@@ -1,0 +1,55 @@
+{
+  "$schema": "https://getbb.app/schemas/marketplace.schema.json",
+  "schemaVersion": 1,
+  "name": "e0068",
+  "displayName": "BB Plugins Public",
+  "description": "Публичные плагины для bb от e0068 и команды.",
+  "plugins": [
+    {
+      "id": "token-usage-header",
+      "displayName": "Token Usage Header",
+      "description": "Расход токенов Claude Code текущей сессии: счётчик в шапке треда.",
+      "icon": "ChartColumn",
+      "tags": [
+        "tokens",
+        "usage",
+        "claude-code",
+        "interface"
+      ],
+      "author": {
+        "name": "e0068",
+        "github": "e0068"
+      },
+      "source": {
+        "git": {
+          "url": "https://github.com/e0068/bb-plugins-public.git",
+          "subdir": "bb-plugin-token-usage-header",
+          "ref": "main"
+        }
+      }
+    },
+    {
+      "id": "usage-circles",
+      "displayName": "Usage Circles",
+      "description": "Кольца лимитов Claude Code в подвале сайдбара.",
+      "icon": "CircleDashed",
+      "tags": [
+        "usage",
+        "limits",
+        "claude-code",
+        "interface"
+      ],
+      "author": {
+        "name": "e0068",
+        "github": "e0068"
+      },
+      "source": {
+        "git": {
+          "url": "https://github.com/e0068/bb-plugins-public.git",
+          "subdir": "bb-plugin-usage-circles",
+          "ref": "main"
+        }
+      }
+    }
+  ]
+}
