@@ -3,7 +3,7 @@
   "schemaVersion": 1,
   "name": "e0068",
   "displayName": "BB Plugins Public",
-  "description": "Публичные плагины для bb от e0068 и команды.",
+  "description": "Плагины для bb, которые поддерживает e0068.",
   "plugins": [
     {
       "id": "token-usage-header",
