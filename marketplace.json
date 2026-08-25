@@ -6,6 +6,29 @@
   "description": "Плагины для bb, которые поддерживает e0068.",
   "plugins": [
     {
+      "id": "tasks-plus",
+      "displayName": "Tasks+",
+      "description": "Fork of Tasks with native workflow fields: Type, Check, Estimate, Plan/Fact tokens.",
+      "icon": "ListTodo",
+      "tags": [
+        "tasks",
+        "tracker",
+        "project-management",
+        "workflow"
+      ],
+      "author": {
+        "name": "e0068",
+        "github": "e0068"
+      },
+      "source": {
+        "git": {
+          "url": "https://github.com/e0068/bb-plugins-public.git",
+          "subdir": "bb-plugin-tasks-plus",
+          "ref": "main"
+        }
+      }
+    },
+    {
       "id": "token-usage-header",
       "displayName": "Token Usage Header",
       "description": "Расход токенов Claude Code текущей сессии: счётчик в шапке треда.",

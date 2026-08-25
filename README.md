@@ -12,5 +12,6 @@ bb plugin install <id>@e0068
 
 ## Плагины
 
+- **Tasks+** (`tasks-plus`) — Fork of Tasks with native workflow fields: Type, Check, Estimate, Plan/Fact tokens.
 - **Token Usage Header** (`token-usage-header`) — Расход токенов Claude Code текущей сессии: счётчик в шапке треда.
 - **Usage Circles** (`usage-circles`) — Кольца лимитов Claude Code в подвале сайдбара.
