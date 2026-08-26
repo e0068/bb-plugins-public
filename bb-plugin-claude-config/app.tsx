@@ -27,17 +27,17 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
-import { MarkdownEditor } from "../packages/md-editor/react";
+import { MarkdownEditor } from "packages/md-editor/react";
 import {
   fileRefFromCode,
   isInTabLink,
   parseHref,
   resolveRelative,
-} from "../packages/link-navigation/resolve";
+} from "packages/link-navigation/resolve";
 import {
   ResizeHandle,
   useResizableWidth,
-} from "../packages/resizable-pane/react";
+} from "packages/resizable-pane/react";
 import "./doc-editor.css";
 
 const PANEL_PATH = "claude-config";

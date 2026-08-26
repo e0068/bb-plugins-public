@@ -14,7 +14,7 @@ import { TasksNavigationPanelContent } from "./navigation-panel.js";
 import {
   ResizeHandle,
   useResizableWidth,
-} from "../../packages/resizable-pane/react";
+} from "../packages/resizable-pane/react";
 import { ListView } from "../views/list/index.js";
 import { BoardView } from "../views/board/index.js";
 import { DetailView } from "../views/detail/index.js";
