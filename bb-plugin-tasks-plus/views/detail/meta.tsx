@@ -44,6 +44,16 @@ export const ESTIMATE_LABELS: Record<TaskEstimate, string> = {
   xl: "XL",
 };
 
+// Full names for the picker menu; the short codes above stay for the badge and
+// the collapsed trigger.
+export const ESTIMATE_OPTION_LABELS: Record<TaskEstimate, string> = {
+  xs: "XS — Extra Small",
+  s: "S — Small",
+  m: "M — Medium",
+  l: "L — Large",
+  xl: "XL — Extra Large",
+};
+
 export const CHECK_LABELS: Record<TaskCheck, string> = {
   test: "Test",
   review: "Review",
@@ -62,16 +72,8 @@ export const TYPE_ICONS: Record<TaskType, IconName> = {
 
 export const TYPE_NONE_ICON: IconName = "Target";
 
-// Estimate reads as a growing, warming swatch: a small square that scales up
-// and shifts green → red across xs…xl. "No estimate" is the empty frame.
-const ESTIMATE_META: Record<TaskEstimate, { size: number; color: string }> = {
-  xs: { size: 4, color: "var(--success)" },
-  s: { size: 6, color: "#9aa83a" },
-  m: { size: 8, color: "#d4a72c" },
-  l: { size: 10, color: "#d4772c" },
-  xl: { size: 12, color: "var(--destructive)" },
-};
-
+// Estimate reads as its own size code — XS…XL — sized to the rail glyphs and
+// inheriting their color, no frame. Empty when there is no estimate.
 export function EstimateIcon({
   estimate,
   className,
@@ -79,24 +81,14 @@ export function EstimateIcon({
   estimate: TaskEstimate | null;
   className?: string;
 }) {
-  const meta = estimate ? ESTIMATE_META[estimate] : null;
   return (
     <span
       className={cn(
-        "inline-flex size-3.5 shrink-0 items-center justify-center rounded-[3px] border border-border",
+        "inline-flex min-w-3.5 shrink-0 items-center justify-center text-sm font-light leading-none tracking-tight tabular-nums",
         className,
       )}
     >
-      {meta ? (
-        <span
-          className="rounded-[2px]"
-          style={{
-            width: `${meta.size}px`,
-            height: `${meta.size}px`,
-            backgroundColor: meta.color,
-          }}
-        />
-      ) : null}
+      {estimate ? ESTIMATE_LABELS[estimate] : null}
     </span>
   );
 }

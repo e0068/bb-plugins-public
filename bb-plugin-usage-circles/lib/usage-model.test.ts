@@ -157,4 +157,10 @@ describe("normalizeUsage", () => {
     expect(normalizeUsage({ status: "error", message: "boom" })).toEqual({ status: "error", message: "boom" });
     expect(normalizeUsage({ status: "error" })).toEqual({ status: "error", message: "Не удалось получить данные" });
   });
+
+  it("treats a missing claudeCode provider as not_installed instead of throwing", () => {
+    // usageLimits() может вернуть объект без claudeCode → в getState это undefined.
+    // Без guard'а чтение .status у undefined роняло getState на каждый вызов (BP-52).
+    expect(normalizeUsage(undefined)).toEqual({ status: "not_installed" });
+  });
 });

@@ -402,6 +402,7 @@ function TaskDetail({ task }: { task: Task }) {
 
           <InlineProperties
             task={task}
+            project={project}
             labels={labels.data}
             presets={presets.data}
             onUpdate={(update) => void updateTask(update)}

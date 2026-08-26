@@ -7,7 +7,9 @@
 import { useEffect, useRef, useState } from "react";
 import {
   definePluginApp,
+  useBbNavigate,
   useRpc,
+  type PluginNavPanelProps,
   type PluginRpcResult,
   type PluginThreadHeaderActionProps,
 } from "@get-bb/plugin-sdk/app";
@@ -17,6 +19,8 @@ import { Icon } from "@/components/ui/icon";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { cn } from "@/lib/utils";
 import { formatCost, formatPercent, formatTokenCount } from "./src/core";
+import { AgentTimelinePage, buildAgentDetailSubPath, THREADS_TIMELINE_PANEL_PATH } from "./pages/AgentTimelinePage";
+import { ThreadsTimelinePage } from "./pages/ThreadsTimelinePage";
 
 type SessionTokenUsage = PluginRpcResult<(typeof rpcContract)["sessionTokenUsage"]>;
 type ReadyUsage = Extract<SessionTokenUsage, { status: "ready" }>;
@@ -47,6 +51,7 @@ const TOKEN_PHASES: ReadonlyArray<{
 
 function TokenUsageHeaderAction({ threadId, isCompactViewport }: PluginThreadHeaderActionProps) {
   const rpc = useRpc<typeof rpcContract>();
+  const navigate = useBbNavigate();
   const [state, setState] = useState<LoadState>({ kind: "loading" });
   const [open, setOpen] = useState(false);
 
@@ -88,6 +93,17 @@ function TokenUsageHeaderAction({ threadId, isCompactViewport }: PluginThreadHea
   // on every render.
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(load, [threadId]);
+
+  // Clicking an agent row (below) navigates into the "threads-timeline"
+  // panel's agent-detail sub-view, with the session id resolved
+  // server-side for THIS thread (sessionTokenUsage's ready `sessionId`) —
+  // `agentTimeline` takes a session directly now, not a BB threadId (see
+  // pages/AgentTimelinePage.tsx's module doc comment).
+  function openAgentDetails(agentKey: string, sessionId: string) {
+    navigate.toPluginPanel(THREADS_TIMELINE_PANEL_PATH, {
+      subPath: buildAgentDetailSubPath({ session: sessionId, agent: agentKey }),
+    });
+  }
 
   const isError = state.kind === "error";
   const buttonText =
@@ -138,13 +154,20 @@ function TokenUsageHeaderAction({ threadId, isCompactViewport }: PluginThreadHea
           </p>
         )}
         {state.kind === "error" && <p className="text-sm text-destructive">{state.message}</p>}
-        {state.kind === "ready" && <UsageDetails usage={state.usage} />}
+        {state.kind === "ready" && <UsageDetails usage={state.usage} onAgentDetails={openAgentDetails} />}
       </PopoverContent>
     </Popover>
   );
 }
 
-function UsageDetails({ usage }: { usage: ReadyUsage }) {
+function UsageDetails({
+  usage,
+  onAgentDetails,
+}: {
+  usage: ReadyUsage;
+  /** Navigates to the agent-detail sub-view for one agent row; omitted renders the row inert (no hover/click). */
+  onAgentDetails?: (agentKey: string, sessionId: string) => void;
+}) {
   const { totals, agents } = usage;
   return (
     <div className="space-y-3">
@@ -197,20 +220,33 @@ function UsageDetails({ usage }: { usage: ReadyUsage }) {
               <span className="text-xs text-muted-foreground/70">показаны не все</span>
             )}
           </div>
-          <ul className="space-y-1">
+          <ul className="space-y-0.5">
             {/* Имя и подпись не собирать заново — они уже готовы с сервера
-                (formatBucketDisplay), см. memory/decisions/token-usage-one-caption-source.md. */}
+                (formatBucketDisplay), см. memory/decisions/token-usage-one-caption-source.md.
+                Whole row is the click target (no separate "Детали" button)
+                — same row treatment as the "Агенты" list in
+                pages/AgentTimelinePage.tsx's LeftPanel. */}
             {agents.map((agent) => (
-              <li key={agent.key} className="flex items-start justify-between gap-2 text-xs">
-                <div className="min-w-0">
-                  <div className="truncate text-foreground" title={agent.name}>
-                    {agent.name}
+              <li key={agent.key}>
+                <button
+                  type="button"
+                  disabled={!onAgentDetails}
+                  onClick={() => onAgentDetails?.(agent.key, usage.sessionId)}
+                  className={cn(
+                    "flex w-full items-start justify-between gap-2 rounded-md px-2 py-1 text-left text-xs",
+                    onAgentDetails && "cursor-pointer hover:bg-state-hover",
+                  )}
+                >
+                  <div className="min-w-0">
+                    <div className="truncate text-foreground" title={agent.name}>
+                      {agent.name}
+                    </div>
+                    {agent.caption && <div className="truncate text-muted-foreground/70">{agent.caption}</div>}
                   </div>
-                  {agent.caption && <div className="truncate text-muted-foreground/70">{agent.caption}</div>}
-                </div>
-                <span className="shrink-0 tabular-nums text-muted-foreground">
-                  {formatTokenCount(agent.total)} · {formatCost(agent.cost)}
-                </span>
+                  <span className="shrink-0 tabular-nums text-muted-foreground">
+                    {formatTokenCount(agent.total)} · {formatCost(agent.cost)}
+                  </span>
+                </button>
               </li>
             ))}
           </ul>
@@ -220,10 +256,33 @@ function UsageDetails({ usage }: { usage: ReadyUsage }) {
   );
 }
 
+/**
+ * The single "Лента тредов" nav panel's own router: an empty `subPath` is
+ * the feed (ThreadsTimelinePage), anything else is the agent-detail
+ * sub-view (AgentTimelinePage) — see AgentTimelinePage.tsx's module doc
+ * comment. "Детализация агента" used to be a second, separately registered
+ * nav panel (`agent-detail`); it was a dead left-menu entry (opened
+ * directly, with no session, it only ever showed "Нет id сессии") and is
+ * folded into this one panel instead, reachable only by navigating here
+ * with a subPath — never from the left menu directly.
+ */
+function ThreadsTimelinePanel({ subPath }: PluginNavPanelProps) {
+  if (subPath === "") return <ThreadsTimelinePage subPath={subPath} />;
+  return <AgentTimelinePage subPath={subPath} />;
+}
+
 export default definePluginApp((app) => {
   app.slots.experimental_threadHeaderAction({
     id: "token-usage-header",
     title: "Расход токенов",
     component: TokenUsageHeaderAction,
+  });
+
+  app.slots.navPanel({
+    id: "threads-timeline",
+    title: "Лента тредов",
+    icon: "ChartColumn",
+    path: THREADS_TIMELINE_PANEL_PATH,
+    component: ThreadsTimelinePanel,
   });
 });

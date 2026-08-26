@@ -474,5 +474,76 @@ def _ts(iso_str):
     return dt.replace(tzinfo=timezone.utc).timestamp()
 
 
+def _write_raw(path, lines):
+    """Пишет jsonl из готовых dict-записей (без подстановки requestId)."""
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w") as f:
+        for line in lines:
+            f.write(json.dumps(line) + "\n")
+
+
+def _assistant(msg_id, req, out, ts="2026-08-19T07:40:00.000Z", model="claude-sonnet-4"):
+    return {
+        "type": "assistant", "timestamp": ts, "requestId": req,
+        "message": {"id": msg_id, "model": model,
+                    "usage": {"input_tokens": 1, "output_tokens": out}},
+    }
+
+
+class DedupTest(unittest.TestCase):
+    """tokens.walk: повторы одного ответа сворачиваются в последнюю запись."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.root = self._tmp.name
+        self._real_root = tokens.ROOT
+        tokens.ROOT = self.root
+
+    def tearDown(self):
+        tokens.ROOT = self._real_root
+        self._tmp.cleanup()
+
+    def _p(self, *parts):
+        return os.path.join(self.root, *parts)
+
+    def test_streaming_snapshots_collapse_to_final_value(self):
+        # один ответ, записанный трижды по мере стриминга: 1 -> 1 -> 366
+        path = self._p("projA", "sess1.jsonl")
+        _write_raw(path, [_assistant("msg-1", "req-1", 1),
+                          _assistant("msg-1", "req-1", 1),
+                          _assistant("msg-1", "req-1", 366)])
+        recs = list(tokens.walk([path]))
+        self.assertEqual(len(recs), 1)
+        self.assertEqual(recs[0]["usage"]["output_tokens"], 366)
+
+    def test_repeat_keeps_position_of_first_appearance(self):
+        # порядок выдачи — по первому появлению ключа, значение — последнее
+        path = self._p("projA", "sess1.jsonl")
+        _write_raw(path, [_assistant("msg-1", "req-1", 5),
+                          _assistant("msg-2", "req-2", 7),
+                          _assistant("msg-1", "req-1", 50)])
+        recs = list(tokens.walk([path]))
+        self.assertEqual([r["usage"]["output_tokens"] for r in recs], [50, 7])
+
+    def test_same_answer_in_two_files_counted_once_for_first_path(self):
+        # один ответ, попавший в две сессии: считается один раз, за файл,
+        # который раньше по отсортированному пути
+        a = self._p("projA", "aaa.jsonl")
+        b = self._p("projA", "bbb.jsonl")
+        _write_raw(a, [_assistant("msg-1", "req-1", 9)])
+        _write_raw(b, [_assistant("msg-1", "req-1", 9)])
+        recs = list(tokens.walk([b, a]))
+        self.assertEqual(len(recs), 1)
+        self.assertEqual(recs[0]["session"], "aaa")
+
+    def test_file_order_does_not_depend_on_input_order(self):
+        a = self._p("projA", "aaa.jsonl")
+        b = self._p("projA", "bbb.jsonl")
+        _write_raw(a, [_assistant("msg-1", "req-1", 9)])
+        _write_raw(b, [_assistant("msg-1", "req-1", 9)])
+        self.assertEqual([r["session"] for r in tokens.walk([a, b])],
+                         [r["session"] for r in tokens.walk([b, a])])
+
+
 if __name__ == "__main__":
     unittest.main()

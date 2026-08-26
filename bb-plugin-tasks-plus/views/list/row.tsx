@@ -75,7 +75,7 @@ function EstimateChip({ estimate }: { estimate: Task["estimate"] }) {
   if (estimate === null) return null;
   return (
     <span title={`Estimate: ${estimate.toUpperCase()}`} className={RAIL_ICON_CLASS}>
-      <EstimateIcon estimate={estimate} className="size-3" />
+      <EstimateIcon estimate={estimate} />
     </span>
   );
 }

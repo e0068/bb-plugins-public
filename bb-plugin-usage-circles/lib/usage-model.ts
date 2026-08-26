@@ -152,7 +152,16 @@ interface ClaudeCodeUsageInput {
   message?: string;
 }
 
-export function normalizeUsage(claudeCode: ClaudeCodeUsageInput): UsageResultWire {
+export function normalizeUsage(
+  claudeCode: ClaudeCodeUsageInput | undefined,
+): UsageResultWire {
+  // bb.sdk.system.usageLimits() может не вернуть провайдера claudeCode вовсе
+  // (Claude Code не установлен / не в этой сессии / хост не отдаёт данные
+  // подписки) — тогда поле claudeCode === undefined. Тот же случай lanes
+  // трактует как «нет линии»; здесь считаем это not_installed, а не падаем на
+  // чтении .status у undefined (иначе getState бросает на каждый вызов и кольца
+  // не рисуются — BP-52).
+  if (!claudeCode) return { status: "not_installed" };
   if (claudeCode.status === "ok") {
     return {
       status: "ok",

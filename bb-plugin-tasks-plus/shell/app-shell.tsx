@@ -10,6 +10,11 @@ import {
 } from "./routes.js";
 import { loadViewMode, storeViewMode } from "./view-preference.js";
 import { TasksTopbar } from "./topbar.js";
+import { TasksNavigationPanelContent } from "./navigation-panel.js";
+import {
+  ResizeHandle,
+  useResizableWidth,
+} from "../../packages/resizable-pane/react";
 import { ListView } from "../views/list/index.js";
 import { BoardView } from "../views/board/index.js";
 import { DetailView } from "../views/detail/index.js";
@@ -126,6 +131,17 @@ function TasksAppShellContent({ subPath }: PluginNavPanelProps) {
   );
   const [newTaskOpen, setNewTaskOpen] = useState(false);
   const [newProjectOpen, setNewProjectOpen] = useState(false);
+  // Навигация переехала из фиксированной хостовой вкладки (experimental_fixedTabs,
+  // которую bb 0.40.0 не монтирует — см. BP-53) в левую колонку самой панели.
+  // Правая панель треда остаётся под эмбед конкретной таски (threadPanelAction).
+  const [navOpen, setNavOpen] = useState(true);
+  const { width: navWidth, startResize } = useResizableWidth({
+    side: "left",
+    initial: 280,
+    min: 200,
+    max: 520,
+    storageKey: "tasks-plus:nav-pane-width",
+  });
 
   const mainRef = useRef<HTMLElement>(null);
   const [boardUsable, setBoardUsable] = useState(true);
@@ -191,6 +207,17 @@ function TasksAppShellContent({ subPath }: PluginNavPanelProps) {
 
   return (
     <div className="relative flex h-full min-h-0 bg-background text-foreground">
+      {navOpen ? (
+        <>
+          <div
+            style={{ width: navWidth }}
+            className="h-full min-h-0 shrink-0 overflow-hidden"
+          >
+            <TasksNavigationPanelContent subPath={subPath} />
+          </div>
+          <ResizeHandle onPointerDown={startResize} />
+        </>
+      ) : null}
       <main ref={mainRef} className="@container flex min-w-0 flex-1 flex-col">
         <TasksTopbar
           route={route}
@@ -208,6 +235,8 @@ function TasksAppShellContent({ subPath }: PluginNavPanelProps) {
           onNavigate={navigation.go}
           onNewTask={() => setNewTaskOpen(true)}
           onBack={backFromTask}
+          navOpen={navOpen}
+          onToggleNav={() => setNavOpen((v) => !v)}
         />
         <div className="min-h-0 flex-1 overflow-auto">
           {noProjects && route.kind !== "task" && route.kind !== "manage" ? (

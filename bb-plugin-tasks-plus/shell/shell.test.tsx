@@ -23,12 +23,15 @@ const app = await loadPluginApp(() => import("../app"));
 const { parseTasksRoute, tasksRouteToSubPath } = await import("./routes.js");
 const { pagerPosition } = await import("./topbar.js");
 const { loadViewMode } = await import("./view-preference.js");
+const { TasksNavigationPanel } = await import("./navigation-panel.js");
 
 const tasksRegistration = app.navPanels[0]!;
-const navigationView = tasksRegistration.experimental_fixedTabs?.[0]!;
+// Navigation is now a column inside the panel (its fixed-tab was dropped because
+// bb 0.40.0 won't mount a navPanel that declares experimental_fixedTabs — BP-53).
+// The standalone component still renders on its own, so tests drive it directly.
 const navigationRegistration = {
   ...tasksRegistration,
-  component: navigationView.component,
+  component: TasksNavigationPanel,
 };
 
 beforeEach(() => window.localStorage.clear());
@@ -260,15 +263,11 @@ describe("task pager", () => {
 });
 
 describe("tasks app shell", () => {
-  it("registers navigation as a BB-owned fixed panel tab", () => {
-    expect(tasksRegistration.experimental_fixedTabs).toMatchObject([
-      {
-        id: "navigation",
-        title: "Navigation",
-        icon: "ListView",
-        layout: "flush",
-      },
-    ]);
+  it("declares no host fixed tab (navigation moved into the panel column)", () => {
+    // bb 0.40.0 won't mount a navPanel that declares experimental_fixedTabs, so
+    // the sidebar entry vanishes (BP-53). Navigation now renders as a column
+    // inside the panel instead of a host-owned fixed tab.
+    expect(tasksRegistration.experimental_fixedTabs).toBeUndefined();
   });
 
   it("does not treat the first connection as a reconnect", async () => {

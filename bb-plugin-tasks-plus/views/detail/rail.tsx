@@ -22,7 +22,7 @@ import { useTasksQuery, useTasksRpc } from "../../shell/data.js";
 import {
   CHECK_LABELS,
   ESTIMATE_LABELS,
-  EstimateIcon,
+  ESTIMATE_OPTION_LABELS,
   PRIORITY_LABELS,
   PriorityIcon,
   STATUS_LABELS,
@@ -226,6 +226,7 @@ function EnumMenu<T extends string>({
   value,
   values,
   labels,
+  optionLabels,
   noneLabel,
   onSelect,
   triggerClassName,
@@ -234,11 +235,14 @@ function EnumMenu<T extends string>({
   value: T | null;
   values: readonly T[];
   labels: Record<T, string>;
+  // Longer text for the dropdown items; the trigger always uses `labels`.
+  optionLabels?: Record<T, string>;
   noneLabel: string;
   onSelect: (next: T | null) => void;
   triggerClassName: string;
   renderIcon?: (value: T | null) => ReactNode;
 }) {
+  const itemLabels = optionLabels ?? labels;
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
@@ -258,7 +262,7 @@ function EnumMenu<T extends string>({
         {values.map((item) => (
           <DropdownMenuItem key={item} onSelect={() => onSelect(item)}>
             {renderIcon?.(item)}
-            {labels[item]}
+            {itemLabels[item]}
             {item === value ? (
               <Icon name="Check" className="ml-auto size-3.5" />
             ) : null}
@@ -766,10 +770,10 @@ export function PropertiesRail({
         value={task.estimate}
         values={TASK_ESTIMATES}
         labels={ESTIMATE_LABELS}
+        optionLabels={ESTIMATE_OPTION_LABELS}
         noneLabel="No estimate"
         onSelect={(estimate) => onUpdate({ estimate })}
         triggerClassName={RAIL_ROW_CLASS}
-        renderIcon={(value) => <EstimateIcon estimate={value} />}
       />
 
       <div className="mb-1 mt-3 text-2xs font-semibold text-muted-foreground">
@@ -906,17 +910,30 @@ export function PropertiesRail({
 const CHIP_CLASS =
   "inline-flex items-center gap-1.5 rounded-md border border-border bg-secondary px-2.5 py-0.5 text-xs text-foreground hover:border-input";
 
+// Same pill with the fill removed: marks an optional property that is currently
+// empty (the due date, which may legitimately have no value) so it reads as an
+// affordance to set rather than as a value already chosen.
+const CHIP_GHOST_CLASS =
+  "inline-flex items-center gap-1.5 rounded-md border border-border px-2.5 py-0.5 text-xs text-muted-foreground hover:border-input hover:text-foreground";
+
+// Non-interactive variant for the project, shown in the row but edited elsewhere.
+const CHIP_STATIC_CLASS =
+  "inline-flex items-center gap-1.5 rounded-md border border-border bg-secondary px-2.5 py-0.5 text-xs text-foreground";
+
 /** Compact property chips shown under the title when the rail is hidden.
- *  Carries the task's single DispatchControl on narrow layouts, so it also
- *  needs the rail's presets/onError wiring. */
+ *  Mirrors the rail's fields as pills — every set property (status, priority,
+ *  type, estimate, project, labels, checks) plus the due date, which stays
+ *  visible even when empty as a ghost pill. Carries the task's single
+ *  DispatchControl full-width beneath the pills. */
 export function InlineProperties({
   task,
+  project,
   labels,
   presets,
   onUpdate,
   onError,
   className,
-}: Omit<TaskPropertiesProps, "project" | "threads"> & {
+}: Omit<TaskPropertiesProps, "threads"> & {
   presets: Preset[] | undefined;
   onError: (message: string) => void;
   className?: string;
@@ -924,36 +941,103 @@ export function InlineProperties({
   const taskLabels = (labels ?? []).filter((label) =>
     task.labelIds.includes(label.id),
   );
+  const checks = task.checks ?? [];
   return (
-    <div className={cn("flex flex-wrap items-center gap-1.5", className)}>
-      <StatusMenu task={task} onUpdate={onUpdate} triggerClassName={CHIP_CLASS} />
-      <PriorityMenu task={task} onUpdate={onUpdate} triggerClassName={CHIP_CLASS} />
-      <DueDateMenu task={task} onUpdate={onUpdate} triggerClassName={CHIP_CLASS} />
-      {taskLabels.map((label) => (
-        <LabelChip
-          key={label.id}
-          label={label}
-          onRemove={() =>
-            onUpdate({
-              labelIds: task.labelIds.filter((id) => id !== label.id),
-            })
-          }
+    <div className={cn("flex flex-col gap-2", className)}>
+      <div className="flex flex-wrap items-center gap-1.5">
+        <StatusMenu task={task} onUpdate={onUpdate} triggerClassName={CHIP_CLASS} />
+        <PriorityMenu
+          task={task}
+          onUpdate={onUpdate}
+          triggerClassName={CHIP_CLASS}
         />
-      ))}
-      <LabelsMenu task={task} labels={labels} onUpdate={onUpdate}>
-        <button
-          type="button"
-          aria-label="Edit labels"
-          className="inline-flex items-center rounded-md border border-dashed border-border px-2 py-1 text-muted-foreground hover:border-input hover:text-foreground"
-        >
-          <Icon name="Plus" className="size-3" />
-        </button>
-      </LabelsMenu>
+        <DueDateMenu
+          task={task}
+          onUpdate={onUpdate}
+          triggerClassName={task.dueDate ? CHIP_CLASS : CHIP_GHOST_CLASS}
+        />
+        {task.type ? (
+          <EnumMenu
+            value={task.type}
+            values={TASK_TYPES}
+            labels={TYPE_LABELS}
+            noneLabel="No type"
+            onSelect={(type) => onUpdate({ type })}
+            triggerClassName={CHIP_CLASS}
+            renderIcon={(value) => (
+              <Icon
+                name={value ? TYPE_ICONS[value] : TYPE_NONE_ICON}
+                className="size-3.5"
+              />
+            )}
+          />
+        ) : null}
+        {task.estimate ? (
+          <EnumMenu
+            value={task.estimate}
+            values={TASK_ESTIMATES}
+            labels={ESTIMATE_LABELS}
+            optionLabels={ESTIMATE_OPTION_LABELS}
+            noneLabel="No estimate"
+            onSelect={(estimate) => onUpdate({ estimate })}
+            triggerClassName={CHIP_CLASS}
+          />
+        ) : null}
+        {project ? (
+          <span className={CHIP_STATIC_CLASS}>
+            <span
+              aria-hidden
+              className="size-2 shrink-0 rounded-sm"
+              style={{ backgroundColor: project.color }}
+            />
+            {project.name}
+          </span>
+        ) : null}
+        {taskLabels.map((label) => (
+          <LabelChip
+            key={label.id}
+            label={label}
+            onRemove={() =>
+              onUpdate({
+                labelIds: task.labelIds.filter((id) => id !== label.id),
+              })
+            }
+          />
+        ))}
+        <LabelsMenu task={task} labels={labels} onUpdate={onUpdate}>
+          <button
+            type="button"
+            aria-label="Edit labels"
+            className="inline-flex items-center rounded-md border border-dashed border-border px-2 py-1 text-muted-foreground hover:border-input hover:text-foreground"
+          >
+            <Icon name="Plus" className="size-3" />
+          </button>
+        </LabelsMenu>
+        {checks.map((check) => (
+          <CheckChip
+            key={check}
+            check={check}
+            onRemove={() =>
+              onUpdate({ checks: checks.filter((item) => item !== check) })
+            }
+          />
+        ))}
+        <ChecksMenu task={task} onUpdate={onUpdate}>
+          <button
+            type="button"
+            aria-label="Edit checks"
+            className="inline-flex items-center rounded-md border border-dashed border-border px-2 py-1 text-muted-foreground hover:border-input hover:text-foreground"
+          >
+            <Icon name="Plus" className="size-3" />
+          </button>
+        </ChecksMenu>
+      </div>
       <DispatchControl
         taskId={task.id}
         presets={presets}
         onError={onError}
-        className="ml-auto max-w-56"
+        align="start"
+        className="w-full"
       />
     </div>
   );

@@ -21,7 +21,6 @@ import { cn } from "@/lib/utils";
 import { PriorityIcon, StatusIcon } from "./icons.js";
 import {
   ESTIMATE_LABELS,
-  EstimateIcon,
   TYPE_ICONS,
   TYPE_LABELS,
 } from "../detail/meta.js";
@@ -283,7 +282,6 @@ export function ListFilterBar({
               }
             >
               <span className="flex items-center gap-2">
-                <EstimateIcon estimate={estimate} />
                 {ESTIMATE_LABELS[estimate]}
               </span>
             </DropdownMenuCheckboxItem>

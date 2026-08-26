@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { Label, Preset } from "../../shared/contract.js";
 import {
   listAllTasks,
@@ -28,11 +28,127 @@ import {
   savePresetDraft,
   type PresetDraft,
 } from "./preset-dialog.js";
-import { ColorSwatchPicker, DEFAULT_COLOR } from "./shared.js";
+import { ColorSwatchPicker, DEFAULT_COLOR, Field } from "./shared.js";
 import { FoldersSection } from "./folders-section.js";
 
 function describeError(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+// ---------------------------------------------------------------------------
+// Project
+// ---------------------------------------------------------------------------
+
+function ProjectSection() {
+  const rpc = useTasksRpc();
+  const projects = useProjects();
+  const projectList = projects.data ?? [];
+  const [selectedProjectId, setSelectedProjectId] = useState<string | null>(
+    null,
+  );
+  const projectId = selectedProjectId ?? projectList[0]?.id ?? null;
+  const project = projectList.find((entry) => entry.id === projectId) ?? null;
+
+  const [name, setName] = useState("");
+  const [color, setColor] = useState<string>(DEFAULT_COLOR);
+  const [error, setError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+
+  // The editor mirrors the selected project; resync whenever that project — or
+  // its stored name/color — changes underneath us.
+  useEffect(() => {
+    if (project) {
+      setName(project.name);
+      setColor(project.color);
+    }
+  }, [project?.id, project?.name, project?.color]);
+
+  if (projectList.length === 0) {
+    return (
+      <p className="text-sm text-muted-foreground">
+        No projects yet — create one first.
+      </p>
+    );
+  }
+
+  const dirty =
+    project !== null &&
+    (name.trim() !== project.name || color !== project.color);
+  const canSave = project !== null && name.trim() !== "" && dirty && !saving;
+
+  const save = async () => {
+    if (!project || !canSave) return;
+    setSaving(true);
+    setError(null);
+    try {
+      await rpc.call("updateProject", {
+        projectId: project.id,
+        name: name.trim(),
+        color,
+      });
+    } catch (saveError) {
+      setError(describeError(saveError));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="space-y-3">
+      <Select
+        value={projectId ?? undefined}
+        onValueChange={(value) => setSelectedProjectId(value)}
+      >
+        <SelectTrigger aria-label="Project" className="h-8 w-56">
+          <SelectValue placeholder="Project" />
+        </SelectTrigger>
+        <SelectContent>
+          {projectList.map((entry) => (
+            <SelectItem key={entry.id} value={entry.id}>
+              <span className="flex items-center gap-2">
+                <span
+                  aria-hidden
+                  className="size-2.5 rounded-sm"
+                  style={{ backgroundColor: entry.color }}
+                />
+                {entry.name}
+              </span>
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+      <Field label="Name">
+        <Input
+          value={name}
+          placeholder="Project name"
+          onChange={(event) => setName(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key === "Enter" && canSave) {
+              event.preventDefault();
+              void save();
+            }
+          }}
+          className="h-8 w-56"
+        />
+      </Field>
+      <Field label="Color">
+        <ColorSwatchPicker value={color} onChange={setColor} />
+      </Field>
+      <Button
+        size="sm"
+        className="h-7"
+        disabled={!canSave}
+        onClick={() => void save()}
+      >
+        Save
+      </Button>
+      {error ? (
+        <p role="alert" className="text-xs text-destructive">
+          {error}
+        </p>
+      ) : null}
+    </div>
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -451,15 +567,19 @@ export function ManagePanel({ className }: { className?: string }) {
       <header className="space-y-1">
         <h2 className="text-base font-semibold">Manage</h2>
         <p className="text-sm text-muted-foreground">
-          Labels, agent presets, and folders.
+          Project, labels, agent presets, and folders.
         </p>
       </header>
-      <Tabs defaultValue="labels">
+      <Tabs defaultValue="project">
         <TabsList>
+          <TabsTrigger value="project">Project</TabsTrigger>
           <TabsTrigger value="labels">Labels</TabsTrigger>
           <TabsTrigger value="presets">Presets</TabsTrigger>
           <TabsTrigger value="folders">Folders</TabsTrigger>
         </TabsList>
+        <TabsContent value="project" className="pt-3">
+          <ProjectSection />
+        </TabsContent>
         <TabsContent value="labels" className="pt-3">
           <LabelsSection />
         </TabsContent>

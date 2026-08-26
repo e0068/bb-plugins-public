@@ -12,6 +12,10 @@ export default defineConfig({
       // point vitest at the ESM build so `import tippy` gets the function.
       "tippy.js": "tippy.js/dist/tippy.esm.js",
     },
+    // Shared ../../packages import "react" from their own location; without
+    // dedupe vitest loads a second React and hooks throw. esbuild dedupes at
+    // build time, so this only matters for tests.
+    dedupe: ["react", "react-dom", "react/jsx-runtime"],
   },
   test: {
     name: "bb-plugin-tasks-plus",

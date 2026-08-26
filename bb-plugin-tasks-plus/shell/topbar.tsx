@@ -248,6 +248,12 @@ export interface TasksTopbarProps {
   onNavigate: (route: TasksRoute) => void;
   onNewTask: () => void;
   onBack: () => void;
+  /**
+   * Левая колонка навигации открыта. Кнопка-переключатель рендерится только
+   * когда передан onToggleNav, поэтому проп обратносовместим.
+   */
+  navOpen?: boolean;
+  onToggleNav?: () => void;
 }
 
 export function TasksTopbar({
@@ -257,6 +263,8 @@ export function TasksTopbar({
   onNavigate,
   onNewTask,
   onBack,
+  navOpen,
+  onToggleNav,
 }: TasksTopbarProps) {
   const project = useMemo(() => {
     if (route.kind === "project") {
@@ -369,6 +377,18 @@ export function TasksTopbar({
     // (`max-md:`), not the container, because the toggle is viewport-fixed and
     // wide windows always place a host pane header above this bar instead.
     <header className="flex h-11 shrink-0 items-center gap-2.5 border-b border-border-hairline bg-background px-3.5 text-sm max-md:h-12 max-md:pl-12 max-md:pointer-coarse:pl-14">
+      {onToggleNav ? (
+        <Button
+          variant="ghost"
+          size="icon"
+          className="-ml-1 size-7 shrink-0"
+          aria-label={navOpen ? "Скрыть навигацию" : "Показать навигацию"}
+          aria-pressed={navOpen ?? false}
+          onClick={onToggleNav}
+        >
+          <Icon name="ListView" className="size-4" />
+        </Button>
+      ) : null}
       <div className="min-w-0 flex-1 overflow-hidden">{breadcrumb}</div>
       {route.kind === "task" &&
       (pagerScope !== null || projects !== undefined) ? (

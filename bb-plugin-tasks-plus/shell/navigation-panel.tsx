@@ -12,7 +12,7 @@ import { TasksSidebar } from "./sidebar.js";
 import { NewProjectDialog } from "../views/manage/index.js";
 import { useState } from "react";
 
-function TasksNavigationPanelContent({ subPath }: PluginNavPanelProps) {
+export function TasksNavigationPanelContent({ subPath }: PluginNavPanelProps) {
   const route = parseTasksRoute(subPath);
   const navigation = useTasksNavigation();
   const folders = useFolders();

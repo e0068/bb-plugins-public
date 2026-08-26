@@ -341,7 +341,11 @@ def walk(paths, since=None, until=None):
     since_dt = _parse_time_bound(since, strict=True)
     until_dt = _parse_time_bound(until, strict=True, end_of_day=True)
     seen = set()
-    for f in paths:
+    # Порядок файлов фиксируем сортировкой: ключ дедупликации может встретиться
+    # в двух файлах сразу (перенос тредов между окружениями), и от порядка
+    # зависит, какому файлу — а значит какой сессии — достанется расход.
+    # os.listdir/glob такого порядка не гарантируют.
+    for f in sorted(paths):
         rel = os.path.relpath(f, ROOT)
         parts = rel.split(os.sep)
         project = parts[0]
@@ -365,21 +369,34 @@ def walk(paths, since=None, until=None):
             agent_id = None
             meta = None
 
-        for line in open(f, errors="ignore"):
-            try:
-                d = json.loads(line)
-            except Exception:
-                continue
-            msg = d.get("message") or {}
-            u = msg.get("usage")
-            if not u or d.get("type") != "assistant":
-                continue
-            # дедуп: один ответ API мог быть записан дважды при резюме сессии
-            dedup = (msg.get("id"), d.get("requestId"))
+        # Свернуть записи файла по ключу дедупликации: побеждает последняя.
+        # Пока ответ стримится, транскрипт пишет его несколько раз с одной
+        # парой (message.id, requestId), наращивая output_tokens; финальное
+        # значение — в последней записи, ранние это незавершённые снимки.
+        # Раньше здесь оставалась первая запись — выход занижался.
+        # См. decisions/token-usage-dedup-last-wins.md.
+        records = {}
+        with open(f, errors="ignore") as fh:
+            for line in fh:
+                try:
+                    d = json.loads(line)
+                except Exception:
+                    continue
+                msg = d.get("message") or {}
+                u = msg.get("usage")
+                if not u or d.get("type") != "assistant":
+                    continue
+                records[(msg.get("id"), d.get("requestId"))] = {
+                    "usage": u,
+                    "model": msg.get("model"),
+                    "ts": d.get("timestamp"),
+                }
+
+        for dedup, rec in records.items():
             if dedup in seen:
                 continue
             seen.add(dedup)
-            ts = d.get("timestamp")
+            ts = rec["ts"]
             if since_dt or until_dt:
                 ts_dt = _parse_time_bound(ts)
                 if since_dt and (ts_dt is None or ts_dt < since_dt):  continue
@@ -390,8 +407,8 @@ def walk(paths, since=None, until=None):
                 "agentId": agent_id,
                 "workflowRunId": workflow_run_id,
                 "meta": meta,
-                "usage": u,
-                "model": msg.get("model"),
+                "usage": rec["usage"],
+                "model": rec["model"],
                 "ts": ts,
             }
 
