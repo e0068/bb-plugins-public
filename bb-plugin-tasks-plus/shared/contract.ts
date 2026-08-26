@@ -1,4 +1,7 @@
-import { defineRpcContract } from "@get-bb/plugin-sdk";
+// Импорт из /app, а не из голого @get-bb/plugin-sdk: этот файл тянут во
+// фронтенд-бандл ради констант и схем, а голый SDK хост шимит только серверной
+// сборке — при git-install фронтенд его не резолвит. /app доступен обеим.
+import { defineRpcContract } from "@get-bb/plugin-sdk/app";
 import { z } from "zod";
 import {
   TASK_SORTS,
