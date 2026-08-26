@@ -1,8 +1,5 @@
-import {
-  TASK_ESTIMATES,
-  TASK_PRIORITIES,
-  type Task,
-} from "./contract.js";
+import { TASK_ESTIMATES, TASK_PRIORITIES } from "./enums.js";
+import type { Task } from "./contract.js";
 
 export { TASK_SORTS, type TaskSort } from "./pagination.js";
 
