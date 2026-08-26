@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, expect, it } from "vitest";
-import { TASK_PRIORITIES, TASK_STATUSES } from "../../shared/contract.js";
+import { TASK_PRIORITIES, TASK_STATUSES } from "../../shared/enums.js";
 import {
   isBareKey,
   PRIORITY_MENU_ORDER,

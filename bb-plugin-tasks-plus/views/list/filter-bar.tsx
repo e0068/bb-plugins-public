@@ -8,7 +8,7 @@ import {
   type TaskPriority,
   type TaskStatus,
   type TaskType,
-} from "../../shared/contract.js";
+} from "../../shared/enums.js";
 import { LIST_SORTS, type ListSort } from "../../shared/sort.js";
 import {
   DropdownMenu,

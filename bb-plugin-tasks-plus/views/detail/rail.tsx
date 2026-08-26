@@ -1,22 +1,19 @@
 import { useState, type ReactNode } from "react";
+import type { Label, Project, Task, TaskThread } from "../../shared/contract.js";
 import type {
-  Label,
-  Project,
-  Task,
   TaskCheck,
   TaskEstimate,
   TaskPriority,
   TaskStatus,
-  TaskThread,
   TaskType,
-} from "../../shared/contract.js";
+} from "../../shared/enums.js";
 import {
   TASK_CHECKS,
   TASK_ESTIMATES,
   TASK_PRIORITIES,
   TASK_STATUSES,
   TASK_TYPES,
-} from "../../shared/contract.js";
+} from "../../shared/enums.js";
 import type { Preset } from "../../shared/contract.js";
 import { useTasksQuery, useTasksRpc } from "../../shell/data.js";
 import {

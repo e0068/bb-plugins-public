@@ -5,13 +5,8 @@ import {
   type PointerEvent as ReactPointerEvent,
   type ReactNode,
 } from "react";
-import {
-  TASK_STATUSES,
-  type Label,
-  type Task,
-  type TaskStatus,
-  type TaskThread,
-} from "../../shared/contract.js";
+import { TASK_STATUSES, type TaskStatus } from "../../shared/enums.js";
+import type { Label, Task, TaskThread } from "../../shared/contract.js";
 import {
   listAllTasks,
   useTasksQuery,

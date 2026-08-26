@@ -5,13 +5,13 @@ import {
   TASK_PRIORITIES,
   TASK_STATUSES,
   TASK_TYPES,
-  type Task,
   type TaskCheck,
   type TaskEstimate,
   type TaskPriority,
   type TaskStatus,
   type TaskType,
-} from "../../shared/contract.js";
+} from "../../shared/enums.js";
+import type { Task } from "../../shared/contract.js";
 import { uploadAttachment } from "../detail/attachments.js";
 import {
   AttachmentChip,

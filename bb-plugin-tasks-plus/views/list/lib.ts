@@ -1,10 +1,9 @@
 import {
   TASK_STATUSES,
-  type Label,
-  type Task,
   type TaskPriority,
   type TaskStatus,
-} from "../../shared/contract.js";
+} from "../../shared/enums.js";
+import type { Label, Task } from "../../shared/contract.js";
 import type { ListSort } from "../../shared/sort.js";
 
 export const STATUS_LABELS: Record<TaskStatus, string> = {

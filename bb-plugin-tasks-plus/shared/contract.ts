@@ -1,44 +1,24 @@
-// Импорт из /app, а не из голого @get-bb/plugin-sdk: этот файл тянут во
-// фронтенд-бандл ради констант и схем, а голый SDK хост шимит только серверной
-// сборке — при git-install фронтенд его не резолвит. /app доступен обеим.
-import { defineRpcContract } from "@get-bb/plugin-sdk/app";
+import { defineRpcContract } from "@get-bb/plugin-sdk";
 import { z } from "zod";
 import {
   TASK_SORTS,
   TASKS_PAGE_DEFAULT_LIMIT,
   TASKS_PAGE_MAX_LIMIT,
 } from "./pagination.js";
+import {
+  TASK_STATUSES,
+  TASK_PRIORITIES,
+  TASK_TYPES,
+  TASK_ESTIMATES,
+  TASK_CHECKS,
+  PRESET_ENVIRONMENT_KINDS,
+  PRESET_PERMISSION_MODES,
+} from "./enums.js";
 
-export const TASK_STATUSES = [
-  "backlog",
-  "todo",
-  "in_progress",
-  "in_review",
-  "done",
-  "canceled",
-] as const;
-
-export const TASK_PRIORITIES = [
-  "urgent",
-  "high",
-  "medium",
-  "low",
-  "none",
-] as const;
-
-// Mirror of db/types.ts — kept in sync by hand, like TASK_STATUSES above.
-export const TASK_TYPES = [
-  "feature",
-  "bugfix",
-  "spike",
-  "refactor",
-  "migration",
-  "design",
-] as const;
-
-export const TASK_ESTIMATES = ["xs", "s", "m", "l", "xl"] as const;
-
-export const TASK_CHECKS = ["test", "review", "design", "browser"] as const;
+// Перечисления и производные типы вынесены в enums.js (без @get-bb/plugin-sdk),
+// чтобы фронтенд-бандл не тянул сюда серверный SDK. Ре-экспорт сохраняет прежний
+// путь для серверного кода: import { TASK_STATUSES, ... } from "../shared/contract".
+export * from "./enums.js";
 
 export const TASK_THREAD_LIVE_STATUSES = [
   "starting",
@@ -46,11 +26,6 @@ export const TASK_THREAD_LIVE_STATUSES = [
   "idle",
   "completed",
   "failed",
-] as const;
-
-export const PRESET_ENVIRONMENT_KINDS = [
-  "project-default",
-  "new-worktree",
 ] as const;
 
 const ULID_PATTERN = /^[0-7][0-9A-HJKMNP-TV-Z]{25}$/;
@@ -66,11 +41,6 @@ const presetReasoningLevelSchema = z.enum([
   "xhigh",
   "max",
 ]);
-export const PRESET_PERMISSION_MODES = [
-  "accept-edits",
-  "auto",
-  "full",
-] as const;
 export const presetPermissionModeSchema = z.enum(PRESET_PERMISSION_MODES);
 export type PresetPermissionMode = z.infer<typeof presetPermissionModeSchema>;
 const presetEnvironmentKindSchema = z.enum(PRESET_ENVIRONMENT_KINDS);
@@ -854,11 +824,6 @@ export type TasksRpcContract = typeof tasksRpcContract;
 export type Folder = z.infer<typeof folderSchema>;
 export type Project = z.infer<typeof projectSchema>;
 export type Task = z.infer<typeof taskSchema>;
-export type TaskStatus = (typeof TASK_STATUSES)[number];
-export type TaskPriority = (typeof TASK_PRIORITIES)[number];
-export type TaskType = (typeof TASK_TYPES)[number];
-export type TaskEstimate = (typeof TASK_ESTIMATES)[number];
-export type TaskCheck = (typeof TASK_CHECKS)[number];
 export type Label = z.infer<typeof labelSchema>;
 export type Comment = z.infer<typeof commentSchema>;
 export type CommentProvider = z.infer<typeof commentProviderSchema>;

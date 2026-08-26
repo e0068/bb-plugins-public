@@ -6,7 +6,7 @@ import type {
 import {
   PRESET_ENVIRONMENT_KINDS,
   PRESET_PERMISSION_MODES,
-} from "../../shared/contract.js";
+} from "../../shared/enums.js";
 import type { TasksRpc } from "../../shell/data.js";
 import { useTasksQuery } from "../../shell/data.js";
 import {

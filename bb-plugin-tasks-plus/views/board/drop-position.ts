@@ -1,4 +1,4 @@
-import { TASK_STATUSES, type TaskStatus } from "../../shared/contract.js";
+import { TASK_STATUSES, type TaskStatus } from "../../shared/enums.js";
 
 /** Always-visible columns in board order; Canceled is appended on demand. */
 export const BOARD_STATUSES = [

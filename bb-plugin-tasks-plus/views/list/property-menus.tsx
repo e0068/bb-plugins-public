@@ -2,11 +2,10 @@ import type { ReactNode, Ref } from "react";
 import {
   TASK_PRIORITIES,
   TASK_STATUSES,
-  type Label,
-  type Task,
   type TaskPriority,
   type TaskStatus,
-} from "../../shared/contract.js";
+} from "../../shared/enums.js";
+import type { Label, Task } from "../../shared/contract.js";
 import {
   DropdownMenu,
   DropdownMenuContent,
