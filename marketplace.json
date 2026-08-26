@@ -6,6 +6,30 @@
   "description": "Плагины для bb, которые поддерживает e0068.",
   "plugins": [
     {
+      "id": "claude-config",
+      "displayName": "Claude Config",
+      "description": "Управление конфигом Claude Code: плагины, коннекторы, навыки, хуки и подгрузка инструментов по областям.",
+      "icon": "SlidersHorizontal",
+      "tags": [
+        "config",
+        "claude-code",
+        "skills",
+        "hooks",
+        "mcp"
+      ],
+      "author": {
+        "name": "e0068",
+        "github": "e0068"
+      },
+      "source": {
+        "git": {
+          "url": "https://github.com/e0068/bb-plugins-public.git",
+          "subdir": "bb-plugin-claude-config",
+          "ref": "main"
+        }
+      }
+    },
+    {
       "id": "tasks-plus",
       "displayName": "Tasks+",
       "description": "Fork of Tasks with native workflow fields: Type, Check, Estimate, Plan/Fact tokens.",
@@ -30,7 +54,7 @@
     },
     {
       "id": "token-usage-header",
-      "displayName": "Token Usage Header",
+      "displayName": "Token Usage Analytics",
       "description": "Расход токенов Claude Code текущей сессии: счётчик в шапке треда.",
       "icon": "ChartColumn",
       "tags": [

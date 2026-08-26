@@ -1,0 +1,77 @@
+/* Правки внешнего вида общего md-editor ИМЕННО в Claude Config — не в самом
+   пакете, чтобы не задеть других потребителей (Workflow Composer). Класс
+   cc-doc-mde добавляется к host редактора через проп className, поэтому правила
+   действуют поверх общей темы (.bb-mde-host .mde-root), а не вместо неё. */
+
+/* Фон прозрачный: редактор сливается с поверхностью панели, а не рисует свою
+   подложку var(--background). */
+.cc-doc-mde .mde-root {
+  --mde-bg: transparent;
+  background: transparent;
+}
+
+/* Одинаковые поля в правке и просмотре: движок добавляет боковые
+   «format margins» (padding: 4px 44px) только в editable — из-за этого текст
+   при входе в правку прыгал вправо. Гасим их полностью, отступ задаёт общий
+   контейнер p-4 одинаково для обоих режимов, поэтому текст выглядит идентично. */
+.cc-doc-mde .mde-root.mde-editable {
+  padding: 0;
+}
+
+/* Типографика как в разделе Docs BB (значения сверены с его markdown-рендером:
+   тело text-sm + leading-relaxed, заголовки semibold на foreground, инлайн-код
+   в плашке bg-muted, колонка ограничена по ширине). Вёрстку таблиц НЕ трогаем —
+   у них только цвета берутся из токенов темы. */
+
+/* Колонка с текстом ограничена по ширине, как в Docs (не тянется на всю
+   панель), и отцентрирована по горизонтали. */
+.cc-doc-mde .mde-root {
+  max-width: 46rem;
+  margin-left: auto;
+  margin-right: auto;
+  /* Тело как text-sm Docs (~14px); у движка дефолт был 13px. Заголовки заданы
+     в em, поэтому подтягиваются вместе с базой. */
+  --mde-size: 0.875rem;
+  line-height: 1.65;
+  color: var(--foreground);
+}
+
+/* Заголовки: контрастный foreground, semibold, щедрые отступы сверху. */
+.cc-doc-mde .mde-root .mde-h {
+  font-size: 1.6em;
+  font-weight: 600;
+  margin: 1.4em 0 0.5em;
+  color: var(--foreground);
+}
+.cc-doc-mde .mde-root .mde-h2 {
+  font-size: 1.3em;
+  font-weight: 600;
+  margin: 1.1em 0 0.4em;
+  color: var(--foreground);
+}
+.cc-doc-mde .mde-root .mde-h3 {
+  font-size: 1.1em;
+  font-weight: 600;
+  margin: 0.9em 0 0.3em;
+  color: var(--foreground);
+}
+
+/* Инлайн-код в плашке, как в Docs (bg-muted, скруглённый, моно, чуть мельче).
+   Блок-код — это `pre.mde-code`, его не задеваем: селектор бьёт только по
+   голому инлайновому `<code>`. */
+.cc-doc-mde .mde-root code:not(.mde-code) {
+  background: var(--muted);
+  border-radius: 0.25rem;
+  padding: 0.1em 0.35em;
+  font-size: 0.85em;
+  font-family: var(--font-mono, ui-monospace, monospace);
+}
+
+/* Ссылки — синим цветным токеном темы, без подчёркивания. У bb тема почти
+   монохромная: --primary achromatic (серый), поэтому ссылки им были бесцветны.
+   Единственный синий хостовый токен — --timeline-accent (oklch hue 250),
+   адаптируется к светлой/тёмной теме. */
+.cc-doc-mde .mde-root .mde-link {
+  color: var(--timeline-accent);
+  text-decoration: none;
+}

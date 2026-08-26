@@ -152,6 +152,19 @@ interface ClaudeCodeUsageInput {
   message?: string;
 }
 
+// bb.sdk.system.usageLimits() отдаёт словарь по providerId, где ключ Claude
+// Code — дефисный "claude-code" (как id провайдера), а не camelCase. Тип SDK
+// объявляет поле "claudeCode", из-за чего прямое чтение молча давало undefined
+// и кольца всегда показывали «не установлен» — см.
+// decisions/usage-provider-key-is-hyphenated.md. camelCase оставлен запасным
+// на случай сборки хоста со старым ключом.
+export function selectClaudeCodeProvider(
+  providers: Record<string, ClaudeCodeUsageInput | undefined> | undefined,
+): ClaudeCodeUsageInput | undefined {
+  if (!providers) return undefined;
+  return providers["claude-code"] ?? providers.claudeCode;
+}
+
 export function normalizeUsage(
   claudeCode: ClaudeCodeUsageInput | undefined,
 ): UsageResultWire {

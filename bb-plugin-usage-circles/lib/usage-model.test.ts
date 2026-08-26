@@ -5,6 +5,7 @@ import {
   formatRelativeReset,
   inferWindowDurationMs,
   normalizeUsage,
+  selectClaudeCodeProvider,
   statusLabel,
   tierForUsedPercent,
 } from "./usage-model";
@@ -162,5 +163,26 @@ describe("normalizeUsage", () => {
     // usageLimits() может вернуть объект без claudeCode → в getState это undefined.
     // Без guard'а чтение .status у undefined роняло getState на каждый вызов (BP-52).
     expect(normalizeUsage(undefined)).toEqual({ status: "not_installed" });
+  });
+});
+
+describe("selectClaudeCodeProvider", () => {
+  it("reads the hyphenated provider id the host actually returns", () => {
+    // Живой ответ host ключует провайдеров по id: "claude-code", "codex", ...
+    const live = {
+      codex: { status: "unauthenticated" as const },
+      "claude-code": { status: "ok" as const, windows: [{ label: "Current session", usedPercent: 5, resetsAt: null }] },
+    };
+    expect(selectClaudeCodeProvider(live)).toBe(live["claude-code"]);
+  });
+
+  it("falls back to the camelCase key for hosts that still use it", () => {
+    const legacy = { claudeCode: { status: "ok" as const, windows: [] } };
+    expect(selectClaudeCodeProvider(legacy)).toBe(legacy.claudeCode);
+  });
+
+  it("returns undefined when neither key is present or the map is missing", () => {
+    expect(selectClaudeCodeProvider({ codex: { status: "expired" } })).toBeUndefined();
+    expect(selectClaudeCodeProvider(undefined)).toBeUndefined();
   });
 });

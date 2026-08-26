@@ -4,7 +4,7 @@
 // provider files — see memory/decisions/usage-rings-own-code.md.
 import { defineRpcContract, type BbPluginApi } from "@get-bb/plugin-sdk";
 import { z } from "zod";
-import { normalizeUsage } from "./lib/usage-model";
+import { normalizeUsage, selectClaudeCodeProvider } from "./lib/usage-model";
 import { createUsageLimitsCache } from "./lib/usage-cache";
 
 // Anthropic's account usage endpoint is tightly rate-limited; every open
@@ -52,7 +52,9 @@ export default async function plugin(bb: BbPluginApi) {
   bb.rpc.register(rpcContract, {
     async getState() {
       const { fiveHour, weekly, fable, openOnHover } = await settings.get();
-      const { claudeCode } = await usageLimitsCache.get();
+      // Провайдер Claude Code лежит под дефисным ключом "claude-code"
+      // (selectClaudeCodeProvider знает про рассинхрон с типом SDK).
+      const claudeCode = selectClaudeCodeProvider(await usageLimitsCache.get());
       return { toggles: { fiveHour, weekly, fable }, openOnHover, usage: normalizeUsage(claudeCode) };
     },
   });

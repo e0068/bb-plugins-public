@@ -12,6 +12,7 @@ bb plugin install <id>@e0068
 
 ## Плагины
 
+- **Claude Config** (`claude-config`) — Управление конфигом Claude Code: плагины, коннекторы, навыки, хуки и подгрузка инструментов по областям.
 - **Tasks+** (`tasks-plus`) — Fork of Tasks with native workflow fields: Type, Check, Estimate, Plan/Fact tokens.
-- **Token Usage Header** (`token-usage-header`) — Расход токенов Claude Code текущей сессии: счётчик в шапке треда.
+- **Token Usage Analytics** (`token-usage-header`) — Расход токенов Claude Code текущей сессии: счётчик в шапке треда.
 - **Usage Circles** (`usage-circles`) — Кольца лимитов Claude Code в подвале сайдбара.

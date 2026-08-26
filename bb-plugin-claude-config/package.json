@@ -1,5 +1,5 @@
 {
-  "name": "bb-plugin-token-usage-header",
+  "name": "bb-plugin-claude-config",
   "version": "0.1.1",
   "type": "module",
   "engines": {
@@ -7,45 +7,41 @@
     "bbPluginSdk": ">=0.4.8"
   },
   "bb": {
-    "name": "Token Usage Analytics",
-    "description": "Расход токенов Claude Code текущей сессии: счётчик в шапке треда.",
+    "name": "Claude Config",
+    "description": "Управление конфигом Claude Code: плагины, коннекторы, навыки, хуки и подгрузка инструментов по областям.",
     "branding": {
-      "icon": "ChartColumn"
+      "icon": "SlidersHorizontal"
     },
     "server": "./server.ts",
     "app": "./app.tsx"
   },
   "bbMarketplace": {
     "public": true,
-    "tags": ["tokens", "usage", "claude-code", "interface"]
+    "tags": ["config", "claude-code", "skills", "hooks", "mcp"]
   },
   "dependencies": {
     "@hugeicons/core-free-icons": "^4.1.3",
     "@hugeicons/react": "^1.1.6",
-    "@radix-ui/react-popover": "^1.1.23",
     "@radix-ui/react-slot": "^1.3.0",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "tailwind-merge": "^3.4.0",
     "zod": "^4.3.6"
   },
-  "scripts": {
-    "test": "vitest run"
-  },
   "devDependencies": {
     "@get-bb/plugin-sdk": "0.4.8",
-    "@testing-library/react": "^16.3.2",
+    "@radix-ui/react-dialog": "^1.1.19",
     "@types/better-sqlite3": "^7.6.12",
     "@types/node": "^22.0.0",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
     "better-sqlite3": "^12.0.0",
-    "cron-parser": "^5.10.0",
     "hono": "^4.11.9",
-    "jsdom": "^30.0.1",
-    "react": "^19.2.8",
-    "react-dom": "^19.2.8",
     "typescript": "^5.7.0",
-    "vitest": "^3.2.4"
+    "vitest": "^3.2.7"
+  },
+  "scripts": {
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
   }
 }
