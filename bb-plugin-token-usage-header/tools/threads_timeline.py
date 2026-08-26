@@ -19,14 +19,16 @@ import tokens  # noqa: E402
 # сверяет именно эту версию). Поднимать при любой ломающей смене формата.
 # 1 -> 2: добавлено верхнеуровневое поле agentLabels (человекочитаемые имена
 # агентов по их ключу из bins) — форма отчёта расширилась.
-SCHEMA_VERSION = 2
+# 2 -> 3: у треда добавлены totalCost (стоимость расхода в USD по тарифу
+# tokens.py) и workflowCount (число различных workflow-прогонов в сессии).
+SCHEMA_VERSION = 3
 
 # Порог обрезки meta.description для agentLabels — легенда и подписи в UI не
 # резиновые, длинное описание таска ломает вёрстку чипа/тултипа.
 LABEL_DESCRIPTION_LIMIT = 60
 
 
-def _session_main_files(root, project=None):
+def _session_main_files(root, project=None, session=None):
     """Главные .jsonl-файлы сессий (без субагентов) по каталогам проектов.
 
     Возвращает список (sessionId, project, path, mtime) — по одной записи на
@@ -57,6 +59,8 @@ def _session_main_files(root, project=None):
             if not os.path.isfile(path):
                 continue
             sid = name[: -len(".jsonl")]
+            if session is not None and sid != session:
+                continue
             mtime = tokens._file_mtime(path)
             out.append((sid, os.path.basename(pd), path, mtime.timestamp() if mtime else 0))
     return out
@@ -109,7 +113,40 @@ def _agent_label(agent_key, meta):
     return agent_key
 
 
-def build_timeline(root, limit=20, unit=300, project=None):
+def _workflow_name(root, project, session, run_id):
+    """Человекочитаемое имя workflow по его run_id.
+
+    Скрипт прогона лежит в `<project>/<session>/workflows/scripts/` и назван
+    `<имя>-<run_id>.js` (см. фактическую раскладку транскриптов) — имя берём,
+    отрезав хвост `-<run_id>.js`. Скрипта нет/каталог недоступен — сам run_id
+    как fallback (лучше показать id, чем пусто).
+    """
+    scripts_dir = os.path.join(root, project, session, "workflows", "scripts")
+    suffix = "-" + run_id + ".js"
+    try:
+        for name in os.listdir(scripts_dir):
+            if name.endswith(suffix):
+                return name[: -len(suffix)]
+    except OSError:
+        pass
+    return run_id
+
+
+def _bin_key(rec, group_workflows):
+    """Ключ сегмента бина для записи.
+
+    По умолчанию — agentId субагента ("main" у главного). При group_workflows
+    все агенты одного workflow-прогона сливаются в один сегмент `workflow:<run>`
+    — так на странице сессии группа агентов, поднятая одним Workflow, рисуется
+    единым сегментом (см. agentLabels: там ключ несёт имя workflow).
+    """
+    wf = rec["workflowRunId"]
+    if group_workflows and wf:
+        return "workflow:" + wf
+    return rec["agentId"] or "main"
+
+
+def build_timeline(root, limit=20, unit=300, project=None, session=None, group_workflows=False):
     """Собирает ленту последних `limit` сессий, разложенных на бины `unit` секунд.
 
     Логику подсчёта расхода не переопределяет — каждая usage-запись из
@@ -120,14 +157,19 @@ def build_timeline(root, limit=20, unit=300, project=None):
     верхнеуровневый (не per-thread): один и тот же agentId в разных тредах
     (напр. повторный вызов одного workflow-агента) получает одну метку.
     """
-    sessions = _session_main_files(root, project=project)
+    sessions = _session_main_files(root, project=project, session=session)
     # последние N сессий по последней активности транскрипта, самые свежие первыми
     sessions.sort(key=lambda row: row[3], reverse=True)
     sessions = sessions[: max(limit, 0)]
 
     project_dirs = {}
+    # session id -> project dir basename (под `root`). Нужен для _workflow_name:
+    # rec["project"] из walk() — это relpath от глобального tokens.ROOT, а не от
+    # переданного root, и при root != ROOT (тесты) он неверен.
+    sid_to_proj = {}
     for _sid, proj, _path, _mtime in sessions:
         project_dirs.setdefault(proj, os.path.join(root, proj))
+        sid_to_proj[_sid] = proj
 
     files = []
     for sid, proj, _path, _mtime in sessions:
@@ -141,9 +183,13 @@ def build_timeline(root, limit=20, unit=300, project=None):
     agent_labels = {}
     for rec in tokens.walk(files):
         records_by_session[rec["session"]].append(rec)
-        key = rec["agentId"] or "main"
+        key = _bin_key(rec, group_workflows)
         if key not in agent_labels:
-            agent_labels[key] = _agent_label(key, rec["meta"])
+            if group_workflows and rec["workflowRunId"]:
+                proj = sid_to_proj.get(rec["session"], rec["project"])
+                agent_labels[key] = _workflow_name(root, proj, rec["session"], rec["workflowRunId"])
+            else:
+                agent_labels[key] = _agent_label(key, rec["meta"])
 
     threads = []
     for sid, proj, _path, _mtime in sessions:
@@ -160,7 +206,7 @@ def build_timeline(root, limit=20, unit=300, project=None):
                 continue
             epochs.append(epoch)
             bin_epoch = _bin_start_epoch(epoch, unit)
-            agent_key = rec["agentId"] or "main"
+            agent_key = _bin_key(rec, group_workflows)
             bin_buckets[bin_epoch][agent_key].add(rec["usage"], rec["model"], rec["ts"])
 
         if not epochs:
@@ -193,6 +239,14 @@ def build_timeline(root, limit=20, unit=300, project=None):
             bins_out.append({"t": _iso_from_epoch(bin_epoch), "agents": agents_out})
 
         total_tokens = sum(a["total"] for bo in bins_out for a in bo["agents"])
+        # Стоимость считается по тем же Bucket, что и токены (один тариф, одна
+        # формула) — сумма по бакетам равна полной стоимости треда, как и
+        # total_tokens равна сумме b.total.
+        total_cost = round(sum(b.cost for agents in bin_buckets.values() for b in agents.values()), 2)
+        # Различные workflow-прогоны сессии: agentId субагента, запущенного в
+        # рамках workflow, несёт workflowRunId (см. tokens.walk); обычный
+        # тред без workflow даёт пустое множество -> 0.
+        workflow_count = len({r["workflowRunId"] for r in recs if r["workflowRunId"]})
 
         threads.append(
             {
@@ -204,6 +258,8 @@ def build_timeline(root, limit=20, unit=300, project=None):
                 "end": _iso_from_epoch(end_epoch),
                 "durationSec": end_epoch - start_epoch,
                 "totalTokens": total_tokens,
+                "totalCost": total_cost,
+                "workflowCount": workflow_count,
                 "bins": bins_out,
             }
         )
@@ -217,6 +273,8 @@ def main():
     ap.add_argument("--limit", type=int, default=20, help="сколько последних сессий взять")
     ap.add_argument("--unit", type=int, required=True, help="размер бина в секундах")
     ap.add_argument("--project", help="подстрока пути проекта")
+    ap.add_argument("--session", help="точный id сессии (страница одной сессии); отменяет отбор по свежести")
+    ap.add_argument("--group-workflows", action="store_true", help="слить агентов одного workflow-прогона в один сегмент")
     a = ap.parse_args()
 
     if a.limit < 0:
@@ -224,7 +282,9 @@ def main():
     if a.unit <= 0:
         ap.error("--unit должен быть положительным числом секунд")
 
-    result = build_timeline(tokens.ROOT, limit=a.limit, unit=a.unit, project=a.project)
+    result = build_timeline(
+        tokens.ROOT, limit=a.limit, unit=a.unit, project=a.project, session=a.session, group_workflows=a.group_workflows
+    )
     out = {"schemaVersion": SCHEMA_VERSION, "unit": a.unit, **result}
 
     if a.json:

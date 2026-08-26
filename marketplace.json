@@ -79,7 +79,9 @@
       "id": "usage-circles",
       "displayName": "Usage Circles",
       "description": "Кольца лимитов Claude Code в подвале сайдбара.",
-      "icon": "CircleDashed",
+      "icon": {
+        "url": "bb-plugin-usage-circles/assets/icon.svg"
+      },
       "tags": [
         "usage",
         "limits",

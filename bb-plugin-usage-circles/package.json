@@ -10,7 +10,7 @@
     "name": "Usage Circles",
     "description": "Кольца лимитов Claude Code в подвале сайдбара.",
     "branding": {
-      "icon": "CircleDashed"
+      "icon": "./assets/icon.svg"
     },
     "server": "./server.ts",
     "app": "./app.ts"

@@ -610,6 +610,8 @@ describe("server.ts threadsTimeline", () => {
           end: "2026-08-25T10:05:00Z",
           durationSec: 300,
           totalTokens: 1500,
+          totalCost: 0.75,
+          workflowCount: 3,
           bins: [{ t: "2026-08-25T10:00:00Z", agents: [{ key: "main", total: 1500 }] }],
           bbProjectId: "proj-1",
           bbProjectName: "bb-plugins",

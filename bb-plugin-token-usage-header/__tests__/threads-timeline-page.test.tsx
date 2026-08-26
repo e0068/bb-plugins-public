@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it } from "vitest";
-import { cleanup, fireEvent, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, screen, waitFor, waitForElementToBeRemoved } from "@testing-library/react";
 import { loadPluginApp, renderSlot, type PluginRpcTestHandlers } from "@get-bb/plugin-sdk/testing/app";
 import type { PluginNavPanelProps } from "@get-bb/plugin-sdk/app";
 import { rpcContract } from "../server";
@@ -72,6 +72,8 @@ const THREADS_READY = {
       end: "2026-08-25T09:05:00.000Z",
       durationSec: 300,
       totalTokens: 5000,
+      totalCost: 0.42,
+      workflowCount: 2,
       bins: [
         { t: "2026-08-25T09:00:00.000Z", agents: [{ key: "main", total: 3000 }] },
         { t: "2026-08-25T09:01:00.000Z", agents: [{ key: "main", total: 1500 }, { key: "code-reviewer", total: 500 }] },
@@ -89,6 +91,8 @@ const THREADS_READY = {
       end: "2026-08-25T08:02:00.000Z",
       durationSec: 120,
       totalTokens: 1000,
+      totalCost: 0.05,
+      workflowCount: 0,
       bins: [{ t: "2026-08-25T08:00:00.000Z", agents: [{ key: "main", total: 1000 }] }],
       // No matching BB thread — the "Threads" bucket on the project picker,
       // and the card falls back to the short session id for its title.
@@ -120,6 +124,8 @@ const THREADS_WITH_GAPS = {
       end: "2026-08-25T09:04:00.000Z",
       durationSec: 240,
       totalTokens: 2000,
+      totalCost: 0.2,
+      workflowCount: 1,
       bins: [
         { t: "2026-08-25T09:00:00.000Z", agents: [{ key: "main", total: 1000 }] },
         { t: "2026-08-25T09:01:00.000Z", agents: [] },
@@ -149,6 +155,14 @@ async function renderThreadsTimeline(rpc: Partial<PluginRpcTestHandlers<typeof r
     ...rpc,
   };
   return renderSlot<PluginNavPanelProps, typeof rpcContract>(registration, props, { rpc: fullRpc });
+}
+
+// Every control except project filter / sort / search now lives behind the
+// gear popover (unit, fill/collapse toggles, width/height, geometry, agent
+// colours). Open it before asserting or driving any of those.
+async function openSettings() {
+  fireEvent.click(screen.getByRole("button", { name: "Настройки диаграммы" }));
+  await screen.findByText("Единица времени");
 }
 
 describe("threads-timeline nav panel", () => {
@@ -185,6 +199,7 @@ describe("threads-timeline nav panel", () => {
     });
     await screen.findByText("Тред А");
 
+    await openSettings();
     fireEvent.click(screen.getByRole("button", { name: "5m" }));
 
     await screen.findByText("Тред А");
@@ -249,7 +264,7 @@ describe("threads-timeline nav panel", () => {
     const slot = await renderThreadsTimeline({ threadsTimeline: async () => THREADS_READY });
     await screen.findByText("Тред А");
 
-    const segment = screen.getByTitle(/code-reviewer: 500 токенов/);
+    const segment = screen.getByLabelText(/code-reviewer: 500 токенов/);
     fireEvent.click(segment);
 
     expect(slot.navigateCalls).toContainEqual({
@@ -266,42 +281,61 @@ describe("threads-timeline nav panel", () => {
     });
   });
 
-  it("shows the human agentLabels name in the legend chip, not the raw agent key", async () => {
+  it("shows the human agentLabels name in the gear's agent-colour list, not the raw agent key", async () => {
     await renderThreadsTimeline({ threadsTimeline: async () => THREADS_READY });
     await screen.findByText("Тред А");
+    await openSettings();
 
     // "main" -> agentLabels["main"] = "Главный агент" — the raw key never
-    // appears as legend text.
+    // appears as the agent-colour row's text.
     screen.getByText("Главный агент");
     expect(screen.queryByText("main", { selector: "span.truncate" })).toBeNull();
   });
 
-  it("falls back to the raw agent key in the legend when agentLabels has no entry for it", async () => {
+  it("falls back to the raw agent key in the gear's agent-colour list when agentLabels has no entry for it", async () => {
     await renderThreadsTimeline({ threadsTimeline: async () => THREADS_READY });
     await screen.findByText("Тред А");
+    await openSettings();
 
     // "code-reviewer" has no entry in THREADS_READY.agentLabels.
     screen.getByText("code-reviewer");
   });
 
-  it("shows the mapped label (not the raw key) in the legend's colour-picker popover", async () => {
+  it("labels each agent-colour picker in the gear with the mapped name, not the raw key", async () => {
     await renderThreadsTimeline({ threadsTimeline: async () => THREADS_READY });
     await screen.findByText("Тред А");
+    await openSettings();
 
-    fireEvent.click(screen.getByText("Главный агент"));
-
-    screen.getByText("Цвет: Главный агент");
-    screen.getByLabelText("Цвет агента Главный агент");
+    // "main" is mapped to "Главный агент"; its colour input is addressed by
+    // that human label, never the raw key.
+    const input = screen.getByLabelText("Цвет агента Главный агент") as HTMLInputElement;
+    expect(input.type).toBe("color");
   });
 
-  it("shows the mapped label (not the raw agent key) in a bar segment's tooltip", async () => {
+  it("shows the mapped label (not the raw agent key) in a bar segment's accessible name", async () => {
     await renderThreadsTimeline({ threadsTimeline: async () => THREADS_READY });
     await screen.findByText("Тред А");
 
     // Тред А's first bin has a "main" segment (3000 tokens) — "main" is
-    // mapped to "Главный агент" in agentLabels, so the tooltip must show that
-    // label, not the raw "main" key.
-    screen.getByTitle(/Главный агент: 3\.0k токенов/);
+    // mapped to "Главный агент" in agentLabels, so the segment's aria-label
+    // must show that label, not the raw "main" key.
+    screen.getByLabelText(/Главный агент: 3\.0k токенов/);
+  });
+
+  it("shows the column's time range and a per-agent legend (tokens + %) in an immediate hover tooltip", async () => {
+    await renderThreadsTimeline({ threadsTimeline: async () => THREADS_READY });
+    const title = await screen.findByText("Тред А");
+
+    // Тред А's second bin: main 1500 + code-reviewer 500 = 2000 → 75% / 25%.
+    const card = title.closest(".rounded-md.border.border-border") as HTMLElement;
+    const columns = card.querySelectorAll(".relative.h-full.min-w-\\[2px\\]");
+    fireEvent.mouseMove(columns[1] as HTMLElement, { clientX: 10, clientY: 10 });
+
+    // Time range of that column (clock is runner-TZ-dependent — assert only
+    // the HH:MM–HH:MM shape), and both agents with their token/share split.
+    await screen.findByText(/^\d{2}:\d{2}–\d{2}:\d{2}$/);
+    screen.getByText(/1\.5k · 75%/);
+    screen.getByText(/500 · 25%/);
   });
 
   it("keeps the colour/click identity on the raw agent key even though the legend/tooltip show the mapped label", async () => {
@@ -310,7 +344,7 @@ describe("threads-timeline nav panel", () => {
 
     // Clicking the "main" segment must still navigate with agent="main" (the
     // raw key), never the display label "Главный агент".
-    const segment = screen.getByTitle(/Главный агент: 3\.0k токенов/);
+    const segment = screen.getByLabelText(/Главный агент: 3\.0k токенов/);
     fireEvent.click(segment);
 
     expect(slot.navigateCalls).toContainEqual({
@@ -334,11 +368,11 @@ describe("threads-timeline nav panel", () => {
     await screen.findByText("boom");
   });
 
-  it("exposes a geometry popover (gear button, next to the legend) with numeric gap/radius controls and a frame-lift colour picker that live-update the chart", async () => {
+  it("exposes numeric gap/radius controls and a frame-lift colour picker in the gear popover that live-update the chart", async () => {
     await renderThreadsTimeline({ threadsTimeline: async () => THREADS_READY });
     await screen.findByText("Тред А");
 
-    fireEvent.click(screen.getByRole("button", { name: "Геометрия и высветление диаграммы" }));
+    await openSettings();
 
     await screen.findByLabelText("Отступ между столбцами");
     await screen.findByLabelText("Отступ между сегментами");
@@ -350,7 +384,7 @@ describe("threads-timeline nav panel", () => {
     fireEvent.change(segRadiusInput, { target: { value: "6" } });
     fireEvent.change(colorInput, { target: { value: "#112233" } });
 
-    const segment = screen.getByTitle(/code-reviewer: 500 токенов/) as HTMLElement;
+    const segment = screen.getByLabelText(/code-reviewer: 500 токенов/) as HTMLElement;
     await waitFor(() => expect(segment.style.borderRadius).toBe("6px"));
 
     const row = segment.closest(".rounded-md.border.border-border") as HTMLElement | null;
@@ -373,6 +407,7 @@ describe("threads-timeline nav panel", () => {
 
     await screen.findByText("Тред А");
     await waitFor(() => expect(lastInput).toEqual({ limit: 20, unit: 900 }));
+    await openSettings();
     expect(screen.getByRole("button", { name: "15m" }).getAttribute("aria-pressed")).toBe("true");
   });
 
@@ -392,6 +427,7 @@ describe("threads-timeline nav panel", () => {
     });
     await screen.findByText("Тред А");
 
+    await openSettings();
     fireEvent.click(screen.getByRole("button", { name: "5m" }));
 
     await waitFor(() => expect(savedInput).toBeDefined());
@@ -443,6 +479,7 @@ describe("threads-timeline nav panel", () => {
     // Тред А has 2 bins, so even 2*700 + 1*colGap comfortably exceeds the
     // jsdom fallback container width — this now overflows only the graph's
     // own scroll wrapper inside the card, never the card itself.
+    await openSettings();
     fireEvent.click(screen.getByRole("button", { name: "Выкл" }));
     const colWidthInput = screen.getByLabelText("Ширина столбца, пикселей");
     fireEvent.change(colWidthInput, { target: { value: "700" } });
@@ -458,6 +495,7 @@ describe("threads-timeline nav panel", () => {
     await renderThreadsTimeline({ threadsTimeline: async () => THREADS_READY });
     await screen.findByText("Тред А");
 
+    await openSettings();
     fireEvent.click(screen.getByRole("button", { name: "Выкл" }));
     const colWidthInput = screen.getByLabelText("Ширина столбца, пикселей");
     fireEvent.change(colWidthInput, { target: { value: "700" } });
@@ -486,6 +524,7 @@ describe("threads-timeline nav panel", () => {
     await renderThreadsTimeline({ threadsTimeline: async () => THREADS_READY });
     await screen.findByText("Тред А");
 
+    await openSettings();
     fireEvent.click(screen.getByRole("button", { name: "Выкл" }));
     screen.getByText("px/стб");
     const colWidthInput = screen.getByLabelText("Ширина столбца, пикселей") as HTMLInputElement;
@@ -529,6 +568,7 @@ describe("threads-timeline nav panel", () => {
     });
     await screen.findByText("Тред А");
 
+    await openSettings();
     fireEvent.click(screen.getByRole("button", { name: "Выкл" }));
     const colWidthInput = screen.getByLabelText("Ширина столбца, пикселей");
     fireEvent.change(colWidthInput, { target: { value: "15" } });
@@ -554,6 +594,7 @@ describe("threads-timeline nav panel", () => {
     await renderThreadsTimeline({ threadsTimeline: async () => THREADS_WITH_GAPS });
     const title = await screen.findByText("Тред с паузой");
 
+    await openSettings();
     fireEvent.click(screen.getByRole("button", { name: "Схлопнуть пустоты: Вкл" }));
 
     await waitFor(() => {
@@ -569,5 +610,114 @@ describe("threads-timeline nav panel", () => {
     await screen.findByText("Тред А");
 
     expect(slot.container.querySelector("section.overflow-x-auto")).toBeNull();
+  });
+
+  it("shows the thread's cost ($) in the card header and no longer the word «токенов» there", async () => {
+    await renderThreadsTimeline({ threadsTimeline: async () => THREADS_READY });
+    const title = await screen.findByText("Тред А");
+
+    // Тред А's totalCost is 0.42 → "$0.42"; the card header no longer labels
+    // the raw token count with the word «токенов» (the page subtitle still may).
+    const card = title.closest(".rounded-md.border.border-border") as HTMLElement;
+    expect(card.textContent).toContain("$0.42");
+    expect(card.textContent).not.toContain("токенов");
+  });
+
+  it("shows how many workflows and agents took part, to the left of the duration", async () => {
+    await renderThreadsTimeline({ threadsTimeline: async () => THREADS_READY });
+    await screen.findByText("Тред А");
+
+    // Тред А: workflowCount 2; two distinct agent keys across its bins (main +
+    // code-reviewer) → "2 agents".
+    screen.getByText(/2 workflows · 2 agents/);
+  });
+
+  it("opens the matched BB thread when its card title is clicked", async () => {
+    const slot = await renderThreadsTimeline({ threadsTimeline: async () => THREADS_READY });
+    await screen.findByText("Тред А");
+
+    fireEvent.click(screen.getByRole("button", { name: "Тред А" }));
+
+    expect(slot.navigateCalls).toContainEqual({ method: "toThread", threadId: "thread-aaa" });
+  });
+
+  it("leaves the title non-clickable for a session with no BB thread match (the «Threads» bucket)", async () => {
+    await renderThreadsTimeline({ threadsTimeline: async () => THREADS_READY });
+    await screen.findByText(THREAD_B_FALLBACK_TITLE);
+
+    // Тред Б has threadId === null — its title is plain text, not a button.
+    expect(screen.queryByRole("button", { name: THREAD_B_FALLBACK_TITLE })).toBeNull();
+  });
+
+  it("filters threads by a minimum cost bound (от)", async () => {
+    await renderThreadsTimeline({ threadsTimeline: async () => THREADS_READY });
+    await screen.findByText("Тред А");
+
+    // Тред А $0.42, Тред Б $0.05 — a 0.1 floor drops Б, keeps А.
+    fireEvent.change(screen.getByLabelText("Стоимость от, USD"), { target: { value: "0.1" } });
+
+    await waitFor(() => expect(screen.queryByText(THREAD_B_FALLBACK_TITLE)).toBeNull());
+    screen.getByText("Тред А");
+  });
+
+  it("filters threads by a maximum cost bound (до)", async () => {
+    await renderThreadsTimeline({ threadsTimeline: async () => THREADS_READY });
+    await screen.findByText("Тред А");
+
+    // A 0.1 ceiling drops Тред А ($0.42), keeps Тред Б ($0.05).
+    fireEvent.change(screen.getByLabelText("Стоимость до, USD"), { target: { value: "0.1" } });
+
+    await waitFor(() => expect(screen.queryByText("Тред А")).toBeNull());
+    screen.getByText(THREAD_B_FALLBACK_TITLE);
+  });
+
+  it("hydrates the filter state (search) from loadVizSettings and applies it", async () => {
+    const loaded: VizSettings = {
+      threads: { ...DEFAULT_VIZ_SETTINGS.threads, searchQuery: "bbb222" },
+      agentDetail: DEFAULT_VIZ_SETTINGS.agentDetail,
+    };
+    await renderThreadsTimeline({ threadsTimeline: async () => THREADS_READY, loadVizSettings: async () => loaded });
+
+    // The persisted search term is in the box and already filters the feed.
+    await screen.findByText(THREAD_B_FALLBACK_TITLE);
+    expect((screen.getByPlaceholderText("По названию или ID сессии") as HTMLInputElement).value).toBe("bbb222");
+    expect(screen.queryByText("Тред А")).toBeNull();
+  });
+
+  it("persists a filter change (cost bound) into the saved viz settings", async () => {
+    let saved: unknown;
+    await renderThreadsTimeline({
+      threadsTimeline: async () => THREADS_READY,
+      saveVizSettings: async (input) => {
+        saved = input;
+        return { ok: true as const };
+      },
+    });
+    await screen.findByText("Тред А");
+
+    fireEvent.change(screen.getByLabelText("Стоимость от, USD"), { target: { value: "0.1" } });
+
+    await waitFor(() => expect((saved as VizSettings | undefined)?.threads.costMin).toBe("0.1"));
+    assertMatchesContract("saveVizSettings", saved);
+  });
+
+  it("fades the column tooltip out over ~200ms after the pointer leaves, then unmounts it", async () => {
+    await renderThreadsTimeline({ threadsTimeline: async () => THREADS_READY });
+    const title = await screen.findByText("Тред А");
+    const card = title.closest(".rounded-md.border.border-border") as HTMLElement;
+    const column = card.querySelectorAll(".relative.h-full.min-w-\\[2px\\]")[1] as HTMLElement;
+
+    fireEvent.mouseMove(column, { clientX: 10, clientY: 10 });
+    const tooltip = (await screen.findByText(/1\.5k · 75%/)).closest("div") as HTMLElement;
+
+    // Leaving starts the fade — the node stays mounted but its opacity animates
+    // to 0 (ease-in) rather than vanishing on a fully-visible hold…
+    fireEvent.mouseOut(column);
+    expect(tooltip.className).toContain("opacity-0");
+    expect(tooltip.className).toContain("ease-in");
+    screen.getByText(/1\.5k · 75%/);
+
+    // …and only after the fade does it unmount.
+    await waitForElementToBeRemoved(() => screen.queryByText(/1\.5k · 75%/));
   });
 });

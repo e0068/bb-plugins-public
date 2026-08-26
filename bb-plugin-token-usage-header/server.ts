@@ -115,6 +115,8 @@ const threadsTimelineEntrySchema = z
     end: z.string(),
     durationSec: finiteNumber,
     totalTokens: finiteNumber,
+    totalCost: finiteNumber,
+    workflowCount: finiteNumber,
     bins: z.array(threadsTimelineBinSchema),
     // BB project/thread match, resolved by threads-timeline-service.ts —
     // null when the session isn't tied to any BB thread (the "Threads"
@@ -198,6 +200,10 @@ export const rpcContract = defineRpcContract({
         limit: z.number().int().min(1).max(100),
         unit: z.number().int().positive(),
         project: z.string().optional(),
+        // Single-session slice (the session page): exact session id, and
+        // whether to merge each workflow run's agents into one segment.
+        session: z.string().min(1).optional(),
+        groupWorkflows: z.boolean().optional(),
       })
       .strict(),
     output: z.discriminatedUnion("status", [
@@ -349,7 +355,7 @@ async function loadAgentTimeline(
 
 async function loadThreadsTimeline(
   threadsTimelineService: ThreadsTimelineService,
-  params: { limit: number; unit: number; project?: string },
+  params: { limit: number; unit: number; project?: string; session?: string; groupWorkflows?: boolean },
 ) {
   try {
     const result = await threadsTimelineService.query(params);

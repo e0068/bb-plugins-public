@@ -18,8 +18,10 @@ import { z } from "zod";
  *
  * 1 -> 2: добавлено верхнеуровневое поле agentLabels (человекочитаемые
  * имена агентов по ключу — см. RawThreadsTimelineSchema ниже).
+ * 2 -> 3: у треда добавлены totalCost (стоимость расхода в USD по тарифу
+ * tokens.py) и workflowCount (число различных workflow-прогонов в сессии).
  */
-export const EXPECTED_THREADS_TIMELINE_SCHEMA_VERSION = 2;
+export const EXPECTED_THREADS_TIMELINE_SCHEMA_VERSION = 3;
 
 const AgentBinSchema = z
   .object({
@@ -53,6 +55,10 @@ const RawThreadEntrySchema = z
     end: z.string(),
     durationSec: z.number().finite(),
     totalTokens: z.number().finite(),
+    /** Стоимость всего расхода треда в USD, тем же тарифом, что и tokens.py (Bucket.cost). */
+    totalCost: z.number().finite(),
+    /** Сколько различных workflow-прогонов участвовало в сессии (0 — обычный тред без workflow). */
+    workflowCount: z.number().int().nonnegative(),
     bins: z.array(TimelineBinSchema),
   })
   .strict();

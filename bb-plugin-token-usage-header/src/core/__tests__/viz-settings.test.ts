@@ -16,6 +16,10 @@ describe("DEFAULT_VIZ_SETTINGS", () => {
       frameLiftColor: "#e3e3dd",
       agentColors: {},
       sortMode: "recent",
+      searchQuery: "",
+      projectFilter: [],
+      costMin: "",
+      costMax: "",
     });
   });
 
@@ -155,6 +159,10 @@ describe("vizSettingsSchema strictness", () => {
         frameLiftColor: "#abc",
         agentColors: { main: "#3b82f6" },
         sortMode: "duration",
+        searchQuery: "прототип",
+        projectFilter: ["Token Usage Header", null],
+        costMin: "0.1",
+        costMax: "5",
       },
       agentDetail: { showHooks: false, relativeTime: true, groupedByTurn: true },
     };

@@ -1,0 +1,401 @@
+// The one token-usage chart frame, shared by both pages: the feed
+// (ThreadsTimelinePage renders one ThreadRow per session) and the session page
+// (AgentTimelinePage renders a single SessionChartCard for the open session).
+// Extracted here rather than exported from either page so neither imports the
+// other — ThreadsTimelinePage already depends on AgentTimelinePage
+// (buildAgentDetailSubPath), and a back-edge would make the two page modules
+// circular. This module depends only on core + the SDK.
+import { useEffect, useMemo, useRef, useState } from "react";
+import type * as React from "react";
+import { createPortal } from "react-dom";
+import { usePortalScopeProps } from "@/lib/portal-scope";
+import { binTotal, formatCost, formatPercent, formatTokenCount, type ThreadEntry, type TimelineBin } from "../src/core";
+
+/** Fixed, subtle alpha for the chart frame's lift tint — only the hue is user-configurable (native `<input type="color">` has no alpha channel). */
+export const FRAME_LIFT_ALPHA = 0.05;
+/** Floor for the graph's own width when fillWidth is off (colWidthPx * 0 bins would otherwise collapse it). */
+const MIN_GRAPH_WIDTH_PX = 4;
+/** Fade-out duration of the column tooltip: on leave it eases to transparent over this long, then unmounts (no fully-visible hold). */
+const TOOLTIP_FADE_MS = 200;
+/** Default chart height (px) for the single-session card, mirroring the feed's own BASE_CHART_HEIGHT. */
+const SESSION_CARD_CHART_HEIGHT = 72;
+
+/** Cycled by first-seen order (main first, then by total spend) — a free choice: agent colour is chart data, not UI chrome. */
+export const DEFAULT_PALETTE = ["#3b82f6", "#22c55e", "#f59e0b", "#ef4444", "#a855f7", "#06b6d4", "#eab308", "#14b8a6", "#ec4899", "#84cc16"];
+
+export function hexToRgba(hex: string, alpha: number): string {
+  let h = hex.replace("#", "");
+  if (h.length === 3) h = h[0] + h[0] + h[1] + h[1] + h[2] + h[2];
+  const r = parseInt(h.substring(0, 2), 16) || 0;
+  const g = parseInt(h.substring(2, 4), 16) || 0;
+  const b = parseInt(h.substring(4, 6), 16) || 0;
+  return `rgba(${r},${g},${b},${alpha})`;
+}
+
+function fmtDuration(sec: number): string {
+  const h = Math.floor(sec / 3600);
+  const m = Math.floor((sec % 3600) / 60);
+  const s = Math.floor(sec % 60);
+  if (h > 0) return `${h} ч ${m} мин`;
+  if (m > 0) return `${m} мин ${s} с`;
+  return `${s} с`;
+}
+
+function fmtClock(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  return d.toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" });
+}
+
+/**
+ * One rendered column of a thread's chart. `bin: null` is an empty/no-activity
+ * column — `gapUnits` counts how many raw (unit-sized) empty bins it stands
+ * for: always 1 when collapseEmpty is off (one column per raw bin, same as
+ * before this feature) or for a lone empty bin even when collapseEmpty is on;
+ * >1 only when collapseEmpty merged a run of consecutive empty raw bins into
+ * one gap column. A non-empty bin is always its own column (gapUnits: 1).
+ */
+export interface DisplayBin {
+  /** bin.t of the first raw bin folded into this column — start of its time window. */
+  t: string;
+  gapUnits: number;
+  bin: TimelineBin | null;
+}
+
+/**
+ * Collapses a thread's raw per-unit bins into display columns. With
+ * collapseEmpty off this is a 1:1 passthrough (every bin, empty or not, is
+ * its own column) — the pre-feature behaviour. With it on, runs of
+ * consecutive empty bins (no agents, or binTotal 0) merge into a single gap
+ * column carrying their combined `gapUnits`; non-empty bins are never merged
+ * and always keep their own column.
+ */
+export function computeDisplayBins(bins: readonly TimelineBin[], collapseEmpty: boolean): DisplayBin[] {
+  const displayBins: DisplayBin[] = [];
+  for (const bin of bins) {
+    const isEmpty = bin.agents.length === 0 || binTotal(bin) === 0;
+    if (!isEmpty) {
+      displayBins.push({ t: bin.t, gapUnits: 1, bin });
+      continue;
+    }
+    const last = displayBins[displayBins.length - 1];
+    if (collapseEmpty && last && last.bin === null) {
+      last.gapUnits += 1;
+      continue;
+    }
+    displayBins.push({ t: bin.t, gapUnits: 1, bin: null });
+  }
+  return displayBins;
+}
+
+export function ThreadRow({
+  thread,
+  unit,
+  chartHeight,
+  maxBinTotal,
+  maxBinCount,
+  agentKeys,
+  colorFor,
+  labelFor,
+  onSegmentClick,
+  onOpenThread,
+  fillWidth,
+  collapseEmpty,
+  colWidthPx,
+  colGap,
+  segGap,
+  colRadius,
+  segRadius,
+  frameLiftColor,
+}: {
+  thread: ThreadEntry;
+  unit: number;
+  chartHeight: number;
+  maxBinTotal: number;
+  /** DISPLAYED column count of the longest visible thread (after collapseEmpty folding — see computeDisplayBins) — drives the uniform column width when fillWidth is on. */
+  maxBinCount: number;
+  agentKeys: readonly string[];
+  colorFor: (agentKey: string) => string;
+  /** Human-readable display text for an agentId (agentLabels[key] ?? key) — used only in the tooltip text, never as a key. */
+  labelFor: (agentKey: string) => string;
+  onSegmentClick: (agentKey: string, session: string, fromIso: string, toIso: string) => void;
+  /** Открыть тред BB по клику на название — задан, только когда у треда есть матч (threadId); для бакета «Threads» отсутствует. */
+  onOpenThread?: () => void;
+  /** true = bin columns stretch to share the graph's width equally (flex-1); false = each bin column is a fixed colWidthPx wide. */
+  fillWidth: boolean;
+  /** true = consecutive empty bins render as one collapsed gap column — see computeDisplayBins. */
+  collapseEmpty: boolean;
+  /** px, fixed width of EACH bin column — used only when fillWidth is off. */
+  colWidthPx: number;
+  /** px, gap between bin columns. */
+  colGap: number;
+  /** px, gap between an agent's stacked segments inside one bin. */
+  segGap: number;
+  /** px, corner radius of a bin's segment stack as a whole. */
+  colRadius: number;
+  /** px, corner radius of each individual agent segment. */
+  segRadius: number;
+  /** hex; tint of the chart frame's subtle background lift (fixed low alpha — see FRAME_LIFT_ALPHA). */
+  frameLiftColor: string;
+}) {
+  const threadEndMs = Date.parse(thread.end);
+
+  // Названия из bb.sdk (bbThreadTitle, см. threads-timeline-service.ts) — не
+  // сырой `title` из threads_timeline.py, который всегда равен session.
+  // Нет матча с тредом BB (бакет «Threads») — короткий id сессии вместо
+  // пустоты; полный session остаётся в подсказке, а не дублируется в шапке.
+  const headerTitle = thread.bbThreadTitle ?? thread.session.slice(0, 8);
+  const headerTooltip = thread.bbThreadTitle ? `${thread.bbThreadTitle}\n${thread.session}` : thread.session;
+  // Число различных агентов треда — считается из его же бинов (главный "main"
+  // + субагенты), а не из глобального agentKeys (тот собран по всей ленте).
+  const agentCount = new Set(thread.bins.flatMap((b) => b.agents.map((a) => a.key))).size;
+
+  // Displayed columns, not raw bins — collapseEmpty folds runs of empty bins
+  // into one gap column each (see computeDisplayBins); binCount/graphWidthPx
+  // below size the graph off however many columns are actually rendered.
+  const displayBins = useMemo(() => computeDisplayBins(thread.bins, collapseEmpty), [thread.bins, collapseEmpty]);
+  const binCount = displayBins.length;
+  const graphWidthPx = fillWidth
+    ? undefined
+    : Math.max(binCount * colWidthPx + Math.max(binCount - 1, 0) * colGap, MIN_GRAPH_WIDTH_PX);
+
+  // Time range, total and per-agent breakdown of one bin — shared by the
+  // column render (segment heights) and the hover tooltip (its legend), so
+  // the two never diverge on how a bin's agents are ordered or summed.
+  function describeBin(bin: TimelineBin) {
+    const binStartMs = Date.parse(bin.t);
+    const binEndMs = Number.isNaN(threadEndMs) ? binStartMs + unit * 1000 : Math.min(binStartMs + unit * 1000, threadEndMs);
+    const total = binTotal(bin);
+    const timeLabel = `${fmtClock(bin.t)}–${fmtClock(new Date(binEndMs).toISOString())}`;
+    const ordered = agentKeys.filter((key) => bin.agents.some((a) => a.key === key)).map((key) => bin.agents.find((a) => a.key === key)!);
+    return { binEndMs, total, timeLabel, ordered };
+  }
+
+  // Hover tooltip for a data column. Driven by pointer move (not the native
+  // `title` attribute, which the browser delays ~1s before showing) so the
+  // per-agent legend appears immediately, and portaled to document.body so
+  // the graph's own overflow-hidden/overflow-x-auto never clips it.
+  const [tip, setTip] = useState<{ binIndex: number; x: number; y: number } | null>(null);
+  // On leave the tooltip eases to transparent over TOOLTIP_FADE_MS, then
+  // unmounts — a fade-out, not a fully-visible grace hold. Moving onto another
+  // column cancels the fade and re-shows at full opacity, so crossing the
+  // chart never blinks it off and on.
+  const [tipClosing, setTipClosing] = useState(false);
+  const portalScope = usePortalScopeProps();
+  const tipBin = tip ? displayBins[tip.binIndex]?.bin ?? null : null;
+
+  const fadeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  function showTip(binIndex: number, x: number, y: number) {
+    if (fadeTimerRef.current !== null) {
+      clearTimeout(fadeTimerRef.current);
+      fadeTimerRef.current = null;
+    }
+    setTipClosing(false);
+    setTip({ binIndex, x, y });
+  }
+  function startTipFade() {
+    if (fadeTimerRef.current !== null) clearTimeout(fadeTimerRef.current);
+    setTipClosing(true);
+    fadeTimerRef.current = setTimeout(() => {
+      setTip(null);
+      setTipClosing(false);
+      fadeTimerRef.current = null;
+    }, TOOLTIP_FADE_MS);
+  }
+  useEffect(
+    () => () => {
+      if (fadeTimerRef.current !== null) clearTimeout(fadeTimerRef.current);
+    },
+    [],
+  );
+
+  return (
+    <div className="w-full space-y-2 rounded-md border border-border p-3" style={{ backgroundColor: hexToRgba(frameLiftColor, FRAME_LIFT_ALPHA) }}>
+      <div className="flex items-baseline justify-between gap-3 overflow-hidden text-xs text-muted-foreground">
+        {onOpenThread ? (
+          <button
+            type="button"
+            className="min-w-0 flex-1 truncate text-left font-medium text-foreground hover:underline focus-visible:underline focus-visible:outline-none"
+            title={headerTooltip}
+            onClick={onOpenThread}
+          >
+            {headerTitle}
+          </button>
+        ) : (
+          <span className="min-w-0 flex-1 truncate font-medium text-foreground" title={headerTooltip}>
+            {headerTitle}
+          </span>
+        )}
+        <span className="ml-auto shrink-0 tabular-nums">
+          {thread.workflowCount} workflows · {agentCount} agents · {fmtDuration(thread.durationSec)} · {formatTokenCount(thread.totalTokens)} · {formatCost(thread.totalCost)}
+        </span>
+      </div>
+
+      <div className="w-full overflow-x-auto">
+        <div
+          className="flex items-end overflow-hidden rounded-sm"
+          style={{ height: chartHeight, width: fillWidth ? "100%" : graphWidthPx, gap: colGap }}
+        >
+          {displayBins.map((displayBin, binIndex) => {
+            const { bin, gapUnits } = displayBin;
+            // Columns are fixed-width in BOTH modes so every thread's columns
+            // are the SAME width. fillWidth on: width = 100%/maxBinCount (the
+            // longest thread's DISPLAYED columns), so only the longest fills
+            // the row and shorter threads are proportionally narrower.
+            // fillWidth off: each column is a fixed colWidthPx the "Ширина"
+            // control sets.
+            const colClassName = "relative h-full min-w-[2px] shrink-0";
+            const colStyle: React.CSSProperties = fillWidth
+              ? { width: `calc((100% - ${Math.max(maxBinCount - 1, 0) * colGap}px) / ${maxBinCount})`, flexShrink: 0 }
+              : { width: colWidthPx, flexShrink: 0 };
+
+            if (bin === null) {
+              // Empty column — either a single raw empty bin (collapseEmpty
+              // off, gapUnits always 1) or a run of consecutive empty bins
+              // folded into one (collapseEmpty on, gapUnits = run length).
+              // Same muted "no activity" marker either way; only the tooltip
+              // differs, carrying the total collapsed duration.
+              return (
+                <div
+                  key={binIndex}
+                  className={colClassName}
+                  style={colStyle}
+                  title={`${fmtClock(displayBin.t)}\nперерыв ${fmtDuration(gapUnits * unit)}`}
+                >
+                  <div className="absolute bottom-0 h-[2px] w-full bg-muted/50" style={{ borderRadius: segRadius }} />
+                </div>
+              );
+            }
+
+            const { binEndMs, total, ordered } = describeBin(bin);
+            const dispHeight = maxBinTotal > 0 ? Math.max((total / maxBinTotal) * chartHeight, 2) : 2;
+
+            return (
+              <div
+                key={binIndex}
+                className={colClassName}
+                style={colStyle}
+                onMouseMove={(e) => showTip(binIndex, e.clientX, e.clientY)}
+                onMouseLeave={startTipFade}
+              >
+                <div
+                  className="absolute bottom-0 flex w-full flex-col-reverse overflow-hidden"
+                  style={{ height: dispHeight, borderRadius: colRadius, gap: segGap }}
+                >
+                  {ordered.map((a) => {
+                    const segHeight = (a.total / total) * dispHeight;
+                    return (
+                      <button
+                        key={a.key}
+                        type="button"
+                        className="block w-full transition-opacity hover:opacity-80 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                        style={{ height: Math.max(segHeight, 1), backgroundColor: colorFor(a.key), borderRadius: segRadius }}
+                        aria-label={`${labelFor(a.key)}: ${formatTokenCount(a.total)} токенов`}
+                        onClick={() => onSegmentClick(a.key, thread.session, bin.t, new Date(binEndMs).toISOString())}
+                      />
+                    );
+                  })}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
+      {tip && tipBin
+        ? (() => {
+            const { total, timeLabel, ordered } = describeBin(tipBin);
+            return createPortal(
+              <div
+                {...portalScope}
+                className={`pointer-events-none fixed z-50 w-max max-w-[min(90vw,32rem)] rounded-md border border-border bg-popover px-2.5 py-2 text-xs text-popover-foreground shadow-md transition-opacity duration-200 ease-in ${
+                  tipClosing ? "opacity-0" : "opacity-100"
+                }`}
+                style={{ left: tip.x + 12, top: tip.y + 12 }}
+              >
+                <div className="font-medium tabular-nums">{timeLabel}</div>
+                <ul className="mt-1.5 space-y-1">
+                  {ordered.map((a) => (
+                    <li key={a.key} className="flex w-full items-center gap-3">
+                      <span className="inline-block size-2.5 shrink-0 rounded-sm" style={{ backgroundColor: colorFor(a.key) }} />
+                      <span className="whitespace-nowrap">{labelFor(a.key)}</span>
+                      <span className="ml-auto shrink-0 tabular-nums text-muted-foreground">
+                        {formatTokenCount(a.total)} · {formatPercent(a.total, total)}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              </div>,
+              document.body,
+            );
+          })()
+        : null}
+    </div>
+  );
+}
+
+/** Prefix a workflow-merged segment's label so the group reads as one Workflow, not a nameless agent (its key is `workflow:<runId>`, its label the workflow's human name). */
+const WORKFLOW_KEY_PREFIX = "workflow:";
+
+/**
+ * Single-session convenience wrapper around ThreadRow: the session page renders
+ * exactly the feed's chart frame, so there's one implementation, not two. Fills
+ * the feed's per-page inputs (colours, labels, max totals, default geometry)
+ * from this one session's own bins. Segments merged server-side by workflow
+ * (`groupWorkflows`) get a "Workflow: <name>" label so the collapsed group is
+ * legible.
+ */
+export function SessionChartCard({
+  thread,
+  unit,
+  agentLabels,
+  onSelectAgent,
+}: {
+  thread: ThreadEntry;
+  unit: number;
+  agentLabels: Record<string, string>;
+  /** Клик по сегменту реального агента ведёт на его детализацию; workflow-сегмент (сводный) кликом не открывается. */
+  onSelectAgent?: (agentKey: string) => void;
+}) {
+  const agentKeys = useMemo(() => {
+    const totals = new Map<string, number>();
+    thread.bins.forEach((bin) => bin.agents.forEach((a) => totals.set(a.key, (totals.get(a.key) ?? 0) + a.total)));
+    return Array.from(totals.keys()).sort((a, b) => {
+      if (a === "main") return -1;
+      if (b === "main") return 1;
+      return (totals.get(b) ?? 0) - (totals.get(a) ?? 0);
+    });
+  }, [thread.bins]);
+  const maxBinTotal = useMemo(() => thread.bins.reduce((m, bin) => Math.max(m, binTotal(bin)), 0), [thread.bins]);
+  const maxBinCount = useMemo(() => computeDisplayBins(thread.bins, false).length, [thread.bins]);
+
+  const colorFor = (key: string) => DEFAULT_PALETTE[Math.max(agentKeys.indexOf(key), 0) % DEFAULT_PALETTE.length];
+  const labelFor = (key: string) => {
+    const name = agentLabels[key] ?? key;
+    return key.startsWith(WORKFLOW_KEY_PREFIX) ? `Workflow: ${name}` : name;
+  };
+
+  return (
+    <ThreadRow
+      thread={thread}
+      unit={unit}
+      chartHeight={SESSION_CARD_CHART_HEIGHT}
+      maxBinTotal={maxBinTotal}
+      maxBinCount={maxBinCount}
+      agentKeys={agentKeys}
+      colorFor={colorFor}
+      labelFor={labelFor}
+      onSegmentClick={(agentKey) => {
+        if (!agentKey.startsWith(WORKFLOW_KEY_PREFIX)) onSelectAgent?.(agentKey);
+      }}
+      fillWidth
+      collapseEmpty={false}
+      colWidthPx={6}
+      colGap={1}
+      segGap={0}
+      colRadius={0}
+      segRadius={0}
+      frameLiftColor="#e3e3dd"
+    />
+  );
+}

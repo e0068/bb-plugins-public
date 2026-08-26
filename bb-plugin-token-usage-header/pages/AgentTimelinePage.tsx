@@ -9,7 +9,7 @@
 // panel's subPath is non-empty — an empty subPath renders
 // ThreadsTimelinePage (the feed) instead. Both entry points (header popover
 // row click, chart segment click) navigate to THREADS_TIMELINE_PANEL_PATH
-// with subPath built by buildAgentDetailSubPath; the "Лента тредов" back
+// with subPath built by buildAgentDetailSubPath; the "Usage Analytics" back
 // link below returns to subPath "".
 //
 // `agentTimeline` takes a Claude Code session id directly (not a BB
@@ -25,7 +25,8 @@ import { useBbNavigate, useRpc, type PluginNavPanelProps, type PluginRpcResult }
 import type { rpcContract } from "../server";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
-import { DEFAULT_VIZ_SETTINGS, formatCost, formatPercent, formatTokenCount, type AgentTimelineEvent } from "../src/core";
+import { DEFAULT_VIZ_SETTINGS, formatCost, formatPercent, formatTokenCount, type AgentTimelineEvent, type ThreadEntry } from "../src/core";
+import { SessionChartCard } from "./thread-chart";
 
 /**
  * Path of the one nav panel both pages of this plugin share — defined here
@@ -195,6 +196,8 @@ function displayAgentName(agent: { key: string; description: string | null; agen
   return agent.description ?? agent.agentType ?? "Субагент";
 }
 
+/** Bin size (seconds) for the session bar chart at the top of this page. */
+const SESSION_CHART_UNIT = 60;
 export function AgentTimelinePage({ subPath }: PluginNavPanelProps) {
   const rpc = useRpc<typeof rpcContract>();
   const navigate = useBbNavigate();
@@ -253,6 +256,36 @@ export function AgentTimelinePage({ subPath }: PluginNavPanelProps) {
       cancelled = true;
     };
   }, [rpc, session, activeAgentKey]);
+
+  // Session bar chart at the top — one horizontal token chart for the whole
+  // session, workflow runs merged into single segments. Reuses the
+  // threadsTimeline RPC's single-session slice (no new backend surface), so a
+  // failure just hides the chart; the agent timeline below is the real content.
+  const [sessionChart, setSessionChart] = useState<{ thread: ThreadEntry; agentLabels: Record<string, string> } | null>(null);
+  useEffect(() => {
+    if (!session) {
+      setSessionChart(null);
+      return;
+    }
+    let cancelled = false;
+    rpc.call("threadsTimeline", { limit: 1, unit: SESSION_CHART_UNIT, session, groupWorkflows: true }).then(
+      (result) => {
+        if (cancelled || !mountedRef.current) return;
+        setSessionChart(
+          result.status === "ready" && result.threads.length > 0
+            ? { thread: result.threads[0], agentLabels: result.agentLabels }
+            : null,
+        );
+      },
+      () => {
+        if (!cancelled && mountedRef.current) setSessionChart(null);
+      },
+    );
+    return () => {
+      cancelled = true;
+    };
+    // Agent switch keeps the same session chart — it depends only on `session`.
+  }, [rpc, session]);
 
   // --- Timeline display controls: NOT reset on agent change (they're
   // standing preferences, persisted below) — only `expanded`/`collapsedTurns`
@@ -375,9 +408,20 @@ export function AgentTimelinePage({ subPath }: PluginNavPanelProps) {
           className="h-7 gap-1 px-2 text-xs font-medium text-muted-foreground hover:text-foreground"
           onClick={backToFeed}
         >
-          <span aria-hidden="true">←</span> Лента тредов
+          <span aria-hidden="true">←</span> Usage Analytics
         </Button>
       </div>
+      {sessionChart && (
+        <div className="shrink-0 px-4 pt-3 md:px-5">
+          <div className="mb-1 text-xs font-medium text-muted-foreground">Диаграмма сессии</div>
+          <SessionChartCard
+            thread={sessionChart.thread}
+            unit={SESSION_CHART_UNIT}
+            agentLabels={sessionChart.agentLabels}
+            onSelectAgent={selectAgent}
+          />
+        </div>
+      )}
       <div className="grid grow grid-cols-1 gap-4 p-4 md:p-5 lg:grid-cols-[20rem_1fr] lg:items-start">
         <LeftPanel
         session={session}
@@ -452,7 +496,7 @@ function LeftPanel({
         <p>
           Эта ссылка не несёт параметра session — разбивка по токенам
           недоступна. Откройте детализацию кликом по строке агента в счётчике
-          токенов треда или по сегменту диаграммы в ленте тредов.
+          токенов треда или по сегменту диаграммы в Usage Analytics.
         </p>
       </div>
     );

@@ -83,6 +83,10 @@ export interface ThreadsTimelineQueryParams {
   unit: number;
   /** Substring match on the project path, as the script's `--project` does. */
   project?: string;
+  /** Exact Claude Code session id — the single-session slice (session page). Overrides recency selection. */
+  session?: string;
+  /** Merge every agent of one workflow run into a single segment (`workflow:<runId>`). */
+  groupWorkflows?: boolean;
 }
 
 export type ThreadsTimelineRunFailureReason =
@@ -102,6 +106,8 @@ function buildArgs(scriptPath: string, params: ThreadsTimelineQueryParams): stri
   const args = [scriptPath, "--json", "--unit", String(params.unit)];
   if (params.limit !== undefined) args.push("--limit", String(params.limit));
   if (params.project) args.push("--project", params.project);
+  if (params.session) args.push("--session", params.session);
+  if (params.groupWorkflows) args.push("--group-workflows");
   return args;
 }
 
@@ -215,6 +221,8 @@ export function threadsTimelineCacheKey(params: ThreadsTimelineQueryParams): str
     limit: params.limit ?? DEFAULT_LIMIT,
     unit: params.unit,
     project: params.project ?? null,
+    session: params.session ?? null,
+    groupWorkflows: params.groupWorkflows ?? false,
   });
 }
 

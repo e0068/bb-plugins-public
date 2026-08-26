@@ -106,7 +106,10 @@ async function renderAgentDetail(subPath: string, rpc: Partial<PluginRpcTestHand
   const fullRpc: PluginRpcTestHandlers<typeof rpcContract> = {
     sessionTokenUsage: unusedRpcMethod("sessionTokenUsage"),
     agentTimeline: unusedRpcMethod("agentTimeline"),
-    threadsTimeline: unusedRpcMethod("threadsTimeline"),
+    // The page fetches its top session chart via threadsTimeline (single-session
+    // slice); default to an empty ready slice so that background call neither
+    // throws nor renders a chart unless a test opts in.
+    threadsTimeline: async () => ({ status: "ready" as const, unit: 60, threads: [], agentLabels: {} }),
     loadVizSettings: async () => DEFAULT_VIZ_SETTINGS,
     saveVizSettings: async () => ({ ok: true as const }),
     ...rpc,
@@ -126,7 +129,7 @@ describe("threads-timeline panel — agent-detail sub-view", () => {
       agentTimeline: async () => READY_TIMELINE,
     });
 
-    fireEvent.click(screen.getByRole("button", { name: /Лента тредов/ }));
+    fireEvent.click(screen.getByRole("button", { name: /Usage Analytics/ }));
 
     expect(slot.navigateCalls).toContainEqual({
       method: "toPluginPanel",
@@ -150,14 +153,68 @@ describe("threads-timeline panel — agent-detail sub-view", () => {
     expect(screen.getAllByText("Главный агент").length).toBeGreaterThan(0);
 
     expect(slot.rpcCalls.length).toBeGreaterThan(0);
-    // Only agentTimeline and the mount-time viz-settings load are called —
-    // the left panel's breakdown is fed from the agentTimeline response, not
-    // a second sessionTokenUsage round trip.
-    expect(slot.rpcCalls.every((call) => call.method === "agentTimeline" || call.method === "loadVizSettings")).toBe(true);
+    // The left panel's breakdown is fed from the agentTimeline response (no
+    // second sessionTokenUsage round trip); the only other calls are the
+    // mount-time viz-settings load and the top session chart's threadsTimeline
+    // slice.
+    expect(
+      slot.rpcCalls.every(
+        (call) => call.method === "agentTimeline" || call.method === "loadVizSettings" || call.method === "threadsTimeline",
+      ),
+    ).toBe(true);
     expect(slot.rpcCalls.some((call) => call.method === "agentTimeline")).toBe(true);
     for (const call of slot.rpcCalls) {
       assertMatchesContract(call.method as keyof typeof rpcContract, call.input);
     }
+  });
+
+  it("renders the top session bar chart, grouping a workflow run into one segment labelled by workflow name", async () => {
+    const slot = await renderAgentDetail(buildAgentDetailSubPath({ session: "sess_abc123", agent: "main" }), {
+      agentTimeline: async () => READY_TIMELINE,
+      threadsTimeline: async (input) => {
+        // The page asks for this session's own slice, workflow-grouped.
+        expect(input).toEqual({ limit: 1, unit: 60, session: "sess_abc123", groupWorkflows: true });
+        return {
+          status: "ready" as const,
+          unit: 60,
+          threads: [
+            {
+              session: "sess_abc123",
+              project: "p",
+              title: "sess_abc123",
+              start: "2026-08-25T09:00:00.000Z",
+              end: "2026-08-25T09:01:00.000Z",
+              durationSec: 60,
+              totalTokens: 300,
+              totalCost: 0.1,
+              workflowCount: 1,
+              bins: [
+                {
+                  t: "2026-08-25T09:00:00.000Z",
+                  agents: [
+                    { key: "main", total: 100 },
+                    { key: "workflow:wf_1", total: 200 },
+                  ],
+                },
+              ],
+              bbProjectId: null,
+              bbProjectName: null,
+              threadId: null,
+              bbThreadTitle: null,
+            },
+          ],
+          agentLabels: { main: "Главный агент", "workflow:wf_1": "arch-review" },
+        };
+      },
+    });
+
+    await screen.findByText("Диаграмма сессии");
+    // The chart is the reused feed frame (ThreadRow) — the per-agent legend
+    // lives in the column hover tooltip, where the workflow-merged segment
+    // reads as a Workflow with its human name.
+    const column = slot.container.querySelector(".relative.h-full.min-w-\\[2px\\]") as HTMLElement;
+    fireEvent.mouseMove(column, { clientX: 10, clientY: 10 });
+    await screen.findByText(/Workflow: arch-review/);
   });
 
   it("renders tool and message rows from the agent's events with their labels", async () => {

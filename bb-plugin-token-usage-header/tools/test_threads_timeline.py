@@ -20,6 +20,7 @@ import unittest
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import tokens  # noqa: E402
 import threads_timeline  # noqa: E402
+import tokens  # noqa: E402
 
 
 def _assistant(msg_id, req, out_tokens, ts, model="claude-sonnet-4", inp=0):
@@ -130,6 +131,84 @@ class BuildTimelineTest(unittest.TestCase):
         bin_sum = sum(a["total"] for b in thread["bins"] for a in b["agents"])
         self.assertEqual(bin_sum, thread["totalTokens"])
         self.assertEqual(thread["totalTokens"], 15)
+
+    def test_thread_carries_total_cost_matching_tokens_pricing(self):
+        # totalCost считается тем же tokens.Bucket, что и total — тест сверяет
+        # её с ценой, посчитанной напрямую по тому же usage/model, чтобы форма
+        # не разошлась с тарифом tokens.py.
+        ts = "2026-08-19T10:00:01.000Z"
+        _write_raw(self._p("projA", "sess1.jsonl"), [_assistant("m1", "r1", 1000, ts)])
+        thread = self._threads(limit=20, unit=300)[0]
+        expected = tokens.Bucket()
+        expected.add({"input_tokens": 0, "output_tokens": 1000}, "claude-sonnet-4", ts)
+        self.assertEqual(thread["totalCost"], round(expected.cost, 2))
+        self.assertGreater(thread["totalCost"], 0)
+
+    def test_workflow_count_counts_distinct_workflow_runs(self):
+        sess = "sess-wf"
+        _write_raw(self._p("projA", sess + ".jsonl"), [_assistant("m0", "r0", 5, "2026-08-19T10:00:00.000Z")])
+        # Два прогона workflow, по одному агенту в каждом — workflowRunId берётся
+        # из сегмента пути после "workflows" (см. tokens.walk).
+        _write_raw(
+            self._p("projA", sess, "subagents", "workflows", "run1", "agent-w1.jsonl"),
+            [_assistant("m1", "r1", 3, "2026-08-19T10:00:01.000Z")],
+        )
+        _write_raw(
+            self._p("projA", sess, "subagents", "workflows", "run2", "agent-w2.jsonl"),
+            [_assistant("m2", "r2", 4, "2026-08-19T10:00:02.000Z")],
+        )
+        thread = self._threads(limit=20, unit=300)[0]
+        self.assertEqual(thread["workflowCount"], 2)
+
+    def test_workflow_count_is_zero_without_workflow_runs(self):
+        _write_raw(self._p("projA", "sess-plain.jsonl"), [_assistant("m1", "r1", 5, "2026-08-19T10:00:00.000Z")])
+        thread = self._threads(limit=20, unit=300)[0]
+        self.assertEqual(thread["workflowCount"], 0)
+
+    def test_session_filter_restricts_to_the_named_session(self):
+        _write_raw(self._p("projA", "sess-a.jsonl"), [_assistant("m1", "r1", 5, "2026-08-19T10:00:00.000Z")])
+        _write_raw(self._p("projA", "sess-b.jsonl"), [_assistant("m2", "r2", 7, "2026-08-19T10:01:00.000Z")])
+        threads = threads_timeline.build_timeline(self.root, limit=20, unit=300, session="sess-a")["threads"]
+        self.assertEqual([t["session"] for t in threads], ["sess-a"])
+
+    def test_group_workflows_merges_run_agents_and_labels_by_workflow_name(self):
+        sess = "sess-wf"
+        _write_raw(self._p("projA", sess + ".jsonl"), [_assistant("m0", "r0", 5, "2026-08-19T10:00:00.000Z")])
+        # Два агента одного прогона wf_run1 — в один сегмент; main отдельно.
+        _write_raw(
+            self._p("projA", sess, "subagents", "workflows", "wf_run1", "agent-x.jsonl"),
+            [_assistant("m1", "r1", 3, "2026-08-19T10:00:01.000Z")],
+        )
+        _write_raw(
+            self._p("projA", sess, "subagents", "workflows", "wf_run1", "agent-y.jsonl"),
+            [_assistant("m2", "r2", 4, "2026-08-19T10:00:02.000Z")],
+        )
+        # Человеческое имя workflow — из workflows/scripts/<имя>-<runId>.js.
+        scripts = self._p("projA", sess, "workflows", "scripts")
+        os.makedirs(scripts, exist_ok=True)
+        open(os.path.join(scripts, "my-review-wf_run1.js"), "w").close()
+
+        result = threads_timeline.build_timeline(self.root, limit=20, unit=300, group_workflows=True)
+        thread = result["threads"][0]
+        agents = {a["key"]: a["total"] for b in thread["bins"] for a in b["agents"]}
+        self.assertEqual(agents.get("workflow:wf_run1"), 7)
+        self.assertEqual(agents.get("main"), 5)
+        self.assertEqual(result["agentLabels"]["workflow:wf_run1"], "my-review")
+
+    def test_group_workflows_off_keeps_run_agents_separate(self):
+        sess = "sess-wf2"
+        _write_raw(self._p("projA", sess + ".jsonl"), [_assistant("m0", "r0", 5, "2026-08-19T10:00:00.000Z")])
+        _write_raw(
+            self._p("projA", sess, "subagents", "workflows", "wf_run2", "agent-x.jsonl"),
+            [_assistant("m1", "r1", 3, "2026-08-19T10:00:01.000Z")],
+        )
+        keys = {
+            a["key"]
+            for b in threads_timeline.build_timeline(self.root, limit=20, unit=300, group_workflows=False)["threads"][0]["bins"]
+            for a in b["agents"]
+        }
+        self.assertIn("agent-x", keys)
+        self.assertNotIn("workflow:wf_run2", keys)
 
     def test_multiple_agents_in_same_bin_are_broken_out_by_agent_key(self):
         sess = "11111111-1111-1111-1111-111111111111"

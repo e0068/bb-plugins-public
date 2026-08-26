@@ -257,7 +257,7 @@ function UsageDetails({
 }
 
 /**
- * The single "Лента тредов" nav panel's own router: an empty `subPath` is
+ * The single "Usage Analytics" nav panel's own router: an empty `subPath` is
  * the feed (ThreadsTimelinePage), anything else is the agent-detail
  * sub-view (AgentTimelinePage) — see AgentTimelinePage.tsx's module doc
  * comment. "Детализация агента" used to be a second, separately registered
@@ -280,7 +280,7 @@ export default definePluginApp((app) => {
 
   app.slots.navPanel({
     id: "threads-timeline",
-    title: "Лента тредов",
+    title: "Usage Analytics",
     icon: "ChartColumn",
     path: THREADS_TIMELINE_PANEL_PATH,
     component: ThreadsTimelinePanel,

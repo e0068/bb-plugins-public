@@ -34,9 +34,12 @@ export type ThreadsSortMode = (typeof THREADS_SORT_MODES)[number];
  * Mirrors ThreadsTimelinePage.tsx's own `useState` calls one-for-one:
  * unit, fillWidth, collapseEmpty, colWidthPx, heightScale (row 1 controls),
  * colGap/segGap/colRadius/segRadius/frameLiftColor (geometry popover),
- * agentColors (per-agent legend colour picker), sortMode. Search/project-filter
- * state is deliberately absent — see the decision doc: transient query state,
- * not a visual preference.
+ * agentColors (per-agent legend colour picker), sortMode, and the filter
+ * state — searchQuery, projectFilter, costMin, costMax. The filters used to be
+ * deliberately transient; they're now persisted at the owner's request so a
+ * chosen slice survives a reload (reverses the earlier "transient query state"
+ * carve-out in the decision doc). Each new field carries its own `.default`,
+ * so a blob saved before they existed still merges cleanly.
  */
 const threadsVizSettingsSchema = z
   .object({
@@ -61,6 +64,13 @@ const threadsVizSettingsSchema = z
     /** Per-agent-key legend colour overrides; keys not present fall back to the row's own default palette cycling. */
     agentColors: z.record(z.string(), hexColorSchema).default({}),
     sortMode: z.enum(THREADS_SORT_MODES).default("recent"),
+    /** Free-text search over thread title / session id / BB thread title. */
+    searchQuery: z.string().default(""),
+    /** Selected project keys; `null` is the "Threads" bucket (sessions with no BB thread). Empty = all projects. */
+    projectFilter: z.array(z.string().nullable()).default([]),
+    /** Cost bounds in USD as raw input strings — "" means unbounded on that end. */
+    costMin: z.string().default(""),
+    costMax: z.string().default(""),
   })
   .strict();
 

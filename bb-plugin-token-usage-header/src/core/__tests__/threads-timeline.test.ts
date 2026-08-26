@@ -19,6 +19,8 @@ const validTimeline = {
       end: "2026-08-20T14:46:48.357Z",
       durationSec: 3717,
       totalTokens: 4809213,
+      totalCost: 12.5,
+      workflowCount: 1,
       bins: [
         {
           t: "2026-08-20T13:40:00.000Z",
@@ -213,6 +215,8 @@ function thread(durationSec: number, session = `s-${durationSec}`): ThreadEntry 
     end: "2026-08-20T00:00:00.000Z",
     durationSec,
     totalTokens: 0,
+    totalCost: 0,
+    workflowCount: 0,
     bins: [],
     bbProjectId: null,
     bbProjectName: null,

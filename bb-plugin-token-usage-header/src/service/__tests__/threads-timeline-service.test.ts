@@ -33,6 +33,8 @@ function rawThread(session: string) {
     end: "2026-08-20T14:46:48.357Z",
     durationSec: 3717,
     totalTokens: 100,
+    totalCost: 1.5,
+    workflowCount: 0,
     bins: [],
   };
 }
