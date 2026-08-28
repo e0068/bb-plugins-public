@@ -18,6 +18,7 @@ import {
   useFieldDisplay,
   type FieldScope,
 } from "./row-field-preference.js";
+import { SavedViewsSection } from "./saved-views-section.js";
 
 /**
  * Destination index `moveField` expects, from an "insert before slot N" drop.
@@ -206,6 +207,8 @@ export function FieldDisplayMenu({ scope, variant }: FieldDisplayMenuProps) {
             onToggle={() => setShowDescription(scope, !config.showDescription)}
           />
         ) : null}
+        <div className="my-1 border-t border-border-hairline" />
+        <SavedViewsSection scope={scope} config={config} />
         <div className="my-1 border-t border-border-hairline" />
         <button
           type="button"

@@ -48,6 +48,7 @@ export const INVALIDATION_CHANNELS = [
   "projects:changed",
   "comments:changed",
   "threads:changed",
+  "views:changed",
 ] as const;
 
 export type InvalidationChannel = (typeof INVALIDATION_CHANNELS)[number];
@@ -70,6 +71,7 @@ export function useInvalidation(
   useRealtime("projects:changed", () => fire("projects:changed"));
   useRealtime("comments:changed", () => fire("comments:changed"));
   useRealtime("threads:changed", () => fire("threads:changed"));
+  useRealtime("views:changed", () => fire("views:changed"));
 }
 
 export interface TasksQuery<T> {
@@ -161,6 +163,20 @@ export function usePresets() {
   return useTasksQuery(
     async (rpc) => (await rpc.call("listPresets")).presets,
     ["projects:changed"],
+  );
+}
+
+/**
+ * Saved views for one field-display scope. Views live in the plugin's own
+ * database, not localStorage — one bb instance's saved views are shared
+ * across its tabs, so a sibling tab must see a new/renamed/deleted view
+ * without a reload, hence the `views:changed` realtime channel.
+ */
+export function useSavedViews(scope: string) {
+  return useTasksQuery(
+    async (rpc) => (await rpc.call("listSavedViews", { scope })).savedViews,
+    ["views:changed"],
+    [scope],
   );
 }
 

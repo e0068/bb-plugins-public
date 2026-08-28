@@ -286,6 +286,30 @@ const MIGRATIONS = [
     -- memory/decisions/tasks-drop-chore-shallow-migration.md
     UPDATE tasks SET type = 'refactor' WHERE type = 'chore';
   `,
+  `
+    -- BP-63: сохранённые виды меню Display. config хранит JSON-документ, чью
+    -- схему держит shared/contract.ts (fieldDisplayConfigSchema) — здесь он
+    -- непрозрачная строка.
+    -- name COLLATE NOCASE НЕ делает имя регистронезависимым по правилу
+    -- продукта — SQLite NOCASE складывает только ASCII ("Вид"/"вид" остаются
+    -- разными строками), а решение владельца (см.
+    -- memory/decisions/saved-view-name-overwrite.md) требует полного Unicode
+    -- сравнения. Эту нормализацию делает db/store.ts (normalizeSavedViewName,
+    -- используется в createSavedView) — она источник истины для совпадения
+    -- имён. UNIQUE (scope, name) ниже — только страховка от гонки при
+    -- одновременной записи в пределах ASCII-совпадения NOCASE, не проверка
+    -- продуктового правила. Отдельного индекса на (scope, name) нет: его
+    -- целиком покрывает автоиндекс этого уникального ограничения (проверено
+    -- планом запроса listSavedViews).
+    CREATE TABLE saved_views (
+      id TEXT PRIMARY KEY,
+      scope TEXT NOT NULL,
+      name TEXT NOT NULL COLLATE NOCASE,
+      config TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      UNIQUE (scope, name)
+    );
+  `,
 ] as const;
 
 export function initializeTasksSchema(db: PluginDatabase): void {

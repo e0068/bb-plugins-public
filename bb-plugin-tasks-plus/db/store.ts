@@ -7,7 +7,12 @@ import {
   TASKS_PAGE_MAX_LIMIT,
   type TaskSort,
 } from "../shared/pagination.js";
-import { presetPermissionModeSchema } from "../shared/contract.js";
+import {
+  fieldDisplayConfigSchema,
+  presetPermissionModeSchema,
+  ROW_FIELDS,
+  type FieldDisplayConfig,
+} from "../shared/contract.js";
 import { TASK_CHECKS } from "./types";
 import type {
   Attachment,
@@ -18,6 +23,7 @@ import type {
   CreateLabelInput,
   CreatePresetInput,
   CreateProjectInput,
+  CreateSavedViewInput,
   CreateTaskInput,
   FileTask,
   Folder,
@@ -27,6 +33,7 @@ import type {
   Preset,
   PresetEnvironmentKind,
   Project,
+  SavedView,
   SubtaskDoneCounts,
   Task,
   TaskCheck,
@@ -176,6 +183,14 @@ interface PresetRow {
   machine_id: string | null;
   instructions: string;
   builtin: number;
+  created_at: string;
+}
+
+interface SavedViewRow {
+  id: string;
+  scope: string;
+  name: string;
+  config: string;
   created_at: string;
 }
 
@@ -501,6 +516,77 @@ function presetFromRow(row: PresetRow): Preset {
   };
 }
 
+const ROW_FIELD_SET = new Set<string>(ROW_FIELDS);
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/**
+ * Drops field entries this server build no longer recognizes before
+ * validating, mirroring the client's tolerant field parsing (unknown fields
+ * are discarded, not rejected). Without this, retiring one entry from
+ * ROW_FIELDS would fail `fieldDisplayConfigSchema` for every saved view that
+ * still lists it — hiding the whole view, not just that one field.
+ */
+function dropUnknownFields(candidate: unknown): unknown {
+  if (!isPlainObject(candidate) || !Array.isArray(candidate.fields)) {
+    return candidate;
+  }
+  return {
+    ...candidate,
+    fields: candidate.fields.filter(
+      (entry) =>
+        isPlainObject(entry) &&
+        typeof entry.field === "string" &&
+        ROW_FIELD_SET.has(entry.field),
+    ),
+  };
+}
+
+/**
+ * Parses a saved view's stored config JSON against the shared schema. Returns
+ * null for anything unparsable (malformed JSON, or JSON that no longer
+ * matches `fieldDisplayConfigSchema`) rather than throwing — callers decide
+ * whether that is a tolerable read-time gap (listing) or an invariant break
+ * (right after writing the row ourselves).
+ */
+function parseSavedViewConfig(raw: string): FieldDisplayConfig | null {
+  let candidate: unknown;
+  try {
+    candidate = JSON.parse(raw);
+  } catch {
+    return null;
+  }
+  const result = fieldDisplayConfigSchema.safeParse(dropUnknownFields(candidate));
+  return result.success ? result.data : null;
+}
+
+function savedViewFromRow(row: SavedViewRow): SavedView | null {
+  const config = parseSavedViewConfig(row.config);
+  if (config === null) return null;
+  return {
+    id: row.id,
+    scope: row.scope,
+    name: row.name,
+    config,
+    createdAt: row.created_at,
+  };
+}
+
+/**
+ * The client treats two saved-view names as the same view by
+ * `name.trim().toLowerCase()` (full Unicode). SQLite's `COLLATE NOCASE` only
+ * folds ASCII, so it cannot decide this comparison — "Вид" and "вид" collate
+ * as distinct there even though the client treats them as one view. This
+ * normalization is the actual source of truth for the name-collision rule
+ * `createSavedView` enforces below; see
+ * memory/decisions/saved-view-name-overwrite.md.
+ */
+function normalizeSavedViewName(name: string): string {
+  return name.trim().toLowerCase();
+}
+
 function validatePresetEnvironment(input: {
   environmentKind: PresetEnvironmentKind;
   baseBranch: string | null;
@@ -567,6 +653,9 @@ export function createTasksStore(db: PluginDatabase) {
   );
   const getPresetRow = db.prepare<[string], PresetRow>(
     "SELECT * FROM presets WHERE id = ?",
+  );
+  const getSavedViewRow = db.prepare<[string], SavedViewRow>(
+    "SELECT * FROM saved_views WHERE id = ?",
   );
 
   function getFolder(id: string): Folder | undefined {
@@ -2032,6 +2121,68 @@ export function createTasksStore(db: PluginDatabase) {
     );
   }
 
+  /**
+   * Saving under a name already taken in the same scope overwrites that
+   * view's config in place (id and createdAt survive) — see
+   * memory/decisions/saved-view-name-overwrite.md. The existing view is
+   * found by `normalizeSavedViewName`, not by the column's `COLLATE NOCASE`
+   * (ASCII-only) — this must stay in sync with the client's collision rule.
+   * `UNIQUE (scope, name)` in the schema is only a race guard at this point,
+   * not the source of truth for this comparison.
+   */
+  function createSavedView(input: CreateSavedViewInput): SavedView {
+    const name = requireNonEmpty(input.name, "Saved view name");
+    const normalizedName = normalizeSavedViewName(name);
+    const existing = db
+      .prepare<
+        [string],
+        { id: string; name: string }
+      >("SELECT id, name FROM saved_views WHERE scope = ?")
+      .all(input.scope)
+      .find((row) => normalizeSavedViewName(row.name) === normalizedName);
+
+    const config = JSON.stringify(input.config);
+    const id = existing ? existing.id : createOrValidateUlid(input.id);
+    if (existing) {
+      db.prepare<[string, string]>(
+        "UPDATE saved_views SET config = ? WHERE id = ?",
+      ).run(config, id);
+    } else {
+      db.prepare<[string, string, string, string, string]>(
+        `
+        INSERT INTO saved_views (id, scope, name, config, created_at)
+        VALUES (?, ?, ?, ?, ?)
+      `,
+      ).run(id, input.scope, name, config, nowIso());
+    }
+
+    const row = getSavedViewRow.get(id);
+    if (!row) throw new Error("Saved view upsert failed");
+    const savedView = savedViewFromRow(row);
+    if (!savedView) {
+      throw new Error(`Saved view ${row.id} has an unreadable config`);
+    }
+    return savedView;
+  }
+
+  function listSavedViews(scope: string): SavedView[] {
+    return db
+      .prepare<
+        [string],
+        SavedViewRow
+      >("SELECT * FROM saved_views WHERE scope = ? ORDER BY name COLLATE NOCASE, id")
+      .all(scope)
+      .map(savedViewFromRow)
+      .filter((view): view is SavedView => view !== null); // a single unreadable view must not hide the rest
+  }
+
+  function deleteSavedView(id: string): boolean {
+    return (
+      db.prepare<[string]>("DELETE FROM saved_views WHERE id = ?").run(id)
+        .changes > 0
+    );
+  }
+
   return {
     createFolder,
     getFolder,
@@ -2095,6 +2246,9 @@ export function createTasksStore(db: PluginDatabase) {
     listPresets,
     updatePreset,
     deletePreset,
+    createSavedView,
+    listSavedViews,
+    deleteSavedView,
   };
 }
 

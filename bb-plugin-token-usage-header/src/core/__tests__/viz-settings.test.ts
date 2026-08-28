@@ -6,9 +6,13 @@ describe("DEFAULT_VIZ_SETTINGS", () => {
     expect(DEFAULT_VIZ_SETTINGS.threads).toEqual({
       unit: 60,
       fillWidth: true,
+      hugWidth: false,
+      contentFullWidth: false,
+      contentMaxWidthPx: 1400,
       collapseEmpty: false,
       colWidthPx: 6,
       heightScale: 1,
+      heightMode: "shared",
       colGap: 1,
       segGap: 0,
       colRadius: 0,
@@ -65,6 +69,29 @@ describe("parseVizSettings", () => {
   it("defaults collapseEmpty to false and preserves a saved true value", () => {
     expect(parseVizSettings({}).threads.collapseEmpty).toBe(false);
     expect(parseVizSettings({ threads: { collapseEmpty: true } }).threads.collapseEmpty).toBe(true);
+  });
+
+  it("defaults hugWidth to false and preserves a saved true value", () => {
+    expect(parseVizSettings({}).threads.hugWidth).toBe(false);
+    expect(parseVizSettings({ threads: { hugWidth: true } }).threads.hugWidth).toBe(true);
+  });
+
+  it("defaults content-area width (full off, 1400px) and preserves saved values", () => {
+    expect(parseVizSettings({}).threads.contentFullWidth).toBe(false);
+    expect(parseVizSettings({}).threads.contentMaxWidthPx).toBe(1400);
+    const saved = parseVizSettings({ threads: { contentFullWidth: true, contentMaxWidthPx: 2400 } });
+    expect(saved.threads.contentFullWidth).toBe(true);
+    expect(saved.threads.contentMaxWidthPx).toBe(2400);
+  });
+
+  it("rejects an out-of-range contentMaxWidthPx (falls back to defaults)", () => {
+    expect(parseVizSettings({ threads: { contentMaxWidthPx: 500 } })).toEqual(DEFAULT_VIZ_SETTINGS);
+    expect(parseVizSettings({ threads: { contentMaxWidthPx: 5000 } })).toEqual(DEFAULT_VIZ_SETTINGS);
+  });
+
+  it("defaults heightMode to shared and preserves a saved perCard value", () => {
+    expect(parseVizSettings({}).threads.heightMode).toBe("shared");
+    expect(parseVizSettings({ threads: { heightMode: "perCard" } }).threads.heightMode).toBe("perCard");
   });
 
   it("preserves a saved agentColors map", () => {
@@ -149,9 +176,13 @@ describe("vizSettingsSchema strictness", () => {
       threads: {
         unit: 900,
         fillWidth: false,
+        hugWidth: true,
+        contentFullWidth: true,
+        contentMaxWidthPx: 2000,
         collapseEmpty: true,
         colWidthPx: 20,
         heightScale: 2,
+        heightMode: "perCard",
         colGap: 4,
         segGap: 2,
         colRadius: 3,

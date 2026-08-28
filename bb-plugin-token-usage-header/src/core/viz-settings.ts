@@ -30,9 +30,12 @@ const hexColorSchema = z.string().regex(/^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/, "e
 export const THREADS_SORT_MODES = ["recent", "tokens", "duration"] as const;
 export type ThreadsSortMode = (typeof THREADS_SORT_MODES)[number];
 
+export const THREADS_HEIGHT_MODES = ["shared", "perCard"] as const;
+export type ThreadsHeightMode = (typeof THREADS_HEIGHT_MODES)[number];
+
 /**
  * Mirrors ThreadsTimelinePage.tsx's own `useState` calls one-for-one:
- * unit, fillWidth, collapseEmpty, colWidthPx, heightScale (row 1 controls),
+ * unit, fillWidth, hugWidth, collapseEmpty, colWidthPx, heightScale (row 1 controls),
  * colGap/segGap/colRadius/segRadius/frameLiftColor (geometry popover),
  * agentColors (per-agent legend colour picker), sortMode, and the filter
  * state — searchQuery, projectFilter, costMin, costMax. The filters used to be
@@ -46,11 +49,19 @@ const threadsVizSettingsSchema = z
     /** Bin width in seconds — mirrors the UNIT_OPTIONS group (30/60/300/900/3600). */
     unit: z.number().int().positive().default(60),
     fillWidth: z.boolean().default(true),
+    /** true = the card shrinks to fit the chart's own width (w-fit) instead of stretching to the container (w-full) — meaningful only when fillWidth is off, where the graph is a fixed content width. */
+    hugWidth: z.boolean().default(false),
+    /** true = the whole Usage Analytics content area spans the full window width (no centered cap); false = capped and centered at contentMaxWidthPx, leaving side gutters. */
+    contentFullWidth: z.boolean().default(false),
+    /** px, max width of the centered content area when contentFullWidth is off — smaller = wider side gutters, larger = narrower gutters. */
+    contentMaxWidthPx: z.number().int().min(600).max(4000).default(1400),
     /** true = consecutive empty bins collapse into one displayed gap column carrying their summed duration; false = one column per bin (including empty ones), as before. */
     collapseEmpty: z.boolean().default(false),
     /** px width of a single column (bin), used only when fillWidth is off — not px per second of duration. */
     colWidthPx: z.number().int().min(1).max(40).default(6),
     heightScale: z.number().min(0.3).max(3).default(1),
+    /** How column heights are normalized: "shared" = one scale across all cards (tallest column anywhere fills the card height); "perCard" = each card scales to its own tallest column. */
+    heightMode: z.enum(THREADS_HEIGHT_MODES).default("shared"),
     /** px, gap between bin columns. */
     colGap: z.number().min(0).max(8).default(1),
     /** px, gap between an agent's stacked segments inside one bin. */

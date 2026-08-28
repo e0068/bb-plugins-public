@@ -1,5 +1,8 @@
 import type { TaskSort } from "../shared/pagination.js";
-import type { PresetPermissionMode } from "../shared/contract.js";
+import type {
+  FieldDisplayConfig,
+  PresetPermissionMode,
+} from "../shared/contract.js";
 
 export const TASK_STATUSES = [
   "backlog",
@@ -352,4 +355,19 @@ export interface UpdatePresetInput {
   machineId?: string | null;
   instructions?: string;
   builtin?: boolean;
+}
+
+export interface SavedView {
+  id: string;
+  scope: string;
+  name: string;
+  config: FieldDisplayConfig;
+  createdAt: string;
+}
+
+export interface CreateSavedViewInput {
+  id?: string;
+  scope: string;
+  name: string;
+  config: FieldDisplayConfig;
 }

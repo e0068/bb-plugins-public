@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  applyFieldDisplay,
   boardFieldScope,
   CANONICAL_FIELD_ORDER,
   defaultConfig,
@@ -14,6 +15,8 @@ import {
   setShowEmpty,
   surfaceOfScope,
   toggleFieldVisible,
+  type FieldDisplayConfig,
+  type FieldEntry,
   type FieldScope,
   type RowField,
 } from "./row-field-preference.js";
@@ -194,6 +197,163 @@ describe("mutations persist per scope", () => {
     setShowEmpty("all", true);
     resetFieldDisplay("all");
     expect(loadFieldDisplay("all")).toEqual(defaultConfig("list"));
+  });
+});
+
+describe("applyFieldDisplay", () => {
+  it("applies a full config verbatim: order, visibility, and the flags", () => {
+    const config: FieldDisplayConfig = {
+      fields: [
+        "dueDate",
+        "labels",
+        "priority",
+        "active",
+        "type",
+        "estimate",
+        "tokens",
+        "project",
+        "createdAt",
+        "updatedAt",
+      ].map((field) => ({
+        field: field as RowField,
+        visible: field === "labels" || field === "dueDate",
+      })),
+      showEmpty: true,
+      showDescription: false,
+    };
+    applyFieldDisplay("all", config);
+    expect(loadFieldDisplay("all").fields.map((entry) => entry.field)).toEqual(
+      config.fields.map((entry) => entry.field),
+    );
+    // Visible order follows the applied order (dueDate before labels), not
+    // the canonical one.
+    expect(visibleOrder("all")).toEqual(["dueDate", "labels"]);
+    expect(loadFieldDisplay("all").showEmpty).toBe(true);
+  });
+
+  it("survives a reload from localStorage, not just the in-memory session", () => {
+    applyFieldDisplay("all", {
+      fields: CANONICAL_FIELD_ORDER.map((field) => ({
+        field,
+        visible: field === "tokens",
+      })),
+      showEmpty: false,
+      showDescription: false,
+    });
+    const stored = JSON.parse(
+      window.localStorage.getItem(ROW_FIELD_PREFERENCE_STORAGE_KEY)!,
+    );
+    expect(stored.scopes.all.fields.find((e: FieldEntry) => e.field === "tokens").visible).toBe(
+      true,
+    );
+    expect(visibleOrder("all")).toEqual(["tokens"]);
+  });
+
+  it("appends canonical fields a partial config omits, hidden, keeping the given order first", () => {
+    applyFieldDisplay("all", {
+      fields: [
+        { field: "tokens", visible: true },
+        { field: "priority", visible: false },
+      ],
+      showEmpty: false,
+      showDescription: false,
+    });
+    const fields = loadFieldDisplay("all").fields;
+    expect(fields.slice(0, 2)).toEqual([
+      { field: "tokens", visible: true },
+      { field: "priority", visible: false },
+    ]);
+    expect(fields.slice(2).every((entry) => entry.visible === false)).toBe(
+      true,
+    );
+    expect(fields).toHaveLength(CANONICAL_FIELD_ORDER.length);
+  });
+
+  it("drops an unrecognized field name without erroring", () => {
+    applyFieldDisplay("all", {
+      fields: [
+        { field: "labels", visible: true },
+        { field: "bogus" as unknown as RowField, visible: true },
+        { field: "tokens", visible: false },
+      ],
+      showEmpty: false,
+      showDescription: false,
+    });
+    const fields = loadFieldDisplay("all").fields;
+    expect(fields.some((entry) => (entry.field as string) === "bogus")).toBe(
+      false,
+    );
+    expect(fields).toHaveLength(CANONICAL_FIELD_ORDER.length);
+    expect(visibleOrder("all")).toEqual(["labels"]);
+  });
+
+  it("drops a repeated field, keeping the first occurrence", () => {
+    applyFieldDisplay("all", {
+      fields: [
+        { field: "labels", visible: true },
+        { field: "labels", visible: false },
+        ...CANONICAL_FIELD_ORDER.filter((field) => field !== "labels").map(
+          (field) => ({ field, visible: false }),
+        ),
+      ],
+      showEmpty: false,
+      showDescription: false,
+    });
+    const fields = loadFieldDisplay("all").fields;
+    expect(fields.filter((entry) => entry.field === "labels")).toEqual([
+      { field: "labels", visible: true },
+    ]);
+    expect(fields).toHaveLength(CANONICAL_FIELD_ORDER.length);
+  });
+
+  it("touches only the applied scope, leaving other scopes untouched", () => {
+    // Give board:P1 a known, non-default state first so this test does not
+    // depend on whatever default happens to be on disk.
+    applyFieldDisplay("board:P1", {
+      fields: CANONICAL_FIELD_ORDER.map((field) => ({
+        field,
+        visible: field === "labels",
+      })),
+      showEmpty: false,
+      showDescription: true,
+    });
+    const boardBefore = loadFieldDisplay("board:P1");
+    applyFieldDisplay("all", {
+      fields: CANONICAL_FIELD_ORDER.map((field) => ({
+        field,
+        visible: field === "priority",
+      })),
+      showEmpty: true,
+      showDescription: false,
+    });
+    expect(loadFieldDisplay("board:P1")).toEqual(boardBefore);
+  });
+
+  it("applies to a board scope, including showDescription", () => {
+    applyFieldDisplay("board:P1", {
+      fields: CANONICAL_FIELD_ORDER.map((field) => ({
+        field,
+        visible: field === "priority",
+      })),
+      showEmpty: false,
+      showDescription: true,
+    });
+    expect(loadFieldDisplay("board:P1").showDescription).toBe(true);
+    expect(visibleOrder("board:P1")).toEqual(["priority"]);
+  });
+
+  it("never down-converts a document written by a newer client", () => {
+    const future = JSON.stringify({
+      version: 99,
+      scopes: {
+        all: { fields: [{ field: "labels", visible: true }], showEmpty: true },
+      },
+    });
+    window.localStorage.setItem(ROW_FIELD_PREFERENCE_STORAGE_KEY, future);
+    applyFieldDisplay("all", defaultConfig("list"));
+    expect(window.localStorage.getItem(ROW_FIELD_PREFERENCE_STORAGE_KEY)).toBe(
+      future,
+    );
   });
 });
 

@@ -13,8 +13,14 @@ import { binTotal, formatCost, formatPercent, formatTokenCount, type ThreadEntry
 
 /** Fixed, subtle alpha for the chart frame's lift tint — only the hue is user-configurable (native `<input type="color">` has no alpha channel). */
 export const FRAME_LIFT_ALPHA = 0.05;
+/** Stronger lift alpha applied while the whole card is hovered (only when it's clickable, i.e. onOpenCard is set) — the "card lights up on hover" feedback. */
+export const FRAME_LIFT_ALPHA_HOVER = 0.14;
 /** Floor for the graph's own width when fillWidth is off (colWidthPx * 0 bins would otherwise collapse it). */
 const MIN_GRAPH_WIDTH_PX = 4;
+/** Horizontal chrome of the card the graph sits in — p-3 (12px) on both sides plus a 1px border on each — so a hug card can be sized to exactly hold its graph. */
+const CARD_FRAME_PX = 12 * 2 + 1 * 2;
+/** Floor for a hug card's width — a very short session's graph is only a few px wide; without this the card would collapse to an unreadable sliver. */
+const MIN_HUG_CARD_WIDTH_PX = 96;
 /** Fade-out duration of the column tooltip: on leave it eases to transparent over this long, then unmounts (no fully-visible hold). */
 const TOOLTIP_FADE_MS = 200;
 /** Default chart height (px) for the single-session card, mirroring the feed's own BASE_CHART_HEIGHT. */
@@ -93,13 +99,16 @@ export function ThreadRow({
   unit,
   chartHeight,
   maxBinTotal,
+  perCardHeight,
   maxBinCount,
   agentKeys,
   colorFor,
   labelFor,
   onSegmentClick,
   onOpenThread,
+  onOpenCard,
   fillWidth,
+  hugWidth,
   collapseEmpty,
   colWidthPx,
   colGap,
@@ -112,6 +121,8 @@ export function ThreadRow({
   unit: number;
   chartHeight: number;
   maxBinTotal: number;
+  /** true = normalize column heights to THIS card's own tallest column (its tallest fills the card height); false = use the shared maxBinTotal across all cards. */
+  perCardHeight: boolean;
   /** DISPLAYED column count of the longest visible thread (after collapseEmpty folding — see computeDisplayBins) — drives the uniform column width when fillWidth is on. */
   maxBinCount: number;
   agentKeys: readonly string[];
@@ -121,8 +132,19 @@ export function ThreadRow({
   onSegmentClick: (agentKey: string, session: string, fromIso: string, toIso: string) => void;
   /** Открыть тред BB по клику на название — задан, только когда у треда есть матч (threadId); для бакета «Threads» отсутствует. */
   onOpenThread?: () => void;
+  /**
+   * Открыть внутреннюю страницу сессии по клику на карточку целиком (включая
+   * пустую область). Задан только в ленте (ThreadsTimelinePage); в карточке
+   * самой страницы сессии (SessionChartCard) отсутствует — там интерактива
+   * уровня карточки нет. Когда задан, карточка подсвечивается на наведении и
+   * становится кликабельной; заголовок и сегменты гасят всплытие, сохраняя
+   * своё поведение.
+   */
+  onOpenCard?: () => void;
   /** true = bin columns stretch to share the graph's width equally (flex-1); false = each bin column is a fixed colWidthPx wide. */
   fillWidth: boolean;
+  /** true = карточка сжимается под ширину графика (w-fit) вместо растягивания на контейнер (w-full); осмысленно при выключенном fillWidth. */
+  hugWidth: boolean;
   /** true = consecutive empty bins render as one collapsed gap column — see computeDisplayBins. */
   collapseEmpty: boolean;
   /** px, fixed width of EACH bin column — used only when fillWidth is off. */
@@ -158,6 +180,19 @@ export function ThreadRow({
   const graphWidthPx = fillWidth
     ? undefined
     : Math.max(binCount * colWidthPx + Math.max(binCount - 1, 0) * colGap, MIN_GRAPH_WIDTH_PX);
+  // Hug is only meaningful with a fixed graph width (fillWidth off): the card
+  // is sized to hold exactly that graph, so its header (title + metrics) must
+  // stop dictating the width — it stacks and truncates instead. maxWidth 100%
+  // keeps a very wide graph from overflowing the row (its own overflow-x-auto
+  // scrolls inside the capped card).
+  const hug = hugWidth && !fillWidth;
+  const cardWidthPx = hug ? Math.max((graphWidthPx ?? 0) + CARD_FRAME_PX, MIN_HUG_CARD_WIDTH_PX) : undefined;
+
+  // Column-height reference: this card's own tallest column (perCard) or the
+  // shared max across all cards (the default). perCard makes each card's
+  // tallest column fill its height, at the cost of cross-card comparability.
+  const localMaxBinTotal = useMemo(() => thread.bins.reduce((m, bin) => Math.max(m, binTotal(bin)), 0), [thread.bins]);
+  const effectiveMaxBinTotal = perCardHeight ? localMaxBinTotal : maxBinTotal;
 
   // Time range, total and per-agent breakdown of one bin — shared by the
   // column render (segment heights) and the hover tooltip (its legend), so
@@ -176,6 +211,10 @@ export function ThreadRow({
   // per-agent legend appears immediately, and portaled to document.body so
   // the graph's own overflow-hidden/overflow-x-auto never clips it.
   const [tip, setTip] = useState<{ binIndex: number; x: number; y: number } | null>(null);
+  // Whole-card hover, only tracked (and only visible) when the card is
+  // clickable — drives the lift-tint bump on the whole frame, including its
+  // empty area.
+  const [cardHovered, setCardHovered] = useState(false);
   // On leave the tooltip eases to transparent over TOOLTIP_FADE_MS, then
   // unmounts — a fade-out, not a fully-visible grace hold. Moving onto another
   // column cancels the fade and re-shows at full opacity, so crossing the
@@ -209,25 +248,66 @@ export function ThreadRow({
     [],
   );
 
+  const cardActive = Boolean(onOpenCard) && cardHovered;
+  // Card-level interaction exists only in the feed (onOpenCard set); on the
+  // session page's own card it's absent, so the whole block is empty there.
+  const cardInteractive: React.HTMLAttributes<HTMLDivElement> = onOpenCard
+    ? {
+        role: "button",
+        tabIndex: 0,
+        "aria-label": `Открыть детализацию сессии: ${headerTitle}`,
+        onClick: onOpenCard,
+        onMouseEnter: () => setCardHovered(true),
+        onMouseLeave: () => setCardHovered(false),
+        onKeyDown: (e) => {
+          // Enter/Space activate a role="button" — match native button keys so
+          // keyboard users reach the same internal page as a click.
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            onOpenCard();
+          }
+        },
+      }
+    : {};
+
   return (
-    <div className="w-full space-y-2 rounded-md border border-border p-3" style={{ backgroundColor: hexToRgba(frameLiftColor, FRAME_LIFT_ALPHA) }}>
-      <div className="flex items-baseline justify-between gap-3 overflow-hidden text-xs text-muted-foreground">
+    <div
+      className={`space-y-2 rounded-md border border-border p-3 transition-colors ${hug ? "" : "w-full"} ${
+        onOpenCard ? "cursor-pointer ring-inset hover:ring-1 hover:ring-border" : ""
+      }`}
+      style={{
+        backgroundColor: hexToRgba(frameLiftColor, cardActive ? FRAME_LIFT_ALPHA_HOVER : FRAME_LIFT_ALPHA),
+        ...(hug ? { width: cardWidthPx, maxWidth: "100%" } : null),
+      }}
+      {...cardInteractive}
+    >
+      {/* В hug шапка идёт колонкой: заголовок и метрики каждый в своей строке и
+          обрезаются, поэтому не распирают карточку шире графика. Без hug —
+          прежний ряд: заголовок слева, метрики справа. */}
+      <div className={`flex ${hug ? "flex-col gap-0.5" : "items-baseline justify-between gap-3"} overflow-hidden text-xs text-muted-foreground`}>
         {onOpenThread ? (
           <button
             type="button"
-            className="min-w-0 flex-1 truncate text-left font-medium text-foreground hover:underline focus-visible:underline focus-visible:outline-none"
+            className={`${hug ? "w-full" : "min-w-0 flex-1"} truncate text-left font-medium text-foreground hover:underline focus-visible:underline focus-visible:outline-none`}
             title={headerTooltip}
-            onClick={onOpenThread}
+            onClick={(e) => {
+              // Название ведёт в тред BB — гасим всплытие, чтобы клик по карточке
+              // (внутренняя страница сессии) не сработал заодно.
+              e.stopPropagation();
+              onOpenThread();
+            }}
           >
             {headerTitle}
           </button>
         ) : (
-          <span className="min-w-0 flex-1 truncate font-medium text-foreground" title={headerTooltip}>
+          <span className={`${hug ? "w-full" : "min-w-0 flex-1"} truncate font-medium text-foreground`} title={headerTooltip}>
             {headerTitle}
           </span>
         )}
-        <span className="ml-auto shrink-0 tabular-nums">
-          {thread.workflowCount} workflows · {agentCount} agents · {fmtDuration(thread.durationSec)} · {formatTokenCount(thread.totalTokens)} · {formatCost(thread.totalCost)}
+        <span className={`tabular-nums ${hug ? "w-full truncate" : "ml-auto shrink-0"}`}>
+          {/* Не было workflow — не упоминаем их вовсе, а не пишем «0 workflows». */}
+          {thread.workflowCount > 0 && `${thread.workflowCount} workflows · `}
+          {agentCount} agents · {fmtDuration(thread.durationSec)} · {formatTokenCount(thread.totalTokens)} · {formatCost(thread.totalCost)}
         </span>
       </div>
 
@@ -268,12 +348,15 @@ export function ThreadRow({
             }
 
             const { binEndMs, total, ordered } = describeBin(bin);
-            const dispHeight = maxBinTotal > 0 ? Math.max((total / maxBinTotal) * chartHeight, 2) : 2;
+            const dispHeight = effectiveMaxBinTotal > 0 ? Math.max((total / effectiveMaxBinTotal) * chartHeight, 2) : 2;
 
+            // Пока тултип показывает этот столбец — подсвечиваем сам столбец,
+            // чтобы было видно, к чему относится подсказка.
+            const columnActive = tip?.binIndex === binIndex && !tipClosing;
             return (
               <div
                 key={binIndex}
-                className={colClassName}
+                className={`${colClassName} rounded-sm transition-colors ${columnActive ? "bg-state-hover" : ""}`}
                 style={colStyle}
                 onMouseMove={(e) => showTip(binIndex, e.clientX, e.clientY)}
                 onMouseLeave={startTipFade}
@@ -291,7 +374,12 @@ export function ThreadRow({
                         className="block w-full transition-opacity hover:opacity-80 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
                         style={{ height: Math.max(segHeight, 1), backgroundColor: colorFor(a.key), borderRadius: segRadius }}
                         aria-label={`${labelFor(a.key)}: ${formatTokenCount(a.total)} токенов`}
-                        onClick={() => onSegmentClick(a.key, thread.session, bin.t, new Date(binEndMs).toISOString())}
+                        onClick={(e) => {
+                          // Сегмент ведёт в детализацию агента с окном времени —
+                          // гасим всплытие, чтобы не сработал клик по карточке.
+                          e.stopPropagation();
+                          onSegmentClick(a.key, thread.session, bin.t, new Date(binEndMs).toISOString());
+                        }}
                       />
                     );
                   })}
@@ -381,6 +469,7 @@ export function SessionChartCard({
       unit={unit}
       chartHeight={SESSION_CARD_CHART_HEIGHT}
       maxBinTotal={maxBinTotal}
+      perCardHeight={false}
       maxBinCount={maxBinCount}
       agentKeys={agentKeys}
       colorFor={colorFor}
@@ -389,6 +478,7 @@ export function SessionChartCard({
         if (!agentKey.startsWith(WORKFLOW_KEY_PREFIX)) onSelectAgent?.(agentKey);
       }}
       fillWidth
+      hugWidth={false}
       collapseEmpty={false}
       colWidthPx={6}
       colGap={1}

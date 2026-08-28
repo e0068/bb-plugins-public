@@ -24,8 +24,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { cn } from "@/lib/utils";
-import { ProjectSwitcher, type ProjectSwitcherOption } from "../packages/project-switcher/react";
-import { DEFAULT_VIZ_SETTINGS, binTotal, type ThreadEntry } from "../src/core";
+import { DEFAULT_VIZ_SETTINGS, binTotal, type ThreadEntry, type ThreadsHeightMode } from "../src/core";
 import { DEFAULT_PALETTE, ThreadRow, computeDisplayBins } from "./thread-chart";
 import { THREADS_TIMELINE_PANEL_PATH, buildAgentDetailSubPath } from "./AgentTimelinePage";
 
@@ -143,6 +142,16 @@ export function ThreadsTimelinePage(_props: PluginNavPanelProps) {
 
   // --- Visual scale controls (numeric inputs, no slider — see memory/decisions/token-usage-no-slider-use-inputs.md). ---
   const [fillWidth, setFillWidth] = useState(true);
+  // true = the card hugs the chart's own width (w-fit) instead of stretching
+  // to the container (w-full) — meaningful only when fillWidth is off.
+  const [hugWidth, setHugWidth] = useState(false);
+  // Content-area width: full-window vs a centered cap (contentMaxWidthPx),
+  // whose side gutters the owner wanted to grow/remove from the gear.
+  const [contentFullWidth, setContentFullWidth] = useState(false);
+  const [contentMaxWidthPx, setContentMaxWidthPx] = useState(1400);
+  // "shared" = one column-height scale across every card (as before);
+  // "perCard" = each card scales to its own tallest column.
+  const [heightMode, setHeightMode] = useState<ThreadsHeightMode>("shared");
   // true = consecutive empty bins render as one collapsed gap column instead
   // of one column per empty bin — see computeDisplayBins above.
   const [collapseEmpty, setCollapseEmpty] = useState(false);
@@ -190,14 +199,6 @@ export function ThreadsTimelinePage(_props: PluginNavPanelProps) {
     if (hasThreadsBucket) options.push({ key: null, label: "Threads" });
     return options;
   }, [threads]);
-
-  // "Все проекты" (key: "") resets the filter, then one entry per
-  // projectOptions — the "Threads" bucket (key: null) is already the last
-  // entry there, not duplicated here.
-  const switcherOptions = useMemo<ProjectSwitcherOption[]>(
-    () => [{ key: "", label: "Все проекты" }, ...projectOptions],
-    [projectOptions],
-  );
 
   const filteredSorted = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
@@ -286,6 +287,10 @@ export function ThreadsTimelinePage(_props: PluginNavPanelProps) {
         const t = settings.threads;
         setUnit(t.unit);
         setFillWidth(t.fillWidth);
+        setHugWidth(t.hugWidth);
+        setContentFullWidth(t.contentFullWidth);
+        setContentMaxWidthPx(t.contentMaxWidthPx);
+        setHeightMode(t.heightMode);
         setCollapseEmpty(t.collapseEmpty);
         setColWidthPx(t.colWidthPx);
         setHeightScale(t.heightScale);
@@ -329,6 +334,10 @@ export function ThreadsTimelinePage(_props: PluginNavPanelProps) {
           threads: {
             unit,
             fillWidth,
+            hugWidth,
+            contentFullWidth,
+            contentMaxWidthPx,
+            heightMode,
             collapseEmpty,
             colWidthPx,
             heightScale,
@@ -357,6 +366,10 @@ export function ThreadsTimelinePage(_props: PluginNavPanelProps) {
     vizHydrated,
     unit,
     fillWidth,
+    hugWidth,
+    contentFullWidth,
+    contentMaxWidthPx,
+    heightMode,
     collapseEmpty,
     colWidthPx,
     heightScale,
@@ -401,9 +414,19 @@ export function ThreadsTimelinePage(_props: PluginNavPanelProps) {
     });
   }
 
+  // Клик по карточке целиком ведёт на внутреннюю страницу сессии — детализацию
+  // главного агента без окна времени (в отличие от клика по сегменту).
+  function openSession(session: string) {
+    navigate.toPluginPanel(THREADS_TIMELINE_PANEL_PATH, {
+      subPath: buildAgentDetailSubPath({ agent: "main", session }),
+    });
+  }
+
   return (
     <div className="h-full overflow-y-auto">
-      <div className="mx-auto max-w-[1400px] space-y-6 px-6 py-8">
+      {/* Ширина всей области Usage Analytics: на всю ширину окна или центр. с
+          потолком contentMaxWidthPx — боковые «поля» регулируются из шестерёнки. */}
+      <div className="mx-auto space-y-6 px-6 py-8" style={{ maxWidth: contentFullWidth ? "none" : contentMaxWidthPx }}>
         <header className="space-y-1">
           <h1 className="text-lg font-semibold text-foreground">Usage Analytics</h1>
           <p className="text-sm text-muted-foreground">Расход токенов по агентам, слева направо хронологически внутри каждого треда</p>
@@ -414,22 +437,36 @@ export function ThreadsTimelinePage(_props: PluginNavPanelProps) {
             спрятано под шестерёнку — см. ChartSettingsPopover. Легенды агентов
             в тулбаре больше нет: разбивка по агентам живёт в тултипе столбца. */}
         <section className="flex flex-wrap items-center gap-x-4 gap-y-2 border-b border-border pb-4">
-          <ProjectSwitcher
-            options={switcherOptions}
-            isSelected={(key) => (key === "" ? projectFilter.size === 0 : projectFilter.has(key))}
-            onSelect={(key) => {
-              if (key === "") {
-                setProjectFilter(new Set());
-                return;
-              }
-              setProjectFilter((prev) => {
-                const next = new Set(prev);
-                if (next.has(key)) next.delete(key);
-                else next.add(key);
-                return next;
-              });
-            }}
-          />
+          <div className="flex flex-wrap items-center gap-2">
+            <Button
+              type="button"
+              variant={projectFilter.size === 0 ? "default" : "outline"}
+              size="sm"
+              aria-pressed={projectFilter.size === 0}
+              onClick={() => setProjectFilter(new Set())}
+            >
+              Все проекты
+            </Button>
+            {projectOptions.map((opt) => (
+              <Button
+                key={opt.key ?? "—threads—"}
+                type="button"
+                variant={projectFilter.has(opt.key) ? "default" : "outline"}
+                size="sm"
+                aria-pressed={projectFilter.has(opt.key)}
+                onClick={() =>
+                  setProjectFilter((prev) => {
+                    const next = new Set(prev);
+                    if (next.has(opt.key)) next.delete(opt.key);
+                    else next.add(opt.key);
+                    return next;
+                  })
+                }
+              >
+                {opt.label}
+              </Button>
+            ))}
+          </div>
 
           <div className="ml-auto flex flex-wrap items-center gap-2">
             <div className="flex items-center gap-1" role="group" aria-label="Фильтр по стоимости">
@@ -480,6 +517,14 @@ export function ThreadsTimelinePage(_props: PluginNavPanelProps) {
               onUnitChange={changeUnit}
               fillWidth={fillWidth}
               onFillWidthChange={setFillWidth}
+              hugWidth={hugWidth}
+              onHugWidthChange={setHugWidth}
+              contentFullWidth={contentFullWidth}
+              onContentFullWidthChange={setContentFullWidth}
+              contentMaxWidthPx={contentMaxWidthPx}
+              onContentMaxWidthPxChange={setContentMaxWidthPx}
+              heightMode={heightMode}
+              onHeightModeChange={setHeightMode}
               collapseEmpty={collapseEmpty}
               onCollapseEmptyChange={setCollapseEmpty}
               colWidthPx={colWidthPx}
@@ -509,7 +554,9 @@ export function ThreadsTimelinePage(_props: PluginNavPanelProps) {
 
         {phase !== "loading" && phase !== "error" && (
           <section className="pb-2">
-            <div className="space-y-4">
+            {/* В hug карточки сжаты под свой график и раскладываются плиткой с
+                переносом по строке; иначе — вертикальный стек на всю ширину. */}
+            <div className={hugWidth && !fillWidth ? "flex flex-wrap items-start gap-4" : "space-y-4"}>
               {visibleThreads.map((thread) => (
                 <ThreadRow
                   key={thread.session}
@@ -517,13 +564,16 @@ export function ThreadsTimelinePage(_props: PluginNavPanelProps) {
                   unit={unit}
                   chartHeight={chartHeight}
                   maxBinTotal={maxBinTotal}
+                  perCardHeight={heightMode === "perCard"}
                   maxBinCount={maxBinCount}
                   agentKeys={agentKeys}
                   colorFor={colorFor}
                   labelFor={labelFor}
                   onSegmentClick={openAgentDetail}
                   onOpenThread={thread.threadId ? () => navigate.toThread(thread.threadId!) : undefined}
+                  onOpenCard={() => openSession(thread.session)}
                   fillWidth={fillWidth}
+                  hugWidth={hugWidth}
                   collapseEmpty={collapseEmpty}
                   colWidthPx={colWidthPx}
                   colGap={colGap}
@@ -551,7 +601,7 @@ export function ThreadsTimelinePage(_props: PluginNavPanelProps) {
 /**
  * The chart's single settings surface — a gear-triggered popover holding
  * every control that isn't the project filter, sort, or search: time unit,
- * the fill/collapse toggles, width/height, geometry knobs, the frame-lift
+ * the fill/hug/collapse toggles, width/height, geometry knobs, the frame-lift
  * tint, and each agent's colour. The toolbar legend that used to own those
  * agent colours is gone — the per-agent breakdown now lives in each column's
  * hover tooltip (see ThreadRow). No slider component exists in this design
@@ -563,6 +613,14 @@ function ChartSettingsPopover({
   onUnitChange,
   fillWidth,
   onFillWidthChange,
+  hugWidth,
+  onHugWidthChange,
+  contentFullWidth,
+  onContentFullWidthChange,
+  contentMaxWidthPx,
+  onContentMaxWidthPxChange,
+  heightMode,
+  onHeightModeChange,
   collapseEmpty,
   onCollapseEmptyChange,
   colWidthPx,
@@ -588,6 +646,14 @@ function ChartSettingsPopover({
   onUnitChange: (v: number) => void;
   fillWidth: boolean;
   onFillWidthChange: (v: boolean) => void;
+  hugWidth: boolean;
+  onHugWidthChange: (v: boolean) => void;
+  contentFullWidth: boolean;
+  onContentFullWidthChange: (v: boolean) => void;
+  contentMaxWidthPx: number;
+  onContentMaxWidthPxChange: (v: number) => void;
+  heightMode: ThreadsHeightMode;
+  onHeightModeChange: (v: ThreadsHeightMode) => void;
   collapseEmpty: boolean;
   onCollapseEmptyChange: (v: boolean) => void;
   colWidthPx: number;
@@ -645,6 +711,17 @@ function ChartSettingsPopover({
         </div>
 
         <ToggleField label="Заполнить по ширине" value={fillWidth} onChange={onFillWidthChange} />
+        {/* Hug осмысленен только при выключенном «Заполнить по ширине»: при
+            включённом график и так на 100% карточки, обнимать нечего. */}
+        {!fillWidth && (
+          <ToggleField
+            label="Hug по ширине"
+            value={hugWidth}
+            onChange={onHugWidthChange}
+            nameOn="Hug по ширине: Вкл"
+            nameOff="Hug по ширине: Выкл"
+          />
+        )}
         <ToggleField
           label="Схлопнуть пустоты"
           value={collapseEmpty}
@@ -657,6 +734,41 @@ function ChartSettingsPopover({
           <NumberField label="Ширина" ariaLabel="Ширина столбца, пикселей" suffix="px/стб" value={colWidthPx} onChange={onColWidthPxChange} min={1} max={40} step={1} />
         )}
         <NumberField label="Высота" ariaLabel="Масштаб высоты" suffix="×" value={heightScale} onChange={onHeightScaleChange} min={0.3} max={3} step={0.1} />
+
+        <div className="space-y-1">
+          <div className="text-xs text-muted-foreground">Высота столбцов</div>
+          <div className="flex gap-1" role="group" aria-label="Высота столбцов">
+            <Button type="button" variant={heightMode === "shared" ? "default" : "ghost"} size="sm" aria-pressed={heightMode === "shared"} onClick={() => onHeightModeChange("shared")}>
+              Общая
+            </Button>
+            <Button type="button" variant={heightMode === "perCard" ? "default" : "ghost"} size="sm" aria-pressed={heightMode === "perCard"} onClick={() => onHeightModeChange("perCard")}>
+              По карточке
+            </Button>
+          </div>
+        </div>
+
+        <div className="space-y-2 border-t border-border pt-2">
+          <div className="text-xs font-medium text-muted-foreground">Ширина области</div>
+          <ToggleField
+            label="На всю ширину"
+            value={contentFullWidth}
+            onChange={onContentFullWidthChange}
+            nameOn="На всю ширину: Вкл"
+            nameOff="На всю ширину: Выкл"
+          />
+          {!contentFullWidth && (
+            <NumberField
+              label="Макс. ширина"
+              ariaLabel="Максимальная ширина области, пикселей"
+              suffix="px"
+              value={contentMaxWidthPx}
+              onChange={onContentMaxWidthPxChange}
+              min={600}
+              max={4000}
+              step={50}
+            />
+          )}
+        </div>
 
         <div className="space-y-2 border-t border-border pt-2">
           <div className="text-xs font-medium text-muted-foreground">Геометрия</div>

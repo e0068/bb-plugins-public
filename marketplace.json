@@ -99,6 +99,33 @@
           "ref": "main"
         }
       }
+    },
+    {
+      "id": "workflow-composer",
+      "displayName": "Workflows+",
+      "description": "Visual bb-workflow builder: assemble a tree of phases and steps, compile it to .js, save it to .bb/workflows or ~/.claude/workflows, validate and run it.",
+      "icon": {
+        "url": "bb-plugin-workflow-composer/assets/icon.svg"
+      },
+      "tags": [
+        "workflows",
+        "editor",
+        "constructor",
+        "agents",
+        "claude-code",
+        "automation"
+      ],
+      "author": {
+        "name": "e0068",
+        "github": "e0068"
+      },
+      "source": {
+        "git": {
+          "url": "https://github.com/e0068/bb-plugins-public.git",
+          "subdir": "bb-plugin-workflow-composer",
+          "ref": "main"
+        }
+      }
     }
   ]
 }

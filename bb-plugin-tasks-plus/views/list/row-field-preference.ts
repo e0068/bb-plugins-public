@@ -1,5 +1,11 @@
 import { useMemo } from "react";
 import { useSyncExternalStore } from "react";
+import { ROW_FIELDS } from "../../shared/enums.js";
+import type { RowField as SharedRowField } from "../../shared/enums.js";
+// Type-only: erased at compile time, so this never pulls zod or the server
+// SDK (shared/contract.ts's runtime dependencies) into the frontend bundle.
+// Same trick as shell/data.ts's `TasksRpcContract`/`Task` imports.
+import type { FieldDisplayConfig as ContractFieldDisplayConfig } from "../../shared/contract.js";
 
 /**
  * Client-local choice of which task fields a surface shows, in what order, and
@@ -16,35 +22,19 @@ import { useSyncExternalStore } from "react";
 export const ROW_FIELD_PREFERENCE_STORAGE_KEY = "bb-tasks:row-field-preferences";
 export const ROW_FIELD_PREFERENCE_VERSION = 2 as const;
 
-export type RowField =
-  | "priority"
-  | "active"
-  | "type"
-  | "estimate"
-  | "labels"
-  | "tokens"
-  | "dueDate"
-  | "project"
-  | "createdAt"
-  | "updatedAt";
+// The field dictionary itself lives in shared/enums.ts, not here: a saved view
+// is validated against it on the server too, so the set of field names is
+// shared client/server knowledge, not a detail private to this view. Re-export
+// under the names this module has always used so existing importers (row.tsx,
+// board/index.tsx, field-plan.ts, …) need no changes.
+export type RowField = SharedRowField;
 
 /**
  * Canonical field order. A surface's default order is this list; stored configs
  * keep their own order and gain any field added here later, appended hidden so a
  * new field never surfaces itself on existing clients.
  */
-export const CANONICAL_FIELD_ORDER: readonly RowField[] = [
-  "priority",
-  "active",
-  "type",
-  "estimate",
-  "labels",
-  "tokens",
-  "dueDate",
-  "project",
-  "createdAt",
-  "updatedAt",
-];
+export const CANONICAL_FIELD_ORDER: readonly RowField[] = ROW_FIELDS;
 
 export const ROW_FIELD_LABELS: Record<RowField, string> = {
   priority: "Priority",
@@ -85,19 +75,12 @@ export type FieldScope =
   | `project:${string}`
   | `board:${string}`;
 
-export interface FieldEntry {
-  field: RowField;
-  visible: boolean;
-}
-
-export interface FieldDisplayConfig {
-  /** Every canonical field exactly once, in render order. */
-  fields: FieldEntry[];
-  /** Render an enabled-but-empty field as a placeholder instead of collapsing. */
-  showEmpty: boolean;
-  /** Board only: show the task description's first lines on the card. */
-  showDescription: boolean;
-}
+// The config travels to the database over RPC and is validated there against
+// `shared/contract.ts`'s `fieldDisplayConfigSchema`, so its shape is shared
+// client/server knowledge, not a view-local detail; this is a re-export under
+// the old name for today's importers (field-plan.ts, row.tsx, board/index.tsx).
+export type FieldDisplayConfig = ContractFieldDisplayConfig;
+export type FieldEntry = FieldDisplayConfig["fields"][number];
 
 /** List surfaces reuse the list-filter scope strings; board scopes its own. */
 export function listFieldScope(
@@ -394,6 +377,23 @@ export function setShowDescription(scope: FieldScope, value: boolean): void {
 /** Reset a scope back to its surface default. */
 export function resetFieldDisplay(scope: FieldScope): void {
   writeConfig(scope, defaultConfig(surfaceOfScope(scope)));
+}
+
+/**
+ * Apply a whole config to a scope (saved view). Runs it through the same
+ * sanitizer as any stored document: a view saved by an older client predates
+ * fields added since, so they must be appended hidden rather than missing,
+ * and any field the config no longer recognizes must be dropped rather than
+ * stored verbatim. `sanitizeSurface` takes `unknown` and reads only the keys
+ * it knows, so a malformed `config` (missing `fields`, extra junk) is cleaned
+ * rather than thrown on — unlike `serializeSurface`, which assumes a
+ * well-formed config and was dropped from this path for that reason.
+ */
+export function applyFieldDisplay(
+  scope: FieldScope,
+  config: FieldDisplayConfig,
+): void {
+  writeConfig(scope, sanitizeSurface(config, surfaceOfScope(scope)));
 }
 
 /** Reactive config for one scope; re-renders subscribers on any change. */

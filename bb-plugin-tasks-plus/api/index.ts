@@ -230,6 +230,15 @@ export function publishCommentsChanged(
 }
 
 /**
+ * Saved views live in the plugin's shared database, so one tab creating,
+ * overwriting, or deleting a view must not go unnoticed by another tab on the
+ * same bb — the payload is empty because subscribers just re-list.
+ */
+function publishViewsChanged(bb: BbPluginApi): void {
+  bb.realtime.publish("views:changed", {});
+}
+
+/**
  * The file path backing a task, sourced only from a real `file_tasks` link
  * (kept current by `bb tasks sync`). Tasks that still carry a legacy
  * "Источник: …" description marker (see filesync/legacy-source.ts) but no
@@ -1108,6 +1117,19 @@ export function registerHandlers(
     },
     listPresets() {
       return { presets: store.tasks.listPresets() };
+    },
+    listSavedViews(input) {
+      return { savedViews: store.tasks.listSavedViews(input.scope) };
+    },
+    createSavedView(input) {
+      const savedView = store.tasks.createSavedView(input);
+      publishViewsChanged(bb);
+      return { savedView };
+    },
+    deleteSavedView(input) {
+      const deleted = store.tasks.deleteSavedView(input.savedViewId);
+      if (deleted) publishViewsChanged(bb);
+      return { deleted };
     },
     async listProviders() {
       const providers = await bb.sdk.providers.list();

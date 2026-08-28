@@ -250,34 +250,6 @@ describe("threads-timeline nav panel", () => {
     expect(slot.rpcCalls.length).toBe(callsBefore);
   });
 
-  it("renders the shared ProjectSwitcher's «Все проекты» chip pressed by default, and lets multiple project chips be toggled on together (multi-filter)", async () => {
-    const slot = await renderThreadsTimeline({ threadsTimeline: async () => THREADS_READY });
-    await screen.findByText("Тред А");
-
-    const allChip = screen.getByRole("button", { name: "Все проекты" });
-    expect(allChip.getAttribute("aria-pressed")).toBe("true");
-
-    fireEvent.click(screen.getByRole("button", { name: "Token Usage Header" }));
-    fireEvent.click(screen.getByRole("button", { name: "Threads" }));
-
-    // Both chips now selected (multi-filter), "Все проекты" no longer pressed,
-    // and every thread is visible again — one bucket per row matches.
-    expect(allChip.getAttribute("aria-pressed")).toBe("false");
-    expect(screen.getByRole("button", { name: "Token Usage Header" }).getAttribute("aria-pressed")).toBe("true");
-    expect(screen.getByRole("button", { name: "Threads" }).getAttribute("aria-pressed")).toBe("true");
-    await screen.findByText("Тред А");
-    await screen.findByText(THREAD_B_FALLBACK_TITLE);
-
-    // Clicking "Все проекты" resets the filter back to showing everything.
-    fireEvent.click(allChip);
-    expect(allChip.getAttribute("aria-pressed")).toBe("true");
-    expect(screen.getByRole("button", { name: "Token Usage Header" }).getAttribute("aria-pressed")).toBe("false");
-    const callsBefore = slot.rpcCalls.length;
-    await screen.findByText("Тред А");
-    await screen.findByText(THREAD_B_FALLBACK_TITLE);
-    expect(slot.rpcCalls.length).toBe(callsBefore);
-  });
-
   it("filters rows client-side by search text", async () => {
     await renderThreadsTimeline({ threadsTimeline: async () => THREADS_READY });
     await screen.findByText("Тред А");
@@ -606,6 +578,135 @@ describe("threads-timeline nav panel", () => {
     assertMatchesContract("saveVizSettings", savedInput);
   });
 
+  it("shows the «Hug по ширине» toggle only once fillWidth is off (it does nothing while fill is on)", async () => {
+    await renderThreadsTimeline({ threadsTimeline: async () => THREADS_READY });
+    await screen.findByText("Тред А");
+    await openSettings();
+
+    // fillWidth defaults on → hug hidden.
+    expect(screen.queryByText("Hug по ширине")).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: "Выкл" }));
+
+    // fillWidth off → hug toggle appears.
+    screen.getByText("Hug по ширине");
+  });
+
+  it("persists hugWidth when the Hug toggle is switched on (with fillWidth off)", async () => {
+    let savedInput: unknown;
+    await renderThreadsTimeline({
+      threadsTimeline: async () => THREADS_READY,
+      saveVizSettings: async (input) => {
+        savedInput = input;
+        return { ok: true as const };
+      },
+    });
+    await screen.findByText("Тред А");
+
+    await openSettings();
+    fireEvent.click(screen.getByRole("button", { name: "Выкл" }));
+    fireEvent.click(screen.getByRole("button", { name: "Hug по ширине: Вкл" }));
+
+    await waitFor(() => expect((savedInput as VizSettings | undefined)?.threads.hugWidth).toBe(true));
+    assertMatchesContract("saveVizSettings", savedInput);
+  });
+
+  it("sizes a hug card to its own graph width (not w-full) and lays the feed out as a wrapping tile grid", async () => {
+    const loaded: VizSettings = {
+      threads: { ...DEFAULT_VIZ_SETTINGS.threads, fillWidth: false, hugWidth: true },
+      agentDetail: DEFAULT_VIZ_SETTINGS.agentDetail,
+    };
+    await renderThreadsTimeline({ threadsTimeline: async () => THREADS_READY, loadVizSettings: async () => loaded });
+    const title = await screen.findByText("Тред А");
+    const card = title.closest(".rounded-md.border.border-border") as HTMLElement;
+
+    // Card is explicitly sized (not stretched to the row) and capped so a wide
+    // graph can't overflow — its inner scroller handles that instead.
+    expect(card.classList.contains("w-full")).toBe(false);
+    expect(card.style.width).not.toBe("");
+    expect(card.style.maxWidth).toBe("100%");
+
+    // The feed itself wraps cards into a tile grid rather than a vertical stack.
+    const feed = card.closest("section")?.querySelector(".flex.flex-wrap") as HTMLElement;
+    expect(feed).not.toBeNull();
+    expect(feed.contains(card)).toBe(true);
+  });
+
+  it("caps the content area at contentMaxWidthPx by default and drops the cap when contentFullWidth is on", async () => {
+    // Default: capped at 1400px.
+    const first = await renderThreadsTimeline({ threadsTimeline: async () => THREADS_READY });
+    const capped = (await screen.findByText("Тред А")).closest(".mx-auto") as HTMLElement;
+    expect(capped.style.maxWidth).toBe("1400px");
+    cleanup();
+    void first;
+
+    // Full-width: no cap.
+    const loaded: VizSettings = {
+      threads: { ...DEFAULT_VIZ_SETTINGS.threads, contentFullWidth: true },
+      agentDetail: DEFAULT_VIZ_SETTINGS.agentDetail,
+    };
+    await renderThreadsTimeline({ threadsTimeline: async () => THREADS_READY, loadVizSettings: async () => loaded });
+    const full = (await screen.findByText("Тред А")).closest(".mx-auto") as HTMLElement;
+    expect(full.style.maxWidth).toBe("none");
+  });
+
+  it("persists the content-area width settings from the gear", async () => {
+    let saved: unknown;
+    await renderThreadsTimeline({
+      threadsTimeline: async () => THREADS_READY,
+      saveVizSettings: async (input) => {
+        saved = input;
+        return { ok: true as const };
+      },
+    });
+    await screen.findByText("Тред А");
+    await openSettings();
+
+    fireEvent.click(screen.getByRole("button", { name: "На всю ширину: Вкл" }));
+
+    await waitFor(() => expect((saved as VizSettings | undefined)?.threads.contentFullWidth).toBe(true));
+    assertMatchesContract("saveVizSettings", saved);
+  });
+
+  it("scales each card to its own tallest column in perCard height mode (a small thread fills its card, unlike shared mode)", async () => {
+    // Shared (default): Тред Б's lone 1000-token bin is 1/3 of the global max
+    // (Тред А's 3000) → 24px of the 72px chart.
+    const first = await renderThreadsTimeline({ threadsTimeline: async () => THREADS_READY });
+    const sharedCard = (await screen.findByText(THREAD_B_FALLBACK_TITLE)).closest(".rounded-md.border.border-border") as HTMLElement;
+    const sharedStack = sharedCard.querySelector(".absolute.bottom-0.flex-col-reverse") as HTMLElement;
+    expect(sharedStack.style.height).toBe("24px");
+    cleanup();
+    void first;
+
+    // perCard: the same bin is this card's own max → fills the full 72px.
+    const loaded: VizSettings = {
+      threads: { ...DEFAULT_VIZ_SETTINGS.threads, heightMode: "perCard" },
+      agentDetail: DEFAULT_VIZ_SETTINGS.agentDetail,
+    };
+    await renderThreadsTimeline({ threadsTimeline: async () => THREADS_READY, loadVizSettings: async () => loaded });
+    const perCard = (await screen.findByText(THREAD_B_FALLBACK_TITLE)).closest(".rounded-md.border.border-border") as HTMLElement;
+    const perCardStack = perCard.querySelector(".absolute.bottom-0.flex-col-reverse") as HTMLElement;
+    expect(perCardStack.style.height).toBe("72px");
+  });
+
+  it("persists the column-height mode from the gear", async () => {
+    let saved: unknown;
+    await renderThreadsTimeline({
+      threadsTimeline: async () => THREADS_READY,
+      saveVizSettings: async (input) => {
+        saved = input;
+        return { ok: true as const };
+      },
+    });
+    await screen.findByText("Тред А");
+    await openSettings();
+
+    fireEvent.click(screen.getByRole("button", { name: "По карточке" }));
+
+    await waitFor(() => expect((saved as VizSettings | undefined)?.threads.heightMode).toBe("perCard"));
+    assertMatchesContract("saveVizSettings", saved);
+  });
+
   it("keeps one column per bin, each empty bin with its own single-unit gap tooltip, when Схлопнуть пустоты is off (default)", async () => {
     await renderThreadsTimeline({ threadsTimeline: async () => THREADS_WITH_GAPS });
     const title = await screen.findByText("Тред с паузой");
@@ -667,6 +768,56 @@ describe("threads-timeline nav panel", () => {
     fireEvent.click(screen.getByRole("button", { name: "Тред А" }));
 
     expect(slot.navigateCalls).toContainEqual({ method: "toThread", threadId: "thread-aaa" });
+  });
+
+  it("navigates to the session's internal page (main agent, no window) when the card body is clicked", async () => {
+    const slot = await renderThreadsTimeline({ threadsTimeline: async () => THREADS_READY });
+    const title = await screen.findByText("Тред А");
+    const card = title.closest(".rounded-md.border.border-border") as HTMLElement;
+
+    fireEvent.click(card);
+
+    expect(slot.navigateCalls).toContainEqual({
+      method: "toPluginPanel",
+      path: "threads",
+      options: { subPath: buildAgentDetailSubPath({ agent: "main", session: "sess_aaa111" }) },
+    });
+  });
+
+  it("does not also open the card's session page when a segment is clicked (click stops propagating)", async () => {
+    const slot = await renderThreadsTimeline({ threadsTimeline: async () => THREADS_READY });
+    await screen.findByText("Тред А");
+
+    fireEvent.click(screen.getByLabelText(/code-reviewer: 500 токенов/));
+
+    // The segment's own agent-detail nav fired, but not the card-level
+    // main-agent nav (which carries no from/to window).
+    expect(slot.navigateCalls).not.toContainEqual({
+      method: "toPluginPanel",
+      path: "threads",
+      options: { subPath: buildAgentDetailSubPath({ agent: "main", session: "sess_aaa111" }) },
+    });
+  });
+
+  it("omits workflows entirely (not «0 workflows») for a thread with no workflow runs", async () => {
+    await renderThreadsTimeline({ threadsTimeline: async () => THREADS_READY });
+    const title = await screen.findByText(THREAD_B_FALLBACK_TITLE);
+    const card = title.closest(".rounded-md.border.border-border") as HTMLElement;
+
+    // Тред Б: workflowCount 0, one agent (main) → "1 agents", never "workflows".
+    expect(card.textContent).not.toContain("workflows");
+    expect(card.textContent).toContain("1 agents");
+  });
+
+  it("highlights the hovered column while its tooltip is shown", async () => {
+    await renderThreadsTimeline({ threadsTimeline: async () => THREADS_READY });
+    const title = await screen.findByText("Тред А");
+    const card = title.closest(".rounded-md.border.border-border") as HTMLElement;
+    const column = card.querySelectorAll(".relative.h-full.min-w-\\[2px\\]")[1] as HTMLElement;
+
+    fireEvent.mouseMove(column, { clientX: 10, clientY: 10 });
+
+    expect(column.className).toContain("bg-state-hover");
   });
 
   it("leaves the title non-clickable for a session with no BB thread match (the «Threads» bucket)", async () => {

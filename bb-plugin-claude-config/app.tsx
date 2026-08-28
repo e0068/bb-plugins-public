@@ -27,18 +27,18 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
-import { MarkdownEditor } from "./packages/md-editor/react";
+import { MarkdownEditor } from "packages/md-editor/react";
 import {
   fileRefFromCode,
   isInTabLink,
   parseHref,
   resolveRelative,
-} from "./packages/link-navigation/resolve";
+} from "packages/link-navigation/resolve";
 import {
   ResizeHandle,
   useResizableWidth,
-} from "./packages/resizable-pane/react";
-import { ProjectSwitcher } from "./packages/project-switcher/react";
+} from "packages/resizable-pane/react";
+import { ProjectSwitcher } from "packages/project-switcher/react";
 import { rankCandidates } from "./src/suggest";
 import { extractCommandFile } from "./src/hook-script";
 import "./doc-editor.css";

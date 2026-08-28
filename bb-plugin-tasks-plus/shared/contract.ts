@@ -13,6 +13,7 @@ import {
   TASK_CHECKS,
   PRESET_ENVIRONMENT_KINDS,
   PRESET_PERMISSION_MODES,
+  ROW_FIELDS,
 } from "./enums.js";
 
 // Перечисления и производные типы вынесены в enums.js (без @get-bb/plugin-sdk),
@@ -66,6 +67,7 @@ const taskPrioritySchema = z.enum(TASK_PRIORITIES);
 const taskTypeSchema = z.enum(TASK_TYPES);
 const taskEstimateSchema = z.enum(TASK_ESTIMATES);
 const taskCheckSchema = z.enum(TASK_CHECKS);
+const rowFieldSchema = z.enum(ROW_FIELDS);
 const tokenCountSchema = z.number().int().min(0);
 const taskSortSchema = z.enum(TASK_SORTS);
 const threadSearchStatusSchema = z.enum([
@@ -241,6 +243,47 @@ export const presetSchema = z
     machineId: nullablePresetTargetSchema,
     instructions: z.string(),
     builtin: z.boolean(),
+    createdAt: z.string(),
+  })
+  .strict();
+
+/**
+ * Конфигурация меню Display, сохраняемая как именованный вид. Список полей —
+ * подмножество ROW_FIELDS без повторов: вид, сохранённый старым клиентом, не
+ * знает про поле, добавленное позже, и клиент дополняет список при применении.
+ */
+export const fieldDisplayConfigSchema = z
+  .object({
+    /** Every canonical field exactly once, in display order. */
+    fields: z.array(
+      z.object({ field: rowFieldSchema, visible: z.boolean() }).strict(),
+    ),
+    /** Enabled but empty fields render a placeholder instead of collapsing. */
+    showEmpty: z.boolean(),
+    /** Board only: show the task's leading description lines on its card. */
+    showDescription: z.boolean(),
+  })
+  .strict()
+  .refine(
+    (config) =>
+      new Set(config.fields.map((entry) => entry.field)).size ===
+      config.fields.length,
+    { message: "fields must not repeat" },
+  );
+
+// Область (scope) вида — непрозрачный для сервера partition-ключ раздела
+// («all», «active», «project:<id>», «board:<id>» и т.п.). Его грамматику
+// задаёт и толкует только клиент; сервер её не разбирает, чтобы слои не
+// связывались — иначе следующая правка вида на клиенте потребует правки
+// валидации на сервере.
+const savedViewScopeSchema = nonBlankStringSchema.max(120);
+
+export const savedViewSchema = z
+  .object({
+    id: idSchema,
+    scope: savedViewScopeSchema,
+    name: z.string(),
+    config: fieldDisplayConfigSchema,
     createdAt: z.string(),
   })
   .strict();
@@ -718,6 +761,30 @@ export const tasksRpcContract = defineRpcContract({
     input: z.null(),
     output: z.object({ presets: z.array(presetSchema) }).strict(),
   },
+  listSavedViews: {
+    input: z.object({ scope: savedViewScopeSchema }).strict(),
+    output: z.object({ savedViews: z.array(savedViewSchema) }).strict(),
+  },
+  /**
+   * Name is unique within scope case-insensitively; saving under a name
+   * already taken in that scope overwrites the existing view's config while
+   * keeping its id and createdAt. See
+   * memory/decisions/saved-view-name-overwrite.md.
+   */
+  createSavedView: {
+    input: z
+      .object({
+        scope: savedViewScopeSchema,
+        name: nonBlankStringSchema.max(60),
+        config: fieldDisplayConfigSchema,
+      })
+      .strict(),
+    output: z.object({ savedView: savedViewSchema }).strict(),
+  },
+  deleteSavedView: {
+    input: z.object({ savedViewId: idSchema }).strict(),
+    output: z.object({ deleted: z.boolean() }).strict(),
+  },
   listProviders: {
     input: z.object({}).strict(),
     output: z
@@ -832,6 +899,8 @@ export type Attachment = z.infer<typeof attachmentSchema>;
 export type TaskThread = z.infer<typeof taskThreadSchema>;
 export type TaskPullRequest = z.infer<typeof taskPullRequestSchema>;
 export type Preset = z.infer<typeof presetSchema>;
+export type FieldDisplayConfig = z.infer<typeof fieldDisplayConfigSchema>;
+export type SavedView = z.infer<typeof savedViewSchema>;
 export type TasksDomainError = z.infer<typeof tasksDomainErrorSchema>;
 export type TaskMutationResult = z.infer<typeof taskMutationResultSchema>;
 export type ProjectMutationResult = z.infer<typeof projectMutationResultSchema>;
