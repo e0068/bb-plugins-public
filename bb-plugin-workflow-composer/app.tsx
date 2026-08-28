@@ -15,7 +15,7 @@ import { OutlineEditor } from "./ui/outline-editor";
 import {
   ResizeHandle,
   useResizableWidth,
-} from "packages/resizable-pane/react";
+} from "./packages/resizable-pane/react";
 
 type Rpc = ReturnType<typeof useRpc<typeof rpcContract>>;
 interface WorkflowItem {

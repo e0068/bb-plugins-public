@@ -25,7 +25,7 @@ import { WorkflowEditor } from "./ui/tree-editor";
 // findByLabelText("agent prompt") resolves to that wrapping group, which is
 // all the current test (Miller-column drill, below) needs: a truthy find
 // that proves the prompt field rendered.
-vi.mock("packages/md-editor/react", () => ({
+vi.mock("./packages/md-editor/react", () => ({
   MarkdownEditor: ({
     value,
     onChange,
