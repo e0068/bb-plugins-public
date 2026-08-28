@@ -210,23 +210,161 @@ export function listHooks(doc: SettingsDoc): HookEntry[] {
     for (const group of groups) {
       const record = asRecord(group);
       if (!record) continue;
-      const matcher =
-        typeof record.matcher === "string" && record.matcher !== ""
-          ? record.matcher
-          : null;
+      const matcher = groupMatcher(record);
       const list = Array.isArray(record.hooks) ? record.hooks : [];
       for (const hook of list) {
         const item = asRecord(hook);
         if (!item) continue;
-        entries.push({
-          event,
-          matcher,
-          command: typeof item.command === "string" ? item.command : "",
-        });
+        entries.push({ event, matcher, command: hookCommand(item) });
       }
     }
   }
   return entries;
+}
+
+// --- хуки (запись) ------------------------------------------------------
+
+/**
+ * Удаляет первый хук, совпавший по событию, matcher (`null` считается равным
+ * `null`) и команде. Схлопывает опустевшие уровни структуры — группу, событие
+ * и саму секцию `hooks`, — так же, как `writeEntry` для остальных секций.
+ * Не нашла совпадения — возвращает исходный документ и `removed: null`.
+ */
+export function removeHook(
+  doc: SettingsDoc,
+  entry: HookEntry,
+): { doc: SettingsDoc; removed: HookEntry | null } {
+  const hooksSection = readRecord(doc, "hooks");
+  const groups = hooksSection[entry.event];
+  if (!Array.isArray(groups)) return { doc, removed: null };
+
+  for (let groupIndex = 0; groupIndex < groups.length; groupIndex++) {
+    const group = asRecord(groups[groupIndex]);
+    if (!group) continue;
+    const matcher = groupMatcher(group);
+    if (matcher !== entry.matcher) continue;
+
+    const list = Array.isArray(group.hooks) ? group.hooks : [];
+    const hookIndex = list.findIndex((hook) => {
+      const item = asRecord(hook);
+      return item !== null && hookCommand(item) === entry.command;
+    });
+    if (hookIndex === -1) continue;
+
+    const nextHooks = list.filter((_, i) => i !== hookIndex);
+    const nextGroups =
+      nextHooks.length === 0
+        ? groups.filter((_, i) => i !== groupIndex)
+        : groups.map((g, i) =>
+            i === groupIndex ? { ...group, hooks: nextHooks } : g,
+          );
+
+    const nextHooksSection: Record<string, unknown> = { ...hooksSection };
+    if (nextGroups.length === 0) delete nextHooksSection[entry.event];
+    else nextHooksSection[entry.event] = nextGroups;
+
+    const result: SettingsDoc = { ...doc };
+    if (Object.keys(nextHooksSection).length === 0) delete result.hooks;
+    else result.hooks = nextHooksSection;
+
+    return { doc: result, removed: { event: entry.event, matcher, command: entry.command } };
+  }
+  return { doc, removed: null };
+}
+
+/**
+ * Добавляет хук в `hooks[entry.event]`. Ищет группу с тем же matcher (`null`
+ * — группа без поля `matcher` или с пустой строкой) и дописывает в неё
+ * команду; не нашла — заводит новую группу и, если нужно, само событие.
+ */
+export function addHook(doc: SettingsDoc, entry: HookEntry): SettingsDoc {
+  const hooksSection = readRecord(doc, "hooks");
+  const groups = Array.isArray(hooksSection[entry.event])
+    ? (hooksSection[entry.event] as unknown[])
+    : [];
+
+  const matchedIndex = groups.findIndex((group) => {
+    const record = asRecord(group);
+    return record !== null && groupMatcher(record) === entry.matcher;
+  });
+
+  const newHook = { type: "command", command: entry.command };
+  const nextGroups =
+    matchedIndex === -1
+      ? [...groups, newGroup(entry.matcher, newHook)]
+      : groups.map((group, i) => {
+          if (i !== matchedIndex) return group;
+          const record = asRecord(group) ?? {};
+          const list = Array.isArray(record.hooks) ? record.hooks : [];
+          return { ...record, hooks: [...list, newHook] };
+        });
+
+  const nextHooksSection: Record<string, unknown> = {
+    ...hooksSection,
+    [entry.event]: nextGroups,
+  };
+  return { ...doc, hooks: nextHooksSection };
+}
+
+/**
+ * Заменяет команду хука с плоским индексом (порядок как в `listHooks`).
+ * Индекс вне диапазона возвращает документ без изменений; event и matcher
+ * не трогает.
+ */
+export function setHookCommandAt(
+  doc: SettingsDoc,
+  index: number,
+  command: string,
+): SettingsDoc {
+  if (index < 0) return doc;
+  const hooksSection = readRecord(doc, "hooks");
+  const nextHooksSection: Record<string, unknown> = {};
+  let counter = 0;
+  let found = false;
+
+  for (const [event, groups] of Object.entries(hooksSection)) {
+    if (!Array.isArray(groups)) {
+      nextHooksSection[event] = groups;
+      continue;
+    }
+    nextHooksSection[event] = groups.map((group) => {
+      const record = asRecord(group);
+      if (!record) return group;
+      const list = Array.isArray(record.hooks) ? record.hooks : [];
+      const nextList = list.map((hook) => {
+        const item = asRecord(hook);
+        if (!item) return hook;
+        const currentIndex = counter;
+        counter += 1;
+        if (currentIndex !== index) return hook;
+        found = true;
+        return { ...item, command };
+      });
+      return { ...record, hooks: nextList };
+    });
+  }
+
+  if (!found) return doc;
+  return { ...doc, hooks: nextHooksSection };
+}
+
+/** Matcher группы хуков: пустая строка или отсутствие поля — тоже `null`. */
+function groupMatcher(group: Record<string, unknown>): string | null {
+  return typeof group.matcher === "string" && group.matcher !== ""
+    ? group.matcher
+    : null;
+}
+
+function hookCommand(item: Record<string, unknown>): string {
+  return typeof item.command === "string" ? item.command : "";
+}
+
+/** Новая группа хуков: с полем `matcher`, только когда он не `null`. */
+function newGroup(
+  matcher: string | null,
+  hook: { type: string; command: string },
+): Record<string, unknown> {
+  return matcher !== null ? { matcher, hooks: [hook] } : { hooks: [hook] };
 }
 
 // --- общая механика ----------------------------------------------------

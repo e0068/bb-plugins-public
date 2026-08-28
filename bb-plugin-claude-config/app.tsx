@@ -38,6 +38,9 @@ import {
   ResizeHandle,
   useResizableWidth,
 } from "packages/resizable-pane/react";
+import { ProjectSwitcher } from "packages/project-switcher/react";
+import { rankCandidates } from "./src/suggest";
+import { extractCommandFile } from "./src/hook-script";
 import "./doc-editor.css";
 
 const PANEL_PATH = "claude-config";
@@ -172,6 +175,39 @@ function asMarkdown(path: string, content: string): string {
   return `\`\`\`${lang}\n${content}\n\`\`\``;
 }
 
+/**
+ * Показывает команду хука, сделав в ней токен пути к файлу кликабельной ссылкой
+ * (клик — открыть файл на правку). Токен ищется тем же разбором, что и на
+ * сервере (extractCommandFile), поэтому подсвечивается ровно тот путь, чьё
+ * содержимое показано ниже. Нет файла или токена в строке — команда как есть.
+ */
+function renderCommandWithFileLink(
+  command: string,
+  filePath: string | null,
+  onOpen: () => void,
+) {
+  const token = filePath ? extractCommandFile(command) : null;
+  const at = token ? command.indexOf(token) : -1;
+  if (!token || at < 0) return command;
+  return (
+    <>
+      {command.slice(0, at)}
+      <button
+        type="button"
+        onClick={(event) => {
+          event.stopPropagation();
+          onOpen();
+        }}
+        title="Открыть файл для правки"
+        className="text-primary hover:underline"
+      >
+        {token}
+      </button>
+      {command.slice(at + token.length)}
+    </>
+  );
+}
+
 /** Тоггл-переключатель вкл/выкл, как в настройках bb. */
 function Switch({
   checked,
@@ -248,6 +284,7 @@ type Loaded = {
 
 function DocTab({ subPath }: PluginNavPanelProps) {
   const rpc = useRpc<typeof rpcContract>();
+  const navigate = useBbNavigate();
   const target = parseDocSubPath(subPath);
   const areaId = target?.areaId ?? "";
 
@@ -261,9 +298,22 @@ function DocTab({ subPath }: PluginNavPanelProps) {
   const [saveNote, setSaveNote] = useState<string | null>(null);
   // Композит (плагин: манифест + README) — уже готовый markdown, не редактируется.
   const [composite, setComposite] = useState(false);
-  // Пути в поддереве папки документа — для подсказок редактора по / и @.
-  // Редактор зовёт pathProvider синхронно, поэтому список держим в памяти.
+  // Пути в поддереве папки документа — для подсказок / (путь). Редактор зовёт
+  // pathProvider синхронно, поэтому список держим в памяти.
   const [docPaths, setDocPaths] = useState<string[]>([]);
+  // Цели для подсказок @ (импорт): навыки и файлы памяти области — отдельный
+  // источник, не подмножество docPaths, поэтому @code-st матчится по label
+  // ("code-standards"), а не по файлам поддерева текущего документа.
+  const [refTargets, setRefTargets] = useState<
+    { value: string; label: string }[]
+  >([]);
+  // Доп. данные хука: его определение (JSON) и содержимое файла, который команда
+  // читает или запускает (если опознан). Команда правится, эти два — для показа.
+  const [hookExtra, setHookExtra] = useState<{
+    definition: string | null;
+    filePath: string | null;
+    fileContent: string | null;
+  } | null>(null);
 
   // Любой показ нового файла выходит из режима правки.
   const present = (result: Loaded) => {
@@ -271,7 +321,9 @@ function DocTab({ subPath }: PluginNavPanelProps) {
     setEditing(false);
     setSaveNote(null);
     setLoading(false);
-    // Префетч путей для подсказок / и @ (тихо; ошибки не мешают показу).
+    // Доп. хук-данные ставит только hook-ветка; для прочих документов сбрасываем.
+    setHookExtra(null);
+    // Префетч путей для подсказок / (тихо; ошибки не мешают показу).
     if (result.path && result.content != null) {
       void rpc
         .call("listDocPaths", { areaId, path: result.path })
@@ -279,6 +331,20 @@ function DocTab({ subPath }: PluginNavPanelProps) {
         .catch(() => setDocPaths([]));
     } else {
       setDocPaths([]);
+    }
+    // Префетч целей для подсказок @ — не зависит от текущего файла, только
+    // от области.
+    if (areaId) {
+      void rpc
+        .call("listRefTargets", { areaId })
+        .then((r) =>
+          setRefTargets(
+            r.targets.map((t) => ({ value: t.value, label: t.label })),
+          ),
+        )
+        .catch(() => setRefTargets([]));
+    } else {
+      setRefTargets([]);
     }
   };
 
@@ -378,13 +444,19 @@ function DocTab({ subPath }: PluginNavPanelProps) {
         .then((result) => {
           if (!ok) return;
           setStack(result.path ? [result.path] : []);
-          // content уже готовый markdown (заголовок + bash-блок), не правим.
-          setComposite(result.content != null && !result.error);
+          // Сырая команда (bash), не markdown-склейка — редактируется тем же
+          // MarkdownEditor, что и обычный документ (см. writeHook в save()).
+          setComposite(false);
           present({
             path: result.path,
-            content: result.content,
+            content: result.command,
             error: result.error,
-            sha256: null,
+            sha256: result.sha256,
+          });
+          setHookExtra({
+            definition: result.definition,
+            filePath: result.filePath,
+            fileContent: result.fileContent,
           });
         });
       return () => {
@@ -459,15 +531,28 @@ function DocTab({ subPath }: PluginNavPanelProps) {
     return { onClick: () => openAbs(abs) };
   };
 
-  // Подсказки редактора по / (путь) и @ (импорт): фильтруем заранее собранный
-  // список путей поддерева синхронно — редактор зовёт pathProvider на каждый
-  // ввод и ждёт массив, а не промис. Оба режима дают одни и те же пути.
-  const pathProvider = (query: string) => {
-    const q = query.toLowerCase();
-    return docPaths
-      .filter((p) => p.toLowerCase().includes(q))
-      .slice(0, 8)
-      .map((p) => ({ path: p, label: p }));
+  // Подсказки редактора: @ (импорт) — всё ссылаемое сразу (навыки, память И
+  // файлы поддерева), потому что валидную ссылку в документе даёт только @-импорт;
+  // навыки/память матчатся по человекочитаемому label (@code-st → code-standards).
+  // / (путь) — голые пути файлов поддерева, для случая, когда печатают путь без @.
+  // Редактор зовёт pathProvider синхронно на каждый ввод, поэтому списки держим
+  // заранее собранными в памяти (docPaths, refTargets).
+  const pathProvider = (query: string, mode: "path" | "import") => {
+    if (mode === "import") {
+      const candidates = [
+        ...refTargets,
+        ...docPaths.map((p) => ({ value: p, label: p })),
+      ];
+      return rankCandidates(candidates, query, 8).map((c) => ({
+        path: c.value,
+        label: c.label ?? c.value,
+      }));
+    }
+    return rankCandidates(
+      docPaths.map((p) => ({ value: p })),
+      query,
+      8,
+    ).map((c) => ({ path: c.value, label: c.value }));
   };
 
   const back = () => {
@@ -491,28 +576,38 @@ function DocTab({ subPath }: PluginNavPanelProps) {
   // редакторский onSave (⌘S) может передать своё свежее значение синхронно,
   // не дожидаясь применения setDraft.
   const save = (content: string) => {
-    if (!doc) return;
+    if (!doc || !target) return;
     setSaveNote(null);
-    void rpc
-      .call("writeDoc", {
-        areaId,
-        path: doc.path,
-        content,
-        expectedSha256: doc.sha256,
-      })
-      .then((result) => {
-        if (result.outcome === "written") {
-          setDoc({
+    // Хук пишется своим RPC (index-адресация в файле уровня), всё прочее —
+    // обычной записью по пути.
+    const request =
+      target.kind === "hook"
+        ? rpc.call("writeHook", {
+            areaId,
+            origin: target.origin,
+            index: target.index,
+            command: content,
+            expectedSha256: doc.sha256,
+          })
+        : rpc.call("writeDoc", {
+            areaId,
             path: doc.path,
             content,
-            error: null,
-            sha256: result.sha256,
+            expectedSha256: doc.sha256,
           });
-          setEditing(false);
-        } else {
-          setSaveNote(result.message ?? "Не удалось сохранить.");
-        }
-      });
+    void request.then((result) => {
+      if (result.outcome === "written") {
+        setDoc({
+          path: doc.path,
+          content,
+          error: null,
+          sha256: result.sha256,
+        });
+        setEditing(false);
+      } else {
+        setSaveNote(result.message ?? "Не удалось сохранить.");
+      }
+    });
   };
 
   if (!target) {
@@ -615,7 +710,63 @@ function DocTab({ subPath }: PluginNavPanelProps) {
             <Markdown content={doc.content} />
           </div>
         )}
-        {!loading && doc?.content != null && !composite && (
+        {!loading && doc?.content != null && !composite && target.kind === "hook" && (
+          <div className="flex flex-col gap-4 p-4">
+            {hookExtra?.definition && (
+              <section>
+                <div className="mb-1 text-xs font-medium text-muted-foreground">
+                  Определение
+                </div>
+                <Markdown content={"```json\n" + hookExtra.definition + "\n```"} />
+              </section>
+            )}
+            <section>
+              <div className="mb-1 text-xs font-medium text-muted-foreground">
+                Команда {editing ? "" : "(клик — правка)"}
+              </div>
+              {editing ? (
+                <div onClick={onDocClick}>
+                  <MarkdownEditor
+                    editable
+                    value={draft}
+                    onChange={setDraft}
+                    onSave={(md) => {
+                      setDraft(md);
+                      save(md);
+                    }}
+                    className="cc-doc-mde"
+                  />
+                </div>
+              ) : (
+                <div
+                  onClick={onDocClick}
+                  className="cursor-text whitespace-pre-wrap break-all rounded-md border border-border bg-muted/30 p-2 font-mono text-sm"
+                >
+                  {renderCommandWithFileLink(
+                    doc.content,
+                    hookExtra?.filePath ?? null,
+                    () =>
+                      hookExtra?.filePath &&
+                      navigate.toPluginPanel(PANEL_PATH, {
+                        subPath: docSubPath(areaId, hookExtra.filePath),
+                      }),
+                  )}
+                </div>
+              )}
+            </section>
+            {hookExtra?.fileContent && (
+              <section>
+                <Markdown
+                  content={asMarkdown(
+                    hookExtra.filePath ?? "",
+                    hookExtra.fileContent,
+                  )}
+                />
+              </section>
+            )}
+          </div>
+        )}
+        {!loading && doc?.content != null && !composite && target.kind !== "hook" && (
           <div className="h-full p-4" onClick={onDocClick}>
             <MarkdownEditor
               editable={editing}
@@ -720,6 +871,20 @@ function ConfigPanel({ subPath }: PluginNavPanelProps) {
     void rpc.call("setSkill", { areaId, name, state }).then(handleResult);
   const setToolSearch = (mode: ToolSearchTarget) =>
     void rpc.call("setToolSearch", { areaId, mode }).then(handleResult);
+  const setHookEnabled = (
+    hook: { origin: HookOrigin; event: string; matcher: string | null; command: string },
+    enabled: boolean,
+  ) =>
+    void rpc
+      .call("setHookEnabled", {
+        areaId,
+        origin: hook.origin,
+        event: hook.event,
+        matcher: hook.matcher,
+        command: hook.command,
+        enabled,
+      })
+      .then(handleResult);
 
   const changeArea = (id: string) => {
     setNotice(null);
@@ -748,17 +913,11 @@ function ConfigPanel({ subPath }: PluginNavPanelProps) {
       <div className="mx-auto w-full max-w-3xl space-y-4">
         <div className="flex items-center gap-3">
           <span className="text-sm font-medium">Область</span>
-          <select
-            value={areaId}
-            onChange={(event) => changeArea(event.target.value)}
-            className="h-8 rounded-md border border-border bg-background px-2 text-sm"
-          >
-            {areas.map((area) => (
-              <option key={area.id} value={area.id}>
-                {area.label}
-              </option>
-            ))}
-          </select>
+          <ProjectSwitcher
+            options={areas.map((area) => ({ key: area.id, label: area.label }))}
+            isSelected={(key) => key === areaId}
+            onSelect={(key) => changeArea(String(key))}
+          />
         </div>
 
         {config?.editedFilePath && (
@@ -794,41 +953,68 @@ function ConfigPanel({ subPath }: PluginNavPanelProps) {
                   </p>
                 ) : (
                   <p className="text-xs text-muted-foreground">
-                    Только просмотр: Claude Code не отключает отдельный хук.
-                    Строка открывает команду хука.
+                    Тумблер выключает хук — Claude Code его не отключает сам,
+                    поэтому панель вырезает хук в своё хранилище и возвращает
+                    при включении. Клик по строке открывает и правит команду.
                   </p>
                 )}
-                {config.hooks.map((hook) => (
-                  <button
-                    key={`${hook.origin}:${hook.event}:${hook.index}`}
-                    type="button"
-                    onClick={() =>
-                      openHook(hook.origin, hook.index, hook.event)
-                    }
-                    className={cn(
-                      "block w-full rounded-md border-b border-border px-2 py-1 text-left transition-colors last:border-0 hover:bg-muted",
-                      selectedHook?.origin === hook.origin &&
-                        selectedHook?.index === hook.index &&
-                        selectedHook?.event === hook.event &&
-                        "bg-muted",
-                    )}
-                  >
-                    <div className="flex flex-wrap items-center gap-2">
-                      <span className="text-sm font-medium">{hook.event}</span>
-                      {hook.matcher && (
-                        <span className="text-xs text-muted-foreground">
-                          matcher: {hook.matcher}
+                {config.hooks.map((hook) => {
+                  const infoContent = (
+                    <>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="text-sm font-medium">
+                          {hook.event}
                         </span>
+                        {hook.matcher && (
+                          <span className="text-xs text-muted-foreground">
+                            matcher: {hook.matcher}
+                          </span>
+                        )}
+                        <span className="ml-auto text-xs text-muted-foreground">
+                          {HOOK_ORIGIN_LABEL[hook.origin]}
+                        </span>
+                      </div>
+                      <div className="truncate font-mono text-xs text-muted-foreground">
+                        {hook.command}
+                      </div>
+                    </>
+                  );
+                  return (
+                    <div
+                      key={`${hook.origin}:${hook.event}:${hook.index}:${hook.command}`}
+                      className={cn(
+                        "flex flex-wrap items-center justify-between gap-3 border-b border-border pb-2 transition-opacity last:border-0 last:pb-0",
+                        !hook.enabled && "opacity-60",
                       )}
-                      <span className="ml-auto text-xs text-muted-foreground">
-                        {HOOK_ORIGIN_LABEL[hook.origin]}
-                      </span>
+                    >
+                      {hook.enabled ? (
+                        <button
+                          type="button"
+                          onClick={() =>
+                            openHook(hook.origin, hook.index, hook.event)
+                          }
+                          className={cn(
+                            "min-w-0 flex-1 rounded-md px-2 py-1 text-left transition-colors hover:bg-muted",
+                            selectedHook?.origin === hook.origin &&
+                              selectedHook?.index === hook.index &&
+                              selectedHook?.event === hook.event &&
+                              "bg-muted",
+                          )}
+                        >
+                          {infoContent}
+                        </button>
+                      ) : (
+                        <div className="min-w-0 flex-1 px-2 py-1">
+                          {infoContent}
+                        </div>
+                      )}
+                      <Switch
+                        checked={hook.enabled}
+                        onChange={(next) => setHookEnabled(hook, next)}
+                      />
                     </div>
-                    <div className="truncate font-mono text-xs text-muted-foreground">
-                      {hook.command}
-                    </div>
-                  </button>
-                ))}
+                  );
+                })}
               </CardContent>
             </Card>
 
@@ -1079,7 +1265,7 @@ export default definePluginApp((app) => {
   app.slots.navPanel({
     id: "claude-config",
     title: "Claude Config",
-    icon: "SlidersHorizontal",
+    icon: "Brain",
     path: PANEL_PATH,
     component: ConfigPanel,
   });

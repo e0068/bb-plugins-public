@@ -5,6 +5,7 @@
 // Зависит только вниз: settings-doc, effective, catalog — слои 1 и 2.
 
 import * as doc from "./settings-doc";
+import type { HookEntry } from "./settings-doc";
 import {
   resolveEnableAllMcp,
   resolveMcpServer,
@@ -90,6 +91,8 @@ export interface HookRow {
   origin: HookOrigin;
   /** Позиция в списке хуков своего уровня — адрес для чтения команды. */
   index: number;
+  /** Активен ли хук: false — хук вырезан из файла и лежит в disabled-списке. */
+  enabled: boolean;
 }
 
 export interface ConfigView {
@@ -126,6 +129,12 @@ export interface ViewInput {
   projectRoot: string | null;
   /** Происхождение каждого уровня из levelDocs — для подписи хуков. */
   levelOrigins: HookOrigin[];
+  /**
+   * Выключенные хуки по уровням (та же длина и порядок, что levelDocs).
+   * Выключение — не значение в JSON-документе, а отдельное хранение: хук
+   * вырезается из файла и живёт здесь, пока его не включат обратно.
+   */
+  disabledHooksByLevel: HookEntry[][];
 }
 
 export function buildConfigView(input: ViewInput): ConfigView {
@@ -197,7 +206,11 @@ function buildHooks(input: ViewInput): HookRow[] {
   input.levelDocs.forEach((level, levelIndex) => {
     const origin = input.levelOrigins[levelIndex] ?? "user";
     doc.listHooks(level).forEach((hook, index) => {
-      rows.push({ ...hook, origin, index });
+      rows.push({ ...hook, origin, index, enabled: true });
+    });
+    const disabled = input.disabledHooksByLevel[levelIndex] ?? [];
+    disabled.forEach((hook) => {
+      rows.push({ ...hook, origin, index: -1, enabled: false });
     });
   });
   return rows;

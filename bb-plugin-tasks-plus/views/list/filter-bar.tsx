@@ -30,6 +30,8 @@ import {
   STATUS_LABELS,
   type LabelFilterOption,
 } from "./lib.js";
+import { FieldDisplayMenu } from "./field-display-menu.js";
+import type { FieldScope } from "./row-field-preference.js";
 
 function toggled<T>(values: readonly T[], value: T, checked: boolean): T[] {
   if (checked) return values.includes(value) ? [...values] : [...values, value];
@@ -159,6 +161,7 @@ export function ListFilterBar({
   onSortChange,
   labelOptions,
   taskCount,
+  fieldScope,
 }: {
   filters: ListFilterState;
   onChange: (filters: ListFilterState) => void;
@@ -166,6 +169,8 @@ export function ListFilterBar({
   onSortChange: (sort: ListSort) => void;
   labelOptions: readonly LabelFilterOption[];
   taskCount: number | undefined;
+  /** Scope for the Display menu (field order/visibility for this list). */
+  fieldScope: FieldScope;
 }) {
   const keepOpen = (event: Event) => event.preventDefault();
   // Show the Label chip whenever there are options or a remembered selection
@@ -362,9 +367,10 @@ export function ListFilterBar({
           </button>
         ) : null}
       </div>
-      {/* Sort and the count sit outside the scroller so they stay visible and
-          aligned however far the filter chips overflow. */}
+      {/* Sort, Display, and the count sit outside the scroller so they stay
+          visible and aligned however far the filter chips overflow. */}
       <SortChip sort={sort} onChange={onSortChange} />
+      <FieldDisplayMenu scope={fieldScope} variant="chip" />
       <span className="shrink-0 whitespace-nowrap text-xs tabular-nums text-subtle-foreground">
         {taskCount === undefined
           ? ""

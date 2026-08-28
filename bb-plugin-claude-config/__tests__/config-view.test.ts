@@ -22,6 +22,7 @@ function input(overrides: Partial<ViewInput>): ViewInput {
     claudeJsonText: null,
     projectRoot: null,
     levelOrigins: ["user"],
+    disabledHooksByLevel: [],
     ...overrides,
   };
 }
@@ -368,6 +369,7 @@ describe("buildConfigView — хуки", () => {
         command: "cat checklist",
         origin: "user",
         index: 0,
+        enabled: true,
       },
       {
         event: "PreToolUse",
@@ -375,12 +377,67 @@ describe("buildConfigView — хуки", () => {
         command: "lint",
         origin: "project",
         index: 0,
+        enabled: true,
       },
     ]);
   });
 
   it("нет хуков — пустой список", () => {
     expect(buildConfigView(input({})).hooks).toEqual([]);
+  });
+
+  it("выключенные хуки уровня идут после активных, index:-1, enabled:false", () => {
+    const view = buildConfigView(
+      input({
+        areaKind: "project",
+        levelOrigins: ["user", "project", "local"],
+        levelDocs: [
+          {
+            hooks: {
+              PreToolUse: [
+                { matcher: "Bash", hooks: [{ type: "command", command: "lint" }] },
+              ],
+            },
+          },
+          {},
+          {},
+        ],
+        disabledHooksByLevel: [
+          [{ event: "Stop", matcher: null, command: "notify" }],
+          [],
+          [],
+        ],
+      }),
+    );
+    expect(view.hooks).toEqual([
+      {
+        event: "PreToolUse",
+        matcher: "Bash",
+        command: "lint",
+        origin: "user",
+        index: 0,
+        enabled: true,
+      },
+      {
+        event: "Stop",
+        matcher: null,
+        command: "notify",
+        origin: "user",
+        index: -1,
+        enabled: false,
+      },
+    ]);
+  });
+
+  it("пустой disabledHooksByLevel (в т.ч. короче levelDocs) не ломает сборку", () => {
+    const view = buildConfigView(
+      input({
+        levelDocs: [{}, {}],
+        levelOrigins: ["user", "project"],
+        disabledHooksByLevel: [],
+      }),
+    );
+    expect(view.hooks).toEqual([]);
   });
 });
 

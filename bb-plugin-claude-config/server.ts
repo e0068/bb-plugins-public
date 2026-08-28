@@ -24,6 +24,8 @@ import {
   parseInstalledPlugins,
   parseMcpJson,
 } from "./src/catalog";
+import { parseImports, resolveImportPath } from "./src/imports";
+import { extractCommandFile } from "./src/hook-script";
 
 // --- схемы, общие для сервера и панели ---------------------------------
 
@@ -49,6 +51,24 @@ const docContent = z.object({
   content: z.string().nullable(),
   error: z.string().nullable(),
   sha256: z.string().nullable(),
+});
+
+// Хук для правой вкладки: в отличие от `docContent`, отдаёт сырую команду
+// (не markdown) и `sha256`, чтобы панель могла её отредактировать и сохранить
+// через `writeHook` с CAS. `event`/`matcher` — для заголовка вкладки.
+// `definition` — весь хук как JSON (контекст для показа), `filePath`/
+// `fileContent` — файл, который команда читает или запускает (`cat x.json`,
+// `bash foo.sh`), если он опознан и прочитан в границах области.
+const hookDetail = z.object({
+  path: z.string(),
+  command: z.string().nullable(),
+  error: z.string().nullable(),
+  sha256: z.string().nullable(),
+  event: z.string().nullable(),
+  matcher: z.string().nullable(),
+  definition: z.string().nullable(),
+  filePath: z.string().nullable(),
+  fileContent: z.string().nullable(),
 });
 
 const configOutput = z.object({
@@ -100,6 +120,8 @@ const configOutput = z.object({
       command: z.string(),
       origin: z.enum(["user", "project", "local"]),
       index: z.number().int().nonnegative(),
+      // false — хук вырезан из файла и лежит в disabled-хранилище (см. setHookEnabled).
+      enabled: z.boolean(),
     }),
   ),
   toolSearch: z.object({
@@ -163,7 +185,9 @@ export const rpcContract = defineRpcContract({
   },
   readHook: {
     // Команда хука для правой вкладки. origin выбирает уровень (файл настроек),
-    // index — позицию в списке хуков этого уровня (как в getConfig).
+    // index — позицию в списке хуков этого уровня (как в getConfig). В отличие
+    // от readConnector/readSkillFile отдаёт сырую команду и sha256 — панель
+    // умеет её редактировать (см. writeHook).
     input: z
       .object({
         areaId: z.string(),
@@ -171,7 +195,41 @@ export const rpcContract = defineRpcContract({
         index: z.number().int().nonnegative(),
       })
       .strict(),
-    output: docContent,
+    output: hookDetail,
+  },
+  writeHook: {
+    // Сохранение отредактированной команды хука с CAS: expectedSha256 из readHook.
+    input: z
+      .object({
+        areaId: z.string(),
+        origin: z.enum(["user", "project", "local"]),
+        index: z.number().int().nonnegative(),
+        command: z.string(),
+        expectedSha256: z.string().nullable(),
+      })
+      .strict(),
+    output: z.object({
+      outcome: z.enum(["written", "conflict", "denied", "not-found"]),
+      sha256: z.string().nullable(),
+      message: z.string().nullable(),
+    }),
+  },
+  setHookEnabled: {
+    // Тумблер хука: выключение вырезает запись из файла уровня и хранит её в
+    // kv (disabledHooks:<путь>), включение возвращает её на место. Идентичность
+    // хука — event+matcher+command (см. sameHook), позиции индексов при этом не
+    // используются: они смещаются при каждой правке файла.
+    input: z
+      .object({
+        areaId: z.string(),
+        origin: z.enum(["user", "project", "local"]),
+        event: z.string(),
+        matcher: z.string().nullable(),
+        command: z.string(),
+        enabled: z.boolean(),
+      })
+      .strict(),
+    output: writeResult,
   },
   readSkillFile: {
     // Имя навыка — из каталога (без `/`, чтобы не выйти за skills). `relPath`
@@ -187,11 +245,27 @@ export const rpcContract = defineRpcContract({
     output: docContent,
   },
   listMemory: {
-    // Файлы памяти, доступные в области (только реально существующие).
+    // Файлы памяти, доступные в области: базовые кандидаты плюс их @-импорты,
+    // разобранные транзитивно (CLAUDE.md → навыки → их собственные импорты).
+    // Только реально существующие файлы.
     input: z.object({ areaId: z.string() }).strict(),
     output: z.object({
       entries: z.array(
         z.object({ id: z.string(), label: z.string(), path: z.string() }),
+      ),
+    }),
+  },
+  listRefTargets: {
+    // Полный список целей, на которые можно сослаться через @ (навыки и файлы
+    // памяти); ранжирование по запросу — на панели, через suggest.rankCandidates.
+    input: z.object({ areaId: z.string() }).strict(),
+    output: z.object({
+      targets: z.array(
+        z.object({
+          value: z.string(),
+          label: z.string(),
+          kind: z.enum(["skill", "memory"]),
+        }),
       ),
     }),
   },
@@ -343,6 +417,36 @@ function expandTilde(path: string): string {
   return path;
 }
 
+/**
+ * Раскрывает путь файла из команды хука в абсолютный: плейсхолдеры Claude Code
+ * (`$CLAUDE_PROJECT_DIR`, `$CLAUDE_CONFIG_DIR`), `~` и относительный путь (от
+ * корня проекта — с ним Claude Code и запускает хук). Возвращает null, если
+ * плейсхолдер не разрешить (нет корня проекта, чужая переменная): показать файл
+ * можно только в границах области.
+ */
+function expandHookFilePath(raw: string, area: Area): string | null {
+  let path = raw
+    .replace(/\$\{?CLAUDE_CONFIG_DIR\}?/g, area.claudeHome)
+    .replace(/\$\{?CLAUDE_PROJECT_DIR\}?/g, area.projectRoot ?? "\0");
+  if (path.includes("\0")) return null; // нужен корень проекта, а его нет
+  path = expandTilde(path);
+  if (path.startsWith("$")) return null; // осталась незнакомая переменная
+  if (!path.startsWith("/")) {
+    if (!area.projectRoot) return null;
+    path = join(area.projectRoot, path);
+  }
+  return path;
+}
+
+/** Хук как JSON, каким он лежит в `settings.json` — для показа определения. */
+function hookDefinitionJson(hook: sd.HookEntry): string {
+  const group = {
+    ...(hook.matcher ? { matcher: hook.matcher } : {}),
+    hooks: [{ type: "command", command: hook.command }],
+  };
+  return JSON.stringify({ [hook.event]: [group] }, null, 2);
+}
+
 /** Путь `target` лежит внутри каталога `root` (или равен ему). */
 function isWithin(root: string, target: string): boolean {
   if (target === root) return true;
@@ -364,6 +468,47 @@ function matchRoot(
     roots.push({ root: area.projectRoot, hostId: area.hostId });
   }
   return roots.find((entry) => isWithin(entry.root, path)) ?? null;
+}
+
+/** Ключ kv-хранилища выключенных хуков файла настроек по его пути. */
+function disabledHooksKey(path: string): string {
+  return `disabledHooks:${path}`;
+}
+
+/** Идентичность хука для тумблера/kv: событие, matcher и команда совпадают. */
+function sameHook(a: sd.HookEntry, b: sd.HookEntry): boolean {
+  return (
+    a.event === b.event &&
+    (a.matcher ?? null) === (b.matcher ?? null) &&
+    a.command === b.command
+  );
+}
+
+/**
+ * Подпись файла, найденного по @-импорту. Обычно последний сегмент пути, но
+ * для `SKILL.md` — «<навык>/SKILL.md» (иначе импорты разных навыков схлопнутся
+ * в одинаковую подпись «SKILL.md»).
+ */
+function labelForImport(path: string): string {
+  const segments = path.split("/").filter((segment) => segment.length > 0);
+  const last = segments[segments.length - 1] ?? path;
+  if (last === "SKILL.md" && segments.length >= 2) {
+    return `${segments[segments.length - 2]}/SKILL.md`;
+  }
+  return last;
+}
+
+/**
+ * Имя навыка из пути к его `SKILL.md`, относительного каталога навыков — та же
+ * форма, что и `collectSkillNames` в `src/catalog.ts` (см. его комментарий про
+ * `synced/`). `null`, если путь не ведёт к `SKILL.md` напрямую внутри навыка.
+ */
+function skillTargetName(relPath: string): string | null {
+  const segments = relPath.split("/").filter((segment) => segment.length > 0);
+  if (segments[segments.length - 1] !== "SKILL.md") return null;
+  if (segments[0] === "synced" && segments.length === 3) return segments[1];
+  if (segments.length === 2) return segments[0];
+  return null;
 }
 
 /** Файл памяти: id стабилен для RPC, путь и хост резолвит сервер. */
@@ -479,6 +624,55 @@ export default function plugin(bb: BbPluginApi) {
     }
   }
 
+  /** Хуки, выключенные тумблером для файла настроек по его пути (или []). */
+  async function readDisabledHooks(path: string): Promise<sd.HookEntry[]> {
+    return (await bb.storage.kv.get<sd.HookEntry[]>(disabledHooksKey(path))) ?? [];
+  }
+
+  /** Читает и разбирает файл настроек; SettingsParseError превращает в сообщение. */
+  async function readParsedDoc(
+    path: string,
+    hostId: string | undefined,
+  ): Promise<{ doc: sd.SettingsDoc; sha256: string | null } | { error: string }> {
+    const { text, sha256 } = await readFile(path, hostId);
+    try {
+      return { doc: sd.parse(text), sha256 };
+    } catch (error) {
+      if (error instanceof SettingsParseError) return { error: error.message };
+      throw error;
+    }
+  }
+
+  /**
+   * Как правка редактируемого файла области (см. `applyEdit` ниже), но для
+   * произвольного файла уровня: хук может жить не в `editedPath`. Свежее чтение
+   * прямо перед записью даёт ту же CAS-защиту от параллельной сессии Claude Code.
+   */
+  async function applyEditToPath(
+    path: string,
+    hostId: string | undefined,
+    edit: (doc: sd.SettingsDoc) => sd.SettingsDoc,
+  ): Promise<{ outcome: "ok" | "conflict" | "parse-error"; message: string | null }> {
+    const parsed = await readParsedDoc(path, hostId);
+    if ("error" in parsed) return { outcome: "parse-error", message: parsed.error };
+
+    const next = sd.serialize(edit(parsed.doc));
+    const written = await bb.sdk.files.write({
+      path,
+      hostId,
+      content: next,
+      expectedSha256: parsed.sha256 ?? null,
+      createParents: true,
+    });
+    if (written.outcome === "conflict") {
+      return {
+        outcome: "conflict",
+        message: "Файл изменила другая сессия. Обновите и повторите.",
+      };
+    }
+    return { outcome: "ok", message: null };
+  }
+
   bb.rpc.register(rpcContract, {
     async listAreas() {
       const projects = await bb.sdk.projects.list();
@@ -532,6 +726,11 @@ export default function plugin(bb: BbPluginApi) {
         listSkillPaths(area.personalSkillsDir, area.hostId),
         listSkillPaths(area.projectSkillsDir, area.hostId),
       ]);
+      // По ПУТИ файла уровня, не по области: ~/.claude/settings.json общий для
+      // всех проектных областей, и disabled-хуки в нём должны быть общими тоже.
+      const disabledHooksByLevel = await Promise.all(
+        area.levelPaths.map((path) => readDisabledHooks(path)),
+      );
 
       // Происхождение уровней: глобально один (user), в проекте три по порядку.
       const levelOrigins =
@@ -550,6 +749,7 @@ export default function plugin(bb: BbPluginApi) {
         claudeJsonText: claudeJson.text,
         projectRoot: area.projectRoot,
         levelOrigins: [...levelOrigins],
+        disabledHooksByLevel,
       });
 
       return {
@@ -614,38 +814,167 @@ export default function plugin(bb: BbPluginApi) {
     },
 
     async readHook({ areaId, origin, index }) {
+      const notFound = {
+        path: "",
+        command: null,
+        error: "Хук не найден.",
+        sha256: null,
+        event: null,
+        matcher: null,
+        definition: null,
+        filePath: null,
+        fileContent: null,
+      };
       const area = await resolveArea(bb, areaId);
       if (!area) {
-        return { path: "", content: null, error: "Область не найдена.", sha256: null };
+        return { ...notFound, error: "Область не найдена." };
       }
       // origin → уровень: user/project/local соответствуют порядку levelPaths.
       const levelIndex = { user: 0, project: 1, local: 2 }[origin];
       const path = area.levelPaths[levelIndex];
-      if (!path) {
-        return { path: "", content: null, error: "Хук не найден.", sha256: null };
-      }
-      const { text } = await readFile(path, area.hostId);
+      if (!path) return notFound;
+
+      const { text, sha256 } = await readFile(path, area.hostId);
       let hook;
       try {
         hook = sd.listHooks(sd.parse(text))[index];
       } catch (error) {
         if (error instanceof SettingsParseError) {
-          return { path, content: null, error: error.message, sha256: null };
+          return { ...notFound, path, error: error.message };
         }
         throw error;
       }
-      if (!hook) {
-        return { path, content: null, error: "Хук не найден.", sha256: null };
+      if (!hook) return { ...notFound, path };
+
+      // Файл, который команда читает или запускает (если опознан и лежит в
+      // границах области): плейсхолдеры окружения раскрываем, читаем с confinement.
+      let filePath: string | null = null;
+      let fileContent: string | null = null;
+      const rawFile = extractCommandFile(hook.command);
+      if (rawFile) {
+        const abs = expandHookFilePath(rawFile, area);
+        const match = abs && matchRoot(area, abs);
+        if (abs && match) {
+          const { text: fileText } = await readFile(abs, match.hostId, match.root);
+          if (fileText !== null) {
+            filePath = abs;
+            fileContent = fileText;
+          }
+        }
       }
-      const header = hook.matcher
-        ? `**${hook.event}** · matcher: \`${hook.matcher}\`\n\n`
-        : `**${hook.event}**\n\n`;
+
       return {
         path,
-        content: `${header}\`\`\`bash\n${hook.command}\n\`\`\``,
+        command: hook.command,
         error: null,
-        sha256: null,
+        sha256,
+        event: hook.event,
+        matcher: hook.matcher,
+        definition: hookDefinitionJson(hook),
+        filePath,
+        fileContent,
       };
+    },
+
+    async writeHook({ areaId, origin, index, command, expectedSha256 }) {
+      const area = await resolveArea(bb, areaId);
+      if (!area) {
+        return { outcome: "not-found" as const, sha256: null, message: "Область не найдена." };
+      }
+      const levelIndex = { user: 0, project: 1, local: 2 }[origin];
+      const path = area.levelPaths[levelIndex];
+      if (!path) {
+        return { outcome: "not-found" as const, sha256: null, message: "Уровень не найден." };
+      }
+
+      const parsed = await readParsedDoc(path, area.hostId);
+      if ("error" in parsed) {
+        return { outcome: "denied" as const, sha256: null, message: parsed.error };
+      }
+
+      // index вне диапазона — писать нечего: не рапортуем «written» по no-op.
+      if (!sd.listHooks(parsed.doc)[index]) {
+        return { outcome: "not-found" as const, sha256: null, message: "Хук не найден." };
+      }
+
+      const next = sd.setHookCommandAt(parsed.doc, index, command);
+      const written = await bb.sdk.files.write({
+        path,
+        hostId: area.hostId,
+        content: sd.serialize(next),
+        expectedSha256,
+        createParents: true,
+      });
+      if (written.outcome === "conflict") {
+        return {
+          outcome: "conflict" as const,
+          sha256: written.currentSha256,
+          message: "Файл изменился на диске. Обновите и повторите.",
+        };
+      }
+      return { outcome: "written" as const, sha256: written.sha256, message: null };
+    },
+
+    async setHookEnabled({
+      areaId,
+      origin,
+      event,
+      matcher,
+      command,
+      enabled,
+    }): Promise<WriteOutcome> {
+      const area = await resolveArea(bb, areaId);
+      if (!area) return { outcome: "not-found", message: "Область не найдена." };
+      const levelIndex = { user: 0, project: 1, local: 2 }[origin];
+      const path = area.levelPaths[levelIndex];
+      if (!path) return { outcome: "not-found", message: "Уровень не найден." };
+
+      const entry: sd.HookEntry = { event, matcher, command };
+
+      if (!enabled) {
+        const parsed = await readParsedDoc(path, area.hostId);
+        if ("error" in parsed) return { outcome: "parse-error", message: parsed.error };
+
+        const { doc: next, removed } = sd.removeHook(parsed.doc, entry);
+        // Уже выключен (или его вообще нет в файле) — идемпотентно, kv не трогаем.
+        if (removed === null) return { outcome: "ok", message: null };
+
+        const written = await bb.sdk.files.write({
+          path,
+          hostId: area.hostId,
+          content: sd.serialize(next),
+          expectedSha256: parsed.sha256 ?? null,
+          createParents: true,
+        });
+        if (written.outcome === "conflict") {
+          return {
+            outcome: "conflict",
+            message: "Файл изменила другая сессия. Обновите и повторите.",
+          };
+        }
+
+        const disabled = await readDisabledHooks(path);
+        if (!disabled.some((existing) => sameHook(existing, entry))) {
+          await bb.storage.kv.set(disabledHooksKey(path), [...disabled, entry]);
+        }
+        return { outcome: "ok", message: null };
+      }
+
+      const disabled = await readDisabledHooks(path);
+      if (!disabled.some((existing) => sameHook(existing, entry))) {
+        // Нечего восстанавливать — идемпотентно.
+        return { outcome: "ok", message: null };
+      }
+
+      const written = await applyEditToPath(path, area.hostId, (doc) =>
+        sd.addHook(doc, entry),
+      );
+      if (written.outcome !== "ok") return written;
+
+      const remaining = disabled.filter((existing) => !sameHook(existing, entry));
+      if (remaining.length === 0) await bb.storage.kv.delete(disabledHooksKey(path));
+      else await bb.storage.kv.set(disabledHooksKey(path), remaining);
+      return { outcome: "ok", message: null };
     },
 
     async readSkillFile({ areaId, name, relPath }) {
@@ -674,18 +1003,102 @@ export default function plugin(bb: BbPluginApi) {
     async listMemory({ areaId }) {
       const area = await resolveArea(bb, areaId);
       if (!area) return { entries: [] };
+
       const entries: { id: string; label: string; path: string }[] = [];
+      const visited = new Set<string>();
+      // В очередь кладём уже прочитанный текст файла — его же разбираем на
+      // @-импорты, второй раз с диска не читаем.
+      const queue: { path: string; text: string }[] = [];
+
       for (const candidate of memoryCandidates(area)) {
+        visited.add(candidate.path);
         const { text } = await readFile(candidate.path, candidate.hostId);
-        if (text !== null) {
-          entries.push({
-            id: candidate.id,
-            label: candidate.label,
-            path: candidate.path,
-          });
+        if (text === null) continue;
+        entries.push({
+          id: candidate.id,
+          label: candidate.label,
+          path: candidate.path,
+        });
+        queue.push({ path: candidate.path, text });
+      }
+
+      // Разбираем @-импорты транзитивно: CLAUDE.md ссылается на навыки, навыки —
+      // на свои же файлы. Срез по числу, а не по глубине, — защита от развесистого
+      // дерева ссылок, а не только от циклов (их и так режет `visited`).
+      const IMPORT_LIMIT = 100;
+      let imported = 0;
+      while (queue.length > 0 && imported < IMPORT_LIMIT) {
+        const from = queue.shift();
+        if (!from) break;
+
+        for (const importPath of parseImports(from.text)) {
+          if (imported >= IMPORT_LIMIT) {
+            bb.log.info("listMemory: срезано по лимиту импортов (100)");
+            break;
+          }
+          const abs = resolveImportPath(from.path, importPath, homedir());
+          if (visited.has(abs)) continue;
+          visited.add(abs);
+
+          // Вне корней области — пропускаем (та же граница, что и у readDoc).
+          const target = matchRoot(area, abs);
+          if (!target) continue;
+
+          const { text: importedText } = await readFile(abs, target.hostId, target.root);
+          if (importedText === null) continue;
+
+          entries.push({ id: `import:${abs}`, label: labelForImport(abs), path: abs });
+          queue.push({ path: abs, text: importedText });
+          imported += 1;
         }
       }
+
       return { entries };
+    },
+
+    async listRefTargets({ areaId }) {
+      const area = await resolveArea(bb, areaId);
+      if (!area) return { targets: [] };
+
+      try {
+        const [personalSkillPaths, projectSkillPaths] = await Promise.all([
+          listSkillPaths(area.personalSkillsDir, area.hostId),
+          listSkillPaths(area.projectSkillsDir, area.hostId),
+        ]);
+
+        const targets: { value: string; label: string; kind: "skill" | "memory" }[] = [];
+        const seen = new Set<string>();
+        const push = (value: string, label: string, kind: "skill" | "memory") => {
+          if (seen.has(value)) return;
+          seen.add(value);
+          targets.push({ value, label, kind });
+        };
+
+        // Личные навыки: путь уже относителен `~/.claude/skills`, поэтому
+        // вставляемый импорт — просто `~/.claude/skills/<этот же путь>`.
+        for (const relPath of personalSkillPaths) {
+          const name = skillTargetName(relPath);
+          if (!name) continue;
+          push(`~/.claude/skills/${relPath}`, name, "skill");
+        }
+        // Проектные навыки: вставляем абсолютный путь (нет `~`-алиаса для проекта).
+        if (area.projectSkillsDir) {
+          for (const relPath of projectSkillPaths) {
+            const name = skillTargetName(relPath);
+            if (!name) continue;
+            push(join(area.projectSkillsDir, relPath), name, "skill");
+          }
+        }
+
+        for (const candidate of memoryCandidates(area)) {
+          const { text } = await readFile(candidate.path, candidate.hostId);
+          if (text !== null) push(candidate.path, candidate.label, "memory");
+        }
+
+        return { targets };
+      } catch {
+        return { targets: [] };
+      }
     },
 
     async readDoc({ areaId, path }) {

@@ -250,6 +250,34 @@ describe("threads-timeline nav panel", () => {
     expect(slot.rpcCalls.length).toBe(callsBefore);
   });
 
+  it("renders the shared ProjectSwitcher's «Все проекты» chip pressed by default, and lets multiple project chips be toggled on together (multi-filter)", async () => {
+    const slot = await renderThreadsTimeline({ threadsTimeline: async () => THREADS_READY });
+    await screen.findByText("Тред А");
+
+    const allChip = screen.getByRole("button", { name: "Все проекты" });
+    expect(allChip.getAttribute("aria-pressed")).toBe("true");
+
+    fireEvent.click(screen.getByRole("button", { name: "Token Usage Header" }));
+    fireEvent.click(screen.getByRole("button", { name: "Threads" }));
+
+    // Both chips now selected (multi-filter), "Все проекты" no longer pressed,
+    // and every thread is visible again — one bucket per row matches.
+    expect(allChip.getAttribute("aria-pressed")).toBe("false");
+    expect(screen.getByRole("button", { name: "Token Usage Header" }).getAttribute("aria-pressed")).toBe("true");
+    expect(screen.getByRole("button", { name: "Threads" }).getAttribute("aria-pressed")).toBe("true");
+    await screen.findByText("Тред А");
+    await screen.findByText(THREAD_B_FALLBACK_TITLE);
+
+    // Clicking "Все проекты" resets the filter back to showing everything.
+    fireEvent.click(allChip);
+    expect(allChip.getAttribute("aria-pressed")).toBe("true");
+    expect(screen.getByRole("button", { name: "Token Usage Header" }).getAttribute("aria-pressed")).toBe("false");
+    const callsBefore = slot.rpcCalls.length;
+    await screen.findByText("Тред А");
+    await screen.findByText(THREAD_B_FALLBACK_TITLE);
+    expect(slot.rpcCalls.length).toBe(callsBefore);
+  });
+
   it("filters rows client-side by search text", async () => {
     await renderThreadsTimeline({ threadsTimeline: async () => THREADS_READY });
     await screen.findByText("Тред А");

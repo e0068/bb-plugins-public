@@ -118,6 +118,23 @@ export function formatDueDate(dueDate: string, today = new Date()): string {
 }
 
 /**
+ * ISO timestamp (createdAt/updatedAt) → "Jul 18", with the year appended when
+ * it isn't this year. Parses the full datetime; `formatDueDate` handles the
+ * date-only due field, which must not shift across timezones.
+ */
+export function formatTimestamp(iso: string, today = new Date()): string {
+  const date = new Date(iso);
+  if (Number.isNaN(date.valueOf())) return "";
+  return date.toLocaleDateString("en-US", {
+    month: "short",
+    day: "numeric",
+    ...(date.getFullYear() === today.getFullYear()
+      ? {}
+      : { year: "numeric" }),
+  });
+}
+
+/**
  * Accessible name for the list-row activity dot. Callers only render the dot
  * when at least one thread is live, so the input is never empty.
  */

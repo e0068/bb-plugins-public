@@ -28,6 +28,21 @@ import { DelayedLoading } from "../../components/delayed-loading.js";
 import { Icon } from "@/components/ui/icon";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
+import {
+  boardFieldScope,
+  ROW_FIELD_LABELS,
+  useFieldDisplay,
+  type FieldDisplayConfig,
+  type RowField,
+} from "../list/row-field-preference.js";
+import { planRowFields } from "../list/field-plan.js";
+import {
+  formatDueDate,
+  formatTimestamp,
+  formatTokenCount,
+  PRIORITY_LABELS,
+} from "../list/lib.js";
+import { EstimateIcon, TYPE_ICONS, TYPE_LABELS } from "../detail/meta.js";
 
 const DRAG_THRESHOLD_PX = 5;
 
@@ -171,10 +186,115 @@ function WorkingAgentsChip({ threads }: { threads: TaskThread[] }) {
   );
 }
 
+/** Board footer chip — compact (2xs) sibling of the list rail's pill. */
+const CARD_CHIP_CLASS =
+  "flex items-center gap-1 rounded-md border border-border px-1.5 text-2xs text-muted-foreground";
+const CARD_GLYPH_CLASS = "flex items-center text-muted-foreground";
+
+/** One planned task field on a card; empties are handled by the caller. */
+function CardFieldValue({
+  field,
+  task,
+  labels,
+  activeCount,
+}: {
+  field: RowField;
+  task: Task;
+  labels: readonly Label[];
+  activeCount: number;
+}) {
+  switch (field) {
+    case "priority":
+      return (
+        <span title={PRIORITY_LABELS[task.priority]} className={CARD_GLYPH_CLASS}>
+          <PriorityIcon priority={task.priority} />
+        </span>
+      );
+    case "active":
+      return (
+        <span className="flex items-center gap-1 font-medium text-success">
+          <span
+            aria-hidden
+            className="size-1.5 shrink-0 animate-pulse rounded-full bg-success"
+          />
+          {activeCount === 1 ? "Active" : `${activeCount} agents`}
+        </span>
+      );
+    case "type":
+      return task.type !== null ? (
+        <span title={TYPE_LABELS[task.type]} className={CARD_GLYPH_CLASS}>
+          <Icon name={TYPE_ICONS[task.type]} className="size-3 shrink-0" />
+        </span>
+      ) : null;
+    case "estimate":
+      return task.estimate !== null ? (
+        <span title={`Estimate: ${task.estimate.toUpperCase()}`} className={CARD_GLYPH_CLASS}>
+          <EstimateIcon estimate={task.estimate} />
+        </span>
+      ) : null;
+    case "labels":
+      return (
+        <>
+          {labels.map((label) => (
+            <span key={label.id} className={CARD_CHIP_CLASS}>
+              <span
+                aria-hidden
+                className="size-1.5 rounded-full"
+                style={{ backgroundColor: label.color }}
+              />
+              {label.name}
+            </span>
+          ))}
+        </>
+      );
+    case "tokens": {
+      const plan =
+        task.planTokens === null ? "—" : formatTokenCount(task.planTokens);
+      const fact =
+        task.factTokens === null ? "—" : formatTokenCount(task.factTokens);
+      return (
+        <span
+          title={`Tokens — plan ${plan}, fact ${fact}`}
+          className={`${CARD_CHIP_CLASS} tabular-nums`}
+        >
+          <Icon name="AiContentGenerator01" className="size-3 shrink-0" />
+          {plan} / {fact}
+        </span>
+      );
+    }
+    case "dueDate":
+      return task.dueDate !== null ? (
+        <span className={`${CARD_CHIP_CLASS} tabular-nums`}>
+          <Icon name="Clock" className="size-3 shrink-0" />
+          {formatDueDate(task.dueDate)}
+        </span>
+      ) : null;
+    case "createdAt":
+      return (
+        <span className={`${CARD_CHIP_CLASS} tabular-nums`} title={`Created ${formatTimestamp(task.createdAt)}`}>
+          <Icon name="Calendar" className="size-3 shrink-0" />
+          {formatTimestamp(task.createdAt)}
+        </span>
+      );
+    case "updatedAt":
+      return (
+        <span className={`${CARD_CHIP_CLASS} tabular-nums`} title={`Edited ${formatTimestamp(task.updatedAt)}`}>
+          <Icon name="Edit" className="size-3 shrink-0" />
+          {formatTimestamp(task.updatedAt)}
+        </span>
+      );
+    case "project":
+      // A board is single-project, so the project field never has a swatch to
+      // show; it stays empty (placeholder only when show-empty is on).
+      return null;
+  }
+}
+
 interface TaskCardProps {
   task: Task;
   labelsById: Map<string, Label>;
   meta: BoardCardMeta;
+  config: FieldDisplayConfig;
   ghost?: boolean;
   dragging?: boolean;
   cardRef?: (element: HTMLDivElement | null) => void;
@@ -186,6 +306,7 @@ function TaskCard({
   task,
   labelsById,
   meta,
+  config,
   ghost = false,
   dragging = false,
   cardRef,
@@ -195,6 +316,16 @@ function TaskCard({
   const labels = task.labelIds
     .map((labelId) => labelsById.get(labelId))
     .filter((label): label is Label => label !== undefined);
+  // The card is single-project, so `showProject` is false — the project field
+  // resolves to empty and never draws a swatch here.
+  const cells = planRowFields(config, task, {
+    activeCount: meta.workingThreads.length,
+    showProject: false,
+    hasProject: false,
+  });
+  const description = task.description.trim();
+  const hasFooter =
+    cells.length > 0 || meta.subTotal > 0 || meta.attachmentCount > 0;
   return (
     <div
       ref={cardRef}
@@ -216,35 +347,47 @@ function TaskCard({
       <div className="mt-1 line-clamp-2 text-sm leading-snug font-medium">
         {task.title}
       </div>
-      <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
-        <PriorityIcon priority={task.priority} />
-        {labels.map((label) => (
-          <span
-            key={label.id}
-            className="flex items-center gap-1 rounded-md border border-border px-1.5 text-2xs text-muted-foreground"
-          >
-            <span
-              aria-hidden
-              className="size-1.5 rounded-full"
-              style={{ backgroundColor: label.color }}
+      {config.showDescription && description.length > 0 ? (
+        <div className="mt-1 line-clamp-2 text-2xs leading-snug text-muted-foreground">
+          {description}
+        </div>
+      ) : null}
+      {hasFooter ? (
+        <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+          {cells.map((cell) =>
+            cell.mode === "placeholder" ? (
+              <span
+                key={cell.field}
+                title={`${ROW_FIELD_LABELS[cell.field]}: —`}
+                className="text-2xs text-subtle-foreground/60"
+              >
+                —
+              </span>
+            ) : (
+              <CardFieldValue
+                key={cell.field}
+                field={cell.field}
+                task={task}
+                labels={labels}
+                activeCount={meta.workingThreads.length}
+              />
+            ),
+          )}
+          {meta.subTotal > 0 ? (
+            <span className="flex items-center gap-0.5 text-2xs text-muted-foreground">
+              <Icon name="GitBranch" className="size-3" />
+              {meta.subDone}/{meta.subTotal}
+            </span>
+          ) : null}
+          {meta.attachmentCount > 0 ? (
+            <Icon
+              name="Paperclip"
+              className="size-3 text-muted-foreground"
+              aria-label={`${meta.attachmentCount} attachments`}
             />
-            {label.name}
-          </span>
-        ))}
-        {meta.subTotal > 0 ? (
-          <span className="flex items-center gap-0.5 text-2xs text-muted-foreground">
-            <Icon name="GitBranch" className="size-3" />
-            {meta.subDone}/{meta.subTotal}
-          </span>
-        ) : null}
-        {meta.attachmentCount > 0 ? (
-          <Icon
-            name="Paperclip"
-            className="size-3 text-muted-foreground"
-            aria-label={`${meta.attachmentCount} attachments`}
-          />
-        ) : null}
-      </div>
+          ) : null}
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -276,6 +419,7 @@ export interface BoardViewProps {
 export function BoardView({ projectId }: BoardViewProps) {
   const rpc = useTasksRpc();
   const navigation = useTasksNavigation();
+  const fieldConfig = useFieldDisplay(boardFieldScope(projectId));
   const board = useTasksQuery(
     (queryRpc) => fetchBoard(queryRpc, projectId),
     ["tasks:changed", "projects:changed", "threads:changed"],
@@ -500,6 +644,7 @@ export function BoardView({ projectId }: BoardViewProps) {
           task={task}
           labelsById={labelsById}
           meta={metaByTaskId.get(task.id) ?? EMPTY_META}
+          config={fieldConfig}
           dragging={drag?.taskId === task.id}
           cardRef={(element) => {
             if (element) cardRefs.current.set(task.id, element);
@@ -570,6 +715,7 @@ export function BoardView({ projectId }: BoardViewProps) {
             task={ghostTask}
             labelsById={labelsById}
             meta={metaByTaskId.get(ghostTask.id) ?? EMPTY_META}
+            config={fieldConfig}
             ghost
           />
         </div>

@@ -16,18 +16,8 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import {
-  DropdownMenu,
-  DropdownMenuCheckboxItem,
-  DropdownMenuContent,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
-import {
-  ROW_FIELD_LABELS,
-  ROW_FIELDS,
-  toggleRowField,
-  useHiddenRowFields,
-} from "../views/list/row-field-preference.js";
+import { boardFieldScope } from "../views/list/row-field-preference.js";
+import { FieldDisplayMenu } from "../views/list/field-display-menu.js";
 import { useTasksRefresh } from "./refresh.js";
 
 /** Accessible name + tooltip for the header refresh control. */
@@ -194,45 +184,6 @@ function RefreshTasksButton() {
         <TooltipContent side="bottom">{REFRESH_TASKS_LABEL}</TooltipContent>
       </Tooltip>
     </TooltipProvider>
-  );
-}
-
-/**
- * Column-visibility control for the list row's trailing metadata rail. Reads
- * and writes the shared `row-field-preference` store, so toggling here is
- * reflected immediately by every mounted `TaskRow`.
- */
-function RowFieldVisibilityMenu() {
-  const hidden = useHiddenRowFields();
-  return (
-    <DropdownMenu>
-      <DropdownMenuTrigger asChild>
-        <Button
-          type="button"
-          variant="ghost"
-          size="icon"
-          className="size-7 shrink-0 text-muted-foreground hover:text-foreground active:bg-state-active active:text-foreground max-md:pointer-coarse:size-9"
-          aria-label="Choose visible columns"
-        >
-          <Icon name="Eye" className="size-3.5" />
-        </Button>
-      </DropdownMenuTrigger>
-      <DropdownMenuContent align="end">
-        {ROW_FIELDS.map((field) => (
-          <DropdownMenuCheckboxItem
-            key={field}
-            checked={!hidden.has(field)}
-            onSelect={(event) => {
-              // Keep the menu open so several columns can be toggled at once.
-              event.preventDefault();
-              toggleRowField(field);
-            }}
-          >
-            {ROW_FIELD_LABELS[field]}
-          </DropdownMenuCheckboxItem>
-        ))}
-      </DropdownMenuContent>
-    </DropdownMenu>
   );
 }
 
@@ -412,10 +363,16 @@ export function TasksTopbar({
           />
         </span>
       ) : null}
-      {route.kind === "all" ||
-      route.kind === "active" ||
-      (route.kind === "project" && route.view !== "board") ? (
-        <RowFieldVisibilityMenu />
+      {/* The list's Display menu now lives in the filter bar; the board, which
+          has no filter bar, keeps its own Display menu here. Hidden below @md,
+          where the board yields to the list regardless (see BOARD_MIN_WIDTH). */}
+      {route.kind === "project" && route.view === "board" ? (
+        <span className="hidden @md:block">
+          <FieldDisplayMenu
+            scope={boardFieldScope(route.projectId)}
+            variant="icon"
+          />
+        </span>
       ) : null}
       {/* Refresh sits immediately left of the primary New task action. */}
       <RefreshTasksButton />

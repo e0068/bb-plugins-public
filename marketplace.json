@@ -9,7 +9,7 @@
       "id": "claude-config",
       "displayName": "Claude Config",
       "description": "Управление конфигом Claude Code: плагины, коннекторы, навыки, хуки и подгрузка инструментов по областям.",
-      "icon": "SlidersHorizontal",
+      "icon": "Brain",
       "tags": [
         "config",
         "claude-code",

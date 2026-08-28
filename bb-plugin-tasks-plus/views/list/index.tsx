@@ -21,6 +21,10 @@ import {
   storeListPreference,
   type ListPreference,
 } from "./list-preference.js";
+import {
+  listFieldScope,
+  useFieldDisplay,
+} from "./row-field-preference.js";
 import { sortTasks, type ListSort } from "../../shared/sort.js";
 import { StatusIcon } from "./icons.js";
 import {
@@ -97,6 +101,8 @@ export function ListView({ projectId, activeOnly = false }: ListViewProps) {
   const projects = useProjects();
   const { toasts, push, dismiss } = useDetailToasts();
   const preferenceScope = listPreferenceScope(projectId, activeOnly);
+  const fieldScope = listFieldScope(projectId, activeOnly);
+  const fieldConfig = useFieldDisplay(fieldScope);
   const [preference, setPreference] = useState<ListPreference>(() =>
     loadListPreference(preferenceScope),
   );
@@ -313,6 +319,7 @@ export function ListView({ projectId, activeOnly = false }: ListViewProps) {
             showProject={showProject}
             labelsById={labelsById}
             projectLabels={labelsByProject.get(task.projectId) ?? []}
+            fieldConfig={fieldConfig}
             onEdit={edits.edit}
             onOpen={() => navigation.go({ kind: "task", taskKey: task.key })}
             pending={edits.pending.has(task.id)}
@@ -331,6 +338,7 @@ export function ListView({ projectId, activeOnly = false }: ListViewProps) {
         onSortChange={setSort}
         labelOptions={labelOptions}
         taskCount={displayTasks?.length}
+        fieldScope={fieldScope}
       />
       <div
         ref={scrollRef}

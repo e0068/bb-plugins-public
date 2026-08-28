@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import type {
   Label,
   Project,
@@ -11,10 +11,18 @@ import type { TaskRowMeta } from "./data.js";
 import {
   activeWorkLabel,
   formatDueDate,
+  formatTimestamp,
   formatTokenCount,
   partitionLabels,
 } from "./lib.js";
-import { useHiddenRowFields } from "./row-field-preference.js";
+import { planRowFields } from "./field-plan.js";
+import {
+  ROW_FIELD_LABELS,
+  type FieldDisplayConfig,
+  type RowField,
+} from "./row-field-preference.js";
+import { PriorityIcon } from "./icons.js";
+import { PRIORITY_LABELS } from "./lib.js";
 import type { EditFn } from "./property-menus.js";
 import {
   isBareKey,
@@ -36,21 +44,18 @@ const RAIL_CHIP_CLASS =
   "flex items-center gap-1 rounded-md border border-border px-1.5 py-px text-xs text-muted-foreground";
 
 /**
- * Icon-only rail elements (Type, Estimate) read as glyphs, not chips: they drop
- * the pill's border and padding so a lone icon isn't boxed, while keeping the
- * rail's alignment and muted color.
+ * Icon-only rail elements (Type, Estimate, Priority) read as glyphs, not chips:
+ * they drop the pill's border and padding so a lone icon isn't boxed, while
+ * keeping the rail's alignment and muted color.
  */
 const RAIL_ICON_CLASS = "flex items-center text-muted-foreground";
 
 /**
  * Live-activity chip: a green dot plus an "Active" pill, styled like the label
- * chips so the rail stays uniform. Renders only while an agent is actively
- * starting/working; historical attachments show nothing. The pill text stays
- * constant; the tooltip carries the specific state (starting vs working, agent
- * count).
+ * chips so the rail stays uniform. The pill text stays constant; the tooltip
+ * carries the specific state (starting vs working, agent count).
  */
 function ActiveChip({ threads }: { threads: readonly TaskThread[] }) {
-  if (threads.length === 0) return null;
   return (
     <span title={activeWorkLabel(threads)} className={RAIL_CHIP_CLASS}>
       <span
@@ -62,8 +67,15 @@ function ActiveChip({ threads }: { threads: readonly TaskThread[] }) {
   );
 }
 
-function TypeChip({ type }: { type: Task["type"] }) {
-  if (type === null) return null;
+function PriorityChip({ priority }: { priority: Task["priority"] }) {
+  return (
+    <span title={PRIORITY_LABELS[priority]} className={RAIL_ICON_CLASS}>
+      <PriorityIcon priority={priority} />
+    </span>
+  );
+}
+
+function TypeChip({ type }: { type: NonNullable<Task["type"]> }) {
   return (
     <span title={TYPE_LABELS[type]} className={RAIL_ICON_CLASS}>
       <Icon name={TYPE_ICONS[type]} className="size-3 shrink-0" />
@@ -71,8 +83,7 @@ function TypeChip({ type }: { type: Task["type"] }) {
   );
 }
 
-function EstimateChip({ estimate }: { estimate: Task["estimate"] }) {
-  if (estimate === null) return null;
+function EstimateChip({ estimate }: { estimate: NonNullable<Task["estimate"]> }) {
   return (
     <span title={`Estimate: ${estimate.toUpperCase()}`} className={RAIL_ICON_CLASS}>
       <EstimateIcon estimate={estimate} />
@@ -87,7 +98,6 @@ function TokensChip({
   planTokens: number | null;
   factTokens: number | null;
 }) {
-  if (planTokens === null && factTokens === null) return null;
   const plan = planTokens === null ? "—" : formatTokenCount(planTokens);
   const fact = factTokens === null ? "—" : formatTokenCount(factTokens);
   return (
@@ -97,6 +107,23 @@ function TokensChip({
     >
       <Icon name="AiContentGenerator01" className="size-3 shrink-0" />
       {plan} / {fact}
+    </span>
+  );
+}
+
+function DateChip({
+  icon,
+  title,
+  value,
+}: {
+  icon: Parameters<typeof Icon>[0]["name"];
+  title: string;
+  value: string;
+}) {
+  return (
+    <span className={`${RAIL_CHIP_CLASS} shrink-0 tabular-nums`} title={title}>
+      <Icon name={icon} className="size-3 shrink-0" />
+      {value}
     </span>
   );
 }
@@ -146,14 +173,10 @@ function LabelChipRow({
  * "+N" chip whose tooltip lists the hidden names.
  */
 function LabelChips({
-  task,
-  labelsById,
+  labels,
 }: {
-  task: Task;
-  labelsById: Map<string, Label>;
+  labels: readonly Label[];
 }) {
-  const labels = task.labelIds.flatMap((id) => labelsById.get(id) ?? []);
-  if (labels.length === 0) return null;
   return (
     <>
       <span className="hidden items-center gap-1.5 @xl:flex">
@@ -166,6 +189,89 @@ function LabelChips({
   );
 }
 
+/**
+ * Single em-dash placeholder for an enabled-but-empty field (the "show empty"
+ * mode). One uniform glyph across fields — the row keeps its slots aligned
+ * without inventing a distinct empty form per field.
+ */
+function FieldPlaceholder({ field }: { field: RowField }) {
+  return (
+    <span
+      title={`${ROW_FIELD_LABELS[field]}: —`}
+      className="flex items-center text-subtle-foreground/60"
+    >
+      —
+    </span>
+  );
+}
+
+/** Renders one planned rail cell's value; placeholders are handled by callers. */
+function RailValue({
+  field,
+  task,
+  meta,
+  project,
+  labels,
+}: {
+  field: RowField;
+  task: Task;
+  meta: TaskRowMeta | undefined;
+  project: Project | undefined;
+  labels: readonly Label[];
+}) {
+  switch (field) {
+    case "priority":
+      return <PriorityChip priority={task.priority} />;
+    case "active":
+      return <ActiveChip threads={meta?.activeThreads ?? []} />;
+    case "type":
+      return task.type !== null ? <TypeChip type={task.type} /> : null;
+    case "estimate":
+      return task.estimate !== null ? (
+        <EstimateChip estimate={task.estimate} />
+      ) : null;
+    case "labels":
+      return <LabelChips labels={labels} />;
+    case "tokens":
+      return (
+        <TokensChip planTokens={task.planTokens} factTokens={task.factTokens} />
+      );
+    case "dueDate":
+      return task.dueDate !== null ? (
+        <DateChip
+          icon="Clock"
+          title={`Due ${formatDueDate(task.dueDate)}`}
+          value={formatDueDate(task.dueDate)}
+        />
+      ) : null;
+    case "project":
+      return project !== undefined ? (
+        <span
+          aria-hidden
+          title={project.name}
+          className="size-2.5 shrink-0 rounded-sm"
+          style={{ backgroundColor: project.color }}
+        />
+      ) : null;
+    case "createdAt":
+      return (
+        <DateChip
+          icon="Calendar"
+          title={`Created ${formatTimestamp(task.createdAt)}`}
+          value={formatTimestamp(task.createdAt)}
+        />
+      );
+    case "updatedAt":
+      return (
+        <DateChip
+          icon="Edit"
+          title={`Edited ${formatTimestamp(task.updatedAt)}`}
+          value={formatTimestamp(task.updatedAt)}
+        />
+      );
+  }
+}
+
 export interface TaskRowProps {
   /** Task with any pending optimistic edit already applied. */
   task: Task;
@@ -175,6 +281,8 @@ export interface TaskRowProps {
   labelsById: Map<string, Label>;
   /** Labels belonging to this task's project, for the context menu. */
   projectLabels: readonly Label[];
+  /** Which rail fields to draw, in order, and how to treat empties. */
+  fieldConfig: FieldDisplayConfig;
   onEdit: EditFn;
   onOpen: () => void;
   /** A mutation for this row is in flight. */
@@ -187,7 +295,8 @@ export interface TaskRowProps {
  * it (z-10) and stay independently clickable — so editing never triggers an
  * accidental open. A focused row also opens the pickers with `S`/`P`, and
  * right-click (or the context-menu key / touch long-press) opens the property
- * menu.
+ * menu. The trailing rail is drawn from the client-local field config (order +
+ * visibility + show-empty); priority and key stay leading and unmanaged.
  */
 export function TaskRow({
   task,
@@ -196,12 +305,25 @@ export function TaskRow({
   showProject,
   labelsById,
   projectLabels,
+  fieldConfig,
   onEdit,
   onOpen,
   pending,
 }: TaskRowProps) {
   const [openMenu, setOpenMenu] = useState<"status" | "priority" | null>(null);
-  const hidden = useHiddenRowFields();
+  const labels = useMemo(
+    () => task.labelIds.flatMap((id) => labelsById.get(id) ?? []),
+    [task.labelIds, labelsById],
+  );
+  const cells = useMemo(
+    () =>
+      planRowFields(fieldConfig, task, {
+        activeCount: meta?.activeThreads.length ?? 0,
+        showProject,
+        hasProject: project !== undefined,
+      }),
+    [fieldConfig, task, meta, showProject, project],
+  );
 
   return (
     <TaskContextMenu task={task} onEdit={onEdit} projectLabels={projectLabels}>
@@ -257,36 +379,20 @@ export function TaskRow({
           {task.title}
         </span>
         <span className="col-start-3 row-start-2 flex min-w-0 items-center gap-1.5 justify-self-end text-xs text-subtle-foreground @max-md:overflow-hidden @md:shrink-0">
-          {meta && !hidden.has("active") ? (
-            <ActiveChip threads={meta.activeThreads} />
-          ) : null}
-          {!hidden.has("type") ? <TypeChip type={task.type} /> : null}
-          {!hidden.has("estimate") ? (
-            <EstimateChip estimate={task.estimate} />
-          ) : null}
-          {!hidden.has("labels") ? (
-            <LabelChips task={task} labelsById={labelsById} />
-          ) : null}
-          {!hidden.has("tokens") ? (
-            <TokensChip
-              planTokens={task.planTokens}
-              factTokens={task.factTokens}
-            />
-          ) : null}
-          {!hidden.has("dueDate") && task.dueDate !== null ? (
-            <span className={`${RAIL_CHIP_CLASS} shrink-0 tabular-nums`}>
-              <Icon name="Clock" className="size-3 shrink-0" />
-              {formatDueDate(task.dueDate)}
-            </span>
-          ) : null}
-          {!hidden.has("project") && showProject && project !== undefined ? (
-            <span
-              aria-hidden
-              title={project.name}
-              className="size-2.5 shrink-0 rounded-sm"
-              style={{ backgroundColor: project.color }}
-            />
-          ) : null}
+          {cells.map((cell) =>
+            cell.mode === "placeholder" ? (
+              <FieldPlaceholder key={cell.field} field={cell.field} />
+            ) : (
+              <RailValue
+                key={cell.field}
+                field={cell.field}
+                task={task}
+                meta={meta}
+                project={project}
+                labels={labels}
+              />
+            ),
+          )}
         </span>
       </div>
     </TaskContextMenu>

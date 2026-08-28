@@ -1,6 +1,6 @@
 {
   "name": "bb-plugin-claude-config",
-  "version": "0.1.1",
+  "version": "0.2.1",
   "type": "module",
   "engines": {
     "bb": ">=0.39",
@@ -10,7 +10,7 @@
     "name": "Claude Config",
     "description": "Управление конфигом Claude Code: плагины, коннекторы, навыки, хуки и подгрузка инструментов по областям.",
     "branding": {
-      "icon": "SlidersHorizontal"
+      "icon": "Brain"
     },
     "server": "./server.ts",
     "app": "./app.tsx"

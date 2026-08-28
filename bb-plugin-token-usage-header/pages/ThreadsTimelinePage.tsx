@@ -24,6 +24,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { cn } from "@/lib/utils";
+import { ProjectSwitcher, type ProjectSwitcherOption } from "../packages/project-switcher/react";
 import { DEFAULT_VIZ_SETTINGS, binTotal, type ThreadEntry } from "../src/core";
 import { DEFAULT_PALETTE, ThreadRow, computeDisplayBins } from "./thread-chart";
 import { THREADS_TIMELINE_PANEL_PATH, buildAgentDetailSubPath } from "./AgentTimelinePage";
@@ -189,6 +190,14 @@ export function ThreadsTimelinePage(_props: PluginNavPanelProps) {
     if (hasThreadsBucket) options.push({ key: null, label: "Threads" });
     return options;
   }, [threads]);
+
+  // "Все проекты" (key: "") resets the filter, then one entry per
+  // projectOptions — the "Threads" bucket (key: null) is already the last
+  // entry there, not duplicated here.
+  const switcherOptions = useMemo<ProjectSwitcherOption[]>(
+    () => [{ key: "", label: "Все проекты" }, ...projectOptions],
+    [projectOptions],
+  );
 
   const filteredSorted = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
@@ -405,36 +414,22 @@ export function ThreadsTimelinePage(_props: PluginNavPanelProps) {
             спрятано под шестерёнку — см. ChartSettingsPopover. Легенды агентов
             в тулбаре больше нет: разбивка по агентам живёт в тултипе столбца. */}
         <section className="flex flex-wrap items-center gap-x-4 gap-y-2 border-b border-border pb-4">
-          <div className="flex flex-wrap items-center gap-2">
-            <Button
-              type="button"
-              variant={projectFilter.size === 0 ? "default" : "outline"}
-              size="sm"
-              aria-pressed={projectFilter.size === 0}
-              onClick={() => setProjectFilter(new Set())}
-            >
-              Все проекты
-            </Button>
-            {projectOptions.map((opt) => (
-              <Button
-                key={opt.key ?? "—threads—"}
-                type="button"
-                variant={projectFilter.has(opt.key) ? "default" : "outline"}
-                size="sm"
-                aria-pressed={projectFilter.has(opt.key)}
-                onClick={() =>
-                  setProjectFilter((prev) => {
-                    const next = new Set(prev);
-                    if (next.has(opt.key)) next.delete(opt.key);
-                    else next.add(opt.key);
-                    return next;
-                  })
-                }
-              >
-                {opt.label}
-              </Button>
-            ))}
-          </div>
+          <ProjectSwitcher
+            options={switcherOptions}
+            isSelected={(key) => (key === "" ? projectFilter.size === 0 : projectFilter.has(key))}
+            onSelect={(key) => {
+              if (key === "") {
+                setProjectFilter(new Set());
+                return;
+              }
+              setProjectFilter((prev) => {
+                const next = new Set(prev);
+                if (next.has(key)) next.delete(key);
+                else next.add(key);
+                return next;
+              });
+            }}
+          />
 
           <div className="ml-auto flex flex-wrap items-center gap-2">
             <div className="flex items-center gap-1" role="group" aria-label="Фильтр по стоимости">
