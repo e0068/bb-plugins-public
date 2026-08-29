@@ -75,3 +75,20 @@
   color: var(--timeline-accent);
   text-decoration: none;
 }
+
+/* Ячейка значения во «фронтматер»-таблице: растёт по содержимому (field-sizing),
+   без своей рамки и фона — их даёт клетка таблицы. Длинный description виден
+   целиком, а не обрезается инпутом. */
+.cc-fm-value {
+  field-sizing: content;
+  width: 100%;
+  resize: none;
+  border: 0;
+  background: transparent;
+  outline: none;
+  color: inherit;
+  font: inherit;
+  line-height: 1.45;
+  min-height: 1.45em;
+  padding: 0;
+}

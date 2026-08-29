@@ -19,6 +19,7 @@ import {
   resolveToolSearch,
 } from "./src/effective";
 import { buildConfigView } from "./src/config-view";
+import { estimateTokens } from "./src/weight";
 import {
   parseClaudeJsonServers,
   parseInstalledPlugins,
@@ -104,6 +105,8 @@ const configOutput = z.object({
       dimmed: z.boolean(),
       // Каталог плагина — есть, если строку можно открыть.
       installPath: z.string().nullable(),
+      // Оценка «веса» в токенах (манифест+README); null — не удалось прочитать.
+      tokens: z.number().nullable(),
     }),
   ),
   connectors: z.array(
@@ -115,6 +118,8 @@ const configOutput = z.object({
       toggleable: z.boolean(),
       value: z.boolean(),
       dimmed: z.boolean(),
+      // Оценка веса определения коннектора в токенах.
+      tokens: z.number().nullable(),
     }),
   ),
   skills: z.array(
@@ -126,6 +131,8 @@ const configOutput = z.object({
       enabled: z.boolean(),
       mode: skillMode,
       dimmed: z.boolean(),
+      // Оценка веса SKILL.md в токенах.
+      tokens: z.number().nullable(),
     }),
   ),
   agents: z.array(
@@ -134,6 +141,8 @@ const configOutput = z.object({
       origin: z.enum(["personal", "project"]),
       // Абсолютный путь к файлу агента — панель открывает его по нему.
       path: z.string(),
+      // Оценка веса файла агента в токенах.
+      tokens: z.number().nullable(),
     }),
   ),
   hooks: z.array(
@@ -462,15 +471,16 @@ function expandTilde(path: string): string {
 
 /**
  * Раскрывает путь файла из команды хука в абсолютный: плейсхолдеры Claude Code
- * (`$CLAUDE_PROJECT_DIR`, `$CLAUDE_CONFIG_DIR`), `~` и относительный путь (от
- * корня проекта — с ним Claude Code и запускает хук). Возвращает null, если
- * плейсхолдер не разрешить (нет корня проекта, чужая переменная): показать файл
- * можно только в границах области.
+ * (`$CLAUDE_PROJECT_DIR`, `$CLAUDE_CONFIG_DIR`), `$HOME`, `~` и относительный
+ * путь (от корня проекта — с ним Claude Code и запускает хук). Возвращает null,
+ * если плейсхолдер не разрешить (нет корня проекта, чужая переменная): показать
+ * файл можно только в границах области.
  */
 function expandHookFilePath(raw: string, area: Area): string | null {
   let path = raw
     .replace(/\$\{?CLAUDE_CONFIG_DIR\}?/g, area.claudeHome)
-    .replace(/\$\{?CLAUDE_PROJECT_DIR\}?/g, area.projectRoot ?? "\0");
+    .replace(/\$\{?CLAUDE_PROJECT_DIR\}?/g, area.projectRoot ?? "\0")
+    .replace(/\$\{?HOME\}?/g, homedir());
   if (path.includes("\0")) return null; // нужен корень проекта, а его нет
   path = expandTilde(path);
   if (path.startsWith("$")) return null; // осталась незнакомая переменная
@@ -807,11 +817,123 @@ export default function plugin(bb: BbPluginApi) {
         disabledHooksByLevel,
       });
 
+      // «Вес» строк в токенах: читаем содержимое файлов раздела и оцениваем.
+      // Ошибка чтения — tokens=null (в UI подпись просто без веса).
+      const tokensOf = async (
+        path: string | null,
+        hostId: string | undefined,
+        rootPath?: string,
+      ): Promise<number | null> => {
+        if (!path) return null;
+        const { text } = await readFile(path, hostId, rootPath);
+        return text == null ? null : estimateTokens(text);
+      };
+
+      // Имя навыка → путь его SKILL.md (та же раскладка, что в collectSkillNames).
+      const skillFileByName = (
+        dir: string | null,
+        relPaths: string[],
+      ): Map<string, string> => {
+        const map = new Map<string, string>();
+        if (!dir) return map;
+        for (const rel of relPaths) {
+          const seg = rel.split("/").filter(Boolean);
+          if (seg[seg.length - 1] !== "SKILL.md") continue;
+          const name =
+            seg[0] === "synced" && seg.length === 3
+              ? seg[1]
+              : seg.length === 2
+                ? seg[0]
+                : null;
+          if (name) map.set(name, join(dir, rel));
+        }
+        return map;
+      };
+      const personalSkillFiles = skillFileByName(
+        area.personalSkillsDir,
+        personalSkillPaths,
+      );
+      const projectSkillFiles = skillFileByName(
+        area.projectSkillsDir,
+        projectSkillPaths,
+      );
+
+      // Определения коннекторов (JSON) по ключу origin:name — их вес.
+      const connectorDefs = new Map<string, string>();
+      for (const server of parseMcpJson(mcpJson.text)) {
+        connectorDefs.set(
+          `mcpjson:${server.name}`,
+          JSON.stringify(server.config),
+        );
+      }
+      const claudeServers = parseClaudeJsonServers(
+        claudeJson.text,
+        area.projectRoot,
+      );
+      for (const server of claudeServers.user) {
+        connectorDefs.set(`user:${server.name}`, JSON.stringify(server.config));
+      }
+      for (const server of claudeServers.local) {
+        connectorDefs.set(`local:${server.name}`, JSON.stringify(server.config));
+      }
+
+      const [skills, agents, plugins] = await Promise.all([
+        Promise.all(
+          view.skills.map(async (skill) => {
+            const path = (
+              skill.origin === "project" ? projectSkillFiles : personalSkillFiles
+            ).get(skill.name);
+            return { ...skill, tokens: await tokensOf(path ?? null, area.hostId) };
+          }),
+        ),
+        Promise.all(
+          view.agents.map(async (agent) => ({
+            ...agent,
+            tokens: await tokensOf(agent.path, area.hostId),
+          })),
+        ),
+        Promise.all(
+          view.plugins.map(async (plugin) => {
+            if (!plugin.installPath) return { ...plugin, tokens: null };
+            const manifest = await readFile(
+              join(plugin.installPath, ".claude-plugin", "plugin.json"),
+              area.hostId,
+              area.claudeHome,
+            );
+            let readme = "";
+            for (const name of ["README.md", "readme.md"]) {
+              const { text } = await readFile(
+                join(plugin.installPath, name),
+                area.hostId,
+                area.claudeHome,
+              );
+              if (text != null) {
+                readme = text;
+                break;
+              }
+            }
+            const combined = (manifest.text ?? "") + readme;
+            return {
+              ...plugin,
+              tokens: combined.length ? estimateTokens(combined) : null,
+            };
+          }),
+        ),
+      ]);
+      const connectors = view.connectors.map((connector) => {
+        const def = connectorDefs.get(`${connector.origin}:${connector.name}`);
+        return { ...connector, tokens: def ? estimateTokens(def) : null };
+      });
+
       return {
         areaLabel: area.label,
         editedFilePath: area.editedPath,
         error: null,
         ...view,
+        plugins,
+        connectors,
+        skills,
+        agents,
       };
     },
 

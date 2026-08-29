@@ -22,12 +22,6 @@ import {
 } from "@get-bb/plugin-sdk/app";
 import type { PluginNavPanelProps } from "@get-bb/plugin-sdk/app";
 import type { AreaConfig, rpcContract, WriteOutcome } from "./server";
-import {
-  Card,
-  CardContent,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Icon } from "@/components/ui/icon";
@@ -41,7 +35,15 @@ import {
 } from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
 import { isValidName, slugifyName } from "./src/scaffold";
+import {
+  fieldsFromJson,
+  type FrontmatterEntry,
+  parseFrontmatter,
+  serializeFrontmatter,
+  setFieldValue,
+} from "./src/frontmatter";
 import { MarkdownEditor } from "./packages/md-editor/react";
+import { formatWeight } from "./src/weight";
 import {
   fileRefFromCode,
   isInTabLink,
@@ -58,6 +60,15 @@ import { extractCommandFile } from "./src/hook-script";
 import "./doc-editor.css";
 
 const PANEL_PATH = "claude-config";
+
+// Разделы средней колонки — выбираются из рейки, определяют, что показать.
+type SectionId =
+  | "hooks"
+  | "plugins"
+  | "connectors"
+  | "skills"
+  | "agents"
+  | "toolSearch";
 
 // Режим включённого навыка и цель записи (включая off) — как в контракте.
 type SkillMode = "on" | "name-only" | "user-invocable-only";
@@ -182,6 +193,15 @@ function parseDocSubPath(subPath: string): DocTarget | null {
 
 // Markdown-файлы рендерим как есть; прочие (например plugin.json) — кодовым
 // блоком с подсветкой по расширению, чтобы читалось, а не разъезжалось.
+// Вторая строка элемента списка: вес в токенах впереди, затем остальное
+// (происхождение, версия, транспорт). Нет веса — только остальное; нет
+// остального — только вес.
+function secondLine(tokens: number | null, rest: string): string {
+  const weight = tokens != null ? formatWeight(tokens) : "";
+  if (weight && rest) return `${weight} · ${rest}`;
+  return weight || rest;
+}
+
 function asMarkdown(path: string, content: string): string {
   if (/\.(md|markdown)$/i.test(path)) return content;
   const ext = path.split(".").pop()?.toLowerCase() ?? "";
@@ -375,6 +395,82 @@ type Loaded = {
   sha256: string | null;
 };
 
+// Фронтматер файла — таблицей «поле → значение» во всю ширину страницы. Ключ
+// прижат влево и не растягивается, значение занимает остаток. readOnly — для
+// плагинов (манифест не правится через этот путь); иначе значения редактируемы.
+// В таблицу идут только поля верхнего уровня; вложенные/сырые строки блока
+// сохраняются при записи, но не показываются.
+function FrontmatterTable({
+  entries,
+  onChange,
+  readOnly = false,
+}: {
+  entries: FrontmatterEntry[];
+  onChange?: (index: number, value: string) => void;
+  readOnly?: boolean;
+}) {
+  // Только поля верхнего уровня; сохраняем исходный индекс для onChange.
+  const fields: { key: string; value: string; index: number }[] = [];
+  entries.forEach((entry, index) => {
+    if (entry.kind === "field") {
+      fields.push({ key: entry.key, value: entry.value, index });
+    }
+  });
+
+  return (
+    // Блок ограничен по ширине и по центру. Обёртка со скруглением и
+    // overflow-hidden клиппит углы заливки; сетку рисуют границы ячеек, а не
+    // border самой таблицы (иначе border-collapse ломает скругление).
+    <div className="p-4">
+      <div
+        style={{ width: 668 }}
+        className="mx-auto overflow-hidden rounded-lg border border-border"
+      >
+        <table className="w-full border-collapse text-sm">
+          <tbody>
+            {fields.map((field, pos) => {
+              const notLast = pos < fields.length - 1;
+              return (
+                <tr key={field.index}>
+                  <td
+                    className={cn(
+                      "w-px whitespace-nowrap border-r border-border bg-muted/50 px-3 py-2 align-top font-mono text-xs text-muted-foreground",
+                      notLast && "border-b border-border",
+                    )}
+                  >
+                    {field.key}
+                  </td>
+                  <td
+                    className={cn(
+                      "px-3 py-2 align-top",
+                      notLast && "border-b border-border",
+                    )}
+                  >
+                    {readOnly ? (
+                      <div className="whitespace-pre-wrap break-words">
+                        {field.value}
+                      </div>
+                    ) : (
+                      <textarea
+                        rows={1}
+                        value={field.value}
+                        onChange={(event) =>
+                          onChange?.(field.index, event.target.value)
+                        }
+                        className="cc-fm-value"
+                      />
+                    )}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
 function DocTab({ subPath }: PluginNavPanelProps) {
   const rpc = useRpc<typeof rpcContract>();
   const navigate = useBbNavigate();
@@ -407,6 +503,33 @@ function DocTab({ subPath }: PluginNavPanelProps) {
     filePath: string | null;
     fileContent: string | null;
   } | null>(null);
+  // Разбор фронтматера текущего документа: поля идут в таблицу, тело — в редактор.
+  // hasFm=false → у файла нет фронтматера, тело равно всему содержимому.
+  const [hasFm, setHasFm] = useState(false);
+  const [fmEntries, setFmEntries] = useState<FrontmatterEntry[]>([]);
+  const [fmBody, setFmBody] = useState("");
+  // Манифест плагина (JSON) — его «фронтматер», показываем таблицей над README.
+  const [pluginManifest, setPluginManifest] = useState<string | null>(null);
+
+  // Собрать содержимое файла из полей и тела: с фронтматером — сериализуем блок,
+  // без него — тело и есть весь файл.
+  const composeContent = (entries: FrontmatterEntry[], body: string) =>
+    hasFm ? serializeFrontmatter(entries, body) : body;
+
+  // Разложить документ на фронтматер и тело. Композит (плагин/коннектор) и хук
+  // имеют своё представление — их не трогаем, тело = всё содержимое.
+  const splitDoc = (loaded: Loaded | null, isComposite: boolean) => {
+    if (!loaded || loaded.content == null || isComposite) {
+      setHasFm(false);
+      setFmEntries([]);
+      setFmBody(loaded?.content ?? "");
+      return;
+    }
+    const parsed = parseFrontmatter(loaded.content);
+    setHasFm(parsed.hasFrontmatter);
+    setFmEntries(parsed.entries);
+    setFmBody(parsed.body);
+  };
 
   // Любой показ нового файла выходит из режима правки.
   const present = (result: Loaded) => {
@@ -416,6 +539,8 @@ function DocTab({ subPath }: PluginNavPanelProps) {
     setLoading(false);
     // Доп. хук-данные ставит только hook-ветка; для прочих документов сбрасываем.
     setHookExtra(null);
+    // Манифест ставит только plugin-ветка; для прочих документов сбрасываем.
+    setPluginManifest(null);
     // Префетч путей для подсказок / (тихо; ошибки не мешают показу).
     if (result.path && result.content != null) {
       void rpc
@@ -440,6 +565,15 @@ function DocTab({ subPath }: PluginNavPanelProps) {
       setRefTargets([]);
     }
   };
+
+  // Пересобрать фронтматер/тело при смене документа или его типа. Читает
+  // зафиксированные doc/composite (не из замыкания present), поэтому корректно
+  // и после сохранения (doc.content обновился), и при переключении файла.
+  useEffect(() => {
+    splitDoc(doc, composite);
+    // splitDoc зависит только от doc и composite.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [doc, composite]);
 
   // Первый показ по subPath: навык резолвит сервер (readSkillFile), плагин —
   // манифест + README (readPlugin, композит), любой файл — по абсолютному пути
@@ -474,19 +608,17 @@ function DocTab({ subPath }: PluginNavPanelProps) {
             });
             return;
           }
-          // Манифест — JSON-блок, ниже — README как есть (если есть).
-          const content =
-            "```json\n" +
-            (result.manifest ?? "") +
-            "\n```" +
-            (result.readme != null ? `\n\n---\n\n${result.readme}` : "");
+          // Манифест уходит в таблицу-«фронтматер» (pluginManifest), тело —
+          // README как есть. present() сбрасывает pluginManifest, поэтому
+          // ставим его после present.
           setComposite(true);
           present({
             path: result.manifestPath,
-            content,
+            content: result.readme ?? "",
             error: null,
             sha256: null,
           });
+          setPluginManifest(result.manifest);
         });
       return () => {
         ok = false;
@@ -757,6 +889,13 @@ function DocTab({ subPath }: PluginNavPanelProps) {
         )}
         <div className="min-w-0 flex-1">
           <div className="text-sm font-medium">{heading}</div>
+          {/* Маркетплейс плагина живёт в ключе (name@marketplace) — показываем
+              его у шапки тела, а не второй строкой в списке. */}
+          {target.kind === "plugin" && target.key.includes("@") && (
+            <div className="truncate text-xs text-muted-foreground">
+              {target.key.slice(target.key.indexOf("@") + 1)}
+            </div>
+          )}
           {doc?.path && (
             <div className="truncate text-xs text-muted-foreground">
               {doc.path}
@@ -781,6 +920,8 @@ function DocTab({ subPath }: PluginNavPanelProps) {
               onClick={() => {
                 setEditing(false);
                 setSaveNote(null);
+                // Откат несохранённых правок фронтматера и тела к файлу.
+                splitDoc(doc, composite);
               }}
               className="rounded-md px-2 py-1 text-sm text-muted-foreground hover:bg-muted"
               aria-label="Отмена"
@@ -799,8 +940,19 @@ function DocTab({ subPath }: PluginNavPanelProps) {
           <p className="p-4 text-sm text-destructive">{doc.error}</p>
         )}
         {!loading && doc?.content != null && composite && (
-          <div className="p-4" onClick={onCompositeClick}>
-            <Markdown content={doc.content} />
+          <div onClick={onCompositeClick}>
+            {/* Плагин: манифест таблицей во всю ширину, ниже — README. */}
+            {target.kind === "plugin" && pluginManifest && (
+              <FrontmatterTable
+                entries={fieldsFromJson(pluginManifest)}
+                readOnly
+              />
+            )}
+            {doc.content && (
+              <div className="p-4">
+                <Markdown content={doc.content} />
+              </div>
+            )}
           </div>
         )}
         {!loading && doc?.content != null && !composite && target.kind === "hook" && (
@@ -860,20 +1012,37 @@ function DocTab({ subPath }: PluginNavPanelProps) {
           </div>
         )}
         {!loading && doc?.content != null && !composite && target.kind !== "hook" && (
-          <div className="h-full p-4" onClick={onDocClick}>
-            <MarkdownEditor
-              editable={editing}
-              atLinks
-              value={editing ? draft : asMarkdown(doc.path, doc.content)}
-              onChange={setDraft}
-              linkResolver={linkResolver}
-              pathProvider={pathProvider}
-              onSave={(md) => {
-                setDraft(md);
-                save(md);
-              }}
-              className="h-full cc-doc-mde"
-            />
+          <div className="flex h-full flex-col">
+            {hasFm && fmEntries.some((entry) => entry.kind === "field") && (
+              <FrontmatterTable
+                entries={fmEntries}
+                onChange={(index, value) => {
+                  const next = setFieldValue(fmEntries, index, value);
+                  setFmEntries(next);
+                  setEditing(true);
+                  setDraft(composeContent(next, fmBody));
+                }}
+              />
+            )}
+            <div className="min-h-0 flex-1 p-4" onClick={onDocClick}>
+              <MarkdownEditor
+                editable={editing}
+                atLinks
+                value={editing ? fmBody : asMarkdown(doc.path, fmBody)}
+                onChange={(md) => {
+                  setFmBody(md);
+                  setDraft(composeContent(fmEntries, md));
+                }}
+                linkResolver={linkResolver}
+                pathProvider={pathProvider}
+                onSave={(md) => {
+                  const content = composeContent(fmEntries, md);
+                  setDraft(content);
+                  save(content);
+                }}
+                className="h-full cc-doc-mde"
+              />
+            </div>
           </div>
         )}
       </div>
@@ -894,14 +1063,30 @@ function ConfigPanel({ subPath }: PluginNavPanelProps) {
   >([]);
   // Какой диалог создания открыт: навык, агент или ни один.
   const [createKind, setCreateKind] = useState<"skill" | "agent" | null>(null);
+  // Активный раздел в средней колонке; null → пустое состояние.
+  const [section, setSection] = useState<SectionId | null>(null);
+  // Режим включённых навыков — общий для всего раздела (один список в шапке,
+  // а не по навыку). Включение навыка применяет этот режим.
+  const [skillMode, setSkillMode] = useState<SkillMode>("on");
 
   // Что открыто во второй колонке (для подсветки), если относится к этой области.
   const open = parseDocSubPath(subPath);
-  const { width: docWidth, startResize } = useResizableWidth({
-    initial: 420,
-    min: 320,
-    max: 900,
-    storageKey: "claude-config:doc-pane-width",
+  // Рейка и средняя колонка (список раздела) — ограниченной, регулируемой
+  // ширины; ручка на правом крае каждой (side "left"). Документ занимает
+  // остаток (flex-1), своей ручки не имеет.
+  const { width: railWidth, startResize: startRailResize } = useResizableWidth({
+    initial: 240,
+    min: 180,
+    max: 400,
+    side: "left",
+    storageKey: "claude-config:rail-width",
+  });
+  const { width: midWidth, startResize: startMidResize } = useResizableWidth({
+    initial: 360,
+    min: 260,
+    max: 640,
+    side: "left",
+    storageKey: "claude-config:section-width",
   });
   const openHere = open && open.areaId === areaId ? open : null;
   const selectedName = openHere?.kind === "skill" ? openHere.name : null;
@@ -1027,10 +1212,24 @@ function ConfigPanel({ subPath }: PluginNavPanelProps) {
       return result.message ?? "Не удалось создать агента.";
     });
 
+  // Разделы рейки: id → заголовок и число элементов. Считаем из config,
+  // чтобы рейка и содержимое не разошлись. null-счётчик — раздел без списка.
+  const sections: { id: SectionId; title: string; count: number | null }[] =
+    config && !config.error
+      ? [
+          { id: "hooks", title: "Хуки", count: config.hooks.length },
+          { id: "plugins", title: "Плагины", count: config.plugins.length },
+          { id: "connectors", title: "Коннекторы", count: config.connectors.length },
+          { id: "skills", title: "Навыки", count: config.skills.length },
+          { id: "agents", title: "Агенты", count: config.agents.length },
+          { id: "toolSearch", title: "Подгрузка инструментов", count: null },
+        ]
+      : [];
+
   return (
-    <div className="flex h-full min-h-0">
-      <div className="min-h-0 flex-1 overflow-y-auto p-4 md:p-5">
-      <div className="mx-auto w-full max-w-3xl space-y-4">
+    <div className="flex h-full min-h-0 flex-col">
+      {/* Общая шапка: область + баннеры записи — над всеми колонками. */}
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-2 border-b border-border px-4 py-3">
         <div className="flex items-center gap-3">
           <span className="text-sm font-medium">Область</span>
           <ProjectSwitcher
@@ -1039,245 +1238,299 @@ function ConfigPanel({ subPath }: PluginNavPanelProps) {
             onSelect={(key) => changeArea(String(key))}
           />
         </div>
-
         {config?.editedFilePath && (
           <p className="text-xs text-muted-foreground">
             Пишет в {config.editedFilePath}
           </p>
         )}
-
         {notice && (
-          <div className="rounded-md border border-destructive/50 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+          <div className="w-full rounded-md border border-destructive/50 bg-destructive/10 px-3 py-2 text-sm text-destructive">
             {notice}
           </div>
         )}
+      </div>
 
-        {loading && <p className="text-sm text-muted-foreground">Загрузка…</p>}
+      <div className="flex min-h-0 flex-1">
+        {/* Внешний уровень навигации: память + разделы. */}
+        <nav
+          style={{ width: railWidth }}
+          className="flex shrink-0 flex-col gap-4 overflow-y-auto p-2"
+        >
+          {memory.length > 0 && (
+            <div>
+              <div className="px-2 pb-1 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                Память
+              </div>
+              {memory.map((entry) => (
+                <button
+                  key={entry.id}
+                  type="button"
+                  title={entry.path}
+                  // Файл памяти вытесняет раздел: средней колонки быть не должно.
+                  onClick={() => {
+                    setSection(null);
+                    openDoc(entry.path);
+                  }}
+                  className={cn(
+                    "flex w-full items-center rounded-md px-2 py-1.5 text-left text-sm transition-colors hover:bg-muted",
+                    openDocPath === entry.path && "bg-accent",
+                  )}
+                >
+                  <span className="truncate">{entry.label}</span>
+                </button>
+              ))}
+            </div>
+          )}
 
-        {!loading && config?.error && (
-          <div className="rounded-md border border-destructive/50 bg-destructive/10 px-3 py-2 text-sm text-destructive">
-            Файл {config.error.file} не разобрать: {config.error.message}
+          <div>
+            <div className="px-2 pb-1 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+              Разделы
+            </div>
+            {sections.map((item) => (
+              <button
+                key={item.id}
+                type="button"
+                // Смена раздела очищает и список (перерисуется), и документ
+                // (закрываем открытый файл — 3-я колонка пустеет).
+                onClick={() => {
+                  setSection(item.id);
+                  navigate.toPluginPanel(PANEL_PATH, {
+                    subPath: "",
+                    replace: true,
+                  });
+                }}
+                className={cn(
+                  "flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm transition-colors hover:bg-muted",
+                  section === item.id && "bg-accent",
+                )}
+              >
+                <span className="truncate">{item.title}</span>
+                {item.count != null && (
+                  <span className="ml-auto text-xs text-muted-foreground">
+                    {item.count}
+                  </span>
+                )}
+              </button>
+            ))}
           </div>
-        )}
+        </nav>
 
-        {!loading && config && !config.error && (
+        <ResizeHandle onPointerDown={startRailResize} />
+
+        {loading ? (
+          <div className="flex min-h-0 flex-1 items-center justify-center text-sm text-muted-foreground">
+            Загрузка…
+          </div>
+        ) : config?.error ? (
+          <div className="min-h-0 flex-1 overflow-y-auto p-4 md:p-5">
+            <div className="rounded-md border border-destructive/50 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+              Файл {config.error.file} не разобрать: {config.error.message}
+            </div>
+          </div>
+        ) : open && section === null ? (
+          // Файл памяти: документ во всю оставшуюся ширину, без средней колонки.
+          <div className="min-h-0 flex-1 overflow-hidden">
+            <DocTab subPath={subPath} />
+          </div>
+        ) : section !== null ? (
           <>
-            <Card>
-              <CardHeader>
-                <CardTitle>Хуки</CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-2">
+            {/* Средняя колонка — список раздела, ограниченной регулируемой ширины. */}
+            <div
+              style={{ width: midWidth }}
+              className="min-h-0 shrink-0 overflow-y-auto p-4"
+            >
+              <div className="space-y-4">
+            {config && !config.error && section === "hooks" && (
+              <div>
+                <h2 className="mb-2 text-sm font-semibold">Хуки</h2>
                 {config.hooks.length === 0 ? (
                   <p className="text-sm text-muted-foreground">
                     Хуков не найдено.
                   </p>
                 ) : (
-                  <p className="text-xs text-muted-foreground">
+                  <p className="mb-2 text-xs text-muted-foreground">
                     Тумблер выключает хук — Claude Code его не отключает сам,
                     поэтому панель вырезает хук в своё хранилище и возвращает
                     при включении. Клик по строке открывает и правит команду.
                   </p>
                 )}
-                {config.hooks.map((hook) => {
-                  const infoContent = (
-                    <>
-                      <div className="flex flex-wrap items-center gap-2">
-                        <span className="text-sm font-medium">
-                          {hook.event}
-                        </span>
-                        {hook.matcher && (
-                          <span className="text-xs text-muted-foreground">
-                            matcher: {hook.matcher}
+                <div className="space-y-0.5">
+                  {config.hooks.map((hook) => {
+                    const selected =
+                      selectedHook?.origin === hook.origin &&
+                      selectedHook?.index === hook.index &&
+                      selectedHook?.event === hook.event;
+                    const infoContent = (
+                      <>
+                        <div className="flex items-center gap-2">
+                          <span className="truncate text-sm font-medium">
+                            {hook.event}
                           </span>
-                        )}
-                        <span className="ml-auto text-xs text-muted-foreground">
-                          {HOOK_ORIGIN_LABEL[hook.origin]}
-                        </span>
-                      </div>
-                      <div className="truncate font-mono text-xs text-muted-foreground">
-                        {hook.command}
-                      </div>
-                    </>
-                  );
-                  return (
-                    <div
-                      key={`${hook.origin}:${hook.event}:${hook.index}:${hook.command}`}
-                      className={cn(
-                        "flex flex-wrap items-center justify-between gap-3 border-b border-border pb-2 transition-opacity last:border-0 last:pb-0",
-                        !hook.enabled && "opacity-60",
-                      )}
-                    >
-                      {hook.enabled ? (
-                        <button
-                          type="button"
-                          onClick={() =>
-                            openHook(hook.origin, hook.index, hook.event)
-                          }
-                          className={cn(
-                            "min-w-0 flex-1 rounded-md px-2 py-1 text-left transition-colors hover:bg-muted",
-                            selectedHook?.origin === hook.origin &&
-                              selectedHook?.index === hook.index &&
-                              selectedHook?.event === hook.event &&
-                              "bg-muted",
+                          {hook.matcher && (
+                            <span className="shrink-0 text-xs text-muted-foreground">
+                              matcher: {hook.matcher}
+                            </span>
                           )}
-                        >
-                          {infoContent}
-                        </button>
-                      ) : (
-                        <div className="min-w-0 flex-1 px-2 py-1">
-                          {infoContent}
+                          <span className="ml-auto shrink-0 text-xs text-muted-foreground">
+                            {HOOK_ORIGIN_LABEL[hook.origin]}
+                          </span>
                         </div>
-                      )}
-                      <Switch
-                        checked={hook.enabled}
-                        onChange={(next) => setHookEnabled(hook, next)}
-                      />
-                    </div>
-                  );
-                })}
-              </CardContent>
-            </Card>
-
-            {memory.length > 0 && (
-              <Card>
-                <CardHeader>
-                  <CardTitle>Память</CardTitle>
-                </CardHeader>
-                <CardContent className="flex flex-wrap gap-2">
-                  {memory.map((entry) => (
-                    <button
-                      key={entry.id}
-                      type="button"
-                      title={entry.path}
-                      onClick={() => openDoc(entry.path)}
-                      className={cn(
-                        "rounded-md border border-border px-2 py-1 text-sm transition-colors hover:bg-muted",
-                        openDocPath === entry.path && "bg-muted",
-                      )}
-                    >
-                      {entry.label}
-                    </button>
-                  ))}
-                </CardContent>
-              </Card>
+                        <div className="truncate font-mono text-xs text-muted-foreground">
+                          {hook.command}
+                        </div>
+                      </>
+                    );
+                    return (
+                      <div
+                        key={`${hook.origin}:${hook.event}:${hook.index}:${hook.command}`}
+                        className={cn(
+                          "flex items-center gap-3 rounded-md px-2 py-1.5 transition-colors",
+                          hook.enabled && "hover:bg-muted",
+                          selected && "bg-accent",
+                          !hook.enabled && "opacity-60",
+                        )}
+                      >
+                        {hook.enabled ? (
+                          <button
+                            type="button"
+                            onClick={() =>
+                              openHook(hook.origin, hook.index, hook.event)
+                            }
+                            className="min-w-0 flex-1 text-left"
+                          >
+                            {infoContent}
+                          </button>
+                        ) : (
+                          <div className="min-w-0 flex-1">{infoContent}</div>
+                        )}
+                        <Switch
+                          checked={hook.enabled}
+                          onChange={(next) => setHookEnabled(hook, next)}
+                        />
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
             )}
 
-            <Card>
-              <CardHeader>
-                <CardTitle>Плагины Claude Code</CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-2">
+            {!loading && config && !config.error && section === "plugins" && (
+              <div>
+                <h2 className="mb-2 text-sm font-semibold">
+                  Плагины Claude Code
+                </h2>
                 {config.plugins.length === 0 && (
                   <p className="text-sm text-muted-foreground">
                     Установленных плагинов не найдено.
                   </p>
                 )}
-                {config.plugins.map((plugin) => (
-                  <div
-                    key={plugin.key}
-                    className={cn(
-                      "flex flex-wrap items-center justify-between gap-3 border-b border-border pb-2 transition-opacity last:border-0 last:pb-0",
-                      // В проекте строка «как глобально» приглушена; отличие —
-                      // на полной непрозрачности.
-                      plugin.dimmed && "opacity-60",
-                    )}
-                  >
-                    {plugin.installPath ? (
-                      <button
-                        type="button"
-                        onClick={() => openPlugin(plugin.key)}
-                        className={cn(
-                          "min-w-0 rounded-md px-2 py-1 text-left transition-colors hover:bg-muted",
-                          selectedPluginKey === plugin.key && "bg-muted",
-                        )}
-                      >
-                        <div className="truncate text-sm font-medium">
-                          {plugin.name}
+                <div className="space-y-0.5">
+                  {config.plugins.map((plugin) => (
+                    <div
+                      key={plugin.key}
+                      className={cn(
+                        "flex items-center gap-3 rounded-md px-2 py-1.5 transition-colors",
+                        plugin.installPath && "hover:bg-muted",
+                        selectedPluginKey === plugin.key && "bg-accent",
+                        plugin.dimmed && "opacity-60",
+                      )}
+                    >
+                      {plugin.installPath ? (
+                        <button
+                          type="button"
+                          onClick={() => openPlugin(plugin.key)}
+                          className="min-w-0 flex-1 text-left"
+                        >
+                          <div className="truncate text-sm font-medium">
+                            {plugin.name}
+                          </div>
+                          <div className="truncate text-xs text-muted-foreground">
+                            {secondLine(plugin.tokens, plugin.version ?? "")}
+                          </div>
+                        </button>
+                      ) : (
+                        <div className="min-w-0 flex-1">
+                          <div className="truncate text-sm font-medium">
+                            {plugin.name}
+                          </div>
+                          <div className="truncate text-xs text-muted-foreground">
+                            {secondLine(plugin.tokens, plugin.version ?? "")}
+                          </div>
                         </div>
-                        <div className="truncate text-xs text-muted-foreground">
-                          {plugin.marketplace}
-                          {plugin.version ? ` · ${plugin.version}` : ""}
-                        </div>
-                      </button>
-                    ) : (
-                      <div className="min-w-0 px-2 py-1">
-                        <div className="truncate text-sm font-medium">
-                          {plugin.name}
-                        </div>
-                        <div className="truncate text-xs text-muted-foreground">
-                          {plugin.marketplace}
-                          {plugin.version ? ` · ${plugin.version}` : ""}
-                        </div>
-                      </div>
-                    )}
-                    <Switch
-                      checked={plugin.value}
-                      onChange={(next) => setPlugin(plugin.key, next)}
-                    />
-                  </div>
-                ))}
-              </CardContent>
-            </Card>
+                      )}
+                      <Switch
+                        checked={plugin.value}
+                        onChange={(next) => setPlugin(plugin.key, next)}
+                      />
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
 
-            <Card>
-              <CardHeader>
-                <CardTitle>Коннекторы</CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-2">
+            {!loading && config && !config.error && section === "connectors" && (
+              <div>
+                <h2 className="mb-2 text-sm font-semibold">Коннекторы</h2>
                 {config.connectors.length === 0 && (
                   <p className="text-sm text-muted-foreground">
                     Коннекторов не найдено.
                   </p>
                 )}
-                {config.connectors.map((connector) => (
-                  <div
-                    key={`${connector.origin}:${connector.name}`}
-                    className={cn(
-                      "flex flex-wrap items-center justify-between gap-3 border-b border-border pb-2 transition-opacity last:border-0 last:pb-0",
-                      connector.dimmed && "opacity-60",
-                    )}
-                  >
-                    <button
-                      type="button"
-                      onClick={() =>
-                        openConnector(connector.origin, connector.name)
-                      }
+                <div className="space-y-0.5">
+                  {config.connectors.map((connector) => (
+                    <div
+                      key={`${connector.origin}:${connector.name}`}
                       className={cn(
-                        "min-w-0 rounded-md px-2 py-1 text-left transition-colors hover:bg-muted",
+                        "flex items-center gap-3 rounded-md px-2 py-1.5 transition-colors hover:bg-muted",
                         selectedConnector?.name === connector.name &&
                           selectedConnector?.origin === connector.origin &&
-                          "bg-muted",
+                          "bg-accent",
+                        connector.dimmed && "opacity-60",
                       )}
                     >
-                      <div className="truncate text-sm font-medium">
-                        {connector.name}
-                      </div>
-                      <div className="truncate text-xs text-muted-foreground">
-                        {connectorSubtitle(connector.origin, connector.transport)}
-                      </div>
-                    </button>
-                    {connector.toggleable ? (
-                      <Switch
-                        checked={connector.value}
-                        onChange={(next) =>
-                          setConnector(connector.name, next)
+                      <button
+                        type="button"
+                        onClick={() =>
+                          openConnector(connector.origin, connector.name)
                         }
-                      />
-                    ) : (
-                      // user/local из ~/.claude.json settings.json не гейтит.
-                      <span className="shrink-0 text-xs text-muted-foreground">
-                        только чтение
-                      </span>
-                    )}
-                  </div>
-                ))}
-              </CardContent>
-            </Card>
+                        className="min-w-0 flex-1 text-left"
+                      >
+                        <div className="truncate text-sm font-medium">
+                          {connector.name}
+                        </div>
+                        <div className="truncate text-xs text-muted-foreground">
+                          {secondLine(
+                            connector.tokens,
+                            connectorSubtitle(
+                              connector.origin,
+                              connector.transport,
+                            ),
+                          )}
+                        </div>
+                      </button>
+                      {connector.toggleable ? (
+                        <Switch
+                          checked={connector.value}
+                          onChange={(next) =>
+                            setConnector(connector.name, next)
+                          }
+                        />
+                      ) : (
+                        // user/local из ~/.claude.json settings.json не гейтит.
+                        <span className="shrink-0 text-xs text-muted-foreground">
+                          только чтение
+                        </span>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
 
-            <Card>
-              <CardHeader>
-                <div className="flex items-center justify-between gap-2">
-                  <CardTitle>Навыки</CardTitle>
+            {!loading && config && !config.error && section === "skills" && (
+              <div>
+                <div className="mb-2 flex items-center justify-between gap-2">
+                  <h2 className="text-sm font-semibold">Навыки</h2>
                   <Button
                     variant="outline"
                     size="sm"
@@ -1287,61 +1540,71 @@ function ConfigPanel({ subPath }: PluginNavPanelProps) {
                     Новый навык
                   </Button>
                 </div>
-              </CardHeader>
-              <CardContent className="space-y-2">
+                {/* Режим — общий для раздела: применяется ко всем включённым
+                    навыкам и к каждому включаемому. Отдельной строкой с подписью. */}
+                <div className="mb-3 flex items-center gap-2">
+                  <span className="text-xs text-muted-foreground">
+                    Режим включённых навыков
+                  </span>
+                  <Dropdown
+                    value={skillMode}
+                    options={SKILL_MODE_OPTIONS}
+                    disabled={false}
+                    onChange={(mode) => {
+                      setSkillMode(mode);
+                      for (const skill of config.skills) {
+                        if (skill.enabled) setSkill(skill.name, mode);
+                      }
+                    }}
+                  />
+                </div>
                 {config.skills.length === 0 && (
                   <p className="text-sm text-muted-foreground">
                     Навыков не найдено.
                   </p>
                 )}
-                {config.skills.map((skill) => (
-                  <div
-                    key={skill.name}
-                    className={cn(
-                      "flex flex-wrap items-center justify-between gap-3 border-b border-border pb-2 transition-opacity last:border-0 last:pb-0",
-                      skill.dimmed && "opacity-60",
-                    )}
-                  >
-                    <button
-                      type="button"
-                      onClick={() => openSkill(skill.name)}
+                <div className="space-y-0.5">
+                  {config.skills.map((skill) => (
+                    <div
+                      key={skill.name}
                       className={cn(
-                        "min-w-0 rounded-md px-2 py-1 text-left transition-colors hover:bg-muted",
-                        selectedName === skill.name && "bg-muted",
+                        "flex items-center gap-3 rounded-md px-2 py-1.5 transition-colors hover:bg-muted",
+                        selectedName === skill.name && "bg-accent",
+                        skill.dimmed && "opacity-60",
                       )}
                     >
-                      <div className="truncate text-sm font-medium">
-                        {skill.name}
-                      </div>
-                      <div className="text-xs text-muted-foreground">
-                        {skill.origin === "project" ? "проектный" : "личный"}
-                      </div>
-                    </button>
-                    <div className="flex items-center gap-3">
-                      {/* Список слева от тоггла; при выключенном навыке недоступен. */}
-                      <Dropdown
-                        value={skill.mode}
-                        options={SKILL_MODE_OPTIONS}
-                        disabled={!skill.enabled}
-                        onChange={(mode) => setSkill(skill.name, mode)}
-                      />
+                      <button
+                        type="button"
+                        onClick={() => openSkill(skill.name)}
+                        className="min-w-0 flex-1 text-left"
+                      >
+                        <div className="truncate text-sm font-medium">
+                          {skill.name}
+                        </div>
+                        <div className="text-xs text-muted-foreground">
+                          {secondLine(
+                            skill.tokens,
+                            skill.origin === "project" ? "проектный" : "личный",
+                          )}
+                        </div>
+                      </button>
                       <Switch
                         checked={skill.enabled}
-                        // Включаем в текущем режиме списка, выключаем в off.
+                        // Включаем в общем режиме раздела, выключаем в off.
                         onChange={(next) =>
-                          setSkill(skill.name, next ? skill.mode : "off")
+                          setSkill(skill.name, next ? skillMode : "off")
                         }
                       />
                     </div>
-                  </div>
-                ))}
-              </CardContent>
-            </Card>
+                  ))}
+                </div>
+              </div>
+            )}
 
-            <Card>
-              <CardHeader>
-                <div className="flex items-center justify-between gap-2">
-                  <CardTitle>Агенты</CardTitle>
+            {!loading && config && !config.error && section === "agents" && (
+              <div>
+                <div className="mb-2 flex items-center justify-between gap-2">
+                  <h2 className="text-sm font-semibold">Агенты</h2>
                   <Button
                     variant="outline"
                     size="sm"
@@ -1351,57 +1614,51 @@ function ConfigPanel({ subPath }: PluginNavPanelProps) {
                     Новый агент
                   </Button>
                 </div>
-              </CardHeader>
-              <CardContent className="space-y-2">
                 {config.agents.length === 0 && (
                   <p className="text-sm text-muted-foreground">
                     Агентов не найдено.
                   </p>
                 )}
-                {config.agents.map((agent) => (
-                  <div
-                    key={agent.path}
-                    className="flex flex-wrap items-center justify-between gap-3 border-b border-border pb-2 last:border-0 last:pb-0"
-                  >
+                <div className="space-y-0.5">
+                  {config.agents.map((agent) => (
                     <button
+                      key={agent.path}
                       type="button"
                       onClick={() => openDoc(agent.path)}
                       className={cn(
-                        "min-w-0 flex-1 rounded-md px-2 py-1 text-left transition-colors hover:bg-muted",
-                        openDocPath === agent.path && "bg-muted",
+                        "block w-full rounded-md px-2 py-1.5 text-left transition-colors hover:bg-muted",
+                        openDocPath === agent.path && "bg-accent",
                       )}
                     >
                       <div className="truncate text-sm font-medium">
                         {agent.name}
                       </div>
                       <div className="text-xs text-muted-foreground">
-                        {agent.origin === "project" ? "проектный" : "личный"}
+                        {secondLine(
+                          agent.tokens,
+                          agent.origin === "project" ? "проектный" : "личный",
+                        )}
                       </div>
                     </button>
-                  </div>
-                ))}
-              </CardContent>
-            </Card>
+                  ))}
+                </div>
+              </div>
+            )}
 
-            <Card>
-              <CardHeader>
-                <CardTitle>Подгрузка инструментов</CardTitle>
-              </CardHeader>
-              <CardContent
-                className={cn(
-                  "flex flex-wrap items-center justify-between gap-3 transition-opacity",
-                  config.toolSearch.dimmed && "opacity-60",
-                )}
-              >
-                <p className="max-w-md text-xs text-muted-foreground">
+            {!loading && config && !config.error && section === "toolSearch" && (
+              <div className={cn(config.toolSearch.dimmed && "opacity-60")}>
+                <h2 className="mb-2 text-sm font-semibold">
+                  Подгрузка инструментов
+                </h2>
+                <p className="mb-3 text-xs text-muted-foreground">
                   Схемы инструментов плагинов и MCP не грузятся в контекст все
                   сразу — виден лишь список имён, а полная схема подтягивается по
                   требованию, когда инструмент нужен. Экономит контекст, особенно
-                  при многих MCP-серверах. «Всегда» — подгружать отложенно
-                  всегда; «Автоматически» — только когда инструментов много;
-                  выкл — грузить все схемы сразу.
+                  при многих MCP-серверах. «Всегда» — подгружать отложенно всегда;
+                  «Автоматически» — только когда инструментов много; выкл —
+                  грузить все схемы сразу.
                 </p>
-                <div className="flex items-center gap-3">
+                <div className="flex shrink-0 items-center gap-3">
                   <Dropdown
                     value={config.toolSearch.mode}
                     options={TOOL_SEARCH_MODE_OPTIONS}
@@ -1415,23 +1672,31 @@ function ConfigPanel({ subPath }: PluginNavPanelProps) {
                     }
                   />
                 </div>
-              </CardContent>
-            </Card>
+              </div>
+            )}
+              </div>
+            </div>
+
+            {/* Разделитель средней колонки и документ — остаток ширины. */}
+            <ResizeHandle onPointerDown={startMidResize} />
+            <div className="min-h-0 flex-1 overflow-hidden">
+              {open ? (
+                <DocTab subPath={subPath} />
+              ) : (
+                <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
+                  Выберите элемент в списке
+                </div>
+              )}
+            </div>
           </>
+        ) : (
+          // Ни файла, ни раздела — пустое состояние во всю ширину.
+          <div className="flex min-h-0 flex-1 items-center justify-center text-sm text-muted-foreground">
+            Выберите раздел слева
+          </div>
         )}
       </div>
-      </div>
-      {open && (
-        <>
-          <ResizeHandle onPointerDown={startResize} />
-          <div
-            style={{ width: docWidth }}
-            className="h-full min-h-0 shrink-0 overflow-hidden"
-          >
-            <DocTab subPath={subPath} />
-          </div>
-        </>
-      )}
+
       <CreateDialog
         open={createKind === "skill"}
         title="Новый навык"
