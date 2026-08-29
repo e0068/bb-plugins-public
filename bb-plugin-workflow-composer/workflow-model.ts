@@ -162,11 +162,13 @@ function modeExpr(mode: string, steps: Step[], level: number, engine: Engine): s
     const thunks = steps.map((s) => pad(level + 1) + "() => " + stepExpr(s, level + 1, false, engine));
     return "parallel([\n" + thunks.join(",\n") + ",\n" + pad(level) + "])";
   }
-  // pipeline: seed with a single null element, each stage is (prev) => <step>; agents may use {{prev}}
+  // pipeline: seed with a single truthy placeholder item, each stage is (prev) => <step>; agents may use
+  // {{prev}}. The seed is NOT null: the engine treats a null pipeline item as "dropped" and skips every
+  // remaining stage, so pipeline([null]) silently runs zero agents. See task workflow-composer-pipeline-null-seed.
   const stages = steps.map(
     (s) => pad(level + 1) + "(prev) => " + stepExpr(s, level + 1, s.type !== "container", engine),
   );
-  return "pipeline([null],\n" + stages.join(",\n") + ",\n" + pad(level) + ")";
+  return "pipeline([{}],\n" + stages.join(",\n") + ",\n" + pad(level) + ")";
 }
 
 function phaseBody(phase: Phase, engine: Engine): string {

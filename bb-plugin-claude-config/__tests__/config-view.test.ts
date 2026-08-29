@@ -18,6 +18,10 @@ function input(overrides: Partial<ViewInput>): ViewInput {
     installedPluginsText: installed,
     personalSkillPaths: [],
     projectSkillPaths: [],
+    personalAgentDir: "/home/u/.claude/agents",
+    projectAgentDir: null,
+    personalAgentPaths: [],
+    projectAgentPaths: [],
     mcpJsonText: null,
     claudeJsonText: null,
     projectRoot: null,
@@ -117,6 +121,38 @@ describe("buildConfigView — плагины", () => {
         installPath: null,
       },
     ]);
+  });
+});
+
+describe("buildConfigView — агенты", () => {
+  it("строит путь из каталога и имени, проектный перекрывает личного", () => {
+    const view = buildConfigView(
+      input({
+        areaKind: "project",
+        levelDocs: [{}, {}, {}],
+        levelOrigins: ["user", "project", "local"],
+        personalAgentDir: "/home/u/.claude/agents",
+        projectAgentDir: "/proj/.claude/agents",
+        personalAgentPaths: ["reviewer.md", "planner.md"],
+        projectAgentPaths: ["reviewer.md"],
+      }),
+    );
+    expect(view.agents).toEqual([
+      {
+        name: "planner",
+        origin: "personal",
+        path: "/home/u/.claude/agents/planner.md",
+      },
+      {
+        name: "reviewer",
+        origin: "project",
+        path: "/proj/.claude/agents/reviewer.md",
+      },
+    ]);
+  });
+
+  it("нет файлов — список пуст", () => {
+    expect(buildConfigView(input({})).agents).toEqual([]);
   });
 });
 

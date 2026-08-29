@@ -26,6 +26,12 @@ import {
 } from "./src/catalog";
 import { parseImports, resolveImportPath } from "./src/imports";
 import { extractCommandFile } from "./src/hook-script";
+import {
+  agentTemplate,
+  isValidName,
+  skillTemplate,
+  slugifyName,
+} from "./src/scaffold";
 
 // --- схемы, общие для сервера и панели ---------------------------------
 
@@ -42,6 +48,15 @@ const toolSearchTarget = z.enum(["on", "off", "auto"]);
 // файл нельзя безопасно править; not-found — область не разрешилась.
 const writeResult = z.object({
   outcome: z.enum(["ok", "conflict", "parse-error", "not-found"]),
+  message: z.string().nullable(),
+});
+
+// Итог создания навыка/агента. `created` — файл записан, `path` ведёт к нему
+// (панель его открывает); `exists` — файл с таким именем уже есть; `invalid`
+// — во вводе не осталось допустимых символов; `not-found` — область не найдена.
+const createResult = z.object({
+  outcome: z.enum(["created", "exists", "invalid", "not-found"]),
+  path: z.string().nullable(),
   message: z.string().nullable(),
 });
 
@@ -111,6 +126,14 @@ const configOutput = z.object({
       enabled: z.boolean(),
       mode: skillMode,
       dimmed: z.boolean(),
+    }),
+  ),
+  agents: z.array(
+    z.object({
+      name: z.string(),
+      origin: z.enum(["personal", "project"]),
+      // Абсолютный путь к файлу агента — панель открывает его по нему.
+      path: z.string(),
     }),
   ),
   hooks: z.array(
@@ -311,6 +334,19 @@ export const rpcContract = defineRpcContract({
       message: z.string().nullable(),
     }),
   },
+  createSkill: {
+    // Создаёт новый навык `<slug>/SKILL.md` в каталоге навыков области (в проекте
+    // — проектный, глобально — личный). Имя нормализуется в слаг на сервере.
+    // `exists` — навык с таким слагом уже есть (create-only не перезаписывает).
+    input: z.object({ areaId: z.string(), name: z.string() }).strict(),
+    output: createResult,
+  },
+  createAgent: {
+    // Создаёт новый файл агента `<slug>.md` в каталоге агентов области. Правила
+    // выбора каталога и нормализации имени — как у createSkill.
+    input: z.object({ areaId: z.string(), name: z.string() }).strict(),
+    output: createResult,
+  },
 });
 
 // --- разрешение области в набор путей ----------------------------------
@@ -329,6 +365,8 @@ interface Area {
   installedPath: string;
   personalSkillsDir: string;
   projectSkillsDir: string | null;
+  personalAgentsDir: string;
+  projectAgentsDir: string | null;
   /** Каталог `~/.claude` — для глобальной памяти и авто-памяти. */
   claudeHome: string;
   /** Корень проекта (для проектной памяти) или null в глобальной области. */
@@ -360,6 +398,7 @@ function resolveArea(
     "installed_plugins.json",
   );
   const personalSkillsDir = join(home, ".claude", "skills");
+  const personalAgentsDir = join(home, ".claude", "agents");
 
   if (areaId === GLOBAL_ID) {
     return Promise.resolve({
@@ -371,6 +410,8 @@ function resolveArea(
       installedPath,
       personalSkillsDir,
       projectSkillsDir: null,
+      personalAgentsDir,
+      projectAgentsDir: null,
       claudeHome,
       projectRoot: null,
       claudeJsonPath,
@@ -397,6 +438,8 @@ function resolveArea(
       installedPath,
       personalSkillsDir,
       projectSkillsDir: join(projectClaude, "skills"),
+      personalAgentsDir,
+      projectAgentsDir: join(projectClaude, "agents"),
       claudeHome,
       projectRoot: source.path,
       claudeJsonPath,
@@ -605,7 +648,8 @@ export default function plugin(bb: BbPluginApi) {
     }
   }
 
-  async function listSkillPaths(
+  // Пути файлов внутри каталога (относительно него): каталоги навыков и агентов.
+  async function listDirFiles(
     dir: string | null,
     hostId: string | undefined,
   ): Promise<string[]> {
@@ -722,9 +766,16 @@ export default function plugin(bb: BbPluginApi) {
         ? await readFile(area.mcpJsonPath, area.hostId)
         : { text: null, sha256: null };
       const claudeJson = await readFile(area.claudeJsonPath, undefined);
-      const [personalSkillPaths, projectSkillPaths] = await Promise.all([
-        listSkillPaths(area.personalSkillsDir, area.hostId),
-        listSkillPaths(area.projectSkillsDir, area.hostId),
+      const [
+        personalSkillPaths,
+        projectSkillPaths,
+        personalAgentPaths,
+        projectAgentPaths,
+      ] = await Promise.all([
+        listDirFiles(area.personalSkillsDir, area.hostId),
+        listDirFiles(area.projectSkillsDir, area.hostId),
+        listDirFiles(area.personalAgentsDir, area.hostId),
+        listDirFiles(area.projectAgentsDir, area.hostId),
       ]);
       // По ПУТИ файла уровня, не по области: ~/.claude/settings.json общий для
       // всех проектных областей, и disabled-хуки в нём должны быть общими тоже.
@@ -745,6 +796,10 @@ export default function plugin(bb: BbPluginApi) {
         installedPluginsText: installed.text,
         personalSkillPaths,
         projectSkillPaths,
+        personalAgentDir: area.personalAgentsDir,
+        projectAgentDir: area.projectAgentsDir,
+        personalAgentPaths,
+        projectAgentPaths,
         mcpJsonText: mcpJson.text,
         claudeJsonText: claudeJson.text,
         projectRoot: area.projectRoot,
@@ -1062,8 +1117,8 @@ export default function plugin(bb: BbPluginApi) {
 
       try {
         const [personalSkillPaths, projectSkillPaths] = await Promise.all([
-          listSkillPaths(area.personalSkillsDir, area.hostId),
-          listSkillPaths(area.projectSkillsDir, area.hostId),
+          listDirFiles(area.personalSkillsDir, area.hostId),
+          listDirFiles(area.projectSkillsDir, area.hostId),
         ]);
 
         const targets: { value: string; label: string; kind: "skill" | "memory" }[] = [];
@@ -1221,7 +1276,65 @@ export default function plugin(bb: BbPluginApi) {
       }
       return { outcome: "written" as const, sha256: written.sha256, message: null };
     },
+
+    createSkill({ areaId, name }) {
+      // Навык — папка `<slug>/SKILL.md`; в проекте кладём в проектный каталог,
+      // глобально — в личный. Каталог создаётся вместе с файлом (createParents).
+      return createFile(areaId, name, (area, slug) => {
+        const dir = area.projectSkillsDir ?? area.personalSkillsDir;
+        return { path: join(dir, slug, "SKILL.md"), content: skillTemplate(slug) };
+      });
+    },
+
+    createAgent({ areaId, name }) {
+      // Агент — одиночный файл `<slug>.md` в каталоге агентов области.
+      return createFile(areaId, name, (area, slug) => {
+        const dir = area.projectAgentsDir ?? area.personalAgentsDir;
+        return { path: join(dir, `${slug}.md`), content: agentTemplate(slug) };
+      });
+    },
   });
+
+  /**
+   * Создаёт новый файл конфигурации (навык или агент) из сырого имени. `plan` по
+   * области и уже нормализованному слагу даёт путь и содержимое. Запись —
+   * create-only (expectedSha256 null): существующий файл не перезаписываем, а
+   * возвращаем `exists`, чтобы панель не затёрла одноимённый навык.
+   */
+  async function createFile(
+    areaId: string,
+    rawName: string,
+    plan: (area: Area, slug: string) => { path: string; content: string },
+  ): Promise<{
+    outcome: "created" | "exists" | "invalid" | "not-found";
+    path: string | null;
+    message: string | null;
+  }> {
+    if (!isValidName(rawName)) {
+      return {
+        outcome: "invalid",
+        path: null,
+        message: "Имя должно содержать латинские буквы или цифры.",
+      };
+    }
+    const area = await resolveArea(bb, areaId);
+    if (!area) {
+      return { outcome: "not-found", path: null, message: "Область не найдена." };
+    }
+
+    const { path, content } = plan(area, slugifyName(rawName));
+    const written = await bb.sdk.files.write({
+      path,
+      hostId: area.hostId,
+      content,
+      expectedSha256: null,
+      createParents: true,
+    });
+    if (written.outcome === "conflict") {
+      return { outcome: "exists", path, message: "Такой уже существует." };
+    }
+    return { outcome: "created", path, message: null };
+  }
 
   /**
    * Находит навык: `base` — папка его SKILL.md (проектная перекрывает личную),
@@ -1385,6 +1498,7 @@ function emptyConfig(
     plugins: [],
     connectors: [],
     skills: [],
+    agents: [],
     hooks: [],
     toolSearch: { enabled: true as const, mode: "auto" as const, dimmed: false },
   };

@@ -1,30 +1,20 @@
 // @vitest-environment jsdom
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { cleanup, fireEvent, render, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, waitFor } from "@testing-library/react";
 import { loadPluginApp, renderSlot } from "@get-bb/plugin-sdk/testing/app";
 import { editorStore } from "./store";
 import { compile, blankTree, type Tree } from "./workflow-model";
-import { WorkflowEditor } from "./ui/tree-editor";
 
-// ui/tree-editor.tsx's AgentColumn renders the real MarkdownEditor
-// (../packages/md-editor/react) for the agent prompt field, which mounts
+// ui/outline-editor.tsx's AgentDetails renders the real MarkdownEditor
+// (../packages/md-editor/react) for the agent instructions field, which mounts
 // the vanilla md-editor onto a contenteditable host via window.getSelection
 // / document.createRange — jsdom does not reproduce real contenteditable
 // editing behavior, so mounting it for real here would not exercise
 // anything meaningful. Per bb-plugin-shelf/app.test.tsx's precedent for the
-// same package, mock the wrapper at the boundary: this keeps "agent prompt"
-// a plain controlled textarea, so the existing findByLabelText("agent
-// prompt") check (Miller-column drill, below) keeps passing without any
-// change to its assertions, while the real wrapper stays untouched for the
-// actual bb build (verified separately via `bb plugin build`).
-// No aria-label on the mock textarea itself: AgentColumn already wraps
-// MarkdownEditor in `<div role="group" aria-label="agent prompt">` (the
-// real accessible-name carrier, since the wrapper component takes no
-// aria-label prop) — adding a second aria-label="agent prompt" here would
-// give getByLabelText/findByLabelText two matching elements and throw.
-// findByLabelText("agent prompt") resolves to that wrapping group, which is
-// all the current test (Miller-column drill, below) needs: a truthy find
-// that proves the prompt field rendered.
+// same package, mock the wrapper at the boundary: the instructions field
+// becomes a plain controlled textarea (data-testid="agent-prompt-mock"), so
+// the outline-editor tests can edit it directly, while the real wrapper stays
+// untouched for the actual bb build (verified separately via `bb plugin build`).
 vi.mock("./packages/md-editor/react", () => ({
   MarkdownEditor: ({
     value,
@@ -153,7 +143,7 @@ describe("open", () => {
     const slot = await renderPanel();
     fireEvent.click(await slot.findByText("a"));
     await waitFor(() => {
-      const input = slot.getByLabelText("workflow name") as HTMLInputElement;
+      const input = slot.getByLabelText("outline workflow name") as HTMLInputElement;
       expect(input.value).toBe("loaded-wf");
     });
   });
@@ -171,8 +161,8 @@ describe("code-only (hand-written) workflow", () => {
     fireEvent.click(await slot.findByText("hand"));
     const pre = (await slot.findByLabelText("workflow source")) as HTMLElement;
     expect(pre.textContent).toContain("phase('P')");
-    // the tree editor's own fields must NOT be mounted in code-only mode
-    expect(slot.queryByLabelText("workflow name")).toBeFalsy();
+    // the outline editor's own fields must NOT be mounted in code-only mode
+    expect(slot.queryByLabelText("outline workflow name")).toBeFalsy();
   });
 
   it("disables Save so the constructor can't overwrite the file", async () => {
@@ -188,7 +178,7 @@ describe("save", () => {
   it("compiles the current tree and calls save with the source", async () => {
     const slot = await renderPanel();
     // bb store requires a description — set one so the save is not blocked
-    fireEvent.change(slot.getByLabelText("workflow description"), { target: { value: "d" } });
+    fireEvent.change(slot.getByLabelText("outline workflow description"), { target: { value: "d" } });
     fireEvent.click(slot.getByText("Save")); // opens the dialog
     fireEvent.click(await slot.findByLabelText("confirm save"));
     await waitFor(() => {
@@ -211,7 +201,7 @@ describe("save", () => {
 describe("new", () => {
   it("resets the editor to a blank workflow", async () => {
     const slot = await renderPanel();
-    const input = () => slot.getByLabelText("workflow name") as HTMLInputElement;
+    const input = () => slot.getByLabelText("outline workflow name") as HTMLInputElement;
     fireEvent.change(input(), { target: { value: "temp-name" } });
     expect(input().value).toBe("temp-name");
     fireEvent.click(slot.getByText("+ New workflow"));
@@ -219,126 +209,14 @@ describe("new", () => {
   });
 });
 
-describe("editor → store → compile", () => {
-  it("edits flow into the compiled source the code tab shows", () => {
-    const view = render(<WorkflowEditor models={["opus"]} />);
-    fireEvent.change(view.getByLabelText("workflow name"), { target: { value: "piped" } });
-    fireEvent.click(view.getByText("+ Phase"));
-    const src = compile(editorStore.getSnapshot().tree);
-    expect(src).toContain('name: "piped"');
-    // two phases now: the default one plus the added one
-    expect(editorStore.getSnapshot().tree.phases.length).toBe(2);
-  });
-});
-
-describe("agent type autocomplete", () => {
-  it("shows a filterable suggestion list on focus, seeded by the agents RPC, and selects on click", async () => {
-    const slot = await renderPanel();
-    fireEvent.click(await slot.findByText(/Phase 1/));
-    fireEvent.click(await slot.findByText("+ Agent"));
-    const input = (await slot.findByLabelText("agent type")) as HTMLInputElement;
-    fireEvent.focus(input);
-    expect(await slot.findByText("code-reviewer")).toBeTruthy();
-    expect(await slot.findByText("feature-dev:code-explorer")).toBeTruthy();
-    fireEvent.click(slot.getByText("code-reviewer"));
-    await waitFor(() => expect(input.value).toBe("code-reviewer"));
-  });
-});
-
-describe("provider follows agent", () => {
-  it("shows an editable provider select when no known agent is selected", async () => {
-    const slot = await renderPanel();
-    fireEvent.click(await slot.findByText(/Phase 1/));
-    fireEvent.click(await slot.findByText("+ Agent"));
-    const providerSelect = (await slot.findByLabelText("provider")) as HTMLSelectElement;
-    expect(providerSelect.disabled).toBe(false);
-  });
-
-  it("pins the provider and restricts the model list to that provider's catalog when a known agent is picked", async () => {
-    const slot = await renderPanel();
-    fireEvent.click(await slot.findByText(/Phase 1/));
-    fireEvent.click(await slot.findByText("+ Agent"));
-    const input = (await slot.findByLabelText("agent type")) as HTMLInputElement;
-    fireEvent.focus(input);
-    fireEvent.click(await slot.findByText("code-reviewer"));
-
-    const providerSelect = (await slot.findByLabelText("provider")) as HTMLSelectElement;
-    await waitFor(() => expect(providerSelect.disabled).toBe(true));
-    expect(providerSelect.value).toBe("claude-code");
-
-    const modelSelect = slot.getByLabelText("agent model") as HTMLSelectElement;
-    const modelValues = Array.from(modelSelect.options).map((o) => o.value);
-    expect(modelValues).toContain("opus");
-    expect(modelValues).not.toContain("gpt-5.1"); // a claude-code agent must never offer a codex model
-  });
-});
-
-describe("agent description column", () => {
-  it("shows no description column before an agent type is picked", async () => {
-    const slot = await renderPanel();
-    fireEvent.click(await slot.findByText(/Phase 1/));
-    fireEvent.click(await slot.findByText("+ Agent"));
-    await slot.findByLabelText("agent type");
-    expect(slot.queryByText("Adversarial reviewer")).toBeFalsy();
-  });
-
-  it("shows the selected agent's description in a new column to the right", async () => {
-    const slot = await renderPanel();
-    fireEvent.click(await slot.findByText(/Phase 1/));
-    fireEvent.click(await slot.findByText("+ Agent"));
-    const input = (await slot.findByLabelText("agent type")) as HTMLInputElement;
-    fireEvent.focus(input);
-    fireEvent.click(await slot.findByText("code-reviewer"));
-    expect(await slot.findByText("Adversarial reviewer")).toBeTruthy();
-  });
-});
-
-describe("Miller-column drill", () => {
-  it("opening a phase then an agent walks columns right", async () => {
-    const view = render(<WorkflowEditor models={["opus"]} />);
-    // one phase exists by default — open it
-    fireEvent.click(view.getAllByText(/Phase 1/)[0]);
-    // phase column shows its steps
-    expect(await view.findByText("Steps")).toBeTruthy();
-    // add an agent → auto-selects it → agent detail column appears
-    fireEvent.click(view.getByText("+ Agent"));
-    expect(await view.findByLabelText("agent prompt")).toBeTruthy();
-    expect(editorStore.getSnapshot().selection.length).toBe(2);
-  });
-});
-
-describe("agent reference drill", () => {
-  it("lists an agent's refs in the description column and drills recursively", async () => {
-    const slot = await renderPanel();
-    fireEvent.click(await slot.findByText(/Phase 1/));
-    fireEvent.click(await slot.findByText("+ Agent"));
-    const input = (await slot.findByLabelText("agent type")) as HTMLInputElement;
-    fireEvent.focus(input);
-    fireEvent.click(await slot.findByText("code-reviewer"));
-
-    // description column shows the ref pulled for the agent's own path
-    expect(await slot.findByText("skill-a")).toBeTruthy();
-
-    // drill one level: click the ref → its content + its own ref appear
-    fireEvent.click(slot.getByText("skill-a"));
-    expect(await slot.findByText("Deeper ref here")).toBeTruthy();
-    expect(await slot.findByText("nested")).toBeTruthy();
-
-    // drill a second level
-    fireEvent.click(slot.getByText("nested"));
-    expect(await slot.findByText("leaf")).toBeTruthy();
-  });
-});
-
 describe("outline editor", () => {
   async function openOutline(over?: Record<string, (input: any) => unknown>) {
     const slot = await renderPanel(over);
-    fireEvent.click(await slot.findByText("Outline"));
     await slot.findByText("+ Add Phase"); // wait for the outline to actually mount
     return slot;
   }
 
-  it("shows the outline after switching from Columns", async () => {
+  it("renders the outline as the panel's only editor", async () => {
     const slot = await openOutline();
     expect(await slot.findByText("+ Add Phase")).toBeTruthy();
     expect(await slot.findByText("Phase 1")).toBeTruthy();

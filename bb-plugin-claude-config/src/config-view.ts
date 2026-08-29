@@ -14,7 +14,9 @@ import {
   resolveToolSearch,
 } from "./effective";
 import {
+  collectAgentNames,
   collectSkillNames,
+  mergeAgents,
   mergeSkills,
   parseClaudeJsonServers,
   parseInstalledPlugins,
@@ -51,6 +53,13 @@ export interface SkillRow {
   mode: SkillMode;
   /** Проектная область: действующее состояние совпало с глобальным. */
   dimmed: boolean;
+}
+
+export interface AgentRow {
+  name: string;
+  origin: "personal" | "project";
+  /** Абсолютный путь к файлу агента — панель открывает его по нему. */
+  path: string;
 }
 
 /** Режим включённой подгрузки: «Всегда» (on) или «Автоматически» (auto). */
@@ -99,6 +108,7 @@ export interface ConfigView {
   plugins: PluginRow[];
   connectors: ConnectorRow[];
   skills: SkillRow[];
+  agents: AgentRow[];
   hooks: HookRow[];
   toolSearch: ToolSearchRow;
 }
@@ -121,6 +131,14 @@ export interface ViewInput {
   personalSkillPaths: string[];
   /** Пути внутри проектного каталога навыков (пусто для глобальной области). */
   projectSkillPaths: string[];
+  /** Абсолютный личный каталог агентов (`~/.claude/agents`) — для путей строк. */
+  personalAgentDir: string;
+  /** Абсолютный проектный каталог агентов (null для глобальной области). */
+  projectAgentDir: string | null;
+  /** Имена файлов внутри личного каталога агентов. */
+  personalAgentPaths: string[];
+  /** Имена файлов внутри проектного каталога агентов (пусто глобально). */
+  projectAgentPaths: string[];
   /** Текст проектного `.mcp.json` (null в глобальной области или если файла нет). */
   mcpJsonText: string | null;
   /** Текст `~/.claude.json` — оттуда user- и local-серверы. */
@@ -142,9 +160,25 @@ export function buildConfigView(input: ViewInput): ConfigView {
     plugins: buildPlugins(input),
     connectors: buildConnectors(input),
     skills: buildSkills(input),
+    agents: buildAgents(input),
     hooks: buildHooks(input),
     toolSearch: buildToolSearch(input),
   };
+}
+
+function buildAgents(input: ViewInput): AgentRow[] {
+  const personal = collectAgentNames(input.personalAgentPaths);
+  const project = collectAgentNames(input.projectAgentPaths);
+  return mergeAgents(personal, project).map((entry) => {
+    const dir =
+      entry.origin === "project" ? input.projectAgentDir : input.personalAgentDir;
+    return {
+      name: entry.name,
+      origin: entry.origin,
+      // dir проектной области непуст, раз имя пришло из projectAgentPaths.
+      path: `${dir ?? input.personalAgentDir}/${entry.name}.md`,
+    };
+  });
 }
 
 function buildConnectors(input: ViewInput): ConnectorRow[] {

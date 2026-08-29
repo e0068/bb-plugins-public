@@ -52,7 +52,10 @@ describe("compile", () => {
     expect(src).toContain('name: "review-changes"');
     expect(src).toContain('phase("Review")');
     expect(src).toContain('phase("Verify")');
-    expect(src).toContain("pipeline([null],");
+    expect(src).toContain("pipeline([{}],");
+    // never seed a pipeline with null: the engine treats a null item as "dropped" and skips every stage,
+    // so pipeline([null]) would silently run zero agents (task workflow-composer-pipeline-null-seed).
+    expect(src).not.toContain("pipeline([null]");
     expect(src).toContain("parallel([");
     expect(src).toContain("agent(");
   });

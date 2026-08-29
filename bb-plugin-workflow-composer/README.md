@@ -64,7 +64,7 @@ hand-written** version: a planner splits a task into file-disjoint groups
 with a fix loop, and a final pass reviews the seams and runs integration tests —
 all under the engine's real token `budget`. Its orchestration is dynamic, so it
 does **not** fit the tree model: it carries no mirror and opens as read-only
-source, not in the tree editor.
+source, not in the constructor.
 
 Both ship as defaults: on load the plugin **seeds** every `examples/*.js` into
 `~/.claude/workflows/`, so they show up under **Global · Claude Code** out of the

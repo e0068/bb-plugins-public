@@ -1,7 +1,7 @@
-// app.tsx — the Workflow Composer frontend: a navPanel whose body is the tree editor + workflow list,
-// with the compiled code preview as a resizable second column inside the panel. It used to be a host
-// fixed-tab (experimental_fixedTabs), but bb 0.40.0 fails to mount a navPanel that declares that option
-// and the sidebar entry vanishes (see task BP-53), so the preview moved into a column.
+// app.tsx — the Workflow Composer frontend: a navPanel whose body is the outline editor + workflow list,
+// with the compiled code preview as an optional resizable column inside the panel. The code preview used
+// to be a host fixed-tab (experimental_fixedTabs), but bb 0.40.0 fails to mount a navPanel that declares
+// that option and the sidebar entry vanishes (see task BP-53), so the preview moved into a column.
 // All disk/CLI work is backend RPC; this file only edits the shared tree and calls the contract.
 // Controls are plain native HTML elements styled with host theme token classes.
 import { useCallback, useEffect, useState, useSyncExternalStore } from "react";
@@ -10,7 +10,6 @@ import { toast } from "sonner";
 import type { rpcContract } from "./server";
 import { compile, blankTree, type Engine, type Tree } from "./workflow-model";
 import { editorStore, engineForStore, type StoreKind } from "./store";
-import { WorkflowEditor } from "./ui/tree-editor";
 import { OutlineEditor } from "./ui/outline-editor";
 import {
   ResizeHandle,
@@ -62,14 +61,6 @@ const SELECT_FULL_CLS =
 const useEditor = () =>
   useSyncExternalStore(editorStore.subscribe, editorStore.getSnapshot, editorStore.getSnapshot);
 
-function useModels(rpc: Rpc): string[] {
-  const [models, setModels] = useState<string[]>([]);
-  useEffect(() => {
-    void rpc.call("models", null).then((r) => setModels(r.models));
-  }, [rpc]);
-  return models;
-}
-
 // Discovered Claude Code agent types (user/project/plugin), for the "Agent type" autocomplete and for
 // following the selected agent's own model/effort/provider. Re-fetches when the selected project
 // changes, since project agents depend on it.
@@ -104,7 +95,6 @@ function useProjects(rpc: Rpc): ProjectOption[] {
 function ComposerPanel() {
   const { projectId } = useBbContext();
   const rpc = useRpc<typeof rpcContract>();
-  const models = useModels(rpc);
   const projects = useProjects(rpc);
   const { tree, identity, rawSource } = useEditor();
   const codeOnly = rawSource != null;
@@ -117,8 +107,6 @@ function ComposerPanel() {
   // Код-превью — колонка по требованию (как прежняя вкладка «Code»): по умолчанию
   // скрыта, открывается кнопкой в тулбаре.
   const [showCode, setShowCode] = useState(false);
-  // Статичный макет нового конструктора (вложенный аутлайн) vs. текущий Miller-редактор.
-  const [preview, setPreview] = useState(false);
 
   const [items, setItems] = useState<WorkflowItem[]>([]);
   const [saveOpen, setSaveOpen] = useState(false);
@@ -126,13 +114,6 @@ function ComposerPanel() {
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(projectId);
   const agents = useAgents(rpc, selectedProjectId);
   const providerCatalog = useProviderCatalog(rpc);
-  // Feeds the description column's "Refers to" drill-in: given a .md file's path, its content plus the
-  // .md/skill files it references. Re-bound when the project changes since the RPC is path-confined per
-  // project.
-  const loadRefs = useCallback(
-    (path: string) => rpc.call("agentRefs", { path, projectId: selectedProjectId }),
-    [rpc, selectedProjectId],
-  );
 
   // The host's own projectId may be null (no project in view); once the project list arrives, fall
   // back to its first entry so the panel isn't stuck with nothing selected.
@@ -238,22 +219,6 @@ function ComposerPanel() {
             </span>
           )
         )}
-        <div className="ml-auto flex gap-0.5 rounded-md bg-muted p-0.5">
-          <button
-            type="button"
-            className={`rounded px-2.5 py-1 text-xs transition ${!preview ? "bg-background text-foreground" : "text-muted-foreground hover:text-foreground"}`}
-            onClick={() => setPreview(false)}
-          >
-            Columns
-          </button>
-          <button
-            type="button"
-            className={`rounded px-2.5 py-1 text-xs transition ${preview ? "bg-background text-foreground" : "text-muted-foreground hover:text-foreground"}`}
-            onClick={() => setPreview(true)}
-          >
-            Outline
-          </button>
-        </div>
       </div>
 
       {output && (
@@ -276,17 +241,15 @@ function ComposerPanel() {
           </div>
         </div>
 
-        {preview ? (
-          <OutlineEditor
-            agents={agents}
-            providerCatalog={providerCatalog}
-            writeAgent={(input) => rpc.call("writeAgent", { projectId: selectedProjectId, ...input })}
-          />
-        ) : codeOnly ? (
+        {codeOnly ? (
           <CodeOnlyView source={rawSource!} />
         ) : (
           <>
-            <WorkflowEditor models={models} agents={agents} providerCatalog={providerCatalog} loadRefs={loadRefs} />
+            <OutlineEditor
+              agents={agents}
+              providerCatalog={providerCatalog}
+              writeAgent={(input) => rpc.call("writeAgent", { projectId: selectedProjectId, ...input })}
+            />
             {showCode && (
               <>
                 <ResizeHandle onPointerDown={startResize} />
@@ -316,8 +279,8 @@ function ComposerPanel() {
   );
 }
 
-// Read-only body shown instead of the tree editor when the open workflow is hand-written (no composer
-// tree). Shows the file's real source verbatim — the honest "essence" the tree editor can't reconstruct.
+// Read-only body shown instead of the outline editor when the open workflow is hand-written (no composer
+// tree). Shows the file's real source verbatim — the honest "essence" the outline editor can't reconstruct.
 function CodeOnlyView({ source }: { source: string }) {
   return (
     <div className="flex h-full min-h-0 flex-1 flex-col">

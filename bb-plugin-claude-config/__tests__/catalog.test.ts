@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  collectAgentNames,
   collectSkillNames,
+  mergeAgents,
   mergeSkills,
   parseClaudeJsonServers,
   parseInstalledPlugins,
@@ -95,6 +97,30 @@ describe("mergeSkills", () => {
   it("одноимённый проектный навык перекрывает личный", () => {
     expect(mergeSkills(["deploy"], ["deploy"])).toEqual([
       { name: "deploy", origin: "project" },
+    ]);
+  });
+});
+
+describe("collectAgentNames", () => {
+  it("берёт имя файла .md без расширения", () => {
+    expect(collectAgentNames(["reviewer.md", "planner.md"])).toEqual([
+      "planner",
+      "reviewer",
+    ]);
+  });
+
+  it("пропускает вложенные пути и не-.md файлы", () => {
+    expect(
+      collectAgentNames(["reviewer.md", "sub/nested.md", "README.txt"]),
+    ).toEqual(["reviewer"]);
+  });
+});
+
+describe("mergeAgents", () => {
+  it("помечает происхождение, проектный перекрывает личного", () => {
+    expect(mergeAgents(["reviewer"], ["reviewer", "deploy"])).toEqual([
+      { name: "deploy", origin: "project" },
+      { name: "reviewer", origin: "project" },
     ]);
   });
 });

@@ -1,6 +1,8 @@
-// bb-plugin-claude-config — панель: выбор области сверху и пять секций
-// (хуки, плагины, коннекторы, навыки, подгрузка инструментов). Данные и запись
-// — через RPC к server.ts; здесь только показ и переключение. Коннекторы .mcp.json
+// bb-plugin-claude-config — панель: выбор области сверху и секции (хуки,
+// плагины, коннекторы, навыки, агенты, подгрузка инструментов). Данные и запись
+// — через RPC к server.ts; здесь только показ и переключение. Навыки и агенты
+// можно создать кнопкой в шапке секции (диалог имени → createSkill/createAgent).
+// Коннекторы .mcp.json
 // переключаются тумблером; user/local и хуки — только просмотр (хук кликабелен,
 // открывает своё содержимое во второй колонке).
 //
@@ -26,7 +28,19 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Icon } from "@/components/ui/icon";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
+import { isValidName, slugifyName } from "./src/scaffold";
 import { MarkdownEditor } from "./packages/md-editor/react";
 import {
   fileRefFromCode,
@@ -265,6 +279,85 @@ function Dropdown<T extends string>({
         </option>
       ))}
     </select>
+  );
+}
+
+/**
+ * Диалог создания навыка или агента: одно поле имени. Имя нормализуется в слаг
+ * (латиница, цифры, дефисы) — при расхождении показываем, каким слагом файл
+ * будет создан. `onCreate` возвращает текст ошибки или null при успехе.
+ */
+function CreateDialog({
+  open,
+  title,
+  description,
+  onClose,
+  onCreate,
+}: {
+  open: boolean;
+  title: string;
+  description: string;
+  onClose: () => void;
+  onCreate: (name: string) => Promise<string | null>;
+}) {
+  const [name, setName] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  // При каждом открытии диалог чистый.
+  useEffect(() => {
+    if (open) {
+      setName("");
+      setError(null);
+      setBusy(false);
+    }
+  }, [open]);
+
+  const slug = slugifyName(name);
+  const canSubmit = isValidName(name) && !busy;
+
+  const submit = () => {
+    if (!canSubmit) return;
+    setBusy(true);
+    setError(null);
+    void onCreate(name).then((message) => {
+      setBusy(false);
+      if (message) setError(message);
+    });
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={(next) => !next && onClose()}>
+      <DialogContent className="max-w-sm">
+        <DialogHeader>
+          <DialogTitle>{title}</DialogTitle>
+          <DialogDescription>{description}</DialogDescription>
+        </DialogHeader>
+        <div className="space-y-2">
+          <Input
+            autoFocus
+            value={name}
+            placeholder="имя-через-дефис"
+            onChange={(event) => setName(event.target.value)}
+            onKeyDown={(event) => event.key === "Enter" && submit()}
+          />
+          {name.trim() !== "" && slug !== name.trim() && (
+            <p className="text-xs text-muted-foreground">
+              Будет создан как: {slug || "—"}
+            </p>
+          )}
+          {error && <p className="text-xs text-destructive">{error}</p>}
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose} disabled={busy}>
+            Отмена
+          </Button>
+          <Button onClick={submit} disabled={!canSubmit}>
+            Создать
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -799,6 +892,8 @@ function ConfigPanel({ subPath }: PluginNavPanelProps) {
   const [memory, setMemory] = useState<
     { id: string; label: string; path: string }[]
   >([]);
+  // Какой диалог создания открыт: навык, агент или ни один.
+  const [createKind, setCreateKind] = useState<"skill" | "agent" | null>(null);
 
   // Что открыто во второй колонке (для подсветки), если относится к этой области.
   const open = parseDocSubPath(subPath);
@@ -905,6 +1000,31 @@ function ConfigPanel({ subPath }: PluginNavPanelProps) {
   const openHook = (origin: HookOrigin, index: number, event: string) =>
     navigate.toPluginPanel(PANEL_PATH, {
       subPath: hookSubPath(areaId, origin, index, event),
+    });
+
+  // Создание навыка: успех открывает новый SKILL.md по слагу и перечитывает
+  // список; иначе диалог остаётся с сообщением (имя занято/недопустимо).
+  const createSkill = (name: string): Promise<string | null> =>
+    rpc.call("createSkill", { areaId, name }).then((result) => {
+      if (result.outcome === "created") {
+        setCreateKind(null);
+        reload();
+        openSkill(slugifyName(name));
+        return null;
+      }
+      return result.message ?? "Не удалось создать навык.";
+    });
+
+  // Создание агента: успех открывает новый файл по пути из ответа сервера.
+  const createAgent = (name: string): Promise<string | null> =>
+    rpc.call("createAgent", { areaId, name }).then((result) => {
+      if (result.outcome === "created" && result.path) {
+        setCreateKind(null);
+        reload();
+        openDoc(result.path);
+        return null;
+      }
+      return result.message ?? "Не удалось создать агента.";
     });
 
   return (
@@ -1156,7 +1276,17 @@ function ConfigPanel({ subPath }: PluginNavPanelProps) {
 
             <Card>
               <CardHeader>
-                <CardTitle>Навыки</CardTitle>
+                <div className="flex items-center justify-between gap-2">
+                  <CardTitle>Навыки</CardTitle>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setCreateKind("skill")}
+                  >
+                    <Icon name="Plus" />
+                    Новый навык
+                  </Button>
+                </div>
               </CardHeader>
               <CardContent className="space-y-2">
                 {config.skills.length === 0 && (
@@ -1203,6 +1333,51 @@ function ConfigPanel({ subPath }: PluginNavPanelProps) {
                         }
                       />
                     </div>
+                  </div>
+                ))}
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader>
+                <div className="flex items-center justify-between gap-2">
+                  <CardTitle>Агенты</CardTitle>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setCreateKind("agent")}
+                  >
+                    <Icon name="Plus" />
+                    Новый агент
+                  </Button>
+                </div>
+              </CardHeader>
+              <CardContent className="space-y-2">
+                {config.agents.length === 0 && (
+                  <p className="text-sm text-muted-foreground">
+                    Агентов не найдено.
+                  </p>
+                )}
+                {config.agents.map((agent) => (
+                  <div
+                    key={agent.path}
+                    className="flex flex-wrap items-center justify-between gap-3 border-b border-border pb-2 last:border-0 last:pb-0"
+                  >
+                    <button
+                      type="button"
+                      onClick={() => openDoc(agent.path)}
+                      className={cn(
+                        "min-w-0 flex-1 rounded-md px-2 py-1 text-left transition-colors hover:bg-muted",
+                        openDocPath === agent.path && "bg-muted",
+                      )}
+                    >
+                      <div className="truncate text-sm font-medium">
+                        {agent.name}
+                      </div>
+                      <div className="text-xs text-muted-foreground">
+                        {agent.origin === "project" ? "проектный" : "личный"}
+                      </div>
+                    </button>
                   </div>
                 ))}
               </CardContent>
@@ -1257,6 +1432,20 @@ function ConfigPanel({ subPath }: PluginNavPanelProps) {
           </div>
         </>
       )}
+      <CreateDialog
+        open={createKind === "skill"}
+        title="Новый навык"
+        description="Создаст папку с SKILL.md и откроет его для правки."
+        onClose={() => setCreateKind(null)}
+        onCreate={createSkill}
+      />
+      <CreateDialog
+        open={createKind === "agent"}
+        title="Новый агент"
+        description="Создаст файл агента и откроет его для правки."
+        onClose={() => setCreateKind(null)}
+        onCreate={createAgent}
+      />
     </div>
   );
 }

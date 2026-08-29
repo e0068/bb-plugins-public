@@ -80,11 +80,43 @@ export function collectSkillNames(relativePaths: string[]): string[] {
   return [...names].sort();
 }
 
+/**
+ * Собирает имена агентов из списка путей внутри каталога агентов.
+ *
+ * Агент — это одиночный файл `<имя>.md` прямо в каталоге агентов, поэтому имя
+ * берётся из имени файла без расширения. Вложенные пути (файлы в подпапках) не
+ * считаются агентами и пропускаются.
+ */
+export function collectAgentNames(relativePaths: string[]): string[] {
+  const names = new Set<string>();
+  for (const path of relativePaths) {
+    const segments = path.split("/").filter(Boolean);
+    if (segments.length !== 1) continue;
+    const file = segments[0];
+    if (!file.endsWith(".md")) continue;
+    names.add(file.slice(0, -".md".length));
+  }
+  return [...names].sort();
+}
+
 /** Сливает каталоги двух областей: имя из проекта перекрывает личное. */
 export function mergeSkills(
   personal: string[],
   project: string[],
 ): SkillEntry[] {
+  return mergeNamed(personal, project);
+}
+
+/** Сливает списки имён агентов двух областей: проектное перекрывает личное. */
+export function mergeAgents(
+  personal: string[],
+  project: string[],
+): SkillEntry[] {
+  return mergeNamed(personal, project);
+}
+
+/** Слияние по имени: проектная запись перекрывает личную, результат отсортирован. */
+function mergeNamed(personal: string[], project: string[]): SkillEntry[] {
   const byName = new Map<string, SkillEntry>();
   for (const name of personal) byName.set(name, { name, origin: "personal" });
   for (const name of project) byName.set(name, { name, origin: "project" });
