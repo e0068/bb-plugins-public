@@ -21,6 +21,7 @@ import {
   useRpc,
 } from "@get-bb/plugin-sdk/app";
 import type { PluginNavPanelProps } from "@get-bb/plugin-sdk/app";
+import { toast } from "sonner";
 import type { AreaConfig, rpcContract, WriteOutcome } from "./server";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -189,6 +190,30 @@ function parseDocSubPath(subPath: string): DocTarget | null {
     return { kind: "doc", areaId: seg[1], path: decodePath(seg[2]) };
   }
   return null;
+}
+
+// Открыть реальный файл нативным опенером bb: сервер по области и пути отдаёт
+// хост (проектный или локальный для ~/.claude), а хост открывает файл тем
+// опенером, что пользователь выбрал в настройках bb для формата. Синтезированные
+// представления (плагин, коннектор, команда хука) — не файлы, идут не сюда.
+function useOpenFile(areaId: string): (path: string) => Promise<void> {
+  const rpc = useRpc<typeof rpcContract>();
+  const navigate = useBbNavigate();
+  return async (path: string) => {
+    const { hostId, error } = await rpc.call("resolveOpenTarget", {
+      areaId,
+      path,
+    });
+    if (!hostId) {
+      toast.error(error ?? "Не удалось открыть файл.");
+      return;
+    }
+    const opened = navigate.experimental_openFilePreview({
+      target: { kind: "host", hostId, path },
+      location: null,
+    });
+    if (!opened) toast.error("Хост отклонил открытие файла.");
+  };
 }
 
 // Markdown-файлы рендерим как есть; прочие (например plugin.json) — кодовым
@@ -710,14 +735,11 @@ function DocTab({ subPath }: PluginNavPanelProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [subPath, rpc]);
 
-  const openAbs = (abs: string) => {
-    setLoading(true);
-    setComposite(false);
-    void rpc.call("readDoc", { areaId, path: abs }).then((result) => {
-      setStack((prev) => [...prev, abs]);
-      present(result);
-    });
-  };
+  // Файловая ссылка внутри показанного документа (README плагина, ссылка в
+  // редакторе) — это реальный файл: открываем его нативным опенером bb, а не
+  // грузим во встроенную колонку.
+  const openFile = useOpenFile(areaId);
+  const openAbs = (abs: string) => void openFile(abs);
 
   // Клик по файловой ссылке внутри композитного (плагин/коннектор/хук)
   // документа: он рендерится хостовым `Markdown`, а не MarkdownEditor, так
@@ -1172,10 +1194,8 @@ function ConfigPanel({ subPath }: PluginNavPanelProps) {
     // Выбор навыка относится к прежней области — снимаем.
     navigate.toPluginPanel(PANEL_PATH, { subPath: "", replace: true });
   };
-  const openSkill = (name: string) =>
-    navigate.toPluginPanel(PANEL_PATH, { subPath: skillSubPath(areaId, name) });
-  const openDoc = (path: string) =>
-    navigate.toPluginPanel(PANEL_PATH, { subPath: docSubPath(areaId, path) });
+  // Навык, агент, документ — реальные файлы: открываем нативным опенером bb.
+  const openFile = useOpenFile(areaId);
   const openPlugin = (key: string) =>
     navigate.toPluginPanel(PANEL_PATH, { subPath: pluginSubPath(areaId, key) });
   const openConnector = (origin: ConnectorOrigin, name: string) =>
@@ -1187,14 +1207,14 @@ function ConfigPanel({ subPath }: PluginNavPanelProps) {
       subPath: hookSubPath(areaId, origin, index, event),
     });
 
-  // Создание навыка: успех открывает новый SKILL.md по слагу и перечитывает
-  // список; иначе диалог остаётся с сообщением (имя занято/недопустимо).
+  // Создание навыка: успех перечитывает список и открывает новый SKILL.md
+  // нативным опенером; иначе диалог остаётся с сообщением (имя занято/недопустимо).
   const createSkill = (name: string): Promise<string | null> =>
     rpc.call("createSkill", { areaId, name }).then((result) => {
       if (result.outcome === "created") {
         setCreateKind(null);
         reload();
-        openSkill(slugifyName(name));
+        if (result.path) void openFile(result.path);
         return null;
       }
       return result.message ?? "Не удалось создать навык.";
@@ -1206,7 +1226,7 @@ function ConfigPanel({ subPath }: PluginNavPanelProps) {
       if (result.outcome === "created" && result.path) {
         setCreateKind(null);
         reload();
-        openDoc(result.path);
+        void openFile(result.path);
         return null;
       }
       return result.message ?? "Не удалось создать агента.";
@@ -1269,7 +1289,7 @@ function ConfigPanel({ subPath }: PluginNavPanelProps) {
                   // Файл памяти вытесняет раздел: средней колонки быть не должно.
                   onClick={() => {
                     setSection(null);
-                    openDoc(entry.path);
+                    void openFile(entry.path);
                   }}
                   className={cn(
                     "flex w-full items-center rounded-md px-2 py-1.5 text-left text-sm transition-colors hover:bg-muted",
@@ -1575,7 +1595,11 @@ function ConfigPanel({ subPath }: PluginNavPanelProps) {
                     >
                       <button
                         type="button"
-                        onClick={() => openSkill(skill.name)}
+                        onClick={() =>
+                          skill.path
+                            ? void openFile(skill.path)
+                            : toast.error("Файл навыка не найден.")
+                        }
                         className="min-w-0 flex-1 text-left"
                       >
                         <div className="truncate text-sm font-medium">
@@ -1624,7 +1648,7 @@ function ConfigPanel({ subPath }: PluginNavPanelProps) {
                     <button
                       key={agent.path}
                       type="button"
-                      onClick={() => openDoc(agent.path)}
+                      onClick={() => void openFile(agent.path)}
                       className={cn(
                         "block w-full rounded-md px-2 py-1.5 text-left transition-colors hover:bg-muted",
                         openDocPath === agent.path && "bg-accent",
