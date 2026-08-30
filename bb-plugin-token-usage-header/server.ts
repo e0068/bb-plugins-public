@@ -127,6 +127,11 @@ const threadsTimelineEntrySchema = z
     bbProjectName: z.string().nullable(),
     threadId: z.string().nullable(),
     bbThreadTitle: z.string().nullable(),
+    // Liveness of the matched BB thread, also resolved by the service: isAlive
+    // = not archived (green title), isWorking = work running now (blinking
+    // dot). Both false for an unmatched session. See ThreadEntry's doc.
+    isAlive: z.boolean(),
+    isWorking: z.boolean(),
   })
   .strict() satisfies z.ZodType<ThreadEntry>;
 

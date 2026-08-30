@@ -15,15 +15,26 @@ vi.mock("./KasimovEditor", () => ({
   KasimovEditor: ({
     value,
     linkResolver,
+    vars,
+    followLinks,
+    frontmatter,
   }: {
     value: string;
     linkResolver?: (href: string) => { onClick: () => void } | null;
+    vars?: Record<string, string>;
+    followLinks?: boolean;
+    frontmatter?: boolean;
   }) => {
     const hrefs = [...String(value).matchAll(/\[[^\]]*\]\(([^)]+)\)/g)].map(
       (m) => m[1],
     );
     return (
-      <div>
+      <div
+        data-testid="mde"
+        data-vars={JSON.stringify(vars ?? null)}
+        data-follow={String(followLinks)}
+        data-frontmatter={String(frontmatter)}
+      >
         <div data-testid="mde-value">{value}</div>
         {hrefs.map((href, i) => {
           const r = linkResolver?.(href);
@@ -165,5 +176,29 @@ describe("MdDocView", () => {
 
     await view.findByText("нет файла");
     expect(view.queryByTestId("mde-value")).toBeNull();
+    // Кнопки «Редактировать» на нечитаемом файле нет.
+    expect(view.queryByText("Редактировать")).toBeNull();
+  });
+
+  it("в просмотре видна кнопка «Редактировать» и входит в правку", async () => {
+    const view = renderView();
+    // В просмотре — кнопка входа в правку (не Сохранить/Отмена).
+    const editBtn = await view.findByText("Редактировать");
+    expect(view.queryByText("Сохранить")).toBeNull();
+
+    fireEvent.click(editBtn);
+    // В правке — Сохранить/Отмена, кнопки «Редактировать» больше нет.
+    await view.findByText("Сохранить");
+    expect(view.getByText("Отмена")).toBeInTheDocument();
+    expect(view.queryByText("Редактировать")).toBeNull();
+  });
+
+  it("vars и флаги долетают до KasimovEditor", async () => {
+    const vars = { "--kasi-size": "18px", "--kasi-accent": "#0af" };
+    const view = renderView({ vars, followLinks: false, frontmatter: false });
+    const mde = await view.findByTestId("mde");
+    expect(mde.getAttribute("data-vars")).toBe(JSON.stringify(vars));
+    expect(mde.getAttribute("data-follow")).toBe("false");
+    expect(mde.getAttribute("data-frontmatter")).toBe("false");
   });
 });

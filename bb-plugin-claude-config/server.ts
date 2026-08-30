@@ -33,6 +33,9 @@ import {
   skillTemplate,
   slugifyName,
 } from "./src/scaffold";
+// Прямой импорт чистого модуля (не barrel index): иначе сервер потянул бы
+// React-компонент MdDocView и его CSS в серверный бандл.
+import { descriptors as kasimovDescriptors } from "./packages/md-doc-view/kasimov-settings";
 
 // --- схемы, общие для сервера и панели ---------------------------------
 
@@ -660,6 +663,10 @@ export default function plugin(bb: BbPluginApi) {
   //   host       — делегировать хостовой вкладке bb (прежнее поведение def088e).
   // Отменяет решение claude-config-delegate-file-open: выбор вместо хардкода
   // (memory/decisions/claude-config-opener-setting.md).
+  // Настройки Kasimov (кегли/отступы/цвета/шрифты + флаги) объявлены единой
+  // таблицей в src/kasimov-settings; здесь только домешиваем их к настройкам
+  // плагина рядом с fileOpener. Фронт читает их через useSettings и применяет к
+  // колонке-редактору (ColumnMdDocView).
   bb.settings.define({
     fileOpener: {
       type: "select",
@@ -667,6 +674,7 @@ export default function plugin(bb: BbPluginApi) {
       options: ["md-opener", "builtin", "host"],
       default: "md-opener",
     },
+    ...kasimovDescriptors,
   });
 
   // Чтение файла: отсутствие — это пустой документ (text=null), а не ошибка.

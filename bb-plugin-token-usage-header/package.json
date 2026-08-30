@@ -16,7 +16,6 @@
     "app": "./app.tsx"
   },
   "bbMarketplace": {
-    "public": true,
     "tags": ["tokens", "usage", "claude-code", "interface"]
   },
   "dependencies": {

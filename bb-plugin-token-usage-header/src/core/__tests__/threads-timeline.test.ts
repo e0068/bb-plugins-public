@@ -2,9 +2,11 @@ import { describe, expect, it } from "vitest";
 import {
   EXPECTED_THREADS_TIMELINE_SCHEMA_VERSION,
   binTotal,
+  deriveThreadLiveness,
   parseThreadsTimeline,
   widthFractions,
   type ThreadEntry,
+  type ThreadLivenessInput,
 } from "../threads-timeline";
 
 const validTimeline = {
@@ -53,7 +55,7 @@ describe("parseThreadsTimeline", () => {
   // src/service/threads-timeline-service.ts's BB project enrichment, which
   // runs after parsing. A freshly parsed thread must start out unmatched
   // (all four null), not undefined/missing.
-  it("defaults bbProjectId/bbProjectName/threadId/bbThreadTitle to null — the script itself never sends them", () => {
+  it("defaults bbProjectId/bbProjectName/threadId/bbThreadTitle to null and isAlive/isWorking to false — the script itself never sends them", () => {
     const result = parseThreadsTimeline(JSON.stringify(validTimeline));
     expect(result.ok).toBe(true);
     if (!result.ok) return;
@@ -62,6 +64,10 @@ describe("parseThreadsTimeline", () => {
       bbProjectName: null,
       threadId: null,
       bbThreadTitle: null,
+      // Liveness is a BB-thread property attached by the service; a freshly
+      // parsed (unmatched) thread is neither alive-coloured nor working.
+      isAlive: false,
+      isWorking: false,
     });
   });
 
@@ -222,6 +228,8 @@ function thread(durationSec: number, session = `s-${durationSec}`): ThreadEntry 
     bbProjectName: null,
     threadId: null,
     bbThreadTitle: null,
+    isAlive: false,
+    isWorking: false,
   };
 }
 
@@ -262,5 +270,60 @@ describe("binTotal", () => {
 
   it("returns 0 for a bin with no agents", () => {
     expect(binTotal({ t: "2026-08-20T00:00:00.000Z", agents: [] })).toBe(0);
+  });
+});
+
+describe("deriveThreadLiveness", () => {
+  const NOW = 1_700_000_000_000;
+  const WINDOW = 2 * 60_000;
+  // A live thread, last active exactly now, no background work — the baseline.
+  const alive: ThreadLivenessInput = { archivedAt: null, lastActivityMs: NOW, nowMs: NOW, workingWindowMs: WINDOW, activeWorkCount: 0 };
+
+  it("marks a non-archived thread alive, an archived one dead", () => {
+    expect(deriveThreadLiveness(alive).isAlive).toBe(true);
+    expect(deriveThreadLiveness({ ...alive, archivedAt: NOW }).isAlive).toBe(false);
+  });
+
+  it("is working when the last activity is within the window", () => {
+    expect(deriveThreadLiveness({ ...alive, lastActivityMs: NOW - WINDOW + 1 }).isWorking).toBe(true);
+  });
+
+  it("is not working when the last activity is older than the window", () => {
+    expect(deriveThreadLiveness({ ...alive, lastActivityMs: NOW - WINDOW - 1 }).isWorking).toBe(false);
+  });
+
+  it("treats the exact window edge as still working", () => {
+    expect(deriveThreadLiveness({ ...alive, lastActivityMs: NOW - WINDOW }).isWorking).toBe(true);
+  });
+
+  it("counts a lastActivity slightly in the future (clock skew) as working", () => {
+    expect(deriveThreadLiveness({ ...alive, lastActivityMs: NOW + 5_000 }).isWorking).toBe(true);
+  });
+
+  it("is working when background work runs, even with a stale last activity", () => {
+    expect(deriveThreadLiveness({ ...alive, lastActivityMs: NOW - WINDOW - 60_000, activeWorkCount: 1 }).isWorking).toBe(true);
+  });
+
+  it("is not working when a NaN last activity has no background work to fall back on", () => {
+    expect(deriveThreadLiveness({ ...alive, lastActivityMs: Number.NaN }).isWorking).toBe(false);
+  });
+
+  it("never reports an archived thread as working, even when just active", () => {
+    const { isAlive, isWorking } = deriveThreadLiveness({ ...alive, archivedAt: NOW, activeWorkCount: 3 });
+    expect(isAlive).toBe(false);
+    expect(isWorking).toBe(false);
+  });
+
+  // Invariant over the whole finite input space: working always implies alive —
+  // the dot can never blink on a dead card.
+  it("keeps isWorking ⇒ isAlive across every combination", () => {
+    for (const archivedAt of [null, NOW]) {
+      for (const lastActivityMs of [NOW, NOW - WINDOW - 1, Number.NaN]) {
+        for (const activeWorkCount of [0, 2]) {
+          const { isAlive, isWorking } = deriveThreadLiveness({ archivedAt, lastActivityMs, nowMs: NOW, workingWindowMs: WINDOW, activeWorkCount });
+          if (isWorking) expect(isAlive).toBe(true);
+        }
+      }
+    }
   });
 });

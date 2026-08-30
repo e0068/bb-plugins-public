@@ -16,7 +16,6 @@
     "app": "./app.tsx"
   },
   "bbMarketplace": {
-    "public": true,
     "tags": ["pull-request", "github", "git", "interface", "claude-code"]
   },
   "scripts": {

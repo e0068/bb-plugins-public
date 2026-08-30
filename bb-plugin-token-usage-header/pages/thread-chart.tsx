@@ -285,25 +285,38 @@ export function ThreadRow({
           обрезаются, поэтому не распирают карточку шире графика. Без hug —
           прежний ряд: заголовок слева, метрики справа. */}
       <div className={`flex ${hug ? "flex-col gap-0.5" : "items-baseline justify-between gap-3"} overflow-hidden text-xs text-muted-foreground`}>
-        {onOpenThread ? (
-          <button
-            type="button"
-            className={`${hug ? "w-full" : "min-w-0 flex-1"} truncate text-left font-medium text-foreground hover:underline focus-visible:underline focus-visible:outline-none`}
-            title={headerTooltip}
-            onClick={(e) => {
-              // Название ведёт в тред BB — гасим всплытие, чтобы клик по карточке
-              // (внутренняя страница сессии) не сработал заодно.
-              e.stopPropagation();
-              onOpenThread();
-            }}
-          >
-            {headerTitle}
-          </button>
-        ) : (
-          <span className={`${hug ? "w-full" : "min-w-0 flex-1"} truncate font-medium text-foreground`} title={headerTooltip}>
-            {headerTitle}
-          </span>
-        )}
+        {/* Живой (не заархивированный) тред — имя зелёным; идёт работа сейчас —
+            мигающая зелёная точка слева от имени. Обёртка держит точку и имя в
+            одной строке, а сама занимает ту же ширину, что раньше занимало имя. */}
+        <div className={`flex min-w-0 items-center gap-1.5 ${hug ? "w-full" : "flex-1"}`}>
+          {thread.isWorking && (
+            <span
+              className="size-1.5 shrink-0 animate-pulse rounded-full bg-success"
+              role="img"
+              aria-label="Идёт работа"
+              title="Идёт работа"
+            />
+          )}
+          {onOpenThread ? (
+            <button
+              type="button"
+              className={`min-w-0 flex-1 truncate text-left font-medium ${thread.isAlive ? "text-success" : "text-foreground"} hover:underline focus-visible:underline focus-visible:outline-none`}
+              title={headerTooltip}
+              onClick={(e) => {
+                // Название ведёт в тред BB — гасим всплытие, чтобы клик по карточке
+                // (внутренняя страница сессии) не сработал заодно.
+                e.stopPropagation();
+                onOpenThread();
+              }}
+            >
+              {headerTitle}
+            </button>
+          ) : (
+            <span className={`min-w-0 flex-1 truncate font-medium ${thread.isAlive ? "text-success" : "text-foreground"}`} title={headerTooltip}>
+              {headerTitle}
+            </span>
+          )}
+        </div>
         <span className={`tabular-nums ${hug ? "w-full truncate" : "ml-auto shrink-0"}`}>
           {/* Не было workflow — не упоминаем их вовсе, а не пишем «0 workflows». */}
           {thread.workflowCount > 0 && `${thread.workflowCount} workflows · `}

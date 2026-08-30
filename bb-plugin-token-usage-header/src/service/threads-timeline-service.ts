@@ -9,7 +9,12 @@ import { existsSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
-import { parseThreadsTimeline, type ThreadEntry, type ThreadsTimeline } from "../core/threads-timeline";
+import {
+  deriveThreadLiveness,
+  parseThreadsTimeline,
+  type ThreadEntry,
+  type ThreadsTimeline,
+} from "../core/threads-timeline";
 import {
   DEFAULT_MAX_OUTPUT_BYTES,
   DEFAULT_TIMEOUT_MS,
@@ -240,14 +245,72 @@ export interface ThreadsTimelineService {
   clearCache(): void;
 }
 
-type BbProjectMatch = Pick<ThreadEntry, "bbProjectId" | "bbProjectName" | "threadId" | "bbThreadTitle">;
+type BbProjectMatch = Pick<
+  ThreadEntry,
+  "bbProjectId" | "bbProjectName" | "threadId" | "bbThreadTitle" | "isAlive" | "isWorking"
+>;
 
 const UNMATCHED_BB_PROJECT: BbProjectMatch = {
   bbProjectId: null,
   bbProjectName: null,
   threadId: null,
   bbThreadTitle: null,
+  // No BB thread matched → no liveness to read; the "Threads" bucket is
+  // neither coloured alive nor blinking.
+  isAlive: false,
+  isWorking: false,
 };
+
+/**
+ * What buildSessionToBbThreadMap keeps per matched session: the BB thread's
+ * identity/title plus its raw liveness facts. The working flag is derived
+ * later (enrichBbProjects), once the python thread's `end` and a clock are
+ * also in hand.
+ */
+interface SessionBbThread {
+  threadId: string;
+  projectId: string;
+  title: string | null;
+  archivedAt: number | null;
+  activeWorkCount: number;
+}
+
+/**
+ * A thread counts as "working now" if its last activity is at most this fresh.
+ * The feed refetches on mount and every ~30s (cache TTL), so a 2-minute window
+ * lights the thread being worked at snapshot time and clears once it goes
+ * quiet, without flickering across an agent's brief between-record gaps.
+ */
+const WORKING_WINDOW_MS = 2 * 60_000;
+
+/**
+ * Raw liveness facts of one `bb.sdk.threads.list` item, read defensively: a
+ * degraded host (or a partial test stub) may omit `archivedAt`/`activity`, so a
+ * missing field reads as "live / no background work" rather than throwing
+ * inside the enrichment pass. The real SDK always sends all of them (see
+ * threadListResponseSchema in bb-plugin-sdk.d.ts). Recency (the main "working"
+ * signal) comes from the python thread's `end`, not from here — see
+ * deriveThreadLiveness's doc.
+ */
+function livenessFactsOf(thread: {
+  archivedAt?: number | null;
+  activity?: {
+    activeBackgroundAgentCount?: number;
+    activeBackgroundCommandCount?: number;
+    activeWorkflowCount?: number;
+    activePlanModeCount?: number;
+    activeGoalCount?: number;
+  };
+}): { archivedAt: number | null; activeWorkCount: number } {
+  const a = thread.activity ?? {};
+  const activeWorkCount =
+    (a.activeBackgroundAgentCount ?? 0) +
+    (a.activeBackgroundCommandCount ?? 0) +
+    (a.activeWorkflowCount ?? 0) +
+    (a.activePlanModeCount ?? 0) +
+    (a.activeGoalCount ?? 0);
+  return { archivedAt: thread.archivedAt ?? null, activeWorkCount };
+}
 
 /**
  * Scans up to THREADS_SCAN_LIMIT of BB's most recent threads and resolves
@@ -268,9 +331,9 @@ const UNMATCHED_BB_PROJECT: BbProjectMatch = {
 async function buildSessionToBbThreadMap(
   bb: BbPluginApi,
   resolver: ThreadSessionResolver,
-): Promise<Map<string, { threadId: string; projectId: string; title: string | null }>> {
+): Promise<Map<string, SessionBbThread>> {
   const threads = await bb.sdk.threads.list({ limit: THREADS_SCAN_LIMIT });
-  const map = new Map<string, { threadId: string; projectId: string; title: string | null }>();
+  const map = new Map<string, SessionBbThread>();
   await Promise.all(
     threads.map(async (thread) => {
       const sessionId = await resolver.resolve(thread.id);
@@ -278,6 +341,10 @@ async function buildSessionToBbThreadMap(
         map.set(sessionId, {
           threadId: thread.id,
           projectId: thread.projectId,
+          // Raw liveness facts off the same list item; the working flag also
+          // needs the python thread's `end`, so the derivation happens in
+          // enrichBbProjects — see memory/decisions/thread-liveness-signals.md.
+          ...livenessFactsOf(thread),
           // `title` is BB's user-set (or auto-generated on first message)
           // thread name; `titleFallback` is BB's own derived fallback for a
           // thread that never got one (see bb-plugin-sdk.d.ts's
@@ -322,6 +389,7 @@ async function enrichBbProjects(
   bb: BbPluginApi,
   resolver: ThreadSessionResolver,
   timeline: ThreadsTimeline,
+  nowMs: number,
 ): Promise<ThreadsTimeline> {
   if (timeline.threads.length === 0) return timeline;
 
@@ -334,12 +402,23 @@ async function enrichBbProjects(
     const threads = timeline.threads.map((thread): ThreadEntry => {
       const match = sessionMap.get(thread.session);
       if (!match) return { ...thread, ...UNMATCHED_BB_PROJECT };
+      // Working = alive + recent last activity (`end`) or running background
+      // work — see deriveThreadLiveness and the decision doc.
+      const liveness = deriveThreadLiveness({
+        archivedAt: match.archivedAt,
+        lastActivityMs: Date.parse(thread.end),
+        nowMs,
+        workingWindowMs: WORKING_WINDOW_MS,
+        activeWorkCount: match.activeWorkCount,
+      });
       return {
         ...thread,
         bbProjectId: match.projectId,
         bbProjectName: projectNames.get(match.projectId) ?? null,
         threadId: match.threadId,
         bbThreadTitle: match.title,
+        isAlive: liveness.isAlive,
+        isWorking: liveness.isWorking,
       };
     });
     return { ...timeline, threads };
@@ -382,7 +461,7 @@ export function createThreadsTimelineService(
       // the python process and the BB project scan together.
       const promise = runner.run(params).then(async (result): Promise<ThreadsTimelineRunResult> => {
         if (!result.ok) return result;
-        return { ok: true, data: await enrichBbProjects(bb, resolver, result.data) };
+        return { ok: true, data: await enrichBbProjects(bb, resolver, result.data, now()) };
       });
       const entry = { expiresAt: now() + ttlMs, promise };
       entries.set(key, entry);

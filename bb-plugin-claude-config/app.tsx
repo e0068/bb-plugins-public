@@ -26,6 +26,11 @@ import { toast } from "sonner";
 import type { AreaConfig, rpcContract, WriteOutcome } from "./server";
 import { MdDocView } from "./packages/md-doc-view";
 import type { LoadedDoc, SaveResult } from "./packages/md-doc-view";
+import {
+  parseKasimovSettings,
+  kasimovCssVars,
+  kasimovFlags,
+} from "./packages/md-doc-view";
 import { isHostOpen, normalizeOpener } from "./src/open-action";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -243,6 +248,11 @@ function ColumnMdDocView({
   initialPath: string;
 }) {
   const rpc = useRpc<typeof rpcContract>();
+  // Вид и флаги Kasimov — из настроек плагина (kasimov*). parse тотален: пока
+  // useSettings грузится (values === undefined) — дефолты, совпадающие с kasimov.css.
+  const settings = parseKasimovSettings(useSettings().values);
+  const vars = kasimovCssVars(settings);
+  const flags = kasimovFlags(settings);
   const load = async (path: string): Promise<LoadedDoc> => {
     const res = await rpc.call("readDoc", { areaId, path });
     return {
@@ -272,6 +282,9 @@ function ColumnMdDocView({
       load={load}
       save={save}
       resolveLinkTarget={resolveLinkTarget}
+      vars={vars}
+      followLinks={flags.followLinks}
+      frontmatter={flags.frontmatter}
     />
   );
 }

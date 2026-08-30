@@ -356,6 +356,71 @@ describe("createThreadsTimelineService: BB project enrichment", () => {
     ]);
   });
 
+  it("derives isAlive from archivedAt and isWorking from recent activity (`end`) or background work", async () => {
+    const NOW = Date.parse("2026-08-25T10:00:00.000Z");
+    const recentEnd = "2026-08-25T09:59:00.000Z"; // 60s before NOW → within the 2-min window
+    const staleEnd = "2026-08-25T09:00:00.000Z"; // 1h before NOW → outside the window
+    // One python thread per session, each with its own `end` recency.
+    const threadWithEnd = (session: string, end: string) => ({ ...rawThread(session), end });
+    const stdout = JSON.stringify({
+      schemaVersion: EXPECTED_THREADS_TIMELINE_SCHEMA_VERSION,
+      unit: 300,
+      threads: [
+        threadWithEnd("sess-recent", recentEnd),
+        threadWithEnd("sess-stale", staleEnd),
+        threadWithEnd("sess-bg", staleEnd),
+        threadWithEnd("sess-arch", recentEnd),
+      ],
+      agentLabels: {},
+    });
+
+    const { bb, harness } = createFakePluginHost();
+    harness.sdk.stub("threads.list", async () => [
+      // Live, recent activity → alive and working.
+      { id: "t-recent", projectId: "proj-1", title: "Recent", archivedAt: null, activity: {} },
+      // Live, stale activity, no background work → alive, not working.
+      { id: "t-stale", projectId: "proj-1", title: "Stale", archivedAt: null, activity: {} },
+      // Live, stale activity BUT a background agent runs → alive and working.
+      { id: "t-bg", projectId: "proj-1", title: "Background", archivedAt: null, activity: { activeBackgroundAgentCount: 1 } },
+      // Archived, even with recent activity → dead, never working.
+      { id: "t-arch", projectId: "proj-1", title: "Archived", archivedAt: NOW - 5_000, activity: {} },
+    ]);
+    harness.sdk.stub("threads.events.list", async ({ threadId }: { threadId: string }) => {
+      const map: Record<string, string> = { "t-recent": "sess-recent", "t-stale": "sess-stale", "t-bg": "sess-bg", "t-arch": "sess-arch" };
+      return map[threadId] ? [identityEvent(threadId, map[threadId])] : [];
+    });
+    harness.sdk.stub("projects.list", async () => [{ id: "proj-1", name: "bb-plugins" }]);
+    const { runner } = fakeRunner(() => ({ ok: true, stdout, stderr: "", code: 0 }));
+    const service = createThreadsTimelineService(bb, { processRunner: runner, now: () => NOW });
+
+    const result = await service.query({ unit: 300 });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const byId = new Map(result.data.threads.map((t) => [t.session, t]));
+    expect(byId.get("sess-recent")).toMatchObject({ isAlive: true, isWorking: true });
+    expect(byId.get("sess-stale")).toMatchObject({ isAlive: true, isWorking: false });
+    expect(byId.get("sess-bg")).toMatchObject({ isAlive: true, isWorking: true });
+    expect(byId.get("sess-arch")).toMatchObject({ isAlive: false, isWorking: false });
+  });
+
+  it("defaults isAlive/isWorking to false for a session with no BB thread match", async () => {
+    const { bb, harness } = createFakePluginHost();
+    harness.sdk.stub("threads.list", async () => [
+      { id: "thread-1", projectId: "proj-1", title: "Some other thread", archivedAt: null, status: "active", activity: {} },
+    ]);
+    harness.sdk.stub("threads.events.list", async () => [identityEvent("thread-1", "some-other-session")]);
+    harness.sdk.stub("projects.list", async () => [{ id: "proj-1", name: "bb-plugins" }]);
+    const { runner } = fakeRunner(() => ({ ok: true, stdout: stdoutWithThreads("sess-unmatched"), stderr: "", code: 0 }));
+    const service = createThreadsTimelineService(bb, { processRunner: runner });
+
+    const result = await service.query({ unit: 300 });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.data.threads).toEqual([expect.objectContaining({ session: "sess-unmatched", isAlive: false, isWorking: false })]);
+  });
+
   it("falls back to titleFallback when the matched BB thread's title is null", async () => {
     const { bb, harness } = createFakePluginHost();
     harness.sdk.stub("threads.list", async () => [

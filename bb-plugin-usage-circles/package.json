@@ -16,7 +16,6 @@
     "app": "./app.ts"
   },
   "bbMarketplace": {
-    "public": true,
     "tags": ["usage", "limits", "claude-code", "interface"]
   },
   "scripts": {
