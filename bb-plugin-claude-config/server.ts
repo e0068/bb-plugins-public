@@ -131,6 +131,9 @@ const configOutput = z.object({
       enabled: z.boolean(),
       mode: skillMode,
       dimmed: z.boolean(),
+      // Абсолютный путь к SKILL.md — панель открывает его хостовым опенером.
+      // null — навык-сирота (строка override осталась, файла на диске нет).
+      path: z.string().nullable(),
       // Оценка веса SKILL.md в токенах.
       tokens: z.number().nullable(),
     }),
@@ -313,6 +316,17 @@ export const rpcContract = defineRpcContract({
     // пути относительно неё. В границах области; при ошибке тихо отдаёт [].
     input: z.object({ areaId: z.string(), path: z.string() }).strict(),
     output: z.object({ paths: z.array(z.string()) }),
+  },
+  resolveOpenTarget: {
+    // Хост для файла в границах области: панель открывает его нативным опенером
+    // bb (experimental_openFilePreview) целью { kind: "host", hostId, path }.
+    // Для проектных файлов — хост источника проекта, для личных (~/.claude) —
+    // primaryHostId сервера. hostId=null — путь вне границ или хост неизвестен.
+    input: z.object({ areaId: z.string(), path: z.string() }).strict(),
+    output: z.object({
+      hostId: z.string().nullable(),
+      error: z.string().nullable(),
+    }),
   },
   readPlugin: {
     // Референс плагина: манифест (определение) и README, если он есть.
@@ -883,7 +897,11 @@ export default function plugin(bb: BbPluginApi) {
             const path = (
               skill.origin === "project" ? projectSkillFiles : personalSkillFiles
             ).get(skill.name);
-            return { ...skill, tokens: await tokensOf(path ?? null, area.hostId) };
+            return {
+              ...skill,
+              path: path ?? null,
+              tokens: await tokensOf(path ?? null, area.hostId),
+            };
           }),
         ),
         Promise.all(
@@ -1295,6 +1313,22 @@ export default function plugin(bb: BbPluginApi) {
         return { path: "", content: null, error: "Файл не найден.", sha256: null };
       }
       return { path: abs, content: text, error: null, sha256 };
+    },
+
+    async resolveOpenTarget({ areaId, path }) {
+      const area = await resolveArea(bb, areaId);
+      if (!area) return { hostId: null, error: "Область не найдена." };
+      const abs = expandTilde(path);
+      const match = matchRoot(area, abs);
+      if (!match) return { hostId: null, error: "Путь вне доступных папок." };
+      // Проектный корень несёт свой хост; личный уровень (~/.claude) лежит на
+      // локальном хосте сервера — его id берём из primaryHostId.
+      if (match.hostId) return { hostId: match.hostId, error: null };
+      const { primaryHostId } = await bb.sdk.system.config();
+      if (!primaryHostId) {
+        return { hostId: null, error: "Основной хост не определён." };
+      }
+      return { hostId: primaryHostId, error: null };
     },
 
     async listDocPaths({ areaId, path }) {
