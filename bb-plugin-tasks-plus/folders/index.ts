@@ -256,6 +256,15 @@ export function registerFolders(bb: BbPluginApi, store: TasksApiStore): void {
       if (!refreshed || !isSyncEligible(refreshed)) return { folder: null };
       return { folder: await buildSyncedFolderRow(refreshed) };
     },
+
+    async syncAllFolders() {
+      // Same catch-up the background loop and post-load bootstrap run, on
+      // demand. syncFolder de-dupes per project, so a click that overlaps a
+      // background tick coalesces onto the in-flight run instead of doubling.
+      const projects = store.tasks.listSyncProjects();
+      for (const project of projects) await syncFolder(project.id);
+      return { synced: projects.length };
+    },
   };
 
   bb.rpc.register(foldersRpcContract, handlers);

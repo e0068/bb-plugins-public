@@ -19,10 +19,14 @@ import {
   Markdown,
   useBbNavigate,
   useRpc,
+  useSettings,
 } from "@get-bb/plugin-sdk/app";
 import type { PluginNavPanelProps } from "@get-bb/plugin-sdk/app";
 import { toast } from "sonner";
 import type { AreaConfig, rpcContract, WriteOutcome } from "./server";
+import { MdDocView } from "./packages/md-doc-view";
+import type { LoadedDoc, SaveResult } from "./packages/md-doc-view";
+import { isHostOpen, normalizeOpener } from "./src/open-action";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Icon } from "@/components/ui/icon";
@@ -192,14 +196,25 @@ function parseDocSubPath(subPath: string): DocTarget | null {
   return null;
 }
 
-// Открыть реальный файл нативным опенером bb: сервер по области и пути отдаёт
-// хост (проектный или локальный для ~/.claude), а хост открывает файл тем
-// опенером, что пользователь выбрал в настройках bb для формата. Синтезированные
-// представления (плагин, коннектор, команда хука) — не файлы, идут не сюда.
+// Открыть реальный файл по настройке `fileOpener` (memory/decisions/
+// claude-config-opener-setting.md). `md-opener`/`builtin` — во встроенной колонке
+// (DocTab по subPath, редактор выбирает сам DocTab). `host` — делегировать
+// хостовой вкладке bb: сервер по области и пути отдаёт хост, тот открывает файл
+// опенером формата. Синтезированные представления (плагин, коннектор, команда
+// хука) — не файлы, идут не сюда.
 function useOpenFile(areaId: string): (path: string) => Promise<void> {
   const rpc = useRpc<typeof rpcContract>();
   const navigate = useBbNavigate();
+  const settings = useSettings();
+  const fileOpener = (settings.values as { fileOpener?: unknown } | undefined)
+    ?.fileOpener;
   return async (path: string) => {
+    if (!isHostOpen(fileOpener)) {
+      navigate.toPluginPanel(PANEL_PATH, {
+        subPath: docSubPath(areaId, path),
+      });
+      return;
+    }
     const { hostId, error } = await rpc.call("resolveOpenTarget", {
       areaId,
       path,
@@ -214,6 +229,51 @@ function useOpenFile(areaId: string): (path: string) => Promise<void> {
     });
     if (!opened) toast.error("Хост отклонил открытие файла.");
   };
+}
+
+// Встроенная колонка в режиме `md-opener`: тот же MdDocView, что и слот
+// MD Opener, но поверх RPC самой панели. Любой файл (md и не-md) правится сырым
+// текстом; ссылки резолвятся как в остальной панели (относительно документа, `~`
+// и `/` — как есть, границы проверит сервер).
+function ColumnMdDocView({
+  areaId,
+  initialPath,
+}: {
+  areaId: string;
+  initialPath: string;
+}) {
+  const rpc = useRpc<typeof rpcContract>();
+  const load = async (path: string): Promise<LoadedDoc> => {
+    const res = await rpc.call("readDoc", { areaId, path });
+    return {
+      path: res.path,
+      content: res.content,
+      sha256: res.sha256,
+      error: res.error,
+    };
+  };
+  const save = (
+    path: string,
+    content: string,
+    expectedSha256: string | null,
+  ): Promise<SaveResult> =>
+    rpc.call("writeDoc", { areaId, path, content, expectedSha256 });
+  const resolveLinkTarget = (href: string, fromPath: string): string | null => {
+    if (!isInTabLink(href) && !href.startsWith("~/")) return null;
+    const path = parseHref(href).path;
+    return path.startsWith("~/") || path.startsWith("/")
+      ? path
+      : resolveRelative(fromPath, path);
+  };
+  return (
+    <MdDocView
+      key={initialPath}
+      initialPath={initialPath}
+      load={load}
+      save={save}
+      resolveLinkTarget={resolveLinkTarget}
+    />
+  );
 }
 
 // Markdown-файлы рендерим как есть; прочие (например plugin.json) — кодовым
@@ -286,10 +346,15 @@ function Switch({
         checked ? "bg-primary" : "bg-input",
       )}
     >
+      {/* Бегунок контрастирует с дорожкой в ОБОИХ состояниях, как нативный
+          свитч bb: тёмный на светлой (вкл) дорожке, светлый на тёмной (выкл).
+          Один и тот же bg-background тонул в дорожке выкл — отсюда расхождение. */}
       <span
         className={cn(
-          "inline-block h-4 w-4 rounded-full bg-background shadow transition-transform",
-          checked ? "translate-x-[18px]" : "translate-x-0.5",
+          "inline-block h-4 w-4 rounded-full shadow transition-transform",
+          checked
+            ? "translate-x-[18px] bg-background"
+            : "translate-x-0.5 bg-foreground",
         )}
       />
     </button>
@@ -499,8 +564,14 @@ function FrontmatterTable({
 function DocTab({ subPath }: PluginNavPanelProps) {
   const rpc = useRpc<typeof rpcContract>();
   const navigate = useBbNavigate();
+  const opener = normalizeOpener(
+    (useSettings().values as { fileOpener?: unknown } | undefined)?.fileOpener,
+  );
   const target = parseDocSubPath(subPath);
   const areaId = target?.areaId ?? "";
+  // Реальный файл в режиме `md-opener` рисует MdDocView (он же грузит и правит).
+  // Ветки composite/hook и режим `builtin` идут прежним путём ниже.
+  const mdOpenerDoc = target?.kind === "doc" && opener === "md-opener";
 
   // Стек посещённых абсолютных путей (последний — текущий) и загруженный файл.
   const [stack, setStack] = useState<string[]>([]);
@@ -609,6 +680,11 @@ function DocTab({ subPath }: PluginNavPanelProps) {
       setStack([]);
       setEditing(false);
       setComposite(false);
+      return;
+    }
+    // Режим md-opener для файла: DocTab не грузит — MdDocView сам читает и правит.
+    if (mdOpenerDoc) {
+      setLoading(false);
       return;
     }
     let ok = true;
@@ -733,7 +809,7 @@ function DocTab({ subPath }: PluginNavPanelProps) {
     };
     // target выведен из subPath.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [subPath, rpc]);
+  }, [subPath, rpc, mdOpenerDoc]);
 
   // Файловая ссылка внутри показанного документа (README плагина, ссылка в
   // редакторе) — это реальный файл: открываем его нативным опенером bb, а не
@@ -861,6 +937,16 @@ function DocTab({ subPath }: PluginNavPanelProps) {
     return (
       <div className="p-4 text-sm text-muted-foreground">
         Выберите слева навык, плагин или файл памяти, чтобы увидеть содержимое.
+      </div>
+    );
+  }
+
+  // Режим md-opener: колонка отдаёт файл целиком MdDocView (своя шапка, стек
+  // прыжков, CAS). Без хлебных крошек и таблицы полей DocTab — чистый MD Opener.
+  if (mdOpenerDoc && target.kind === "doc") {
+    return (
+      <div className="flex h-full min-h-0 flex-col">
+        <ColumnMdDocView areaId={target.areaId} initialPath={target.path} />
       </div>
     );
   }

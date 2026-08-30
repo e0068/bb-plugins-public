@@ -1,5 +1,5 @@
-// React wrapper around the vanilla md-editor engine (./md-editor.js, copied
-// verbatim from bb-plugin-shelf/md-editor/). The vanilla editor owns the
+// React wrapper around the vanilla md-editor engine (./md-editor.js). The
+// vanilla editor owns the
 // contenteditable surface, format bar, tables, and its own markdown
 // round-trip; this wrapper only bridges it into React's value/onChange world
 // and the host's `--mde-*` theme variables (see ./theme.css).

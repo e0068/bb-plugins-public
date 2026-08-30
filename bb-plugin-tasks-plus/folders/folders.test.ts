@@ -320,6 +320,78 @@ describe("folders RPC", () => {
     }
   });
 
+  it("syncAllFolders reports zero when nothing is connected", async () => {
+    const { harness } = setup();
+    try {
+      const result = foldersRpcContract.syncAllFolders.output.parse(
+        await harness.callRpc("syncAllFolders", null),
+      );
+      expect(result).toEqual({ synced: 0 });
+    } finally {
+      await harness.dispose();
+    }
+  });
+
+  it("syncAllFolders picks up on-disk edits across every connected folder", async () => {
+    // A folder that starts empty and gains a file after connect proves the
+    // call actually re-scans, not just counts folders.
+    let filePresent = false;
+    const { bb, harness } = createFakePluginHost({
+      pluginId: "tasks",
+      sdk: {
+        projects: {
+          get: async () => bbProjectResponse(),
+          list: async () => [bbProjectResponse()],
+          paths: async () =>
+            filePresent
+              ? {
+                  paths: [
+                    {
+                      kind: "file",
+                      name: "task-one.md",
+                      path: "memory/tasks/todo/task-one.md",
+                      positions: [],
+                      score: 0,
+                    },
+                  ],
+                  truncated: false,
+                }
+              : emptyFolder(),
+          fileContent: async () => ({
+            content: "---\nslug: task-one\ntitle: Task One\n---\nBody\n",
+            contentEncoding: "utf8",
+            mimeType: "text/markdown",
+            sizeBytes: 10,
+          }),
+        },
+      },
+    });
+    const store = createStore(bb);
+    registerFolders(bb, store);
+    try {
+      const added = foldersRpcContract.addSyncedFolder.output.parse(
+        await harness.callRpc("addSyncedFolder", {
+          bbProjectId: BB_PROJECT_ID,
+          tasksFolder: "memory/tasks",
+        }),
+      );
+      if (!added.ok) throw new Error(added.error.message);
+      const projectId = added.folder.projectId;
+      expect(store.tasks.listTasks({ projectId })).toHaveLength(0);
+
+      filePresent = true;
+      const result = foldersRpcContract.syncAllFolders.output.parse(
+        await harness.callRpc("syncAllFolders", null),
+      );
+      expect(result).toEqual({ synced: 1 });
+      expect(store.tasks.listTasks({ projectId })).toHaveLength(1);
+      const [folder] = await listFolders(harness);
+      expect(folder?.status.kind).toBe("synced");
+    } finally {
+      await harness.dispose();
+    }
+  });
+
   it("listSyncableBbProjects only lists bb projects with a local source, flagging connected ones", async () => {
     const remoteOnly = {
       ...bbProjectResponse({ id: "proj_remote", name: "Remote only" }),

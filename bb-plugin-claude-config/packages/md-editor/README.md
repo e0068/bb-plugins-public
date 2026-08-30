@@ -1,14 +1,12 @@
 # @bb-plugins/md-editor
 
 Общий пакет: ванильный WYSIWYG-редактор markdown (`md-editor.js`,
-`markdown.js`, `tables.js`, `history.js`, `md-editor.css` — скопированы
-байт-в-байт из [bb-plugin-shelf/md-editor](../../bb-plugin-shelf/md-editor))
-плюс React-обёртка и тема на переменных `--mde-*`.
+`markdown.js`, `tables.js`, `history.js`, `md-editor.css`) плюс React-обёртка и
+тема на переменных `--mde-*`.
 
 Один contenteditable-surface; markdown — единственный источник истины.
-Собственной документации по внутреннему устройству движка здесь нет — см.
-исходный движок в `bb-plugin-shelf/md-editor/` (там остаётся его копия,
-Shelf её не удаляет).
+Отдельной документации по внутреннему устройству движка здесь нет — читается по
+исходникам в этом каталоге.
 
 ## Импорт
 

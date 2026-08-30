@@ -10,8 +10,7 @@ import { compile, blankTree, type Tree } from "./workflow-model";
 // the vanilla md-editor onto a contenteditable host via window.getSelection
 // / document.createRange — jsdom does not reproduce real contenteditable
 // editing behavior, so mounting it for real here would not exercise
-// anything meaningful. Per bb-plugin-shelf/app.test.tsx's precedent for the
-// same package, mock the wrapper at the boundary: the instructions field
+// anything meaningful. So mock the wrapper at the boundary: the instructions field
 // becomes a plain controlled textarea (data-testid="agent-prompt-mock"), so
 // the outline-editor tests can edit it directly, while the real wrapper stays
 // untouched for the actual bb build (verified separately via `bb plugin build`).
