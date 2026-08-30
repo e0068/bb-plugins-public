@@ -38,6 +38,12 @@ export interface MdDocViewProps {
   ) => Promise<SaveResult>;
   /** Абсолютная цель внутривкладочной ссылки или null (ссылка некликабельна). */
   resolveLinkTarget: (href: string, fromPath: string) => string | null;
+  /** CSS custom properties (`--kasi-*`) внешнего вида редактора. */
+  vars?: Record<string, string>;
+  /** Клик по живой ссылке ведёт по ней. default true. */
+  followLinks?: boolean;
+  /** Показывать frontmatter-блок сеткой. default true. */
+  frontmatter?: boolean;
 }
 
 export function MdDocView({
@@ -45,6 +51,9 @@ export function MdDocView({
   load,
   save,
   resolveLinkTarget,
+  vars,
+  followLinks,
+  frontmatter,
 }: MdDocViewProps) {
   const [doc, setDoc] = useState<LoadedDoc | null>(null);
   const [stack, setStack] = useState<string[]>([]);
@@ -134,7 +143,10 @@ export function MdDocView({
   };
 
   const fileName = (doc?.path || initialPath).split("/").pop() ?? "";
-  const showHeader = editing || stack.length > 1 || !!saveNote;
+  // Шапка появляется и когда файл можно править: там висит видимая кнопка
+  // «Редактировать» — вход в правку иначе неочевиден (клик по тексту не виден).
+  const showHeader =
+    editing || stack.length > 1 || !!saveNote || (canEdit && !editing);
 
   return (
     <div className="mdo-root">
@@ -156,7 +168,7 @@ export function MdDocView({
             <div className="mdo-title">{fileName}</div>
             {saveNote && <div className="mdo-note">{saveNote}</div>}
           </div>
-          {editing && (
+          {editing ? (
             <div className="mdo-actions">
               <button
                 type="button"
@@ -176,6 +188,18 @@ export function MdDocView({
                 Отмена
               </button>
             </div>
+          ) : (
+            canEdit && (
+              <div className="mdo-actions">
+                <button
+                  type="button"
+                  onClick={startEdit}
+                  className="mdo-btn mdo-btn-primary"
+                >
+                  Редактировать
+                </button>
+              </div>
+            )
           )}
         </div>
       )}
@@ -187,6 +211,9 @@ export function MdDocView({
           <div className="mdo-doc" onClick={onDocClick}>
             <KasimovEditor
               editable={editing}
+              followLinks={followLinks}
+              frontmatter={frontmatter}
+              vars={vars}
               value={editing ? draft : doc.content}
               onChange={setDraft}
               linkResolver={linkResolver}

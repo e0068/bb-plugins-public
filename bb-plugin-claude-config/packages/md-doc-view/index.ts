@@ -7,3 +7,15 @@ export type {
   LoadedDoc,
   SaveResult,
 } from "./MdDocView";
+// Общая схема настроек Kasimov (кегли/отступы/цвета/флаги). Значения каждый
+// плагин хранит свои; здесь только схема и чистые преобразования.
+export {
+  CSS_FIELDS,
+  FLAG_FIELDS,
+  DEFAULTS,
+  descriptors as kasimovSettingsDescriptors,
+  parse as parseKasimovSettings,
+  toCssVars as kasimovCssVars,
+  toFlags as kasimovFlags,
+} from "./kasimov-settings";
+export type { KasimovSettings, SettingValue } from "./kasimov-settings";
