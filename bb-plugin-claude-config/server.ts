@@ -653,6 +653,22 @@ const TOOLSEARCH_SECTION: LeveledSection<sd.ToolSearchMode> = {
 export default function plugin(bb: BbPluginApi) {
   bb.log.info("loaded");
 
+  // Чем открывать реальный файл (навык, агент, документ, ссылка, файл хука) —
+  // одна настройка на плагин, читается фронтом живьём через useSettings.
+  //   md-opener — во встроенной колонке редактором Kasimov (MdDocView);
+  //   builtin    — во встроенной колонке штатным MarkdownEditor + таблицей полей;
+  //   host       — делегировать хостовой вкладке bb (прежнее поведение def088e).
+  // Отменяет решение claude-config-delegate-file-open: выбор вместо хардкода
+  // (memory/decisions/claude-config-opener-setting.md).
+  bb.settings.define({
+    fileOpener: {
+      type: "select",
+      label: "Чем открывать файлы",
+      options: ["md-opener", "builtin", "host"],
+      default: "md-opener",
+    },
+  });
+
   // Чтение файла: отсутствие — это пустой документ (text=null), а не ошибка.
   // sha нужен для CAS-записи; при отсутствии файла запись пойдёт как create-only.
   async function readFile(

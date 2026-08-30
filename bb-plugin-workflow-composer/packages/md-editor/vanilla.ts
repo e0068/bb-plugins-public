@@ -1,5 +1,5 @@
 // Thin, consumer-side type shim for the vanilla md-editor engine
-// (./md-editor.js, copied verbatim from bb-plugin-shelf/md-editor/). The
+// (./md-editor.js). The
 // engine is source-of-truth for its own API (see the comment block at its
 // top) and stays plain, type-free ESM with no knowledge of any consumer —
 // this file exists purely so package consumers get real types.

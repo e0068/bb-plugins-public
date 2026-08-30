@@ -3,9 +3,7 @@
 // Structural unit test for the MarkdownEditor wrapper. jsdom cannot
 // reproduce real contenteditable *editing* behavior, so this test only
 // checks plain DOM construction the vanilla editor performs on mount
-// (appendChild, classList) — the same scope as
-// bb-plugin-shelf/components/MarkdownEditor.test.tsx, which this test
-// mirrors and extends with the editable/linkResolver cases specific to
+// (appendChild, classList), plus the editable/linkResolver cases specific to
 // this package's wider prop surface.
 import { afterEach, describe, expect, it } from "vitest";
 import { cleanup, render } from "@testing-library/react";

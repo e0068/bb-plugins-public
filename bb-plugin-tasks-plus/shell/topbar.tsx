@@ -1,4 +1,6 @@
 import { useCallback, useMemo } from "react";
+import { useRpc } from "@get-bb/plugin-sdk/app";
+import type { FoldersRpcContract } from "../folders/contract.js";
 import type { Project, Task } from "../shared/contract.js";
 import { groupTasksByStatus } from "../views/list/lib.js";
 import { listAllTasks, useTasksQuery } from "./data.js";
@@ -152,14 +154,26 @@ function ViewToggle({
  * not add listeners or alternate refresh paths. In-flight state tracks real
  * generation-driven query work (spin + disabled) with fixed geometry so the
  * header does not shift.
+ *
+ * A click re-queries the DB immediately (the generation bump) and, in the
+ * background, kicks a file sync of every connected folder so on-disk task
+ * edits land without waiting for the sync loop's next tick — a second
+ * generation bump surfaces whatever that sync brought in. The button never
+ * blocks on the sync: `syncAllFolders` swallows its own errors, so a failed
+ * or slow sync only forfeits the follow-up refresh.
  */
 function RefreshTasksButton() {
   const { refresh, isRefreshing } = useTasksRefresh();
+  const rpc = useRpc<FoldersRpcContract>();
 
   const handleRefresh = useCallback(() => {
     if (isRefreshing) return;
     refresh();
-  }, [isRefreshing, refresh]);
+    void rpc
+      .call("syncAllFolders", null)
+      .catch(() => {})
+      .finally(() => refresh());
+  }, [isRefreshing, refresh, rpc]);
 
   return (
     <TooltipProvider delayDuration={300}>

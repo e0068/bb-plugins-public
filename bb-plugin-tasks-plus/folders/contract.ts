@@ -140,6 +140,17 @@ export const foldersRpcContract = defineRpcContract({
     // concurrently) by the time the sync finishes.
     output: z.object({ folder: syncedFolderSchema.nullable() }).strict(),
   },
+  /**
+   * Kicks a file sync of every connected folder now, instead of waiting for
+   * the background loop's next tick. Backs the header reload control: the
+   * button re-queries the DB immediately and fires this so on-disk edits land
+   * without opening Manage. Resolves once every folder's sync has settled;
+   * `synced` is how many folders were kicked.
+   */
+  syncAllFolders: {
+    input: z.null(),
+    output: z.object({ synced: z.number().int().nonnegative() }).strict(),
+  },
 });
 
 export type FoldersRpcContract = typeof foldersRpcContract;

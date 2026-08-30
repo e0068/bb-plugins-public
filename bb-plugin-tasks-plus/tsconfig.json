@@ -1,14 +1,7 @@
 {
+  "extends": "../packages/plugin-base/tsconfig.base.json",
   "compilerOptions": {
-    "strict": true,
-    "target": "ES2022",
-    "module": "ESNext",
-    "moduleResolution": "bundler",
     "jsx": "react-jsx",
-    "lib": [
-      "ES2022",
-      "DOM"
-    ],
     "types": [
       "node"
     ],
@@ -16,9 +9,7 @@
       "@/*": [
         "./*"
       ]
-    },
-    "noEmit": true,
-    "skipLibCheck": true
+    }
   },
   "include": [
     "server.ts",
