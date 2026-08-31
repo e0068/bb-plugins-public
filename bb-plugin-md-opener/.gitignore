@@ -1,0 +1,5 @@
+dist/
+node_modules/
+# Пин версии редактора держим в package.json (kasimov#<commit>), а не в lock —
+# lock тянул 2600 строк транзитивных dev-зависимостей ради одной значимой строки.
+package-lock.json

@@ -30,6 +30,23 @@
       }
     },
     {
+      "id": "md-opener",
+      "displayName": "Kasimov",
+      "description": "Открывает .md-файлы редактором Kasimov: markdown-ссылки внутри кликабельны и ведут в той же вкладке, с крошками и возвратом. Правка сохраняется с CAS-защитой.",
+      "icon": "FileText",
+      "author": {
+        "name": "e0068",
+        "github": "e0068"
+      },
+      "source": {
+        "git": {
+          "url": "https://github.com/e0068/bb-plugins-public.git",
+          "subdir": "bb-plugin-md-opener",
+          "ref": "main"
+        }
+      }
+    },
+    {
       "id": "tasks-plus",
       "displayName": "Tasks+",
       "description": "Fork of Tasks with native workflow fields: Type, Check, Estimate, Plan/Fact tokens.",

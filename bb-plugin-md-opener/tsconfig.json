@@ -1,0 +1,11 @@
+{
+  "extends": "../packages/plugin-base/tsconfig.base.json",
+  "compilerOptions": {
+    "jsx": "react-jsx",
+    "types": ["node"],
+    "paths": {
+      "@/*": ["./*"]
+    }
+  },
+  "include": ["server.ts", "app.tsx", "src"]
+}
