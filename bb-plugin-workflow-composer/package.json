@@ -22,7 +22,6 @@
     "skills": []
   },
   "bbMarketplace": {
-    "public": true,
     "tags": ["workflows", "editor", "constructor", "agents", "claude-code", "automation"]
   },
   "dependencies": {

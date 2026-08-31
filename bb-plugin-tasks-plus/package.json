@@ -22,7 +22,6 @@
     ]
   },
   "bbMarketplace": {
-    "public": true,
     "tags": ["tasks", "tracker", "project-management", "workflow"]
   },
   "dependencies": {

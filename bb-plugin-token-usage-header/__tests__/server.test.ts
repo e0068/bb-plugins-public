@@ -617,6 +617,8 @@ describe("server.ts threadsTimeline", () => {
           bbProjectName: "bb-plugins",
           threadId: "thread-1",
           bbThreadTitle: "Тред 1",
+          isAlive: true,
+          isWorking: true,
         },
       ],
       agentLabels: { main: "Главный агент" },

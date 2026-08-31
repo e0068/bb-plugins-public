@@ -105,6 +105,19 @@ export type ThreadEntry = z.infer<typeof RawThreadEntrySchema> & {
   bbProjectName: string | null;
   threadId: string | null;
   bbThreadTitle: string | null;
+  /**
+   * True when the matched BB thread is live (not archived). False for a
+   * session with no BB thread match (the "Threads" bucket) — liveness is a
+   * property of a BB thread, and there's none to read. Drives the feed's
+   * green thread title.
+   */
+  isAlive: boolean;
+  /**
+   * True when work is happening in the matched BB thread right now — its main
+   * turn is active or any background work runs (see deriveThreadLiveness).
+   * Always false for an unmatched session. Drives the feed's blinking dot.
+   */
+  isWorking: boolean;
 };
 
 export type ThreadsTimeline = Omit<z.infer<typeof RawThreadsTimelineSchema>, "threads"> & {
@@ -214,6 +227,8 @@ export function parseThreadsTimeline(raw: string): ThreadsTimelineParseResult {
       bbProjectName: null,
       threadId: null,
       bbThreadTitle: null,
+      isAlive: false,
+      isWorking: false,
     })),
   };
 
@@ -243,4 +258,57 @@ export function widthFractions(threads: readonly ThreadEntry[]): number[] {
 /** Суммарный расход одного бина — сумма total всех агентов внутри него. */
 export function binTotal(bin: TimelineBin): number {
   return bin.agents.reduce((sum, agent) => sum + agent.total, 0);
+}
+
+// --- Thread liveness ---------------------------------------------------
+
+/**
+ * The BB-thread facts the feed's liveness indicators derive from, reduced to
+ * exactly what {@link deriveThreadLiveness} needs. The service (imperative
+ * shell) reads these off `bb.sdk.threads.list`'s response and hands them here;
+ * this module never imports the SDK, so the mapping stays testable in
+ * isolation — see memory/decisions/thread-liveness-signals.md.
+ */
+export interface ThreadLivenessInput {
+  /** Epoch ms the BB thread was archived at, or null while it's still live. */
+  archivedAt: number | null;
+  /**
+   * Epoch ms of the thread's most recent activity — the last transcript
+   * record (`end`). The feed is a transcript snapshot, not a live turn feed:
+   * bb.sdk.threads.list's own `status`/`runtime.displayStatus` describe the
+   * *environment* lifecycle (provisioning/starting/stopping), not "an agent
+   * turn is running now" — a local thread works at status "idle". So recency
+   * of this record is the honest "working now" signal. NaN when unparseable.
+   */
+  lastActivityMs: number;
+  /** Epoch ms "now" at snapshot time — injected, never read from the clock in core. */
+  nowMs: number;
+  /** How fresh lastActivityMs must be (ms) to count the thread as working. */
+  workingWindowMs: number;
+  /** Count of background work items running now (agents + commands + workflows + plan mode + goals). */
+  activeWorkCount: number;
+}
+
+export interface ThreadLiveness {
+  isAlive: boolean;
+  isWorking: boolean;
+}
+
+/**
+ * Derives the two feed indicators from a BB thread's raw liveness facts.
+ * Pure and total: same input, same flags, no I/O.
+ *
+ * - `isAlive` — the thread is not archived.
+ * - `isWorking` — the thread is alive AND either its last activity is within
+ *   `workingWindowMs` of now, or some background work is running. An archived
+ *   thread is never shown working, even with a stale flag (see the decision
+ *   doc). A NaN `lastActivityMs` fails the recency test, never throws.
+ */
+export function deriveThreadLiveness(input: ThreadLivenessInput): ThreadLiveness {
+  const isAlive = input.archivedAt === null;
+  // No lower bound on the gap: a lastActivityMs slightly in the future (clock
+  // skew) is "just now", still recent. NaN makes the comparison false.
+  const recentlyActive = input.nowMs - input.lastActivityMs <= input.workingWindowMs;
+  const isWorking = isAlive && (recentlyActive || input.activeWorkCount > 0);
+  return { isAlive, isWorking };
 }

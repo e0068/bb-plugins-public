@@ -900,3 +900,95 @@ describe("threads-timeline nav panel", () => {
     await waitForElementToBeRemoved(() => screen.queryByText(/1\.5k · 75%/));
   });
 });
+
+describe("threads-timeline nav panel — liveness indicators", () => {
+  // Three cards: a live thread with work running, a live-but-idle thread, and
+  // an archived (dead) thread — one fixture covering every indicator branch.
+  const LIVENESS_READY = {
+    status: "ready" as const,
+    unit: 60,
+    threads: [
+      {
+        session: "sess_live1",
+        project: "p",
+        title: "sess_live1",
+        start: "2026-08-25T09:00:00.000Z",
+        end: "2026-08-25T09:05:00.000Z",
+        durationSec: 300,
+        totalTokens: 5000,
+        totalCost: 0.42,
+        workflowCount: 0,
+        bins: [{ t: "2026-08-25T09:00:00.000Z", agents: [{ key: "main", total: 3000 }] }],
+        bbProjectId: "bb-proj-1",
+        bbProjectName: "Proj",
+        threadId: "thread-live",
+        bbThreadTitle: "Живой в работе",
+        isAlive: true,
+        isWorking: true,
+      },
+      {
+        session: "sess_idle1",
+        project: "p",
+        title: "sess_idle1",
+        start: "2026-08-25T08:00:00.000Z",
+        end: "2026-08-25T08:02:00.000Z",
+        durationSec: 120,
+        totalTokens: 1000,
+        totalCost: 0.05,
+        workflowCount: 0,
+        bins: [{ t: "2026-08-25T08:00:00.000Z", agents: [{ key: "main", total: 1000 }] }],
+        bbProjectId: "bb-proj-1",
+        bbProjectName: "Proj",
+        threadId: "thread-idle",
+        bbThreadTitle: "Живой без работы",
+        isAlive: true,
+        isWorking: false,
+      },
+      {
+        session: "sess_dead1",
+        project: "p",
+        title: "sess_dead1",
+        start: "2026-08-25T07:00:00.000Z",
+        end: "2026-08-25T07:01:00.000Z",
+        durationSec: 60,
+        totalTokens: 500,
+        totalCost: 0.01,
+        workflowCount: 0,
+        bins: [{ t: "2026-08-25T07:00:00.000Z", agents: [{ key: "main", total: 500 }] }],
+        bbProjectId: "bb-proj-1",
+        bbProjectName: "Proj",
+        threadId: "thread-dead",
+        bbThreadTitle: "Заархивированный",
+        isAlive: false,
+        isWorking: false,
+      },
+    ],
+    agentLabels: { main: "Главный агент" },
+  };
+
+  it("paints a live thread's title green and an archived thread's title with the default foreground", async () => {
+    await renderThreadsTimeline({ threadsTimeline: async () => LIVENESS_READY });
+
+    const liveTitle = await screen.findByRole("button", { name: "Живой в работе" });
+    expect(liveTitle.className).toContain("text-success");
+    expect(liveTitle.className).not.toContain("text-foreground");
+
+    const deadTitle = screen.getByRole("button", { name: "Заархивированный" });
+    expect(deadTitle.className).toContain("text-foreground");
+    expect(deadTitle.className).not.toContain("text-success");
+  });
+
+  it("shows one blinking dot — only on the thread that is working right now", async () => {
+    await renderThreadsTimeline({ threadsTimeline: async () => LIVENESS_READY });
+    await screen.findByRole("button", { name: "Живой в работе" });
+
+    const dots = screen.getAllByLabelText("Идёт работа");
+    expect(dots).toHaveLength(1);
+    expect(dots[0].className).toContain("animate-pulse");
+    expect(dots[0].className).toContain("bg-success");
+
+    // The dot sits inside the working thread's card, next to its title.
+    const workingCard = screen.getByRole("button", { name: "Живой в работе" }).closest(".rounded-md.border.border-border");
+    expect(workingCard!.contains(dots[0])).toBe(true);
+  });
+});
