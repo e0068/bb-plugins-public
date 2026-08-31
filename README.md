@@ -14,7 +14,6 @@ bb plugin install <id>@e0068
 
 - **Claude Config** (`claude-config`) — Управление конфигом Claude Code: плагины, коннекторы, навыки, хуки и подгрузка инструментов по областям.
 - **Kasimov** (`md-opener`) — Открывает .md-файлы редактором Kasimov: markdown-ссылки внутри кликабельны и ведут в той же вкладке, с крошками и возвратом. Правка сохраняется с CAS-защитой.
-- **Tasks+** (`tasks-plus`) — Fork of Tasks with native workflow fields: Type, Check, Estimate, Plan/Fact tokens.
 - **Token Usage Analytics** (`token-usage-header`) — Расход токенов Claude Code текущей сессии: счётчик в шапке треда.
 - **Usage Circles** (`usage-circles`) — Кольца лимитов Claude Code в подвале сайдбара.
 - **Workflows+** (`workflow-composer`) — Visual bb-workflow builder: assemble a tree of phases and steps, compile it to .js, save it to .bb/workflows or ~/.claude/workflows, validate and run it.
