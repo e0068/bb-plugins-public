@@ -1,12 +1,17 @@
 /// <reference path="./kasimov.d.ts" />
-// React-обёртка вокруг редактора Kasimov (createEditor, editor/create-editor.js).
+// React-обёртка вокруг вендорённого редактора Kasimov (createEditor,
+// editor/create-editor.js). Движок вендорён как соседний слой
+// packages/kasimov (готовая сборка), обёртка тянет его относительным импортом:
+// bare-специфер "kasimov" из этого пакета не резолвится сборщиком плагина —
+// зависимость ставится в node_modules плагина-соседа, а не предка (см.
+// memory/decisions/md-opener-vendor-kasimov.md).
 // Kasimov поставляется как vanilla-ESM: фабрика монтирует свой contenteditable в
 // host-элемент и владеет DOM целиком; обёртка лишь мостит его в мир value/onChange
 // React и держит стабильную идентичность инстанса между рендерами.
 //
-// Тройной slash-reference выше тащит ambient-декларацию модуля `kasimov` в любую
-// компиляцию, где импортируется эта обёртка (плагин-потребитель не обязан
-// включать kasimov.d.ts в свой tsconfig).
+// Slash-reference выше подключает ambient-объявление css-модуля для
+// side-effect импорта стилей; типы движка приходят из packages/kasimov/kasimov.d.ts
+// по относительному импорту.
 //
 // Отличие от packages/md-editor/react: там движок — класс `new
 // VanillaMarkdownEditor(host, opts)` со своим `atLinks`; здесь Kasimov даёт
@@ -14,15 +19,21 @@
 // только markdown-форма) — поэтому проп atLinks отсутствует, а переход по ссылке
 // включается флагом followLinks (см. memory/decisions/md-opener-kasimov-editor.md).
 import { useEffect, useRef } from "react";
-import { createEditor } from "kasimov";
-import type { KasimovEditorInstance, KasimovLink } from "kasimov";
-import "kasimov/css";
+import { createEditor } from "../kasimov/kasimov.js";
+import type { KasimovEditorInstance, KasimovLink } from "../kasimov/kasimov.js";
+import "../kasimov/kasimov.css";
 
 export interface KasimovEditorProps {
   value: string;
   onChange?: (v: string) => void;
   /** default true */
   editable?: boolean;
+  /** Клик по живой ссылке ведёт по ней. default true. */
+  followLinks?: boolean;
+  /** Показывать frontmatter-блок сеткой. default true. */
+  frontmatter?: boolean;
+  /** CSS custom properties (`--kasi-*` и т.п.), навешиваются на host-элемент. */
+  vars?: Record<string, string>;
   linkResolver?: (href: string) => KasimovLink | null;
   onSave?: (md: string) => Promise<void> | void;
   className?: string;
@@ -32,6 +43,9 @@ export function KasimovEditor({
   value,
   onChange,
   editable = true,
+  followLinks = true,
+  frontmatter = true,
+  vars,
   linkResolver,
   onSave,
   className,
@@ -64,11 +78,11 @@ export function KasimovEditor({
     const editor = createEditor(host, {
       value: lastEmittedRef.current,
       editable,
-      // Клик по ссылке всегда переходит по ней вместо выделения токена — флаг
-      // включён по решению владельца (md-opener-kasimov-editor.md). В режиме
-      // правки переход уводит из несохранённого черновика ОСОЗНАННО: клик по
-      // ссылке — намеренный жест навигации, а не молчаливая потеря при перечитке.
-      followLinks: true,
+      // Клик по ссылке переходит по ней вместо выделения токена. По умолчанию
+      // включено (md-opener-kasimov-editor.md); в правке переход уводит из
+      // несохранённого черновика ОСОЗНАННО. Теперь управляется настройкой.
+      followLinks,
+      frontmatter,
       onChange: (next) => {
         lastEmittedRef.current = next;
         onChangeRef.current?.(next);
@@ -83,12 +97,12 @@ export function KasimovEditor({
       editor.destroy();
       editorRef.current = null;
     };
-    // Пересоздаём при смене `editable`: Kasimov читает editable/followLinks один
-    // раз в createEditor (не через live-ref), поэтому переключение режима требует
-    // свежего инстанса. Остальные колбэки идут через ref'ы — на их смену
+    // Пересоздаём при смене `editable`/`followLinks`/`frontmatter`: Kasimov читает
+    // их один раз в createEditor (не через live-ref), поэтому переключение флага
+    // требует свежего инстанса. Остальные колбэки идут через ref'ы — на их смену
     // редактор не пересоздаётся.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [editable]);
+  }, [editable, followLinks, frontmatter]);
 
   useEffect(() => {
     if (editorRef.current && value !== lastEmittedRef.current) {
@@ -96,6 +110,21 @@ export function KasimovEditor({
       editorRef.current.setValue(value);
     }
   }, [value]);
+
+  // CSS-переменные (`--kasi-*`) навешиваем на host-элемент: движок владеет его
+  // ПОТОМКАМИ (innerHTML при render), но host.style не трогает — переменные
+  // наследуются вниз и переживают пересборку тела редактора.
+  useEffect(() => {
+    const host = hostRef.current;
+    if (!host) return;
+    const applied = vars ?? {};
+    for (const [name, value] of Object.entries(applied)) {
+      host.style.setProperty(name, value);
+    }
+    return () => {
+      for (const name of Object.keys(applied)) host.style.removeProperty(name);
+    };
+  }, [vars]);
 
   return <div ref={hostRef} className={className} />;
 }
