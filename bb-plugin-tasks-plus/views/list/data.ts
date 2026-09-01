@@ -19,8 +19,9 @@ export interface ListTaskFilters {
 }
 
 /**
- * Server-side filtered task list. Subtasks are excluded (parentTaskId: null),
- * matching the design mock — they surface on their parent's detail page.
+ * Server-side filtered task list, including subtasks. The list groups a
+ * subtask under its parent's status (see `nestSubtasks`/`groupTasksByStatus`
+ * in ./lib.js), so it must fetch both to render the tree.
  */
 export function useListTasks(
   projectId: string | null,
@@ -41,7 +42,6 @@ export function useListTasks(
           ? { labelIds: [...filters.labelIds] }
           : {}),
         activeOnly,
-        parentTaskId: null,
       }),
     ["tasks:changed", "threads:changed"],
     [
