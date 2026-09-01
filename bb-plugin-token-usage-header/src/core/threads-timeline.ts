@@ -20,14 +20,26 @@ import { z } from "zod";
  * имена агентов по ключу — см. RawThreadsTimelineSchema ниже).
  * 2 -> 3: у треда добавлены totalCost (стоимость расхода в USD по тарифу
  * tokens.py) и workflowCount (число различных workflow-прогонов в сессии).
+ * 3 -> 4: у workflow-сегмента бина (key == "workflow:<run>", только при
+ * group_workflows) добавлено members — реальные agentId, слитые в сегмент.
  */
-export const EXPECTED_THREADS_TIMELINE_SCHEMA_VERSION = 3;
+export const EXPECTED_THREADS_TIMELINE_SCHEMA_VERSION = 4;
 
 const AgentBinSchema = z
   .object({
     /** "main" для главного агента, иначе agentId субагента — как в tokens.py --by agent. */
     key: z.string(),
     total: z.number().finite(),
+    /**
+     * Реальные agentId, слитые в этот сегмент — присутствует ТОЛЬКО когда
+     * `key` сам является групповым workflow-ключом (`workflow:<run>`, см.
+     * tools/threads_timeline.py::_bin_key при --group-workflows); у обычного
+     * агента key уже и есть его real id, поле отсутствует. Существует ради
+     * подсветки/гашения сегмента на графике сессии по выбранному агенту
+     * (thread-chart.tsx) — без него принадлежность реального агента внутри
+     * слитого сегмента была бы неразличима.
+     */
+    members: z.array(z.string()).optional(),
   })
   .strict();
 

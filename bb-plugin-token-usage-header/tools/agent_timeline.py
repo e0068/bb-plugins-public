@@ -6,6 +6,7 @@ Claude Code (~/.claude/projects).
 собственный каталог и `import tokens` переиспользуют его ROOT/JsonAwareParser/
 load_meta, а не дублируют их здесь.
 """
+import glob
 import json
 import os
 import sys
@@ -21,7 +22,16 @@ from tokens import ROOT, Bucket, JsonAwareParser, load_meta  # noqa: E402
 # 1 -> 2: assistant-сообщения несут tokens/cost (решение владельца: стоимость
 # считается на вызов модели, не на строку-инструмент) — см.
 # memory/decisions/token-usage-cost-on-messages.md.
-SCHEMA_VERSION = 2
+#
+# 2 -> 3: agent несёт requestFull/requestFullTruncated/responseFull/
+# responseFullTruncated — необрезанные (в пределах FULL_TEXT_MAX) текст
+# запроса и ответа агента, для показа целиком в UI поверх коротких
+# превью-фрагментов events[].text.
+#
+# 3 -> 4: каждое message-событие несёт fullText/fullTextTruncated — полный
+# текст ЭТОГО сообщения (не только первого/последнего), чтобы раскрытие
+# любой строки хронологии показывало её целиком, а не 300-символьное превью.
+SCHEMA_VERSION = 4
 
 # Инструменты, запускающие субагента, встречались под двумя именами в разных
 # версиях Claude Code ("Task" в документации/спецификации, "Agent" — то, что
@@ -110,20 +120,32 @@ def hook_event(record):
     }
 
 
-def _is_real_user_message(record):
+def _is_real_user_message(record, own_file=False):
     """Настоящее сообщение человека, а не tool_result/meta/слэш-команда.
 
     Большинство записей type=="user" в транскрипте — это tool_result (ответ
     инструмента, поданный назад модели): у них message.content — СПИСОК
-    блоков. Настоящее сообщение пользователя — content-СТРОКА. isMeta и
-    isSidechain отсекают инжектированные системой и субагентские записи;
-    "<local-command-stdout>" — вывод слэш-команды, который транскрипт тоже
-    заворачивает в user-запись со строковым content, но isMeta там не
-    выставлен, поэтому проверяется отдельно, текстом.
+    блоков. Настоящее сообщение пользователя — content-СТРОКА. isMeta
+    отсекает инжектированные системой записи везде; "<local-command-stdout>"
+    — вывод слэш-команды, который транскрипт тоже заворачивает в user-запись
+    со строковым content, но isMeta там не выставлен, поэтому проверяется
+    отдельно, текстом.
+
+    isSidechain отсекает записи субагента, ПОДМЕШАННЫЕ в основной транскрипт
+    (сессия видит побочную ветку целиком) — но только там: `own_file=True`
+    говорит, что `record` пришёл из СОБСТВЕННОГО файла субагента
+    (`<session>/subagents/**/agent-<id>.jsonl`), где isSidechain стоит `True`
+    буквально на каждой строке (это метка «весь файл — сайдчейн», а не
+    «это сообщение — служебное»). Без own_file фильтр там отбрасывал бы
+    любое сообщение агента, включая тот самый первый промпт, которым его
+    запустили — реальный кейс, поймавший это: агент из workflow-прогона
+    показывал 0 текстовых событий несмотря на 194 события в хронологии.
     """
     if record.get("type") != "user":
         return False
-    if record.get("isMeta") or record.get("isSidechain"):
+    if record.get("isMeta"):
+        return False
+    if record.get("isSidechain") and not own_file:
         return False
     content = (record.get("message") or {}).get("content")
     if not isinstance(content, str):
@@ -133,11 +155,16 @@ def _is_real_user_message(record):
     return True
 
 
-def _assistant_text(record):
-    """Текст assistant-записи (склейка text-блоков), либо None."""
+def _assistant_text(record, own_file=False):
+    """Текст assistant-записи (склейка text-блоков), либо None.
+
+    own_file — см. _is_real_user_message: тот же смысл, та же причина.
+    """
     if record.get("type") != "assistant":
         return None
-    if record.get("isMeta") or record.get("isSidechain"):
+    if record.get("isMeta"):
+        return None
+    if record.get("isSidechain") and not own_file:
         return None
     content = (record.get("message") or {}).get("content")
     if not isinstance(content, list):
@@ -163,27 +190,99 @@ def _message_usage(record):
     return b
 
 
-def message_event(record):
+def message_event(record, own_file=False):
     """Настоящее сообщение (человек или ассистент) -> событие kind="message".
 
     Решение владельца: стоимость считается на вызов модели (assistant-запись
     целиком), не размазывается по её отдельным tool_use-блокам — поэтому
     tokens/cost появляются здесь, а не в tool_events. У user-сообщений цены
     нет: они не вызов модели, а вход для него.
+
+    own_file — см. _is_real_user_message: True, когда `record` пришёл из
+    собственного файла субагента, а не из основного транскрипта сессии.
+
+    Несёт и превью (`text`, обрезано до EXCERPT_MAX — для строки в списке),
+    и полный текст (`fullText`, обрезано до куда более щедрого FULL_TEXT_MAX
+    — раскрыть конкретную запись и прочитать её целиком, не только первый
+    запрос/последний ответ агента, как agent.requestFull/responseFull).
     """
     ts = record.get("timestamp")
-    if _is_real_user_message(record):
-        text = excerpt((record.get("message") or {}).get("content"))
-        return {"ts": ts, "kind": "message", "role": "user", "text": text}
-    text = _assistant_text(record)
+    if _is_real_user_message(record, own_file=own_file):
+        raw = ((record.get("message") or {}).get("content") or "").strip()
+        full_text, full_truncated = truncate_full(raw)
+        return {
+            "ts": ts,
+            "kind": "message",
+            "role": "user",
+            "text": excerpt(raw),
+            "fullText": full_text,
+            "fullTextTruncated": full_truncated,
+        }
+    text = _assistant_text(record, own_file=own_file)
     if text is not None:
-        event = {"ts": ts, "kind": "message", "role": "assistant", "text": excerpt(text)}
+        full_text, full_truncated = truncate_full(text)
+        event = {
+            "ts": ts,
+            "kind": "message",
+            "role": "assistant",
+            "text": excerpt(text),
+            "fullText": full_text,
+            "fullTextTruncated": full_truncated,
+        }
         bucket = _message_usage(record)
         if bucket is not None:
             event["tokens"] = bucket.total
             event["cost"] = round(bucket.cost, 2)
         return event
     return None
+
+
+# Длина полного (не превью, как EXCERPT_MAX) текста запроса/ответа агента —
+# достаточно, чтобы прочитать реальный промпт/ответ целиком, но с потолком,
+# чтобы огромный транскрипт не раздул JSON-ответ RPC без границы.
+FULL_TEXT_MAX = 20_000
+
+
+def truncate_full(text):
+    """Обрезает текст до FULL_TEXT_MAX символов -> (текст, обрезан ли)."""
+    if len(text) <= FULL_TEXT_MAX:
+        return text, False
+    return text[:FULL_TEXT_MAX], True
+
+
+def full_request(records, own_file=False):
+    """Полный текст первого настоящего user-сообщения -> (текст, обрезан) либо (None, False).
+
+    То же условие, что message_event/_is_real_user_message (own_file — тот
+    же смысл, см. там), но без обрезки excerpt() — это вход, которым агента
+    запустили, целиком.
+    """
+    for record in records:
+        if _is_real_user_message(record, own_file=own_file):
+            text = ((record.get("message") or {}).get("content") or "").strip()
+            return truncate_full(text) if text else (None, False)
+    return None, False
+
+
+def full_response(records, own_file=False):
+    """Полный текст последнего assistant-сообщения -> (текст, обрезан) либо (None, False).
+
+    Последняя ассистентская запись побеждает, включая пустую: транскрипт,
+    оборвавшийся на голом tool_use (без текстового блока), даёт None, а не
+    устаревший более ранний ответ — тот же приём, что message_event/
+    _assistant_text уже применяют для превью, здесь — для полного текста.
+    own_file — тот же смысл, что у _assistant_text.
+    """
+    response = None
+    for record in records:
+        if record.get("type") != "assistant":
+            continue
+        if record.get("isMeta"):
+            continue
+        if record.get("isSidechain") and not own_file:
+            continue
+        response = _assistant_text(record, own_file=own_file)
+    return truncate_full(response) if response else (None, False)
 
 
 def read_records(path):
@@ -206,15 +305,20 @@ def read_records(path):
     return records
 
 
-def extract_events(records):
-    """Все события транскрипта, хронологически по ts (записи без ts — в конец)."""
+def extract_events(records, own_file=False):
+    """Все события транскрипта, хронологически по ts (записи без ts — в конец).
+
+    own_file — см. _is_real_user_message: True для records из собственного
+    файла субагента, где isSidechain стоит на каждой записи и не должен
+    отбрасывать её текст.
+    """
     events = []
     for record in records:
         events.extend(tool_events(record))
         hook = hook_event(record)
         if hook:
             events.append(hook)
-        message = message_event(record)
+        message = message_event(record, own_file=own_file)
         if message:
             events.append(message)
     events.sort(key=lambda e: e["ts"] or "")
@@ -274,6 +378,24 @@ def find_session(root, session):
     return None, None
 
 
+def find_agent_file(project_dir, full_session, agent):
+    """Путь к транскрипту субагента под `<session>/subagents/`.
+
+    Не всегда лежит прямо в этом каталоге: субагенты workflow-прогонов
+    пишутся на уровень глубже, в `subagents/workflows/<runId>/agent-<hash>.jsonl`
+    (см. `_session_files` в tools/tokens.py — тот же случай, тот же приём:
+    рекурсивный glob). Прямая проверка сначала — частый случай без обхода
+    дерева; `sorted()` — детерминированный выбор, если совпадений вдруг
+    больше одного (не должно happen: хэш агента уникален).
+    """
+    subagents_dir = os.path.join(project_dir, full_session, "subagents")
+    direct = os.path.join(subagents_dir, f"{agent}.jsonl")
+    if os.path.exists(direct):
+        return direct
+    matches = sorted(glob.glob(os.path.join(subagents_dir, "**", f"{agent}.jsonl"), recursive=True))
+    return matches[0] if matches else direct
+
+
 def build_timeline(root, session, agent):
     """Собирает {schemaVersion, agent, events} для одного (session, agent)."""
     project_dir, full_session = find_session(root, session)
@@ -285,6 +407,8 @@ def build_timeline(root, session, agent):
 
     if agent == "main":
         events = extract_events(main_records)
+        request, request_truncated = full_request(main_records)
+        response, response_truncated = full_response(main_records)
         agent_info = {
             "key": "main",
             "agentType": None,
@@ -292,12 +416,30 @@ def build_timeline(root, session, agent):
             "model": None,
             "spawnDepth": None,
             "promptExcerpt": None,
+            "requestFull": request,
+            "requestFullTruncated": request_truncated,
+            "responseFull": response,
+            "responseFullTruncated": response_truncated,
         }
     else:
-        agent_path = os.path.join(project_dir, full_session, "subagents", f"{agent}.jsonl")
+        agent_path = find_agent_file(project_dir, full_session, agent)
         agent_records = read_records(agent_path)
-        events = extract_events(agent_records)
+        # own_file=True: в собственном файле субагента isSidechain стоит на
+        # КАЖДОЙ записи (это метка «весь файл — побочная ветка», не
+        # «сообщение служебное») — без own_file _is_real_user_message/
+        # _assistant_text отбросили бы весь текст агента целиком, включая
+        # его же промпт. См. разбор в _is_real_user_message.
+        events = extract_events(agent_records, own_file=True)
         meta = load_meta(agent_path) or {}
+        # Из СОБСТВЕННОГО транскрипта агента (agent_records), не из main_records
+        # как promptExcerpt/find_task_prompt: у субагентов workflow-прогонов нет
+        # toolUseId в meta.json (их запускает не блок Task/Agent в основном
+        # транскрипте, а сам workflow-движок) — find_task_prompt для них всегда
+        # даёт None. Первая настоящая user-запись в собственном транскрипте
+        # агента при этом есть всегда (это его задание), поэтому requestFull
+        # работает и там, где promptExcerpt не может.
+        request, request_truncated = full_request(agent_records, own_file=True)
+        response, response_truncated = full_response(agent_records, own_file=True)
         agent_info = {
             "key": agent,
             "agentType": meta.get("agentType"),
@@ -305,6 +447,10 @@ def build_timeline(root, session, agent):
             "model": meta.get("model"),
             "spawnDepth": meta.get("spawnDepth"),
             "promptExcerpt": find_task_prompt(main_records, meta.get("toolUseId")),
+            "requestFull": request,
+            "requestFullTruncated": request_truncated,
+            "responseFull": response,
+            "responseFullTruncated": response_truncated,
         }
 
     return {"schemaVersion": SCHEMA_VERSION, "agent": agent_info, "events": events}

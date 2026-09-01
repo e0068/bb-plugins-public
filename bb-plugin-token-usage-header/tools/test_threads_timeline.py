@@ -195,6 +195,27 @@ class BuildTimelineTest(unittest.TestCase):
         self.assertEqual(agents.get("main"), 5)
         self.assertEqual(result["agentLabels"]["workflow:wf_run1"], "my-review")
 
+        # Реальная принадлежность агента внутри слитого сегмента не теряется:
+        # members несёт обоих реальных agentId, отсортированных.
+        bin_agents = {a["key"]: a for b in thread["bins"] for a in b["agents"]}
+        self.assertEqual(bin_agents["workflow:wf_run1"]["members"], ["agent-x", "agent-y"])
+        # У обычного (не-workflow) сегмента members нет вовсе — key уже и есть
+        # его real id, дублировать нечего.
+        self.assertNotIn("members", bin_agents["main"])
+
+    def test_group_workflows_off_has_no_members_field_on_any_segment(self):
+        sess = "sess-wf-nogroup"
+        _write_raw(self._p("projA", sess + ".jsonl"), [_assistant("m0", "r0", 5, "2026-08-19T10:00:00.000Z")])
+        _write_raw(
+            self._p("projA", sess, "subagents", "workflows", "wf_run3", "agent-x.jsonl"),
+            [_assistant("m1", "r1", 3, "2026-08-19T10:00:01.000Z")],
+        )
+        result = threads_timeline.build_timeline(self.root, limit=20, unit=300, group_workflows=False)
+        thread = result["threads"][0]
+        for b in thread["bins"]:
+            for a in b["agents"]:
+                self.assertNotIn("members", a)
+
     def test_group_workflows_off_keeps_run_agents_separate(self):
         sess = "sess-wf2"
         _write_raw(self._p("projA", sess + ".jsonl"), [_assistant("m0", "r0", 5, "2026-08-19T10:00:00.000Z")])

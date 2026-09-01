@@ -10,12 +10,30 @@ const validTimeline = {
     model: "sonnet",
     spawnDepth: 1,
     promptExcerpt: "Please review the diff carefully",
+    requestFull: "Please review the diff carefully",
+    requestFullTruncated: false,
+    responseFull: "Looks good",
+    responseFullTruncated: false,
   },
   events: [
-    { ts: "2026-08-20T14:40:00.000Z", kind: "message", role: "user", text: "Please review the diff carefully" },
+    {
+      ts: "2026-08-20T14:40:00.000Z",
+      kind: "message",
+      role: "user",
+      text: "Please review the diff carefully",
+      fullText: "Please review the diff carefully",
+      fullTextTruncated: false,
+    },
     { ts: "2026-08-20T14:40:01.000Z", kind: "tool", name: "Read", target: "/repo/file.ts" },
     { ts: "2026-08-20T14:40:02.000Z", kind: "hook", hookName: "PostToolUse", hookEvent: "PostToolUse" },
-    { ts: "2026-08-20T14:40:03.000Z", kind: "message", role: "assistant", text: "Looks good" },
+    {
+      ts: "2026-08-20T14:40:03.000Z",
+      kind: "message",
+      role: "assistant",
+      text: "Looks good",
+      fullText: "Looks good",
+      fullTextTruncated: false,
+    },
   ],
 };
 
@@ -37,7 +55,18 @@ describe("parseAgentTimeline", () => {
   it("parses the main agent's info with null fields", () => {
     const mainTimeline = {
       schemaVersion: EXPECTED_AGENT_TIMELINE_SCHEMA_VERSION,
-      agent: { key: "main", agentType: null, description: null, model: null, spawnDepth: null, promptExcerpt: null },
+      agent: {
+        key: "main",
+        agentType: null,
+        description: null,
+        model: null,
+        spawnDepth: null,
+        promptExcerpt: null,
+        requestFull: null,
+        requestFullTruncated: false,
+        responseFull: null,
+        responseFullTruncated: false,
+      },
       events: [],
     };
     const result = parseAgentTimeline(JSON.stringify(mainTimeline));
@@ -89,7 +118,16 @@ describe("parseAgentTimeline", () => {
     const timeline = {
       ...validTimeline,
       events: [
-        { ts: "2026-08-20T14:40:03.000Z", kind: "message", role: "assistant", text: "Looks good", tokens: 150, cost: 0.03 },
+        {
+          ts: "2026-08-20T14:40:03.000Z",
+          kind: "message",
+          role: "assistant",
+          text: "Looks good",
+          fullText: "Looks good",
+          fullTextTruncated: false,
+          tokens: 150,
+          cost: 0.03,
+        },
       ],
     };
     const result = parseAgentTimeline(JSON.stringify(timeline));
@@ -105,7 +143,9 @@ describe("parseAgentTimeline", () => {
   it("parses a user message without tokens/cost fields", () => {
     const timeline = {
       ...validTimeline,
-      events: [{ ts: "2026-08-20T14:40:00.000Z", kind: "message", role: "user", text: "hi" }],
+      events: [
+        { ts: "2026-08-20T14:40:00.000Z", kind: "message", role: "user", text: "hi", fullText: "hi", fullTextTruncated: false },
+      ],
     };
     const result = parseAgentTimeline(JSON.stringify(timeline));
     expect(result.ok).toBe(true);
@@ -179,22 +219,31 @@ describe("formatEventLabel", () => {
   });
 
   it("formats a user message event", () => {
-    const label = formatEventLabel({ ts: "t", kind: "message", role: "user", text: "Сделай штуку" });
+    const label = formatEventLabel({ ts: "t", kind: "message", role: "user", text: "Сделай штуку", fullText: "Сделай штуку", fullTextTruncated: false });
     expect(label).toBe("Пользователь: Сделай штуку");
   });
 
   it("formats an assistant message event", () => {
-    const label = formatEventLabel({ ts: "t", kind: "message", role: "assistant", text: "Готово" });
+    const label = formatEventLabel({ ts: "t", kind: "message", role: "assistant", text: "Готово", fullText: "Готово", fullTextTruncated: false });
     expect(label).toBe("Ассистент: Готово");
   });
 
   it("formats an assistant message event with cost", () => {
-    const label = formatEventLabel({ ts: "t", kind: "message", role: "assistant", text: "Готово", tokens: 150, cost: 0.03 });
+    const label = formatEventLabel({
+      ts: "t",
+      kind: "message",
+      role: "assistant",
+      text: "Готово",
+      fullText: "Готово",
+      fullTextTruncated: false,
+      tokens: 150,
+      cost: 0.03,
+    });
     expect(label).toBe("Ассистент ($0.03): Готово");
   });
 
   it("formats a user message event without a cost suffix even though the field could be present", () => {
-    const label = formatEventLabel({ ts: "t", kind: "message", role: "user", text: "Сделай штуку" });
+    const label = formatEventLabel({ ts: "t", kind: "message", role: "user", text: "Сделай штуку", fullText: "Сделай штуку", fullTextTruncated: false });
     expect(label).toBe("Пользователь: Сделай штуку");
   });
 

@@ -21,7 +21,10 @@ import tokens  # noqa: E402
 # агентов по их ключу из bins) — форма отчёта расширилась.
 # 2 -> 3: у треда добавлены totalCost (стоимость расхода в USD по тарифу
 # tokens.py) и workflowCount (число различных workflow-прогонов в сессии).
-SCHEMA_VERSION = 3
+# 3 -> 4: у workflow-сегмента бина (agents[].key == "workflow:<run>", только
+# при --group-workflows) добавлено members — отсортированный список реальных
+# agentId, слитых в этот сегмент; у обычного (не-workflow) агента поля нет.
+SCHEMA_VERSION = 4
 
 # Порог обрезки meta.description для agentLabels — легенда и подписи в UI не
 # резиновые, длинное описание таска ломает вёрстку чипа/тултипа.
@@ -199,6 +202,14 @@ def build_timeline(root, limit=20, unit=300, project=None, session=None, group_w
         # tokens.py, чтобы формула total (inp+cacheWrite+cacheRead+out) не
         # дублировалась и не расходилась с той, что уже применяет tokens.py.
         bin_buckets = defaultdict(lambda: defaultdict(tokens.Bucket))
+        # bin_epoch -> workflow agent_key -> set реальных agentId, слитых в
+        # этот сегмент (см. _bin_key: при group_workflows все агенты одного
+        # прогона схлопываются в "workflow:<run>", реальная принадлежность
+        # иначе терялась бы совсем — фронт не мог различить, участвовал ли
+        # выбранный агент в этом сегменте, для подсветки/гашения на графике
+        # сессии). Заполняется только для workflow-ключей — для обычного
+        # агента key уже и есть его real id, дублировать нечего.
+        bin_members = defaultdict(lambda: defaultdict(set))
         epochs = []
         for rec in recs:
             epoch = _epoch(rec["ts"])
@@ -208,6 +219,8 @@ def build_timeline(root, limit=20, unit=300, project=None, session=None, group_w
             bin_epoch = _bin_start_epoch(epoch, unit)
             agent_key = _bin_key(rec, group_workflows)
             bin_buckets[bin_epoch][agent_key].add(rec["usage"], rec["model"], rec["ts"])
+            if agent_key.startswith("workflow:"):
+                bin_members[bin_epoch][agent_key].add(rec["agentId"] or "main")
 
         if not epochs:
             # Сессия без единой валидной usage-записи не несёт данных для
@@ -228,14 +241,16 @@ def build_timeline(root, limit=20, unit=300, project=None, session=None, group_w
         bins_out = []
         for bin_epoch in range(start_bin, end_bin + unit, unit):
             agents = bin_buckets.get(bin_epoch)
-            agents_out = (
-                sorted(
-                    ({"key": k, "total": b.total} for k, b in agents.items()),
-                    key=lambda a: (-a["total"], a["key"]),
-                )
-                if agents
-                else []
-            )
+            members_by_key = bin_members.get(bin_epoch, {})
+            agents_out = []
+            if agents:
+                for k, b in agents.items():
+                    entry = {"key": k, "total": b.total}
+                    members = members_by_key.get(k)
+                    if members:
+                        entry["members"] = sorted(members)
+                    agents_out.append(entry)
+                agents_out.sort(key=lambda a: (-a["total"], a["key"]))
             bins_out.append({"t": _iso_from_epoch(bin_epoch), "agents": agents_out})
 
         total_tokens = sum(a["total"] for bo in bins_out for a in bo["agents"])
