@@ -50,6 +50,32 @@ describe("parseThreadsTimeline", () => {
     expect(result.data.threads[0].bins[0].agents).toHaveLength(2);
   });
 
+  it("parses a workflow segment's members list, and leaves it undefined for a plain agent", () => {
+    const withWorkflow = {
+      ...validTimeline,
+      threads: [
+        {
+          ...validTimeline.threads[0],
+          bins: [
+            {
+              t: "2026-08-20T13:40:00.000Z",
+              agents: [
+                { key: "main", total: 100 },
+                { key: "workflow:wf_1", total: 200, members: ["agent-x", "agent-y"] },
+              ],
+            },
+          ],
+        },
+      ],
+    };
+    const result = parseThreadsTimeline(JSON.stringify(withWorkflow));
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const agents = result.data.threads[0].bins[0].agents;
+    expect(agents.find((a) => a.key === "workflow:wf_1")?.members).toEqual(["agent-x", "agent-y"]);
+    expect(agents.find((a) => a.key === "main")?.members).toBeUndefined();
+  });
+
   // threads_timeline.py's own JSON never carries bbProjectId/bbProjectName/
   // threadId/bbThreadTitle — those come from
   // src/service/threads-timeline-service.ts's BB project enrichment, which

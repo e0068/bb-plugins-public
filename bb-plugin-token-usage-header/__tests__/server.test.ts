@@ -47,7 +47,7 @@ function fakeThreadsTimelineService(overrides: Partial<ThreadsTimelineService> =
 
 function emptyAgentTimeline(): AgentTimeline {
   return {
-    schemaVersion: 2,
+    schemaVersion: 3,
     agent: {
       key: "main",
       agentType: null,
@@ -55,6 +55,10 @@ function emptyAgentTimeline(): AgentTimeline {
       model: null,
       spawnDepth: null,
       promptExcerpt: null,
+      requestFull: null,
+      requestFullTruncated: false,
+      responseFull: null,
+      responseFullTruncated: false,
     },
     events: [],
   };
@@ -456,7 +460,7 @@ describe("server.ts agentTimeline", () => {
 
   it("maps a ready timeline (agent info + events) plus session totals/agents to the RPC output shape", async () => {
     const timeline: AgentTimeline = {
-      schemaVersion: 2,
+      schemaVersion: 3,
       agent: {
         key: "agent-abc",
         agentType: "general-purpose",
@@ -464,11 +468,24 @@ describe("server.ts agentTimeline", () => {
         model: "sonnet",
         spawnDepth: 1,
         promptExcerpt: "запусти тесты",
+        requestFull: "запусти тесты полностью",
+        requestFullTruncated: false,
+        responseFull: "готово, всё прошло",
+        responseFullTruncated: false,
       },
       events: [
         { ts: "2026-08-25T10:00:00Z", kind: "tool", name: "Read", target: "server.ts" },
         { ts: "2026-08-25T10:00:01Z", kind: "hook", hookName: "pre-tool", hookEvent: "PreToolUse" },
-        { ts: "2026-08-25T10:00:02Z", kind: "message", role: "assistant", text: "готово", tokens: 120, cost: 0.03 },
+        {
+          ts: "2026-08-25T10:00:02Z",
+          kind: "message",
+          role: "assistant",
+          text: "готово",
+          fullText: "готово, всё прошло",
+          fullTextTruncated: false,
+          tokens: 120,
+          cost: 0.03,
+        },
       ],
     };
     const report: TokensReport = {

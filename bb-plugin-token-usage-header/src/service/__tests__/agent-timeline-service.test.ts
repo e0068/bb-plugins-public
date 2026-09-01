@@ -17,6 +17,10 @@ const VALID_STDOUT = JSON.stringify({
     model: null,
     spawnDepth: null,
     promptExcerpt: null,
+    requestFull: null,
+    requestFullTruncated: false,
+    responseFull: null,
+    responseFullTruncated: false,
   },
   events: [],
 });

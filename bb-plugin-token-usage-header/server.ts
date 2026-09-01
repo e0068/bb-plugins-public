@@ -90,6 +90,10 @@ const agentTimelineAgentInfoSchema = z
     model: z.string().nullable(),
     spawnDepth: z.number().nullable(),
     promptExcerpt: z.string().nullable(),
+    requestFull: z.string().nullable(),
+    requestFullTruncated: z.boolean(),
+    responseFull: z.string().nullable(),
+    responseFullTruncated: z.boolean(),
   })
   .strict() satisfies z.ZodType<AgentTimelineAgentInfo>;
 

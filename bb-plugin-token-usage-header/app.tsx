@@ -18,9 +18,10 @@ import { Button } from "@/components/ui/button";
 import { Icon } from "@/components/ui/icon";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { cn } from "@/lib/utils";
-import { formatCost, formatPercent, formatTokenCount } from "./src/core";
+import { formatCost, formatPercent, formatTokenCount, type ThreadEntry } from "./src/core";
 import { AgentTimelinePage, buildAgentDetailSubPath, THREADS_TIMELINE_PANEL_PATH } from "./pages/AgentTimelinePage";
 import { ThreadsTimelinePage } from "./pages/ThreadsTimelinePage";
+import { SessionChartCard, SESSION_CHART_UNIT } from "./pages/thread-chart";
 
 type SessionTokenUsage = PluginRpcResult<(typeof rpcContract)["sessionTokenUsage"]>;
 type ReadyUsage = Extract<SessionTokenUsage, { status: "ready" }>;
@@ -94,6 +95,37 @@ function TokenUsageHeaderAction({ threadId, isCompactViewport }: PluginThreadHea
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(load, [threadId]);
 
+  // Session bar chart at the top of the popover — same chart frame as the
+  // session page (SessionChartCard), fed by the same single-session slice of
+  // threadsTimeline. A failure just hides the chart; the totals/agent list
+  // below is the load-bearing content.
+  const [sessionChart, setSessionChart] = useState<{ thread: ThreadEntry; agentLabels: Record<string, string> } | null>(null);
+  const chartSessionId = state.kind === "ready" ? state.usage.sessionId : null;
+  useEffect(() => {
+    if (!chartSessionId) {
+      setSessionChart(null);
+      return;
+    }
+    let cancelled = false;
+    rpc.call("threadsTimeline", { limit: 1, unit: SESSION_CHART_UNIT, session: chartSessionId, groupWorkflows: true }).then(
+      (result) => {
+        if (cancelled || !mountedRef.current) return;
+        setSessionChart(
+          result.status === "ready" && result.threads.length > 0
+            ? { thread: result.threads[0], agentLabels: result.agentLabels }
+            : null,
+        );
+      },
+      () => {
+        if (!cancelled && mountedRef.current) setSessionChart(null);
+      },
+    );
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rpc, chartSessionId]);
+
   // Clicking an agent row (below) navigates into the "threads-timeline"
   // panel's agent-detail sub-view, with the session id resolved
   // server-side for THIS thread (sessionTokenUsage's ready `sessionId`) —
@@ -146,7 +178,7 @@ function TokenUsageHeaderAction({ threadId, isCompactViewport }: PluginThreadHea
           {buttonText && !isCompactViewport && <span className={cn(isError && "text-destructive")}>{buttonText}</span>}
         </Button>
       </PopoverTrigger>
-      <PopoverContent align="start" className="w-80 space-y-3">
+      <PopoverContent align="start" className="max-h-[70vh] w-80 space-y-3 overflow-y-auto">
         {state.kind === "loading" && <p className="text-sm text-muted-foreground">Загрузка…</p>}
         {state.kind === "no-session" && (
           <p className="text-sm text-muted-foreground">
@@ -154,7 +186,9 @@ function TokenUsageHeaderAction({ threadId, isCompactViewport }: PluginThreadHea
           </p>
         )}
         {state.kind === "error" && <p className="text-sm text-destructive">{state.message}</p>}
-        {state.kind === "ready" && <UsageDetails usage={state.usage} onAgentDetails={openAgentDetails} />}
+        {state.kind === "ready" && (
+          <UsageDetails usage={state.usage} sessionChart={sessionChart} onAgentDetails={openAgentDetails} />
+        )}
       </PopoverContent>
     </Popover>
   );
@@ -162,15 +196,26 @@ function TokenUsageHeaderAction({ threadId, isCompactViewport }: PluginThreadHea
 
 function UsageDetails({
   usage,
+  sessionChart,
   onAgentDetails,
 }: {
   usage: ReadyUsage;
+  /** Session bar chart to render above the totals — null while it's loading or unavailable (chart is a bonus, not load-bearing). */
+  sessionChart: { thread: ThreadEntry; agentLabels: Record<string, string> } | null;
   /** Navigates to the agent-detail sub-view for one agent row; omitted renders the row inert (no hover/click). */
   onAgentDetails?: (agentKey: string, sessionId: string) => void;
 }) {
   const { totals, agents } = usage;
   return (
     <div className="space-y-3">
+      {sessionChart && (
+        <SessionChartCard
+          thread={sessionChart.thread}
+          unit={SESSION_CHART_UNIT}
+          agentLabels={sessionChart.agentLabels}
+        />
+      )}
+
       <div className="flex items-baseline justify-between">
         <span className="text-sm font-medium text-foreground">Всего токенов</span>
         <span className="text-sm font-semibold tabular-nums text-foreground">{formatTokenCount(totals.total)}</span>

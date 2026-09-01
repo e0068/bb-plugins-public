@@ -26,7 +26,7 @@ import type { rpcContract } from "../server";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { DEFAULT_VIZ_SETTINGS, formatCost, formatPercent, formatTokenCount, type AgentTimelineEvent, type ThreadEntry } from "../src/core";
-import { SessionChartCard } from "./thread-chart";
+import { SessionChartCard, SESSION_CHART_UNIT } from "./thread-chart";
 
 /**
  * Path of the one nav panel both pages of this plugin share — defined here
@@ -196,8 +196,6 @@ function displayAgentName(agent: { key: string; description: string | null; agen
   return agent.description ?? agent.agentType ?? "Субагент";
 }
 
-/** Bin size (seconds) for the session bar chart at the top of this page. */
-const SESSION_CHART_UNIT = 60;
 export function AgentTimelinePage({ subPath }: PluginNavPanelProps) {
   const rpc = useRpc<typeof rpcContract>();
   const navigate = useBbNavigate();
@@ -355,9 +353,13 @@ export function AgentTimelinePage({ subPath }: PluginNavPanelProps) {
 
   const [expanded, setExpanded] = useState<Set<number>>(new Set());
   const [collapsedTurns, setCollapsedTurns] = useState<Set<number>>(new Set());
+  // Раскрытие «Вход/Выход целиком» — та же логика, что expanded/collapsedTurns
+  // выше: сбрасывается при смене агента, а не переживает переключение.
+  const [showFullContent, setShowFullContent] = useState(false);
   useEffect(() => {
     setExpanded(new Set());
     setCollapsedTurns(new Set());
+    setShowFullContent(false);
   }, [activeAgentKey]);
 
   // --- Deep-link highlight: recomputed whenever the timeline (re)loads or the link's window changes. ---
@@ -419,6 +421,7 @@ export function AgentTimelinePage({ subPath }: PluginNavPanelProps) {
             unit={SESSION_CHART_UNIT}
             agentLabels={sessionChart.agentLabels}
             onSelectAgent={selectAgent}
+            activeAgentKey={activeAgentKey}
           />
         </div>
       )}
@@ -472,6 +475,8 @@ export function AgentTimelinePage({ subPath }: PluginNavPanelProps) {
         }}
         highlighted={highlighted}
         onClearHighlight={() => setHighlighted(null)}
+        showFullContent={showFullContent}
+        onToggleShowFullContent={() => setShowFullContent((v) => !v)}
       />
       </div>
     </div>
@@ -589,6 +594,29 @@ function LeftPanel({
   );
 }
 
+/**
+ * Полный (не 300-символьное превью) текст запроса или ответа агента —
+ * agent.requestFull/responseFull из agentTimeline, а не events[].text.
+ * Без внутреннего скролла — блок разворачивается на всю высоту текста
+ * (до FULL_TEXT_MAX, 20000 символов tools/agent_timeline.py), страница
+ * вокруг него скроллится сама.
+ */
+function FullContentBlock({ label, text, truncated }: { label: string; text: string | null; truncated: boolean }) {
+  return (
+    <div className="space-y-1">
+      <div className="flex items-baseline justify-between">
+        <span className="font-medium text-foreground">{label}</span>
+        {truncated && <span className="text-subtle-foreground">показано не всё</span>}
+      </div>
+      {text ? (
+        <pre className="whitespace-pre-wrap break-words rounded bg-card p-2 font-mono text-muted-foreground">{text}</pre>
+      ) : (
+        <p className="text-subtle-foreground">Нет текста.</p>
+      )}
+    </div>
+  );
+}
+
 function Badge({ children }: { children: React.ReactNode }) {
   return (
     <span className="rounded-md border border-border bg-secondary px-1.5 py-0.5 text-xs text-muted-foreground">{children}</span>
@@ -628,6 +656,8 @@ interface RightPanelProps {
   onSetAllTurnsCollapsed: (collapsed: boolean) => void;
   highlighted: Set<number> | null;
   onClearHighlight: () => void;
+  showFullContent: boolean;
+  onToggleShowFullContent: () => void;
 }
 
 function RightPanel(props: RightPanelProps) {
@@ -680,6 +710,8 @@ function ReadyRightPanel(
     onSetAllTurnsCollapsed,
     highlighted,
     onClearHighlight,
+    showFullContent,
+    onToggleShowFullContent,
   } = props;
 
   const { turns, indexToTurn } = useMemo(() => computeTurns(events), [events]);
@@ -800,19 +832,26 @@ function ReadyRightPanel(
           {isHeader && <span className="shrink-0 text-xs text-subtle-foreground">{itemCount}</span>}
           {costCells(isHeader ? undefined : event.tokens, isHeader ? headerTurnCost : event.cost)}
         </div>
-        {isExpanded &&
-          (tools.length === 0 ? (
-            <div className="px-3 pb-1.5 pl-[104px] text-xs text-subtle-foreground">Инструменты не использовались</div>
-          ) : (
-            <div className="space-y-0.5 px-3 pb-1.5 pl-[104px]">
-              {tools.map((tool, idx) => (
-                <div key={idx} className="flex items-center gap-2 text-xs">
-                  <span className="w-14 shrink-0 text-muted-foreground">{tool.name}</span>
-                  <span className="min-w-0 flex-1 truncate font-mono text-subtle-foreground">{tool.target ?? ""}</span>
-                </div>
-              ))}
+        {isExpanded && (
+          <div className="space-y-2 px-3 pb-1.5 pl-[104px]">
+            <div className="space-y-1">
+              {event.fullTextTruncated && <p className="text-xs text-subtle-foreground">показано не всё</p>}
+              <pre className="whitespace-pre-wrap break-words rounded bg-card p-2 font-mono text-xs text-muted-foreground">{event.fullText}</pre>
             </div>
-          ))}
+            {tools.length === 0 ? (
+              <div className="text-xs text-subtle-foreground">Инструменты не использовались</div>
+            ) : (
+              <div className="space-y-0.5">
+                {tools.map((tool, idx) => (
+                  <div key={idx} className="flex items-center gap-2 text-xs">
+                    <span className="w-14 shrink-0 text-muted-foreground">{tool.name}</span>
+                    <span className="min-w-0 flex-1 truncate font-mono text-subtle-foreground">{tool.target ?? ""}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
       </div>
     );
   }
@@ -861,6 +900,26 @@ function ReadyRightPanel(
           <div className="mt-3 border-l-2 border-border pl-2">
             <div className="mb-1 text-xs font-medium text-muted-foreground">Промпт</div>
             <p className="font-mono text-xs text-muted-foreground">{agent.promptExcerpt}</p>
+          </div>
+        )}
+        {(agent.requestFull || agent.responseFull) && (
+          <div className="mt-3">
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              className="h-6 border border-input px-2 text-xs font-medium text-muted-foreground"
+              aria-expanded={showFullContent}
+              onClick={onToggleShowFullContent}
+            >
+              {showFullContent ? "Скрыть содержимое" : "Содержимое целиком"}
+            </Button>
+            {showFullContent && (
+              <div className="mt-2 space-y-2 rounded-md border border-border bg-popover p-2 text-xs">
+                <FullContentBlock label="Вход" text={agent.requestFull} truncated={agent.requestFullTruncated} />
+                <FullContentBlock label="Выход" text={agent.responseFull} truncated={agent.responseFullTruncated} />
+              </div>
+            )}
           </div>
         )}
       </div>

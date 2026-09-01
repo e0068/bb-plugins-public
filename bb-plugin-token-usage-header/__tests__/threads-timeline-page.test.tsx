@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, screen, waitFor, waitForElementToBeRemoved } from "@testing-library/react";
 import { loadPluginApp, renderSlot, type PluginRpcTestHandlers } from "@get-bb/plugin-sdk/testing/app";
 import type { PluginNavPanelProps } from "@get-bb/plugin-sdk/app";
@@ -336,6 +336,50 @@ describe("threads-timeline nav panel", () => {
     await screen.findByText(/^\d{2}:\d{2}–\d{2}:\d{2}$/);
     screen.getByText(/1\.5k · 75%/);
     screen.getByText(/500 · 25%/);
+  });
+
+  it("clamps the hover tooltip inside the viewport instead of letting it overflow past a screen edge", async () => {
+    const originalGetBoundingClientRect = HTMLElement.prototype.getBoundingClientRect;
+    const originalInnerWidth = window.innerWidth;
+    const originalInnerHeight = window.innerHeight;
+    // A small window and a tooltip whose real size (mocked — jsdom never lays
+    // out text) would overflow it from the bottom-right, same as a column
+    // near the right edge of a narrow panel.
+    window.innerWidth = 400;
+    window.innerHeight = 300;
+    vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockReturnValue({
+      width: 220,
+      height: 100,
+      top: 0,
+      left: 0,
+      right: 220,
+      bottom: 100,
+      x: 0,
+      y: 0,
+      toJSON: () => ({}),
+    } as DOMRect);
+
+    try {
+      await renderThreadsTimeline({ threadsTimeline: async () => THREADS_READY });
+      const title = await screen.findByText("Тред А");
+      const card = title.closest(".rounded-md.border.border-border") as HTMLElement;
+      const columns = card.querySelectorAll(".relative.h-full.min-w-\\[2px\\]");
+      // Natural anchor (clientX/Y + 12) plus the mocked 220×100 tooltip would
+      // land at right 612 / bottom 392 — both past the 400×300 window.
+      fireEvent.mouseMove(columns[1] as HTMLElement, { clientX: 380, clientY: 280 });
+
+      const tooltip = (await screen.findByText(/1\.5k · 75%/)).closest("div") as HTMLElement;
+      await waitFor(() => {
+        const left = parseFloat(tooltip.style.left);
+        const top = parseFloat(tooltip.style.top);
+        expect(left + 220).toBeLessThanOrEqual(400 - 8);
+        expect(top + 100).toBeLessThanOrEqual(300 - 8);
+      });
+    } finally {
+      HTMLElement.prototype.getBoundingClientRect = originalGetBoundingClientRect;
+      window.innerWidth = originalInnerWidth;
+      window.innerHeight = originalInnerHeight;
+    }
   });
 
   it("keeps the colour/click identity on the raw agent key even though the legend/tooltip show the mapped label", async () => {

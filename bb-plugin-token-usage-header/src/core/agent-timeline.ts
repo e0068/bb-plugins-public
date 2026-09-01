@@ -14,8 +14,18 @@ import { formatCost } from "./format";
  *
  * 1 -> 2: assistant-сообщения несут опциональные tokens/cost — см.
  * memory/decisions/token-usage-cost-on-messages.md.
+ *
+ * 2 -> 3: agent несёт requestFull/requestFullTruncated/responseFull/
+ * responseFullTruncated — необрезанные (в пределах FULL_TEXT_MAX
+ * tools/agent_timeline.py) текст запроса и ответа агента целиком, поверх
+ * коротких превью-фрагментов events[].text.
+ *
+ * 3 -> 4: каждое message-событие несёт fullText/fullTextTruncated — полный
+ * текст ИМЕННО ЭТОГО сообщения, чтобы раскрытие любой строки хронологии
+ * показывало её целиком, а не только первого запроса/последнего ответа
+ * агента (agent.requestFull/responseFull).
  */
-export const EXPECTED_AGENT_TIMELINE_SCHEMA_VERSION = 2;
+export const EXPECTED_AGENT_TIMELINE_SCHEMA_VERSION = 4;
 
 const toolEventSchema = z
   .object({
@@ -44,6 +54,13 @@ const messageEventSchema = z
     role: z.enum(["user", "assistant"]),
     /** Краткий отрывок текста — уже обрезан скриптом, не полное сообщение. */
     text: z.string(),
+    /**
+     * Полный текст этого сообщения (в пределах FULL_TEXT_MAX символов
+     * tools/agent_timeline.py), не только превью в `text` — для раскрытой
+     * строки хронологии.
+     */
+    fullText: z.string(),
+    fullTextTruncated: z.boolean(),
     /**
      * Цена вызова модели, породившего это сообщение — тарифицируется на
      * assistant-запись целиком (решение владельца: не на отдельные
@@ -77,6 +94,23 @@ const agentTimelineAgentInfoSchema = z
     spawnDepth: z.number().nullable(),
     /** Отрывок prompt, которым субагент был запущен; null для главного агента. */
     promptExcerpt: z.string().nullable(),
+    /**
+     * Полный (в пределах FULL_TEXT_MAX символов) текст первого настоящего
+     * user-сообщения этого агента — вход, которым его запустили, целиком, а
+     * не 300-символьный promptExcerpt. Читается из СОБСТВЕННОГО транскрипта
+     * агента, поэтому работает и там, где promptExcerpt не может (у
+     * субагентов workflow-прогонов нет toolUseId, чтобы найти запись в
+     * основном транскрипте). null, если такой записи нет.
+     */
+    requestFull: z.string().nullable(),
+    requestFullTruncated: z.boolean(),
+    /**
+     * Полный текст последнего assistant-сообщения — финальный ответ агента
+     * целиком. Последняя запись побеждает, включая пустую: транскрипт,
+     * оборвавшийся на голом tool_use, даёт null, а не устаревший ответ.
+     */
+    responseFull: z.string().nullable(),
+    responseFullTruncated: z.boolean(),
   })
   .strict();
 

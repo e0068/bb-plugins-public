@@ -35,10 +35,11 @@ def assistant_tool_use(ts, name, input_, tool_id="toolu_1"):
     }
 
 
-def assistant_text(ts, text):
+def assistant_text(ts, text, is_sidechain=False):
     return {
         "type": "assistant",
         "timestamp": ts,
+        "isSidechain": is_sidechain,
         "message": {"role": "assistant", "content": [{"type": "text", "text": text}]},
     }
 
@@ -56,8 +57,8 @@ def assistant_text_with_usage(ts, text, usage, model="claude-sonnet-4"):
     }
 
 
-def user_message(ts, text):
-    return {"type": "user", "timestamp": ts, "isSidechain": False, "message": {"role": "user", "content": text}}
+def user_message(ts, text, is_sidechain=False):
+    return {"type": "user", "timestamp": ts, "isSidechain": is_sidechain, "message": {"role": "user", "content": text}}
 
 
 def user_tool_result(ts, tool_id="toolu_1"):
@@ -141,14 +142,34 @@ class ExtractEventsTest(unittest.TestCase):
         records = [user_message("2026-01-01T00:00:02Z", "Сделай штуку")]
         events = agent_timeline.extract_events(records)
         self.assertEqual(
-            events, [{"ts": "2026-01-01T00:00:02Z", "kind": "message", "role": "user", "text": "Сделай штуку"}]
+            events,
+            [
+                {
+                    "ts": "2026-01-01T00:00:02Z",
+                    "kind": "message",
+                    "role": "user",
+                    "text": "Сделай штуку",
+                    "fullText": "Сделай штуку",
+                    "fullTextTruncated": False,
+                }
+            ],
         )
 
     def test_extracts_assistant_text_message(self):
         records = [assistant_text("2026-01-01T00:00:03Z", "Готово")]
         events = agent_timeline.extract_events(records)
         self.assertEqual(
-            events, [{"ts": "2026-01-01T00:00:03Z", "kind": "message", "role": "assistant", "text": "Готово"}]
+            events,
+            [
+                {
+                    "ts": "2026-01-01T00:00:03Z",
+                    "kind": "message",
+                    "role": "assistant",
+                    "text": "Готово",
+                    "fullText": "Готово",
+                    "fullTextTruncated": False,
+                }
+            ],
         )
 
     def test_drops_tool_result_records(self):
@@ -167,15 +188,32 @@ class ExtractEventsTest(unittest.TestCase):
         self.assertEqual(agent_timeline.extract_events(records), [])
 
     def test_drops_is_sidechain_records(self):
-        records = [
-            {
-                "type": "user",
-                "timestamp": "2026-01-01T00:00:06Z",
-                "isSidechain": True,
-                "message": {"role": "user", "content": "sidechain text"},
-            }
-        ]
+        # Реальный смысл isSidechain — "эта запись из ветки субагента,
+        # подмешанной в ОСНОВНОЙ транскрипт"; own_file (умолчание False)
+        # здесь как раз означает "читаем основной транскрипт" — отбрасывать
+        # такие записи из него правильно.
+        records = [user_message("2026-01-01T00:00:06Z", "sidechain text", is_sidechain=True)]
         self.assertEqual(agent_timeline.extract_events(records), [])
+
+    def test_own_file_keeps_sidechain_records_a_subagent_transcript_marks_on_every_line(self):
+        # Регресс: в СОБСТВЕННОМ файле субагента (agent-<id>.jsonl) реальные
+        # транскрипты Claude Code ставят isSidechain=True буквально на КАЖДОЙ
+        # записи — это метка "весь файл — побочная ветка", не "сообщение
+        # служебное". Без own_file=True это отбрасывало вообще все
+        # текстовые сообщения агента, включая его собственный первый промпт:
+        # реальный агент с 194 событиями в хронологии показывал 0
+        # message-событий. own_file=True — то, что читает СОБСТВЕННЫЙ файл
+        # агента, а не основной транскрипт, поэтому запись не подмешана
+        # откуда-то ещё, а действительно принадлежит этому разговору.
+        records = [
+            user_message("2026-01-01T00:00:00Z", "Сделай задачу", is_sidechain=True),
+            assistant_text("2026-01-01T00:00:01Z", "Готово", is_sidechain=True),
+        ]
+        events = agent_timeline.extract_events(records, own_file=True)
+        self.assertEqual([(e["kind"], e.get("role"), e.get("text")) for e in events], [
+            ("message", "user", "Сделай задачу"),
+            ("message", "assistant", "Готово"),
+        ])
 
     def test_drops_local_command_stdout(self):
         records = [user_message("2026-01-01T00:00:07Z", "<local-command-stdout>Set model</local-command-stdout>")]
@@ -197,6 +235,24 @@ class ExtractEventsTest(unittest.TestCase):
     def test_empty_records_give_empty_events(self):
         self.assertEqual(agent_timeline.extract_events([]), [])
 
+    def test_message_fullText_carries_the_whole_text_past_the_excerpt_cap(self):
+        # text (preview) обрезается на EXCERPT_MAX; fullText — на куда более
+        # щедром FULL_TEXT_MAX, так что раскрытая строка хронологии
+        # показывает сообщение целиком, а не 300-символьный обрубок.
+        long_text = "п" * (agent_timeline.EXCERPT_MAX + 200)
+        records = [user_message("2026-01-01T00:00:00Z", long_text)]
+        [event] = agent_timeline.extract_events(records)
+        self.assertEqual(len(event["text"]), agent_timeline.EXCERPT_MAX)
+        self.assertEqual(event["fullText"], long_text)
+        self.assertFalse(event["fullTextTruncated"])
+
+    def test_message_fullText_truncates_past_its_own_higher_cap(self):
+        long_text = "о" * (agent_timeline.FULL_TEXT_MAX + 500)
+        records = [assistant_text("2026-01-01T00:00:00Z", long_text)]
+        [event] = agent_timeline.extract_events(records)
+        self.assertEqual(len(event["fullText"]), agent_timeline.FULL_TEXT_MAX)
+        self.assertTrue(event["fullTextTruncated"])
+
 
 class ExcerptTest(unittest.TestCase):
     def test_short_text_unchanged(self):
@@ -210,6 +266,81 @@ class ExcerptTest(unittest.TestCase):
 
     def test_non_string_returns_empty(self):
         self.assertEqual(agent_timeline.excerpt(None), "")
+
+
+class FullRequestResponseTest(unittest.TestCase):
+    def test_full_request_is_first_real_user_message_untruncated(self):
+        long_text = "x" * (agent_timeline.EXCERPT_MAX + 50)
+        records = [user_message("2026-01-01T00:00:00Z", long_text)]
+        text, truncated = agent_timeline.full_request(records)
+        self.assertEqual(text, long_text)
+        self.assertFalse(truncated)
+
+    def test_full_request_ignores_tool_result_and_later_user_messages(self):
+        records = [
+            user_message("2026-01-01T00:00:00Z", "первый"),
+            user_tool_result("2026-01-01T00:00:01Z"),
+            user_message("2026-01-01T00:00:02Z", "второй, должен быть проигнорирован"),
+        ]
+        text, truncated = agent_timeline.full_request(records)
+        self.assertEqual(text, "первый")
+        self.assertFalse(truncated)
+
+    def test_full_request_none_when_no_real_user_message(self):
+        records = [user_tool_result("2026-01-01T00:00:00Z")]
+        self.assertEqual(agent_timeline.full_request(records), (None, False))
+
+    def test_full_request_without_own_file_drops_sidechain_marked_message(self):
+        records = [user_message("2026-01-01T00:00:00Z", "из основного транскрипта", is_sidechain=True)]
+        self.assertEqual(agent_timeline.full_request(records), (None, False))
+
+    def test_full_request_with_own_file_keeps_sidechain_marked_message(self):
+        # Регресс: собственный файл субагента ставит isSidechain=True на
+        # каждой записи, включая её собственный первый промпт.
+        records = [user_message("2026-01-01T00:00:00Z", "промпт агента", is_sidechain=True)]
+        text, truncated = agent_timeline.full_request(records, own_file=True)
+        self.assertEqual(text, "промпт агента")
+        self.assertFalse(truncated)
+
+    def test_full_request_truncates_past_the_cap(self):
+        long_text = "y" * (agent_timeline.FULL_TEXT_MAX + 100)
+        records = [user_message("2026-01-01T00:00:00Z", long_text)]
+        text, truncated = agent_timeline.full_request(records)
+        self.assertEqual(len(text), agent_timeline.FULL_TEXT_MAX)
+        self.assertTrue(truncated)
+
+    def test_full_response_is_last_assistant_message_untruncated(self):
+        records = [assistant_text("2026-01-01T00:00:00Z", "первый"), assistant_text("2026-01-01T00:00:01Z", "последний")]
+        text, truncated = agent_timeline.full_response(records)
+        self.assertEqual(text, "последний")
+        self.assertFalse(truncated)
+
+    def test_full_response_without_own_file_drops_sidechain_marked_message(self):
+        records = [assistant_text("2026-01-01T00:00:00Z", "из основного транскрипта", is_sidechain=True)]
+        self.assertEqual(agent_timeline.full_response(records), (None, False))
+
+    def test_full_response_with_own_file_keeps_sidechain_marked_message(self):
+        records = [assistant_text("2026-01-01T00:00:00Z", "ответ агента", is_sidechain=True)]
+        text, truncated = agent_timeline.full_response(records, own_file=True)
+        self.assertEqual(text, "ответ агента")
+        self.assertFalse(truncated)
+
+    def test_full_response_none_when_transcript_ends_on_tool_use(self):
+        records = [
+            assistant_text("2026-01-01T00:00:00Z", "промежуточный ответ"),
+            assistant_tool_use("2026-01-01T00:00:01Z", "Bash", {"command": "ls"}),
+        ]
+        self.assertEqual(agent_timeline.full_response(records), (None, False))
+
+    def test_full_response_none_on_empty_records(self):
+        self.assertEqual(agent_timeline.full_response([]), (None, False))
+
+    def test_full_response_truncates_past_the_cap(self):
+        long_text = "z" * (agent_timeline.FULL_TEXT_MAX + 100)
+        records = [assistant_text("2026-01-01T00:00:00Z", long_text)]
+        text, truncated = agent_timeline.full_response(records)
+        self.assertEqual(len(text), agent_timeline.FULL_TEXT_MAX)
+        self.assertTrue(truncated)
 
 
 class BuildTimelineTest(unittest.TestCase):
@@ -239,6 +370,11 @@ class BuildTimelineTest(unittest.TestCase):
         self.assertEqual(out["schemaVersion"], agent_timeline.SCHEMA_VERSION)
         self.assertEqual(out["agent"]["key"], "main")
         self.assertIsNone(out["agent"]["promptExcerpt"])
+        self.assertEqual(out["agent"]["requestFull"], "Привет")
+        self.assertFalse(out["agent"]["requestFullTruncated"])
+        # Only a tool_use assistant record exists — no text -> no response.
+        self.assertIsNone(out["agent"]["responseFull"])
+        self.assertFalse(out["agent"]["responseFullTruncated"])
         self.assertEqual(len(out["events"]), 2)
 
     def test_session_prefix_resolves_to_full_id(self):
@@ -302,7 +438,74 @@ class BuildTimelineTest(unittest.TestCase):
         self.assertEqual(out["agent"]["model"], "sonnet")
         self.assertEqual(out["agent"]["spawnDepth"], 1)
         self.assertEqual(out["agent"]["promptExcerpt"], "Please review the diff carefully")
+        # requestFull comes from the AGENT's OWN transcript (its own first
+        # user record), not from main_records/promptExcerpt — this fixture's
+        # agent transcript has no user record at all, so it's None.
+        self.assertIsNone(out["agent"]["requestFull"])
+        self.assertEqual(out["agent"]["responseFull"], "Looks good")
+        self.assertFalse(out["agent"]["responseFullTruncated"])
         self.assertEqual(len(out["events"]), 1)
+
+    def test_subagent_nested_under_workflow_run_is_found(self):
+        # Регресс: субагенты workflow-прогонов пишутся на уровень глубже
+        # (subagents/workflows/<runId>/agent-<hash>.jsonl), не прямо в
+        # subagents/. Раньше build_timeline искал только прямой путь и молча
+        # получал events=[] для любого такого агента — см. find_agent_file.
+        session = "sess-workflow-1"
+        project = self._project()
+        main_path = os.path.join(project, f"{session}.jsonl")
+        write_jsonl(main_path, [])
+
+        agent_key = "agent-nested123"
+        agent_path = os.path.join(project, session, "subagents", "workflows", "wf_abc-123", f"{agent_key}.jsonl")
+        # is_sidechain=True на обеих записях — так реально выглядит файл
+        # субагента (проверено на живых данных: каждая строка в его
+        # собственном .jsonl несёт isSidechain=True). Без own_file=True в
+        # build_timeline это давало бы 0 message-событий несмотря на
+        # найденный файл.
+        write_jsonl(
+            agent_path,
+            [
+                user_message("2026-01-01T00:00:00Z", "Сделай задачу воркфлоу", is_sidechain=True),
+                assistant_text("2026-01-01T00:00:01Z", "готово", is_sidechain=True),
+            ],
+        )
+        meta_path = os.path.join(project, session, "subagents", "workflows", "wf_abc-123", f"{agent_key}.meta.json")
+        # Реалистично: у субагентов workflow-прогонов в meta.json нет
+        # toolUseId вовсе (их запускает не блок Task/Agent в основном
+        # транскрипте) — не "toolUseId": None, а поле отсутствует.
+        with open(meta_path, "w") as f:
+            json.dump({"agentType": "general-purpose", "spawnDepth": 1, "model": "sonnet"}, f)
+
+        out = agent_timeline.build_timeline(self.root, session, agent_key)
+
+        self.assertEqual(out["agent"]["key"], agent_key)
+        self.assertEqual(out["agent"]["agentType"], "general-purpose")
+        self.assertEqual(len(out["events"]), 2)
+        self.assertEqual(out["events"][1]["text"], "готово")
+        # promptExcerpt fails for a workflow subagent (no toolUseId to match
+        # in main_records) — requestFull succeeds anyway because it reads
+        # the agent's own transcript instead. This is the actual fix for the
+        # real-world symptom: "Хронология сессии: 0 событий" plus no visible
+        # input/output for exactly this kind of agent.
+        self.assertIsNone(out["agent"]["promptExcerpt"])
+        self.assertEqual(out["agent"]["requestFull"], "Сделай задачу воркфлоу")
+        self.assertEqual(out["agent"]["responseFull"], "готово")
+
+    def test_subagent_direct_path_preferred_over_nested_glob(self):
+        # Если файл лежит прямо в subagents/ (обычный, не-workflow субагент),
+        # find_agent_file не должен уходить в рекурсивный поиск и находить
+        # что-то другое — прямой путь имеет приоритет.
+        session = "sess-direct-1"
+        project = self._project()
+        write_jsonl(os.path.join(project, f"{session}.jsonl"), [])
+
+        agent_key = "agent-direct1"
+        direct_path = os.path.join(project, session, "subagents", f"{agent_key}.jsonl")
+        write_jsonl(direct_path, [assistant_text("2026-01-01T00:00:00Z", "прямой файл")])
+
+        found = agent_timeline.find_agent_file(project, session, agent_key)
+        self.assertEqual(found, direct_path)
 
     def test_subagent_without_meta_does_not_crash(self):
         session = "sess-agent-2"

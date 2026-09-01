@@ -5,11 +5,11 @@
 // other — ThreadsTimelinePage already depends on AgentTimelinePage
 // (buildAgentDetailSubPath), and a back-edge would make the two page modules
 // circular. This module depends only on core + the SDK.
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type * as React from "react";
 import { createPortal } from "react-dom";
 import { usePortalScopeProps } from "@/lib/portal-scope";
-import { binTotal, formatCost, formatPercent, formatTokenCount, type ThreadEntry, type TimelineBin } from "../src/core";
+import { binTotal, formatCost, formatPercent, formatTokenCount, type AgentBin, type ThreadEntry, type TimelineBin } from "../src/core";
 
 /** Fixed, subtle alpha for the chart frame's lift tint — only the hue is user-configurable (native `<input type="color">` has no alpha channel). */
 export const FRAME_LIFT_ALPHA = 0.05;
@@ -23,11 +23,28 @@ const CARD_FRAME_PX = 12 * 2 + 1 * 2;
 const MIN_HUG_CARD_WIDTH_PX = 96;
 /** Fade-out duration of the column tooltip: on leave it eases to transparent over this long, then unmounts (no fully-visible hold). */
 const TOOLTIP_FADE_MS = 200;
+/** Minimum gap (px) kept between the column tooltip and the viewport edge when clamping its position — see the tooltip's useLayoutEffect below. */
+const TOOLTIP_VIEWPORT_MARGIN_PX = 8;
 /** Default chart height (px) for the single-session card, mirroring the feed's own BASE_CHART_HEIGHT. */
 const SESSION_CARD_CHART_HEIGHT = 72;
+/** Bin width (seconds) for a single-session chart — shared by every caller of SessionChartCard so they all bucket the same way. */
+export const SESSION_CHART_UNIT = 60;
 
 /** Cycled by first-seen order (main first, then by total spend) — a free choice: agent colour is chart data, not UI chrome. */
 export const DEFAULT_PALETTE = ["#3b82f6", "#22c55e", "#f59e0b", "#ef4444", "#a855f7", "#06b6d4", "#eab308", "#14b8a6", "#ec4899", "#84cc16"];
+
+/** Opacity applied to a segment belonging to an agent OTHER than activeAgentKey — see ThreadRow's activeAgentKey prop. */
+export const FADED_SEGMENT_OPACITY = "opacity-40";
+
+/**
+ * Whether a bin's agent segment "contains" agentKey — either the segment IS
+ * that agent, or (for a workflow-merged segment, see tools/threads_timeline.py's
+ * `members`) that agent's own contribution was folded into it. A plain
+ * (non-workflow) segment has no `members`, so it only ever matches by key.
+ */
+export function segmentContainsAgent(agent: AgentBin, agentKey: string): boolean {
+  return agent.key === agentKey || (agent.members?.includes(agentKey) ?? false);
+}
 
 export function hexToRgba(hex: string, alpha: number): string {
   let h = hex.replace("#", "");
@@ -116,6 +133,7 @@ export function ThreadRow({
   colRadius,
   segRadius,
   frameLiftColor,
+  activeAgentKey,
 }: {
   thread: ThreadEntry;
   unit: number;
@@ -159,6 +177,8 @@ export function ThreadRow({
   segRadius: number;
   /** hex; tint of the chart frame's subtle background lift (fixed low alpha — see FRAME_LIFT_ALPHA). */
   frameLiftColor: string;
+  /** Agent key currently selected elsewhere on the page (e.g. the session page's right panel) — every OTHER agent's segments fade to FADED_SEGMENT_OPACITY. Absent/null: no fading, all segments full opacity (the feed's own rows, which have no notion of a selected agent). */
+  activeAgentKey?: string | null;
 }) {
   const threadEndMs = Date.parse(thread.end);
 
@@ -222,6 +242,28 @@ export function ThreadRow({
   const [tipClosing, setTipClosing] = useState(false);
   const portalScope = usePortalScopeProps();
   const tipBin = tip ? displayBins[tip.binIndex]?.bin ?? null : null;
+
+  // Keeps the tooltip on-screen: it's anchored at the cursor (tip.x/y + 12px),
+  // which overflows the viewport's right/bottom edge for a column near the
+  // chart's own edge (the popover itself is a fairly narrow, fixed-position
+  // panel). Measured after mount/update (getBoundingClientRect gives its real
+  // width/height regardless of any prior shift already applied — only
+  // position is translated, not size), then nudged back inside by however
+  // much it would otherwise overflow. useLayoutEffect (not useEffect) so the
+  // correction lands before the browser paints — no visible jump.
+  const tipRef = useRef<HTMLDivElement>(null);
+  const [tipShift, setTipShift] = useState({ x: 0, y: 0 });
+  useLayoutEffect(() => {
+    if (!tip || !tipRef.current) return;
+    const rect = tipRef.current.getBoundingClientRect();
+    const naturalLeft = tip.x + 12;
+    const naturalTop = tip.y + 12;
+    const maxLeft = Math.max(TOOLTIP_VIEWPORT_MARGIN_PX, window.innerWidth - rect.width - TOOLTIP_VIEWPORT_MARGIN_PX);
+    const maxTop = Math.max(TOOLTIP_VIEWPORT_MARGIN_PX, window.innerHeight - rect.height - TOOLTIP_VIEWPORT_MARGIN_PX);
+    const clampedLeft = Math.min(Math.max(naturalLeft, TOOLTIP_VIEWPORT_MARGIN_PX), maxLeft);
+    const clampedTop = Math.min(Math.max(naturalTop, TOOLTIP_VIEWPORT_MARGIN_PX), maxTop);
+    setTipShift({ x: clampedLeft - naturalLeft, y: clampedTop - naturalTop });
+  }, [tip]);
 
   const fadeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   function showTip(binIndex: number, x: number, y: number) {
@@ -380,11 +422,12 @@ export function ThreadRow({
                 >
                   {ordered.map((a) => {
                     const segHeight = (a.total / total) * dispHeight;
+                    const faded = activeAgentKey != null && !segmentContainsAgent(a, activeAgentKey);
                     return (
                       <button
                         key={a.key}
                         type="button"
-                        className="block w-full transition-opacity hover:opacity-80 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                        className={`block w-full transition-opacity hover:opacity-80 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring ${faded ? FADED_SEGMENT_OPACITY : ""}`}
                         style={{ height: Math.max(segHeight, 1), backgroundColor: colorFor(a.key), borderRadius: segRadius }}
                         aria-label={`${labelFor(a.key)}: ${formatTokenCount(a.total)} токенов`}
                         onClick={(e) => {
@@ -408,11 +451,12 @@ export function ThreadRow({
             const { total, timeLabel, ordered } = describeBin(tipBin);
             return createPortal(
               <div
+                ref={tipRef}
                 {...portalScope}
                 className={`pointer-events-none fixed z-50 w-max max-w-[min(90vw,32rem)] rounded-md border border-border bg-popover px-2.5 py-2 text-xs text-popover-foreground shadow-md transition-opacity duration-200 ease-in ${
                   tipClosing ? "opacity-0" : "opacity-100"
                 }`}
-                style={{ left: tip.x + 12, top: tip.y + 12 }}
+                style={{ left: tip.x + 12 + tipShift.x, top: tip.y + 12 + tipShift.y }}
               >
                 <div className="font-medium tabular-nums">{timeLabel}</div>
                 <ul className="mt-1.5 space-y-1">
@@ -451,12 +495,15 @@ export function SessionChartCard({
   unit,
   agentLabels,
   onSelectAgent,
+  activeAgentKey,
 }: {
   thread: ThreadEntry;
   unit: number;
   agentLabels: Record<string, string>;
   /** Клик по сегменту реального агента ведёт на его детализацию; workflow-сегмент (сводный) кликом не открывается. */
   onSelectAgent?: (agentKey: string) => void;
+  /** Агент, выбранный сейчас на странице сессии (правая панель) — сегменты остальных агентов гасятся до FADED_SEGMENT_OPACITY. */
+  activeAgentKey?: string | null;
 }) {
   const agentKeys = useMemo(() => {
     const totals = new Map<string, number>();
@@ -468,7 +515,11 @@ export function SessionChartCard({
     });
   }, [thread.bins]);
   const maxBinTotal = useMemo(() => thread.bins.reduce((m, bin) => Math.max(m, binTotal(bin)), 0), [thread.bins]);
-  const maxBinCount = useMemo(() => computeDisplayBins(thread.bins, false).length, [thread.bins]);
+  // Пробои схлопываются всегда — оба вызывающих места (страница сессии и
+  // попап шапки) хотят одно и то же: пауза без активности не должна растягивать
+  // ось на всю длину простоя. Не проп: конфигурируемости не требуется ни
+  // одному из двух мест, где эта карточка используется.
+  const maxBinCount = useMemo(() => computeDisplayBins(thread.bins, true).length, [thread.bins]);
 
   const colorFor = (key: string) => DEFAULT_PALETTE[Math.max(agentKeys.indexOf(key), 0) % DEFAULT_PALETTE.length];
   const labelFor = (key: string) => {
@@ -492,13 +543,14 @@ export function SessionChartCard({
       }}
       fillWidth
       hugWidth={false}
-      collapseEmpty={false}
+      collapseEmpty
       colWidthPx={6}
       colGap={1}
       segGap={0}
       colRadius={0}
       segRadius={0}
       frameLiftColor="#e3e3dd"
+      activeAgentKey={activeAgentKey}
     />
   );
 }
