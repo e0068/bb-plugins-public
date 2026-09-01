@@ -32,26 +32,74 @@ export const SORT_LABELS: Record<ListSort, string> = {
   fact_tokens: "Tokens - Fact",
 };
 
-export interface StatusGroup {
-  status: TaskStatus;
-  tasks: Task[];
+export interface TaskTreeEntry {
+  task: Task;
+  /** 0 for a top-level task, or a subtask whose parent isn't in this list.
+   * 1 for a subtask nested directly under a parent present in the list. */
+  depth: 0 | 1;
+  /** Status bucket the row groups under: its own status at depth 0, or its
+   * parent's status when nested — a subtask always surfaces beside its
+   * parent, whatever its own status is. */
+  groupStatus: TaskStatus;
 }
 
 /**
- * Buckets tasks into canonical status order, dropping empty groups. Within a
- * group the incoming order is preserved, so callers control ordering by
- * pre-sorting (the server default is board position).
+ * Nests each subtask directly after its parent, preserving the incoming
+ * order otherwise. A subtask whose parent isn't present in the list (filtered
+ * out, or itself a subtask) surfaces at depth 0 under its own status — there's
+ * no parent row for it to attach under.
  */
-export function groupTasksByStatus(tasks: readonly Task[]): StatusGroup[] {
-  const byStatus = new Map<TaskStatus, Task[]>();
+export function nestSubtasks(tasks: readonly Task[]): TaskTreeEntry[] {
+  const presentIds = new Set(tasks.map((task) => task.id));
+  const childrenByParent = new Map<string, Task[]>();
   for (const task of tasks) {
-    const bucket = byStatus.get(task.status);
+    if (task.parentTaskId === null || !presentIds.has(task.parentTaskId)) {
+      continue;
+    }
+    const bucket = childrenByParent.get(task.parentTaskId);
     if (bucket) bucket.push(task);
-    else byStatus.set(task.status, [task]);
+    else childrenByParent.set(task.parentTaskId, [task]);
+  }
+  const nestedIds = new Set(
+    [...childrenByParent.values()].flat().map((task) => task.id),
+  );
+  return tasks
+    .filter((task) => !nestedIds.has(task.id))
+    .flatMap((task): TaskTreeEntry[] => [
+      { task, depth: 0, groupStatus: task.status },
+      ...(childrenByParent.get(task.id) ?? []).map(
+        (child): TaskTreeEntry => ({
+          task: child,
+          depth: 1,
+          groupStatus: task.status,
+        }),
+      ),
+    ]);
+}
+
+export interface StatusGroup {
+  status: TaskStatus;
+  entries: TaskTreeEntry[];
+}
+
+/**
+ * Buckets tree entries into canonical status order by `groupStatus`, dropping
+ * empty groups. Within a group the incoming order is preserved, so callers
+ * control ordering by pre-sorting and pre-nesting (the server default is
+ * board position).
+ */
+export function groupTasksByStatus(
+  entries: readonly TaskTreeEntry[],
+): StatusGroup[] {
+  const byStatus = new Map<TaskStatus, TaskTreeEntry[]>();
+  for (const entry of entries) {
+    const bucket = byStatus.get(entry.groupStatus);
+    if (bucket) bucket.push(entry);
+    else byStatus.set(entry.groupStatus, [entry]);
   }
   return TASK_STATUSES.flatMap((status) => {
     const bucket = byStatus.get(status);
-    return bucket ? [{ status, tasks: bucket }] : [];
+    return bucket ? [{ status, entries: bucket }] : [];
   });
 }
 

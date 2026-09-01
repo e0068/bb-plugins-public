@@ -34,6 +34,7 @@ import {
 import {
   groupTasksByStatus,
   labelFilterOptions,
+  nestSubtasks,
   selectedLabelIds,
   STATUS_LABELS,
 } from "./lib.js";
@@ -206,7 +207,7 @@ export function ListView({ projectId, activeOnly = false }: ListViewProps) {
     labelIds,
   ]);
   const groups = useMemo(
-    () => groupTasksByStatus(sortTasks(displayTasks ?? [], sort)),
+    () => groupTasksByStatus(nestSubtasks(sortTasks(displayTasks ?? [], sort))),
     [displayTasks, sort],
   );
 
@@ -307,13 +308,14 @@ export function ListView({ projectId, activeOnly = false }: ListViewProps) {
           <StatusIcon status={group.status} />
           {STATUS_LABELS[group.status]}
           <span className="text-xs font-normal tabular-nums text-subtle-foreground">
-            {group.tasks.length}
+            {group.entries.length}
           </span>
         </div>
-        {group.tasks.map((task) => (
+        {group.entries.map(({ task, depth }) => (
           <TaskRow
             key={task.id}
             task={task}
+            depth={depth}
             meta={meta.data?.get(task.id)}
             project={projectsById.get(task.projectId)}
             showProject={showProject}

@@ -275,6 +275,9 @@ function RailValue({
 export interface TaskRowProps {
   /** Task with any pending optimistic edit already applied. */
   task: Task;
+  /** 0 for a top-level task; 1 indents the title to read as nested under the
+   * subtask's parent row directly above it. */
+  depth?: 0 | 1;
   meta: TaskRowMeta | undefined;
   project: Project | undefined;
   showProject: boolean;
@@ -300,6 +303,7 @@ export interface TaskRowProps {
  */
 export function TaskRow({
   task,
+  depth = 0,
   meta,
   project,
   showProject,
@@ -375,8 +379,13 @@ export function TaskRow({
           onOpenChange={(next) => setOpenMenu(next ? "status" : null)}
           className="col-start-1 row-start-1"
         />
-        <span className="col-start-2 col-span-2 row-start-1 min-w-0 truncate text-sm @md:flex-1">
-          {task.title}
+        <span className="col-start-2 col-span-2 row-start-1 flex min-w-0 items-center gap-1 truncate text-sm @md:flex-1">
+          {depth === 1 ? (
+            <span aria-hidden className="shrink-0 text-subtle-foreground">
+              ∟
+            </span>
+          ) : null}
+          <span className="min-w-0 truncate">{task.title}</span>
         </span>
         <span className="col-start-3 row-start-2 flex min-w-0 items-center gap-1.5 justify-self-end text-xs text-subtle-foreground @max-md:overflow-hidden @md:shrink-0">
           {cells.map((cell) =>
