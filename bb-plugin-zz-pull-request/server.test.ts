@@ -9,12 +9,15 @@ import plugin from "./server";
 interface StatusStub {
   hasUncommittedChanges: boolean;
   aheadCount: number;
+  behindCount?: number;
 }
+
+type PrState = "open" | "draft" | "merged" | "closed";
 
 function host(options: {
   environmentId: string | null;
   status?: StatusStub;
-  pr?: { outcome: "absent" | "available" | "unavailable"; url?: string };
+  pr?: { outcome: "absent" | "available" | "unavailable"; url?: string; state?: PrState };
   prThrows?: boolean;
 }) {
   const statusResult =
@@ -24,12 +27,21 @@ function host(options: {
           outcome: "available" as const,
           workspace: {
             workingTree: { hasUncommittedChanges: options.status.hasUncommittedChanges },
-            mergeBase: { aheadCount: options.status.aheadCount },
+            mergeBase: {
+              aheadCount: options.status.aheadCount,
+              behindCount: options.status.behindCount ?? 0,
+            },
           },
         };
   const prResult =
     options.pr?.outcome === "available"
-      ? { outcome: "available", pullRequest: { url: options.pr.url ?? "https://x" } }
+      ? {
+          outcome: "available",
+          pullRequest: {
+            url: options.pr.url ?? "https://x",
+            state: options.pr.state ?? "open",
+          },
+        }
       : { outcome: options.pr?.outcome ?? "absent" };
 
   return createFakePluginHost({
@@ -42,6 +54,7 @@ function host(options: {
           mergeBaseBranch: null,
           defaultBranch: "main",
           baseBranch: "origin/main",
+          path: "/tmp/worktree",
         }),
         status: async () => statusResult,
         pullRequest: async () => {
@@ -57,6 +70,12 @@ async function prState(options: Parameters<typeof host>[0]) {
   const { bb, harness } = host(options);
   await plugin(bb);
   return harness.behavior.callRpc("prState", { threadId: "t1" });
+}
+
+async function fastForwardState(options: Parameters<typeof host>[0]) {
+  const { bb, harness } = host(options);
+  await plugin(bb);
+  return harness.behavior.callRpc("fastForwardState", { threadId: "t1" });
 }
 
 describe("prState (склейка)", () => {
@@ -80,16 +99,38 @@ describe("prState (склейка)", () => {
     ).toEqual({ visible: false, reason: "dirty", prUrl: null });
   });
 
-  it("PR уже открыт → скрыта, но url отдаётся", async () => {
+  it("живой PR (open) → скрыта, но url отдаётся", async () => {
     expect(
       await prState({
         environmentId: "env1",
         status: { hasUncommittedChanges: false, aheadCount: 2 },
-        pr: { outcome: "available", url: "https://github.com/e0068/bb-plugins/pull/9" },
+        pr: {
+          outcome: "available",
+          state: "open",
+          url: "https://github.com/e0068/bb-plugins/pull/9",
+        },
       }),
     ).toEqual({
       visible: false,
       reason: "pr-exists",
+      prUrl: "https://github.com/e0068/bb-plugins/pull/9",
+    });
+  });
+
+  it("PR слит (merged) + новый коммит впереди → видна снова", async () => {
+    expect(
+      await prState({
+        environmentId: "env1",
+        status: { hasUncommittedChanges: false, aheadCount: 1 },
+        pr: {
+          outcome: "available",
+          state: "merged",
+          url: "https://github.com/e0068/bb-plugins/pull/9",
+        },
+      }),
+    ).toEqual({
+      visible: true,
+      reason: "ready",
       prUrl: "https://github.com/e0068/bb-plugins/pull/9",
     });
   });
@@ -117,6 +158,49 @@ describe("prState (склейка)", () => {
       visible: false,
       reason: "status-unavailable",
       prUrl: null,
+    });
+  });
+});
+
+describe("fastForwardState (склейка)", () => {
+  it("отстаём, своих коммитов нет, чисто → видна", async () => {
+    expect(
+      await fastForwardState({
+        environmentId: "env1",
+        status: { hasUncommittedChanges: false, aheadCount: 0, behindCount: 3 },
+      }),
+    ).toEqual({ visible: true, reason: "ready" });
+  });
+
+  it("не отстаём → скрыта", async () => {
+    expect(
+      await fastForwardState({
+        environmentId: "env1",
+        status: { hasUncommittedChanges: false, aheadCount: 0, behindCount: 0 },
+      }),
+    ).toEqual({ visible: false, reason: "up-to-date" });
+  });
+
+  it("свои коммиты впереди при отставании → скрыта (расхождение)", async () => {
+    expect(
+      await fastForwardState({
+        environmentId: "env1",
+        status: { hasUncommittedChanges: false, aheadCount: 2, behindCount: 3 },
+      }),
+    ).toEqual({ visible: false, reason: "diverged" });
+  });
+
+  it("у треда нет окружения → скрыта", async () => {
+    expect(await fastForwardState({ environmentId: null })).toEqual({
+      visible: false,
+      reason: "no-environment",
+    });
+  });
+
+  it("git недоступен в окружении → скрыта", async () => {
+    expect(await fastForwardState({ environmentId: "env1" })).toEqual({
+      visible: false,
+      reason: "status-unavailable",
     });
   });
 });

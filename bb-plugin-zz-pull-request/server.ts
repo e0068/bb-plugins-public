@@ -8,6 +8,7 @@ import { defineRpcContract, type BbPluginApi } from "@get-bb/plugin-sdk";
 import { z } from "zod";
 import { resolveBase } from "./src/core/base-branch";
 import { isDeletion } from "./src/core/changed-files";
+import { decideFastForward } from "./src/core/fast-forward";
 import {
   configPathFromGitdir,
   originUrlFromGitConfig,
@@ -17,9 +18,11 @@ import type { ChangedFile, RepoRef } from "./src/core/github-requests";
 import { parseGithubRemote } from "./src/core/remote";
 import { threadChangeTouchesPr } from "./src/core/thread-change";
 import { chooseToken } from "./src/core/token";
-import { decideVisibility, type PrLookupOutcome } from "./src/core/visibility";
+import { decideVisibility, type PrPresence } from "./src/core/visibility";
 import { runCreatePr } from "./src/wiring/create-pr";
+import { runFastForward } from "./src/wiring/fast-forward";
 import { ghAuthToken } from "./src/wiring/gh-token";
+import { gitClient } from "./src/wiring/git-client";
 import { githubClient } from "./src/wiring/github-client";
 
 export const rpcContract = defineRpcContract({
@@ -34,6 +37,14 @@ export const rpcContract = defineRpcContract({
   createPr: {
     input: z.object({ threadId: z.string() }).strict(),
     output: z.object({ url: z.string(), number: z.number() }),
+  },
+  fastForwardState: {
+    input: z.object({ threadId: z.string() }).strict(),
+    output: z.object({ visible: z.boolean(), reason: z.string() }),
+  },
+  fastForward: {
+    input: z.object({ threadId: z.string() }).strict(),
+    output: z.object({ ok: z.boolean() }),
   },
 });
 
@@ -58,6 +69,12 @@ export default async function plugin(bb: BbPluginApi) {
     async createPr({ threadId }) {
       const token = await resolveToken(settings);
       return gatherAndCreate(bb.sdk, token, threadId);
+    },
+    async fastForwardState({ threadId }) {
+      return computeFastForwardState(bb.sdk, threadId);
+    },
+    async fastForward({ threadId }) {
+      return fastForwardBranch(bb.sdk, threadId);
     },
   });
 
@@ -109,9 +126,37 @@ async function computePrState(
   const decision = decideVisibility({
     hasUncommittedChanges: workingTree.hasUncommittedChanges,
     aheadCount: mergeBase?.aheadCount ?? 0,
-    pr: pr.outcome,
+    pr: pr.presence,
   });
   return { visible: decision.visible, reason: decision.reason, prUrl: pr.url };
+}
+
+async function computeFastForwardState(
+  sdk: Sdk,
+  threadId: string,
+): Promise<{ visible: boolean; reason: string }> {
+  const environmentId = await environmentIdOf(sdk, threadId);
+  if (!environmentId) return { visible: false, reason: "no-environment" };
+
+  const env = await sdk.environments.get({ environmentId });
+  const base = resolveBase(env);
+  if (!base) return { visible: false, reason: "no-base-branch" };
+
+  const status = await sdk.environments.status({
+    environmentId,
+    mergeBaseBranch: base.statusBase,
+  });
+  if (status.outcome !== "available") {
+    return { visible: false, reason: `status-${status.outcome}` };
+  }
+
+  const { workingTree, mergeBase } = status.workspace;
+  const decision = decideFastForward({
+    behindCount: mergeBase?.behindCount ?? 0,
+    aheadCount: mergeBase?.aheadCount ?? 0,
+    hasUncommittedChanges: workingTree.hasUncommittedChanges,
+  });
+  return { visible: decision.visible, reason: decision.reason };
 }
 
 async function gatherAndCreate(
@@ -139,7 +184,7 @@ async function gatherAndCreate(
   const decision = decideVisibility({
     hasUncommittedChanges: workingTree.hasUncommittedChanges,
     aheadCount: mergeBase?.aheadCount ?? 0,
-    pr: pr.outcome,
+    pr: pr.presence,
   });
   if (!decision.visible || !mergeBase) {
     throw new Error(`Сейчас PR открыть нельзя (${decision.reason}).`);
@@ -165,6 +210,42 @@ async function gatherAndCreate(
   });
 }
 
+async function fastForwardBranch(
+  sdk: Sdk,
+  threadId: string,
+): Promise<{ ok: boolean }> {
+  const environmentId = await environmentIdOf(sdk, threadId);
+  if (!environmentId) throw new Error("У треда нет окружения с git.");
+
+  const env = await sdk.environments.get({ environmentId });
+  const base = resolveBase(env);
+  if (!base) throw new Error("У окружения не удалось определить базовую ветку.");
+
+  const status = await sdk.environments.status({
+    environmentId,
+    mergeBaseBranch: base.statusBase,
+  });
+  if (status.outcome !== "available") {
+    throw new Error(`git-статус окружения недоступен (${status.outcome}).`);
+  }
+
+  const { workingTree, mergeBase } = status.workspace;
+  const decision = decideFastForward({
+    behindCount: mergeBase?.behindCount ?? 0,
+    aheadCount: mergeBase?.aheadCount ?? 0,
+    hasUncommittedChanges: workingTree.hasUncommittedChanges,
+  });
+  if (!decision.visible) {
+    throw new Error(`Перемотка сейчас невозможна (${decision.reason}).`);
+  }
+
+  const path = env.path;
+  if (!path) throw new Error("У окружения нет рабочей копии на диске.");
+
+  await runFastForward(gitClient(path), base.githubBase);
+  return { ok: true };
+}
+
 async function environmentIdOf(sdk: Sdk, threadId: string): Promise<string | null> {
   const thread = await sdk.threads.get({ threadId });
   return thread.environmentId;
@@ -172,19 +253,26 @@ async function environmentIdOf(sdk: Sdk, threadId: string): Promise<string | nul
 
 // environments.pullRequest бросает 409 для персональных/не-git/удалённых
 // окружений — это не наша ошибка, а «PR тут неоткуда взяться». Глушим в
-// «unavailable», чтобы не ронять prState на каждом таком треде.
+// «unknown», чтобы не ронять prState на каждом таком треде.
+//
+// Живой PR (open/draft) блокирует кнопку; слитый/закрытый (merged/closed) —
+// нет: на новый коммит поверх слитого можно открыть новый PR.
 async function lookupPullRequest(
   sdk: Sdk,
   environmentId: string,
-): Promise<{ outcome: PrLookupOutcome; url: string | null }> {
+): Promise<{ presence: PrPresence; url: string | null }> {
   try {
     const pr = await sdk.environments.pullRequest({ environmentId });
     if (pr.outcome === "available") {
-      return { outcome: "available", url: pr.pullRequest.url };
+      const { state, url } = pr.pullRequest;
+      const presence: PrPresence =
+        state === "open" || state === "draft" ? "open" : "settled";
+      return { presence, url };
     }
-    return { outcome: pr.outcome, url: null };
+    if (pr.outcome === "absent") return { presence: "absent", url: null };
+    return { presence: "unknown", url: null };
   } catch {
-    return { outcome: "unavailable", url: null };
+    return { presence: "unknown", url: null };
   }
 }
 

@@ -1,13 +1,19 @@
 import { describe, expect, it } from "vitest";
 import fc from "fast-check";
-import { decideVisibility, type PrLookupOutcome } from "./visibility";
+import { decideVisibility, type PrPresence } from "./visibility";
 
-const outcomes: PrLookupOutcome[] = ["absent", "available", "unavailable"];
+const presences: PrPresence[] = ["absent", "open", "settled", "unknown"];
 
 describe("decideVisibility", () => {
   it("видна ровно когда чисто, есть коммиты впереди и PR absent", () => {
     expect(
       decideVisibility({ hasUncommittedChanges: false, aheadCount: 3, pr: "absent" }),
+    ).toEqual({ visible: true, reason: "ready" });
+  });
+
+  it("PR слит/закрыт (settled) + новый коммит впереди → видна снова", () => {
+    expect(
+      decideVisibility({ hasUncommittedChanges: false, aheadCount: 1, pr: "settled" }),
     ).toEqual({ visible: true, reason: "ready" });
   });
 
@@ -23,30 +29,30 @@ describe("decideVisibility", () => {
     ).toEqual({ visible: false, reason: "nothing-to-pr" });
   });
 
-  it("PR уже открыт — прячет, чем бы ни было остальное", () => {
+  it("живой PR (open) — прячет, чем бы ни было остальное", () => {
     expect(
-      decideVisibility({ hasUncommittedChanges: false, aheadCount: 5, pr: "available" }),
+      decideVisibility({ hasUncommittedChanges: false, aheadCount: 5, pr: "open" }),
     ).toEqual({ visible: false, reason: "pr-exists" });
   });
 
   it("статус PR неизвестен — прячет", () => {
     expect(
-      decideVisibility({ hasUncommittedChanges: false, aheadCount: 5, pr: "unavailable" }),
+      decideVisibility({ hasUncommittedChanges: false, aheadCount: 5, pr: "unknown" }),
     ).toEqual({ visible: false, reason: "pr-unknown" });
   });
 
-  it("инвариант: видна ⇒ чисто ∧ ahead>0 ∧ pr=absent", () => {
+  it("инвариант: видна ⇒ чисто ∧ ahead>0 ∧ pr∈{absent,settled}", () => {
     fc.assert(
       fc.property(
         fc.boolean(),
         fc.integer({ min: -2, max: 50 }),
-        fc.constantFrom(...outcomes),
+        fc.constantFrom(...presences),
         (hasUncommittedChanges, aheadCount, pr) => {
           const { visible } = decideVisibility({ hasUncommittedChanges, aheadCount, pr });
           if (visible) {
             expect(hasUncommittedChanges).toBe(false);
             expect(aheadCount).toBeGreaterThan(0);
-            expect(pr).toBe("absent");
+            expect(pr === "absent" || pr === "settled").toBe(true);
           }
         },
       ),
