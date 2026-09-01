@@ -9,7 +9,7 @@
 // сырым текстом; отдельного «только чтение» для не-md нет по решению владельца
 // (memory/decisions/claude-config-opener-setting.md).
 import { useEffect, useRef, useState } from "react";
-import type { MouseEvent as ReactMouseEvent } from "react";
+import type { MouseEvent as ReactMouseEvent, ReactNode } from "react";
 
 import { KasimovEditor } from "./KasimovEditor";
 import "./md-doc-view.css";
@@ -42,8 +42,27 @@ export interface MdDocViewProps {
   vars?: Record<string, string>;
   /** Клик по живой ссылке ведёт по ней. default true. */
   followLinks?: boolean;
+  /** `@path` (Claude @import) кликабелен. default true. */
+  atLinks?: boolean;
   /** Показывать frontmatter-блок сеткой. default true. */
   frontmatter?: boolean;
+  /** Стиль узлов mermaid: "contrast" — залитый чип; "soft" — мягкие (default). */
+  mermaidNodes?: "soft" | "contrast";
+  /**
+   * Доп. элемент в начале шапки, перед внутренней стрелкой прыжков (например
+   * кнопка возврата к внешнему списку хозяина вкладки). Своей навигацией не
+   * владеет — рисует то, что передал потребитель. Пакет не завязан на его
+   * действия, поэтому шапка показывается и без файла для правки (только ради
+   * leading), см. showHeader ниже.
+   */
+  leading?: ReactNode;
+  /**
+   * Замена кнопки «Редактировать» в режиме просмотра — например, иконкой без
+   * текста. Пакет не знает иконочного набора хозяина, поэтому рендер отдаётся
+   * потребителю; сам компонент передаёт только колбэк входа в правку.
+   * По умолчанию (не передан) — прежняя текстовая кнопка.
+   */
+  editButton?: (onClick: () => void) => ReactNode;
 }
 
 export function MdDocView({
@@ -53,7 +72,11 @@ export function MdDocView({
   resolveLinkTarget,
   vars,
   followLinks,
+  atLinks,
   frontmatter,
+  mermaidNodes,
+  leading,
+  editButton,
 }: MdDocViewProps) {
   const [doc, setDoc] = useState<LoadedDoc | null>(null);
   const [stack, setStack] = useState<string[]>([]);
@@ -145,15 +168,19 @@ export function MdDocView({
   const fileName = (doc?.path || initialPath).split("/").pop() ?? "";
   // Шапка появляется и когда файл можно править: там висит видимая кнопка
   // «Редактировать» — вход в правку иначе неочевиден (клик по тексту не виден).
+  // leading — навигация хозяина вкладки (не связана с правкой), поэтому тоже
+  // держит шапку видимой, даже если сам файл ещё не загружен или не редактируется.
   const showHeader =
-    editing || stack.length > 1 || !!saveNote || (canEdit && !editing);
+    editing || stack.length > 1 || !!saveNote || (canEdit && !editing) || !!leading;
 
   return (
     <div className="mdo-root">
       {/* Шапки по умолчанию нет — как у родного. Появляется при возврате после
-          прыжка, в режиме правки или при ошибке сохранения. */}
+          прыжка, в режиме правки, при ошибке сохранения или когда хозяин
+          вкладки передал leading. */}
       {showHeader && (
         <div className="mdo-header">
+          {leading}
           {!editing && stack.length > 1 && (
             <button
               type="button"
@@ -189,7 +216,10 @@ export function MdDocView({
               </button>
             </div>
           ) : (
-            canEdit && (
+            canEdit &&
+            (editButton ? (
+              editButton(startEdit)
+            ) : (
               <div className="mdo-actions">
                 <button
                   type="button"
@@ -199,7 +229,7 @@ export function MdDocView({
                   Редактировать
                 </button>
               </div>
-            )
+            ))
           )}
         </div>
       )}
@@ -212,7 +242,9 @@ export function MdDocView({
             <KasimovEditor
               editable={editing}
               followLinks={followLinks}
+              atLinks={atLinks}
               frontmatter={frontmatter}
+              mermaidNodes={mermaidNodes}
               vars={vars}
               value={editing ? draft : doc.content}
               onChange={setDraft}

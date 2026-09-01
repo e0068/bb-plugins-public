@@ -14,14 +14,15 @@
 // по относительному импорту.
 //
 // Отличие от packages/md-editor/react: там движок — класс `new
-// VanillaMarkdownEditor(host, opts)` со своим `atLinks`; здесь Kasimov даёт
-// фабрику `createEditor(host, opts)` и НЕ знает про Claude-`@import` (кликабельна
-// только markdown-форма) — поэтому проп atLinks отсутствует, а переход по ссылке
-// включается флагом followLinks (см. memory/decisions/md-opener-kasimov-editor.md).
-import { useEffect, useRef } from "react";
+// VanillaMarkdownEditor(host, opts)`; здесь Kasimov даёт фабрику
+// `createEditor(host, opts)`. Начиная с 3eb7ba5 движок знает и про Claude-`@import`
+// (флаг `atLinks`), и про стиль узлов mermaid (`mermaidNodes`) — оба пробрасываются
+// пропами (см. memory/decisions/md-opener-kasimov-editor.md).
+import { useEffect, useId, useRef } from "react";
 import { createEditor } from "../kasimov/kasimov.js";
 import type { KasimovEditorInstance, KasimovLink } from "../kasimov/kasimov.js";
 import "../kasimov/kasimov.css";
+import { kasimovCssRule } from "./kasimov-settings";
 
 export interface KasimovEditorProps {
   value: string;
@@ -30,9 +31,13 @@ export interface KasimovEditorProps {
   editable?: boolean;
   /** Клик по живой ссылке ведёт по ней. default true. */
   followLinks?: boolean;
+  /** `@path` (Claude @import) кликабелен. default true. */
+  atLinks?: boolean;
   /** Показывать frontmatter-блок сеткой. default true. */
   frontmatter?: boolean;
-  /** CSS custom properties (`--kasi-*` и т.п.), навешиваются на host-элемент. */
+  /** Стиль узлов mermaid: "contrast" — залитый чип; "soft" — мягкие (default). */
+  mermaidNodes?: "soft" | "contrast";
+  /** CSS custom properties (`--kasi-*` и т.п.); применяются к `.mde-root` внутри host. */
   vars?: Record<string, string>;
   linkResolver?: (href: string) => KasimovLink | null;
   onSave?: (md: string) => Promise<void> | void;
@@ -44,7 +49,9 @@ export function KasimovEditor({
   onChange,
   editable = true,
   followLinks = true,
+  atLinks = true,
   frontmatter = true,
+  mermaidNodes = "soft",
   vars,
   linkResolver,
   onSave,
@@ -52,6 +59,11 @@ export function KasimovEditor({
 }: KasimovEditorProps) {
   const hostRef = useRef<HTMLDivElement | null>(null);
   const editorRef = useRef<KasimovEditorInstance | null>(null);
+  // ID-селектор для правила скина (см. эффект vars ниже). React 18 отдаёт
+  // useId() с двоеточиями ("`:r0:`"), не валидными в raw CSS/HTML id без
+  // экранирования — вырезаем их; React 19 (текущий здесь) отдаёт "_r0_" без
+  // двоеточий, .replace — no-op, но peer-диапазон допускает и 18.
+  const hostId = "kasi-host-" + useId().replace(/:/g, "");
   // Последнее значение, которое ИЗДАЛ сам редактор: эффект синка value ниже так
   // отличает «хост задал новое значение» от «наш onChange вернулся эхом через
   // состояние потребителя» — второе НЕ должно звать setValue, иначе каждый ввод
@@ -82,7 +94,9 @@ export function KasimovEditor({
       // включено (md-opener-kasimov-editor.md); в правке переход уводит из
       // несохранённого черновика ОСОЗНАННО. Теперь управляется настройкой.
       followLinks,
+      atLinks,
       frontmatter,
+      mermaidNodes,
       onChange: (next) => {
         lastEmittedRef.current = next;
         onChangeRef.current?.(next);
@@ -97,12 +111,12 @@ export function KasimovEditor({
       editor.destroy();
       editorRef.current = null;
     };
-    // Пересоздаём при смене `editable`/`followLinks`/`frontmatter`: Kasimov читает
-    // их один раз в createEditor (не через live-ref), поэтому переключение флага
-    // требует свежего инстанса. Остальные колбэки идут через ref'ы — на их смену
-    // редактор не пересоздаётся.
+    // Пересоздаём при смене `editable`/`followLinks`/`atLinks`/`frontmatter`/
+    // `mermaidNodes`: Kasimov читает их один раз в createEditor (не через live-ref),
+    // поэтому переключение требует свежего инстанса. Остальные колбэки идут через
+    // ref'ы — на их смену редактор не пересоздаётся.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [editable, followLinks, frontmatter]);
+  }, [editable, followLinks, atLinks, frontmatter, mermaidNodes]);
 
   useEffect(() => {
     if (editorRef.current && value !== lastEmittedRef.current) {
@@ -111,20 +125,34 @@ export function KasimovEditor({
     }
   }, [value]);
 
-  // CSS-переменные (`--kasi-*`) навешиваем на host-элемент: движок владеет его
-  // ПОТОМКАМИ (innerHTML при render), но host.style не трогает — переменные
-  // наследуются вниз и переживают пересборку тела редактора.
+  // CSS-переменные (`--kasi-*`) нельзя навесить инлайн-стилем на host: движок
+  // объявляет свой набор --kasi-* заново на каждом .mde-root, который он
+  // пересоздаёт при каждом _render() (то есть на каждый ввод) — см.
+  // editor/md-editor/md-editor.js в апстриме. Значение, объявленное на самом
+  // элементе, всегда побеждает унаследованное от предка независимо от
+  // специфичности (контракт задокументирован в апстримном
+  // memory/wiki/kasi-css-contract.md), поэтому host.style.setProperty тут же
+  // перебивается локальным дефолтом того же имени на .mde-root. Правильная
+  // точка приложения — CSS-правило с более высокой специфичностью, целящееся
+  // в `.mde-root` (пример из апстрима: examples/kasi-connector.example.css) —
+  // держим его в document.head под ID-селектором по host, переживает любую
+  // пересборку .mde-root, потому что матчится по селектору, а не по identity узла.
+  //
+  // Построение самого текста правила — чистая функция (kasimovCssRule), а не
+  // часть эффекта: депсит эффект на готовую строку, а не на объект `vars`,
+  // который потребители пересоздают каждый рендер (иначе ререндер с равным
+  // по содержимому, но новым по ссылке `vars` сносил бы и пересоздавал тег
+  // без изменения итогового CSS).
+  const cssRule = kasimovCssRule(hostId, vars ?? {});
   useEffect(() => {
-    const host = hostRef.current;
-    if (!host) return;
-    const applied = vars ?? {};
-    for (const [name, value] of Object.entries(applied)) {
-      host.style.setProperty(name, value);
-    }
+    if (cssRule === null) return;
+    const styleEl = document.createElement("style");
+    styleEl.textContent = cssRule;
+    document.head.appendChild(styleEl);
     return () => {
-      for (const name of Object.keys(applied)) host.style.removeProperty(name);
+      styleEl.remove();
     };
-  }, [vars]);
+  }, [cssRule]);
 
-  return <div ref={hostRef} className={className} />;
+  return <div ref={hostRef} id={hostId} className={className} />;
 }

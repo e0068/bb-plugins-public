@@ -5,8 +5,10 @@
 // чистых, покрытых тестами модулях под src/; здесь только проводка: разрешить
 // пути области, прочитать файлы, отдать их в чистый слой, записать результат с
 // CAS-защитой и превратить конфликт/битый файл в ответ, а не в исключение.
+import { spawn } from "node:child_process";
+import { existsSync } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, join, posix as posixPath, resolve } from "node:path";
 import { defineRpcContract, type BbPluginApi } from "@get-bb/plugin-sdk";
 import { z } from "zod";
 
@@ -35,7 +37,14 @@ import {
 } from "./src/scaffold";
 // Прямой импорт чистого модуля (не barrel index): иначе сервер потянул бы
 // React-компонент MdDocView и его CSS в серверный бандл.
-import { descriptors as kasimovDescriptors } from "./packages/md-doc-view/kasimov-settings";
+import {
+  NATIVE_VIEWER_TOKEN_DEFAULTS,
+  buildDescriptors,
+} from "./packages/md-doc-view/kasimov-settings";
+// Перенос workflow-конструктора (bb-plugin-workflow-composer → сюда): ядро
+// дерево↔.js остаётся DOM-свободным модулем под src/workflow, сервер здесь
+// лишь читает/пишет файлы и зовёт `bb workflows` — как и в исходном плагине.
+import { parse as parseWorkflow, readMetaDescription } from "./src/workflow/workflow-model";
 
 // --- схемы, общие для сервера и панели ---------------------------------
 
@@ -167,6 +176,21 @@ const configOutput = z.object({
     mode: toolSearchModeOn,
     dimmed: z.boolean(),
   }),
+});
+
+// --- схемы workflow-конструктора (перенос bb-plugin-workflow-composer) ---
+// Дословно из его rpcContract; ключи здесь несут префикс wf, чтобы не
+// столкнуться с одноимёнными процедурами этого плагина (list/read/save и т.п.
+// уже заняты областями настроек).
+
+const wfStoreEnum = z.enum(["project", "global"]);
+
+const wfWorkflowItem = z.object({
+  name: z.string(),
+  path: z.string(),
+  store: wfStoreEnum,
+  description: z.string(),
+  hasTree: z.boolean(),
 });
 
 /** Ответ getConfig — панель импортирует этот тип, чтобы не разъезжаться. */
@@ -373,7 +397,298 @@ export const rpcContract = defineRpcContract({
     input: z.object({ areaId: z.string(), name: z.string() }).strict(),
     output: createResult,
   },
+
+  // ---- workflow-конструктор (перенос bb-plugin-workflow-composer) ----
+  // Оба хранилища (project `.bb/workflows/` + global `~/.claude/workflows/`),
+  // сплюснутые в один список. projectId может быть null (нет проекта в
+  // фокусе) → проектное хранилище пропускается.
+  wfList: {
+    input: z.object({ projectId: z.string().nullable() }).strict(),
+    output: z.object({ items: z.array(wfWorkflowItem) }),
+  },
+  wfRead: {
+    input: z
+      .object({ projectId: z.string().nullable(), store: wfStoreEnum, path: z.string() })
+      .strict(),
+    output: z.object({ source: z.string(), tree: z.unknown().nullable() }),
+  },
+  wfSave: {
+    input: z
+      .object({
+        projectId: z.string().nullable(),
+        store: wfStoreEnum,
+        name: z.string(),
+        source: z.string(),
+      })
+      .strict(),
+    output: z.object({ path: z.string() }),
+  },
+  wfRemove: {
+    input: z
+      .object({ projectId: z.string().nullable(), store: wfStoreEnum, path: z.string() })
+      .strict(),
+    output: z.object({ ok: z.boolean() }),
+  },
+  wfValidate: {
+    input: z
+      .object({ projectId: z.string().nullable(), store: wfStoreEnum, path: z.string() })
+      .strict(),
+    output: z.object({ ok: z.boolean(), output: z.string() }),
+  },
+  wfRun: {
+    input: z
+      .object({ projectId: z.string().nullable(), store: wfStoreEnum, path: z.string() })
+      .strict(),
+    output: z.object({ ok: z.boolean(), runId: z.string().nullable(), output: z.string() }),
+  },
+  wfStatus: {
+    input: z.object({ runId: z.string() }).strict(),
+    output: z.object({ output: z.string() }),
+  },
+  // Проекты, которые можно выбрать в селекторе шапки — панель не привязана
+  // только к тому проекту, что сейчас в фокусе у хоста.
+  wfProjects: {
+    input: z.null(),
+    output: z.array(z.object({ id: z.string(), name: z.string() })),
+  },
+  // Типы агентов из личных (~/.claude/agents), проектных (.claude/agents) и
+  // плагинных (~/.claude/plugins/**/agents) каталогов — автокомплит «Agent
+  // type», плюс собственные модель/effort/provider агента (из frontmatter).
+  wfAgents: {
+    input: z.object({ projectId: z.string().nullable() }).strict(),
+    output: z.object({
+      agents: z.array(
+        z.object({
+          value: z.string(),
+          model: z.string(),
+          effort: z.string(),
+          provider: z.string(),
+          description: z.string(),
+          path: z.string(),
+          tools: z.array(z.string()),
+          scope: z.enum(["user", "project", "plugin"]),
+        }),
+      ),
+    }),
+  },
+  // Живой каталог провайдер/модель/effort (bb.sdk.providers.list + .models на
+  // провайдера) для колонки деталей агента.
+  wfProviderCatalog: {
+    input: z.null(),
+    output: z.array(
+      z.object({
+        id: z.string(),
+        name: z.string(),
+        models: z.array(z.object({ id: z.string(), efforts: z.array(z.string()) })),
+      }),
+    ),
+  },
+  // Пишет полный .md агента (frontmatter + тело) на диск. Сервер — «тупой
+  // писатель»: содержимое собирает клиент, здесь только валидация имени/области
+  // и ограждение пути записи.
+  wfWriteAgent: {
+    input: z
+      .object({
+        projectId: z.string().nullable(),
+        scope: z.enum(["user", "project"]),
+        name: z.string(),
+        content: z.string(),
+        overwrite: z.boolean(),
+      })
+      .strict(),
+    output: z.object({ path: z.string() }),
+  },
 });
+
+// --- workflow-конструктор: чистые функции и общие типы (перенос) --------
+// Перенесено дословно из bb-plugin-workflow-composer/server.ts: чистые
+// функции модульного уровня плюс приватные хелперы, которых требуют
+// перенесённые wf*-обработчики. Обработчики agentRefs/models остались в
+// исходном плагине и сюда не переносились — вместе с ними не переносились и
+// их собственные хелперы (MD_REF_RE, candidatesForToken, listModels).
+
+type WfStore = z.infer<typeof wfStoreEnum>;
+
+const WORKFLOW_EXT = ".js";
+const WF_MARKER = "/.bb/workflows/"; // project workflows live directly under a checkout's .bb/workflows
+
+function joinPath(...parts: string[]): string {
+  return parts.join("/").replace(/\/+/g, "/");
+}
+
+function baseName(path: string): string {
+  const seg = path.split("/").pop() ?? path;
+  return seg.endsWith(WORKFLOW_EXT) ? seg.slice(0, -WORKFLOW_EXT.length) : seg;
+}
+
+// The checkout root of a project workflow file, e.g. /repo/.bb/workflows/x.js → /repo.
+function projectRootOf(path: string): string | null {
+  const i = path.indexOf(WF_MARKER);
+  return i === -1 ? null : path.slice(0, i);
+}
+
+// A project workflow file must sit DIRECTLY in some checkout's .bb/workflows — no nesting/traversal.
+function assertProjectWorkflowPath(path: string): void {
+  const i = path.indexOf(WF_MARKER);
+  if (i === -1 || !path.endsWith(WORKFLOW_EXT)) throw new Error("not a project workflow path");
+  if (path.slice(i + WF_MARKER.length).includes("/")) throw new Error("workflow must sit directly in .bb/workflows");
+}
+
+// A global (~/.claude/workflows) .js sitting directly in the store dir.
+function assertGlobalPath(dir: string, path: string): void {
+  if (!path.endsWith(WORKFLOW_EXT)) throw new Error("not a .js workflow file");
+  if (path.slice(0, path.lastIndexOf("/")) !== dir.replace(/\/$/, "")) throw new Error("path is not directly inside the global store");
+}
+
+// True when already-normalized `absPath` is `root` itself or sits somewhere under it. Named wfIsWithin
+// (not isWithin) to avoid colliding with this file's own pre-existing isWithin(root, target) helper,
+// whose argument order is reversed.
+function wfIsWithin(absPath: string, root: string): boolean {
+  return absPath === root || absPath.startsWith(root.endsWith("/") ? root : root + "/");
+}
+
+// The server process is GUI-launched: no shell PATH and no BB_CLI in its env, so a bare "bb" spawn
+// fails ENOENT. Resolve the bb CLI binary explicitly — BB_CLI if present, else next to the daemon
+// executable (…/Contents/MacOS/bb → …/Contents/Resources/app.asar.unpacked/.../host-daemon/dist/bb),
+// else via resourcesPath, else fall back to PATH.
+export function resolveBbBin(): string {
+  if (process.env.BB_CLI && existsSync(process.env.BB_CLI)) return process.env.BB_CLI;
+  const candidates: string[] = [];
+  if (process.execPath) {
+    candidates.push(
+      resolve(dirname(process.execPath), "..", "Resources", "app.asar.unpacked", "node_modules", "bb-app", "host-daemon", "dist", "bb"),
+    );
+  }
+  const resourcesPath = (process as unknown as { resourcesPath?: string }).resourcesPath;
+  if (resourcesPath) {
+    candidates.push(join(resourcesPath, "app.asar.unpacked", "node_modules", "bb-app", "host-daemon", "dist", "bb"));
+  }
+  return candidates.find((p) => existsSync(p)) ?? "bb";
+}
+
+// `bb workflows run` prints JSON `{ "runId": "wfr_…" }`; fall back to scanning for a wfr_/wf_ token
+// when the output is not clean JSON (e.g. warnings prepended).
+export function extractRunId(text: string): string | null {
+  try {
+    const parsed = JSON.parse(text.trim());
+    if (parsed && typeof parsed.runId === "string") return parsed.runId;
+  } catch {
+    // not clean JSON → fall through to a token scan
+  }
+  const m = text.match(/\bwfr?_[a-z0-9-]+/i);
+  return m ? m[0] : null;
+}
+
+// Which agents/ directory an agent was discovered in — mirrors rpcContract.wfAgents' output `scope`.
+type AgentScope = "user" | "project" | "plugin";
+
+// listPaths, but a missing directory (throw) yields [] instead of failing the caller.
+async function listPathsSafe(bb: BbPluginApi, args: { hostId?: string; path: string }): Promise<string[]> {
+  try {
+    const res = await bb.sdk.files.listPaths({ ...args, includeFiles: true, includeDirectories: false });
+    return res.paths.map((p) => p.path);
+  } catch {
+    return [];
+  }
+}
+
+// Bare agent names from top-level (no "/") *.md files in a single agents dir.
+function bareAgentNames(paths: string[]): string[] {
+  return paths.filter((p) => !p.includes("/") && p.endsWith(".md")).map((p) => p.slice(0, -".md".length));
+}
+
+// Pull `model:`, `effort:`/`reasoningLevel:`, `description:`, and `tools:` out of an agent .md's
+// frontmatter — the simple `key: value` block between the first pair of `---` lines. Missing/malformed
+// frontmatter → "" for the scalars, [] for tools.
+//
+// `tools` supports both Claude Code agent .md syntaxes: an inline comma-separated string
+// ("tools: Read, Grep, Glob") and a YAML list on the following indented "- Item" lines.
+export function parseAgentFrontmatter(content: string): { model: string; effort: string; description: string; tools: string[] } {
+  const lines = content.split("\n");
+  let start = -1;
+  let end = -1;
+  for (let i = 0; i < lines.length; i++) {
+    if (lines[i].trim() !== "---") continue;
+    if (start === -1) start = i;
+    else {
+      end = i;
+      break;
+    }
+  }
+  let model = "";
+  let effort = "";
+  let description = "";
+  let tools: string[] = [];
+  if (start !== -1 && end !== -1) {
+    const body = lines.slice(start + 1, end);
+    for (let i = 0; i < body.length; i++) {
+      const m = body[i].match(/^([A-Za-z_][\w-]*)\s*:\s*(.*)$/);
+      if (!m) continue;
+      const key = m[1].trim();
+      const value = m[2].trim().replace(/^["']|["']$/g, "");
+      if (key === "model") model = value;
+      else if (key === "effort" || key === "reasoningLevel") effort = value;
+      else if (key === "description") description = value;
+      else if (key === "tools") {
+        if (value) {
+          tools = value
+            .split(",")
+            .map((t) => t.trim())
+            .filter(Boolean);
+        } else {
+          // Empty inline value → a YAML list follows on subsequent "- Item" lines.
+          let j = i + 1;
+          const items: string[] = [];
+          while (j < body.length) {
+            const listItem = body[j].match(/^\s*-\s*(.+?)\s*$/);
+            if (!listItem) break;
+            const item = listItem[1].trim();
+            if (item) items.push(item);
+            j++;
+          }
+          tools = items;
+          i = j - 1; // resume scanning after the consumed list lines
+        }
+      }
+    }
+  }
+  return { model, effort, description, tools };
+}
+
+// A candidate plugin-dir segment that is really a version tag ("1.0.0", "v2") or a content hash
+// ("5e821f406d57") rather than the plugin's own name — skip it and step up one more segment.
+const VERSION_LIKE = /^v?\d/;
+const HASH_LIKE = /^[0-9a-f]{8,}$/;
+
+// `<plugin>:<agent>` for a path (relative to ~/.claude/plugins) that is a *.md file sitting directly
+// in an "agents" directory; null for anything else (nested docs, non-md files, etc).
+export function pluginAgentName(relPath: string): string | null {
+  const segments = relPath.split("/");
+  const filename = segments[segments.length - 1];
+  if (!filename || !filename.endsWith(".md")) return null;
+  const agentsIdx = segments.length - 2;
+  if (agentsIdx < 0 || segments[agentsIdx] !== "agents") return null;
+  let pluginIdx = agentsIdx - 1;
+  if (pluginIdx < 0) return null;
+  const candidate = segments[pluginIdx];
+  if (VERSION_LIKE.test(candidate) || HASH_LIKE.test(candidate)) {
+    pluginIdx -= 1;
+    if (pluginIdx < 0) return null;
+  }
+  const plugin = segments[pluginIdx];
+  return `${plugin}:${filename.slice(0, -".md".length)}`;
+}
+
+// Short readable name for a resolved ref: a SKILL.md's parent directory name (e.g. "foo" for
+// ".../skills/foo/SKILL.md"), else the file's own basename. Not used by any transferred wf*
+// procedure today (agentRefs stayed behind in workflow-composer) — kept + tested because it is
+// small, self-contained, and paired 1:1 with agentRefs should that procedure be ported later.
+export function agentRefLabel(absPath: string): string {
+  const segs = absPath.split("/");
+  const filename = segs[segs.length - 1] ?? absPath;
+  if (filename === "SKILL.md" && segs.length >= 2) return segs[segs.length - 2];
+  return filename;
+}
 
 // --- разрешение области в набор путей ----------------------------------
 
@@ -667,6 +982,13 @@ export default function plugin(bb: BbPluginApi) {
   // таблицей в src/kasimov-settings; здесь только домешиваем их к настройкам
   // плагина рядом с fileOpener. Фронт читает их через useSettings и применяет к
   // колонке-редактору (ColumnMdDocView).
+  //
+  // Пресеты по умолчанию — «под родной bb-вьюер», те же, что у MD Opener: оба
+  // рендерят Kasimov через один и тот же MdDocView/md-doc-view.css (было
+  // хардкодом там, см. memory/decisions/kasimov-opener-css-uses-token-defaults.md)
+  // — владелец явно попросил одинаковый вид у обоих потребителей.
+  // (doc-editor.css в этом плагине — про другой редактор, packages/md-editor
+  // с классом cc-doc-mde; к Kasimov отношения не имеет.)
   bb.settings.define({
     fileOpener: {
       type: "select",
@@ -674,7 +996,7 @@ export default function plugin(bb: BbPluginApi) {
       options: ["md-opener", "builtin", "host"],
       default: "md-opener",
     },
-    ...kasimovDescriptors,
+    ...buildDescriptors(NATIVE_VIEWER_TOKEN_DEFAULTS),
   });
 
   // Чтение файла: отсутствие — это пустой документ (text=null), а не ошибка.
@@ -763,6 +1085,115 @@ export default function plugin(bb: BbPluginApi) {
       };
     }
     return { outcome: "ok", message: null };
+  }
+
+  // --- workflow-конструктор: сием и обработчики (перенос) ----------------
+  // Инлайн вместо фабрики createPlugin/WorkflowDeps исходного плагина: этому
+  // серверу фабрика с инъекцией не нужна (тесты — на чистых функциях выше),
+  // а сами обработчики регистрируются в общий `bb.rpc.register` ниже.
+
+  const wfHome = homedir();
+  const wfGlobalDir = joinPath(wfHome, ".claude", "workflows");
+  const wfBbBin = resolveBbBin();
+
+  function runBbCli(args: string[], opts?: { cwd?: string }): Promise<{ code: number; stdout: string; stderr: string }> {
+    return new Promise((resolvePromise) => {
+      const child = spawn(wfBbBin, args, { cwd: opts?.cwd, env: process.env });
+      let stdout = "";
+      let stderr = "";
+      child.stdout.on("data", (d) => (stdout += d.toString()));
+      child.stderr.on("data", (d) => (stderr += d.toString()));
+      child.on("error", (err) => resolvePromise({ code: -1, stdout, stderr: stderr + String(err) }));
+      child.on("close", (code) => resolvePromise({ code: code ?? -1, stdout, stderr }));
+    });
+  }
+
+  function gitWorktrees(root: string): Promise<string[]> {
+    return new Promise((resolvePromise) => {
+      const child = spawn("git", ["-C", root, "worktree", "list", "--porcelain"], { env: process.env });
+      let out = "";
+      child.stdout.on("data", (d) => (out += d.toString()));
+      child.on("error", () => resolvePromise([]));
+      child.on("close", () =>
+        resolvePromise(
+          out
+            .split("\n")
+            .filter((l) => l.startsWith("worktree "))
+            .map((l) => l.slice("worktree ".length).trim())
+            .filter(Boolean),
+        ),
+      );
+    });
+  }
+
+  // The project's default source (checkout root + its host).
+  async function projectSource(projectId: string | null): Promise<{ hostId: string; path: string }> {
+    if (!projectId) throw new Error("project store needs a project in view");
+    const project = await bb.sdk.projects.get({ projectId });
+    const source = project.sources.find((s) => s.isDefault) ?? project.sources[0];
+    if (!source) throw new Error("project has no source path");
+    return { hostId: source.hostId, path: source.path };
+  }
+
+  // Scan one directory for top-level workflow .js files, reading each to recover its description/tree.
+  async function wfScanDir(hostId: string | undefined, dir: string, store: WfStore) {
+    let entries: { path: string }[] = [];
+    try {
+      const res = await bb.sdk.files.listPaths({ hostId, path: dir, includeFiles: true, includeDirectories: false });
+      entries = res.paths;
+    } catch {
+      return []; // dir does not exist
+    }
+    const items = [];
+    for (const entry of entries) {
+      if (entry.path.includes("/") || !entry.path.endsWith(WORKFLOW_EXT)) continue; // top-level .js only
+      const abs = joinPath(dir, entry.path);
+      let description = "";
+      let hasTree = false;
+      try {
+        const file = await bb.sdk.files.read({ hostId, path: abs });
+        const tree = parseWorkflow(file.content);
+        hasTree = tree !== null;
+        // A composer-written file carries its description in the mirrored tree; a hand-written one has no
+        // mirror, so fall back to its `export const meta` description rather than showing a blank row.
+        description = tree?.description ?? readMetaDescription(file.content);
+      } catch {
+        // unreadable → list it minimally
+      }
+      items.push({ name: baseName(entry.path), path: abs, store, description, hasTree });
+    }
+    return items;
+  }
+
+  // Project workflows live in EVERY checkout of the project (main source + its git worktrees), so union
+  // across them, deduped by name (first checkout wins).
+  async function wfListProjectStore(projectId: string | null) {
+    let src: { hostId: string; path: string };
+    try {
+      src = await projectSource(projectId);
+    } catch {
+      return [];
+    }
+    const worktrees = await gitWorktrees(src.path).catch(() => []);
+    const roots = [...new Set([src.path, ...worktrees])];
+    const byName = new Map<string, Awaited<ReturnType<typeof wfScanDir>>[number]>();
+    for (const root of roots) {
+      for (const item of await wfScanDir(src.hostId, joinPath(root, ".bb", "workflows"), "project")) {
+        if (!byName.has(item.name)) byName.set(item.name, item);
+      }
+    }
+    return [...byName.values()];
+  }
+
+  // hostId + working dir for an already-existing file (read/remove/validate/run).
+  async function wfResolveFile(store: WfStore, projectId: string | null, path: string): Promise<{ hostId: string | undefined; cwd: string | undefined }> {
+    if (store === "global") {
+      assertGlobalPath(wfGlobalDir, path);
+      return { hostId: undefined, cwd: undefined };
+    }
+    assertProjectWorkflowPath(path);
+    const src = await projectSource(projectId);
+    return { hostId: src.hostId, cwd: projectRootOf(path) ?? undefined };
   }
 
   bb.rpc.register(rpcContract, {
@@ -1472,6 +1903,172 @@ export default function plugin(bb: BbPluginApi) {
         const dir = area.projectAgentsDir ?? area.personalAgentsDir;
         return { path: join(dir, `${slug}.md`), content: agentTemplate(slug) };
       });
+    },
+
+    // ---- workflow-конструктор (перенос bb-plugin-workflow-composer) ----
+
+    async wfList({ projectId }) {
+      const [project, global] = await Promise.all([wfListProjectStore(projectId), wfScanDir(undefined, wfGlobalDir, "global")]);
+      return { items: [...project, ...global] };
+    },
+
+    async wfRead({ projectId, store, path }) {
+      const { hostId } = await wfResolveFile(store, projectId, path);
+      const file = await bb.sdk.files.read({ hostId, path });
+      return { source: file.content, tree: parseWorkflow(file.content) };
+    },
+
+    async wfSave({ projectId, store, name, source }) {
+      const slug = String(name).trim();
+      if (!/^[a-z0-9][a-z0-9-]*$/.test(slug)) throw new Error("name must be lowercase kebab-case");
+      let hostId: string | undefined;
+      let dir: string;
+      if (store === "global") {
+        hostId = undefined;
+        dir = wfGlobalDir;
+      } else {
+        const src = await projectSource(projectId);
+        hostId = src.hostId;
+        dir = joinPath(src.path, ".bb", "workflows"); // new project workflows land in the default checkout
+      }
+      const path = joinPath(dir, slug + WORKFLOW_EXT);
+      await bb.sdk.files.write({ hostId, path, content: source, createParents: true });
+      return { path };
+    },
+
+    async wfRemove({ projectId, store, path }) {
+      const { hostId } = await wfResolveFile(store, projectId, path);
+      await bb.sdk.files.remove({ hostId, path });
+      return { ok: true };
+    },
+
+    async wfValidate({ projectId, store, path }) {
+      const { cwd } = await wfResolveFile(store, projectId, path);
+      const res = await runBbCli(["workflows", "validate", "--file", path], { cwd });
+      return { ok: res.code === 0, output: (res.stdout + res.stderr).trim() };
+    },
+
+    async wfRun({ projectId, store, path }) {
+      const { cwd } = await wfResolveFile(store, projectId, path);
+      const res = await runBbCli(["workflows", "run", "--file", path], { cwd });
+      return { ok: res.code === 0, runId: extractRunId(res.stdout + res.stderr), output: (res.stdout + res.stderr).trim() };
+    },
+
+    async wfStatus({ runId }) {
+      const res = await runBbCli(["workflows", "status", runId]);
+      return { output: (res.stdout + res.stderr).trim() };
+    },
+
+    async wfProjects() {
+      const list = await bb.sdk.projects.list();
+      return list.map((p) => ({ id: p.id, name: p.name }));
+    },
+
+    async wfAgents({ projectId }) {
+      // value → its frontmatter-derived model/effort/provider/description + its file path. A Map (not a
+      // Set) so each value carries its own detail; first source to discover a value wins, matching the
+      // old Set's de-dup semantics.
+      const found = new Map<
+        string,
+        { model: string; effort: string; provider: string; description: string; path: string; tools: string[]; scope: AgentScope }
+      >();
+
+      // Every agent source scanned here sits under a `.claude` directory, so provider is always
+      // "claude-code" — the day a non-.claude source is added, that source computes its own provider.
+      // `scope` records which of the three source directories this agent came from, so the client can
+      // route writeAgent's overwrite back to the same source (and disable Override for "plugin").
+      const addAgent = async (value: string, hostId: string | undefined, absPath: string, scope: AgentScope) => {
+        if (found.has(value)) return;
+        let model = "";
+        let effort = "";
+        let description = "";
+        let tools: string[] = [];
+        try {
+          const file = await bb.sdk.files.read({ hostId, path: absPath });
+          ({ model, effort, description, tools } = parseAgentFrontmatter(file.content));
+        } catch {
+          // unreadable → still list it, with blank model/effort/description/tools
+        }
+        found.set(value, { model, effort, provider: "claude-code", description, path: absPath, tools, scope });
+      };
+
+      const userDir = joinPath(wfHome, ".claude", "agents");
+      const userPaths = await listPathsSafe(bb, { path: userDir });
+      for (const name of bareAgentNames(userPaths)) await addAgent(name, undefined, joinPath(userDir, name + ".md"), "user");
+
+      if (projectId !== null) {
+        try {
+          const src = await projectSource(projectId);
+          const projectDir = joinPath(src.path, ".claude", "agents");
+          const projectPaths = await listPathsSafe(bb, { hostId: src.hostId, path: projectDir });
+          for (const name of bareAgentNames(projectPaths))
+            await addAgent(name, src.hostId, joinPath(projectDir, name + ".md"), "project");
+        } catch {
+          // no resolvable project source → project agents skipped
+        }
+      }
+
+      const pluginsDir = joinPath(wfHome, ".claude", "plugins");
+      const pluginPaths = await listPathsSafe(bb, { path: pluginsDir });
+      for (const relPath of pluginPaths) {
+        const name = pluginAgentName(relPath);
+        if (name) await addAgent(name, undefined, joinPath(pluginsDir, relPath), "plugin");
+      }
+
+      const agents = [...found.entries()]
+        .map(([value, detail]) => ({ value, ...detail }))
+        .sort((a, b) => (a.value < b.value ? -1 : a.value > b.value ? 1 : 0));
+      return { agents };
+    },
+
+    async wfProviderCatalog() {
+      const providers = await bb.sdk.providers.list();
+      return Promise.all(
+        providers.map(async (p) => {
+          let models: { id: string; efforts: string[] }[] = [];
+          try {
+            const res = await bb.sdk.providers.models({ providerId: p.id });
+            models = res.models.map((m) => ({ id: m.id, efforts: m.supportedReasoningEfforts.map((e) => e.reasoningEffort) }));
+          } catch {
+            // one provider's catalog failing shouldn't blank out the others
+          }
+          return { id: p.id, name: p.displayName || p.id, models };
+        }),
+      );
+    },
+
+    async wfWriteAgent({ projectId, scope, name, content, overwrite }) {
+      if (!/^[a-z0-9][a-z0-9-]*$/.test(name)) throw new Error("agent name must be lowercase kebab-case");
+
+      let hostId: string | undefined;
+      let dir: string;
+      if (scope === "user") {
+        hostId = undefined;
+        dir = joinPath(wfHome, ".claude", "agents");
+      } else {
+        const src = await projectSource(projectId);
+        hostId = src.hostId;
+        dir = joinPath(src.path, ".claude", "agents");
+      }
+
+      const path = joinPath(dir, name + ".md");
+      // FENCING: even though the kebab-case check above already rejects "/" and "..", normalize + confine
+      // explicitly (matching the agentRefs style) so this guard doesn't silently rot if that check ever
+      // loosens.
+      if (!wfIsWithin(posixPath.normalize(path), posixPath.normalize(dir))) throw new Error("agent path escapes its scope directory");
+
+      if (!overwrite) {
+        let exists = true;
+        try {
+          await bb.sdk.files.read({ hostId, path });
+        } catch {
+          exists = false;
+        }
+        if (exists) throw new Error("agent already exists");
+      }
+
+      await bb.sdk.files.write({ hostId, path, content, createParents: true });
+      return { path };
     },
   });
 
