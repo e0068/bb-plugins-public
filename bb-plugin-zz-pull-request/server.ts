@@ -4,7 +4,7 @@
 // GitHub через API без push). Вся логика — в слоях ниже: чистое ядро (src/core)
 // и оркестратор GitHub-потока (src/wiring/create-pr). Здесь — чтение мира через
 // bb.sdk и склейка.
-import { defineRpcContract, type BbPluginApi } from "@get-bb/plugin-sdk";
+import { defineRpcContract, type BbPluginApi, type PluginKvStorage } from "@get-bb/plugin-sdk";
 import { z } from "zod";
 import { resolveBase } from "./src/core/base-branch";
 import { isDeletion } from "./src/core/changed-files";
@@ -15,6 +15,12 @@ import {
   parseGitdirPointer,
 } from "./src/core/git-config";
 import type { ChangedFile, RepoRef } from "./src/core/github-requests";
+import {
+  decideMergeReadiness,
+  type ChecksState,
+  type MergeIndicator,
+  type PrState,
+} from "./src/core/merge-readiness";
 import { parseGithubRemote } from "./src/core/remote";
 import { threadChangeTouchesPr } from "./src/core/thread-change";
 import { chooseToken } from "./src/core/token";
@@ -24,6 +30,7 @@ import { runFastForward } from "./src/wiring/fast-forward";
 import { ghAuthToken } from "./src/wiring/gh-token";
 import { gitClient } from "./src/wiring/git-client";
 import { githubClient } from "./src/wiring/github-client";
+import { runLocalMainPull, type LocalMainPullResult } from "./src/wiring/local-main-pull";
 
 export const rpcContract = defineRpcContract({
   prState: {
@@ -46,6 +53,26 @@ export const rpcContract = defineRpcContract({
     input: z.object({ threadId: z.string() }).strict(),
     output: z.object({ ok: z.boolean() }),
   },
+  mergeState: {
+    input: z.object({ threadId: z.string() }).strict(),
+    output: z.object({
+      visible: z.boolean(),
+      indicator: z.enum(["success", "failure", "pending", "neutral", "unknown"]),
+      prUrl: z.string().nullable(),
+    }),
+  },
+  mergePr: {
+    input: z.object({ threadId: z.string() }).strict(),
+    output: z.object({ ok: z.boolean() }),
+  },
+  mainPullState: {
+    input: z.object({ threadId: z.string() }).strict(),
+    output: z.object({
+      attempted: z.boolean(),
+      ok: z.boolean(),
+      reason: z.string().nullable(),
+    }),
+  },
 });
 
 type Sdk = BbPluginApi["sdk"];
@@ -62,27 +89,72 @@ export default async function plugin(bb: BbPluginApi) {
     },
   });
 
-  bb.rpc.register(rpcContract, {
-    async prState({ threadId }) {
-      return computePrState(bb.sdk, threadId);
-    },
-    async createPr({ threadId }) {
-      const token = await resolveToken(settings);
-      return gatherAndCreate(bb.sdk, token, threadId);
-    },
-    async fastForwardState({ threadId }) {
-      return computeFastForwardState(bb.sdk, threadId);
-    },
-    async fastForward({ threadId }) {
-      return fastForwardBranch(bb.sdk, threadId);
-    },
-  });
-
   // Толкаем фронт перечитать prState на двух источниках правды:
   // - environment:changed — коммит/смена ветки/git-refs меняют git-статус;
   // - thread:changed(environment-changed) — bb опознал/сменил PR у треда;
   //   без этой подписки строчка оживала бы только по перезагрузке интерфейса.
   const republish = () => bb.realtime.publish("changed", {});
+
+  // Мутирующие RPC (createPr/fastForward/mergePr) зовут не голый republish(), а
+  // republishAfterMutation(): сразу после мутации `sdk.environments.pullRequest`/
+  // `status` на СТОРОНЕ bb ещё не догнали GitHub (bb сам узнаёт об изменении не
+  // мгновенно, см. memory/wiki/pr-plugin-live-refresh-event.md) — первый рефетч
+  // часто читает то же устаревшее состояние, и без подстраховки кнопка ждала
+  // следующего события или до POLL_INTERVAL_MS (20 с) в app.tsx, из-за чего
+  // переключение PR → Merge растягивалось секунд на 30 (см.
+  // memory/decisions/republish-catchup-burst-after-mutation.md). Вместо того
+  // чтобы держать общий поллинг коротким для всех простаивающих тредов, шлём
+  // короткую серию повторных republish() именно в те секунды, когда САМИ знаем,
+  // что состояние вот-вот догонит.
+  const REPUBLISH_CATCHUP_DELAYS_MS = [1000, 3000, 6000, 12000];
+  const pendingCatchupTimers = new Set<ReturnType<typeof setTimeout>>();
+  function republishAfterMutation(): void {
+    republish();
+    for (const delay of REPUBLISH_CATCHUP_DELAYS_MS) {
+      const timer = setTimeout(() => {
+        pendingCatchupTimers.delete(timer);
+        republish();
+      }, delay);
+      timer.unref?.();
+      pendingCatchupTimers.add(timer);
+    }
+  }
+  bb.onDispose(() => {
+    for (const timer of pendingCatchupTimers) clearTimeout(timer);
+    pendingCatchupTimers.clear();
+  });
+
+  bb.rpc.register(rpcContract, {
+    async prState({ threadId }) {
+      return computePrState(bb.sdk, bb.storage.kv, threadId);
+    },
+    async createPr({ threadId }) {
+      const token = await resolveToken(settings);
+      const result = await gatherAndCreate(bb.sdk, bb.storage.kv, token, threadId);
+      republishAfterMutation();
+      return result;
+    },
+    async fastForwardState({ threadId }) {
+      return computeFastForwardState(bb.sdk, threadId);
+    },
+    async fastForward({ threadId }) {
+      const result = await fastForwardBranch(bb.sdk, threadId);
+      republishAfterMutation();
+      return result;
+    },
+    async mergeState({ threadId }) {
+      return computeMergeState(bb.sdk, threadId);
+    },
+    async mergePr({ threadId }) {
+      const result = await mergePullRequest(bb.sdk, bb.storage.kv, threadId);
+      republishAfterMutation();
+      return result;
+    },
+    async mainPullState({ threadId }) {
+      return computeMainPullState(bb.sdk, bb.storage.kv, threadId);
+    },
+  });
+
   const unsubscribeEnv = bb.sdk.subscribe({
     event: "environment:changed",
     callback: republish,
@@ -101,6 +173,7 @@ export default async function plugin(bb: BbPluginApi) {
 
 async function computePrState(
   sdk: Sdk,
+  kv: PluginKvStorage,
   threadId: string,
 ): Promise<{ visible: boolean; reason: string; prUrl: string | null }> {
   const environmentId = await environmentIdOf(sdk, threadId);
@@ -127,6 +200,11 @@ async function computePrState(
     hasUncommittedChanges: workingTree.hasUncommittedChanges,
     aheadCount: mergeBase?.aheadCount ?? 0,
     pr: pr.presence,
+    headAlreadyMerged: await wasHeadAlreadyMerged(
+      kv,
+      environmentId,
+      checkoutHeadSha(status.workspace.checkout),
+    ),
   });
   return { visible: decision.visible, reason: decision.reason, prUrl: pr.url };
 }
@@ -161,6 +239,7 @@ async function computeFastForwardState(
 
 async function gatherAndCreate(
   sdk: Sdk,
+  kv: PluginKvStorage,
   token: string,
   threadId: string,
 ): Promise<{ url: string; number: number }> {
@@ -185,6 +264,11 @@ async function gatherAndCreate(
     hasUncommittedChanges: workingTree.hasUncommittedChanges,
     aheadCount: mergeBase?.aheadCount ?? 0,
     pr: pr.presence,
+    headAlreadyMerged: await wasHeadAlreadyMerged(
+      kv,
+      environmentId,
+      checkoutHeadSha(status.workspace.checkout),
+    ),
   });
   if (!decision.visible || !mergeBase) {
     throw new Error(`Сейчас PR открыть нельзя (${decision.reason}).`);
@@ -246,6 +330,117 @@ async function fastForwardBranch(
   return { ok: true };
 }
 
+async function computeMergeState(
+  sdk: Sdk,
+  threadId: string,
+): Promise<{ visible: boolean; indicator: MergeIndicator; prUrl: string | null }> {
+  const environmentId = await environmentIdOf(sdk, threadId);
+  if (!environmentId) return { visible: false, indicator: "unknown", prUrl: null };
+
+  const pr = await lookupPullRequest(sdk, environmentId);
+  if (pr.state === null || pr.checksState === null) {
+    return { visible: false, indicator: "unknown", prUrl: pr.url };
+  }
+  const decision = decideMergeReadiness({ prState: pr.state, checksState: pr.checksState });
+  return { visible: decision.visible, indicator: decision.indicator, prUrl: pr.url };
+}
+
+// Мёржим тем же способом (squash), которым в проекте уже принято доводить
+// ветку до main — см. memory/decisions/fast-forward-ff-only-safe.md. bb сам
+// делает запрос к GitHub (sdk.environments.mergePullRequest), плагину не нужно
+// собирать его руками, как для createPr.
+const MERGE_METHOD = "squash";
+
+async function mergePullRequest(
+  sdk: Sdk,
+  kv: PluginKvStorage,
+  threadId: string,
+): Promise<{ ok: boolean }> {
+  const environmentId = await environmentIdOf(sdk, threadId);
+  if (!environmentId) throw new Error("У треда нет окружения с git.");
+
+  // HEAD берём ДО мёржа: сам мёрдж — только запрос к GitHub API, локальный git
+  // он не трогает, поэтому HEAD не сдвигается. Squash-мёрдж создаёт на GitHub
+  // новый коммит с другим SHA — старые коммиты локальной ветки навсегда
+  // остаются «впереди» базовой по счётчику (aheadCount), хотя по содержимому
+  // уже целиком влиты. Запоминаем ровно этот HEAD как «уже смёржен нами»:
+  // decideVisibility в src/core/visibility.ts прячет по нему кнопку PR, пока
+  // не появится новый коммит (см. wasHeadAlreadyMerged).
+  const headSha = await currentHeadSha(sdk, environmentId);
+  await sdk.environments.mergePullRequest({ environmentId, method: MERGE_METHOD });
+  if (headSha) await kv.set(mergedHeadKey(environmentId), headSha);
+
+  // Мёрдж на GitHub уже прошёл — подтяжка локального main дальше best-effort:
+  // неудача (реф занят в другом worktree/разошёлся) не должна ронять mergePr,
+  // только лечь в KV, чтобы фронт показал причину на месте кнопки Merge.
+  // См. memory/decisions/local-main-pull-after-merge.md.
+  const env = await sdk.environments.get({ environmentId });
+  const base = resolveBase(env);
+  if (base && env.path) {
+    const pull = await runLocalMainPull(gitClient(env.path), base.githubBase);
+    await kv.set(localMainPullKey(environmentId), pull);
+  }
+
+  return { ok: true };
+}
+
+async function computeMainPullState(
+  sdk: Sdk,
+  kv: PluginKvStorage,
+  threadId: string,
+): Promise<{ attempted: boolean; ok: boolean; reason: string | null }> {
+  const environmentId = await environmentIdOf(sdk, threadId);
+  if (!environmentId) return { attempted: false, ok: true, reason: null };
+
+  const stored = await kv.get<LocalMainPullResult>(localMainPullKey(environmentId));
+  if (!stored) return { attempted: false, ok: true, reason: null };
+  return stored.ok
+    ? { attempted: true, ok: true, reason: null }
+    : { attempted: true, ok: false, reason: stored.reason };
+}
+
+async function currentHeadSha(sdk: Sdk, environmentId: string): Promise<string | null> {
+  const status = await sdk.environments.status({ environmentId });
+  return status.outcome === "available" ? checkoutHeadSha(status.workspace.checkout) : null;
+}
+
+// «unborn» (репозиторий без коммитов) и «unknown» (не удалось определить) не
+// несут SHA вовсе — им нечего сравнивать с сохранённым «уже смёржено».
+type WorkspaceCheckout =
+  | { kind: "branch"; headSha: string | null }
+  | { kind: "detached"; headSha: string | null }
+  | { kind: "unborn" }
+  | { kind: "unknown" };
+
+function checkoutHeadSha(checkout: WorkspaceCheckout): string | null {
+  switch (checkout.kind) {
+    case "branch":
+    case "detached":
+      return checkout.headSha;
+    case "unborn":
+    case "unknown":
+      return null;
+  }
+}
+
+function mergedHeadKey(environmentId: string): string {
+  return `merged-head:${environmentId}`;
+}
+
+function localMainPullKey(environmentId: string): string {
+  return `local-main-pull:${environmentId}`;
+}
+
+async function wasHeadAlreadyMerged(
+  kv: PluginKvStorage,
+  environmentId: string,
+  headSha: string | null,
+): Promise<boolean> {
+  if (!headSha) return false;
+  const mergedSha = await kv.get<string>(mergedHeadKey(environmentId));
+  return mergedSha === headSha;
+}
+
 async function environmentIdOf(sdk: Sdk, threadId: string): Promise<string | null> {
   const thread = await sdk.threads.get({ threadId });
   return thread.environmentId;
@@ -260,19 +455,26 @@ async function environmentIdOf(sdk: Sdk, threadId: string): Promise<string | nul
 async function lookupPullRequest(
   sdk: Sdk,
   environmentId: string,
-): Promise<{ presence: PrPresence; url: string | null }> {
+): Promise<{
+  presence: PrPresence;
+  url: string | null;
+  state: PrState | null;
+  checksState: ChecksState | null;
+}> {
   try {
     const pr = await sdk.environments.pullRequest({ environmentId });
     if (pr.outcome === "available") {
-      const { state, url } = pr.pullRequest;
+      const { state, url, checks } = pr.pullRequest;
       const presence: PrPresence =
         state === "open" || state === "draft" ? "open" : "settled";
-      return { presence, url };
+      return { presence, url, state, checksState: checks.state };
     }
-    if (pr.outcome === "absent") return { presence: "absent", url: null };
-    return { presence: "unknown", url: null };
+    if (pr.outcome === "absent") {
+      return { presence: "absent", url: null, state: null, checksState: null };
+    }
+    return { presence: "unknown", url: null, state: null, checksState: null };
   } catch {
-    return { presence: "unknown", url: null };
+    return { presence: "unknown", url: null, state: null, checksState: null };
   }
 }
 
