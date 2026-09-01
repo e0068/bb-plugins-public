@@ -22,12 +22,23 @@ export interface VisibilityInput {
   hasUncommittedChanges: boolean;
   aheadCount: number;
   pr: PrPresence;
+  /**
+   * true, когда текущий HEAD — это ровно тот коммит, который этот же плагин
+   * уже смёржил. После squash-мёрджа `aheadCount` остаётся > 0 (старые коммиты
+   * ветки под другими SHA, чем сквош-коммит в базе, — см.
+   * memory/decisions/pr-button-reappear-on-settled.md), хотя открывать PR не
+   * на что: содержимое уже целиком влито. Флаг ловит именно этот случай, не
+   * трогая `aheadCount` — как только появится новый коммит, HEAD изменится и
+   * флаг сам станет false.
+   */
+  headAlreadyMerged: boolean;
 }
 
 /** Причина скрыта наружу — по ней фронт может подсказать пользователю. */
 export type VisibilityReason =
   | "ready"
   | "dirty"
+  | "already-merged"
   | "nothing-to-pr"
   | "pr-exists"
   | "pr-unknown";
@@ -45,6 +56,8 @@ export function decideVisibility(input: VisibilityInput): VisibilityDecision {
   // absent | settled — PR открыть можно; дальше решают правки и коммиты.
   // Есть несохранённые правки — сперва коммит (кнопка Commit ядра bb).
   if (input.hasUncommittedChanges) return { visible: false, reason: "dirty" };
+  // Тот же HEAD уже смёржен нами же — новых изменений с тех пор нет.
+  if (input.headAlreadyMerged) return { visible: false, reason: "already-merged" };
   // Нечего пиарить — ветка не ушла вперёд базовой.
   if (input.aheadCount <= 0) return { visible: false, reason: "nothing-to-pr" };
   return { visible: true, reason: "ready" };

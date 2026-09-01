@@ -3,7 +3,7 @@
 // оркестратор (fast-forward.ts), который и решает, успех это или ошибка.
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import type { GitPorts, GitRun } from "./fast-forward";
+import type { GitPorts, GitRun } from "./git-run";
 
 const run = promisify(execFile);
 
