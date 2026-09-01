@@ -12,8 +12,8 @@
 // фиксированная вкладка в правой хостовой панели (experimental_fixedTabs), но в
 // bb 0.40.0 navPanel с этой опцией не монтируется и пункт пропадает из сайдбара
 // (см. задачу BP-53), поэтому содержимое перенесено в колонку.
-import { useEffect, useState } from "react";
-import type { MouseEvent as ReactMouseEvent } from "react";
+import { useEffect, useState, useSyncExternalStore } from "react";
+import type { MouseEvent as ReactMouseEvent, ReactNode } from "react";
 import {
   definePluginApp,
   Markdown,
@@ -62,14 +62,33 @@ import {
 } from "./packages/link-navigation/resolve";
 import {
   ResizeHandle,
+  HorizontalResizeHandle,
   useResizableWidth,
+  useResizableHeight,
 } from "./packages/resizable-pane/react";
 import { ProjectSwitcher } from "./packages/project-switcher/react";
 import { rankCandidates } from "./src/suggest";
 import { extractCommandFile } from "./src/hook-script";
 import "./doc-editor.css";
+// Раздел «Workflows» — конструктор workflow, встроенный в панель как ещё один
+// раздел рейки (см. WorkflowsView ниже). Ядро (модель дерева, чистые операции
+// над ним, module-level store) и сам конструктор уже реализованы соседними
+// группами; здесь — только интеграция: RPC-обвязка на wf*-процедуры server.ts
+// и многоколоночная раскладка внутри панели.
+import { editorStore, engineForStore, type StoreKind, type Identity } from "./src/workflow/store";
+import { compile, blankTree, type Engine, type Tree, type Agent, type Phase, type Step } from "./src/workflow/workflow-model";
+import { applyTemplate, setAgentField, nodeAt, type OutlinePath } from "./src/workflow/outline-ops";
+import { agentsMissingTemplate } from "./src/workflow/validity";
+import {
+  OutlineEditor,
+  AgentDetails,
+  type AgentOption,
+  type ProviderCatalogEntry,
+} from "./components/workflow/outline-editor";
 
 const PANEL_PATH = "claude-config";
+
+type Rpc = ReturnType<typeof useRpc<typeof rpcContract>>;
 
 // Разделы средней колонки — выбираются из рейки, определяют, что показать.
 type SectionId =
@@ -78,7 +97,8 @@ type SectionId =
   | "connectors"
   | "skills"
   | "agents"
-  | "toolSearch";
+  | "toolSearch"
+  | "workflows";
 
 // Режим включённого навыка и цель записи (включая off) — как в контракте.
 type SkillMode = "on" | "name-only" | "user-invocable-only";
@@ -243,9 +263,15 @@ function useOpenFile(areaId: string): (path: string) => Promise<void> {
 function ColumnMdDocView({
   areaId,
   initialPath,
+  leading,
+  editButton,
 }: {
   areaId: string;
   initialPath: string;
+  // Прокидываются в MdDocView как есть — хозяин вкладки решает, что показать в
+  // начале общей шапки и чем заменить дефолтную кнопку «Редактировать» (см. md-doc-view).
+  leading?: ReactNode;
+  editButton?: (onClick: () => void) => ReactNode;
 }) {
   const rpc = useRpc<typeof rpcContract>();
   // Вид и флаги Kasimov — из настроек плагина (kasimov*). parse тотален: пока
@@ -285,6 +311,8 @@ function ColumnMdDocView({
       vars={vars}
       followLinks={flags.followLinks}
       frontmatter={flags.frontmatter}
+      leading={leading}
+      editButton={editButton}
     />
   );
 }
@@ -1171,6 +1199,531 @@ function DocTab({ subPath }: PluginNavPanelProps) {
   );
 }
 
+// ---- раздел «Workflows» (перенос bb-plugin-workflow-composer, без колонки кода) ----
+
+// Дерево редактора живёт в module-level editorStore (см. ./src/workflow/store) — общий для конструктора
+// и превью кода нескольких хостовых точек монтирования; здесь читаем его тем же способом.
+const useEditor = () =>
+  useSyncExternalStore(editorStore.subscribe, editorStore.getSnapshot, editorStore.getSnapshot);
+
+interface WfItem {
+  name: string;
+  path: string;
+  store: StoreKind;
+  description: string;
+  hasTree: boolean;
+}
+const AGENT_SCOPE_LABEL: Record<"user" | "project" | "plugin", string> = {
+  user: "личный",
+  project: "проектный",
+  plugin: "плагин",
+};
+
+function useWfAgents(rpc: Rpc, projectId: string | null): AgentOption[] {
+  const [agents, setAgents] = useState<AgentOption[]>([]);
+  useEffect(() => {
+    void rpc.call("wfAgents", { projectId }).then((r) => setAgents(r.agents));
+  }, [rpc, projectId]);
+  return agents;
+}
+
+// Счётчик workflow для рейки (раздел «Workflows»). Обновляется при смене области, как и остальные
+// счётчики; null — пока не загрузился.
+function useWfCount(rpc: Rpc, areaId: string): number | null {
+  const [count, setCount] = useState<number | null>(null);
+  const projectId = areaId === "global" ? null : areaId;
+  useEffect(() => {
+    let alive = true;
+    void rpc.call("wfList", { projectId }).then((r) => {
+      if (alive) setCount((r.items as WfItem[]).length);
+    });
+    return () => {
+      alive = false;
+    };
+  }, [rpc, projectId]);
+  return count;
+}
+
+function useWfProviderCatalog(rpc: Rpc): ProviderCatalogEntry[] {
+  const [catalog, setCatalog] = useState<ProviderCatalogEntry[]>([]);
+  useEffect(() => {
+    void rpc.call("wfProviderCatalog", null).then((r) => setCatalog(r));
+  }, [rpc]);
+  return catalog;
+}
+
+// Поллинг статуса запуска: `wfStatus` — бесплатная операция чтения, текст CLI показываем как есть.
+function pollStatus(rpc: Rpc, runId: string, setOutput: (s: string) => void): void {
+  let ticks = 0;
+  const timer = setInterval(() => {
+    ticks += 1;
+    void rpc.call("wfStatus", { runId }).then((r) => setOutput(r.output));
+    if (ticks >= 15) clearInterval(timer);
+  }, 2000);
+}
+
+// Написанный вручную .js без дерева-мирроора конструктора — показываем исходник как есть, без правки:
+// сохранение поверх него скомпилировало бы заглушку-дерево и стёрло бы настоящий код.
+function CodeOnlyView({ source }: { source: string }) {
+  return (
+    <div className="flex h-full min-h-0 flex-1 flex-col">
+      <div className="border-b border-border px-4 py-2 text-xs text-muted-foreground">
+        Написан вручную — нет дерева конструктора. Только чтение; правьте .js-файл напрямую.
+      </div>
+      <pre className="flex-1 overflow-auto p-4 font-mono text-xs text-foreground" aria-label="workflow source">
+        {source}
+      </pre>
+    </div>
+  );
+}
+
+function WfList({
+  items,
+  onOpen,
+  activePath,
+}: {
+  items: WfItem[];
+  onOpen: (i: WfItem) => void;
+  activePath?: string;
+}) {
+  return (
+    <div className="space-y-1">
+      {items.length === 0 && <div className="px-1 py-0.5 text-xs text-muted-foreground">пусто</div>}
+      {items.map((item) => (
+        <button
+          key={item.path}
+          type="button"
+          onClick={() => onOpen(item)}
+          className={cn(
+            "flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm hover:bg-muted",
+            activePath === item.path && "bg-accent",
+          )}
+          title={item.description || item.name}
+        >
+          <span className="min-w-0 flex-1 truncate">{item.name}</span>
+          {!item.hasTree && (
+            <span className="shrink-0 text-xs text-muted-foreground" title="Файл без дерева конструктора — откроется как код">
+              только код
+            </span>
+          )}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+// Диалог сохранения: имя + хранилище (project → .bb/workflows, движок bb; global → ~/.claude/workflows,
+// движок Claude Code). Движок выводится из хранилища (engineForStore) — они всегда в паре.
+function WfSaveDialog({
+  open,
+  onOpenChange,
+  rpc,
+  projectId,
+  tree,
+  defaultName,
+  defaultStore,
+  onSaved,
+}: {
+  open: boolean;
+  onOpenChange: (v: boolean) => void;
+  rpc: Rpc;
+  projectId: string | null;
+  tree: Tree;
+  defaultName: string;
+  defaultStore: StoreKind;
+  onSaved: (identity: Identity) => void;
+}) {
+  const [name, setName] = useState(defaultName);
+  const [store, setStore] = useState<StoreKind>(defaultStore);
+  useEffect(() => {
+    if (open) {
+      setName(defaultName);
+      setStore(defaultStore);
+    }
+  }, [open, defaultName, defaultStore]);
+
+  const engine: Engine = engineForStore(store);
+
+  const save = async () => {
+    if (!/^[a-z0-9][a-z0-9-]*$/.test(name.trim())) {
+      toast.error("Имя — латиница в нижнем регистре, цифры и дефисы, без пробелов (например review-changes)");
+      return;
+    }
+    // Движок bb требует непустое описание — проверяем здесь, чтобы сохранение не создало невалидный файл.
+    if (engine === "bb" && !tree.description.trim()) {
+      toast.error("Добавьте описание, чтобы сохранить в проект — движку bb оно обязательно");
+      return;
+    }
+    try {
+      const res = await rpc.call("wfSave", { projectId, store, name: name.trim(), source: compile(tree, engine) });
+      toast.success(store === "project" ? "Сохранено в проект" : "Сохранено глобально");
+      onOpenChange(false);
+      onSaved({ store, path: res.path, name: name.trim() });
+    } catch (e) {
+      toast.error("Не удалось сохранить: " + String((e as Error).message ?? e));
+    }
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-sm">
+        <DialogHeader>
+          <DialogTitle>Сохранить workflow</DialogTitle>
+          <DialogDescription>Куда сохранить и под каким именем.</DialogDescription>
+        </DialogHeader>
+        <div className="space-y-3">
+          <label className="block space-y-1.5">
+            <span className="text-xs text-muted-foreground">Куда</span>
+            <select
+              aria-label="save destination"
+              value={store}
+              onChange={(e) => setStore(e.target.value as StoreKind)}
+              className="flex h-9 w-full items-center rounded-md border border-border bg-transparent px-3 text-sm text-foreground outline-none focus-visible:ring-1 focus-visible:ring-ring"
+            >
+              <option value="project" disabled={!projectId}>
+                Проект · .bb/workflows · движок bb{!projectId ? " — нет проекта" : ""}
+              </option>
+              <option value="global">Глобально · ~/.claude/workflows · Claude Code</option>
+            </select>
+          </label>
+          <label className="block space-y-1.5">
+            <span className="text-xs text-muted-foreground">Имя (kebab-case)</span>
+            <Input
+              aria-label="save name"
+              placeholder="review-changes"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+            />
+          </label>
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={() => onOpenChange(false)}>
+            Отмена
+          </Button>
+          <Button onClick={save} aria-label="confirm save">
+            Сохранить
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// Тело раздела «Workflows»: список (кол.2) + сам конструктор (кол.3) + при выбранном шаге-агенте —
+// объединённая колонка 4 (список доступных типов агента либо, после выбора, деталь агента). Колонки
+// 2–3 регулируются независимо, со своими ключами localStorage — так же, как рейка и список раздела в
+// ConfigPanel; колонка 4 ширины не регулирует, занимает всю оставшуюся ширину страницы.
+function WorkflowsView({ rpc, areaId }: { rpc: Rpc; areaId: string }) {
+  const { tree, identity, rawSource } = useEditor();
+  const codeOnly = rawSource != null;
+
+  // Проект workflow — та же ось, что «Область» в шапке Cloud Config: сентинел "global" означает
+  // глобальную область, любое другое значение areaId — id bb-проекта.
+  const projectId = areaId === "global" ? null : areaId;
+  const [items, setItems] = useState<WfItem[]>([]);
+  const [output, setOutput] = useState("");
+  const [saveOpen, setSaveOpen] = useState(false);
+  const [selectedPath, setSelectedPath] = useState<OutlinePath | null>(null);
+  // Объединённая колонка 4 (агенты + деталь): список агентов либо деталь уже
+  // выбранного (файл + настройки). Переключается кликом по агенту / кнопкой «Назад».
+  const [pickerOpen, setPickerOpen] = useState(true);
+
+  const agents = useWfAgents(rpc, projectId);
+  const providerCatalog = useWfProviderCatalog(rpc);
+
+  // Смена области — устаревший выбранный шаг (кол.4) относится к прежнему дереву/проекту.
+  useEffect(() => {
+    setSelectedPath(null);
+  }, [projectId]);
+
+  const refresh = () => {
+    void rpc.call("wfList", { projectId }).then((r) => setItems(r.items as WfItem[]));
+  };
+  // rpc — стабильная ссылка на время жизни панели, refresh — новая функция на каждый рендер; в
+  // зависимостях достаточно того, что реально меняет список.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(refresh, [projectId]);
+
+  const openItem = async (item: WfItem) => {
+    const res = await rpc.call("wfRead", { projectId: projectId, store: item.store, path: item.path });
+    const parsedTree = res.tree as Tree | null;
+    // Нет дерева конструктора → написанный вручную файл: открываем как есть, read-only.
+    editorStore.load(
+      parsedTree ?? blankTree(item.name),
+      { store: item.store, path: item.path, name: item.name },
+      parsedTree ? null : res.source,
+    );
+    setSelectedPath(null);
+  };
+
+  // `bb workflows` работает только с проектными (bb) workflow. Глобальные (~/.claude) — Claude Code,
+  // проверка/запуск для них недоступны из этой панели.
+  const bbRunnable = identity?.store === "project";
+
+  const doValidate = async () => {
+    if (!identity) {
+      toast.error("Сначала сохраните workflow — проверка смотрит файл на диске");
+      return;
+    }
+    if (!bbRunnable) {
+      toast.error("Проверка доступна только для проектных workflow; глобальные выполняются через Claude Code");
+      return;
+    }
+    const res = await rpc.call("wfValidate", { projectId: projectId, store: identity.store, path: identity.path });
+    setOutput(res.output || (res.ok ? "Ошибок нет" : "Есть ошибки"));
+    if (res.ok) toast.success("Проверка прошла");
+    else toast.error("Проверка нашла ошибки — см. вывод ниже");
+  };
+
+  const doRun = async () => {
+    if (!identity) {
+      toast.error("Сначала сохраните workflow — запуск выполняет файл на диске");
+      return;
+    }
+    if (!bbRunnable) {
+      toast.error("Запуск доступен только для проектных workflow; глобальные выполняются через Claude Code");
+      return;
+    }
+    const res = await rpc.call("wfRun", { projectId: projectId, store: identity.store, path: identity.path });
+    setOutput(res.output);
+    if (res.runId) {
+      toast.success("Запущено");
+      pollStatus(rpc, res.runId, setOutput);
+    } else {
+      toast.error("Не удалось запустить — см. вывод ниже");
+    }
+  };
+
+  const doDelete = async () => {
+    if (!identity) return;
+    await rpc.call("wfRemove", { projectId: projectId, store: identity.store, path: identity.path });
+    toast.success("Workflow удалён");
+    editorStore.newWorkflow();
+    setSelectedPath(null);
+    refresh();
+  };
+
+  // Выбранный шаг-агент (для объединённой колонки 4): узел по selectedPath, если это агент, а не фаза/группа.
+  const node: Phase | Step | null = selectedPath ? nodeAt(tree, selectedPath) : null;
+  const selAgent: Agent | null = node && "type" in node && node.type === "agent" ? node : null;
+  // Файл выбранного шаблона-агента — его показывает верхняя половина детали в отображении
+  // Kasimov (тот же MdDocView, что и слот MD Opener). Нет шаблона или пути — верхней половины нет.
+  const selAgentPath: string | null = selAgent ? agents.find((a) => a.value === selAgent.agentType)?.path ?? null : null;
+
+  // Новый выбранный шаг: сразу открыта деталь, если шаблон у него уже назначен, иначе —
+  // список для выбора. Дальше переключение — кликом по агенту в списке или кнопкой «Назад»,
+  // поэтому в зависимостях только selectedPath — правку selAgent.agentType (выбор шаблона)
+  // не должна откатывать pickerOpen обратно.
+  useEffect(() => {
+    setPickerOpen(!selAgent || selAgent.agentType.trim() === "");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedPath]);
+
+  const { width: listWidth, startResize: startListResize } = useResizableWidth({
+    initial: 240,
+    min: 200,
+    max: 400,
+    side: "left",
+    storageKey: "claude-config:wf-list-width",
+  });
+  const { width: constructorWidth, startResize: startConstructorResize } = useResizableWidth({
+    initial: 360,
+    min: 220,
+    max: 760,
+    side: "left",
+    // Ключ с суффиксом -v2: прежняя версия успела записать 540 в localStorage при
+    // монтировании (useResizableWidth пишет ширину и на маунте), из-за чего новый
+    // initial игнорировался. Новый ключ даёт свежий старт 360, тянется до 220.
+    storageKey: "claude-config:wf-constructor-width-v2",
+  });
+  // Объединённая колонка 4 своей регулируемой ширины не имеет — она берёт всю оставшуюся
+  // ширину страницы (flex-1); резервной шириной колонки-списка распоряжается только
+  // constructorWidth (ручка между конструктором и этой колонкой).
+  // Высота верхней половины колонки деталей — файл агента в Kasimov; ручка снизу, тянем вниз — выше.
+  const { height: agentFileHeight, startResize: startAgentFileResize } = useResizableHeight({
+    initial: 280,
+    min: 120,
+    max: 640,
+    storageKey: "claude-config:wf-agent-file-height",
+  });
+
+  // Валидность конструктора: агент годен только с выбранным шаблоном. Пока шаблон не выбран хотя бы у
+  // одного агента — Workflow не валиден, сохранение заблокировано.
+  const invalidAgents = agentsMissingTemplate(tree);
+
+  return (
+    // min-w-0 flex-1 — этот корень сам сидит flex-item'ом в строке ConfigPanel (рядом с рейкой
+    // разделов); без них он не растягивался на всю ширину страницы, а сжимался по контенту —
+    // из-за этого объединённая колонка 4 ниже не могла дотянуться до правого края.
+    <div className="flex h-full min-h-0 min-w-0 flex-1 overflow-x-auto">
+      <div style={{ width: listWidth }} className="flex h-full shrink-0 flex-col overflow-hidden border-r border-border">
+        <div className="flex flex-col gap-2 border-b border-border p-2">
+          <div className="flex flex-wrap gap-1.5">
+            <Button size="sm" onClick={() => setSaveOpen(true)} disabled={codeOnly || invalidAgents > 0}>
+              Сохранить
+            </Button>
+            <Button size="sm" variant="outline" onClick={doValidate} disabled={!bbRunnable}>
+              Проверить
+            </Button>
+            <Button size="sm" variant="outline" onClick={doRun} disabled={!bbRunnable}>
+              Запустить
+            </Button>
+            <Button size="sm" variant="outline" onClick={doDelete} disabled={!identity}>
+              Удалить
+            </Button>
+          </div>
+          {!codeOnly && invalidAgents > 0 && (
+            <p className="text-xs text-muted-foreground">
+              Workflow не валиден: у {invalidAgents} {invalidAgents === 1 ? "агента" : "агентов"} не выбран
+              шаблон. Выберите агент в колонке «Агенты».
+            </p>
+          )}
+        </div>
+        {output && (
+          <pre className="max-h-32 shrink-0 overflow-auto border-b border-border bg-muted p-2 text-xs text-foreground" aria-label="output">
+            {output}
+          </pre>
+        )}
+        <div className="min-h-0 flex-1 overflow-y-auto p-2">
+          <button
+            type="button"
+            onClick={() => {
+              editorStore.newWorkflow();
+              setSelectedPath(null);
+            }}
+            className="mb-3 flex w-full items-center justify-center rounded-md border border-border bg-muted/40 py-1.5 text-xs text-muted-foreground hover:text-foreground"
+          >
+            + Новый workflow
+          </button>
+          {/* Плоский список: разделение по проектам уже задано «Областью» в шапке Cloud Config. */}
+          <WfList items={items} onOpen={openItem} activePath={identity?.path} />
+        </div>
+      </div>
+
+      <ResizeHandle onPointerDown={startListResize} />
+
+      <div style={{ width: constructorWidth }} className="h-full min-h-0 min-w-0 shrink-0 overflow-hidden">
+        {codeOnly ? (
+          <CodeOnlyView source={rawSource!} />
+        ) : (
+          <OutlineEditor
+            agents={agents}
+            selectedPath={selectedPath}
+            onSelect={setSelectedPath}
+          />
+        )}
+      </div>
+
+      <ResizeHandle onPointerDown={startConstructorResize} />
+
+      {!codeOnly && selAgent && (
+        // Колонка 4 — объединённая: список агентов (выбор шаблона) либо, после выбора, деталь —
+        // файл шаблона в отображении Kasimov сверху и правки шага (модель·эфорт, инструкции,
+        // формат вывода) снизу. Своей ширины не держит — занимает всю оставшуюся ширину страницы;
+        // между списком и деталью переключает клик по агенту / кнопка «Назад», а не соседняя колонка.
+        <div className="flex h-full min-h-0 min-w-0 flex-1 flex-col overflow-hidden border-l border-border">
+          {pickerOpen ? (
+            <div className="flex h-full flex-col gap-0.5 overflow-y-auto p-2">
+              <div className="mb-1 px-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                Агенты
+              </div>
+              {agents.map((a) => (
+                <button
+                  key={a.path ?? a.value}
+                  type="button"
+                  onClick={() => {
+                    editorStore.update((draft) =>
+                      applyTemplate(draft, selectedPath!, a.value, { model: a.model, effort: a.effort, provider: a.provider }),
+                    );
+                    setPickerOpen(false);
+                  }}
+                  className="block w-full rounded-md px-2 py-1.5 text-left transition-colors hover:bg-muted"
+                >
+                  <div className="truncate text-sm font-medium">{a.value}</div>
+                  <div className="text-xs text-muted-foreground">{AGENT_SCOPE_LABEL[a.scope ?? "user"]}</div>
+                </button>
+              ))}
+            </div>
+          ) : (
+            <div className="flex h-full min-h-0 flex-col overflow-hidden">
+              {/* Нет файла шаблона (агент ещё не подтянулся/без .md) — своей шапки у
+                  AgentDetails ниже нет, поэтому кнопка назад держится тут отдельно.
+                  Когда файл есть, она уезжает в общую шапку MdDocView (leading ниже) —
+                  так стрелка, путь файла и «Редактировать» оказываются в одной строке. */}
+              {!selAgentPath && (
+                <div className="flex shrink-0 items-center border-b border-border p-1">
+                  <button
+                    type="button"
+                    onClick={() => setPickerOpen(true)}
+                    className="rounded-md px-2 py-1 text-sm text-muted-foreground hover:bg-muted"
+                    aria-label="Назад к списку агентов"
+                  >
+                    ← Агенты
+                  </button>
+                </div>
+              )}
+              {selAgentPath && (
+                <>
+                  <div style={{ height: agentFileHeight }} className="shrink-0 overflow-hidden">
+                    <ColumnMdDocView
+                      areaId={areaId}
+                      initialPath={selAgentPath}
+                      leading={
+                        <button
+                          type="button"
+                          onClick={() => setPickerOpen(true)}
+                          className="mdo-back"
+                          aria-label="Назад к списку агентов"
+                        >
+                          ←
+                        </button>
+                      }
+                      editButton={(onClick) => (
+                        <button
+                          type="button"
+                          onClick={onClick}
+                          className="mdo-btn mdo-btn-icon"
+                          aria-label="Редактировать"
+                          title="Редактировать"
+                        >
+                          <Icon name="Edit" className="size-4" />
+                        </button>
+                      )}
+                    />
+                  </div>
+                  <HorizontalResizeHandle onPointerDown={startAgentFileResize} />
+                </>
+              )}
+              <div className="min-h-0 flex-1 overflow-hidden">
+                <AgentDetails
+                  agent={selAgent}
+                  agents={agents}
+                  providerCatalog={providerCatalog}
+                  onSetField={(patch) => editorStore.update((draft) => setAgentField(draft, selectedPath!, patch))}
+                />
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      <WfSaveDialog
+        open={saveOpen}
+        onOpenChange={setSaveOpen}
+        rpc={rpc}
+        projectId={projectId}
+        tree={tree}
+        defaultName={identity?.name ?? tree.name}
+        defaultStore={identity?.store ?? (projectId ? "project" : "global")}
+        onSaved={(nextIdentity) => {
+          editorStore.load(structuredClone(editorStore.getSnapshot().tree), nextIdentity);
+          refresh();
+        }}
+      />
+    </div>
+  );
+}
+
 function ConfigPanel({ subPath }: PluginNavPanelProps) {
   const rpc = useRpc<typeof rpcContract>();
   const navigate = useBbNavigate();
@@ -1331,6 +1884,9 @@ function ConfigPanel({ subPath }: PluginNavPanelProps) {
       return result.message ?? "Не удалось создать агента.";
     });
 
+  // Счётчик workflow для рейки — из wfList по текущей области (config его не несёт).
+  const wfCount = useWfCount(rpc, areaId);
+
   // Разделы рейки: id → заголовок и число элементов. Считаем из config,
   // чтобы рейка и содержимое не разошлись. null-счётчик — раздел без списка.
   const sections: { id: SectionId; title: string; count: number | null }[] =
@@ -1341,6 +1897,7 @@ function ConfigPanel({ subPath }: PluginNavPanelProps) {
           { id: "connectors", title: "Коннекторы", count: config.connectors.length },
           { id: "skills", title: "Навыки", count: config.skills.length },
           { id: "agents", title: "Агенты", count: config.agents.length },
+          { id: "workflows", title: "Workflows", count: wfCount },
           { id: "toolSearch", title: "Подгрузка инструментов", count: null },
         ]
       : [];
@@ -1451,6 +2008,8 @@ function ConfigPanel({ subPath }: PluginNavPanelProps) {
           <div className="min-h-0 flex-1 overflow-hidden">
             <DocTab subPath={subPath} />
           </div>
+        ) : section === "workflows" ? (
+          <WorkflowsView rpc={rpc} areaId={areaId} />
         ) : section !== null ? (
           <>
             {/* Средняя колонка — список раздела, ограниченной регулируемой ширины. */}

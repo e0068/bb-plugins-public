@@ -13,7 +13,6 @@ export {
   CSS_FIELDS,
   FLAG_FIELDS,
   DEFAULTS,
-  descriptors as kasimovSettingsDescriptors,
   parse as parseKasimovSettings,
   toCssVars as kasimovCssVars,
   toFlags as kasimovFlags,
