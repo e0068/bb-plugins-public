@@ -466,6 +466,57 @@ function MainPullRetryBadge({
   );
 }
 
+// Shows up in the same rightmost spot the "Merge" button holds once the PR
+// is merged and there's nothing uncommitted left to lose — see
+// decideArchiveVisible in src/core/archive-readiness.ts.
+function ArchiveHeaderAction({ threadId }: PluginThreadHeaderActionProps) {
+  const rpc = useRpc<typeof rpcContract>();
+  const mounted = useMounted();
+  const [submitting, setSubmitting] = useState(false);
+  const [archived, setArchived] = useState(false);
+  const fetch = useCallback(() => rpc.call("archiveState", { threadId }), [rpc, threadId]);
+  const visible = useVisible(fetch, mounted);
+
+  const archive = useCallback(() => {
+    if (submitting) return;
+    setSubmitting(true);
+    rpc.call("archiveThread", { threadId }).then(
+      () => {
+        // Set once and never unset, same reasoning as PullRequestHeaderAction's
+        // `created`: hide on our own knowledge right away, without waiting for
+        // the next archiveState refetch.
+        if (mounted.current) setArchived(true);
+        toast.success("Thread archived");
+      },
+      (error: unknown) => {
+        if (mounted.current) setSubmitting(false);
+        toast.error(errorText(error, "Could not archive the thread."));
+      },
+    );
+  }, [rpc, submitting, threadId, mounted]);
+
+  if (!visible || archived) return null;
+
+  return (
+    <Button
+      aria-label="Archive the thread"
+      className={HEADER_ACTION_CLASS}
+      disabled={submitting}
+      onClick={archive}
+      size="sm"
+      type="button"
+      variant="outline"
+    >
+      <Icon
+        aria-hidden="true"
+        className={submitting ? "size-3.5 animate-spin" : "size-3.5"}
+        name={submitting ? "Loading" : "Archive"}
+      />
+      Archive
+    </Button>
+  );
+}
+
 export default definePluginApp((app) => {
   // Registered first: when it's visible, the environment is retiring and the
   // git-dependent buttons below have nothing reliable to show yet anyway.
@@ -492,5 +543,12 @@ export default definePluginApp((app) => {
     id: "merge",
     title: "Merge Pull Request",
     component: MergeHeaderAction,
+  });
+  // Registered last: takes the same rightmost spot "Merge" holds, once the
+  // PR is merged and the tree is clean.
+  app.slots.experimental_threadHeaderAction({
+    id: "archive",
+    title: "Archive the thread",
+    component: ArchiveHeaderAction,
   });
 });

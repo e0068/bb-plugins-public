@@ -38,8 +38,29 @@ export async function runFastForward(ports: GitPorts, base: string): Promise<voi
 // to refuse earlier and more clearly in an already-diverged case, not as the
 // sole line of defense.
 async function hasLiveAheadCommits(ports: GitPorts, base: string): Promise<boolean> {
+  const count = await countAhead(ports, base);
+  return count !== null && count > 0;
+}
+
+async function countAhead(ports: GitPorts, base: string): Promise<number | null> {
   const counted = await ports.run(aheadCountArgs(base));
-  if (counted.code !== 0) return false;
+  if (counted.code !== 0) return null;
   const count = Number.parseInt(counted.stdout.trim(), 10);
-  return Number.isInteger(count) && count > 0;
+  return Number.isInteger(count) ? count : null;
+}
+
+// The button's visibility (server.ts computeFastForwardState) must not trust
+// `sdk.environments.status`'s cached aheadCount: that cache can sit stale at
+// 0 well past the run of a thread's own commits, showing "ready" for a
+// branch that has in fact already diverged — every click then dies with
+// "diverged" and the button never fixes itself (see
+// memory/tasks/in_progress/fast-forward-stale-ahead-status.md). Fetch first
+// — a stale local `origin/<base>` would lie the same way checkMergedContent
+// avoids (merged-content.ts) — then count live. `null` when it can't be
+// measured (network hiccup): the caller falls back to the cached count
+// rather than hiding the button on a shrug.
+export async function liveAheadCount(ports: GitPorts, base: string): Promise<number | null> {
+  const fetched = await ports.run(fetchBaseArgs(base));
+  if (fetched.code !== 0) return null;
+  return countAhead(ports, base);
 }
