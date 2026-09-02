@@ -30,6 +30,7 @@ interface HostOptions {
   prThrows?: boolean;
   mergePullRequest?: () => Promise<unknown>;
   unarchive?: () => Promise<unknown>;
+  archive?: () => Promise<unknown>;
   /** The environment's lifecycle status. Defaults to "ready". */
   environmentStatus?: "destroyed" | "destroying" | "error" | "provisioning" | "ready" | "retiring";
   /**
@@ -82,6 +83,7 @@ function host(options: HostOptions) {
       threads: {
         get: async () => ({ environmentId: options.environmentId }),
         unarchive: options.unarchive ?? (async () => ({ ok: true })),
+        archive: options.archive ?? (async () => ({ ok: true })),
       },
       environments: {
         get: async () => ({
@@ -119,6 +121,12 @@ async function mergeState(options: Parameters<typeof host>[0]) {
   const { bb, harness } = host(options);
   await plugin(bb);
   return harness.behavior.callRpc("mergeState", { threadId: "t1" });
+}
+
+async function archiveState(options: Parameters<typeof host>[0]) {
+  const { bb, harness } = host(options);
+  await plugin(bb);
+  return harness.behavior.callRpc("archiveState", { threadId: "t1" });
 }
 
 describe("prState (wiring)", () => {
@@ -267,6 +275,44 @@ describe("fastForwardState (wiring)", () => {
       reason: "status-unavailable",
     });
   });
+
+  // The one place where the wiring meets real git: with a working copy on
+  // disk, the live ahead-count actually shells out (see liveAheadCount's doc
+  // comment in src/wiring/fast-forward.ts — bb's cached aheadCount can sit
+  // stale at 0 well after the branch has diverged). The path here doesn't
+  // exist, so git refuses to measure — and a refusal must fall back to the
+  // cache, not hide the button on a shrug.
+  it("git can't answer (a working copy that isn't there) → falls back to the cached count", async () => {
+    expect(
+      await fastForwardState({
+        environmentId: "env1",
+        path: "/tmp/does-not-exist-worktree",
+        status: { hasUncommittedChanges: false, aheadCount: 0, behindCount: 3 },
+      }),
+    ).toEqual({ visible: true, reason: "ready" });
+  });
+});
+
+describe("fastForward (wiring)", () => {
+  // env.path in the fake host is a nonexistent directory, so the real git
+  // fetch inside runFastForward inevitably refuses; the actual fetch → live
+  // ahead-check → merge --ff-only sequence is verified without real git in
+  // src/wiring/fast-forward.test.ts. Here we only check that a failed
+  // fastForward still republishes — see the try/finally in server.ts: a
+  // refusal used to leave fastForwardState's cache-backed "ready" answer on
+  // screen until the next 20-second poll, so every click in between failed
+  // the same way with no way for the front end to learn it should re-check.
+  it("a failed fast-forward still publishes \"changed\" so the front end re-checks promptly", async () => {
+    const { bb, harness } = host({
+      environmentId: "env1",
+      path: "/tmp/does-not-exist-worktree",
+      status: { hasUncommittedChanges: false, aheadCount: 0, behindCount: 3 },
+    });
+    await plugin(bb);
+    await expect(harness.behavior.callRpc("fastForward", { threadId: "t1" })).rejects.toThrow();
+    const changed = harness.realtimeSignals.filter((signal) => signal.channel === "changed");
+    expect(changed.length).toBeGreaterThanOrEqual(1);
+  });
 });
 
 describe("mergeState (wiring)", () => {
@@ -381,6 +427,85 @@ describe("wakeUp", () => {
     const { bb, harness } = host({ environmentId: "env1", environmentStatus: "retiring" });
     await plugin(bb);
     await harness.behavior.callRpc("wakeUp", { threadId: "t1" });
+    const changed = harness.realtimeSignals.filter((signal) => signal.channel === "changed");
+    expect(changed).toHaveLength(1);
+  });
+});
+
+describe("archiveState (wiring)", () => {
+  it("PR merged + clean tree → visible", async () => {
+    expect(
+      await archiveState({
+        environmentId: "env1",
+        status: { hasUncommittedChanges: false, aheadCount: 0 },
+        pr: { outcome: "available", state: "merged" },
+      }),
+    ).toEqual({ visible: true, reason: "ready" });
+  });
+
+  it("PR merged + uncommitted changes → hidden (dirty)", async () => {
+    expect(
+      await archiveState({
+        environmentId: "env1",
+        status: { hasUncommittedChanges: true, aheadCount: 0 },
+        pr: { outcome: "available", state: "merged" },
+      }),
+    ).toEqual({ visible: false, reason: "dirty" });
+  });
+
+  it("PR still open → hidden (not-merged), status is never even fetched", async () => {
+    expect(
+      await archiveState({
+        environmentId: "env1",
+        pr: { outcome: "available", state: "open" },
+      }),
+    ).toEqual({ visible: false, reason: "not-merged" });
+  });
+
+  it("no PR at all → hidden (not-merged)", async () => {
+    expect(
+      await archiveState({ environmentId: "env1", pr: { outcome: "absent" } }),
+    ).toEqual({ visible: false, reason: "not-merged" });
+  });
+
+  it("the thread has no environment → hidden", async () => {
+    expect(await archiveState({ environmentId: null })).toEqual({
+      visible: false,
+      reason: "no-environment",
+    });
+  });
+
+  it("git unavailable in the environment after a merge → hidden", async () => {
+    expect(
+      await archiveState({
+        environmentId: "env1",
+        pr: { outcome: "available", state: "merged" },
+      }),
+    ).toEqual({ visible: false, reason: "status-unavailable" });
+  });
+});
+
+describe("archiveThread", () => {
+  it("archives the thread", async () => {
+    const calls: unknown[] = [];
+    const { bb, harness } = host({
+      environmentId: "env1",
+      archive: async () => {
+        calls.push("called");
+        return { ok: true };
+      },
+    });
+    await plugin(bb);
+    expect(await harness.behavior.callRpc("archiveThread", { threadId: "t1" })).toEqual({
+      ok: true,
+    });
+    expect(calls).toHaveLength(1);
+  });
+
+  it("publishes \"changed\" right on success — the front end doesn't wait for polling", async () => {
+    const { bb, harness } = host({ environmentId: "env1" });
+    await plugin(bb);
+    await harness.behavior.callRpc("archiveThread", { threadId: "t1" });
     const changed = harness.realtimeSignals.filter((signal) => signal.channel === "changed");
     expect(changed).toHaveLength(1);
   });

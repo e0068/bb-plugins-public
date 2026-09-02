@@ -7,6 +7,7 @@
 // bb.sdk and wires it together.
 import { defineRpcContract, type BbPluginApi, type PluginKvStorage } from "@get-bb/plugin-sdk";
 import { z } from "zod";
+import { decideArchiveVisible } from "./src/core/archive-readiness";
 import { resolveBase } from "./src/core/base-branch";
 import { isDeletion } from "./src/core/changed-files";
 import { decideFastForward } from "./src/core/fast-forward";
@@ -28,7 +29,7 @@ import { threadChangeTouchesPr } from "./src/core/thread-change";
 import { chooseToken } from "./src/core/token";
 import { type PrPresence } from "./src/core/visibility";
 import { runCreatePr } from "./src/wiring/create-pr";
-import { runFastForward } from "./src/wiring/fast-forward";
+import { liveAheadCount, runFastForward } from "./src/wiring/fast-forward";
 import { ghAuthToken } from "./src/wiring/gh-token";
 import { gitClient } from "./src/wiring/git-client";
 import { githubClient } from "./src/wiring/github-client";
@@ -116,6 +117,14 @@ export const rpcContract = defineRpcContract({
     input: z.object({ threadId: z.string() }).strict(),
     output: z.object({ ok: z.boolean() }),
   },
+  archiveState: {
+    input: z.object({ threadId: z.string() }).strict(),
+    output: z.object({ visible: z.boolean(), reason: z.string() }),
+  },
+  archiveThread: {
+    input: z.object({ threadId: z.string() }).strict(),
+    output: z.object({ ok: z.boolean() }),
+  },
 });
 
 type Sdk = BbPluginApi["sdk"];
@@ -187,6 +196,7 @@ export default async function plugin(bb: BbPluginApi) {
     async createAndMergePr({ threadId }) {
       const token = await resolveToken(settings);
       const created = await gatherAndCreate(bb.sdk, bb.storage.kv, token, threadId);
+      await sleep(CREATE_TO_MERGE_PAUSE_MS);
       const merged = await mergePullRequest(bb.sdk, bb.storage.kv, threadId);
       republishAfterMutation();
       return { url: created.url, number: created.number, mainPull: merged.mainPull };
@@ -195,9 +205,17 @@ export default async function plugin(bb: BbPluginApi) {
       return computeFastForwardState(bb.sdk, threadId);
     },
     async fastForward({ threadId }) {
-      const result = await fastForwardBranch(bb.sdk, threadId);
-      republishAfterMutation();
-      return result;
+      // republish runs on failure too (finally, not just after the return):
+      // a refusal here means the live check just found the branch already
+      // diverged — exactly the state fastForwardState's own cache was
+      // trusting when it showed the button. Without this, the button stayed
+      // "ready" until the next 20s poll and every click in between repeated
+      // the same failure.
+      try {
+        return await fastForwardBranch(bb.sdk, threadId);
+      } finally {
+        republishAfterMutation();
+      }
     },
     async mergeState({ threadId }) {
       return computeMergeState(bb.sdk, threadId);
@@ -232,6 +250,14 @@ export default async function plugin(bb: BbPluginApi) {
     // turn starts, no message is added).
     async wakeUp({ threadId }) {
       await bb.sdk.threads.unarchive({ threadId });
+      republishAfterMutation();
+      return { ok: true };
+    },
+    async archiveState({ threadId }) {
+      return computeArchiveState(bb.sdk, threadId);
+    },
+    async archiveThread({ threadId }) {
+      await bb.sdk.threads.archive({ threadId });
       republishAfterMutation();
       return { ok: true };
     },
@@ -352,6 +378,30 @@ async function computeWakeUpState(sdk: Sdk, threadId: string): Promise<{ visible
   return { visible: decideWakeUpVisible(env.status) };
 }
 
+// Cheap-first: a merged check needs no working-copy status at all, so a PR
+// that isn't merged yet answers without ever touching environments.status —
+// same economy as peekNextPrNumber avoiding gh for a missing working copy.
+async function computeArchiveState(
+  sdk: Sdk,
+  threadId: string,
+): Promise<{ visible: boolean; reason: string }> {
+  const environmentId = await environmentIdOf(sdk, threadId);
+  if (!environmentId) return { visible: false, reason: "no-environment" };
+
+  const pr = await lookupPullRequest(sdk, environmentId);
+  if (pr.state !== "merged") return { visible: false, reason: "not-merged" };
+
+  const status = await sdk.environments.status({ environmentId });
+  if (status.outcome !== "available") {
+    return { visible: false, reason: `status-${status.outcome}` };
+  }
+
+  return decideArchiveVisible({
+    prState: pr.state,
+    hasUncommittedChanges: status.workspace.workingTree.hasUncommittedChanges,
+  });
+}
+
 async function computeFastForwardState(
   sdk: Sdk,
   threadId: string,
@@ -372,9 +422,14 @@ async function computeFastForwardState(
   }
 
   const { workingTree, mergeBase } = status.workspace;
+  // The cached aheadCount can lie stale at 0 (see liveAheadCount's doc
+  // comment in src/wiring/fast-forward.ts) — measure live when there's a
+  // working copy to measure in, and fall back to the cache only when that
+  // measurement itself is unavailable.
+  const liveAhead = env.path ? await liveAheadCount(gitClient(env.path), base.githubBase) : null;
   const decision = decideFastForward({
     behindCount: mergeBase?.behindCount ?? 0,
-    aheadCount: mergeBase?.aheadCount ?? 0,
+    aheadCount: liveAhead ?? mergeBase?.aheadCount ?? 0,
     hasUncommittedChanges: workingTree.hasUncommittedChanges,
   });
   return { visible: decision.visible, reason: decision.reason };
@@ -492,6 +547,15 @@ async function computeMergeState(
 // itself makes the request to GitHub (sdk.environments.mergePullRequest),
 // the plugin doesn't need to build it by hand like it does for createPr.
 const MERGE_METHOD = "squash";
+
+// Don't merge right after creating: GitHub isn't ready to merge a PR that
+// fresh and the merge leg fails. See
+// memory/decisions/pause-between-create-and-merge.md.
+const CREATE_TO_MERGE_PAUSE_MS = 5000;
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
 
 async function mergePullRequest(
   sdk: Sdk,
