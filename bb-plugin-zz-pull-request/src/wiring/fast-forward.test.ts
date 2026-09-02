@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { runFastForward, type GitPorts, type GitRun } from "./fast-forward";
 
-// Фейковый run: очередь ответов по argv + запись обращений. Ответ выбирается
-// функцией по первому аргументу (fetch/merge), без запуска git.
+// Fake run: queues replies by argv + records calls. The reply is picked by a
+// function based on the first argument (fetch/merge), no real git runs.
 function fakePorts(
   reply: (args: readonly string[]) => GitRun,
 ): { ports: GitPorts; calls: string[][] } {
@@ -22,7 +22,7 @@ const ok: GitRun = { code: 0, stdout: "", stderr: "" };
 const aheadZero: GitRun = { code: 0, stdout: "0\n", stderr: "" };
 
 describe("runFastForward", () => {
-  it("успех: fetch → живой ahead=0 → merge --ff-only, в этом порядке", async () => {
+  it("success: fetch → live ahead=0 → merge --ff-only, in that order", async () => {
     const { ports, calls } = fakePorts((args) =>
       args[0] === "rev-list" ? aheadZero : ok,
     );
@@ -34,20 +34,20 @@ describe("runFastForward", () => {
     ]);
   });
 
-  it("fetch упал → бросает и дальше ничего не запускается", async () => {
+  it("fetch failed → throws and nothing further runs", async () => {
     const { ports, calls } = fakePorts((args) =>
-      args[0] === "fetch" ? { code: 1, stdout: "", stderr: "нет сети" } : ok,
+      args[0] === "fetch" ? { code: 1, stdout: "", stderr: "no network" } : ok,
     );
-    await expect(runFastForward(ports, "main")).rejects.toThrow("нет сети");
+    await expect(runFastForward(ports, "main")).rejects.toThrow("no network");
     expect(calls).toEqual([["fetch", "origin", "main"]]);
   });
 
-  it("живой ahead > 0 → читаемый отказ плагина, merge не запускается", async () => {
+  it("live ahead > 0 → readable plugin refusal, merge does not run", async () => {
     const { ports, calls } = fakePorts((args) =>
       args[0] === "rev-list" ? { code: 0, stdout: "2\n", stderr: "" } : ok,
     );
     await expect(runFastForward(ports, "main")).rejects.toThrow(
-      "Перемотка сейчас невозможна (diverged).",
+      "Fast-forward is not possible right now (diverged).",
     );
     expect(calls).toEqual([
       ["fetch", "origin", "main"],
@@ -55,7 +55,7 @@ describe("runFastForward", () => {
     ]);
   });
 
-  it("rev-list упал или дал не число → не блокирует, идём в merge как раньше", async () => {
+  it("rev-list failed or gave a non-number → does not block, proceeds to merge as before", async () => {
     const { ports, calls } = fakePorts((args) =>
       args[0] === "rev-list" ? { code: 1, stdout: "", stderr: "boom" } : ok,
     );
@@ -67,7 +67,7 @@ describe("runFastForward", () => {
     ]);
   });
 
-  it("merge не перемотка (расхождение, живая проверка его не поймала) → бросает с текстом git", async () => {
+  it("merge is not a fast-forward (diverged, the live check missed it) → throws with git's text", async () => {
     const { ports } = fakePorts((args) => {
       if (args[0] === "rev-list") return aheadZero;
       if (args[0] === "merge") {
@@ -80,12 +80,12 @@ describe("runFastForward", () => {
     );
   });
 
-  it("без stderr берёт stdout, иначе код возврата", async () => {
+  it("no stderr falls back to stdout, otherwise the exit code", async () => {
     const { ports } = fakePorts((args) => {
       if (args[0] === "rev-list") return aheadZero;
       if (args[0] === "merge") return { code: 128, stdout: "", stderr: "" };
       return ok;
     });
-    await expect(runFastForward(ports, "main")).rejects.toThrow("код 128");
+    await expect(runFastForward(ports, "main")).rejects.toThrow("code 128");
   });
 });

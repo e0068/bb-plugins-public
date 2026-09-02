@@ -1,6 +1,7 @@
-// Слой 3 — единственная точка сетевого эффекта: fetch к api.github.com.
-// Реализует порт CreatePrPorts, не бросая на HTTP-коде: код и тело уходят
-// в оркестратор (create-pr.ts), который и решает, успех это или ошибка.
+// Layer 3 — the single network effect point: fetch to api.github.com.
+// Implements the CreatePrPorts port without throwing on an HTTP error code:
+// the status and body go to the orchestrator (create-pr.ts), which decides
+// whether it's a success or a failure.
 import type { GithubRequest } from "../core/github-requests";
 import type { CreatePrPorts, GithubResponse } from "./create-pr";
 

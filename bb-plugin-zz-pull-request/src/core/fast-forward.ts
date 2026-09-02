@@ -1,11 +1,12 @@
-// Слой 1 — решение, показывать ли кнопку «Fast Forward» (догнать базовую ветку).
-// Ноль эффектов.
+// Layer 1 — decides whether to show the "Fast Forward" button (catch up with
+// the base branch). Zero effects.
 //
-// Перемотка нужна ровно когда ветку МОЖНО перемотать без слияния: она отстала
-// от базы (behind > 0) и не имеет своих коммитов впереди (ahead = 0). Свои
-// коммиты впереди означают расхождение — тогда это уже merge/rebase, а не
-// fast-forward, и кнопку прячем. Несохранённые правки тоже прячут: ff-merge на
-// грязном дереве упирается в незакоммиченное.
+// Fast-forwarding is needed exactly when the branch CAN be fast-forwarded
+// without a merge: it's behind the base (behind > 0) and has no commits of
+// its own ahead (ahead = 0). Commits ahead mean divergence — that's a
+// merge/rebase situation, not a fast-forward, so the button is hidden.
+// Uncommitted changes also hide it: an ff-merge on a dirty tree runs into
+// uncommitted work.
 
 export interface FastForwardInput {
   behindCount: number;
@@ -13,7 +14,7 @@ export interface FastForwardInput {
   hasUncommittedChanges: boolean;
 }
 
-/** Причина скрыта наружу — по ней фронт может подсказать пользователю. */
+/** The reason is exposed outward — the front end can use it to hint the user. */
 export type FastForwardReason = "ready" | "up-to-date" | "diverged" | "dirty";
 
 export interface FastForwardDecision {
@@ -22,11 +23,11 @@ export interface FastForwardDecision {
 }
 
 export function decideFastForward(input: FastForwardInput): FastForwardDecision {
-  // Грязное дерево — ff-merge упрётся в незакоммиченное; сперва коммит.
+  // Dirty tree — the ff-merge would run into uncommitted work; commit first.
   if (input.hasUncommittedChanges) return { visible: false, reason: "dirty" };
-  // Не отстаём — перематывать нечего.
+  // Not behind — nothing to fast-forward.
   if (input.behindCount <= 0) return { visible: false, reason: "up-to-date" };
-  // Есть свои коммиты впереди — ветки разошлись, чистый fast-forward невозможен.
+  // Commits ahead of our own — branches diverged, a clean fast-forward is impossible.
   if (input.aheadCount > 0) return { visible: false, reason: "diverged" };
   return { visible: true, reason: "ready" };
 }

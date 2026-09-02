@@ -1,24 +1,25 @@
-// Слой 3 (оболочка) — best-effort подтяжка локального `main` после мёржа PR.
+// Layer 3 (shell) — best-effort update of the local `main` after a PR merge.
 //
-// `<base>` почти всегда зачекаучена ГДЕ-ТО в общем репозитории — обычно в
-// интеграционной копии, отдельной от рабочей копии окружения (env.path), в
-// которой запущен сам плагин (см. AGENTS.md, «Параллельные сессии»). Прямой
-// `git fetch origin <base>:<base>` из env.path на это натыкается: git
-// корректно ОТКАЗЫВАЕТСЯ обновлять ветку, зачекаученную в другом worktree —
-// но раньше плагин на этом и останавливался, хотя обновить её ВСЁ ЖЕ можно:
-// штатным `fetch`+`merge --ff-only`, выполненным ПРЯМО в той рабочей копии
-// (`git -C <path> ...`) — это то же самое, что сделал бы человек руками. См.
+// `<base>` is almost always checked out SOMEWHERE in the shared repository —
+// usually in the integration copy, separate from the environment's working
+// copy (env.path) that the plugin itself runs in (see AGENTS.md, "Parallel
+// sessions"). A direct `git fetch origin <base>:<base>` from env.path runs
+// into that: git correctly REFUSES to update a branch checked out in another
+// worktree — but previously the plugin just stopped there, even though the
+// branch CAN still be updated: with a regular `fetch`+`merge --ff-only` run
+// DIRECTLY in that working copy (`git -C <path> ...`) — the same thing a
+// human would do by hand. See
 // memory/decisions/local-main-pull-targets-actual-checkout.md.
 //
-// Поэтому сначала спрашиваем `git worktree list --porcelain` (дёшево,
-// read-only, не имеет значения, откуда запущено — worktree общие для всего
-// репозитория) и ищем, в каком worktree сейчас зачекаучена `<base>`:
-// - нашли → `fetch`+`merge --ff-only` там же (`-C <path>`);
-// - нигде не зачекаучена → прежний прямой путь, `fetch origin <base>:<base>`.
-// В обоих случаях `--ff-only`/рефспек без `+` не дают неfast-forward
-// обновление — гарантия от git, не от плагина. Отказ — ожидаемый штатный
-// исход (разошлись, или в целевой копии несохранённые правки), не дефект:
-// результат — Result, не throw.
+// So first we ask `git worktree list --porcelain` (cheap, read-only, doesn't
+// matter where it's run from — worktrees are shared across the whole
+// repository) and look for which worktree currently has `<base>` checked out:
+// - found → `fetch`+`merge --ff-only` right there (`-C <path>`);
+// - not checked out anywhere → the old direct path, `fetch origin <base>:<base>`.
+// In both cases `--ff-only`/a refspec with no `+` prevent a non-fast-forward
+// update — a guarantee from git, not from the plugin. A refusal is an
+// expected, ordinary outcome (diverged, or uncommitted changes in the target
+// copy), not a defect: the result is a Result, not a throw.
 import { findBaseCheckout, parseWorktreeList } from "../core/git-worktrees";
 import {
   fastForwardAtArgs,

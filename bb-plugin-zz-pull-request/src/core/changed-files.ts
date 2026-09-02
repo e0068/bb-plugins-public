@@ -1,13 +1,13 @@
-// Слой 1 — классификация статуса изменённого файла git. Ноль эффектов.
-// Оболочка по этому решению либо читает новое содержимое (upsert), либо ставит
-// удаление в дереве. Статусы приходят из bb `environments.status`.
+// Layer 1 — classifies the status of a changed git file. Zero effects.
+// Based on this decision the shell either reads the new content (upsert) or
+// records a deletion in the tree. Statuses come from bb `environments.status`.
 
 export type GitFileStatus = "?" | "??" | "A" | "C" | "D" | "M" | "R" | "U";
 
 /**
- * Только `D` — удаление файла из дерева. Остальное (добавление, изменение,
- * копия, переименование, неотслеживаемый) требует нового содержимого, то есть
- * upsert. `U` (конфликт) в чистом дереве не встречается; трактуем как upsert.
+ * Only `D` means the file was deleted from the tree. Everything else (added,
+ * modified, copied, renamed, untracked) requires new content, i.e. an upsert.
+ * `U` (conflict) doesn't occur in a clean tree; treated as an upsert.
  */
 export function isDeletion(status: GitFileStatus): boolean {
   return status === "D";

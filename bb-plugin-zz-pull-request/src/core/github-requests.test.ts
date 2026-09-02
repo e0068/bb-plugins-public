@@ -4,6 +4,8 @@ import {
   buildTreeEntries,
   commitRequest,
   createRefRequest,
+  latestIssueRequest,
+  parseNextPrNumber,
   pullRequestRequest,
   treeRequest,
   updateRefRequest,
@@ -14,7 +16,7 @@ import {
 const repo: RepoRef = { owner: "e0068", repo: "bb-plugins" };
 
 describe("blobRequest", () => {
-  it("POST git/blobs с содержимым и кодировкой", () => {
+  it("POST git/blobs with content and encoding", () => {
     expect(blobRequest(repo, "hello", "utf-8")).toEqual({
       method: "POST",
       path: "/repos/e0068/bb-plugins/git/blobs",
@@ -24,7 +26,7 @@ describe("blobRequest", () => {
 });
 
 describe("buildTreeEntries", () => {
-  it("upsert берёт sha из карты, delete даёт sha: null", () => {
+  it("upsert takes sha from the map, delete gives sha: null", () => {
     const files: ChangedFile[] = [
       { kind: "upsert", path: "a.ts", content: "x", encoding: "utf-8" },
       { kind: "delete", path: "old.ts" },
@@ -35,7 +37,7 @@ describe("buildTreeEntries", () => {
     ]);
   });
 
-  it("нет sha для upsert — ошибка, а не тихий пропуск", () => {
+  it("no sha for an upsert — an error, not a silent skip", () => {
     const files: ChangedFile[] = [
       { kind: "upsert", path: "a.ts", content: "x", encoding: "utf-8" },
     ];
@@ -44,7 +46,7 @@ describe("buildTreeEntries", () => {
 });
 
 describe("treeRequest", () => {
-  it("POST git/trees с base_tree и записями", () => {
+  it("POST git/trees with base_tree and entries", () => {
     const entries = [{ path: "a", mode: "100644" as const, type: "blob" as const, sha: "s" }];
     expect(treeRequest(repo, "base-tree", entries)).toEqual({
       method: "POST",
@@ -55,7 +57,7 @@ describe("treeRequest", () => {
 });
 
 describe("commitRequest", () => {
-  it("POST git/commits с одним родителем", () => {
+  it("POST git/commits with a single parent", () => {
     expect(
       commitRequest(repo, { message: "m", treeSha: "t", parentSha: "p" }),
     ).toEqual({
@@ -66,8 +68,8 @@ describe("commitRequest", () => {
   });
 });
 
-describe("ref-запросы", () => {
-  it("create — POST git/refs с полным ref", () => {
+describe("ref requests", () => {
+  it("create — POST git/refs with the full ref", () => {
     expect(createRefRequest(repo, "feature", "c")).toEqual({
       method: "POST",
       path: "/repos/e0068/bb-plugins/git/refs",
@@ -75,7 +77,7 @@ describe("ref-запросы", () => {
     });
   });
 
-  it("update — PATCH git/refs/heads/<branch> с force", () => {
+  it("update — PATCH git/refs/heads/<branch> with force", () => {
     expect(updateRefRequest(repo, "feature", "c")).toEqual({
       method: "PATCH",
       path: "/repos/e0068/bb-plugins/git/refs/heads/feature",
@@ -85,7 +87,7 @@ describe("ref-запросы", () => {
 });
 
 describe("pullRequestRequest", () => {
-  it("POST pulls с head/base", () => {
+  it("POST pulls with head/base", () => {
     expect(
       pullRequestRequest(repo, { title: "T", body: "B", head: "feature", base: "main" }),
     ).toEqual({
@@ -93,5 +95,32 @@ describe("pullRequestRequest", () => {
       path: "/repos/e0068/bb-plugins/pulls",
       body: { title: "T", body: "B", head: "feature", base: "main" },
     });
+  });
+});
+
+describe("latestIssueRequest", () => {
+  it("GET issues, newest first, one result", () => {
+    expect(latestIssueRequest(repo)).toEqual({
+      method: "GET",
+      path: "/repos/e0068/bb-plugins/issues?state=all&per_page=1",
+    });
+  });
+});
+
+describe("parseNextPrNumber", () => {
+  it("latest issue/PR number 41 → next is 42", () => {
+    expect(parseNextPrNumber([{ number: 41 }])).toBe(42);
+  });
+
+  it("no issues or PRs yet → next is 1", () => {
+    expect(parseNextPrNumber([])).toBe(1);
+  });
+
+  it("not an array (an error body) → unknown", () => {
+    expect(parseNextPrNumber({ message: "Not Found" })).toBeNull();
+  });
+
+  it("array entry without a number field → unknown", () => {
+    expect(parseNextPrNumber([{}])).toBeNull();
   });
 });

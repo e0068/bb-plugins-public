@@ -1,14 +1,15 @@
-// Слой 1 — решение, показывать ли кнопку «Merge» и какой индикатор проверок у неё
-// рисовать. Ноль эффектов.
+// Layer 1 — decides whether to show the "Merge" button and which checks
+// indicator to render on it. Zero effects.
 //
-// Кнопка «Merge» — зеркало кнопки «Pull Request»: та живёт, пока PR ещё не открыт
-// (см. visibility.ts); эта — с момента, когда открытый PR появился, до его слияния
-// или закрытия. Видна ровно при живом (не draft, не закрытом, не слитом) PR.
+// The "Merge" button mirrors the "Pull Request" button: that one lives while
+// the PR is not yet open (see visibility.ts); this one lives from the moment
+// an open PR appears until it's merged or closed. Visible exactly for a live
+// (not draft, not closed, not merged) PR.
 
-/** `checks.state` из ответа GitHub через bb: агрегированный статус проверок PR. */
+/** `checks.state` from the GitHub response via bb: the PR's aggregated checks status. */
 export type ChecksState = "failing" | "no_checks" | "passing" | "pending" | "unknown";
 
-/** `pullRequest.state` из ответа bb. */
+/** `pullRequest.state` from the bb response. */
 export type PrState = "closed" | "draft" | "merged" | "open";
 
 export interface MergeReadinessInput {
@@ -16,7 +17,7 @@ export interface MergeReadinessInput {
   checksState: ChecksState;
 }
 
-/** Что рисовать на кнопке — форма иконки под агрегированный статус проверок. */
+/** What to render on the button — the icon shape matching the aggregated checks status. */
 export type MergeIndicator = "success" | "failure" | "pending" | "neutral" | "unknown";
 
 export interface MergeReadinessDecision {
@@ -25,8 +26,8 @@ export interface MergeReadinessDecision {
 }
 
 export function decideMergeReadiness(input: MergeReadinessInput): MergeReadinessDecision {
-  // Мёржить можно только живой, не-draft PR — draft и settled кнопку прячут,
-  // симметрично тому, как их прячет кнопка «Pull Request» на своей стороне.
+  // Only a live, non-draft PR can be merged — draft and settled PRs hide the
+  // button, mirroring how the "Pull Request" button hides for them on its side.
   if (input.prState !== "open") return { visible: false, indicator: "unknown" };
   return { visible: true, indicator: mergeIndicator(input.checksState) };
 }

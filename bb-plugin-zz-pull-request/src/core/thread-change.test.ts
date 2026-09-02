@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import fc from "fast-check";
 import { threadChangeTouchesPr } from "./thread-change";
 
-// Прочие виды изменения треда из контракта bb — все, кроме environment-changed.
+// The other kinds of thread change from the bb contract — everything except environment-changed.
 const irrelevant = [
   "archived-changed",
   "events-appended",
@@ -22,19 +22,19 @@ const irrelevant = [
 ];
 
 describe("threadChangeTouchesPr", () => {
-  it("environment-changed → задевает PR", () => {
+  it("environment-changed → touches the PR", () => {
     expect(threadChangeTouchesPr(["environment-changed"])).toBe(true);
   });
 
-  it("виды-хартбиты сами по себе не задевают PR", () => {
+  it("heartbeat kinds on their own don't touch the PR", () => {
     expect(threadChangeTouchesPr(irrelevant)).toBe(false);
   });
 
-  it("пустой список изменений → не задевает", () => {
+  it("empty change list → doesn't touch", () => {
     expect(threadChangeTouchesPr([])).toBe(false);
   });
 
-  it("environment-changed в любой примеси → задевает", () => {
+  it("environment-changed mixed in anywhere → touches", () => {
     fc.assert(
       fc.property(fc.subarray(irrelevant), fc.array(fc.constantFrom(...irrelevant)), (a, b) => {
         expect(threadChangeTouchesPr([...a, "environment-changed", ...b])).toBe(true);
@@ -42,7 +42,7 @@ describe("threadChangeTouchesPr", () => {
     );
   });
 
-  it("без environment-changed из любого набора хартбитов → не задевает", () => {
+  it("no environment-changed in any set of heartbeats → doesn't touch", () => {
     fc.assert(
       fc.property(fc.array(fc.constantFrom(...irrelevant)), (changes) => {
         expect(threadChangeTouchesPr(changes)).toBe(false);

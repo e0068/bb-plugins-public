@@ -9,8 +9,9 @@ const files: ChangedFile[] = [
   { kind: "delete", path: "old.ts" },
 ];
 
-// Фейковый send: очередь ответов + запись обращений. Ответ выбирается функцией
-// по запросу, что позволяет вернуть 200/404 на getBranch head в разных тестах.
+// Fake send: queues replies + records calls. The reply is picked by a
+// function based on the request, which lets tests return 200/404 for
+// getBranch head in different cases.
 function fakePorts(
   reply: (req: GithubRequest) => GithubResponse,
 ): { ports: CreatePrPorts; calls: GithubRequest[] } {
@@ -47,7 +48,7 @@ function happyReply(headExists: boolean) {
       return { status: 200, data: {} };
     if (req.path.endsWith("/pulls"))
       return { status: 201, data: { html_url: "https://github.com/e0068/bb-plugins/pull/7", number: 7 } };
-    throw new Error(`неожиданный запрос: ${req.method} ${req.path}`);
+    throw new Error(`unexpected request: ${req.method} ${req.path}`);
   };
 }
 
@@ -56,12 +57,12 @@ const input = {
   baseBranch: "main",
   headBranch: "feature",
   files,
-  title: "Заголовок",
-  body: "Тело",
+  title: "Title",
+  body: "Body",
 };
 
 describe("runCreatePr", () => {
-  it("новая ветка: blob→tree→commit→createRef→pull, возвращает url и номер", async () => {
+  it("new branch: blob→tree→commit→createRef→pull, returns url and number", async () => {
     const { ports, calls } = fakePorts(happyReply(false));
     const result = await runCreatePr(ports, input);
 
@@ -69,42 +70,42 @@ describe("runCreatePr", () => {
       url: "https://github.com/e0068/bb-plugins/pull/7",
       number: 7,
     });
-    // Блоб создаётся только для upsert (не для delete).
+    // A blob is only created for upsert (not for delete).
     const blobCalls = calls.filter((c) => c.path.endsWith("/git/blobs"));
     expect(blobCalls).toHaveLength(1);
-    // Дерево несёт base_tree базы, коммит — родителя базы.
+    // The tree carries the base's base_tree, the commit its parent.
     const tree = calls.find((c) => c.path.endsWith("/git/trees"))!;
     expect((tree.body as { base_tree: string }).base_tree).toBe("base-tree");
     const commit = calls.find((c) => c.path.endsWith("/git/commits"))!;
     expect((commit.body as { parents: string[] }).parents).toEqual(["base-commit"]);
-    // Ветки не было — создаём ref, а не обновляем.
+    // The branch didn't exist — we create the ref rather than update it.
     expect(calls.some((c) => c.method === "POST" && c.path.endsWith("/git/refs"))).toBe(true);
     expect(calls.some((c) => c.method === "PATCH")).toBe(false);
   });
 
-  it("ветка уже на remote: ref обновляется (PATCH), а не создаётся", async () => {
+  it("branch already on remote: ref is updated (PATCH), not created", async () => {
     const { ports, calls } = fakePorts(happyReply(true));
     await runCreatePr(ports, input);
     expect(calls.some((c) => c.method === "PATCH" && c.path.includes("/git/refs/heads/feature"))).toBe(true);
     expect(calls.some((c) => c.method === "POST" && c.path.endsWith("/git/refs"))).toBe(false);
   });
 
-  it("база не найдена — понятная ошибка", async () => {
+  it("base not found — a clear error", async () => {
     const { ports } = fakePorts((req) =>
       req.path.endsWith("/branches/main")
         ? { status: 404, data: { message: "Not Found" } }
         : { status: 200, data: {} },
     );
-    await expect(runCreatePr(ports, input)).rejects.toThrow(/база «main» не найдена/);
+    await expect(runCreatePr(ports, input)).rejects.toThrow(/base "main" not found/);
   });
 
-  it("сбой создания блоба — ошибка с шагом и сообщением GitHub", async () => {
+  it("blob creation failure — an error with the step and GitHub's message", async () => {
     const { ports } = fakePorts((req) => {
       if (req.path.endsWith("/branches/main")) return base;
       if (req.path.endsWith("/git/blobs"))
         return { status: 403, data: { message: "rate limited" } };
       return { status: 200, data: {} };
     });
-    await expect(runCreatePr(ports, input)).rejects.toThrow(/создание блоба a\.ts.*rate limited/);
+    await expect(runCreatePr(ports, input)).rejects.toThrow(/creating blob a\.ts.*rate limited/);
   });
 });

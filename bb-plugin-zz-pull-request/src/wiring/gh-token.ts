@@ -1,7 +1,8 @@
-// Слой 3 — точка эффекта: чтение токена из авторизованного `gh` на машине bb.
-// `gh auth token` печатает валидный bearer-токен для api.github.com; так PR
-// открывается без личного токена в настройках. Ошибку (нет gh / не залогинен)
-// глушим в null — выше это станет понятным сообщением пользователю.
+// Layer 3 — effect point: read the token from an authorized `gh` on the bb
+// machine. `gh auth token` prints a valid bearer token for api.github.com,
+// so a PR can be opened without a personal token in settings. Errors (no gh /
+// not logged in) are swallowed into null — the caller turns that into a
+// readable message for the user.
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 

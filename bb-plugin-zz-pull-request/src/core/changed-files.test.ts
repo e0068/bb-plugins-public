@@ -2,11 +2,11 @@ import { describe, expect, it } from "vitest";
 import { isDeletion, type GitFileStatus } from "./changed-files";
 
 describe("isDeletion", () => {
-  it("D — удаление", () => {
+  it("D — deletion", () => {
     expect(isDeletion("D")).toBe(true);
   });
 
-  it("всё прочее — не удаление (upsert)", () => {
+  it("everything else — not a deletion (upsert)", () => {
     const others: GitFileStatus[] = ["?", "??", "A", "C", "M", "R", "U"];
     for (const status of others) expect(isDeletion(status)).toBe(false);
   });

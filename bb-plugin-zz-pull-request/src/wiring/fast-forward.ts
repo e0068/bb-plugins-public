@@ -1,17 +1,19 @@
-// Слой 3 (оболочка), тестируемая часть — оркестрация перемотки ветки к базе.
+// Layer 3 (shell), the testable part — orchestrates fast-forwarding the
+// branch to the base.
 //
-// Последовательность (fetch → живая перепроверка ahead → merge --ff-only) и
-// разбор кодов возврата живут здесь и проверяются фейковым `run` без git. Сам
-// `run` (запуск процесса) — в git-client.ts, единственной точке эффекта.
+// The sequence (fetch → live re-check of ahead → merge --ff-only) and the
+// parsing of exit codes live here and are verified with a fake `run`, no
+// real git. The actual `run` (spawning the process) is in git-client.ts, the
+// single effect point.
 //
-// Между тем, как фронт решил показать кнопку, и кликом по ней вызывающая
-// сторона (server.ts) уже опиралась на `sdk.environments.status` — кэш bb,
-// который может не подхватить свежий коммит вовремя (см.
+// Between the moment the front end decides to show the button and the click
+// on it, the caller (server.ts) already relied on `sdk.environments.status` —
+// a bb cache that can be slow to pick up a fresh commit (see
 // memory/tasks/in_progress/fast-forward-stale-ahead-status.md). `--ff-only`
-// сам по себе безопасен и на расхождении просто откажет, но сырым текстом
-// git. Поэтому сразу после `fetch` (когда `origin/<base>` уже свежий) сами
-// живьём считаем `ahead` — и, если он положительный, отказываем читаемым
-// текстом плагина раньше, чем это сделает git.
+// is safe on its own and simply refuses on divergence, but with raw git
+// text. So right after `fetch` (once `origin/<base>` is already fresh) we
+// count `ahead` live ourselves — and if it's positive, we refuse with the
+// plugin's own readable text before git gets the chance to.
 import { aheadCountArgs, fastForwardArgs, fetchBaseArgs } from "../core/git-commands";
 import { gitRunMessage, type GitPorts, type GitRun } from "./git-run";
 
@@ -23,17 +25,18 @@ export async function runFastForward(ports: GitPorts, base: string): Promise<voi
     throw new Error(`git fetch origin ${base}: ${gitRunMessage(fetched)}`);
   }
   if (await hasLiveAheadCommits(ports, base)) {
-    throw new Error("Перемотка сейчас невозможна (diverged).");
+    throw new Error("Fast-forward is not possible right now (diverged).");
   }
   const merged = await ports.run(fastForwardArgs(base));
   if (merged.code !== 0) {
-    throw new Error(`не удалось перемотать на origin/${base}: ${gitRunMessage(merged)}`);
+    throw new Error(`could not fast-forward to origin/${base}: ${gitRunMessage(merged)}`);
   }
 }
 
-// Код возврата или нечисловой вывод не блокируют перемотку: `--ff-only`
-// и сам по себе безопасен, живая проверка — только чтобы отказать раньше
-// и понятнее в заведомо расхождённом случае, а не единственная линия защиты.
+// A non-zero exit code or non-numeric output does not block the
+// fast-forward: `--ff-only` is safe on its own; the live check only exists
+// to refuse earlier and more clearly in an already-diverged case, not as the
+// sole line of defense.
 async function hasLiveAheadCommits(ports: GitPorts, base: string): Promise<boolean> {
   const counted = await ports.run(aheadCountArgs(base));
   if (counted.code !== 0) return false;

@@ -1,25 +1,27 @@
-// Слой 1 — разбор git-remote в пару {owner, repo}. Ноль зависимостей, ноль эффектов.
+// Layer 1 — parses a git remote into an {owner, repo} pair. Zero dependencies, zero effects.
 //
-// bb нигде не хранит origin-url окружения, поэтому его читают из git-config
-// воркри (см. git-config.ts) и разбирают здесь. Цель — обычный github.com;
-// enterprise-хосты сознательно не поддержаны: у них другой API-базовый URL.
+// bb doesn't store the environment's origin url anywhere, so it's read from
+// the worktree's git-config (see git-config.ts) and parsed here. The target
+// is plain github.com; enterprise hosts are deliberately unsupported — they
+// have a different API base URL.
 
 export interface RepoRef {
   owner: string;
   repo: string;
 }
 
-// GitHub допускает в owner/repo буквы, цифры, дефис, точку и подчёркивание.
+// GitHub allows letters, digits, hyphen, dot and underscore in owner/repo.
 const SEGMENT = /^[A-Za-z0-9._-]+$/;
 
-/** Хост, из-под которого работает публичный REST GitHub. */
+/** The host the public GitHub REST API runs under. */
 const GITHUB_HOST = "github.com";
 
 /**
- * Разбирает git-remote GitHub в {owner, repo} или возвращает null, если это не
- * похоже на github.com-remote. Понимает scp-форму (`git@github.com:o/r.git`) и
- * url-форму (`https://github.com/o/r`, `ssh://git@github.com/o/r.git`), с
- * необязательным `.git` на конце и `user@` в url-форме.
+ * Parses a GitHub git-remote into {owner, repo}, or returns null if it
+ * doesn't look like a github.com remote. Understands the scp form
+ * (`git@github.com:o/r.git`) and the url form (`https://github.com/o/r`,
+ * `ssh://git@github.com/o/r.git`), with an optional trailing `.git` and
+ * `user@` in the url form.
  */
 export function parseGithubRemote(url: string): RepoRef | null {
   const trimmed = url.trim();
@@ -34,9 +36,9 @@ interface HostAndPath {
   path: string;
 }
 
-// scp-форма `user@host:path` (без схемы) и url-форма `scheme://[user@]host/path`
-// — единственные две формы git-remote. Возвращаем сырой host (возможно с
-// `user@`) и путь; чистит их вызывающий.
+// The scp form `user@host:path` (no scheme) and the url form
+// `scheme://[user@]host/path` are the only two git-remote forms. We return
+// the raw host (possibly with `user@`) and path; the caller cleans them up.
 function splitHostAndPath(url: string): HostAndPath | null {
   const scheme = /^(?:ssh|git|https?):\/\/(.+)$/.exec(url);
   if (scheme) {
@@ -50,7 +52,7 @@ function splitHostAndPath(url: string): HostAndPath | null {
   return null;
 }
 
-/** Отбрасывает необязательные `user@` и `:port` вокруг имени хоста. */
+/** Strips the optional `user@` and `:port` around the hostname. */
 function hostname(rawHost: string): string {
   const afterUser = rawHost.includes("@")
     ? rawHost.slice(rawHost.lastIndexOf("@") + 1)

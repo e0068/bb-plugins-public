@@ -1,13 +1,14 @@
-// Слой 1 — разбор `git worktree list --porcelain` и поиск, в каком worktree
-// сейчас зачекаучена базовая ветка. Ноль эффектов.
+// Layer 1 — parses `git worktree list --porcelain` and finds which worktree
+// currently has the base branch checked out. Zero effects.
 //
-// Формат porcelain — блоки строк на каждый worktree, разделённые пустой
-// строкой: `worktree <path>`, `HEAD <sha>`, затем `branch <ref>` (обычная
-// ветка) либо `detached`/`bare` (без ветки). Нужна только пара path↔branch.
+// The porcelain format is blocks of lines per worktree, separated by a blank
+// line: `worktree <path>`, `HEAD <sha>`, then either `branch <ref>` (a
+// regular branch) or `detached`/`bare` (no branch). Only the path↔branch
+// pair is needed.
 
 export interface GitWorktree {
   path: string;
-  /** `null` — detached HEAD, bare-репозиторий или неопределимо. */
+  /** `null` — detached HEAD, a bare repository, or undeterminable. */
   branch: string | null;
 }
 
@@ -37,7 +38,7 @@ export function parseWorktreeList(output: string): readonly GitWorktree[] {
   return worktrees;
 }
 
-/** Путь worktree, где сейчас зачекаучена `<base>`, либо `null`, если нигде. */
+/** The worktree path where `<base>` is currently checked out, or `null` if nowhere. */
 export function findBaseCheckout(
   worktrees: readonly GitWorktree[],
   base: string,

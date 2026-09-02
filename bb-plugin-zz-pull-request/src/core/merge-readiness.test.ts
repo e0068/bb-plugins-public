@@ -6,35 +6,35 @@ const prStates: PrState[] = ["closed", "draft", "merged", "open"];
 const checksStates: ChecksState[] = ["failing", "no_checks", "passing", "pending", "unknown"];
 
 describe("decideMergeReadiness", () => {
-  it("PR открыт + проверки прошли → видна, индикатор success", () => {
+  it("PR open + checks passing → visible, indicator success", () => {
     expect(decideMergeReadiness({ prState: "open", checksState: "passing" })).toEqual({
       visible: true,
       indicator: "success",
     });
   });
 
-  it("PR открыт + проверки провалены → видна, индикатор failure", () => {
+  it("PR open + checks failing → visible, indicator failure", () => {
     expect(decideMergeReadiness({ prState: "open", checksState: "failing" })).toEqual({
       visible: true,
       indicator: "failure",
     });
   });
 
-  it("PR открыт + проверки идут → видна, индикатор pending", () => {
+  it("PR open + checks running → visible, indicator pending", () => {
     expect(decideMergeReadiness({ prState: "open", checksState: "pending" })).toEqual({
       visible: true,
       indicator: "pending",
     });
   });
 
-  it("PR открыт + проверок нет вовсе → видна, индикатор neutral", () => {
+  it("PR open + no checks at all → visible, indicator neutral", () => {
     expect(decideMergeReadiness({ prState: "open", checksState: "no_checks" })).toEqual({
       visible: true,
       indicator: "neutral",
     });
   });
 
-  it("PR открыт + статус проверок неизвестен → видна, индикатор unknown", () => {
+  it("PR open + checks status unknown → visible, indicator unknown", () => {
     expect(decideMergeReadiness({ prState: "open", checksState: "unknown" })).toEqual({
       visible: true,
       indicator: "unknown",
@@ -42,7 +42,7 @@ describe("decideMergeReadiness", () => {
   });
 
   for (const prState of ["closed", "draft", "merged"] as const) {
-    it(`PR не открыт (${prState}) — прячет, чем бы ни были проверки`, () => {
+    it(`PR not open (${prState}) — hides, regardless of checks`, () => {
       expect(decideMergeReadiness({ prState, checksState: "passing" })).toEqual({
         visible: false,
         indicator: "unknown",
@@ -50,7 +50,7 @@ describe("decideMergeReadiness", () => {
     });
   }
 
-  it("инвариант: видна ⇔ prState === open", () => {
+  it("invariant: visible ⇔ prState === open", () => {
     fc.assert(
       fc.property(
         fc.constantFrom(...prStates),
