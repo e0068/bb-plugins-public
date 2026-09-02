@@ -3,13 +3,13 @@ import { describe, expect, it } from "vitest";
 import { extractCommandFile } from "../src/hook-script";
 
 describe("extractCommandFile", () => {
-  it("берёт файл, который читает команда (не только скрипт по расширению)", () => {
+  it("takes the file the command reads (not just a script by extension)", () => {
     expect(
       extractCommandFile("cat /Users/e0068/.claude/output-checklist.json"),
     ).toBe("/Users/e0068/.claude/output-checklist.json");
   });
 
-  it("берёт путь скрипта, отсекая интерпретатор и флаги", () => {
+  it("takes the script path, stripping the interpreter and flags", () => {
     expect(extractCommandFile("bash ~/.claude/hooks/foo.sh --flag")).toBe(
       "~/.claude/hooks/foo.sh",
     );
@@ -18,29 +18,29 @@ describe("extractCommandFile", () => {
     );
   });
 
-  it("сохраняет плейсхолдеры окружения в пути", () => {
+  it("preserves environment placeholders in the path", () => {
     expect(
       extractCommandFile('$CLAUDE_PROJECT_DIR/.claude/hooks/x.py "$1"'),
     ).toBe("$CLAUDE_PROJECT_DIR/.claude/hooks/x.py");
   });
 
-  it("прямой запуск файла без интерпретатора", () => {
+  it("direct file execution without an interpreter", () => {
     expect(extractCommandFile("/abs/path/check.py")).toBe("/abs/path/check.py");
   });
 
-  it("снимает кавычки с токена-пути", () => {
+  it("strips quotes from the path token", () => {
     expect(extractCommandFile("bash '~/hooks/check.sh'")).toBe(
       "~/hooks/check.sh",
     );
   });
 
-  it("инлайновая команда без файлового аргумента → null", () => {
+  it("an inline command without a file argument → null", () => {
     expect(extractCommandFile("jq -r '.tool_input.command'")).toBeNull();
     expect(extractCommandFile('echo "hello"')).toBeNull();
     expect(extractCommandFile("bash -c 'exit 0'")).toBeNull();
   });
 
-  it("голое имя файла без пути не считается файлом (нет разделителя)", () => {
+  it("a bare file name without a path isn't treated as a file (no separator)", () => {
     expect(extractCommandFile("echo build.sh done")).toBeNull();
   });
 });

@@ -8,42 +8,42 @@ import {
 } from "../src/scaffold";
 
 describe("slugifyName", () => {
-  it("приводит к строчным и заменяет пробелы на дефис", () => {
+  it("lowercases and replaces spaces with a hyphen", () => {
     expect(slugifyName("My New Skill")).toBe("my-new-skill");
   });
 
-  it("схлопывает повторы разделителей в один дефис", () => {
+  it("collapses repeated separators into a single hyphen", () => {
     expect(slugifyName("a  b__c")).toBe("a-b-c");
   });
 
-  it("срезает дефисы по краям", () => {
+  it("trims hyphens from the edges", () => {
     expect(slugifyName("  -hello- ")).toBe("hello");
   });
 
-  it("выбрасывает недопустимые символы", () => {
-    expect(slugifyName("Привет! v2")).toBe("v2");
+  it("discards disallowed characters", () => {
+    expect(slugifyName("@@@ v2")).toBe("v2");
   });
 
-  it("пустой ввод даёт пустой слаг", () => {
+  it("empty input gives an empty slug", () => {
     expect(slugifyName("   ")).toBe("");
     expect(slugifyName("!!!")).toBe("");
   });
 });
 
 describe("isValidName", () => {
-  it("имя с латиницей или цифрой допустимо", () => {
+  it("a name with Latin letters or digits is valid", () => {
     expect(isValidName("skill")).toBe(true);
     expect(isValidName("v2")).toBe(true);
   });
 
-  it("имя без допустимых символов недопустимо", () => {
+  it("a name without any allowed characters is invalid", () => {
     expect(isValidName("   ")).toBe(false);
     expect(isValidName("!!!")).toBe(false);
   });
 });
 
 describe("skillTemplate", () => {
-  it("подставляет имя в frontmatter и заголовок", () => {
+  it("substitutes the name into the frontmatter and heading", () => {
     const text = skillTemplate("my-skill");
     expect(text).toContain("name: my-skill");
     expect(text).toContain("# my-skill");
@@ -53,7 +53,7 @@ describe("skillTemplate", () => {
 });
 
 describe("agentTemplate", () => {
-  it("подставляет имя в frontmatter", () => {
+  it("substitutes the name into the frontmatter", () => {
     const text = agentTemplate("my-agent");
     expect(text).toContain("name: my-agent");
     expect(text.startsWith("---\n")).toBe(true);

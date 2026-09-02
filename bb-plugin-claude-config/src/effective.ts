@@ -1,9 +1,9 @@
-// Слой 1 — сведение нескольких областей настроек в одно действующее значение.
+// Layer 1 — merging multiple settings scopes into one effective value.
 //
-// Claude Code читает настройки уровнями и берёт более узкий уровень поверх
-// более широкого: user → project → local → managed. Плагин правит два из них
-// (user и local), поэтому здесь список идёт от широкого к узкому, а побеждает
-// последний, где значение вообще задано.
+// Claude Code reads settings by level and lets a narrower level override a
+// broader one: user → project → local → managed. The plugin edits two of
+// them (user and local), so the list here goes from broad to narrow, and
+// the last level where a value is actually set wins.
 
 import type {
   McpServerState,
@@ -12,11 +12,11 @@ import type {
   ToolSearchMode,
 } from "./settings-doc";
 
-/** Плагина нет в настройках — значит он не включён. */
+/** Plugin absent from settings — means it's not enabled. */
 const PLUGIN_DEFAULT = "off" as const;
-/** Навыка нет в skillOverrides — значит он виден полностью. */
+/** Skill absent from skillOverrides — means it's fully visible. */
 const SKILL_DEFAULT = "on" as const;
-/** Переменная не задана — Claude Code ведёт себя как `auto` (порог по числу). */
+/** Variable unset — Claude Code behaves like `auto` (threshold by count). */
 const TOOL_SEARCH_DEFAULT = "auto" as const;
 
 export type EffectivePlugin = Exclude<PluginToggle, "inherit">;
@@ -40,9 +40,10 @@ export function resolveToolSearch(
 export type EffectiveMcpServer = Exclude<McpServerState, "inherit">;
 
 /**
- * Свёртка состояния MCP-сервера. Умолчание зависит от `enableAllProjectMcpServers`:
- * при нём сервер без явной записи считается включённым, иначе выключенным. Явные
- * `on`/`off` на любом уровне (последний победивший) старше умолчания.
+ * Resolves an MCP server's state. The default depends on
+ * `enableAllProjectMcpServers`: when set, a server with no explicit entry is
+ * considered enabled, otherwise disabled. An explicit `on`/`off` at any
+ * level (last one wins) takes priority over the default.
  */
 export function resolveMcpServer(
   levels: McpServerState[],
@@ -51,7 +52,7 @@ export function resolveMcpServer(
   return resolve(levels, enableAll ? "on" : "off");
 }
 
-/** Действующее `enableAllProjectMcpServers`: последний заданный уровень, иначе false. */
+/** Effective `enableAllProjectMcpServers`: the last level that sets it, otherwise false. */
 export function resolveEnableAllMcp(levels: (boolean | undefined)[]): boolean {
   for (let index = levels.length - 1; index >= 0; index -= 1) {
     const level = levels[index];
@@ -61,15 +62,15 @@ export function resolveEnableAllMcp(levels: (boolean | undefined)[]): boolean {
 }
 
 /**
- * «Своё» значение MCP-сервера при минимальной записи: если после снятия
- * локального оверрайда сервер и так даст target, пишем `inherit` (вон из обоих
- * массивов), иначе ставим явно.
+ * The MCP server's "own" value for a minimal write: if, after removing the
+ * local override, the server would resolve to `target` anyway, write
+ * `inherit` (drop it from both arrays); otherwise set it explicitly.
  *
- * `broaderStates` — состояния сервера на уровнях старше редактируемого.
- * `enableAllLevels` — `enableAllProjectMcpServers` ВСЕХ уровней, включая
- * редактируемый: `setMcpServer` его не трогает, поэтому при `inherit` он
- * продолжает задавать умолчание, и без него решение считается с неверным
- * фолбэком (тумблер бы молча не сработал).
+ * `broaderStates` — the server's states at levels broader than the one being
+ * edited. `enableAllLevels` — `enableAllProjectMcpServers` at ALL levels,
+ * including the one being edited: `setMcpServer` doesn't touch it, so under
+ * `inherit` it keeps supplying the default, and without it the decision
+ * would use the wrong fallback (the toggle would silently fail to work).
  */
 export function decideMcpOwn(
   broaderStates: McpServerState[],

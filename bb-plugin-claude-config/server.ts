@@ -1,10 +1,11 @@
-// bb-plugin-claude-config — бэкенд: разрешение областей, чтение и запись файлов
-// настроек Claude Code и RPC-контракт для панели.
+// bb-plugin-claude-config — backend: area resolution, reading and writing
+// Claude Code settings files, and the RPC contract for the panel.
 //
-// Слой ввода-вывода. Вся логика сборки представления и правки документа — в
-// чистых, покрытых тестами модулях под src/; здесь только проводка: разрешить
-// пути области, прочитать файлы, отдать их в чистый слой, записать результат с
-// CAS-защитой и превратить конфликт/битый файл в ответ, а не в исключение.
+// I/O layer. All logic for building the view and editing the document lives
+// in pure, test-covered modules under src/; here it's just wiring: resolve
+// area paths, read files, hand them to the pure layer, write the result with
+// CAS protection, and turn a conflict/corrupt file into a response rather
+// than an exception.
 import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import { homedir } from "node:os";
@@ -13,7 +14,7 @@ import { defineRpcContract, type BbPluginApi } from "@get-bb/plugin-sdk";
 import { z } from "zod";
 
 import * as sd from "./src/settings-doc";
-import { SettingsParseError } from "./src/settings-doc";
+import { HookDefinitionParseError, SettingsParseError } from "./src/settings-doc";
 import {
   decideMcpOwn,
   resolvePlugin,
@@ -35,45 +36,48 @@ import {
   skillTemplate,
   slugifyName,
 } from "./src/scaffold";
-// Прямой импорт чистого модуля (не barrel index): иначе сервер потянул бы
-// React-компонент MdDocView и его CSS в серверный бандл.
+// Direct import of the pure module (not the barrel index): otherwise the
+// server would pull the React component MdDocView and its CSS into the
+// server bundle.
 import {
   NATIVE_VIEWER_TOKEN_DEFAULTS,
   buildDescriptors,
 } from "./packages/md-doc-view/kasimov-settings";
-// Перенос workflow-конструктора (bb-plugin-workflow-composer → сюда): ядро
-// дерево↔.js остаётся DOM-свободным модулем под src/workflow, сервер здесь
-// лишь читает/пишет файлы и зовёт `bb workflows` — как и в исходном плагине.
+// Port of the workflow builder (bb-plugin-workflow-composer → here): the
+// tree<->.js core stays a DOM-free module under src/workflow; the server
+// here only reads/writes files and calls `bb workflows` — same as in the
+// original plugin.
 import { parse as parseWorkflow, readMetaDescription } from "./src/workflow/workflow-model";
 
-// --- схемы, общие для сервера и панели ---------------------------------
+// --- schemas shared between the server and the panel --------------------
 
-// Режим включённого навыка (без off) и цель записи (включая off). «inherit»
-// в контракт не выносим: панель им не оперирует, сервер сам решает, когда
-// оставить ключ, а когда снять.
+// Enabled-skill mode (without off) and write target (including off).
+// "inherit" isn't exposed in the contract: the panel doesn't operate on it,
+// the server itself decides when to keep the key and when to drop it.
 const skillMode = z.enum(["on", "name-only", "user-invocable-only"]);
 const skillTarget = z.enum(["on", "name-only", "user-invocable-only", "off"]);
-// Подгрузка инструментов: режим при включённой (Всегда/Авто) и цель записи (+off).
+// Tool search loading: mode when enabled (Always/Auto) and write target (+off).
 const toolSearchModeOn = z.enum(["on", "auto"]);
 const toolSearchTarget = z.enum(["on", "off", "auto"]);
 
-// Итог записи: ok — записали; conflict — файл сменили под нами; parse-error —
-// файл нельзя безопасно править; not-found — область не разрешилась.
+// Write outcome: ok — written; conflict — file changed under us; parse-error —
+// file can't be safely edited; not-found — area didn't resolve.
 const writeResult = z.object({
   outcome: z.enum(["ok", "conflict", "parse-error", "not-found"]),
   message: z.string().nullable(),
 });
 
-// Итог создания навыка/агента. `created` — файл записан, `path` ведёт к нему
-// (панель его открывает); `exists` — файл с таким именем уже есть; `invalid`
-// — во вводе не осталось допустимых символов; `not-found` — область не найдена.
+// Outcome of creating a skill/agent. `created` — file written, `path` points
+// to it (the panel opens it); `exists` — a file with that name already
+// exists; `invalid` — no valid characters remained in the input; `not-found`
+// — area not found.
 const createResult = z.object({
   outcome: z.enum(["created", "exists", "invalid", "not-found"]),
   path: z.string().nullable(),
   message: z.string().nullable(),
 });
 
-// Содержимое документа: `sha256` нужен панели для CAS-записи при правке.
+// Document contents: the panel needs `sha256` for a CAS write on edit.
 const docContent = z.object({
   path: z.string(),
   content: z.string().nullable(),
@@ -81,12 +85,12 @@ const docContent = z.object({
   sha256: z.string().nullable(),
 });
 
-// Хук для правой вкладки: в отличие от `docContent`, отдаёт сырую команду
-// (не markdown) и `sha256`, чтобы панель могла её отредактировать и сохранить
-// через `writeHook` с CAS. `event`/`matcher` — для заголовка вкладки.
-// `definition` — весь хук как JSON (контекст для показа), `filePath`/
-// `fileContent` — файл, который команда читает или запускает (`cat x.json`,
-// `bash foo.sh`), если он опознан и прочитан в границах области.
+// Hook for the right-hand tab: unlike `docContent`, returns the raw command
+// (not markdown) and `sha256`, so the panel can edit and save it via
+// `writeHook` with CAS. `event`/`matcher` are for the tab title.
+// `definition` — the whole hook as JSON (context for display), `filePath`/
+// `fileContent` — the file the command reads or runs (`cat x.json`,
+// `bash foo.sh`), if it's recognized and read within the area's bounds.
 const hookDetail = z.object({
   path: z.string(),
   command: z.string().nullable(),
@@ -97,6 +101,10 @@ const hookDetail = z.object({
   definition: z.string().nullable(),
   filePath: z.string().nullable(),
   fileContent: z.string().nullable(),
+  // sha256 of the referenced file's content — CAS for editing it in place
+  // via writeDoc, same as any other file (see hookDetail's own sha256 for
+  // the settings.json entry itself).
+  fileSha256: z.string().nullable(),
 });
 
 const configOutput = z.object({
@@ -111,13 +119,13 @@ const configOutput = z.object({
       name: z.string(),
       marketplace: z.string(),
       version: z.string().nullable(),
-      // Состояние свитча (действующее вкл/выкл) и гашение строки: в проекте
-      // true, если совпадает с глобальным; глобально — всегда false.
+      // Switch state (effective on/off) and row dimming: in the project,
+      // true if it matches the global value; globally, always false.
       value: z.boolean(),
       dimmed: z.boolean(),
-      // Каталог плагина — есть, если строку можно открыть.
+      // Plugin directory — present if the row can be opened.
       installPath: z.string().nullable(),
-      // Оценка «веса» в токенах (манифест+README); null — не удалось прочитать.
+      // Estimated "weight" in tokens (manifest+README); null — couldn't read it.
       tokens: z.number().nullable(),
     }),
   ),
@@ -126,11 +134,11 @@ const configOutput = z.object({
       name: z.string(),
       origin: z.enum(["mcpjson", "user", "local"]),
       transport: z.string(),
-      // toggleable — только серверы .mcp.json; у read-only value всегда true.
+      // toggleable — only .mcp.json servers; for read-only, value is always true.
       toggleable: z.boolean(),
       value: z.boolean(),
       dimmed: z.boolean(),
-      // Оценка веса определения коннектора в токенах.
+      // Estimated weight of the connector definition in tokens.
       tokens: z.number().nullable(),
     }),
   ),
@@ -138,15 +146,15 @@ const configOutput = z.object({
     z.object({
       name: z.string(),
       origin: z.enum(["personal", "project"]),
-      // Тоггл (вкл/выкл) и режим при включённом; в проекте dimmed — совпало
-      // с глобальным.
+      // Toggle (on/off) and mode when enabled; in the project, dimmed means
+      // it matches the global value.
       enabled: z.boolean(),
       mode: skillMode,
       dimmed: z.boolean(),
-      // Абсолютный путь к SKILL.md — панель открывает его хостовым опенером.
-      // null — навык-сирота (строка override осталась, файла на диске нет).
+      // Absolute path to SKILL.md — the panel opens it with the host opener.
+      // null — orphaned skill (the override entry remains, but no file on disk).
       path: z.string().nullable(),
-      // Оценка веса SKILL.md в токенах.
+      // Estimated weight of SKILL.md in tokens.
       tokens: z.number().nullable(),
     }),
   ),
@@ -154,9 +162,9 @@ const configOutput = z.object({
     z.object({
       name: z.string(),
       origin: z.enum(["personal", "project"]),
-      // Абсолютный путь к файлу агента — панель открывает его по нему.
+      // Absolute path to the agent file — the panel opens it via this path.
       path: z.string(),
-      // Оценка веса файла агента в токенах.
+      // Estimated weight of the agent file in tokens.
       tokens: z.number().nullable(),
     }),
   ),
@@ -166,8 +174,12 @@ const configOutput = z.object({
       matcher: z.string().nullable(),
       command: z.string(),
       origin: z.enum(["user", "project", "local"]),
-      index: z.number().int().nonnegative(),
-      // false — хук вырезан из файла и лежит в disabled-хранилище (см. setHookEnabled).
+      // Position in the level's flat hook list, as in readHook/writeHook —
+      // except -1, the sentinel `buildHooks` gives a disabled hook: it has
+      // no position, having been cut out of the file entirely.
+      index: z.number().int(),
+      // false — the hook has been cut out of the file and lives in the
+      // disabled store (see setHookEnabled).
       enabled: z.boolean(),
     }),
   ),
@@ -178,10 +190,10 @@ const configOutput = z.object({
   }),
 });
 
-// --- схемы workflow-конструктора (перенос bb-plugin-workflow-composer) ---
-// Дословно из его rpcContract; ключи здесь несут префикс wf, чтобы не
-// столкнуться с одноимёнными процедурами этого плагина (list/read/save и т.п.
-// уже заняты областями настроек).
+// --- workflow builder schemas (port of bb-plugin-workflow-composer) -----
+// Verbatim from its rpcContract; keys here carry a wf prefix so they don't
+// collide with this plugin's identically named procedures (list/read/save
+// etc. are already taken by the settings areas).
 
 const wfStoreEnum = z.enum(["project", "global"]);
 
@@ -193,9 +205,9 @@ const wfWorkflowItem = z.object({
   hasTree: z.boolean(),
 });
 
-/** Ответ getConfig — панель импортирует этот тип, чтобы не разъезжаться. */
+/** getConfig response — the panel imports this type to stay in sync. */
 export type AreaConfig = z.infer<typeof configOutput>;
-/** Итог любой правки — тем же типом пользуется панель. */
+/** Outcome of any edit — the panel uses the same type. */
 export type WriteOutcome = z.infer<typeof writeResult>;
 
 export const rpcContract = defineRpcContract({
@@ -210,14 +222,14 @@ export const rpcContract = defineRpcContract({
     output: configOutput,
   },
   setPlugin: {
-    // Свитч бинарный: value — желаемое действующее вкл/выкл в этой области.
+    // The switch is binary: value — the desired effective on/off in this area.
     input: z
       .object({ areaId: z.string(), key: z.string(), value: z.boolean() })
       .strict(),
     output: writeResult,
   },
   setConnector: {
-    // Тумблер сервера .mcp.json: value — желаемое действующее вкл/выкл в области.
+    // .mcp.json server toggle: value — the desired effective on/off in the area.
     input: z
       .object({ areaId: z.string(), name: z.string(), value: z.boolean() })
       .strict(),
@@ -234,8 +246,9 @@ export const rpcContract = defineRpcContract({
     output: writeResult,
   },
   readConnector: {
-    // Определение сервера как JSON для правой вкладки. origin выбирает источник:
-    // .mcp.json проекта либо секции mcpServers в ~/.claude.json (user/local).
+    // Server definition as JSON for the right-hand tab. origin selects the
+    // source: the project's .mcp.json or the mcpServers sections in
+    // ~/.claude.json (user/local).
     input: z
       .object({
         areaId: z.string(),
@@ -246,10 +259,10 @@ export const rpcContract = defineRpcContract({
     output: docContent,
   },
   readHook: {
-    // Команда хука для правой вкладки. origin выбирает уровень (файл настроек),
-    // index — позицию в списке хуков этого уровня (как в getConfig). В отличие
-    // от readConnector/readSkillFile отдаёт сырую команду и sha256 — панель
-    // умеет её редактировать (см. writeHook).
+    // Hook command for the right-hand tab. origin selects the level (settings
+    // file), index — the position in that level's hook list (as in
+    // getConfig). Unlike readConnector/readSkillFile, this returns the raw
+    // command and sha256 — the panel can edit it (see writeHook).
     input: z
       .object({
         areaId: z.string(),
@@ -260,7 +273,7 @@ export const rpcContract = defineRpcContract({
     output: hookDetail,
   },
   writeHook: {
-    // Сохранение отредактированной команды хука с CAS: expectedSha256 из readHook.
+    // Save the edited hook command with CAS: expectedSha256 comes from readHook.
     input: z
       .object({
         areaId: z.string(),
@@ -276,11 +289,33 @@ export const rpcContract = defineRpcContract({
       message: z.string().nullable(),
     }),
   },
+  writeHookDefinition: {
+    // Save the edited "Definition" JSON with CAS: parses it back into
+    // event/matcher/command (see parseHookDefinitionJson) and replaces the
+    // hook at `index`, moving it to a different event or matcher group if
+    // those changed (see sd.replaceHook). A parse error is reported as
+    // `denied`, same as a corrupt settings file — both are "can't write
+    // this", not a crash.
+    input: z
+      .object({
+        areaId: z.string(),
+        origin: z.enum(["user", "project", "local"]),
+        index: z.number().int().nonnegative(),
+        definition: z.string(),
+        expectedSha256: z.string().nullable(),
+      })
+      .strict(),
+    output: z.object({
+      outcome: z.enum(["written", "conflict", "denied", "not-found"]),
+      sha256: z.string().nullable(),
+      message: z.string().nullable(),
+    }),
+  },
   setHookEnabled: {
-    // Тумблер хука: выключение вырезает запись из файла уровня и хранит её в
-    // kv (disabledHooks:<путь>), включение возвращает её на место. Идентичность
-    // хука — event+matcher+command (см. sameHook), позиции индексов при этом не
-    // используются: они смещаются при каждой правке файла.
+    // Hook toggle: disabling cuts the entry out of the level's file and
+    // stores it in kv (disabledHooks:<path>); enabling puts it back. The
+    // hook's identity is event+matcher+command (see sameHook); index
+    // positions aren't used for this, since they shift on every file edit.
     input: z
       .object({
         areaId: z.string(),
@@ -294,9 +329,10 @@ export const rpcContract = defineRpcContract({
     output: writeResult,
   },
   readSkillFile: {
-    // Имя навыка — из каталога (без `/`, чтобы не выйти за skills). `relPath`
-    // — ссылка внутри SKILL.md относительно его папки; выход за пределы папки
-    // навыка отсекает `rootPath` при чтении, здесь же — грубый фильтр символов.
+    // Skill name — from the directory (no `/`, so it can't escape skills).
+    // `relPath` — a link inside SKILL.md relative to its folder; escaping the
+    // skill's folder is cut off by `rootPath` at read time, here it's just a
+    // coarse character filter.
     input: z
       .object({
         areaId: z.string(),
@@ -307,9 +343,9 @@ export const rpcContract = defineRpcContract({
     output: docContent,
   },
   listMemory: {
-    // Файлы памяти, доступные в области: базовые кандидаты плюс их @-импорты,
-    // разобранные транзитивно (CLAUDE.md → навыки → их собственные импорты).
-    // Только реально существующие файлы.
+    // Memory files available in the area: base candidates plus their
+    // @-imports, resolved transitively (CLAUDE.md -> skills -> their own
+    // imports). Only files that actually exist.
     input: z.object({ areaId: z.string() }).strict(),
     output: z.object({
       entries: z.array(
@@ -318,8 +354,8 @@ export const rpcContract = defineRpcContract({
     }),
   },
   listRefTargets: {
-    // Полный список целей, на которые можно сослаться через @ (навыки и файлы
-    // памяти); ранжирование по запросу — на панели, через suggest.rankCandidates.
+    // Full list of targets that can be referenced via @ (skills and memory
+    // files); ranking by query happens on the panel, via suggest.rankCandidates.
     input: z.object({ areaId: z.string() }).strict(),
     output: z.object({
       targets: z.array(
@@ -332,23 +368,27 @@ export const rpcContract = defineRpcContract({
     }),
   },
   readDoc: {
-    // Читает любой файл в границах области (корень `.claude` и корень проекта).
-    // Абсолютный путь приходит из UI (README плагина, файл памяти, ссылка внутри
-    // документа), но выход за оба корня отсекается на сервере.
+    // Reads any file within the area's bounds (the `.claude` root and the
+    // project root). The absolute path comes from the UI (plugin README,
+    // memory file, a link inside the document), but escaping either root is
+    // cut off on the server.
     input: z.object({ areaId: z.string(), path: z.string() }).strict(),
     output: docContent,
   },
   listDocPaths: {
-    // Подсказки путей для / и @ в редакторе: файлы в поддереве папки документа,
-    // пути относительно неё. В границах области; при ошибке тихо отдаёт [].
+    // Path suggestions for / and @ in the editor: files in the subtree of
+    // the document's folder, paths relative to it. Within the area's bounds;
+    // on error, silently returns [].
     input: z.object({ areaId: z.string(), path: z.string() }).strict(),
     output: z.object({ paths: z.array(z.string()) }),
   },
   resolveOpenTarget: {
-    // Хост для файла в границах области: панель открывает его нативным опенером
-    // bb (experimental_openFilePreview) целью { kind: "host", hostId, path }.
-    // Для проектных файлов — хост источника проекта, для личных (~/.claude) —
-    // primaryHostId сервера. hostId=null — путь вне границ или хост неизвестен.
+    // Host for a file within the area's bounds: the panel opens it with bb's
+    // native opener (experimental_openFilePreview) targeting
+    // { kind: "host", hostId, path }. For project files — the project
+    // source's host, for personal ones (~/.claude) — the server's
+    // primaryHostId. hostId=null — the path is out of bounds or the host is
+    // unknown.
     input: z.object({ areaId: z.string(), path: z.string() }).strict(),
     output: z.object({
       hostId: z.string().nullable(),
@@ -356,7 +396,7 @@ export const rpcContract = defineRpcContract({
     }),
   },
   readPlugin: {
-    // Референс плагина: манифест (определение) и README, если он есть.
+    // Plugin reference: the manifest (definition) and README, if present.
     input: z.object({ areaId: z.string(), key: z.string() }).strict(),
     output: z.object({
       manifestPath: z.string(),
@@ -367,9 +407,9 @@ export const rpcContract = defineRpcContract({
     }),
   },
   writeDoc: {
-    // Сохранение отредактированного документа с CAS: expectedSha256 из readDoc.
-    // Те же границы области, что у чтения. sha256 при успехе — новый, для
-    // продолжения правки без повторного чтения.
+    // Save the edited document with CAS: expectedSha256 comes from readDoc.
+    // Same area bounds as reading. sha256 on success is the new one, so
+    // editing can continue without re-reading.
     input: z
       .object({
         areaId: z.string(),
@@ -385,23 +425,25 @@ export const rpcContract = defineRpcContract({
     }),
   },
   createSkill: {
-    // Создаёт новый навык `<slug>/SKILL.md` в каталоге навыков области (в проекте
-    // — проектный, глобально — личный). Имя нормализуется в слаг на сервере.
-    // `exists` — навык с таким слагом уже есть (create-only не перезаписывает).
+    // Creates a new skill `<slug>/SKILL.md` in the area's skills directory
+    // (project skills dir in a project, personal one globally). The name is
+    // normalized into a slug on the server. `exists` — a skill with that
+    // slug already exists (create-only doesn't overwrite).
     input: z.object({ areaId: z.string(), name: z.string() }).strict(),
     output: createResult,
   },
   createAgent: {
-    // Создаёт новый файл агента `<slug>.md` в каталоге агентов области. Правила
-    // выбора каталога и нормализации имени — как у createSkill.
+    // Creates a new agent file `<slug>.md` in the area's agents directory.
+    // Directory selection and name normalization rules are the same as
+    // createSkill.
     input: z.object({ areaId: z.string(), name: z.string() }).strict(),
     output: createResult,
   },
 
-  // ---- workflow-конструктор (перенос bb-plugin-workflow-composer) ----
-  // Оба хранилища (project `.bb/workflows/` + global `~/.claude/workflows/`),
-  // сплюснутые в один список. projectId может быть null (нет проекта в
-  // фокусе) → проектное хранилище пропускается.
+  // ---- workflow builder (port of bb-plugin-workflow-composer) ----
+  // Both stores (project `.bb/workflows/` + global `~/.claude/workflows/`),
+  // flattened into one list. projectId can be null (no project in focus)
+  // -> the project store is skipped.
   wfList: {
     input: z.object({ projectId: z.string().nullable() }).strict(),
     output: z.object({ items: z.array(wfWorkflowItem) }),
@@ -445,15 +487,15 @@ export const rpcContract = defineRpcContract({
     input: z.object({ runId: z.string() }).strict(),
     output: z.object({ output: z.string() }),
   },
-  // Проекты, которые можно выбрать в селекторе шапки — панель не привязана
-  // только к тому проекту, что сейчас в фокусе у хоста.
+  // Projects selectable in the header selector — the panel isn't tied
+  // exclusively to whichever project the host currently has in focus.
   wfProjects: {
     input: z.null(),
     output: z.array(z.object({ id: z.string(), name: z.string() })),
   },
-  // Типы агентов из личных (~/.claude/agents), проектных (.claude/agents) и
-  // плагинных (~/.claude/plugins/**/agents) каталогов — автокомплит «Agent
-  // type», плюс собственные модель/effort/provider агента (из frontmatter).
+  // Agent types from personal (~/.claude/agents), project (.claude/agents),
+  // and plugin (~/.claude/plugins/**/agents) directories — autocomplete for
+  // "Agent type", plus the agent's own model/effort/provider (from frontmatter).
   wfAgents: {
     input: z.object({ projectId: z.string().nullable() }).strict(),
     output: z.object({
@@ -471,8 +513,8 @@ export const rpcContract = defineRpcContract({
       ),
     }),
   },
-  // Живой каталог провайдер/модель/effort (bb.sdk.providers.list + .models на
-  // провайдера) для колонки деталей агента.
+  // Live provider/model/effort catalog (bb.sdk.providers.list + .models per
+  // provider) for the agent details column.
   wfProviderCatalog: {
     input: z.null(),
     output: z.array(
@@ -483,9 +525,9 @@ export const rpcContract = defineRpcContract({
       }),
     ),
   },
-  // Пишет полный .md агента (frontmatter + тело) на диск. Сервер — «тупой
-  // писатель»: содержимое собирает клиент, здесь только валидация имени/области
-  // и ограждение пути записи.
+  // Writes the full agent .md (frontmatter + body) to disk. The server is a
+  // "dumb writer": the client assembles the content, here it's only
+  // name/area validation and fencing the write path.
   wfWriteAgent: {
     input: z
       .object({
@@ -500,12 +542,12 @@ export const rpcContract = defineRpcContract({
   },
 });
 
-// --- workflow-конструктор: чистые функции и общие типы (перенос) --------
-// Перенесено дословно из bb-plugin-workflow-composer/server.ts: чистые
-// функции модульного уровня плюс приватные хелперы, которых требуют
-// перенесённые wf*-обработчики. Обработчики agentRefs/models остались в
-// исходном плагине и сюда не переносились — вместе с ними не переносились и
-// их собственные хелперы (MD_REF_RE, candidatesForToken, listModels).
+// --- workflow builder: pure functions and shared types (port) -----------
+// Ported verbatim from bb-plugin-workflow-composer/server.ts: module-level
+// pure functions plus the private helpers the ported wf*-handlers require.
+// The agentRefs/models handlers stayed in the original plugin and weren't
+// ported here — along with them, their own helpers (MD_REF_RE,
+// candidatesForToken, listModels) weren't ported either.
 
 type WfStore = z.infer<typeof wfStoreEnum>;
 
@@ -690,39 +732,39 @@ export function agentRefLabel(absPath: string): string {
   return filename;
 }
 
-// --- разрешение области в набор путей ----------------------------------
+// --- resolving an area into a set of paths ------------------------------
 
 const GLOBAL_ID = "global";
 
 interface Area {
   kind: "global" | "project";
   label: string;
-  /** Хост, на котором лежат файлы проекта (для глобальной — локальный). */
+  /** Host where the project's files live (local for the global area). */
   hostId: string | undefined;
-  /** Файл, который правит панель. */
+  /** File the panel edits. */
   editedPath: string;
-  /** Уровни от широкого к узкому для свёртки действующего значения. */
+  /** Levels from broad to narrow, for collapsing the effective value. */
   levelPaths: string[];
   installedPath: string;
   personalSkillsDir: string;
   projectSkillsDir: string | null;
   personalAgentsDir: string;
   projectAgentsDir: string | null;
-  /** Каталог `~/.claude` — для глобальной памяти и авто-памяти. */
+  /** `~/.claude` directory — for global memory and auto-memory. */
   claudeHome: string;
-  /** Корень проекта (для проектной памяти) или null в глобальной области. */
+  /** Project root (for project memory), or null in the global area. */
   projectRoot: string | null;
-  /** `~/.claude.json` — user- и local-скоуп MCP-серверов (локальный хост). */
+  /** `~/.claude.json` — user- and local-scope MCP servers (local host). */
   claudeJsonPath: string;
-  /** `<корень проекта>/.mcp.json` — коннекторы проекта; null в глобальной. */
+  /** `<project root>/.mcp.json` — project connectors; null in the global area. */
   mcpJsonPath: string | null;
 }
 
 /**
- * Личный уровень (`~/.claude`) резолвится по домашнему каталогу сервера, то есть
- * локального хоста. Для проекта на удалённом хосте это приближение: проектные
- * файлы читаются на его хосте, а пользовательский уровень — локально. Общий
- * случай (проект на этой же машине) точен.
+ * The personal level (`~/.claude`) is resolved against the server's home
+ * directory, i.e. the local host. For a project on a remote host this is an
+ * approximation: project files are read on its host, but the user level is
+ * local. The common case (project on this same machine) is exact.
  */
 function resolveArea(
   bb: BbPluginApi,
@@ -744,7 +786,7 @@ function resolveArea(
   if (areaId === GLOBAL_ID) {
     return Promise.resolve({
       kind: "global",
-      label: "Глобально",
+      label: "Globally",
       hostId: undefined,
       editedPath: userSettings,
       levelPaths: [userSettings],
@@ -790,10 +832,11 @@ function resolveArea(
 }
 
 /**
- * Раскрывает ведущий `~` в домашний каталог хоста. Нужен для перехода по
- * Claude-импортам вида `@~/.claude/skills/x.md`: клик отдаёт путь с `~`, а
- * границы области и чтение требуют абсолютного пути. Как и `resolveArea`,
- * берёт homedir() сервера (локального хоста) — для `~/.claude` это точно.
+ * Expands a leading `~` into the host's home directory. Needed for
+ * navigating Claude imports like `@~/.claude/skills/x.md`: a click yields a
+ * path with `~`, but area bounds checking and reading require an absolute
+ * path. Like `resolveArea`, uses the server's (local host's) homedir() —
+ * exact for `~/.claude`.
  */
 function expandTilde(path: string): string {
   if (path === "~") return homedir();
@@ -802,20 +845,21 @@ function expandTilde(path: string): string {
 }
 
 /**
- * Раскрывает путь файла из команды хука в абсолютный: плейсхолдеры Claude Code
- * (`$CLAUDE_PROJECT_DIR`, `$CLAUDE_CONFIG_DIR`), `$HOME`, `~` и относительный
- * путь (от корня проекта — с ним Claude Code и запускает хук). Возвращает null,
- * если плейсхолдер не разрешить (нет корня проекта, чужая переменная): показать
- * файл можно только в границах области.
+ * Expands a file path from a hook command into an absolute one: Claude Code
+ * placeholders (`$CLAUDE_PROJECT_DIR`, `$CLAUDE_CONFIG_DIR`), `$HOME`, `~`,
+ * and a relative path (from the project root — that's what Claude Code runs
+ * the hook with). Returns null if a placeholder can't be resolved (no
+ * project root, an unfamiliar variable): a file can only be shown within the
+ * area's bounds.
  */
 function expandHookFilePath(raw: string, area: Area): string | null {
   let path = raw
     .replace(/\$\{?CLAUDE_CONFIG_DIR\}?/g, area.claudeHome)
     .replace(/\$\{?CLAUDE_PROJECT_DIR\}?/g, area.projectRoot ?? "\0")
     .replace(/\$\{?HOME\}?/g, homedir());
-  if (path.includes("\0")) return null; // нужен корень проекта, а его нет
+  if (path.includes("\0")) return null; // needs a project root, and there isn't one
   path = expandTilde(path);
-  if (path.startsWith("$")) return null; // осталась незнакомая переменная
+  if (path.startsWith("$")) return null; // an unfamiliar variable remains
   if (!path.startsWith("/")) {
     if (!area.projectRoot) return null;
     path = join(area.projectRoot, path);
@@ -823,7 +867,7 @@ function expandHookFilePath(raw: string, area: Area): string | null {
   return path;
 }
 
-/** Хук как JSON, каким он лежит в `settings.json` — для показа определения. */
+/** Hook as JSON, the way it sits in `settings.json` — for showing the definition. */
 function hookDefinitionJson(hook: sd.HookEntry): string {
   const group = {
     ...(hook.matcher ? { matcher: hook.matcher } : {}),
@@ -832,15 +876,16 @@ function hookDefinitionJson(hook: sd.HookEntry): string {
   return JSON.stringify({ [hook.event]: [group] }, null, 2);
 }
 
-/** Путь `target` лежит внутри каталога `root` (или равен ему). */
+/** Whether path `target` sits inside directory `root` (or equals it). */
 function isWithin(root: string, target: string): boolean {
   if (target === root) return true;
   return target.startsWith(root.endsWith("/") ? root : `${root}/`);
 }
 
 /**
- * Корень области, под которым лежит путь (и хост для чтения/записи), или null.
- * Границы — `~/.claude` (личное, навыки, плагины, авто-память) и корень проекта.
+ * The area root the path sits under (and the host for reading/writing), or
+ * null. Bounds are `~/.claude` (personal — skills, plugins, auto-memory) and
+ * the project root.
  */
 function matchRoot(
   area: Area,
@@ -855,12 +900,12 @@ function matchRoot(
   return roots.find((entry) => isWithin(entry.root, path)) ?? null;
 }
 
-/** Ключ kv-хранилища выключенных хуков файла настроек по его пути. */
+/** kv-store key for a settings file's disabled hooks, keyed by its path. */
 function disabledHooksKey(path: string): string {
   return `disabledHooks:${path}`;
 }
 
-/** Идентичность хука для тумблера/kv: событие, matcher и команда совпадают. */
+/** Hook identity for the toggle/kv: event, matcher, and command all match. */
 function sameHook(a: sd.HookEntry, b: sd.HookEntry): boolean {
   return (
     a.event === b.event &&
@@ -870,9 +915,9 @@ function sameHook(a: sd.HookEntry, b: sd.HookEntry): boolean {
 }
 
 /**
- * Подпись файла, найденного по @-импорту. Обычно последний сегмент пути, но
- * для `SKILL.md` — «<навык>/SKILL.md» (иначе импорты разных навыков схлопнутся
- * в одинаковую подпись «SKILL.md»).
+ * Label for a file found via an @-import. Usually the path's last segment,
+ * but for `SKILL.md` it's "<skill>/SKILL.md" (otherwise imports from
+ * different skills would collapse into the same "SKILL.md" label).
  */
 function labelForImport(path: string): string {
   const segments = path.split("/").filter((segment) => segment.length > 0);
@@ -884,9 +929,10 @@ function labelForImport(path: string): string {
 }
 
 /**
- * Имя навыка из пути к его `SKILL.md`, относительного каталога навыков — та же
- * форма, что и `collectSkillNames` в `src/catalog.ts` (см. его комментарий про
- * `synced/`). `null`, если путь не ведёт к `SKILL.md` напрямую внутри навыка.
+ * Skill name from the path to its `SKILL.md`, relative to the skills
+ * directory — the same shape as `collectSkillNames` in `src/catalog.ts` (see
+ * its comment about `synced/`). `null` if the path doesn't lead directly to
+ * a `SKILL.md` inside a skill.
  */
 function skillTargetName(relPath: string): string | null {
   const segments = relPath.split("/").filter((segment) => segment.length > 0);
@@ -896,7 +942,7 @@ function skillTargetName(relPath: string): string | null {
   return null;
 }
 
-/** Файл памяти: id стабилен для RPC, путь и хост резолвит сервер. */
+/** Memory file: id is stable for RPC, the server resolves the path and host. */
 interface MemoryEntry {
   id: string;
   label: string;
@@ -905,16 +951,17 @@ interface MemoryEntry {
 }
 
 /**
- * Кандидаты файлов памяти для области (без проверки существования). Глобальная
- * CLAUDE.md и авто-память живут на локальном хосте; проектные файлы — на хосте
- * проекта. Авто-память — каталог Claude Code по проекту: путь кодируется
- * заменой `/` на `-` (так их именует сам Claude Code).
+ * Memory file candidates for the area (without checking existence). The
+ * global CLAUDE.md and auto-memory live on the local host; project files —
+ * on the project's host. Auto-memory is Claude Code's per-project directory:
+ * the path is encoded by replacing `/` with `-` (that's how Claude Code
+ * itself names them).
  */
 function memoryCandidates(area: Area): MemoryEntry[] {
   const list: MemoryEntry[] = [
     {
       id: "global-claude",
-      label: "Глобальная CLAUDE.md",
+      label: "Global CLAUDE.md",
       path: join(area.claudeHome, "CLAUDE.md"),
       hostId: undefined,
     },
@@ -923,21 +970,21 @@ function memoryCandidates(area: Area): MemoryEntry[] {
     const root = area.projectRoot;
     const enc = root.replace(/\//g, "-");
     list.push(
-      { id: "project-claude", label: "Проектная CLAUDE.md", path: join(root, "CLAUDE.md"), hostId: area.hostId },
+      { id: "project-claude", label: "Project CLAUDE.md", path: join(root, "CLAUDE.md"), hostId: area.hostId },
       { id: "project-claude-local", label: "CLAUDE.local.md", path: join(root, "CLAUDE.local.md"), hostId: area.hostId },
       { id: "project-agents", label: "AGENTS.md", path: join(root, "AGENTS.md"), hostId: area.hostId },
       { id: "project-memory", label: "memory/MEMORY.md", path: join(root, "memory", "MEMORY.md"), hostId: area.hostId },
       { id: "project-memory-index", label: "memory/INDEX.md", path: join(root, "memory", "INDEX.md"), hostId: area.hostId },
-      { id: "auto-memory", label: "Авто-память MEMORY.md", path: join(area.claudeHome, "projects", enc, "memory", "MEMORY.md"), hostId: undefined },
+      { id: "auto-memory", label: "Auto-memory MEMORY.md", path: join(area.claudeHome, "projects", enc, "memory", "MEMORY.md"), hostId: undefined },
     );
   }
   return list;
 }
 
-// Секция настроек как уровневое поле: чтение/запись «своего» значения и свёртка
-// уровней. `default` — значение-умолчание, которое в файле не хранится (для
-// плагинов «выкл», для навыков «полностью»). Позволяет писать плагины и навыки
-// одним помощником.
+// Settings section as a leveled field: reading/writing its "own" value and
+// collapsing levels. `default` — the default value, which isn't stored in
+// the file (for plugins, "off"; for skills, "fully"). Lets plugins and
+// skills be written with one shared helper.
 interface LeveledSection<S extends string> {
   default: S;
   get(document: sd.SettingsDoc, key: string): S;
@@ -959,8 +1006,8 @@ const SKILL_SECTION: LeveledSection<sd.SkillState> = {
   resolve: resolveSkill,
 };
 
-// Подгрузка инструментов — единственное поле (ключ env фиксирован), поэтому
-// `key` игнорируется. Умолчание — auto: неустановленная переменная так и ведёт.
+// Tool search loading — a single field (the env key is fixed), so `key` is
+// ignored. Default is auto: an unset variable behaves that way already.
 const TOOLSEARCH_SECTION: LeveledSection<sd.ToolSearchMode> = {
   default: "auto",
   get: (document) => sd.getToolSearch(document),
@@ -971,36 +1018,40 @@ const TOOLSEARCH_SECTION: LeveledSection<sd.ToolSearchMode> = {
 export default function plugin(bb: BbPluginApi) {
   bb.log.info("loaded");
 
-  // Чем открывать реальный файл (навык, агент, документ, ссылка, файл хука) —
-  // одна настройка на плагин, читается фронтом живьём через useSettings.
-  //   md-opener — во встроенной колонке редактором Kasimov (MdDocView);
-  //   builtin    — во встроенной колонке штатным MarkdownEditor + таблицей полей;
-  //   host       — делегировать хостовой вкладке bb (прежнее поведение def088e).
-  // Отменяет решение claude-config-delegate-file-open: выбор вместо хардкода
-  // (memory/decisions/claude-config-opener-setting.md).
-  // Настройки Kasimov (кегли/отступы/цвета/шрифты + флаги) объявлены единой
-  // таблицей в src/kasimov-settings; здесь только домешиваем их к настройкам
-  // плагина рядом с fileOpener. Фронт читает их через useSettings и применяет к
-  // колонке-редактору (ColumnMdDocView).
+  // What to open a real file with (skill, agent, document, link, hook file)
+  // — one setting for the whole plugin, read live by the front end via
+  // useSettings.
+  //   md-opener — in the embedded column, with the Kasimov editor (MdDocView);
+  //   builtin    — in the embedded column, with the stock MarkdownEditor + field table;
+  //   host       — delegate to bb's host tab (previous behavior, def088e).
+  // Supersedes decision claude-config-delegate-file-open: a choice instead of
+  // a hardcode (memory/decisions/claude-config-opener-setting.md).
+  // Kasimov settings (font size/spacing/colors/fonts + flags) are declared as
+  // a single table in src/kasimov-settings; here we just mix them into the
+  // plugin's settings alongside fileOpener. The front end reads them live via
+  // useSettings and applies them to the editor column (ColumnMdDocView).
   //
-  // Пресеты по умолчанию — «под родной bb-вьюер», те же, что у MD Opener: оба
-  // рендерят Kasimov через один и тот же MdDocView/md-doc-view.css (было
-  // хардкодом там, см. memory/decisions/kasimov-opener-css-uses-token-defaults.md)
-  // — владелец явно попросил одинаковый вид у обоих потребителей.
-  // (doc-editor.css в этом плагине — про другой редактор, packages/md-editor
-  // с классом cc-doc-mde; к Kasimov отношения не имеет.)
+  // Default presets are "to match the native bb viewer", the same as MD
+  // Opener: both render Kasimov through the same MdDocView/md-doc-view.css
+  // (used to be hardcoded there, see
+  // memory/decisions/kasimov-opener-css-uses-token-defaults.md) — the owner
+  // explicitly asked for both consumers to look the same.
+  // (doc-editor.css in this plugin is about a different editor,
+  // packages/md-editor with the cc-doc-mde class; it has nothing to do with
+  // Kasimov.)
   bb.settings.define({
     fileOpener: {
       type: "select",
-      label: "Чем открывать файлы",
+      label: "What to open files with",
       options: ["md-opener", "builtin", "host"],
       default: "md-opener",
     },
     ...buildDescriptors(NATIVE_VIEWER_TOKEN_DEFAULTS),
   });
 
-  // Чтение файла: отсутствие — это пустой документ (text=null), а не ошибка.
-  // sha нужен для CAS-записи; при отсутствии файла запись пойдёт как create-only.
+  // Reading a file: absence is an empty document (text=null), not an error.
+  // sha is needed for a CAS write; if the file is absent, the write proceeds
+  // as create-only.
   async function readFile(
     path: string,
     hostId: string | undefined,
@@ -1018,7 +1069,7 @@ export default function plugin(bb: BbPluginApi) {
     }
   }
 
-  // Пути файлов внутри каталога (относительно него): каталоги навыков и агентов.
+  // Paths of files inside a directory (relative to it): skills and agents directories.
   async function listDirFiles(
     dir: string | null,
     hostId: string | undefined,
@@ -1038,12 +1089,12 @@ export default function plugin(bb: BbPluginApi) {
     }
   }
 
-  /** Хуки, выключенные тумблером для файла настроек по его пути (или []). */
+  /** Hooks toggled off for a settings file, keyed by its path (or []). */
   async function readDisabledHooks(path: string): Promise<sd.HookEntry[]> {
     return (await bb.storage.kv.get<sd.HookEntry[]>(disabledHooksKey(path))) ?? [];
   }
 
-  /** Читает и разбирает файл настроек; SettingsParseError превращает в сообщение. */
+  /** Reads and parses a settings file; turns SettingsParseError into a message. */
   async function readParsedDoc(
     path: string,
     hostId: string | undefined,
@@ -1058,9 +1109,10 @@ export default function plugin(bb: BbPluginApi) {
   }
 
   /**
-   * Как правка редактируемого файла области (см. `applyEdit` ниже), но для
-   * произвольного файла уровня: хук может жить не в `editedPath`. Свежее чтение
-   * прямо перед записью даёт ту же CAS-защиту от параллельной сессии Claude Code.
+   * Like editing the area's edited file (see `applyEdit` below), but for an
+   * arbitrary level's file: a hook may live outside `editedPath`. A fresh
+   * read right before the write gives the same CAS protection against a
+   * concurrent Claude Code session.
    */
   async function applyEditToPath(
     path: string,
@@ -1081,16 +1133,17 @@ export default function plugin(bb: BbPluginApi) {
     if (written.outcome === "conflict") {
       return {
         outcome: "conflict",
-        message: "Файл изменила другая сессия. Обновите и повторите.",
+        message: "Another session changed the file. Refresh and try again.",
       };
     }
     return { outcome: "ok", message: null };
   }
 
-  // --- workflow-конструктор: сием и обработчики (перенос) ----------------
-  // Инлайн вместо фабрики createPlugin/WorkflowDeps исходного плагина: этому
-  // серверу фабрика с инъекцией не нужна (тесты — на чистых функциях выше),
-  // а сами обработчики регистрируются в общий `bb.rpc.register` ниже.
+  // --- workflow builder: state and handlers (port) ------------------------
+  // Inline instead of the original plugin's createPlugin/WorkflowDeps
+  // factory: this server doesn't need an injection factory (tests target the
+  // pure functions above), and the handlers themselves are registered in the
+  // shared `bb.rpc.register` below.
 
   const wfHome = homedir();
   const wfGlobalDir = joinPath(wfHome, ".claude", "workflows");
@@ -1201,7 +1254,7 @@ export default function plugin(bb: BbPluginApi) {
       const projects = await bb.sdk.projects.list();
       return {
         areas: [
-          { id: GLOBAL_ID, label: "Глобально" },
+          { id: GLOBAL_ID, label: "Globally" },
           ...projects.map((project) => ({
             id: project.id,
             label: project.name,
@@ -1215,12 +1268,13 @@ export default function plugin(bb: BbPluginApi) {
       if (!area) {
         return emptyConfig("—", "", {
           file: "",
-          message: "Область не найдена.",
+          message: "Area not found.",
         });
       }
 
-      // Разбор каждого уровня с привязкой к файлу: битый JSON — сообщение в UI,
-      // а не подмена пустым документом (иначе первая запись затёрла бы файл).
+      // Parse each level tied to its file: corrupt JSON becomes a UI
+      // message, not a swap-in empty document (otherwise the first write
+      // would clobber the file).
       const parsedLevels: sd.SettingsDoc[] = [];
       for (const path of area.levelPaths) {
         const { text } = await readFile(path, area.hostId);
@@ -1236,11 +1290,11 @@ export default function plugin(bb: BbPluginApi) {
           throw error;
         }
       }
-      // Редактируемый файл — последний из уровней (локальный или глобальный).
+      // The edited file is the last of the levels (local or global).
       const editedDoc = parsedLevels[parsedLevels.length - 1] ?? {};
 
       const installed = await readFile(area.installedPath, area.hostId);
-      // .mcp.json — на хосте проекта; ~/.claude.json — на локальном хосте.
+      // .mcp.json — on the project's host; ~/.claude.json — on the local host.
       const mcpJson = area.mcpJsonPath
         ? await readFile(area.mcpJsonPath, area.hostId)
         : { text: null, sha256: null };
@@ -1256,13 +1310,14 @@ export default function plugin(bb: BbPluginApi) {
         listDirFiles(area.personalAgentsDir, area.hostId),
         listDirFiles(area.projectAgentsDir, area.hostId),
       ]);
-      // По ПУТИ файла уровня, не по области: ~/.claude/settings.json общий для
-      // всех проектных областей, и disabled-хуки в нём должны быть общими тоже.
+      // Keyed by the level file's PATH, not by area: ~/.claude/settings.json
+      // is shared across all project areas, and the disabled hooks in it
+      // must be shared too.
       const disabledHooksByLevel = await Promise.all(
         area.levelPaths.map((path) => readDisabledHooks(path)),
       );
 
-      // Происхождение уровней: глобально один (user), в проекте три по порядку.
+      // Level origins: one (user) globally, three in order for a project.
       const levelOrigins =
         area.kind === "global"
           ? (["user"] as const)
@@ -1286,8 +1341,9 @@ export default function plugin(bb: BbPluginApi) {
         disabledHooksByLevel,
       });
 
-      // «Вес» строк в токенах: читаем содержимое файлов раздела и оцениваем.
-      // Ошибка чтения — tokens=null (в UI подпись просто без веса).
+      // Row "weight" in tokens: read the section's file contents and
+      // estimate. A read error means tokens=null (the UI label just shows
+      // no weight).
       const tokensOf = async (
         path: string | null,
         hostId: string | undefined,
@@ -1298,7 +1354,7 @@ export default function plugin(bb: BbPluginApi) {
         return text == null ? null : estimateTokens(text);
       };
 
-      // Имя навыка → путь его SKILL.md (та же раскладка, что в collectSkillNames).
+      // Skill name -> path to its SKILL.md (same layout as collectSkillNames).
       const skillFileByName = (
         dir: string | null,
         relPaths: string[],
@@ -1327,7 +1383,7 @@ export default function plugin(bb: BbPluginApi) {
         projectSkillPaths,
       );
 
-      // Определения коннекторов (JSON) по ключу origin:name — их вес.
+      // Connector definitions (JSON) keyed by origin:name — their weight.
       const connectorDefs = new Map<string, string>();
       for (const server of parseMcpJson(mcpJson.text)) {
         connectorDefs.set(
@@ -1430,12 +1486,12 @@ export default function plugin(bb: BbPluginApi) {
       const notFound = {
         path: "",
         content: null,
-        error: "Коннектор не найден.",
+        error: "Connector not found.",
         sha256: null,
       };
       const area = await resolveArea(bb, areaId);
       if (!area) {
-        return { path: "", content: null, error: "Область не найдена.", sha256: null };
+        return { path: "", content: null, error: "Area not found.", sha256: null };
       }
 
       let config: unknown;
@@ -1446,7 +1502,7 @@ export default function plugin(bb: BbPluginApi) {
         config = parseMcpJson(text).find((server) => server.name === name)?.config;
         path = area.mcpJsonPath;
       } else {
-        // user/local — из ~/.claude.json на локальном хосте.
+        // user/local — from ~/.claude.json on the local host.
         const { text } = await readFile(area.claudeJsonPath, undefined);
         const { user, local } = parseClaudeJsonServers(text, area.projectRoot);
         const list = origin === "user" ? user : local;
@@ -1467,19 +1523,20 @@ export default function plugin(bb: BbPluginApi) {
       const notFound = {
         path: "",
         command: null,
-        error: "Хук не найден.",
+        error: "Hook not found.",
         sha256: null,
         event: null,
         matcher: null,
         definition: null,
         filePath: null,
         fileContent: null,
+        fileSha256: null,
       };
       const area = await resolveArea(bb, areaId);
       if (!area) {
-        return { ...notFound, error: "Область не найдена." };
+        return { ...notFound, error: "Area not found." };
       }
-      // origin → уровень: user/project/local соответствуют порядку levelPaths.
+      // origin -> level: user/project/local correspond to levelPaths order.
       const levelIndex = { user: 0, project: 1, local: 2 }[origin];
       const path = area.levelPaths[levelIndex];
       if (!path) return notFound;
@@ -1496,19 +1553,25 @@ export default function plugin(bb: BbPluginApi) {
       }
       if (!hook) return { ...notFound, path };
 
-      // Файл, который команда читает или запускает (если опознан и лежит в
-      // границах области): плейсхолдеры окружения раскрываем, читаем с confinement.
+      // The file the command reads or runs (if recognized and within the
+      // area's bounds): expand environment placeholders, read with confinement.
       let filePath: string | null = null;
       let fileContent: string | null = null;
+      let fileSha256: string | null = null;
       const rawFile = extractCommandFile(hook.command);
       if (rawFile) {
         const abs = expandHookFilePath(rawFile, area);
         const match = abs && matchRoot(area, abs);
         if (abs && match) {
-          const { text: fileText } = await readFile(abs, match.hostId, match.root);
+          const { text: fileText, sha256: fileSha } = await readFile(
+            abs,
+            match.hostId,
+            match.root,
+          );
           if (fileText !== null) {
             filePath = abs;
             fileContent = fileText;
+            fileSha256 = fileSha;
           }
         }
       }
@@ -1523,18 +1586,19 @@ export default function plugin(bb: BbPluginApi) {
         definition: hookDefinitionJson(hook),
         filePath,
         fileContent,
+        fileSha256,
       };
     },
 
     async writeHook({ areaId, origin, index, command, expectedSha256 }) {
       const area = await resolveArea(bb, areaId);
       if (!area) {
-        return { outcome: "not-found" as const, sha256: null, message: "Область не найдена." };
+        return { outcome: "not-found" as const, sha256: null, message: "Area not found." };
       }
       const levelIndex = { user: 0, project: 1, local: 2 }[origin];
       const path = area.levelPaths[levelIndex];
       if (!path) {
-        return { outcome: "not-found" as const, sha256: null, message: "Уровень не найден." };
+        return { outcome: "not-found" as const, sha256: null, message: "Level not found." };
       }
 
       const parsed = await readParsedDoc(path, area.hostId);
@@ -1542,9 +1606,9 @@ export default function plugin(bb: BbPluginApi) {
         return { outcome: "denied" as const, sha256: null, message: parsed.error };
       }
 
-      // index вне диапазона — писать нечего: не рапортуем «written» по no-op.
+      // index out of range — nothing to write: don't report "written" for a no-op.
       if (!sd.listHooks(parsed.doc)[index]) {
-        return { outcome: "not-found" as const, sha256: null, message: "Хук не найден." };
+        return { outcome: "not-found" as const, sha256: null, message: "Hook not found." };
       }
 
       const next = sd.setHookCommandAt(parsed.doc, index, command);
@@ -1559,7 +1623,59 @@ export default function plugin(bb: BbPluginApi) {
         return {
           outcome: "conflict" as const,
           sha256: written.currentSha256,
-          message: "Файл изменился на диске. Обновите и повторите.",
+          message: "The file changed on disk. Refresh and try again.",
+        };
+      }
+      return { outcome: "written" as const, sha256: written.sha256, message: null };
+    },
+
+    async writeHookDefinition({ areaId, origin, index, definition, expectedSha256 }) {
+      const area = await resolveArea(bb, areaId);
+      if (!area) {
+        return { outcome: "not-found" as const, sha256: null, message: "Area not found." };
+      }
+      const levelIndex = { user: 0, project: 1, local: 2 }[origin];
+      const path = area.levelPaths[levelIndex];
+      if (!path) {
+        return { outcome: "not-found" as const, sha256: null, message: "Level not found." };
+      }
+
+      const parsed = await readParsedDoc(path, area.hostId);
+      if ("error" in parsed) {
+        return { outcome: "denied" as const, sha256: null, message: parsed.error };
+      }
+
+      const oldEntry = sd.listHooks(parsed.doc)[index];
+      if (!oldEntry) {
+        return { outcome: "not-found" as const, sha256: null, message: "Hook not found." };
+      }
+
+      let newEntry: sd.HookEntry;
+      try {
+        newEntry = sd.parseHookDefinitionJson(definition);
+      } catch (error) {
+        if (error instanceof HookDefinitionParseError) {
+          return { outcome: "denied" as const, sha256: null, message: error.message };
+        }
+        throw error;
+      }
+
+      const { doc: next, replaced } = sd.replaceHook(parsed.doc, oldEntry, newEntry);
+      if (!replaced) {
+        return { outcome: "not-found" as const, sha256: null, message: "Hook not found." };
+      }
+      const written = await bb.sdk.files.write({
+        path,
+        hostId: area.hostId,
+        content: sd.serialize(next),
+        expectedSha256,
+        createParents: true,
+      });
+      if (written.outcome === "conflict") {
+        return {
+          outcome: "conflict" as const,
+          sha256: written.currentSha256,
+          message: "The file changed on disk. Refresh and try again.",
         };
       }
       return { outcome: "written" as const, sha256: written.sha256, message: null };
@@ -1574,10 +1690,10 @@ export default function plugin(bb: BbPluginApi) {
       enabled,
     }): Promise<WriteOutcome> {
       const area = await resolveArea(bb, areaId);
-      if (!area) return { outcome: "not-found", message: "Область не найдена." };
+      if (!area) return { outcome: "not-found", message: "Area not found." };
       const levelIndex = { user: 0, project: 1, local: 2 }[origin];
       const path = area.levelPaths[levelIndex];
-      if (!path) return { outcome: "not-found", message: "Уровень не найден." };
+      if (!path) return { outcome: "not-found", message: "Level not found." };
 
       const entry: sd.HookEntry = { event, matcher, command };
 
@@ -1586,7 +1702,7 @@ export default function plugin(bb: BbPluginApi) {
         if ("error" in parsed) return { outcome: "parse-error", message: parsed.error };
 
         const { doc: next, removed } = sd.removeHook(parsed.doc, entry);
-        // Уже выключен (или его вообще нет в файле) — идемпотентно, kv не трогаем.
+        // Already disabled (or not in the file at all) — idempotent, don't touch kv.
         if (removed === null) return { outcome: "ok", message: null };
 
         const written = await bb.sdk.files.write({
@@ -1599,7 +1715,7 @@ export default function plugin(bb: BbPluginApi) {
         if (written.outcome === "conflict") {
           return {
             outcome: "conflict",
-            message: "Файл изменила другая сессия. Обновите и повторите.",
+            message: "Another session changed the file. Refresh and try again.",
           };
         }
 
@@ -1612,7 +1728,7 @@ export default function plugin(bb: BbPluginApi) {
 
       const disabled = await readDisabledHooks(path);
       if (!disabled.some((existing) => sameHook(existing, entry))) {
-        // Нечего восстанавливать — идемпотентно.
+        // Nothing to restore — idempotent.
         return { outcome: "ok", message: null };
       }
 
@@ -1630,22 +1746,23 @@ export default function plugin(bb: BbPluginApi) {
     async readSkillFile({ areaId, name, relPath }) {
       const area = await resolveArea(bb, areaId);
       if (!area) {
-        return { path: "", content: null, error: "Область не найдена.", sha256: null };
+        return { path: "", content: null, error: "Area not found.", sha256: null };
       }
 
-      // Ссылки внутри навыка считаем относительно папки его SKILL.md, а читаем
-      // с confinement по корню `.claude` — так штатная ссылка `../../CONNECTORS.md`
-      // на общий для всех навыков файл проходит, а выход за `.claude` (ssh-ключи
-      // и прочее) остаётся закрыт.
+      // Links inside a skill are resolved relative to its SKILL.md's folder,
+      // but read with confinement to the `.claude` root — so the standard
+      // `../../CONNECTORS.md` link to the file shared by all skills gets
+      // through, while escaping `.claude` (ssh keys and the like) stays
+      // closed off.
       const found = await findSkill(area, name);
       if (!found) {
-        return { path: "", content: null, error: "SKILL.md не найден.", sha256: null };
+        return { path: "", content: null, error: "SKILL.md not found.", sha256: null };
       }
 
       const target = join(found.base, relPath);
       const { text, sha256 } = await readFile(target, area.hostId, found.root);
       if (text === null) {
-        return { path: "", content: null, error: "Файл не найден.", sha256: null };
+        return { path: "", content: null, error: "File not found.", sha256: null };
       }
       return { path: target, content: text, error: null, sha256 };
     },
@@ -1656,8 +1773,8 @@ export default function plugin(bb: BbPluginApi) {
 
       const entries: { id: string; label: string; path: string }[] = [];
       const visited = new Set<string>();
-      // В очередь кладём уже прочитанный текст файла — его же разбираем на
-      // @-импорты, второй раз с диска не читаем.
+      // The queue holds the already-read file text — we parse it for
+      // @-imports without reading from disk a second time.
       const queue: { path: string; text: string }[] = [];
 
       for (const candidate of memoryCandidates(area)) {
@@ -1672,9 +1789,10 @@ export default function plugin(bb: BbPluginApi) {
         queue.push({ path: candidate.path, text });
       }
 
-      // Разбираем @-импорты транзитивно: CLAUDE.md ссылается на навыки, навыки —
-      // на свои же файлы. Срез по числу, а не по глубине, — защита от развесистого
-      // дерева ссылок, а не только от циклов (их и так режет `visited`).
+      // Resolve @-imports transitively: CLAUDE.md links to skills, skills to
+      // their own files. Capped by count, not by depth — a guard against a
+      // sprawling link tree, not just against cycles (those are already cut
+      // off by `visited`).
       const IMPORT_LIMIT = 100;
       let imported = 0;
       while (queue.length > 0 && imported < IMPORT_LIMIT) {
@@ -1683,14 +1801,14 @@ export default function plugin(bb: BbPluginApi) {
 
         for (const importPath of parseImports(from.text)) {
           if (imported >= IMPORT_LIMIT) {
-            bb.log.info("listMemory: срезано по лимиту импортов (100)");
+            bb.log.info("listMemory: cut off by the import limit (100)");
             break;
           }
           const abs = resolveImportPath(from.path, importPath, homedir());
           if (visited.has(abs)) continue;
           visited.add(abs);
 
-          // Вне корней области — пропускаем (та же граница, что и у readDoc).
+          // Outside the area's roots — skip (same boundary as readDoc).
           const target = matchRoot(area, abs);
           if (!target) continue;
 
@@ -1724,14 +1842,15 @@ export default function plugin(bb: BbPluginApi) {
           targets.push({ value, label, kind });
         };
 
-        // Личные навыки: путь уже относителен `~/.claude/skills`, поэтому
-        // вставляемый импорт — просто `~/.claude/skills/<этот же путь>`.
+        // Personal skills: the path is already relative to
+        // `~/.claude/skills`, so the inserted import is just
+        // `~/.claude/skills/<this same path>`.
         for (const relPath of personalSkillPaths) {
           const name = skillTargetName(relPath);
           if (!name) continue;
           push(`~/.claude/skills/${relPath}`, name, "skill");
         }
-        // Проектные навыки: вставляем абсолютный путь (нет `~`-алиаса для проекта).
+        // Project skills: insert the absolute path (no `~` alias for a project).
         if (area.projectSkillsDir) {
           for (const relPath of projectSkillPaths) {
             const name = skillTargetName(relPath);
@@ -1754,34 +1873,34 @@ export default function plugin(bb: BbPluginApi) {
     async readDoc({ areaId, path }) {
       const area = await resolveArea(bb, areaId);
       if (!area) {
-        return { path: "", content: null, error: "Область не найдена.", sha256: null };
+        return { path: "", content: null, error: "Area not found.", sha256: null };
       }
-      // Раскрываем `~` (переход по @-импорту отдаёт путь с ~) и возвращаем уже
-      // абсолютный путь — от него фронт считает вложенные ссылки.
+      // Expand `~` (following an @-import yields a path with ~) and return
+      // the already-absolute path — the front end resolves nested links from it.
       const abs = expandTilde(path);
       const match = matchRoot(area, abs);
       if (!match) {
-        return { path: "", content: null, error: "Путь вне доступных папок.", sha256: null };
+        return { path: "", content: null, error: "Path outside the available folders.", sha256: null };
       }
       const { text, sha256 } = await readFile(abs, match.hostId, match.root);
       if (text === null) {
-        return { path: "", content: null, error: "Файл не найден.", sha256: null };
+        return { path: "", content: null, error: "File not found.", sha256: null };
       }
       return { path: abs, content: text, error: null, sha256 };
     },
 
     async resolveOpenTarget({ areaId, path }) {
       const area = await resolveArea(bb, areaId);
-      if (!area) return { hostId: null, error: "Область не найдена." };
+      if (!area) return { hostId: null, error: "Area not found." };
       const abs = expandTilde(path);
       const match = matchRoot(area, abs);
-      if (!match) return { hostId: null, error: "Путь вне доступных папок." };
-      // Проектный корень несёт свой хост; личный уровень (~/.claude) лежит на
-      // локальном хосте сервера — его id берём из primaryHostId.
+      if (!match) return { hostId: null, error: "Path outside the available folders." };
+      // A project root carries its own host; the personal level (~/.claude)
+      // lives on the server's local host — take its id from primaryHostId.
       if (match.hostId) return { hostId: match.hostId, error: null };
       const { primaryHostId } = await bb.sdk.system.config();
       if (!primaryHostId) {
-        return { hostId: null, error: "Основной хост не определён." };
+        return { hostId: null, error: "Primary host not determined." };
       }
       return { hostId: primaryHostId, error: null };
     },
@@ -1828,20 +1947,20 @@ export default function plugin(bb: BbPluginApi) {
         readme: null,
       };
       const area = await resolveArea(bb, areaId);
-      if (!area) return { ...empty, error: "Область не найдена." };
+      if (!area) return { ...empty, error: "Area not found." };
 
-      // installPath берём из installed_plugins.json (он на локальном хосте).
+      // installPath comes from installed_plugins.json (it's on the local host).
       const installed = await readFile(area.installedPath, undefined);
       const plugin = parseInstalledPlugins(installed.text).find(
         (entry) => entry.key === key,
       );
-      if (!plugin?.installPath) return { ...empty, error: "Плагин не найден." };
+      if (!plugin?.installPath) return { ...empty, error: "Plugin not found." };
 
       const base = plugin.installPath;
       const manifestPath = join(base, ".claude-plugin", "plugin.json");
       const manifest = await readFile(manifestPath, undefined, area.claudeHome);
 
-      // README необязателен: у части плагинов его нет — тогда readme = null.
+      // README is optional: some plugins don't have one — then readme = null.
       let readmePath: string | null = null;
       let readme: string | null = null;
       for (const name of ["README.md", "readme.md"]) {
@@ -1858,18 +1977,18 @@ export default function plugin(bb: BbPluginApi) {
         manifest: manifest.text,
         readmePath,
         readme,
-        error: manifest.text === null ? "Манифест не найден." : null,
+        error: manifest.text === null ? "Manifest not found." : null,
       };
     },
 
     async writeDoc({ areaId, path, content, expectedSha256 }) {
       const area = await resolveArea(bb, areaId);
       if (!area) {
-        return { outcome: "not-found" as const, sha256: null, message: "Область не найдена." };
+        return { outcome: "not-found" as const, sha256: null, message: "Area not found." };
       }
       const match = matchRoot(area, path);
       if (!match) {
-        return { outcome: "denied" as const, sha256: null, message: "Путь вне доступных папок." };
+        return { outcome: "denied" as const, sha256: null, message: "Path outside the available folders." };
       }
       const written = await bb.sdk.files.write({
         path,
@@ -1882,15 +2001,16 @@ export default function plugin(bb: BbPluginApi) {
         return {
           outcome: "conflict" as const,
           sha256: written.currentSha256,
-          message: "Файл изменился на диске. Обновите и повторите.",
+          message: "The file changed on disk. Refresh and try again.",
         };
       }
       return { outcome: "written" as const, sha256: written.sha256, message: null };
     },
 
     createSkill({ areaId, name }) {
-      // Навык — папка `<slug>/SKILL.md`; в проекте кладём в проектный каталог,
-      // глобально — в личный. Каталог создаётся вместе с файлом (createParents).
+      // A skill is a `<slug>/SKILL.md` folder; in a project it goes into the
+      // project directory, globally into the personal one. The directory is
+      // created along with the file (createParents).
       return createFile(areaId, name, (area, slug) => {
         const dir = area.projectSkillsDir ?? area.personalSkillsDir;
         return { path: join(dir, slug, "SKILL.md"), content: skillTemplate(slug) };
@@ -1898,14 +2018,14 @@ export default function plugin(bb: BbPluginApi) {
     },
 
     createAgent({ areaId, name }) {
-      // Агент — одиночный файл `<slug>.md` в каталоге агентов области.
+      // An agent is a single `<slug>.md` file in the area's agents directory.
       return createFile(areaId, name, (area, slug) => {
         const dir = area.projectAgentsDir ?? area.personalAgentsDir;
         return { path: join(dir, `${slug}.md`), content: agentTemplate(slug) };
       });
     },
 
-    // ---- workflow-конструктор (перенос bb-plugin-workflow-composer) ----
+    // ---- workflow builder (port of bb-plugin-workflow-composer) ----
 
     async wfList({ projectId }) {
       const [project, global] = await Promise.all([wfListProjectStore(projectId), wfScanDir(undefined, wfGlobalDir, "global")]);
@@ -2073,10 +2193,11 @@ export default function plugin(bb: BbPluginApi) {
   });
 
   /**
-   * Создаёт новый файл конфигурации (навык или агент) из сырого имени. `plan` по
-   * области и уже нормализованному слагу даёт путь и содержимое. Запись —
-   * create-only (expectedSha256 null): существующий файл не перезаписываем, а
-   * возвращаем `exists`, чтобы панель не затёрла одноимённый навык.
+   * Creates a new config file (skill or agent) from a raw name. `plan` takes
+   * the area and the already-normalized slug and returns the path and
+   * content. The write is create-only (expectedSha256 null): an existing
+   * file isn't overwritten — we return `exists` instead, so the panel
+   * doesn't clobber a same-named skill.
    */
   async function createFile(
     areaId: string,
@@ -2091,12 +2212,12 @@ export default function plugin(bb: BbPluginApi) {
       return {
         outcome: "invalid",
         path: null,
-        message: "Имя должно содержать латинские буквы или цифры.",
+        message: "The name must contain Latin letters or digits.",
       };
     }
     const area = await resolveArea(bb, areaId);
     if (!area) {
-      return { outcome: "not-found", path: null, message: "Область не найдена." };
+      return { outcome: "not-found", path: null, message: "Area not found." };
     }
 
     const { path, content } = plan(area, slugifyName(rawName));
@@ -2108,14 +2229,15 @@ export default function plugin(bb: BbPluginApi) {
       createParents: true,
     });
     if (written.outcome === "conflict") {
-      return { outcome: "exists", path, message: "Такой уже существует." };
+      return { outcome: "exists", path, message: "One like this already exists." };
     }
     return { outcome: "created", path, message: null };
   }
 
   /**
-   * Находит навык: `base` — папка его SKILL.md (проектная перекрывает личную),
-   * `root` — корень `.claude`, за пределы которого чтение по ссылкам не пускаем.
+   * Finds a skill: `base` — the folder of its SKILL.md (project overrides
+   * personal), `root` — the `.claude` root, beyond which link-based reads
+   * aren't allowed.
    */
   async function findSkill(
     area: Area,
@@ -2136,10 +2258,11 @@ export default function plugin(bb: BbPluginApi) {
   }
 
   /**
-   * Ставит уровневое поле (плагин или навык) в желаемое действующее значение,
-   * записывая минимум. Глобально уровень один: `default` убирает ключ, иначе
-   * пишем явно. В проекте, если старшие уровни уже дают `target`, локальный
-   * оверрайд снимаем (строка «как глобально», UI её гасит); иначе ставим явно.
+   * Sets a leveled field (plugin or skill) to the desired effective value,
+   * writing the minimum. Globally there's one level: `default` removes the
+   * key, otherwise we write it explicitly. In a project, if the broader
+   * levels already give `target`, we drop the local override (a row "same as
+   * global", which the UI dims); otherwise we set it explicitly.
    */
   async function writeLeveled<S extends string>(
     areaId: string,
@@ -2148,9 +2271,9 @@ export default function plugin(bb: BbPluginApi) {
     target: S,
   ): Promise<WriteOutcome> {
     const area = await resolveArea(bb, areaId);
-    if (!area) return { outcome: "not-found", message: "Область не найдена." };
+    if (!area) return { outcome: "not-found", message: "Area not found." };
 
-    // И PluginToggle, и SkillState включают «inherit» — снятие ключа из файла.
+    // Both PluginToggle and SkillState include "inherit" — removing the key from the file.
     const inherit = "inherit" as S;
 
     if (area.kind === "global") {
@@ -2175,11 +2298,12 @@ export default function plugin(bb: BbPluginApi) {
   }
 
   /**
-   * Тумблер MCP-сервера из .mcp.json. Хранится двумя массивами и учитывает
-   * `enableAllProjectMcpServers`, поэтому не ложится в общий `writeLeveled`:
-   * умолчание зависит от enableAll, а `setMcpServer` правит два ключа. Логика та
-   * же — пишем минимум: если старшие уровни уже дают target, локальный оверрайд
-   * снимаем (сервер вон из обоих массивов), иначе ставим явно.
+   * MCP server toggle from .mcp.json. Stored as two arrays and accounts for
+   * `enableAllProjectMcpServers`, so it doesn't fit the shared
+   * `writeLeveled`: the default depends on enableAll, and `setMcpServer`
+   * touches two keys. Same logic though — write the minimum: if the broader
+   * levels already give target, drop the local override (server out of both
+   * arrays), otherwise set it explicitly.
    */
   async function writeConnector(
     areaId: string,
@@ -2187,13 +2311,13 @@ export default function plugin(bb: BbPluginApi) {
     value: boolean,
   ): Promise<WriteOutcome> {
     const area = await resolveArea(bb, areaId);
-    if (!area) return { outcome: "not-found", message: "Область не найдена." };
+    if (!area) return { outcome: "not-found", message: "Area not found." };
     const target = value ? "on" : "off";
 
-    // Состояния сервера берём с уровней старше редактируемого (при снятии
-    // оверрайда его собственное значение станет inherit). А enableAll — со ВСЕХ
-    // уровней, включая редактируемый: setMcpServer его не трогает, и он остаётся
-    // задавать умолчание.
+    // Server states are taken from levels broader than the one being edited
+    // (dropping the override makes its own value become inherit). enableAll,
+    // though, is taken from ALL levels, including the one being edited:
+    // setMcpServer doesn't touch it, and it keeps setting the default.
     const broaderStates: sd.McpServerState[] = [];
     const enableAllLevels: (boolean | undefined)[] = [];
     for (const [index, path] of area.levelPaths.entries()) {
@@ -2217,17 +2341,18 @@ export default function plugin(bb: BbPluginApi) {
   }
 
   /**
-   * Читает редактируемый файл заново (свежий sha), применяет чистую правку и
-   * пишет с CAS-защитой. Свежее чтение прямо перед записью и делает правку
-   * атомарной против параллельной сессии Claude Code: чужая запись между нашим
-   * чтением и записью не совпадёт по sha и вернётся конфликтом, а не затиранием.
+   * Re-reads the edited file (a fresh sha), applies the pure edit, and
+   * writes it with CAS protection. Reading fresh right before the write is
+   * what makes the edit atomic against a concurrent Claude Code session: a
+   * foreign write between our read and write won't match the sha and comes
+   * back as a conflict rather than being clobbered.
    */
   async function applyEdit(
     areaId: string,
     edit: (doc: sd.SettingsDoc) => sd.SettingsDoc,
   ): Promise<{ outcome: "ok" | "conflict" | "parse-error" | "not-found"; message: string | null }> {
     const area = await resolveArea(bb, areaId);
-    if (!area) return { outcome: "not-found", message: "Область не найдена." };
+    if (!area) return { outcome: "not-found", message: "Area not found." };
 
     const { text, sha256 } = await readFile(area.editedPath, area.hostId);
     let doc: sd.SettingsDoc;
@@ -2245,14 +2370,14 @@ export default function plugin(bb: BbPluginApi) {
       path: area.editedPath,
       hostId: area.hostId,
       content: next,
-      // Есть sha — пишем только поверх той же версии; нет файла — create-only.
+      // If sha is present, write only on top of the same version; if the file is absent, it's create-only.
       expectedSha256: sha256 ?? null,
       createParents: true,
     });
     if (written.outcome === "conflict") {
       return {
         outcome: "conflict",
-        message: "Файл изменила другая сессия. Обновите и повторите.",
+        message: "Another session changed the file. Refresh and try again.",
       };
     }
     return { outcome: "ok", message: null };

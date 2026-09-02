@@ -7,7 +7,7 @@ import {
 } from "./resolve";
 
 describe("isInTabLink", () => {
-  it("отсекает схемные, протокол-относительные, якорные и пустые ссылки", () => {
+  it("excludes scheme, protocol-relative, anchor, and empty links", () => {
     expect(isInTabLink("http://example.com/x")).toBe(false);
     expect(isInTabLink("https://example.com/x")).toBe(false);
     expect(isInTabLink("mailto:a@b.com")).toBe(false);
@@ -16,7 +16,7 @@ describe("isInTabLink", () => {
     expect(isInTabLink("")).toBe(false);
   });
 
-  it("признаёт локальные пути живыми для навигации", () => {
+  it("recognizes local paths as valid for navigation", () => {
     expect(isInTabLink("tasks/x.md")).toBe(true);
     expect(isInTabLink("./y.md")).toBe(true);
     expect(isInTabLink("/abs/z.md")).toBe(true);
@@ -24,22 +24,22 @@ describe("isInTabLink", () => {
 });
 
 describe("parseHref", () => {
-  it("сперва отрезает title, потом якорь", () => {
+  it("strips the title first, then the anchor", () => {
     expect(parseHref('path "t"#sec')).toEqual({ path: "path", anchor: "sec" });
   });
 
-  it("без title и якоря — путь целиком, якорь null", () => {
+  it("no title and no anchor — the whole path, anchor null", () => {
     expect(parseHref("tasks/x.md")).toEqual({ path: "tasks/x.md", anchor: null });
   });
 
-  it("только якорь, без title", () => {
+  it("anchor only, no title", () => {
     expect(parseHref("tasks/x.md#section")).toEqual({
       path: "tasks/x.md",
       anchor: "section",
     });
   });
 
-  it("хвостовую пунктуацию не режет — легальная точка в имени файла цела", () => {
+  it("doesn't strip trailing punctuation — a legitimate dot in the filename stays intact", () => {
     expect(parseHref("notes/v1.2.md")).toEqual({
       path: "notes/v1.2.md",
       anchor: null,
@@ -48,32 +48,32 @@ describe("parseHref", () => {
 });
 
 describe("resolveRelative", () => {
-  it("дедуплицирует хвостовой слэш абсолютной ссылки", () => {
+  it("deduplicates the trailing slash of an absolute link", () => {
     expect(resolveRelative("dir/a.md", "/a/b/")).toBe(
       resolveRelative("dir/a.md", "/a/b"),
     );
   });
 
-  it("резолвит относительный путь от директории файла", () => {
+  it("resolves a relative path against the file's directory", () => {
     expect(resolveRelative("dir/a.md", "b.md")).toBe("/dir/b.md");
   });
 
-  it("схлопывает ..", () => {
+  it("collapses ..", () => {
     expect(resolveRelative("dir/a.md", "../c.md")).toBe("/c.md");
   });
 
-  it("абсолютный ref не зависит от fromPath", () => {
+  it("an absolute ref doesn't depend on fromPath", () => {
     expect(resolveRelative("dir/a.md", "/abs/z.md")).toBe("/abs/z.md");
   });
 });
 
 describe("fileRefFromCode", () => {
-  it("файловую ссылку в инлайн-коде распознаёт", () => {
+  it("recognizes a file link in inline code", () => {
     expect(fileRefFromCode("references/x.md")).toBe("references/x.md");
     expect(fileRefFromCode("  references/x.md  ")).toBe("references/x.md");
   });
 
-  it("обычный код — не ссылка", () => {
+  it("regular code is not a link", () => {
     expect(fileRefFromCode("const x")).toBe(null);
     expect(fileRefFromCode("user-scalable=no")).toBe(null);
   });

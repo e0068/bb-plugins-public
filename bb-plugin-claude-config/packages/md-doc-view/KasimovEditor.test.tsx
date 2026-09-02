@@ -2,9 +2,9 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, render } from "@testing-library/react";
 
-// Движок Kasimov — vanilla-DOM, jsdom его не воспроизводит. Мокаем фабрику:
-// ловим переданные опции и отдаём заглушку-инстанс, чтобы проверить проводку
-// обёртки (CSS-переменные на host, флаги в createEditor).
+// The Kasimov engine is vanilla DOM, jsdom doesn't reproduce it. We mock the
+// factory: capture the passed options and return a stub instance, to check
+// the wrapper's wiring (CSS variables on the host, flags in createEditor).
 const created: Array<{ opts: Record<string, unknown> }> = [];
 vi.mock("../kasimov/kasimov.js", () => ({
   createEditor: (_host: HTMLElement, opts: Record<string, unknown>) => {
@@ -27,7 +27,7 @@ afterEach(() => {
 });
 
 describe("KasimovEditor", () => {
-  it("флаги по умолчанию: followLinks/atLinks/frontmatter вкл, mermaidNodes soft", () => {
+  it("default flags: followLinks/atLinks/frontmatter on, mermaidNodes soft", () => {
     render(<KasimovEditor value="x" />);
     expect(created).toHaveLength(1);
     expect(created[0].opts.followLinks).toBe(true);
@@ -36,7 +36,7 @@ describe("KasimovEditor", () => {
     expect(created[0].opts.mermaidNodes).toBe("soft");
   });
 
-  it("флаги пробрасываются в createEditor", () => {
+  it("flags are threaded through to createEditor", () => {
     render(
       <KasimovEditor
         value="x"
@@ -52,18 +52,18 @@ describe("KasimovEditor", () => {
     expect(created[0].opts.mermaidNodes).toBe("contrast");
   });
 
-  // Kasimov пересоздаёт .mde-root на каждый ввод и заново объявляет на нём
-  // свои дефолты --kasi-*; собственное объявление на элементе всегда бьёт
-  // унаследованное от host независимо от специфичности предка (контракт
-  // апстрима, memory/wiki/kasi-css-contract.md). Поэтому вместо host.style
-  // обёртка держит правило в document.head с ID-селектором по host,
-  // целящееся именно в `.mde-root` — эти тесты проверяют это правило.
+  // Kasimov recreates .mde-root on every keystroke and redeclares its own
+  // --kasi-* defaults on it; a declaration on the element itself always beats
+  // one inherited from the host regardless of ancestor specificity (the
+  // upstream contract, memory/wiki/kasi-css-contract.md). So instead of
+  // host.style the wrapper keeps a rule in document.head with an ID selector
+  // keyed to the host, targeting `.mde-root` specifically — these tests check that rule.
   const styleRuleFor = (hostId: string) =>
     Array.from(document.head.querySelectorAll("style")).find((s) =>
       s.textContent?.includes(`#${hostId} .mde-root`),
     );
 
-  it("vars дают CSS-правило в document.head, целящееся в host .mde-root", () => {
+  it("vars produce a CSS rule in document.head, targeting the host's .mde-root", () => {
     const { container } = render(
       <KasimovEditor
         value="x"
@@ -74,11 +74,11 @@ describe("KasimovEditor", () => {
     const rule = styleRuleFor(host.id);
     expect(rule?.textContent).toContain("--kasi-size: 18px;");
     expect(rule?.textContent).toContain("--kasi-accent: #0af;");
-    // не инлайн-стиль на host — контракт требует специфичности выше .mde-root
+    // not an inline style on the host — the contract requires specificity higher than .mde-root
     expect(host.style.getPropertyValue("--kasi-size")).toBe("");
   });
 
-  it("смена vars снимает прежнее правило и ставит новое", () => {
+  it("changing vars removes the old rule and sets a new one", () => {
     const { container, rerender } = render(
       <KasimovEditor value="x" vars={{ "--kasi-size": "18px" }} />,
     );
@@ -90,7 +90,7 @@ describe("KasimovEditor", () => {
     expect(styleRuleFor(host.id)?.textContent).not.toContain("--kasi-size");
   });
 
-  it("размонтирование убирает правило из document.head", () => {
+  it("unmounting removes the rule from document.head", () => {
     const { container, unmount } = render(
       <KasimovEditor value="x" vars={{ "--kasi-size": "18px" }} />,
     );
@@ -100,7 +100,7 @@ describe("KasimovEditor", () => {
     expect(styleRuleFor(host.id)).toBeUndefined();
   });
 
-  it("без vars / с пустым vars правило не создаётся", () => {
+  it("no rule is created without vars / with empty vars", () => {
     const { container: c1 } = render(<KasimovEditor value="x" />);
     const host1 = c1.firstElementChild as HTMLElement;
     expect(styleRuleFor(host1.id)).toBeUndefined();
@@ -110,7 +110,7 @@ describe("KasimovEditor", () => {
     expect(styleRuleFor(host2.id)).toBeUndefined();
   });
 
-  it("два инстанса получают разные id и независимые правила", () => {
+  it("two instances get different ids and independent rules", () => {
     const { container: c1 } = render(
       <KasimovEditor value="x" vars={{ "--kasi-size": "18px" }} />,
     );
@@ -124,7 +124,7 @@ describe("KasimovEditor", () => {
     expect(styleRuleFor(host2.id)?.textContent).toContain("--kasi-size: 22px;");
   });
 
-  it("ровно один <style>-тег на инстанс, без дублей", () => {
+  it("exactly one <style> tag per instance, no duplicates", () => {
     const { container } = render(
       <KasimovEditor value="x" vars={{ "--kasi-size": "18px" }} />,
     );
@@ -135,21 +135,21 @@ describe("KasimovEditor", () => {
     expect(matches).toHaveLength(1);
   });
 
-  it("ререндер с новым, но равным по содержимому vars не пересоздаёт тег", () => {
+  it("a re-render with a new but content-equal vars doesn't recreate the tag", () => {
     const { container, rerender } = render(
       <KasimovEditor value="x" vars={{ "--kasi-size": "18px" }} />,
     );
     const host = container.firstElementChild as HTMLElement;
     const before = styleRuleFor(host.id);
 
-    // Новый объект-литерал с тем же содержимым — вызывающие (md-opener/
-    // claude-config) зовут toCssVars() заново на каждый рендер, без мемоизации.
+    // A new object literal with the same content — the callers (md-opener/
+    // claude-config) call toCssVars() again on every render, without memoization.
     rerender(<KasimovEditor value="x" vars={{ "--kasi-size": "18px" }} />);
     const after = styleRuleFor(host.id);
     expect(after).toBe(before);
   });
 
-  it("смена флага пересоздаёт редактор", () => {
+  it("changing a flag recreates the editor", () => {
     const { rerender } = render(<KasimovEditor value="x" followLinks />);
     expect(created).toHaveLength(1);
     rerender(<KasimovEditor value="x" followLinks={false} />);
@@ -157,7 +157,7 @@ describe("KasimovEditor", () => {
     expect(created[1].opts.followLinks).toBe(false);
   });
 
-  it("смена mermaidNodes пересоздаёт редактор", () => {
+  it("changing mermaidNodes recreates the editor", () => {
     const { rerender } = render(<KasimovEditor value="x" mermaidNodes="soft" />);
     expect(created).toHaveLength(1);
     rerender(<KasimovEditor value="x" mermaidNodes="contrast" />);

@@ -1,18 +1,19 @@
-// bb-plugin-claude-config — панель: выбор области сверху и секции (хуки,
-// плагины, коннекторы, навыки, агенты, подгрузка инструментов). Данные и запись
-// — через RPC к server.ts; здесь только показ и переключение. Навыки и агенты
-// можно создать кнопкой в шапке секции (диалог имени → createSkill/createAgent).
-// Коннекторы .mcp.json
-// переключаются тумблером; user/local и хуки — только просмотр (хук кликабелен,
-// открывает своё содержимое во второй колонке).
+// bb-plugin-claude-config — panel: area picker up top plus sections (hooks,
+// plugins, connectors, skills, agents, tool search). Data and writes go
+// through RPC to server.ts; this file only handles display and toggling.
+// Skills and agents can be created via a button in the section header
+// (name dialog → createSkill/createAgent). .mcp.json connectors
+// are toggled by a switch; user/local and hooks are read-only (a hook is
+// clickable and opens its contents in the second column).
 //
-// SKILL.md выбранного навыка (и любой открытый документ) показывается второй
-// колонкой внутри самой панели — компонентом DocTab по тому же `subPath`
-// маршрута (там и область, и имя), который панель уже получает. Раньше это была
-// фиксированная вкладка в правой хостовой панели (experimental_fixedTabs), но в
-// bb 0.40.0 navPanel с этой опцией не монтируется и пункт пропадает из сайдбара
-// (см. задачу BP-53), поэтому содержимое перенесено в колонку.
-import { useEffect, useState, useSyncExternalStore } from "react";
+// The SKILL.md of the selected skill (or any open document) is shown in the
+// second column inside the panel itself — the DocTab component keyed off the
+// same `subPath` route segment (which already carries the area and name) that
+// the panel receives. This used to be a fixed tab in the right-hand host panel
+// (experimental_fixedTabs), but in bb 0.40.0 navPanel with that option doesn't
+// mount and the entry disappears from the sidebar (see task BP-53), so the
+// content was moved into the column.
+import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import type { MouseEvent as ReactMouseEvent, ReactNode } from "react";
 import {
   definePluginApp,
@@ -70,11 +71,12 @@ import { ProjectSwitcher } from "./packages/project-switcher/react";
 import { rankCandidates } from "./src/suggest";
 import { extractCommandFile } from "./src/hook-script";
 import "./doc-editor.css";
-// Раздел «Workflows» — конструктор workflow, встроенный в панель как ещё один
-// раздел рейки (см. WorkflowsView ниже). Ядро (модель дерева, чистые операции
-// над ним, module-level store) и сам конструктор уже реализованы соседними
-// группами; здесь — только интеграция: RPC-обвязка на wf*-процедуры server.ts
-// и многоколоночная раскладка внутри панели.
+// "Workflows" section — a workflow builder embedded in the panel as another
+// rail section (see WorkflowsView below). The core (tree model, pure
+// operations over it, module-level store) and the builder itself were already
+// implemented by neighboring groups; this file only handles integration:
+// RPC glue for the wf*-procedures in server.ts and the multi-column layout
+// inside the panel.
 import { editorStore, engineForStore, type StoreKind, type Identity } from "./src/workflow/store";
 import { compile, blankTree, type Engine, type Tree, type Agent, type Phase, type Step } from "./src/workflow/workflow-model";
 import { applyTemplate, setAgentField, nodeAt, type OutlinePath } from "./src/workflow/outline-ops";
@@ -90,7 +92,7 @@ const PANEL_PATH = "claude-config";
 
 type Rpc = ReturnType<typeof useRpc<typeof rpcContract>>;
 
-// Разделы средней колонки — выбираются из рейки, определяют, что показать.
+// Middle-column sections — picked from the rail, determine what is shown.
 type SectionId =
   | "hooks"
   | "plugins"
@@ -100,37 +102,37 @@ type SectionId =
   | "toolSearch"
   | "workflows";
 
-// Режим включённого навыка и цель записи (включая off) — как в контракте.
+// Enabled-skill mode and write target (including off) — matches the contract.
 type SkillMode = "on" | "name-only" | "user-invocable-only";
 type SkillTarget = SkillMode | "off";
 type ToolSearchModeOn = "on" | "auto";
 type ToolSearchTarget = ToolSearchModeOn | "off";
 
-// Режимы включённого навыка для выпадающего списка (порядок — от полного к узкому).
+// Enabled-skill modes for the dropdown (ordered from fullest to narrowest).
 const SKILL_MODE_OPTIONS: { value: SkillMode; label: string }[] = [
-  { value: "on", label: "Полностью" },
-  { value: "name-only", label: "Только название" },
-  { value: "user-invocable-only", label: "Через слэш" },
+  { value: "on", label: "Full" },
+  { value: "name-only", label: "Name only" },
+  { value: "user-invocable-only", label: "Slash only" },
 ];
 
-// Режимы включённой подгрузки инструментов.
+// Enabled tool-search modes.
 const TOOL_SEARCH_MODE_OPTIONS: { value: ToolSearchModeOn; label: string }[] = [
-  { value: "auto", label: "Автоматически" },
-  { value: "on", label: "Всегда" },
+  { value: "auto", label: "Automatic" },
+  { value: "on", label: "Always" },
 ];
 
-// Откуда объявлен коннектор — подпись под именем.
+// Where the connector is declared — caption under the name.
 const CONNECTOR_ORIGIN_LABEL: Record<ConnectorOrigin, string> = {
   mcpjson: ".mcp.json",
-  user: "глобальный",
-  local: "локальный",
+  user: "global",
+  local: "local",
 };
 
-// С какого уровня настроек пришёл хук.
+// Which settings level the hook came from.
 const HOOK_ORIGIN_LABEL: Record<"user" | "project" | "local", string> = {
-  user: "глобальный",
-  project: "проектный",
-  local: "локальный",
+  user: "global",
+  project: "project",
+  local: "local",
 };
 
 function connectorSubtitle(origin: ConnectorOrigin, transport: string): string {
@@ -138,10 +140,11 @@ function connectorSubtitle(origin: ConnectorOrigin, transport: string): string {
   return transport ? `${label} · ${transport}` : label;
 }
 
-// Что открыто в правой вкладке, живёт в subPath. Навык — `skill/<area>/<name>`
-// (сервер сам находит его SKILL.md). Любой файл по абсолютному пути (README
-// плагина, файл памяти) — `doc/<area>/<b64>`, где путь закодирован base64url,
-// чтобы его слэши не спутались с разделителем сегментов.
+// What's open in the right-hand tab lives in subPath. A skill is
+// `skill/<area>/<name>` (the server resolves its SKILL.md itself). Any file
+// by absolute path (plugin README, memory file) is `doc/<area>/<b64>`, where
+// the path is base64url-encoded so its slashes don't collide with the segment
+// separator.
 type ConnectorOrigin = "mcpjson" | "user" | "local";
 type HookOrigin = "user" | "project" | "local";
 
@@ -221,12 +224,12 @@ function parseDocSubPath(subPath: string): DocTarget | null {
   return null;
 }
 
-// Открыть реальный файл по настройке `fileOpener` (memory/decisions/
-// claude-config-opener-setting.md). `md-opener`/`builtin` — во встроенной колонке
-// (DocTab по subPath, редактор выбирает сам DocTab). `host` — делегировать
-// хостовой вкладке bb: сервер по области и пути отдаёт хост, тот открывает файл
-// опенером формата. Синтезированные представления (плагин, коннектор, команда
-// хука) — не файлы, идут не сюда.
+// Open a real file per the `fileOpener` setting (memory/decisions/
+// claude-config-opener-setting.md). `md-opener`/`builtin` — in the embedded
+// column (DocTab by subPath, the editor itself picks the DocTab). `host` —
+// delegate to a bb host tab: the server resolves the host for the area and
+// path, and it opens the file with the format's opener. Synthesized views
+// (plugin, connector, hook command) aren't files and don't go through here.
 function useOpenFile(areaId: string): (path: string) => Promise<void> {
   const rpc = useRpc<typeof rpcContract>();
   const navigate = useBbNavigate();
@@ -245,21 +248,22 @@ function useOpenFile(areaId: string): (path: string) => Promise<void> {
       path,
     });
     if (!hostId) {
-      toast.error(error ?? "Не удалось открыть файл.");
+      toast.error(error ?? "Failed to open the file.");
       return;
     }
     const opened = navigate.experimental_openFilePreview({
       target: { kind: "host", hostId, path },
       location: null,
     });
-    if (!opened) toast.error("Хост отклонил открытие файла.");
+    if (!opened) toast.error("The host declined to open the file.");
   };
 }
 
-// Встроенная колонка в режиме `md-opener`: тот же MdDocView, что и слот
-// MD Opener, но поверх RPC самой панели. Любой файл (md и не-md) правится сырым
-// текстом; ссылки резолвятся как в остальной панели (относительно документа, `~`
-// и `/` — как есть, границы проверит сервер).
+// Embedded column in `md-opener` mode: the same MdDocView as the MD Opener
+// slot, but layered over this panel's own RPC. Any file (md and non-md) is
+// edited as raw text; links resolve the same way as in the rest of the panel
+// (relative to the document, `~` and `/` are passed through, the server
+// checks the boundaries).
 function ColumnMdDocView({
   areaId,
   initialPath,
@@ -268,14 +272,16 @@ function ColumnMdDocView({
 }: {
   areaId: string;
   initialPath: string;
-  // Прокидываются в MdDocView как есть — хозяин вкладки решает, что показать в
-  // начале общей шапки и чем заменить дефолтную кнопку «Редактировать» (см. md-doc-view).
+  // Passed through to MdDocView as-is — the tab owner decides what to show at
+  // the start of the shared header and what replaces the default "Edit" button
+  // (see md-doc-view).
   leading?: ReactNode;
   editButton?: (onClick: () => void) => ReactNode;
 }) {
   const rpc = useRpc<typeof rpcContract>();
-  // Вид и флаги Kasimov — из настроек плагина (kasimov*). parse тотален: пока
-  // useSettings грузится (values === undefined) — дефолты, совпадающие с kasimov.css.
+  // Kasimov look and flags — from the plugin settings (kasimov*). The parser
+  // is total: while useSettings is loading (values === undefined) it returns
+  // defaults that match kasimov.css.
   const settings = parseKasimovSettings(useSettings().values);
   const vars = kasimovCssVars(settings);
   const flags = kasimovFlags(settings);
@@ -317,11 +323,11 @@ function ColumnMdDocView({
   );
 }
 
-// Markdown-файлы рендерим как есть; прочие (например plugin.json) — кодовым
-// блоком с подсветкой по расширению, чтобы читалось, а не разъезжалось.
-// Вторая строка элемента списка: вес в токенах впереди, затем остальное
-// (происхождение, версия, транспорт). Нет веса — только остальное; нет
-// остального — только вес.
+// Markdown files render as-is; everything else (e.g. plugin.json) renders as
+// a code block with extension-based highlighting, so it reads cleanly instead
+// of falling apart. Second line of a list item: token weight first, then the
+// rest (origin, version, transport). No weight — just the rest; no rest —
+// just the weight.
 function secondLine(tokens: number | null, rest: string): string {
   const weight = tokens != null ? formatWeight(tokens) : "";
   if (weight && rest) return `${weight} · ${rest}`;
@@ -336,10 +342,11 @@ function asMarkdown(path: string, content: string): string {
 }
 
 /**
- * Показывает команду хука, сделав в ней токен пути к файлу кликабельной ссылкой
- * (клик — открыть файл на правку). Токен ищется тем же разбором, что и на
- * сервере (extractCommandFile), поэтому подсвечивается ровно тот путь, чьё
- * содержимое показано ниже. Нет файла или токена в строке — команда как есть.
+ * Renders a hook command, turning the file-path token inside it into a
+ * clickable link (click — open the file for editing). The token is found by
+ * the same parsing used on the server (extractCommandFile), so exactly the
+ * path whose contents are shown below gets highlighted. No file or token in
+ * the string — the command is rendered as-is.
  */
 function renderCommandWithFileLink(
   command: string,
@@ -358,7 +365,7 @@ function renderCommandWithFileLink(
           event.stopPropagation();
           onOpen();
         }}
-        title="Открыть файл для правки"
+        title="Open the file for editing"
         className="text-primary hover:underline"
       >
         {token}
@@ -368,7 +375,25 @@ function renderCommandWithFileLink(
   );
 }
 
-/** Тоггл-переключатель вкл/выкл, как в настройках bb. */
+/**
+ * Toggle switch on/off — same size and colors as bb's own native settings
+ * switch (see bb-plugin-thread-handoff/components/ui/switch.tsx, the one
+ * design-system Switch in this repo): track h-4 w-7, thumb size-3 constant
+ * bg-background. bg-primary is achromatic gray in bb's theme (see
+ * doc-editor.css) — indistinguishable from bg-muted, hence bg-foreground for
+ * the on-track instead.
+ *
+ * Colors are set imperatively via `style.setProperty(..., "important")`,
+ * not Tailwind classes — including the earlier `!bg-foreground`/`!bg-muted`
+ * escape hatch (same one used in bb-plugin-token-usage-header). Some host
+ * style still won that cascade fight against a class-based `!important` on
+ * `[role="switch"]` (on-screen the track read the same gray in both states,
+ * which read as "the switch doesn't respond to clicks" — see
+ * memory/tasks/in_progress/cloud-config-plugin-kasimov-switch.md). An
+ * element's own inline style, written `important`, outranks every
+ * author-stylesheet rule regardless of that rule's selector specificity —
+ * there's no cascade fight left to lose.
+ */
 function Switch({
   checked,
   onChange,
@@ -376,33 +401,43 @@ function Switch({
   checked: boolean;
   onChange: (next: boolean) => void;
 }) {
+  const trackRef = useRef<HTMLButtonElement>(null);
+  const thumbRef = useRef<HTMLSpanElement>(null);
+  useEffect(() => {
+    trackRef.current?.style.setProperty(
+      "background-color",
+      checked ? "var(--foreground)" : "var(--muted)",
+      "important",
+    );
+  }, [checked]);
+  useEffect(() => {
+    thumbRef.current?.style.setProperty(
+      "background-color",
+      "var(--background)",
+      "important",
+    );
+  }, []);
   return (
     <button
+      ref={trackRef}
       type="button"
       role="switch"
       aria-checked={checked}
       onClick={() => onChange(!checked)}
-      className={cn(
-        "relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors",
-        checked ? "bg-primary" : "bg-input",
-      )}
+      className="relative inline-flex h-4 w-7 shrink-0 items-center rounded-full transition-colors"
     >
-      {/* Бегунок контрастирует с дорожкой в ОБОИХ состояниях, как нативный
-          свитч bb: тёмный на светлой (вкл) дорожке, светлый на тёмной (выкл).
-          Один и тот же bg-background тонул в дорожке выкл — отсюда расхождение. */}
       <span
+        ref={thumbRef}
         className={cn(
-          "inline-block h-4 w-4 rounded-full shadow transition-transform",
-          checked
-            ? "translate-x-[18px] bg-background"
-            : "translate-x-0.5 bg-foreground",
+          "inline-block size-3 rounded-full shadow transition-transform",
+          checked ? "translate-x-3" : "translate-x-0",
         )}
       />
     </button>
   );
 }
 
-/** Выпадающий список режима; недоступен (полупрозрачен) при выключенном тоггле. */
+/** Mode dropdown; disabled (translucent) when the toggle is off. */
 function Dropdown<T extends string>({
   value,
   options,
@@ -434,9 +469,73 @@ function Dropdown<T extends string>({
 }
 
 /**
- * Диалог создания навыка или агента: одно поле имени. Имя нормализуется в слаг
- * (латиница, цифры, дефисы) — при расхождении показываем, каким слагом файл
- * будет создан. `onCreate` возвращает текст ошибки или null при успехе.
+ * Click-to-edit block for raw text that isn't markdown (JSON, a shell/JS
+ * script) — a plain monospace textarea, not MarkdownEditor: WYSIWYG markdown
+ * rendering would mangle exact JSON/code text. Mirrors the Save/Cancel
+ * affordance of the document toolbar, scoped to just this block.
+ *
+ * One textarea throughout, `readOnly` until clicked — not a pre/textarea
+ * swap — so `rows` (sized to the content once, from `value`) never changes
+ * between viewing and editing and the block doesn't jump height on click.
+ */
+function PlainTextBlock({
+  value,
+  onSave,
+}: {
+  value: string;
+  onSave: (next: string) => void;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(value);
+  const rows = Math.min(20, Math.max(3, value.split("\n").length));
+
+  return (
+    <div className="flex flex-col gap-1">
+      <textarea
+        readOnly={!editing}
+        rows={rows}
+        value={editing ? draft : value}
+        onClick={() => {
+          if (editing) return;
+          setDraft(value);
+          setEditing(true);
+        }}
+        onChange={(event) => editing && setDraft(event.target.value)}
+        className={cn(
+          "w-full rounded-md border border-border p-2 font-mono text-sm",
+          editing ? "cursor-text bg-background" : "cursor-pointer bg-muted/30",
+        )}
+      />
+      {editing && (
+        <div className="flex gap-1">
+          <button
+            type="button"
+            onClick={() => {
+              onSave(draft);
+              setEditing(false);
+            }}
+            className="rounded-md px-2 py-1 text-sm text-primary hover:bg-muted"
+          >
+            Save
+          </button>
+          <button
+            type="button"
+            onClick={() => setEditing(false)}
+            className="rounded-md px-2 py-1 text-sm text-muted-foreground hover:bg-muted"
+          >
+            Cancel
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Dialog for creating a skill or agent: a single name field. The name is
+ * normalized into a slug (latin letters, digits, hyphens) — if it differs, we
+ * show which slug the file will be created with. `onCreate` returns an error
+ * message or null on success.
  */
 function CreateDialog({
   open,
@@ -455,7 +554,7 @@ function CreateDialog({
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
-  // При каждом открытии диалог чистый.
+  // The dialog resets on every open.
   useEffect(() => {
     if (open) {
       setName("");
@@ -488,23 +587,23 @@ function CreateDialog({
           <Input
             autoFocus
             value={name}
-            placeholder="имя-через-дефис"
+            placeholder="name-with-hyphens"
             onChange={(event) => setName(event.target.value)}
             onKeyDown={(event) => event.key === "Enter" && submit()}
           />
           {name.trim() !== "" && slug !== name.trim() && (
             <p className="text-xs text-muted-foreground">
-              Будет создан как: {slug || "—"}
+              Will be created as: {slug || "—"}
             </p>
           )}
           {error && <p className="text-xs text-destructive">{error}</p>}
         </div>
         <DialogFooter>
           <Button variant="outline" onClick={onClose} disabled={busy}>
-            Отмена
+            Cancel
           </Button>
           <Button onClick={submit} disabled={!canSubmit}>
-            Создать
+            Create
           </Button>
         </DialogFooter>
       </DialogContent>
@@ -513,11 +612,11 @@ function CreateDialog({
 }
 
 /**
- * Правая вкладка: показывает выбранный по `subPath` документ — SKILL.md навыка
- * либо файл по абсолютному пути (README плагина, память) — хостовым Markdown.
- * Ссылки на файлы внутри документа (и `<a>`, и файловые бэктик-код-спаны вида
- * `references/x.md`) открываются в этой же вкладке через единый `readDoc`;
- * стек хранит абсолютные пути для «назад».
+ * Right-hand tab: shows the document selected via `subPath` — a skill's
+ * SKILL.md or a file by absolute path (plugin README, memory) — rendered with
+ * the host Markdown component. File links inside the document (both `<a>`
+ * tags and backtick code spans like `references/x.md`) open in this same tab
+ * through a single `readDoc`; the stack holds absolute paths for "back".
  */
 type Loaded = {
   path: string;
@@ -526,11 +625,11 @@ type Loaded = {
   sha256: string | null;
 };
 
-// Фронтматер файла — таблицей «поле → значение» во всю ширину страницы. Ключ
-// прижат влево и не растягивается, значение занимает остаток. readOnly — для
-// плагинов (манифест не правится через этот путь); иначе значения редактируемы.
-// В таблицу идут только поля верхнего уровня; вложенные/сырые строки блока
-// сохраняются при записи, но не показываются.
+// The file's frontmatter — a "field → value" table spanning the page width.
+// The key is pinned left and doesn't stretch, the value takes the rest.
+// readOnly — for plugins (the manifest isn't edited through this path);
+// otherwise values are editable. Only top-level fields go into the table;
+// nested/raw block lines are preserved on write but not shown.
 function FrontmatterTable({
   entries,
   onChange,
@@ -540,7 +639,7 @@ function FrontmatterTable({
   onChange?: (index: number, value: string) => void;
   readOnly?: boolean;
 }) {
-  // Только поля верхнего уровня; сохраняем исходный индекс для onChange.
+  // Only top-level fields; keep the original index for onChange.
   const fields: { key: string; value: string; index: number }[] = [];
   entries.forEach((entry, index) => {
     if (entry.kind === "field") {
@@ -549,9 +648,9 @@ function FrontmatterTable({
   });
 
   return (
-    // Блок ограничен по ширине и по центру. Обёртка со скруглением и
-    // overflow-hidden клиппит углы заливки; сетку рисуют границы ячеек, а не
-    // border самой таблицы (иначе border-collapse ломает скругление).
+    // The block is width-limited and centered. The rounded, overflow-hidden
+    // wrapper clips the fill's corners; the grid is drawn by cell borders, not
+    // the table's own border (otherwise border-collapse breaks the rounding).
     <div className="p-4">
       <div
         style={{ width: 668 }}
@@ -610,51 +709,56 @@ function DocTab({ subPath }: PluginNavPanelProps) {
   );
   const target = parseDocSubPath(subPath);
   const areaId = target?.areaId ?? "";
-  // Реальный файл в режиме `md-opener` рисует MdDocView (он же грузит и правит).
-  // Ветки composite/hook и режим `builtin` идут прежним путём ниже.
+  // A real file in `md-opener` mode is rendered by MdDocView (which also
+  // loads and edits it). The composite/hook branches and `builtin` mode
+  // follow the old path below.
   const mdOpenerDoc = target?.kind === "doc" && opener === "md-opener";
 
-  // Стек посещённых абсолютных путей (последний — текущий) и загруженный файл.
+  // Stack of visited absolute paths (last one is current) and the loaded file.
   const [stack, setStack] = useState<string[]>([]);
   const [doc, setDoc] = useState<Loaded | null>(null);
   const [loading, setLoading] = useState(false);
-  // Режим правки: тот же MarkdownEditor, но editable; вход — кликом по тексту.
+  // Edit mode: the same MarkdownEditor, but editable; entered by clicking the text.
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState("");
   const [saveNote, setSaveNote] = useState<string | null>(null);
-  // Композит (плагин: манифест + README) — уже готовый markdown, не редактируется.
+  // Composite (plugin: manifest + README) — already-assembled markdown, not editable.
   const [composite, setComposite] = useState(false);
-  // Пути в поддереве папки документа — для подсказок / (путь). Редактор зовёт
-  // pathProvider синхронно, поэтому список держим в памяти.
+  // Paths within the document folder's subtree — for / (path) suggestions.
+  // The editor calls pathProvider synchronously, so we keep the list in memory.
   const [docPaths, setDocPaths] = useState<string[]>([]);
-  // Цели для подсказок @ (импорт): навыки и файлы памяти области — отдельный
-  // источник, не подмножество docPaths, поэтому @code-st матчится по label
-  // ("code-standards"), а не по файлам поддерева текущего документа.
+  // Targets for @ (import) suggestions: skills and area memory files — a
+  // separate source, not a subset of docPaths, so @code-st matches by label
+  // ("code-standards") rather than by files in the current document's subtree.
   const [refTargets, setRefTargets] = useState<
     { value: string; label: string }[]
   >([]);
-  // Доп. данные хука: его определение (JSON) и содержимое файла, который команда
-  // читает или запускает (если опознан). Команда правится, эти два — для показа.
+  // Extra hook data: its definition (JSON) and the contents of the file the
+  // command reads or runs (if recognized) — both editable in place (see
+  // saveHookDefinition/saveHookFile), each with its own CAS sha256.
   const [hookExtra, setHookExtra] = useState<{
     definition: string | null;
     filePath: string | null;
     fileContent: string | null;
+    fileSha256: string | null;
   } | null>(null);
-  // Разбор фронтматера текущего документа: поля идут в таблицу, тело — в редактор.
-  // hasFm=false → у файла нет фронтматера, тело равно всему содержимому.
+  // Parsing the current document's frontmatter: fields go into the table, the
+  // body goes into the editor. hasFm=false → the file has no frontmatter, the
+  // body equals the whole content.
   const [hasFm, setHasFm] = useState(false);
   const [fmEntries, setFmEntries] = useState<FrontmatterEntry[]>([]);
   const [fmBody, setFmBody] = useState("");
-  // Манифест плагина (JSON) — его «фронтматер», показываем таблицей над README.
+  // Plugin manifest (JSON) — its "frontmatter", shown as a table above the README.
   const [pluginManifest, setPluginManifest] = useState<string | null>(null);
 
-  // Собрать содержимое файла из полей и тела: с фронтматером — сериализуем блок,
-  // без него — тело и есть весь файл.
+  // Assemble the file's content from the fields and body: with frontmatter —
+  // serialize the block, without it — the body is the whole file.
   const composeContent = (entries: FrontmatterEntry[], body: string) =>
     hasFm ? serializeFrontmatter(entries, body) : body;
 
-  // Разложить документ на фронтматер и тело. Композит (плагин/коннектор) и хук
-  // имеют своё представление — их не трогаем, тело = всё содержимое.
+  // Split the document into frontmatter and body. Composite (plugin/connector)
+  // and hook have their own representation — leave them alone, body = the
+  // whole content.
   const splitDoc = (loaded: Loaded | null, isComposite: boolean) => {
     if (!loaded || loaded.content == null || isComposite) {
       setHasFm(false);
@@ -668,17 +772,17 @@ function DocTab({ subPath }: PluginNavPanelProps) {
     setFmBody(parsed.body);
   };
 
-  // Любой показ нового файла выходит из режима правки.
+  // Showing any new file exits edit mode.
   const present = (result: Loaded) => {
     setDoc(result);
     setEditing(false);
     setSaveNote(null);
     setLoading(false);
-    // Доп. хук-данные ставит только hook-ветка; для прочих документов сбрасываем.
+    // Extra hook data is only set by the hook branch; reset it for other documents.
     setHookExtra(null);
-    // Манифест ставит только plugin-ветка; для прочих документов сбрасываем.
+    // The manifest is only set by the plugin branch; reset it for other documents.
     setPluginManifest(null);
-    // Префетч путей для подсказок / (тихо; ошибки не мешают показу).
+    // Prefetch paths for / suggestions (silently; errors don't block display).
     if (result.path && result.content != null) {
       void rpc
         .call("listDocPaths", { areaId, path: result.path })
@@ -687,8 +791,8 @@ function DocTab({ subPath }: PluginNavPanelProps) {
     } else {
       setDocPaths([]);
     }
-    // Префетч целей для подсказок @ — не зависит от текущего файла, только
-    // от области.
+    // Prefetch targets for @ suggestions — independent of the current file,
+    // only depends on the area.
     if (areaId) {
       void rpc
         .call("listRefTargets", { areaId })
@@ -703,18 +807,19 @@ function DocTab({ subPath }: PluginNavPanelProps) {
     }
   };
 
-  // Пересобрать фронтматер/тело при смене документа или его типа. Читает
-  // зафиксированные doc/composite (не из замыкания present), поэтому корректно
-  // и после сохранения (doc.content обновился), и при переключении файла.
+  // Recompute frontmatter/body when the document or its type changes. Reads
+  // the committed doc/composite (not from the present() closure), so it stays
+  // correct both after a save (doc.content updated) and when switching files.
   useEffect(() => {
     splitDoc(doc, composite);
-    // splitDoc зависит только от doc и composite.
+    // splitDoc depends only on doc and composite.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [doc, composite]);
 
-  // Первый показ по subPath: навык резолвит сервер (readSkillFile), плагин —
-  // манифест + README (readPlugin, композит), любой файл — по абсолютному пути
-  // (readDoc). Абсолютный путь кладём в стек — по нему идут «назад» и ссылки.
+  // First render by subPath: the server resolves a skill (readSkillFile), a
+  // plugin — manifest + README (readPlugin, composite), any file — by absolute
+  // path (readDoc). We push the absolute path onto the stack — "back" and
+  // links use it.
   useEffect(() => {
     if (!target) {
       setDoc(null);
@@ -723,7 +828,7 @@ function DocTab({ subPath }: PluginNavPanelProps) {
       setComposite(false);
       return;
     }
-    // Режим md-opener для файла: DocTab не грузит — MdDocView сам читает и правит.
+    // md-opener mode for a file: DocTab doesn't load it — MdDocView reads and edits it itself.
     if (mdOpenerDoc) {
       setLoading(false);
       return;
@@ -737,7 +842,7 @@ function DocTab({ subPath }: PluginNavPanelProps) {
         .call("readPlugin", { areaId: target.areaId, key: target.key })
         .then((result) => {
           if (!ok) return;
-          // Ссылки в README считаем от папки плагина (папка README).
+          // README links are resolved relative to the plugin folder (the README's folder).
           const base = result.readmePath ?? result.manifestPath;
           setStack(base ? [base] : []);
           if (result.error && result.manifest == null) {
@@ -750,9 +855,9 @@ function DocTab({ subPath }: PluginNavPanelProps) {
             });
             return;
           }
-          // Манифест уходит в таблицу-«фронтматер» (pluginManifest), тело —
-          // README как есть. present() сбрасывает pluginManifest, поэтому
-          // ставим его после present.
+          // The manifest goes into the "frontmatter" table (pluginManifest),
+          // the body is the README as-is. present() resets pluginManifest, so
+          // we set it after calling present.
           setComposite(true);
           present({
             path: result.manifestPath,
@@ -787,7 +892,7 @@ function DocTab({ subPath }: PluginNavPanelProps) {
             });
             return;
           }
-          // Определение — срез большего файла, показываем JSON-блоком, не правим.
+          // The definition is a slice of a larger file, shown as a JSON block, not editable.
           setComposite(true);
           present({
             path: result.path,
@@ -811,8 +916,8 @@ function DocTab({ subPath }: PluginNavPanelProps) {
         .then((result) => {
           if (!ok) return;
           setStack(result.path ? [result.path] : []);
-          // Сырая команда (bash), не markdown-склейка — редактируется тем же
-          // MarkdownEditor, что и обычный документ (см. writeHook в save()).
+          // A raw command (bash), not markdown assembly — edited with the same
+          // MarkdownEditor as a regular document (see writeHook in save()).
           setComposite(false);
           present({
             path: result.path,
@@ -824,6 +929,7 @@ function DocTab({ subPath }: PluginNavPanelProps) {
             definition: result.definition,
             filePath: result.filePath,
             fileContent: result.fileContent,
+            fileSha256: result.fileSha256,
           });
         });
       return () => {
@@ -848,20 +954,21 @@ function DocTab({ subPath }: PluginNavPanelProps) {
     return () => {
       ok = false;
     };
-    // target выведен из subPath.
+    // target is derived from subPath.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [subPath, rpc, mdOpenerDoc]);
 
-  // Файловая ссылка внутри показанного документа (README плагина, ссылка в
-  // редакторе) — это реальный файл: открываем его нативным опенером bb, а не
-  // грузим во встроенную колонку.
+  // A file link inside the shown document (plugin README, editor link) is a
+  // real file: open it with bb's native opener rather than loading it into
+  // the embedded column.
   const openFile = useOpenFile(areaId);
   const openAbs = (abs: string) => void openFile(abs);
 
-  // Клик по файловой ссылке внутри композитного (плагин/коннектор/хук)
-  // документа: он рендерится хостовым `Markdown`, а не MarkdownEditor, так
-  // как это склейка — не самостоятельный markdown-файл. Ловим `<a>` и
-  // инлайн-код вида `references/x.md`. Считаем цель от текущего файла.
+  // Click on a file link inside a composite (plugin/connector/hook) document:
+  // it's rendered by the host `Markdown` component, not MarkdownEditor, since
+  // it's an assembled view — not a standalone markdown file. We catch `<a>`
+  // and inline code like `references/x.md`. The target is resolved relative
+  // to the current file.
   const onCompositeClick = (event: ReactMouseEvent<HTMLDivElement>) => {
     const current = stack[stack.length - 1];
     if (!current) return;
@@ -880,10 +987,11 @@ function DocTab({ subPath }: PluginNavPanelProps) {
     openAbs(resolveRelative(current, ref));
   };
 
-  // linkResolver для MarkdownEditor: `[..](..)`-ссылки и `@`-импорты (atLinks)
-  // резолвятся от пути текущего документа и открываются в этой же вкладке.
-  // `~/` и абсолютный `/` отдаём как есть — сервер раскроет `~` и проверит
-  // границы; относительный путь считаем от папки документа.
+  // linkResolver for MarkdownEditor: `[..](..)` links and `@` imports
+  // (atLinks) resolve relative to the current document's path and open in
+  // this same tab. `~/` and absolute `/` are passed through as-is — the server
+  // expands `~` and checks the boundaries; a relative path is resolved from
+  // the document's folder.
   const fromPath = doc?.path ?? stack[stack.length - 1] ?? "";
   const linkResolver = (href: string) => {
     if (!isInTabLink(href) && !href.startsWith("~/")) return null;
@@ -895,12 +1003,13 @@ function DocTab({ subPath }: PluginNavPanelProps) {
     return { onClick: () => openAbs(abs) };
   };
 
-  // Подсказки редактора: @ (импорт) — всё ссылаемое сразу (навыки, память И
-  // файлы поддерева), потому что валидную ссылку в документе даёт только @-импорт;
-  // навыки/память матчатся по человекочитаемому label (@code-st → code-standards).
-  // / (путь) — голые пути файлов поддерева, для случая, когда печатают путь без @.
-  // Редактор зовёт pathProvider синхронно на каждый ввод, поэтому списки держим
-  // заранее собранными в памяти (docPaths, refTargets).
+  // Editor suggestions: @ (import) — everything referenceable at once (skills,
+  // memory, AND subtree files), because only an @-import yields a valid link
+  // in the document; skills/memory match by their human-readable label
+  // (@code-st → code-standards). / (path) — bare subtree file paths, for when
+  // a path is typed without @. The editor calls pathProvider synchronously on
+  // every keystroke, so we keep the lists pre-assembled in memory (docPaths,
+  // refTargets).
   const pathProvider = (query: string, mode: "path" | "import") => {
     if (mode === "import") {
       const candidates = [
@@ -934,16 +1043,16 @@ function DocTab({ subPath }: PluginNavPanelProps) {
     setEditing(true);
   };
 
-  // Сохранение с CAS: sha из последнего чтения. Конфликт — сообщение, правку
-  // не теряем; успех — обновляем содержимое и свежий sha, выходим из правки.
-  // Принимает содержимое параметром (не читает `draft` из замыкания) — так
-  // редакторский onSave (⌘S) может передать своё свежее значение синхронно,
-  // не дожидаясь применения setDraft.
+  // Save with CAS: sha from the last read. Conflict — show a message, don't
+  // lose the edit; success — update the content and the fresh sha, exit edit
+  // mode. Takes the content as a parameter (doesn't read `draft` from the
+  // closure) — so the editor's onSave (⌘S) can pass its fresh value
+  // synchronously, without waiting for setDraft to apply.
   const save = (content: string) => {
     if (!doc || !target) return;
     setSaveNote(null);
-    // Хук пишется своим RPC (index-адресация в файле уровня), всё прочее —
-    // обычной записью по пути.
+    // A hook is written via its own RPC (index addressing within the level's
+    // file), everything else via a regular write by path.
     const request =
       target.kind === "hook"
         ? rpc.call("writeHook", {
@@ -969,21 +1078,74 @@ function DocTab({ subPath }: PluginNavPanelProps) {
         });
         setEditing(false);
       } else {
-        setSaveNote(result.message ?? "Не удалось сохранить.");
+        setSaveNote(result.message ?? "Failed to save.");
       }
     });
+  };
+
+  // Definition edit can move the hook to a different event or matcher group
+  // (see sd.replaceHook) — that shifts its flat index within the level's
+  // file, so `target.index` (baked into the current subPath) may no longer
+  // point at this hook. Rather than guess the new index, land back on the
+  // Hooks list on success; the edited hook shows up there, in its new spot.
+  const saveHookDefinition = (definition: string) => {
+    if (!target || target.kind !== "hook") return;
+    void rpc
+      .call("writeHookDefinition", {
+        areaId,
+        origin: target.origin,
+        index: target.index,
+        definition,
+        expectedSha256: doc?.sha256 ?? null,
+      })
+      .then((result) => {
+        if (result.outcome === "written") {
+          toast.success("Hook saved.");
+          navigate.toPluginPanel(PANEL_PATH, { subPath: "", replace: true });
+        } else {
+          toast.error(result.message ?? "Failed to save.");
+        }
+      });
+  };
+
+  // The referenced script (json/mjs/sh) is a real file — the same writeDoc
+  // RPC as any other document, with its own CAS sha256 (hookExtra.fileSha256,
+  // separate from the hook command's doc.sha256).
+  const saveHookFile = (content: string) => {
+    if (!hookExtra?.filePath) return;
+    const filePath = hookExtra.filePath;
+    void rpc
+      .call("writeDoc", {
+        areaId,
+        path: filePath,
+        content,
+        expectedSha256: hookExtra.fileSha256,
+      })
+      .then((result) => {
+        if (result.outcome === "written") {
+          setHookExtra({
+            ...hookExtra,
+            fileContent: content,
+            fileSha256: result.sha256,
+          });
+          toast.success("File saved.");
+        } else {
+          toast.error(result.message ?? "Failed to save.");
+        }
+      });
   };
 
   if (!target) {
     return (
       <div className="p-4 text-sm text-muted-foreground">
-        Выберите слева навык, плагин или файл памяти, чтобы увидеть содержимое.
+        Select a skill, plugin, or memory file on the left to see its contents.
       </div>
     );
   }
 
-  // Режим md-opener: колонка отдаёт файл целиком MdDocView (своя шапка, стек
-  // прыжков, CAS). Без хлебных крошек и таблицы полей DocTab — чистый MD Opener.
+  // md-opener mode: the column hands the whole file over to MdDocView (its own
+  // header, jump stack, CAS). No DocTab breadcrumbs or field table — a plain
+  // MD Opener.
   if (mdOpenerDoc && target.kind === "doc") {
     return (
       <div className="flex h-full min-h-0 flex-col">
@@ -1000,12 +1162,13 @@ function DocTab({ subPath }: PluginNavPanelProps) {
         : target.kind === "plugin"
           ? target.key.split("@")[0]
           : (doc?.path?.split("/").pop() ?? "");
-  // Композит (плагин) не редактируем — это склейка двух файлов.
+  // Composite (plugin) is not editable — it's an assembly of two files.
   const canEdit = !!doc && doc.content != null && !doc.error && !composite;
 
-  // Клик по тексту в режиме просмотра — вход в правку. Ссылку ведёт сам
-  // редактор через linkResolver, инлайн-код `references/x.md` — переход; всё
-  // прочее — startEdit. В режиме правки клики обрабатывает редактор.
+  // Clicking text in view mode enters edit mode. Links are handled by the
+  // editor itself via linkResolver, inline code like `references/x.md` — a
+  // navigation; everything else — startEdit. In edit mode, clicks are handled
+  // by the editor.
   const onDocClick = (event: ReactMouseEvent<HTMLDivElement>) => {
     if (editing) return;
     const el = event.target as HTMLElement;
@@ -1031,15 +1194,15 @@ function DocTab({ subPath }: PluginNavPanelProps) {
             type="button"
             onClick={back}
             className="shrink-0 rounded-md px-2 py-1 text-sm text-muted-foreground hover:bg-muted"
-            aria-label="Назад"
+            aria-label="Back"
           >
             ←
           </button>
         )}
         <div className="min-w-0 flex-1">
           <div className="text-sm font-medium">{heading}</div>
-          {/* Маркетплейс плагина живёт в ключе (name@marketplace) — показываем
-              его у шапки тела, а не второй строкой в списке. */}
+          {/* The plugin's marketplace lives in the key (name@marketplace) — we
+              show it by the body's header, not as a second line in the list. */}
           {target.kind === "plugin" && target.key.includes("@") && (
             <div className="truncate text-xs text-muted-foreground">
               {target.key.slice(target.key.indexOf("@") + 1)}
@@ -1060,22 +1223,22 @@ function DocTab({ subPath }: PluginNavPanelProps) {
               type="button"
               onClick={() => save(draft)}
               className="rounded-md px-2 py-1 text-sm text-primary hover:bg-muted"
-              aria-label="Сохранить"
+              aria-label="Save"
             >
-              Сохранить
+              Save
             </button>
             <button
               type="button"
               onClick={() => {
                 setEditing(false);
                 setSaveNote(null);
-                // Откат несохранённых правок фронтматера и тела к файлу.
+                // Roll back unsaved frontmatter and body edits to match the file.
                 splitDoc(doc, composite);
               }}
               className="rounded-md px-2 py-1 text-sm text-muted-foreground hover:bg-muted"
-              aria-label="Отмена"
+              aria-label="Cancel"
             >
-              Отмена
+              Cancel
             </button>
           </div>
         )}
@@ -1083,20 +1246,43 @@ function DocTab({ subPath }: PluginNavPanelProps) {
 
       <div className="min-h-0 flex-1 overflow-y-auto">
         {loading && (
-          <p className="p-4 text-sm text-muted-foreground">Загрузка…</p>
+          <p className="p-4 text-sm text-muted-foreground">Loading…</p>
         )}
         {!loading && doc?.error && (
           <p className="p-4 text-sm text-destructive">{doc.error}</p>
         )}
-        {!loading && doc?.content != null && composite && (
-          <div onClick={onCompositeClick}>
-            {/* Плагин: манифест таблицей во всю ширину, ниже — README. */}
-            {target.kind === "plugin" && pluginManifest && (
+        {/* Plugin: manifest as a full-width table, README below — the README
+            is a real markdown file, so it opens through the same Kasimov
+            engine (MarkdownEditor) as skills and docs, not the plain host
+            Markdown renderer. Read-only: the manifest isn't edited through
+            this path (memory/decisions/kasimov-settings-first-in-cloud-config.md). */}
+        {!loading && doc?.content != null && composite && target.kind === "plugin" && (
+          <div className="flex h-full flex-col">
+            {pluginManifest && (
               <FrontmatterTable
                 entries={fieldsFromJson(pluginManifest)}
                 readOnly
               />
             )}
+            {doc.content && (
+              <div className="min-h-0 flex-1 p-4">
+                <MarkdownEditor
+                  editable={false}
+                  atLinks
+                  value={doc.content}
+                  linkResolver={linkResolver}
+                  pathProvider={pathProvider}
+                  className="h-full cc-doc-mde"
+                />
+              </div>
+            )}
+          </div>
+        )}
+        {/* Connector: the definition is a JSON slice, not a standalone
+            document — the plain host Markdown renderer fits a fenced code
+            block just as well and keeps the composite-link click handling. */}
+        {!loading && doc?.content != null && composite && target.kind !== "plugin" && (
+          <div onClick={onCompositeClick}>
             {doc.content && (
               <div className="p-4">
                 <Markdown content={doc.content} />
@@ -1109,14 +1295,17 @@ function DocTab({ subPath }: PluginNavPanelProps) {
             {hookExtra?.definition && (
               <section>
                 <div className="mb-1 text-xs font-medium text-muted-foreground">
-                  Определение
+                  Definition (click to edit)
                 </div>
-                <Markdown content={"```json\n" + hookExtra.definition + "\n```"} />
+                <PlainTextBlock
+                  value={hookExtra.definition}
+                  onSave={saveHookDefinition}
+                />
               </section>
             )}
             <section>
               <div className="mb-1 text-xs font-medium text-muted-foreground">
-                Команда {editing ? "" : "(клик — правка)"}
+                Command {editing ? "" : "(click to edit)"}
               </div>
               {editing ? (
                 <div onClick={onDocClick}>
@@ -1148,13 +1337,14 @@ function DocTab({ subPath }: PluginNavPanelProps) {
                 </div>
               )}
             </section>
-            {hookExtra?.fileContent && (
+            {hookExtra?.fileContent != null && (
               <section>
-                <Markdown
-                  content={asMarkdown(
-                    hookExtra.filePath ?? "",
-                    hookExtra.fileContent,
-                  )}
+                <div className="mb-1 break-all font-mono text-xs font-medium text-muted-foreground">
+                  {hookExtra.filePath} (click to edit)
+                </div>
+                <PlainTextBlock
+                  value={hookExtra.fileContent}
+                  onSave={saveHookFile}
                 />
               </section>
             )}
@@ -1199,10 +1389,11 @@ function DocTab({ subPath }: PluginNavPanelProps) {
   );
 }
 
-// ---- раздел «Workflows» (перенос bb-plugin-workflow-composer, без колонки кода) ----
+// ---- "Workflows" section (ported from bb-plugin-workflow-composer, without the code column) ----
 
-// Дерево редактора живёт в module-level editorStore (см. ./src/workflow/store) — общий для конструктора
-// и превью кода нескольких хостовых точек монтирования; здесь читаем его тем же способом.
+// The editor tree lives in the module-level editorStore (see
+// ./src/workflow/store) — shared between the builder and the code preview
+// across several host mount points; here we read it the same way.
 const useEditor = () =>
   useSyncExternalStore(editorStore.subscribe, editorStore.getSnapshot, editorStore.getSnapshot);
 
@@ -1214,9 +1405,9 @@ interface WfItem {
   hasTree: boolean;
 }
 const AGENT_SCOPE_LABEL: Record<"user" | "project" | "plugin", string> = {
-  user: "личный",
-  project: "проектный",
-  plugin: "плагин",
+  user: "personal",
+  project: "project",
+  plugin: "plugin",
 };
 
 function useWfAgents(rpc: Rpc, projectId: string | null): AgentOption[] {
@@ -1227,8 +1418,8 @@ function useWfAgents(rpc: Rpc, projectId: string | null): AgentOption[] {
   return agents;
 }
 
-// Счётчик workflow для рейки (раздел «Workflows»). Обновляется при смене области, как и остальные
-// счётчики; null — пока не загрузился.
+// Workflow count for the rail ("Workflows" section). Updates on area change,
+// like the other counters; null — not loaded yet.
 function useWfCount(rpc: Rpc, areaId: string): number | null {
   const [count, setCount] = useState<number | null>(null);
   const projectId = areaId === "global" ? null : areaId;
@@ -1252,7 +1443,7 @@ function useWfProviderCatalog(rpc: Rpc): ProviderCatalogEntry[] {
   return catalog;
 }
 
-// Поллинг статуса запуска: `wfStatus` — бесплатная операция чтения, текст CLI показываем как есть.
+// Polling the run status: `wfStatus` is a free read operation, we show the CLI text as-is.
 function pollStatus(rpc: Rpc, runId: string, setOutput: (s: string) => void): void {
   let ticks = 0;
   const timer = setInterval(() => {
@@ -1262,13 +1453,14 @@ function pollStatus(rpc: Rpc, runId: string, setOutput: (s: string) => void): vo
   }, 2000);
 }
 
-// Написанный вручную .js без дерева-мирроора конструктора — показываем исходник как есть, без правки:
-// сохранение поверх него скомпилировало бы заглушку-дерево и стёрло бы настоящий код.
+// A hand-written .js file without a builder mirror tree — we show the source
+// as-is, read-only: saving over it would compile a stub tree and wipe out the
+// real code.
 function CodeOnlyView({ source }: { source: string }) {
   return (
     <div className="flex h-full min-h-0 flex-1 flex-col">
       <div className="border-b border-border px-4 py-2 text-xs text-muted-foreground">
-        Написан вручную — нет дерева конструктора. Только чтение; правьте .js-файл напрямую.
+        Hand-written — no builder tree. Read-only; edit the .js file directly.
       </div>
       <pre className="flex-1 overflow-auto p-4 font-mono text-xs text-foreground" aria-label="workflow source">
         {source}
@@ -1288,7 +1480,7 @@ function WfList({
 }) {
   return (
     <div className="space-y-1">
-      {items.length === 0 && <div className="px-1 py-0.5 text-xs text-muted-foreground">пусто</div>}
+      {items.length === 0 && <div className="px-1 py-0.5 text-xs text-muted-foreground">empty</div>}
       {items.map((item) => (
         <button
           key={item.path}
@@ -1302,8 +1494,8 @@ function WfList({
         >
           <span className="min-w-0 flex-1 truncate">{item.name}</span>
           {!item.hasTree && (
-            <span className="shrink-0 text-xs text-muted-foreground" title="Файл без дерева конструктора — откроется как код">
-              только код
+            <span className="shrink-0 text-xs text-muted-foreground" title="File without a builder tree — opens as code">
+              code only
             </span>
           )}
         </button>
@@ -1312,8 +1504,9 @@ function WfList({
   );
 }
 
-// Диалог сохранения: имя + хранилище (project → .bb/workflows, движок bb; global → ~/.claude/workflows,
-// движок Claude Code). Движок выводится из хранилища (engineForStore) — они всегда в паре.
+// Save dialog: name + storage (project → .bb/workflows, bb engine; global →
+// ~/.claude/workflows, Claude Code engine). The engine is derived from the
+// storage (engineForStore) — they're always paired.
 function WfSaveDialog({
   open,
   onOpenChange,
@@ -1346,21 +1539,21 @@ function WfSaveDialog({
 
   const save = async () => {
     if (!/^[a-z0-9][a-z0-9-]*$/.test(name.trim())) {
-      toast.error("Имя — латиница в нижнем регистре, цифры и дефисы, без пробелов (например review-changes)");
+      toast.error("Name must be lowercase latin letters, digits, and hyphens, no spaces (e.g. review-changes)");
       return;
     }
-    // Движок bb требует непустое описание — проверяем здесь, чтобы сохранение не создало невалидный файл.
+    // The bb engine requires a non-empty description — checked here so saving can't produce an invalid file.
     if (engine === "bb" && !tree.description.trim()) {
-      toast.error("Добавьте описание, чтобы сохранить в проект — движку bb оно обязательно");
+      toast.error("Add a description to save to the project — the bb engine requires it");
       return;
     }
     try {
       const res = await rpc.call("wfSave", { projectId, store, name: name.trim(), source: compile(tree, engine) });
-      toast.success(store === "project" ? "Сохранено в проект" : "Сохранено глобально");
+      toast.success(store === "project" ? "Saved to the project" : "Saved globally");
       onOpenChange(false);
       onSaved({ store, path: res.path, name: name.trim() });
     } catch (e) {
-      toast.error("Не удалось сохранить: " + String((e as Error).message ?? e));
+      toast.error("Failed to save: " + String((e as Error).message ?? e));
     }
   };
 
@@ -1368,12 +1561,12 @@ function WfSaveDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-sm">
         <DialogHeader>
-          <DialogTitle>Сохранить workflow</DialogTitle>
-          <DialogDescription>Куда сохранить и под каким именем.</DialogDescription>
+          <DialogTitle>Save workflow</DialogTitle>
+          <DialogDescription>Where to save it and under what name.</DialogDescription>
         </DialogHeader>
         <div className="space-y-3">
           <label className="block space-y-1.5">
-            <span className="text-xs text-muted-foreground">Куда</span>
+            <span className="text-xs text-muted-foreground">Where</span>
             <select
               aria-label="save destination"
               value={store}
@@ -1381,13 +1574,13 @@ function WfSaveDialog({
               className="flex h-9 w-full items-center rounded-md border border-border bg-transparent px-3 text-sm text-foreground outline-none focus-visible:ring-1 focus-visible:ring-ring"
             >
               <option value="project" disabled={!projectId}>
-                Проект · .bb/workflows · движок bb{!projectId ? " — нет проекта" : ""}
+                Project · .bb/workflows · bb engine{!projectId ? " — no project" : ""}
               </option>
-              <option value="global">Глобально · ~/.claude/workflows · Claude Code</option>
+              <option value="global">Global · ~/.claude/workflows · Claude Code</option>
             </select>
           </label>
           <label className="block space-y-1.5">
-            <span className="text-xs text-muted-foreground">Имя (kebab-case)</span>
+            <span className="text-xs text-muted-foreground">Name (kebab-case)</span>
             <Input
               aria-label="save name"
               placeholder="review-changes"
@@ -1398,10 +1591,10 @@ function WfSaveDialog({
         </div>
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)}>
-            Отмена
+            Cancel
           </Button>
           <Button onClick={save} aria-label="confirm save">
-            Сохранить
+            Save
           </Button>
         </DialogFooter>
       </DialogContent>
@@ -1409,29 +1602,33 @@ function WfSaveDialog({
   );
 }
 
-// Тело раздела «Workflows»: список (кол.2) + сам конструктор (кол.3) + при выбранном шаге-агенте —
-// объединённая колонка 4 (список доступных типов агента либо, после выбора, деталь агента). Колонки
-// 2–3 регулируются независимо, со своими ключами localStorage — так же, как рейка и список раздела в
-// ConfigPanel; колонка 4 ширины не регулирует, занимает всю оставшуюся ширину страницы.
+// Body of the "Workflows" section: list (col. 2) + the builder itself (col.
+// 3) + when an agent step is selected — a combined column 4 (list of
+// available agent types, or, after selection, the agent detail). Columns 2–3
+// resize independently, each with its own localStorage key — the same way the
+// rail and section list do in ConfigPanel; column 4 doesn't resize, it takes
+// up the rest of the page width.
 function WorkflowsView({ rpc, areaId }: { rpc: Rpc; areaId: string }) {
   const { tree, identity, rawSource } = useEditor();
   const codeOnly = rawSource != null;
 
-  // Проект workflow — та же ось, что «Область» в шапке Cloud Config: сентинел "global" означает
-  // глобальную область, любое другое значение areaId — id bb-проекта.
+  // Workflow project — the same axis as "Area" in the Cloud Config header: the
+  // sentinel "global" means the global area, any other areaId value is a
+  // bb project id.
   const projectId = areaId === "global" ? null : areaId;
   const [items, setItems] = useState<WfItem[]>([]);
   const [output, setOutput] = useState("");
   const [saveOpen, setSaveOpen] = useState(false);
   const [selectedPath, setSelectedPath] = useState<OutlinePath | null>(null);
-  // Объединённая колонка 4 (агенты + деталь): список агентов либо деталь уже
-  // выбранного (файл + настройки). Переключается кликом по агенту / кнопкой «Назад».
+  // Combined column 4 (agents + detail): the agent list or the detail of an
+  // already-selected one (file + settings). Toggled by clicking an agent /
+  // the "Back" button.
   const [pickerOpen, setPickerOpen] = useState(true);
 
   const agents = useWfAgents(rpc, projectId);
   const providerCatalog = useWfProviderCatalog(rpc);
 
-  // Смена области — устаревший выбранный шаг (кол.4) относится к прежнему дереву/проекту.
+  // Area change — the stale selected step (col. 4) belongs to the previous tree/project.
   useEffect(() => {
     setSelectedPath(null);
   }, [projectId]);
@@ -1439,15 +1636,16 @@ function WorkflowsView({ rpc, areaId }: { rpc: Rpc; areaId: string }) {
   const refresh = () => {
     void rpc.call("wfList", { projectId }).then((r) => setItems(r.items as WfItem[]));
   };
-  // rpc — стабильная ссылка на время жизни панели, refresh — новая функция на каждый рендер; в
-  // зависимостях достаточно того, что реально меняет список.
+  // rpc — a stable reference for the panel's lifetime, refresh — a new
+  // function on every render; the dependency list only needs what actually
+  // changes the list.
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(refresh, [projectId]);
 
   const openItem = async (item: WfItem) => {
     const res = await rpc.call("wfRead", { projectId: projectId, store: item.store, path: item.path });
     const parsedTree = res.tree as Tree | null;
-    // Нет дерева конструктора → написанный вручную файл: открываем как есть, read-only.
+    // No builder tree → a hand-written file: open it as-is, read-only.
     editorStore.load(
       parsedTree ?? blankTree(item.name),
       { store: item.store, path: item.path, name: item.name },
@@ -1456,64 +1654,67 @@ function WorkflowsView({ rpc, areaId }: { rpc: Rpc; areaId: string }) {
     setSelectedPath(null);
   };
 
-  // `bb workflows` работает только с проектными (bb) workflow. Глобальные (~/.claude) — Claude Code,
-  // проверка/запуск для них недоступны из этой панели.
+  // `bb workflows` only works with project (bb) workflows. Global ones
+  // (~/.claude) are Claude Code — validate/run aren't available for them from
+  // this panel.
   const bbRunnable = identity?.store === "project";
 
   const doValidate = async () => {
     if (!identity) {
-      toast.error("Сначала сохраните workflow — проверка смотрит файл на диске");
+      toast.error("Save the workflow first — validation reads the file on disk");
       return;
     }
     if (!bbRunnable) {
-      toast.error("Проверка доступна только для проектных workflow; глобальные выполняются через Claude Code");
+      toast.error("Validation is only available for project workflows; global ones run through Claude Code");
       return;
     }
     const res = await rpc.call("wfValidate", { projectId: projectId, store: identity.store, path: identity.path });
-    setOutput(res.output || (res.ok ? "Ошибок нет" : "Есть ошибки"));
-    if (res.ok) toast.success("Проверка прошла");
-    else toast.error("Проверка нашла ошибки — см. вывод ниже");
+    setOutput(res.output || (res.ok ? "No errors" : "Has errors"));
+    if (res.ok) toast.success("Validation passed");
+    else toast.error("Validation found errors — see the output below");
   };
 
   const doRun = async () => {
     if (!identity) {
-      toast.error("Сначала сохраните workflow — запуск выполняет файл на диске");
+      toast.error("Save the workflow first — running executes the file on disk");
       return;
     }
     if (!bbRunnable) {
-      toast.error("Запуск доступен только для проектных workflow; глобальные выполняются через Claude Code");
+      toast.error("Running is only available for project workflows; global ones run through Claude Code");
       return;
     }
     const res = await rpc.call("wfRun", { projectId: projectId, store: identity.store, path: identity.path });
     setOutput(res.output);
     if (res.runId) {
-      toast.success("Запущено");
+      toast.success("Started");
       pollStatus(rpc, res.runId, setOutput);
     } else {
-      toast.error("Не удалось запустить — см. вывод ниже");
+      toast.error("Failed to run — see the output below");
     }
   };
 
   const doDelete = async () => {
     if (!identity) return;
     await rpc.call("wfRemove", { projectId: projectId, store: identity.store, path: identity.path });
-    toast.success("Workflow удалён");
+    toast.success("Workflow deleted");
     editorStore.newWorkflow();
     setSelectedPath(null);
     refresh();
   };
 
-  // Выбранный шаг-агент (для объединённой колонки 4): узел по selectedPath, если это агент, а не фаза/группа.
+  // Selected agent step (for the combined column 4): the node at selectedPath, if it's an agent rather than a phase/group.
   const node: Phase | Step | null = selectedPath ? nodeAt(tree, selectedPath) : null;
   const selAgent: Agent | null = node && "type" in node && node.type === "agent" ? node : null;
-  // Файл выбранного шаблона-агента — его показывает верхняя половина детали в отображении
-  // Kasimov (тот же MdDocView, что и слот MD Opener). Нет шаблона или пути — верхней половины нет.
+  // The file for the selected agent template — shown by the upper half of the
+  // detail in Kasimov rendering (the same MdDocView as the MD Opener slot). No
+  // template or path — no upper half.
   const selAgentPath: string | null = selAgent ? agents.find((a) => a.value === selAgent.agentType)?.path ?? null : null;
 
-  // Новый выбранный шаг: сразу открыта деталь, если шаблон у него уже назначен, иначе —
-  // список для выбора. Дальше переключение — кликом по агенту в списке или кнопкой «Назад»,
-  // поэтому в зависимостях только selectedPath — правку selAgent.agentType (выбор шаблона)
-  // не должна откатывать pickerOpen обратно.
+  // A newly selected step: the detail opens right away if a template is
+  // already assigned to it, otherwise — the picker list. From there, toggling
+  // happens by clicking an agent in the list or the "Back" button, so the
+  // dependency list only has selectedPath — editing selAgent.agentType
+  // (choosing a template) must not roll pickerOpen back.
   useEffect(() => {
     setPickerOpen(!selAgent || selAgent.agentType.trim() === "");
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1531,15 +1732,17 @@ function WorkflowsView({ rpc, areaId }: { rpc: Rpc; areaId: string }) {
     min: 220,
     max: 760,
     side: "left",
-    // Ключ с суффиксом -v2: прежняя версия успела записать 540 в localStorage при
-    // монтировании (useResizableWidth пишет ширину и на маунте), из-за чего новый
-    // initial игнорировался. Новый ключ даёт свежий старт 360, тянется до 220.
+    // Key with a -v2 suffix: the previous version had already written 540 to
+    // localStorage on mount (useResizableWidth writes the width on mount too),
+    // which caused the new initial value to be ignored. The new key gives a
+    // fresh start at 360, resizable down to 220.
     storageKey: "claude-config:wf-constructor-width-v2",
   });
-  // Объединённая колонка 4 своей регулируемой ширины не имеет — она берёт всю оставшуюся
-  // ширину страницы (flex-1); резервной шириной колонки-списка распоряжается только
-  // constructorWidth (ручка между конструктором и этой колонкой).
-  // Высота верхней половины колонки деталей — файл агента в Kasimov; ручка снизу, тянем вниз — выше.
+  // The combined column 4 has no resizable width of its own — it takes up all
+  // the remaining page width (flex-1); only constructorWidth (the handle
+  // between the builder and this column) governs the reserved width of the
+  // list column.
+  // Height of the detail column's upper half — the agent file in Kasimov; the handle is at the bottom, drag down for more height.
   const { height: agentFileHeight, startResize: startAgentFileResize } = useResizableHeight({
     initial: 280,
     min: 120,
@@ -1547,35 +1750,37 @@ function WorkflowsView({ rpc, areaId }: { rpc: Rpc; areaId: string }) {
     storageKey: "claude-config:wf-agent-file-height",
   });
 
-  // Валидность конструктора: агент годен только с выбранным шаблоном. Пока шаблон не выбран хотя бы у
-  // одного агента — Workflow не валиден, сохранение заблокировано.
+  // Builder validity: an agent is valid only with a template selected. As
+  // long as at least one agent has no template chosen — the workflow is
+  // invalid and saving is blocked.
   const invalidAgents = agentsMissingTemplate(tree);
 
   return (
-    // min-w-0 flex-1 — этот корень сам сидит flex-item'ом в строке ConfigPanel (рядом с рейкой
-    // разделов); без них он не растягивался на всю ширину страницы, а сжимался по контенту —
-    // из-за этого объединённая колонка 4 ниже не могла дотянуться до правого края.
+    // min-w-0 flex-1 — this root itself sits as a flex item in ConfigPanel's
+    // row (next to the section rail); without them it wouldn't stretch to the
+    // full page width and would shrink to fit its content — which meant the
+    // combined column 4 below couldn't reach the right edge.
     <div className="flex h-full min-h-0 min-w-0 flex-1 overflow-x-auto">
       <div style={{ width: listWidth }} className="flex h-full shrink-0 flex-col overflow-hidden border-r border-border">
         <div className="flex flex-col gap-2 border-b border-border p-2">
           <div className="flex flex-wrap gap-1.5">
             <Button size="sm" onClick={() => setSaveOpen(true)} disabled={codeOnly || invalidAgents > 0}>
-              Сохранить
+              Save
             </Button>
             <Button size="sm" variant="outline" onClick={doValidate} disabled={!bbRunnable}>
-              Проверить
+              Validate
             </Button>
             <Button size="sm" variant="outline" onClick={doRun} disabled={!bbRunnable}>
-              Запустить
+              Run
             </Button>
             <Button size="sm" variant="outline" onClick={doDelete} disabled={!identity}>
-              Удалить
+              Delete
             </Button>
           </div>
           {!codeOnly && invalidAgents > 0 && (
             <p className="text-xs text-muted-foreground">
-              Workflow не валиден: у {invalidAgents} {invalidAgents === 1 ? "агента" : "агентов"} не выбран
-              шаблон. Выберите агент в колонке «Агенты».
+              Workflow is invalid: {invalidAgents} {invalidAgents === 1 ? "agent" : "agents"} without a
+              chosen template. Select an agent in the "Agents" column.
             </p>
           )}
         </div>
@@ -1593,9 +1798,9 @@ function WorkflowsView({ rpc, areaId }: { rpc: Rpc; areaId: string }) {
             }}
             className="mb-3 flex w-full items-center justify-center rounded-md border border-border bg-muted/40 py-1.5 text-xs text-muted-foreground hover:text-foreground"
           >
-            + Новый workflow
+            + New workflow
           </button>
-          {/* Плоский список: разделение по проектам уже задано «Областью» в шапке Cloud Config. */}
+          {/* Flat list: separation by project is already defined by "Area" in the Cloud Config header. */}
           <WfList items={items} onOpen={openItem} activePath={identity?.path} />
         </div>
       </div>
@@ -1617,15 +1822,17 @@ function WorkflowsView({ rpc, areaId }: { rpc: Rpc; areaId: string }) {
       <ResizeHandle onPointerDown={startConstructorResize} />
 
       {!codeOnly && selAgent && (
-        // Колонка 4 — объединённая: список агентов (выбор шаблона) либо, после выбора, деталь —
-        // файл шаблона в отображении Kasimov сверху и правки шага (модель·эфорт, инструкции,
-        // формат вывода) снизу. Своей ширины не держит — занимает всю оставшуюся ширину страницы;
-        // между списком и деталью переключает клик по агенту / кнопка «Назад», а не соседняя колонка.
+        // Column 4 — combined: agent list (template picker) or, after
+        // selection, the detail — the template file in Kasimov rendering on
+        // top and step editing (model·effort, instructions, output format)
+        // below. It doesn't hold its own width — it takes up all the
+        // remaining page width; toggling between list and detail is done by
+        // clicking an agent / the "Back" button, not the neighboring column.
         <div className="flex h-full min-h-0 min-w-0 flex-1 flex-col overflow-hidden border-l border-border">
           {pickerOpen ? (
             <div className="flex h-full flex-col gap-0.5 overflow-y-auto p-2">
               <div className="mb-1 px-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                Агенты
+                Agents
               </div>
               {agents.map((a) => (
                 <button
@@ -1646,19 +1853,20 @@ function WorkflowsView({ rpc, areaId }: { rpc: Rpc; areaId: string }) {
             </div>
           ) : (
             <div className="flex h-full min-h-0 flex-col overflow-hidden">
-              {/* Нет файла шаблона (агент ещё не подтянулся/без .md) — своей шапки у
-                  AgentDetails ниже нет, поэтому кнопка назад держится тут отдельно.
-                  Когда файл есть, она уезжает в общую шапку MdDocView (leading ниже) —
-                  так стрелка, путь файла и «Редактировать» оказываются в одной строке. */}
+              {/* No template file (the agent hasn't loaded yet / has no .md)
+                  — AgentDetails below has no header of its own, so the back
+                  button is kept here separately. Once the file exists, it
+                  moves into MdDocView's shared header (leading below) — so the
+                  arrow, file path, and "Edit" end up on one line. */}
               {!selAgentPath && (
                 <div className="flex shrink-0 items-center border-b border-border p-1">
                   <button
                     type="button"
                     onClick={() => setPickerOpen(true)}
                     className="rounded-md px-2 py-1 text-sm text-muted-foreground hover:bg-muted"
-                    aria-label="Назад к списку агентов"
+                    aria-label="Back to the agent list"
                   >
-                    ← Агенты
+                    ← Agents
                   </button>
                 </div>
               )}
@@ -1673,7 +1881,7 @@ function WorkflowsView({ rpc, areaId }: { rpc: Rpc; areaId: string }) {
                           type="button"
                           onClick={() => setPickerOpen(true)}
                           className="mdo-back"
-                          aria-label="Назад к списку агентов"
+                          aria-label="Back to the agent list"
                         >
                           ←
                         </button>
@@ -1683,8 +1891,8 @@ function WorkflowsView({ rpc, areaId }: { rpc: Rpc; areaId: string }) {
                           type="button"
                           onClick={onClick}
                           className="mdo-btn mdo-btn-icon"
-                          aria-label="Редактировать"
-                          title="Редактировать"
+                          aria-label="Edit"
+                          title="Edit"
                         >
                           <Icon name="Edit" className="size-4" />
                         </button>
@@ -1735,19 +1943,19 @@ function ConfigPanel({ subPath }: PluginNavPanelProps) {
   const [memory, setMemory] = useState<
     { id: string; label: string; path: string }[]
   >([]);
-  // Какой диалог создания открыт: навык, агент или ни один.
+  // Which creation dialog is open: skill, agent, or none.
   const [createKind, setCreateKind] = useState<"skill" | "agent" | null>(null);
-  // Активный раздел в средней колонке; null → пустое состояние.
+  // Active section in the middle column; null → empty state.
   const [section, setSection] = useState<SectionId | null>(null);
-  // Режим включённых навыков — общий для всего раздела (один список в шапке,
-  // а не по навыку). Включение навыка применяет этот режим.
+  // Enabled-skills mode — shared across the whole section (one dropdown in
+  // the header, not per skill). Enabling a skill applies this mode.
   const [skillMode, setSkillMode] = useState<SkillMode>("on");
 
-  // Что открыто во второй колонке (для подсветки), если относится к этой области.
+  // What's open in the second column (for highlighting), if it belongs to this area.
   const open = parseDocSubPath(subPath);
-  // Рейка и средняя колонка (список раздела) — ограниченной, регулируемой
-  // ширины; ручка на правом крае каждой (side "left"). Документ занимает
-  // остаток (flex-1), своей ручки не имеет.
+  // The rail and middle column (section list) — bounded, resizable width; the
+  // handle sits on the right edge of each one (side "left"). The document
+  // takes up the rest (flex-1) and has no handle of its own.
   const { width: railWidth, startResize: startRailResize } = useResizableWidth({
     initial: 240,
     min: 180,
@@ -1767,7 +1975,7 @@ function ConfigPanel({ subPath }: PluginNavPanelProps) {
   const selectedPluginKey = openHere?.kind === "plugin" ? openHere.key : null;
   const selectedConnector = openHere?.kind === "connector" ? openHere : null;
   const selectedHook = openHere?.kind === "hook" ? openHere : null;
-  // Открытый файл по пути (README плагина или память) — подсветка по совпадению.
+  // Open file by path (plugin README or memory) — highlighted on match.
   const openDocPath = openHere?.kind === "doc" ? openHere.path : null;
 
   useEffect(() => {
@@ -1789,29 +1997,45 @@ function ConfigPanel({ subPath }: PluginNavPanelProps) {
   useEffect(() => {
     let alive = true;
     setLoading(true);
-    void rpc.call("getConfig", { areaId }).then((next) => {
-      if (alive) {
-        setConfig(next as AreaConfig);
-        setLoading(false);
-      }
-    });
+    void rpc
+      .call("getConfig", { areaId })
+      .then((next) => {
+        if (alive) {
+          setConfig(next as AreaConfig);
+          setLoading(false);
+        }
+      })
+      // An RPC rejection (e.g. the output failed its own contract) left this
+      // stuck on "Loading..." forever with nothing to show for it — a real
+      // failure needs a real message, not silence.
+      .catch((error: unknown) => {
+        if (alive) {
+          setNotice(error instanceof Error ? error.message : "Failed to load.");
+          setLoading(false);
+        }
+      });
     return () => {
       alive = false;
     };
-    // notice сбрасываем при смене области — старая причина к ней не относится.
+    // Reset notice on area change — the old reason no longer applies.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [areaId, rpc]);
 
-  // Перечитывание после записи НЕ трогает loading: карточки остаются
-  // смонтированными, значения обновляются на месте — страница не прыгает к началу.
+  // Reloading after a write does NOT touch loading: the cards stay mounted,
+  // values update in place — the page doesn't jump back to the top.
   const reload = () => {
-    void rpc.call("getConfig", { areaId }).then((next) => {
-      setConfig(next as AreaConfig);
-    });
+    void rpc
+      .call("getConfig", { areaId })
+      .then((next) => {
+        setConfig(next as AreaConfig);
+      })
+      .catch((error: unknown) => {
+        setNotice(error instanceof Error ? error.message : "Failed to reload.");
+      });
   };
 
-  // Итог записи: ok — перечитать область; иначе показать причину баннером,
-  // тоже перечитав, чтобы показать актуальное состояние файла.
+  // Write outcome: ok — reload the area; otherwise show the reason in a
+  // banner, also reloading, so the file's actual state is shown.
   const handleResult = (result: WriteOutcome) => {
     setNotice(result.outcome === "ok" ? null : result.message);
     reload();
@@ -1826,9 +2050,28 @@ function ConfigPanel({ subPath }: PluginNavPanelProps) {
   const setToolSearch = (mode: ToolSearchTarget) =>
     void rpc.call("setToolSearch", { areaId, mode }).then(handleResult);
   const setHookEnabled = (
-    hook: { origin: HookOrigin; event: string; matcher: string | null; command: string },
+    hook: {
+      origin: HookOrigin;
+      event: string;
+      matcher: string | null;
+      command: string;
+      index: number;
+    },
     enabled: boolean,
-  ) =>
+  ) => {
+    // Toggling moves the hook in or out of the level's flat hook list (cut
+    // to/from the disabled kv store) — the same index-shift `saveHookDefinition`
+    // already guards against. If this exact hook is open, its subPath's index
+    // is about to go stale; land back on the list rather than show a
+    // confusing "not found" for a hook whose state just changed.
+    if (
+      selectedHook &&
+      selectedHook.origin === hook.origin &&
+      selectedHook.event === hook.event &&
+      selectedHook.index === hook.index
+    ) {
+      navigate.toPluginPanel(PANEL_PATH, { subPath: "", replace: true });
+    }
     void rpc
       .call("setHookEnabled", {
         areaId,
@@ -1839,14 +2082,15 @@ function ConfigPanel({ subPath }: PluginNavPanelProps) {
         enabled,
       })
       .then(handleResult);
+  };
 
   const changeArea = (id: string) => {
     setNotice(null);
     setAreaId(id);
-    // Выбор навыка относится к прежней области — снимаем.
+    // The skill selection belongs to the previous area — clear it.
     navigate.toPluginPanel(PANEL_PATH, { subPath: "", replace: true });
   };
-  // Навык, агент, документ — реальные файлы: открываем нативным опенером bb.
+  // Skill, agent, document — real files: open with bb's native opener.
   const openFile = useOpenFile(areaId);
   const openPlugin = (key: string) =>
     navigate.toPluginPanel(PANEL_PATH, { subPath: pluginSubPath(areaId, key) });
@@ -1859,8 +2103,9 @@ function ConfigPanel({ subPath }: PluginNavPanelProps) {
       subPath: hookSubPath(areaId, origin, index, event),
     });
 
-  // Создание навыка: успех перечитывает список и открывает новый SKILL.md
-  // нативным опенером; иначе диалог остаётся с сообщением (имя занято/недопустимо).
+  // Creating a skill: on success, reload the list and open the new SKILL.md
+  // with the native opener; otherwise the dialog stays open with a message
+  // (name taken/invalid).
   const createSkill = (name: string): Promise<string | null> =>
     rpc.call("createSkill", { areaId, name }).then((result) => {
       if (result.outcome === "created") {
@@ -1869,10 +2114,10 @@ function ConfigPanel({ subPath }: PluginNavPanelProps) {
         if (result.path) void openFile(result.path);
         return null;
       }
-      return result.message ?? "Не удалось создать навык.";
+      return result.message ?? "Failed to create the skill.";
     });
 
-  // Создание агента: успех открывает новый файл по пути из ответа сервера.
+  // Creating an agent: on success, open the new file at the path from the server response.
   const createAgent = (name: string): Promise<string | null> =>
     rpc.call("createAgent", { areaId, name }).then((result) => {
       if (result.outcome === "created" && result.path) {
@@ -1881,33 +2126,34 @@ function ConfigPanel({ subPath }: PluginNavPanelProps) {
         void openFile(result.path);
         return null;
       }
-      return result.message ?? "Не удалось создать агента.";
+      return result.message ?? "Failed to create the agent.";
     });
 
-  // Счётчик workflow для рейки — из wfList по текущей области (config его не несёт).
+  // Workflow count for the rail — from wfList for the current area (config doesn't carry it).
   const wfCount = useWfCount(rpc, areaId);
 
-  // Разделы рейки: id → заголовок и число элементов. Считаем из config,
-  // чтобы рейка и содержимое не разошлись. null-счётчик — раздел без списка.
+  // Rail sections: id → title and item count. Derived from config so the
+  // rail and content don't drift apart. A null count — a section without a
+  // list.
   const sections: { id: SectionId; title: string; count: number | null }[] =
     config && !config.error
       ? [
-          { id: "hooks", title: "Хуки", count: config.hooks.length },
-          { id: "plugins", title: "Плагины", count: config.plugins.length },
-          { id: "connectors", title: "Коннекторы", count: config.connectors.length },
-          { id: "skills", title: "Навыки", count: config.skills.length },
-          { id: "agents", title: "Агенты", count: config.agents.length },
+          { id: "hooks", title: "Hooks", count: config.hooks.length },
+          { id: "plugins", title: "Plugins", count: config.plugins.length },
+          { id: "connectors", title: "Connectors", count: config.connectors.length },
+          { id: "skills", title: "Skills", count: config.skills.length },
+          { id: "agents", title: "Agents", count: config.agents.length },
           { id: "workflows", title: "Workflows", count: wfCount },
-          { id: "toolSearch", title: "Подгрузка инструментов", count: null },
+          { id: "toolSearch", title: "Tool search", count: null },
         ]
       : [];
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      {/* Общая шапка: область + баннеры записи — над всеми колонками. */}
+      {/* Shared header: area + write banners — above all columns. */}
       <div className="flex flex-wrap items-center gap-x-4 gap-y-2 border-b border-border px-4 py-3">
         <div className="flex items-center gap-3">
-          <span className="text-sm font-medium">Область</span>
+          <span className="text-sm font-medium">Area</span>
           <ProjectSwitcher
             options={areas.map((area) => ({ key: area.id, label: area.label }))}
             isSelected={(key) => key === areaId}
@@ -1916,7 +2162,7 @@ function ConfigPanel({ subPath }: PluginNavPanelProps) {
         </div>
         {config?.editedFilePath && (
           <p className="text-xs text-muted-foreground">
-            Пишет в {config.editedFilePath}
+            Writes to {config.editedFilePath}
           </p>
         )}
         {notice && (
@@ -1927,7 +2173,7 @@ function ConfigPanel({ subPath }: PluginNavPanelProps) {
       </div>
 
       <div className="flex min-h-0 flex-1">
-        {/* Внешний уровень навигации: память + разделы. */}
+        {/* Outer navigation level: memory + sections. */}
         <nav
           style={{ width: railWidth }}
           className="flex shrink-0 flex-col gap-4 overflow-y-auto p-2"
@@ -1935,14 +2181,14 @@ function ConfigPanel({ subPath }: PluginNavPanelProps) {
           {memory.length > 0 && (
             <div>
               <div className="px-2 pb-1 text-xs font-medium uppercase tracking-wide text-muted-foreground">
-                Память
+                Memory
               </div>
               {memory.map((entry) => (
                 <button
                   key={entry.id}
                   type="button"
                   title={entry.path}
-                  // Файл памяти вытесняет раздел: средней колонки быть не должно.
+                  // A memory file supersedes the section: there should be no middle column.
                   onClick={() => {
                     setSection(null);
                     void openFile(entry.path);
@@ -1960,14 +2206,15 @@ function ConfigPanel({ subPath }: PluginNavPanelProps) {
 
           <div>
             <div className="px-2 pb-1 text-xs font-medium uppercase tracking-wide text-muted-foreground">
-              Разделы
+              Sections
             </div>
             {sections.map((item) => (
               <button
                 key={item.id}
                 type="button"
-                // Смена раздела очищает и список (перерисуется), и документ
-                // (закрываем открытый файл — 3-я колонка пустеет).
+                // Changing the section clears both the list (it re-renders)
+                // and the document (close the open file — the 3rd column
+                // empties).
                 onClick={() => {
                   setSection(item.id);
                   navigate.toPluginPanel(PANEL_PATH, {
@@ -1995,16 +2242,16 @@ function ConfigPanel({ subPath }: PluginNavPanelProps) {
 
         {loading ? (
           <div className="flex min-h-0 flex-1 items-center justify-center text-sm text-muted-foreground">
-            Загрузка…
+            Loading…
           </div>
         ) : config?.error ? (
           <div className="min-h-0 flex-1 overflow-y-auto p-4 md:p-5">
             <div className="rounded-md border border-destructive/50 bg-destructive/10 px-3 py-2 text-sm text-destructive">
-              Файл {config.error.file} не разобрать: {config.error.message}
+              Failed to parse file {config.error.file}: {config.error.message}
             </div>
           </div>
         ) : open && section === null ? (
-          // Файл памяти: документ во всю оставшуюся ширину, без средней колонки.
+          // Memory file: the document takes the full remaining width, no middle column.
           <div className="min-h-0 flex-1 overflow-hidden">
             <DocTab subPath={subPath} />
           </div>
@@ -2012,7 +2259,7 @@ function ConfigPanel({ subPath }: PluginNavPanelProps) {
           <WorkflowsView rpc={rpc} areaId={areaId} />
         ) : section !== null ? (
           <>
-            {/* Средняя колонка — список раздела, ограниченной регулируемой ширины. */}
+            {/* Middle column — the section list, bounded resizable width. */}
             <div
               style={{ width: midWidth }}
               className="min-h-0 shrink-0 overflow-y-auto p-4"
@@ -2020,16 +2267,17 @@ function ConfigPanel({ subPath }: PluginNavPanelProps) {
               <div className="space-y-4">
             {config && !config.error && section === "hooks" && (
               <div>
-                <h2 className="mb-2 text-sm font-semibold">Хуки</h2>
+                <h2 className="mb-2 text-sm font-semibold">Hooks</h2>
                 {config.hooks.length === 0 ? (
                   <p className="text-sm text-muted-foreground">
-                    Хуков не найдено.
+                    No hooks found.
                   </p>
                 ) : (
                   <p className="mb-2 text-xs text-muted-foreground">
-                    Тумблер выключает хук — Claude Code его не отключает сам,
-                    поэтому панель вырезает хук в своё хранилище и возвращает
-                    при включении. Клик по строке открывает и правит команду.
+                    The toggle disables a hook — Claude Code doesn't disable it
+                    on its own, so the panel cuts the hook out into its own
+                    storage and restores it on enable. Clicking the row opens
+                    and edits the command.
                   </p>
                 )}
                 <div className="space-y-0.5">
@@ -2095,11 +2343,11 @@ function ConfigPanel({ subPath }: PluginNavPanelProps) {
             {!loading && config && !config.error && section === "plugins" && (
               <div>
                 <h2 className="mb-2 text-sm font-semibold">
-                  Плагины Claude Code
+                  Claude Code plugins
                 </h2>
                 {config.plugins.length === 0 && (
                   <p className="text-sm text-muted-foreground">
-                    Установленных плагинов не найдено.
+                    No installed plugins found.
                   </p>
                 )}
                 <div className="space-y-0.5">
@@ -2148,10 +2396,10 @@ function ConfigPanel({ subPath }: PluginNavPanelProps) {
 
             {!loading && config && !config.error && section === "connectors" && (
               <div>
-                <h2 className="mb-2 text-sm font-semibold">Коннекторы</h2>
+                <h2 className="mb-2 text-sm font-semibold">Connectors</h2>
                 {config.connectors.length === 0 && (
                   <p className="text-sm text-muted-foreground">
-                    Коннекторов не найдено.
+                    No connectors found.
                   </p>
                 )}
                 <div className="space-y-0.5">
@@ -2194,9 +2442,9 @@ function ConfigPanel({ subPath }: PluginNavPanelProps) {
                           }
                         />
                       ) : (
-                        // user/local из ~/.claude.json settings.json не гейтит.
+                        // user/local from ~/.claude.json settings.json isn't gated.
                         <span className="shrink-0 text-xs text-muted-foreground">
-                          только чтение
+                          read only
                         </span>
                       )}
                     </div>
@@ -2208,21 +2456,22 @@ function ConfigPanel({ subPath }: PluginNavPanelProps) {
             {!loading && config && !config.error && section === "skills" && (
               <div>
                 <div className="mb-2 flex items-center justify-between gap-2">
-                  <h2 className="text-sm font-semibold">Навыки</h2>
+                  <h2 className="text-sm font-semibold">Skills</h2>
                   <Button
                     variant="outline"
                     size="sm"
                     onClick={() => setCreateKind("skill")}
                   >
                     <Icon name="Plus" />
-                    Новый навык
+                    New skill
                   </Button>
                 </div>
-                {/* Режим — общий для раздела: применяется ко всем включённым
-                    навыкам и к каждому включаемому. Отдельной строкой с подписью. */}
+                {/* Mode is shared for the section: applied to all enabled
+                    skills and to each one being enabled. Shown as its own
+                    labeled row. */}
                 <div className="mb-3 flex items-center gap-2">
                   <span className="text-xs text-muted-foreground">
-                    Режим включённых навыков
+                    Enabled skills mode
                   </span>
                   <Dropdown
                     value={skillMode}
@@ -2238,7 +2487,7 @@ function ConfigPanel({ subPath }: PluginNavPanelProps) {
                 </div>
                 {config.skills.length === 0 && (
                   <p className="text-sm text-muted-foreground">
-                    Навыков не найдено.
+                    No skills found.
                   </p>
                 )}
                 <div className="space-y-0.5">
@@ -2256,7 +2505,7 @@ function ConfigPanel({ subPath }: PluginNavPanelProps) {
                         onClick={() =>
                           skill.path
                             ? void openFile(skill.path)
-                            : toast.error("Файл навыка не найден.")
+                            : toast.error("Skill file not found.")
                         }
                         className="min-w-0 flex-1 text-left"
                       >
@@ -2266,13 +2515,13 @@ function ConfigPanel({ subPath }: PluginNavPanelProps) {
                         <div className="text-xs text-muted-foreground">
                           {secondLine(
                             skill.tokens,
-                            skill.origin === "project" ? "проектный" : "личный",
+                            skill.origin === "project" ? "project" : "personal",
                           )}
                         </div>
                       </button>
                       <Switch
                         checked={skill.enabled}
-                        // Включаем в общем режиме раздела, выключаем в off.
+                        // Enable using the section's shared mode, disable via off.
                         onChange={(next) =>
                           setSkill(skill.name, next ? skillMode : "off")
                         }
@@ -2286,19 +2535,19 @@ function ConfigPanel({ subPath }: PluginNavPanelProps) {
             {!loading && config && !config.error && section === "agents" && (
               <div>
                 <div className="mb-2 flex items-center justify-between gap-2">
-                  <h2 className="text-sm font-semibold">Агенты</h2>
+                  <h2 className="text-sm font-semibold">Agents</h2>
                   <Button
                     variant="outline"
                     size="sm"
                     onClick={() => setCreateKind("agent")}
                   >
                     <Icon name="Plus" />
-                    Новый агент
+                    New agent
                   </Button>
                 </div>
                 {config.agents.length === 0 && (
                   <p className="text-sm text-muted-foreground">
-                    Агентов не найдено.
+                    No agents found.
                   </p>
                 )}
                 <div className="space-y-0.5">
@@ -2318,7 +2567,7 @@ function ConfigPanel({ subPath }: PluginNavPanelProps) {
                       <div className="text-xs text-muted-foreground">
                         {secondLine(
                           agent.tokens,
-                          agent.origin === "project" ? "проектный" : "личный",
+                          agent.origin === "project" ? "project" : "personal",
                         )}
                       </div>
                     </button>
@@ -2330,15 +2579,15 @@ function ConfigPanel({ subPath }: PluginNavPanelProps) {
             {!loading && config && !config.error && section === "toolSearch" && (
               <div className={cn(config.toolSearch.dimmed && "opacity-60")}>
                 <h2 className="mb-2 text-sm font-semibold">
-                  Подгрузка инструментов
+                  Tool search
                 </h2>
                 <p className="mb-3 text-xs text-muted-foreground">
-                  Схемы инструментов плагинов и MCP не грузятся в контекст все
-                  сразу — виден лишь список имён, а полная схема подтягивается по
-                  требованию, когда инструмент нужен. Экономит контекст, особенно
-                  при многих MCP-серверах. «Всегда» — подгружать отложенно всегда;
-                  «Автоматически» — только когда инструментов много; выкл —
-                  грузить все схемы сразу.
+                  Plugin and MCP tool schemas aren't all loaded into context at
+                  once — only the list of names is visible, and the full schema
+                  is fetched on demand when a tool is needed. Saves context,
+                  especially with many MCP servers. "Always" — defer loading
+                  always; "Automatic" — only when there are many tools; off —
+                  load all schemas up front.
                 </p>
                 <div className="flex shrink-0 items-center gap-3">
                   <Dropdown
@@ -2359,37 +2608,37 @@ function ConfigPanel({ subPath }: PluginNavPanelProps) {
               </div>
             </div>
 
-            {/* Разделитель средней колонки и документ — остаток ширины. */}
+            {/* Divider between the middle column and the document — takes the rest of the width. */}
             <ResizeHandle onPointerDown={startMidResize} />
             <div className="min-h-0 flex-1 overflow-hidden">
               {open ? (
                 <DocTab subPath={subPath} />
               ) : (
                 <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
-                  Выберите элемент в списке
+                  Select an item from the list
                 </div>
               )}
             </div>
           </>
         ) : (
-          // Ни файла, ни раздела — пустое состояние во всю ширину.
+          // Neither file nor section — empty state spanning the full width.
           <div className="flex min-h-0 flex-1 items-center justify-center text-sm text-muted-foreground">
-            Выберите раздел слева
+            Select a section on the left
           </div>
         )}
       </div>
 
       <CreateDialog
         open={createKind === "skill"}
-        title="Новый навык"
-        description="Создаст папку с SKILL.md и откроет его для правки."
+        title="New skill"
+        description="Creates a folder with SKILL.md and opens it for editing."
         onClose={() => setCreateKind(null)}
         onCreate={createSkill}
       />
       <CreateDialog
         open={createKind === "agent"}
-        title="Новый агент"
-        description="Создаст файл агента и откроет его для правки."
+        title="New agent"
+        description="Creates an agent file and opens it for editing."
         onClose={() => setCreateKind(null)}
         onCreate={createAgent}
       />

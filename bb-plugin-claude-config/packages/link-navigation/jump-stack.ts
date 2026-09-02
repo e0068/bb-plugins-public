@@ -1,7 +1,7 @@
 /**
- * Чистый стек прыжков (без react). Immutable-хелперы: каждая функция
- * возвращает новое состояние (или то же самое, если менять нечего — jumpTo
- * тем же путём подряд не даёт дубля).
+ * A pure jump stack (no react). Immutable helpers: every function returns a
+ * new state (or the same one, if there's nothing to change — jumpTo to the
+ * same path in a row doesn't produce a duplicate).
  */
 
 export interface JumpState {
@@ -20,14 +20,14 @@ export function canGoBack(s: JumpState): boolean {
   return s.stack.length > 1;
 }
 
-// Толкает новый путь; если abs совпадает с текущим — состояние не меняется
-// (возвращается тот же объект), дубль подряд не появляется.
+// Pushes a new path; if abs matches the current one, the state doesn't change
+// (the same object is returned), so a duplicate in a row never appears.
 export function jumpTo(s: JumpState, abs: string): JumpState {
   if (current(s) === abs) return s;
   return { stack: [...s.stack, abs] };
 }
 
-// Снимает верхний элемент, если есть куда возвращаться; на корне — no-op.
+// Pops the top element if there's somewhere to go back to; at the root — no-op.
 export function goBack(s: JumpState): JumpState {
   if (s.stack.length <= 1) return s;
   return { stack: s.stack.slice(0, -1) };

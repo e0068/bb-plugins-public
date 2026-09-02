@@ -1,30 +1,30 @@
-// Чистый общий слой: настройки внешнего вида и флагов редактора Kasimov. Живёт
-// в packages/md-doc-view, чтобы оба плагина-потребителя (Cloud Config, MD Opener)
-// брали ОДНУ схему, но КАЖДЫЙ хранил СВОИ значения (раздельные настройки: своя
-// bb.settings.define + свой useSettings у каждого плагина; межплагинной
-// синхронизации нет — так решил владелец, decisions/kasimov-settings-separate).
+// Pure shared layer: appearance and flag settings for the Kasimov editor. It
+// lives in packages/md-doc-view so both consuming plugins (Cloud Config, MD
+// Opener) share ONE schema, while EACH stores ITS OWN values (settings are not
+// shared: each plugin has its own bb.settings.define + its own useSettings;
+// there is no cross-plugin sync — the owner's decision, decisions/kasimov-settings-separate).
 //
-// Одна таблица полей — единственный источник истины; из неё выводятся дескрипторы
-// для bb.settings.define, тотальный разбор значений с доски и отображение в
-// CSS-переменные (`--kasi-*`) и флаги движка. Эффектов нет: значения приходят от
-// useSettings() (фронт), функции только преобразуют.
+// One field table is the single source of truth; from it we derive the
+// descriptors for bb.settings.define, a total parse of board values, and the
+// mapping to CSS variables (`--kasi-*`) and engine flags. No effects: values
+// come from useSettings() (the front end), the functions only transform.
 //
-// Кегли/отступы/цвета/шрифты — строками: числового и цветового типа настроек в
-// SDK нет (значение настройки — string | boolean | select-строка из
-// фиксированных options). Флаги — булевы. Дефолты значением совпадают с
-// packages/kasimov/kasimov.css (поэтому пустая/несозданная настройка сохраняет
-// текущий вид) — px-поля хранят голое число ("14", не "14px": единицу
-// дописывает toCssVars/withUnit, полю не нужно её нести).
+// Sizes/gaps/colors/fonts are strings: the SDK has no numeric or color setting
+// type (a setting's value is string | boolean | a select string from fixed
+// options). Flags are booleans. Defaults match packages/kasimov/kasimov.css by
+// value (so an empty/unset setting preserves the current look) — px fields
+// store a bare number ("14", not "14px": the unit is appended by
+// toCssVars/withUnit, the field doesn't need to carry it).
 //
-// Шрифты/цвета дополнительно несут select-пресет (TOKEN_SELECT_FIELDS —
-// готовые шрифты и токены темы хоста): пока он на "custom", действует
-// текстовое поле как раньше; любое другое значение — сам этот пресет.
+// Fonts/colors additionally carry a select preset (TOKEN_SELECT_FIELDS —
+// ready-made fonts and host theme tokens): while it's on "custom", the text
+// field behaves as before; any other value is the preset itself.
 
-/** Плоское значение настройки, как его отдаёт useSettings().values. */
+/** A setting's flat value, as returned by useSettings().values. */
 export type SettingValue = string | boolean;
 
 export interface KasimovSettings {
-  // Внешний вид (CSS-переменные).
+  // Appearance (CSS variables).
   size: string;
   lineHeight: string;
   gap: string;
@@ -41,8 +41,8 @@ export interface KasimovSettings {
   padX: string;
   paraGap: string;
   listGap: string;
-  // Пресеты (select): готовое значение вместо соответствующего поля выше,
-  // пока не выставлено в "custom". См. TOKEN_SELECT_FIELDS.
+  // Presets (select): a ready-made value replacing the corresponding field
+  // above, until set to "custom". See TOKEN_SELECT_FIELDS.
   fontToken: string;
   monoToken: string;
   fgToken: string;
@@ -50,7 +50,7 @@ export interface KasimovSettings {
   bgToken: string;
   cellBgToken: string;
   accentToken: string;
-  // Флаги движка.
+  // Engine flags.
   followLinks: boolean;
   atLinks: boolean;
   frontmatter: boolean;
@@ -68,23 +68,23 @@ type TokenField =
   | "accentToken";
 type CssField = keyof Omit<KasimovSettings, FlagField | TokenField>;
 
-/** Select не переопределяет поле, пока стоит на этом значении. */
+/** A select doesn't override the field while set to this value. */
 const CUSTOM_TOKEN = "custom";
 
 interface CssSpec {
   field: CssField;
-  /** Ключ настройки на доске bb (уникален в пределах плагина). */
+  /** The setting's key on the bb board (unique within the plugin). */
   key: string;
-  /** CSS custom property, которую задаёт значение. */
+  /** The CSS custom property the value sets. */
   cssVar: string;
   default: string;
   label: string;
   description?: string;
   /**
-   * `"px"` — поле принимает голое число ("8"), единицу дописывает toCssVars;
-   * уже указанная единица или ключевое слово (px/%/auto/none/…) не трогается.
-   * Не ставить для безразмерных значений (lineHeight) и не-числовых полей
-   * (шрифты, цвета).
+   * `"px"` — the field accepts a bare number ("8"), toCssVars appends the
+   * unit; a value with a unit already given, or a keyword (px/%/auto/none/…),
+   * is left untouched. Don't set this for unitless values (lineHeight) or
+   * non-numeric fields (fonts, colors).
    */
   unit?: "px";
 }
@@ -98,21 +98,21 @@ interface FlagSpec {
 }
 
 interface TokenSelectSpec {
-  /** Настройка-select. */
+  /** The select setting. */
   field: TokenField;
-  /** Ключ настройки на доске bb. */
+  /** The setting's key on the bb board. */
   key: string;
-  /** Какое CSS-поле (из CSS_FIELDS) этот select переопределяет, пока не "custom". */
+  /** Which CSS field (from CSS_FIELDS) this select overrides while not "custom". */
   target: CssField;
   label: string;
   description?: string;
-  /** Готовые значения вида "var(--foo)" / font-stack; "custom" добавляется отдельно. */
+  /** Ready-made values like "var(--foo)" / a font stack; "custom" is added separately. */
   options: readonly string[];
 }
 
-// Токены хоста bb, встречающиеся в дизайн-системе (shadcn-подобные CSS
-// custom properties, задаёт сам хост). Список наблюдаемый, не официальный —
-// в этом монорепо нет их центрального реестра.
+// bb host tokens found in the design system (shadcn-like CSS custom
+// properties, set by the host itself). This list is observed, not official —
+// this monorepo has no central registry for them.
 const HOST_COLOR_TOKENS = [
   "var(--foreground)",
   "var(--muted-foreground)",
@@ -128,8 +128,8 @@ const HOST_COLOR_TOKENS = [
   "var(--attention)",
   "var(--canvas)",
   "var(--ink)",
-  // --primary в теме bb ахроматичный; единственный цветной акцентный токен —
-  // --timeline-accent (см. packages/md-doc-view/md-doc-view.css, откуда унаследован).
+  // --primary in the bb theme is achromatic; the only colored accent token is
+  // --timeline-accent (see packages/md-doc-view/md-doc-view.css, which it's inherited from).
   "var(--timeline-accent)",
 ] as const;
 
@@ -153,69 +153,69 @@ export const TOKEN_SELECT_FIELDS: readonly TokenSelectSpec[] = [
     field: "fontToken",
     key: "kasimovFontToken",
     target: "font",
-    label: "Kasimov: основной шрифт — пресет",
-    description: `«${CUSTOM_TOKEN}» — использовать поле «Kasimov: основной шрифт» ниже; var(--font-sans) — шрифт темы хоста`,
+    label: "Kasimov: main font — preset",
+    description: `"${CUSTOM_TOKEN}" — use the "Kasimov: main font" field below; var(--font-sans) — the host theme's font`,
     options: FONT_SANS_PRESETS,
   },
   {
     field: "monoToken",
     key: "kasimovMonoToken",
     target: "mono",
-    label: "Kasimov: моноширинный шрифт — пресет",
-    description: `«${CUSTOM_TOKEN}» — использовать поле «Kasimov: моноширинный шрифт» ниже; var(--font-mono) — шрифт темы хоста`,
+    label: "Kasimov: monospace font — preset",
+    description: `"${CUSTOM_TOKEN}" — use the "Kasimov: monospace font" field below; var(--font-mono) — the host theme's font`,
     options: FONT_MONO_PRESETS,
   },
   {
     field: "fgToken",
     key: "kasimovFgToken",
     target: "fg",
-    label: "Kasimov: цвет текста — токен темы",
-    description: `«${CUSTOM_TOKEN}» — использовать поле «Kasimov: цвет текста» ниже`,
+    label: "Kasimov: text color — theme token",
+    description: `"${CUSTOM_TOKEN}" — use the "Kasimov: text color" field below`,
     options: HOST_COLOR_TOKENS,
   },
   {
     field: "fgDimToken",
     key: "kasimovFgDimToken",
     target: "fgDim",
-    label: "Kasimov: цвет приглушённого текста — токен темы",
-    description: `«${CUSTOM_TOKEN}» — использовать поле «Kasimov: цвет приглушённого текста» ниже`,
+    label: "Kasimov: muted text color — theme token",
+    description: `"${CUSTOM_TOKEN}" — use the "Kasimov: muted text color" field below`,
     options: HOST_COLOR_TOKENS,
   },
   {
     field: "bgToken",
     key: "kasimovBgToken",
     target: "bg",
-    label: "Kasimov: цвет фона (внутренние панели) — токен темы",
-    description: `«${CUSTOM_TOKEN}» — использовать поле «Kasimov: цвет фона» ниже`,
+    label: "Kasimov: background color (inner panels) — theme token",
+    description: `"${CUSTOM_TOKEN}" — use the "Kasimov: background color" field below`,
     options: HOST_COLOR_TOKENS,
   },
   {
     field: "cellBgToken",
     key: "kasimovCellBgToken",
     target: "cellBg",
-    label: "Kasimov: цвет ячеек/кода — токен темы",
-    description: `«${CUSTOM_TOKEN}» — использовать поле «Kasimov: цвет ячеек/кода» ниже`,
+    label: "Kasimov: cell/code color — theme token",
+    description: `"${CUSTOM_TOKEN}" — use the "Kasimov: cell/code color" field below`,
     options: HOST_COLOR_TOKENS,
   },
   {
     field: "accentToken",
     key: "kasimovAccentToken",
     target: "accent",
-    label: "Kasimov: акцентный цвет — токен темы",
-    description: `«${CUSTOM_TOKEN}» — использовать поле «Kasimov: акцентный цвет» ниже`,
+    label: "Kasimov: accent color — theme token",
+    description: `"${CUSTOM_TOKEN}" — use the "Kasimov: accent color" field below`,
     options: HOST_COLOR_TOKENS,
   },
 ];
 
-// Дефолты — из packages/kasimov/kasimov.css.
+// Defaults — from packages/kasimov/kasimov.css.
 export const CSS_FIELDS: readonly CssSpec[] = [
   {
     field: "size",
     key: "kasimovFontSize",
     cssVar: "--kasi-size",
     default: "14",
-    label: "Kasimov: кегль текста, px",
-    description: "Размер шрифта редактора, напр. 14",
+    label: "Kasimov: text size, px",
+    description: "Editor font size, e.g. 14",
     unit: "px",
   },
   {
@@ -223,16 +223,16 @@ export const CSS_FIELDS: readonly CssSpec[] = [
     key: "kasimovLineHeight",
     cssVar: "--kasi-line-height",
     default: "1.5",
-    label: "Kasimov: межстрочный интервал",
-    description: "Высота строки тела, напр. 1.5",
+    label: "Kasimov: line height",
+    description: "Body line height, e.g. 1.5",
   },
   {
     field: "gap",
     key: "kasimovGap",
     cssVar: "--kasi-gap",
     default: "4",
-    label: "Kasimov: отступ, px",
-    description: "Базовый вертикальный интервал блоков, напр. 4",
+    label: "Kasimov: gap, px",
+    description: "Base vertical spacing between blocks, e.g. 4",
     unit: "px",
   },
   {
@@ -240,8 +240,8 @@ export const CSS_FIELDS: readonly CssSpec[] = [
     key: "kasimovRadius",
     cssVar: "--kasi-radius",
     default: "8",
-    label: "Kasimov: скругление, px",
-    description: "Радиус скругления панелей/кода, напр. 8",
+    label: "Kasimov: corner radius, px",
+    description: "Corner radius of panels/code, e.g. 8",
     unit: "px",
   },
   {
@@ -250,59 +250,59 @@ export const CSS_FIELDS: readonly CssSpec[] = [
     cssVar: "--kasi-font",
     default:
       '-apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif',
-    label: "Kasimov: основной шрифт",
-    description: "font-family для текста",
+    label: "Kasimov: main font",
+    description: "font-family for text",
   },
   {
     field: "mono",
     key: "kasimovMono",
     cssVar: "--kasi-mono",
     default: "ui-monospace, SFMono-Regular, Menlo, monospace",
-    label: "Kasimov: моноширинный шрифт",
-    description: "font-family для кода",
+    label: "Kasimov: monospace font",
+    description: "font-family for code",
   },
   {
     field: "fg",
     key: "kasimovFg",
     cssVar: "--kasi-fg",
     default: "#e8e8ea",
-    label: "Kasimov: цвет текста",
+    label: "Kasimov: text color",
   },
   {
     field: "fgDim",
     key: "kasimovFgDim",
     cssVar: "--kasi-fg-dim",
     default: "rgba(255, 255, 255, .5)",
-    label: "Kasimov: цвет приглушённого текста",
+    label: "Kasimov: muted text color",
   },
   {
     field: "bg",
     key: "kasimovBg",
     cssVar: "--kasi-bg",
     default: "#0e0e0e",
-    label: "Kasimov: цвет фона (внутренние панели)",
+    label: "Kasimov: background color (inner panels)",
   },
   {
     field: "cellBg",
     key: "kasimovCellBg",
     cssVar: "--kasi-cell-bg",
     default: "#1c1c1e",
-    label: "Kasimov: цвет ячеек/кода",
+    label: "Kasimov: cell/code color",
   },
   {
     field: "accent",
     key: "kasimovAccent",
     cssVar: "--kasi-accent",
     default: "#d1603d",
-    label: "Kasimov: акцентный цвет (ссылки)",
+    label: "Kasimov: accent color (links)",
   },
   {
     field: "maxWidth",
     key: "kasimovMaxWidth",
     cssVar: "--kasi-max-width",
     default: "none",
-    label: "Kasimov: макс. ширина колонки, px",
-    description: "Ширина колонки, напр. 720; none — вся ширина",
+    label: "Kasimov: max column width, px",
+    description: "Column width, e.g. 720; none — full width",
     unit: "px",
   },
   {
@@ -310,8 +310,8 @@ export const CSS_FIELDS: readonly CssSpec[] = [
     key: "kasimovColMx",
     cssVar: "--kasi-col-mx",
     default: "0",
-    label: "Kasimov: отступ колонки, px",
-    description: "При заданной макс. ширине: 0 — влево, auto — по центру",
+    label: "Kasimov: column margin, px",
+    description: "With a max width set: 0 — left-aligned, auto — centered",
     unit: "px",
   },
   {
@@ -319,8 +319,8 @@ export const CSS_FIELDS: readonly CssSpec[] = [
     key: "kasimovPadX",
     cssVar: "--kasi-pad-x",
     default: "44",
-    label: "Kasimov: боковые поля, px",
-    description: "Боковые «формат-поля» редактируемого полотна, напр. 44",
+    label: "Kasimov: side padding, px",
+    description: "Side \"format margins\" of the editable canvas, e.g. 44",
     unit: "px",
   },
   {
@@ -328,8 +328,8 @@ export const CSS_FIELDS: readonly CssSpec[] = [
     key: "kasimovParaGap",
     cssVar: "--kasi-para-gap",
     default: "0",
-    label: "Kasimov: отступ между абзацами, px",
-    description: "Вертикальный интервал между абзацами/блоками, напр. 8",
+    label: "Kasimov: paragraph gap, px",
+    description: "Vertical spacing between paragraphs/blocks, e.g. 8",
     unit: "px",
   },
   {
@@ -337,8 +337,8 @@ export const CSS_FIELDS: readonly CssSpec[] = [
     key: "kasimovListGap",
     cssVar: "--kasi-list-gap",
     default: "0",
-    label: "Kasimov: отступ между пунктами списка, px",
-    description: "Доп. вертикальный интервал между пунктами, напр. 4",
+    label: "Kasimov: list item gap, px",
+    description: "Extra vertical spacing between list items, e.g. 4",
     unit: "px",
   },
 ];
@@ -348,33 +348,33 @@ export const FLAG_FIELDS: readonly FlagSpec[] = [
     field: "followLinks",
     key: "kasimovFollowLinks",
     default: true,
-    label: "Kasimov: переход по ссылкам",
-    description: "Клик по живой ссылке ведёт по ней вместо выделения токена",
+    label: "Kasimov: follow links",
+    description: "Clicking a live link follows it instead of selecting the token",
   },
   {
     field: "atLinks",
     key: "kasimovAtLinks",
     default: true,
-    label: "Kasimov: кликабельный @import",
-    description: "`@path` (Claude @import) кликабелен; выкл — обычный текст",
+    label: "Kasimov: clickable @import",
+    description: "`@path` (Claude @import) is clickable; off — plain text",
   },
   {
     field: "frontmatter",
     key: "kasimovFrontmatter",
     default: true,
-    label: "Kasimov: показывать frontmatter",
-    description: "Показывать блок frontmatter сеткой (значение сохраняется)",
+    label: "Kasimov: show frontmatter",
+    description: "Show the frontmatter block as a grid (the value is preserved)",
   },
   {
     field: "mermaidContrast",
     key: "kasimovMermaidContrast",
     default: false,
-    label: "Kasimov: контрастные узлы mermaid",
-    description: "Залитый чип с инверсным текстом; выкл — «мягкие» узлы (дефолт)",
+    label: "Kasimov: contrast mermaid nodes",
+    description: "Filled chip with inverse text; off — \"soft\" nodes (default)",
   },
 ];
 
-/** Дефолтные настройки — из таблиц полей (совпадают с kasimov.css). */
+/** Default settings — from the field tables (match kasimov.css). */
 export const DEFAULTS: KasimovSettings = {
   ...(Object.fromEntries(
     CSS_FIELDS.map((f) => [f.field, f.default]),
@@ -390,13 +390,15 @@ export const DEFAULTS: KasimovSettings = {
 const tokenSpecByTarget = new Map(TOKEN_SELECT_FIELDS.map((t) => [t.target, t]));
 
 /**
- * Дефолт пресетов «под родной bb-вьюер» — общий для обоих потребителей
- * (MD Opener и Cloud Config), которые раньше добивались того же вида хардкодом
- * поверх Kasimov в общем packages/md-doc-view/md-doc-view.css (см.
- * memory/decisions/kasimov-opener-css-uses-token-defaults.md). Один источник —
- * не копия в каждом server.ts (G1). Все 7 полей TOKEN_SELECT_FIELDS покрыты
- * явно, включая `bgToken` (`--kasi-bg` управляет только внутренними панелями —
- * mermaid/зум, не фоном документа, но панели тоже часть «под родной вид»).
+ * Preset defaults for "match the native bb viewer" — shared by both consumers
+ * (MD Opener and Cloud Config), which used to achieve the same look by
+ * hardcoding it on top of Kasimov in the shared
+ * packages/md-doc-view/md-doc-view.css (see
+ * memory/decisions/kasimov-opener-css-uses-token-defaults.md). One source —
+ * not a copy in each server.ts (G1). All 7 TOKEN_SELECT_FIELDS fields are
+ * covered explicitly, including `bgToken` (`--kasi-bg` only controls inner
+ * panels — mermaid/zoom, not the document background, but the panels are
+ * still part of "matching the native look").
  */
 export const NATIVE_VIEWER_TOKEN_DEFAULTS: Record<TokenField, string> = {
   fontToken: "var(--font-sans)",
@@ -409,13 +411,14 @@ export const NATIVE_VIEWER_TOKEN_DEFAULTS: Record<TokenField, string> = {
 };
 
 /**
- * Дескрипторы для bb.settings.define (плоский объект key → дескриптор).
- * Порядок — из CSS_FIELDS; если у поля есть пресет (TOKEN_SELECT_FIELDS), его
- * select идёт СРАЗУ ПЕРЕД текстовым полем — описание пресета обещает «поле
- * ниже», и это обязано быть буквально так, а не где-то в хвосте списка.
+ * Descriptors for bb.settings.define (a flat key → descriptor object).
+ * Order follows CSS_FIELDS; if a field has a preset (TOKEN_SELECT_FIELDS), its
+ * select goes IMMEDIATELY BEFORE the text field — the preset's own description
+ * promises "the field below", and that has to be literally true, not
+ * somewhere at the tail of the list past a dozen other settings.
  *
- * `tokenDefaults` — дефолт пресета (например `NATIVE_VIEWER_TOKEN_DEFAULTS`);
- * без него — `CUSTOM_TOKEN` на каждом поле (текстовое поле рулит).
+ * `tokenDefaults` — the preset default (e.g. `NATIVE_VIEWER_TOKEN_DEFAULTS`);
+ * without it — `CUSTOM_TOKEN` on every field (the text field takes over).
  */
 export function buildDescriptors(
   tokenDefaults: Partial<Record<TokenField, string>> = {},
@@ -460,7 +463,7 @@ export function buildDescriptors(
   };
 }
 
-/** Дескрипторы с общими дефолтами (CUSTOM_TOKEN для всех пресетов). */
+/** Descriptors with shared defaults (CUSTOM_TOKEN for every preset). */
 export const descriptors = buildDescriptors();
 
 const allowedTokenValues = new Map(
@@ -468,12 +471,13 @@ const allowedTokenValues = new Map(
 );
 
 /**
- * Тотальный разбор значений с доски в настройки: берём значение нужного типа,
- * иначе — дефолт. `values` может быть undefined (грузится) — тогда всё дефолтное.
- * Мусор и лишние ключи отбрасываются самим устройством разбора (читаем только
- * известные ключи). Пресет (select) дополнительно сужен до своего списка
- * `options` — протухшее значение (список токенов правился, а на доске лежит
- * старое) падает на `CUSTOM_TOKEN`, а не летит в CSS как есть.
+ * Total parse of board values into settings: take a value of the right type,
+ * otherwise fall back to the default. `values` can be undefined (still
+ * loading) — then everything is default. Junk and extra keys are dropped by
+ * the parse itself (only known keys are read). A preset (select) is further
+ * narrowed to its own `options` list — a stale value (the token list changed,
+ * but the board still holds the old one) falls back to `CUSTOM_TOKEN` instead
+ * of flying into CSS as-is.
  */
 export function parse(
   values: Record<string, SettingValue> | undefined,
@@ -504,9 +508,9 @@ export function parse(
 const BARE_NUMBER = /^-?\d+(\.\d+)?$/;
 
 /**
- * Голое число ("8") получает единицу измерения; значение с уже указанной
- * единицей или ключевым словом (px/%/auto/none/…) возвращается как есть —
- * поля настроек принимают числа без px, писать его вручную не нужно.
+ * A bare number ("8") gets a unit appended; a value with a unit already given,
+ * or a keyword (px/%/auto/none/…), is returned as-is — setting fields accept
+ * numbers without px, there's no need to write it by hand.
  */
 export function withUnit(value: string, unit: "px"): string {
   return BARE_NUMBER.test(value) ? `${value}${unit}` : value;
@@ -517,12 +521,12 @@ const tokenFieldByTarget = new Map(
 );
 
 /**
- * Итоговое значение CSS-поля: пресет (select), если у поля он есть и не стоит
- * на "custom"/пусто; иначе — текстовое поле. `parse()` уже гарантирует, что
- * пресет ∈ {"custom", ...options}, но `toCssVars` — самостоятельная чистая
- * функция над `KasimovSettings`, а не только над результатом `parse()`
- * (см. тесты, собирающие `KasimovSettings` руками), поэтому "" остаётся явно
- * проверяемым случаем, а не полагается на чужую гарантию.
+ * The final value of a CSS field: the preset (select), if the field has one
+ * and it isn't "custom"/empty; otherwise the text field. `parse()` already
+ * guarantees the preset ∈ {"custom", ...options}, but `toCssVars` is a
+ * standalone pure function over `KasimovSettings`, not just over the result of
+ * `parse()` (see the tests that assemble `KasimovSettings` by hand), so ""
+ * remains an explicitly checked case rather than relying on someone else's guarantee.
  */
 function effectiveCssValue(s: KasimovSettings, f: CssSpec): string {
   const tokenField = tokenFieldByTarget.get(f.field);
@@ -530,7 +534,7 @@ function effectiveCssValue(s: KasimovSettings, f: CssSpec): string {
   return tokenValue !== "" && tokenValue !== CUSTOM_TOKEN ? tokenValue : s[f.field];
 }
 
-/** CSS custom properties для host-элемента: только непустые значения (пусто = дефолт CSS). */
+/** CSS custom properties for the host element: only non-empty values (empty = CSS default). */
 export function toCssVars(s: KasimovSettings): Record<string, string> {
   const out: Record<string, string> = {};
   for (const f of CSS_FIELDS) {
@@ -541,18 +545,17 @@ export function toCssVars(s: KasimovSettings): Record<string, string> {
   return out;
 }
 
-/** Символы, которыми имя/значение переменной может вырваться за границу CSS-правила. */
+/** Characters a variable's name/value could use to escape the boundary of a CSS rule. */
 const UNSAFE_CSS = /[{};<>]/;
 
 /**
- * CSS-правило `#hostId .mde-root { --var: значение; … }` для инъекции в
- * document.head (см. KasimovEditor). `null`, если задавать нечего.
+ * The CSS rule `#hostId .mde-root { --var: value; … }` to inject into
+ * document.head (see KasimovEditor). `null` if there's nothing to set.
  *
- * Значения приходят голыми строками с доски настроек (не типизированы и не
- * валидируются формой — kasimovFontSize и т.п. хранят что угодно), поэтому
- * пары, чьё имя или значение может разорвать правило и вылезти в соседний
- * CSS (`{`, `}`, `;`, `<`, `>`), тотально отбрасываются, а не проверяются на
- * вызывающей стороне.
+ * Values arrive as bare strings from the settings board (untyped and not
+ * validated by a form — kasimovFontSize etc. can hold anything), so pairs
+ * whose name or value could break the rule and leak into neighboring CSS
+ * (`{`, `}`, `;`, `<`, `>`) are dropped entirely, rather than checked by the caller.
  */
 export function kasimovCssRule(
   hostId: string,
@@ -565,7 +568,7 @@ export function kasimovCssRule(
   return decls === "" ? null : `#${hostId} .mde-root { ${decls} }`;
 }
 
-/** Опции движка для KasimovEditor: булевы флаги + строковый режим mermaid. */
+/** Engine options for KasimovEditor: boolean flags + the string mermaid mode. */
 export function toFlags(s: KasimovSettings): {
   followLinks: boolean;
   atLinks: boolean;
@@ -576,7 +579,7 @@ export function toFlags(s: KasimovSettings): {
     followLinks: s.followLinks,
     atLinks: s.atLinks,
     frontmatter: s.frontmatter,
-    // Бинарный выбор режима mermaid → строковая опция движка (soft — дефолт).
+    // Binary mermaid mode choice → the engine's string option (soft — default).
     mermaidNodes: s.mermaidContrast ? "contrast" : "soft",
   };
 }

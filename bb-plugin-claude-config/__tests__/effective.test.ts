@@ -9,71 +9,72 @@ import {
   resolveToolSearch,
 } from "../src/effective";
 
-describe("сведение уровней", () => {
-  it("узкий уровень перебивает широкий", () => {
+describe("resolving levels", () => {
+  it("a narrower level overrides a wider one", () => {
     expect(resolvePlugin(["on", "off"])).toBe("off");
     expect(resolvePlugin(["off", "on"])).toBe("on");
   });
 
-  it("уровень без значения пропускается", () => {
+  it("a level without a value is skipped", () => {
     expect(resolvePlugin(["on", "inherit"])).toBe("on");
     expect(resolveSkill(["off", "inherit"])).toBe("off");
   });
 
-  it("значения нет нигде — берётся умолчание Claude Code", () => {
-    // Плагина нет в настройках — он выключен.
+  it("no value anywhere — falls back to the Claude Code default", () => {
+    // No plugin entry in settings — it's off.
     expect(resolvePlugin(["inherit", "inherit"])).toBe("off");
     expect(resolvePlugin([])).toBe("off");
-    // Навык без override виден полностью.
+    // A skill without an override is fully visible.
     expect(resolveSkill(["inherit"])).toBe("on");
-    // ENABLE_TOOL_SEARCH не задана — Claude Code ведёт себя как auto.
+    // ENABLE_TOOL_SEARCH unset — Claude Code behaves as auto.
     expect(resolveToolSearch(["inherit"])).toBe("auto");
   });
 
-  it("сводит все состояния навыка", () => {
+  it("resolves all skill states", () => {
     expect(resolveSkill(["on", "name-only"])).toBe("name-only");
     expect(resolveSkill(["off", "user-invocable-only"])).toBe(
       "user-invocable-only",
     );
   });
 
-  it("сводит режимы подгрузки инструментов", () => {
+  it("resolves tool-search loading modes", () => {
     expect(resolveToolSearch(["on", "auto"])).toBe("auto");
     expect(resolveToolSearch(["auto", "off"])).toBe("off");
   });
 
-  it("MCP-сервер: явное значение старше умолчания от enableAll", () => {
-    // Без записи умолчание зависит от enableAll.
+  it("MCP server: an explicit value outranks the enableAll default", () => {
+    // With no entry, the default depends on enableAll.
     expect(resolveMcpServer(["inherit"], false)).toBe("off");
     expect(resolveMcpServer(["inherit"], true)).toBe("on");
-    // Явный off перебивает enableAll; узкий уровень перебивает широкий.
+    // An explicit off overrides enableAll; a narrower level overrides a wider one.
     expect(resolveMcpServer(["off"], true)).toBe("off");
     expect(resolveMcpServer(["on", "off"], false)).toBe("off");
   });
 
-  it("enableAll сводится последним заданным уровнем", () => {
+  it("enableAll resolves to the last level that set it", () => {
     expect(resolveEnableAllMcp([])).toBe(false);
     expect(resolveEnableAllMcp([true, undefined])).toBe(true);
     expect(resolveEnableAllMcp([true, false])).toBe(false);
   });
 
-  describe("decideMcpOwn — минимальная запись коннектора", () => {
-    it("совпало со старшими уровнями — снимает оверрайд", () => {
+  describe("decideMcpOwn — minimal connector entry", () => {
+    it("matches the higher levels — drops the override", () => {
       expect(decideMcpOwn(["on"], [undefined, undefined], "on")).toBe("inherit");
       expect(decideMcpOwn([], [undefined], "off")).toBe("inherit");
     });
 
-    it("отличается — ставит явно", () => {
+    it("differs — sets it explicitly", () => {
       expect(decideMcpOwn(["on"], [undefined, undefined], "off")).toBe("off");
       expect(decideMcpOwn([], [undefined], "on")).toBe("on");
     });
 
-    it("enableAll на редактируемом уровне учитывается при снятии оверрайда", () => {
-      // Баг-кейс: enableAll:true в самом редактируемом файле, сервер нигде явно
-      // не задан → действует on. Выключаем: inherit оставил бы on, поэтому нужен
-      // явный off. enableAllLevels включает уровень редактируемого файла.
+    it("enableAll on the level being edited is accounted for when dropping the override", () => {
+      // Bug case: enableAll:true in the very file being edited, the server is
+      // never set explicitly anywhere → effectively on. Turning it off: inherit
+      // would leave it on, so an explicit off is required. enableAllLevels
+      // includes the level of the file being edited.
       expect(decideMcpOwn([], [true], "off")).toBe("off");
-      // Тот же enableAll, включаем — inherit и так даёт on.
+      // Same enableAll, turning it on — inherit already gives on.
       expect(decideMcpOwn([], [true], "on")).toBe("inherit");
     });
   });

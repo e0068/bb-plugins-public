@@ -1,6 +1,6 @@
 {
   "name": "bb-plugin-claude-config",
-  "version": "0.2.5",
+  "version": "0.2.7",
   "type": "module",
   "engines": {
     "bb": ">=0.39",
@@ -8,7 +8,7 @@
   },
   "bb": {
     "name": "Claude Config",
-    "description": "Управление конфигом Claude Code: плагины, коннекторы, навыки, хуки и подгрузка инструментов по областям.",
+    "description": "Manage Claude Code config: plugins, connectors, skills, hooks and tool loading, per scope.",
     "branding": {
       "icon": "Brain"
     },

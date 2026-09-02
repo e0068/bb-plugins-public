@@ -1,8 +1,8 @@
-// Слой 3 — сборка того, что видит панель, из уже разобранных документов.
-// Чистый код без ввода-вывода: server.ts читает файлы и передаёт сюда готовые
-// документы и списки путей, а получает строки-состояния для каждой секции.
+// Layer 3 — assembling what the panel sees from already-parsed documents.
+// Pure code with no I/O: server.ts reads the files and hands over ready
+// documents and path lists, and gets back state rows for each section.
 //
-// Зависит только вниз: settings-doc, effective, catalog — слои 1 и 2.
+// Depends only downward: settings-doc, effective, catalog — layers 1 and 2.
 
 import * as doc from "./settings-doc";
 import type { HookEntry } from "./settings-doc";
@@ -29,68 +29,68 @@ export interface PluginRow {
   name: string;
   marketplace: string;
   version: string | null;
-  /** Состояние свитча в этой области — действующее вкл/выкл. */
+  /** Toggle state in this scope — the effective on/off. */
   value: boolean;
   /**
-   * Только для проектной области: действующее значение совпадает с глобальным,
-   * то есть строка не переопределена. UI гасит такие строки. В глобальной
-   * области сравнивать не с чем — здесь всегда false.
+   * Project scope only: the effective value matches the global one, i.e.
+   * the row isn't overridden. The UI dims such rows. Nothing to compare
+   * against in the global scope — always false there.
    */
   dimmed: boolean;
-  /** Каталог плагина: есть — строка кликабельна, открывает README. */
+  /** Plugin's install directory: present — the row is clickable, opens the README. */
   installPath: string | null;
 }
 
-/** Режим включённого навыка — те же значения `skillOverrides`, кроме `off`. */
+/** Enabled skill mode — the same `skillOverrides` values, minus `off`. */
 export type SkillMode = "on" | "name-only" | "user-invocable-only";
 
 export interface SkillRow {
   name: string;
   origin: "personal" | "project";
-  /** Действующий тоггл: навык не выключен. */
+  /** Effective toggle: the skill isn't disabled. */
   enabled: boolean;
-  /** Режим при включённом навыке (при выключенном — дефолт для показа). */
+  /** Mode while the skill is enabled (default for display when disabled). */
   mode: SkillMode;
-  /** Проектная область: действующее состояние совпало с глобальным. */
+  /** Project scope: the effective state matches the global one. */
   dimmed: boolean;
 }
 
 export interface AgentRow {
   name: string;
   origin: "personal" | "project";
-  /** Абсолютный путь к файлу агента — панель открывает его по нему. */
+  /** Absolute path to the agent file — the panel opens it by this path. */
   path: string;
 }
 
-/** Режим включённой подгрузки: «Всегда» (on) или «Автоматически» (auto). */
+/** Mode while tool loading is enabled: "Always" (on) or "Automatic" (auto). */
 export type ToolSearchModeOn = "on" | "auto";
 
 export interface ToolSearchRow {
-  /** Тоггл: подгрузка не выключена. */
+  /** Toggle: loading isn't disabled. */
   enabled: boolean;
-  /** Режим при включённой подгрузке (при выключенной — дефолт для показа). */
+  /** Mode while loading is enabled (default for display when disabled). */
   mode: ToolSearchModeOn;
-  /** Проектная область: действующее состояние совпало с глобальным. */
+  /** Project scope: the effective state matches the global one. */
   dimmed: boolean;
 }
 
-/** Откуда объявлен коннектор: проектный .mcp.json, user- или local-скоуп. */
+/** Where a connector is declared: project .mcp.json, user or local scope. */
 export type ConnectorOrigin = "mcpjson" | "user" | "local";
 
 export interface ConnectorRow {
   name: string;
   origin: ConnectorOrigin;
-  /** Транспорт для подписи (stdio/http/…). */
+  /** Transport for the label (stdio/http/...). */
   transport: string;
-  /** Строку можно переключать — только для серверов .mcp.json. */
+  /** Whether the row can be toggled — only for .mcp.json servers. */
   toggleable: boolean;
-  /** Действующее вкл/выкл (для .mcp.json); для read-only всегда true (активен). */
+  /** Effective on/off (for .mcp.json); always true (active) for read-only. */
   value: boolean;
-  /** Проектная область: действующее совпало с глобальным (только .mcp.json). */
+  /** Project scope: effective value matches global (only for .mcp.json). */
   dimmed: boolean;
 }
 
-/** Уровень, с которого пришёл хук: пользовательский, проектный, локальный. */
+/** Level the hook came from: user, project, local. */
 export type HookOrigin = "user" | "project" | "local";
 
 export interface HookRow {
@@ -98,9 +98,9 @@ export interface HookRow {
   matcher: string | null;
   command: string;
   origin: HookOrigin;
-  /** Позиция в списке хуков своего уровня — адрес для чтения команды. */
+  /** Position within its level's hook list — the address for reading the command. */
   index: number;
-  /** Активен ли хук: false — хук вырезан из файла и лежит в disabled-списке. */
+  /** Whether the hook is active: false — cut out of the file, sitting in the disabled list. */
   enabled: boolean;
 }
 
@@ -114,43 +114,43 @@ export interface ConfigView {
 }
 
 /**
- * На входе — уже разобранные документы, не текст: разбор с привязкой к файлу
- * (и ошибку разбора) server.ts делает раньше, чтобы сказать в UI, какой именно
- * файл битый. Сюда доходят только валидные документы.
+ * Input is already-parsed documents, not text: server.ts does the
+ * file-tied parsing (and parse-error reporting) earlier, so the UI can
+ * say which exact file is broken. Only valid documents reach here.
  */
 export interface ViewInput {
-  /** Глобальная область или проектная — от этого зависит гашение строк. */
+  /** Global scope or project scope — determines whether rows get dimmed. */
   areaKind: "global" | "project";
-  /** Файл, который правит панель: своё значение берётся отсюда. */
+  /** The file the panel edits: its own value comes from here. */
   editedDoc: doc.SettingsDoc;
-  /** Уровни от широкого к узкому для свёртки в действующее значение. */
+  /** Levels from broad to narrow, for resolving to the effective value. */
   levelDocs: doc.SettingsDoc[];
-  /** Текст `installed_plugins.json`, как его вернул хост (или null). */
+  /** Text of `installed_plugins.json` as returned by the host (or null). */
   installedPluginsText: string | null;
-  /** Пути внутри личного каталога навыков (`~/.claude/skills`). */
+  /** Paths inside the personal skills directory (`~/.claude/skills`). */
   personalSkillPaths: string[];
-  /** Пути внутри проектного каталога навыков (пусто для глобальной области). */
+  /** Paths inside the project skills directory (empty for the global scope). */
   projectSkillPaths: string[];
-  /** Абсолютный личный каталог агентов (`~/.claude/agents`) — для путей строк. */
+  /** Absolute personal agents directory (`~/.claude/agents`) — for row paths. */
   personalAgentDir: string;
-  /** Абсолютный проектный каталог агентов (null для глобальной области). */
+  /** Absolute project agents directory (null for the global scope). */
   projectAgentDir: string | null;
-  /** Имена файлов внутри личного каталога агентов. */
+  /** File names inside the personal agents directory. */
   personalAgentPaths: string[];
-  /** Имена файлов внутри проектного каталога агентов (пусто глобально). */
+  /** File names inside the project agents directory (empty globally). */
   projectAgentPaths: string[];
-  /** Текст проектного `.mcp.json` (null в глобальной области или если файла нет). */
+  /** Text of the project `.mcp.json` (null in the global scope or if the file is absent). */
   mcpJsonText: string | null;
-  /** Текст `~/.claude.json` — оттуда user- и local-серверы. */
+  /** Text of `~/.claude.json` — the source of user and local servers. */
   claudeJsonText: string | null;
-  /** Корень проекта — ключ local-скоупа в `~/.claude.json` (null глобально). */
+  /** Project root — the local-scope key in `~/.claude.json` (null globally). */
   projectRoot: string | null;
-  /** Происхождение каждого уровня из levelDocs — для подписи хуков. */
+  /** Origin of each level in levelDocs — for the hook label. */
   levelOrigins: HookOrigin[];
   /**
-   * Выключенные хуки по уровням (та же длина и порядок, что levelDocs).
-   * Выключение — не значение в JSON-документе, а отдельное хранение: хук
-   * вырезается из файла и живёт здесь, пока его не включат обратно.
+   * Disabled hooks by level (same length and order as levelDocs).
+   * Disabling isn't a value in the JSON document but separate storage: the
+   * hook is cut out of the file and lives here until it's re-enabled.
    */
   disabledHooksByLevel: HookEntry[][];
 }
@@ -175,7 +175,7 @@ function buildAgents(input: ViewInput): AgentRow[] {
     return {
       name: entry.name,
       origin: entry.origin,
-      // dir проектной области непуст, раз имя пришло из projectAgentPaths.
+      // The project-scope dir is non-empty since the name came from projectAgentPaths.
       path: `${dir ?? input.personalAgentDir}/${entry.name}.md`,
     };
   });
@@ -185,8 +185,9 @@ function buildConnectors(input: ViewInput): ConnectorRow[] {
   const rows: ConnectorRow[] = [];
   const globalDoc = input.levelDocs[0] ?? {};
 
-  // Серверы проектного .mcp.json — с тумблером. Действующее значение считаем по
-  // enabled/disabled массивам всех уровней с умолчанием от enableAll.
+  // Servers from the project .mcp.json — with a toggle. The effective value
+  // is resolved from the enabled/disabled arrays of all levels, with the
+  // default coming from enableAll.
   for (const def of parseMcpJson(input.mcpJsonText)) {
     const states = input.levelDocs.map((level) => doc.getMcpServer(level, def.name));
     const enableAll = resolveEnableAllMcp(
@@ -210,7 +211,7 @@ function buildConnectors(input: ViewInput): ConnectorRow[] {
     });
   }
 
-  // Серверы из ~/.claude.json — read-only: settings.json их не гейтит.
+  // Servers from ~/.claude.json — read-only: settings.json doesn't gate them.
   const { user, local } = parseClaudeJsonServers(
     input.claudeJsonText,
     input.projectRoot,
@@ -258,7 +259,7 @@ function buildToolSearch(input: ViewInput): ToolSearchRow {
   const globalState = resolveToolSearch([doc.getToolSearch(globalDoc)]);
   return {
     enabled: effective !== "off",
-    // Режим при выключенной подгрузке не важен — показываем дефолт «Авто».
+    // Mode when loading is disabled doesn't matter — show the "Auto" default.
     mode: effective === "off" ? "auto" : effective,
     dimmed: input.areaKind === "project" && effective === globalState,
   };
@@ -269,16 +270,16 @@ function buildPlugins(input: ViewInput): PluginRow[] {
   const byKey = new Map<string, InstalledPlugin>();
   for (const plugin of installed) byKey.set(plugin.key, plugin);
 
-  // Ключ мог быть выключен в настройках, но уже удалён из установленных —
-  // всё равно показываем, чтобы переключатель можно было вернуть.
+  // The key might be disabled in settings but already removed from the
+  // installed list — still show it so the toggle can be reverted.
   const keys = new Set(byKey.keys());
   for (const level of input.levelDocs) {
     for (const key of doc.listPluginKeys(level)) keys.add(key);
   }
   for (const key of doc.listPluginKeys(input.editedDoc)) keys.add(key);
 
-  // Глобальное значение — свёртка одного лишь широкого уровня (`~/.claude`),
-  // это первый из levelDocs в обеих областях. В проекте с ним сравниваем.
+  // The global value is resolved from just the broad level (`~/.claude`),
+  // which is the first of levelDocs in both scopes. We compare against it in the project.
   const globalDoc = input.levelDocs[0] ?? {};
 
   return [...keys]
@@ -307,8 +308,8 @@ function buildSkills(input: ViewInput): SkillRow[] {
   const entries = mergeSkills(personal, project);
   const known = new Set(entries.map((entry) => entry.name));
 
-  // Навык мог быть удалён с диска, а строка в skillOverrides осталась —
-  // показываем её как личную, чтобы override можно было снять.
+  // The skill might have been deleted from disk while its skillOverrides
+  // entry remains — show it as personal so the override can be removed.
   const orphans: string[] = [];
   for (const level of [input.editedDoc, ...input.levelDocs]) {
     for (const name of doc.listSkillNames(level)) {
@@ -334,14 +335,14 @@ function buildSkills(input: ViewInput): SkillRow[] {
       name: entry.name,
       origin: entry.origin,
       enabled: effective !== "off",
-      // Режим при выключенном навыке не важен — показываем дефолт «полностью».
+      // Mode when the skill is disabled doesn't matter — show the "full" default.
       mode: effective === "off" ? "on" : effective,
       dimmed: input.areaKind === "project" && effective === globalState,
     };
   });
 }
 
-/** Синтезирует метаданные для ключа, которого нет среди установленных. */
+/** Synthesizes metadata for a key that isn't among the installed ones. */
 function pluginFromKey(key: string): InstalledPlugin {
   const at = key.lastIndexOf("@");
   return {

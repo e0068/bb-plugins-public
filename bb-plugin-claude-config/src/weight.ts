@@ -1,14 +1,15 @@
-// Оценка «веса» файла в токенах и её показ. Чистый слой без ввода-вывода:
-// сервер читает содержимое и зовёт estimateTokens, UI печатает formatWeight.
+// Estimating a file's "weight" in tokens and displaying it. A pure layer
+// with no I/O: the server reads the content and calls estimateTokens, the
+// UI prints formatWeight.
 
-// Грубая оценка: ~4 символа на токен — обиходная эвристика для латиницы и
-// разметки. Точный токенайзер тут не нужен: это ориентир «сколько контекста
-// съест файл», а не счёт для биллинга.
+// A rough estimate: ~4 characters per token — a common heuristic for Latin
+// text and markup. No need for an exact tokenizer here: this is a "how much
+// context will the file eat" indicator, not a billing count.
 export function estimateTokens(text: string): number {
   return Math.ceil(text.length / 4);
 }
 
-// Компактная подпись без слова «токенов»: «~340», «~1.2k», «~12k».
+// A compact label without the word "tokens": "~340", "~1.2k", "~12k".
 export function formatWeight(tokens: number): string {
   if (tokens < 1000) return `~${tokens}`;
   const thousands = tokens / 1000;

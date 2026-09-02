@@ -4,7 +4,7 @@ import { reactDedupe } from "../plugin-base/vitest-react-dedupe";
 
 export default defineConfig({
   resolve: {
-    // Один инстанс React для рендера компонента в тесте (см.
+    // A single React instance for rendering the component in tests (see
     // packages/plugin-base/vitest-react-dedupe.ts).
     dedupe: reactDedupe,
   },

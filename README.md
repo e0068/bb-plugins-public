@@ -12,9 +12,9 @@ bb plugin install <id>@e0068
 
 ## Плагины
 
-- **Claude Config** (`claude-config`) — Управление конфигом Claude Code: плагины, коннекторы, навыки, хуки и подгрузка инструментов по областям.
-- **Kasimov** (`md-opener`) — Открывает .md-файлы редактором Kasimov: markdown-ссылки внутри кликабельны и ведут в той же вкладке, с крошками и возвратом. Правка сохраняется с CAS-защитой.
+- **Claude Config** (`claude-config`) — Manage Claude Code config: plugins, connectors, skills, hooks and tool loading, per scope.
+- **Kasimov** (`md-opener`) — Opens .md files with the Kasimov editor: markdown links inside are clickable and navigate within the same tab, with breadcrumbs and a back button. Edits are saved with CAS protection.
 - **Tasks+** (`tasks-plus`) — Fork of Tasks with native workflow fields: Type, Check, Estimate, Plan/Fact tokens.
-- **Token Usage Analytics** (`token-usage-header`) — Расход токенов Claude Code текущей сессии: счётчик в шапке треда.
-- **Usage Circles** (`usage-circles`) — Кольца лимитов Claude Code в подвале сайдбара.
-- **Pull Request** (`zz-pull-request`) — Кнопка Pull Request в шапке треда: когда всё закоммичено, открывает PR на GitHub через API без push.
+- **Token Usage Analytics** (`token-usage-header`) — Claude Code token usage for the current session: a counter in the thread header.
+- **Usage Circles** (`usage-circles`) — Claude Code usage-limit rings in the sidebar footer.
+- **Pull Request** (`zz-pull-request`) — Thread header buttons: opens a Pull Request on GitHub via the API without a push once everything is committed, and wakes up a thread whose environment got stuck retiring.

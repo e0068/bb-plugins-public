@@ -20,7 +20,7 @@ describe("parseInstalledPlugins", () => {
     },
   });
 
-  it("разбирает ключ на имя и маркетплейс", () => {
+  it("splits the key into name and marketplace", () => {
     const [figma] = parseInstalledPlugins(text);
     expect(figma).toEqual({
       key: "figma@claude-plugins-official",
@@ -31,26 +31,26 @@ describe("parseInstalledPlugins", () => {
     });
   });
 
-  it("не падает на файле, которого нет или который испорчен", () => {
+  it("doesn't throw on a missing or corrupted file", () => {
     expect(parseInstalledPlugins(null)).toEqual([]);
-    expect(parseInstalledPlugins("{ битый")).toEqual([]);
+    expect(parseInstalledPlugins("{ broken")).toEqual([]);
     expect(parseInstalledPlugins("[]")).toEqual([]);
     expect(parseInstalledPlugins('{"version":2}')).toEqual([]);
   });
 
-  it("переживает установку без версии", () => {
+  it("survives an installation without a version", () => {
     const noVersion = parseInstalledPlugins('{"plugins":{"a@m":[]}}');
     expect(noVersion[0]).toMatchObject({ key: "a@m", version: null });
   });
 
-  it("берёт installPath из установки", () => {
+  it("takes installPath from the installation", () => {
     const withPath = parseInstalledPlugins(
       '{"plugins":{"a@m":[{"installPath":"/p/a/1.0"}]}}',
     );
     expect(withPath[0]).toMatchObject({ installPath: "/p/a/1.0" });
   });
 
-  it("ключ без маркетплейса остаётся целиком именем", () => {
+  it("a key without a marketplace stays the name in full", () => {
     expect(parseInstalledPlugins('{"plugins":{"local":[{}]}}')[0]).toMatchObject(
       { name: "local", marketplace: "" },
     );
@@ -58,7 +58,7 @@ describe("parseInstalledPlugins", () => {
 });
 
 describe("collectSkillNames", () => {
-  it("берёт имя каталога, в котором лежит SKILL.md", () => {
+  it("takes the name of the directory that holds SKILL.md", () => {
     expect(
       collectSkillNames([
         "preflight/SKILL.md",
@@ -68,13 +68,13 @@ describe("collectSkillNames", () => {
     ).toEqual(["git-hygiene", "preflight"]);
   });
 
-  it("разворачивает служебный каталог synced", () => {
+  it("unwraps the synced service directory", () => {
     expect(collectSkillNames(["synced/pdf-tools/SKILL.md"])).toEqual([
       "pdf-tools",
     ]);
   });
 
-  it("пропускает всё, что не SKILL.md на своём уровне", () => {
+  it("skips anything that isn't SKILL.md at its own level", () => {
     expect(
       collectSkillNames([
         "README.md",
@@ -87,14 +87,14 @@ describe("collectSkillNames", () => {
 });
 
 describe("mergeSkills", () => {
-  it("помечает происхождение и сортирует по имени", () => {
+  it("marks origin and sorts by name", () => {
     expect(mergeSkills(["preflight"], ["deploy"])).toEqual([
       { name: "deploy", origin: "project" },
       { name: "preflight", origin: "personal" },
     ]);
   });
 
-  it("одноимённый проектный навык перекрывает личный", () => {
+  it("a project skill with the same name overrides the personal one", () => {
     expect(mergeSkills(["deploy"], ["deploy"])).toEqual([
       { name: "deploy", origin: "project" },
     ]);
@@ -102,14 +102,14 @@ describe("mergeSkills", () => {
 });
 
 describe("collectAgentNames", () => {
-  it("берёт имя файла .md без расширения", () => {
+  it("takes the .md file name without the extension", () => {
     expect(collectAgentNames(["reviewer.md", "planner.md"])).toEqual([
       "planner",
       "reviewer",
     ]);
   });
 
-  it("пропускает вложенные пути и не-.md файлы", () => {
+  it("skips nested paths and non-.md files", () => {
     expect(
       collectAgentNames(["reviewer.md", "sub/nested.md", "README.txt"]),
     ).toEqual(["reviewer"]);
@@ -117,7 +117,7 @@ describe("collectAgentNames", () => {
 });
 
 describe("mergeAgents", () => {
-  it("помечает происхождение, проектный перекрывает личного", () => {
+  it("marks origin, project overrides personal", () => {
     expect(mergeAgents(["reviewer"], ["reviewer", "deploy"])).toEqual([
       { name: "deploy", origin: "project" },
       { name: "reviewer", origin: "project" },
@@ -126,7 +126,7 @@ describe("mergeAgents", () => {
 });
 
 describe("transportOf", () => {
-  it("берёт явный type, иначе выводит по url/command", () => {
+  it("takes an explicit type, otherwise infers it from url/command", () => {
     expect(transportOf({ type: "sse" })).toBe("sse");
     expect(transportOf({ url: "https://x" })).toBe("http");
     expect(transportOf({ command: "uvx" })).toBe("stdio");
@@ -136,7 +136,7 @@ describe("transportOf", () => {
 });
 
 describe("parseMcpJson", () => {
-  it("разбирает mcpServers и сортирует по имени", () => {
+  it("parses mcpServers and sorts by name", () => {
     const text = JSON.stringify({
       mcpServers: {
         serena: { type: "stdio", command: "uvx" },
@@ -149,9 +149,9 @@ describe("parseMcpJson", () => {
     ]);
   });
 
-  it("нет файла или незнакомая форма — пустой список", () => {
+  it("no file or an unrecognized shape — empty list", () => {
     expect(parseMcpJson(null)).toEqual([]);
-    expect(parseMcpJson("{ битый")).toEqual([]);
+    expect(parseMcpJson("{ broken")).toEqual([]);
     expect(parseMcpJson("{}")).toEqual([]);
   });
 });
@@ -165,7 +165,7 @@ describe("parseClaudeJsonServers", () => {
     },
   });
 
-  it("делит на user (верхний уровень) и local (по корню проекта)", () => {
+  it("splits into user (top level) and local (by project root)", () => {
     const { user, local } = parseClaudeJsonServers(text, "/repo");
     expect(user).toEqual([
       { name: "context7", transport: "http", config: { url: "https://c7" } },
@@ -175,18 +175,18 @@ describe("parseClaudeJsonServers", () => {
     ]);
   });
 
-  it("без корня проекта local пуст", () => {
+  it("without a project root, local is empty", () => {
     expect(parseClaudeJsonServers(text, null).local).toEqual([]);
   });
 
-  it("совпадение по корню терпимо к хвостовому слэшу", () => {
-    // Ключ в файле без слэша, корень из bb со слэшем — сервер всё равно найден.
+  it("root matching tolerates a trailing slash", () => {
+    // Key in the file has no slash, root from bb has one — the server is still found.
     expect(parseClaudeJsonServers(text, "/repo/").local).toEqual([
       { name: "serena", transport: "stdio", config: { command: "uvx" } },
     ]);
   });
 
-  it("нет файла — оба списка пусты", () => {
+  it("no file — both lists are empty", () => {
     expect(parseClaudeJsonServers(null, "/repo")).toEqual({ user: [], local: [] });
   });
 });

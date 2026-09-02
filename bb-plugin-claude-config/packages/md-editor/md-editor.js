@@ -60,7 +60,7 @@ export class MarkdownEditor {
     this.historyOn = opts.history !== false;
     this.history = this.historyOn
       ? createHistory(() => this.getValue(), (v) => { this._value = v; this._render(); this._emit(); })
-      : { recordInput() {}, batch(fn) { opts.onBeforeChange && opts.onBeforeChange(); fn(); }, undo() {}, redo() {} };  // no-op: хост владеет отменой — но всё равно сигналит перед структурной мутацией
+      : { recordInput() {}, batch(fn) { opts.onBeforeChange && opts.onBeforeChange(); fn(); }, undo() {}, redo() {} };  // no-op: the host owns undo — but still signals before a structural mutation
     this._render();
   }
 
@@ -454,16 +454,16 @@ export class MarkdownEditor {
     if (document.getElementById("mde-diffmodal")) return;
     const cur = this.getValue();
     const box = el("div", "mde-modalbox");
-    box.appendChild(el("div", "mde-modaltitle", "Сохранить изменения?"));
+    box.appendChild(el("div", "mde-modaltitle", "Save changes?"));
     const pre = el("pre", "mde-modaldiff"); pre.textContent = cur; box.appendChild(pre);
     const btns = el("div", "mde-modalbtns");
     const mk = (label, cls, fn) => { const b = el("button", "mde-modalbtn" + (cls ? " " + cls : ""), label); b.addEventListener("click", fn); return b; };
     const wrap = el("div", "mde-modal"); wrap.id = "mde-diffmodal";
-    btns.appendChild(mk("Сохранить", "mde-primary", (e) => {
-      const b = e.currentTarget; b.textContent = "Сохраняю…"; b.disabled = true;
-      Promise.resolve(this.onSave(cur)).then(() => wrap.remove()).catch((err) => { b.disabled = false; b.textContent = "Ошибка — повторить"; if (window.console) console.error(err); });
+    btns.appendChild(mk("Save", "mde-primary", (e) => {
+      const b = e.currentTarget; b.textContent = "Saving…"; b.disabled = true;
+      Promise.resolve(this.onSave(cur)).then(() => wrap.remove()).catch((err) => { b.disabled = false; b.textContent = "Error — retry"; if (window.console) console.error(err); });
     }));
-    btns.appendChild(mk("Отмена", "", () => wrap.remove()));
+    btns.appendChild(mk("Cancel", "", () => wrap.remove()));
     box.appendChild(btns); wrap.appendChild(box); document.body.appendChild(wrap);
   }
 }

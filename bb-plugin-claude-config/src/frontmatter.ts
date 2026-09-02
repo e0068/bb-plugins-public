@@ -1,10 +1,11 @@
-// Разбор и сборка YAML-фронтматера markdown-файлов (навыки, агенты, память).
-// Чистый слой без ввода-вывода: DocTab показывает поля таблицей и правит их,
-// сериализация возвращает файл байт-в-байт при отсутствии правок.
+// Parsing and assembling YAML frontmatter for markdown files (skills,
+// agents, memory). A pure layer with no I/O: DocTab shows fields as a table
+// and edits them, and serialization returns the file byte-for-byte when
+// there are no edits.
 
-// Запись блока фронтматера: либо поле верхнего уровня `key: value`, либо строка,
-// которую мы не тронули (комментарий, отступ вложенного значения, пустая) —
-// её сохраняем дословно ради точного round-trip.
+// A frontmatter block entry: either a top-level `key: value` field, or a
+// line we didn't touch (a comment, the indent of a nested value, blank) —
+// kept verbatim for an exact round-trip.
 export type FrontmatterEntry =
   | { kind: "field"; key: string; value: string }
   | { kind: "raw"; text: string };
@@ -15,9 +16,9 @@ export type ParsedFrontmatter = {
   body: string;
 };
 
-// Строка поля: ключ с начала строки (без отступа), двоеточие, затем значение
-// после одного пробела/таба. Отступ или отсутствие пробела → это не поле
-// верхнего уровня (вложенное значение или `key:value`), оставляем как raw.
+// A field line: a key from the start of the line (no indent), a colon, then
+// the value after a single space/tab. Indentation or no space → not a
+// top-level field (a nested value or `key:value`), keep it as raw.
 const FIELD_RE = /^([A-Za-z0-9_][A-Za-z0-9_-]*):(?:[ \t](.*))?$/;
 
 export function parseFrontmatter(content: string): ParsedFrontmatter {
@@ -25,7 +26,7 @@ export function parseFrontmatter(content: string): ParsedFrontmatter {
   if (lines[0] !== "---") {
     return { hasFrontmatter: false, entries: [], body: content };
   }
-  // Закрывающий разделитель — первая строка «---» после открывающей.
+  // Closing delimiter — the first "---" line after the opening one.
   const end = lines.indexOf("---", 1);
   if (end === -1) {
     return { hasFrontmatter: false, entries: [], body: content };
@@ -54,9 +55,10 @@ export function serializeFrontmatter(
   return ["---", ...block, "---", body].join("\n");
 }
 
-// «Фронтматер» плагина — это его JSON-манифест (plugin.json). Разбираем поля
-// верхнего уровня в те же записи, что и YAML: примитивы как строка, объекты и
-// массивы — компактным JSON. Невалидный JSON или не-объект → пусто.
+// A plugin's "frontmatter" is its JSON manifest (plugin.json). We parse
+// top-level fields into the same entry shape as YAML: primitives as a
+// string, objects and arrays as compact JSON. Invalid JSON or a non-object
+// → empty.
 export function fieldsFromJson(text: string): FrontmatterEntry[] {
   let parsed: unknown;
   try {
@@ -81,7 +83,7 @@ export function fieldsFromJson(text: string): FrontmatterEntry[] {
   );
 }
 
-// Замена значения i-го поля — чистая, возвращает новый массив (для setState).
+// Replaces the value of the i-th field — pure, returns a new array (for setState).
 export function setFieldValue(
   entries: FrontmatterEntry[],
   index: number,

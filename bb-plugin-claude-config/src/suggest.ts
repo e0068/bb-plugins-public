@@ -1,6 +1,6 @@
-// Слой 1 — ранжирование кандидатов автодополнения (саджеста).
-// Чистая функция: список кандидатов и запрос на входе, отсортированный и
-// урезанный список на выходе.
+// Layer 1 — ranking autocomplete (suggestion) candidates.
+// A pure function: input is a candidate list and a query, output is a
+// sorted and trimmed list.
 
 export interface Candidate {
   value: string;
@@ -13,11 +13,11 @@ interface DedupedCandidate {
 }
 
 /**
- * Ранжирует кандидатов по совпадению с запросом (регистронезависимо, по
- * `value` и `label`). Ранг: точный префикс (0) лучше префикса сегмента после
- * `/ - _ пробел` (1) лучше произвольного вхождения (2); не совпало — кандидат
- * исключается. Пустой запрос — без фильтра, в исходном порядке. Дубли по
- * `value` схлопываются, побеждает первый по исходному порядку.
+ * Ranks candidates by match against the query (case-insensitive, on
+ * `value` and `label`). Rank: an exact prefix (0) beats a segment prefix
+ * after `/ - _ space` (1) beats an arbitrary substring match (2); no match
+ * excludes the candidate. An empty query — no filtering, original order.
+ * Duplicates by `value` are collapsed, the first one by original order wins.
  */
 export function rankCandidates(
   candidates: Candidate[],
@@ -55,7 +55,7 @@ function dedupeByValue(candidates: Candidate[]): DedupedCandidate[] {
   return result;
 }
 
-/** Лучший (наименьший) ранг кандидата среди его полей value и label. */
+/** The best (lowest) rank for a candidate across its value and label fields. */
 function bestRank(candidate: Candidate, query: string): number | null {
   const fields = [candidate.value, candidate.label].filter(
     (field): field is string => typeof field === "string",
@@ -75,7 +75,7 @@ function fieldRank(field: string, query: string): number | null {
   return null;
 }
 
-/** Совпадение по началу сегмента, разделённого `/ - _ пробел`. */
+/** Match at the start of a segment split by `/ - _ space`. */
 function hasSegmentPrefix(field: string, query: string): boolean {
   return field.split(/[/\-_ ]+/).some((segment) => segment.startsWith(query));
 }

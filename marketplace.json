@@ -8,7 +8,7 @@
     {
       "id": "claude-config",
       "displayName": "Claude Config",
-      "description": "Управление конфигом Claude Code: плагины, коннекторы, навыки, хуки и подгрузка инструментов по областям.",
+      "description": "Manage Claude Code config: plugins, connectors, skills, hooks and tool loading, per scope.",
       "icon": "Brain",
       "tags": [
         "config",
@@ -32,7 +32,7 @@
     {
       "id": "md-opener",
       "displayName": "Kasimov",
-      "description": "Открывает .md-файлы редактором Kasimov: markdown-ссылки внутри кликабельны и ведут в той же вкладке, с крошками и возвратом. Правка сохраняется с CAS-защитой.",
+      "description": "Opens .md files with the Kasimov editor: markdown links inside are clickable and navigate within the same tab, with breadcrumbs and a back button. Edits are saved with CAS protection.",
       "icon": "FileText",
       "author": {
         "name": "e0068",
@@ -72,7 +72,7 @@
     {
       "id": "token-usage-header",
       "displayName": "Token Usage Analytics",
-      "description": "Расход токенов Claude Code текущей сессии: счётчик в шапке треда.",
+      "description": "Claude Code token usage for the current session: a counter in the thread header.",
       "icon": "ChartColumn",
       "tags": [
         "tokens",
@@ -95,7 +95,7 @@
     {
       "id": "usage-circles",
       "displayName": "Usage Circles",
-      "description": "Кольца лимитов Claude Code в подвале сайдбара.",
+      "description": "Claude Code usage-limit rings in the sidebar footer.",
       "icon": {
         "url": "bb-plugin-usage-circles/assets/icon.svg"
       },
@@ -120,7 +120,7 @@
     {
       "id": "zz-pull-request",
       "displayName": "Pull Request",
-      "description": "Кнопка Pull Request в шапке треда: когда всё закоммичено, открывает PR на GitHub через API без push.",
+      "description": "Thread header buttons: opens a Pull Request on GitHub via the API without a push once everything is committed, and wakes up a thread whose environment got stuck retiring.",
       "icon": "GitPullRequest",
       "tags": [
         "pull-request",

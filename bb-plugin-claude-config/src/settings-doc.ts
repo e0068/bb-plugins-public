@@ -1,11 +1,11 @@
-// Слой 1 — чистая работа с документом настроек Claude Code.
-// Никакого ввода-вывода: на входе текст файла, на выходе новый документ.
-// Все функции возвращают новый объект и не трогают исходный.
+// Layer 1 — pure work with the Claude Code settings document.
+// No I/O at all: input is file text, output is a new document.
+// Every function returns a new object and leaves the source untouched.
 
-/** Состояние плагина Claude Code в одной области настроек. */
+/** State of a Claude Code plugin in one settings scope. */
 export type PluginToggle = "on" | "off" | "inherit";
 
-/** Состояние навыка — четыре значения skillOverrides плюс «не задано». */
+/** Skill state — the four skillOverrides values plus "unset". */
 export type SkillState =
   | "on"
   | "name-only"
@@ -13,13 +13,13 @@ export type SkillState =
   | "off"
   | "inherit";
 
-/** Режим подгрузки инструментов по требованию (ENABLE_TOOL_SEARCH). */
+/** On-demand tool loading mode (ENABLE_TOOL_SEARCH). */
 export type ToolSearchMode = "on" | "off" | "auto" | "inherit";
 
-/** Состояние MCP-сервера в одной области: разрешён / запрещён / не задано. */
+/** State of an MCP server in one scope: allowed / denied / unset. */
 export type McpServerState = "on" | "off" | "inherit";
 
-/** Один хук: событие, matcher (или null) и команда. */
+/** One hook: event, matcher (or null), and command. */
 export interface HookEntry {
   event: string;
   matcher: string | null;
@@ -28,7 +28,7 @@ export interface HookEntry {
 
 export type SettingsDoc = Record<string, unknown>;
 
-/** Файл настроек есть, но это не разбираемый JSON-объект. */
+/** The settings file exists but isn't a parseable JSON object. */
 export class SettingsParseError extends Error {
   constructor(message: string) {
     super(message);
@@ -44,11 +44,11 @@ const SKILL_STATES: readonly SkillState[] = [
 ];
 
 /**
- * Разбирает текст файла настроек.
+ * Parses the text of a settings file.
  *
- * `null` — файла нет, это пустой документ. А вот битый JSON — ошибка, а не
- * пустой документ: молча вернуть {} значит при первой же записи затереть
- * настройки, которые не удалось прочитать.
+ * `null` means no file, which is an empty document. Broken JSON, though, is
+ * an error, not an empty document: silently returning {} would mean the
+ * very next write wipes out settings that couldn't be read.
  */
 export function parse(text: string | null): SettingsDoc {
   if (text === null) return {};
@@ -60,21 +60,21 @@ export function parse(text: string | null): SettingsDoc {
     value = JSON.parse(trimmed);
   } catch (error) {
     throw new SettingsParseError(
-      `не разбирается как JSON: ${(error as Error).message}`,
+      `does not parse as JSON: ${(error as Error).message}`,
     );
   }
   if (value === null || typeof value !== "object" || Array.isArray(value)) {
-    throw new SettingsParseError("корень файла настроек — не объект");
+    throw new SettingsParseError("settings file root is not an object");
   }
   return value as SettingsDoc;
 }
 
-/** Сериализует документ так же, как это делает сам Claude Code: 2 пробела. */
+/** Serializes the document the same way Claude Code itself does: 2 spaces. */
 export function serialize(doc: SettingsDoc): string {
   return `${JSON.stringify(doc, null, 2)}\n`;
 }
 
-// --- плагины -----------------------------------------------------------
+// --- plugins -------------------------------------------------------------
 
 export function getPlugin(doc: SettingsDoc, key: string): PluginToggle {
   const value = readRecord(doc, "enabledPlugins")[key];
@@ -96,12 +96,12 @@ export function setPlugin(
   );
 }
 
-/** Все ключи плагинов, упомянутые в документе. */
+/** All plugin keys mentioned in the document. */
 export function listPluginKeys(doc: SettingsDoc): string[] {
   return Object.keys(readRecord(doc, "enabledPlugins"));
 }
 
-// --- навыки ------------------------------------------------------------
+// --- skills ----------------------------------------------------------------
 
 export function getSkill(doc: SettingsDoc, name: string): SkillState {
   const value = readRecord(doc, "skillOverrides")[name];
@@ -121,18 +121,18 @@ export function setSkill(
   );
 }
 
-/** Все имена навыков, упомянутые в документе. */
+/** All skill names mentioned in the document. */
 export function listSkillNames(doc: SettingsDoc): string[] {
   return Object.keys(readRecord(doc, "skillOverrides"));
 }
 
-// --- подгрузка инструментов -------------------------------------------
+// --- tool loading ------------------------------------------------------
 
 export function getToolSearch(doc: SettingsDoc): ToolSearchMode {
   const value = readRecord(doc, "env").ENABLE_TOOL_SEARCH;
   if (value === "true") return "on";
   if (value === "false") return "off";
-  // Претерпит и auto, и auto:5 — порог живёт в самом значении.
+  // Matches both auto and auto:5 — the threshold lives in the value itself.
   if (typeof value === "string" && value.startsWith("auto")) return "auto";
   return "inherit";
 }
@@ -152,12 +152,13 @@ export function setToolSearch(
   return writeEntry(doc, "env", "ENABLE_TOOL_SEARCH", value);
 }
 
-// --- коннекторы (MCP-серверы) -----------------------------------------
+// --- connectors (MCP servers) ------------------------------------------
 
 /**
- * Действующее «своё» состояние сервера в документе. Claude Code хранит его двумя
- * массивами: `enabledMcpjsonServers` (одобрен) и `disabledMcpjsonServers`
- * (запрещён). Запрет старше разрешения: если сервер есть в обоих, читаем `off`.
+ * The server's effective "own" state in the document. Claude Code stores it
+ * in two arrays: `enabledMcpjsonServers` (approved) and
+ * `disabledMcpjsonServers` (denied). A denial outranks an approval: if the
+ * server is in both, we read `off`.
  */
 export function getMcpServer(doc: SettingsDoc, name: string): McpServerState {
   if (readStringArray(doc, "disabledMcpjsonServers").includes(name)) return "off";
@@ -166,9 +167,9 @@ export function getMcpServer(doc: SettingsDoc, name: string): McpServerState {
 }
 
 /**
- * Ставит «своё» состояние сервера: `on` — в enabled и вон из disabled, `off` —
- * наоборот, `inherit` — вон из обоих. Опустевший массив убирается целиком,
- * чтобы «вернул как было» не оставляло следов.
+ * Sets the server's "own" state: `on` — into enabled and out of disabled,
+ * `off` — the reverse, `inherit` — out of both. An emptied array is removed
+ * entirely, so "reverted to how it was" leaves no trace.
  */
 export function setMcpServer(
   doc: SettingsDoc,
@@ -189,18 +190,19 @@ export function setMcpServer(
   );
 }
 
-/** `enableAllProjectMcpServers` из документа, или undefined, если не задан. */
+/** `enableAllProjectMcpServers` from the document, or undefined if unset. */
 export function getEnableAllMcp(doc: SettingsDoc): boolean | undefined {
   const value = doc.enableAllProjectMcpServers;
   return typeof value === "boolean" ? value : undefined;
 }
 
-// --- хуки (только чтение) ---------------------------------------------
+// --- hooks (read-only) --------------------------------------------------
 
 /**
- * Перечисляет все хуки документа. Структура `hooks`: событие → массив групп
- * `{ matcher?, hooks: [{ type, command }] }`. Разворачиваем в плоский список по
- * одной команде на запись. Разбор терпимый: незнакомая форма пропускается.
+ * Lists all hooks in the document. The `hooks` structure: event → array of
+ * groups `{ matcher?, hooks: [{ type, command }] }`. Unrolled into a flat
+ * list, one command per entry. Parsing is lenient: an unfamiliar shape is
+ * skipped.
  */
 export function listHooks(doc: SettingsDoc): HookEntry[] {
   const hooks = readRecord(doc, "hooks");
@@ -222,13 +224,14 @@ export function listHooks(doc: SettingsDoc): HookEntry[] {
   return entries;
 }
 
-// --- хуки (запись) ------------------------------------------------------
+// --- hooks (write) --------------------------------------------------------
 
 /**
- * Удаляет первый хук, совпавший по событию, matcher (`null` считается равным
- * `null`) и команде. Схлопывает опустевшие уровни структуры — группу, событие
- * и саму секцию `hooks`, — так же, как `writeEntry` для остальных секций.
- * Не нашла совпадения — возвращает исходный документ и `removed: null`.
+ * Removes the first hook matching by event, matcher (`null` is considered
+ * equal to `null`) and command. Collapses emptied levels of the structure —
+ * the group, the event, and the `hooks` section itself — the same way
+ * `writeEntry` does for the other sections. No match found — returns the
+ * original document and `removed: null`.
  */
 export function removeHook(
   doc: SettingsDoc,
@@ -273,9 +276,27 @@ export function removeHook(
 }
 
 /**
- * Добавляет хук в `hooks[entry.event]`. Ищет группу с тем же matcher (`null`
- * — группа без поля `matcher` или с пустой строкой) и дописывает в неё
- * команду; не нашла — заводит новую группу и, если нужно, само событие.
+ * Replaces one hook's whole identity: removes `oldEntry` (by event/matcher/
+ * command) and adds `newEntry` in its place — which moves it to a different
+ * event or matcher group when those changed. `oldEntry` not found — the
+ * document is returned unchanged and `replaced: false`, same "no-op, not a
+ * write" contract as `removeHook`.
+ */
+export function replaceHook(
+  doc: SettingsDoc,
+  oldEntry: HookEntry,
+  newEntry: HookEntry,
+): { doc: SettingsDoc; replaced: boolean } {
+  const { doc: withoutOld, removed } = removeHook(doc, oldEntry);
+  if (!removed) return { doc, replaced: false };
+  return { doc: addHook(withoutOld, newEntry), replaced: true };
+}
+
+/**
+ * Adds a hook to `hooks[entry.event]`. Looks for a group with the same
+ * matcher (`null` — a group with no `matcher` field or an empty string) and
+ * appends the command to it; if not found, creates a new group and, if
+ * needed, the event itself.
  */
 export function addHook(doc: SettingsDoc, entry: HookEntry): SettingsDoc {
   const hooksSection = readRecord(doc, "hooks");
@@ -306,10 +327,60 @@ export function addHook(doc: SettingsDoc, entry: HookEntry): SettingsDoc {
   return { ...doc, hooks: nextHooksSection };
 }
 
+/** The "Definition" JSON text (see `hookDefinitionJson` in server.ts) doesn't parse into one hook. */
+export class HookDefinitionParseError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "HookDefinitionParseError";
+  }
+}
+
 /**
- * Заменяет команду хука с плоским индексом (порядок как в `listHooks`).
- * Индекс вне диапазона возвращает документ без изменений; event и matcher
- * не трогает.
+ * Parses one hook's "Definition" JSON — `{ [event]: [{ matcher?, hooks:
+ * [{ type: "command", command }] }] }`, the exact shape `hookDefinitionJson`
+ * renders — back into a `HookEntry`. Anything outside that shape (more than
+ * one event, group, or hook; a non-command type) is a validation message,
+ * not a silent guess at what the user meant.
+ */
+export function parseHookDefinitionJson(text: string): HookEntry {
+  let value: unknown;
+  try {
+    value = JSON.parse(text);
+  } catch {
+    throw new HookDefinitionParseError("Invalid JSON.");
+  }
+  const root = asRecord(value);
+  const events = root ? Object.keys(root) : [];
+  if (!root || events.length !== 1) {
+    throw new HookDefinitionParseError(
+      "Definition must have exactly one event key.",
+    );
+  }
+  const [event] = events;
+  const groups = root[event];
+  if (!Array.isArray(groups) || groups.length !== 1) {
+    throw new HookDefinitionParseError(
+      "Definition must have exactly one matcher group.",
+    );
+  }
+  const group = asRecord(groups[0]);
+  const hooksList = group?.hooks;
+  if (!group || !Array.isArray(hooksList) || hooksList.length !== 1) {
+    throw new HookDefinitionParseError("Definition must have exactly one hook.");
+  }
+  const hookItem = asRecord(hooksList[0]);
+  if (!hookItem || hookItem.type !== "command" || typeof hookItem.command !== "string") {
+    throw new HookDefinitionParseError(
+      'Hook must be {"type": "command", "command": "..."}.',
+    );
+  }
+  return { event, matcher: groupMatcher(group), command: hookItem.command };
+}
+
+/**
+ * Replaces a hook's command by flat index (order matches `listHooks`).
+ * An out-of-range index returns the document unchanged; event and matcher
+ * are left untouched.
  */
 export function setHookCommandAt(
   doc: SettingsDoc,
@@ -348,7 +419,7 @@ export function setHookCommandAt(
   return { ...doc, hooks: nextHooksSection };
 }
 
-/** Matcher группы хуков: пустая строка или отсутствие поля — тоже `null`. */
+/** Matcher of a hook group: an empty string or a missing field also means `null`. */
 function groupMatcher(group: Record<string, unknown>): string | null {
   return typeof group.matcher === "string" && group.matcher !== ""
     ? group.matcher
@@ -359,7 +430,7 @@ function hookCommand(item: Record<string, unknown>): string {
   return typeof item.command === "string" ? item.command : "";
 }
 
-/** Новая группа хуков: с полем `matcher`, только когда он не `null`. */
+/** A new hook group: includes the `matcher` field only when it isn't `null`. */
 function newGroup(
   matcher: string | null,
   hook: { type: string; command: string },
@@ -367,7 +438,7 @@ function newGroup(
   return matcher !== null ? { matcher, hooks: [hook] } : { hooks: [hook] };
 }
 
-// --- общая механика ----------------------------------------------------
+// --- shared machinery ----------------------------------------------------
 
 function readRecord(doc: SettingsDoc, section: string): Record<string, unknown> {
   const value = doc[section];
@@ -378,8 +449,9 @@ function readRecord(doc: SettingsDoc, section: string): Record<string, unknown> 
 }
 
 /**
- * Пишет значение в секцию-объект. `undefined` удаляет ключ, а опустевшую
- * секцию убирает целиком — чтобы «вернул как было» не оставляло следов.
+ * Writes a value into an object-shaped section. `undefined` deletes the
+ * key, and an emptied section is removed entirely — so "reverted to how it
+ * was" leaves no trace.
  */
 function writeEntry(
   doc: SettingsDoc,
@@ -398,7 +470,7 @@ function writeEntry(
   return result;
 }
 
-/** Массив строк из секции-массива; чужие элементы отбрасываются. */
+/** String array from an array-shaped section; foreign elements are dropped. */
 function readStringArray(doc: SettingsDoc, section: string): string[] {
   const value = doc[section];
   if (!Array.isArray(value)) return [];
@@ -406,8 +478,8 @@ function readStringArray(doc: SettingsDoc, section: string): string[] {
 }
 
 /**
- * Добавляет или убирает имя из секции-массива. Опустевший массив убирает
- * целиком; дубликатов не плодит. Возвращает новый документ.
+ * Adds or removes a name from an array-shaped section. Removes an emptied
+ * array entirely; never produces duplicates. Returns a new document.
  */
 function writeArrayMember(
   doc: SettingsDoc,

@@ -19,20 +19,20 @@ import {
 const CUSTOM_TOKEN = "custom";
 
 describe("DEFAULTS", () => {
-  it("совпадают с дефолтами таблиц полей", () => {
+  it("match the field tables' defaults", () => {
     for (const f of CSS_FIELDS) expect(DEFAULTS[f.field]).toBe(f.default);
     for (const f of FLAG_FIELDS) expect(DEFAULTS[f.field]).toBe(f.default);
   });
 
-  it("пресеты по умолчанию — custom (текстовое поле рулит, поведение как раньше)", () => {
+  it("presets default to custom (the text field takes over, same as before)", () => {
     for (const t of TOKEN_SELECT_FIELDS) expect(DEFAULTS[t.field]).toBe(CUSTOM_TOKEN);
   });
 
-  // Три таблицы полей — единственный источник истины для формы KasimovSettings;
-  // поле, забытое в одной из таблиц (или интерфейсе), не должно проходить
-  // незамеченным — DEFAULTS/parse строятся через `as Record<...>`, который сам
-  // по себе такой дрейф не ловит.
-  it("ключи DEFAULTS равны объединению полей трёх таблиц (гейт от дрейфа типов)", () => {
+  // Three field tables are the single source of truth for the KasimovSettings
+  // shape; a field forgotten in one of the tables (or the interface) must not
+  // slip through unnoticed — DEFAULTS/parse are built via `as Record<...>`,
+  // which by itself doesn't catch that kind of drift.
+  it("DEFAULTS keys equal the union of the three tables' fields (type-drift gate)", () => {
     const expected = [
       ...CSS_FIELDS.map((f) => f.field),
       ...TOKEN_SELECT_FIELDS.map((t) => t.field),
@@ -44,7 +44,7 @@ describe("DEFAULTS", () => {
 });
 
 describe("descriptors", () => {
-  it("строковые поля — type string, флаги — type boolean, с дефолтом", () => {
+  it("string fields — type string, flags — type boolean, with a default", () => {
     for (const f of CSS_FIELDS) {
       const d = descriptors[f.key];
       expect(d).toMatchObject({ type: "string", label: f.label, default: f.default });
@@ -55,7 +55,7 @@ describe("descriptors", () => {
     }
   });
 
-  it("пресеты — type select, custom первым в options, дефолт custom", () => {
+  it("presets — type select, custom first in options, default custom", () => {
     for (const t of TOKEN_SELECT_FIELDS) {
       const d = descriptors[t.key] as {
         type: string;
@@ -69,16 +69,16 @@ describe("descriptors", () => {
     }
   });
 
-  it("ключи настроек уникальны", () => {
+  it("setting keys are unique", () => {
     const keys = [...CSS_FIELDS, ...TOKEN_SELECT_FIELDS, ...FLAG_FIELDS].map((f) => f.key);
     expect(new Set(keys).size).toBe(keys.length);
   });
 
-  // Порядок в объекте определяет порядок в UI Settings (см. buildDescriptors
-  // ниже): select-пресет обязан идти НЕПОСРЕДСТВЕННО перед своим текстовым
-  // полем — его собственное описание обещает «поле ниже», и это обязано быть
-  // буквально так, а не где-то в хвосте списка через дюжину чужих настроек.
-  it("select-пресет идёт сразу перед текстовым полем, которое он переопределяет", () => {
+  // Order in the object determines order in the Settings UI (see
+  // buildDescriptors below): a select preset must go IMMEDIATELY BEFORE its
+  // text field — its own description promises "the field below", and that has
+  // to be literally true, not somewhere at the tail past a dozen other settings.
+  it("a select preset goes right before the text field it overrides", () => {
     const order = Object.keys(descriptors);
     for (const t of TOKEN_SELECT_FIELDS) {
       const target = CSS_FIELDS.find((f) => f.field === t.target)!;
@@ -88,11 +88,11 @@ describe("descriptors", () => {
 });
 
 describe("buildDescriptors", () => {
-  it("без аргумента — то же самое, что экспортированный descriptors", () => {
+  it("with no argument — same as the exported descriptors", () => {
     expect(buildDescriptors()).toEqual(descriptors);
   });
 
-  it("override меняет default только у переданного поля, у остальных остаётся custom", () => {
+  it("an override changes the default of only the passed field; the rest stay custom", () => {
     const overridden = buildDescriptors({ fgToken: "var(--foreground)" });
     expect(
       (overridden.kasimovFgToken as { default: string }).default,
@@ -103,50 +103,50 @@ describe("buildDescriptors", () => {
     }
   });
 
-  it("override за пределами options всё равно попадает в default дескриптора (ответственность вызывающего)", () => {
-    // buildDescriptors — внутренний конфигурационный API (вызывающие — только
-    // server.ts плагинов, не доска настроек), поэтому он не обязан быть
-    // тотальным к произвольной строке — в отличие от parse(), разбирающего
-    // недоверенные данные с доски.
+  it("an override outside options still lands in the descriptor's default (caller's responsibility)", () => {
+    // buildDescriptors is an internal config API (its callers are only the
+    // plugins' server.ts, not the settings board), so it isn't obligated to
+    // be total over an arbitrary string — unlike parse(), which parses
+    // untrusted data from the board.
     const overridden = buildDescriptors({ accentToken: "var(--not-in-list)" });
     expect((overridden.kasimovAccentToken as { default: string }).default).toBe(
       "var(--not-in-list)",
     );
   });
 
-  // NATIVE_VIEWER_TOKEN_DEFAULTS — публичная константа, общая для обоих
-  // server.ts (md-opener/claude-config); если список токенов когда-нибудь
-  // сократят, а константу забудут поправить, buildDescriptors() её не
-  // отвергнет (см. тест выше — override не проверяется на членство). Значит
-  // единственное место, ловящее протухание, — этот тест.
-  it("NATIVE_VIEWER_TOKEN_DEFAULTS — каждое значение реально входит в options своего поля", () => {
+  // NATIVE_VIEWER_TOKEN_DEFAULTS is a public constant shared by both
+  // server.ts files (md-opener/claude-config); if the token list is ever
+  // trimmed and the constant is forgotten, buildDescriptors() won't reject it
+  // (see the test above — an override isn't checked for membership). So this
+  // test is the only place that catches the staleness.
+  it("NATIVE_VIEWER_TOKEN_DEFAULTS — every value is actually in its field's options", () => {
     for (const [field, value] of Object.entries(NATIVE_VIEWER_TOKEN_DEFAULTS)) {
       const spec = TOKEN_SELECT_FIELDS.find((t) => t.field === field)!;
       expect(spec.options).toContain(value);
     }
   });
 
-  // Тип Record<TokenField, string> (не Partial) уже заставляет tsc отвергнуть
-  // недостающее поле — этот тест дублирует гарантию в рантайме, чтобы дрейф
-  // ловился и без прогона tsc (напр. локальным `vitest --watch`).
-  it("NATIVE_VIEWER_TOKEN_DEFAULTS покрывает все поля TOKEN_SELECT_FIELDS, ни одно не пропущено", () => {
+  // The Record<TokenField, string> type (not Partial) already makes tsc
+  // reject a missing field — this test duplicates the guarantee at runtime so
+  // drift is caught even without a tsc run (e.g. a local `vitest --watch`).
+  it("NATIVE_VIEWER_TOKEN_DEFAULTS covers every TOKEN_SELECT_FIELDS field, none skipped", () => {
     const expected = TOKEN_SELECT_FIELDS.map((t) => t.field).sort();
     expect(Object.keys(NATIVE_VIEWER_TOKEN_DEFAULTS).sort()).toEqual(expected);
   });
 });
 
 describe("parse", () => {
-  it("undefined → все дефолты", () => {
+  it("undefined → all defaults", () => {
     expect(parse(undefined)).toEqual(DEFAULTS);
   });
 
-  it("пустой объект → все дефолты", () => {
+  it("empty object → all defaults", () => {
     expect(parse({})).toEqual(DEFAULTS);
   });
 
-  it("валидное значение каждого поля применяется", () => {
+  it("a valid value for each field is applied", () => {
     for (const f of CSS_FIELDS) {
-      expect(parse({ [f.key]: "ЗНАЧ" })[f.field]).toBe("ЗНАЧ");
+      expect(parse({ [f.key]: "VALUE" })[f.field]).toBe("VALUE");
     }
     for (const t of TOKEN_SELECT_FIELDS) {
       expect(parse({ [t.key]: t.options[0] })[t.field]).toBe(t.options[0]);
@@ -157,7 +157,7 @@ describe("parse", () => {
     }
   });
 
-  it("значение неверного типа падает на дефолт (тотальность)", () => {
+  it("a value of the wrong type falls back to the default (totality)", () => {
     for (const f of CSS_FIELDS) {
       expect(parse({ [f.key]: true })[f.field]).toBe(f.default);
     }
@@ -165,22 +165,22 @@ describe("parse", () => {
       expect(parse({ [t.key]: true })[t.field]).toBe(CUSTOM_TOKEN);
     }
     for (const f of FLAG_FIELDS) {
-      expect(parse({ [f.key]: "да" })[f.field]).toBe(f.default);
+      expect(parse({ [f.key]: "yes" })[f.field]).toBe(f.default);
     }
   });
 
-  it("неизвестные ключи отбрасываются", () => {
-    const values: Record<string, SettingValue> = { мусор: "x", другое: true };
+  it("unknown keys are dropped", () => {
+    const values: Record<string, SettingValue> = { junk: "x", other: true };
     expect(parse(values)).toEqual(DEFAULTS);
   });
 
-  // Регресс-тест на находку код-ревью: пресет — строка, но не сам по себе
-  // валидная CSS-переменная — значение на доске должно быть ∈ [CUSTOM_TOKEN,
-  // ...options], а не произвольная строка. Список options наблюдаемый, не
-  // официальный (см. комментарий у HOST_COLOR_TOKENS) — его будут править, и
-  // протухшее старое значение на чьей-то доске не должно долететь до CSS как
-  // есть (тот же класс тихой поломки, что чинили в первой части задачи).
-  it("пресет вне options (протухшее значение) падает на custom, а не летит в CSS", () => {
+  // Regression test for a code-review finding: a preset is a string, but not
+  // by itself a valid CSS variable value — the board's value must be ∈
+  // [CUSTOM_TOKEN, ...options], not an arbitrary string. The options list is
+  // observed, not official (see the comment on HOST_COLOR_TOKENS) — it will
+  // get edited, and a stale old value on someone's board shouldn't fly into
+  // CSS as-is (the same class of silent breakage fixed in the first part of the task).
+  it("a preset outside options (a stale value) falls back to custom, not into CSS", () => {
     for (const t of TOKEN_SELECT_FIELDS) {
       expect(parse({ [t.key]: "var(--obsolete-token)" })[t.field]).toBe(CUSTOM_TOKEN);
       expect(parse({ [t.key]: "" })[t.field]).toBe(CUSTOM_TOKEN);
@@ -194,7 +194,7 @@ describe("withUnit", () => {
     ["8.5", "8.5px"],
     ["-8", "-8px"],
     ["0", "0px"],
-  ])("голое число %s → %s", (raw, expected) => {
+  ])("bare number %s → %s", (raw, expected) => {
     expect(withUnit(raw, "px")).toBe(expected);
   });
 
@@ -205,13 +205,13 @@ describe("withUnit", () => {
     ["auto", "auto"],
     ["none", "none"],
     ["", ""],
-  ])("значение с единицей/ключевым словом/пустое не меняется: %s", (raw, expected) => {
+  ])("a value with a unit/keyword/empty is unchanged: %s", (raw, expected) => {
     expect(withUnit(raw, "px")).toBe(expected);
   });
 });
 
 describe("toCssVars", () => {
-  it("дефолты дают все CSS-переменные с их значениями", () => {
+  it("defaults produce every CSS variable with its value", () => {
     const vars = toCssVars(DEFAULTS);
     for (const f of CSS_FIELDS) {
       const expected = f.unit ? withUnit(f.default, f.unit) : f.default;
@@ -220,18 +220,17 @@ describe("toCssVars", () => {
     expect(Object.keys(vars)).toHaveLength(CSS_FIELDS.length);
   });
 
-  it("пустое значение поля исключает его переменную (пусто = дефолт CSS)", () => {
+  it("an empty field value excludes its variable (empty = CSS default)", () => {
     const s: KasimovSettings = { ...DEFAULTS, size: "" };
     const vars = toCssVars(s);
     expect(vars["--kasi-size"]).toBeUndefined();
     expect(Object.keys(vars)).toHaveLength(CSS_FIELDS.length - 1);
   });
 
-  // Поля настроек принимают голое число — пользователь не обязан писать
-  // единицу измерения руками; toCssVars дописывает px там, где кегль/отступ/
-  // ширина её ожидают. Безразмерные (lineHeight) и не-числовые (шрифты,
-  // цвета) поля не тронуты; уже указанная единица/ключевое слово (px/auto/
-  // none) остаётся как есть.
+  // Setting fields accept a bare number — the user doesn't have to write the
+  // unit by hand; toCssVars appends px wherever size/gap/width expects it.
+  // Unitless (lineHeight) and non-numeric (fonts, colors) fields are left
+  // alone; a unit/keyword already given (px/auto/none) is left as-is.
   it.each([
     ["size", "18", "--kasi-size", "18px"],
     ["gap", "6", "--kasi-gap", "6px"],
@@ -241,12 +240,12 @@ describe("toCssVars", () => {
     ["padX", "32", "--kasi-pad-x", "32px"],
     ["paraGap", "8", "--kasi-para-gap", "8px"],
     ["listGap", "4", "--kasi-list-gap", "4px"],
-  ] as const)("%s: голое число %s → %s: %s", (field, raw, cssVar, expected) => {
+  ] as const)("%s: bare number %s → %s: %s", (field, raw, cssVar, expected) => {
     const s: KasimovSettings = { ...DEFAULTS, [field]: raw };
     expect(toCssVars(s)[cssVar]).toBe(expected);
   });
 
-  it("значение с уже указанной единицей/ключевым словом не меняется", () => {
+  it("a value with a unit/keyword already given is unchanged", () => {
     const s: KasimovSettings = {
       ...DEFAULTS,
       size: "1.2rem",
@@ -261,51 +260,52 @@ describe("toCssVars", () => {
     expect(vars["--kasi-pad-x"]).toBe("5%");
   });
 
-  it("lineHeight безразмерный — голое число px не получает", () => {
+  it("lineHeight is unitless — a bare number doesn't get px", () => {
     const s: KasimovSettings = { ...DEFAULTS, lineHeight: "1.8" };
     expect(toCssVars(s)["--kasi-line-height"]).toBe("1.8");
   });
 
-  // Пресет (select) перекрывает текстовое поле, пока не стоит на "custom" —
-  // ровно то поведение, которое просил владелец: выбрал шрифт/токен из
-  // списка — редактор берёт его, а не то, что написано в текстовом поле рядом.
-  it("пресет отличный от custom перекрывает текстовое поле — на каждой цели", () => {
+  // A preset (select) overrides the text field while not set to "custom" —
+  // exactly the behavior the owner asked for: pick a font/token from the
+  // list, and the editor takes it instead of what's written in the text field next to it.
+  it("a preset other than custom overrides the text field — for every target", () => {
     for (const t of TOKEN_SELECT_FIELDS) {
       const cssVar = CSS_FIELDS.find((f) => f.field === t.target)!.cssVar;
       const preset = t.options[0];
       const s: KasimovSettings = {
         ...DEFAULTS,
-        [t.target]: "ЭТО-ДОЛЖНО-БЫТЬ-ПРОИГНОРИРОВАНО",
+        [t.target]: "THIS-SHOULD-BE-IGNORED",
         [t.field]: preset,
       };
       expect(toCssVars(s)[cssVar]).toBe(preset);
     }
   });
 
-  it("пресет custom — используется текстовое поле, как раньше — на каждой цели", () => {
+  it("preset custom — the text field is used, as before — for every target", () => {
     for (const t of TOKEN_SELECT_FIELDS) {
       const cssVar = CSS_FIELDS.find((f) => f.field === t.target)!.cssVar;
       const s: KasimovSettings = {
         ...DEFAULTS,
-        [t.target]: "ОЖИДАЕМОЕ-ЗНАЧЕНИЕ",
+        [t.target]: "EXPECTED-VALUE",
         [t.field]: CUSTOM_TOKEN,
       };
-      expect(toCssVars(s)[cssVar]).toBe("ОЖИДАЕМОЕ-ЗНАЧЕНИЕ");
+      expect(toCssVars(s)[cssVar]).toBe("EXPECTED-VALUE");
     }
   });
 
-  // toCssVars — самостоятельная чистая функция над KasimovSettings, не только
-  // над результатом parse() (который уже сузил пресет до {custom, ...options});
-  // здесь собранный руками объект с "" в поле пресета — защитная ветка должна
-  // отработать так же, как custom, а не протечь "" в CSS.
-  it("пустое значение пресета (собранное в обход parse) тоже уходит на текстовое поле", () => {
+  // toCssVars is a standalone pure function over KasimovSettings, not just
+  // over the result of parse() (which already narrowed the preset to
+  // {custom, ...options}); here a hand-assembled object with "" in the preset
+  // field checks that the guard branch behaves the same as custom, rather
+  // than leaking "" into CSS.
+  it("an empty preset value (assembled bypassing parse) also falls back to the text field", () => {
     const s: KasimovSettings = { ...DEFAULTS, fg: "#123456", fgToken: "" };
     expect(toCssVars(s)["--kasi-fg"]).toBe("#123456");
   });
 });
 
 describe("toFlags", () => {
-  it("отражает булевы флаги движка на всех комбинациях", () => {
+  it("reflects the engine's boolean flags across all combinations", () => {
     for (const followLinks of [true, false]) {
       for (const frontmatter of [true, false]) {
         for (const atLinks of [true, false]) {
@@ -321,7 +321,7 @@ describe("toFlags", () => {
     }
   });
 
-  it("mermaidContrast → строковый mermaidNodes движка", () => {
+  it("mermaidContrast → the engine's string mermaidNodes", () => {
     expect(toFlags({ ...DEFAULTS, mermaidContrast: true }).mermaidNodes).toBe(
       "contrast",
     );
@@ -332,11 +332,11 @@ describe("toFlags", () => {
 });
 
 describe("kasimovCssRule", () => {
-  it("пустой набор переменных → null", () => {
+  it("an empty set of variables → null", () => {
     expect(kasimovCssRule("kasi-host-1", {})).toBeNull();
   });
 
-  it("собирает правило по ID-селектору, целящееся в .mde-root", () => {
+  it("assembles a rule by ID selector, targeting .mde-root", () => {
     const rule = kasimovCssRule("kasi-host-1", {
       "--kasi-size": "18px",
       "--kasi-accent": "#0af",
@@ -346,21 +346,21 @@ describe("kasimovCssRule", () => {
     );
   });
 
-  // Значения приходят голыми строками с доски настроек, без валидации формы —
-  // символ, способный закрыть правило раньше времени и вылезти в соседний
-  // CSS, тотально отбрасывается, а не долетает до document.head как есть.
+  // Values arrive as bare strings from the settings board, without form
+  // validation — a character that could close the rule early and leak into
+  // neighboring CSS is dropped entirely, rather than reaching document.head as-is.
   it.each([
-    ["значение с }", { "--kasi-size": "1px } * { display: none " }],
-    ["значение с {", { "--kasi-size": "1px { evil: 1" }],
-    ["значение с ;", { "--kasi-size": "1px; --evil: 1" }],
-    ["значение с <", { "--kasi-size": "1<px" }],
-    ["значение с >", { "--kasi-size": "1>px" }],
-    ["имя переменной с }", { "--kasi-size}x": "18px" }],
-  ])("отбрасывает пару: %s", (_label, vars) => {
+    ["value with }", { "--kasi-size": "1px } * { display: none " }],
+    ["value with {", { "--kasi-size": "1px { evil: 1" }],
+    ["value with ;", { "--kasi-size": "1px; --evil: 1" }],
+    ["value with <", { "--kasi-size": "1<px" }],
+    ["value with >", { "--kasi-size": "1>px" }],
+    ["variable name with }", { "--kasi-size}x": "18px" }],
+  ])("drops the pair: %s", (_label, vars) => {
     expect(kasimovCssRule("kasi-host-1", vars)).toBeNull();
   });
 
-  it("отбрасывает только небезопасную пару, безопасные остаются", () => {
+  it("drops only the unsafe pair, safe ones remain", () => {
     const rule = kasimovCssRule("kasi-host-1", {
       "--kasi-size": "1px } * { display: none ",
       "--kasi-accent": "#0af",
@@ -368,7 +368,7 @@ describe("kasimovCssRule", () => {
     expect(rule).toBe("#kasi-host-1 .mde-root { --kasi-accent: #0af; }");
   });
 
-  it("результат никогда не содержит внутренних `}` — закрывающая всегда одна", () => {
+  it("the result never contains an internal `}` — the closing one is always the only one", () => {
     const adversarial = [
       "1px",
       "1px }",

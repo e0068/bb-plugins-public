@@ -5,33 +5,33 @@ import { agentsMissingTemplate, isTreeValid } from "../src/workflow/validity";
 const withTemplate = (agentType: string): Agent => ({ ...blankAgent(), agentType });
 
 describe("agentsMissingTemplate", () => {
-  it("пустое дерево валидно", () => {
+  it("an empty tree is valid", () => {
     const t: Tree = { name: "w", description: "", phases: [] };
     expect(agentsMissingTemplate(t)).toBe(0);
     expect(isTreeValid(t)).toBe(true);
   });
 
-  it("агент без шаблона считается, с шаблоном — нет", () => {
+  it("an agent without a template counts, one with a template doesn't", () => {
     const phase = { ...blankPhase(), steps: [withTemplate(""), withTemplate("reviewer")] };
     const t: Tree = { name: "w", description: "", phases: [phase] };
     expect(agentsMissingTemplate(t)).toBe(1);
     expect(isTreeValid(t)).toBe(false);
   });
 
-  it("пробелы в agentType не считаются шаблоном", () => {
+  it("whitespace in agentType doesn't count as a template", () => {
     const phase = { ...blankPhase(), steps: [withTemplate("   ")] };
     const t: Tree = { name: "w", description: "", phases: [phase] };
     expect(agentsMissingTemplate(t)).toBe(1);
   });
 
-  it("рекурсия в группы: считаются вложенные агенты, не сама группа", () => {
+  it("recursion into groups: nested agents count, not the group itself", () => {
     const group = { ...blankContainer("parallel"), steps: [withTemplate(""), withTemplate("")] };
     const phase = { ...blankPhase(), steps: [withTemplate("planner"), group] };
     const t: Tree = { name: "w", description: "", phases: [phase] };
     expect(agentsMissingTemplate(t)).toBe(2);
   });
 
-  it("все агенты с шаблоном → дерево валидно", () => {
+  it("all agents have a template → the tree is valid", () => {
     const group = { ...blankContainer("pipeline"), steps: [withTemplate("a"), withTemplate("b")] };
     const phase = { ...blankPhase(), steps: [withTemplate("c"), group] };
     const t: Tree = { ...blankTree("w"), phases: [phase] };

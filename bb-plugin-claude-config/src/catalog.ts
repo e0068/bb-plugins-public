@@ -1,39 +1,40 @@
-// Слой 2 — что вообще есть на машине: установленные плагины и навыки.
-// Разбор без ввода-вывода: на входе содержимое файлов и списки путей.
+// Layer 2 — what's actually on the machine: installed plugins and skills.
+// Parsing with no I/O: input is file contents and path lists.
 
 export interface InstalledPlugin {
-  /** Ключ вида `name@marketplace` — им же плагин зовётся в enabledPlugins. */
+  /** Key in the form `name@marketplace` — the same one used in enabledPlugins. */
   key: string;
-  /** Короткое имя без маркетплейса — для показа. */
+  /** Short name without the marketplace — for display. */
   name: string;
   marketplace: string;
   version: string | null;
-  /** Каталог установки плагина — в нём лежит README (референс плагина). */
+  /** Plugin install directory — holds the README (plugin reference). */
   installPath: string | null;
 }
 
 export interface SkillEntry {
-  /** Имя, которым навык зовётся в skillOverrides и после слэша. */
+  /** Name the skill is known by in skillOverrides and after the slash. */
   name: string;
   origin: "personal" | "project";
 }
 
 export interface McpServerDef {
-  /** Имя сервера — ключ в объекте mcpServers. */
+  /** Server name — the key in the mcpServers object. */
   name: string;
-  /** Транспорт для подписи: `stdio`, `http`, `sse`… (или пусто, если не понять). */
+  /** Transport for the label: `stdio`, `http`, `sse`... (or empty if unclear). */
   transport: string;
-  /** Определение сервера как есть — для показа JSON в правой вкладке. */
+  /** The server definition as-is — for showing raw JSON in the right-hand tab. */
   config: unknown;
 }
 
 /**
- * Разбирает `~/.claude/plugins/installed_plugins.json` (схема версии 2:
- * ключ плагина → массив установок по областям).
+ * Parses `~/.claude/plugins/installed_plugins.json` (schema version 2:
+ * plugin key → array of per-scope installs).
  *
- * Файл принадлежит Claude Code, а не нам, поэтому разбор терпимый: незнакомая
- * форма даёт пустой список, а не исключение — панель должна открыться и
- * показать хотя бы то, что упомянуто в самих настройках.
+ * The file belongs to Claude Code, not us, so parsing is lenient: an
+ * unfamiliar shape yields an empty list rather than an exception — the
+ * panel should still open and show at least what's mentioned in the
+ * settings themselves.
  */
 export function parseInstalledPlugins(text: string | null): InstalledPlugin[] {
   const root = safeParseObject(text);
@@ -57,11 +58,12 @@ export function parseInstalledPlugins(text: string | null): InstalledPlugin[] {
 }
 
 /**
- * Собирает имена навыков из списка путей внутри каталога навыков.
+ * Collects skill names from a list of paths inside the skills directory.
  *
- * Навык — это каталог с `SKILL.md`, поэтому имя берётся из первого сегмента
- * пути к такому файлу. Служебный каталог `synced/` (навыки, синхронизированные
- * с claude.ai) даёт вложенный уровень — его имя берётся из второго сегмента.
+ * A skill is a directory with a `SKILL.md`, so the name comes from the
+ * first path segment of such a file. The special `synced/` directory
+ * (skills synced from claude.ai) adds a nesting level — its name comes from
+ * the second segment.
  */
 export function collectSkillNames(relativePaths: string[]): string[] {
   const names = new Set<string>();
@@ -81,11 +83,11 @@ export function collectSkillNames(relativePaths: string[]): string[] {
 }
 
 /**
- * Собирает имена агентов из списка путей внутри каталога агентов.
+ * Collects agent names from a list of paths inside the agents directory.
  *
- * Агент — это одиночный файл `<имя>.md` прямо в каталоге агентов, поэтому имя
- * берётся из имени файла без расширения. Вложенные пути (файлы в подпапках) не
- * считаются агентами и пропускаются.
+ * An agent is a single `<name>.md` file directly in the agents directory,
+ * so the name comes from the filename without the extension. Nested paths
+ * (files in subfolders) don't count as agents and are skipped.
  */
 export function collectAgentNames(relativePaths: string[]): string[] {
   const names = new Set<string>();
@@ -99,7 +101,7 @@ export function collectAgentNames(relativePaths: string[]): string[] {
   return [...names].sort();
 }
 
-/** Сливает каталоги двух областей: имя из проекта перекрывает личное. */
+/** Merges the catalogs of two scopes: a project name overrides a personal one. */
 export function mergeSkills(
   personal: string[],
   project: string[],
@@ -107,7 +109,7 @@ export function mergeSkills(
   return mergeNamed(personal, project);
 }
 
-/** Сливает списки имён агентов двух областей: проектное перекрывает личное. */
+/** Merges agent name lists of two scopes: project overrides personal. */
 export function mergeAgents(
   personal: string[],
   project: string[],
@@ -115,7 +117,7 @@ export function mergeAgents(
   return mergeNamed(personal, project);
 }
 
-/** Слияние по имени: проектная запись перекрывает личную, результат отсортирован. */
+/** Merge by name: a project entry overrides a personal one, result is sorted. */
 function mergeNamed(personal: string[], project: string[]): SkillEntry[] {
   const byName = new Map<string, SkillEntry>();
   for (const name of personal) byName.set(name, { name, origin: "personal" });
@@ -124,8 +126,9 @@ function mergeNamed(personal: string[], project: string[]): SkillEntry[] {
 }
 
 /**
- * Разбирает серверы из проектного `.mcp.json` (форма `{ mcpServers: {...} }`).
- * Файл общий и не наш — разбор терпимый: незнакомая форма даёт пустой список.
+ * Parses servers from the project's `.mcp.json` (shape `{ mcpServers: {...} }`).
+ * The file is shared and not ours — parsing is lenient: an unfamiliar shape
+ * yields an empty list.
  */
 export function parseMcpJson(text: string | null): McpServerDef[] {
   const root = safeParseObject(text);
@@ -133,9 +136,9 @@ export function parseMcpJson(text: string | null): McpServerDef[] {
 }
 
 /**
- * Серверы из `~/.claude.json`: верхнеуровневый `mcpServers` — user-скоуп;
- * `projects[<корень>].mcpServers` — local-скоуп текущего проекта (пусто, если
- * корень не задан или проекта нет в файле).
+ * Servers from `~/.claude.json`: top-level `mcpServers` is the user scope;
+ * `projects[<root>].mcpServers` is the current project's local scope (empty
+ * if the root isn't set or the project isn't in the file).
  */
 export function parseClaudeJsonServers(
   text: string | null,
@@ -154,10 +157,11 @@ export function parseClaudeJsonServers(
 }
 
 /**
- * Ищет проект по корню в `projects` из `~/.claude.json`. Сначала точное
- * совпадение ключа, затем — с точностью до хвостового `/` с обеих сторон: bb и
- * Claude Code могут записать путь по-разному. Регистр и симлинки не разрешаем
- * (нужна ФС) — редкие случаи, где local-серверы просто не покажутся.
+ * Looks up a project by root in `projects` from `~/.claude.json`. First an
+ * exact key match, then a match ignoring a trailing `/` on either side: bb
+ * and Claude Code can write the path differently. Case and symlinks aren't
+ * resolved (would need the filesystem) — rare cases where local servers
+ * simply won't show up.
  */
 function findProject(
   projects: Record<string, unknown>,
@@ -173,7 +177,7 @@ function findProject(
   return null;
 }
 
-/** Транспорт из определения сервера: явный `type`, иначе по наличию url/command. */
+/** Transport from the server definition: explicit `type`, else inferred from url/command. */
 export function transportOf(config: unknown): string {
   const obj = asObject(config);
   if (!obj) return "";
@@ -183,7 +187,7 @@ export function transportOf(config: unknown): string {
   return "";
 }
 
-/** Превращает объект mcpServers (имя → определение) в отсортированный список. */
+/** Turns the mcpServers object (name → definition) into a sorted list. */
 function serversFrom(value: unknown): McpServerDef[] {
   const servers = asObject(value);
   if (!servers) return [];
