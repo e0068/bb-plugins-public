@@ -1,6 +1,6 @@
-// Публичный вход пакета — реэкспорт всех трёх ярусов. Сервер, которому react
-// не нужен, импортирует напрямую из "./resolve" (или "@bb-plugins/link-navigation/resolve"),
-// минуя этот файл и не затягивая react-ярус.
+// Public entry point of the package — re-exports all three tiers. A server
+// that doesn't need react imports directly from "./resolve" (or
+// "@bb-plugins/link-navigation/resolve"), bypassing this file and not pulling in the react tier.
 export {
   isInTabLink,
   parseHref,

@@ -1,18 +1,21 @@
-// Слой 1 — извлечение пути файла, который читает или запускает команда хука.
-// Чистая функция без ввода-вывода: на входе команда, на выходе путь-токен (с
-// плейсхолдерами вида `$CLAUDE_PROJECT_DIR` или `~`). Резолв плейсхолдеров и
-// чтение файла — забота слоя I/O (server), не этого модуля.
+// Layer 1 — extracting the path of the file a hook command reads or runs.
+// A pure function with no I/O: input is the command, output is a path
+// token (possibly with placeholders like `$CLAUDE_PROJECT_DIR` or `~`).
+// Resolving placeholders and reading the file is the I/O layer's (server)
+// concern, not this module's.
 
 /**
- * Достаёт из команды хука путь к файлу, который она читает или запускает
- * (`cat …/checklist.json`, `bash …/foo.sh`, прямой `~/.claude/hooks/x.py`), или
- * null, если файлового аргумента нет (`jq -r '.foo'`, `echo hi`).
+ * Pulls the path of the file a hook command reads or runs out of the
+ * command (`cat .../checklist.json`, `bash .../foo.sh`, a direct
+ * `~/.claude/hooks/x.py`), or null if there's no file argument
+ * (`jq -r '.foo'`, `echo hi`).
  *
- * Разбор грубый и терпимый: команда бьётся по пробелам, кавычки снимаются, за
- * файл принимается первый токен с разделителем пути `/` — так имя утилиты
- * (`cat`, `bash`), флаги и jq-фильтры (`.tool_input.command`) отсеиваются сами,
- * а абсолютные, `~`- и `$VAR`-пути к файлу распознаются. Плейсхолдеры окружения
- * остаются в пути как есть — их раскрывает слой I/O.
+ * Parsing is coarse and lenient: the command is split on whitespace, quotes
+ * are stripped, and the first token containing a `/` path separator is
+ * taken as the file — this way the utility name (`cat`, `bash`), flags, and
+ * jq filters (`.tool_input.command`) drop out on their own, while absolute,
+ * `~`- and `$VAR`-prefixed file paths are recognized. Environment
+ * placeholders are left in the path as-is — the I/O layer expands them.
  */
 export function extractCommandFile(command: string): string | null {
   for (const rawToken of command.split(/\s+/)) {
@@ -23,7 +26,7 @@ export function extractCommandFile(command: string): string | null {
   return null;
 }
 
-/** Снимает окружающие одинарные или двойные кавычки с токена. */
+/** Strips surrounding single or double quotes from a token. */
 function stripQuotes(token: string): string {
   const match = /^(['"])(.*)\1$/.exec(token);
   return match ? match[2] : token;

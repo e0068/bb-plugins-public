@@ -37,12 +37,12 @@
      override --mde-mono locally. */
 }
 
-/* Флаг `flush` (проп MarkdownEditor): ужимает боковые «format margins»
-   md-editor (md-editor.css, `padding: 4px 44px`) до обычного шага панели.
-   В узкой колонке 44px по каждому краю съедали ширину под текст. Не
-   обнуляем полностью: табличные grips/controls живут именно в этих полях
-   (см. комментарий у .mde-table в md-editor.css) — 3×--spacing (12px)
-   оставляет их местом и держит текст не впритык к рамке host. */
+/* The `flush` flag (MarkdownEditor prop): shrinks md-editor's side "format
+   margins" (md-editor.css, `padding: 4px 44px`) down to the panel's usual
+   step. In a narrow column, 44px on each edge was eating into the text's
+   width. We don't zero it out entirely: table grips/controls live exactly in
+   those margins (see the comment on .mde-table in md-editor.css) — 3×--spacing
+   (12px) leaves them room and keeps the text from butting right up against the host's border. */
 .bb-mde-flush .mde-root.mde-editable {
   padding-left: calc(var(--spacing) * 3);
   padding-right: calc(var(--spacing) * 3);

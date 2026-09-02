@@ -1,14 +1,15 @@
-// Слой 1 — разбор @-импортов CLAUDE.md и разрешение их в абсолютные пути.
-// Никакого ввода-вывода: на входе текст и уже известные пути, на выходе строки.
+// Layer 1 — parsing CLAUDE.md's @-imports and resolving them to absolute
+// paths. No I/O at all: input is text and already-known paths, output is strings.
 
 import { dirname, isAbsolute, join, normalize } from "node:path";
 
 /**
- * Ищет `@путь` в тексте markdown-файла (CLAUDE.md и подобных). Токен считается
- * импортом, только если перед `@` начало строки или пробел (иначе это часть
- * e-mail вроде `user@example.com`) и захваченный путь похож на файл. Строки
- * внутри огороженных ``` код-блоков не разбираются. Порядок — первого
- * появления, точные дубли схлопнуты.
+ * Finds `@path` in the text of a markdown file (CLAUDE.md and similar). A
+ * token counts as an import only if `@` is preceded by the start of the
+ * line or whitespace (otherwise it's part of an email like
+ * `user@example.com`) and the captured path looks like a file. Lines inside
+ * fenced ``` code blocks aren't parsed. Order is first-occurrence, exact
+ * duplicates are collapsed.
  */
 export function parseImports(text: string): string[] {
   const seen = new Set<string>();
@@ -34,12 +35,12 @@ export function parseImports(text: string): string[] {
   return result;
 }
 
-/** Обрезает хвостовую пунктуацию, оставшуюся от конца предложения. */
+/** Trims trailing punctuation left over from the end of a sentence. */
 function trimTrailingPunctuation(value: string): string {
   return value.replace(/[)(.,;:]+$/, "");
 }
 
-/** Путь похож на файл: содержит слэш, имеет расширение или начинается с ~/./../. */
+/** The path looks like a file: has a slash, has an extension, or starts with ~/./../. */
 function looksLikePath(value: string): boolean {
   if (value.includes("/")) return true;
   if (/\.[a-z0-9]+$/i.test(value)) return true;
@@ -50,9 +51,9 @@ function looksLikePath(value: string): boolean {
 }
 
 /**
- * Разрешает путь импорта в абсолютный. `~` (или `~/...`) — от домашнего
- * каталога; абсолютный путь — как есть; относительный — от каталога файла,
- * в котором встретился импорт.
+ * Resolves an import path to an absolute one. `~` (or `~/...`) — relative
+ * to the home directory; an absolute path — as-is; a relative one —
+ * relative to the directory of the file where the import was found.
  */
 export function resolveImportPath(
   fromFileAbs: string,

@@ -1,11 +1,12 @@
-/* Раскладка вкладки опенера. Скин Kasimov «под родной file-viewer» задаётся не
-   здесь, а дефолтами пресетов --kasi-* (см. NATIVE_VIEWER_TOKEN_DEFAULTS в
-   packages/md-doc-view/kasimov-settings.ts — --foreground/--muted/--timeline-accent),
-   которые пользователь может перевыбрать в Settings → Kasimov. Здесь остаётся
-   только то, что вне контракта --kasi-*: раскладка вкладки, инлайн-код (у
-   kasimov.css для него нет переменной) и специфичный выбор бордера цитаты.
-   Этот файл рендерят ОБА потребителя (md-opener и claude-config) — оба идут
-   через MdDocView с className="mdo-mde". */
+/* Layout of the opener tab. The Kasimov skin "matching the native file
+   viewer" isn't set here, but via the --kasi-* preset defaults (see
+   NATIVE_VIEWER_TOKEN_DEFAULTS in packages/md-doc-view/kasimov-settings.ts —
+   --foreground/--muted/--timeline-accent), which the user can re-pick in
+   Settings → Kasimov. What's left here is only what's outside the --kasi-*
+   contract: the tab layout, inline code (kasimov.css has no variable for it),
+   and the deliberate choice of the blockquote border. This file is rendered
+   by BOTH consumers (md-opener and claude-config) — both go through
+   MdDocView with className="mdo-mde". */
 
 .mdo-root {
   display: flex;
@@ -69,8 +70,8 @@
 .mdo-btn-primary {
   color: var(--primary);
 }
-/* Кнопка-иконка (см. editButton в MdDocViewProps) — квадратный паддинг вместо
-   текстового, чтобы не растягивать её под ширину буквы. */
+/* Icon button (see editButton in MdDocViewProps) — square padding instead of
+   text padding, so it doesn't stretch to the width of a letter. */
 .mdo-btn-icon {
   display: inline-flex;
   align-items: center;
@@ -92,9 +93,9 @@
   color: var(--destructive);
 }
 
-/* Поля под родной вьюер: щедрые боковые отступы, контент во всю ширину.
-   Боковые — через --kasi-pad-x (пресет padX), верх/низ фиксированы (раскладка
-   вкладки, вне контракта --kasi-*). */
+/* Padding matching the native viewer: generous side margins, content at full
+   width. Side margins — via --kasi-pad-x (the padX preset), top/bottom are
+   fixed (tab layout, outside the --kasi-* contract). */
 .mdo-doc {
   padding: 12px var(--kasi-pad-x, 44px) 48px;
 }
@@ -102,17 +103,17 @@
   height: 100%;
 }
 
-/* --- раскладка редактора под вкладку опенера (цвет/фон/шрифт — через --kasi-* пресеты) --- */
+/* --- editor layout for the opener tab (color/background/font — via --kasi-* presets) --- */
 
-/* Format-margins движка (padding в editable) гасим — поля даёт контейнер
-   .mdo-doc (боковые — той же --kasi-pad-x) одинаково для правки и просмотра,
-   текст не прыгает. */
+/* We suppress the engine's format-margins (padding in editable) — the padding
+   comes from the .mdo-doc container (side margins — the same --kasi-pad-x)
+   the same for both editing and viewing, so the text doesn't jump. */
 .mdo-mde .mde-root.mde-editable {
   padding: 0;
 }
 
-/* Заголовки: размер/вес/отступы «как у родного» — раскладка, не в контракте
-   --kasi-* (цвет заголовков берётся из унаследованного --kasi-fg). */
+/* Headings: size/weight/spacing "like the native one" — layout, not in the
+   --kasi-* contract (heading color comes from the inherited --kasi-fg). */
 .mdo-mde .mde-root .mde-h {
   font-size: 1.7em;
   font-weight: 600;
@@ -130,11 +131,11 @@
   margin: 1em 0 0.35em;
 }
 
-/* Инлайн-код — плашка bg-muted, чуть мельче, моно. У kasimov.css нет своей
-   переменной для инлайн-кода (только для блочного .mde-code), поэтому здесь
-   он захардкожен — не входит в контракт --kasi-*, чинить нечего. Блок-код
-   (pre.mde-code) стилизуется через --kasi-cell-bg/--kasi-radius (пресет
-   cellBgToken). */
+/* Inline code — a bg-muted chip, slightly smaller, mono. kasimov.css has no
+   variable of its own for inline code (only for block .mde-code), so it's
+   hardcoded here — it's not part of the --kasi-* contract, nothing to fix.
+   Block code (pre.mde-code) is styled via --kasi-cell-bg/--kasi-radius (the
+   cellBgToken preset). */
 .mdo-mde .mde-root code:not(.mde-code) {
   background: var(--muted);
   border-radius: 0.25rem;
@@ -143,9 +144,9 @@
   font-family: var(--font-mono, ui-monospace, monospace);
 }
 
-/* Цитата: цвет текста — унаследованный --kasi-fg-dim; бордер — сознательный
-   выбор чистого --border вместо computed color-mix из kasimov.css (вне
-   контракта --kasi-*, поэтому остаётся жёстким). */
+/* Blockquote: text color — inherited --kasi-fg-dim; border — a deliberate
+   choice of a plain --border instead of the computed color-mix from
+   kasimov.css (outside the --kasi-* contract, so it stays hardcoded). */
 .mdo-mde .mde-root .mde-quote {
   border-left-color: var(--border);
 }

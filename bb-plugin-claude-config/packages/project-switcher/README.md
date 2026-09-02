@@ -15,7 +15,7 @@ this package renders and dispatches clicks, nothing else.
 import { ProjectSwitcher, type ProjectSwitcherOption } from "../packages/project-switcher/react";
 
 const options: ProjectSwitcherOption[] = [
-  { key: "", label: "Все проекты" },
+  { key: "", label: "All projects" },
   { key: "my-project", label: "my-project" },
   { key: null, label: "Threads" },
 ];

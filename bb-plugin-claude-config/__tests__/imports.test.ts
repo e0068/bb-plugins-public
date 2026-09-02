@@ -3,50 +3,50 @@ import { describe, expect, it } from "vitest";
 import { parseImports, resolveImportPath } from "../src/imports";
 
 describe("parseImports", () => {
-  it("находит относительный импорт с расширением", () => {
-    expect(parseImports("Смотри @AGENTS.md для правил.")).toEqual(["AGENTS.md"]);
+  it("finds a relative import with an extension", () => {
+    expect(parseImports("See @AGENTS.md for the rules.")).toEqual(["AGENTS.md"]);
   });
 
-  it("находит импорт от домашнего каталога", () => {
+  it("finds an import from the home directory", () => {
     expect(parseImports("@~/.claude/skills/x/SKILL.md")).toEqual([
       "~/.claude/skills/x/SKILL.md",
     ]);
   });
 
-  it("находит явно относительный импорт ./", () => {
+  it("finds an explicitly relative import ./", () => {
     expect(parseImports("@./rel/y.md")).toEqual(["./rel/y.md"]);
   });
 
-  it("не путает e-mail с импортом", () => {
-    expect(parseImports("Пиши на user@example.com за помощью.")).toEqual([]);
+  it("doesn't confuse an e-mail address with an import", () => {
+    expect(parseImports("Write to user@example.com for help.")).toEqual([]);
   });
 
-  it("схлопывает точные дубли, сохраняя первое появление", () => {
-    expect(parseImports("@AGENTS.md и снова @AGENTS.md")).toEqual(["AGENTS.md"]);
+  it("collapses exact duplicates, keeping the first occurrence", () => {
+    expect(parseImports("@AGENTS.md and again @AGENTS.md")).toEqual(["AGENTS.md"]);
   });
 
-  it("игнорирует строки внутри огороженных код-блоков", () => {
-    const text = ["текст @AGENTS.md", "```", "@fake.md внутри блока", "```", "@REAL.md"].join(
+  it("ignores lines inside fenced code blocks", () => {
+    const text = ["text @AGENTS.md", "```", "@fake.md inside the block", "```", "@REAL.md"].join(
       "\n",
     );
     expect(parseImports(text)).toEqual(["AGENTS.md", "REAL.md"]);
   });
 
-  it("обрезает хвостовую пунктуацию", () => {
-    expect(parseImports("см. @AGENTS.md.")).toEqual(["AGENTS.md"]);
-    expect(parseImports("(см. @AGENTS.md)")).toEqual(["AGENTS.md"]);
+  it("trims trailing punctuation", () => {
+    expect(parseImports("see @AGENTS.md.")).toEqual(["AGENTS.md"]);
+    expect(parseImports("(see @AGENTS.md)")).toEqual(["AGENTS.md"]);
     expect(parseImports("@AGENTS.md,")).toEqual(["AGENTS.md"]);
   });
 
-  it("в начале строки импорт распознаётся без пробела перед ним", () => {
+  it("an import at the start of a line is recognized without a space before it", () => {
     expect(parseImports("@AGENTS.md")).toEqual(["AGENTS.md"]);
   });
 
-  it("токен без похожести на файл не считается импортом", () => {
-    expect(parseImports("Версия @2 релиза")).toEqual([]);
+  it("a token that doesn't look like a file isn't treated as an import", () => {
+    expect(parseImports("Version @2 of the release")).toEqual([]);
   });
 
-  it("пустой текст — пустой список", () => {
+  it("empty text — empty list", () => {
     expect(parseImports("")).toEqual([]);
   });
 });
@@ -55,21 +55,21 @@ describe("resolveImportPath", () => {
   const home = "/Users/vs";
   const fromFile = "/Users/vs/project/CLAUDE.md";
 
-  it("раскрывает ~ от домашнего каталога", () => {
+  it("expands ~ from the home directory", () => {
     expect(resolveImportPath(fromFile, "~/.claude/skills/x/SKILL.md", home)).toBe(
       "/Users/vs/.claude/skills/x/SKILL.md",
     );
   });
 
-  it("голый ~ разрешается в сам домашний каталог", () => {
+  it("a bare ~ resolves to the home directory itself", () => {
     expect(resolveImportPath(fromFile, "~", home)).toBe("/Users/vs");
   });
 
-  it("абсолютный путь возвращается как есть (нормализованным)", () => {
+  it("an absolute path is returned as-is (normalized)", () => {
     expect(resolveImportPath(fromFile, "/etc/hosts", home)).toBe("/etc/hosts");
   });
 
-  it("относительный путь разрешается от каталога исходного файла", () => {
+  it("a relative path is resolved from the source file's directory", () => {
     expect(resolveImportPath(fromFile, "./AGENTS.md", home)).toBe(
       "/Users/vs/project/AGENTS.md",
     );
@@ -78,7 +78,7 @@ describe("resolveImportPath", () => {
     );
   });
 
-  it("голое имя без ./ тоже относительно каталога исходного файла", () => {
+  it("a bare name without ./ is also relative to the source file's directory", () => {
     expect(resolveImportPath(fromFile, "AGENTS.md", home)).toBe(
       "/Users/vs/project/AGENTS.md",
     );

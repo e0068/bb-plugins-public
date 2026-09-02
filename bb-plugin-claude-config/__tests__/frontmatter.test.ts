@@ -7,7 +7,7 @@ import {
 } from "../src/frontmatter";
 
 describe("fieldsFromJson", () => {
-  it("поля верхнего уровня: примитивы строкой, объекты — JSON", () => {
+  it("top-level fields: primitives as strings, objects as JSON", () => {
     const fields = fieldsFromJson(
       '{"name":"x","version":"1.0.0","author":{"name":"A"}}',
     );
@@ -18,15 +18,15 @@ describe("fieldsFromJson", () => {
     ]);
   });
 
-  it("невалидный JSON или не-объект → пусто", () => {
-    expect(fieldsFromJson("не json")).toEqual([]);
+  it("invalid JSON or a non-object → empty", () => {
+    expect(fieldsFromJson("not json")).toEqual([]);
     expect(fieldsFromJson("[1,2]")).toEqual([]);
     expect(fieldsFromJson("42")).toEqual([]);
   });
 });
 
 describe("parseFrontmatter", () => {
-  it("разбирает поля и тело", () => {
+  it("parses fields and body", () => {
     const parsed = parseFrontmatter("---\nname: x\ntype: feature\n---\n\n# T");
     expect(parsed.hasFrontmatter).toBe(true);
     expect(parsed.entries).toEqual([
@@ -36,26 +36,26 @@ describe("parseFrontmatter", () => {
     expect(parsed.body).toBe("\n# T");
   });
 
-  it("файл без фронтматера — тело целиком, полей нет", () => {
-    const parsed = parseFrontmatter("# Просто заголовок\nтекст");
+  it("file without frontmatter — body is everything, no fields", () => {
+    const parsed = parseFrontmatter("# Just a heading\ntext");
     expect(parsed.hasFrontmatter).toBe(false);
     expect(parsed.entries).toEqual([]);
-    expect(parsed.body).toBe("# Просто заголовок\nтекст");
+    expect(parsed.body).toBe("# Just a heading\ntext");
   });
 
-  it("незакрытый разделитель — не фронтматер", () => {
-    const parsed = parseFrontmatter("---\nname: x\nтело без закрытия");
+  it("unclosed delimiter — not frontmatter", () => {
+    const parsed = parseFrontmatter("---\nname: x\nbody without a closing delimiter");
     expect(parsed.hasFrontmatter).toBe(false);
   });
 
-  it("пустое значение и вложенные строки сохраняются как raw", () => {
+  it("empty value and nested lines are preserved as raw", () => {
     const parsed = parseFrontmatter(
-      "---\nauthor:\n  name: A\n# коммент\n---\ntело",
+      "---\nauthor:\n  name: A\n# comment\n---\nbody",
     );
     expect(parsed.entries).toEqual([
       { kind: "field", key: "author", value: "" },
       { kind: "raw", text: "  name: A" },
-      { kind: "raw", text: "# коммент" },
+      { kind: "raw", text: "# comment" },
     ]);
   });
 });
@@ -63,32 +63,32 @@ describe("parseFrontmatter", () => {
 describe("serializeFrontmatter round-trip", () => {
   const samples = [
     "---\nname: x\ntype: feature\n---\n\n# T",
-    "---\nauthor:\n  name: A\n# коммент\n---\nтело",
+    "---\nauthor:\n  name: A\n# comment\n---\nbody",
     "---\nname: x\n---\n",
   ];
   for (const sample of samples) {
-    it(`возвращает исходник без правок: ${JSON.stringify(sample.slice(0, 20))}`, () => {
+    it(`returns the source unchanged: ${JSON.stringify(sample.slice(0, 20))}`, () => {
       const parsed = parseFrontmatter(sample);
       expect(serializeFrontmatter(parsed.entries, parsed.body)).toBe(sample);
     });
   }
 
-  it("правка значения меняет только своё поле", () => {
-    const parsed = parseFrontmatter("---\nname: x\ntype: feature\n---\nтело");
+  it("editing a value changes only its own field", () => {
+    const parsed = parseFrontmatter("---\nname: x\ntype: feature\n---\nbody");
     const next = setFieldValue(parsed.entries, 0, "y");
     expect(serializeFrontmatter(next, parsed.body)).toBe(
-      "---\nname: y\ntype: feature\n---\nтело",
+      "---\nname: y\ntype: feature\n---\nbody",
     );
   });
 
-  it("непустое значение из пустого сериализуется с пробелом", () => {
+  it("a non-empty value from an empty one is serialized with a space", () => {
     const entries = setFieldValue(
       [{ kind: "field", key: "due", value: "" }],
       0,
       "2026-09-01",
     );
-    expect(serializeFrontmatter(entries, "тело")).toBe(
-      "---\ndue: 2026-09-01\n---\nтело",
+    expect(serializeFrontmatter(entries, "body")).toBe(
+      "---\ndue: 2026-09-01\n---\nbody",
     );
   });
 });

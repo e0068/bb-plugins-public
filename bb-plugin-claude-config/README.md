@@ -1,96 +1,102 @@
-# Claude Config — панель конфига
+# Claude Config — config panel
 
-Плагин **bb**, который правит конфиг **Claude Code**: какие плагины, коннекторы и
-навыки грузятся, какие хуки настроены, и грузятся ли инструменты сразу или по
-требованию. Всё — по областям: отдельно глобально, отдельно на каждый проект.
+A **bb** plugin that edits the **Claude Code** config: which plugins,
+connectors and skills are loaded, which hooks are configured, and whether
+tools are loaded up front or on demand. Everything is scoped: separately
+global, separately per project.
 
-## Зачем
+## Why
 
-Плагины и навыки Claude Code по умолчанию включаются на уровне пользователя и
-после этого грузятся в каждую сессию во всех проектах. Состояние размазано по
-четырём уровням настроек, список установленного лежит в пятом месте, и разобрать
-это руками по файлам тяжело. Панель показывает действующее значение и позволяет
-переключить его в нужной области.
+Claude Code plugins and skills are enabled by default at the user level and
+from then on load into every session in every project. State is spread
+across four levels of settings, the list of what's installed lives in a
+fifth place, and untangling it by hand from the files is hard. The panel
+shows the effective value and lets you toggle it in the right scope.
 
-## Что переключает
+## What it toggles
 
-| Секция | Ключ настроек | Состояния |
+| Section | Settings key | States |
 | --- | --- | --- |
-| Плагины Claude Code | `enabledPlugins` | вкл / выкл / наследовать |
-| Коннекторы | `enabledMcpjsonServers` / `disabledMcpjsonServers` | вкл / выкл / наследовать |
-| Навыки | `skillOverrides` | полностью / только имя / только по слэшу / выключен / наследовать |
-| Агенты | файлы `agents/` | только показ и создание |
-| Хуки | `hooks` | только просмотр |
-| Подгрузка инструментов | `env.ENABLE_TOOL_SEARCH` | вкл / выкл / авто / наследовать |
+| Claude Code plugins | `enabledPlugins` | on / off / inherit |
+| Connectors | `enabledMcpjsonServers` / `disabledMcpjsonServers` | on / off / inherit |
+| Skills | `skillOverrides` | full / name-only / slash-only / disabled / inherit |
+| Agents | `agents/` files | view and create only |
+| Hooks | `hooks` | view only |
+| Tool loading | `env.ENABLE_TOOL_SEARCH` | on / off / auto / inherit |
 
-Навыки из плагинов в список не попадают: `skillOverrides` на них не действует,
-их гасят отключением самого плагина.
+Skills that come from plugins don't show up in the list: `skillOverrides`
+doesn't apply to them — they're disabled by disabling the plugin itself.
 
-**Навыки и агенты** можно создавать прямо из панели — кнопка в шапке секции
-спрашивает имя, нормализует его в слаг, кладёт заготовку в каталог области
-(проектный, если открыт проект, иначе личный) и открывает файл для правки:
-навык — `<каталог навыков>/<имя>/SKILL.md`, агент — `<каталог агентов>/<имя>.md`.
-Агенты не гейтятся настройками, поэтому у секции нет тумблеров — только список и
-создание; клик по строке открывает файл агента.
+**Skills and agents** can be created right from the panel — a button in the
+section header asks for a name, normalizes it into a slug, drops a
+scaffold into the scope's directory (project, if a project is open,
+otherwise personal) and opens the file for editing: a skill goes to
+`<skills dir>/<name>/SKILL.md`, an agent to `<agents dir>/<name>.md`.
+Agents aren't gated by settings, so that section has no toggles — just a
+list and a create action; clicking a row opens the agent file.
 
-## Чем открывать файлы
+## What opens the files
 
-Реальные файлы (навык, агент, документ памяти, ссылки внутри документов, файл,
-на который ссылается хук) открываются по настройке плагина **«Чем открывать
-файлы»** (`fileOpener`, страница Extensions → Plugins). Три режима:
+Real files (a skill, an agent, a memory doc, links inside docs, the file a
+hook points to) open according to the plugin's **"What opens files"**
+setting (`fileOpener`, on the Extensions → Plugins page). Three modes:
 
-- **`md-opener`** (по умолчанию) — во встроенной колонке редактором **Kasimov**
-  через общий слой [packages/md-doc-view](../packages/md-doc-view): кликабельные
-  markdown-ссылки со стеком прыжков в той же колонке и CAS-сохранение. Тот же
-  компонент, что и слот [MD Opener](../bb-plugin-md-opener). Не-markdown файлы
-  правятся сырым текстом.
-- **`builtin`** — во встроенной колонке штатным `MarkdownEditor` из
-  [packages/md-editor](../packages/md-editor) с таблицей полей frontmatter.
-- **`host`** — делегировать хостовой вкладке bb (`experimental_openFilePreview`);
-  файл откроется опенером, выбранным в настройках bb для формата.
+- **`md-opener`** (default) — in the built-in column, with the **Kasimov**
+  editor via the shared [packages/md-doc-view](../packages/md-doc-view)
+  layer: clickable markdown links with a jump stack in the same column and
+  CAS-based saving. The same component used by the
+  [MD Opener](../bb-plugin-md-opener) slot. Non-markdown files are edited
+  as raw text.
+- **`builtin`** — in the built-in column, with the standard `MarkdownEditor`
+  from [packages/md-editor](../packages/md-editor), including a
+  frontmatter field table.
+- **`host`** — delegate to the bb host tab (`experimental_openFilePreview`);
+  the file opens with whatever opener bb settings assign to that format.
 
-Синтезированные представления (плагин, коннектор, команда хука) — не файлы, они
-всегда во встроенной колонке, настройка на них не влияет. Почему выбор, а не
-хардкод — [решение](../memory/decisions/claude-config-opener-setting.md),
-отменяющее прежнее делегирование по умолчанию.
+Synthesized views (a plugin, a connector, a hook command) aren't files —
+they always open in the built-in column, and this setting doesn't affect
+them. Why this is a choice rather than hardcoded —
+[decision](../memory/decisions/claude-config-opener-setting.md), which
+supersedes the previous default delegation.
 
-## Коннекторы и хуки
+## Connectors and hooks
 
-**Коннекторы** — MCP-серверы Claude Code из трёх источников. Серверы проектного
-`.mcp.json` переключаются тумблером (через `enabledMcpjsonServers` /
-`disabledMcpjsonServers`, с учётом `enableAllProjectMcpServers`). Серверы user- и
-local-скоупа из `~/.claude.json` показываются только для чтения: их включение
-`settings.json` не гейтит. Клик по строке открывает определение сервера (JSON).
+**Connectors** are Claude Code MCP servers from three sources. Servers from
+the project's `.mcp.json` are toggled with a switch (via
+`enabledMcpjsonServers` / `disabledMcpjsonServers`, honoring
+`enableAllProjectMcpServers`). User- and local-scope servers from
+`~/.claude.json` are shown read-only: their enablement isn't gated by
+`settings.json`. Clicking a row opens the server definition (JSON).
 
-**Хуки** — первая секция панели, из ключа `hooks` по всем уровням области
-(событие, matcher, команда, происхождение). Только просмотр: у Claude Code нет
-штатного отключения отдельного хука. Строка кликабельна — открывает команду хука
-в правой вкладке.
+**Hooks** are the panel's first section, built from the `hooks` key across
+all setting levels (event, matcher, command, origin). View-only: Claude
+Code has no built-in way to disable a single hook. A row is clickable — it
+opens the hook command in the right-hand tab.
 
-## Куда пишет
+## Where it writes
 
-- **Глобально** — `~/.claude/settings.json`.
-- **Проект** — `<путь проекта>/.claude/settings.local.json`, а не общий
-  `settings.json`: локальный файл обычно в `.gitignore`, поэтому личные
-  переключения не уезжают в командный конфиг репозитория.
+- **Global** — `~/.claude/settings.json`.
+- **Project** — `<project path>/.claude/settings.local.json`, not the
+  shared `settings.json`: the local file is usually in `.gitignore`, so
+  personal toggles don't leak into the repo's team config.
 
-Запись идёт через `bb.sdk.files` с проверкой хэша: если файл настроек изменила
-параллельная сессия Claude Code, панель сообщит о конфликте вместо того, чтобы
-затереть чужую правку.
+Writes go through `bb.sdk.files` with a hash check: if a parallel Claude
+Code session has changed the settings file, the panel reports a conflict
+instead of overwriting the other change.
 
-## Разработка
+## Development
 
 ```sh
-npm test        # чистые функции слоя src/
+npm test        # pure functions in the src/ layer
 npm run typecheck
 bb plugin install .
-bb plugin dev   # пересборка и перезагрузка на каждое сохранение
+bb plugin dev   # rebuild and reload on every save
 ```
 
-## Слои
+## Layers
 
-- `src/` — чистые функции без ввода-вывода, полностью под тестами:
-  разбор и правка документа настроек, сведение уровней, разбор каталога
-  установленного.
-- `server.ts` — RPC-контракт и регистрация в bb.
-- `app.tsx` — панель.
+- `src/` — pure functions with no I/O, fully covered by tests: parsing and
+  editing the settings document, merging levels, parsing the catalog of
+  what's installed.
+- `server.ts` — the RPC contract and registration with bb.
+- `app.tsx` — the panel.

@@ -1,15 +1,18 @@
-// Слой 1 — заготовки новых файлов конфигурации и нормализация имени.
-// Чистый код без ввода-вывода: на входе сырое имя от пользователя, на выходе —
-// безопасное имя-слаг и текст шаблона. Запись файла и выбор папки — в server.ts.
+// Layer 1 — scaffolds for new config files and name normalization. Pure
+// code with no I/O: input is a raw name from the user, output is a safe
+// slug name and template text. Writing the file and picking the folder are
+// in server.ts.
 //
-// Имя навыка и агента в Claude Code — слаг из строчных латинских букв, цифр и
-// дефисов: им зовётся папка навыка (`<имя>/SKILL.md`) и файл агента
-// (`<имя>.md`), и оно же — значение поля `name` во frontmatter.
+// A skill's or agent's name in Claude Code is a slug of lowercase Latin
+// letters, digits and hyphens: it names the skill folder (`<name>/SKILL.md`)
+// and the agent file (`<name>.md`), and it's also the value of the `name`
+// field in frontmatter.
 
 /**
- * Приводит сырое имя к слагу: строчные латинские буквы и цифры, разделители
- * схлопнуты в один дефис, дефисы по краям срезаны. Пустая строка означает, что
- * во вводе не осталось ни одного допустимого символа — вызвавший это проверяет.
+ * Turns a raw name into a slug: lowercase Latin letters and digits,
+ * separators collapsed into a single hyphen, leading/trailing hyphens
+ * trimmed. An empty string means the input had no valid characters left —
+ * the caller checks for that.
  */
 export function slugifyName(raw: string): string {
   return raw
@@ -18,41 +21,41 @@ export function slugifyName(raw: string): string {
     .replace(/^-+|-+$/g, "");
 }
 
-/** Имя допустимо, если его слаг непуст (есть хотя бы один латинский символ/цифра). */
+/** A name is valid if its slug is non-empty (at least one Latin letter/digit). */
 export function isValidName(raw: string): boolean {
   return slugifyName(raw).length > 0;
 }
 
 /**
- * Заготовка `SKILL.md` нового навыка: минимальный валидный frontmatter
- * (`name`, `description`) и подсказка в теле. `name` — уже слаг.
+ * Scaffold for a new skill's `SKILL.md`: a minimal valid frontmatter
+ * (`name`, `description`) and a hint in the body. `name` is already a slug.
  */
 export function skillTemplate(name: string): string {
   return [
     "---",
     `name: ${name}`,
-    "description: Опишите, когда этот навык применять и что он делает.",
+    "description: Describe when to use this skill and what it does.",
     "---",
     "",
     `# ${name}`,
     "",
-    "Опишите здесь инструкции навыка.",
+    "Describe the skill's instructions here.",
     "",
   ].join("\n");
 }
 
 /**
- * Заготовка файла нового агента: frontmatter с `name` и `description` и тело —
- * системный промпт. `name` — уже слаг.
+ * Scaffold for a new agent file: frontmatter with `name` and `description`
+ * and a body that's the system prompt. `name` is already a slug.
  */
 export function agentTemplate(name: string): string {
   return [
     "---",
     `name: ${name}`,
-    "description: Опишите, когда вызывать этого агента и что он делает.",
+    "description: Describe when to invoke this agent and what it does.",
     "---",
     "",
-    "Опишите здесь системный промпт агента: его роль, задачи и ограничения.",
+    "Describe the agent's system prompt here: its role, tasks and constraints.",
     "",
   ].join("\n");
 }

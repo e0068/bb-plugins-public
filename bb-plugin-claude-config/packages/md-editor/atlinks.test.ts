@@ -29,7 +29,7 @@ describe("atLinks: @path recognised as a link (opt-in)", () => {
   });
 
   it("keeps a markdown link AND an @path link both live, and round-trips the mixed line", () => {
-    const src = "см @a/b.md и [t](c.md)";
+    const src = "see @a/b.md and [t](c.md)";
     const root = document.createElement("div");
     renderBody(root, src, undefined as any, true);
 
@@ -40,7 +40,7 @@ describe("atLinks: @path recognised as a link (opt-in)", () => {
   });
 
   it("does NOT turn user@example.com into a link — no whitespace/start boundary before @", () => {
-    const src = "пиши на user@example.com";
+    const src = "write to user@example.com";
     const root = document.createElement("div");
     renderBody(root, src, undefined as any, true);
 
@@ -59,14 +59,14 @@ describe("atLinks: @path recognised as a link (opt-in)", () => {
 
   it("is idempotent across a multi-line body with headings and several @-imports", () => {
     const src = [
-      "# Заголовок",
+      "# Heading",
       "",
-      "Смотри @~/.claude/skills/git-hygiene/SKILL.md и @~/.claude/skills/project-memory-v2/SKILL.md",
+      "See @~/.claude/skills/git-hygiene/SKILL.md and @~/.claude/skills/project-memory-v2/SKILL.md",
       "",
-      "письмо на admin@example.com — не ссылка",
+      "email to admin@example.com — not a link",
       "",
-      "## Подраздел",
-      "- пункт с @relative/path.md внутри",
+      "## Subsection",
+      "- an item with @relative/path.md inside",
     ].join("\n");
 
     expect(roundTrip(src, true)).toBe(src);

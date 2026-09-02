@@ -3,17 +3,17 @@ import type { PointerEvent as ReactPointerEvent } from "react";
 import { clampWidth, nextWidthFromDrag, type PaneSide } from "./geometry";
 
 export interface ResizableWidthOptions {
-  /** Стартовый размер (px), если в хранилище ничего нет. */
+  /** Starting size (px) if there's nothing in storage. */
   initial: number;
   min: number;
   max: number;
-  /** Ключ localStorage для запоминания размера между сессиями. */
+  /** localStorage key for remembering the size across sessions. */
   storageKey?: string;
   /**
-   * С какой стороны контейнера стоит пан. "right" (по умолчанию) — ручка на
-   * левом крае, тянем влево — шире. "left" — ручка на правом крае, тянем
-   * вправо — шире. Для высотных панов: "left" — ручка снизу, тянем вниз —
-   * выше; "right" — ручка сверху, тянем вверх — выше.
+   * Which side of the container the pane sits on. "right" (default) — handle
+   * on the left edge, drag left — wider. "left" — handle on the right edge,
+   * drag right — wider. For height panes: "left" — handle at the bottom, drag
+   * down — taller; "right" — handle at the top, drag up — taller.
    */
   side?: PaneSide;
 }
@@ -29,9 +29,9 @@ function readSaved(key: string): number | null {
   }
 }
 
-// Общее ядро резайза по одной оси. Ось задаёт, какую координату указателя брать
-// (clientX/clientY) и какой курсор ставить; знак и зажим — в чистой геометрии.
-// Ширина и высота — два фасада над ним, отличаются только осью.
+// Shared resize core for a single axis. The axis determines which pointer
+// coordinate to read (clientX/clientY) and which cursor to set; the sign and
+// clamping live in the pure geometry. Width and height are two facades over it, differing only by axis.
 function useResizableAxis(
   axis: "x" | "y",
   { initial, min, max, storageKey, side = "right" }: ResizableWidthOptions,
@@ -52,7 +52,7 @@ function useResizableAxis(
     try {
       localStorage.setItem(storageKey, String(size));
     } catch {
-      // приватный режим/квота — молча продолжаем без запоминания.
+      // private mode/quota — silently continue without remembering.
     }
   }, [storageKey, size]);
 
@@ -83,10 +83,10 @@ function useResizableAxis(
 }
 
 /**
- * Ширина пана, прижатого к правому краю, с ручкой на его левой стороне.
- * Возвращает текущую ширину и обработчик для ResizeHandle. Тянем ручку влево —
- * пан расширяется. Значение зажимается в [min, max] и (если задан storageKey)
- * запоминается в localStorage.
+ * The width of a pane pinned to the right edge, with the handle on its left
+ * side. Returns the current width and a handler for ResizeHandle. Dragging
+ * the handle left expands the pane. The value is clamped to [min, max] and
+ * (if storageKey is given) remembered in localStorage.
  */
 export function useResizableWidth(options: ResizableWidthOptions) {
   const { size, startResize, setSize } = useResizableAxis("x", options);
@@ -94,10 +94,10 @@ export function useResizableWidth(options: ResizableWidthOptions) {
 }
 
 /**
- * Высота горизонтального пана с ручкой на его нижнем крае (side "left",
- * по умолчанию для этого хука): тянем ручку вниз — пан выше. Пара к
- * HorizontalResizeHandle. Значение зажимается в [min, max] и (если задан
- * storageKey) запоминается в localStorage.
+ * The height of a horizontal pane with the handle on its bottom edge (side
+ * "left", the default for this hook): dragging the handle down makes the
+ * pane taller. Pairs with HorizontalResizeHandle. The value is clamped to
+ * [min, max] and (if storageKey is given) remembered in localStorage.
  */
 export function useResizableHeight(options: ResizableWidthOptions) {
   const { size, startResize, setSize } = useResizableAxis("y", { side: "left", ...options });
@@ -105,8 +105,8 @@ export function useResizableHeight(options: ResizableWidthOptions) {
 }
 
 /**
- * Вертикальный разделитель-ручка. Тонкая линия по цвету border, при наведении
- * подсвечивается; клик-зона шире самой линии за счёт невидимого запаса по бокам.
+ * A vertical divider handle. A thin line in the border color, highlighted on
+ * hover; the click zone is wider than the line itself thanks to invisible padding on the sides.
  */
 export function ResizeHandle({
   onPointerDown,
@@ -124,7 +124,7 @@ export function ResizeHandle({
         className ? ` ${className}` : ""
       }`}
     >
-      {/* невидимый запас клик-зоны по бокам линии */}
+      {/* invisible click-zone padding on the sides of the line */}
       <div className="absolute inset-y-0 -left-1.5 -right-1.5" />
       <div className="absolute inset-y-0 -left-px -right-px opacity-0 transition-opacity group-hover:opacity-100 bg-primary" />
     </div>
@@ -132,9 +132,9 @@ export function ResizeHandle({
 }
 
 /**
- * Горизонтальный разделитель-ручка между двумя панами, стоящими друг над другом.
- * Тонкая линия по цвету border, при наведении подсвечивается; клик-зона шире
- * самой линии за счёт невидимого запаса сверху и снизу.
+ * A horizontal divider handle between two panes stacked on top of each other.
+ * A thin line in the border color, highlighted on hover; the click zone is
+ * wider than the line itself thanks to invisible padding above and below.
  */
 export function HorizontalResizeHandle({
   onPointerDown,
@@ -152,7 +152,7 @@ export function HorizontalResizeHandle({
         className ? ` ${className}` : ""
       }`}
     >
-      {/* невидимый запас клик-зоны сверху и снизу линии */}
+      {/* invisible click-zone padding above and below the line */}
       <div className="absolute inset-x-0 -top-1.5 -bottom-1.5" />
       <div className="absolute inset-x-0 -top-px -bottom-px opacity-0 transition-opacity group-hover:opacity-100 bg-primary" />
     </div>

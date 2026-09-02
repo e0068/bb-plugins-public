@@ -1,42 +1,44 @@
-/* Правки внешнего вида общего md-editor ИМЕННО в Claude Config — не в самом
-   пакете, чтобы не задеть других потребителей (Workflow Composer). Класс
-   cc-doc-mde добавляется к host редактора через проп className, поэтому правила
-   действуют поверх общей темы (.bb-mde-host .mde-root), а не вместо неё. */
+/* Appearance overrides for the shared md-editor SPECIFICALLY in Claude Config
+   — not in the package itself, so other consumers (Workflow Composer) aren't
+   affected. The cc-doc-mde class is added to the editor host via the
+   className prop, so these rules apply on top of the shared theme
+   (.bb-mde-host .mde-root) rather than replacing it. */
 
-/* Фон прозрачный: редактор сливается с поверхностью панели, а не рисует свою
-   подложку var(--background). */
+/* Transparent background: the editor blends into the panel surface instead
+   of drawing its own var(--background) backdrop. */
 .cc-doc-mde .mde-root {
   --mde-bg: transparent;
   background: transparent;
 }
 
-/* Одинаковые поля в правке и просмотре: движок добавляет боковые
-   «format margins» (padding: 4px 44px) только в editable — из-за этого текст
-   при входе в правку прыгал вправо. Гасим их полностью, отступ задаёт общий
-   контейнер p-4 одинаково для обоих режимов, поэтому текст выглядит идентично. */
+/* Matching padding in edit and preview: the engine adds side "format
+   margins" (padding: 4px 44px) only in editable mode — that made the text
+   jump right when entering edit mode. Zero them out entirely; padding comes
+   from the shared p-4 container in both modes, so the text looks identical. */
 .cc-doc-mde .mde-root.mde-editable {
   padding: 0;
 }
 
-/* Типографика как в разделе Docs BB (значения сверены с его markdown-рендером:
-   тело text-sm + leading-relaxed, заголовки semibold на foreground, инлайн-код
-   в плашке bg-muted, колонка ограничена по ширине). Вёрстку таблиц НЕ трогаем —
-   у них только цвета берутся из токенов темы. */
+/* Typography matches the BB Docs section (values checked against its
+   markdown renderer: body text-sm + leading-relaxed, semibold headings on
+   foreground, inline code in a bg-muted chip, column width-constrained).
+   Table layout is left UNTOUCHED — only their colors come from theme
+   tokens. */
 
-/* Колонка с текстом ограничена по ширине, как в Docs (не тянется на всю
-   панель), и отцентрирована по горизонтали. */
+/* Text column is width-constrained like in Docs (doesn't stretch across the
+   whole panel) and horizontally centered. */
 .cc-doc-mde .mde-root {
   max-width: 46rem;
   margin-left: auto;
   margin-right: auto;
-  /* Тело как text-sm Docs (~14px); у движка дефолт был 13px. Заголовки заданы
-     в em, поэтому подтягиваются вместе с базой. */
+  /* Body matches Docs text-sm (~14px); the engine's default was 13px.
+     Headings are set in em, so they scale together with the base size. */
   --mde-size: 0.875rem;
   line-height: 1.65;
   color: var(--foreground);
 }
 
-/* Заголовки: контрастный foreground, semibold, щедрые отступы сверху. */
+/* Headings: contrasting foreground, semibold, generous top spacing. */
 .cc-doc-mde .mde-root .mde-h {
   font-size: 1.6em;
   font-weight: 600;
@@ -56,9 +58,9 @@
   color: var(--foreground);
 }
 
-/* Инлайн-код в плашке, как в Docs (bg-muted, скруглённый, моно, чуть мельче).
-   Блок-код — это `pre.mde-code`, его не задеваем: селектор бьёт только по
-   голому инлайновому `<code>`. */
+/* Inline code in a chip, like in Docs (bg-muted, rounded, mono, slightly
+   smaller). Block code is `pre.mde-code`, left untouched: the selector only
+   targets a bare inline `<code>`. */
 .cc-doc-mde .mde-root code:not(.mde-code) {
   background: var(--muted);
   border-radius: 0.25rem;
@@ -67,18 +69,18 @@
   font-family: var(--font-mono, ui-monospace, monospace);
 }
 
-/* Ссылки — синим цветным токеном темы, без подчёркивания. У bb тема почти
-   монохромная: --primary achromatic (серый), поэтому ссылки им были бесцветны.
-   Единственный синий хостовый токен — --timeline-accent (oklch hue 250),
-   адаптируется к светлой/тёмной теме. */
+/* Links — a blue color token from the theme, no underline. bb's theme is
+   almost monochrome: --primary is achromatic (gray), so links would be
+   colorless with it. The only blue host token is --timeline-accent (oklch
+   hue 250), which adapts to light/dark theme. */
 .cc-doc-mde .mde-root .mde-link {
   color: var(--timeline-accent);
   text-decoration: none;
 }
 
-/* Ячейка значения во «фронтматер»-таблице: растёт по содержимому (field-sizing),
-   без своей рамки и фона — их даёт клетка таблицы. Длинный description виден
-   целиком, а не обрезается инпутом. */
+/* Value cell in the frontmatter table: grows with content (field-sizing),
+   with no border or background of its own — the table cell provides those.
+   A long description is shown in full, not truncated by the input. */
 .cc-fm-value {
   field-sizing: content;
   width: 100%;

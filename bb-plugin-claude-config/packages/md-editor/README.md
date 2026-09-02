@@ -1,43 +1,42 @@
 # @bb-plugins/md-editor
 
-Общий пакет: ванильный WYSIWYG-редактор markdown (`md-editor.js`,
-`markdown.js`, `tables.js`, `history.js`, `md-editor.css`) плюс React-обёртка и
-тема на переменных `--mde-*`.
+Shared package: a vanilla WYSIWYG markdown editor (`md-editor.js`,
+`markdown.js`, `tables.js`, `history.js`, `md-editor.css`) plus a React
+wrapper and a theme built on `--mde-*` variables.
 
-Один contenteditable-surface; markdown — единственный источник истины.
-Отдельной документации по внутреннему устройству движка здесь нет — читается по
-исходникам в этом каталоге.
+A single contenteditable surface; markdown is the single source of truth.
+There's no separate documentation of the engine's internals here — read the
+source in this directory.
 
-## Импорт
+## Import
 
 ```ts
 import { MarkdownEditor } from "../../packages/md-editor";
-// или, если пакет установлен через workspace: "@bb-plugins/md-editor"
+// or, if the package is installed via a workspace: "@bb-plugins/md-editor"
 ```
 
-`react` и `react-dom` — peerDependencies: в сборке `bb plugin build` они
-externals (глобали хоста), поэтому второго инстанса React не появляется.
+`react` and `react-dom` are peerDependencies: in a `bb plugin build` build
+they're externals (host globals), so a second React instance never appears.
 
-## Пропсы `MarkdownEditor`
+## `MarkdownEditor` props
 
-| Проп            | Тип                                                                             | По умолчанию   | Описание                                                                 |
+| Prop            | Type                                                                             | Default   | Description                                                                 |
 | ---------------- | -------------------------------------------------------------------------------- | -------------- | -------------------------------------------------------------------------- |
-| `value`           | `string`                                                                          | —              | markdown-текст (controlled)                                                |
-| `onChange`        | `(v: string) => void`                                                            | —              | вызывается при изменении содержимого                                       |
-| `editable`        | `boolean`                                                                         | `true`         | смена значения пересоздаёт инстанс редактора                               |
-| `linkResolver`    | `(href: string) => { label?: string; onClick: () => void } \| null`             | —              | делает ссылку интерактивной; `null` — ссылка остаётся обычным текстом      |
-| `pathProvider`    | `(query: string, mode: "path" \| "import") => { path; label?; comment? }[]`     | —              | автокомплит путей в редакторе                                              |
-| `onSave`          | `(md: string) => Promise<void> \| void`                                          | —              | хук сохранения (например, ⌘S внутри редактора)                             |
-| `flush`           | `boolean`                                                                         | `false`        | убирает боковые format-margins (44px → 12px), для узких колонок            |
-| `className`       | `string`                                                                          | —              | дополнительный класс host-элемента                                         |
-| `hostClassName`   | `string`                                                                          | `"bb-mde-host"`| базовый класс host-элемента; тема (`theme.css`) таргетит `.bb-mde-host .mde-root` |
+| `value`           | `string`                                                                          | —              | markdown text (controlled)                                                |
+| `onChange`        | `(v: string) => void`                                                            | —              | called when the content changes                                       |
+| `editable`        | `boolean`                                                                         | `true`         | changing this value recreates the editor instance                               |
+| `linkResolver`    | `(href: string) => { label?: string; onClick: () => void } \| null`             | —              | makes a link interactive; `null` — the link stays plain text      |
+| `pathProvider`    | `(query: string, mode: "path" \| "import") => { path; label?; comment? }[]`     | —              | path autocomplete in the editor                                              |
+| `onSave`          | `(md: string) => Promise<void> \| void`                                          | —              | a save hook (e.g. ⌘S inside the editor)                             |
+| `flush`           | `boolean`                                                                         | `false`        | removes the side format margins (44px → 12px), for narrow columns            |
+| `className`       | `string`                                                                          | —              | extra class on the host element                                         |
+| `hostClassName`   | `string`                                                                          | `"bb-mde-host"`| base class of the host element; the theme (`theme.css`) targets `.bb-mde-host .mde-root` |
 
-Колбэки (`onChange`, `linkResolver`, `pathProvider`, `onSave`) можно менять
-между рендерами без пересоздания редактора — они читаются через
-стабильные прокси-обёртки. Пересоздаётся редактор только при смене
-`editable`.
+Callbacks (`onChange`, `linkResolver`, `pathProvider`, `onSave`) can change
+between renders without recreating the editor — they're read through stable
+proxy wrappers. The editor is only recreated when `editable` changes.
 
-## Ванильное использование
+## Vanilla usage
 
 ```ts
 import { VanillaMarkdownEditor } from "../../packages/md-editor";

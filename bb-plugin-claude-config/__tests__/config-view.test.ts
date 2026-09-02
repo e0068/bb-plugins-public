@@ -31,8 +31,8 @@ function input(overrides: Partial<ViewInput>): ViewInput {
   };
 }
 
-describe("buildConfigView — плагины", () => {
-  it("глобально: свитч вкл/выкл, без гашения", () => {
+describe("buildConfigView — plugins", () => {
+  it("globally: on/off switch, no dimming", () => {
     const view = buildConfigView(
       input({
         editedDoc: { enabledPlugins: { "figma@official": true } },
@@ -61,9 +61,9 @@ describe("buildConfigView — плагины", () => {
     ]);
   });
 
-  it("проект: строка, совпадающая с глобальным, гасится", () => {
-    // figma включён и глобально, и в проекте (совпадает) → dimmed;
-    // telegram глобально выкл, локально вкл (отличается) → не dimmed.
+  it("project: a row matching the global value is dimmed", () => {
+    // figma is enabled both globally and in the project (matches) → dimmed;
+    // telegram is off globally, on locally (differs) → not dimmed.
     const view = buildConfigView(
       input({
         areaKind: "project",
@@ -84,7 +84,7 @@ describe("buildConfigView — плагины", () => {
     ).toMatchObject({ value: true, dimmed: false });
   });
 
-  it("проект: локальный выключатель поверх глобально включённого — отличие", () => {
+  it("project: a local toggle over a globally enabled value — differs", () => {
     const view = buildConfigView(
       input({
         areaKind: "project",
@@ -102,7 +102,7 @@ describe("buildConfigView — плагины", () => {
     });
   });
 
-  it("показывает ключ из настроек, даже когда он уже не установлен", () => {
+  it("shows the key from settings even when it's no longer installed", () => {
     const view = buildConfigView(
       input({
         installedPluginsText: null,
@@ -124,8 +124,8 @@ describe("buildConfigView — плагины", () => {
   });
 });
 
-describe("buildConfigView — агенты", () => {
-  it("строит путь из каталога и имени, проектный перекрывает личного", () => {
+describe("buildConfigView — agents", () => {
+  it("builds the path from the directory and name, project overrides personal", () => {
     const view = buildConfigView(
       input({
         areaKind: "project",
@@ -151,13 +151,13 @@ describe("buildConfigView — агенты", () => {
     ]);
   });
 
-  it("нет файлов — список пуст", () => {
+  it("no files — the list is empty", () => {
     expect(buildConfigView(input({})).agents).toEqual([]);
   });
 });
 
-describe("buildConfigView — навыки", () => {
-  it("по умолчанию навык включён и полностью", () => {
+describe("buildConfigView — skills", () => {
+  it("a skill is enabled and full by default", () => {
     const view = buildConfigView(
       input({
         personalSkillPaths: ["preflight/SKILL.md"],
@@ -176,7 +176,7 @@ describe("buildConfigView — навыки", () => {
     ]);
   });
 
-  it("режим сводится по уровням, выключение даёт enabled=false", () => {
+  it("mode is resolved across levels, turning off gives enabled=false", () => {
     const view = buildConfigView(
       input({
         personalSkillPaths: ["a/SKILL.md", "b/SKILL.md"],
@@ -188,7 +188,7 @@ describe("buildConfigView — навыки", () => {
         ],
       }),
     );
-    // a выключен на узком уровне; b осталось name-only.
+    // a is turned off at the narrow level; b stays name-only.
     expect(view.skills.find((s) => s.name === "a")).toMatchObject({
       enabled: false,
       mode: "on",
@@ -199,9 +199,9 @@ describe("buildConfigView — навыки", () => {
     });
   });
 
-  it("проект: режим, совпадающий с глобальным, гасит строку", () => {
-    // preflight: глобально name-only, в проекте тоже name-only → dimmed;
-    // deploy: глобально on, локально off → отличие, не dimmed.
+  it("project: a mode matching the global value dims the row", () => {
+    // preflight: name-only globally, name-only in the project too → dimmed;
+    // deploy: on globally, off locally → differs, not dimmed.
     const view = buildConfigView(
       input({
         areaKind: "project",
@@ -226,7 +226,7 @@ describe("buildConfigView — навыки", () => {
     });
   });
 
-  it("оставшийся от удалённого навыка override видно как личный", () => {
+  it("an override left over from a removed skill shows as personal", () => {
     const view = buildConfigView(
       input({
         editedDoc: { skillOverrides: { ghost: "off" } },
@@ -259,8 +259,8 @@ const claudeJson = JSON.stringify({
   },
 });
 
-describe("buildConfigView — коннекторы", () => {
-  it("серверы .mcp.json: тумблер, по умолчанию выкл (нужен approve)", () => {
+describe("buildConfigView — connectors", () => {
+  it(".mcp.json servers: toggleable, off by default (approval needed)", () => {
     const view = buildConfigView(input({ mcpJsonText: mcpJson }));
     expect(view.connectors).toEqual([
       {
@@ -282,7 +282,7 @@ describe("buildConfigView — коннекторы", () => {
     ]);
   });
 
-  it("сервер в enabledMcpjsonServers — включён; в disabled — выключен", () => {
+  it("a server in enabledMcpjsonServers is on; in disabled it's off", () => {
     const view = buildConfigView(
       input({
         mcpJsonText: mcpJson,
@@ -302,7 +302,7 @@ describe("buildConfigView — коннекторы", () => {
     });
   });
 
-  it("enableAllProjectMcpServers включает не упомянутые серверы", () => {
+  it("enableAllProjectMcpServers turns on servers that aren't mentioned", () => {
     const view = buildConfigView(
       input({
         mcpJsonText: mcpJson,
@@ -314,7 +314,7 @@ describe("buildConfigView — коннекторы", () => {
         ],
       }),
     );
-    // serena не упомянут → включён по enableAll; linear явно запрещён.
+    // serena isn't mentioned → enabled via enableAll; linear is explicitly denied.
     expect(view.connectors.find((c) => c.name === "serena")).toMatchObject({
       value: true,
     });
@@ -323,7 +323,7 @@ describe("buildConfigView — коннекторы", () => {
     });
   });
 
-  it("user- и local-серверы из ~/.claude.json — read-only", () => {
+  it("user and local servers from ~/.claude.json — read-only", () => {
     const view = buildConfigView(
       input({
         areaKind: "project",
@@ -353,8 +353,8 @@ describe("buildConfigView — коннекторы", () => {
     ]);
   });
 
-  it("проект: сервер .mcp.json как глобально — гасится", () => {
-    // Включён на user-уровне; в проекте не переопределён → совпадает → dimmed.
+  it("project: a .mcp.json server matching the global value is dimmed", () => {
+    // Enabled at the user level; not overridden in the project → matches → dimmed.
     const view = buildConfigView(
       input({
         areaKind: "project",
@@ -370,8 +370,8 @@ describe("buildConfigView — коннекторы", () => {
   });
 });
 
-describe("buildConfigView — хуки", () => {
-  it("перечисляет хуки по уровням с происхождением", () => {
+describe("buildConfigView — hooks", () => {
+  it("lists hooks across levels with their origin", () => {
     const view = buildConfigView(
       input({
         areaKind: "project",
@@ -418,11 +418,11 @@ describe("buildConfigView — хуки", () => {
     ]);
   });
 
-  it("нет хуков — пустой список", () => {
+  it("no hooks — empty list", () => {
     expect(buildConfigView(input({})).hooks).toEqual([]);
   });
 
-  it("выключенные хуки уровня идут после активных, index:-1, enabled:false", () => {
+  it("a level's disabled hooks come after active ones, index:-1, enabled:false", () => {
     const view = buildConfigView(
       input({
         areaKind: "project",
@@ -465,7 +465,7 @@ describe("buildConfigView — хуки", () => {
     ]);
   });
 
-  it("пустой disabledHooksByLevel (в т.ч. короче levelDocs) не ломает сборку", () => {
+  it("an empty disabledHooksByLevel (including shorter than levelDocs) doesn't break the build", () => {
     const view = buildConfigView(
       input({
         levelDocs: [{}, {}],
@@ -477,8 +477,8 @@ describe("buildConfigView — хуки", () => {
   });
 });
 
-describe("buildConfigView — подгрузка инструментов", () => {
-  it("по умолчанию включена в режиме авто", () => {
+describe("buildConfigView — tool search", () => {
+  it("is enabled by default in auto mode", () => {
     const view = buildConfigView(input({}));
     expect(view.toolSearch).toEqual({
       enabled: true,
@@ -487,7 +487,7 @@ describe("buildConfigView — подгрузка инструментов", () =
     });
   });
 
-  it("узкий уровень перекрывает широкий (выключение)", () => {
+  it("a narrower level overrides a wider one (turning off)", () => {
     const view = buildConfigView(
       input({
         editedDoc: { env: { ENABLE_TOOL_SEARCH: "false" } },
@@ -501,7 +501,7 @@ describe("buildConfigView — подгрузка инструментов", () =
     expect(view.toolSearch).toMatchObject({ enabled: false, mode: "auto" });
   });
 
-  it("проект: режим, совпадающий с глобальным, гасит строку", () => {
+  it("project: a mode matching the global value dims the row", () => {
     const view = buildConfigView(
       input({
         areaKind: "project",

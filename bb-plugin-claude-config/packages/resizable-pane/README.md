@@ -1,14 +1,14 @@
 # @bb-plugins/resizable-pane
 
-Перетаскиваемая ширина для второй колонки внутри navPanel плагина.
+Draggable width for a plugin's navPanel second column.
 
-Появился как замена `experimental_fixedTabs`: в bb 0.40.0 navPanel с этой опцией
-не монтируется и пункт пропадает из сайдбара (см. задачу BP-53). Содержимое, что
-раньше жило фиксированной вкладкой в правой хостовой панели с её разделителем,
-переносится второй колонкой внутрь самой панели — а этот пакет возвращает
-перетаскиваемую ширину.
+Came about as a replacement for `experimental_fixedTabs`: in bb 0.40.0 a
+navPanel with that option doesn't mount and the item disappears from the
+sidebar (see task BP-53). Content that used to live as a fixed tab in the
+host's right panel with its own divider is moved into a second column inside
+the panel itself — and this package provides the draggable width.
 
-## Использование
+## Usage
 
 ```tsx
 import { ResizeHandle, useResizableWidth } from "../packages/resizable-pane/react";
@@ -20,15 +20,15 @@ function Panel({ subPath }: PluginNavPanelProps) {
     max: 900,
     storageKey: "my-plugin:doc-pane-width",
   });
-  const open = /* что-то выбрано */;
+  const open = /* something is selected */;
   return (
     <div className="flex h-full min-h-0">
-      <div className="min-h-0 flex-1 overflow-y-auto">…основное…</div>
+      <div className="min-h-0 flex-1 overflow-y-auto">…main content…</div>
       {open && (
         <>
           <ResizeHandle onPointerDown={startResize} />
           <div style={{ width }} className="h-full min-h-0 shrink-0 overflow-hidden">
-            …вторая колонка…
+            …second column…
           </div>
         </>
       )}
@@ -37,8 +37,9 @@ function Panel({ subPath }: PluginNavPanelProps) {
 }
 ```
 
-Ручка на левой стороне правого пана: тянем влево — пан шире. Ширина зажата в
-`[min, max]` и (если задан `storageKey`) запоминается в `localStorage`.
+Handle on the left side of the right pane: drag left — the pane gets wider.
+The width is clamped to `[min, max]` and (if `storageKey` is given)
+remembered in `localStorage`.
 
-Чистая геометрия (`geometry.ts`) отделена от DOM и покрыта тестами
+Pure geometry (`geometry.ts`) is separated from the DOM and covered by tests
 (`geometry.test.ts`).

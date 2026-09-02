@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { canGoBack, current, goBack, initStack, jumpTo } from "./jump-stack";
 
 describe("initStack", () => {
-  it("текущий — первый элемент, назад некуда", () => {
+  it("current is the first element, nowhere to go back", () => {
     const s = initStack("/a.md");
     expect(current(s)).toBe("/a.md");
     expect(canGoBack(s)).toBe(false);
@@ -10,7 +10,7 @@ describe("initStack", () => {
 });
 
 describe("jumpTo", () => {
-  it("толкает новый путь и меняет current", () => {
+  it("pushes a new path and changes current", () => {
     const s1 = initStack("/a.md");
     const s2 = jumpTo(s1, "/b.md");
     expect(current(s2)).toBe("/b.md");
@@ -18,7 +18,7 @@ describe("jumpTo", () => {
     expect(s2.stack).toEqual(["/a.md", "/b.md"]);
   });
 
-  it("тем же путём подряд не даёт дубля", () => {
+  it("the same path in a row doesn't produce a duplicate", () => {
     const s1 = initStack("/a.md");
     const s2 = jumpTo(s1, "/a.md");
     expect(s2).toBe(s1);
@@ -27,7 +27,7 @@ describe("jumpTo", () => {
 });
 
 describe("goBack", () => {
-  it("возвращает предыдущий элемент", () => {
+  it("returns to the previous element", () => {
     const s1 = initStack("/a.md");
     const s2 = jumpTo(s1, "/b.md");
     const s3 = goBack(s2);
@@ -35,7 +35,7 @@ describe("goBack", () => {
     expect(canGoBack(s3)).toBe(false);
   });
 
-  it("на корне не падает (no-op)", () => {
+  it("doesn't fail at the root (no-op)", () => {
     const s1 = initStack("/a.md");
     const s2 = goBack(s1);
     expect(current(s2)).toBe("/a.md");

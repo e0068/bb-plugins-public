@@ -38,14 +38,14 @@ export interface MarkdownEditorProps {
   ) => { path: string; label?: string; comment?: string }[];
   onSave?: (md: string) => Promise<void> | void;
   /**
-   * Убирает боковые «format margins» md-editor (md-editor.css, `padding: 4px
-   * 44px`) — в узкой колонке эти поля съедают ширину под текст. У md-editor
-   * нет опции для этого padding, поэтому вешаем класс на host, а правило
-   * живёт в ./theme.css. Default false.
+   * Removes md-editor's side "format margins" (md-editor.css, `padding: 4px
+   * 44px`) — in a narrow column those margins eat into the text's width.
+   * md-editor has no option for this padding, so we hang a class on the
+   * host, and the rule lives in ./theme.css. Default false.
    */
   flush?: boolean;
   className?: string;
-  /** Базовый класс host-элемента. Default "bb-mde-host". */
+  /** Base class of the host element. Default "bb-mde-host". */
   hostClassName?: string;
 }
 

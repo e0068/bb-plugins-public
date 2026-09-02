@@ -1,15 +1,15 @@
-// Тесты workflow-конструктора, перенесённого из bb-plugin-workflow-composer/
-// server.ts в этот сервер (см. server.ts, раздел «workflow-конструктор: чистые
-// функции и общие типы» + «сием и обработчики»).
+// Tests for the workflow composer moved from bb-plugin-workflow-composer/
+// server.ts into this server (see server.ts, the "workflow composer: pure
+// functions and shared types" + "seam and handlers" sections).
 //
-// Два слоя тестов:
-//  - чистые функции модульного уровня — напрямую, без хоста;
-//  - wf*-обработчики RPC — тем же харнессом, что и __tests__/server.test.ts:
-//    createFakePluginHost + default-экспорт plugin(bb) + harness.behavior.callRpc.
-//    Отдельной фабрики createPlugin(bb, deps) в этом сервере нет (сием инлайн
-//    внутри plugin(bb)), но она и не нужна: обработчики регистрируются в тот
-//    же bb.rpc.register, который поднимает и остальной сервер, так что тот же
-//    харнесс их вызывает без всякой инъекции.
+// Two layers of tests:
+//  - module-level pure functions — directly, no host;
+//  - wf*-RPC handlers — via the same harness as __tests__/server.test.ts:
+//    createFakePluginHost + the default export plugin(bb) + harness.behavior.callRpc.
+//    This server has no separate createPlugin(bb, deps) factory (the seam is
+//    inline inside plugin(bb)), but none is needed: the handlers register on
+//    the same bb.rpc.register that boots the rest of the server, so the same
+//    harness calls them with no injection at all.
 import { describe, it, expect, afterEach } from "vitest";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -118,17 +118,18 @@ describe("resolveBbBin", () => {
   });
 });
 
-// ---- wf*-обработчики RPC: тот же харнесс, что и __tests__/server.test.ts ----
+// ---- wf*-RPC handlers: the same harness as __tests__/server.test.ts ----
 //
-// ВАЖНО про изоляцию: server.ts вычисляет wfHome = homedir() ОДИН РАЗ при
-// вызове plugin(bb) (сием инлайн, инъекции homeDir нет — в отличие от
-// bb-plugin-workflow-composer/server.ts, где homeDir приходил через
-// WorkflowDeps). Пути wf*-обработчиков (личные agents/, глобальный workflows/
-// store) собираются от этого wfHome — без подмены пути в ассертах ниже
-// (join(homeDir, ".claude", ...)) зависели бы от реального домашнего каталога
-// машины и были бы недетерминированы. os.homedir() на этой платформе читает
-// $HOME (проверено), поэтому каждый setup() перед вызовом plugin(bb) подменяет
-// $HOME на одноразовый temp-каталог и возвращает его в afterEach.
+// IMPORTANT about isolation: server.ts computes wfHome = homedir() ONCE when
+// plugin(bb) is called (the seam is inline, there's no homeDir injection —
+// unlike bb-plugin-workflow-composer/server.ts, where homeDir came in via
+// WorkflowDeps). The wf*-handlers' paths (personal agents/, the global
+// workflows/ store) are built from this wfHome — without swapping the path,
+// the assertions below (join(homeDir, ".claude", ...)) would depend on the
+// machine's real home directory and would be nondeterministic. os.homedir()
+// on this platform reads $HOME (verified), so every setup() before calling
+// plugin(bb) swaps $HOME for a disposable temp directory and restores it in
+// afterEach.
 const REAL_HOME = process.env.HOME;
 const fakeHomeDirs: string[] = [];
 
@@ -147,12 +148,13 @@ function setup() {
   return { bb, harness, homeDir, call: (m: string, i?: unknown) => harness.behavior.callRpc(m, i) };
 }
 
-// Единственный источник проекта, используемый во всех wf*-тестах ниже:
-// checkout "/repo" на хосте "h1". gitWorktrees(root) в server.ts спавнит
-// настоящий `git -C <root> worktree list` без сида — "/repo" не существует на
-// диске, поэтому git детерминированно ошибается и функция глотает ошибку в [];
-// итоговый набор корней union'а — ровно [src.path], так что дедуп по нескольким
-// чекаутам здесь не проверяется (см. задание группы: «обойди одним корнем»).
+// The single project source used across all wf*-tests below: checkout
+// "/repo" on host "h1". gitWorktrees(root) in server.ts spawns a real
+// `git -C <root> worktree list` with no stub — "/repo" doesn't exist on
+// disk, so git deterministically fails and the function swallows the error
+// into []; the resulting union of roots is exactly [src.path], so dedup
+// across multiple checkouts isn't tested here (see the group's brief:
+// "walk with a single root").
 function stubProject(harness: ReturnType<typeof createFakePluginHost>["harness"]) {
   harness.sdk.stub("projects.get", () => ({
     id: "p1",
@@ -275,10 +277,10 @@ describe("wfRead / wfRemove — path fencing via wfResolveFile", () => {
 });
 
 describe("wfValidate / wfRun — reject before spawning the bb CLI on a fenced-out path", () => {
-  // Ветка «валидный путь → реально спавнит bb» здесь намеренно не тестируется:
-  // runBbCli/gitWorktrees в server.ts спавнят настоящий процесс без сида (по
-  // заданию группы), так что детерминированно проверяется только throw-ветка
-  // wfResolveFile, случающаяся ДО всякого spawn.
+  // The "valid path → actually spawns bb" branch is intentionally not tested
+  // here: runBbCli/gitWorktrees in server.ts spawn a real process with no
+  // stub (per the group's brief), so only the throw branch of wfResolveFile,
+  // which happens BEFORE any spawn, is checked deterministically.
   it("wfValidate rejects a global path outside the store dir without spawning", async () => {
     const { call } = setup();
     await expect(call("wfValidate", { projectId: null, store: "global", path: "/etc/evil.js" })).rejects.toBeTruthy();

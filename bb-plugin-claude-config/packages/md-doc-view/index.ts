@@ -1,14 +1,14 @@
-// Публичный вход пакета: презентационный компонент MD Opener и его типы. Обёртка
-// KasimovEditor — внутренняя деталь, наружу не реэкспортируется (потребитель
-// работает через MdDocView и инъекцию эффектов).
+// Public entry point of the package: MD Opener's presentational component and
+// its types. The KasimovEditor wrapper is an internal detail, not re-exported
+// (the consumer works through MdDocView and effect injection).
 export { MdDocView } from "./MdDocView";
 export type {
   MdDocViewProps,
   LoadedDoc,
   SaveResult,
 } from "./MdDocView";
-// Общая схема настроек Kasimov (кегли/отступы/цвета/флаги). Значения каждый
-// плагин хранит свои; здесь только схема и чистые преобразования.
+// The shared Kasimov settings schema (sizes/gaps/colors/flags). Each plugin
+// stores its own values; only the schema and pure transforms live here.
 export {
   CSS_FIELDS,
   FLAG_FIELDS,
