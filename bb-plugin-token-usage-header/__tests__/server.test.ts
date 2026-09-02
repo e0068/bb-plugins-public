@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { createFakePluginHost } from "@get-bb/plugin-sdk/testing";
 import {
+  DEFAULT_GEAR_SETTINGS,
   DEFAULT_VIZ_SETTINGS,
   VIZ_SETTINGS_KV_KEY,
   type AgentTimeline,
@@ -61,6 +62,8 @@ function emptyAgentTimeline(): AgentTimeline {
       responseFullTruncated: false,
     },
     events: [],
+    prNumbers: [],
+    mergeEvents: [],
   };
 }
 
@@ -159,7 +162,7 @@ describe("server.ts sessionTokenUsage", () => {
         async (): Promise<TokensRunResult> => ({
           ok: false,
           reason: "python_not_found",
-          message: "Не найден интерпретатор Python (python3 или python) в PATH.",
+          message: "Python interpreter (python3 or python) not found in PATH.",
         }),
       ),
     });
@@ -169,7 +172,7 @@ describe("server.ts sessionTokenUsage", () => {
 
     expect(result).toEqual({
       status: "error",
-      message: "Не найден интерпретатор Python (python3 или python) в PATH.",
+      message: "Python interpreter (python3 or python) not found in PATH.",
     });
   });
 
@@ -186,7 +189,7 @@ describe("server.ts sessionTokenUsage", () => {
           ok: false,
           reason: "invalid_output",
           message:
-            "empty output (код завершения 2): python3: can't open file 'tools/tokens.py': [Errno 2] No such file or directory",
+            "empty output (exit code 2): python3: can't open file 'tools/tokens.py': [Errno 2] No such file or directory",
         }),
       ),
     });
@@ -197,7 +200,7 @@ describe("server.ts sessionTokenUsage", () => {
     expect(result).toEqual({
       status: "error",
       message:
-        "empty output (код завершения 2): python3: can't open file 'tools/tokens.py': [Errno 2] No such file or directory",
+        "empty output (exit code 2): python3: can't open file 'tools/tokens.py': [Errno 2] No such file or directory",
     });
   });
 
@@ -209,14 +212,14 @@ describe("server.ts sessionTokenUsage", () => {
     // "error" status with readable text.
     const service = fakeService({
       resolveSessionId: vi.fn(async () => {
-        throw new Error("демон недоступен");
+        throw new Error("daemon unavailable");
       }),
     });
     const harness = await loadPlugin(service);
 
     const result = await harness.callRpc("sessionTokenUsage", { threadId: "thread-1" });
 
-    expect(result).toEqual({ status: "error", message: "демон недоступен" });
+    expect(result).toEqual({ status: "error", message: "daemon unavailable" });
   });
 
   it("returns error when the query itself throws, not just when it resolves to ok:false", async () => {
@@ -324,7 +327,7 @@ describe("server.ts sessionTokenUsage", () => {
           project: "my-project",
           agent: {
             id: "a9e92d5bea00f5cb7",
-            description: "H4: тесты",
+            description: "H4: tests",
             agentType: "general-purpose",
             model: "sonnet",
             workflowRunId: null,
@@ -404,14 +407,14 @@ describe("server.ts sessionTokenUsage", () => {
       agents: [
         {
           key: "agent-a9e92d5bea00f5cb7",
-          name: "H4: тесты",
+          name: "H4: tests",
           caption: "general-purpose · sonnet 100",
           total: 500,
           cost: 0.12,
         },
         {
           key: "main",
-          name: "Главный агент",
+          name: "Main agent",
           caption: "sonnet 100",
           total: 1500,
           cost: 0.4,
@@ -464,13 +467,13 @@ describe("server.ts agentTimeline", () => {
       agent: {
         key: "agent-abc",
         agentType: "general-purpose",
-        description: "H4: тесты",
+        description: "H4: tests",
         model: "sonnet",
         spawnDepth: 1,
-        promptExcerpt: "запусти тесты",
-        requestFull: "запусти тесты полностью",
+        promptExcerpt: "run the tests",
+        requestFull: "run the tests fully",
         requestFullTruncated: false,
-        responseFull: "готово, всё прошло",
+        responseFull: "done, everything passed",
         responseFullTruncated: false,
       },
       events: [
@@ -480,13 +483,15 @@ describe("server.ts agentTimeline", () => {
           ts: "2026-08-25T10:00:02Z",
           kind: "message",
           role: "assistant",
-          text: "готово",
-          fullText: "готово, всё прошло",
+          text: "done",
+          fullText: "done, everything passed",
           fullTextTruncated: false,
           tokens: 120,
           cost: 0.03,
         },
       ],
+      prNumbers: [],
+      mergeEvents: [],
     };
     const report: TokensReport = {
       ...emptyReport(),
@@ -505,6 +510,7 @@ describe("server.ts agentTimeline", () => {
       status: "ready",
       agent: timeline.agent,
       events: timeline.events,
+      mergeEvents: timeline.mergeEvents,
       totals: { total: 900, cost: 0.2 },
       agents: [{ key: "main", total: 900, cost: 0.2 }],
     });
@@ -513,7 +519,7 @@ describe("server.ts agentTimeline", () => {
   it("returns error with the backend's message when the totals query fails", async () => {
     const service = fakeService({
       query: vi.fn(
-        async (): Promise<TokensRunResult> => ({ ok: false, reason: "python_not_found", message: "нет python" }),
+        async (): Promise<TokensRunResult> => ({ ok: false, reason: "python_not_found", message: "no python" }),
       ),
     });
     const agentTimelineService = fakeAgentTimelineService();
@@ -521,33 +527,33 @@ describe("server.ts agentTimeline", () => {
 
     const result = await harness.callRpc("agentTimeline", { session: "sess-1", agent: "main" });
 
-    expect(result).toEqual({ status: "error", message: "нет python" });
+    expect(result).toEqual({ status: "error", message: "no python" });
   });
 
   it("returns error with the backend's message when the timeline query fails", async () => {
     const service = fakeService();
     const agentTimelineService = fakeAgentTimelineService({
-      query: vi.fn(async (): Promise<AgentTimelineRunResult> => ({ ok: false, reason: "invalid_output", message: "плохой вывод" })),
+      query: vi.fn(async (): Promise<AgentTimelineRunResult> => ({ ok: false, reason: "invalid_output", message: "bad output" })),
     });
     const harness = await loadPluginWithDeps({ service, agentTimelineService });
 
     const result = await harness.callRpc("agentTimeline", { session: "sess-1", agent: "main" });
 
-    expect(result).toEqual({ status: "error", message: "плохой вывод" });
+    expect(result).toEqual({ status: "error", message: "bad output" });
   });
 
   it("returns error instead of letting a thrown exception surface as a raw transport failure", async () => {
     const service = fakeService();
     const agentTimelineService = fakeAgentTimelineService({
       query: vi.fn(async () => {
-        throw new Error("демон недоступен");
+        throw new Error("daemon unavailable");
       }),
     });
     const harness = await loadPluginWithDeps({ service, agentTimelineService });
 
     const result = await harness.callRpc("agentTimeline", { session: "sess-1", agent: "main" });
 
-    expect(result).toEqual({ status: "error", message: "демон недоступен" });
+    expect(result).toEqual({ status: "error", message: "daemon unavailable" });
   });
 
   it("rejects an output that doesn't conform to the strict schema", async () => {
@@ -630,15 +636,26 @@ describe("server.ts threadsTimeline", () => {
           totalCost: 0.75,
           workflowCount: 3,
           bins: [{ t: "2026-08-25T10:00:00Z", agents: [{ key: "main", total: 1500 }] }],
+          cwd: "/repo",
+          gitBranch: "main",
+          events: [
+            {
+              type: "pr",
+              ts: "2026-08-25T10:02:00Z",
+              number: 73,
+              url: "https://github.com/e0068/bb-plugins/pull/73",
+              repository: "e0068/bb-plugins",
+            },
+          ],
           bbProjectId: "proj-1",
           bbProjectName: "bb-plugins",
           threadId: "thread-1",
-          bbThreadTitle: "Тред 1",
+          bbThreadTitle: "Thread 1",
           isAlive: true,
           isWorking: true,
         },
       ],
-      agentLabels: { main: "Главный агент" },
+      agentLabels: { main: "Main agent" },
     };
     const threadsTimelineService = fakeThreadsTimelineService({
       query: vi.fn(async (): Promise<ThreadsTimelineRunResult> => ({ ok: true, data: timeline })),
@@ -657,26 +674,26 @@ describe("server.ts threadsTimeline", () => {
 
   it("returns error with the backend's message when the query fails", async () => {
     const threadsTimelineService = fakeThreadsTimelineService({
-      query: vi.fn(async (): Promise<ThreadsTimelineRunResult> => ({ ok: false, reason: "invalid_params", message: "плохой unit" })),
+      query: vi.fn(async (): Promise<ThreadsTimelineRunResult> => ({ ok: false, reason: "invalid_params", message: "bad unit" })),
     });
     const harness = await loadPluginWithDeps({ threadsTimelineService });
 
     const result = await harness.callRpc("threadsTimeline", { limit: 20, unit: 60 });
 
-    expect(result).toEqual({ status: "error", message: "плохой unit" });
+    expect(result).toEqual({ status: "error", message: "bad unit" });
   });
 
   it("returns error instead of letting a thrown exception surface as a raw transport failure", async () => {
     const threadsTimelineService = fakeThreadsTimelineService({
       query: vi.fn(async () => {
-        throw new Error("демон недоступен");
+        throw new Error("daemon unavailable");
       }),
     });
     const harness = await loadPluginWithDeps({ threadsTimelineService });
 
     const result = await harness.callRpc("threadsTimeline", { limit: 20, unit: 60 });
 
-    expect(result).toEqual({ status: "error", message: "демон недоступен" });
+    expect(result).toEqual({ status: "error", message: "daemon unavailable" });
   });
 
   it("rejects an output that doesn't conform to the strict schema", async () => {
@@ -756,7 +773,7 @@ describe("server.ts threadsTimeline", () => {
       schemaVersion: 1,
       unit: 60,
       threads: [],
-      agentLabels: { main: "Главный агент", "agent-abc": "Ревью PR" },
+      agentLabels: { main: "Main agent", "agent-abc": "PR review" },
     };
     const threadsTimelineService = fakeThreadsTimelineService({
       query: vi.fn(async (): Promise<ThreadsTimelineRunResult> => ({ ok: true, data: timeline })),
@@ -765,7 +782,7 @@ describe("server.ts threadsTimeline", () => {
 
     const result = await harness.callRpc("threadsTimeline", { limit: 20, unit: 60 });
 
-    expect(result).toMatchObject({ agentLabels: { main: "Главный агент", "agent-abc": "Ревью PR" } });
+    expect(result).toMatchObject({ agentLabels: { main: "Main agent", "agent-abc": "PR review" } });
   });
 });
 
@@ -780,7 +797,7 @@ describe("server.ts loadVizSettings / saveVizSettings", () => {
 
   it("round-trips a saved value through the fake host's own bb.storage.kv (no deps.kv override)", async () => {
     const { harness } = await loadPluginFull();
-    const toSave = validVizSettings({ unit: 900, sortMode: "tokens", agentColors: { main: "#3b82f6" } });
+    const toSave = validVizSettings({ sortMode: "tokens", agentColors: { main: "#3b82f6" } });
 
     const saveResult = await harness.callRpc("saveVizSettings", toSave);
     expect(saveResult).toEqual({ ok: true });
@@ -791,7 +808,7 @@ describe("server.ts loadVizSettings / saveVizSettings", () => {
 
   it("persists straight to bb.storage.kv under the shared key, readable independently of the RPC layer", async () => {
     const { bb, harness } = await loadPluginFull();
-    const toSave = validVizSettings({ heightScale: 2 });
+    const toSave = validVizSettings({ costMin: "0.5" });
 
     await harness.callRpc("saveVizSettings", toSave);
 
@@ -816,17 +833,16 @@ describe("server.ts loadVizSettings / saveVizSettings", () => {
     expect(result).toEqual(DEFAULT_VIZ_SETTINGS);
   });
 
-  it("rejects saveVizSettings when a known field is out of its allowed range", async () => {
+  it("rejects saveVizSettings when a known enum field holds a value outside its allowed set", async () => {
     const { harness } = await loadPluginFull();
+    const bad = { ...validVizSettings(), threads: { ...DEFAULT_VIZ_SETTINGS.threads, sortMode: "bogus" } };
 
-    await expect(
-      harness.callRpc("saveVizSettings", validVizSettings({ heightScale: 999 })),
-    ).rejects.toThrow();
+    await expect(harness.callRpc("saveVizSettings", bad)).rejects.toThrow();
   });
 
   it("rejects saveVizSettings when a known field has the wrong type", async () => {
     const { harness } = await loadPluginFull();
-    const bad = { ...validVizSettings(), threads: { ...DEFAULT_VIZ_SETTINGS.threads, unit: "sixty" } };
+    const bad = { ...validVizSettings(), threads: { ...DEFAULT_VIZ_SETTINGS.threads, sortMode: 123 } };
 
     await expect(harness.callRpc("saveVizSettings", bad)).rejects.toThrow();
   });
@@ -892,5 +908,46 @@ describe("server.ts loadVizSettings / saveVizSettings", () => {
     const { harness } = await loadPluginFull({ kv: rejectingKv });
 
     await expect(harness.callRpc("saveVizSettings", validVizSettings())).rejects.toThrow("kv unreachable");
+  });
+});
+
+describe("server.ts gear settings (bb.settings.define)", () => {
+  it("declares exactly the 16 former gear-popover fields, each carrying DEFAULT_GEAR_SETTINGS's own default (single source of truth)", async () => {
+    const { harness } = await loadPluginFull();
+    const descriptors = harness.inspection.registrations.settingsDescriptors;
+
+    expect(Object.keys(descriptors).sort()).toEqual(
+      [
+        "unit",
+        "fillWidthFeed",
+        "fillWidthPopover",
+        "fillWidthSession",
+        "hugWidth",
+        "contentFullWidth",
+        "contentMaxWidthPx",
+        "heightMode",
+        "collapseEmpty",
+        "colWidthPx",
+        "heightScale",
+        "colGap",
+        "segGap",
+        "colRadius",
+        "segRadius",
+        "frameLiftColor",
+      ].sort(),
+    );
+
+    for (const [key, defaultValue] of Object.entries(DEFAULT_GEAR_SETTINGS)) {
+      const expected = typeof defaultValue === "boolean" ? defaultValue : String(defaultValue);
+      expect(descriptors[key].default).toEqual(expected);
+    }
+  });
+
+  it("declares unit/heightMode as select descriptors whose options list matches GEAR_UNIT_OPTIONS/GEAR_HEIGHT_MODE_OPTIONS", async () => {
+    const { harness } = await loadPluginFull();
+    const descriptors = harness.inspection.registrations.settingsDescriptors;
+
+    expect(descriptors.unit).toMatchObject({ type: "select", options: ["30", "60", "300", "900", "3600"] });
+    expect(descriptors.heightMode).toMatchObject({ type: "select", options: ["shared", "perCard"] });
   });
 });

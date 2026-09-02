@@ -32,11 +32,11 @@ function buildAgentDetailSubPath(params: AgentDetailLinkParams): string {
 function assertMatchesContract(method: keyof typeof rpcContract, input: unknown) {
   const result = rpcContract[method].input["~standard"].validate(input);
   if (result instanceof Promise) {
-    throw new Error(`схема метода "${method}" асинхронная — тест этого не ждёт`);
+    throw new Error(`method "${method}"'s schema is async — this test doesn't await it`);
   }
   if (result.issues !== undefined) {
     throw new Error(
-      `вход метода "${method}" не проходит контракт: ${JSON.stringify(input)}\n` +
+      `method "${method}"'s input fails the contract: ${JSON.stringify(input)}\n` +
         result.issues.map((issue) => `  · ${issue.message}`).join("\n"),
     );
   }
@@ -78,10 +78,13 @@ const THREADS_READY = {
         { t: "2026-08-25T09:00:00.000Z", agents: [{ key: "main", total: 3000 }] },
         { t: "2026-08-25T09:01:00.000Z", agents: [{ key: "main", total: 1500 }, { key: "code-reviewer", total: 500 }] },
       ],
+      cwd: null,
+      gitBranch: null,
+      events: [],
       bbProjectId: "bb-proj-1",
       bbProjectName: "Token Usage Header",
       threadId: "thread-aaa",
-      bbThreadTitle: "Тред А",
+      bbThreadTitle: "Thread A",
     },
     {
       session: THREAD_B_SESSION,
@@ -94,6 +97,9 @@ const THREADS_READY = {
       totalCost: 0.05,
       workflowCount: 0,
       bins: [{ t: "2026-08-25T08:00:00.000Z", agents: [{ key: "main", total: 1000 }] }],
+      cwd: null,
+      gitBranch: null,
+      events: [],
       // No matching BB thread — the "Threads" bucket on the project picker,
       // and the card falls back to the short session id for its title.
       bbProjectId: null,
@@ -105,10 +111,10 @@ const THREADS_READY = {
   // "main" gets a real label; "code-reviewer" is left unmapped on purpose —
   // exercises the labelFor fallback (agentLabels[key] ?? key) alongside the
   // mapped case, in the same fixture used by most tests below.
-  agentLabels: { main: "Главный агент" },
+  agentLabels: { main: "Main agent" },
 };
 
-// Fixture for the collapseEmpty (\"Схлопнуть пустоты\") feature tests below —
+// Fixture for the collapseEmpty ("Collapse gaps") feature tests below —
 // two consecutive empty bins sandwiched between real activity, isolated from
 // THREADS_READY so those existing tests' bin counts/tooltips stay untouched.
 const COLLAPSE_SESSION = "sess_collapse1";
@@ -132,16 +138,22 @@ const THREADS_WITH_GAPS = {
         { t: "2026-08-25T09:02:00.000Z", agents: [] },
         { t: "2026-08-25T09:03:00.000Z", agents: [{ key: "main", total: 1000 }] },
       ],
+      cwd: null,
+      gitBranch: null,
+      events: [],
       bbProjectId: "bb-proj-1",
       bbProjectName: "Token Usage Header",
       threadId: "thread-collapse",
-      bbThreadTitle: "Тред с паузой",
+      bbThreadTitle: "Thread with a pause",
     },
   ],
-  agentLabels: { main: "Главный агент" },
+  agentLabels: { main: "Main agent" },
 };
 
-async function renderThreadsTimeline(rpc: Partial<PluginRpcTestHandlers<typeof rpcContract>>) {
+async function renderThreadsTimeline(
+  rpc: Partial<PluginRpcTestHandlers<typeof rpcContract>>,
+  settings?: Record<string, string | boolean>,
+) {
   const app = await loadPluginApp(() => import("../app"));
   const registration = app.navPanels.find((p) => p.id === "threads-timeline");
   if (!registration) throw new Error("threads-timeline nav panel is not registered");
@@ -154,15 +166,18 @@ async function renderThreadsTimeline(rpc: Partial<PluginRpcTestHandlers<typeof r
     saveVizSettings: async () => ({ ok: true as const }),
     ...rpc,
   };
-  return renderSlot<PluginNavPanelProps, typeof rpcContract>(registration, props, { rpc: fullRpc });
+  return renderSlot<PluginNavPanelProps, typeof rpcContract>(registration, props, { rpc: fullRpc, settings });
 }
 
-// Every control except project filter / sort / search now lives behind the
-// gear popover (unit, fill/collapse toggles, width/height, geometry, agent
-// colours). Open it before asserting or driving any of those.
-async function openSettings() {
-  fireEvent.click(screen.getByRole("button", { name: "Настройки диаграммы" }));
-  await screen.findByText("Единица времени");
+// Everything except project filter / sort / search / agent colours now lives
+// on the plugin's native Settings page (Tools → Usage Analytics, via
+// bb.settings.define — see src/core/gear-settings.ts) and is exercised here
+// through renderThreadsTimeline's `settings` option, not by clicking an
+// in-page control. Only the per-agent colour picker remains an in-page
+// popover — open it before asserting or driving that.
+async function openAgentColors() {
+  fireEvent.click(screen.getByRole("button", { name: "Agent colors" }));
+  await screen.findByText("Agent colors");
 }
 
 describe("threads-timeline nav panel", () => {
@@ -181,7 +196,7 @@ describe("threads-timeline nav panel", () => {
       },
     });
 
-    await screen.findByText("Тред А");
+    await screen.findByText("Thread A");
     await screen.findByText(THREAD_B_FALLBACK_TITLE);
 
     for (const call of slot.rpcCalls) {
@@ -189,29 +204,25 @@ describe("threads-timeline nav panel", () => {
     }
   });
 
-  it("re-fetches with the new unit (and reset limit) when the unit switcher is clicked, still matching the contract", async () => {
+  it("fetches with the bucket width from the plugin's Settings page (bb.settings.define), not a hardcoded unit", async () => {
     let lastInput: unknown;
-    const slot = await renderThreadsTimeline({
-      threadsTimeline: async (input) => {
-        lastInput = input;
-        return { ...THREADS_READY, unit: (input as { unit: number }).unit };
+    await renderThreadsTimeline(
+      {
+        threadsTimeline: async (input) => {
+          lastInput = input;
+          return { ...THREADS_READY, unit: (input as { unit: number }).unit };
+        },
       },
-    });
-    await screen.findByText("Тред А");
+      { unit: "300" },
+    );
 
-    await openSettings();
-    fireEvent.click(screen.getByRole("button", { name: "5m" }));
-
-    await screen.findByText("Тред А");
+    await screen.findByText("Thread A");
     expect(lastInput).toEqual({ limit: 20, unit: 300 });
-    for (const call of slot.rpcCalls) {
-      assertMatchesContract(call.method as keyof typeof rpcContract, call.input);
-    }
   });
 
   it("builds the project picker from bbProjectName (real BB projects) plus a \"Threads\" bucket for bbProjectName===null, not the raw directory slug", async () => {
     await renderThreadsTimeline({ threadsTimeline: async () => THREADS_READY });
-    await screen.findByText("Тред А");
+    await screen.findByText("Thread A");
 
     // The real BB project name shows up as a chip…
     screen.getByRole("button", { name: "Token Usage Header" });
@@ -226,12 +237,12 @@ describe("threads-timeline nav panel", () => {
     const slot = await renderThreadsTimeline({
       threadsTimeline: async () => THREADS_READY,
     });
-    await screen.findByText("Тред А");
+    await screen.findByText("Thread A");
     const callsBefore = slot.rpcCalls.length;
 
     fireEvent.click(screen.getByRole("button", { name: "Token Usage Header" }));
 
-    await screen.findByText("Тред А");
+    await screen.findByText("Thread A");
     expect(screen.queryByText(THREAD_B_FALLBACK_TITLE)).toBeNull();
     expect(slot.rpcCalls.length).toBe(callsBefore);
   });
@@ -240,31 +251,31 @@ describe("threads-timeline nav panel", () => {
     const slot = await renderThreadsTimeline({
       threadsTimeline: async () => THREADS_READY,
     });
-    await screen.findByText("Тред А");
+    await screen.findByText("Thread A");
     const callsBefore = slot.rpcCalls.length;
 
     fireEvent.click(screen.getByRole("button", { name: "Threads" }));
 
     await screen.findByText(THREAD_B_FALLBACK_TITLE);
-    expect(screen.queryByText("Тред А")).toBeNull();
+    expect(screen.queryByText("Thread A")).toBeNull();
     expect(slot.rpcCalls.length).toBe(callsBefore);
   });
 
   it("filters rows client-side by search text", async () => {
     await renderThreadsTimeline({ threadsTimeline: async () => THREADS_READY });
-    await screen.findByText("Тред А");
+    await screen.findByText("Thread A");
 
-    fireEvent.change(screen.getByPlaceholderText("По названию или ID сессии"), { target: { value: "bbb222" } });
+    fireEvent.change(screen.getByPlaceholderText("By name or session ID"), { target: { value: "bbb222" } });
 
     await screen.findByText(THREAD_B_FALLBACK_TITLE);
-    expect(screen.queryByText("Тред А")).toBeNull();
+    expect(screen.queryByText("Thread A")).toBeNull();
   });
 
   it("clicking a bar segment navigates to the threads panel's agent-detail sub-view with agent/session/from/to, no threadId", async () => {
     const slot = await renderThreadsTimeline({ threadsTimeline: async () => THREADS_READY });
-    await screen.findByText("Тред А");
+    await screen.findByText("Thread A");
 
-    const segment = screen.getByLabelText(/code-reviewer: 500 токенов/);
+    const segment = screen.getByLabelText(/code-reviewer: 500 tokens/);
     fireEvent.click(segment);
 
     expect(slot.navigateCalls).toContainEqual({
@@ -281,52 +292,52 @@ describe("threads-timeline nav panel", () => {
     });
   });
 
-  it("shows the human agentLabels name in the gear's agent-colour list, not the raw agent key", async () => {
+  it("shows the human agentLabels name in the agent-colours popover, not the raw agent key", async () => {
     await renderThreadsTimeline({ threadsTimeline: async () => THREADS_READY });
-    await screen.findByText("Тред А");
-    await openSettings();
+    await screen.findByText("Thread A");
+    await openAgentColors();
 
-    // "main" -> agentLabels["main"] = "Главный агент" — the raw key never
+    // "main" -> agentLabels["main"] = "Main agent" — the raw key never
     // appears as the agent-colour row's text.
-    screen.getByText("Главный агент");
+    screen.getByText("Main agent");
     expect(screen.queryByText("main", { selector: "span.truncate" })).toBeNull();
   });
 
-  it("falls back to the raw agent key in the gear's agent-colour list when agentLabels has no entry for it", async () => {
+  it("falls back to the raw agent key in the agent-colours popover when agentLabels has no entry for it", async () => {
     await renderThreadsTimeline({ threadsTimeline: async () => THREADS_READY });
-    await screen.findByText("Тред А");
-    await openSettings();
+    await screen.findByText("Thread A");
+    await openAgentColors();
 
     // "code-reviewer" has no entry in THREADS_READY.agentLabels.
     screen.getByText("code-reviewer");
   });
 
-  it("labels each agent-colour picker in the gear with the mapped name, not the raw key", async () => {
+  it("labels each agent-colour picker with the mapped name, not the raw key", async () => {
     await renderThreadsTimeline({ threadsTimeline: async () => THREADS_READY });
-    await screen.findByText("Тред А");
-    await openSettings();
+    await screen.findByText("Thread A");
+    await openAgentColors();
 
-    // "main" is mapped to "Главный агент"; its colour input is addressed by
+    // "main" is mapped to "Main agent"; its colour input is addressed by
     // that human label, never the raw key.
-    const input = screen.getByLabelText("Цвет агента Главный агент") as HTMLInputElement;
+    const input = screen.getByLabelText("Main agent color") as HTMLInputElement;
     expect(input.type).toBe("color");
   });
 
   it("shows the mapped label (not the raw agent key) in a bar segment's accessible name", async () => {
     await renderThreadsTimeline({ threadsTimeline: async () => THREADS_READY });
-    await screen.findByText("Тред А");
+    await screen.findByText("Thread A");
 
-    // Тред А's first bin has a "main" segment (3000 tokens) — "main" is
-    // mapped to "Главный агент" in agentLabels, so the segment's aria-label
+    // Thread A's first bin has a "main" segment (3000 tokens) — "main" is
+    // mapped to "Main agent" in agentLabels, so the segment's aria-label
     // must show that label, not the raw "main" key.
-    screen.getByLabelText(/Главный агент: 3\.0k токенов/);
+    screen.getByLabelText(/Main agent: 3\.0k tokens/);
   });
 
   it("shows the column's time range and a per-agent legend (tokens + %) in an immediate hover tooltip", async () => {
     await renderThreadsTimeline({ threadsTimeline: async () => THREADS_READY });
-    const title = await screen.findByText("Тред А");
+    const title = await screen.findByText("Thread A");
 
-    // Тред А's second bin: main 1500 + code-reviewer 500 = 2000 → 75% / 25%.
+    // Thread A's second bin: main 1500 + code-reviewer 500 = 2000 → 75% / 25%.
     const card = title.closest(".rounded-md.border.border-border") as HTMLElement;
     const columns = card.querySelectorAll(".relative.h-full.min-w-\\[2px\\]");
     fireEvent.mouseMove(columns[1] as HTMLElement, { clientX: 10, clientY: 10 });
@@ -336,6 +347,41 @@ describe("threads-timeline nav panel", () => {
     await screen.findByText(/^\d{2}:\d{2}–\d{2}:\d{2}$/);
     screen.getByText(/1\.5k · 75%/);
     screen.getByText(/500 · 25%/);
+  });
+
+  it("marks a column with a git event icon and shows its label + link in the hover tooltip", async () => {
+    const withCommit = {
+      status: "ready" as const,
+      unit: 60,
+      threads: [
+        {
+          ...THREADS_READY.threads[0],
+          events: [
+            {
+              type: "commit" as const,
+              ts: "2026-08-25T09:01:10.000Z", // inside the thread's second (09:01) bin
+              hash: "a5ee9a4b3c2d1e0f",
+              message: "fix bug",
+              url: "https://github.com/e0068/bb-plugins/commit/a5ee9a4b3c2d1e0f",
+            },
+          ],
+        },
+      ],
+      agentLabels: THREADS_READY.agentLabels,
+    };
+    await renderThreadsTimeline({ threadsTimeline: async () => withCommit });
+    const title = await screen.findByText("Thread A");
+    const card = title.closest(".rounded-md.border.border-border") as HTMLElement;
+
+    const marker = card.querySelector('[data-icon="GitCommit"]');
+    expect(marker).not.toBeNull();
+
+    fireEvent.mouseMove(marker!.parentElement as HTMLElement, { clientX: 10, clientY: 10 });
+
+    const link = (await screen.findByText("a5ee9a4 fix bug")) as HTMLAnchorElement;
+    expect(link.tagName).toBe("A");
+    expect(link.getAttribute("href")).toBe("https://github.com/e0068/bb-plugins/commit/a5ee9a4b3c2d1e0f");
+    expect(link.getAttribute("target")).toBe("_blank");
   });
 
   it("clamps the hover tooltip inside the viewport instead of letting it overflow past a screen edge", async () => {
@@ -361,7 +407,7 @@ describe("threads-timeline nav panel", () => {
 
     try {
       await renderThreadsTimeline({ threadsTimeline: async () => THREADS_READY });
-      const title = await screen.findByText("Тред А");
+      const title = await screen.findByText("Thread A");
       const card = title.closest(".rounded-md.border.border-border") as HTMLElement;
       const columns = card.querySelectorAll(".relative.h-full.min-w-\\[2px\\]");
       // Natural anchor (clientX/Y + 12) plus the mocked 220×100 tooltip would
@@ -384,11 +430,11 @@ describe("threads-timeline nav panel", () => {
 
   it("keeps the colour/click identity on the raw agent key even though the legend/tooltip show the mapped label", async () => {
     const slot = await renderThreadsTimeline({ threadsTimeline: async () => THREADS_READY });
-    await screen.findByText("Тред А");
+    await screen.findByText("Thread A");
 
     // Clicking the "main" segment must still navigate with agent="main" (the
-    // raw key), never the display label "Главный агент".
-    const segment = screen.getByLabelText(/Главный агент: 3\.0k токенов/);
+    // raw key), never the display label "Main agent".
+    const segment = screen.getByLabelText(/Main agent: 3\.0k tokens/);
     fireEvent.click(segment);
 
     expect(slot.navigateCalls).toContainEqual({
@@ -412,50 +458,21 @@ describe("threads-timeline nav panel", () => {
     await screen.findByText("boom");
   });
 
-  it("exposes numeric gap/radius controls and a frame-lift colour picker in the gear popover that live-update the chart", async () => {
-    await renderThreadsTimeline({ threadsTimeline: async () => THREADS_READY });
-    await screen.findByText("Тред А");
+  it("applies segRadius and frameLiftColor from the plugin's Settings page to the chart", async () => {
+    await renderThreadsTimeline(
+      { threadsTimeline: async () => THREADS_READY },
+      { segRadius: "6", frameLiftColor: "#112233" },
+    );
+    await screen.findByText("Thread A");
 
-    await openSettings();
-
-    await screen.findByLabelText("Отступ между столбцами");
-    await screen.findByLabelText("Отступ между сегментами");
-    await screen.findByLabelText("Скругление столбца");
-    const segRadiusInput = screen.getByLabelText("Скругление сегмента") as HTMLInputElement;
-    const colorInput = screen.getByLabelText("Цвет высветления фрейма графика") as HTMLInputElement;
-    expect(colorInput.type).toBe("color");
-
-    fireEvent.change(segRadiusInput, { target: { value: "6" } });
-    fireEvent.change(colorInput, { target: { value: "#112233" } });
-
-    const segment = screen.getByLabelText(/code-reviewer: 500 токенов/) as HTMLElement;
-    await waitFor(() => expect(segment.style.borderRadius).toBe("6px"));
+    const segment = screen.getByLabelText(/code-reviewer: 500 tokens/) as HTMLElement;
+    expect(segment.style.borderRadius).toBe("6px");
 
     const row = segment.closest(".rounded-md.border.border-border") as HTMLElement | null;
     expect(row?.style.backgroundColor).toBe("rgba(17, 34, 51, 0.05)");
   });
 
-  it("hydrates the row-1 controls from loadVizSettings on mount and re-fetches with the persisted unit", async () => {
-    const loadedSettings: VizSettings = {
-      threads: { ...DEFAULT_VIZ_SETTINGS.threads, unit: 900, sortMode: "duration" },
-      agentDetail: DEFAULT_VIZ_SETTINGS.agentDetail,
-    };
-    let lastInput: unknown;
-    await renderThreadsTimeline({
-      threadsTimeline: async (input) => {
-        lastInput = input;
-        return { ...THREADS_READY, unit: (input as { unit: number }).unit };
-      },
-      loadVizSettings: async () => loadedSettings,
-    });
-
-    await screen.findByText("Тред А");
-    await waitFor(() => expect(lastInput).toEqual({ limit: 20, unit: 900 }));
-    await openSettings();
-    expect(screen.getByRole("button", { name: "15m" }).getAttribute("aria-pressed")).toBe("true");
-  });
-
-  it("saves the full viz settings (including the loaded agentDetail section, untouched) when a row-1 control changes", async () => {
+  it("saves the full viz settings (including the loaded agentDetail section, untouched) when an agent colour changes", async () => {
     const loadedSettings: VizSettings = {
       threads: DEFAULT_VIZ_SETTINGS.threads,
       agentDetail: { showHooks: false, relativeTime: true, groupedByTurn: true },
@@ -469,21 +486,21 @@ describe("threads-timeline nav panel", () => {
         return { ok: true as const };
       },
     });
-    await screen.findByText("Тред А");
+    await screen.findByText("Thread A");
 
-    await openSettings();
-    fireEvent.click(screen.getByRole("button", { name: "5m" }));
+    await openAgentColors();
+    fireEvent.change(screen.getByLabelText("Main agent color"), { target: { value: "#123456" } });
 
     await waitFor(() => expect(savedInput).toBeDefined());
     expect((savedInput as VizSettings).agentDetail).toEqual(loadedSettings.agentDetail);
-    expect((savedInput as VizSettings).threads.unit).toBe(300);
+    expect((savedInput as VizSettings).threads.agentColors.main).toBe("#123456");
     assertMatchesContract("saveVizSettings", savedInput);
   });
 
   it("shows the BB thread's human title as the card header, not the raw session id duplicated", async () => {
     await renderThreadsTimeline({ threadsTimeline: async () => THREADS_READY });
 
-    await screen.findByText("Тред А");
+    await screen.findByText("Thread A");
     // The session id no longer appears anywhere in the card header — only
     // the human title (the old behaviour duplicated the session UUID twice).
     expect(screen.queryByText("sess_aaa111")).toBeNull();
@@ -499,11 +516,12 @@ describe("threads-timeline nav panel", () => {
   });
 
   it("renders every card at a constant full container width, regardless of thread duration/bin count (no more proportional widthFractions sizing)", async () => {
-    await renderThreadsTimeline({ threadsTimeline: async () => THREADS_READY });
-    // Тред А: 300s, 2 bins. Тред Б (fallback title): 120s, 1 bin — the old
+    // hugWidth off — this test is about the non-hug width behaviour, independent of the fillWidth toggle exercised elsewhere.
+    await renderThreadsTimeline({ threadsTimeline: async () => THREADS_READY }, { hugWidth: false });
+    // Thread A: 300s, 2 bins. Thread B (fallback title): 120s, 1 bin — the old
     // widthFractions-driven card width would have made this one much
     // narrower; now both cards must be identically full-width.
-    const titleA = await screen.findByText("Тред А");
+    const titleA = await screen.findByText("Thread A");
     const titleB = await screen.findByText(THREAD_B_FALLBACK_TITLE);
 
     for (const title of [titleA, titleB]) {
@@ -516,19 +534,19 @@ describe("threads-timeline nav panel", () => {
     }
   });
 
-  it("keeps the card at a constant full width even when a huge fixed colWidthPx (fillWidth off) would blow the graph itself far past the container", async () => {
-    await renderThreadsTimeline({ threadsTimeline: async () => THREADS_READY });
-    await screen.findByText("Тред А");
+  it("keeps the card at a constant full width even when a large fixed colWidthPx (fillWidth off) would blow the graph itself far past the container", async () => {
+    await renderThreadsTimeline(
+      { threadsTimeline: async () => THREADS_READY },
+      // "999" clamps to colWidthPx's 40px maximum (parseGearSettings) — a
+      // native Settings text field has no in-app range guardrail beyond that.
+      // hugWidth off — this test is about the non-hug width behaviour.
+      { fillWidthFeed: false, hugWidth: false, colWidthPx: "999" },
+    );
 
-    // Тред А has 2 bins, so even 2*700 + 1*colGap comfortably exceeds the
+    // Thread A has 2 bins, so even 2*40 + 1*colGap comfortably exceeds the
     // jsdom fallback container width — this now overflows only the graph's
     // own scroll wrapper inside the card, never the card itself.
-    await openSettings();
-    fireEvent.click(screen.getByRole("button", { name: "Выкл" }));
-    const colWidthInput = screen.getByLabelText("Ширина столбца, пикселей");
-    fireEvent.change(colWidthInput, { target: { value: "700" } });
-
-    const title = await screen.findByText("Тред А");
+    const title = await screen.findByText("Thread A");
     const card = title.closest(".rounded-md.border.border-border") as HTMLElement | null;
     expect(card).not.toBeNull();
     expect(card!.classList.contains("w-full")).toBe(true);
@@ -536,47 +554,40 @@ describe("threads-timeline nav panel", () => {
   });
 
   it("wraps the graph in its own overflow-x-auto scroll container inside the card, sized to bins*colWidthPx+gaps when fillWidth is off", async () => {
-    await renderThreadsTimeline({ threadsTimeline: async () => THREADS_READY });
-    await screen.findByText("Тред А");
+    await renderThreadsTimeline(
+      { threadsTimeline: async () => THREADS_READY },
+      { fillWidthFeed: false, colWidthPx: "35" },
+    );
 
-    await openSettings();
-    fireEvent.click(screen.getByRole("button", { name: "Выкл" }));
-    const colWidthInput = screen.getByLabelText("Ширина столбца, пикселей");
-    fireEvent.change(colWidthInput, { target: { value: "700" } });
-
-    const title = await screen.findByText("Тред А");
+    const title = await screen.findByText("Thread A");
     const card = title.closest(".rounded-md.border.border-border") as HTMLElement;
     const scrollWrapper = card.querySelector(".overflow-x-auto") as HTMLElement | null;
     expect(scrollWrapper).not.toBeNull();
     const graph = scrollWrapper!.querySelector(".flex.items-end") as HTMLElement;
-    // Тред А: 2 bins * 700px + 1 gap * default colGap (1px) = 1401px — far
+    // Thread A: 2 bins * 35px + 1 gap * default colGap (1px) = 71px — far
     // past the card, so this width can only ever fit via the wrapper's own
     // horizontal scroll, not by stretching the card.
-    expect(graph.style.width).toBe("1401px");
+    expect(graph.style.width).toBe("71px");
   });
 
   it("sizes the graph to 100% of the card (no overflow wrapper needed) when fillWidth is on", async () => {
-    await renderThreadsTimeline({ threadsTimeline: async () => THREADS_READY });
-    const title = await screen.findByText("Тред А");
+    await renderThreadsTimeline({ threadsTimeline: async () => THREADS_READY }, { fillWidthFeed: true });
+    const title = await screen.findByText("Thread A");
 
     const card = title.closest(".rounded-md.border.border-border") as HTMLElement;
     const graph = card.querySelector(".flex.items-end") as HTMLElement;
     expect(graph.style.width).toBe("100%");
   });
 
-  it("sizes each bin column to a fixed colWidthPx (not a shared fraction) when fillWidth is off, labelled px/стб", async () => {
-    await renderThreadsTimeline({ threadsTimeline: async () => THREADS_READY });
-    await screen.findByText("Тред А");
+  it("sizes each bin column to a fixed colWidthPx (not a shared fraction) when fillWidth is off", async () => {
+    await renderThreadsTimeline(
+      { threadsTimeline: async () => THREADS_READY },
+      { fillWidthFeed: false, colWidthPx: "12" },
+    );
 
-    await openSettings();
-    fireEvent.click(screen.getByRole("button", { name: "Выкл" }));
-    screen.getByText("px/стб");
-    const colWidthInput = screen.getByLabelText("Ширина столбца, пикселей") as HTMLInputElement;
-    fireEvent.change(colWidthInput, { target: { value: "12" } });
-
-    const title = await screen.findByText("Тред А");
+    const title = await screen.findByText("Thread A");
     const card = title.closest(".rounded-md.border.border-border") as HTMLElement;
-    // Тред А has 2 bins — each fixed-width column reports its own inline
+    // Thread A has 2 bins — each fixed-width column reports its own inline
     // width, independent of the other columns or the card's own width.
     const columns = card.querySelectorAll(".relative.h-full.min-w-\\[2px\\]");
     expect(columns.length).toBe(2);
@@ -587,8 +598,8 @@ describe("threads-timeline nav panel", () => {
   });
 
   it("gives every bin column a uniform fixed width (calc of 100%/maxBinCount, not flex-1) when fillWidth is on", async () => {
-    await renderThreadsTimeline({ threadsTimeline: async () => THREADS_READY });
-    const title = await screen.findByText("Тред А");
+    await renderThreadsTimeline({ threadsTimeline: async () => THREADS_READY }, { fillWidthFeed: true });
+    const title = await screen.findByText("Thread A");
 
     const card = title.closest(".rounded-md.border.border-border") as HTMLElement;
     const columns = card.querySelectorAll(".relative.h-full.min-w-\\[2px\\]");
@@ -601,67 +612,12 @@ describe("threads-timeline nav panel", () => {
     });
   });
 
-  it("saves colWidthPx (not pxPerSecond) when the width control changes with fillWidth off", async () => {
-    let savedInput: unknown;
-    await renderThreadsTimeline({
-      threadsTimeline: async () => THREADS_READY,
-      saveVizSettings: async (input) => {
-        savedInput = input;
-        return { ok: true as const };
-      },
-    });
-    await screen.findByText("Тред А");
-
-    await openSettings();
-    fireEvent.click(screen.getByRole("button", { name: "Выкл" }));
-    const colWidthInput = screen.getByLabelText("Ширина столбца, пикселей");
-    fireEvent.change(colWidthInput, { target: { value: "15" } });
-
-    await waitFor(() => expect((savedInput as VizSettings | undefined)?.threads.colWidthPx).toBe(15));
-    expect((savedInput as VizSettings).threads).not.toHaveProperty("pxPerSecond");
-    assertMatchesContract("saveVizSettings", savedInput);
-  });
-
-  it("shows the «Hug по ширине» toggle only once fillWidth is off (it does nothing while fill is on)", async () => {
-    await renderThreadsTimeline({ threadsTimeline: async () => THREADS_READY });
-    await screen.findByText("Тред А");
-    await openSettings();
-
-    // fillWidth defaults on → hug hidden.
-    expect(screen.queryByText("Hug по ширине")).toBeNull();
-
-    fireEvent.click(screen.getByRole("button", { name: "Выкл" }));
-
-    // fillWidth off → hug toggle appears.
-    screen.getByText("Hug по ширине");
-  });
-
-  it("persists hugWidth when the Hug toggle is switched on (with fillWidth off)", async () => {
-    let savedInput: unknown;
-    await renderThreadsTimeline({
-      threadsTimeline: async () => THREADS_READY,
-      saveVizSettings: async (input) => {
-        savedInput = input;
-        return { ok: true as const };
-      },
-    });
-    await screen.findByText("Тред А");
-
-    await openSettings();
-    fireEvent.click(screen.getByRole("button", { name: "Выкл" }));
-    fireEvent.click(screen.getByRole("button", { name: "Hug по ширине: Вкл" }));
-
-    await waitFor(() => expect((savedInput as VizSettings | undefined)?.threads.hugWidth).toBe(true));
-    assertMatchesContract("saveVizSettings", savedInput);
-  });
-
   it("sizes a hug card to its own graph width (not w-full) and lays the feed out as a wrapping tile grid", async () => {
-    const loaded: VizSettings = {
-      threads: { ...DEFAULT_VIZ_SETTINGS.threads, fillWidth: false, hugWidth: true },
-      agentDetail: DEFAULT_VIZ_SETTINGS.agentDetail,
-    };
-    await renderThreadsTimeline({ threadsTimeline: async () => THREADS_READY, loadVizSettings: async () => loaded });
-    const title = await screen.findByText("Тред А");
+    await renderThreadsTimeline(
+      { threadsTimeline: async () => THREADS_READY },
+      { fillWidthFeed: false, hugWidth: true },
+    );
+    const title = await screen.findByText("Thread A");
     const card = title.closest(".rounded-md.border.border-border") as HTMLElement;
 
     // Card is explicitly sized (not stretched to the row) and capped so a wide
@@ -677,45 +633,29 @@ describe("threads-timeline nav panel", () => {
   });
 
   it("caps the content area at contentMaxWidthPx by default and drops the cap when contentFullWidth is on", async () => {
-    // Default: capped at 1400px.
-    const first = await renderThreadsTimeline({ threadsTimeline: async () => THREADS_READY });
-    const capped = (await screen.findByText("Тред А")).closest(".mx-auto") as HTMLElement;
+    // Capped case: contentFullWidth off.
+    const first = await renderThreadsTimeline(
+      { threadsTimeline: async () => THREADS_READY },
+      { contentFullWidth: false },
+    );
+    const capped = (await screen.findByText("Thread A")).closest(".mx-auto") as HTMLElement;
     expect(capped.style.maxWidth).toBe("1400px");
     cleanup();
     void first;
 
     // Full-width: no cap.
-    const loaded: VizSettings = {
-      threads: { ...DEFAULT_VIZ_SETTINGS.threads, contentFullWidth: true },
-      agentDetail: DEFAULT_VIZ_SETTINGS.agentDetail,
-    };
-    await renderThreadsTimeline({ threadsTimeline: async () => THREADS_READY, loadVizSettings: async () => loaded });
-    const full = (await screen.findByText("Тред А")).closest(".mx-auto") as HTMLElement;
+    await renderThreadsTimeline({ threadsTimeline: async () => THREADS_READY }, { contentFullWidth: true });
+    const full = (await screen.findByText("Thread A")).closest(".mx-auto") as HTMLElement;
     expect(full.style.maxWidth).toBe("none");
   });
 
-  it("persists the content-area width settings from the gear", async () => {
-    let saved: unknown;
-    await renderThreadsTimeline({
-      threadsTimeline: async () => THREADS_READY,
-      saveVizSettings: async (input) => {
-        saved = input;
-        return { ok: true as const };
-      },
-    });
-    await screen.findByText("Тред А");
-    await openSettings();
-
-    fireEvent.click(screen.getByRole("button", { name: "На всю ширину: Вкл" }));
-
-    await waitFor(() => expect((saved as VizSettings | undefined)?.threads.contentFullWidth).toBe(true));
-    assertMatchesContract("saveVizSettings", saved);
-  });
-
   it("scales each card to its own tallest column in perCard height mode (a small thread fills its card, unlike shared mode)", async () => {
-    // Shared (default): Тред Б's lone 1000-token bin is 1/3 of the global max
-    // (Тред А's 3000) → 24px of the 72px chart.
-    const first = await renderThreadsTimeline({ threadsTimeline: async () => THREADS_READY });
+    // Shared: Thread B's lone 1000-token bin is 1/3 of the global max
+    // (Thread A's 3000) → 24px of the 72px chart.
+    const first = await renderThreadsTimeline(
+      { threadsTimeline: async () => THREADS_READY },
+      { heightMode: "shared" },
+    );
     const sharedCard = (await screen.findByText(THREAD_B_FALLBACK_TITLE)).closest(".rounded-md.border.border-border") as HTMLElement;
     const sharedStack = sharedCard.querySelector(".absolute.bottom-0.flex-col-reverse") as HTMLElement;
     expect(sharedStack.style.height).toBe("24px");
@@ -723,100 +663,79 @@ describe("threads-timeline nav panel", () => {
     void first;
 
     // perCard: the same bin is this card's own max → fills the full 72px.
-    const loaded: VizSettings = {
-      threads: { ...DEFAULT_VIZ_SETTINGS.threads, heightMode: "perCard" },
-      agentDetail: DEFAULT_VIZ_SETTINGS.agentDetail,
-    };
-    await renderThreadsTimeline({ threadsTimeline: async () => THREADS_READY, loadVizSettings: async () => loaded });
+    await renderThreadsTimeline({ threadsTimeline: async () => THREADS_READY }, { heightMode: "perCard" });
     const perCard = (await screen.findByText(THREAD_B_FALLBACK_TITLE)).closest(".rounded-md.border.border-border") as HTMLElement;
     const perCardStack = perCard.querySelector(".absolute.bottom-0.flex-col-reverse") as HTMLElement;
     expect(perCardStack.style.height).toBe("72px");
   });
 
-  it("persists the column-height mode from the gear", async () => {
-    let saved: unknown;
-    await renderThreadsTimeline({
-      threadsTimeline: async () => THREADS_READY,
-      saveVizSettings: async (input) => {
-        saved = input;
-        return { ok: true as const };
-      },
-    });
-    await screen.findByText("Тред А");
-    await openSettings();
-
-    fireEvent.click(screen.getByRole("button", { name: "По карточке" }));
-
-    await waitFor(() => expect((saved as VizSettings | undefined)?.threads.heightMode).toBe("perCard"));
-    assertMatchesContract("saveVizSettings", saved);
-  });
-
-  it("keeps one column per bin, each empty bin with its own single-unit gap tooltip, when Схлопнуть пустоты is off (default)", async () => {
-    await renderThreadsTimeline({ threadsTimeline: async () => THREADS_WITH_GAPS });
-    const title = await screen.findByText("Тред с паузой");
+  it("keeps one column per bin, each empty bin with its own single-unit gap tooltip, when Collapse gaps is off", async () => {
+    await renderThreadsTimeline(
+      { threadsTimeline: async () => THREADS_WITH_GAPS },
+      { collapseEmpty: false },
+    );
+    const title = await screen.findByText("Thread with a pause");
 
     const card = title.closest(".rounded-md.border.border-border") as HTMLElement;
     const columns = card.querySelectorAll(".relative.h-full.min-w-\\[2px\\]");
     expect(columns.length).toBe(4);
     // Two separate empty bins — each its own column, each its own
     // single-unit gap tooltip (not summed into one).
-    expect(screen.getAllByTitle(/перерыв 1 мин 0 с/)).toHaveLength(2);
+    expect(screen.getAllByTitle(/1 min 0 s break/)).toHaveLength(2);
   });
 
-  it("collapses consecutive empty bins into one gap column carrying the summed break duration when Схлопнуть пустоты is Вкл", async () => {
-    await renderThreadsTimeline({ threadsTimeline: async () => THREADS_WITH_GAPS });
-    const title = await screen.findByText("Тред с паузой");
+  it("collapses consecutive empty bins into one gap column carrying the summed break duration when collapseEmpty is on", async () => {
+    await renderThreadsTimeline(
+      { threadsTimeline: async () => THREADS_WITH_GAPS },
+      { collapseEmpty: true },
+    );
+    await screen.findByText("Thread with a pause");
 
-    await openSettings();
-    fireEvent.click(screen.getByRole("button", { name: "Схлопнуть пустоты: Вкл" }));
-
-    await waitFor(() => {
-      const card = title.closest(".rounded-md.border.border-border") as HTMLElement;
-      const columns = card.querySelectorAll(".relative.h-full.min-w-\\[2px\\]");
-      expect(columns.length).toBe(3);
-    });
-    screen.getByTitle(/перерыв 2 мин 0 с/);
+    const card = screen.getByText("Thread with a pause").closest(".rounded-md.border.border-border") as HTMLElement;
+    const columns = card.querySelectorAll(".relative.h-full.min-w-\\[2px\\]");
+    expect(columns.length).toBe(3);
+    screen.getByTitle(/2 min 0 s break/);
   });
 
   it("keeps the feed a plain vertical list — no feed-level horizontal scroll container", async () => {
     const slot = await renderThreadsTimeline({ threadsTimeline: async () => THREADS_READY });
-    await screen.findByText("Тред А");
+    await screen.findByText("Thread A");
 
     expect(slot.container.querySelector("section.overflow-x-auto")).toBeNull();
   });
 
-  it("shows the thread's cost ($) in the card header and no longer the word «токенов» there", async () => {
+  it("shows the thread's cost ($) in the card header and no longer the word «tokens» there", async () => {
     await renderThreadsTimeline({ threadsTimeline: async () => THREADS_READY });
-    const title = await screen.findByText("Тред А");
+    const title = await screen.findByText("Thread A");
 
-    // Тред А's totalCost is 0.42 → "$0.42"; the card header no longer labels
-    // the raw token count with the word «токенов» (the page subtitle still may).
+    // Thread A's totalCost is 0.42 → "$0.42"; the card header no longer labels
+    // the raw token count with the word «tokens» (the page subtitle still may).
     const card = title.closest(".rounded-md.border.border-border") as HTMLElement;
     expect(card.textContent).toContain("$0.42");
-    expect(card.textContent).not.toContain("токенов");
+    expect(card.textContent).not.toContain("tokens");
   });
 
   it("shows how many workflows and agents took part, to the left of the duration", async () => {
     await renderThreadsTimeline({ threadsTimeline: async () => THREADS_READY });
-    await screen.findByText("Тред А");
+    await screen.findByText("Thread A");
 
-    // Тред А: workflowCount 2; two distinct agent keys across its bins (main +
+    // Thread A: workflowCount 2; two distinct agent keys across its bins (main +
     // code-reviewer) → "2 agents".
     screen.getByText(/2 workflows · 2 agents/);
   });
 
   it("opens the matched BB thread when its card title is clicked", async () => {
     const slot = await renderThreadsTimeline({ threadsTimeline: async () => THREADS_READY });
-    await screen.findByText("Тред А");
+    await screen.findByText("Thread A");
 
-    fireEvent.click(screen.getByRole("button", { name: "Тред А" }));
+    fireEvent.click(screen.getByRole("button", { name: "Thread A" }));
 
     expect(slot.navigateCalls).toContainEqual({ method: "toThread", threadId: "thread-aaa" });
   });
 
   it("navigates to the session's internal page (main agent, no window) when the card body is clicked", async () => {
     const slot = await renderThreadsTimeline({ threadsTimeline: async () => THREADS_READY });
-    const title = await screen.findByText("Тред А");
+    const title = await screen.findByText("Thread A");
     const card = title.closest(".rounded-md.border.border-border") as HTMLElement;
 
     fireEvent.click(card);
@@ -830,9 +749,9 @@ describe("threads-timeline nav panel", () => {
 
   it("does not also open the card's session page when a segment is clicked (click stops propagating)", async () => {
     const slot = await renderThreadsTimeline({ threadsTimeline: async () => THREADS_READY });
-    await screen.findByText("Тред А");
+    await screen.findByText("Thread A");
 
-    fireEvent.click(screen.getByLabelText(/code-reviewer: 500 токенов/));
+    fireEvent.click(screen.getByLabelText(/code-reviewer: 500 tokens/));
 
     // The segment's own agent-detail nav fired, but not the card-level
     // main-agent nav (which carries no from/to window).
@@ -848,14 +767,14 @@ describe("threads-timeline nav panel", () => {
     const title = await screen.findByText(THREAD_B_FALLBACK_TITLE);
     const card = title.closest(".rounded-md.border.border-border") as HTMLElement;
 
-    // Тред Б: workflowCount 0, one agent (main) → "1 agents", never "workflows".
+    // Thread B: workflowCount 0, one agent (main) → "1 agents", never "workflows".
     expect(card.textContent).not.toContain("workflows");
     expect(card.textContent).toContain("1 agents");
   });
 
   it("highlights the hovered column while its tooltip is shown", async () => {
     await renderThreadsTimeline({ threadsTimeline: async () => THREADS_READY });
-    const title = await screen.findByText("Тред А");
+    const title = await screen.findByText("Thread A");
     const card = title.closest(".rounded-md.border.border-border") as HTMLElement;
     const column = card.querySelectorAll(".relative.h-full.min-w-\\[2px\\]")[1] as HTMLElement;
 
@@ -868,29 +787,29 @@ describe("threads-timeline nav panel", () => {
     await renderThreadsTimeline({ threadsTimeline: async () => THREADS_READY });
     await screen.findByText(THREAD_B_FALLBACK_TITLE);
 
-    // Тред Б has threadId === null — its title is plain text, not a button.
+    // Thread B has threadId === null — its title is plain text, not a button.
     expect(screen.queryByRole("button", { name: THREAD_B_FALLBACK_TITLE })).toBeNull();
   });
 
-  it("filters threads by a minimum cost bound (от)", async () => {
+  it("filters threads by a minimum cost bound (from)", async () => {
     await renderThreadsTimeline({ threadsTimeline: async () => THREADS_READY });
-    await screen.findByText("Тред А");
+    await screen.findByText("Thread A");
 
-    // Тред А $0.42, Тред Б $0.05 — a 0.1 floor drops Б, keeps А.
-    fireEvent.change(screen.getByLabelText("Стоимость от, USD"), { target: { value: "0.1" } });
+    // Thread A $0.42, Thread B $0.05 — a 0.1 floor drops B, keeps A.
+    fireEvent.change(screen.getByLabelText("Cost from, USD"), { target: { value: "0.1" } });
 
     await waitFor(() => expect(screen.queryByText(THREAD_B_FALLBACK_TITLE)).toBeNull());
-    screen.getByText("Тред А");
+    screen.getByText("Thread A");
   });
 
-  it("filters threads by a maximum cost bound (до)", async () => {
+  it("filters threads by a maximum cost bound (to)", async () => {
     await renderThreadsTimeline({ threadsTimeline: async () => THREADS_READY });
-    await screen.findByText("Тред А");
+    await screen.findByText("Thread A");
 
-    // A 0.1 ceiling drops Тред А ($0.42), keeps Тред Б ($0.05).
-    fireEvent.change(screen.getByLabelText("Стоимость до, USD"), { target: { value: "0.1" } });
+    // A 0.1 ceiling drops Thread A ($0.42), keeps Thread B ($0.05).
+    fireEvent.change(screen.getByLabelText("Cost to, USD"), { target: { value: "0.1" } });
 
-    await waitFor(() => expect(screen.queryByText("Тред А")).toBeNull());
+    await waitFor(() => expect(screen.queryByText("Thread A")).toBeNull());
     screen.getByText(THREAD_B_FALLBACK_TITLE);
   });
 
@@ -903,8 +822,8 @@ describe("threads-timeline nav panel", () => {
 
     // The persisted search term is in the box and already filters the feed.
     await screen.findByText(THREAD_B_FALLBACK_TITLE);
-    expect((screen.getByPlaceholderText("По названию или ID сессии") as HTMLInputElement).value).toBe("bbb222");
-    expect(screen.queryByText("Тред А")).toBeNull();
+    expect((screen.getByPlaceholderText("By name or session ID") as HTMLInputElement).value).toBe("bbb222");
+    expect(screen.queryByText("Thread A")).toBeNull();
   });
 
   it("persists a filter change (cost bound) into the saved viz settings", async () => {
@@ -916,9 +835,9 @@ describe("threads-timeline nav panel", () => {
         return { ok: true as const };
       },
     });
-    await screen.findByText("Тред А");
+    await screen.findByText("Thread A");
 
-    fireEvent.change(screen.getByLabelText("Стоимость от, USD"), { target: { value: "0.1" } });
+    fireEvent.change(screen.getByLabelText("Cost from, USD"), { target: { value: "0.1" } });
 
     await waitFor(() => expect((saved as VizSettings | undefined)?.threads.costMin).toBe("0.1"));
     assertMatchesContract("saveVizSettings", saved);
@@ -926,7 +845,7 @@ describe("threads-timeline nav panel", () => {
 
   it("fades the column tooltip out over ~200ms after the pointer leaves, then unmounts it", async () => {
     await renderThreadsTimeline({ threadsTimeline: async () => THREADS_READY });
-    const title = await screen.findByText("Тред А");
+    const title = await screen.findByText("Thread A");
     const card = title.closest(".rounded-md.border.border-border") as HTMLElement;
     const column = card.querySelectorAll(".relative.h-full.min-w-\\[2px\\]")[1] as HTMLElement;
 
@@ -963,10 +882,13 @@ describe("threads-timeline nav panel — liveness indicators", () => {
         totalCost: 0.42,
         workflowCount: 0,
         bins: [{ t: "2026-08-25T09:00:00.000Z", agents: [{ key: "main", total: 3000 }] }],
+        cwd: null,
+        gitBranch: null,
+        events: [],
         bbProjectId: "bb-proj-1",
         bbProjectName: "Proj",
         threadId: "thread-live",
-        bbThreadTitle: "Живой в работе",
+        bbThreadTitle: "Live, in progress",
         isAlive: true,
         isWorking: true,
       },
@@ -981,10 +903,13 @@ describe("threads-timeline nav panel — liveness indicators", () => {
         totalCost: 0.05,
         workflowCount: 0,
         bins: [{ t: "2026-08-25T08:00:00.000Z", agents: [{ key: "main", total: 1000 }] }],
+        cwd: null,
+        gitBranch: null,
+        events: [],
         bbProjectId: "bb-proj-1",
         bbProjectName: "Proj",
         threadId: "thread-idle",
-        bbThreadTitle: "Живой без работы",
+        bbThreadTitle: "Live, idle",
         isAlive: true,
         isWorking: false,
       },
@@ -999,40 +924,43 @@ describe("threads-timeline nav panel — liveness indicators", () => {
         totalCost: 0.01,
         workflowCount: 0,
         bins: [{ t: "2026-08-25T07:00:00.000Z", agents: [{ key: "main", total: 500 }] }],
+        cwd: null,
+        gitBranch: null,
+        events: [],
         bbProjectId: "bb-proj-1",
         bbProjectName: "Proj",
         threadId: "thread-dead",
-        bbThreadTitle: "Заархивированный",
+        bbThreadTitle: "Archived",
         isAlive: false,
         isWorking: false,
       },
     ],
-    agentLabels: { main: "Главный агент" },
+    agentLabels: { main: "Main agent" },
   };
 
   it("paints a live thread's title green and an archived thread's title with the default foreground", async () => {
     await renderThreadsTimeline({ threadsTimeline: async () => LIVENESS_READY });
 
-    const liveTitle = await screen.findByRole("button", { name: "Живой в работе" });
+    const liveTitle = await screen.findByRole("button", { name: "Live, in progress" });
     expect(liveTitle.className).toContain("text-success");
     expect(liveTitle.className).not.toContain("text-foreground");
 
-    const deadTitle = screen.getByRole("button", { name: "Заархивированный" });
+    const deadTitle = screen.getByRole("button", { name: "Archived" });
     expect(deadTitle.className).toContain("text-foreground");
     expect(deadTitle.className).not.toContain("text-success");
   });
 
   it("shows one blinking dot — only on the thread that is working right now", async () => {
     await renderThreadsTimeline({ threadsTimeline: async () => LIVENESS_READY });
-    await screen.findByRole("button", { name: "Живой в работе" });
+    await screen.findByRole("button", { name: "Live, in progress" });
 
-    const dots = screen.getAllByLabelText("Идёт работа");
+    const dots = screen.getAllByLabelText("In progress");
     expect(dots).toHaveLength(1);
     expect(dots[0].className).toContain("animate-pulse");
     expect(dots[0].className).toContain("bg-success");
 
     // The dot sits inside the working thread's card, next to its title.
-    const workingCard = screen.getByRole("button", { name: "Живой в работе" }).closest(".rounded-md.border.border-border");
+    const workingCard = screen.getByRole("button", { name: "Live, in progress" }).closest(".rounded-md.border.border-border");
     expect(workingCard!.contains(dots[0])).toBe(true);
   });
 });

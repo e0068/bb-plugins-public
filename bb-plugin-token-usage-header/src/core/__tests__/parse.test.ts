@@ -12,7 +12,7 @@ const validReport = {
       project: "-Users-e0068-Documents-Projects-bb-plugins",
       agent: {
         id: "a9e92d5bea00f5cb7",
-        description: "H1: каркас плагина и JSON-режим",
+        description: "H1: plugin scaffold and JSON mode",
         agentType: "general-purpose",
         model: "sonnet",
         workflowRunId: null,
@@ -75,7 +75,7 @@ describe("parseTokensOutput", () => {
     expect(result.data.buckets).toHaveLength(2);
     const agentBucket = result.data.buckets[0];
     expect(agentBucket.agent).not.toBeNull();
-    expect(agentBucket.agent?.description).toBe("H1: каркас плагина и JSON-режим");
+    expect(agentBucket.agent?.description).toBe("H1: plugin scaffold and JSON mode");
     expect(agentBucket.agent?.id).toBe("a9e92d5bea00f5cb7");
   });
 
@@ -195,28 +195,29 @@ describe("parseTokensOutput", () => {
   });
 
   it("rejects a schemaVersion newer than this bundle expects, blaming a stale bundle", () => {
-    // Версия на диске новее ожидаемой — отстала сборка бандла, лечится
-    // пересборкой плагина.
+    // The version on disk is newer than expected — the bundle build is
+    // stale, fixed by rebuilding the plugin.
     const bad = { ...validReport, schemaVersion: EXPECTED_SCHEMA_VERSION + 1 };
     const result = parseTokensOutput(JSON.stringify(bad));
     expect(result.ok).toBe(false);
     if (result.ok) return;
     expect(result.reason).toBe("schema_version_mismatch");
-    expect(result.message).toContain("версию");
-    expect(result.message).toContain("пересбор");
+    expect(result.message).toContain("version");
+    expect(result.message).toContain("Rebuild");
   });
 
   it("rejects a schemaVersion older than this bundle expects, blaming a stale tokens.py instead of the build", () => {
-    // Версия на диске старше ожидаемой — устарел сам tools/tokens.py, а не
-    // бандл; пересборка плагина тут не лечит, поэтому совет другой.
+    // The version on disk is older than expected — tools/tokens.py itself is
+    // stale, not the bundle; rebuilding the plugin doesn't fix this, so the
+    // advice differs.
     const bad = { ...validReport, schemaVersion: EXPECTED_SCHEMA_VERSION - 1 };
     const result = parseTokensOutput(JSON.stringify(bad));
     expect(result.ok).toBe(false);
     if (result.ok) return;
     expect(result.reason).toBe("schema_version_mismatch");
-    expect(result.message).toContain("версию");
-    expect(result.message).not.toContain("Нужна пересборка");
-    expect(result.message).toContain("не поможет");
+    expect(result.message).toContain("version");
+    expect(result.message).not.toContain("Rebuild the plugin");
+    expect(result.message).toContain("won't help");
   });
 
   it("rejects a report with no schemaVersion field (old counter), blaming a stale tokens.py", () => {
@@ -225,10 +226,10 @@ describe("parseTokensOutput", () => {
     expect(result.ok).toBe(false);
     if (result.ok) return;
     expect(result.reason).toBe("schema_version_mismatch");
-    expect(result.message).toContain("версии");
-    expect(result.message).toContain("отсутствует");
-    expect(result.message).not.toContain("Нужна пересборка");
-    expect(result.message).toContain("не поможет");
+    expect(result.message).toContain("version");
+    expect(result.message).toContain("missing");
+    expect(result.message).not.toContain("Rebuild the plugin");
+    expect(result.message).toContain("won't help");
   });
 
   it("rejects a non-numeric schemaVersion, blaming a stale tokens.py (no numeric direction to compare)", () => {
@@ -237,9 +238,9 @@ describe("parseTokensOutput", () => {
     expect(result.ok).toBe(false);
     if (result.ok) return;
     expect(result.reason).toBe("schema_version_mismatch");
-    expect(result.message).toContain("версию");
-    expect(result.message).not.toContain("Нужна пересборка");
-    expect(result.message).toContain("не поможет");
+    expect(result.message).toContain("version");
+    expect(result.message).not.toContain("Rebuild the plugin");
+    expect(result.message).toContain("won't help");
   });
 
   it("checks schemaVersion before buckets/totals shape — a version mismatch wins over a shape error", () => {

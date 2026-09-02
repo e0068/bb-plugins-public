@@ -6,4 +6,6 @@ export * from "./parse";
 export * from "./format";
 export * from "./agent-timeline";
 export * from "./threads-timeline";
+export * from "./git-events";
 export * from "./viz-settings";
+export * from "./gear-settings";

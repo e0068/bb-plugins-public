@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-"""Лента тредов: последние N сессий Claude Code, разложенные по бинам времени.
+"""Thread feed: the last N Claude Code sessions, laid out into time bins.
 
-Переиспользует tools/tokens.py (walk(), Bucket, _session_files, _file_mtime,
-JsonAwareParser) для самого подсчёта токенов — здесь только отбор "последних N
-сессий" и раскладка их usage-записей по бинам фиксированного размера,
-внутри бина — по агенту (главный агент — ключ "main", субагенты — их
-agentId, как в tokens.py --by agent).
+Reuses tools/tokens.py (walk(), Bucket, _session_files, _file_mtime,
+JsonAwareParser) for the actual token counting — this module only handles
+selecting the "last N sessions" and laying their usage records out into
+fixed-size bins, and within a bin, by agent (main agent gets key "main",
+subagents get their agentId, same as tokens.py --by agent).
 """
 import json, os, sys
 from collections import defaultdict
@@ -13,31 +13,42 @@ from datetime import datetime, timezone
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import tokens  # noqa: E402
+import git_events  # noqa: E402
 
-# Версия формата отчёта --json этого скрипта. Отдельная от tokens.SCHEMA_VERSION
-# — разные контракты, разные потребители (src/core/threads-timeline.ts
-# сверяет именно эту версию). Поднимать при любой ломающей смене формата.
-# 1 -> 2: добавлено верхнеуровневое поле agentLabels (человекочитаемые имена
-# агентов по их ключу из bins) — форма отчёта расширилась.
-# 2 -> 3: у треда добавлены totalCost (стоимость расхода в USD по тарифу
-# tokens.py) и workflowCount (число различных workflow-прогонов в сессии).
-# 3 -> 4: у workflow-сегмента бина (agents[].key == "workflow:<run>", только
-# при --group-workflows) добавлено members — отсортированный список реальных
-# agentId, слитых в этот сегмент; у обычного (не-workflow) агента поля нет.
-SCHEMA_VERSION = 4
+# Version of this script's --json report format. Separate from
+# tokens.SCHEMA_VERSION — different contracts, different consumers
+# (src/core/threads-timeline.ts checks this exact version). Bump on any
+# breaking format change.
+# 1 -> 2: added the top-level agentLabels field (human-readable agent names
+# keyed by their key from bins) — the report shape expanded.
+# 2 -> 3: a thread gained totalCost (usage cost in USD, priced per
+# tokens.py) and workflowCount (number of distinct workflow runs in the
+# session).
+# 3 -> 4: a bin's workflow segment (agents[].key == "workflow:<run>", only
+# under --group-workflows) gained members — a sorted list of the real
+# agentIds merged into this segment; a regular (non-workflow) agent has no
+# such field.
+#
+# 4 -> 5: a thread gained cwd/gitBranch (its working directory and git
+# branch, for the chart's commit-marker enrichment on the TS side — see
+# git_events.scan_session) and events (pr/push facts mined from its own
+# transcript by the same function; commit events are appended later, by
+# src/service/threads-timeline-service.ts, not by this script).
+SCHEMA_VERSION = 5
 
-# Порог обрезки meta.description для agentLabels — легенда и подписи в UI не
-# резиновые, длинное описание таска ломает вёрстку чипа/тултипа.
+# Truncation threshold for meta.description in agentLabels — the legend and
+# labels in the UI aren't elastic, a long task description would break the
+# chip/tooltip layout.
 LABEL_DESCRIPTION_LIMIT = 60
 
 
 def _session_main_files(root, project=None, session=None):
-    """Главные .jsonl-файлы сессий (без субагентов) по каталогам проектов.
+    """Main session .jsonl files (no subagents) across project directories.
 
-    Возвращает список (sessionId, project, path, mtime) — по одной записи на
-    сессию, чтобы отобрать "последние N по активности" ДО чтения содержимого
-    файлов. mtime — приближение "последней активности транскрипта" (то же
-    допущение, что и в tokens.py::_filter_by_since).
+    Returns a list of (sessionId, project, path, mtime) — one record per
+    session, so "the last N by activity" can be selected BEFORE reading
+    file contents. mtime is an approximation of "the transcript's last
+    activity" (the same assumption as in tokens.py::_filter_by_since).
     """
     if not os.path.isdir(root):
         return []
@@ -74,17 +85,17 @@ def _bin_start_epoch(epoch, unit):
 
 
 def _epoch(ts):
-    """Метка времени записи (см. tokens.walk) -> unix-секунды, либо None.
+    """A record's timestamp (see tokens.walk) -> unix seconds, or None.
 
-    Нестрогий разбор (как в самом walk()): кривая/отсутствующая метка — не
-    ошибка пользователя, запись просто не попадает ни в один бин.
+    Lenient parsing (as in walk() itself): a malformed/missing timestamp is
+    not a user error, the record simply doesn't land in any bin.
     """
     dt = tokens._parse_time_bound(ts)
     return dt.timestamp() if dt else None
 
 
 def _iso_from_epoch(epoch):
-    """unix-секунды -> ISO 8601 UTC с миллисекундами. Формат как tokens.iso()."""
+    """unix seconds -> ISO 8601 UTC with milliseconds. Same format as tokens.iso()."""
     dt = datetime.fromtimestamp(epoch, tz=timezone.utc)
     return dt.strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
 
@@ -97,15 +108,15 @@ def _truncate(s, limit=LABEL_DESCRIPTION_LIMIT):
 
 
 def _agent_label(agent_key, meta):
-    """Человекочитаемая метка агента для agentLabels.
+    """Human-readable agent label for agentLabels.
 
-    "main" -> фиксированная метка "Главный агент", не завязанная на meta (у
-    главного агента meta всегда None, см. tokens.walk). Для субагента —
-    meta.description (обрезанное), иначе meta.agentType, иначе сам ключ как
-    fallback — та же лестница приоритетов, что и в agent_timeline.py::_header.
+    "main" -> the fixed label "Main agent", not tied to meta (the main
+    agent's meta is always None, see tokens.walk). For a subagent —
+    meta.description (truncated), else meta.agentType, else the key itself
+    as a fallback — the same priority ladder as agent_timeline.py::_header.
     """
     if agent_key == "main":
-        return "Главный агент"
+        return "Main agent"
     if meta:
         desc = meta.get("description")
         if desc:
@@ -117,12 +128,13 @@ def _agent_label(agent_key, meta):
 
 
 def _workflow_name(root, project, session, run_id):
-    """Человекочитаемое имя workflow по его run_id.
+    """Human-readable workflow name for its run_id.
 
-    Скрипт прогона лежит в `<project>/<session>/workflows/scripts/` и назван
-    `<имя>-<run_id>.js` (см. фактическую раскладку транскриптов) — имя берём,
-    отрезав хвост `-<run_id>.js`. Скрипта нет/каталог недоступен — сам run_id
-    как fallback (лучше показать id, чем пусто).
+    The run's script lives in `<project>/<session>/workflows/scripts/` and
+    is named `<name>-<run_id>.js` (see the actual transcript layout) — the
+    name is obtained by stripping the `-<run_id>.js` suffix. If the script
+    is missing/the directory is unavailable — the run_id itself as a
+    fallback (better to show the id than nothing).
     """
     scripts_dir = os.path.join(root, project, session, "workflows", "scripts")
     suffix = "-" + run_id + ".js"
@@ -136,12 +148,13 @@ def _workflow_name(root, project, session, run_id):
 
 
 def _bin_key(rec, group_workflows):
-    """Ключ сегмента бина для записи.
+    """Bin segment key for a record.
 
-    По умолчанию — agentId субагента ("main" у главного). При group_workflows
-    все агенты одного workflow-прогона сливаются в один сегмент `workflow:<run>`
-    — так на странице сессии группа агентов, поднятая одним Workflow, рисуется
-    единым сегментом (см. agentLabels: там ключ несёт имя workflow).
+    By default — the subagent's agentId ("main" for the main agent). Under
+    group_workflows, all agents of one workflow run merge into a single
+    `workflow:<run>` segment — so on the session page, a group of agents
+    raised by one Workflow renders as a single segment (see agentLabels:
+    there the key carries the workflow's name).
     """
     wf = rec["workflowRunId"]
     if group_workflows and wf:
@@ -150,33 +163,41 @@ def _bin_key(rec, group_workflows):
 
 
 def build_timeline(root, limit=20, unit=300, project=None, session=None, group_workflows=False):
-    """Собирает ленту последних `limit` сессий, разложенных на бины `unit` секунд.
+    """Builds the feed of the last `limit` sessions, laid out into `unit`-second bins.
 
-    Логику подсчёта расхода не переопределяет — каждая usage-запись из
-    tokens.walk() учитывается ровно один раз (дедуп уже сделан в walk()),
-    поэтому сумма total всех бинов сессии равна её полному расходу.
+    Doesn't redefine the usage-counting logic — every usage record from
+    tokens.walk() is counted exactly once (dedup is already done in
+    walk()), so the sum of total over a session's bins equals its full
+    usage.
 
-    Возвращает {"threads": [...], "agentLabels": {...}} — agentLabels
-    верхнеуровневый (не per-thread): один и тот же agentId в разных тредах
-    (напр. повторный вызов одного workflow-агента) получает одну метку.
+    Returns {"threads": [...], "agentLabels": {...}} — agentLabels is
+    top-level (not per-thread): the same agentId across different threads
+    (e.g. a repeated call to the same workflow agent) gets a single label.
     """
     sessions = _session_main_files(root, project=project, session=session)
-    # последние N сессий по последней активности транскрипта, самые свежие первыми
+    # the last N sessions by the transcript's last activity, freshest first
     sessions.sort(key=lambda row: row[3], reverse=True)
     sessions = sessions[: max(limit, 0)]
 
     project_dirs = {}
-    # session id -> project dir basename (под `root`). Нужен для _workflow_name:
-    # rec["project"] из walk() — это relpath от глобального tokens.ROOT, а не от
-    # переданного root, и при root != ROOT (тесты) он неверен.
+    # session id -> project dir basename (under `root`). Needed for
+    # _workflow_name: rec["project"] from walk() is a relpath from the
+    # global tokens.ROOT, not from the passed-in root, and it's wrong when
+    # root != ROOT (tests).
     sid_to_proj = {}
     for _sid, proj, _path, _mtime in sessions:
         project_dirs.setdefault(proj, os.path.join(root, proj))
         sid_to_proj[_sid] = proj
 
     files = []
+    # Kept per-session (not just flattened into `files`) so git_events.scan_session
+    # can be run once per session below — it needs exactly one session's own
+    # files, not the whole slice's.
+    session_files = {}
     for sid, proj, _path, _mtime in sessions:
-        files.extend(tokens._session_files(project_dirs[proj], sid))
+        sfiles = tokens._session_files(project_dirs[proj], sid)
+        session_files[sid] = sfiles
+        files.extend(sfiles)
 
     records_by_session = defaultdict(list)
     # agent_key -> label, populated from the meta of the FIRST record seen for
@@ -198,17 +219,18 @@ def build_timeline(root, limit=20, unit=300, project=None, session=None, group_w
     for sid, proj, _path, _mtime in sessions:
         recs = records_by_session.get(sid, [])
 
-        # bin_epoch -> agent_key -> Bucket. Bucket переиспользуется из
-        # tokens.py, чтобы формула total (inp+cacheWrite+cacheRead+out) не
-        # дублировалась и не расходилась с той, что уже применяет tokens.py.
+        # bin_epoch -> agent_key -> Bucket. Bucket is reused from tokens.py,
+        # so the total formula (inp+cacheWrite+cacheRead+out) isn't
+        # duplicated and doesn't drift from the one tokens.py already applies.
         bin_buckets = defaultdict(lambda: defaultdict(tokens.Bucket))
-        # bin_epoch -> workflow agent_key -> set реальных agentId, слитых в
-        # этот сегмент (см. _bin_key: при group_workflows все агенты одного
-        # прогона схлопываются в "workflow:<run>", реальная принадлежность
-        # иначе терялась бы совсем — фронт не мог различить, участвовал ли
-        # выбранный агент в этом сегменте, для подсветки/гашения на графике
-        # сессии). Заполняется только для workflow-ключей — для обычного
-        # агента key уже и есть его real id, дублировать нечего.
+        # bin_epoch -> workflow agent_key -> a set of the real agentIds
+        # merged into this segment (see _bin_key: under group_workflows all
+        # agents of one run collapse into "workflow:<run>," and the real
+        # membership would otherwise be lost entirely — the frontend
+        # couldn't tell whether a selected agent participated in this
+        # segment, for highlighting/dimming on the session chart).
+        # Populated only for workflow keys — for a regular agent, key is
+        # already its real id, nothing to duplicate.
         bin_members = defaultdict(lambda: defaultdict(set))
         epochs = []
         for rec in recs:
@@ -223,19 +245,20 @@ def build_timeline(root, limit=20, unit=300, project=None, session=None, group_w
                 bin_members[bin_epoch][agent_key].add(rec["agentId"] or "main")
 
         if not epochs:
-            # Сессия без единой валидной usage-записи не несёт данных для
-            # ленты (не с чем считать start/end/duration) — пропускается, а
-            # не выводится с фиктивными нулями.
+            # A session without a single valid usage record carries no data
+            # for the feed (nothing to compute start/end/duration from) —
+            # it's skipped, rather than emitted with fake zeros.
             continue
 
         start_epoch = min(epochs)
         end_epoch = max(epochs)
 
-        # Непрерывная лента: по бину на КАЖДУЮ единицу времени интервала
-        # [start, end], включая пустые (нет активности). Иначе число столбцов
-        # зависело бы от плотности активности, а не от длительности, и тред,
-        # шедший дольше, но с редкими всплесками, выглядел бы уже плотного
-        # короткого. Пустые бины фронтенд рисует меткой «нет активности».
+        # Continuous feed: one bin per EVERY time unit of the [start, end]
+        # interval, including empty ones (no activity). Otherwise the number
+        # of columns would depend on activity density rather than duration,
+        # and a thread that ran longer but with sparse bursts would look
+        # narrower than a dense short one. The frontend renders empty bins
+        # with a "no activity" label.
         start_bin = _bin_start_epoch(start_epoch, unit)
         end_bin = _bin_start_epoch(end_epoch, unit)
         bins_out = []
@@ -254,20 +277,23 @@ def build_timeline(root, limit=20, unit=300, project=None, session=None, group_w
             bins_out.append({"t": _iso_from_epoch(bin_epoch), "agents": agents_out})
 
         total_tokens = sum(a["total"] for bo in bins_out for a in bo["agents"])
-        # Стоимость считается по тем же Bucket, что и токены (один тариф, одна
-        # формула) — сумма по бакетам равна полной стоимости треда, как и
-        # total_tokens равна сумме b.total.
+        # Cost is computed from the same Buckets as tokens (one tier, one
+        # formula) — the sum over buckets equals the thread's full cost,
+        # just as total_tokens equals the sum of b.total.
         total_cost = round(sum(b.cost for agents in bin_buckets.values() for b in agents.values()), 2)
-        # Различные workflow-прогоны сессии: agentId субагента, запущенного в
-        # рамках workflow, несёт workflowRunId (см. tokens.walk); обычный
-        # тред без workflow даёт пустое множество -> 0.
+        # Distinct workflow runs in the session: the agentId of a subagent
+        # launched within a workflow carries workflowRunId (see
+        # tokens.walk); a regular thread without a workflow gives an empty
+        # set -> 0.
         workflow_count = len({r["workflowRunId"] for r in recs if r["workflowRunId"]})
+
+        git_info = git_events.scan_session(session_files.get(sid, []))
 
         threads.append(
             {
                 "session": sid,
                 "project": proj,
-                # человекочитаемое имя подставит сервис (src/service) позже
+                # a human-readable name will be filled in by the service (src/service) later
                 "title": sid,
                 "start": _iso_from_epoch(start_epoch),
                 "end": _iso_from_epoch(end_epoch),
@@ -276,6 +302,9 @@ def build_timeline(root, limit=20, unit=300, project=None, session=None, group_w
                 "totalCost": total_cost,
                 "workflowCount": workflow_count,
                 "bins": bins_out,
+                "cwd": git_info["cwd"],
+                "gitBranch": git_info["gitBranch"],
+                "events": git_info["events"],
             }
         )
 
@@ -284,18 +313,18 @@ def build_timeline(root, limit=20, unit=300, project=None, session=None, group_w
 
 def main():
     ap = tokens.JsonAwareParser()
-    ap.add_argument("--json", action="store_true", help="печатать один JSON-объект вместо таблицы")
-    ap.add_argument("--limit", type=int, default=20, help="сколько последних сессий взять")
-    ap.add_argument("--unit", type=int, required=True, help="размер бина в секундах")
-    ap.add_argument("--project", help="подстрока пути проекта")
-    ap.add_argument("--session", help="точный id сессии (страница одной сессии); отменяет отбор по свежести")
-    ap.add_argument("--group-workflows", action="store_true", help="слить агентов одного workflow-прогона в один сегмент")
+    ap.add_argument("--json", action="store_true", help="print a single JSON object instead of a table")
+    ap.add_argument("--limit", type=int, default=20, help="how many of the most recent sessions to take")
+    ap.add_argument("--unit", type=int, required=True, help="bin size in seconds")
+    ap.add_argument("--project", help="substring of the project path")
+    ap.add_argument("--session", help="exact session id (single-session page); overrides recency selection")
+    ap.add_argument("--group-workflows", action="store_true", help="merge agents of one workflow run into a single segment")
     a = ap.parse_args()
 
     if a.limit < 0:
-        ap.error("--limit не может быть отрицательным")
+        ap.error("--limit cannot be negative")
     if a.unit <= 0:
-        ap.error("--unit должен быть положительным числом секунд")
+        ap.error("--unit must be a positive number of seconds")
 
     result = build_timeline(
         tokens.ROOT, limit=a.limit, unit=a.unit, project=a.project, session=a.session, group_workflows=a.group_workflows
@@ -306,7 +335,7 @@ def main():
         print(json.dumps(out, ensure_ascii=False))
         return
 
-    print(f"{'сессия':<10} {'проект':<40} {'токенов':>10} {'сек':>8}")
+    print(f"{'session':<10} {'project':<40} {'tokens':>10} {'sec':>8}")
     print("-" * 70)
     for t in result["threads"]:
         print(f"{t['session'][:8]:<10} {t['project'][:40]:<40} {t['totalTokens']:>10} {t['durationSec']:>8.0f}")

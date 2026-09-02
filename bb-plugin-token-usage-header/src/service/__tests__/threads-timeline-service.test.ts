@@ -3,6 +3,7 @@
 // python/process involved. Mirrors src/service/__tests__/tokens-runner.test.ts
 // and cache.test.ts's structure for the sibling contract.
 import { existsSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { describe, expect, it, vi } from "vitest";
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import { createFakePluginHost } from "@get-bb/plugin-sdk/testing";
@@ -14,7 +15,8 @@ import {
   threadsTimelineCacheKey,
 } from "../threads-timeline-service";
 import type { ProcessRunner, ProcessRunResult } from "../process-runner";
-import { EXPECTED_THREADS_TIMELINE_SCHEMA_VERSION } from "../../core/threads-timeline";
+import { EXPECTED_THREADS_TIMELINE_SCHEMA_VERSION, type ThreadEntry } from "../../core/threads-timeline";
+import type { PrEvent, PushEvent } from "../../core/git-events";
 
 const VALID_STDOUT = JSON.stringify({
   schemaVersion: EXPECTED_THREADS_TIMELINE_SCHEMA_VERSION,
@@ -24,7 +26,7 @@ const VALID_STDOUT = JSON.stringify({
 });
 
 /** One thread entry as threads_timeline.py --json prints it — pre-enrichment, no BB fields yet. */
-function rawThread(session: string) {
+function rawThread(session: string): Omit<ThreadEntry, "bbProjectId" | "bbProjectName" | "threadId" | "bbThreadTitle" | "isAlive" | "isWorking"> {
   return {
     session,
     project: `-Users-e0068-Documents-Projects-${session}`,
@@ -36,6 +38,12 @@ function rawThread(session: string) {
     totalCost: 1.5,
     workflowCount: 0,
     bins: [],
+    // No git activity by default — commit enrichment (see the dedicated
+    // "commit enrichment" describe block below) short-circuits on a null cwd
+    // without spawning a process, so every other test here stays unaffected.
+    cwd: null,
+    gitBranch: null,
+    events: [],
   };
 }
 
@@ -216,7 +224,7 @@ describe("createThreadsTimelineRunner: success and failure mapping", () => {
     if (result.ok) return;
     expect(result.reason).toBe("invalid_output");
     expect(result.message).toContain("empty output");
-    expect(result.message).toContain("код завершения 2");
+    expect(result.message).toContain("exit code 2");
     expect(result.message).toContain("No such file or directory");
   });
 
@@ -481,7 +489,7 @@ describe("createThreadsTimelineService: BB project enrichment", () => {
   it("does not fail the slice when bb.sdk.threads.list rejects — every thread comes back unmatched", async () => {
     const { bb, harness } = createFakePluginHost();
     harness.sdk.stub("threads.list", async () => {
-      throw new Error("демон недоступен");
+      throw new Error("daemon unavailable");
     });
     harness.sdk.stub("projects.list", async () => [{ id: "proj-1", name: "bb-plugins" }]);
     const { runner } = fakeRunner(() => ({ ok: true, stdout: stdoutWithThreads("sess-1"), stderr: "", code: 0 }));
@@ -501,7 +509,7 @@ describe("createThreadsTimelineService: BB project enrichment", () => {
     harness.sdk.stub("threads.list", async () => [{ id: "thread-1", projectId: "proj-1", title: "Design review" }]);
     harness.sdk.stub("threads.events.list", async () => [identityEvent("thread-1", "sess-1")]);
     harness.sdk.stub("projects.list", async () => {
-      throw new Error("демон недоступен");
+      throw new Error("daemon unavailable");
     });
     const { runner } = fakeRunner(() => ({ ok: true, stdout: stdoutWithThreads("sess-1"), stderr: "", code: 0 }));
     const service = createThreadsTimelineService(bb, { processRunner: runner });
@@ -542,5 +550,165 @@ describe("createThreadsTimelineService: BB project enrichment", () => {
     await service.query({ unit: 300 });
 
     expect(harness.sdk.callsTo("threads.events.list")).toHaveLength(1);
+  });
+});
+
+// Runs threads_timeline.py's stub response through the SAME fake
+// processRunner as the live `git log`/`git config` calls — impl switches on
+// the invoked command/args, mirroring how the real interpreter ("python3")
+// and "git" are told apart by createThreadsTimelineRunner/enrichCommits.
+function fakeGitAwareRunner(opts: { scriptStdout: string; gitLogOut?: string; gitLogFails?: boolean; gitConfigOut?: string }) {
+  return fakeRunner((command, args) => {
+    if (command === "git" && args.includes("log")) {
+      if (opts.gitLogFails) return { ok: false, reason: "spawn_error", message: "git not found" };
+      return { ok: true, stdout: opts.gitLogOut ?? "", stderr: "", code: 0 };
+    }
+    if (command === "git" && args.includes("config")) {
+      return { ok: true, stdout: opts.gitConfigOut ?? "", stderr: "", code: 0 };
+    }
+    return { ok: true, stdout: opts.scriptStdout, stderr: "", code: 0 };
+  });
+}
+
+describe("createThreadsTimelineService: commit enrichment", () => {
+  const REAL_DIR = tmpdir(); // must exist on disk — enrichThreadCommits checks existsSync(thread.cwd) before calling git
+
+  function threadWithGitContext(overrides: Partial<ReturnType<typeof rawThread>> = {}) {
+    return { ...rawThread("sess-1"), cwd: REAL_DIR, gitBranch: "bb/thr_x", ...overrides };
+  }
+
+  it("appends commit events from a live `git log`, linked via the thread's own pr event repository", async () => {
+    const prEvent: PrEvent = {
+      type: "pr",
+      ts: "2026-08-20T14:00:00.000Z",
+      number: 73,
+      url: "https://github.com/e0068/bb-plugins/pull/73",
+      repository: "e0068/bb-plugins",
+    };
+    const thread = threadWithGitContext({ events: [prEvent] });
+    const scriptStdout = JSON.stringify({
+      schemaVersion: EXPECTED_THREADS_TIMELINE_SCHEMA_VERSION,
+      unit: 300,
+      threads: [thread],
+      agentLabels: {},
+    });
+    const gitLogOut = "a5ee9a4b3c2d1e0f\x1f2026-08-20T13:50:00+00:00\x1ffix bug\x1e";
+    const { runner, calls } = fakeGitAwareRunner({ scriptStdout, gitLogOut });
+    const service = createThreadsTimelineService(fakeBb, { processRunner: runner });
+
+    const result = await service.query({ unit: 300 });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.data.threads[0].events).toEqual([
+      {
+        type: "commit",
+        ts: "2026-08-20T13:50:00+00:00",
+        hash: "a5ee9a4b3c2d1e0f",
+        message: "fix bug",
+        url: "https://github.com/e0068/bb-plugins/commit/a5ee9a4b3c2d1e0f",
+      },
+      prEvent,
+    ]);
+    // No pr event on the thread → resolveRepoSlug must not fall back to `git
+    // config` when one is already known for free.
+    expect(calls.some((c) => c.args.includes("config"))).toBe(false);
+  });
+
+  it("resolves the repo slug via `git config` when the thread has no pr event, and uses it for both a commit and a push url", async () => {
+    const pushEvent: PushEvent = { type: "push", ts: "2026-08-20T13:40:00.000Z", branch: "bb/thr_x", url: null };
+    const thread = threadWithGitContext({ events: [pushEvent] });
+    const scriptStdout = JSON.stringify({
+      schemaVersion: EXPECTED_THREADS_TIMELINE_SCHEMA_VERSION,
+      unit: 300,
+      threads: [thread],
+      agentLabels: {},
+    });
+    const gitLogOut = "a5ee9a4\x1f2026-08-20T13:50:00+00:00\x1ffix bug\x1e";
+    const { runner } = fakeGitAwareRunner({ scriptStdout, gitLogOut, gitConfigOut: "git@github.com:e0068/bb-plugins.git\n" });
+    const service = createThreadsTimelineService(fakeBb, { processRunner: runner });
+
+    const result = await service.query({ unit: 300 });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.data.threads[0].events).toEqual([
+      { ...pushEvent, url: "https://github.com/e0068/bb-plugins/tree/bb/thr_x" },
+      {
+        type: "commit",
+        ts: "2026-08-20T13:50:00+00:00",
+        hash: "a5ee9a4",
+        message: "fix bug",
+        url: "https://github.com/e0068/bb-plugins/commit/a5ee9a4",
+      },
+    ]);
+  });
+
+  it("leaves a thread without cwd untouched and never spawns git for it", async () => {
+    const thread = rawThread("sess-1"); // cwd: null by default
+    const scriptStdout = JSON.stringify({
+      schemaVersion: EXPECTED_THREADS_TIMELINE_SCHEMA_VERSION,
+      unit: 300,
+      threads: [thread],
+      agentLabels: {},
+    });
+    const { runner, calls } = fakeGitAwareRunner({ scriptStdout });
+    const service = createThreadsTimelineService(fakeBb, { processRunner: runner });
+
+    const result = await service.query({ unit: 300 });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.data.threads[0].events).toEqual([]);
+    expect(calls.some((c) => c.command === "git")).toBe(false);
+  });
+
+  it("leaves a thread untouched when its cwd no longer exists on disk (worktree already cleaned up)", async () => {
+    const thread = threadWithGitContext({ cwd: "/no/such/directory/at-all" });
+    const scriptStdout = JSON.stringify({
+      schemaVersion: EXPECTED_THREADS_TIMELINE_SCHEMA_VERSION,
+      unit: 300,
+      threads: [thread],
+      agentLabels: {},
+    });
+    const { runner, calls } = fakeGitAwareRunner({ scriptStdout });
+    const service = createThreadsTimelineService(fakeBb, { processRunner: runner });
+
+    const result = await service.query({ unit: 300 });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.data.threads[0].events).toEqual([]);
+    expect(calls.some((c) => c.command === "git")).toBe(false);
+  });
+
+  it("leaves a thread without commit events (but otherwise intact) when `git log` fails, instead of failing the whole slice", async () => {
+    const prEvent: PrEvent = { type: "pr", ts: "t", number: 1, url: "u", repository: "a/b" };
+    const thread = threadWithGitContext({ events: [prEvent] });
+    const scriptStdout = JSON.stringify({
+      schemaVersion: EXPECTED_THREADS_TIMELINE_SCHEMA_VERSION,
+      unit: 300,
+      threads: [thread],
+      agentLabels: {},
+    });
+    const { runner } = fakeGitAwareRunner({ scriptStdout, gitLogFails: true });
+    const service = createThreadsTimelineService(fakeBb, { processRunner: runner });
+
+    const result = await service.query({ unit: 300 });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.data.threads[0].events).toEqual([prEvent]);
+  });
+
+  it("skips commit enrichment entirely for an empty slice", async () => {
+    const scriptStdout = VALID_STDOUT;
+    const { runner, calls } = fakeGitAwareRunner({ scriptStdout });
+    const service = createThreadsTimelineService(fakeBb, { processRunner: runner });
+
+    const result = await service.query({ unit: 300 });
+
+    expect(result.ok).toBe(true);
+    expect(calls.some((c) => c.command === "git")).toBe(false);
   });
 });

@@ -35,15 +35,15 @@ function buildAgentDetailSubPath(params: AgentDetailLinkParams): string {
   return seg.map(encodeURIComponent).join("/");
 }
 
-/** Показать значение схеме контракта — тот же приём, что и в contract-sync.test.tsx соседнего плагина. */
+/** Show the value to the contract's schema — same trick as contract-sync.test.tsx in the sibling plugin. */
 function assertMatchesContract(method: keyof typeof rpcContract, input: unknown) {
   const result = rpcContract[method].input["~standard"].validate(input);
   if (result instanceof Promise) {
-    throw new Error(`схема метода "${method}" асинхронная — тест этого не ждёт`);
+    throw new Error(`method "${method}"'s schema is async — this test doesn't await it`);
   }
   if (result.issues !== undefined) {
     throw new Error(
-      `вход метода "${method}" не проходит контракт: ${JSON.stringify(input)}\n` +
+      `method "${method}"'s input fails the contract: ${JSON.stringify(input)}\n` +
         result.issues.map((issue) => `  · ${issue.message}`).join("\n"),
     );
   }
@@ -69,19 +69,19 @@ const READY_TIMELINE = {
     messages: 5,
   },
   agents: [
-    { key: "main", name: "Главный агент", caption: "opus 700", total: 700, cost: 0.2 },
+    { key: "main", name: "Main agent", caption: "opus 700", total: 700, cost: 0.2 },
     { key: "agent-a11", name: "code-reviewer", caption: "code-reviewer · opus 300", total: 300, cost: 0.1 },
   ],
   agent: {
     key: "main",
     agentType: null,
-    description: "Ведёт сессию",
+    description: "Leads the session",
     model: "opus",
     spawnDepth: 0,
-    promptExcerpt: "Проверь упрощение функции distort.",
-    requestFull: "Проверь упрощение функции distort. Дай полный разбор.",
+    promptExcerpt: "Check the simplification of the distort function.",
+    requestFull: "Check the simplification of the distort function. Give a full breakdown.",
     requestFullTruncated: false,
-    responseFull: "Готово, разбор ниже. Всё покрыто тестами.",
+    responseFull: "Done, breakdown below. Everything is covered by tests.",
     responseFullTruncated: false,
   },
   events: [
@@ -90,8 +90,8 @@ const READY_TIMELINE = {
       ts: "2026-08-25T09:14:03.000Z",
       kind: "message" as const,
       role: "user" as const,
-      text: "Начинаем разбор.",
-      fullText: "Начинаем разбор. Смотри на функцию distort и её use-сайты по всему модулю signal.",
+      text: "Starting the analysis.",
+      fullText: "Starting the analysis. Look at the distort function and its use sites across the signal module.",
       fullTextTruncated: false,
     },
     { ts: "2026-08-25T09:14:05.000Z", kind: "tool" as const, name: "Read", target: "signal/distort.ts" },
@@ -99,18 +99,19 @@ const READY_TIMELINE = {
       ts: "2026-08-25T09:14:20.000Z",
       kind: "message" as const,
       role: "assistant" as const,
-      text: "Готово, разбор ниже.",
-      fullText: "Готово, разбор ниже. Полный текст ответа со всеми деталями находки и предложенным патчем.",
+      text: "Done, breakdown below.",
+      fullText: "Done, breakdown below. Full response text with all the details of the finding and the proposed patch.",
       fullTextTruncated: true,
       tokens: 452,
       cost: 0.0123,
     },
   ],
+  mergeEvents: [],
 };
 
 async function renderAgentDetail(subPath: string, rpc: Partial<PluginRpcTestHandlers<typeof rpcContract>>) {
   const app = await loadPluginApp(() => import("../app"));
-  // "Детализация агента" isn't a nav panel of its own — it's the
+  // "Agent breakdown" isn't a nav panel of its own — it's the
   // subPath !== "" sub-view rendered inside the single "threads-timeline"
   // panel (see app.tsx's ThreadsTimelinePanel router).
   const registration = app.navPanels.find((p) => p.id === "threads-timeline");
@@ -160,10 +161,10 @@ describe("threads-timeline panel — agent-detail sub-view", () => {
       },
     });
 
-    await screen.findByText("Всего токенов");
-    await screen.findByText("Проверь упрощение функции distort.");
+    await screen.findByText("Total tokens");
+    await screen.findByText("Check the simplification of the distort function.");
     // Both events tied to the "main" agent and the left panel's own row for it show up.
-    expect(screen.getAllByText("Главный агент").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Main agent").length).toBeGreaterThan(0);
 
     expect(slot.rpcCalls.length).toBeGreaterThan(0);
     // The left panel's breakdown is fed from the agentTimeline response (no
@@ -210,18 +211,21 @@ describe("threads-timeline panel — agent-detail sub-view", () => {
                   ],
                 },
               ],
+              cwd: null,
+              gitBranch: null,
+              events: [],
               bbProjectId: null,
               bbProjectName: null,
               threadId: null,
               bbThreadTitle: null,
             },
           ],
-          agentLabels: { main: "Главный агент", "workflow:wf_1": "arch-review" },
+          agentLabels: { main: "Main agent", "workflow:wf_1": "arch-review" },
         };
       },
     });
 
-    await screen.findByText("Диаграмма сессии");
+    await screen.findByText("Session chart");
     // The chart is the reused feed frame (ThreadRow) — the per-agent legend
     // lives in the column hover tooltip, where the workflow-merged segment
     // reads as a Workflow with its human name.
@@ -255,13 +259,16 @@ describe("threads-timeline panel — agent-detail sub-view", () => {
               ],
             },
           ],
+          cwd: null,
+          gitBranch: null,
+          events: [],
           bbProjectId: null,
           bbProjectName: null,
           threadId: null,
           bbThreadTitle: null,
         },
       ],
-      agentLabels: { main: "Главный агент", "agent-a11": "code-reviewer" },
+      agentLabels: { main: "Main agent", "agent-a11": "code-reviewer" },
     };
   }
 
@@ -271,11 +278,11 @@ describe("threads-timeline panel — agent-detail sub-view", () => {
       threadsTimeline: threadsTimelineTwoAgents,
     });
 
-    await screen.findByText("Диаграмма сессии");
+    await screen.findByText("Session chart");
     // Full aria-label (name + token count) to pick the chart's own segment
     // button, not the left panel's identically-named agent row.
-    const mainSegment = screen.getByRole("button", { name: /Главный агент: 100 токенов/ });
-    const otherSegment = screen.getByRole("button", { name: /code-reviewer: 200 токенов/ });
+    const mainSegment = screen.getByRole("button", { name: /Main agent: 100 tokens/ });
+    const otherSegment = screen.getByRole("button", { name: /code-reviewer: 200 tokens/ });
     expect(mainSegment.className).not.toContain("opacity-40");
     expect(otherSegment.className).toContain("opacity-40");
     // Sanity: this isn't just the DOM query resolving the same element twice.
@@ -289,11 +296,11 @@ describe("threads-timeline panel — agent-detail sub-view", () => {
       threadsTimeline: threadsTimelineTwoAgents,
     });
 
-    await screen.findByText("Диаграмма сессии");
+    await screen.findByText("Session chart");
     // Full aria-label (name + token count) to pick the chart's own segment
     // button, not the left panel's identically-named agent row.
-    const mainSegment = screen.getByRole("button", { name: /Главный агент: 100 токенов/ });
-    const otherSegment = screen.getByRole("button", { name: /code-reviewer: 200 токенов/ });
+    const mainSegment = screen.getByRole("button", { name: /Main agent: 100 tokens/ });
+    const otherSegment = screen.getByRole("button", { name: /code-reviewer: 200 tokens/ });
     expect(mainSegment.className).toContain("opacity-40");
     expect(otherSegment.className).not.toContain("opacity-40");
   });
@@ -323,13 +330,16 @@ describe("threads-timeline panel — agent-detail sub-view", () => {
               ],
             },
           ],
+          cwd: null,
+          gitBranch: null,
+          events: [],
           bbProjectId: null,
           bbProjectName: null,
           threadId: null,
           bbThreadTitle: null,
         },
       ],
-      agentLabels: { main: "Главный агент", "workflow:wf_1": "arch-review" },
+      agentLabels: { main: "Main agent", "workflow:wf_1": "arch-review" },
     };
   }
 
@@ -339,9 +349,9 @@ describe("threads-timeline panel — agent-detail sub-view", () => {
       threadsTimeline: threadsTimelineWithWorkflowMembers,
     });
 
-    await screen.findByText("Диаграмма сессии");
-    const workflowSegment = screen.getByRole("button", { name: /Workflow: arch-review: 200 токенов/ });
-    const mainSegment = screen.getByRole("button", { name: /Главный агент: 100 токенов/ });
+    await screen.findByText("Session chart");
+    const workflowSegment = screen.getByRole("button", { name: /Workflow: arch-review: 200 tokens/ });
+    const mainSegment = screen.getByRole("button", { name: /Main agent: 100 tokens/ });
     expect(workflowSegment.className).not.toContain("opacity-40");
     // The selected agent isn't main itself, so main still fades — only the
     // segment that actually contains the selected agent stays lit.
@@ -354,9 +364,81 @@ describe("threads-timeline panel — agent-detail sub-view", () => {
       threadsTimeline: threadsTimelineWithWorkflowMembers,
     });
 
-    await screen.findByText("Диаграмма сессии");
-    const workflowSegment = screen.getByRole("button", { name: /Workflow: arch-review: 200 токенов/ });
+    await screen.findByText("Session chart");
+    const workflowSegment = screen.getByRole("button", { name: /Workflow: arch-review: 200 tokens/ });
     expect(workflowSegment.className).toContain("opacity-40");
+  });
+
+  it("clicking a plain agent segment on the session's own chart re-navigates with the bin's from/to window, not just the agent", async () => {
+    const slot = await renderAgentDetail(buildAgentDetailSubPath({ session: "sess_abc123", agent: "agent-x11" }), {
+      agentTimeline: async () => READY_TIMELINE,
+      threadsTimeline: threadsTimelineWithWorkflowMembers,
+    });
+
+    await screen.findByText("Session chart");
+    fireEvent.click(screen.getByRole("button", { name: /Main agent: 100 tokens/ }));
+
+    expect(slot.navigateCalls).toContainEqual({
+      method: "toPluginPanel",
+      path: "threads",
+      options: {
+        subPath: buildAgentDetailSubPath({
+          session: "sess_abc123",
+          agent: "main",
+          from: "2026-08-25T09:00:00.000Z",
+          to: "2026-08-25T09:01:00.000Z",
+        }),
+        replace: true,
+      },
+    });
+  });
+
+  it("clicking a workflow-merged segment opens the active member's own timeline at that bin's window, instead of doing nothing", async () => {
+    const slot = await renderAgentDetail(buildAgentDetailSubPath({ session: "sess_abc123", agent: "agent-x11" }), {
+      agentTimeline: async () => READY_TIMELINE,
+      threadsTimeline: threadsTimelineWithWorkflowMembers,
+    });
+
+    await screen.findByText("Session chart");
+    fireEvent.click(screen.getByRole("button", { name: /Workflow: arch-review: 200 tokens/ }));
+
+    expect(slot.navigateCalls).toContainEqual({
+      method: "toPluginPanel",
+      path: "threads",
+      options: {
+        subPath: buildAgentDetailSubPath({
+          session: "sess_abc123",
+          agent: "agent-x11",
+          from: "2026-08-25T09:00:00.000Z",
+          to: "2026-08-25T09:01:00.000Z",
+        }),
+        replace: true,
+      },
+    });
+  });
+
+  it("clicking a workflow-merged segment falls back to its first member when the currently open agent took no part in that run", async () => {
+    const slot = await renderAgentDetail(buildAgentDetailSubPath({ session: "sess_abc123", agent: "agent-z99" }), {
+      agentTimeline: async () => READY_TIMELINE,
+      threadsTimeline: threadsTimelineWithWorkflowMembers,
+    });
+
+    await screen.findByText("Session chart");
+    fireEvent.click(screen.getByRole("button", { name: /Workflow: arch-review: 200 tokens/ }));
+
+    expect(slot.navigateCalls).toContainEqual({
+      method: "toPluginPanel",
+      path: "threads",
+      options: {
+        subPath: buildAgentDetailSubPath({
+          session: "sess_abc123",
+          agent: "agent-x11",
+          from: "2026-08-25T09:00:00.000Z",
+          to: "2026-08-25T09:01:00.000Z",
+        }),
+        replace: true,
+      },
+    });
   });
 
   it("renders tool and message rows from the agent's events with their labels", async () => {
@@ -366,7 +448,7 @@ describe("threads-timeline panel — agent-detail sub-view", () => {
 
     await screen.findByText("Read");
     await screen.findByText("signal/distort.ts");
-    await screen.findByText("Готово, разбор ниже.");
+    await screen.findByText("Done, breakdown below.");
   });
 
   it("clicking a message row reveals its full text, not just the short preview already shown inline", async () => {
@@ -374,14 +456,14 @@ describe("threads-timeline panel — agent-detail sub-view", () => {
       agentTimeline: async () => READY_TIMELINE,
     });
 
-    const previewRow = await screen.findByText("Готово, разбор ниже.");
-    expect(screen.queryByText(/Полный текст ответа со всеми деталями/)).toBeNull();
+    const previewRow = await screen.findByText("Done, breakdown below.");
+    expect(screen.queryByText(/Full response text with all the details/)).toBeNull();
 
     fireEvent.click(previewRow);
 
-    await screen.findByText(/Полный текст ответа со всеми деталями находки и предложенным патчем\./);
+    await screen.findByText(/Full response text with all the details of the finding and the proposed patch\./);
     // Truncated on this event -> the notice shows.
-    await screen.findByText("показано не всё");
+    await screen.findByText("not everything is shown");
   });
 
   it("does not show a truncation notice for a row whose full text was not truncated", async () => {
@@ -389,10 +471,10 @@ describe("threads-timeline panel — agent-detail sub-view", () => {
       agentTimeline: async () => READY_TIMELINE,
     });
 
-    fireEvent.click(await screen.findByText("Начинаем разбор."));
+    fireEvent.click(await screen.findByText("Starting the analysis."));
 
-    await screen.findByText(/Смотри на функцию distort/);
-    expect(screen.queryByText("показано не всё")).toBeNull();
+    await screen.findByText(/Look at the distort function/);
+    expect(screen.queryByText("not everything is shown")).toBeNull();
   });
 
   it("shows tokens/cost only on assistant message rows, leaving tool/hook rows blank", async () => {
@@ -400,7 +482,7 @@ describe("threads-timeline panel — agent-detail sub-view", () => {
       agentTimeline: async () => READY_TIMELINE,
     });
 
-    const assistantRow = (await screen.findByText("Готово, разбор ниже.")).closest("[data-ev-index]");
+    const assistantRow = (await screen.findByText("Done, breakdown below.")).closest("[data-ev-index]");
     expect(assistantRow).not.toBeNull();
     expect(assistantRow?.textContent).toContain("452");
     expect(assistantRow?.textContent).toContain("$0.01");
@@ -416,15 +498,15 @@ describe("threads-timeline panel — agent-detail sub-view", () => {
       agentTimeline: async () => READY_TIMELINE,
     });
 
-    await screen.findByText("Всего токенов");
+    await screen.findByText("Total tokens");
     expect(screen.queryByText(READY_TIMELINE.agent.requestFull)).toBeNull();
 
-    fireEvent.click(await screen.findByRole("button", { name: "Содержимое целиком" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Full content" }));
 
     await screen.findByText(READY_TIMELINE.agent.requestFull);
     await screen.findByText(READY_TIMELINE.agent.responseFull);
 
-    fireEvent.click(screen.getByRole("button", { name: "Скрыть содержимое" }));
+    fireEvent.click(screen.getByRole("button", { name: "Hide content" }));
     expect(screen.queryByText(READY_TIMELINE.agent.requestFull)).toBeNull();
   });
 
@@ -436,8 +518,8 @@ describe("threads-timeline panel — agent-detail sub-view", () => {
       }),
     });
 
-    await screen.findByText("Всего токенов");
-    expect(screen.queryByRole("button", { name: /Содержимое целиком/ })).toBeNull();
+    await screen.findByText("Total tokens");
+    expect(screen.queryByRole("button", { name: /Full content/ })).toBeNull();
   });
 
   it("marks only the truncated side (response) with a notice, leaving the untruncated request unmarked", async () => {
@@ -448,16 +530,16 @@ describe("threads-timeline panel — agent-detail sub-view", () => {
       }),
     });
 
-    fireEvent.click(await screen.findByRole("button", { name: "Содержимое целиком" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Full content" }));
     await screen.findByText(READY_TIMELINE.agent.responseFull);
 
-    // "Выход"/"Вход" also label the token-breakdown numbers in the left
+    // "Output"/"Input" also label the token-breakdown numbers in the left
     // panel — scope the search to the full-content toggle's own wrapper.
-    const fullContentPanel = screen.getByRole("button", { name: "Скрыть содержимое" }).parentElement!;
-    const responseBlock = within(fullContentPanel).getByText("Выход").closest("div")!;
-    expect(within(responseBlock).getByText("показано не всё")).toBeTruthy();
-    const requestBlock = within(fullContentPanel).getByText("Вход").closest("div")!;
-    expect(within(requestBlock).queryByText("показано не всё")).toBeNull();
+    const fullContentPanel = screen.getByRole("button", { name: "Hide content" }).parentElement!;
+    const responseBlock = within(fullContentPanel).getByText("Output").closest("div")!;
+    expect(within(responseBlock).getByText("not everything is shown")).toBeTruthy();
+    const requestBlock = within(fullContentPanel).getByText("Input").closest("div")!;
+    expect(within(requestBlock).queryByText("not everything is shown")).toBeNull();
   });
 
   it("clicking a different agent row in the left panel navigates within the panel to that agent, dropping any from/to window", async () => {
@@ -481,7 +563,7 @@ describe("threads-timeline panel — agent-detail sub-view", () => {
   it("without a session id (malformed/stale link), makes no agentTimeline call and explains why", async () => {
     const slot = await renderAgentDetail(buildAgentDetailSubPath({ agent: "main", session: "" }), {});
 
-    await screen.findByText(/Нет id сессии Claude Code/);
+    await screen.findByText(/No session id Claude Code/);
     // The mount-time viz-settings load still fires (it doesn't depend on a
     // session) — only the data-fetching call is gated on having one.
     expect(slot.rpcCalls.some((call) => call.method === "agentTimeline")).toBe(false);
@@ -528,15 +610,15 @@ describe("threads-timeline panel — agent-detail sub-view", () => {
       loadVizSettings: async () => loadedSettings,
     });
 
-    await screen.findByText("Всего токенов");
-    await screen.findByRole("button", { name: /Хуки:\s*выкл/ });
-    await screen.findByRole("button", { name: /Время:\s*относительное/ });
-    await screen.findByRole("button", { name: /Группировка:\s*по ходам/ });
+    await screen.findByText("Total tokens");
+    await screen.findByRole("button", { name: /Hooks:\s*off/ });
+    await screen.findByRole("button", { name: /Time:\s*relative/ });
+    await screen.findByRole("button", { name: /Grouping:\s*by turn/ });
   });
 
   it("saves the full viz settings (including the loaded threads section, untouched) when a display toggle changes", async () => {
     const loadedSettings: VizSettings = {
-      threads: { ...DEFAULT_VIZ_SETTINGS.threads, unit: 300, sortMode: "tokens" },
+      threads: { ...DEFAULT_VIZ_SETTINGS.threads, sortMode: "tokens" },
       agentDetail: DEFAULT_VIZ_SETTINGS.agentDetail,
     };
     let savedInput: unknown;
@@ -549,7 +631,7 @@ describe("threads-timeline panel — agent-detail sub-view", () => {
       },
     });
 
-    const hooksToggle = await screen.findByRole("button", { name: /Хуки:\s*вкл/ });
+    const hooksToggle = await screen.findByRole("button", { name: /Hooks:\s*on/ });
     fireEvent.click(hooksToggle);
 
     await waitFor(() => expect(savedInput).toBeDefined());
@@ -569,7 +651,10 @@ describe("token usage header row", () => {
     };
   }
 
-  async function renderHeaderAction(rpc: Partial<PluginRpcTestHandlers<typeof rpcContract>>) {
+  async function renderHeaderAction(
+    rpc: Partial<PluginRpcTestHandlers<typeof rpcContract>>,
+    settings?: Record<string, string | boolean>,
+  ) {
     const app = await loadPluginApp(() => import("../app"));
     expect(app.threadHeaderActions).toHaveLength(1);
     const [registration] = app.threadHeaderActions;
@@ -582,14 +667,19 @@ describe("token usage header row", () => {
       // ready — default to an empty ready slice so that background call
       // neither throws nor renders a chart unless a test opts in.
       threadsTimeline: async () => ({ status: "ready" as const, unit: 60, threads: [], agentLabels: {} }),
-      loadVizSettings: unusedHeaderRpcMethod("loadVizSettings"),
+      // The popover also loads agentColors from bb.storage.kv on mount (so
+      // its session chart's legend matches the feed's) — geometry/behaviour
+      // settings (unit, collapseEmpty, …) come from `settings` above via
+      // useSettings() instead, not from this kv blob. The popover never
+      // writes settings, so saveVizSettings stays an unused poison pill.
+      loadVizSettings: async () => DEFAULT_VIZ_SETTINGS,
       saveVizSettings: unusedHeaderRpcMethod("saveVizSettings"),
       ...rpc,
     };
-    return renderSlot<PluginThreadHeaderActionProps, typeof rpcContract>(registration, props, { rpc: fullRpc });
+    return renderSlot<PluginThreadHeaderActionProps, typeof rpcContract>(registration, props, { rpc: fullRpc, settings });
   }
 
-  it("clicking an agent row (the whole row, not a separate \"Детали\" button) navigates into the threads panel's agent-detail sub-view", async () => {
+  it("clicking an agent row (the whole row, not a separate \"Details\" button) navigates into the threads panel's agent-detail sub-view", async () => {
     const slot = await renderHeaderAction({
       sessionTokenUsage: async () => ({
         status: "ready",
@@ -600,12 +690,12 @@ describe("token usage header row", () => {
       }),
     });
 
-    const trigger = await screen.findByRole("button", { name: /Расход токенов/ });
+    const trigger = await screen.findByRole("button", { name: /Token usage/ });
     fireEvent.click(trigger);
 
     const agentRow = await screen.findByRole("button", { name: /code-reviewer/ });
-    // No separate "Детали" action inside the row — the whole row is one button.
-    expect(screen.queryByRole("button", { name: "Детали" })).toBeNull();
+    // No separate "Details" action inside the row — the whole row is one button.
+    expect(screen.queryByRole("button", { name: "Details" })).toBeNull();
     fireEvent.click(agentRow);
 
     expect(slot.navigateCalls).toContainEqual({
@@ -626,69 +716,76 @@ describe("token usage header row", () => {
       }),
     });
 
-    fireEvent.click(await screen.findByRole("button", { name: /Расход токенов/ }));
+    fireEvent.click(await screen.findByRole("button", { name: /Token usage/ }));
 
-    const scrollBody = (await screen.findByText("Всего токенов")).closest(".overflow-y-auto");
+    const scrollBody = (await screen.findByText("Total tokens")).closest(".overflow-y-auto");
     expect(scrollBody).not.toBeNull();
     expect(scrollBody!.classList.contains("max-h-[70vh]")).toBe(true);
   });
 
-  it("shows the session chart above the totals, with consecutive empty bins collapsed into one gap column", async () => {
-    await renderHeaderAction({
-      sessionTokenUsage: async () => ({
-        status: "ready",
-        sessionId: "sess_abc123",
-        totals: READY_TIMELINE.totals,
-        agents: READY_TIMELINE.agents,
-        truncated: false,
-      }),
-      threadsTimeline: async (input) => {
-        assertMatchesContract("threadsTimeline", input);
-        return {
-          status: "ready" as const,
-          unit: 60,
-          threads: [
-            {
-              session: "sess_abc123",
-              project: "token-usage-header",
-              title: "sess_abc123",
-              start: "2026-08-25T09:00:00.000Z",
-              end: "2026-08-25T09:04:00.000Z",
-              durationSec: 240,
-              totalTokens: 2000,
-              totalCost: 0.2,
-              workflowCount: 0,
-              // main, gap, gap, main — collapseEmpty should fold the two
-              // consecutive empty bins into one 2-unit gap column, same as
-              // the feed's own "Схлопнуть пустоты: Вкл" behaviour (see
-              // threads-timeline-page.test.tsx), except this popover always
-              // renders collapsed (no toggle).
-              bins: [
-                { t: "2026-08-25T09:00:00.000Z", agents: [{ key: "main", total: 1000 }] },
-                { t: "2026-08-25T09:01:00.000Z", agents: [] },
-                { t: "2026-08-25T09:02:00.000Z", agents: [] },
-                { t: "2026-08-25T09:03:00.000Z", agents: [{ key: "main", total: 1000 }] },
-              ],
-              bbProjectId: null,
-              bbProjectName: null,
-              threadId: null,
-              bbThreadTitle: null,
-              isAlive: false,
-              isWorking: false,
-            },
-          ],
-          agentLabels: { main: "Главный агент" },
-        };
+  it("shows the session chart above the totals, honouring the gear's collapse-empty setting like the feed does", async () => {
+    await renderHeaderAction(
+      {
+        sessionTokenUsage: async () => ({
+          status: "ready",
+          sessionId: "sess_abc123",
+          totals: READY_TIMELINE.totals,
+          agents: READY_TIMELINE.agents,
+          truncated: false,
+        }),
+        threadsTimeline: async (input) => {
+          assertMatchesContract("threadsTimeline", input);
+          return {
+            status: "ready" as const,
+            unit: 60,
+            threads: [
+              {
+                session: "sess_abc123",
+                project: "token-usage-header",
+                title: "sess_abc123",
+                start: "2026-08-25T09:00:00.000Z",
+                end: "2026-08-25T09:04:00.000Z",
+                durationSec: 240,
+                totalTokens: 2000,
+                totalCost: 0.2,
+                workflowCount: 0,
+                // main, gap, gap, main — collapseEmpty should fold the two
+                // consecutive empty bins into one 2-unit gap column, same as
+                // the feed's own "Collapse gaps: On" behaviour (see
+                // threads-timeline-page.test.tsx) — this test's `settings`
+                // option below turns that gear setting on, and the popover's
+                // chart follows it exactly like the feed's own rows do.
+                bins: [
+                  { t: "2026-08-25T09:00:00.000Z", agents: [{ key: "main", total: 1000 }] },
+                  { t: "2026-08-25T09:01:00.000Z", agents: [] },
+                  { t: "2026-08-25T09:02:00.000Z", agents: [] },
+                  { t: "2026-08-25T09:03:00.000Z", agents: [{ key: "main", total: 1000 }] },
+                ],
+                cwd: null,
+                gitBranch: null,
+                events: [],
+                bbProjectId: null,
+                bbProjectName: null,
+                threadId: null,
+                bbThreadTitle: null,
+                isAlive: false,
+                isWorking: false,
+              },
+            ],
+            agentLabels: { main: "Main agent" },
+          };
+        },
       },
-    });
+      { collapseEmpty: true },
+    );
 
-    fireEvent.click(await screen.findByRole("button", { name: /Расход токенов/ }));
+    fireEvent.click(await screen.findByRole("button", { name: /Token usage/ }));
 
-    const scrollBody = (await screen.findByText("Всего токенов")).closest(".overflow-y-auto") as HTMLElement;
+    const scrollBody = (await screen.findByText("Total tokens")).closest(".overflow-y-auto") as HTMLElement;
     await waitFor(() => {
       const columns = scrollBody.querySelectorAll(".relative.h-full.min-w-\\[2px\\]");
       expect(columns.length).toBe(3);
     });
-    expect(scrollBody.querySelector('[title*="перерыв 2 мин 0 с"]')).not.toBeNull();
+    expect(scrollBody.querySelector('[title*="2 min 0 s break"]')).not.toBeNull();
   });
 });

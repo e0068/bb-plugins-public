@@ -1,14 +1,15 @@
 #!/usr/bin/env python3
-"""Тесты на отбор файлов транскриптов, применение временных границ и на саму
-логику подсчёта.
+"""Tests for transcript file selection, applying time boundaries, and the
+counting logic itself.
 
-Три группы: tokens.select_files (какие файлы попадают в обход при заданных
---session/--project/--since, на подставном дереве каталогов — структура как
-в ~/.claude/projects, без обращения к настоящему ~/.claude); разбор/
-применение --since/--until (tokens._parse_time_bound, tokens.walk); и подсчёт
-токенов по моделям (tokens.ModelCounts, tokens.Bucket.add/cost/bucket_json,
-tokens.tier, tokens.merge_buckets) — разнесение расхода записи по бакету и по
-тиру модели, порядок и тариф в выдаче, слияние счётчиков в grand-итоги.
+Three groups: tokens.select_files (which files make it into the walk given
+--session/--project/--since, on a stand-in directory tree — structured like
+~/.claude/projects, without touching the real ~/.claude); parsing/applying
+--since/--until (tokens._parse_time_bound, tokens.walk); and counting
+tokens by model (tokens.ModelCounts, tokens.Bucket.add/cost/bucket_json,
+tokens.tier, tokens.merge_buckets) — attributing a record's usage to a
+bucket and a model tier, ordering and pricing in the output, merging
+counters into grand totals.
 """
 import json
 import os
@@ -83,7 +84,7 @@ class SelectFilesTest(unittest.TestCase):
         touch(subagent_file)
         touch(workflow_agent_file)
         touch(workflow_journal_file)
-        # шум: другая сессия рядом не должна попасть в выборку
+        # noise: a different neighboring session must not end up in the selection
         touch(self._p("projA", "99999999-0000-0000-0000-000000000000.jsonl"))
 
         got = set(tokens.select_files(self.root, session="22222222"))
@@ -103,9 +104,9 @@ class SelectFilesTest(unittest.TestCase):
     def test_since_drops_file_strictly_older_than_boundary(self):
         old_file = self._p("projA", "old.jsonl")
         new_file = self._p("projA", "new.jsonl")
-        # mtime строго раньше границы -> файл целиком вне окна, отбрасывается
+        # mtime strictly earlier than the boundary -> file entirely outside the window, dropped
         touch(old_file, mtime=_ts("2026-08-01T00:00:00Z"))
-        # mtime позже границы -> файл может содержать записи внутри окна
+        # mtime later than the boundary -> file may contain records within the window
         touch(new_file, mtime=_ts("2026-08-19T00:00:00Z"))
         got = set(tokens.select_files(self.root, since="2026-08-18"))
         self.assertEqual(got, {new_file})
@@ -128,7 +129,7 @@ class SelectFilesTest(unittest.TestCase):
         touch(keep, mtime=_ts("2026-08-19T00:00:00Z"))
         touch(wrong_project, mtime=_ts("2026-08-19T00:00:00Z"))
         touch(wrong_session, mtime=_ts("2026-08-19T00:00:00Z"))
-        # старый файл той же сессии/проекта — должен быть отброшен по since
+        # an old file from the same session/project — must be dropped by since
         old_same = self._p("-Users-e0068-Documents-Projects-bb-plugins", "sess-old-noise.jsonl")
         touch(old_same, mtime=_ts("2026-08-01T00:00:00Z"))
 
@@ -140,17 +141,17 @@ class SelectFilesTest(unittest.TestCase):
         self.assertEqual(got, {keep})
 
     def test_missing_project_dir_for_session_lookup(self):
-        # каталог проекта вообще отсутствует внутри пустого root
+        # the project directory is entirely absent inside an empty root
         got = tokens.select_files(self.root, session="anything")
         self.assertEqual(got, [])
 
 
 class ParseTimeBoundTest(unittest.TestCase):
-    """tokens._parse_time_bound: разбор пользовательских --since/--until."""
+    """tokens._parse_time_bound: parsing user-supplied --since/--until."""
 
     def test_strict_rejects_nonexistent_calendar_dates(self):
-        # regex-подобная проверка формы (\d{4}-\d{2}-\d{2}) пропускает эти
-        # строки — но 30 февраля и 99-й месяц не существуют в календаре.
+        # a regex-like shape check (\d{4}-\d{2}-\d{2}) lets these strings
+        # through — but February 30 and month 99 don't exist on the calendar.
         for bad in ("2026-02-30", "9999-99-99", "2026-13-45"):
             with self.assertRaises(ValueError, msg=bad):
                 tokens._parse_time_bound(bad, strict=True)
@@ -160,8 +161,8 @@ class ParseTimeBoundTest(unittest.TestCase):
         self.assertEqual((dt.year, dt.month, dt.day), (2026, 8, 19))
 
     def test_lenient_mode_still_returns_none_for_bad_input(self):
-        # Разбор меток времени самих записей транскрипта (не пользовательский
-        # ввод) остаётся нестрогим: кривая запись просто не проходит фильтр.
+        # Parsing timestamps of the transcript records themselves (not user
+        # input) stays lenient: a malformed record simply fails the filter.
         self.assertIsNone(tokens._parse_time_bound("2026-02-30"))
         self.assertIsNone(tokens._parse_time_bound("not-a-date"))
 
@@ -179,7 +180,7 @@ class ParseTimeBoundTest(unittest.TestCase):
 
 
 def _write_transcript(path, records):
-    """Пишет один jsonl-транскрипт с assistant-записями usage."""
+    """Writes a single jsonl transcript with assistant usage records."""
     os.makedirs(os.path.dirname(path), exist_ok=True)
     with open(path, "w") as f:
         for i, (ts, msg_id) in enumerate(records):
@@ -197,7 +198,7 @@ def _write_transcript(path, records):
 
 
 class WalkSinceUntilTest(unittest.TestCase):
-    """tokens.walk: применение --since/--until к записям транскрипта."""
+    """tokens.walk: applying --since/--until to transcript records."""
 
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
@@ -222,8 +223,8 @@ class WalkSinceUntilTest(unittest.TestCase):
         })
 
     def test_until_includes_last_millisecond_of_named_day(self):
-        # Live-репорт бага: 2026-08-16T00:00:14.616Z должен остаться под
-        # until=2026-08-16, а не быть отброшен строковым сравнением.
+        # Live bug report: 2026-08-16T00:00:14.616Z must stay under
+        # until=2026-08-16, not be dropped by a string comparison.
         _write_transcript(self.path, [
             ("2026-08-16T00:00:14.616Z", "just-after-midnight"),
             ("2026-08-17T00:00:00.000Z", "next-day"),
@@ -254,12 +255,12 @@ class WalkSinceUntilTest(unittest.TestCase):
 
 
 class CountingTest(unittest.TestCase):
-    """Подсчёт токенов: разнесение расхода по бакету и по тиру модели."""
+    """Token counting: attributing usage to a bucket and to a model tier."""
 
     def test_bucket_total_equals_sum_of_model_totals(self):
-        # Записи на разных моделях, с разными видами токенов (вход,
-        # кэш-запись 5m и 1h, кэш-чтение, выход) — сумма по models должна
-        # сойтись с общим total бакета, иначе часть расхода теряется.
+        # Records on different models, with different token kinds (input,
+        # cache write 5m and 1h, cache read, output) — the sum over models
+        # must match the bucket's overall total, otherwise usage gets lost.
         b = tokens.Bucket()
         b.add({
             "input_tokens": 100,
@@ -280,10 +281,10 @@ class CountingTest(unittest.TestCase):
         self.assertEqual(b.models["sonnet"].total, 5 + 2 + 3)
 
     def test_legacy_flat_cache_creation_field_reaches_model_counts(self):
-        # Старый формат: cache_creation отсутствует, есть плоское
-        # cache_creation_input_tokens — Bucket.add уходит в ветку "if not cc"
-        # и должен разнести это число и в бакет, и в счётчик модели, а не
-        # потерять его.
+        # Legacy format: cache_creation is absent, there's a flat
+        # cache_creation_input_tokens field instead — Bucket.add takes the
+        # "if not cc" branch and must attribute that number to both the
+        # bucket and the model counter, not lose it.
         b = tokens.Bucket()
         b.add({
             "input_tokens": 1,
@@ -295,8 +296,8 @@ class CountingTest(unittest.TestCase):
 
     def test_bucket_json_models_sorted_by_total_desc_then_tier_name(self):
         b = tokens.Bucket()
-        b.models["haiku"].add(0, 0, 0, 0, 200)   # total 200 — впереди всех
-        b.models["opus"].add(0, 0, 0, 0, 100)    # тай-брейк с sonnet: 'o' < 's'
+        b.models["haiku"].add(0, 0, 0, 0, 200)   # total 200 — ahead of everyone
+        b.models["opus"].add(0, 0, 0, 0, 100)    # tie-break with sonnet: 'o' < 's'
         b.models["sonnet"].add(0, 0, 0, 0, 100)
         d = tokens.bucket_json("k", b, None, None, None)
         self.assertEqual(
@@ -309,9 +310,10 @@ class CountingTest(unittest.TestCase):
         )
 
     def test_cost_uses_model_with_highest_output_not_highest_total(self):
-        # opus получает почти весь расход бакета за счёт чтения кэша, но
-        # почти не давал выход. sonnet — наоборот: расход мал, выход больше.
-        # Тариф должен взяться по sonnet (выход), а не по opus (общий расход).
+        # opus accounts for almost the entire bucket's usage via cache reads,
+        # but produced almost no output. sonnet is the opposite: little usage,
+        # more output. The tier must be taken from sonnet (output), not opus
+        # (total usage).
         b = tokens.Bucket()
         b.add({"cache_read_input_tokens": 1_000_000, "output_tokens": 1}, "claude-opus-4", None)
         b.add({"cache_read_input_tokens": 0, "output_tokens": 100}, "claude-sonnet-4", None)
@@ -348,8 +350,8 @@ class CountingTest(unittest.TestCase):
         self.assertEqual(tokens.tier(None), "sonnet")
         self.assertEqual(tokens.tier("some-unheard-of-model-xyz"), "sonnet")
 
-        # запись с неизвестной моделью не теряется, а попадает в разбивку
-        # под "sonnet"
+        # a record with an unknown model isn't lost — it lands in the
+        # breakdown under "sonnet"
         b = tokens.Bucket()
         b.add({"input_tokens": 10, "output_tokens": 5}, "some-unheard-of-model-xyz", None)
         self.assertEqual(set(b.models.keys()), {"sonnet"})
@@ -357,16 +359,17 @@ class CountingTest(unittest.TestCase):
 
 
 class CostPartsTest(unittest.TestCase):
-    """Bucket.cost_parts: разбивка cost по видам токенов (H-header-only —
-    отсутствует в bb-plugin-token-usage). src/core/parse.ts требует
-    totals.costs на каждом отчёте, поэтому расхождение суммы здесь ломает
-    плагин так же тихо, как и рассинхрон схемы."""
+    """Bucket.cost_parts: cost broken down by token kind (H-header-only —
+    absent from bb-plugin-token-usage). src/core/parse.ts requires
+    totals.costs on every report, so a sum mismatch here breaks the plugin
+    just as silently as a schema drift would."""
 
     def test_cost_parts_sum_equals_cost(self):
-        # input+cacheWrite+cacheRead+output из cost_parts обязаны совпасть с
-        # cost — иначе разбивка по видам в попапе не сойдётся с итоговой
-        # ценой строки. thinking намеренно не входит в эту сумму (см.
-        # докстринг cost_parts) — только он и остаётся объяснить остаток.
+        # input+cacheWrite+cacheRead+output from cost_parts must match
+        # cost — otherwise the per-kind breakdown in the popup won't
+        # reconcile with the row's final price. thinking is deliberately
+        # excluded from this sum (see the cost_parts docstring) — it's the
+        # only thing left to account for the remainder.
         b = tokens.Bucket()
         b.add({
             "input_tokens": 100,
@@ -384,10 +387,10 @@ class CostPartsTest(unittest.TestCase):
         self.assertAlmostEqual(without_thinking, b.cost)
 
     def test_cost_parts_and_cost_use_the_same_tier_price(self):
-        # Тариф для cost_parts берётся тем же _tier_prices(), что и для
-        # cost — если бы они разошлись (например, cost_parts взял бы тир по
-        # общему расходу, а cost — по выходу), сумма частей перестала бы
-        # сходиться с cost именно на неоднородных по моделям бакетах.
+        # The tier for cost_parts comes from the same _tier_prices() as for
+        # cost — if they diverged (e.g. cost_parts took the tier by total
+        # usage while cost took it by output), the sum of parts would stop
+        # matching cost precisely on buckets that are heterogeneous by model.
         b = tokens.Bucket()
         b.add({"cache_read_input_tokens": 1_000_000, "output_tokens": 1}, "claude-opus-4", None)
         b.add({"cache_read_input_tokens": 0, "output_tokens": 100}, "claude-sonnet-4", None)
@@ -405,8 +408,8 @@ class CostPartsTest(unittest.TestCase):
 
 
 class JsonReportSchemaVersionTest(unittest.TestCase):
-    """Отчёт --json несёт номер версии схемы — src/core/parse.ts в плагине
-    сверяет его первым делом. См. memory/decisions/token-usage-json-schema-version.md."""
+    """The --json report carries a schema version number — src/core/parse.ts
+    in the plugin checks it first thing. See memory/decisions/token-usage-json-schema-version.md."""
 
     def _run_json(self, argv_tail, root=None):
         import contextlib
@@ -437,19 +440,19 @@ class JsonReportSchemaVersionTest(unittest.TestCase):
         self.assertEqual(out["schemaVersion"], tokens.SCHEMA_VERSION)
 
     def test_json_report_totals_carry_a_costs_breakdown(self):
-        # Требование src/core/parse.ts::validateTotals — отчёт без
-        # totals.costs плагин отклоняет как invalid_shape.
+        # Requirement of src/core/parse.ts::validateTotals — the plugin
+        # rejects a report without totals.costs as invalid_shape.
         out = json.loads(self._run_json(["--json", "--by", "session"]))
         self.assertIn("costs", out["totals"])
         for field in ("input", "cacheWrite", "cacheRead", "output", "thinking"):
             self.assertIn(field, out["totals"]["costs"])
 
     def test_bad_top_still_emits_a_json_error_envelope_not_empty_stdout(self):
-        # Живая проверка инварианта, на который опирается фикс в
-        # src/service/tokens-runner.ts: --json ошибку argparse обязана
-        # печатать как {"error": ...}, а не молчать на stdout — иначе
-        # процесс-раннер плагина не сможет отличить "пустой отчёт" от "скрипт
-        # упал, ничего не сказав".
+        # A live check of the invariant that the fix in
+        # src/service/tokens-runner.ts relies on: --json must print an
+        # argparse error as {"error": ...}, not stay silent on stdout —
+        # otherwise the plugin's process runner can't tell "empty report"
+        # apart from "the script crashed without saying anything".
         out = self._run_json(["--json", "--top", "-1"])
         parsed = json.loads(out)
         self.assertIn("error", parsed)
@@ -468,14 +471,14 @@ class JsonReportSchemaVersionTest(unittest.TestCase):
 
 
 def _ts(iso_str):
-    """ISO 8601 UTC -> unix timestamp, для проставления mtime в тестах."""
+    """ISO 8601 UTC -> unix timestamp, for setting mtime in tests."""
     from datetime import datetime, timezone
     dt = datetime.fromisoformat(iso_str.replace("Z", "+00:00"))
     return dt.replace(tzinfo=timezone.utc).timestamp()
 
 
 def _write_raw(path, lines):
-    """Пишет jsonl из готовых dict-записей (без подстановки requestId)."""
+    """Writes jsonl from ready-made dict records (without substituting requestId)."""
     os.makedirs(os.path.dirname(path), exist_ok=True)
     with open(path, "w") as f:
         for line in lines:
@@ -491,7 +494,7 @@ def _assistant(msg_id, req, out, ts="2026-08-19T07:40:00.000Z", model="claude-so
 
 
 class DedupTest(unittest.TestCase):
-    """tokens.walk: повторы одного ответа сворачиваются в последнюю запись."""
+    """tokens.walk: repeats of one response collapse into the last record."""
 
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
@@ -507,7 +510,7 @@ class DedupTest(unittest.TestCase):
         return os.path.join(self.root, *parts)
 
     def test_streaming_snapshots_collapse_to_final_value(self):
-        # один ответ, записанный трижды по мере стриминга: 1 -> 1 -> 366
+        # one response, written three times as it streams: 1 -> 1 -> 366
         path = self._p("projA", "sess1.jsonl")
         _write_raw(path, [_assistant("msg-1", "req-1", 1),
                           _assistant("msg-1", "req-1", 1),
@@ -517,7 +520,7 @@ class DedupTest(unittest.TestCase):
         self.assertEqual(recs[0]["usage"]["output_tokens"], 366)
 
     def test_repeat_keeps_position_of_first_appearance(self):
-        # порядок выдачи — по первому появлению ключа, значение — последнее
+        # output order follows the key's first appearance, the value is the last one
         path = self._p("projA", "sess1.jsonl")
         _write_raw(path, [_assistant("msg-1", "req-1", 5),
                           _assistant("msg-2", "req-2", 7),
@@ -526,8 +529,8 @@ class DedupTest(unittest.TestCase):
         self.assertEqual([r["usage"]["output_tokens"] for r in recs], [50, 7])
 
     def test_same_answer_in_two_files_counted_once_for_first_path(self):
-        # один ответ, попавший в две сессии: считается один раз, за файл,
-        # который раньше по отсортированному пути
+        # one response that ended up in two sessions: counted once, credited
+        # to the file that comes first in sorted path order
         a = self._p("projA", "aaa.jsonl")
         b = self._p("projA", "bbb.jsonl")
         _write_raw(a, [_assistant("msg-1", "req-1", 9)])

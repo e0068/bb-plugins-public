@@ -1,13 +1,19 @@
 import { HugeiconsIcon, type IconSvgElement } from "@hugeicons/react";
-import { AlertCircleIcon, ChartColumnIcon } from "@hugeicons/core-free-icons";
+import { AlertCircleIcon, ChartColumnIcon, GitCommitIcon, GitMergeIcon, GitPullRequestIcon, Upload01Icon } from "@hugeicons/core-free-icons";
 import { cn } from "../../lib/utils";
 
-// Trimmed to the two icons this plugin's header button actually uses
-// (the shared design-system Icon component vendors the full set; this
-// plugin needs neither the rest of the map nor its custom inline glyphs).
+// Trimmed to the icons this plugin actually uses (the header button's own
+// two, plus one per git-event marker kind on the chart — see
+// pages/thread-chart.tsx's GIT_EVENT_ICON) — the shared design-system Icon
+// component vendors the full set; this plugin needs neither the rest of the
+// map nor its custom inline glyphs.
 const ICON_MAP = {
   AlertCircle: AlertCircleIcon,
   ChartColumn: ChartColumnIcon,
+  GitCommit: GitCommitIcon,
+  GitPullRequest: GitPullRequestIcon,
+  GitMerge: GitMergeIcon,
+  Upload: Upload01Icon,
 } as const satisfies Record<string, IconSvgElement>;
 
 export type IconName = keyof typeof ICON_MAP;

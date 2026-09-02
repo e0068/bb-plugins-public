@@ -10,6 +10,17 @@
 // slice re-calls the RPC with a bigger `limit` (capped at the contract's
 // max of 100).
 //
+// Chart geometry/behaviour (time unit, fill/hug width, collapse-empty,
+// column width, height scale/mode, gaps, radii, frame-lift colour, content
+// width) used to live behind this page's own gear popover, persisted in
+// bb.storage.kv. It now lives on the plugin's native Settings page (Tools →
+// plugin detail, via bb.settings.define — see src/core/gear-settings.ts and
+// memory/decisions/token-usage-gear-to-native-settings.md) and is read here
+// live via `useSettings()`; this page no longer writes those fields at all.
+// Only per-agent legend colours (agentColors, a dynamic agent-id → hex map
+// that can't be a declared setting) remain in this page's own small popover,
+// still kv-persisted alongside sort/search/filter state.
+//
 // This is the feed (empty-subPath) sub-view of the plugin's one
 // "threads-timeline" nav panel — app.tsx renders it when subPath is "",
 // AgentTimelinePage.tsx otherwise (see that file's module doc comment).
@@ -18,42 +29,19 @@
 // pages/AgentTimelinePage.tsx's module doc comment for why that sub-view
 // then can't fetch real data for such a link without one.
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useBbNavigate, useRpc, type PluginNavPanelProps, type PluginRpcResult } from "@get-bb/plugin-sdk/app";
+import { useBbNavigate, useRpc, useSettings, type PluginNavPanelProps } from "@get-bb/plugin-sdk/app";
 import type { rpcContract } from "../server";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { cn } from "@/lib/utils";
-import { DEFAULT_VIZ_SETTINGS, binTotal, type ThreadEntry, type ThreadsHeightMode } from "../src/core";
+import { DEFAULT_VIZ_SETTINGS, binTotal, parseGearSettings, type ThreadEntry } from "../src/core";
 import { DEFAULT_PALETTE, ThreadRow, computeDisplayBins } from "./thread-chart";
 import { THREADS_TIMELINE_PANEL_PATH, buildAgentDetailSubPath } from "./AgentTimelinePage";
 
-/**
- * Default lift colour follows the theme's own `--foreground` token (read
- * live at mount, not hardcoded) — mirrors prototype/threads-timeline.html's
- * own approach. Falls back to that prototype's known dark-theme value if
- * the variable isn't resolvable yet (e.g. under jsdom in tests, or before
- * the host's stylesheet has applied) — not a fabricated colour, just the
- * one already used as this file's own fallback reference.
- */
-function readForegroundHex(): string {
-  if (typeof document === "undefined") return "#e3e3dd";
-  const raw = getComputedStyle(document.documentElement).getPropertyValue("--foreground").trim();
-  return raw || "#e3e3dd";
-}
-
-const UNIT_OPTIONS: ReadonlyArray<{ label: string; value: number }> = [
-  { label: "30s", value: 30 },
-  { label: "1m", value: 60 },
-  { label: "5m", value: 300 },
-  { label: "15m", value: 900 },
-  { label: "1h", value: 3600 },
-];
-
 const SORT_OPTIONS: ReadonlyArray<{ label: string; value: SortMode }> = [
-  { label: "Последние", value: "recent" },
-  { label: "По токенам (убыв.)", value: "tokens" },
-  { label: "По длительности (убыв.)", value: "duration" },
+  { label: "Latest", value: "recent" },
+  { label: "By tokens (desc.)", value: "tokens" },
+  { label: "By duration (desc.)", value: "duration" },
 ];
 
 type SortMode = "recent" | "tokens" | "duration";
@@ -85,7 +73,12 @@ export function ThreadsTimelinePage(_props: PluginNavPanelProps) {
   const rpc = useRpc<typeof rpcContract>();
   const navigate = useBbNavigate();
 
-  const [unit, setUnit] = useState<number>(60);
+  // Chart geometry/behaviour — declared settings, read live, never written
+  // from here (see this file's module doc comment). `gear.unit` in
+  // particular drives the RPC's bucket width below.
+  const settingsState = useSettings();
+  const gear = useMemo(() => parseGearSettings(settingsState.values), [settingsState.values]);
+
   const [limit, setLimit] = useState(INITIAL_LIMIT);
   const [threads, setThreads] = useState<ThreadEntry[]>([]);
   // agentId (bins[].agents[].key, "main" for the main agent) -> human-readable
@@ -105,14 +98,19 @@ export function ThreadsTimelinePage(_props: PluginNavPanelProps) {
   }, []);
   const requestIdRef = useRef(0);
 
+  // A changed bucket width re-bins server-side — stale rows would show bars
+  // sized for the old bin width, so a unit change blanks the list and resets
+  // the fetched slice back to the first page. Runs on mount too (a harmless
+  // no-op there: both are already at their initial values).
+  useEffect(() => {
+    setLimit(INITIAL_LIMIT);
+    setThreads([]);
+  }, [gear.unit]);
+
   useEffect(() => {
     const requestId = ++requestIdRef.current;
-    // A fresh unit re-bins server-side — stale rows would show bars sized
-    // for the old bin width, so only that case blanks the list. Growing
-    // `limit` alone (easy-load) keeps the current rows on screen while the
-    // bigger slice loads.
     if (threads.length === 0) setPhase("loading");
-    rpc.call("threadsTimeline", { limit, unit }).then(
+    rpc.call("threadsTimeline", { limit, unit: gear.unit }).then(
       (result) => {
         if (!mountedRef.current || requestIdRef.current !== requestId) return;
         if (result.status === "ready") {
@@ -126,47 +124,12 @@ export function ThreadsTimelinePage(_props: PluginNavPanelProps) {
       },
       (err: unknown) => {
         if (!mountedRef.current || requestIdRef.current !== requestId) return;
-        setErrorMessage(err instanceof Error ? err.message : "Не удалось получить сводную ленту тредов.");
+        setErrorMessage(err instanceof Error ? err.message : "Failed to fetch the threads summary feed.");
         setPhase("error");
       },
     );
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [rpc, unit, limit]);
-
-  function changeUnit(next: number) {
-    if (next === unit) return;
-    setUnit(next);
-    setLimit(INITIAL_LIMIT);
-    setThreads([]);
-  }
-
-  // --- Visual scale controls (numeric inputs, no slider — see memory/decisions/token-usage-no-slider-use-inputs.md). ---
-  const [fillWidth, setFillWidth] = useState(true);
-  // true = the card hugs the chart's own width (w-fit) instead of stretching
-  // to the container (w-full) — meaningful only when fillWidth is off.
-  const [hugWidth, setHugWidth] = useState(false);
-  // Content-area width: full-window vs a centered cap (contentMaxWidthPx),
-  // whose side gutters the owner wanted to grow/remove from the gear.
-  const [contentFullWidth, setContentFullWidth] = useState(false);
-  const [contentMaxWidthPx, setContentMaxWidthPx] = useState(1400);
-  // "shared" = one column-height scale across every card (as before);
-  // "perCard" = each card scales to its own tallest column.
-  const [heightMode, setHeightMode] = useState<ThreadsHeightMode>("shared");
-  // true = consecutive empty bins render as one collapsed gap column instead
-  // of one column per empty bin — see computeDisplayBins above.
-  const [collapseEmpty, setCollapseEmpty] = useState(false);
-  const [colWidthPx, setColWidthPx] = useState(6);
-  const [heightScale, setHeightScale] = useState(1);
-
-  // --- Chart geometry (numeric px settings behind the gear popover, next to
-  // the legend) — data geometry, not UI chrome, so free px values are fine
-  // here (same reasoning as prototype/threads-timeline.html's state.colGap
-  // et al.). ---
-  const [colGap, setColGap] = useState(1);
-  const [segGap, setSegGap] = useState(0);
-  const [colRadius, setColRadius] = useState(0);
-  const [segRadius, setSegRadius] = useState(0);
-  const [frameLiftColor, setFrameLiftColor] = useState<string>(() => readForegroundHex());
+  }, [rpc, gear.unit, limit]);
 
   // --- Filter/sort/search — client-side over the fetched slice. ---
   const [projectFilter, setProjectFilter] = useState<Set<string | null>>(new Set());
@@ -180,7 +143,7 @@ export function ThreadsTimelinePage(_props: PluginNavPanelProps) {
   const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
   useEffect(() => {
     setVisibleCount(PAGE_SIZE);
-  }, [projectFilter, searchQuery, sortMode, costMin, costMax, unit]);
+  }, [projectFilter, searchQuery, sortMode, costMin, costMax, gear.unit]);
 
   // Real BB projects (bbProjectName) sorted alphabetically, plus a trailing
   // "Threads" bucket for sessions with no BB thread match (bbProjectName
@@ -202,7 +165,7 @@ export function ThreadsTimelinePage(_props: PluginNavPanelProps) {
 
   const filteredSorted = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
-    // A blank or non-numeric bound is "no bound", never 0 — an empty "от"
+    // A blank or non-numeric bound is "no bound", never 0 — an empty "from"
     // must not silently drop every free thread.
     const min = Number.parseFloat(costMin);
     const max = Number.parseFloat(costMax);
@@ -264,16 +227,18 @@ export function ThreadsTimelinePage(_props: PluginNavPanelProps) {
     return agentLabels[agentKey] ?? agentKey;
   }
 
-  // --- Viz-settings persistence (bb.storage.kv via loadVizSettings/
-  // saveVizSettings — see memory/decisions/token-usage-viz-settings-persist-kv.md).
-  // This page owns only the `threads` section (unit, fillWidth, colWidthPx,
-  // heightScale, colGap, segGap, colRadius, segRadius, frameLiftColor,
-  // agentColors, sortMode — deliberately NOT projectFilter/searchQuery,
-  // transient query state per the decision doc); the sibling `agentDetail`
-  // section belongs to AgentTimelinePage.tsx. A save always sends the FULL
-  // VizSettings object (the RPC schema requires both sections), so whatever
-  // `agentDetail` this page last loaded is held in a ref and echoed back
-  // unchanged on every save — this page never edits it.
+  // --- Remaining viz-settings persistence (bb.storage.kv via
+  // loadVizSettings/saveVizSettings — see memory/decisions/
+  // token-usage-viz-settings-persist-kv.md and memory/decisions/
+  // token-usage-gear-to-native-settings.md). This page owns only the
+  // `threads` section's agentColors/sortMode/searchQuery/projectFilter/
+  // costMin/costMax — everything else that USED to live here (geometry,
+  // fill/hug width, content width, collapse-empty) is now a
+  // bb.settings.define field read via `gear` above, not part of this blob.
+  // The sibling `agentDetail` section belongs to AgentTimelinePage.tsx; a
+  // save always sends the FULL VizSettings object (the RPC schema requires
+  // both sections), so whatever `agentDetail` this page last loaded is held
+  // in a ref and echoed back unchanged on every save.
   const loadedAgentDetailSectionRef = useRef(DEFAULT_VIZ_SETTINGS.agentDetail);
   const [vizHydrated, setVizHydrated] = useState(false);
   const skipNextSaveRef = useRef(false);
@@ -285,20 +250,6 @@ export function ThreadsTimelinePage(_props: PluginNavPanelProps) {
         skipNextSaveRef.current = true;
         loadedAgentDetailSectionRef.current = settings.agentDetail;
         const t = settings.threads;
-        setUnit(t.unit);
-        setFillWidth(t.fillWidth);
-        setHugWidth(t.hugWidth);
-        setContentFullWidth(t.contentFullWidth);
-        setContentMaxWidthPx(t.contentMaxWidthPx);
-        setHeightMode(t.heightMode);
-        setCollapseEmpty(t.collapseEmpty);
-        setColWidthPx(t.colWidthPx);
-        setHeightScale(t.heightScale);
-        setColGap(t.colGap);
-        setSegGap(t.segGap);
-        setColRadius(t.colRadius);
-        setSegRadius(t.segRadius);
-        setFrameLiftColor(t.frameLiftColor);
         setAgentColors(t.agentColors);
         setSortMode(t.sortMode);
         setSearchQuery(t.searchQuery);
@@ -332,20 +283,6 @@ export function ThreadsTimelinePage(_props: PluginNavPanelProps) {
       rpc
         .call("saveVizSettings", {
           threads: {
-            unit,
-            fillWidth,
-            hugWidth,
-            contentFullWidth,
-            contentMaxWidthPx,
-            heightMode,
-            collapseEmpty,
-            colWidthPx,
-            heightScale,
-            colGap,
-            segGap,
-            colRadius,
-            segRadius,
-            frameLiftColor,
             agentColors,
             sortMode,
             searchQuery,
@@ -362,30 +299,7 @@ export function ThreadsTimelinePage(_props: PluginNavPanelProps) {
         });
     }, 400);
     return () => clearTimeout(timer);
-  }, [
-    vizHydrated,
-    unit,
-    fillWidth,
-    hugWidth,
-    contentFullWidth,
-    contentMaxWidthPx,
-    heightMode,
-    collapseEmpty,
-    colWidthPx,
-    heightScale,
-    colGap,
-    segGap,
-    colRadius,
-    segRadius,
-    frameLiftColor,
-    agentColors,
-    sortMode,
-    searchQuery,
-    projectFilter,
-    costMin,
-    costMax,
-    rpc,
-  ]);
+  }, [vizHydrated, agentColors, sortMode, searchQuery, projectFilter, costMin, costMax, rpc]);
 
   const maxBinTotal = useMemo(() => {
     let max = 0;
@@ -403,10 +317,10 @@ export function ThreadsTimelinePage(_props: PluginNavPanelProps) {
   // columns", so this uses computeDisplayBins too.
   const maxBinCount = useMemo(() => {
     let max = 1;
-    for (const t of visibleThreads) max = Math.max(max, computeDisplayBins(t.bins, collapseEmpty).length);
+    for (const t of visibleThreads) max = Math.max(max, computeDisplayBins(t.bins, gear.collapseEmpty).length);
     return max;
-  }, [visibleThreads, collapseEmpty]);
-  const chartHeight = BASE_CHART_HEIGHT * heightScale;
+  }, [visibleThreads, gear.collapseEmpty]);
+  const chartHeight = BASE_CHART_HEIGHT * gear.heightScale;
 
   function openAgentDetail(agentKey: string, session: string, fromIso: string, toIso: string) {
     navigate.toPluginPanel(THREADS_TIMELINE_PANEL_PATH, {
@@ -414,8 +328,8 @@ export function ThreadsTimelinePage(_props: PluginNavPanelProps) {
     });
   }
 
-  // Клик по карточке целиком ведёт на внутреннюю страницу сессии — детализацию
-  // главного агента без окна времени (в отличие от клика по сегменту).
+  // Clicking anywhere on the card navigates to the session's internal page —
+  // main-agent detail with no time window (unlike clicking a segment).
   function openSession(session: string) {
     navigate.toPluginPanel(THREADS_TIMELINE_PANEL_PATH, {
       subPath: buildAgentDetailSubPath({ agent: "main", session }),
@@ -424,18 +338,21 @@ export function ThreadsTimelinePage(_props: PluginNavPanelProps) {
 
   return (
     <div className="h-full overflow-y-auto">
-      {/* Ширина всей области Usage Analytics: на всю ширину окна или центр. с
-          потолком contentMaxWidthPx — боковые «поля» регулируются из шестерёнки. */}
-      <div className="mx-auto space-y-6 px-6 py-8" style={{ maxWidth: contentFullWidth ? "none" : contentMaxWidthPx }}>
+      {/* Width of the whole Usage Analytics area: full window width, or
+          centered with a contentMaxWidthPx ceiling — both fields are
+          configured in Tools → Usage Analytics (Settings), not here. */}
+      <div className="mx-auto space-y-6 px-6 py-8" style={{ maxWidth: gear.contentFullWidth ? "none" : gear.contentMaxWidthPx }}>
         <header className="space-y-1">
           <h1 className="text-lg font-semibold text-foreground">Usage Analytics</h1>
-          <p className="text-sm text-muted-foreground">Расход токенов по агентам, слева направо хронологически внутри каждого треда</p>
+          <p className="text-sm text-muted-foreground">Token usage by agent, left to right chronologically within each thread</p>
         </header>
 
-        {/* Один ряд управления: проекты слева, сортировка/поиск/шестерёнка
-            справа. Всё остальное (единица времени, геометрия, цвета агентов)
-            спрятано под шестерёнку — см. ChartSettingsPopover. Легенды агентов
-            в тулбаре больше нет: разбивка по агентам живёт в тултипе столбца. */}
+        {/* One control row: projects on the left, sort/search/agent colors on
+            the right. Time unit, geometry, and the rest of the chart's visuals
+            are configured on the plugin's Settings page (Tools → Usage
+            Analytics) — see the module doc comment above. There's no agent
+            legend in the toolbar: the per-agent breakdown lives in a column's
+            tooltip, and their colors live in the AgentColorsPopover. */}
         <section className="flex flex-wrap items-center gap-x-4 gap-y-2 border-b border-border pb-4">
           <div className="flex flex-wrap items-center gap-2">
             <Button
@@ -445,7 +362,7 @@ export function ThreadsTimelinePage(_props: PluginNavPanelProps) {
               aria-pressed={projectFilter.size === 0}
               onClick={() => setProjectFilter(new Set())}
             >
-              Все проекты
+              All projects
             </Button>
             {projectOptions.map((opt) => (
               <Button
@@ -469,33 +386,33 @@ export function ThreadsTimelinePage(_props: PluginNavPanelProps) {
           </div>
 
           <div className="ml-auto flex flex-wrap items-center gap-2">
-            <div className="flex items-center gap-1" role="group" aria-label="Фильтр по стоимости">
+            <div className="flex items-center gap-1" role="group" aria-label="Cost filter">
               <span className="text-xs text-muted-foreground">$</span>
               <Input
                 type="number"
                 min={0}
                 step={0.01}
-                placeholder="от"
+                placeholder="from"
                 value={costMin}
                 onChange={(e) => setCostMin(e.target.value)}
                 className="h-8 w-16 tabular-nums"
-                aria-label="Стоимость от, USD"
+                aria-label="Cost from, USD"
               />
               <span className="text-xs text-muted-foreground">–</span>
               <Input
                 type="number"
                 min={0}
                 step={0.01}
-                placeholder="до"
+                placeholder="to"
                 value={costMax}
                 onChange={(e) => setCostMax(e.target.value)}
                 className="h-8 w-16 tabular-nums"
-                aria-label="Стоимость до, USD"
+                aria-label="Cost to, USD"
               />
             </div>
             <select
               className="h-8 rounded-md border border-border bg-background px-2 text-xs text-foreground"
-              aria-label="Сортировка"
+              aria-label="Sorting"
               value={sortMode}
               onChange={(e) => setSortMode(e.target.value as SortMode)}
             >
@@ -507,40 +424,12 @@ export function ThreadsTimelinePage(_props: PluginNavPanelProps) {
             </select>
             <Input
               type="text"
-              placeholder="По названию или ID сессии"
+              placeholder="By name or session ID"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               className="h-8 w-52"
             />
-            <ChartSettingsPopover
-              unit={unit}
-              onUnitChange={changeUnit}
-              fillWidth={fillWidth}
-              onFillWidthChange={setFillWidth}
-              hugWidth={hugWidth}
-              onHugWidthChange={setHugWidth}
-              contentFullWidth={contentFullWidth}
-              onContentFullWidthChange={setContentFullWidth}
-              contentMaxWidthPx={contentMaxWidthPx}
-              onContentMaxWidthPxChange={setContentMaxWidthPx}
-              heightMode={heightMode}
-              onHeightModeChange={setHeightMode}
-              collapseEmpty={collapseEmpty}
-              onCollapseEmptyChange={setCollapseEmpty}
-              colWidthPx={colWidthPx}
-              onColWidthPxChange={setColWidthPx}
-              heightScale={heightScale}
-              onHeightScaleChange={setHeightScale}
-              colGap={colGap}
-              onColGapChange={setColGap}
-              segGap={segGap}
-              onSegGapChange={setSegGap}
-              colRadius={colRadius}
-              onColRadiusChange={setColRadius}
-              segRadius={segRadius}
-              onSegRadiusChange={setSegRadius}
-              frameLiftColor={frameLiftColor}
-              onFrameLiftColorChange={setFrameLiftColor}
+            <AgentColorsPopover
               agentKeys={agentKeys}
               colorFor={colorFor}
               labelFor={labelFor}
@@ -549,22 +438,23 @@ export function ThreadsTimelinePage(_props: PluginNavPanelProps) {
           </div>
         </section>
 
-        {phase === "loading" && <p className="text-sm text-muted-foreground">Загрузка…</p>}
+        {phase === "loading" && <p className="text-sm text-muted-foreground">Loading…</p>}
         {phase === "error" && <p className="text-sm text-destructive">{errorMessage}</p>}
 
         {phase !== "loading" && phase !== "error" && (
           <section className="pb-2">
-            {/* В hug карточки сжаты под свой график и раскладываются плиткой с
-                переносом по строке; иначе — вертикальный стек на всю ширину. */}
-            <div className={hugWidth && !fillWidth ? "flex flex-wrap items-start gap-4" : "space-y-4"}>
+            {/* In hug mode, cards are sized to their own chart and laid out as
+                a wrapping tile grid; otherwise it's a full-width vertical
+                stack. */}
+            <div className={gear.hugWidth && !gear.fillWidthFeed ? "flex flex-wrap items-start gap-4" : "space-y-4"}>
               {visibleThreads.map((thread) => (
                 <ThreadRow
                   key={thread.session}
                   thread={thread}
-                  unit={unit}
+                  unit={gear.unit}
                   chartHeight={chartHeight}
                   maxBinTotal={maxBinTotal}
-                  perCardHeight={heightMode === "perCard"}
+                  perCardHeight={gear.heightMode === "perCard"}
                   maxBinCount={maxBinCount}
                   agentKeys={agentKeys}
                   colorFor={colorFor}
@@ -572,24 +462,24 @@ export function ThreadsTimelinePage(_props: PluginNavPanelProps) {
                   onSegmentClick={openAgentDetail}
                   onOpenThread={thread.threadId ? () => navigate.toThread(thread.threadId!) : undefined}
                   onOpenCard={() => openSession(thread.session)}
-                  fillWidth={fillWidth}
-                  hugWidth={hugWidth}
-                  collapseEmpty={collapseEmpty}
-                  colWidthPx={colWidthPx}
-                  colGap={colGap}
-                  segGap={segGap}
-                  colRadius={colRadius}
-                  segRadius={segRadius}
-                  frameLiftColor={frameLiftColor}
+                  fillWidth={gear.fillWidthFeed}
+                  hugWidth={gear.hugWidth}
+                  collapseEmpty={gear.collapseEmpty}
+                  colWidthPx={gear.colWidthPx}
+                  colGap={gear.colGap}
+                  segGap={gear.segGap}
+                  colRadius={gear.colRadius}
+                  segRadius={gear.segRadius}
+                  frameLiftColor={gear.frameLiftColor}
                 />
               ))}
             </div>
             <div ref={sentinelRef} className="pt-4 text-center text-xs text-subtle-foreground">
               {filteredSorted.length === 0
-                ? "Треды не найдены"
+                ? "No threads found"
                 : visibleCount < filteredSorted.length || (phase === "ready" && limit < MAX_LIMIT && threads.length === limit)
-                  ? "Загрузка…"
-                  : `Показаны все ${filteredSorted.length} тредов`}
+                  ? "Loading…"
+                  : `Showing all ${filteredSorted.length} threads`}
             </div>
           </section>
         )}
@@ -599,77 +489,17 @@ export function ThreadsTimelinePage(_props: PluginNavPanelProps) {
 }
 
 /**
- * The chart's single settings surface — a gear-triggered popover holding
- * every control that isn't the project filter, sort, or search: time unit,
- * the fill/hug/collapse toggles, width/height, geometry knobs, the frame-lift
- * tint, and each agent's colour. The toolbar legend that used to own those
- * agent colours is gone — the per-agent breakdown now lives in each column's
- * hover tooltip (see ThreadRow). No slider component exists in this design
- * system (see memory/decisions/token-usage-no-slider-use-inputs.md) — number
- * inputs only.
+ * Per-agent legend colour picker — all that's left of the former gear
+ * popover (everything else moved to bb.settings.define, see this file's
+ * module doc comment). agentColors can't be a declared setting: its keys
+ * are agent ids discovered from session data, unknown ahead of time.
  */
-function ChartSettingsPopover({
-  unit,
-  onUnitChange,
-  fillWidth,
-  onFillWidthChange,
-  hugWidth,
-  onHugWidthChange,
-  contentFullWidth,
-  onContentFullWidthChange,
-  contentMaxWidthPx,
-  onContentMaxWidthPxChange,
-  heightMode,
-  onHeightModeChange,
-  collapseEmpty,
-  onCollapseEmptyChange,
-  colWidthPx,
-  onColWidthPxChange,
-  heightScale,
-  onHeightScaleChange,
-  colGap,
-  onColGapChange,
-  segGap,
-  onSegGapChange,
-  colRadius,
-  onColRadiusChange,
-  segRadius,
-  onSegRadiusChange,
-  frameLiftColor,
-  onFrameLiftColorChange,
+function AgentColorsPopover({
   agentKeys,
   colorFor,
   labelFor,
   onAgentColorChange,
 }: {
-  unit: number;
-  onUnitChange: (v: number) => void;
-  fillWidth: boolean;
-  onFillWidthChange: (v: boolean) => void;
-  hugWidth: boolean;
-  onHugWidthChange: (v: boolean) => void;
-  contentFullWidth: boolean;
-  onContentFullWidthChange: (v: boolean) => void;
-  contentMaxWidthPx: number;
-  onContentMaxWidthPxChange: (v: number) => void;
-  heightMode: ThreadsHeightMode;
-  onHeightModeChange: (v: ThreadsHeightMode) => void;
-  collapseEmpty: boolean;
-  onCollapseEmptyChange: (v: boolean) => void;
-  colWidthPx: number;
-  onColWidthPxChange: (v: number) => void;
-  heightScale: number;
-  onHeightScaleChange: (v: number) => void;
-  colGap: number;
-  onColGapChange: (v: number) => void;
-  segGap: number;
-  onSegGapChange: (v: number) => void;
-  colRadius: number;
-  onColRadiusChange: (v: number) => void;
-  segRadius: number;
-  onSegRadiusChange: (v: number) => void;
-  frameLiftColor: string;
-  onFrameLiftColorChange: (hex: string) => void;
   agentKeys: readonly string[];
   colorFor: (agentKey: string) => string;
   labelFor: (agentKey: string) => string;
@@ -683,210 +513,38 @@ function ChartSettingsPopover({
           variant="outline"
           size="icon"
           className="size-8 shrink-0 text-muted-foreground"
-          aria-label="Настройки диаграммы"
+          aria-label="Agent colors"
         >
           <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-            <circle cx="12" cy="12" r="3" />
-            <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
+            <path d="M12 21a9 9 0 1 1 0-18c4.97 0 9 3.582 9 7.2 0 2.319-1.79 4.2-4 4.2h-1.877a1.6 1.6 0 0 0-1.123 2.74l.083.083a1.6 1.6 0 0 1-1.123 2.74z" />
+            <circle cx="7.5" cy="10.5" r="1.2" fill="currentColor" stroke="none" />
+            <circle cx="11.5" cy="7" r="1.2" fill="currentColor" stroke="none" />
+            <circle cx="16" cy="9.5" r="1.2" fill="currentColor" stroke="none" />
           </svg>
         </Button>
       </PopoverTrigger>
-      <PopoverContent align="end" className="max-h-[70vh] w-72 space-y-3 overflow-y-auto p-3">
-        <div className="space-y-1.5">
-          <div className="text-xs font-medium text-muted-foreground">Единица времени</div>
-          <div className="flex flex-wrap gap-1" role="group" aria-label="Единица времени">
-            {UNIT_OPTIONS.map((opt) => (
-              <Button
-                key={opt.value}
-                type="button"
-                variant={opt.value === unit ? "default" : "ghost"}
-                size="sm"
-                aria-pressed={opt.value === unit}
-                onClick={() => onUnitChange(opt.value)}
-              >
-                {opt.label}
-              </Button>
+      <PopoverContent align="end" className="max-h-[70vh] w-64 space-y-1.5 overflow-y-auto p-3">
+        <div className="text-xs font-medium text-muted-foreground">Agent colors</div>
+        {agentKeys.length === 0 ? (
+          <p className="text-xs text-subtle-foreground">No agent data yet.</p>
+        ) : (
+          <div className="max-h-72 space-y-1 overflow-y-auto">
+            {agentKeys.map((key) => (
+              <div key={key} className="flex items-center gap-2">
+                <span className="inline-block size-2.5 shrink-0 rounded-sm" style={{ backgroundColor: colorFor(key) }} />
+                <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">{labelFor(key)}</span>
+                <input
+                  type="color"
+                  value={colorFor(key)}
+                  onChange={(e) => onAgentColorChange(key, e.target.value)}
+                  className="h-6 w-8 shrink-0 cursor-pointer rounded-sm border border-border bg-transparent p-0"
+                  aria-label={`${labelFor(key)} color`}
+                />
+              </div>
             ))}
-          </div>
-        </div>
-
-        <ToggleField label="Заполнить по ширине" value={fillWidth} onChange={onFillWidthChange} />
-        {/* Hug осмысленен только при выключенном «Заполнить по ширине»: при
-            включённом график и так на 100% карточки, обнимать нечего. */}
-        {!fillWidth && (
-          <ToggleField
-            label="Hug по ширине"
-            value={hugWidth}
-            onChange={onHugWidthChange}
-            nameOn="Hug по ширине: Вкл"
-            nameOff="Hug по ширине: Выкл"
-          />
-        )}
-        <ToggleField
-          label="Схлопнуть пустоты"
-          value={collapseEmpty}
-          onChange={onCollapseEmptyChange}
-          nameOn="Схлопнуть пустоты: Вкл"
-          nameOff="Схлопнуть пустоты: Выкл"
-        />
-
-        {!fillWidth && (
-          <NumberField label="Ширина" ariaLabel="Ширина столбца, пикселей" suffix="px/стб" value={colWidthPx} onChange={onColWidthPxChange} min={1} max={40} step={1} />
-        )}
-        <NumberField label="Высота" ariaLabel="Масштаб высоты" suffix="×" value={heightScale} onChange={onHeightScaleChange} min={0.3} max={3} step={0.1} />
-
-        <div className="space-y-1">
-          <div className="text-xs text-muted-foreground">Высота столбцов</div>
-          <div className="flex gap-1" role="group" aria-label="Высота столбцов">
-            <Button type="button" variant={heightMode === "shared" ? "default" : "ghost"} size="sm" aria-pressed={heightMode === "shared"} onClick={() => onHeightModeChange("shared")}>
-              Общая
-            </Button>
-            <Button type="button" variant={heightMode === "perCard" ? "default" : "ghost"} size="sm" aria-pressed={heightMode === "perCard"} onClick={() => onHeightModeChange("perCard")}>
-              По карточке
-            </Button>
-          </div>
-        </div>
-
-        <div className="space-y-2 border-t border-border pt-2">
-          <div className="text-xs font-medium text-muted-foreground">Ширина области</div>
-          <ToggleField
-            label="На всю ширину"
-            value={contentFullWidth}
-            onChange={onContentFullWidthChange}
-            nameOn="На всю ширину: Вкл"
-            nameOff="На всю ширину: Выкл"
-          />
-          {!contentFullWidth && (
-            <NumberField
-              label="Макс. ширина"
-              ariaLabel="Максимальная ширина области, пикселей"
-              suffix="px"
-              value={contentMaxWidthPx}
-              onChange={onContentMaxWidthPxChange}
-              min={600}
-              max={4000}
-              step={50}
-            />
-          )}
-        </div>
-
-        <div className="space-y-2 border-t border-border pt-2">
-          <div className="text-xs font-medium text-muted-foreground">Геометрия</div>
-          <NumberField label="Отступ между столбцами" value={colGap} onChange={onColGapChange} min={0} max={8} step={0.1} />
-          <NumberField label="Отступ между сегментами" value={segGap} onChange={onSegGapChange} min={0} max={6} step={0.1} />
-          <NumberField label="Скругление столбца" value={colRadius} onChange={onColRadiusChange} min={0} max={8} step={0.1} />
-          <NumberField label="Скругление сегмента" value={segRadius} onChange={onSegRadiusChange} min={0} max={8} step={0.1} />
-        </div>
-
-        <div className="space-y-1 border-t border-border pt-2">
-          <div className="text-xs font-medium text-muted-foreground">Цвет высветления фрейма графика</div>
-          <input
-            type="color"
-            value={frameLiftColor}
-            onChange={(e) => onFrameLiftColorChange(e.target.value)}
-            className="h-8 w-full cursor-pointer rounded-sm border border-border bg-transparent p-0"
-            aria-label="Цвет высветления фрейма графика"
-          />
-        </div>
-
-        {agentKeys.length > 0 && (
-          <div className="space-y-1.5 border-t border-border pt-2">
-            <div className="text-xs font-medium text-muted-foreground">Цвета агентов</div>
-            <div className="max-h-40 space-y-1 overflow-y-auto">
-              {agentKeys.map((key) => (
-                <div key={key} className="flex items-center gap-2">
-                  <span className="inline-block size-2.5 shrink-0 rounded-sm" style={{ backgroundColor: colorFor(key) }} />
-                  <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">{labelFor(key)}</span>
-                  <input
-                    type="color"
-                    value={colorFor(key)}
-                    onChange={(e) => onAgentColorChange(key, e.target.value)}
-                    className="h-6 w-8 shrink-0 cursor-pointer rounded-sm border border-border bg-transparent p-0"
-                    aria-label={`Цвет агента ${labelFor(key)}`}
-                  />
-                </div>
-              ))}
-            </div>
           </div>
         )}
       </PopoverContent>
     </Popover>
-  );
-}
-
-/**
- * A labelled Вкл/Выкл toggle pair. By default the two buttons' accessible
- * names are just "Вкл"/"Выкл"; pass nameOn/nameOff when two toggles share the
- * same popover so their buttons stay individually addressable (a bare "Выкл"
- * would otherwise match both).
- */
-function ToggleField({
-  label,
-  value,
-  onChange,
-  nameOn,
-  nameOff,
-}: {
-  label: string;
-  value: boolean;
-  onChange: (v: boolean) => void;
-  nameOn?: string;
-  nameOff?: string;
-}) {
-  return (
-    <div className="space-y-1">
-      <div className="text-xs text-muted-foreground">{label}</div>
-      <div className="flex gap-1" role="group" aria-label={label}>
-        <Button type="button" variant={value ? "default" : "ghost"} size="sm" aria-pressed={value} aria-label={nameOn} onClick={() => onChange(true)}>
-          Вкл
-        </Button>
-        <Button type="button" variant={!value ? "default" : "ghost"} size="sm" aria-pressed={!value} aria-label={nameOff} onClick={() => onChange(false)}>
-          Выкл
-        </Button>
-      </div>
-    </div>
-  );
-}
-
-function NumberField({
-  label,
-  value,
-  onChange,
-  min,
-  max,
-  step,
-  suffix = "px",
-  ariaLabel,
-}: {
-  label: string;
-  value: number;
-  onChange: (v: number) => void;
-  min: number;
-  max: number;
-  step: number;
-  suffix?: string;
-  /** Overrides the field's accessible name when it must differ from the visible label (e.g. "Ширина" shown, "Ширина столбца, пикселей" announced). */
-  ariaLabel?: string;
-}) {
-  return (
-    <div className="space-y-1">
-      <div className="text-xs text-muted-foreground">{label}</div>
-      <div className="flex items-center gap-1.5">
-        <Input
-          type="number"
-          min={min}
-          max={max}
-          step={step}
-          value={value}
-          onChange={(e) => {
-            const v = Number(e.target.value);
-            if (!Number.isNaN(v)) onChange(v);
-          }}
-          className="w-16 tabular-nums"
-          aria-label={ariaLabel ?? label}
-        />
-        <span className="shrink-0 text-xs text-muted-foreground">{suffix}</span>
-      </div>
-    </div>
   );
 }

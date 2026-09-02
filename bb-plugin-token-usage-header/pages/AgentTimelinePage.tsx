@@ -21,12 +21,22 @@
 // fed from that same response instead of a second round trip.
 import { useEffect, useMemo, useRef, useState } from "react";
 import type * as React from "react";
-import { useBbNavigate, useRpc, type PluginNavPanelProps, type PluginRpcResult } from "@get-bb/plugin-sdk/app";
+import { useBbNavigate, useRpc, useSettings, type PluginNavPanelProps, type PluginRpcResult } from "@get-bb/plugin-sdk/app";
 import type { rpcContract } from "../server";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
-import { DEFAULT_VIZ_SETTINGS, formatCost, formatPercent, formatTokenCount, type AgentTimelineEvent, type ThreadEntry } from "../src/core";
-import { SessionChartCard, SESSION_CHART_UNIT } from "./thread-chart";
+import {
+  DEFAULT_VIZ_SETTINGS,
+  formatCost,
+  formatPercent,
+  formatTokenCount,
+  parseGearSettings,
+  type AgentTimelineEvent,
+  type ChartSettings,
+  type ThreadEntry,
+  type ThreadsVizSettings,
+} from "../src/core";
+import { SessionChartCard } from "./thread-chart";
 
 /**
  * Path of the one nav panel both pages of this plugin share — defined here
@@ -51,7 +61,7 @@ export interface AgentDetailLinkParams {
 // go through here. Ordered key/value PATH SEGMENTS, NOT a query string: BB
 // routes subPath as a path remainder and percent-encodes it, so a `?a=b&c=d`
 // query survives the round-trip as one opaque key and `session` is lost (the
-// "нет id сессии" dead end). Segments survive because `/` stays a separator;
+// "no session id" dead end). Segments survive because `/` stays a separator;
 // each value is encodeURIComponent'd so `:` in ISO timestamps is safe.
 export function buildAgentDetailSubPath(params: AgentDetailLinkParams): string {
   const seg: string[] = ["agent", params.agent, "session", params.session];
@@ -104,10 +114,10 @@ type TimelineLoadState =
  * in server.ts and hasn't changed since the header control shipped.
  */
 const TOKEN_PHASES: ReadonlyArray<{ key: "cacheRead" | "cacheWrite" | "input" | "output"; label: string }> = [
-  { key: "cacheRead", label: "Чтение кэша" },
-  { key: "cacheWrite", label: "Запись в кэш" },
-  { key: "input", label: "Вход" },
-  { key: "output", label: "Выход" },
+  { key: "cacheRead", label: "Cache read" },
+  { key: "cacheWrite", label: "Cache write" },
+  { key: "input", label: "Input" },
+  { key: "output", label: "Output" },
 ];
 
 interface Turn {
@@ -192,8 +202,8 @@ function formatRelativeTime(ms: number): string {
 }
 
 function displayAgentName(agent: { key: string; description: string | null; agentType: string | null }): string {
-  if (agent.key === "main") return "Главный агент";
-  return agent.description ?? agent.agentType ?? "Субагент";
+  if (agent.key === "main") return "Main agent";
+  return agent.description ?? agent.agentType ?? "Subagent";
 }
 
 export function AgentTimelinePage({ subPath }: PluginNavPanelProps) {
@@ -210,6 +220,19 @@ export function AgentTimelinePage({ subPath }: PluginNavPanelProps) {
       // Deliberately drop from/to: a highlight window belongs to the agent
       // it was computed for, not to whatever agent is picked next.
       subPath: buildAgentDetailSubPath({ session: linkParams.session, agent: agentKey }),
+      replace: true,
+    });
+  }
+
+  // Segment click on THIS page's own session chart: unlike selectAgent above,
+  // a chart segment always carries a bin's time window, and that window WAS
+  // computed for the agentKey being navigated to — so it's kept, not dropped.
+  // Re-navigating (even to the same agentKey) changes linkParams.from/to,
+  // which re-triggers the highlight/scroll effect below on the already-loaded
+  // timeline; switching agentKey additionally refetches it first.
+  function selectSegment(agentKey: string, fromIso: string, toIso: string) {
+    navigate.toPluginPanel(THREADS_TIMELINE_PANEL_PATH, {
+      subPath: buildAgentDetailSubPath({ session: linkParams.session, agent: agentKey, from: fromIso, to: toIso }),
       replace: true,
     });
   }
@@ -246,7 +269,7 @@ export function AgentTimelinePage({ subPath }: PluginNavPanelProps) {
         if (cancelled || !mountedRef.current) return;
         setTimelineState({
           kind: "error",
-          message: err instanceof Error ? err.message : "Не удалось получить хронологию агента.",
+          message: err instanceof Error ? err.message : "Failed to fetch the agent timeline.",
         });
       },
     );
@@ -260,13 +283,39 @@ export function AgentTimelinePage({ subPath }: PluginNavPanelProps) {
   // threadsTimeline RPC's single-session slice (no new backend surface), so a
   // failure just hides the chart; the agent timeline below is the real content.
   const [sessionChart, setSessionChart] = useState<{ thread: ThreadEntry; agentLabels: Record<string, string> } | null>(null);
+  // Chart geometry/behaviour — declared settings (bb.settings.define), read
+  // live via useSettings(); this page never writes them (see
+  // ThreadsTimelinePage.tsx's module doc comment for the full split).
+  // `gear.unit` drives the bucket width below.
+  const settingsState = useSettings();
+  const gear = useMemo(() => parseGearSettings(settingsState.values), [settingsState.values]);
+  // What's LEFT of the kv-persisted `threads` blob (agentColors + the
+  // toolbar's sort/search/filter state, none of which this page edits) —
+  // hydrated below, held so the session chart's agent colours match the
+  // feed's and so a save can echo the rest back unchanged.
+  const [threadsSettings, setThreadsSettings] = useState<ThreadsVizSettings>(DEFAULT_VIZ_SETTINGS.threads);
+  const chartSettings: ChartSettings = useMemo(
+    () => ({ ...gear, agentColors: threadsSettings.agentColors }),
+    [gear, threadsSettings.agentColors],
+  );
+  // Merge markers are resolved ONLY by the agentTimeline RPC (a live `gh pr
+  // view` per PR — see memory/decisions/merge-marker-session-page-only.md),
+  // never by threadsTimeline itself — sessionChart's own thread.events never
+  // carries them. Spliced in here, client-side, so this page's chart is the
+  // only place they ever appear.
+  const mergeEvents = timelineState.kind === "ready" ? timelineState.data.mergeEvents : [];
+  const sessionChartThread = useMemo(() => {
+    if (!sessionChart) return null;
+    if (mergeEvents.length === 0) return sessionChart.thread;
+    return { ...sessionChart.thread, events: [...sessionChart.thread.events, ...mergeEvents].sort((a, b) => (a.ts < b.ts ? -1 : a.ts > b.ts ? 1 : 0)) };
+  }, [sessionChart, mergeEvents]);
   useEffect(() => {
     if (!session) {
       setSessionChart(null);
       return;
     }
     let cancelled = false;
-    rpc.call("threadsTimeline", { limit: 1, unit: SESSION_CHART_UNIT, session, groupWorkflows: true }).then(
+    rpc.call("threadsTimeline", { limit: 1, unit: gear.unit, session, groupWorkflows: true }).then(
       (result) => {
         if (cancelled || !mountedRef.current) return;
         setSessionChart(
@@ -282,8 +331,10 @@ export function AgentTimelinePage({ subPath }: PluginNavPanelProps) {
     return () => {
       cancelled = true;
     };
-    // Agent switch keeps the same session chart — it depends only on `session`.
-  }, [rpc, session]);
+    // Agent switch keeps the same session chart — depends on `session` and
+    // the bucket width, which also refetches if the gear's saved time-unit
+    // setting changes.
+  }, [rpc, session, gear.unit]);
 
   // --- Timeline display controls: NOT reset on agent change (they're
   // standing preferences, persisted below) — only `expanded`/`collapsedTurns`
@@ -293,14 +344,17 @@ export function AgentTimelinePage({ subPath }: PluginNavPanelProps) {
   const [groupedByTurn, setGroupedByTurn] = useState(DEFAULT_VIZ_SETTINGS.agentDetail.groupedByTurn);
 
   // --- Viz-settings persistence (bb.storage.kv via loadVizSettings/
-  // saveVizSettings — see memory/decisions/token-usage-viz-settings-persist-kv.md).
-  // This page owns only the `agentDetail` section (showHooks/relativeTime/
-  // groupedByTurn); the sibling `threads` section belongs to
-  // ThreadsTimelinePage.tsx. Since a save always sends the FULL VizSettings
-  // object (the RPC schema requires both sections), whatever `threads` this
-  // page last loaded is held in a ref and echoed back unchanged on every
-  // save — this page never edits it, so there's nothing to merge.
-  const loadedThreadsSectionRef = useRef(DEFAULT_VIZ_SETTINGS.threads);
+  // saveVizSettings — see memory/decisions/token-usage-viz-settings-persist-kv.md
+  // and memory/decisions/token-usage-gear-to-native-settings.md). This page
+  // owns and edits only the `agentDetail` section (showHooks/relativeTime/
+  // groupedByTurn); the sibling `threads` section (now just agentColors +
+  // toolbar sort/search/filter state, geometry having moved to
+  // bb.settings.define) belongs to ThreadsTimelinePage.tsx. This page still
+  // keeps its own copy (threadsSettings, declared above) for two reasons:
+  // the session chart above needs the SAME agent colours as the feed, and a
+  // save always sends the FULL VizSettings object (the RPC schema requires
+  // both sections) — so whatever `threads` this page last loaded is echoed
+  // back unchanged on every save, since this page never edits it.
   const [vizHydrated, setVizHydrated] = useState(false);
   const skipNextSaveRef = useRef(false);
   useEffect(() => {
@@ -309,7 +363,7 @@ export function AgentTimelinePage({ subPath }: PluginNavPanelProps) {
       (settings) => {
         if (cancelled || !mountedRef.current) return;
         skipNextSaveRef.current = true;
-        loadedThreadsSectionRef.current = settings.threads;
+        setThreadsSettings(settings.threads);
         setShowHooks(settings.agentDetail.showHooks);
         setRelativeTime(settings.agentDetail.relativeTime);
         setGroupedByTurn(settings.agentDetail.groupedByTurn);
@@ -339,7 +393,7 @@ export function AgentTimelinePage({ subPath }: PluginNavPanelProps) {
     const timer = setTimeout(() => {
       rpc
         .call("saveVizSettings", {
-          threads: loadedThreadsSectionRef.current,
+          threads: threadsSettings,
           agentDetail: { showHooks, relativeTime, groupedByTurn },
         })
         .catch(() => {
@@ -349,12 +403,12 @@ export function AgentTimelinePage({ subPath }: PluginNavPanelProps) {
         });
     }, 400);
     return () => clearTimeout(timer);
-  }, [vizHydrated, showHooks, relativeTime, groupedByTurn, rpc]);
+  }, [vizHydrated, showHooks, relativeTime, groupedByTurn, threadsSettings, rpc]);
 
   const [expanded, setExpanded] = useState<Set<number>>(new Set());
   const [collapsedTurns, setCollapsedTurns] = useState<Set<number>>(new Set());
-  // Раскрытие «Вход/Выход целиком» — та же логика, что expanded/collapsedTurns
-  // выше: сбрасывается при смене агента, а не переживает переключение.
+  // "Full Input/Output" expansion — same logic as expanded/collapsedTurns
+  // above: resets on agent change rather than surviving the switch.
   const [showFullContent, setShowFullContent] = useState(false);
   useEffect(() => {
     setExpanded(new Set());
@@ -413,14 +467,15 @@ export function AgentTimelinePage({ subPath }: PluginNavPanelProps) {
           <span aria-hidden="true">←</span> Usage Analytics
         </Button>
       </div>
-      {sessionChart && (
+      {sessionChart && sessionChartThread && (
         <div className="shrink-0 px-4 pt-3 md:px-5">
-          <div className="mb-1 text-xs font-medium text-muted-foreground">Диаграмма сессии</div>
+          <div className="mb-1 text-xs font-medium text-muted-foreground">Session chart</div>
           <SessionChartCard
-            thread={sessionChart.thread}
-            unit={SESSION_CHART_UNIT}
+            thread={sessionChartThread}
             agentLabels={sessionChart.agentLabels}
-            onSelectAgent={selectAgent}
+            settings={chartSettings}
+            fillWidth={chartSettings.fillWidthSession}
+            onSelectAgent={selectSegment}
             activeAgentKey={activeAgentKey}
           />
         </div>
@@ -497,11 +552,11 @@ function LeftPanel({
   if (!session) {
     return (
       <div className="space-y-2 rounded-lg border border-border bg-popover p-4 text-xs text-muted-foreground lg:sticky lg:top-4">
-        <p className="font-medium text-foreground">Нет id сессии Claude Code</p>
+        <p className="font-medium text-foreground">No session id Claude Code</p>
         <p>
-          Эта ссылка не несёт параметра session — разбивка по токенам
-          недоступна. Откройте детализацию кликом по строке агента в счётчике
-          токенов треда или по сегменту диаграммы в Usage Analytics.
+          This link carries no session parameter — the token breakdown is
+          unavailable. Open the detail view by clicking an agent row in the
+          thread's token counter, or a chart segment in Usage Analytics.
         </p>
       </div>
     );
@@ -510,13 +565,13 @@ function LeftPanel({
   return (
     <div className="space-y-3 rounded-lg border border-border bg-popover p-4 lg:sticky lg:top-4">
       {(timelineState.kind === "loading" || timelineState.kind === "idle") && (
-        <p className="text-sm text-muted-foreground">Загрузка…</p>
+        <p className="text-sm text-muted-foreground">Loading…</p>
       )}
       {timelineState.kind === "error" && <p className="text-sm text-destructive">{timelineState.message}</p>}
       {timelineState.kind === "ready" && (
         <>
           <div className="flex items-baseline justify-between">
-            <span className="text-sm font-medium text-foreground">Всего токенов</span>
+            <span className="text-sm font-medium text-foreground">Total tokens</span>
             <span className="text-sm font-semibold tabular-nums text-foreground">
               {formatTokenCount(timelineState.data.totals.total)}
             </span>
@@ -537,7 +592,7 @@ function LeftPanel({
               );
             })}
             <div className="flex items-center justify-between gap-2 pl-3 text-xs text-subtle-foreground">
-              <dt>в т.ч. размышления</dt>
+              <dt>incl. thinking</dt>
               <dd className="tabular-nums">
                 {formatTokenCount(timelineState.data.totals.thinking)}{" "}
                 <span>({formatPercent(timelineState.data.totals.thinking, timelineState.data.totals.output)})</span>{" "}
@@ -547,17 +602,17 @@ function LeftPanel({
           </dl>
 
           <div className="flex items-center justify-between border-t border-border pt-2 text-xs text-muted-foreground">
-            <span>Стоимость</span>
+            <span>Cost</span>
             <span className="font-medium tabular-nums text-foreground">{formatCost(timelineState.data.totals.cost)}</span>
           </div>
           <div className="flex items-center justify-between text-xs text-muted-foreground">
-            <span>Ответов</span>
+            <span>Responses</span>
             <span className="font-medium tabular-nums text-foreground">{timelineState.data.totals.messages}</span>
           </div>
 
           {timelineState.data.agents.length > 0 && (
             <div className="space-y-1 border-t border-border pt-2">
-              <span className="text-xs font-medium text-muted-foreground">Агенты</span>
+              <span className="text-xs font-medium text-muted-foreground">Agents</span>
               <ul className="space-y-1">
                 {timelineState.data.agents.map((agent) => {
                   const active = agent.key === activeAgentKey;
@@ -595,23 +650,23 @@ function LeftPanel({
 }
 
 /**
- * Полный (не 300-символьное превью) текст запроса или ответа агента —
- * agent.requestFull/responseFull из agentTimeline, а не events[].text.
- * Без внутреннего скролла — блок разворачивается на всю высоту текста
- * (до FULL_TEXT_MAX, 20000 символов tools/agent_timeline.py), страница
- * вокруг него скроллится сама.
+ * Full (not the 300-char preview) text of the agent's request or response —
+ * agent.requestFull/responseFull from agentTimeline, not events[].text.
+ * No inner scroll — the block expands to the text's full height (up to
+ * FULL_TEXT_MAX, 20000 chars in tools/agent_timeline.py), the page around it
+ * scrolls on its own.
  */
 function FullContentBlock({ label, text, truncated }: { label: string; text: string | null; truncated: boolean }) {
   return (
     <div className="space-y-1">
       <div className="flex items-baseline justify-between">
         <span className="font-medium text-foreground">{label}</span>
-        {truncated && <span className="text-subtle-foreground">показано не всё</span>}
+        {truncated && <span className="text-subtle-foreground">not everything is shown</span>}
       </div>
       {text ? (
         <pre className="whitespace-pre-wrap break-words rounded bg-card p-2 font-mono text-muted-foreground">{text}</pre>
       ) : (
-        <p className="text-subtle-foreground">Нет текста.</p>
+        <p className="text-subtle-foreground">No text.</p>
       )}
     </div>
   );
@@ -667,11 +722,11 @@ function RightPanel(props: RightPanelProps) {
     return (
       <div className="min-w-0 space-y-3 text-sm text-muted-foreground">
         <p>
-          Без параметра session эта страница не может запросить хронологию.
-          Параметры ссылки: агент <span className="font-mono text-foreground">{linkParams.agent}</span>
+          Without a session parameter, this page can't request the timeline.
+          Link parameters: agent <span className="font-mono text-foreground">{linkParams.agent}</span>
           {linkParams.from && linkParams.to && (
             <>
-              , окно {formatAbsoluteTime(linkParams.from)}–{formatAbsoluteTime(linkParams.to)}
+              , window {formatAbsoluteTime(linkParams.from)}–{formatAbsoluteTime(linkParams.to)}
             </>
           )}
           .
@@ -681,7 +736,7 @@ function RightPanel(props: RightPanelProps) {
   }
 
   if (timelineState.kind === "loading" || timelineState.kind === "idle") {
-    return <p className="text-sm text-muted-foreground">Загрузка…</p>;
+    return <p className="text-sm text-muted-foreground">Loading…</p>;
   }
   if (timelineState.kind === "error") {
     return <p className="text-sm text-destructive">{timelineState.message}</p>;
@@ -771,7 +826,7 @@ function ReadyRightPanel(
           className={cn("flex items-center gap-3 border-l-2 border-primary/40 bg-primary/[0.04] px-3 py-1", highlightCls(i))}
         >
           <span className="w-[74px] shrink-0 font-mono text-xs tabular-nums text-subtle-foreground">{formatTime(event.ts)}</span>
-          <span className="w-14 shrink-0 text-xs font-medium text-muted-foreground">хук</span>
+          <span className="w-14 shrink-0 text-xs font-medium text-muted-foreground">hook</span>
           <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">
             {event.hookName ?? "?"} <span className="text-subtle-foreground">· {event.hookEvent ?? "?"}</span>
           </span>
@@ -793,7 +848,7 @@ function ReadyRightPanel(
   }
 
   function messageRow(i: number, event: Extract<AgentTimelineEvent, { kind: "message" }>, isHeader: boolean): React.ReactNode {
-    const label = event.role === "assistant" ? "ассистент" : "пользователь";
+    const label = event.role === "assistant" ? "assistant" : "user";
     const isExpanded = expanded.has(i);
     const turnIdx = indexToTurn.get(i);
     const tools =
@@ -835,11 +890,11 @@ function ReadyRightPanel(
         {isExpanded && (
           <div className="space-y-2 px-3 pb-1.5 pl-[104px]">
             <div className="space-y-1">
-              {event.fullTextTruncated && <p className="text-xs text-subtle-foreground">показано не всё</p>}
+              {event.fullTextTruncated && <p className="text-xs text-subtle-foreground">not everything is shown</p>}
               <pre className="whitespace-pre-wrap break-words rounded bg-card p-2 font-mono text-xs text-muted-foreground">{event.fullText}</pre>
             </div>
             {tools.length === 0 ? (
-              <div className="text-xs text-subtle-foreground">Инструменты не использовались</div>
+              <div className="text-xs text-subtle-foreground">No tools were used</div>
             ) : (
               <div className="space-y-0.5">
                 {tools.map((tool, idx) => (
@@ -898,7 +953,7 @@ function ReadyRightPanel(
         <p className="text-sm text-muted-foreground">{displayAgentName(agent)}</p>
         {agent.promptExcerpt && (
           <div className="mt-3 border-l-2 border-border pl-2">
-            <div className="mb-1 text-xs font-medium text-muted-foreground">Промпт</div>
+            <div className="mb-1 text-xs font-medium text-muted-foreground">Prompt</div>
             <p className="font-mono text-xs text-muted-foreground">{agent.promptExcerpt}</p>
           </div>
         )}
@@ -912,12 +967,12 @@ function ReadyRightPanel(
               aria-expanded={showFullContent}
               onClick={onToggleShowFullContent}
             >
-              {showFullContent ? "Скрыть содержимое" : "Содержимое целиком"}
+              {showFullContent ? "Hide content" : "Full content"}
             </Button>
             {showFullContent && (
               <div className="mt-2 space-y-2 rounded-md border border-border bg-popover p-2 text-xs">
-                <FullContentBlock label="Вход" text={agent.requestFull} truncated={agent.requestFullTruncated} />
-                <FullContentBlock label="Выход" text={agent.responseFull} truncated={agent.responseFullTruncated} />
+                <FullContentBlock label="Input" text={agent.requestFull} truncated={agent.requestFullTruncated} />
+                <FullContentBlock label="Output" text={agent.responseFull} truncated={agent.responseFullTruncated} />
               </div>
             )}
           </div>
@@ -925,16 +980,16 @@ function ReadyRightPanel(
       </div>
 
       <div className="flex flex-wrap items-center gap-2 border-b border-border pb-2">
-        <ToggleButton pressed={showHooks} onClick={onToggleShowHooks} label="Хуки" on="вкл" off="выкл" />
-        <ToggleButton pressed={relativeTime} onClick={onToggleRelativeTime} label="Время" on="относительное" off="абсолютное" />
-        <ToggleButton pressed={groupedByTurn} onClick={onToggleGroupedByTurn} label="Группировка" on="по ходам" off="плоско" />
+        <ToggleButton pressed={showHooks} onClick={onToggleShowHooks} label="Hooks" on="on" off="off" />
+        <ToggleButton pressed={relativeTime} onClick={onToggleRelativeTime} label="Time" on="relative" off="absolute" />
+        <ToggleButton pressed={groupedByTurn} onClick={onToggleGroupedByTurn} label="Grouping" on="by turn" off="flat" />
         {groupedByTurn && (
           <span className="flex items-center gap-2">
             <Button type="button" variant="ghost" size="sm" className="h-7 border border-input px-2.5 text-xs font-medium text-muted-foreground" onClick={() => onSetAllTurnsCollapsed(true)}>
-              Свернуть всё
+              Collapse all
             </Button>
             <Button type="button" variant="ghost" size="sm" className="h-7 border border-input px-2.5 text-xs font-medium text-muted-foreground" onClick={() => onSetAllTurnsCollapsed(false)}>
-              Развернуть всё
+              Expand all
             </Button>
           </span>
         )}
@@ -942,8 +997,8 @@ function ReadyRightPanel(
 
       <div className="rounded-lg border border-border">
         <div className="flex items-center justify-between border-b border-border px-3 py-1.5">
-          <span className="text-xs font-medium text-muted-foreground">Хронология сессии</span>
-          <span className="text-xs text-subtle-foreground">{visibleCount} событий</span>
+          <span className="text-xs font-medium text-muted-foreground">Session timeline</span>
+          <span className="text-xs text-subtle-foreground">{visibleCount} events</span>
         </div>
         <div
           ref={containerRef}
