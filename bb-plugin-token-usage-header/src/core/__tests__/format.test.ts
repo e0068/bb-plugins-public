@@ -100,40 +100,41 @@ describe("formatPercentValue", () => {
 });
 
 describe("formatBucketDisplay", () => {
-  it("именует бакет главного агента даже без объекта агента", () => {
+  it("names the main agent's bucket even without an agent object", () => {
     expect(formatBucketDisplay(makeBucket({ key: "main" }))).toEqual({
-      name: "Главный агент",
+      name: "Main agent",
       caption: null,
     });
   });
 
-  it("у бакета с данными агента имя — описание запуска, подпись — тип и модели с расходом", () => {
+  it("for a bucket with agent data, the name is the launch description and the caption is the type plus models with usage", () => {
     const bucket = makeBucket({
       key: "agent-abc",
       models: [{ tier: "sonnet", total: 172_000 }],
-      agent: { id: "abc", description: "H1: тест", agentType: "general-purpose", model: "sonnet", workflowRunId: null },
+      agent: { id: "abc", description: "H1: test", agentType: "general-purpose", model: "sonnet", workflowRunId: null },
     });
     expect(formatBucketDisplay(bucket)).toEqual({
-      name: "H1: тест",
+      name: "H1: test",
       caption: "general-purpose · sonnet 172.0k",
     });
   });
 
-  it("подпись показывает тип и модели даже когда имя уже говорящее", () => {
-    // Именно это отличает display от прежнего единого label: тип и модели не
-    // прячутся, как только у агента есть описание запуска.
+  it("caption shows the type and models even when the name is already descriptive", () => {
+    // This is exactly what distinguishes display from the former single
+    // label: the type and models don't hide away just because the agent has
+    // a launch description.
     const bucket = makeBucket({
       key: "agent-abc",
       models: [{ tier: "opus", total: 900 }],
-      agent: { id: "abc", description: "Починка", agentType: "code-reviewer", model: "opus", workflowRunId: null },
+      agent: { id: "abc", description: "Fix", agentType: "code-reviewer", model: "opus", workflowRunId: null },
     });
     expect(formatBucketDisplay(bucket).caption).toBe("code-reviewer · opus 900");
   });
 
-  it("перечисляет все модели бакета с расходом, по убыванию", () => {
-    // Живой случай, ради которого это и переделано: главный агент работал на
-    // трёх моделях, а подпись показывала одну — и по алфавиту это оказывался
-    // haiku, самая дешёвая из трёх.
+  it("lists all of the bucket's models with usage, in descending order", () => {
+    // The real case this was reworked for: the main agent worked across
+    // three models, but the caption showed only one — and alphabetically
+    // that turned out to be haiku, the cheapest of the three.
     const bucket = makeBucket({
       key: "main",
       models: [
@@ -145,25 +146,25 @@ describe("formatBucketDisplay", () => {
     expect(formatBucketDisplay(bucket).caption).toBe("opus 5.7M, sonnet 52.0k, haiku 607");
   });
 
-  it("субагент с известным типом, но без единой модели — подпись без « · »", () => {
-    // tier() в питоновской считалке всегда возвращает какой-то тир, поэтому
-    // бакет главного агента с хотя бы одним сообщением не бывает без
-    // models — но у subagent-бакета models может опустеть (например, вызов
-    // не оставил ни одной записи о цене), и тогда join не должен оставлять
-    // висячий " · " перед пустой правой частью.
+  it("subagent with a known type but no models at all — caption without the « · » separator", () => {
+    // tier() in the Python counter script always returns some tier, so a
+    // main-agent bucket with at least one message is never without models —
+    // but a subagent bucket's models can be empty (e.g. the call left no
+    // priced record at all), and then join must not leave a dangling " · "
+    // in front of an empty right-hand side.
     const bucket = makeBucket({
       key: "agent-abc",
       models: [],
-      agent: { id: "abc", description: "Разбор PR", agentType: "code-reviewer", model: null, workflowRunId: null },
+      agent: { id: "abc", description: "PR analysis", agentType: "code-reviewer", model: null, workflowRunId: null },
     });
     expect(formatBucketDisplay(bucket).caption).toBe("code-reviewer");
   });
 
-  it("главный агент без единой модели остаётся без подписи", () => {
+  it("main agent with no models at all is left without a caption", () => {
     expect(formatBucketDisplay(makeBucket({ key: "main", models: [] })).caption).toBeNull();
   });
 
-  it("имя падает до типа агента, когда нет описания запуска", () => {
+  it("name falls back to the agent type when there is no launch description", () => {
     const bucket = makeBucket({
       key: "agent-abc",
       agent: { id: "abc", description: null, agentType: "general-purpose", model: null, workflowRunId: null },
@@ -171,15 +172,15 @@ describe("formatBucketDisplay", () => {
     expect(formatBucketDisplay(bucket).name).toBe("general-purpose");
   });
 
-  it("имя падает до общего 'Субагент', когда нет ни описания, ни типа", () => {
+  it("name falls back to the generic 'Subagent' when there is neither a description nor a type", () => {
     const bucket = makeBucket({
       key: "agent-abc",
       agent: { id: "abc", description: null, agentType: null, model: null, workflowRunId: null },
     });
-    expect(formatBucketDisplay(bucket).name).toBe("Субагент");
+    expect(formatBucketDisplay(bucket).name).toBe("Subagent");
   });
 
-  it("ключ бакета идёт как есть для разрезов без агента (сессия, проект, модель, день, workflow)", () => {
+  it("the bucket key passes through as-is for agent-less cuts (session, project, model, day, workflow)", () => {
     expect(formatBucketDisplay(makeBucket({ key: "my-project" }))).toEqual({
       name: "my-project",
       caption: null,
@@ -187,7 +188,7 @@ describe("formatBucketDisplay", () => {
     expect(formatBucketDisplay(makeBucket({ key: "2026-08-01" })).name).toBe("2026-08-01");
   });
 
-  it("длинное имя усекается, подпись при этом остаётся целой", () => {
+  it("a long name gets truncated while the caption stays intact", () => {
     const bucket = makeBucket({
       key: "agent-abc",
       agent: {

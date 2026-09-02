@@ -100,7 +100,7 @@ function mapStdout(result: Extract<ProcessRunResult, { ok: true }>): TokensRunRe
   }
   const diagnostic = result.stderr.trim();
   const message = diagnostic
-    ? `${parsed.message} (код завершения ${result.code}): ${diagnostic}`
+    ? `${parsed.message} (exit code ${result.code}): ${diagnostic}`
     : parsed.message;
   return { ok: false, reason: "invalid_output", message };
 }
@@ -144,7 +144,7 @@ export function createTokensRunner(options: TokensRunnerOptions = {}): TokensRun
         return {
           ok: false,
           reason: "invalid_session",
-          message: "Пустой session id недопустим: это не отсутствие сессии, а потерянный фильтр по ней.",
+          message: "An empty session id is not allowed: this isn't the absence of a session, but a lost filter on one.",
         };
       }
 
@@ -165,7 +165,7 @@ export function createTokensRunner(options: TokensRunnerOptions = {}): TokensRun
           return {
             ok: false,
             reason: "timeout",
-            message: `Превышен общий бюджет времени (${totalTimeoutMs}ms) до попытки запустить "${interpreter}"`,
+            message: `Overall time budget (${totalTimeoutMs}ms) exceeded before attempting to run "${interpreter}"`,
           };
         }
 
@@ -184,7 +184,7 @@ export function createTokensRunner(options: TokensRunnerOptions = {}): TokensRun
         ok: false,
         reason: "python_not_found",
         message:
-          "Не найден интерпретатор Python (python3 или python) в PATH. Установите Python 3 и убедитесь, что команда python3 доступна.",
+          "Python interpreter (python3 or python) not found in PATH. Install Python 3 and make sure the python3 command is available.",
       };
     },
   };

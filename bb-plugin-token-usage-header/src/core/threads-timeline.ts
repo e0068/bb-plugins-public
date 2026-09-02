@@ -7,37 +7,43 @@
 // contract for tools/tokens.py, but a separate schema/version — a different
 // script, a different JSON shape.
 import { z } from "zod";
+import { gitEventSchema } from "./git-events";
 
 /**
- * Версия формата отчёта threads_timeline.py --json, которую понимает этот
- * бандл. Должна совпадать с SCHEMA_VERSION в tools/threads_timeline.py —
- * считалка читается с диска при каждом вызове, а это число живёт в
- * собранном бандле и обновляется только пересборкой. Отдельная версия от
- * EXPECTED_SCHEMA_VERSION в src/core/types.ts (tools/tokens.py) — разные
- * скрипты, разные контракты, версии не обязаны совпадать.
+ * Version of the threads_timeline.py --json report format understood by
+ * this bundle. Must match SCHEMA_VERSION in tools/threads_timeline.py — the
+ * counter script is read from disk on every call, while this number lives
+ * in the built bundle and only gets updated on rebuild. A separate version
+ * from EXPECTED_SCHEMA_VERSION in src/core/types.ts (tools/tokens.py) —
+ * different scripts, different contracts, the versions don't have to match.
  *
- * 1 -> 2: добавлено верхнеуровневое поле agentLabels (человекочитаемые
- * имена агентов по ключу — см. RawThreadsTimelineSchema ниже).
- * 2 -> 3: у треда добавлены totalCost (стоимость расхода в USD по тарифу
- * tokens.py) и workflowCount (число различных workflow-прогонов в сессии).
- * 3 -> 4: у workflow-сегмента бина (key == "workflow:<run>", только при
- * group_workflows) добавлено members — реальные agentId, слитые в сегмент.
+ * 1 -> 2: added the top-level agentLabels field (human-readable agent names
+ * by key — see RawThreadsTimelineSchema below).
+ * 2 -> 3: a thread gained totalCost (usage cost in USD at tokens.py's rate)
+ * and workflowCount (number of distinct workflow runs in the session).
+ * 3 -> 4: a bin's workflow segment (key == "workflow:<run>", only under
+ * group_workflows) gained members — the real agentIds merged into the segment.
+ * 4 -> 5: a thread gained cwd/gitBranch (its working directory and git
+ * branch, read from the transcript) and events (pr/push facts from the same
+ * transcript — see git_events.scan_session; commit events are appended
+ * later, client-independent of the script, by
+ * src/service/threads-timeline-service.ts's enrichCommits).
  */
-export const EXPECTED_THREADS_TIMELINE_SCHEMA_VERSION = 4;
+export const EXPECTED_THREADS_TIMELINE_SCHEMA_VERSION = 5;
 
 const AgentBinSchema = z
   .object({
-    /** "main" для главного агента, иначе agentId субагента — как в tokens.py --by agent. */
+    /** "main" for the main agent, otherwise the subagent's agentId — as in tokens.py --by agent. */
     key: z.string(),
     total: z.number().finite(),
     /**
-     * Реальные agentId, слитые в этот сегмент — присутствует ТОЛЬКО когда
-     * `key` сам является групповым workflow-ключом (`workflow:<run>`, см.
-     * tools/threads_timeline.py::_bin_key при --group-workflows); у обычного
-     * агента key уже и есть его real id, поле отсутствует. Существует ради
-     * подсветки/гашения сегмента на графике сессии по выбранному агенту
-     * (thread-chart.tsx) — без него принадлежность реального агента внутри
-     * слитого сегмента была бы неразличима.
+     * Real agentIds merged into this segment — present ONLY when `key`
+     * itself is a group workflow key (`workflow:<run>`, see
+     * tools/threads_timeline.py::_bin_key under --group-workflows); for a
+     * regular agent, key is already its real id and the field is absent.
+     * Exists so the session chart (thread-chart.tsx) can highlight/dim a
+     * segment by the selected agent — without it, which real agent
+     * contributed within a merged segment would be indistinguishable.
      */
     members: z.array(z.string()).optional(),
   })
@@ -45,7 +51,7 @@ const AgentBinSchema = z
 
 const TimelineBinSchema = z
   .object({
-    /** ISO 8601 UTC начало бина; кратно `unit` секундам от отчёта. */
+    /** ISO 8601 UTC start of the bin; a multiple of the report's `unit` seconds. */
     t: z.string(),
     agents: z.array(AgentBinSchema),
   })
@@ -59,36 +65,42 @@ const TimelineBinSchema = z
 const RawThreadEntrySchema = z
   .object({
     session: z.string(),
-    /** Сырой слаг каталога транскрипта из python (`~/.claude/projects/<slug>`) — не путать с bbProjectId/bbProjectName ниже. */
+    /** Raw transcript directory slug from python (`~/.claude/projects/<slug>`) — not to be confused with bbProjectId/bbProjectName below. */
     project: z.string(),
-    /** Пока всегда равно `session` — человекочитаемое имя подставляет сервис. */
+    /** Currently always equal to `session` — the service substitutes the human-readable name. */
     title: z.string(),
     start: z.string(),
     end: z.string(),
     durationSec: z.number().finite(),
     totalTokens: z.number().finite(),
-    /** Стоимость всего расхода треда в USD, тем же тарифом, что и tokens.py (Bucket.cost). */
+    /** Cost of the thread's entire usage in USD, at the same rate as tokens.py (Bucket.cost). */
     totalCost: z.number().finite(),
-    /** Сколько различных workflow-прогонов участвовало в сессии (0 — обычный тред без workflow). */
+    /** How many distinct workflow runs took part in the session (0 — a regular thread with no workflow). */
     workflowCount: z.number().int().nonnegative(),
     bins: z.array(TimelineBinSchema),
+    /** The session's working directory, from its own transcript records — null when none carried both cwd and gitBranch. Used by the service layer to resolve commit events via a live `git log`; the parsed report otherwise only reads it, never runs anything with it. */
+    cwd: z.string().nullable(),
+    /** The session's git branch, same source/nullability as cwd. */
+    gitBranch: z.string().nullable(),
+    /** pr/push facts mined from the transcript by tools/git_events.py — commit events are appended on top by the service layer, not present in the script's own output. */
+    events: z.array(gitEventSchema),
   })
   .strict();
 
 /**
- * agentId (как в bins[].agents[].key, "main" для главного агента) ->
- * человекочитаемая метка. Строится threads_timeline.py из meta субагента
- * (description, иначе agentType, иначе сам agentId как fallback) — см.
- * tools/threads_timeline.py::_agent_label. Верхнеуровневое, не per-thread:
- * один и тот же agentId в разных тредах слайса делит одну метку. Пустой
- * объект — валидный случай (слайс без единого треда).
+ * agentId (as in bins[].agents[].key, "main" for the main agent) ->
+ * human-readable label. Built by threads_timeline.py from the subagent's
+ * meta (description, else agentType, else the agentId itself as a fallback)
+ * — see tools/threads_timeline.py::_agent_label. Top-level, not per-thread:
+ * the same agentId across different threads of the slice shares one label.
+ * An empty object is a valid case (a slice with no threads at all).
  */
 const AgentLabelsSchema = z.record(z.string(), z.string());
 
 const RawThreadsTimelineSchema = z
   .object({
     schemaVersion: z.number(),
-    /** Размер бина в секундах, как был передан в --unit. */
+    /** Bin size in seconds, as passed to --unit. */
     unit: z.number().finite(),
     threads: z.array(RawThreadEntrySchema),
     agentLabels: AgentLabelsSchema,
@@ -200,24 +212,24 @@ export function parseThreadsTimeline(raw: string): ThreadsTimelineParseResult {
     return fail("invalid_shape", "expected a JSON object at the top level");
   }
 
-  // Проверяется раньше threads/unit и чего угодно ещё: рассинхрон версии
-  // означает, что собранный плагин и tools/threads_timeline.py на диске
-  // говорят на разных диалектах формата, и претензия должна называть это, а
-  // не первое поле данных, до которого дошёл разбор (см.
-  // memory/decisions/token-usage-json-schema-version.md для того же приёма
-  // на соседнем контракте).
+  // Checked before threads/unit and anything else: a version mismatch means
+  // the built plugin and tools/threads_timeline.py on disk speak different
+  // dialects of the format, and the failure must name that instead of the
+  // first data field the parser happens to reach (see
+  // memory/decisions/token-usage-json-schema-version.md for the same
+  // approach on the neighboring contract).
   if (json.schemaVersion !== EXPECTED_THREADS_TIMELINE_SCHEMA_VERSION) {
     const got =
       json.schemaVersion === undefined
-        ? "поле версии схемы отсутствует"
-        : `получена версия ${JSON.stringify(json.schemaVersion)}`;
+        ? "the schema version field is missing"
+        : `got version ${JSON.stringify(json.schemaVersion)}`;
     const remedy =
       typeof json.schemaVersion === "number" && json.schemaVersion > EXPECTED_THREADS_TIMELINE_SCHEMA_VERSION
-        ? "Нужна пересборка плагина."
-        : "Пересборка плагина не поможет: обновите установку плагина или проверьте, из какого дерева берётся tools/threads_timeline.py.";
+        ? "Rebuild the plugin."
+        : "Rebuilding the plugin won't help: update the plugin installation or check which tree tools/threads_timeline.py is being read from.";
     return fail(
       "schema_version_mismatch",
-      `Плагин собран под другую версию считалки tools/threads_timeline.py: ожидается версия схемы ${EXPECTED_THREADS_TIMELINE_SCHEMA_VERSION}, ${got}. ${remedy}`,
+      `Plugin was built against a different version of the tools/threads_timeline.py counter: expected schema version ${EXPECTED_THREADS_TIMELINE_SCHEMA_VERSION}, ${got}. ${remedy}`,
     );
   }
 
@@ -250,15 +262,15 @@ export function parseThreadsTimeline(raw: string): ThreadsTimelineParseResult {
 // --- UI layout helpers -------------------------------------------------
 
 /**
- * Доля ширины каждого треда относительно самого длинного по durationSec:
- * самый длинный получает 1.0, остальные — пропорционально своей
- * длительности. Индексы результата совпадают с индексами `threads`.
+ * Each thread's width fraction relative to the longest by durationSec: the
+ * longest gets 1.0, the rest are proportional to their own duration. Result
+ * indexes match `threads`' indexes.
  *
- * Пустой массив -> пустой массив. Когда у всех тредов нулевая (или
- * отрицательная — не должно случаться, но не считается ошибкой здесь)
- * длительность, максимум равен нулю и делить не на что — каждый тред тогда
- * получает 1.0, а не NaN/Infinity: одноточечные бары рисуются одной и той
- * же минимальной шириной, а не пропадают.
+ * Empty array -> empty array. When every thread has zero (or negative —
+ * shouldn't happen, but isn't treated as an error here) duration, the
+ * maximum is zero and there's nothing to divide by — every thread then gets
+ * 1.0, not NaN/Infinity: single-point bars are drawn at the same minimal
+ * width instead of disappearing.
  */
 export function widthFractions(threads: readonly ThreadEntry[]): number[] {
   if (threads.length === 0) return [];
@@ -267,7 +279,7 @@ export function widthFractions(threads: readonly ThreadEntry[]): number[] {
   return threads.map((t) => Math.max(t.durationSec, 0) / maxDuration);
 }
 
-/** Суммарный расход одного бина — сумма total всех агентов внутри него. */
+/** Total usage of one bin — the sum of `total` across all agents within it. */
 export function binTotal(bin: TimelineBin): number {
   return bin.agents.reduce((sum, agent) => sum + agent.total, 0);
 }

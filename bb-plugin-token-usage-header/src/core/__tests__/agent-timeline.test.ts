@@ -35,6 +35,7 @@ const validTimeline = {
       fullTextTruncated: false,
     },
   ],
+  prNumbers: [{ number: 73, repository: "e0068/bb-plugins" }],
 };
 
 describe("parseAgentTimeline", () => {
@@ -50,6 +51,28 @@ describe("parseAgentTimeline", () => {
       name: "Read",
       target: "/repo/file.ts",
     });
+  });
+
+  it("defaults mergeEvents to [] — the script never sends it, only the service layer fills it in", () => {
+    const result = parseAgentTimeline(JSON.stringify(validTimeline));
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.data.mergeEvents).toEqual([]);
+  });
+
+  it("carries prNumbers through as-is", () => {
+    const result = parseAgentTimeline(JSON.stringify(validTimeline));
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.data.prNumbers).toEqual([{ number: 73, repository: "e0068/bb-plugins" }]);
+  });
+
+  it("accepts an empty prNumbers list", () => {
+    const timeline = { ...validTimeline, prNumbers: [] };
+    const result = parseAgentTimeline(JSON.stringify(timeline));
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.data.prNumbers).toEqual([]);
   });
 
   it("parses the main agent's info with null fields", () => {
@@ -68,6 +91,7 @@ describe("parseAgentTimeline", () => {
         responseFullTruncated: false,
       },
       events: [],
+      prNumbers: [],
     };
     const result = parseAgentTimeline(JSON.stringify(mainTimeline));
     expect(result.ok).toBe(true);
@@ -91,11 +115,11 @@ describe("parseAgentTimeline", () => {
   });
 
   it("recognizes the script's own {error: ...} envelope as script_error", () => {
-    const result = parseAgentTimeline(JSON.stringify({ error: "Сессия не найдена: 'x'" }));
+    const result = parseAgentTimeline(JSON.stringify({ error: "Session not found: 'x'" }));
     expect(result.ok).toBe(false);
     if (result.ok) return;
     expect(result.reason).toBe("script_error");
-    expect(result.message).toBe("Сессия не найдена: 'x'");
+    expect(result.message).toBe("Session not found: 'x'");
   });
 
   it("fails on a schema version mismatch, reported before any shape errors", () => {
@@ -205,27 +229,27 @@ describe("parseAgentTimeline", () => {
 describe("formatEventLabel", () => {
   it("formats a tool event with a target", () => {
     const label = formatEventLabel({ ts: "t", kind: "tool", name: "Read", target: "/repo/file.ts" });
-    expect(label).toBe("Инструмент Read: /repo/file.ts");
+    expect(label).toBe("Tool Read: /repo/file.ts");
   });
 
   it("formats a tool event without a target", () => {
     const label = formatEventLabel({ ts: "t", kind: "tool", name: "Glob", target: null });
-    expect(label).toBe("Инструмент Glob");
+    expect(label).toBe("Tool Glob");
   });
 
   it("formats a hook event", () => {
     const label = formatEventLabel({ ts: "t", kind: "hook", hookName: "SessionStart:startup", hookEvent: "SessionStart" });
-    expect(label).toBe("Хук SessionStart:startup (SessionStart)");
+    expect(label).toBe("Hook SessionStart:startup (SessionStart)");
   });
 
   it("formats a user message event", () => {
-    const label = formatEventLabel({ ts: "t", kind: "message", role: "user", text: "Сделай штуку", fullText: "Сделай штуку", fullTextTruncated: false });
-    expect(label).toBe("Пользователь: Сделай штуку");
+    const label = formatEventLabel({ ts: "t", kind: "message", role: "user", text: "Do the thing", fullText: "Do the thing", fullTextTruncated: false });
+    expect(label).toBe("User: Do the thing");
   });
 
   it("formats an assistant message event", () => {
-    const label = formatEventLabel({ ts: "t", kind: "message", role: "assistant", text: "Готово", fullText: "Готово", fullTextTruncated: false });
-    expect(label).toBe("Ассистент: Готово");
+    const label = formatEventLabel({ ts: "t", kind: "message", role: "assistant", text: "Done", fullText: "Done", fullTextTruncated: false });
+    expect(label).toBe("Assistant: Done");
   });
 
   it("formats an assistant message event with cost", () => {
@@ -233,18 +257,18 @@ describe("formatEventLabel", () => {
       ts: "t",
       kind: "message",
       role: "assistant",
-      text: "Готово",
-      fullText: "Готово",
+      text: "Done",
+      fullText: "Done",
       fullTextTruncated: false,
       tokens: 150,
       cost: 0.03,
     });
-    expect(label).toBe("Ассистент ($0.03): Готово");
+    expect(label).toBe("Assistant ($0.03): Done");
   });
 
   it("formats a user message event without a cost suffix even though the field could be present", () => {
-    const label = formatEventLabel({ ts: "t", kind: "message", role: "user", text: "Сделай штуку", fullText: "Сделай штуку", fullTextTruncated: false });
-    expect(label).toBe("Пользователь: Сделай штуку");
+    const label = formatEventLabel({ ts: "t", kind: "message", role: "user", text: "Do the thing", fullText: "Do the thing", fullTextTruncated: false });
+    expect(label).toBe("User: Do the thing");
   });
 
   it("truncates a long label to maxLength", () => {

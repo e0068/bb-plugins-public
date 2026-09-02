@@ -5,12 +5,13 @@
 // `out` dicts are the source of truth for this shape.
 
 /**
- * Версия формата отчёта --json, которую понимает этот бандл. Должна
- * совпадать с SCHEMA_VERSION в tools/tokens.py — считалка читается с диска
- * при каждом вызове, а этот файл живёт в собранном бандле и обновляется
- * только пересборкой; при расхождении parse.ts обязан сообщить о версии, а
- * не гадать по полям. См. memory/decisions/token-usage-json-schema-version.md
- * и __tests__/contract-sync.test.tsx для похожего сторожа.
+ * Version of the --json report format understood by this bundle. Must match
+ * SCHEMA_VERSION in tools/tokens.py — the counter script is read from disk on
+ * every call, while this file lives in the built bundle and only gets
+ * updated on rebuild; on a mismatch, parse.ts must report the version
+ * instead of guessing from the fields. See
+ * memory/decisions/token-usage-json-schema-version.md and
+ * __tests__/contract-sync.test.tsx for a similar guard.
  */
 export const EXPECTED_SCHEMA_VERSION = 2;
 
@@ -26,7 +27,7 @@ export type TokensBy = "session" | "project" | "agent" | "workflow" | "model" | 
 export interface TokensAgentInfo {
   /** Bare hash id, e.g. "a9e92d5bea00f5cb7" (without the "agent-" prefix). */
   id: string;
-  /** Human label the call was launched with, e.g. "H1: каркас плагина и JSON-режим". */
+  /** Human label the call was launched with, e.g. "H1: plugin scaffold and JSON mode". */
   description: string | null;
   agentType: string | null;
   model: string | null;
@@ -34,7 +35,7 @@ export interface TokensAgentInfo {
   workflowRunId: string | null;
 }
 
-/** Сколько токенов бакета пришлось на один тир моделей. */
+/** How many of a bucket's tokens fall on one model tier. */
 export interface BucketModelUsage {
   tier: string;
   total: number;
@@ -62,10 +63,10 @@ export interface TokensBucket {
   /** Estimated cost in USD, rounded to cents. */
   cost: number;
   /**
-   * Расход по каждому тиру моделей, встреченному в бакете, по убыванию.
-   * Бакет почти никогда не однороден: главный агент за сессию успевает
-   * поработать на нескольких моделях, и одно имя выбирало бы победителя
-   * произвольно.
+   * Usage per model tier encountered in the bucket, in descending order.
+   * A bucket is almost never homogeneous: over the course of a session the
+   * main agent can end up working across several models, and a single name
+   * would pick a winner arbitrarily.
    */
   models: BucketModelUsage[];
   /** ISO 8601 UTC timestamp of the earliest record in the bucket, or null. */
@@ -75,9 +76,10 @@ export interface TokensBucket {
 }
 
 /**
- * Стоимость итога по видам токенов (USD). input+cacheWrite+cacheRead+output
- * складываются в `cost`; thinking — часть output, поверх суммы. Считает
- * tools/tokens.py (там прайс и множители), не выводить заново на клиенте.
+ * Cost of the total broken down by token kind (USD). input+cacheWrite+
+ * cacheRead+output sum up to `cost`; thinking is part of output, on top of
+ * the sum. Computed by tools/tokens.py (pricing and multipliers live there);
+ * do not recompute it on the client.
  */
 export interface TokensCostBreakdown {
   input: number;
@@ -98,7 +100,7 @@ export interface TokensTotals {
   thinking: number;
   messages: number;
   cost: number;
-  /** Разбивка `cost` по видам токенов — для стоимости в каждой строке разбивки. */
+  /** Breakdown of `cost` by token kind — for the cost shown on each breakdown row. */
   costs: TokensCostBreakdown;
   models: BucketModelUsage[];
   /** Total number of buckets before truncation to --top. */

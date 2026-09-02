@@ -23,6 +23,7 @@ const VALID_STDOUT = JSON.stringify({
     responseFullTruncated: false,
   },
   events: [],
+  prNumbers: [],
 });
 
 function fakeRunner(impl: (command: string, args: readonly string[]) => Promise<ProcessRunResult> | ProcessRunResult) {
@@ -93,7 +94,7 @@ describe("createAgentTimelineRunner", () => {
   it("recognizes the script's own {error: ...} envelope as script_error", async () => {
     const { runner } = fakeRunner(() => ({
       ok: true,
-      stdout: JSON.stringify({ error: "Сессия не найдена: 'x'" }),
+      stdout: JSON.stringify({ error: "Session not found: 'x'" }),
       stderr: "",
       code: 1,
     }));
@@ -103,7 +104,7 @@ describe("createAgentTimelineRunner", () => {
     expect(result.ok).toBe(false);
     if (result.ok) return;
     expect(result.reason).toBe("script_error");
-    expect(result.message).toBe("Сессия не найдена: 'x'");
+    expect(result.message).toBe("Session not found: 'x'");
   });
 
   it("treats non-JSON garbage on stdout as invalid_output, not a thrown error", async () => {
@@ -129,7 +130,7 @@ describe("createAgentTimelineRunner", () => {
     expect(result.ok).toBe(false);
     if (result.ok) return;
     expect(result.reason).toBe("invalid_output");
-    expect(result.message).toContain("код завершения 2");
+    expect(result.message).toContain("exit code 2");
     expect(result.message).toContain("agent_timeline.py");
   });
 });
@@ -228,5 +229,120 @@ describe("createAgentTimelineService", () => {
     await service.query({ session: "sess-1" });
 
     expect(calls).toBe(2);
+  });
+});
+
+function stdoutWithPrNumbers(...prNumbers: { number: number; repository: string }[]) {
+  return JSON.stringify({
+    schemaVersion: EXPECTED_AGENT_TIMELINE_SCHEMA_VERSION,
+    agent: {
+      key: "main",
+      agentType: null,
+      description: null,
+      model: null,
+      spawnDepth: null,
+      promptExcerpt: null,
+      requestFull: null,
+      requestFullTruncated: false,
+      responseFull: null,
+      responseFullTruncated: false,
+    },
+    events: [],
+    prNumbers,
+  });
+}
+
+describe("createAgentTimelineService: merge status", () => {
+  it("turns a MERGED PR into a merge event", async () => {
+    const scriptStdout = stdoutWithPrNumbers({ number: 73, repository: "e0068/bb-plugins" });
+    const { runner } = fakeRunner((command) => {
+      if (command === "gh") {
+        return {
+          ok: true,
+          stdout: JSON.stringify({ state: "MERGED", url: "https://github.com/e0068/bb-plugins/pull/73", mergedAt: "2026-08-27T00:10:00Z" }),
+          stderr: "",
+          code: 0,
+        };
+      }
+      return { ok: true, stdout: scriptStdout, stderr: "", code: 0 };
+    });
+    const service = createAgentTimelineService(fakeBb, { processRunner: runner });
+
+    const result = await service.query({ session: "sess-1" });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.data.mergeEvents).toEqual([
+      { type: "merge", ts: "2026-08-27T00:10:00Z", number: 73, url: "https://github.com/e0068/bb-plugins/pull/73", repository: "e0068/bb-plugins" },
+    ]);
+  });
+
+  it("produces no merge event for an open PR", async () => {
+    const scriptStdout = stdoutWithPrNumbers({ number: 73, repository: "e0068/bb-plugins" });
+    const { runner } = fakeRunner((command) => {
+      if (command === "gh") {
+        return { ok: true, stdout: JSON.stringify({ state: "OPEN", url: "u", mergedAt: null }), stderr: "", code: 0 };
+      }
+      return { ok: true, stdout: scriptStdout, stderr: "", code: 0 };
+    });
+    const service = createAgentTimelineService(fakeBb, { processRunner: runner });
+
+    const result = await service.query({ session: "sess-1" });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.data.mergeEvents).toEqual([]);
+  });
+
+  it("resolves multiple PRs in parallel, one merge event per merged PR", async () => {
+    const scriptStdout = stdoutWithPrNumbers({ number: 73, repository: "e0068/bb-plugins" }, { number: 10, repository: "e0068/bb-plugins" });
+    const { runner } = fakeRunner((command, args) => {
+      if (command === "gh") {
+        const number = args[2];
+        const merged = number === "73";
+        return {
+          ok: true,
+          stdout: JSON.stringify({ state: merged ? "MERGED" : "CLOSED", url: `https://github.com/e0068/bb-plugins/pull/${number}`, mergedAt: merged ? "2026-08-27T00:10:00Z" : null }),
+          stderr: "",
+          code: 0,
+        };
+      }
+      return { ok: true, stdout: scriptStdout, stderr: "", code: 0 };
+    });
+    const service = createAgentTimelineService(fakeBb, { processRunner: runner });
+
+    const result = await service.query({ session: "sess-1" });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.data.mergeEvents).toEqual([
+      { type: "merge", ts: "2026-08-27T00:10:00Z", number: 73, url: "https://github.com/e0068/bb-plugins/pull/73", repository: "e0068/bb-plugins" },
+    ]);
+  });
+
+  it("does not call `gh` at all when the session references no PR", async () => {
+    const scriptStdout = stdoutWithPrNumbers();
+    const { runner, calls } = fakeRunner(() => ({ ok: true, stdout: scriptStdout, stderr: "", code: 0 }));
+    const service = createAgentTimelineService(fakeBb, { processRunner: runner });
+
+    const result = await service.query({ session: "sess-1" });
+
+    expect(result.ok).toBe(true);
+    expect(calls.some((c) => c.command === "gh")).toBe(false);
+  });
+
+  it("leaves mergeEvents empty (but doesn't fail the query) when `gh` isn't installed", async () => {
+    const scriptStdout = stdoutWithPrNumbers({ number: 73, repository: "e0068/bb-plugins" });
+    const { runner } = fakeRunner((command) => {
+      if (command === "gh") return { ok: false, reason: "not_found", message: '"gh" not found in PATH' };
+      return { ok: true, stdout: scriptStdout, stderr: "", code: 0 };
+    });
+    const service = createAgentTimelineService(fakeBb, { processRunner: runner });
+
+    const result = await service.query({ session: "sess-1" });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.data.mergeEvents).toEqual([]);
   });
 });

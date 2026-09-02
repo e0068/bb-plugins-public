@@ -218,7 +218,7 @@ describe("createTokensRunner", () => {
     if (result.ok) return;
     expect(result.reason).toBe("invalid_output");
     expect(result.message).toContain("empty output");
-    expect(result.message).toContain("код завершения 2");
+    expect(result.message).toContain("exit code 2");
     expect(result.message).toContain("No such file or directory");
   });
 

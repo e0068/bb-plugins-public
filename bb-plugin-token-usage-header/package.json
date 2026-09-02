@@ -1,6 +1,6 @@
 {
   "name": "bb-plugin-token-usage-header",
-  "version": "0.3.2",
+  "version": "0.4.0",
   "type": "module",
   "engines": {
     "bb": ">=0.39",
@@ -8,7 +8,7 @@
   },
   "bb": {
     "name": "Token Usage Analytics",
-    "description": "Расход токенов Claude Code текущей сессии: счётчик в шапке треда.",
+    "description": "Claude Code token usage for the current session: a counter in the thread header.",
     "branding": {
       "icon": "ChartColumn"
     },

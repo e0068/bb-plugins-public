@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
-"""Тесты на ленту тредов: раскладку usage-записей сессий по бинам времени.
+"""Tests for the thread feed: laying out session usage records into time bins.
 
-build_timeline() — точка входа под тест; сам подсчёт расхода (tokens.walk(),
-tokens.Bucket) не дублируется и не переопределяется — здесь проверяется
-только раскладка по бинам, агрегация по агентам внутри бина, отбор "последних
-N сессий", фильтр по проекту и построение agentLabels. Отдельная группа — на
-CLI/--json обвязку.
+build_timeline() is the entry point under test; the actual usage counting
+(tokens.walk(), tokens.Bucket) isn't duplicated or redefined — this only
+checks the bin layout, per-agent aggregation within a bin, selecting "the
+last N sessions," filtering by project, and building agentLabels. A
+separate group covers the CLI/--json wiring.
 
-build_timeline() возвращает {"threads": [...], "agentLabels": {...}} —
-большинство тестов интересует только "threads", поэтому распаковывают его
-сразу в локальную переменную `threads`.
+build_timeline() returns {"threads": [...], "agentLabels": {...}} — most
+tests only care about "threads," so they unpack it right away into a local
+`threads` variable.
 """
 import json
 import os
@@ -24,8 +24,9 @@ import tokens  # noqa: E402
 
 
 def _assistant(msg_id, req, out_tokens, ts, model="claude-sonnet-4", inp=0):
-    """Assistant-запись с usage. inp=0 по умолчанию, чтобы total бакета
-    совпадал ровно с out_tokens — упрощает арифметику ожиданий в тестах."""
+    """An assistant record with usage. inp=0 by default, so the bucket's
+    total matches out_tokens exactly — simplifies expected-value arithmetic
+    in tests."""
     return {
         "type": "assistant",
         "timestamp": ts,
@@ -81,7 +82,7 @@ class BuildTimelineTest(unittest.TestCase):
             path,
             [
                 _assistant("m1", "r1", 5, "2026-08-19T10:00:01.000Z"),
-                _assistant("m2", "r2", 7, "2026-08-19T10:00:04.000Z"),  # тот же 10-секундный бин
+                _assistant("m2", "r2", 7, "2026-08-19T10:00:04.000Z"),  # the same 10-second bin
             ],
         )
         threads = self._threads(limit=20, unit=10)
@@ -96,7 +97,7 @@ class BuildTimelineTest(unittest.TestCase):
             path,
             [
                 _assistant("m1", "r1", 5, "2026-08-19T10:00:09.000Z"),
-                _assistant("m2", "r2", 7, "2026-08-19T10:00:10.000Z"),  # следующий 10-секундный бин
+                _assistant("m2", "r2", 7, "2026-08-19T10:00:10.000Z"),  # the next 10-second bin
             ],
         )
         threads = self._threads(limit=20, unit=10)
@@ -133,9 +134,9 @@ class BuildTimelineTest(unittest.TestCase):
         self.assertEqual(thread["totalTokens"], 15)
 
     def test_thread_carries_total_cost_matching_tokens_pricing(self):
-        # totalCost считается тем же tokens.Bucket, что и total — тест сверяет
-        # её с ценой, посчитанной напрямую по тому же usage/model, чтобы форма
-        # не разошлась с тарифом tokens.py.
+        # totalCost is computed by the same tokens.Bucket as total — the
+        # test cross-checks it against a price computed directly from the
+        # same usage/model, so the shape doesn't drift from tokens.py pricing.
         ts = "2026-08-19T10:00:01.000Z"
         _write_raw(self._p("projA", "sess1.jsonl"), [_assistant("m1", "r1", 1000, ts)])
         thread = self._threads(limit=20, unit=300)[0]
@@ -147,8 +148,8 @@ class BuildTimelineTest(unittest.TestCase):
     def test_workflow_count_counts_distinct_workflow_runs(self):
         sess = "sess-wf"
         _write_raw(self._p("projA", sess + ".jsonl"), [_assistant("m0", "r0", 5, "2026-08-19T10:00:00.000Z")])
-        # Два прогона workflow, по одному агенту в каждом — workflowRunId берётся
-        # из сегмента пути после "workflows" (см. tokens.walk).
+        # Two workflow runs, one agent in each — workflowRunId is taken from
+        # the path segment after "workflows" (see tokens.walk).
         _write_raw(
             self._p("projA", sess, "subagents", "workflows", "run1", "agent-w1.jsonl"),
             [_assistant("m1", "r1", 3, "2026-08-19T10:00:01.000Z")],
@@ -174,7 +175,7 @@ class BuildTimelineTest(unittest.TestCase):
     def test_group_workflows_merges_run_agents_and_labels_by_workflow_name(self):
         sess = "sess-wf"
         _write_raw(self._p("projA", sess + ".jsonl"), [_assistant("m0", "r0", 5, "2026-08-19T10:00:00.000Z")])
-        # Два агента одного прогона wf_run1 — в один сегмент; main отдельно.
+        # Two agents of the same wf_run1 run — into one segment; main is separate.
         _write_raw(
             self._p("projA", sess, "subagents", "workflows", "wf_run1", "agent-x.jsonl"),
             [_assistant("m1", "r1", 3, "2026-08-19T10:00:01.000Z")],
@@ -183,7 +184,7 @@ class BuildTimelineTest(unittest.TestCase):
             self._p("projA", sess, "subagents", "workflows", "wf_run1", "agent-y.jsonl"),
             [_assistant("m2", "r2", 4, "2026-08-19T10:00:02.000Z")],
         )
-        # Человеческое имя workflow — из workflows/scripts/<имя>-<runId>.js.
+        # The workflow's human-readable name comes from workflows/scripts/<name>-<runId>.js.
         scripts = self._p("projA", sess, "workflows", "scripts")
         os.makedirs(scripts, exist_ok=True)
         open(os.path.join(scripts, "my-review-wf_run1.js"), "w").close()
@@ -195,12 +196,12 @@ class BuildTimelineTest(unittest.TestCase):
         self.assertEqual(agents.get("main"), 5)
         self.assertEqual(result["agentLabels"]["workflow:wf_run1"], "my-review")
 
-        # Реальная принадлежность агента внутри слитого сегмента не теряется:
-        # members несёт обоих реальных agentId, отсортированных.
+        # An agent's real membership within a merged segment isn't lost:
+        # members carries both real agentIds, sorted.
         bin_agents = {a["key"]: a for b in thread["bins"] for a in b["agents"]}
         self.assertEqual(bin_agents["workflow:wf_run1"]["members"], ["agent-x", "agent-y"])
-        # У обычного (не-workflow) сегмента members нет вовсе — key уже и есть
-        # его real id, дублировать нечего.
+        # A regular (non-workflow) segment has no members field at all —
+        # key is already its real id, nothing to duplicate.
         self.assertNotIn("members", bin_agents["main"])
 
     def test_group_workflows_off_has_no_members_field_on_any_segment(self):
@@ -244,7 +245,7 @@ class BuildTimelineTest(unittest.TestCase):
         self.assertEqual(len(bins), 1)
         agents = {a["key"]: a["total"] for a in bins[0]["agents"]}
         self.assertEqual(agents, {"main": 5, "agent-aaa": 9})
-        # Ни одна запись не потеряна и не задвоена между главным агентом и субагентом.
+        # No record is lost or double-counted between the main agent and the subagent.
         self.assertEqual(threads[0]["totalTokens"], 14)
 
     def test_agents_within_a_bin_are_sorted_by_total_desc(self):
@@ -262,7 +263,7 @@ class BuildTimelineTest(unittest.TestCase):
         for i in range(5):
             path = self._p("projA", f"sess{i}.jsonl")
             _write_raw(path, [_assistant(f"m{i}", f"r{i}", 1, "2026-08-19T10:00:00.000Z")])
-            os.utime(path, (1000 + i, 1000 + i))  # растущий mtime -> sess4 самый свежий
+            os.utime(path, (1000 + i, 1000 + i))  # increasing mtime -> sess4 is the freshest
 
         threads = self._threads(limit=2, unit=300)
         self.assertEqual(len(threads), 2)
@@ -291,6 +292,51 @@ class BuildTimelineTest(unittest.TestCase):
         threads = self._threads(limit=20, unit=300)
         self.assertEqual(threads[0]["title"], "sess1")
 
+    def test_a_thread_with_no_git_activity_carries_null_context_and_no_events(self):
+        _write_raw(self._p("projA", "sess1.jsonl"), [_assistant("m1", "r1", 1, "2026-08-19T10:00:00.000Z")])
+        threads = self._threads(limit=20, unit=300)
+        self.assertEqual(threads[0]["cwd"], None)
+        self.assertEqual(threads[0]["gitBranch"], None)
+        self.assertEqual(threads[0]["events"], [])
+
+    def test_a_thread_s_pr_link_record_becomes_a_pr_event_with_cwd_and_branch_from_the_same_session(self):
+        _write_raw(
+            self._p("projA", "sess1.jsonl"),
+            [
+                {
+                    "type": "assistant",
+                    "timestamp": "2026-08-19T10:00:00.000Z",
+                    "cwd": "/repo",
+                    "gitBranch": "bb/thr_x",
+                    "message": {"id": "m1", "model": "claude-sonnet-4", "usage": {"input_tokens": 0, "output_tokens": 1}},
+                    "requestId": "r1",
+                },
+                {
+                    "type": "pr-link",
+                    "sessionId": "sess1",
+                    "prNumber": 73,
+                    "prUrl": "https://github.com/e0068/bb-plugins/pull/73",
+                    "prRepository": "e0068/bb-plugins",
+                    "timestamp": "2026-08-19T10:00:05.000Z",
+                },
+            ],
+        )
+        threads = self._threads(limit=20, unit=300)
+        self.assertEqual(threads[0]["cwd"], "/repo")
+        self.assertEqual(threads[0]["gitBranch"], "bb/thr_x")
+        self.assertEqual(
+            threads[0]["events"],
+            [
+                {
+                    "type": "pr",
+                    "ts": "2026-08-19T10:00:05.000Z",
+                    "number": 73,
+                    "url": "https://github.com/e0068/bb-plugins/pull/73",
+                    "repository": "e0068/bb-plugins",
+                }
+            ],
+        )
+
 
 class AgentLabelsTest(unittest.TestCase):
     def setUp(self):
@@ -310,7 +356,7 @@ class AgentLabelsTest(unittest.TestCase):
     def test_main_agent_is_labelled_regardless_of_meta(self):
         _write_raw(self._p("projA", "sess1.jsonl"), [_assistant("m1", "r1", 1, "2026-08-19T10:00:00.000Z")])
         result = threads_timeline.build_timeline(self.root, limit=20, unit=300)
-        self.assertEqual(result["agentLabels"]["main"], "Главный агент")
+        self.assertEqual(result["agentLabels"]["main"], "Main agent")
 
     def test_subagent_without_meta_falls_back_to_its_key(self):
         sess = "33333333-3333-3333-3333-333333333333"
@@ -318,7 +364,7 @@ class AgentLabelsTest(unittest.TestCase):
         sub_path = self._p("projA", sess, "subagents", "agent-nometa.jsonl")
         _write_raw(main_path, [_assistant("m1", "r1", 1, "2026-08-19T10:00:00.000Z")])
         _write_raw(sub_path, [_assistant("m2", "r2", 1, "2026-08-19T10:00:01.000Z")])
-        # Нет agent-nometa.meta.json рядом — старый транскрипт без meta-файла.
+        # No agent-nometa.meta.json alongside it — an old transcript without a meta file.
 
         result = threads_timeline.build_timeline(self.root, limit=20, unit=300)
         self.assertEqual(result["agentLabels"]["agent-nometa"], "agent-nometa")
@@ -329,10 +375,10 @@ class AgentLabelsTest(unittest.TestCase):
         sub_path = self._p("projA", sess, "subagents", "agent-desc.jsonl")
         _write_raw(main_path, [_assistant("m1", "r1", 1, "2026-08-19T10:00:00.000Z")])
         _write_raw(sub_path, [_assistant("m2", "r2", 1, "2026-08-19T10:00:01.000Z")])
-        _write_meta(sub_path, {"agentType": "general-purpose", "description": "Ревью PR #42", "model": "sonnet"})
+        _write_meta(sub_path, {"agentType": "general-purpose", "description": "PR review #42", "model": "sonnet"})
 
         result = threads_timeline.build_timeline(self.root, limit=20, unit=300)
-        self.assertEqual(result["agentLabels"]["agent-desc"], "Ревью PR #42")
+        self.assertEqual(result["agentLabels"]["agent-desc"], "PR review #42")
 
     def test_subagent_without_description_falls_back_to_agent_type(self):
         sess = "55555555-5555-5555-5555-555555555555"
@@ -356,7 +402,7 @@ class AgentLabelsTest(unittest.TestCase):
 
         result = threads_timeline.build_timeline(self.root, limit=20, unit=300)
         label = result["agentLabels"]["agent-long"]
-        self.assertLessEqual(len(label), 61)  # 60 символов + многоточие
+        self.assertLessEqual(len(label), 61)  # 60 characters + ellipsis
         self.assertTrue(label.startswith("A" * 60))
         self.assertTrue(label.endswith("…"))
 
@@ -366,7 +412,7 @@ class AgentLabelsTest(unittest.TestCase):
         sub_path = self._p("projA", sess, "subagents", "agent-match.jsonl")
         _write_raw(main_path, [_assistant("m1", "r1", 1, "2026-08-19T10:00:00.000Z")])
         _write_raw(sub_path, [_assistant("m2", "r2", 1, "2026-08-19T10:00:01.000Z")])
-        _write_meta(sub_path, {"agentType": "general-purpose", "description": "Ищет баги", "model": "sonnet"})
+        _write_meta(sub_path, {"agentType": "general-purpose", "description": "Finds bugs", "model": "sonnet"})
 
         result = threads_timeline.build_timeline(self.root, limit=20, unit=300)
         bin_keys = {a["key"] for t in result["threads"] for b in t["bins"] for a in b["agents"]}
@@ -374,7 +420,7 @@ class AgentLabelsTest(unittest.TestCase):
 
 
 class MainCliTest(unittest.TestCase):
-    """CLI/--json обвязка threads_timeline.main() (JsonAwareParser, --limit/--unit валидация)."""
+    """CLI/--json wiring for threads_timeline.main() (JsonAwareParser, --limit/--unit validation)."""
 
     def _run_json(self, argv_tail, root=None):
         import contextlib
@@ -423,7 +469,7 @@ class MainCliTest(unittest.TestCase):
         self.assertIn("error", parsed)
 
     def test_limit_not_passed_uses_default_without_parser_error(self):
-        # --limit не передан -> должен уйти дефолт 20, без ошибки парсера.
+        # --limit not passed -> should fall through to the default 20, with no parser error.
         out = json.loads(self._run_json(["--json", "--unit", "60"]))
         self.assertEqual(out["threads"], [])
 

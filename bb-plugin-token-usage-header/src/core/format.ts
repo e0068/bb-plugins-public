@@ -54,16 +54,16 @@ function truncateLabel(raw: string, maxLength: number): string {
   return `${raw.slice(0, maxLength - 1)}…`;
 }
 
-/** Как показать один бакет: имя строкой и приглушённая подпись под ним. */
+/** How to display a single bucket: name as a string, and a muted caption below it. */
 export interface BucketDisplay {
   name: string;
   caption: string | null;
 }
 
 /**
- * Модели бакета с расходом по каждой: "opus 5.7M, sonnet 52.0M, haiku 607".
- * Порядок (по убыванию расхода) приходит из считалки — см. разбор в
- * memory/decisions/token-usage-one-caption-source.md.
+ * The bucket's models with usage for each one: "opus 5.7M, sonnet 52.0M, haiku 607".
+ * The order (descending by usage) comes from the counter script — see the
+ * discussion in memory/decisions/token-usage-one-caption-source.md.
  */
 function formatBucketModels(models: BucketModelUsage[]): string | null {
   if (models.length === 0) return null;
@@ -71,15 +71,15 @@ function formatBucketModels(models: BucketModelUsage[]): string | null {
 }
 
 /**
- * Как показать один бакет отчёта для любого разреза (session, project, agent,
- * workflow, model, day) — единственное место на сервере, где это
- * вычисляется; клиент рисует готовое и не выводит имя заново (см.
- * memory/decisions/token-usage-one-caption-source.md).
+ * How to display one report bucket for any cut (session, project, agent,
+ * workflow, model, day) — the single place on the server where this is
+ * computed; the client renders the finished result and doesn't derive the
+ * name again (see memory/decisions/token-usage-one-caption-source.md).
  *
- * Бакет с данными агента (и бакет "main" под `--by agent`) получает имя и
- * подпись агента; у остальных разрезов ключ бакета сам по себе человеческий
- * (идентификатор сессии, слаг проекта, тир модели, дата), поэтому идёт как
- * есть и подписи не имеет.
+ * A bucket with agent data (and the "main" bucket under `--by agent`) gets
+ * the agent's name and caption; for the other cuts the bucket key is already
+ * human-readable on its own (a session id, a project slug, a model tier, a
+ * date), so it's used as-is and has no caption.
  */
 export function formatBucketDisplay(bucket: TokensBucket, maxLength = 40): BucketDisplay {
   const models = formatBucketModels(bucket.models);
@@ -87,16 +87,16 @@ export function formatBucketDisplay(bucket: TokensBucket, maxLength = 40): Bucke
   const isMain = bucket.key === "main";
   if (isMain || bucket.agent) {
     const agentType = bucket.agent?.agentType ?? null;
-    const raw = isMain ? "Главный агент" : (bucket.agent?.description ?? agentType ?? "Субагент");
+    const raw = isMain ? "Main agent" : (bucket.agent?.description ?? agentType ?? "Subagent");
     const name = truncateLabel(raw, maxLength);
-    // Тип агента и модели с расходом — рядом: "general-purpose · sonnet 172M".
-    // Тип показывается всегда, когда он есть, а не как замена имени.
+    // Agent type and models with usage go side by side: "general-purpose · sonnet 172M".
+    // The type is always shown when present, not as a replacement for the name.
     const parts = [isMain ? null : agentType, models].filter((v): v is string => Boolean(v));
     return { name, caption: parts.length > 0 ? parts.join(" · ") : null };
   }
 
-  // Разрез по модели уже назван моделью в ключе — повторять её расход в
-  // подписи значило бы написать то же число дважды.
+  // The model cut is already named by the model in the key — repeating its
+  // usage in the caption would mean writing the same number twice.
   return { name: bucket.key, caption: null };
 }
 

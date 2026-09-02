@@ -4,36 +4,44 @@
 // ever sees a string (stdout) and pure data.
 import { z } from "zod";
 import { formatCost } from "./format";
+import type { GitEvent } from "./git-events";
 
 /**
- * Версия формата отчёта --json, которую понимает этот бандл. Должна
- * совпадать с SCHEMA_VERSION в tools/agent_timeline.py — считалка читается
- * с диска при каждом вызове, а этот файл живёт в собранном бандле и
- * обновляется только пересборкой. Тот же приём, что EXPECTED_SCHEMA_VERSION
- * в src/core/types.ts — см. memory/decisions/token-usage-json-schema-version.md.
+ * Version of the --json report format understood by this bundle. Must match
+ * SCHEMA_VERSION in tools/agent_timeline.py — the counter script is read
+ * from disk on every call, while this file lives in the built bundle and
+ * only gets updated on rebuild. Same approach as EXPECTED_SCHEMA_VERSION in
+ * src/core/types.ts — see memory/decisions/token-usage-json-schema-version.md.
  *
- * 1 -> 2: assistant-сообщения несут опциональные tokens/cost — см.
+ * 1 -> 2: assistant messages carry optional tokens/cost — see
  * memory/decisions/token-usage-cost-on-messages.md.
  *
- * 2 -> 3: agent несёт requestFull/requestFullTruncated/responseFull/
- * responseFullTruncated — необрезанные (в пределах FULL_TEXT_MAX
- * tools/agent_timeline.py) текст запроса и ответа агента целиком, поверх
- * коротких превью-фрагментов events[].text.
+ * 2 -> 3: agent carries requestFull/requestFullTruncated/responseFull/
+ * responseFullTruncated — the untruncated (within FULL_TEXT_MAX in
+ * tools/agent_timeline.py) full text of the agent's request and response, on
+ * top of the short preview fragments in events[].text.
  *
- * 3 -> 4: каждое message-событие несёт fullText/fullTextTruncated — полный
- * текст ИМЕННО ЭТОГО сообщения, чтобы раскрытие любой строки хронологии
- * показывало её целиком, а не только первого запроса/последнего ответа
- * агента (agent.requestFull/responseFull).
+ * 3 -> 4: every message event carries fullText/fullTextTruncated — the full
+ * text of THAT SPECIFIC message, so expanding any timeline row shows it in
+ * full, not just the agent's first request / last response
+ * (agent.requestFull/responseFull).
+ *
+ * 4 -> 5: the report gained a top-level prNumbers field — every PR
+ * referenced anywhere in the session's transcript (main + subagents), as
+ * {number, repository} pairs. src/service/agent-timeline-service.ts uses it
+ * to look up each PR's live merge status (`gh pr view`) and turn a merged
+ * one into a "merge" GitEvent for the session chart — see
+ * src/core/git-events.ts.
  */
-export const EXPECTED_AGENT_TIMELINE_SCHEMA_VERSION = 4;
+export const EXPECTED_AGENT_TIMELINE_SCHEMA_VERSION = 5;
 
 const toolEventSchema = z
   .object({
     ts: z.string(),
     kind: z.literal("tool"),
-    /** Название инструмента из блока tool_use: Read/Glob/Grep/Skill/Bash/Task/Edit/Write/… */
+    /** Tool name from the tool_use block: Read/Glob/Grep/Skill/Bash/Task/Edit/Write/… */
     name: z.string(),
-    /** Один осмысленный аргумент вызова (file_path/pattern/command/…), либо null. */
+    /** One meaningful call argument (file_path/pattern/command/…), or null. */
     target: z.string().nullable(),
   })
   .strict();
@@ -52,21 +60,21 @@ const messageEventSchema = z
     ts: z.string(),
     kind: z.literal("message"),
     role: z.enum(["user", "assistant"]),
-    /** Краткий отрывок текста — уже обрезан скриптом, не полное сообщение. */
+    /** A short text excerpt — already truncated by the script, not the full message. */
     text: z.string(),
     /**
-     * Полный текст этого сообщения (в пределах FULL_TEXT_MAX символов
-     * tools/agent_timeline.py), не только превью в `text` — для раскрытой
-     * строки хронологии.
+     * Full text of this message (within FULL_TEXT_MAX characters in
+     * tools/agent_timeline.py), not just the preview in `text` — for an
+     * expanded timeline row.
      */
     fullText: z.string(),
     fullTextTruncated: z.boolean(),
     /**
-     * Цена вызова модели, породившего это сообщение — тарифицируется на
-     * assistant-запись целиком (решение владельца: не на отдельные
-     * tool_use-строки внутри неё). Присутствует только у role:"assistant"
-     * записей с usage в транскрипте; у user-сообщений и записей без usage —
-     * отсутствует, не null (см. tools/agent_timeline.py::message_event).
+     * Cost of the model call that produced this message — priced on the
+     * whole assistant record (owner's decision: not on individual tool_use
+     * entries within it). Present only on role:"assistant" records that have
+     * usage in the transcript; absent, not null, for user messages and
+     * records without usage (see tools/agent_timeline.py::message_event).
      */
     tokens: z.number().finite().optional(),
     cost: z.number().finite().optional(),
@@ -86,28 +94,28 @@ export type AgentTimelineEvent = z.infer<typeof agentTimelineEventSchema>;
 
 const agentTimelineAgentInfoSchema = z
   .object({
-    /** "main" для главного агента, "agent-<hash>" для субагента. */
+    /** "main" for the main agent, "agent-<hash>" for a subagent. */
     key: z.string(),
     agentType: z.string().nullable(),
     description: z.string().nullable(),
     model: z.string().nullable(),
     spawnDepth: z.number().nullable(),
-    /** Отрывок prompt, которым субагент был запущен; null для главного агента. */
+    /** Excerpt of the prompt the subagent was launched with; null for the main agent. */
     promptExcerpt: z.string().nullable(),
     /**
-     * Полный (в пределах FULL_TEXT_MAX символов) текст первого настоящего
-     * user-сообщения этого агента — вход, которым его запустили, целиком, а
-     * не 300-символьный promptExcerpt. Читается из СОБСТВЕННОГО транскрипта
-     * агента, поэтому работает и там, где promptExcerpt не может (у
-     * субагентов workflow-прогонов нет toolUseId, чтобы найти запись в
-     * основном транскрипте). null, если такой записи нет.
+     * Full (within FULL_TEXT_MAX characters) text of this agent's first real
+     * user message — the input it was launched with, in full, not the
+     * 300-character promptExcerpt. Read from the agent's OWN transcript, so
+     * it works even where promptExcerpt can't (workflow-run subagents have
+     * no toolUseId to find the record in the main transcript). null if there
+     * is no such record.
      */
     requestFull: z.string().nullable(),
     requestFullTruncated: z.boolean(),
     /**
-     * Полный текст последнего assistant-сообщения — финальный ответ агента
-     * целиком. Последняя запись побеждает, включая пустую: транскрипт,
-     * оборвавшийся на голом tool_use, даёт null, а не устаревший ответ.
+     * Full text of the last assistant message — the agent's final response
+     * in full. The last record wins, including an empty one: a transcript
+     * that breaks off on a bare tool_use yields null, not a stale response.
      */
     responseFull: z.string().nullable(),
     responseFullTruncated: z.boolean(),
@@ -116,15 +124,38 @@ const agentTimelineAgentInfoSchema = z
 
 export type AgentTimelineAgentInfo = z.infer<typeof agentTimelineAgentInfoSchema>;
 
+const agentTimelinePrNumberSchema = z
+  .object({
+    number: z.number().int(),
+    repository: z.string(),
+  })
+  .strict();
+
+export type AgentTimelinePrNumber = z.infer<typeof agentTimelinePrNumberSchema>;
+
 const agentTimelineSchema = z
   .object({
     schemaVersion: z.number(),
     agent: agentTimelineAgentInfoSchema,
     events: z.array(agentTimelineEventSchema),
+    /** Every PR referenced anywhere in the session (main + subagents), deduped by number — see tools/agent_timeline.py's own doc. */
+    prNumbers: z.array(agentTimelinePrNumberSchema),
   })
   .strict();
 
-export type AgentTimeline = z.infer<typeof agentTimelineSchema>;
+/**
+ * The script's own fields plus mergeEvents — added by the service layer
+ * (src/service/agent-timeline-service.ts), never by the script itself: a
+ * PR's merge state is GitHub-side truth, resolved with a live `gh pr view`
+ * per prNumbers entry. parseAgentTimeline below fills it with `[]` right
+ * after validating the raw script output, the same two-step shape
+ * threads-timeline.ts uses for its own service-added fields
+ * (bbProjectId/…). Only ever non-empty here — this type is exclusively
+ * consumed by the session page (AgentTimelinePage); the feed and header
+ * popup never call the `agentTimeline` RPC at all, by design (see
+ * memory/decisions/merge-marker-session-page-only.md) — not just an unused field.
+ */
+export type AgentTimeline = z.infer<typeof agentTimelineSchema> & { mergeEvents: GitEvent[] };
 
 export type AgentTimelineParseFailureReason =
   | "invalid_json"
@@ -181,20 +212,20 @@ export function parseAgentTimeline(raw: string): AgentTimelineParseResult {
     return fail("script_error", json.error);
   }
 
-  // Проверяется раньше events/agent и чего угодно ещё, тем же приёмом, что
-  // и parseTokensOutput в src/core/parse.ts.
+  // Checked before events/agent and anything else, the same way
+  // parseTokensOutput does it in src/core/parse.ts.
   if (json.schemaVersion !== EXPECTED_AGENT_TIMELINE_SCHEMA_VERSION) {
     const got =
       json.schemaVersion === undefined
-        ? "поле версии схемы отсутствует"
-        : `получена версия ${JSON.stringify(json.schemaVersion)}`;
+        ? "the schema version field is missing"
+        : `got version ${JSON.stringify(json.schemaVersion)}`;
     const remedy =
       typeof json.schemaVersion === "number" && json.schemaVersion > EXPECTED_AGENT_TIMELINE_SCHEMA_VERSION
-        ? "Нужна пересборка плагина."
-        : "Пересборка плагина не поможет: обновите установку плагина или проверьте, из какого дерева берётся tools/agent_timeline.py.";
+        ? "Rebuild the plugin."
+        : "Rebuilding the plugin won't help: update the plugin installation or check which tree tools/agent_timeline.py is being read from.";
     return fail(
       "schema_version_mismatch",
-      `Плагин собран под другую версию считалки tools/agent_timeline.py: ожидается версия схемы ${EXPECTED_AGENT_TIMELINE_SCHEMA_VERSION}, ${got}. ${remedy}`,
+      `Plugin was built against a different version of the tools/agent_timeline.py counter: expected schema version ${EXPECTED_AGENT_TIMELINE_SCHEMA_VERSION}, ${got}. ${remedy}`,
     );
   }
 
@@ -203,7 +234,11 @@ export function parseAgentTimeline(raw: string): AgentTimelineParseResult {
     return fail("invalid_shape", parsed.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`).join("; "));
   }
 
-  return { ok: true, data: parsed.data };
+  // mergeEvents isn't part of the script's own contract (see AgentTimeline's
+  // doc comment) — starts empty here, the same way parseThreadsTimeline
+  // starts bbProjectId/… at null right after validating the raw script
+  // output, for the service layer to fill in when it resolves it.
+  return { ok: true, data: { ...parsed.data, mergeEvents: [] } };
 }
 
 /** True when a parsed JSON value looks like agent_timeline.py's `{"error": "..."}` output. */
@@ -211,10 +246,10 @@ export function isAgentTimelineScriptError(json: unknown): json is { error: stri
   return isRecord(json) && typeof json.error === "string" && !("events" in json);
 }
 
-const TOOL_KIND_LABEL = "Инструмент";
-const HOOK_KIND_LABEL = "Хук";
-const USER_LABEL = "Пользователь";
-const ASSISTANT_LABEL = "Ассистент";
+const TOOL_KIND_LABEL = "Tool";
+const HOOK_KIND_LABEL = "Hook";
+const USER_LABEL = "User";
+const ASSISTANT_LABEL = "Assistant";
 
 function truncate(raw: string, maxLength: number): string {
   if (raw.length <= maxLength) return raw;
@@ -223,11 +258,11 @@ function truncate(raw: string, maxLength: number): string {
 }
 
 /**
- * Единственное место, где событие хронологии превращается в подпись для UI:
- * тип-словом (что заменяет иконку в тексте) плюс человекочитаемая цель.
- * Клиент рисует готовую строку и не собирает её заново — тот же приём, что
- * formatBucketDisplay в src/core/format.ts (см.
- * memory/decisions/token-usage-one-caption-source.md).
+ * The single place where a timeline event turns into a UI caption: a
+ * type-word (standing in for an icon in the text) plus a human-readable
+ * target. The client renders the finished string and doesn't assemble it
+ * again — the same approach as formatBucketDisplay in src/core/format.ts
+ * (see memory/decisions/token-usage-one-caption-source.md).
  */
 export function formatEventLabel(event: AgentTimelineEvent, maxLength = 80): string {
   switch (event.kind) {
@@ -242,8 +277,8 @@ export function formatEventLabel(event: AgentTimelineEvent, maxLength = 80): str
     }
     case "message": {
       const roleLabel = event.role === "user" ? USER_LABEL : ASSISTANT_LABEL;
-      // Цена — только у assistant-сообщений с usage (см. messageEventSchema);
-      // отсутствие поля, а не 0, значит "цены нет" — суффикс не показывается.
+      // Cost only exists for assistant messages with usage (see messageEventSchema);
+      // the field being absent, not 0, means "no price" — the suffix isn't shown.
       const prefix = event.cost !== undefined ? `${roleLabel} (${formatCost(event.cost)})` : roleLabel;
       return event.text ? truncate(`${prefix}: ${event.text}`, maxLength) : prefix;
     }

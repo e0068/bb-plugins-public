@@ -47,8 +47,9 @@ export function createThreadSessionResolver(bb: BbPluginApi, options: ThreadSess
       const sessionId = identity?.data.providerThreadId ?? null;
 
       if (sessionId !== null) {
-        // `!cache.has(threadId)` здесь не нужен: попадание в кэш уже вернулось
-        // выше ранним выходом, значит этот тред в кэше заведомо отсутствует.
+        // `!cache.has(threadId)` isn't needed here: a cache hit would already
+        // have returned above via the early exit, so this thread is
+        // guaranteed to be absent from the cache.
         if (cache.size >= maxCacheEntries) {
           const oldestKey = cache.keys().next().value;
           if (oldestKey !== undefined) cache.delete(oldestKey);

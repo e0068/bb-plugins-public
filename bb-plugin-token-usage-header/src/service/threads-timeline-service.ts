@@ -1,5 +1,5 @@
 // Runs tools/threads_timeline.py --json, parses its output, and caches
-// identical queries — the "Ленты тредов" counterpart of
+// identical queries — the "Thread feeds" counterpart of
 // src/service/tokens-runner.ts + src/service/token-usage-service.ts. Kept
 // as its own self-contained module (own runner + own cache) rather than
 // wired through those, so this file doesn't need to touch
@@ -15,6 +15,7 @@ import {
   type ThreadEntry,
   type ThreadsTimeline,
 } from "../core/threads-timeline";
+import { githubRepoSlugFromRemoteUrl, type CommitEvent, type GitEvent, type PrEvent } from "../core/git-events";
 import {
   DEFAULT_MAX_OUTPUT_BYTES,
   DEFAULT_TIMEOUT_MS,
@@ -133,7 +134,7 @@ function mapStdout(result: Extract<ProcessRunResult, { ok: true }>): ThreadsTime
   }
   const diagnostic = result.stderr.trim();
   const message = diagnostic
-    ? `${parsed.message} (код завершения ${result.code}): ${diagnostic}`
+    ? `${parsed.message} (exit code ${result.code}): ${diagnostic}`
     : parsed.message;
   return { ok: false, reason: "invalid_output", message };
 }
@@ -169,14 +170,14 @@ export function createThreadsTimelineRunner(options: ThreadsTimelineRunnerOption
         return {
           ok: false,
           reason: "invalid_params",
-          message: "unit должен быть конечным положительным числом секунд.",
+          message: "unit must be a finite positive number of seconds.",
         };
       }
       if (params.limit !== undefined && (!Number.isFinite(params.limit) || params.limit < 0)) {
         return {
           ok: false,
           reason: "invalid_params",
-          message: "limit не может быть отрицательным.",
+          message: "limit must not be negative.",
         };
       }
 
@@ -195,7 +196,7 @@ export function createThreadsTimelineRunner(options: ThreadsTimelineRunnerOption
           return {
             ok: false,
             reason: "timeout",
-            message: `Превышен общий бюджет времени (${totalTimeoutMs}ms) до попытки запустить "${interpreter}"`,
+            message: `Overall time budget (${totalTimeoutMs}ms) exceeded before attempting to run "${interpreter}"`,
           };
         }
 
@@ -214,7 +215,7 @@ export function createThreadsTimelineRunner(options: ThreadsTimelineRunnerOption
         ok: false,
         reason: "python_not_found",
         message:
-          "Не найден интерпретатор Python (python3 или python) в PATH. Установите Python 3 и убедитесь, что команда python3 доступна.",
+          "Python interpreter (python3 or python) not found in PATH. Install Python 3 and make sure the python3 command is available.",
       };
     },
   };
@@ -372,7 +373,7 @@ async function buildProjectNameMap(bb: BbPluginApi): Promise<Map<string, string>
 
 /**
  * Enriches each parsed thread entry with its matching BB project, so the
- * "Проекты" picker on the feed page can group by BB's actual projects (a
+ * "Projects" picker on the feed page can group by BB's actual projects (a
  * handful) instead of raw `~/.claude/projects` directory slugs (dozens) —
  * see this group's task description. A session that doesn't match any of
  * the scanned BB threads (older than THREADS_SCAN_LIMIT, or from outside BB
@@ -428,6 +429,122 @@ async function enrichBbProjects(
   }
 }
 
+// --- Commit/push enrichment (live `git log` / `git config`) --------------
+
+// Field/record separators for `git log --pretty=format`, chosen because a
+// commit subject can itself contain almost any character except these two
+// control bytes — a plain "," or "|" would risk splitting a real subject.
+const COMMIT_LOG_FIELD_SEP = "\x1f";
+const COMMIT_LOG_RECORD_SEP = "\x1e";
+const COMMIT_LOG_FORMAT = `%H${COMMIT_LOG_FIELD_SEP}%aI${COMMIT_LOG_FIELD_SEP}%s${COMMIT_LOG_RECORD_SEP}`;
+
+/**
+ * Per-call timeout for one `git log`/`git config` invocation — short on
+ * purpose: these run once per thread, in parallel, and a single hung/huge
+ * repo must not hold up the whole feed's response the way DEFAULT_TIMEOUT_MS
+ * (30s) would if applied here.
+ */
+const GIT_CALL_TIMEOUT_MS = 5_000;
+
+/** Parses `git log --pretty=format:COMMIT_LOG_FORMAT` stdout into commit events, priced with repoSlug's URL scheme when known. */
+function parseCommitLog(stdout: string, repoSlug: string | null): CommitEvent[] {
+  return stdout
+    .split(COMMIT_LOG_RECORD_SEP)
+    .map((record) => record.trim())
+    .filter((record) => record.length > 0)
+    .map((record) => {
+      const [hash, authorDate, ...rest] = record.split(COMMIT_LOG_FIELD_SEP);
+      const message = rest.join(COMMIT_LOG_FIELD_SEP);
+      return {
+        type: "commit" as const,
+        ts: authorDate,
+        hash,
+        message,
+        url: repoSlug ? `https://github.com/${repoSlug}/commit/${hash}` : null,
+      };
+    });
+}
+
+/**
+ * A thread's GitHub "owner/repo" slug, for building commit/push links.
+ * Prefers a `pr` event already on the thread (free — no extra process, and
+ * it's the exact repo the PR was opened against) over a live `git config`
+ * lookup, which only runs when no PR event exists yet. Never throws: a
+ * failed/missing remote resolves to null, same as an unresolvable one.
+ */
+async function resolveRepoSlug(thread: ThreadEntry, processRunner: ProcessRunner): Promise<string | null> {
+  const prEvent = thread.events.find((event): event is PrEvent => event.type === "pr");
+  if (prEvent) return prEvent.repository;
+  if (!thread.cwd) return null;
+  const result = await processRunner("git", ["-C", thread.cwd, "config", "--get", "remote.origin.url"], {
+    timeoutMs: GIT_CALL_TIMEOUT_MS,
+  });
+  if (!result.ok || result.code !== 0) return null;
+  return githubRepoSlugFromRemoteUrl(result.stdout.trim());
+}
+
+/** Live `git log` for one thread's own window (its branch, [start, end]) — [] on any failure, never throws. */
+async function commitEventsFor(
+  thread: ThreadEntry,
+  repoSlug: string | null,
+  processRunner: ProcessRunner,
+): Promise<CommitEvent[]> {
+  if (!thread.gitBranch || !thread.cwd) return [];
+  const result = await processRunner(
+    "git",
+    [
+      "-C",
+      thread.cwd,
+      "log",
+      thread.gitBranch,
+      `--since=${thread.start}`,
+      `--until=${thread.end}`,
+      `--pretty=format:${COMMIT_LOG_FORMAT}`,
+    ],
+    { timeoutMs: GIT_CALL_TIMEOUT_MS },
+  );
+  if (!result.ok || result.code !== 0) return [];
+  return parseCommitLog(result.stdout, repoSlug);
+}
+
+/** Fills in a push event's url once repoSlug is known — a no-op for every other event kind, or one already carrying a url. */
+function backfillPushUrl(event: GitEvent, repoSlug: string | null): GitEvent {
+  if (event.type !== "push" || event.url !== null || repoSlug === null || event.branch === null) return event;
+  return { ...event, url: `https://github.com/${repoSlug}/tree/${event.branch}` };
+}
+
+async function enrichThreadCommits(thread: ThreadEntry, processRunner: ProcessRunner): Promise<ThreadEntry> {
+  // No cwd, or the worktree it pointed at is gone (cleaned up by git
+  // hygiene after the thread's branch merged/closed) — nothing live to ask,
+  // same "graceful, not an error" outcome as an unmatched BB project above.
+  if (!thread.cwd || !existsSync(thread.cwd)) return thread;
+  try {
+    const repoSlug = await resolveRepoSlug(thread, processRunner);
+    const commits = await commitEventsFor(thread, repoSlug, processRunner);
+    const events = [...thread.events.map((event) => backfillPushUrl(event, repoSlug)), ...commits].sort((a, b) =>
+      a.ts < b.ts ? -1 : a.ts > b.ts ? 1 : 0,
+    );
+    return { ...thread, events };
+  } catch (err) {
+    console.error("[threads-timeline-service] commit enrichment failed for one thread, leaving it without commit events:", err);
+    return thread;
+  }
+}
+
+/**
+ * Adds live commit events to every thread whose working directory still
+ * exists on disk, and backfills a push event's url once the thread's GitHub
+ * repo slug becomes known. Threads are enriched in parallel and
+ * independently — same resilience shape as enrichBbProjects: one thread's
+ * git failure never fails the slice, it just leaves that thread without
+ * commit events.
+ */
+async function enrichCommits(timeline: ThreadsTimeline, processRunner: ProcessRunner): Promise<ThreadsTimeline> {
+  if (timeline.threads.length === 0) return timeline;
+  const threads = await Promise.all(timeline.threads.map((thread) => enrichThreadCommits(thread, processRunner)));
+  return { ...timeline, threads };
+}
+
 /**
  * `bb` powers BB-project enrichment (see enrichBbProjects above): each
  * query's result is tagged with the BB project/thread its Claude Code
@@ -443,6 +560,7 @@ export function createThreadsTimelineService(
 ): ThreadsTimelineService {
   const runner = createThreadsTimelineRunner(options);
   const resolver = createThreadSessionResolver(bb);
+  const processRunner = options.processRunner ?? runProcess;
   const ttlMs = options.cacheTtlMs ?? DEFAULT_CACHE_TTL_MS;
   const now = options.now ?? Date.now;
 
@@ -457,11 +575,14 @@ export function createThreadsTimelineService(
       }
 
       // Enrichment runs once per (uncached) query and is folded into the
-      // same cached promise as the raw slice — a cache hit above skips both
-      // the python process and the BB project scan together.
+      // same cached promise as the raw slice — a cache hit above skips the
+      // python process, the BB project scan, AND the per-thread git calls
+      // together.
       const promise = runner.run(params).then(async (result): Promise<ThreadsTimelineRunResult> => {
         if (!result.ok) return result;
-        return { ok: true, data: await enrichBbProjects(bb, resolver, result.data, now()) };
+        const withProjects = await enrichBbProjects(bb, resolver, result.data, now());
+        const withCommits = await enrichCommits(withProjects, processRunner);
+        return { ok: true, data: withCommits };
       });
       const entry = { expiresAt: now() + ttlMs, promise };
       entries.set(key, entry);

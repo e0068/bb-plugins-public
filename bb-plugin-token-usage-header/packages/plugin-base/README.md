@@ -1,18 +1,18 @@
 # plugin-base
 
-Общий слой 1 для конфигов плагинов — без собственных зависимостей, только
-статичные настройки, на которые ссылаются остальные плагины по
-относительному пути (как и другие пакеты в [packages](..) — без npm-линковки,
-одной установки плагина отдельно от репозитория и так не бывает).
+Shared layer 1 for plugin configs — no dependencies of its own, just static
+settings referenced by the other plugins via a relative path (like the other
+packages in [packages](..) — no npm linking, a plugin is never installed
+separately from the repo anyway).
 
-Список зависимостей, которые уже используются другими плагинами (чтобы не
-тянуть дубль под другим именем), — в
+The list of dependencies already used by other plugins (so you don't pull in
+a duplicate under a different name) lives in
 [memory/wiki/plugin-dependency-stack.md](../../memory/wiki/plugin-dependency-stack.md).
 
 ## tsconfig.base.json
 
-Компилятор-опции, одинаковые почти во всех 14 `tsconfig.json`. Подключается
-через `extends`:
+Compiler options that are identical across nearly all 14 `tsconfig.json`
+files. Pulled in via `extends`:
 
 ```json
 {
@@ -24,15 +24,15 @@
 }
 ```
 
-Локально в плагине остаётся только то, что реально отличается: `jsx` (если
-есть React), `types`, `paths`, нестандартный `lib`. `include` в базовый файл
-не выносится — у каждого плагина свой набор директорий.
+What stays local to a plugin is only what actually differs: `jsx` (if it uses
+React), `types`, `paths`, a non-standard `lib`. `include` isn't pulled into
+the base file — each plugin has its own set of directories.
 
 ## vitest-react-dedupe.ts
 
-`reactDedupe` — массив для `resolve.dedupe` в `vitest.config.ts`, нужен
-только плагинам, что импортируют UI из `packages/*` (тянут "react" из
-node_modules пакета, а не плагина — без дедупа тесты падают на второй копии
-React). Импортируется напрямую, без фабрики конфига — остальная часть
-`vitest.config.ts` у каждого плагина своя (jsdom/node, алиасы, таймауты) и
-форсировать её в общий шаблон не стоило: реальные различия, не дублирование.
+`reactDedupe` is an array for `resolve.dedupe` in `vitest.config.ts`, needed
+only by plugins that import UI from `packages/*` (they pull "react" from the
+package's node_modules, not the plugin's — without dedupe, tests fail on a
+second copy of React). Imported directly, with no config factory — the rest
+of each plugin's `vitest.config.ts` is its own (jsdom/node, aliases, timeouts)
+and it wasn't worth forcing that into a shared template: real differences, not duplication.

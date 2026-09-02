@@ -32,11 +32,22 @@ const validTimeline = {
           ],
         },
       ],
+      cwd: "/Users/e0068/.bb/worktrees/env_x/bb-plugins",
+      gitBranch: "bb/thr_x",
+      events: [
+        {
+          type: "pr",
+          ts: "2026-08-20T14:00:00.000Z",
+          number: 73,
+          url: "https://github.com/e0068/bb-plugins/pull/73",
+          repository: "e0068/bb-plugins",
+        },
+      ],
     },
   ],
   agentLabels: {
-    main: "Главный агент",
-    "agent-a9e92d5bea00f5cb7": "H4: тесты",
+    main: "Main agent",
+    "agent-a9e92d5bea00f5cb7": "H4: tests",
   },
 };
 
@@ -48,6 +59,37 @@ describe("parseThreadsTimeline", () => {
     expect(result.data.unit).toBe(300);
     expect(result.data.threads).toHaveLength(1);
     expect(result.data.threads[0].bins[0].agents).toHaveLength(2);
+  });
+
+  it("carries a thread's cwd/gitBranch/events through as-is", () => {
+    const result = parseThreadsTimeline(JSON.stringify(validTimeline));
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const thread = result.data.threads[0];
+    expect(thread.cwd).toBe("/Users/e0068/.bb/worktrees/env_x/bb-plugins");
+    expect(thread.gitBranch).toBe("bb/thr_x");
+    expect(thread.events).toEqual([
+      {
+        type: "pr",
+        ts: "2026-08-20T14:00:00.000Z",
+        number: 73,
+        url: "https://github.com/e0068/bb-plugins/pull/73",
+        repository: "e0068/bb-plugins",
+      },
+    ]);
+  });
+
+  it("accepts null cwd/gitBranch and an empty events list", () => {
+    const withoutGitContext = {
+      ...validTimeline,
+      threads: [{ ...validTimeline.threads[0], cwd: null, gitBranch: null, events: [] }],
+    };
+    const result = parseThreadsTimeline(JSON.stringify(withoutGitContext));
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.data.threads[0].cwd).toBeNull();
+    expect(result.data.threads[0].gitBranch).toBeNull();
+    expect(result.data.threads[0].events).toEqual([]);
   });
 
   it("parses a workflow segment's members list, and leaves it undefined for a plain agent", () => {
@@ -102,8 +144,8 @@ describe("parseThreadsTimeline", () => {
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     expect(result.data.agentLabels).toEqual({
-      main: "Главный агент",
-      "agent-a9e92d5bea00f5cb7": "H4: тесты",
+      main: "Main agent",
+      "agent-a9e92d5bea00f5cb7": "H4: tests",
     });
   });
 
@@ -165,7 +207,7 @@ describe("parseThreadsTimeline", () => {
     expect(result.ok).toBe(false);
     if (result.ok) return;
     expect(result.reason).toBe("schema_version_mismatch");
-    expect(result.message).toContain("Пересборка плагина не поможет");
+    expect(result.message).toContain("Rebuilding the plugin won't help");
   });
 
   it("fails with schema_version_mismatch when the version is a newer number", () => {
@@ -175,7 +217,7 @@ describe("parseThreadsTimeline", () => {
     expect(result.ok).toBe(false);
     if (result.ok) return;
     expect(result.reason).toBe("schema_version_mismatch");
-    expect(result.message).toContain("Нужна пересборка плагина.");
+    expect(result.message).toContain("Rebuild the plugin.");
   });
 
   it("fails with invalid_shape when a bin's agent entry is missing a field", () => {
@@ -250,6 +292,9 @@ function thread(durationSec: number, session = `s-${durationSec}`): ThreadEntry 
     totalCost: 0,
     workflowCount: 0,
     bins: [],
+    cwd: null,
+    gitBranch: null,
+    events: [],
     bbProjectId: null,
     bbProjectName: null,
     threadId: null,

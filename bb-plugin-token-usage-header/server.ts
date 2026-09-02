@@ -10,9 +10,13 @@ import {
   agentTimelineEventSchema,
   cacheWriteTotal,
   formatBucketDisplay,
+  gitEventSchema,
   parseVizSettings,
   vizSettingsSchema,
   VIZ_SETTINGS_KV_KEY,
+  DEFAULT_GEAR_SETTINGS,
+  GEAR_HEIGHT_MODE_OPTIONS,
+  GEAR_UNIT_OPTIONS,
   type AgentTimelineAgentInfo,
   type ThreadEntry,
   type ThreadsTimeline,
@@ -48,9 +52,10 @@ const tokenBreakdownSchema = z.object({
   thinking: finiteNumber,
 });
 
-// Разбивка стоимости по видам токенов — для цены в каждой строке разбивки
-// попапа. input+cacheWrite+cacheRead+output складываются в `cost`; thinking —
-// часть output. Считает tools/tokens.py, здесь только протягивается.
+// Cost breakdown by token kind — for the price shown in each row of the
+// popover's breakdown. input+cacheWrite+cacheRead+output sum to `cost`;
+// thinking is part of output. Computed by tools/tokens.py, only passed
+// through here.
 const costBreakdownSchema = z.object({
   input: finiteNumber,
   cacheWrite: finiteNumber,
@@ -68,11 +73,11 @@ const sessionTotalsSchema = tokenBreakdownSchema.extend({
 const agentUsageSchema = z.object({
   /** Bucket key from tools/tokens.py: "main" for the top-level agent, "agent-<hash>" for a subagent call. */
   key: z.string(),
-  /** Готовые имя и подпись — см. formatBucketDisplay в src/core, единственное место, где они вычисляются. */
+  /** Ready-made name and caption — see formatBucketDisplay in src/core, the single place where they're computed. */
   name: z.string(),
   caption: z.string().nullable(),
   total: finiteNumber,
-  /** Оценка стоимости бакета агента в USD — считалка тарифицирует бакет целиком. */
+  /** Estimated cost of the agent's bucket in USD — the calculator prices the bucket as a whole. */
   cost: finiteNumber,
 });
 
@@ -122,6 +127,13 @@ const threadsTimelineEntrySchema = z
     totalCost: finiteNumber,
     workflowCount: finiteNumber,
     bins: z.array(threadsTimelineBinSchema),
+    // Working directory/branch the session ran in, and pr/push/commit
+    // markers mined from its transcript (pr/push by tools/git_events.py,
+    // commit appended live by threads-timeline-service.ts's enrichCommits)
+    // — see threads-timeline.ts's ThreadEntry doc.
+    cwd: z.string().nullable(),
+    gitBranch: z.string().nullable(),
+    events: z.array(gitEventSchema),
     // BB project/thread match, resolved by threads-timeline-service.ts —
     // null when the session isn't tied to any BB thread (the "Threads"
     // bucket on the project picker). See threads-timeline.ts's ThreadEntry
@@ -156,7 +168,7 @@ export const rpcContract = defineRpcContract({
         status: z.literal("ready"),
         /**
          * Claude Code session id, already resolved from `threadId` inside
-         * the service — surfaced so the header's "Детали" button can hand
+         * the service — surfaced so the header's "Details" button can hand
          * it straight to `agentTimeline` (which now takes a session, not a
          * threadId; a chart click only ever knows the session id, not BB's
          * threadId, and that's the mismatch this field fixes).
@@ -197,6 +209,12 @@ export const rpcContract = defineRpcContract({
         agents: z.array(agentUsageSchema),
         agent: agentTimelineAgentInfoSchema,
         events: z.array(agentTimelineEventSchema),
+        // Every PR referenced by the session that turned out to be merged —
+        // resolved live (`gh pr view`) by agent-timeline-service.ts, only
+        // for this one RPC (see memory/decisions/merge-marker-session-page-only.md).
+        // The session page splices these into its chart's own thread.events
+        // (from threadsTimeline, which never carries them) before rendering.
+        mergeEvents: z.array(gitEventSchema),
       }),
       z.object({ status: z.literal("error"), message: z.string() }),
     ]),
@@ -225,9 +243,11 @@ export const rpcContract = defineRpcContract({
       z.object({ status: z.literal("error"), message: z.string() }),
     ]),
   },
-  // See memory/decisions/token-usage-viz-settings-persist-kv.md: the two
-  // pages' visualization settings (geometry, colours, sort, detail toggles)
-  // persist across sessions in bb.storage.kv, not localStorage — kv is only
+  // See memory/decisions/token-usage-viz-settings-persist-kv.md and
+  // memory/decisions/token-usage-gear-to-native-settings.md: what's LEFT of
+  // the two pages' visualization state (agent colours, sort, filters, detail
+  // toggles — everything that can't be a declared bb.settings.define field)
+  // persists across sessions in bb.storage.kv, not localStorage — kv is only
   // reachable from the server side of the plugin, hence these two RPCs.
   loadVizSettings: {
     input: z.object({}).strict().default({}),
@@ -254,8 +274,8 @@ export const rpcContract = defineRpcContract({
  *
  * tokens.py already returns buckets sorted by descending total (and
  * truncated to --top) — re-sorting here would only ever reproduce that same
- * order, so the report's order is trusted as-is. Подпись считает только
- * formatBucketDisplay — не собирать её здесь заново, см.
+ * order, so the report's order is trusted as-is. The caption is computed only
+ * by formatBucketDisplay — don't reassemble it here, see
  * memory/decisions/token-usage-one-caption-source.md.
  */
 function mapSessionTotals(report: TokensReport) {
@@ -316,7 +336,7 @@ async function loadSessionTokenUsage(service: TokenUsageService, threadId: strin
   } catch (err) {
     return {
       status: "error" as const,
-      message: err instanceof Error ? err.message : "Не удалось получить данные о расходе токенов.",
+      message: err instanceof Error ? err.message : "Failed to fetch token usage data.",
     };
   }
 }
@@ -353,11 +373,12 @@ async function loadAgentTimeline(
       agents,
       agent: timelineResult.data.agent,
       events: timelineResult.data.events,
+      mergeEvents: timelineResult.data.mergeEvents,
     };
   } catch (err) {
     return {
       status: "error" as const,
-      message: err instanceof Error ? err.message : "Не удалось получить хронологию агента.",
+      message: err instanceof Error ? err.message : "Failed to fetch the agent timeline.",
     };
   }
 }
@@ -381,7 +402,7 @@ async function loadThreadsTimeline(
   } catch (err) {
     return {
       status: "error" as const,
-      message: err instanceof Error ? err.message : "Не удалось получить сводную ленту тредов.",
+      message: err instanceof Error ? err.message : "Failed to fetch the threads summary feed.",
     };
   }
 }
@@ -414,7 +435,7 @@ async function saveVizSettings(kv: PluginKvStorage, value: VizSettings) {
     await kv.set(VIZ_SETTINGS_KV_KEY, value);
     return { ok: true as const };
   } catch (err) {
-    throw err instanceof Error ? err : new Error("Не удалось сохранить настройки визуализации.");
+    throw err instanceof Error ? err : new Error("Failed to save visualization settings.");
   }
 }
 
@@ -427,11 +448,132 @@ export interface PluginDeps {
   kv?: PluginKvStorage;
 }
 
+/**
+ * The former gear popover's 14 geometry/behaviour fields, declared here so
+ * bb renders them on the plugin's own Settings page (Tools → plugin detail)
+ * instead of a custom in-app popover — see
+ * memory/decisions/token-usage-gear-to-native-settings.md. The frontend
+ * reads them live via `useSettings()` + `parseGearSettings` (src/core/
+ * gear-settings.ts); nothing here reads `.get()` — no server-side logic
+ * depends on these values, only the pages that render charts do.
+ *
+ * The SDK only has `string`/`boolean`/`select`/`project` descriptor types —
+ * every numeric or colour field is declared as a bare numeric/hex string,
+ * parsed and clamped back into its real type by `parseGearSettings`.
+ * Defaults come from `DEFAULT_GEAR_SETTINGS` (src/core/gear-settings.ts) so
+ * the descriptor and the frontend's own fallback can't drift apart.
+ */
+function defineGearSettings(bb: BbPluginApi) {
+  bb.settings.define({
+    unit: {
+      type: "select",
+      label: "Chart time unit",
+      description: "Width of a single bin in seconds: 30, 60 (1 min), 300 (5 min), 900 (15 min), or 3600 (1 h).",
+      options: [...GEAR_UNIT_OPTIONS],
+      default: String(DEFAULT_GEAR_SETTINGS.unit),
+    },
+    fillWidthFeed: {
+      type: "boolean",
+      label: "Fill card width — Usage Analytics",
+      description: "On the Usage Analytics feed: columns stretch to the full card width instead of using a fixed width.",
+      default: DEFAULT_GEAR_SETTINGS.fillWidthFeed,
+    },
+    fillWidthPopover: {
+      type: "boolean",
+      label: "Fill card width — header popup",
+      description: "In the header's session chart popup: columns stretch to the full card width instead of using a fixed width.",
+      default: DEFAULT_GEAR_SETTINGS.fillWidthPopover,
+    },
+    fillWidthSession: {
+      type: "boolean",
+      label: "Fill card width — thread breakdown",
+      description:
+        "On the thread/agent breakdown page's session chart: columns stretch to the full card width instead of using a fixed width.",
+      default: DEFAULT_GEAR_SETTINGS.fillWidthSession,
+    },
+    hugWidth: {
+      type: "boolean",
+      label: "Card hugs chart width (Hug)",
+      description: "Only applies on a view where that view's own «Fill card width» setting is off — the card shrinks to the width of its own chart.",
+      default: DEFAULT_GEAR_SETTINGS.hugWidth,
+    },
+    contentFullWidth: {
+      type: "boolean",
+      label: "Usage Analytics area at full window width",
+      description: "Off — the area is centered, limited by «Max area width».",
+      default: DEFAULT_GEAR_SETTINGS.contentFullWidth,
+    },
+    contentMaxWidthPx: {
+      type: "string",
+      label: "Max area width, px",
+      description: "Only applies when «full window width» is off. From 600 to 4000.",
+      default: String(DEFAULT_GEAR_SETTINGS.contentMaxWidthPx),
+    },
+    heightMode: {
+      type: "select",
+      label: "Bar height mode",
+      description: "shared — one height scale for all cards; perCard — each card scales to its own maximum.",
+      options: [...GEAR_HEIGHT_MODE_OPTIONS],
+      default: DEFAULT_GEAR_SETTINGS.heightMode,
+    },
+    collapseEmpty: {
+      type: "boolean",
+      label: "Collapse empty intervals",
+      description: "Several consecutive empty bins are drawn as a single gap column instead of one column each.",
+      default: DEFAULT_GEAR_SETTINGS.collapseEmpty,
+    },
+    colWidthPx: {
+      type: "string",
+      label: "Column width, px",
+      description: "Only applies on a view where that view's own «Fill card width» setting is off. From 1 to 40.",
+      default: String(DEFAULT_GEAR_SETTINGS.colWidthPx),
+    },
+    heightScale: {
+      type: "string",
+      label: "Height scale (×)",
+      description: "From 0.3 to 3.",
+      default: String(DEFAULT_GEAR_SETTINGS.heightScale),
+    },
+    colGap: {
+      type: "string",
+      label: "Gap between columns, px",
+      description: "From 0 to 8.",
+      default: String(DEFAULT_GEAR_SETTINGS.colGap),
+    },
+    segGap: {
+      type: "string",
+      label: "Gap between agent segments, px",
+      description: "From 0 to 6.",
+      default: String(DEFAULT_GEAR_SETTINGS.segGap),
+    },
+    colRadius: {
+      type: "string",
+      label: "Column corner radius, px",
+      description: "From 0 to 8.",
+      default: String(DEFAULT_GEAR_SETTINGS.colRadius),
+    },
+    segRadius: {
+      type: "string",
+      label: "Segment corner radius, px",
+      description: "From 0 to 8.",
+      default: String(DEFAULT_GEAR_SETTINGS.segRadius),
+    },
+    frameLiftColor: {
+      type: "string",
+      label: "Chart frame highlight color (hex)",
+      description: "E.g. #e3e3dd.",
+      default: DEFAULT_GEAR_SETTINGS.frameLiftColor,
+    },
+  });
+}
+
 export default function plugin(bb: BbPluginApi, deps: PluginDeps = {}) {
   const service = deps.service ?? createTokenUsageService(bb);
   const agentTimelineService = deps.agentTimelineService ?? createAgentTimelineService(bb);
   const threadsTimelineService = deps.threadsTimelineService ?? createThreadsTimelineService(bb);
   const kv = deps.kv ?? bb.storage.kv;
+
+  defineGearSettings(bb);
 
   bb.rpc.register(rpcContract, {
     sessionTokenUsage: ({ threadId }) => loadSessionTokenUsage(service, threadId),

@@ -50,8 +50,9 @@ function isNumber(v: unknown): v is number {
 }
 
 /**
- * Разбор разбивки по моделям: массив пар «тир — расход», как его отдаёт
- * tools/tokens.py. Пустой массив законен — бакет без единой записи с моделью.
+ * Parses the per-model breakdown: an array of "tier — usage" pairs, as
+ * returned by tools/tokens.py. An empty array is legal — a bucket with no
+ * model records at all.
  */
 function validateModels(v: unknown, path: string): BucketModelUsage[] | string {
   if (!Array.isArray(v)) return `${path} must be an array`;
@@ -205,29 +206,30 @@ export function parseTokensOutput(raw: string): ParseResult {
     return fail("script_error", json.error);
   }
 
-  // Проверяется раньше buckets/totals и чего угодно ещё: рассинхрон версии
-  // означает, что собранный плагин и tools/tokens.py на диске говорят на
-  // разных диалектах формата, и претензия должна называть это, а не первое
-  // поле данных, до которого дошёл разбор. См. решение в
+  // Checked before buckets/totals and anything else: a version mismatch
+  // means the built plugin and tools/tokens.py on disk speak different
+  // dialects of the format, and the failure must name that instead of the
+  // first data field the parser happens to reach. See the decision in
   // memory/decisions/token-usage-json-schema-version.md.
   if (json.schemaVersion !== EXPECTED_SCHEMA_VERSION) {
     const got =
       json.schemaVersion === undefined
-        ? "поле версии схемы отсутствует"
-        : `получена версия ${JSON.stringify(json.schemaVersion)}`;
-    // Направление расхождения лечится по-разному: версия БОЛЬШЕ ожидаемой —
-    // на диске более новая считалка, чем знает собранный бандл, отстала
-    // сборка. Версия МЕНЬШЕ или поле отсутствует вовсе — устарел сам
-    // tools/tokens.py на диске (он не производится сборкой, читается как
-    // есть — см. defaultScriptPath в src/service/tokens-runner.ts), и
-    // пересборка плагина даст то же самое сообщение снова.
+        ? "the schema version field is missing"
+        : `got version ${JSON.stringify(json.schemaVersion)}`;
+    // The direction of the mismatch is fixed differently depending on sign:
+    // version GREATER than expected — the counter on disk is newer than the
+    // built bundle knows about, so the build is stale. Version LESS than
+    // expected, or the field missing altogether — tools/tokens.py itself on
+    // disk is stale (it isn't produced by the build, it's read as-is — see
+    // defaultScriptPath in src/service/tokens-runner.ts), and rebuilding the
+    // plugin would just produce the same message again.
     const remedy =
       typeof json.schemaVersion === "number" && json.schemaVersion > EXPECTED_SCHEMA_VERSION
-        ? "Нужна пересборка плагина."
-        : "Пересборка плагина не поможет: обновите установку плагина или проверьте, из какого дерева берётся tools/tokens.py.";
+        ? "Rebuild the plugin."
+        : "Rebuilding the plugin won't help: update the plugin installation or check which tree tools/tokens.py is being read from.";
     return fail(
       "schema_version_mismatch",
-      `Плагин собран под другую версию считалки tools/tokens.py: ожидается версия схемы ${EXPECTED_SCHEMA_VERSION}, ${got}. ${remedy}`,
+      `Plugin was built against a different version of the tools/tokens.py counter: expected schema version ${EXPECTED_SCHEMA_VERSION}, ${got}. ${remedy}`,
     );
   }
 

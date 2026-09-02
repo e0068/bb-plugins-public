@@ -4,11 +4,12 @@
 // token spend, with a popover for the full breakdown. Mounted once per
 // visible thread (twice in a split view) — all state lives in the
 // component, never at module scope.
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   definePluginApp,
   useBbNavigate,
   useRpc,
+  useSettings,
   type PluginNavPanelProps,
   type PluginRpcResult,
   type PluginThreadHeaderActionProps,
@@ -18,10 +19,18 @@ import { Button } from "@/components/ui/button";
 import { Icon } from "@/components/ui/icon";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { cn } from "@/lib/utils";
-import { formatCost, formatPercent, formatTokenCount, type ThreadEntry } from "./src/core";
+import {
+  DEFAULT_VIZ_SETTINGS,
+  formatCost,
+  formatPercent,
+  formatTokenCount,
+  parseGearSettings,
+  type ChartSettings,
+  type ThreadEntry,
+} from "./src/core";
 import { AgentTimelinePage, buildAgentDetailSubPath, THREADS_TIMELINE_PANEL_PATH } from "./pages/AgentTimelinePage";
 import { ThreadsTimelinePage } from "./pages/ThreadsTimelinePage";
-import { SessionChartCard, SESSION_CHART_UNIT } from "./pages/thread-chart";
+import { SessionChartCard } from "./pages/thread-chart";
 
 type SessionTokenUsage = PluginRpcResult<(typeof rpcContract)["sessionTokenUsage"]>;
 type ReadyUsage = Extract<SessionTokenUsage, { status: "ready" }>;
@@ -44,10 +53,10 @@ const TOKEN_PHASES: ReadonlyArray<{
   key: "cacheRead" | "cacheWrite" | "input" | "output";
   label: string;
 }> = [
-  { key: "cacheRead", label: "Чтение кэша" },
-  { key: "cacheWrite", label: "Запись в кэш" },
-  { key: "input", label: "Вход" },
-  { key: "output", label: "Выход" },
+  { key: "cacheRead", label: "Cache read" },
+  { key: "cacheWrite", label: "Cache write" },
+  { key: "input", label: "Input" },
+  { key: "output", label: "Output" },
 ];
 
 function TokenUsageHeaderAction({ threadId, isCompactViewport }: PluginThreadHeaderActionProps) {
@@ -70,6 +79,29 @@ function TokenUsageHeaderAction({ threadId, isCompactViewport }: PluginThreadHea
     };
   }, []);
 
+  // Chart geometry/behaviour — declared settings (bb.settings.define, Tools
+  // → Usage Analytics), read live via useSettings() so this popover's own
+  // session chart renders identically configured to the feed's, instead of
+  // its own hardcoded defaults — see ThreadsTimelinePage.tsx's module doc
+  // comment for the full split. agentColors (dynamic, can't be a declared
+  // setting) is still loaded from bb.storage.kv separately, below.
+  const settingsState = useSettings();
+  const gear = useMemo(() => parseGearSettings(settingsState.values), [settingsState.values]);
+  const [agentColors, setAgentColors] = useState<Record<string, string>>(DEFAULT_VIZ_SETTINGS.threads.agentColors);
+  useEffect(() => {
+    rpc.call("loadVizSettings", {}).then(
+      (settings) => {
+        if (!mountedRef.current) return;
+        setAgentColors(settings.threads.agentColors);
+      },
+      () => {
+        // Best-effort — keep the schema's own default (no overrides) already in state.
+      },
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rpc]);
+  const chartSettings: ChartSettings = useMemo(() => ({ ...gear, agentColors }), [gear, agentColors]);
+
   function load() {
     const requestId = ++requestIdRef.current;
     setState({ kind: "loading" });
@@ -84,7 +116,7 @@ function TokenUsageHeaderAction({ threadId, isCompactViewport }: PluginThreadHea
         if (!mountedRef.current || requestIdRef.current !== requestId) return;
         setState({
           kind: "error",
-          message: err instanceof Error ? err.message : "Не удалось получить данные о токенах.",
+          message: err instanceof Error ? err.message : "Failed to fetch token data.",
         });
       },
     );
@@ -107,7 +139,7 @@ function TokenUsageHeaderAction({ threadId, isCompactViewport }: PluginThreadHea
       return;
     }
     let cancelled = false;
-    rpc.call("threadsTimeline", { limit: 1, unit: SESSION_CHART_UNIT, session: chartSessionId, groupWorkflows: true }).then(
+    rpc.call("threadsTimeline", { limit: 1, unit: gear.unit, session: chartSessionId, groupWorkflows: true }).then(
       (result) => {
         if (cancelled || !mountedRef.current) return;
         setSessionChart(
@@ -124,7 +156,7 @@ function TokenUsageHeaderAction({ threadId, isCompactViewport }: PluginThreadHea
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [rpc, chartSessionId]);
+  }, [rpc, chartSessionId, gear.unit]);
 
   // Clicking an agent row (below) navigates into the "threads-timeline"
   // panel's agent-detail sub-view, with the session id resolved
@@ -148,12 +180,12 @@ function TokenUsageHeaderAction({ threadId, isCompactViewport }: PluginThreadHea
           : "";
   const ariaLabel =
     state.kind === "ready"
-      ? `Расход токенов Claude Code: ${formatTokenCount(state.usage.totals.total)}, ${formatCost(state.usage.totals.cost)}`
+      ? `Token usage Claude Code: ${formatTokenCount(state.usage.totals.total)}, ${formatCost(state.usage.totals.cost)}`
       : state.kind === "no-session"
-        ? "Расход токенов Claude Code: сессия ещё не начата"
+        ? "Claude Code token usage: session not started yet"
         : state.kind === "loading"
-          ? "Расход токенов Claude Code: загрузка"
-          : `Расход токенов Claude Code: ошибка — ${state.message}`;
+          ? "Claude Code token usage: loading"
+          : `Token usage Claude Code: error — ${state.message}`;
 
   return (
     <Popover
@@ -179,15 +211,20 @@ function TokenUsageHeaderAction({ threadId, isCompactViewport }: PluginThreadHea
         </Button>
       </PopoverTrigger>
       <PopoverContent align="start" className="max-h-[70vh] w-80 space-y-3 overflow-y-auto">
-        {state.kind === "loading" && <p className="text-sm text-muted-foreground">Загрузка…</p>}
+        {state.kind === "loading" && <p className="text-sm text-muted-foreground">Loading…</p>}
         {state.kind === "no-session" && (
           <p className="text-sm text-muted-foreground">
-            Сессия ещё не началась — счётчик появится после первого ответа.
+            Session hasn't started yet — the counter appears after the first response.
           </p>
         )}
         {state.kind === "error" && <p className="text-sm text-destructive">{state.message}</p>}
         {state.kind === "ready" && (
-          <UsageDetails usage={state.usage} sessionChart={sessionChart} onAgentDetails={openAgentDetails} />
+          <UsageDetails
+            usage={state.usage}
+            sessionChart={sessionChart}
+            chartSettings={chartSettings}
+            onAgentDetails={openAgentDetails}
+          />
         )}
       </PopoverContent>
     </Popover>
@@ -197,11 +234,14 @@ function TokenUsageHeaderAction({ threadId, isCompactViewport }: PluginThreadHea
 function UsageDetails({
   usage,
   sessionChart,
+  chartSettings,
   onAgentDetails,
 }: {
   usage: ReadyUsage;
   /** Session bar chart to render above the totals — null while it's loading or unavailable (chart is a bonus, not load-bearing). */
   sessionChart: { thread: ThreadEntry; agentLabels: Record<string, string> } | null;
+  /** Same geometry/colour settings as the "Usage Analytics" feed's gear popover — keeps this chart visually identical to the feed's and the session page's. */
+  chartSettings: ChartSettings;
   /** Navigates to the agent-detail sub-view for one agent row; omitted renders the row inert (no hover/click). */
   onAgentDetails?: (agentKey: string, sessionId: string) => void;
 }) {
@@ -211,13 +251,14 @@ function UsageDetails({
       {sessionChart && (
         <SessionChartCard
           thread={sessionChart.thread}
-          unit={SESSION_CHART_UNIT}
           agentLabels={sessionChart.agentLabels}
+          settings={chartSettings}
+          fillWidth={chartSettings.fillWidthPopover}
         />
       )}
 
       <div className="flex items-baseline justify-between">
-        <span className="text-sm font-medium text-foreground">Всего токенов</span>
+        <span className="text-sm font-medium text-foreground">Total tokens</span>
         <span className="text-sm font-semibold tabular-nums text-foreground">{formatTokenCount(totals.total)}</span>
       </div>
 
@@ -239,7 +280,7 @@ function UsageDetails({
             the output row above, its share is of `totals.output` (the
             share of `totals.total` would always read "0%"). */}
         <div className="flex items-center justify-between gap-2 pl-3 text-xs text-muted-foreground/70">
-          <dt>в т.ч. размышления</dt>
+          <dt>incl. thinking</dt>
           <dd className="tabular-nums">
             {formatTokenCount(totals.thinking)}{" "}
             <span className="text-muted-foreground/50">({formatPercent(totals.thinking, totals.output)})</span>{" "}
@@ -249,27 +290,28 @@ function UsageDetails({
       </dl>
 
       <div className="flex items-center justify-between border-t border-border pt-2 text-xs text-muted-foreground">
-        <span>Стоимость</span>
+        <span>Cost</span>
         <span className="font-medium tabular-nums text-foreground">{formatCost(totals.cost)}</span>
       </div>
       <div className="flex items-center justify-between text-xs text-muted-foreground">
-        <span>Ответов</span>
+        <span>Responses</span>
         <span className="font-medium tabular-nums text-foreground">{totals.messages}</span>
       </div>
 
       {agents.length > 0 && (
         <div className="space-y-1 border-t border-border pt-2">
           <div className="flex items-baseline justify-between">
-            <span className="text-xs font-medium text-muted-foreground">Агенты</span>
+            <span className="text-xs font-medium text-muted-foreground">Agents</span>
             {usage.truncated && (
-              <span className="text-xs text-muted-foreground/70">показаны не все</span>
+              <span className="text-xs text-muted-foreground/70">not all shown</span>
             )}
           </div>
           <ul className="space-y-0.5">
-            {/* Имя и подпись не собирать заново — они уже готовы с сервера
-                (formatBucketDisplay), см. memory/decisions/token-usage-one-caption-source.md.
-                Whole row is the click target (no separate "Детали" button)
-                — same row treatment as the "Агенты" list in
+            {/* Name and caption aren't recomputed here — they already arrive
+                ready from the server (formatBucketDisplay), see
+                memory/decisions/token-usage-one-caption-source.md.
+                Whole row is the click target (no separate "Details" button)
+                — same row treatment as the "Agents" list in
                 pages/AgentTimelinePage.tsx's LeftPanel. */}
             {agents.map((agent) => (
               <li key={agent.key}>
@@ -305,9 +347,9 @@ function UsageDetails({
  * The single "Usage Analytics" nav panel's own router: an empty `subPath` is
  * the feed (ThreadsTimelinePage), anything else is the agent-detail
  * sub-view (AgentTimelinePage) — see AgentTimelinePage.tsx's module doc
- * comment. "Детализация агента" used to be a second, separately registered
+ * comment. "Agent breakdown" used to be a second, separately registered
  * nav panel (`agent-detail`); it was a dead left-menu entry (opened
- * directly, with no session, it only ever showed "Нет id сессии") and is
+ * directly, with no session, it only ever showed "No session id") and is
  * folded into this one panel instead, reachable only by navigating here
  * with a subPath — never from the left menu directly.
  */
@@ -319,7 +361,7 @@ function ThreadsTimelinePanel({ subPath }: PluginNavPanelProps) {
 export default definePluginApp((app) => {
   app.slots.experimental_threadHeaderAction({
     id: "token-usage-header",
-    title: "Расход токенов",
+    title: "Token usage",
     component: TokenUsageHeaderAction,
   });
 

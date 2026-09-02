@@ -33,7 +33,7 @@ export function createTokensCache(ttlMs = DEFAULT_TTL_MS, now: () => number = Da
       const entry = { expiresAt: now() + ttlMs, promise };
       entries.set(key, entry);
 
-      /** Снять запись, если её с тех пор не заменили более свежей. */
+      /** Drop the entry, unless it's since been replaced by a fresher one. */
       const dropIfCurrent = () => {
         if (entries.get(key) === entry) entries.delete(key);
       };
@@ -42,10 +42,11 @@ export function createTokensCache(ttlMs = DEFAULT_TTL_MS, now: () => number = Da
       // resolves to a tagged result), but if it ever does reject, don't let
       // a stale rejection sit in the cache for the rest of the TTL.
       promise.catch(dropIfCurrent);
-      // Отказ не кэшируем по той же причине: он обычно про окружение, а не
-      // про данные — не найден python, недоступен демон. Пользователь чинит
-      // причину за секунды, а закэшированный отказ держал бы ту же ошибку
-      // весь TTL, не реагируя на повторное открытие.
+      // Failures aren't cached for the same reason: they're usually about
+      // the environment rather than about the data — python not found,
+      // daemon unavailable. The User fixes the cause within seconds, while a
+      // cached failure would keep holding the same error for the whole TTL,
+      // not reacting to reopening.
       promise.then((result) => {
         if (!result.ok) dropIfCurrent();
       }, dropIfCurrent);

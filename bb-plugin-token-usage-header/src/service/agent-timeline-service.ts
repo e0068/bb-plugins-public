@@ -11,7 +11,8 @@ import type { BbPluginApi } from "@get-bb/plugin-sdk";
 // Imported directly from src/core/agent-timeline (not the ../core barrel):
 // src/core/index.ts is outside this group's file map, and re-exporting a new
 // core module through it is a decision for whoever owns that barrel.
-import { parseAgentTimeline, type AgentTimeline } from "../core/agent-timeline";
+import { parseAgentTimeline, type AgentTimeline, type AgentTimelinePrNumber } from "../core/agent-timeline";
+import type { GitEvent } from "../core/git-events";
 import {
   DEFAULT_MAX_OUTPUT_BYTES,
   DEFAULT_TIMEOUT_MS,
@@ -81,7 +82,7 @@ function mapStdout(result: Extract<ProcessRunResult, { ok: true }>): AgentTimeli
   }
   const diagnostic = result.stderr.trim();
   const message = diagnostic
-    ? `${parsed.message} (код завершения ${result.code}): ${diagnostic}`
+    ? `${parsed.message} (exit code ${result.code}): ${diagnostic}`
     : parsed.message;
   return { ok: false, reason: "invalid_output", message };
 }
@@ -122,7 +123,7 @@ export function createAgentTimelineRunner(options: AgentTimelineRunnerOptions = 
         return {
           ok: false,
           reason: "invalid_session",
-          message: "Пустой session id недопустим.",
+          message: "An empty session id is not allowed.",
         };
       }
 
@@ -139,7 +140,7 @@ export function createAgentTimelineRunner(options: AgentTimelineRunnerOptions = 
           return {
             ok: false,
             reason: "timeout",
-            message: `Превышен общий бюджет времени (${totalTimeoutMs}ms) до попытки запустить "${interpreter}"`,
+            message: `Overall time budget (${totalTimeoutMs}ms) exceeded before attempting to run "${interpreter}"`,
           };
         }
 
@@ -158,7 +159,7 @@ export function createAgentTimelineRunner(options: AgentTimelineRunnerOptions = 
         ok: false,
         reason: "python_not_found",
         message:
-          "Не найден интерпретатор Python (python3 или python) в PATH. Установите Python 3 и убедитесь, что команда python3 доступна.",
+          "Python interpreter (python3 or python) not found in PATH. Install Python 3 and make sure the python3 command is available.",
       };
     },
   };
@@ -170,6 +171,61 @@ function cacheKeyFor(params: AgentTimelineQueryParams): string {
 }
 
 const DEFAULT_CACHE_TTL_MS = 30_000;
+
+// --- Merge status (live `gh pr view`) --------------------------------
+//
+// The session page's own enrichment — see
+// memory/decisions/merge-marker-session-page-only.md for why this call
+// only ever happens here (one PR at a time, on-demand), never for the
+// feed/popup's threadsTimeline slice.
+
+/** Longer than GIT_CALL_TIMEOUT_MS in threads-timeline-service.ts: `gh` is a real network round trip to GitHub, not a local git op. */
+const GH_CALL_TIMEOUT_MS = 8_000;
+
+/** The subset of `gh pr view --json state,url,mergedAt`'s output this module cares about — undefined/wrong-typed fields make the whole parse fail rather than guess. */
+function parseGhPrView(stdout: string): { state: string; url: string; mergedAt: string | null } | null {
+  let json: unknown;
+  try {
+    json = JSON.parse(stdout);
+  } catch {
+    return null;
+  }
+  if (typeof json !== "object" || json === null) return null;
+  const { state, url, mergedAt } = json as Record<string, unknown>;
+  if (typeof state !== "string" || typeof url !== "string") return null;
+  return { state, url, mergedAt: typeof mergedAt === "string" ? mergedAt : null };
+}
+
+/** One PR's merge status, or null when it isn't merged (or `gh` failed/isn't installed/isn't authenticated) — never throws. */
+async function mergeEventFor(pr: AgentTimelinePrNumber, processRunner: ProcessRunner): Promise<GitEvent | null> {
+  const result = await processRunner(
+    "gh",
+    ["pr", "view", String(pr.number), "--repo", pr.repository, "--json", "state,url,mergedAt"],
+    { timeoutMs: GH_CALL_TIMEOUT_MS },
+  );
+  if (!result.ok || result.code !== 0) return null;
+  const parsed = parseGhPrView(result.stdout);
+  if (!parsed || parsed.state !== "MERGED" || !parsed.mergedAt) return null;
+  return { type: "merge", ts: parsed.mergedAt, number: pr.number, url: parsed.url, repository: pr.repository };
+}
+
+/**
+ * Resolves every PR the session touched to a "merge" GitEvent, dropping the
+ * ones that aren't merged (open/closed-unmerged — nothing to mark). Runs the
+ * `gh` calls in parallel; a lookup failure for one PR (or all of them —
+ * `gh` missing/unauthenticated/network down) degrades to no merge events,
+ * never fails the whole agentTimeline response.
+ */
+async function resolveMergeEvents(prNumbers: readonly AgentTimelinePrNumber[], processRunner: ProcessRunner): Promise<GitEvent[]> {
+  if (prNumbers.length === 0) return [];
+  try {
+    const results = await Promise.all(prNumbers.map((pr) => mergeEventFor(pr, processRunner)));
+    return results.filter((event): event is GitEvent => event !== null);
+  } catch (err) {
+    console.error("[agent-timeline-service] merge status lookup failed, leaving mergeEvents empty:", err);
+    return [];
+  }
+}
 
 export interface AgentTimelineServiceOptions extends AgentTimelineRunnerOptions {
   /** Cache TTL in ms; defaults to 30s (same default as src/service/cache.ts). */
@@ -202,6 +258,7 @@ export interface AgentTimelineService {
 export function createAgentTimelineService(bb: BbPluginApi, options: AgentTimelineServiceOptions = {}): AgentTimelineService {
   void bb;
   const runner = createAgentTimelineRunner(options);
+  const processRunner = options.processRunner ?? runProcess;
   const ttlMs = options.cacheTtlMs ?? DEFAULT_CACHE_TTL_MS;
   const now = options.now ?? Date.now;
 
@@ -215,7 +272,14 @@ export function createAgentTimelineService(bb: BbPluginApi, options: AgentTimeli
         return existing.promise;
       }
 
-      const promise = runner.run(params);
+      // mergeEvents is resolved once per (uncached) query, folded into the
+      // same cached promise as the script's own result — a cache hit above
+      // skips both the python process and the `gh pr view` calls together.
+      const promise = runner.run(params).then(async (result): Promise<AgentTimelineRunResult> => {
+        if (!result.ok) return result;
+        const mergeEvents = await resolveMergeEvents(result.data.prNumbers, processRunner);
+        return { ok: true, data: { ...result.data, mergeEvents } };
+      });
       const entry = { expiresAt: now() + ttlMs, promise };
       entries.set(key, entry);
 
@@ -223,10 +287,10 @@ export function createAgentTimelineService(bb: BbPluginApi, options: AgentTimeli
         if (entries.get(key) === entry) entries.delete(key);
       };
       promise.catch(dropIfCurrent);
-      // Отказ не кэшируем — та же причина, что в src/service/cache.ts: он
-      // обычно про окружение (не найден python, недоступна сессия сейчас),
-      // а не про данные, и не должен держать пользователя на устаревшей
-      // ошибке весь TTL.
+      // Failures aren't cached — same reasoning as src/service/cache.ts:
+      // they're usually about the environment (python not found, session
+      // temporarily unavailable) rather than about the data, and shouldn't
+      // keep the user stuck on a stale error for the whole TTL.
       promise.then((result) => {
         if (!result.ok) dropIfCurrent();
       }, dropIfCurrent);

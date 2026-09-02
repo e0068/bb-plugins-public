@@ -8,8 +8,21 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type * as React from "react";
 import { createPortal } from "react-dom";
+import { Icon, type IconName } from "@/components/ui/icon";
 import { usePortalScopeProps } from "@/lib/portal-scope";
-import { binTotal, formatCost, formatPercent, formatTokenCount, type AgentBin, type ThreadEntry, type TimelineBin } from "../src/core";
+import {
+  binTotal,
+  formatCost,
+  formatPercent,
+  formatTokenCount,
+  gitEventLabel,
+  gitEventLinkUrl,
+  type AgentBin,
+  type ChartSettings,
+  type GitEvent,
+  type ThreadEntry,
+  type TimelineBin,
+} from "../src/core";
 
 /** Fixed, subtle alpha for the chart frame's lift tint — only the hue is user-configurable (native `<input type="color">` has no alpha channel). */
 export const FRAME_LIFT_ALPHA = 0.05;
@@ -25,10 +38,8 @@ const MIN_HUG_CARD_WIDTH_PX = 96;
 const TOOLTIP_FADE_MS = 200;
 /** Minimum gap (px) kept between the column tooltip and the viewport edge when clamping its position — see the tooltip's useLayoutEffect below. */
 const TOOLTIP_VIEWPORT_MARGIN_PX = 8;
-/** Default chart height (px) for the single-session card, mirroring the feed's own BASE_CHART_HEIGHT. */
+/** Default chart height (px) for the single-session card, mirroring the feed's own BASE_CHART_HEIGHT — scaled by settings.heightScale, same as the feed. */
 const SESSION_CARD_CHART_HEIGHT = 72;
-/** Bin width (seconds) for a single-session chart — shared by every caller of SessionChartCard so they all bucket the same way. */
-export const SESSION_CHART_UNIT = 60;
 
 /** Cycled by first-seen order (main first, then by total spend) — a free choice: agent colour is chart data, not UI chrome. */
 export const DEFAULT_PALETTE = ["#3b82f6", "#22c55e", "#f59e0b", "#ef4444", "#a855f7", "#06b6d4", "#eab308", "#14b8a6", "#ec4899", "#84cc16"];
@@ -46,6 +57,26 @@ export function segmentContainsAgent(agent: AgentBin, agentKey: string): boolean
   return agent.key === agentKey || (agent.members?.includes(agentKey) ?? false);
 }
 
+/** Segment key prefix for a workflow-merged bin (see tools/threads_timeline.py's `--group-workflows`); its label is the workflow's human name, not a real agentId. */
+export const WORKFLOW_KEY_PREFIX = "workflow:";
+
+/**
+ * A workflow-merged segment has no single agentId of its own — clicking it
+ * picks one of its real `members` to open a detail page for. Prefers
+ * `activeAgentKey` when it's a member (stay on the agent already open, just
+ * jump its highlight window to this bin); otherwise falls back to the first
+ * member (arbitrary but stable — the same segment always opens the same
+ * agent). `members` is the sorted list of real agentIds folded into this
+ * workflow run (empty/undefined only if the backend schema predates
+ * SCHEMA_VERSION 4 — memory/decisions/workflow-segment-membership-backend.md);
+ * null means the segment has nowhere to send the click, which keeps it a
+ * no-op instead of guessing.
+ */
+export function resolveWorkflowClickTarget(agent: AgentBin, activeAgentKey: string | null | undefined): string | null {
+  if (activeAgentKey && agent.members?.includes(activeAgentKey)) return activeAgentKey;
+  return agent.members?.[0] ?? null;
+}
+
 export function hexToRgba(hex: string, alpha: number): string {
   let h = hex.replace("#", "");
   if (h.length === 3) h = h[0] + h[0] + h[1] + h[1] + h[2] + h[2];
@@ -59,9 +90,9 @@ function fmtDuration(sec: number): string {
   const h = Math.floor(sec / 3600);
   const m = Math.floor((sec % 3600) / 60);
   const s = Math.floor(sec % 60);
-  if (h > 0) return `${h} ч ${m} мин`;
-  if (m > 0) return `${m} мин ${s} с`;
-  return `${s} с`;
+  if (h > 0) return `${h} h ${m} min`;
+  if (m > 0) return `${m} min ${s} s`;
+  return `${s} s`;
 }
 
 function fmtClock(iso: string): string {
@@ -111,6 +142,35 @@ export function computeDisplayBins(bins: readonly TimelineBin[], collapseEmpty: 
   return displayBins;
 }
 
+/** One icon per git event kind, for the marker lane and its tooltip section — see components/ui/icon.tsx's ICON_MAP. */
+export const GIT_EVENT_ICON: Record<GitEvent["type"], IconName> = {
+  commit: "GitCommit",
+  push: "Upload",
+  pr: "GitPullRequest",
+  merge: "GitMerge",
+};
+
+/**
+ * Buckets a thread's git events into the SAME display columns as its bars
+ * (see computeDisplayBins) — an event lands in whichever column's time
+ * window [t, t + gapUnits*unit) contains its own ts. Index-aligned with
+ * displayBins: result[i] is displayBins[i]'s events, [] when none fall in
+ * that window. An event with an unparseable ts is dropped, not thrown — the
+ * marker lane is a bonus overlay, not something a single bad timestamp
+ * should crash.
+ */
+export function bucketGitEventsByBin(displayBins: readonly DisplayBin[], events: readonly GitEvent[], unit: number): GitEvent[][] {
+  return displayBins.map((displayBin) => {
+    const startMs = Date.parse(displayBin.t);
+    if (Number.isNaN(startMs)) return [];
+    const endMs = startMs + displayBin.gapUnits * unit * 1000;
+    return events.filter((event) => {
+      const eventMs = Date.parse(event.ts);
+      return !Number.isNaN(eventMs) && eventMs >= startMs && eventMs < endMs;
+    });
+  });
+}
+
 export function ThreadRow({
   thread,
   unit,
@@ -148,20 +208,20 @@ export function ThreadRow({
   /** Human-readable display text for an agentId (agentLabels[key] ?? key) — used only in the tooltip text, never as a key. */
   labelFor: (agentKey: string) => string;
   onSegmentClick: (agentKey: string, session: string, fromIso: string, toIso: string) => void;
-  /** Открыть тред BB по клику на название — задан, только когда у треда есть матч (threadId); для бакета «Threads» отсутствует. */
+  /** Opens the BB thread when the title is clicked — set only when the thread has a match (threadId); absent for the "Threads" bucket. */
   onOpenThread?: () => void;
   /**
-   * Открыть внутреннюю страницу сессии по клику на карточку целиком (включая
-   * пустую область). Задан только в ленте (ThreadsTimelinePage); в карточке
-   * самой страницы сессии (SessionChartCard) отсутствует — там интерактива
-   * уровня карточки нет. Когда задан, карточка подсвечивается на наведении и
-   * становится кликабельной; заголовок и сегменты гасят всплытие, сохраняя
-   * своё поведение.
+   * Opens the session's internal page when the card is clicked anywhere,
+   * including empty area. Set only in the feed (ThreadsTimelinePage); absent
+   * on the session page's own card (SessionChartCard) — there's no
+   * card-level interaction there. When set, the card highlights on hover and
+   * becomes clickable; the title and segments stop propagation, keeping
+   * their own behavior.
    */
   onOpenCard?: () => void;
   /** true = bin columns stretch to share the graph's width equally (flex-1); false = each bin column is a fixed colWidthPx wide. */
   fillWidth: boolean;
-  /** true = карточка сжимается под ширину графика (w-fit) вместо растягивания на контейнер (w-full); осмысленно при выключенном fillWidth. */
+  /** true = card shrinks to the graph's width (w-fit) instead of stretching to the container (w-full); meaningful only when fillWidth is off. */
   hugWidth: boolean;
   /** true = consecutive empty bins render as one collapsed gap column — see computeDisplayBins. */
   collapseEmpty: boolean;
@@ -182,14 +242,16 @@ export function ThreadRow({
 }) {
   const threadEndMs = Date.parse(thread.end);
 
-  // Названия из bb.sdk (bbThreadTitle, см. threads-timeline-service.ts) — не
-  // сырой `title` из threads_timeline.py, который всегда равен session.
-  // Нет матча с тредом BB (бакет «Threads») — короткий id сессии вместо
-  // пустоты; полный session остаётся в подсказке, а не дублируется в шапке.
+  // Titles come from bb.sdk (bbThreadTitle, see threads-timeline-service.ts) —
+  // not the raw `title` from threads_timeline.py, which always equals session.
+  // No match with a BB thread (the "Threads" bucket) — a short session id
+  // instead of blank; the full session stays in the tooltip, not duplicated
+  // in the header.
   const headerTitle = thread.bbThreadTitle ?? thread.session.slice(0, 8);
   const headerTooltip = thread.bbThreadTitle ? `${thread.bbThreadTitle}\n${thread.session}` : thread.session;
-  // Число различных агентов треда — считается из его же бинов (главный "main"
-  // + субагенты), а не из глобального agentKeys (тот собран по всей ленте).
+  // Count of distinct agents in the thread — computed from its own bins
+  // (main agent + subagents), not from the global agentKeys (that's
+  // aggregated across the whole feed).
   const agentCount = new Set(thread.bins.flatMap((b) => b.agents.map((a) => a.key))).size;
 
   // Displayed columns, not raw bins — collapseEmpty folds runs of empty bins
@@ -197,6 +259,17 @@ export function ThreadRow({
   // below size the graph off however many columns are actually rendered.
   const displayBins = useMemo(() => computeDisplayBins(thread.bins, collapseEmpty), [thread.bins, collapseEmpty]);
   const binCount = displayBins.length;
+  // Git activity markers (commit/push/pr/merge), index-aligned with
+  // displayBins — rendered as a lane below the bars and folded into the same
+  // hover tooltip (see the "Git" section below).
+  const eventsByBin = useMemo(() => bucketGitEventsByBin(displayBins, thread.events, unit), [displayBins, thread.events, unit]);
+  // Same width/gap every column, independent of which bin it is — computed
+  // once here instead of per-iteration, and shared by BOTH the bars row and
+  // the marker lane below so their columns line up pixel-for-pixel.
+  const colClassName = "relative h-full min-w-[2px] shrink-0";
+  const colStyle: React.CSSProperties = fillWidth
+    ? { width: `calc((100% - ${Math.max(maxBinCount - 1, 0) * colGap}px) / ${maxBinCount})`, flexShrink: 0 }
+    : { width: colWidthPx, flexShrink: 0 };
   const graphWidthPx = fillWidth
     ? undefined
     : Math.max(binCount * colWidthPx + Math.max(binCount - 1, 0) * colGap, MIN_GRAPH_WIDTH_PX);
@@ -297,7 +370,7 @@ export function ThreadRow({
     ? {
         role: "button",
         tabIndex: 0,
-        "aria-label": `Открыть детализацию сессии: ${headerTitle}`,
+        "aria-label": `Open session detail: ${headerTitle}`,
         onClick: onOpenCard,
         onMouseEnter: () => setCardHovered(true),
         onMouseLeave: () => setCardHovered(false),
@@ -323,20 +396,22 @@ export function ThreadRow({
       }}
       {...cardInteractive}
     >
-      {/* В hug шапка идёт колонкой: заголовок и метрики каждый в своей строке и
-          обрезаются, поэтому не распирают карточку шире графика. Без hug —
-          прежний ряд: заголовок слева, метрики справа. */}
+      {/* In hug mode the header stacks into a column: title and metrics each
+          on their own line and truncated, so they never force the card wider
+          than the graph. Without hug — the usual row: title on the left,
+          metrics on the right. */}
       <div className={`flex ${hug ? "flex-col gap-0.5" : "items-baseline justify-between gap-3"} overflow-hidden text-xs text-muted-foreground`}>
-        {/* Живой (не заархивированный) тред — имя зелёным; идёт работа сейчас —
-            мигающая зелёная точка слева от имени. Обёртка держит точку и имя в
-            одной строке, а сама занимает ту же ширину, что раньше занимало имя. */}
+        {/* A live (non-archived) thread gets its name in green; work in
+            progress right now adds a blinking green dot to the left of the
+            name. The wrapper keeps the dot and name on one line, and itself
+            takes the same width the name alone used to occupy. */}
         <div className={`flex min-w-0 items-center gap-1.5 ${hug ? "w-full" : "flex-1"}`}>
           {thread.isWorking && (
             <span
               className="size-1.5 shrink-0 animate-pulse rounded-full bg-success"
               role="img"
-              aria-label="Идёт работа"
-              title="Идёт работа"
+              aria-label="In progress"
+              title="In progress"
             />
           )}
           {onOpenThread ? (
@@ -345,8 +420,8 @@ export function ThreadRow({
               className={`min-w-0 flex-1 truncate text-left font-medium ${thread.isAlive ? "text-success" : "text-foreground"} hover:underline focus-visible:underline focus-visible:outline-none`}
               title={headerTooltip}
               onClick={(e) => {
-                // Название ведёт в тред BB — гасим всплытие, чтобы клик по карточке
-                // (внутренняя страница сессии) не сработал заодно.
+                // The title navigates to the BB thread — stop propagation so
+                // the card's own click (session's internal page) doesn't also fire.
                 e.stopPropagation();
                 onOpenThread();
               }}
@@ -360,7 +435,7 @@ export function ThreadRow({
           )}
         </div>
         <span className={`tabular-nums ${hug ? "w-full truncate" : "ml-auto shrink-0"}`}>
-          {/* Не было workflow — не упоминаем их вовсе, а не пишем «0 workflows». */}
+          {/* No workflows ran — omit them entirely rather than writing "0 workflows". */}
           {thread.workflowCount > 0 && `${thread.workflowCount} workflows · `}
           {agentCount} agents · {fmtDuration(thread.durationSec)} · {formatTokenCount(thread.totalTokens)} · {formatCost(thread.totalCost)}
         </span>
@@ -377,12 +452,9 @@ export function ThreadRow({
             // are the SAME width. fillWidth on: width = 100%/maxBinCount (the
             // longest thread's DISPLAYED columns), so only the longest fills
             // the row and shorter threads are proportionally narrower.
-            // fillWidth off: each column is a fixed colWidthPx the "Ширина"
-            // control sets.
-            const colClassName = "relative h-full min-w-[2px] shrink-0";
-            const colStyle: React.CSSProperties = fillWidth
-              ? { width: `calc((100% - ${Math.max(maxBinCount - 1, 0) * colGap}px) / ${maxBinCount})`, flexShrink: 0 }
-              : { width: colWidthPx, flexShrink: 0 };
+            // fillWidth off: each column is a fixed colWidthPx the "Width"
+            // control sets. colClassName/colStyle are hoisted above (shared
+            // with the marker lane below).
 
             if (bin === null) {
               // Empty column — either a single raw empty bin (collapseEmpty
@@ -395,7 +467,7 @@ export function ThreadRow({
                   key={binIndex}
                   className={colClassName}
                   style={colStyle}
-                  title={`${fmtClock(displayBin.t)}\nперерыв ${fmtDuration(gapUnits * unit)}`}
+                  title={`${fmtClock(displayBin.t)}\n${fmtDuration(gapUnits * unit)} break`}
                 >
                   <div className="absolute bottom-0 h-[2px] w-full bg-muted/50" style={{ borderRadius: segRadius }} />
                 </div>
@@ -405,8 +477,8 @@ export function ThreadRow({
             const { binEndMs, total, ordered } = describeBin(bin);
             const dispHeight = effectiveMaxBinTotal > 0 ? Math.max((total / effectiveMaxBinTotal) * chartHeight, 2) : 2;
 
-            // Пока тултип показывает этот столбец — подсвечиваем сам столбец,
-            // чтобы было видно, к чему относится подсказка.
+            // While the tooltip is showing this column, highlight the column
+            // itself so it's clear which one the tooltip refers to.
             const columnActive = tip?.binIndex === binIndex && !tipClosing;
             return (
               <div
@@ -429,12 +501,19 @@ export function ThreadRow({
                         type="button"
                         className={`block w-full transition-opacity hover:opacity-80 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring ${faded ? FADED_SEGMENT_OPACITY : ""}`}
                         style={{ height: Math.max(segHeight, 1), backgroundColor: colorFor(a.key), borderRadius: segRadius }}
-                        aria-label={`${labelFor(a.key)}: ${formatTokenCount(a.total)} токенов`}
+                        aria-label={`${labelFor(a.key)}: ${formatTokenCount(a.total)} tokens`}
                         onClick={(e) => {
-                          // Сегмент ведёт в детализацию агента с окном времени —
-                          // гасим всплытие, чтобы не сработал клик по карточке.
+                          // The segment navigates to agent detail with a time
+                          // window — stop propagation so the card's own click
+                          // doesn't also fire. A workflow segment isn't tied
+                          // to a single agentId — resolveWorkflowClickTarget
+                          // picks whose detail to open (null — the segment
+                          // has nowhere to go, the click is a no-op).
                           e.stopPropagation();
-                          onSegmentClick(a.key, thread.session, bin.t, new Date(binEndMs).toISOString());
+                          const targetKey = a.key.startsWith(WORKFLOW_KEY_PREFIX)
+                            ? resolveWorkflowClickTarget(a, activeAgentKey)
+                            : a.key;
+                          if (targetKey) onSegmentClick(targetKey, thread.session, bin.t, new Date(binEndMs).toISOString());
                         }}
                       />
                     );
@@ -444,32 +523,94 @@ export function ThreadRow({
             );
           })}
         </div>
+
+        {/* Git activity lane — same column widths/gaps as the bars above
+            (colClassName/colStyle, width/gap), inside the SAME scroll
+            wrapper so it always stays aligned under them, scrolled or not.
+            A column with no events renders an empty (but width-holding) div
+            — the lane's own height only ever depends on the tallest icon
+            row, never the bars. */}
+        <div className="mt-1 flex items-center" style={{ width: fillWidth ? "100%" : graphWidthPx, gap: colGap }}>
+          {displayBins.map((displayBin, binIndex) => {
+            const binEvents = eventsByBin[binIndex];
+            return (
+              <div
+                key={binIndex}
+                className="flex shrink-0 items-center justify-center gap-0.5"
+                style={colStyle}
+                // Only intercepts hover when there's actually something to
+                // show — an empty column here (no git events) leaves the bar
+                // row's own hover (native title on a gap column, or the
+                // custom tooltip on a data column) as the only trigger.
+                onMouseMove={binEvents.length > 0 ? (e) => showTip(binIndex, e.clientX, e.clientY) : undefined}
+                onMouseLeave={binEvents.length > 0 ? startTipFade : undefined}
+              >
+                {binEvents.slice(0, 3).map((event, i) => (
+                  <Icon key={i} name={GIT_EVENT_ICON[event.type]} className="size-2.5 shrink-0 text-muted-foreground" aria-hidden="true" />
+                ))}
+              </div>
+            );
+          })}
+        </div>
       </div>
 
-      {tip && tipBin
+      {tip
         ? (() => {
-            const { total, timeLabel, ordered } = describeBin(tipBin);
+            const tipDisplayBin = displayBins[tip.binIndex];
+            if (!tipDisplayBin) return null;
+            const binData = tipBin ? describeBin(tipBin) : null;
+            const timeLabel = binData ? binData.timeLabel : fmtClock(tipDisplayBin.t);
+            const tipEvents = eventsByBin[tip.binIndex] ?? [];
             return createPortal(
               <div
                 ref={tipRef}
                 {...portalScope}
-                className={`pointer-events-none fixed z-50 w-max max-w-[min(90vw,32rem)] rounded-md border border-border bg-popover px-2.5 py-2 text-xs text-popover-foreground shadow-md transition-opacity duration-200 ease-in ${
+                // Interactive (not pointer-events-none, unlike before this
+                // feature): a git event's link needs to be reachable by the
+                // cursor. onMouseEnter/onMouseLeave below keep it open while
+                // the cursor is over it (instead of fading the instant it
+                // leaves the narrow column), the same "hoverable tooltip"
+                // pattern any clickable-content popover needs.
+                className={`fixed z-50 w-max max-w-[min(90vw,32rem)] rounded-md border border-border bg-popover px-2.5 py-2 text-xs text-popover-foreground shadow-md transition-opacity duration-200 ease-in ${
                   tipClosing ? "opacity-0" : "opacity-100"
                 }`}
                 style={{ left: tip.x + 12 + tipShift.x, top: tip.y + 12 + tipShift.y }}
+                onMouseEnter={() => showTip(tip.binIndex, tip.x, tip.y)}
+                onMouseLeave={startTipFade}
               >
                 <div className="font-medium tabular-nums">{timeLabel}</div>
-                <ul className="mt-1.5 space-y-1">
-                  {ordered.map((a) => (
-                    <li key={a.key} className="flex w-full items-center gap-3">
-                      <span className="inline-block size-2.5 shrink-0 rounded-sm" style={{ backgroundColor: colorFor(a.key) }} />
-                      <span className="whitespace-nowrap">{labelFor(a.key)}</span>
-                      <span className="ml-auto shrink-0 tabular-nums text-muted-foreground">
-                        {formatTokenCount(a.total)} · {formatPercent(a.total, total)}
-                      </span>
-                    </li>
-                  ))}
-                </ul>
+                {binData && (
+                  <ul className="mt-1.5 space-y-1">
+                    {binData.ordered.map((a) => (
+                      <li key={a.key} className="flex w-full items-center gap-3">
+                        <span className="inline-block size-2.5 shrink-0 rounded-sm" style={{ backgroundColor: colorFor(a.key) }} />
+                        <span className="whitespace-nowrap">{labelFor(a.key)}</span>
+                        <span className="ml-auto shrink-0 tabular-nums text-muted-foreground">
+                          {formatTokenCount(a.total)} · {formatPercent(a.total, binData.total)}
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+                {tipEvents.length > 0 && (
+                  <ul className={`space-y-1 ${binData ? "mt-2 border-t border-border pt-2" : "mt-1.5"}`}>
+                    {tipEvents.map((event, i) => {
+                      const url = gitEventLinkUrl(event);
+                      return (
+                        <li key={i} className="flex w-full items-center gap-2">
+                          <Icon name={GIT_EVENT_ICON[event.type]} className="size-2.5 shrink-0 text-muted-foreground" aria-hidden="true" />
+                          {url ? (
+                            <a href={url} target="_blank" rel="noreferrer" className="truncate text-primary underline underline-offset-2 hover:no-underline">
+                              {gitEventLabel(event)}
+                            </a>
+                          ) : (
+                            <span className="truncate text-popover-foreground">{gitEventLabel(event)}</span>
+                          )}
+                        </li>
+                      );
+                    })}
+                  </ul>
+                )}
               </div>,
               document.body,
             );
@@ -479,30 +620,48 @@ export function ThreadRow({
   );
 }
 
-/** Prefix a workflow-merged segment's label so the group reads as one Workflow, not a nameless agent (its key is `workflow:<runId>`, its label the workflow's human name). */
-const WORKFLOW_KEY_PREFIX = "workflow:";
-
 /**
  * Single-session convenience wrapper around ThreadRow: the session page renders
- * exactly the feed's chart frame, so there's one implementation, not two. Fills
- * the feed's per-page inputs (colours, labels, max totals, default geometry)
- * from this one session's own bins. Segments merged server-side by workflow
- * (`groupWorkflows`) get a "Workflow: <name>" label so the collapsed group is
- * legible.
+ * exactly the feed's chart frame, so there's one implementation, not two. Takes
+ * the SAME `ChartSettings` the feed reads (bb.settings.define's geometry
+ * fields, see src/core/gear-settings.ts, plus the kv-persisted agentColors
+ * map) instead of its own hardcoded geometry, so a setting changed on the
+ * plugin's Settings page is visible here too — in the header popover
+ * (app.tsx) and the session-detail page (AgentTimelinePage.tsx) alike, not
+ * just the feed. Fills the remaining per-page inputs (agent labels, max
+ * totals) from this one session's own bins. Segments merged server-side by
+ * workflow (`groupWorkflows`) get a "Workflow: <name>" label so the
+ * collapsed group is legible.
  */
 export function SessionChartCard({
   thread,
-  unit,
   agentLabels,
+  settings,
+  fillWidth,
   onSelectAgent,
   activeAgentKey,
 }: {
   thread: ThreadEntry;
-  unit: number;
   agentLabels: Record<string, string>;
-  /** Клик по сегменту реального агента ведёт на его детализацию; workflow-сегмент (сводный) кликом не открывается. */
-  onSelectAgent?: (agentKey: string) => void;
-  /** Агент, выбранный сейчас на странице сессии (правая панель) — сегменты остальных агентов гасятся до FADED_SEGMENT_OPACITY. */
+  /** Chart geometry/behaviour from the plugin's Settings page, plus the kv-persisted per-agent colour overrides. */
+  settings: ChartSettings;
+  /**
+   * Which of GearSettings's three fillWidth fields applies here — the caller
+   * picks fillWidthPopover (header popup) or fillWidthSession (thread
+   * breakdown page) since this same card is rendered in both places with
+   * independent settings; ChartSettings carries all three, so it can't pick
+   * the right one on its own.
+   */
+  fillWidth: boolean;
+  /**
+   * A segment click navigates to agent detail with the bin's time window
+   * (fromIso/toIso), so the page highlights and scrolls to that window's
+   * events — the same highlight as a deep-link from the feed. For a
+   * workflow (merged) segment, agentKey is already resolved by ThreadRow via
+   * resolveWorkflowClickTarget to a real member, not "workflow:...".
+   */
+  onSelectAgent?: (agentKey: string, fromIso: string, toIso: string) => void;
+  /** Agent currently selected on the session page (right panel) — every other agent's segments fade to FADED_SEGMENT_OPACITY. */
   activeAgentKey?: string | null;
 }) {
   const agentKeys = useMemo(() => {
@@ -515,13 +674,13 @@ export function SessionChartCard({
     });
   }, [thread.bins]);
   const maxBinTotal = useMemo(() => thread.bins.reduce((m, bin) => Math.max(m, binTotal(bin)), 0), [thread.bins]);
-  // Пробои схлопываются всегда — оба вызывающих места (страница сессии и
-  // попап шапки) хотят одно и то же: пауза без активности не должна растягивать
-  // ось на всю длину простоя. Не проп: конфигурируемости не требуется ни
-  // одному из двух мест, где эта карточка используется.
-  const maxBinCount = useMemo(() => computeDisplayBins(thread.bins, true).length, [thread.bins]);
+  const maxBinCount = useMemo(
+    () => computeDisplayBins(thread.bins, settings.collapseEmpty).length,
+    [thread.bins, settings.collapseEmpty],
+  );
 
-  const colorFor = (key: string) => DEFAULT_PALETTE[Math.max(agentKeys.indexOf(key), 0) % DEFAULT_PALETTE.length];
+  const colorFor = (key: string) =>
+    settings.agentColors[key] ?? DEFAULT_PALETTE[Math.max(agentKeys.indexOf(key), 0) % DEFAULT_PALETTE.length];
   const labelFor = (key: string) => {
     const name = agentLabels[key] ?? key;
     return key.startsWith(WORKFLOW_KEY_PREFIX) ? `Workflow: ${name}` : name;
@@ -530,26 +689,24 @@ export function SessionChartCard({
   return (
     <ThreadRow
       thread={thread}
-      unit={unit}
-      chartHeight={SESSION_CARD_CHART_HEIGHT}
+      unit={settings.unit}
+      chartHeight={SESSION_CARD_CHART_HEIGHT * settings.heightScale}
       maxBinTotal={maxBinTotal}
       perCardHeight={false}
       maxBinCount={maxBinCount}
       agentKeys={agentKeys}
       colorFor={colorFor}
       labelFor={labelFor}
-      onSegmentClick={(agentKey) => {
-        if (!agentKey.startsWith(WORKFLOW_KEY_PREFIX)) onSelectAgent?.(agentKey);
-      }}
-      fillWidth
-      hugWidth={false}
-      collapseEmpty
-      colWidthPx={6}
-      colGap={1}
-      segGap={0}
-      colRadius={0}
-      segRadius={0}
-      frameLiftColor="#e3e3dd"
+      onSegmentClick={(agentKey, _session, fromIso, toIso) => onSelectAgent?.(agentKey, fromIso, toIso)}
+      fillWidth={fillWidth}
+      hugWidth={settings.hugWidth}
+      collapseEmpty={settings.collapseEmpty}
+      colWidthPx={settings.colWidthPx}
+      colGap={settings.colGap}
+      segGap={settings.segGap}
+      colRadius={settings.colRadius}
+      segRadius={settings.segRadius}
+      frameLiftColor={settings.frameLiftColor}
       activeAgentKey={activeAgentKey}
     />
   );

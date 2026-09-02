@@ -39,12 +39,13 @@ describe("createTokensCache", () => {
     expect(calls).toBe(1);
   });
 
-  // Отказ обычно про окружение, а не про данные: не найден python, недоступен
-  // демон. Пользователь чинит причину за секунды — закэшированный отказ держал
-  // бы ту же ошибку весь TTL, и повторное открытие ничего бы не меняло.
-  it("не кэширует отказ: следующий запрос считает заново", async () => {
+  // A failure is usually about the environment rather than about the data:
+  // python not found, daemon unavailable. The User fixes the cause within
+  // seconds — a cached failure would keep the same error for the whole TTL,
+  // and reopening wouldn't change anything.
+  it("does not cache a failure: the next request recomputes", async () => {
     const results: TokensRunResult[] = [
-      { ok: false, reason: "python_not_found", message: "Не найден интерпретатор Python." },
+      { ok: false, reason: "python_not_found", message: "Python interpreter not found." },
       OK,
     ];
     let calls = 0;
@@ -59,9 +60,9 @@ describe("createTokensCache", () => {
     expect(calls).toBe(2);
   });
 
-  it("успешный результат по-прежнему кэшируется после отказа", async () => {
+  it("a successful result is still cached after a failure", async () => {
     const results: TokensRunResult[] = [
-      { ok: false, reason: "python_not_found", message: "нет python" },
+      { ok: false, reason: "python_not_found", message: "no python" },
       OK,
     ];
     let calls = 0;
@@ -72,8 +73,8 @@ describe("createTokensCache", () => {
     await cache.get("k", compute);
     await cache.get("k", compute);
 
-    // Первый заход — отказ (не кэшируется), второй — успех (кэшируется),
-    // третий обслуживается из кэша.
+    // First call — failure (not cached), second — success (cached), third
+    // served from the cache.
     expect(calls).toBe(2);
   });
 
