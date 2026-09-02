@@ -1,11 +1,11 @@
-// Слой 1 — выбор GitHub-токена из доступных источников. Ноль эффектов.
-// Приоритет: явная настройка плагина (если задана) → токен из `gh auth token`.
-// Само чтение gh — эффект, живёт в src/wiring/gh-token.ts.
+// Layer 1 — chooses a GitHub token from the available sources. Zero effects.
+// Priority: explicit plugin setting (if set) → token from `gh auth token`.
+// Reading gh itself is an effect, living in src/wiring/gh-token.ts.
 
 /**
- * Возвращает первый непустой токен или null, если ни настройка, ни gh его не
- * дали. Пробелы по краям отбрасываются, чтобы случайный перевод строки из
- * вывода gh не поехал в заголовок авторизации.
+ * Returns the first non-empty token, or null if neither the setting nor gh
+ * provided one. Surrounding whitespace is trimmed so a stray newline from
+ * gh's output doesn't end up in the authorization header.
  */
 export function chooseToken(
   settingToken: string | undefined,

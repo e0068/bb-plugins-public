@@ -1,9 +1,14 @@
-// bb-plugin-zz-pull-request — кнопки шапки треда: «Pull Request», «Fast Forward»,
-// «Merge» (и её плашка «main не подтянут» после мёржа).
+// bb-plugin-zz-pull-request — thread header buttons: "Wake Up", "Pull Request",
+// "Fast Forward", "Merge" (and its "main not pulled" badge after a merge).
 //
-// Слой UI: спрашивает бэкенд, показывать ли кнопку (prState / fastForwardState /
-// mergeState / mainPullState), и по клику просит действие (createPr /
-// fastForward / mergePr). Ни git, ни GitHub здесь нет — только вызовы rpc.
+// "Wake Up" rides along in this plugin (not its own) because the user asked
+// for it right next to the PR button, not because it's about pull requests —
+// see decideWakeUpVisible in src/core/retiring.ts.
+//
+// UI layer: asks the backend whether to show a button (wakeUpState / prState /
+// fastForwardState / mergeState / mainPullState), and on click requests an
+// action (wakeUp / createPr / fastForward / mergePr). No git, no GitHub here
+// — only rpc calls.
 import { useCallback, useEffect, useRef, useState, type RefObject } from "react";
 import {
   definePluginApp,
@@ -13,32 +18,41 @@ import {
 } from "@get-bb/plugin-sdk/app";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { Icon, type IconName } from "@/components/ui/icon";
+import { cn } from "@/lib/utils";
 import type { rpcContract } from "./server";
 
-// Байт-в-байт оверрайд нативной кнопки шапки «Squash Merge»/«Merge» (variant
-// outline size sm), извлечённый из бандла bb: h-7/px-2/cursor-pointer — часть
-// общей базы _n, остальное — сам оверрайд. У нас были лишние text-muted-foreground
-// и hover:text-foreground (второй и так есть в variant=outline) — из-за них
-// текст кнопки был заметно светлее нативного; gap-1.5 сужал зазор мимо
-// стандартного gap-2 из базовых cva-классов кнопки. Все три убраны.
+// A byte-for-byte override of the native header "Squash Merge"/"Merge" button
+// (variant outline size sm), extracted from the bb bundle: h-7/px-2/cursor-pointer
+// is part of the shared base class `_n`, the rest is the override itself. We
+// used to have extra text-muted-foreground and hover:text-foreground (the
+// latter already comes from variant=outline) — they made the button text
+// noticeably lighter than the native one; gap-1.5 narrowed the gap below the
+// button's standard gap-2 from its base cva classes. All three are removed.
 const HEADER_ACTION_CLASS =
   "h-7 border-border/70 bg-transparent px-2 font-normal hover:bg-state-hover";
 
-// У «changed» нет вида события на смену статуса PR саму по себе — только на
-// git-refs/статус окружения. Закрытие или мёрдж PR вручную на GitHub ничего
-// из этого не трогает, поэтому «changed» может не прийти вовсе. Поллим раз в
-// 20 секунд как подстраховку — дёшево (один RPC), надёжнее, чем ждать
-// несуществующее событие.
+// "changed" has no event kind for a PR status change on its own — only for
+// git-refs/environment status. Closing or merging a PR by hand on GitHub
+// touches none of that, so "changed" may never fire for it. We poll every 20
+// seconds as a safety net — cheap (a single RPC), more reliable than waiting
+// on an event that doesn't exist.
 const POLL_INTERVAL_MS = 20_000;
 
 /**
- * Общая схема подписки для всех состояний кнопок шапки: первый запрос +
- * рефетч по «changed» (коммит/смена ветки/refs в окружении) + поллинг раз в
- * {@link POLL_INTERVAL_MS} (изменение статуса PR на GitHub само по себе
- * «changed» не шлёт — поллинг ловит это). Три состояния (видимость PR/Fast
- * Forward, mergeState, mainPullState) отличаются только формой ответа и
- * фолбэком на ошибку — сама подписка одна.
+ * The shared subscription scheme for all header button states: initial
+ * fetch + refetch on "changed" (a commit/branch change/refs in the
+ * environment) + polling every {@link POLL_INTERVAL_MS} (a PR status change
+ * on GitHub doesn't fire "changed" on its own — polling catches that). The
+ * three states (PR/Fast Forward visibility, mergeState, mainPullState)
+ * differ only in the response shape and the error fallback — the
+ * subscription itself is one and the same.
  */
 function usePolledState<T>(
   fetch: () => Promise<T>,
@@ -70,7 +84,7 @@ function usePolledState<T>(
 
 const VISIBLE_FALLBACK: { visible: boolean } = { visible: false };
 
-/** Подписка на состояние видимости кнопки. */
+/** Subscription to a button's visibility state. */
 function useVisible(
   fetch: () => Promise<{ visible: boolean }>,
   mounted: RefObject<boolean>,
@@ -82,9 +96,15 @@ interface MergeState {
   visible: boolean;
   indicator: "success" | "failure" | "pending" | "neutral" | "unknown";
   prUrl: string | null;
+  number: number | null;
 }
 
-const MERGE_STATE_FALLBACK: MergeState = { visible: false, indicator: "unknown", prUrl: null };
+const MERGE_STATE_FALLBACK: MergeState = {
+  visible: false,
+  indicator: "unknown",
+  prUrl: null,
+  number: null,
+};
 
 interface MainPullState {
   attempted: boolean;
@@ -109,29 +129,126 @@ function errorText(error: unknown, fallback: string): string {
   return error instanceof Error ? error.message : fallback;
 }
 
+interface PrButtonState {
+  visible: boolean;
+  /** Best-effort preview of the number GitHub will assign the PR; `null` when it couldn't be determined. */
+  nextNumber: number | null;
+}
+
+const PR_BUTTON_STATE_FALLBACK: PrButtonState = { visible: false, nextNumber: null };
+
 function PullRequestHeaderAction({ threadId }: PluginThreadHeaderActionProps) {
   const rpc = useRpc<typeof rpcContract>();
   const mounted = useMounted();
   const [submitting, setSubmitting] = useState(false);
+  // Set once createPr succeeds, and never unset: it hides the button on our
+  // own knowledge that the PR now exists, without waiting for the next
+  // prState refetch (an event round trip, or up to POLL_INTERVAL_MS) — that
+  // wait previously left the button enabled and clickable a second time.
+  const [created, setCreated] = useState(false);
   const fetch = useCallback(
     () => rpc.call("prState", { threadId }),
     [rpc, threadId],
   );
-  const visible = useVisible(fetch, mounted);
+  const { visible, nextNumber } = usePolledState(fetch, PR_BUTTON_STATE_FALLBACK, mounted);
 
   const create = useCallback(() => {
     if (submitting) return;
     setSubmitting(true);
     rpc.call("createPr", { threadId }).then(
       ({ number }) => {
-        if (mounted.current) setSubmitting(false);
-        // PR открыт — кнопка больше не нужна (её роль только «создать»).
-        // Вкладку в браузере не открываем: merge доступен прямо в BB.
-        toast.success(`Pull Request #${number} открыт`);
+        if (mounted.current) setCreated(true);
+        // We don't open a browser tab: merge is available right in BB.
+        toast.success(`Pull Request #${number} opened`);
       },
       (error: unknown) => {
         if (mounted.current) setSubmitting(false);
-        toast.error(errorText(error, "Не удалось открыть Pull Request."));
+        toast.error(errorText(error, "Could not open the Pull Request."));
+      },
+    );
+  }, [rpc, submitting, threadId, mounted]);
+
+  const createThenMerge = useCallback(() => {
+    if (submitting) return;
+    setSubmitting(true);
+    rpc.call("createAndMergePr", { threadId }).then(
+      ({ number, mainPull }) => {
+        if (mounted.current) setCreated(true);
+        toast.success(`Pull Request #${number} opened and merged`);
+        if (mainPull?.ok) toast.success("main pulled");
+      },
+      (error: unknown) => {
+        if (mounted.current) setSubmitting(false);
+        toast.error(errorText(error, "Could not open and merge the Pull Request."));
+      },
+    );
+  }, [rpc, submitting, threadId, mounted]);
+
+  if (!visible || created) return null;
+
+  return (
+    <DropdownMenu>
+      <div className="flex items-center">
+        <Button
+          aria-label={
+            nextNumber === null ? "Open Pull Request" : `Open Pull Request #${nextNumber}`
+          }
+          className={cn(HEADER_ACTION_CLASS, "rounded-r-none border-r-0")}
+          disabled={submitting}
+          onClick={create}
+          size="sm"
+          type="button"
+          variant="outline"
+        >
+          <Icon
+            aria-hidden="true"
+            className={submitting ? "size-3.5 animate-spin" : "size-3.5"}
+            name={submitting ? "Loading" : "GitPullRequest"}
+          />
+          {nextNumber === null ? "PR" : `PR #${nextNumber}`}
+        </Button>
+        <DropdownMenuTrigger asChild>
+          <Button
+            aria-label="More Pull Request actions"
+            className={cn(HEADER_ACTION_CLASS, "rounded-l-none px-1")}
+            disabled={submitting}
+            size="sm"
+            type="button"
+            variant="outline"
+          >
+            <Icon aria-hidden="true" className="size-3.5" name="ChevronDown" />
+          </Button>
+        </DropdownMenuTrigger>
+      </div>
+      <DropdownMenuContent align="end">
+        <DropdownMenuItem disabled={submitting} onSelect={createThenMerge}>
+          Pull Request then Merge
+        </DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
+
+function WakeUpHeaderAction({ threadId }: PluginThreadHeaderActionProps) {
+  const rpc = useRpc<typeof rpcContract>();
+  const mounted = useMounted();
+  const [submitting, setSubmitting] = useState(false);
+  const fetch = useCallback(() => rpc.call("wakeUpState", { threadId }), [rpc, threadId]);
+  const visible = useVisible(fetch, mounted);
+
+  const wakeUp = useCallback(() => {
+    if (submitting) return;
+    setSubmitting(true);
+    rpc.call("wakeUp", { threadId }).then(
+      () => {
+        if (mounted.current) setSubmitting(false);
+        // The environment goes back to "ready" — republishAfterMutation on
+        // the backend already covers the refetch, no need to hide locally.
+        toast.success("Thread woken up");
+      },
+      (error: unknown) => {
+        if (mounted.current) setSubmitting(false);
+        toast.error(errorText(error, "Could not wake up the thread."));
       },
     );
   }, [rpc, submitting, threadId, mounted]);
@@ -140,10 +257,10 @@ function PullRequestHeaderAction({ threadId }: PluginThreadHeaderActionProps) {
 
   return (
     <Button
-      aria-label="Открыть Pull Request"
+      aria-label="Wake up the retired thread"
       className={HEADER_ACTION_CLASS}
       disabled={submitting}
-      onClick={create}
+      onClick={wakeUp}
       size="sm"
       type="button"
       variant="outline"
@@ -151,9 +268,9 @@ function PullRequestHeaderAction({ threadId }: PluginThreadHeaderActionProps) {
       <Icon
         aria-hidden="true"
         className={submitting ? "size-3.5 animate-spin" : "size-3.5"}
-        name={submitting ? "Loading" : "GitPullRequest"}
+        name={submitting ? "Loading" : "Zap"}
       />
-      PR
+      Wake Up
     </Button>
   );
 }
@@ -174,12 +291,12 @@ function FastForwardHeaderAction({ threadId }: PluginThreadHeaderActionProps) {
     rpc.call("fastForward", { threadId }).then(
       () => {
         if (mounted.current) setSubmitting(false);
-        // Ветка перемотана — «changed» перечитает состояние и спрячет кнопку.
-        toast.success("Ветка перемотана на main");
+        // The branch was fast-forwarded — "changed" will refetch state and hide the button.
+        toast.success("Branch fast-forwarded to main");
       },
       (error: unknown) => {
         if (mounted.current) setSubmitting(false);
-        toast.error(errorText(error, "Не удалось перемотать ветку."));
+        toast.error(errorText(error, "Could not fast-forward the branch."));
       },
     );
   }, [rpc, submitting, threadId, mounted]);
@@ -188,7 +305,7 @@ function FastForwardHeaderAction({ threadId }: PluginThreadHeaderActionProps) {
 
   return (
     <Button
-      aria-label="Догнать main (fast-forward)"
+      aria-label="Catch up with main (fast-forward)"
       className={HEADER_ACTION_CLASS}
       disabled={submitting}
       onClick={run}
@@ -206,9 +323,10 @@ function FastForwardHeaderAction({ threadId }: PluginThreadHeaderActionProps) {
   );
 }
 
-// Иконка кнопки Merge отражает агрегированный статус проверок PR (checks.state
-// из bb, см. src/core/merge-readiness.ts): «Pull Request» гаснет ровно тогда,
-// когда «Merge» загорается, — это одна и та же роль кнопки на двух стадиях жизни PR.
+// The Merge button's icon reflects the PR's aggregated checks status
+// (checks.state from bb, see src/core/merge-readiness.ts): "Pull Request"
+// turns off exactly when "Merge" turns on — it's the same button role at
+// two stages of the PR's life.
 const MERGE_INDICATOR_ICON: Record<MergeState["indicator"], IconName> = {
   success: "CircleCheck",
   failure: "CircleX",
@@ -218,11 +336,11 @@ const MERGE_INDICATOR_ICON: Record<MergeState["indicator"], IconName> = {
 };
 
 const MERGE_INDICATOR_LABEL: Record<MergeState["indicator"], string> = {
-  success: "проверки прошли",
-  failure: "проверки не прошли",
-  pending: "проверки выполняются",
-  neutral: "проверок нет",
-  unknown: "статус проверок неизвестен",
+  success: "checks passed",
+  failure: "checks failed",
+  pending: "checks running",
+  neutral: "no checks",
+  unknown: "checks status unknown",
 };
 
 function MergeHeaderAction({ threadId }: PluginThreadHeaderActionProps) {
@@ -230,9 +348,10 @@ function MergeHeaderAction({ threadId }: PluginThreadHeaderActionProps) {
   const mounted = useMounted();
   const [submitting, setSubmitting] = useState(false);
   const fetchMerge = useCallback(() => rpc.call("mergeState", { threadId }), [rpc, threadId]);
-  const { visible, indicator } = usePolledState(fetchMerge, MERGE_STATE_FALLBACK, mounted);
-  // После мёржа кнопка гаснет (visible: false) — на её месте показываем,
-  // подтянулся ли локальный main (см. memory/decisions/local-main-pull-after-merge.md).
+  const { visible, indicator, number } = usePolledState(fetchMerge, MERGE_STATE_FALLBACK, mounted);
+  // After a merge the button turns off (visible: false) — in its place we
+  // show whether the local main got pulled (see
+  // memory/decisions/local-main-pull-after-merge.md).
   const fetchMainPull = useCallback(
     () => rpc.call("mainPullState", { threadId }),
     [rpc, threadId],
@@ -243,37 +362,32 @@ function MergeHeaderAction({ threadId }: PluginThreadHeaderActionProps) {
     if (submitting) return;
     setSubmitting(true);
     rpc.call("mergePr", { threadId }).then(
-      () => {
+      (result) => {
         if (mounted.current) setSubmitting(false);
-        toast.success("Pull Request смёржен");
+        toast.success("Pull Request merged");
+        // A separate toast about main, symmetric with MainPullRetryBadge:
+        // success is quiet news on its own, failure will already be shown
+        // by the "main not pulled" badge that appears in the button's place
+        // on the next refetch.
+        if (result.mainPull?.ok) toast.success("main pulled");
       },
       (error: unknown) => {
         if (mounted.current) setSubmitting(false);
-        toast.error(errorText(error, "Не удалось смёржить Pull Request."));
+        toast.error(errorText(error, "Could not merge the Pull Request."));
       },
     );
   }, [rpc, submitting, threadId, mounted]);
 
   if (!visible) {
     if (!mainPull.attempted || mainPull.ok) return null;
-    return (
-      <Button
-        aria-label={`Локальный main не подтянут: ${mainPull.reason ?? "неизвестная причина"}`}
-        className={HEADER_ACTION_CLASS}
-        disabled
-        size="sm"
-        type="button"
-        variant="outline"
-      >
-        <Icon aria-hidden="true" className="size-3.5" name="AlertTriangle" />
-        main не подтянут
-      </Button>
-    );
+    return <MainPullRetryBadge threadId={threadId} reason={mainPull.reason} />;
   }
+
+  const label = number === null ? "Merge" : `Merge #${number}`;
 
   return (
     <Button
-      aria-label={`Смёржить Pull Request (${MERGE_INDICATOR_LABEL[indicator]})`}
+      aria-label={`${label} Pull Request (${MERGE_INDICATOR_LABEL[indicator]})`}
       className={HEADER_ACTION_CLASS}
       disabled={submitting}
       onClick={merge}
@@ -286,29 +400,97 @@ function MergeHeaderAction({ threadId }: PluginThreadHeaderActionProps) {
         className={submitting ? "size-3.5 animate-spin" : "size-3.5"}
         name={submitting ? "Loading" : MERGE_INDICATOR_ICON[indicator]}
       />
-      Merge
+      {label}
+    </Button>
+  );
+}
+
+// Previously the main-pull KV state was written once right after mergePr and
+// never updated again — there was no trigger to re-check, even once the
+// failure reason (main busy in another copy) had cleared later (see
+// memory/decisions/main-pull-retry-button.md). On hover the badge turns into
+// "Retry": an explicit click reruns the same pull via the `retryMainPull`
+// RPC, instead of just waiting for the next merge.
+function MainPullRetryBadge({
+  threadId,
+  reason,
+}: {
+  threadId: string;
+  reason: string | null;
+}) {
+  const rpc = useRpc<typeof rpcContract>();
+  const mounted = useMounted();
+  const [retrying, setRetrying] = useState(false);
+  const [hovering, setHovering] = useState(false);
+
+  const retry = useCallback(() => {
+    if (retrying) return;
+    setRetrying(true);
+    rpc.call("retryMainPull", { threadId }).then(
+      (result) => {
+        if (!mounted.current) return;
+        setRetrying(false);
+        if (result.ok) toast.success("main pulled");
+        else toast.error(`Could not pull main: ${result.reason ?? "unknown reason"}`);
+      },
+      (error: unknown) => {
+        if (mounted.current) setRetrying(false);
+        toast.error(errorText(error, "Could not retry pulling main."));
+      },
+    );
+  }, [rpc, retrying, threadId, mounted]);
+
+  return (
+    <Button
+      aria-label={
+        retrying
+          ? "Retrying pulling main"
+          : `Local main not pulled: ${reason ?? "unknown reason"}. Click to retry.`
+      }
+      className={HEADER_ACTION_CLASS}
+      disabled={retrying}
+      onClick={retry}
+      onMouseEnter={() => setHovering(true)}
+      onMouseLeave={() => setHovering(false)}
+      size="sm"
+      type="button"
+      variant="outline"
+    >
+      <Icon
+        aria-hidden="true"
+        className={retrying ? "size-3.5 animate-spin" : "size-3.5"}
+        name={retrying ? "Loading" : hovering ? "RotateCcw" : "AlertTriangle"}
+      />
+      {retrying ? "Retrying…" : hovering ? "Retry" : "main not pulled"}
     </Button>
   );
 }
 
 export default definePluginApp((app) => {
+  // Registered first: when it's visible, the environment is retiring and the
+  // git-dependent buttons below have nothing reliable to show yet anyway.
+  app.slots.experimental_threadHeaderAction({
+    id: "wake-up",
+    title: "Wake up the retired thread",
+    component: WakeUpHeaderAction,
+  });
   app.slots.experimental_threadHeaderAction({
     id: "fast-forward",
-    title: "Догнать main (fast-forward)",
+    title: "Catch up with main (fast-forward)",
     component: FastForwardHeaderAction,
   });
   app.slots.experimental_threadHeaderAction({
     id: "pull-request",
-    title: "Открыть Pull Request",
+    title: "Open Pull Request",
     component: PullRequestHeaderAction,
   });
-  // Регистрируется последней среди кнопок этого плагина — занимает то же
-  // крайнее правое место, что держала кнопка «Pull Request»
-  // (memory/decisions/pr-button-rightmost-via-plugin-id.md), пока живой PR не
-  // открыт: ровно одна из двух видна в любой момент.
+  // Registered last among this plugin's buttons — takes the same rightmost
+  // spot that the "Pull Request" button held
+  // (memory/decisions/pr-button-rightmost-via-plugin-id.md) until a live PR
+  // is opened: exactly one of the two is visible at any given time.
   app.slots.experimental_threadHeaderAction({
     id: "merge",
-    title: "Смёржить Pull Request",
+    title: "Merge Pull Request",
     component: MergeHeaderAction,
   });
 });

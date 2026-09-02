@@ -1,9 +1,10 @@
 # bb-plugin-zz-pull-request
 
-> Префикс `zz-` в имени не косметика: id плагина BB выводит из имени пакета и
-> сортирует кнопки в шапке треда по нему по алфавиту. `zz-` держит кнопку
-> «PR» крайней справа среди кнопок-плагинов. Переименуешь обратно — кнопка
-> молча уедет влево. Разбор: `memory/decisions/pr-button-rightmost-via-plugin-id.md`.
+> The `zz-` prefix in the name isn't cosmetic: BB derives the plugin id from
+> the package name and sorts the thread header buttons by it alphabetically.
+> `zz-` keeps the "PR" button rightmost among the plugin buttons. Rename it
+> back and the button silently drifts left. Details:
+> `memory/decisions/pr-button-rightmost-via-plugin-id.md`.
 
 A BB plugin that keeps a todo list. It shows every surface a plugin can own:
 

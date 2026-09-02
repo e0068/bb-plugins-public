@@ -2,15 +2,15 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createFakePluginHost } from "@get-bb/plugin-sdk/testing";
 import plugin from "./server";
 
-// Тонкий интеграционный тест склейки prState: гоняем реальный rpc-контракт
-// поверх заглушённого bb.sdk и проверяем, что статус окружения и PR правильно
-// сводятся в решение о видимости кнопки.
+// A thin integration test of the prState wiring: runs the real rpc contract
+// over a stubbed bb.sdk and checks that the environment's git status and PR
+// state correctly resolve into the button's visibility decision.
 
 interface StatusStub {
   hasUncommittedChanges: boolean;
   aheadCount: number;
   behindCount?: number;
-  /** HEAD текущей ветки — по умолчанию фиксированный, чтобы мержи мог узнать «тот же коммит». */
+  /** The current branch's HEAD — fixed by default, so a merge can recognize "the same commit". */
   headSha?: string;
 }
 
@@ -23,17 +23,28 @@ interface HostOptions {
   pr?: {
     outcome: "absent" | "available" | "unavailable";
     url?: string;
+    number?: number;
     state?: PrState;
     checksState?: ChecksState;
   };
   prThrows?: boolean;
   mergePullRequest?: () => Promise<unknown>;
+  unarchive?: () => Promise<unknown>;
+  /** The environment's lifecycle status. Defaults to "ready". */
+  environmentStatus?: "destroyed" | "destroying" | "error" | "provisioning" | "ready" | "retiring";
+  /**
+   * The environment's working copy. `null` by default on purpose: the content
+   * check (src/wiring/merged-content.ts) shells out to real git when there is
+   * a path, and these tests are about the wiring, not about git. Tests that
+   * need the real-git path — the local main pull — pass one explicitly.
+   */
+  path?: string | null;
 }
 
-// `options` читается лениво при каждом вызове (не снимается один раз при
-// создании host) — так тест может смёржить PR, затем подменить options.pr/
-// options.status «под GitHub, ответивший merged» и переиспользовать тот же
-// bb/harness (а с ним и ту же kv) для второго RPC-вызова.
+// `options` is read lazily on every call (not snapshotted once when the host
+// is created) — so a test can merge a PR, then swap options.pr/options.status
+// to look "as if GitHub responded merged", and reuse the same bb/harness
+// (and with it the same kv) for a second RPC call.
 function statusResultOf(status: StatusStub | undefined) {
   if (status === undefined) return { outcome: "unavailable" as const, message: "no git" };
   return {
@@ -55,6 +66,7 @@ function prResultOf(pr: HostOptions["pr"]) {
         outcome: "available",
         pullRequest: {
           url: pr.url ?? "https://x",
+          number: pr.number ?? 9,
           state: pr.state ?? "open",
           checks: { state: pr.checksState ?? "no_checks" },
         },
@@ -67,13 +79,17 @@ function host(options: HostOptions) {
     pluginId: "pull-request",
     sdk: {
       subscribe: () => () => {},
-      threads: { get: async () => ({ environmentId: options.environmentId }) },
+      threads: {
+        get: async () => ({ environmentId: options.environmentId }),
+        unarchive: options.unarchive ?? (async () => ({ ok: true })),
+      },
       environments: {
         get: async () => ({
           mergeBaseBranch: null,
           defaultBranch: "main",
           baseBranch: "origin/main",
-          path: "/tmp/worktree",
+          path: options.path ?? null,
+          status: options.environmentStatus ?? "ready",
         }),
         status: async () => statusResultOf(options.status),
         pullRequest: async () => {
@@ -105,28 +121,45 @@ async function mergeState(options: Parameters<typeof host>[0]) {
   return harness.behavior.callRpc("mergeState", { threadId: "t1" });
 }
 
-describe("prState (склейка)", () => {
-  it("чисто + впереди базы + PR absent → видна", async () => {
+describe("prState (wiring)", () => {
+  it("clean + ahead of base + PR absent → visible", async () => {
     expect(
       await prState({
         environmentId: "env1",
         status: { hasUncommittedChanges: false, aheadCount: 2 },
         pr: { outcome: "absent" },
       }),
-    ).toEqual({ visible: true, reason: "ready", prUrl: null });
+    ).toEqual({ visible: true, reason: "ready", prUrl: null, nextNumber: null });
   });
 
-  it("несохранённые правки → скрыта", async () => {
+  // The one place where the wiring meets real git: with a working copy on
+  // disk the content check actually shells out. The path here doesn't exist,
+  // so git refuses — and a refusal must not withhold the button, since
+  // "couldn't measure" is not "already merged". The same missing path also
+  // makes the nextNumber preview (readOrigin) fail closed to null, without
+  // ever touching a token or the network.
+  it("git can't answer (a working copy that isn't there) → still visible", async () => {
+    expect(
+      await prState({
+        environmentId: "env1",
+        path: "/tmp/does-not-exist-worktree",
+        status: { hasUncommittedChanges: false, aheadCount: 2 },
+        pr: { outcome: "absent" },
+      }),
+    ).toEqual({ visible: true, reason: "ready", prUrl: null, nextNumber: null });
+  });
+
+  it("uncommitted changes → hidden", async () => {
     expect(
       await prState({
         environmentId: "env1",
         status: { hasUncommittedChanges: true, aheadCount: 2 },
         pr: { outcome: "absent" },
       }),
-    ).toEqual({ visible: false, reason: "dirty", prUrl: null });
+    ).toEqual({ visible: false, reason: "dirty", prUrl: null, nextNumber: null });
   });
 
-  it("живой PR (open) → скрыта, но url отдаётся", async () => {
+  it("a live PR (open) → hidden, but the url is still returned", async () => {
     expect(
       await prState({
         environmentId: "env1",
@@ -141,10 +174,11 @@ describe("prState (склейка)", () => {
       visible: false,
       reason: "pr-exists",
       prUrl: "https://github.com/e0068/bb-plugins/pull/9",
+      nextNumber: null,
     });
   });
 
-  it("PR слит (merged) + новый коммит впереди → видна снова", async () => {
+  it("PR merged + new commit ahead → visible again", async () => {
     expect(
       await prState({
         environmentId: "env1",
@@ -159,38 +193,41 @@ describe("prState (склейка)", () => {
       visible: true,
       reason: "ready",
       prUrl: "https://github.com/e0068/bb-plugins/pull/9",
+      nextNumber: null,
     });
   });
 
-  it("у треда нет окружения → скрыта", async () => {
+  it("the thread has no environment → hidden", async () => {
     expect(await prState({ environmentId: null })).toEqual({
       visible: false,
       reason: "no-environment",
       prUrl: null,
+      nextNumber: null,
     });
   });
 
-  it("pullRequest бросает (персональное/не-git окружение) → скрыта, не падает", async () => {
+  it("pullRequest throws (personal/non-git environment) → hidden, doesn't fail", async () => {
     expect(
       await prState({
         environmentId: "env1",
         status: { hasUncommittedChanges: false, aheadCount: 2 },
         prThrows: true,
       }),
-    ).toEqual({ visible: false, reason: "pr-unknown", prUrl: null });
+    ).toEqual({ visible: false, reason: "pr-unknown", prUrl: null, nextNumber: null });
   });
 
-  it("git недоступен в окружении → скрыта", async () => {
+  it("git unavailable in the environment → hidden", async () => {
     expect(await prState({ environmentId: "env1" })).toEqual({
       visible: false,
       reason: "status-unavailable",
       prUrl: null,
+      nextNumber: null,
     });
   });
 });
 
-describe("fastForwardState (склейка)", () => {
-  it("отстаём, своих коммитов нет, чисто → видна", async () => {
+describe("fastForwardState (wiring)", () => {
+  it("behind, no commits of our own, clean → visible", async () => {
     expect(
       await fastForwardState({
         environmentId: "env1",
@@ -199,7 +236,7 @@ describe("fastForwardState (склейка)", () => {
     ).toEqual({ visible: true, reason: "ready" });
   });
 
-  it("не отстаём → скрыта", async () => {
+  it("not behind → hidden", async () => {
     expect(
       await fastForwardState({
         environmentId: "env1",
@@ -208,7 +245,7 @@ describe("fastForwardState (склейка)", () => {
     ).toEqual({ visible: false, reason: "up-to-date" });
   });
 
-  it("свои коммиты впереди при отставании → скрыта (расхождение)", async () => {
+  it("commits of our own ahead while behind → hidden (diverged)", async () => {
     expect(
       await fastForwardState({
         environmentId: "env1",
@@ -217,14 +254,14 @@ describe("fastForwardState (склейка)", () => {
     ).toEqual({ visible: false, reason: "diverged" });
   });
 
-  it("у треда нет окружения → скрыта", async () => {
+  it("the thread has no environment → hidden", async () => {
     expect(await fastForwardState({ environmentId: null })).toEqual({
       visible: false,
       reason: "no-environment",
     });
   });
 
-  it("git недоступен в окружении → скрыта", async () => {
+  it("git unavailable in the environment → hidden", async () => {
     expect(await fastForwardState({ environmentId: "env1" })).toEqual({
       visible: false,
       reason: "status-unavailable",
@@ -232,8 +269,8 @@ describe("fastForwardState (склейка)", () => {
   });
 });
 
-describe("mergeState (склейка)", () => {
-  it("PR открыт + проверки прошли → видна, индикатор success", async () => {
+describe("mergeState (wiring)", () => {
+  it("PR open + checks passing → visible, indicator success", async () => {
     expect(
       await mergeState({
         environmentId: "env1",
@@ -248,54 +285,113 @@ describe("mergeState (склейка)", () => {
       visible: true,
       indicator: "success",
       prUrl: "https://github.com/e0068/bb-plugins/pull/9",
+      number: 9,
     });
   });
 
-  it("PR открыт + проверки провалены → видна, индикатор failure", async () => {
+  it("PR open + checks failing → visible, indicator failure", async () => {
     expect(
       await mergeState({
         environmentId: "env1",
         pr: { outcome: "available", state: "open", checksState: "failing" },
       }),
-    ).toEqual({ visible: true, indicator: "failure", prUrl: "https://x" });
+    ).toEqual({ visible: true, indicator: "failure", prUrl: "https://x", number: 9 });
   });
 
-  it("PR слит (merged) → скрыта, индикатор unknown", async () => {
+  it("PR merged → hidden, indicator unknown", async () => {
     expect(
       await mergeState({
         environmentId: "env1",
         pr: { outcome: "available", state: "merged", checksState: "passing" },
       }),
-    ).toEqual({ visible: false, indicator: "unknown", prUrl: "https://x" });
+    ).toEqual({ visible: false, indicator: "unknown", prUrl: "https://x", number: 9 });
   });
 
-  it("PR отсутствует → скрыта, prUrl null", async () => {
+  it("no PR → hidden, prUrl null", async () => {
     expect(await mergeState({ environmentId: "env1", pr: { outcome: "absent" } })).toEqual({
       visible: false,
       indicator: "unknown",
       prUrl: null,
+      number: null,
     });
   });
 
-  it("у треда нет окружения → скрыта", async () => {
+  it("the thread has no environment → hidden", async () => {
     expect(await mergeState({ environmentId: null })).toEqual({
       visible: false,
       indicator: "unknown",
       prUrl: null,
+      number: null,
     });
   });
 
-  it("pullRequest бросает → скрыта, не падает", async () => {
+  it("pullRequest throws → hidden, doesn't fail", async () => {
     expect(await mergeState({ environmentId: "env1", prThrows: true })).toEqual({
       visible: false,
       indicator: "unknown",
       prUrl: null,
+      number: null,
     });
   });
 });
 
-describe("headAlreadyMerged после squash-мёржа (склейка mergePr → prState)", () => {
-  it("тот же HEAD после mergePr не даёт снова показать PR, хотя aheadCount > 0", async () => {
+describe("wakeUpState (wiring)", () => {
+  it("environment retiring → visible", async () => {
+    const { bb, harness } = host({ environmentId: "env1", environmentStatus: "retiring" });
+    await plugin(bb);
+    expect(await harness.behavior.callRpc("wakeUpState", { threadId: "t1" })).toEqual({
+      visible: true,
+    });
+  });
+
+  it("environment ready → hidden", async () => {
+    const { bb, harness } = host({ environmentId: "env1", environmentStatus: "ready" });
+    await plugin(bb);
+    expect(await harness.behavior.callRpc("wakeUpState", { threadId: "t1" })).toEqual({
+      visible: false,
+    });
+  });
+
+  it("the thread has no environment → hidden", async () => {
+    const { bb, harness } = host({ environmentId: null });
+    await plugin(bb);
+    expect(await harness.behavior.callRpc("wakeUpState", { threadId: "t1" })).toEqual({
+      visible: false,
+    });
+  });
+});
+
+describe("wakeUp", () => {
+  it("unarchives the thread — bb's own unarchive route cancels a stuck retire as a side effect", async () => {
+    const calls: unknown[] = [];
+    const { bb, harness } = host({
+      environmentId: "env1",
+      environmentStatus: "retiring",
+      unarchive: async () => {
+        calls.push("called");
+        return { ok: true };
+      },
+    });
+    await plugin(bb);
+    expect(await harness.behavior.callRpc("wakeUp", { threadId: "t1" })).toEqual({ ok: true });
+    expect(calls).toHaveLength(1);
+  });
+
+  it("publishes \"changed\" right on success — the front end doesn't wait for polling", async () => {
+    const { bb, harness } = host({ environmentId: "env1", environmentStatus: "retiring" });
+    await plugin(bb);
+    await harness.behavior.callRpc("wakeUp", { threadId: "t1" });
+    const changed = harness.realtimeSignals.filter((signal) => signal.channel === "changed");
+    expect(changed).toHaveLength(1);
+  });
+});
+
+// The KV cache of the merged fact, seen through the RPCs: mergePr primes it,
+// prState reads it. Whether the fact itself is measured correctly when the
+// cache is cold — including a merge done outside the plugin — is covered in
+// src/wiring/visibility-decision.test.ts, without shelling out to git.
+describe("merged-head cache after a squash merge (mergePr → prState wiring)", () => {
+  it("the same HEAD after mergePr doesn't let the PR show again, even though aheadCount > 0", async () => {
     const options: Parameters<typeof host>[0] = {
       environmentId: "env1",
       status: { hasUncommittedChanges: false, aheadCount: 8, headSha: "sha-1" },
@@ -305,18 +401,20 @@ describe("headAlreadyMerged после squash-мёржа (склейка mergePr
     await plugin(bb);
 
     await harness.behavior.callRpc("mergePr", { threadId: "t1" });
-    // GitHub теперь отдаёт PR как merged; squash оставил старые SHA локальной
-    // ветки «впереди» — HEAD и aheadCount не поменялись.
+    // GitHub now returns the PR as merged; the squash left the local
+    // branch's old SHAs "ahead" — HEAD and aheadCount haven't changed. The
+    // cache primed by mergePr answers without any git run.
     options.pr = { outcome: "available", state: "merged" };
 
     expect(await harness.behavior.callRpc("prState", { threadId: "t1" })).toEqual({
       visible: false,
       reason: "already-merged",
       prUrl: "https://x",
+      nextNumber: null,
     });
   });
 
-  it("новый коммит после мёржа (другой HEAD) → кнопка PR снова видна", async () => {
+  it("a new commit after the merge (different HEAD) → the PR button is visible again", async () => {
     const options: Parameters<typeof host>[0] = {
       environmentId: "env1",
       status: { hasUncommittedChanges: false, aheadCount: 8, headSha: "sha-1" },
@@ -333,15 +431,17 @@ describe("headAlreadyMerged после squash-мёржа (склейка mergePr
       visible: true,
       reason: "ready",
       prUrl: "https://x",
+      nextNumber: null,
     });
   });
 });
 
 describe("mergePr", () => {
-  it("мёржит открытый PR через bb (squash) и возвращает ok", async () => {
+  it("merges an open PR via bb (squash) and returns ok", async () => {
     const calls: unknown[] = [];
     const { bb, harness } = host({
       environmentId: "env1",
+      path: "/tmp/worktree",
       pr: { outcome: "available", state: "open", checksState: "passing" },
       mergePullRequest: async () => {
         calls.push("called");
@@ -349,21 +449,27 @@ describe("mergePr", () => {
       },
     });
     await plugin(bb);
-    expect(await harness.behavior.callRpc("mergePr", { threadId: "t1" })).toEqual({ ok: true });
+    // env.path in the fake host is a nonexistent directory, so the real-git
+    // main pull refuses right away; that doesn't undo the merge itself.
+    // The content of mainPull is checked separately by describe("mainPullState").
+    const result = await harness.behavior.callRpc("mergePr", { threadId: "t1" });
+    expect(result.ok).toBe(true);
+    expect(result.mainPull).toEqual({ ok: false, reason: expect.any(String) });
     expect(calls).toHaveLength(1);
   });
 
-  it("у треда нет окружения → бросает", async () => {
+  it("the thread has no environment → throws", async () => {
     const { bb, harness } = host({ environmentId: null });
     await plugin(bb);
     await expect(harness.behavior.callRpc("mergePr", { threadId: "t1" })).rejects.toThrow();
   });
 
-  // Раньше кнопки Merge/PR узнавали о свежесмёрженном PR только по «changed»
-  // из environment:changed/thread:changed или по 20-секундному поллингу
-  // (app.tsx) — отсюда заметная задержка перед тем, как «Pull Request»
-  // сменялась на «Merge». mergePr публикует «changed» сам, сразу по успеху.
-  it("публикует «changed» сразу по успеху — фронт не ждёт поллинга", async () => {
+  // Previously the Merge/PR buttons only learned about a freshly merged PR
+  // via "changed" from environment:changed/thread:changed or via the
+  // 20-second poll (app.tsx) — hence a noticeable delay before "Pull
+  // Request" switched to "Merge". mergePr now publishes "changed" itself,
+  // right on success.
+  it("publishes \"changed\" right on success — the front end doesn't wait for polling", async () => {
     const { bb, harness } = host({
       environmentId: "env1",
       pr: { outcome: "available", state: "open", checksState: "passing" },
@@ -375,12 +481,23 @@ describe("mergePr", () => {
   });
 });
 
-// bb сам узнаёт о смене статуса PR на GitHub не мгновенно (см.
-// memory/decisions/republish-catchup-burst-after-mutation.md): один republish()
-// сразу после мутации часто читает ещё не догнавший кэш bb, и без подстраховки
-// кнопка ждала 20-секундного поллинга на фронте. Проверяем, что после мутации
-// «changed» приходит не один раз, а короткой серией.
-describe("серия догоняющих republish после мутации (createPr/fastForward/mergePr)", () => {
+describe("createAndMergePr", () => {
+  it("the thread has no environment → throws before touching GitHub", async () => {
+    const { bb, harness } = host({ environmentId: null });
+    await plugin(bb);
+    await expect(
+      harness.behavior.callRpc("createAndMergePr", { threadId: "t1" }),
+    ).rejects.toThrow();
+  });
+});
+
+// bb itself doesn't learn about a PR status change on GitHub instantly (see
+// memory/decisions/republish-catchup-burst-after-mutation.md): a single
+// republish() right after the mutation often reads bb's cache before it has
+// caught up, and without a safety net the button would wait for the
+// front end's 20-second poll. We check that after a mutation "changed"
+// arrives not once, but as a short burst.
+describe("catch-up republish burst after a mutation (createPr/fastForward/mergePr)", () => {
   beforeEach(() => {
     vi.useFakeTimers();
   });
@@ -388,7 +505,7 @@ describe("серия догоняющих republish после мутации (c
     vi.useRealTimers();
   });
 
-  it("mergePr → «changed» сразу и ещё несколько раз в следующие секунды", async () => {
+  it("mergePr → \"changed\" right away and a few more times over the next seconds", async () => {
     const { bb, harness } = host({
       environmentId: "env1",
       pr: { outcome: "available", state: "open", checksState: "passing" },
@@ -406,7 +523,7 @@ describe("серия догоняющих republish после мутации (c
     expect(changedCount()).toBe(5);
   });
 
-  it("после диспоуза плагина отложенные republish не срабатывают", async () => {
+  it("after the plugin is disposed, the pending republishes do not fire", async () => {
     const { bb, harness } = host({
       environmentId: "env1",
       pr: { outcome: "available", state: "open", checksState: "passing" },
@@ -421,8 +538,8 @@ describe("серия догоняющих republish после мутации (c
   });
 });
 
-describe("mainPullState (склейка)", () => {
-  it("PR ещё не мёржили → попытки не было", async () => {
+describe("mainPullState (wiring)", () => {
+  it("PR not merged yet → no attempt was made", async () => {
     const { bb, harness } = host({ environmentId: "env1" });
     await plugin(bb);
     expect(await harness.behavior.callRpc("mainPullState", { threadId: "t1" })).toEqual({
@@ -432,7 +549,7 @@ describe("mainPullState (склейка)", () => {
     });
   });
 
-  it("у треда нет окружения → попытки не было", async () => {
+  it("the thread has no environment → no attempt was made", async () => {
     const { bb, harness } = host({ environmentId: null });
     await plugin(bb);
     expect(await harness.behavior.callRpc("mainPullState", { threadId: "t1" })).toEqual({
@@ -442,15 +559,16 @@ describe("mainPullState (склейка)", () => {
     });
   });
 
-  // env.path в фейковом host — несуществующий каталог, поэтому реальный git
-  // здесь неизбежно откажет; сама логика fetch origin <base>:<base>
-  // (fast-forward-only + отказ на занятой в другом worktree ветке)
-  // проверяется отдельно, без реального git, в
-  // src/wiring/local-main-pull.test.ts. Здесь — только склейка mergePr →
-  // KV → mainPullState.
-  it("после mergePr попытка подтянуть main отражается в mainPullState", async () => {
+  // env.path in the fake host is a nonexistent directory, so real git
+  // inevitably refuses here; the actual logic of fetch origin
+  // <base>:<base> (fast-forward-only + refusal on a branch busy in another
+  // worktree) is verified separately, without real git, in
+  // src/wiring/local-main-pull.test.ts. Here we only check the mergePr →
+  // KV → mainPullState wiring.
+  it("after mergePr, the main-pull attempt is reflected in mainPullState", async () => {
     const { bb, harness } = host({
       environmentId: "env1",
+      path: "/tmp/worktree",
       pr: { outcome: "available", state: "open", checksState: "passing" },
     });
     await plugin(bb);
@@ -463,9 +581,48 @@ describe("mainPullState (склейка)", () => {
   });
 });
 
-// Оболочка подписок: сервер просит фронт перечитать («changed») на изменение
-// окружения всегда, а на изменение треда — только когда сменилась связка с
-// окружением (появился/сменился PR), а не на статус-хартбитах.
+// The "main not pulled" badge previously had no trigger to re-check state —
+// KV was written once right after mergePr and never updated again, even if
+// the failure reason (main busy in another copy) cleared later. See
+// memory/decisions/main-pull-retry-button.md.
+describe("retryMainPull (wiring)", () => {
+  it("the thread has no environment → throws", async () => {
+    const { bb, harness } = host({ environmentId: null });
+    await plugin(bb);
+    await expect(harness.behavior.callRpc("retryMainPull", { threadId: "t1" })).rejects.toThrow();
+  });
+
+  it("retries the attempt and returns the result directly (not only via mainPullState)", async () => {
+    const { bb, harness } = host({ environmentId: "env1", path: "/tmp/worktree" });
+    await plugin(bb);
+    const result = await harness.behavior.callRpc("retryMainPull", { threadId: "t1" });
+    expect(result.ok).toBe(false);
+    expect(typeof result.reason).toBe("string");
+  });
+
+  it("the retry's result is reflected in mainPullState without a separate mergePr", async () => {
+    const { bb, harness } = host({ environmentId: "env1", path: "/tmp/worktree" });
+    await plugin(bb);
+    await harness.behavior.callRpc("retryMainPull", { threadId: "t1" });
+
+    const state = await harness.behavior.callRpc("mainPullState", { threadId: "t1" });
+    expect(state.attempted).toBe(true);
+    expect(state.ok).toBe(false);
+  });
+
+  it("publishes \"changed\" — the front end learns the retry's outcome without waiting for the 20-second poll", async () => {
+    const { bb, harness } = host({ environmentId: "env1", path: "/tmp/worktree" });
+    await plugin(bb);
+    await harness.behavior.callRpc("retryMainPull", { threadId: "t1" });
+    const changed = harness.realtimeSignals.filter((signal) => signal.channel === "changed");
+    expect(changed.length).toBeGreaterThanOrEqual(1);
+  });
+});
+
+// The subscription shell: the server asks the front end to refetch
+// ("changed") on any environment change, and on a thread change only when
+// the environment link changed (a PR appeared/changed), not on
+// status-heartbeats.
 type ChangeEvent = { changes: readonly string[] };
 type SubscribeCall = [{ event: string; callback: (event: ChangeEvent) => void }];
 
@@ -478,7 +635,7 @@ async function subscriptions() {
   const calls = harness.inspection.sdk.callsTo("subscribe") as SubscribeCall[];
   const callbackFor = (event: string) => {
     const call = calls.find((args) => args[0].event === event);
-    if (!call) throw new Error(`нет подписки на ${event}`);
+    if (!call) throw new Error(`no subscription for ${event}`);
     return call[0].callback;
   };
   const changedCount = () =>
@@ -486,20 +643,20 @@ async function subscriptions() {
   return { callbackFor, changedCount };
 }
 
-describe("подписки republish «changed»", () => {
-  it("environment:changed → перечитать (любое изменение окружения)", async () => {
+describe("republish \"changed\" subscriptions", () => {
+  it("environment:changed → refetch (any environment change)", async () => {
     const { callbackFor, changedCount } = await subscriptions();
     callbackFor("environment:changed")({ changes: ["git-refs-changed"] });
     expect(changedCount()).toBe(1);
   });
 
-  it("thread:changed с environment-changed → перечитать (bb опознал PR)", async () => {
+  it("thread:changed with environment-changed → refetch (bb recognized the PR)", async () => {
     const { callbackFor, changedCount } = await subscriptions();
     callbackFor("thread:changed")({ changes: ["environment-changed"] });
     expect(changedCount()).toBe(1);
   });
 
-  it("thread:changed без environment-changed → молчим (хартбиты не трогаем)", async () => {
+  it("thread:changed without environment-changed → stay quiet (heartbeats don't count)", async () => {
     const { callbackFor, changedCount } = await subscriptions();
     callbackFor("thread:changed")({ changes: ["status-changed", "title-changed"] });
     expect(changedCount()).toBe(0);

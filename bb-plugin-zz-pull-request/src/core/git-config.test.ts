@@ -6,33 +6,33 @@ import {
 } from "./git-config";
 
 describe("parseGitdirPointer", () => {
-  it("достаёт gitdir из файла-указателя воркри", () => {
+  it("extracts gitdir from the worktree's pointer file", () => {
     expect(parseGitdirPointer("gitdir: /a/b/.git/worktrees/x\n")).toBe(
       "/a/b/.git/worktrees/x",
     );
   });
 
-  it("терпит лишние пробелы", () => {
+  it("tolerates extra whitespace", () => {
     expect(parseGitdirPointer("  gitdir:   /a/.git  ")).toBe("/a/.git");
   });
 
-  it("нет строки gitdir → null", () => {
+  it("no gitdir line → null", () => {
     expect(parseGitdirPointer("ref: refs/heads/main")).toBeNull();
   });
 });
 
 describe("configPathFromGitdir", () => {
-  it("воркри: config берётся из главного .git, не из worktrees/<name>", () => {
+  it("worktree: config is taken from the main .git, not worktrees/<name>", () => {
     expect(configPathFromGitdir("/a/b/.git/worktrees/feature")).toBe(
       "/a/b/.git/config",
     );
   });
 
-  it("обычный репозиторий: config рядом с gitdir", () => {
+  it("regular repository: config sits next to gitdir", () => {
     expect(configPathFromGitdir("/a/b/.git")).toBe("/a/b/.git/config");
   });
 
-  it("хвостовой слэш не задваивается", () => {
+  it("a trailing slash isn't doubled", () => {
     expect(configPathFromGitdir("/a/b/.git/")).toBe("/a/b/.git/config");
   });
 });
@@ -48,13 +48,13 @@ describe("originUrlFromGitConfig", () => {
 	remote = origin
 `;
 
-  it("достаёт url секции origin", () => {
+  it("extracts the origin section's url", () => {
     expect(originUrlFromGitConfig(config)).toBe(
       "git@github.com:e0068/bb-plugins.git",
     );
   });
 
-  it("не путает url другого ремоута с origin", () => {
+  it("doesn't confuse another remote's url with origin", () => {
     const text = `
 [remote "upstream"]
 	url = git@github.com:other/repo.git
@@ -64,12 +64,12 @@ describe("originUrlFromGitConfig", () => {
     expect(originUrlFromGitConfig(text)).toBe("https://github.com/me/mine.git");
   });
 
-  it("терпит пробел в заголовке подсекции", () => {
+  it("tolerates whitespace in the subsection header", () => {
     const text = `[remote  "origin"]\n\turl = git@github.com:a/b.git\n`;
     expect(originUrlFromGitConfig(text)).toBe("git@github.com:a/b.git");
   });
 
-  it("нет origin → null", () => {
+  it("no origin → null", () => {
     expect(originUrlFromGitConfig(`[remote "upstream"]\n\turl = x\n`)).toBeNull();
   });
 });

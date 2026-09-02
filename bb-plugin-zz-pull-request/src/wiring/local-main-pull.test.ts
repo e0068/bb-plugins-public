@@ -37,7 +37,7 @@ const CHECKED_OUT_AT_INTEGRATION_COPY: GitRun = {
 };
 
 describe("runLocalMainPull", () => {
-  it("база нигде не зачекаучена → прямой fetch origin <base>:<base>", async () => {
+  it("base is not checked out anywhere → direct fetch origin <base>:<base>", async () => {
     const { ports, calls } = fakePorts((args) =>
       args[0] === "worktree" ? NOWHERE_CHECKED_OUT : ok,
     );
@@ -48,7 +48,7 @@ describe("runLocalMainPull", () => {
     ]);
   });
 
-  it("база зачекаучена в другой копии → fetch+merge --ff-only ТАМ (-C <path>), не прямой fetch в реф", async () => {
+  it("base is checked out in another copy → fetch+merge --ff-only THERE (-C <path>), not a direct fetch into the ref", async () => {
     const { ports, calls } = fakePorts((args) =>
       args[0] === "worktree" ? CHECKED_OUT_AT_INTEGRATION_COPY : ok,
     );
@@ -66,7 +66,7 @@ describe("runLocalMainPull", () => {
     ]);
   });
 
-  it("копия с базой расходится (ff невозможен) → ok: false с текстом git, реф напрямую не трогается", async () => {
+  it("the copy with the base has diverged (ff impossible) → ok: false with git's text, ref is not touched directly", async () => {
     const { ports } = fakePorts((args) => {
       if (args[0] === "worktree") return CHECKED_OUT_AT_INTEGRATION_COPY;
       if (args.includes("merge"))
@@ -77,7 +77,7 @@ describe("runLocalMainPull", () => {
     expect(result).toEqual({ ok: false, reason: "Not possible to fast-forward, aborting." });
   });
 
-  it("несохранённые правки в целевой копии → merge отказывает, ok: false", async () => {
+  it("uncommitted changes in the target copy → merge refuses, ok: false", async () => {
     const { ports } = fakePorts((args) => {
       if (args[0] === "worktree") return CHECKED_OUT_AT_INTEGRATION_COPY;
       if (args.includes("merge")) {
@@ -93,21 +93,21 @@ describe("runLocalMainPull", () => {
     expect(result.ok).toBe(false);
   });
 
-  it("fetch в целевой копии упал → merge не запускается, ok: false", async () => {
+  it("fetch in the target copy failed → merge does not run, ok: false", async () => {
     const { ports, calls } = fakePorts((args) => {
       if (args[0] === "worktree") return CHECKED_OUT_AT_INTEGRATION_COPY;
-      if (args.includes("fetch")) return { code: 1, stdout: "", stderr: "нет сети" };
+      if (args.includes("fetch")) return { code: 1, stdout: "", stderr: "no network" };
       return ok;
     });
     const result = await runLocalMainPull(ports, "main");
-    expect(result).toEqual({ ok: false, reason: "нет сети" });
+    expect(result).toEqual({ ok: false, reason: "no network" });
     expect(calls).toEqual([
       ["worktree", "list", "--porcelain"],
       ["-C", "/Users/e0068/Documents/Projects/Kasimov", "fetch", "origin", "main"],
     ]);
   });
 
-  it("worktree list упал → фоллбэк на прямой fetch в реф", async () => {
+  it("worktree list failed → falls back to a direct fetch into the ref", async () => {
     const { ports, calls } = fakePorts((args) =>
       args[0] === "worktree" ? { code: 1, stdout: "", stderr: "boom" } : ok,
     );
@@ -118,7 +118,7 @@ describe("runLocalMainPull", () => {
     ]);
   });
 
-  it("реф зачекаучен только в САМОМ окружении (не найден в списке) → прямой fetch тоже безопасно откажет", async () => {
+  it("the ref is checked out only in the environment ITSELF (not found in the list) → the direct fetch also refuses safely", async () => {
     const { ports } = fakePorts((args) => {
       if (args[0] === "worktree") return NOWHERE_CHECKED_OUT;
       return {
@@ -131,13 +131,13 @@ describe("runLocalMainPull", () => {
     expect(result.ok).toBe(false);
   });
 
-  it("без stderr берёт stdout, иначе код возврата", async () => {
+  it("no stderr falls back to stdout, otherwise the exit code", async () => {
     const { ports } = fakePorts((args) =>
       args[0] === "worktree" ? NOWHERE_CHECKED_OUT : { code: 128, stdout: "", stderr: "" },
     );
     await expect(runLocalMainPull(ports, "main")).resolves.toEqual({
       ok: false,
-      reason: "код 128",
+      reason: "code 128",
     });
   });
 });

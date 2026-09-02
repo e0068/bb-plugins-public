@@ -1,29 +1,30 @@
-// Слой 1 — чистые построители запросов к GitHub REST (Git Data API). Ноль эффектов.
+// Layer 1 — pure builders for GitHub REST (Git Data API) requests. Zero effects.
 //
-// PR открывается без push: содержимое ветки пересобирается прямо на GitHub —
-// blob на каждый изменённый файл → tree (base_tree = дерево базовой ветки) →
-// commit (parent = вершина базы) → ref новой head-ветки → pull request. Здесь
-// только тела запросов; их последовательность и сеть — в оболочке (Слой 3),
-// потому что между шагами есть зависимость по возвращённым sha.
+// The PR is opened without a push: the branch content is rebuilt right on
+// GitHub — a blob for each changed file → a tree (base_tree = the base
+// branch's tree) → a commit (parent = the tip of the base) → a ref for the
+// new head branch → the pull request. Only the request bodies live here;
+// their sequencing and the network are in the shell (Layer 3), because there
+// is a dependency between steps through the returned shas.
 
 export interface RepoRef {
   owner: string;
   repo: string;
 }
 
-/** Путь относительно https://api.github.com; базовый URL и авторизацию добавляет оболочка. */
+/** Path relative to https://api.github.com; the shell adds the base URL and authorization. */
 export interface GithubRequest {
   method: "GET" | "POST" | "PATCH";
   path: string;
   body?: unknown;
 }
 
-/** Изменение одного файла ветки относительно базовой ветки. */
+/** A change to a single branch file relative to the base branch. */
 export type ChangedFile =
   | { kind: "upsert"; path: string; content: string; encoding: "utf-8" | "base64" }
   | { kind: "delete"; path: string };
 
-/** Запись дерева GitHub: обычный файл (`sha` блоба) или удаление (`sha: null`). */
+/** A GitHub tree entry: a regular file (blob `sha`) or a deletion (`sha: null`). */
 export interface TreeEntry {
   path: string;
   mode: "100644";
@@ -36,9 +37,9 @@ function base(repo: RepoRef): string {
 }
 
 /**
- * GET одной ветки: даёт вершину (`commit.sha`) и её дерево
- * (`commit.commit.tree.sha`) для base_tree и родителя коммита; 404 означает
- * «ветки на remote нет».
+ * GET for a single branch: gives its tip (`commit.sha`) and its tree
+ * (`commit.commit.tree.sha`) for base_tree and the commit's parent; a 404
+ * means "the branch doesn't exist on the remote".
  */
 export function getBranchRequest(repo: RepoRef, branch: string): GithubRequest {
   return { method: "GET", path: `${base(repo)}/branches/${branch}` };
@@ -53,9 +54,10 @@ export function blobRequest(
 }
 
 /**
- * Собирает записи дерева из изменений и карты `путь → sha блоба`. Удаления
- * дают `sha: null`; для upsert sha берётся из карты (её наполняет оболочка,
- * создав блобы). Порядок записей повторяет порядок изменений.
+ * Builds tree entries from the changes and a `path → blob sha` map.
+ * Deletions produce `sha: null`; for upserts, the sha comes from the map
+ * (populated by the shell after creating the blobs). Entry order follows
+ * the order of the changes.
  */
 export function buildTreeEntries(
   files: readonly ChangedFile[],
@@ -67,7 +69,7 @@ export function buildTreeEntries(
     }
     const sha = blobShaByPath[file.path];
     if (sha === undefined) {
-      throw new Error(`нет sha блоба для ${file.path}`);
+      throw new Error(`no blob sha for ${file.path}`);
     }
     return { path: file.path, mode: "100644", type: "blob", sha };
   });
@@ -134,4 +136,29 @@ export function pullRequestRequest(
       base: input.base,
     },
   };
+}
+
+/**
+ * GET the single most recently created issue or PR in the repo. Issues and
+ * PRs share one number sequence, so this is the highest number handed out
+ * so far — the shell turns it into "the number a new PR will (almost
+ * certainly) get" for display before the click.
+ */
+export function latestIssueRequest(repo: RepoRef): GithubRequest {
+  return { method: "GET", path: `${base(repo)}/issues?state=all&per_page=1` };
+}
+
+/**
+ * Parses {@link latestIssueRequest}'s response into "the next PR's number":
+ * the latest issue/PR's number plus one, or `1` for a repo with none yet.
+ * `null` when the shape isn't the expected array — an error body, a future
+ * API change — so the caller can degrade to showing no number.
+ */
+export function parseNextPrNumber(data: unknown): number | null {
+  if (!Array.isArray(data)) return null;
+  if (data.length === 0) return 1;
+  const latest = data[0];
+  const number =
+    latest && typeof latest === "object" ? (latest as { number?: unknown }).number : undefined;
+  return typeof number === "number" ? number + 1 : null;
 }

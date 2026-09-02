@@ -1,14 +1,14 @@
-// Слой 1 — чтение git-конфигурации как текста. Ноль зависимостей, ноль эффектов.
+// Layer 1 — reads git configuration as text. Zero dependencies, zero effects.
 //
-// Оболочка читает два файла через bb.sdk.files и отдаёт их содержимое сюда:
-//  1) файл-указатель `<worktree>/.git` воркри вида `gitdir: <path>`;
-//  2) сам `config` главного репозитория.
-// Разбор путей и INI — здесь, чтобы его можно было проверить без файловой системы.
+// The shell reads two files via bb.sdk.files and hands their content here:
+//  1) the `<worktree>/.git` pointer file of the form `gitdir: <path>`;
+//  2) the main repository's `config` itself.
+// Path and INI parsing live here so they can be verified without a filesystem.
 
 /**
- * Достаёт путь gitdir из содержимого файла-указателя `<worktree>/.git`.
- * У воркри `.git` — это файл (`gitdir: /abs/repo/.git/worktrees/name`), а не
- * директория. Возвращает null, если строки `gitdir:` нет.
+ * Extracts the gitdir path from the content of the `<worktree>/.git` pointer
+ * file. In a worktree, `.git` is a file (`gitdir: /abs/repo/.git/worktrees/name`),
+ * not a directory. Returns null if there's no `gitdir:` line.
  */
 export function parseGitdirPointer(pointerFile: string): string | null {
   const match = /^\s*gitdir:\s*(.+?)\s*$/m.exec(pointerFile);
@@ -16,10 +16,10 @@ export function parseGitdirPointer(pointerFile: string): string | null {
 }
 
 /**
- * По пути gitdir возвращает путь до `config` главного репозитория.
- * Для воркри gitdir указывает внутрь `.../.git/worktrees/<name>`, а общий
- * `config` лежит в самом `.../.git`. Для обычного репозитория gitdir и есть
- * `.git`, где `config` лежит рядом.
+ * Given a gitdir path, returns the path to the main repository's `config`.
+ * For a worktree, gitdir points inside `.../.git/worktrees/<name>`, while
+ * the shared `config` lives right in `.../.git`. For a regular repository,
+ * gitdir is `.git` itself, where `config` sits alongside it.
  */
 export function configPathFromGitdir(gitdir: string): string {
   const marker = "/worktrees/";
@@ -29,8 +29,8 @@ export function configPathFromGitdir(gitdir: string): string {
 }
 
 /**
- * Достаёт url ремоута `origin` из текста git-config. Возвращает null, если
- * секции `[remote "origin"]` или её `url` нет.
+ * Extracts the `origin` remote's url from git-config text. Returns null if
+ * there's no `[remote "origin"]` section or its `url`.
  */
 export function originUrlFromGitConfig(configText: string): string | null {
   let inOrigin = false;
@@ -49,8 +49,8 @@ export function originUrlFromGitConfig(configText: string): string | null {
   return null;
 }
 
-// `[remote "origin"]` — заголовок с подсекцией; пробелы между `remote` и кавычкой
-// git допускает, поэтому нормализуем.
+// `[remote "origin"]` — a header with a subsection; git allows whitespace
+// between `remote` and the quote, so we normalize it.
 function isOriginSection(header: string): boolean {
   return /^remote\s+"origin"$/.test(header.trim());
 }

@@ -17,7 +17,7 @@ const PORCELAIN_SAMPLE = [
 ].join("\n");
 
 describe("parseWorktreeList", () => {
-  it("разбирает несколько блоков worktree с обычными ветками", () => {
+  it("parses several worktree blocks with regular branches", () => {
     expect(parseWorktreeList(PORCELAIN_SAMPLE)).toEqual([
       { path: "/Users/e0068/Documents/Projects/Kasimov", branch: "refs/heads/main" },
       {
@@ -28,11 +28,11 @@ describe("parseWorktreeList", () => {
     ]);
   });
 
-  it("пустой вывод → пустой список", () => {
+  it("empty output → empty list", () => {
     expect(parseWorktreeList("")).toEqual([]);
   });
 
-  it("один worktree без завершающей пустой строки всё равно разобран", () => {
+  it("a single worktree with no trailing blank line still parses", () => {
     expect(
       parseWorktreeList("worktree /repo\nHEAD abc\nbranch refs/heads/main"),
     ).toEqual([{ path: "/repo", branch: "refs/heads/main" }]);
@@ -42,17 +42,17 @@ describe("parseWorktreeList", () => {
 describe("findBaseCheckout", () => {
   const worktrees = parseWorktreeList(PORCELAIN_SAMPLE);
 
-  it("находит путь worktree, где зачекаучена база", () => {
+  it("finds the worktree path where the base is checked out", () => {
     expect(findBaseCheckout(worktrees, "main")).toBe(
       "/Users/e0068/Documents/Projects/Kasimov",
     );
   });
 
-  it("база нигде не зачекаучена → null", () => {
+  it("base is not checked out anywhere → null", () => {
     expect(findBaseCheckout(worktrees, "release/1.2")).toBeNull();
   });
 
-  it("detached-worktree не считается чекаутом ветки", () => {
+  it("a detached worktree does not count as a branch checkout", () => {
     expect(findBaseCheckout(worktrees, "")).toBeNull();
   });
 });

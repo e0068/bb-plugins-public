@@ -1,9 +1,10 @@
-// bb-plugin-zz-pull-request — вход плагина (Слой 3, только проводка).
+// bb-plugin-zz-pull-request — the plugin entry point (Layer 3, wiring only).
 //
-// Даёт фронту два RPC: prState (показывать ли кнопку) и createPr (открыть PR на
-// GitHub через API без push). Вся логика — в слоях ниже: чистое ядро (src/core)
-// и оркестратор GitHub-потока (src/wiring/create-pr). Здесь — чтение мира через
-// bb.sdk и склейка.
+// Gives the front end two RPCs: prState (whether to show the button) and
+// createPr (open a PR on GitHub via the API without a push). All the logic
+// lives in the layers below: the pure core (src/core) and the GitHub-flow
+// orchestrator (src/wiring/create-pr). This file reads the world through
+// bb.sdk and wires it together.
 import { defineRpcContract, type BbPluginApi, type PluginKvStorage } from "@get-bb/plugin-sdk";
 import { z } from "zod";
 import { resolveBase } from "./src/core/base-branch";
@@ -22,15 +23,23 @@ import {
   type PrState,
 } from "./src/core/merge-readiness";
 import { parseGithubRemote } from "./src/core/remote";
+import { decideWakeUpVisible } from "./src/core/retiring";
 import { threadChangeTouchesPr } from "./src/core/thread-change";
 import { chooseToken } from "./src/core/token";
-import { decideVisibility, type PrPresence } from "./src/core/visibility";
+import { type PrPresence } from "./src/core/visibility";
 import { runCreatePr } from "./src/wiring/create-pr";
 import { runFastForward } from "./src/wiring/fast-forward";
 import { ghAuthToken } from "./src/wiring/gh-token";
 import { gitClient } from "./src/wiring/git-client";
 import { githubClient } from "./src/wiring/github-client";
 import { runLocalMainPull, type LocalMainPullResult } from "./src/wiring/local-main-pull";
+import { fetchNextPrNumber } from "./src/wiring/next-pr-number";
+import { checkMergedContent } from "./src/wiring/merged-content";
+import {
+  resolveVisibility,
+  type VisibilityPorts,
+  type VisibilityWorkspace,
+} from "./src/wiring/visibility-decision";
 
 export const rpcContract = defineRpcContract({
   prState: {
@@ -39,11 +48,24 @@ export const rpcContract = defineRpcContract({
       visible: z.boolean(),
       reason: z.string(),
       prUrl: z.string().nullable(),
+      // Best-effort preview of the number GitHub will assign the PR, shown
+      // on the button before the click. `null` when it couldn't be
+      // determined (no working copy, no token, GitHub unreachable) — the
+      // button still works, it just shows no number.
+      nextNumber: z.number().nullable(),
     }),
   },
   createPr: {
     input: z.object({ threadId: z.string() }).strict(),
     output: z.object({ url: z.string(), number: z.number() }),
+  },
+  createAndMergePr: {
+    input: z.object({ threadId: z.string() }).strict(),
+    output: z.object({
+      url: z.string(),
+      number: z.number(),
+      mainPull: z.object({ ok: z.boolean(), reason: z.string().nullable() }).nullable(),
+    }),
   },
   fastForwardState: {
     input: z.object({ threadId: z.string() }).strict(),
@@ -59,11 +81,20 @@ export const rpcContract = defineRpcContract({
       visible: z.boolean(),
       indicator: z.enum(["success", "failure", "pending", "neutral", "unknown"]),
       prUrl: z.string().nullable(),
+      // The PR number to show on the Merge button, so it's clear which PR
+      // will be merged. `null` when it couldn't be determined.
+      number: z.number().nullable(),
     }),
   },
   mergePr: {
     input: z.object({ threadId: z.string() }).strict(),
-    output: z.object({ ok: z.boolean() }),
+    output: z.object({
+      ok: z.boolean(),
+      // The result of trying to pull the local main in the same pass — the
+      // front end marks success with a toast, symmetric with retryMainPull
+      // (see app.tsx). `null` when there was nothing to pull (no path/base branch).
+      mainPull: z.object({ ok: z.boolean(), reason: z.string().nullable() }).nullable(),
+    }),
   },
   mainPullState: {
     input: z.object({ threadId: z.string() }).strict(),
@@ -72,6 +103,18 @@ export const rpcContract = defineRpcContract({
       ok: z.boolean(),
       reason: z.string().nullable(),
     }),
+  },
+  retryMainPull: {
+    input: z.object({ threadId: z.string() }).strict(),
+    output: z.object({ ok: z.boolean(), reason: z.string().nullable() }),
+  },
+  wakeUpState: {
+    input: z.object({ threadId: z.string() }).strict(),
+    output: z.object({ visible: z.boolean() }),
+  },
+  wakeUp: {
+    input: z.object({ threadId: z.string() }).strict(),
+    output: z.object({ ok: z.boolean() }),
   },
 });
 
@@ -82,30 +125,31 @@ export default async function plugin(bb: BbPluginApi) {
   const settings = bb.settings.define({
     githubToken: {
       type: "string",
-      // По умолчанию токен берётся из `gh auth token` на машине bb; настройка —
-      // необязательный override (например, если gh не залогинен).
-      label: "GitHub-токен (необязательно; по умолчанию из gh auth token)",
+      // By default the token comes from `gh auth token` on the bb machine;
+      // the setting is an optional override (e.g. when gh isn't logged in).
+      label: "GitHub token (optional; defaults to gh auth token)",
       secret: true,
     },
   });
 
-  // Толкаем фронт перечитать prState на двух источниках правды:
-  // - environment:changed — коммит/смена ветки/git-refs меняют git-статус;
-  // - thread:changed(environment-changed) — bb опознал/сменил PR у треда;
-  //   без этой подписки строчка оживала бы только по перезагрузке интерфейса.
+  // Prompts the front end to refetch prState from two sources of truth:
+  // - environment:changed — a commit/branch change/git-refs change the git status;
+  // - thread:changed(environment-changed) — bb recognized/changed the thread's PR;
+  //   without this subscription, the row would only update on an interface reload.
   const republish = () => bb.realtime.publish("changed", {});
 
-  // Мутирующие RPC (createPr/fastForward/mergePr) зовут не голый republish(), а
-  // republishAfterMutation(): сразу после мутации `sdk.environments.pullRequest`/
-  // `status` на СТОРОНЕ bb ещё не догнали GitHub (bb сам узнаёт об изменении не
-  // мгновенно, см. memory/wiki/pr-plugin-live-refresh-event.md) — первый рефетч
-  // часто читает то же устаревшее состояние, и без подстраховки кнопка ждала
-  // следующего события или до POLL_INTERVAL_MS (20 с) в app.tsx, из-за чего
-  // переключение PR → Merge растягивалось секунд на 30 (см.
-  // memory/decisions/republish-catchup-burst-after-mutation.md). Вместо того
-  // чтобы держать общий поллинг коротким для всех простаивающих тредов, шлём
-  // короткую серию повторных republish() именно в те секунды, когда САМИ знаем,
-  // что состояние вот-вот догонит.
+  // Mutating RPCs (createPr/fastForward/mergePr) call not plain republish(),
+  // but republishAfterMutation(): right after the mutation,
+  // `sdk.environments.pullRequest`/`status` on bb's SIDE haven't yet caught
+  // up with GitHub (bb itself doesn't learn about the change instantly, see
+  // memory/wiki/pr-plugin-live-refresh-event.md) — the first refetch often
+  // reads the same stale state, and without a safety net the button would
+  // wait for the next event or up to POLL_INTERVAL_MS (20s) in app.tsx,
+  // which stretched the PR → Merge switch to about 30 seconds (see
+  // memory/decisions/republish-catchup-burst-after-mutation.md). Rather than
+  // keeping the general polling short for every idle thread, we send a
+  // short burst of repeated republish() calls exactly during the seconds
+  // when we OURSELVES know the state is about to catch up.
   const REPUBLISH_CATCHUP_DELAYS_MS = [1000, 3000, 6000, 12000];
   const pendingCatchupTimers = new Set<ReturnType<typeof setTimeout>>();
   function republishAfterMutation(): void {
@@ -126,13 +170,26 @@ export default async function plugin(bb: BbPluginApi) {
 
   bb.rpc.register(rpcContract, {
     async prState({ threadId }) {
-      return computePrState(bb.sdk, bb.storage.kv, threadId);
+      return computePrState(bb.sdk, bb.storage.kv, settings, threadId);
     },
     async createPr({ threadId }) {
       const token = await resolveToken(settings);
       const result = await gatherAndCreate(bb.sdk, bb.storage.kv, token, threadId);
       republishAfterMutation();
       return result;
+    },
+    // A composition of createPr and mergePr's own logic, no new decision-making:
+    // opens the PR (gatherAndCreate), then merges it the same way the "Merge"
+    // button does (mergePullRequest resolves the PR by re-reading GitHub, same
+    // path lookupPullRequest uses — not by any local id createPr just returned).
+    // If the merge leg throws, the PR still exists and surfaces its own "Merge"
+    // button on the next refetch — nothing is silently lost.
+    async createAndMergePr({ threadId }) {
+      const token = await resolveToken(settings);
+      const created = await gatherAndCreate(bb.sdk, bb.storage.kv, token, threadId);
+      const merged = await mergePullRequest(bb.sdk, bb.storage.kv, threadId);
+      republishAfterMutation();
+      return { url: created.url, number: created.number, mainPull: merged.mainPull };
     },
     async fastForwardState({ threadId }) {
       return computeFastForwardState(bb.sdk, threadId);
@@ -153,6 +210,31 @@ export default async function plugin(bb: BbPluginApi) {
     async mainPullState({ threadId }) {
       return computeMainPullState(bb.sdk, bb.storage.kv, threadId);
     },
+    async retryMainPull({ threadId }) {
+      const environmentId = await environmentIdOf(bb.sdk, threadId);
+      if (!environmentId) throw new Error("The thread has no environment with git.");
+      const pull = await attemptLocalMainPull(bb.sdk, bb.storage.kv, environmentId);
+      if (!pull) {
+        throw new Error("The environment has no working copy or base branch — nothing to pull.");
+      }
+      republishAfterMutation();
+      return normalizeMainPull(pull);
+    },
+    async wakeUpState({ threadId }) {
+      return computeWakeUpState(bb.sdk, threadId);
+    },
+    // threads.unarchive is a real, idempotent SDK action (fine to call on an
+    // already-unarchived thread — it just re-sets archivedAt to null); on an
+    // environment stuck "retiring" it also cancels that retire as a side
+    // effect of bb's own unarchive route, before any live command reaches the
+    // provider (the route re-checks the environment is already "ready" before
+    // forwarding anything, so a retiring one is a pure state fix — no agent
+    // turn starts, no message is added).
+    async wakeUp({ threadId }) {
+      await bb.sdk.threads.unarchive({ threadId });
+      republishAfterMutation();
+      return { ok: true };
+    },
   });
 
   const unsubscribeEnv = bb.sdk.subscribe({
@@ -168,45 +250,106 @@ export default async function plugin(bb: BbPluginApi) {
   bb.onDispose(unsubscribeEnv);
   bb.onDispose(unsubscribeThread);
 
-  bb.log.info("pull-request загружен");
+  bb.log.info("pull-request loaded");
 }
 
 async function computePrState(
   sdk: Sdk,
   kv: PluginKvStorage,
+  settings: GithubTokenSettings,
   threadId: string,
-): Promise<{ visible: boolean; reason: string; prUrl: string | null }> {
+): Promise<{ visible: boolean; reason: string; prUrl: string | null; nextNumber: number | null }> {
   const environmentId = await environmentIdOf(sdk, threadId);
-  if (!environmentId) return { visible: false, reason: "no-environment", prUrl: null };
+  if (!environmentId) {
+    return { visible: false, reason: "no-environment", prUrl: null, nextNumber: null };
+  }
 
   const env = await sdk.environments.get({ environmentId });
   const base = resolveBase(env);
-  if (!base) return { visible: false, reason: "no-base-branch", prUrl: null };
+  if (!base) return { visible: false, reason: "no-base-branch", prUrl: null, nextNumber: null };
 
-  // Без явной базы bb не считает mergeBase (а с ним aheadCount) — тогда кнопка
-  // всегда пряталась бы как «нечего пиарить». Считаем против УДАЛЁННОЙ базы
-  // (base.statusBase), иначе устаревший локальный main даёт фантомный ahead.
+  // Without an explicit base, bb doesn't compute mergeBase (and with it
+  // aheadCount) — the button would then always hide as "nothing to PR". We
+  // compute against the REMOTE base (base.statusBase), otherwise a stale
+  // local main produces a phantom ahead.
   const status = await sdk.environments.status({
     environmentId,
     mergeBaseBranch: base.statusBase,
   });
   if (status.outcome !== "available") {
-    return { visible: false, reason: `status-${status.outcome}`, prUrl: null };
+    return { visible: false, reason: `status-${status.outcome}`, prUrl: null, nextNumber: null };
   }
 
   const pr = await lookupPullRequest(sdk, environmentId);
-  const { workingTree, mergeBase } = status.workspace;
-  const decision = decideVisibility({
-    hasUncommittedChanges: workingTree.hasUncommittedChanges,
-    aheadCount: mergeBase?.aheadCount ?? 0,
-    pr: pr.presence,
-    headAlreadyMerged: await wasHeadAlreadyMerged(
-      kv,
-      environmentId,
-      checkoutHeadSha(status.workspace.checkout),
-    ),
-  });
-  return { visible: decision.visible, reason: decision.reason, prUrl: pr.url };
+  const decision = await resolveVisibility(
+    visibilityPorts(kv, environmentId, env.path, base.githubBase),
+    { workspace: visibilityWorkspace(status.workspace), pr: pr.presence },
+  );
+  if (!decision.visible) {
+    return { visible: false, reason: decision.reason, prUrl: pr.url, nextNumber: null };
+  }
+
+  const nextNumber = await peekNextPrNumber(sdk, settings, env);
+  return { visible: true, reason: decision.reason, prUrl: pr.url, nextNumber };
+}
+
+// Best-effort preview of the button's number, shown before the click. Needs
+// a working copy on disk (to read origin) and a token — either missing, or
+// GitHub unreachable, degrades to no number rather than failing prState or
+// hiding the button: the number is a label, not something the button's
+// visibility depends on. Reads the repo before the token, so the common
+// case of "no working copy on disk" never touches `gh`/settings at all.
+async function peekNextPrNumber(
+  sdk: Sdk,
+  settings: GithubTokenSettings,
+  env: { hostId: string; path: string | null },
+): Promise<number | null> {
+  if (!env.path) return null;
+  try {
+    const repo = await readOrigin(sdk, env.hostId, env.path);
+    const token = await resolveToken(settings);
+    return await fetchNextPrNumber(githubClient(token), repo);
+  } catch {
+    return null;
+  }
+}
+
+// The ports for resolveVisibility: KV as the cache of the measured fact, git
+// as the measurement itself. The order in which they are consulted lives in
+// src/wiring/visibility-decision.ts.
+function visibilityPorts(
+  kv: PluginKvStorage,
+  environmentId: string,
+  path: string | null,
+  base: string,
+): VisibilityPorts {
+  return {
+    cachedHeadMatches: (headSha) => wasHeadAlreadyMerged(kv, environmentId, headSha),
+    rememberMerged: (headSha) => kv.set(mergedHeadKey(environmentId), headSha),
+    // Without a working copy on disk there is nothing to run git in, and the
+    // question stays unanswered rather than being guessed at.
+    measure: async () => (path ? checkMergedContent(gitClient(path), base) : "unknown"),
+  };
+}
+
+function visibilityWorkspace(workspace: {
+  checkout: WorkspaceCheckout;
+  workingTree: { hasUncommittedChanges: boolean };
+  mergeBase: { aheadCount: number } | null;
+}): VisibilityWorkspace {
+  return {
+    headSha: checkoutHeadSha(workspace.checkout),
+    hasUncommittedChanges: workspace.workingTree.hasUncommittedChanges,
+    aheadCount: workspace.mergeBase?.aheadCount ?? 0,
+  };
+}
+
+async function computeWakeUpState(sdk: Sdk, threadId: string): Promise<{ visible: boolean }> {
+  const environmentId = await environmentIdOf(sdk, threadId);
+  if (!environmentId) return { visible: false };
+
+  const env = await sdk.environments.get({ environmentId });
+  return { visible: decideWakeUpVisible(env.status) };
 }
 
 async function computeFastForwardState(
@@ -244,40 +387,34 @@ async function gatherAndCreate(
   threadId: string,
 ): Promise<{ url: string; number: number }> {
   const environmentId = await environmentIdOf(sdk, threadId);
-  if (!environmentId) throw new Error("У треда нет окружения с git.");
+  if (!environmentId) throw new Error("The thread has no environment with git.");
 
   const env = await sdk.environments.get({ environmentId });
   const base = resolveBase(env);
-  if (!base) throw new Error("У окружения не удалось определить базовую ветку.");
+  if (!base) throw new Error("Could not determine the environment's base branch.");
 
   const status = await sdk.environments.status({
     environmentId,
     mergeBaseBranch: base.statusBase,
   });
   if (status.outcome !== "available") {
-    throw new Error(`git-статус окружения недоступен (${status.outcome}).`);
+    throw new Error(`environment git status unavailable (${status.outcome}).`);
   }
 
   const pr = await lookupPullRequest(sdk, environmentId);
-  const { workingTree, mergeBase } = status.workspace;
-  const decision = decideVisibility({
-    hasUncommittedChanges: workingTree.hasUncommittedChanges,
-    aheadCount: mergeBase?.aheadCount ?? 0,
-    pr: pr.presence,
-    headAlreadyMerged: await wasHeadAlreadyMerged(
-      kv,
-      environmentId,
-      checkoutHeadSha(status.workspace.checkout),
-    ),
-  });
+  const { mergeBase } = status.workspace;
+  const decision = await resolveVisibility(
+    visibilityPorts(kv, environmentId, env.path, base.githubBase),
+    { workspace: visibilityWorkspace(status.workspace), pr: pr.presence },
+  );
   if (!decision.visible || !mergeBase) {
-    throw new Error(`Сейчас PR открыть нельзя (${decision.reason}).`);
+    throw new Error(`Can't open a PR right now (${decision.reason}).`);
   }
 
   const path = env.path;
-  if (!path) throw new Error("У окружения нет рабочей копии на диске.");
+  if (!path) throw new Error("The environment has no working copy on disk.");
   const headBranch = env.branchName;
-  if (!headBranch) throw new Error("У окружения нет текущей ветки.");
+  if (!headBranch) throw new Error("The environment has no current branch.");
 
   const repo = await readOrigin(sdk, env.hostId, path);
   const files = await buildChangedFiles(sdk, env.hostId, path, mergeBase.files);
@@ -299,18 +436,18 @@ async function fastForwardBranch(
   threadId: string,
 ): Promise<{ ok: boolean }> {
   const environmentId = await environmentIdOf(sdk, threadId);
-  if (!environmentId) throw new Error("У треда нет окружения с git.");
+  if (!environmentId) throw new Error("The thread has no environment with git.");
 
   const env = await sdk.environments.get({ environmentId });
   const base = resolveBase(env);
-  if (!base) throw new Error("У окружения не удалось определить базовую ветку.");
+  if (!base) throw new Error("Could not determine the environment's base branch.");
 
   const status = await sdk.environments.status({
     environmentId,
     mergeBaseBranch: base.statusBase,
   });
   if (status.outcome !== "available") {
-    throw new Error(`git-статус окружения недоступен (${status.outcome}).`);
+    throw new Error(`environment git status unavailable (${status.outcome}).`);
   }
 
   const { workingTree, mergeBase } = status.workspace;
@@ -320,11 +457,11 @@ async function fastForwardBranch(
     hasUncommittedChanges: workingTree.hasUncommittedChanges,
   });
   if (!decision.visible) {
-    throw new Error(`Перемотка сейчас невозможна (${decision.reason}).`);
+    throw new Error(`Fast-forward is not possible right now (${decision.reason}).`);
   }
 
   const path = env.path;
-  if (!path) throw new Error("У окружения нет рабочей копии на диске.");
+  if (!path) throw new Error("The environment has no working copy on disk.");
 
   await runFastForward(gitClient(path), base.githubBase);
   return { ok: true };
@@ -333,55 +470,86 @@ async function fastForwardBranch(
 async function computeMergeState(
   sdk: Sdk,
   threadId: string,
-): Promise<{ visible: boolean; indicator: MergeIndicator; prUrl: string | null }> {
+): Promise<{
+  visible: boolean;
+  indicator: MergeIndicator;
+  prUrl: string | null;
+  number: number | null;
+}> {
   const environmentId = await environmentIdOf(sdk, threadId);
-  if (!environmentId) return { visible: false, indicator: "unknown", prUrl: null };
+  if (!environmentId) return { visible: false, indicator: "unknown", prUrl: null, number: null };
 
   const pr = await lookupPullRequest(sdk, environmentId);
   if (pr.state === null || pr.checksState === null) {
-    return { visible: false, indicator: "unknown", prUrl: pr.url };
+    return { visible: false, indicator: "unknown", prUrl: pr.url, number: pr.number };
   }
   const decision = decideMergeReadiness({ prState: pr.state, checksState: pr.checksState });
-  return { visible: decision.visible, indicator: decision.indicator, prUrl: pr.url };
+  return { visible: decision.visible, indicator: decision.indicator, prUrl: pr.url, number: pr.number };
 }
 
-// Мёржим тем же способом (squash), которым в проекте уже принято доводить
-// ветку до main — см. memory/decisions/fast-forward-ff-only-safe.md. bb сам
-// делает запрос к GitHub (sdk.environments.mergePullRequest), плагину не нужно
-// собирать его руками, как для createPr.
+// We merge with the same method (squash) the project already uses to land a
+// branch onto main — see memory/decisions/fast-forward-ff-only-safe.md. bb
+// itself makes the request to GitHub (sdk.environments.mergePullRequest),
+// the plugin doesn't need to build it by hand like it does for createPr.
 const MERGE_METHOD = "squash";
 
 async function mergePullRequest(
   sdk: Sdk,
   kv: PluginKvStorage,
   threadId: string,
-): Promise<{ ok: boolean }> {
+): Promise<{ ok: boolean; mainPull: { ok: boolean; reason: string | null } | null }> {
   const environmentId = await environmentIdOf(sdk, threadId);
-  if (!environmentId) throw new Error("У треда нет окружения с git.");
+  if (!environmentId) throw new Error("The thread has no environment with git.");
 
-  // HEAD берём ДО мёржа: сам мёрдж — только запрос к GitHub API, локальный git
-  // он не трогает, поэтому HEAD не сдвигается. Squash-мёрдж создаёт на GitHub
-  // новый коммит с другим SHA — старые коммиты локальной ветки навсегда
-  // остаются «впереди» базовой по счётчику (aheadCount), хотя по содержимому
-  // уже целиком влиты. Запоминаем ровно этот HEAD как «уже смёржен нами»:
-  // decideVisibility в src/core/visibility.ts прячет по нему кнопку PR, пока
-  // не появится новый коммит (см. wasHeadAlreadyMerged).
+  // We capture HEAD BEFORE the merge: the merge itself is only a request to
+  // the GitHub API, it doesn't touch local git, so HEAD doesn't move. Storing
+  // it primes the cache described at mergedHeadKey — the button hides the
+  // instant the merge goes through, without waiting for the next content
+  // measurement (which needs a fetch and a fresh remote ref).
   const headSha = await currentHeadSha(sdk, environmentId);
   await sdk.environments.mergePullRequest({ environmentId, method: MERGE_METHOD });
   if (headSha) await kv.set(mergedHeadKey(environmentId), headSha);
 
-  // Мёрдж на GitHub уже прошёл — подтяжка локального main дальше best-effort:
-  // неудача (реф занят в другом worktree/разошёлся) не должна ронять mergePr,
-  // только лечь в KV, чтобы фронт показал причину на месте кнопки Merge.
-  // См. memory/decisions/local-main-pull-after-merge.md.
+  // The merge on GitHub has already gone through — pulling the local main
+  // from here on is best-effort: a failure (main is busy with an
+  // incompatible change in the target copy/has diverged) must not fail
+  // mergePr, only land in KV so the front end can show the reason in the
+  // Merge button's place — and offer a retry (retryMainPull) instead of
+  // just waiting for the next merge. See
+  // memory/decisions/local-main-pull-after-merge.md and
+  // memory/decisions/main-pull-retry-button.md. We also return the result
+  // directly — the front end marks success with a toast right away, without
+  // waiting for the next mainPullState.
+  const pull = await attemptLocalMainPull(sdk, kv, environmentId);
+
+  return { ok: true, mainPull: pull && normalizeMainPull(pull) };
+}
+
+// Shared shape of the RPC response for the main-pull result
+// (mergePr/retryMainPull): `LocalMainPullResult` doesn't carry a `reason` on
+// the success branch, while the RPC's zod schema requires the field always —
+// here it's normalized to a present `null`.
+function normalizeMainPull(pull: LocalMainPullResult): { ok: boolean; reason: string | null } {
+  return pull.ok ? { ok: true, reason: null } : { ok: false, reason: pull.reason };
+}
+
+// The shared step for mergePullRequest (best-effort right after the merge)
+// and retryMainPull (an explicit retry on click): resolve the environment's
+// path/base, try to pull main, and save the result to KV. Returns `null`
+// when there's nothing to try (no path or base branch) — mergePullRequest
+// silently skips the step at that point, retryMainPull turns it into an RPC error.
+async function attemptLocalMainPull(
+  sdk: Sdk,
+  kv: PluginKvStorage,
+  environmentId: string,
+): Promise<LocalMainPullResult | null> {
   const env = await sdk.environments.get({ environmentId });
   const base = resolveBase(env);
-  if (base && env.path) {
-    const pull = await runLocalMainPull(gitClient(env.path), base.githubBase);
-    await kv.set(localMainPullKey(environmentId), pull);
-  }
+  if (!base || !env.path) return null;
 
-  return { ok: true };
+  const pull = await runLocalMainPull(gitClient(env.path), base.githubBase);
+  await kv.set(localMainPullKey(environmentId), pull);
+  return pull;
 }
 
 async function computeMainPullState(
@@ -404,8 +572,9 @@ async function currentHeadSha(sdk: Sdk, environmentId: string): Promise<string |
   return status.outcome === "available" ? checkoutHeadSha(status.workspace.checkout) : null;
 }
 
-// «unborn» (репозиторий без коммитов) и «unknown» (не удалось определить) не
-// несут SHA вовсе — им нечего сравнивать с сохранённым «уже смёржено».
+// "unborn" (a repository with no commits) and "unknown" (could not
+// determine) carry no SHA at all — they have nothing to compare against a
+// stored "already merged".
 type WorkspaceCheckout =
   | { kind: "branch"; headSha: string | null }
   | { kind: "detached"; headSha: string | null }
@@ -423,6 +592,17 @@ function checkoutHeadSha(checkout: WorkspaceCheckout): string | null {
   }
 }
 
+// A cache of the measured fact, not a memory of our own action. The content
+// check (src/wiring/merged-content.ts) costs a `git fetch`, and its answer
+// cannot change while HEAD stays put — so a HEAD once found merged is
+// remembered, and every later poll answers from KV without touching the
+// network. A new commit moves HEAD, the match breaks, and the fact gets
+// measured again.
+//
+// The value is only ever trusted as "already merged"; nothing hides behind
+// its absence, so a cache that was never written (a merge through bb's own
+// button, through github.com, through `gh`) costs one measurement, not a
+// ghost button — see memory/decisions/pr-button-merged-by-content.md.
 function mergedHeadKey(environmentId: string): string {
   return `merged-head:${environmentId}`;
 }
@@ -446,50 +626,52 @@ async function environmentIdOf(sdk: Sdk, threadId: string): Promise<string | nul
   return thread.environmentId;
 }
 
-// environments.pullRequest бросает 409 для персональных/не-git/удалённых
-// окружений — это не наша ошибка, а «PR тут неоткуда взяться». Глушим в
-// «unknown», чтобы не ронять prState на каждом таком треде.
+// environments.pullRequest throws a 409 for personal/non-git/deleted
+// environments — that's not our error, it's "there's nowhere for a PR to
+// come from here". We swallow it into "unknown" so prState doesn't fail on
+// every such thread.
 //
-// Живой PR (open/draft) блокирует кнопку; слитый/закрытый (merged/closed) —
-// нет: на новый коммит поверх слитого можно открыть новый PR.
+// A live PR (open/draft) blocks the button; a merged/closed one doesn't: a
+// new PR can be opened for a new commit on top of a merged one.
 async function lookupPullRequest(
   sdk: Sdk,
   environmentId: string,
 ): Promise<{
   presence: PrPresence;
   url: string | null;
+  number: number | null;
   state: PrState | null;
   checksState: ChecksState | null;
 }> {
   try {
     const pr = await sdk.environments.pullRequest({ environmentId });
     if (pr.outcome === "available") {
-      const { state, url, checks } = pr.pullRequest;
+      const { state, url, number, checks } = pr.pullRequest;
       const presence: PrPresence =
         state === "open" || state === "draft" ? "open" : "settled";
-      return { presence, url, state, checksState: checks.state };
+      return { presence, url, number, state, checksState: checks.state };
     }
     if (pr.outcome === "absent") {
-      return { presence: "absent", url: null, state: null, checksState: null };
+      return { presence: "absent", url: null, number: null, state: null, checksState: null };
     }
-    return { presence: "unknown", url: null, state: null, checksState: null };
+    return { presence: "unknown", url: null, number: null, state: null, checksState: null };
   } catch {
-    return { presence: "unknown", url: null, state: null, checksState: null };
+    return { presence: "unknown", url: null, number: null, state: null, checksState: null };
   }
 }
 
-// Токен по умолчанию — из gh на машине bb; gh дёргаем только когда настройка
-// пуста, чтобы не запускать процесс без нужды.
-async function resolveToken(settings: {
-  get(): Promise<{ githubToken: string | undefined }>;
-}): Promise<string> {
+type GithubTokenSettings = { get(): Promise<{ githubToken: string | undefined }> };
+
+// The default token comes from gh on the bb machine; we only call gh when
+// the setting is empty, to avoid spawning the process needlessly.
+async function resolveToken(settings: GithubTokenSettings): Promise<string> {
   const { githubToken } = await settings.get();
   const ghToken = githubToken?.trim() ? null : await ghAuthToken();
   const token = chooseToken(githubToken, ghToken);
   if (!token) {
     throw new Error(
-      "Нет GitHub-токена: gh не авторизован и токен не задан в настройках. " +
-        "Выполни `gh auth login` либо укажи токен в настройках плагина.",
+      "No GitHub token: gh is not authorized and no token is set in the settings. " +
+        "Run `gh auth login` or set a token in the plugin settings.",
     );
   }
   return token;
@@ -502,14 +684,15 @@ async function readOrigin(
 ): Promise<RepoRef> {
   const configText = await readGitConfig(sdk, hostId, path);
   const originUrl = originUrlFromGitConfig(configText);
-  if (!originUrl) throw new Error("В git-config нет ремоута origin.");
+  if (!originUrl) throw new Error("git-config has no origin remote.");
   const repo = parseGithubRemote(originUrl);
-  if (!repo) throw new Error(`origin не на github.com: ${originUrl}`);
+  if (!repo) throw new Error(`origin is not on github.com: ${originUrl}`);
   return repo;
 }
 
-// У воркри `<path>/.git` — файл-указатель на общий gitdir; у обычного чекаута
-// это директория, тогда config лежит прямо в `<path>/.git/config`.
+// For a worktree, `<path>/.git` is a pointer file to the shared gitdir; for
+// a regular checkout it's a directory, and then config sits right in
+// `<path>/.git/config`.
 async function readGitConfig(
   sdk: Sdk,
   hostId: string,
@@ -524,7 +707,7 @@ async function readGitConfig(
       );
     }
   } catch {
-    // `.git` — директория: падаем в чтение config напрямую ниже.
+    // `.git` is a directory: fall through to reading config directly below.
   }
   return decode(await sdk.files.read({ path: `${path}/.git/config`, hostId }));
 }
@@ -545,7 +728,7 @@ async function buildChangedFiles(
       path: `${path}/${file.path}`,
       hostId,
     })) as FileRead;
-    // Содержимое отдаём GitHub как есть: utf8 → blob utf-8, base64 → base64.
+    // We hand the content to GitHub as is: utf8 → blob utf-8, base64 → base64.
     result.push({
       kind: "upsert",
       path: file.path,
@@ -557,7 +740,7 @@ async function buildChangedFiles(
 }
 
 function prBody(commits: readonly { subject: string }[]): string {
-  if (commits.length === 0) return "Открыто из bb.";
+  if (commits.length === 0) return "Opened from bb.";
   return commits.map((commit) => `- ${commit.subject}`).join("\n");
 }
 

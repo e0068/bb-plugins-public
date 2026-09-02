@@ -3,31 +3,31 @@ import fc from "fast-check";
 import { decideFastForward } from "./fast-forward";
 
 describe("decideFastForward", () => {
-  it("отстаём, своих коммитов нет, чисто → видна", () => {
+  it("behind, no commits of our own, clean → visible", () => {
     expect(
       decideFastForward({ behindCount: 3, aheadCount: 0, hasUncommittedChanges: false }),
     ).toEqual({ visible: true, reason: "ready" });
   });
 
-  it("не отстаём → скрыта (нечего перематывать)", () => {
+  it("not behind → hidden (nothing to fast-forward)", () => {
     expect(
       decideFastForward({ behindCount: 0, aheadCount: 0, hasUncommittedChanges: false }),
     ).toEqual({ visible: false, reason: "up-to-date" });
   });
 
-  it("свои коммиты впереди при отставании → скрыта (расхождение)", () => {
+  it("commits of our own ahead while behind → hidden (diverged)", () => {
     expect(
       decideFastForward({ behindCount: 3, aheadCount: 2, hasUncommittedChanges: false }),
     ).toEqual({ visible: false, reason: "diverged" });
   });
 
-  it("несохранённые правки → скрыта, чем бы ни было остальное", () => {
+  it("uncommitted changes → hidden regardless of everything else", () => {
     expect(
       decideFastForward({ behindCount: 3, aheadCount: 0, hasUncommittedChanges: true }),
     ).toEqual({ visible: false, reason: "dirty" });
   });
 
-  it("инвариант: видна ⇒ чисто ∧ behind>0 ∧ ahead=0", () => {
+  it("invariant: visible ⇒ clean ∧ behind>0 ∧ ahead=0", () => {
     fc.assert(
       fc.property(
         fc.integer({ min: -2, max: 50 }),
