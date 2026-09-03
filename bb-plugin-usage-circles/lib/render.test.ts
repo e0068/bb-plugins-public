@@ -76,13 +76,13 @@ describe("buildWindowRow", () => {
   it("says there is no reset data when resetsAt is null", () => {
     const model = buildUsageWindowModel({ label: "Weekly limit", usedPercent: 0, resetsAt: null }, now);
     const row = buildWindowRow(model);
-    expect(row.querySelector(".usage-circles__window-reset")?.textContent).toBe("Нет данных о сбросе");
+    expect(row.querySelector(".usage-circles__window-reset")?.textContent).toBe("No reset data available");
   });
 
   it("shows the relative and absolute reset time when known", () => {
     const resetsAt = new Date(now + 61 * 60 * 1000).toISOString();
     const model = buildUsageWindowModel({ label: "5-hour limit", usedPercent: 0, resetsAt }, now);
     const row = buildWindowRow(model);
-    expect(row.querySelector(".usage-circles__window-reset")?.textContent).toBe(`Сброс через 1ч 1мин (${formatAbsoluteReset(resetsAt)})`);
+    expect(row.querySelector(".usage-circles__window-reset")?.textContent).toBe(`Resets in 1h 1m (${formatAbsoluteReset(resetsAt)})`);
   });
 });

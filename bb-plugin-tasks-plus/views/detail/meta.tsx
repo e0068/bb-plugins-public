@@ -314,6 +314,19 @@ export function formatBytes(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
+/** Formats an ISO timestamp like "Jul 22, 2026, 14:30". */
+export function formatDateTime(iso: string): string {
+  const parsed = new Date(iso);
+  if (Number.isNaN(parsed.valueOf())) return iso;
+  return parsed.toLocaleString(undefined, {
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
 /** Formats a YYYY-MM-DD due date like "Jul 22" (with year when not this year). */
 export function formatDueDate(dueDate: string): string {
   const parsed = new Date(`${dueDate}T00:00:00`);
@@ -324,4 +337,21 @@ export function formatDueDate(dueDate: string): string {
     day: "numeric",
     ...(sameYear ? {} : { year: "numeric" }),
   });
+}
+
+/**
+ * A worktree-origin task's identity for display, shared by the board card
+ * mark and the detail Properties banner so the two never drift (see
+ * shared/contract.ts's fileTaskOriginSchema). `identity` is the bold-worthy
+ * name; `detail` is an extra parenthetical, only set when it adds
+ * information beyond `identity` — never both null and non-null in a way
+ * that reads as "worktree an active worktree".
+ */
+export function describeWorktreeOrigin(origin: {
+  name: string | null;
+  branchName: string | null;
+}): { identity: string; detail: string | null } {
+  if (origin.name !== null) return { identity: origin.name, detail: origin.branchName };
+  if (origin.branchName !== null) return { identity: origin.branchName, detail: null };
+  return { identity: "an active worktree", detail: null };
 }

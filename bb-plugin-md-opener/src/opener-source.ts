@@ -1,16 +1,19 @@
-// Слой 2 — источник вкладки: из PluginFileOpenerSource получить хост и корень
-// для чтения/записи. Единственная bb-I/O здесь идёт через переданный `bb`
-// (модуль его не импортирует на верхнем уровне — только type-only), поэтому
-// слой тестируется мок-объектом без живого SDK.
+// Layer 2 — the tab's source: get a host and a root for reading/writing out
+// of a PluginFileOpenerSource. The only bb-I/O here goes through the passed-in
+// `bb` (the module doesn't import it at the top level — type-only), so this
+// layer is testable with a mock object, no live SDK needed.
 //
-// Что задаёт `source.kind` (см. memory/wiki/bb-plugin-file-opener-slot.md):
-//   workspace     — путь относителен воркдереву окружения; корень = env.path;
-//   thread-storage — путь относителен корню стораджа треда;
-//   host          — путь абсолютный, корня-фенса НЕТ (файл может жить на другой
-//                   машине — memory/decisions/opener-host-path-no-home-fence.md).
+// What `source.kind` determines (see
+// memory/wiki/bb-plugin-file-opener-slot.md):
+//   workspace      — the path is relative to the environment's workdir; root
+//                    = env.path;
+//   thread-storage — the path is relative to the thread's storage root;
+//   host           — the path is absolute, there's NO root fence (the file
+//                    may live on a different machine —
+//                    memory/decisions/opener-host-path-no-home-fence.md).
 //
-// Хост нужен ВСЕМ файловым вызовам: пропуск на удалённой машине убивает фичу
-// целиком, а не «слегка ухудшает».
+// The host is needed for ALL file calls: skipping it on a remote machine
+// kills the feature entirely, not just "degrades it slightly".
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 
 export interface OpenerSource {
@@ -21,20 +24,22 @@ export interface OpenerSource {
 }
 
 export interface ResolvedSource {
-  /** Хост файлов (undefined — локальный хост сервера bb). */
+  /** The files host (undefined — the bb server's local host). */
   hostId: string | undefined;
   /**
-   * Абсолютный корень, ниже которого confine'ится чтение/запись (rootPath,
-   * symlink-safe). undefined для kind:"host" — там границы нет намеренно.
+   * The absolute root that reads/writes are confined below (rootPath,
+   * symlink-safe). undefined for kind:"host" — there's intentionally no
+   * boundary there.
    */
   root: string | undefined;
 }
 
 /**
- * Резолвит source в { hostId, root }. Возвращает null, когда источник не даёт
- * нужного (нет environmentId у workspace, нет threadId у thread-storage, у
- * окружения ещё нет пути) — вызывающий превращает это в понятную ошибку, а не в
- * чтение мимо корня.
+ * Resolves source into { hostId, root }. Returns null when the source
+ * doesn't provide what's needed (no environmentId for workspace, no
+ * threadId for thread-storage, the environment doesn't have a path yet) —
+ * the caller turns this into a clear error instead of reading outside the
+ * root.
  */
 export async function resolveSource(
   bb: BbPluginApi,
@@ -49,8 +54,8 @@ export async function resolveSource(
     return { hostId: env.hostId, root: env.path };
   }
 
-  // Хост для thread-storage/host берём из окружения (там и живёт hostId файлов
-  // треда). Нет окружения — локальный хост.
+  // For thread-storage/host, the host comes from the environment (that's
+  // where the thread's file hostId lives). No environment — local host.
   const hostId = source.environmentId
     ? (await bb.sdk.environments.get({ environmentId: source.environmentId }))
         .hostId
@@ -64,6 +69,6 @@ export async function resolveSource(
     return { hostId, root: storage.storageRootPath };
   }
 
-  // host — путь абсолютный, фенса нет.
+  // host — the path is absolute, there's no fence.
   return { hostId, root: undefined };
 }

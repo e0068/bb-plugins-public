@@ -76,8 +76,8 @@ function enumOr<T extends string>(
   return fallback;
 }
 
-// Легаси-псевдонимы типов: значение уже не входит в TASK_TYPES, но старые
-// файлы задач его содержат и не должны терять тип. См.
+// Legacy type aliases: the value is no longer part of TASK_TYPES, but old
+// task files still contain it and shouldn't lose their type. See
 // memory/decisions/tasks-drop-chore-shallow-migration.md
 const LEGACY_TYPE_ALIASES: Record<string, TaskType> = { chore: "refactor" };
 

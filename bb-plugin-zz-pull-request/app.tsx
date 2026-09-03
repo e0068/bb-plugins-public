@@ -184,6 +184,23 @@ function PullRequestHeaderAction({ threadId }: PluginThreadHeaderActionProps) {
     );
   }, [rpc, submitting, threadId, mounted]);
 
+  const createMergeThenArchive = useCallback(() => {
+    if (submitting) return;
+    setSubmitting(true);
+    rpc.call("createMergeArchivePr", { threadId }).then(
+      ({ number, mainPull, archived }) => {
+        if (mounted.current) setCreated(true);
+        toast.success(`Pull Request #${number} opened and merged`);
+        if (mainPull?.ok) toast.success("main pulled");
+        if (archived) toast.success("Thread archived");
+      },
+      (error: unknown) => {
+        if (mounted.current) setSubmitting(false);
+        toast.error(errorText(error, "Could not open, merge and archive the Pull Request."));
+      },
+    );
+  }, [rpc, submitting, threadId, mounted]);
+
   if (!visible || created) return null;
 
   return (
@@ -223,6 +240,9 @@ function PullRequestHeaderAction({ threadId }: PluginThreadHeaderActionProps) {
       <DropdownMenuContent align="end">
         <DropdownMenuItem disabled={submitting} onSelect={createThenMerge}>
           Pull Request then Merge
+        </DropdownMenuItem>
+        <DropdownMenuItem disabled={submitting} onSelect={createMergeThenArchive}>
+          Pull Request, Merge then Archive
         </DropdownMenuItem>
       </DropdownMenuContent>
     </DropdownMenu>

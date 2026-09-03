@@ -57,7 +57,7 @@ export function segmentCountForDuration(durationMs: number): 1 | 7 {
   return durationMs < WEEK_MS ? 1 : 7;
 }
 
-const WEEKDAYS_RU = ["вс", "пн", "вт", "ср", "чт", "пт", "сб"] as const;
+const WEEKDAYS_EN = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"] as const;
 
 function pad2(n: number): string {
   return n < 10 ? `0${n}` : String(n);
@@ -67,7 +67,7 @@ export function formatAbsoluteReset(resetsAt: string | null): string {
   if (resetsAt === null) return "—";
   const date = new Date(resetsAt);
   if (Number.isNaN(date.getTime())) return "—";
-  const weekday = WEEKDAYS_RU[date.getDay()];
+  const weekday = WEEKDAYS_EN[date.getDay()];
   return `${weekday} ${pad2(date.getHours())}:${pad2(date.getMinutes())}`;
 }
 
@@ -76,15 +76,15 @@ export function formatRelativeReset(resetsAt: string | null, nowMs: number): str
   const target = new Date(resetsAt).getTime();
   if (Number.isNaN(target)) return "—";
   const remainingMs = target - nowMs;
-  if (remainingMs <= 0) return "меньше минуты";
+  if (remainingMs <= 0) return "less than a minute";
 
   const days = Math.floor(remainingMs / DAY_MS);
   const hours = Math.floor((remainingMs % DAY_MS) / HOUR_MS);
   const minutes = Math.floor((remainingMs % HOUR_MS) / 60_000);
 
-  if (days > 0) return `${days}д ${hours}ч`;
-  if (hours > 0) return `${hours}ч ${minutes}мин`;
-  return `${minutes}мин`;
+  if (days > 0) return `${days}d ${hours}h`;
+  if (hours > 0) return `${hours}h ${minutes}m`;
+  return `${minutes}m`;
 }
 
 export function buildUsageWindowModel(window: UsageWindowInput, nowMs: number): UsageWindowModel {
@@ -123,13 +123,13 @@ export type UsageProviderErrorStatus = "not_installed" | "unauthenticated" | "ex
 export function statusLabel(status: UsageProviderErrorStatus, message?: string): string {
   switch (status) {
     case "not_installed":
-      return "Claude Code не установлен";
+      return "Claude Code is not installed";
     case "unauthenticated":
-      return "Не авторизовано";
+      return "Not authenticated";
     case "expired":
-      return "Сессия авторизации истекла";
+      return "Authentication session expired";
     case "error":
-      return message ?? "Не удалось получить данные";
+      return message ?? "Failed to fetch data";
   }
 }
 
@@ -152,12 +152,12 @@ interface ClaudeCodeUsageInput {
   message?: string;
 }
 
-// bb.sdk.system.usageLimits() отдаёт словарь по providerId, где ключ Claude
-// Code — дефисный "claude-code" (как id провайдера), а не camelCase. Тип SDK
-// объявляет поле "claudeCode", из-за чего прямое чтение молча давало undefined
-// и кольца всегда показывали «не установлен» — см.
-// decisions/usage-provider-key-is-hyphenated.md. camelCase оставлен запасным
-// на случай сборки хоста со старым ключом.
+// bb.sdk.system.usageLimits() returns a dictionary keyed by providerId, where
+// the Claude Code key is the hyphenated "claude-code" (matching the
+// provider's id), not camelCase. The SDK type declares a "claudeCode" field,
+// so reading it directly silently gave undefined and the rings always showed
+// "not installed" — see decisions/usage-provider-key-is-hyphenated.md. The
+// camelCase key is kept as a fallback for host builds still using the old key.
 export function selectClaudeCodeProvider(
   providers: Record<string, ClaudeCodeUsageInput | undefined> | undefined,
 ): ClaudeCodeUsageInput | undefined {
@@ -168,12 +168,13 @@ export function selectClaudeCodeProvider(
 export function normalizeUsage(
   claudeCode: ClaudeCodeUsageInput | undefined,
 ): UsageResultWire {
-  // bb.sdk.system.usageLimits() может не вернуть провайдера claudeCode вовсе
-  // (Claude Code не установлен / не в этой сессии / хост не отдаёт данные
-  // подписки) — тогда поле claudeCode === undefined. Тот же случай lanes
-  // трактует как «нет линии»; здесь считаем это not_installed, а не падаем на
-  // чтении .status у undefined (иначе getState бросает на каждый вызов и кольца
-  // не рисуются — BP-52).
+  // bb.sdk.system.usageLimits() may not return the claudeCode provider at all
+  // (Claude Code not installed / not in this session / the host doesn't
+  // report subscription data) — in that case claudeCode === undefined. The
+  // same case is treated as "no lane" elsewhere; here we treat it as
+  // not_installed instead of failing on reading .status off undefined
+  // (otherwise getState throws on every call and the rings never render —
+  // BP-52).
   if (!claudeCode) return { status: "not_installed" };
   if (claudeCode.status === "ok") {
     return {
@@ -186,7 +187,7 @@ export function normalizeUsage(
     };
   }
   if (claudeCode.status === "error") {
-    return { status: "error", message: claudeCode.message ?? "Не удалось получить данные" };
+    return { status: "error", message: claudeCode.message ?? "Failed to fetch data" };
   }
   return { status: claudeCode.status };
 }

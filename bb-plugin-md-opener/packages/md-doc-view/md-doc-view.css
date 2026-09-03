@@ -1,7 +1,12 @@
-/* Раскладка вкладки опенера + стилизация редактора Kasimov ПОД РОДНОЙ file-viewer
-   (хостовый Markdown). Значения выверены по родному рендереру и токенам bb
-   (--foreground/--muted/--timeline-accent). Правила бьют по .mde-root — тому,
-   что рисует движок, — поверх структурного kasimov/css. */
+/* Layout of the opener tab. The Kasimov skin "matching the native file
+   viewer" isn't set here, but via the --kasi-* preset defaults (see
+   NATIVE_VIEWER_TOKEN_DEFAULTS in packages/md-doc-view/kasimov-settings.ts —
+   --foreground/--muted/--timeline-accent), which the user can re-pick in
+   Settings → Kasimov. What's left here is only what's outside the --kasi-*
+   contract: the tab layout, inline code (kasimov.css has no variable for it),
+   and the deliberate choice of the blockquote border. This file is rendered
+   by BOTH consumers (md-opener and claude-config) — both go through
+   MdDocView with className="mdo-mde". */
 
 .mdo-root {
   display: flex;
@@ -65,6 +70,14 @@
 .mdo-btn-primary {
   color: var(--primary);
 }
+/* Icon button (see editButton in MdDocViewProps) — square padding instead of
+   text padding, so it doesn't stretch to the width of a letter. */
+.mdo-btn-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 4px;
+}
 
 .mdo-body {
   min-height: 0;
@@ -80,61 +93,49 @@
   color: var(--destructive);
 }
 
-/* Поля под родной вьюер: щедрые боковые отступы, контент во всю ширину. */
+/* Padding matching the native viewer: generous side margins, content at full
+   width. Side margins — via --kasi-pad-x (the padX preset), top/bottom are
+   fixed (tab layout, outside the --kasi-* contract). */
 .mdo-doc {
-  padding: 12px 44px 48px;
+  padding: 12px var(--kasi-pad-x, 44px) 48px;
 }
 .mdo-mde {
   height: 100%;
 }
 
-/* --- стилизация редактора под родной Markdown ------------------------------ */
+/* --- editor layout for the opener tab (color/background/font — via --kasi-* presets) --- */
 
-.mdo-mde .mde-root {
-  --mde-bg: transparent;
-  background: transparent;
-  color: var(--foreground);
-  /* Тело как у родного: ~15px, читаемый интерлиньяж. Заголовки заданы в em и
-     подтягиваются от этой базы. */
-  --mde-size: 0.9375rem;
-  line-height: 1.6;
-}
-
-/* Format-margins движка (padding в editable) гасим — поля даёт контейнер
-   .mdo-doc одинаково для правки и просмотра, текст не прыгает. */
+/* We suppress the engine's format-margins (padding in editable) — the padding
+   comes from the .mdo-doc container (side margins — the same --kasi-pad-x)
+   the same for both editing and viewing, so the text doesn't jump. */
 .mdo-mde .mde-root.mde-editable {
   padding: 0;
 }
 
-/* Заголовки: контрастный foreground, semibold, щедрые отступы сверху. */
+/* Headings: size/weight/spacing "like the native one" — layout, not in the
+   --kasi-* contract (heading color comes from the inherited --kasi-fg). */
 .mdo-mde .mde-root .mde-h {
   font-size: 1.7em;
   font-weight: 600;
   line-height: 1.25;
   margin: 1.4em 0 0.5em;
-  color: var(--foreground);
 }
 .mdo-mde .mde-root .mde-h2 {
   font-size: 1.35em;
   font-weight: 600;
   margin: 1.3em 0 0.45em;
-  color: var(--foreground);
 }
 .mdo-mde .mde-root .mde-h3 {
   font-size: 1.1em;
   font-weight: 600;
   margin: 1em 0 0.35em;
-  color: var(--foreground);
 }
 
-/* Маркеры списков — приглушённые, как у родного. */
-.mdo-mde .mde-root .mde-li::before,
-.mdo-mde .mde-root .mde-oli::before {
-  color: var(--muted-foreground);
-}
-
-/* Инлайн-код — плашка bg-muted, чуть мельче, моно. Блок-код (pre.mde-code)
-   отдельным правилом ниже. */
+/* Inline code — a bg-muted chip, slightly smaller, mono. kasimov.css has no
+   variable of its own for inline code (only for block .mde-code), so it's
+   hardcoded here — it's not part of the --kasi-* contract, nothing to fix.
+   Block code (pre.mde-code) is styled via --kasi-cell-bg/--kasi-radius (the
+   cellBgToken preset). */
 .mdo-mde .mde-root code:not(.mde-code) {
   background: var(--muted);
   border-radius: 0.25rem;
@@ -143,25 +144,9 @@
   font-family: var(--font-mono, ui-monospace, monospace);
 }
 
-/* Блок-код — плашка bg-muted со скруглением, как у родного. */
-.mdo-mde .mde-root .mde-code {
-  background: var(--muted);
-  border-radius: var(--radius);
-}
-
-/* Цитата — приглушённая с левой линией. */
+/* Blockquote: text color — inherited --kasi-fg-dim; border — a deliberate
+   choice of a plain --border instead of the computed color-mix from
+   kasimov.css (outside the --kasi-* contract, so it stays hardcoded). */
 .mdo-mde .mde-root .mde-quote {
-  color: var(--muted-foreground);
   border-left-color: var(--border);
-}
-
-/* Ссылки — accent-цветом (в теме bb --primary ахроматичный, цветной токен один
-   — --timeline-accent, адаптируется к светлой/тёмной теме). */
-.mdo-mde .mde-root .mde-link {
-  color: var(--timeline-accent);
-  text-decoration: none;
-}
-.mdo-mde .mde-root .mde-link:hover {
-  text-decoration: underline;
-  text-underline-offset: 2px;
 }

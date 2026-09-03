@@ -68,6 +68,15 @@ export const rpcContract = defineRpcContract({
       mainPull: z.object({ ok: z.boolean(), reason: z.string().nullable() }).nullable(),
     }),
   },
+  createMergeArchivePr: {
+    input: z.object({ threadId: z.string() }).strict(),
+    output: z.object({
+      url: z.string(),
+      number: z.number(),
+      mainPull: z.object({ ok: z.boolean(), reason: z.string().nullable() }).nullable(),
+      archived: z.boolean(),
+    }),
+  },
   fastForwardState: {
     input: z.object({ threadId: z.string() }).strict(),
     output: z.object({ visible: z.boolean(), reason: z.string() }),
@@ -201,6 +210,27 @@ export default async function plugin(bb: BbPluginApi) {
       republishAfterMutation();
       return { url: created.url, number: created.number, mainPull: merged.mainPull };
     },
+    // Extends createAndMergePr with a final archive step, still no new
+    // decision-making: mergePullRequest THROWS on a conflict/failed merge, so
+    // reaching the archive line already proves the merge landed cleanly — the
+    // "if everything went smoothly" gate is the absence of a throw, not a
+    // re-read of bb's (post-merge stale) state. The best-effort local main
+    // pull inside mergePullRequest never fails the merge, so it never blocks
+    // archiving either — it's surfaced by its own toast, same as elsewhere.
+    async createMergeArchivePr({ threadId }) {
+      const token = await resolveToken(settings);
+      const created = await gatherAndCreate(bb.sdk, bb.storage.kv, token, threadId);
+      await sleep(CREATE_TO_MERGE_PAUSE_MS);
+      const merged = await mergePullRequest(bb.sdk, bb.storage.kv, threadId);
+      await bb.sdk.threads.archive({ threadId });
+      republishAfterMutation();
+      return {
+        url: created.url,
+        number: created.number,
+        mainPull: merged.mainPull,
+        archived: true,
+      };
+    },
     async fastForwardState({ threadId }) {
       return computeFastForwardState(bb.sdk, threadId);
     },
@@ -254,7 +284,7 @@ export default async function plugin(bb: BbPluginApi) {
       return { ok: true };
     },
     async archiveState({ threadId }) {
-      return computeArchiveState(bb.sdk, threadId);
+      return computeArchiveState(bb.sdk, bb.storage.kv, threadId);
     },
     async archiveThread({ threadId }) {
       await bb.sdk.threads.archive({ threadId });
@@ -378,11 +408,13 @@ async function computeWakeUpState(sdk: Sdk, threadId: string): Promise<{ visible
   return { visible: decideWakeUpVisible(env.status) };
 }
 
-// Cheap-first: a merged check needs no working-copy status at all, so a PR
-// that isn't merged yet answers without ever touching environments.status —
-// same economy as peekNextPrNumber avoiding gh for a missing working copy.
+// Cheap-first: an unmerged PR answers without ever touching environments.status
+// — same economy as peekNextPrNumber avoiding gh for a missing working copy.
+// Only once the PR is merged do we pay for the working-tree and "un-landed
+// commits" checks that keep Archive from showing next to another button.
 async function computeArchiveState(
   sdk: Sdk,
+  kv: PluginKvStorage,
   threadId: string,
 ): Promise<{ visible: boolean; reason: string }> {
   const environmentId = await environmentIdOf(sdk, threadId);
@@ -391,14 +423,32 @@ async function computeArchiveState(
   const pr = await lookupPullRequest(sdk, environmentId);
   if (pr.state !== "merged") return { visible: false, reason: "not-merged" };
 
-  const status = await sdk.environments.status({ environmentId });
+  const env = await sdk.environments.get({ environmentId });
+  const base = resolveBase(env);
+  // With a base we read aheadCount too, so the "Pull Request" visibility below
+  // can tell landed-and-done from new commits waiting for a fresh PR.
+  const status = await sdk.environments.status(
+    base ? { environmentId, mergeBaseBranch: base.statusBase } : { environmentId },
+  );
   if (status.outcome !== "available") {
     return { visible: false, reason: `status-${status.outcome}` };
   }
 
+  // The same fact — and the same decision — the "Pull Request" button lives on.
+  // Deriving "un-landed commits" from it guarantees Archive and Pull Request are
+  // never shown at once. Without a base there's nothing ahead to compare against,
+  // and the Pull Request button is hidden anyway, so there's no un-landed work.
+  const createPr = base
+    ? await resolveVisibility(
+        visibilityPorts(kv, environmentId, env.path, base.githubBase),
+        { workspace: visibilityWorkspace(status.workspace), pr: pr.presence },
+      )
+    : null;
+
   return decideArchiveVisible({
     prState: pr.state,
     hasUncommittedChanges: status.workspace.workingTree.hasUncommittedChanges,
+    hasUnlandedCommits: createPr?.visible ?? false,
   });
 }
 

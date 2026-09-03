@@ -3,36 +3,37 @@ import { describe, expect, it } from "vitest";
 import { extractLinkHrefs } from "./opener-links";
 
 describe("extractLinkHrefs", () => {
-  it("берёт локальные markdown-ссылки, отсекает внешние схемы и якоря", () => {
+  it("takes local markdown links, drops external schemes and anchors", () => {
     const body = [
-      "см. [задачу](tasks/x.md) и [индекс](../INDEX.md)",
-      "[сайт](https://example.com) — внешняя",
-      "[якорь](#section) — не файл",
-      "[почта](mailto:a@b.c)",
+      "see [the task](tasks/x.md) and [the index](../INDEX.md)",
+      "[a site](https://example.com) — external",
+      "[an anchor](#section) — not a file",
+      "[mail](mailto:a@b.c)",
     ].join("\n");
     expect(extractLinkHrefs(body)).toEqual(["tasks/x.md", "../INDEX.md"]);
   });
 
-  it("НЕ поднимает Claude-@import: kasimov его как ссылку не рендерит", () => {
-    // Отличие kasimov-варианта от исходного: движок делает кликабельной только
-    // markdown-форму `[текст](href)`, поэтому @import сюда не попадает — иначе
-    // сервер посчитал бы живой ссылку, которую фронт никогда не откроет.
-    const body = "конфиг тянет @AGENTS.md и @~/.claude/skills/x.md";
+  it("does NOT pick up a Claude @import: kasimov doesn't render it as a link", () => {
+    // The difference from the original variant: the engine only makes the
+    // markdown form `[text](href)` clickable, so @import doesn't get picked
+    // up here — otherwise the server would treat as live a link the front end
+    // never opens.
+    const body = "config pulls in @AGENTS.md and @~/.claude/skills/x.md";
     expect(extractLinkHrefs(body)).toEqual([]);
   });
 
-  it("не матчит почту user@host в прозе", () => {
-    const body = "пиши на user@example.com — это не ссылка";
+  it("doesn't match a user@host email in prose", () => {
+    const body = "write to user@example.com — that's not a link";
     expect(extractLinkHrefs(body)).toEqual([]);
   });
 
-  it("сохраняет порядок и сворачивает дубли одного написания", () => {
-    const body = "[a](a.md) [b](b.md) снова [a](a.md)";
+  it("preserves order and collapses duplicates of the same spelling", () => {
+    const body = "[a](a.md) [b](b.md) again [a](a.md)";
     expect(extractLinkHrefs(body)).toEqual(["a.md", "b.md"]);
   });
 
-  it("абсолютный путь-ссылка проходит как внутривкладочный", () => {
-    const body = "[абс](/Users/me/notes/n.md)";
+  it("an absolute path link passes through as in-tab", () => {
+    const body = "[abs](/Users/me/notes/n.md)";
     expect(extractLinkHrefs(body)).toEqual(["/Users/me/notes/n.md"]);
   });
 });

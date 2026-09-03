@@ -131,9 +131,10 @@ function TasksAppShellContent({ subPath }: PluginNavPanelProps) {
   );
   const [newTaskOpen, setNewTaskOpen] = useState(false);
   const [newProjectOpen, setNewProjectOpen] = useState(false);
-  // Навигация переехала из фиксированной хостовой вкладки (experimental_fixedTabs,
-  // которую bb 0.40.0 не монтирует — см. BP-53) в левую колонку самой панели.
-  // Правая панель треда остаётся под эмбед конкретной таски (threadPanelAction).
+  // Navigation moved out of the fixed host tab (experimental_fixedTabs,
+  // which bb 0.40.0 doesn't mount — see BP-53) into the panel's own left
+  // column. The thread's right panel is still reserved for embedding a
+  // specific task (threadPanelAction).
   const [navOpen, setNavOpen] = useState(true);
   const { width: navWidth, startResize } = useResizableWidth({
     side: "left",

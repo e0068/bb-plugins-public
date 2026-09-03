@@ -1,32 +1,33 @@
 # bb-plugin-usage-circles
 
-Кольца лимитов Claude Code в подвале левого сайдбара BB. Знак — два кольца на
-окно лимита: внешнее показывает израсходованную долю (цвет по порогу: синий
-до 60 %, жёлтый с 60 %, красный с 90 %), внутреннее — сколько прошло времени
-до сброса окна (сплошная дуга у 5-часового окна, семь сегментов по дням у
-недельного). Клик раскрывает панель со строкой на каждое окно: подпись,
-процент, полоса расхода, полоса времени и время сброса.
+Claude Code usage-limit rings in the footer of BB's left sidebar. The
+indicator is two rings per limit window: the outer ring shows the used
+share (colored by threshold: blue below 60%, yellow from 60%, red from
+90%), the inner ring shows how much time has passed until the window
+resets (a solid arc for the 5-hour window, seven day-segments for the
+weekly one). Clicking expands a panel with one row per window: label,
+percentage, usage bar, time bar, and reset time.
 
-Данные берутся из самого BB — `bb.sdk.system.usageLimits()`; парсить файлы
-Claude Code не нужно.
+Data comes straight from BB itself — `bb.sdk.system.usageLimits()`; no
+parsing of Claude Code's own files is needed.
 
-## Слои
+## Layers
 
-- [lib/usage-model.ts](lib/usage-model.ts) — слой 1, чистая логика: разбор
-  ответа SDK, модель окна (доля расхода, цвет, доля времени, остаток до
-  сброса), без DOM.
-- [lib/render.ts](lib/render.ts) — слой 2, отрисовка модели в две формы:
-  кольцо для подвала и строка-полоса для панели.
-- [lib/sidebar-widget.ts](lib/sidebar-widget.ts) — слой 3, сборка виджета в
-  подвале сайдбара, раскрытие панели, опрос состояния.
-- [lib/usage-cache.ts](lib/usage-cache.ts) — кэш с TTL и склейкой
-  параллельных вызовов перед аккаунтным эндпоинтом Anthropic (жёсткий
-  рейт-лимит).
+- [lib/usage-model.ts](lib/usage-model.ts) — layer 1, pure logic: parsing
+  the SDK response, the window model (usage share, color, time share,
+  time left until reset), no DOM.
+- [lib/render.ts](lib/render.ts) — layer 2, rendering the model into two
+  forms: the ring for the footer and the bar row for the panel.
+- [lib/sidebar-widget.ts](lib/sidebar-widget.ts) — layer 3, assembling the
+  widget in the sidebar footer, expanding the panel, polling state.
+- [lib/usage-cache.ts](lib/usage-cache.ts) — a TTL cache that coalesces
+  concurrent calls in front of Anthropic's account endpoint (tightly
+  rate-limited).
 
-Три свитча в настройках плагина включают/выключают кольца отдельных окон в
-подвале; на состав раскрытой панели они не влияют.
+Three switches in the plugin settings turn the individual window rings in
+the footer on/off; they don't affect what's shown in the expanded panel.
 
-## Разработка
+## Development
 
 ```
 npm install --include=dev

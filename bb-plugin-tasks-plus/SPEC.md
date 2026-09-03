@@ -1,59 +1,62 @@
-# Tasks+ — форк плагина Tasks с нативными полями workflow
+# Tasks+ — fork of the Tasks plugin with native workflow fields
 
-## Цель
+## Goal
 
-Форк встроенного плагина Tasks (id `tasks-plus`), добавляющий пять нативных
-полей задачи под workflow проектной памяти. Заменяет встроенный Tasks:
-данные переносятся, встроенный выключается, форк забирает CLI-имя `bb tasks`.
+A fork of the built-in Tasks plugin (id `tasks-plus`) that adds five native
+task fields for the project-memory workflow. Replaces the built-in Tasks:
+data is migrated, the built-in plugin is disabled, and the fork takes over
+the `bb tasks` CLI name.
 
-## Поля
+## Fields
 
-| Поле | Тип UI | Хранение | Значения |
+| Field | UI type | Storage | Values |
 | --- | --- | --- | --- |
-| Type | одиночный select, nullable | `tasks.type TEXT` | feature, bugfix, spike, refactor, migration, design |
-| Estimate | одиночный select, nullable | `tasks.estimate TEXT` | xs, s, m, l, xl |
-| Check | мультивыбор | join `task_checks(task_id, check)` | test, review, design, browser |
-| Plan Tokens | целое ≥ 0, nullable | `tasks.plan_tokens INTEGER` | — |
-| Fact Tokens | целое ≥ 0, nullable | `tasks.fact_tokens INTEGER` | — |
+| Type | single select, nullable | `tasks.type TEXT` | feature, bugfix, spike, refactor, migration, design |
+| Estimate | single select, nullable | `tasks.estimate TEXT` | xs, s, m, l, xl |
+| Check | multi-select | join `task_checks(task_id, check)` | test, review, design, browser |
+| Plan Tokens | integer ≥ 0, nullable | `tasks.plan_tokens INTEGER` | — |
+| Fact Tokens | integer ≥ 0, nullable | `tasks.fact_tokens INTEGER` | — |
 
-Type/Estimate допускают «пусто» (NULL) — как `priority = 'none'`. Существующие
-задачи после переноса остаются без значений.
+Type/Estimate allow "empty" (NULL) — like `priority = 'none'`. Existing
+tasks remain unset after the migration.
 
-## Слои (зависимости строго вниз)
+## Layers (dependencies strictly downward)
 
-1. **db** — `db/schema.ts` (одна append-only миграция: 4 колонки + таблица
-   `task_checks`), `db/types.ts` (enum-массивы `TASK_TYPES`, `TASK_ESTIMATES`,
-   `TASK_CHECKS`; поля в `Task`, `CreateTaskInput`, `UpdateTaskInput`),
-   `db/store.ts` (`TaskRow`, `taskFromRow`, INSERT/UPDATE, `setTaskChecks`,
-   `listTaskChecks`).
-2. **shared/contract** — DTO задачи + zod-схемы create/update.
-3. **api** — проброс полей в create/update/get, эндпоинт замены checks.
-4. **cli** — флаги `--type`, `--estimate`, `--check` (повторяемый),
-   `--plan-tokens`, `--fact-tokens`; вывод в `show`.
-5. **views/detail** — редакторы в `meta.tsx`/`rail.tsx`: select для Type и
-   Estimate, popover-мультивыбор для Check, числовые инпуты Plan/Fact.
+1. **db** — `db/schema.ts` (a single append-only migration: 4 columns + the
+   `task_checks` table), `db/types.ts` (enum arrays `TASK_TYPES`,
+   `TASK_ESTIMATES`, `TASK_CHECKS`; fields on `Task`, `CreateTaskInput`,
+   `UpdateTaskInput`), `db/store.ts` (`TaskRow`, `taskFromRow`,
+   INSERT/UPDATE, `setTaskChecks`, `listTaskChecks`).
+2. **shared/contract** — task DTO + create/update zod schemas.
+3. **api** — thread fields through create/update/get, the checks-replace
+   endpoint.
+4. **cli** — flags `--type`, `--estimate`, `--check` (repeatable),
+   `--plan-tokens`, `--fact-tokens`; output in `show`.
+5. **views/detail** — editors in `meta.tsx`/`rail.tsx`: select for Type and
+   Estimate, popover multi-select for Check, numeric inputs for Plan/Fact.
 
-Шаблоны: `priority` (одиночный select) → Type/Estimate; `labels`
-(многие-ко-многим) → Check, но упрощённо — фикс. enum без отдельной таблицы
-значений и без привязки к проекту.
+Templates: `priority` (single select) → Type/Estimate; `labels`
+(many-to-many) → Check, but simplified — a fixed enum with no separate
+values table and no project binding.
 
-## Вне MVP (полировка)
+## Out of MVP scope (polish)
 
-Фильтрация/сортировка по новым полям в списке, колонки списка, чипы на
-карточках доски, оптимистичные апдейты новых полей. Поля существуют,
-сохраняются, редактируются в детали задачи и ставятся через CLI.
+Filtering/sorting by the new fields in the list, list columns, chips on
+board cards, optimistic updates for the new fields. The fields exist, are
+persisted, are editable in task detail, and can be set via the CLI.
 
-## Сборка и установка
+## Build and install
 
-Standalone-репак: зависимость на опубликованный `@get-bb/plugin-sdk`,
-`@bb/shared-ui` завендорен через shadcn-реестр (запинен под BB 0.39.0),
-импорты переписаны `@bb/shared-ui/*` → `@/*`. Сборка `bb plugin build`.
+Standalone repack: depends on the published `@get-bb/plugin-sdk`,
+`@bb/shared-ui` is vendored via the shadcn registry (pinned to BB 0.39.0),
+imports rewritten from `@bb/shared-ui/*` to `@/*`. Build with
+`bb plugin build`.
 
-Перенос: копия `~/.bb/plugins/tasks/data.db*` в `~/.bb/plugins/tasks-plus/`
-до первой загрузки; миграция достраивает колонки. `bb plugin disable tasks`,
-`bb plugin install .` — форк регистрирует CLI `tasks`.
+Migration: copy `~/.bb/plugins/tasks/data.db*` into `~/.bb/plugins/tasks-plus/`
+before the first load; the migration adds the columns. `bb plugin disable tasks`,
+`bb plugin install .` — the fork registers the `tasks` CLI.
 
-## Тесты
+## Tests
 
-Существующий vitest-набор сохраняется; добавляются тесты новых полей на
-слоях store, api, cli, meta.
+The existing vitest suite is kept; tests for the new fields are added at
+the store, api, cli, and meta layers.

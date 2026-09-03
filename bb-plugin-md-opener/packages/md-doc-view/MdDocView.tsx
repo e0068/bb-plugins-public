@@ -1,15 +1,15 @@
-// Общий слой: презентационный опыт MD Opener (редактор Kasimov) с инвертированными
-// зависимостями. Компонент владеет стеком прыжков, режимом правки и CAS-нотой, а
-// эффекты (чтение/запись файла, резолв цели ссылки) приходят функциями-пропсами —
-// плагин-потребитель подставляет свой RPC. Ядро само по себе не знает ни про bb,
-// ни про источник вкладки.
+// Shared layer: the presentational experience of MD Opener (the Kasimov editor)
+// with inverted dependencies. The component owns the jump stack, edit mode, and
+// the CAS note, while effects (reading/writing the file, resolving link targets)
+// arrive as function props — the consuming plugin supplies its own RPC. The core
+// itself knows nothing about bb or the tab's source.
 //
-// Порт из bb-plugin-md-opener/app.tsx (DocOpener), где useRpc/source заменены на
-// load/save/resolveLinkTarget. Любой файл — и markdown, и не-markdown — правится
-// сырым текстом; отдельного «только чтение» для не-md нет по решению владельца
-// (memory/decisions/claude-config-opener-setting.md).
+// Ported from bb-plugin-md-opener/app.tsx (DocOpener), where useRpc/source were
+// replaced with load/save/resolveLinkTarget. Any file — markdown or not — is
+// edited as raw text; there is no separate "read-only" mode for non-md, per the
+// owner's decision (memory/decisions/claude-config-opener-setting.md).
 import { useEffect, useRef, useState } from "react";
-import type { MouseEvent as ReactMouseEvent } from "react";
+import type { MouseEvent as ReactMouseEvent, ReactNode } from "react";
 
 import { KasimovEditor } from "./KasimovEditor";
 import "./md-doc-view.css";
@@ -28,7 +28,7 @@ export interface SaveResult {
 }
 
 export interface MdDocViewProps {
-  /** Абсолютный (или относительный первичный) путь первого показа. */
+  /** Absolute (or relative initial) path to show first. */
   initialPath: string;
   load: (path: string) => Promise<LoadedDoc>;
   save: (
@@ -36,14 +36,33 @@ export interface MdDocViewProps {
     content: string,
     expectedSha256: string | null,
   ) => Promise<SaveResult>;
-  /** Абсолютная цель внутривкладочной ссылки или null (ссылка некликабельна). */
+  /** Absolute target of an in-tab link, or null (link is not clickable). */
   resolveLinkTarget: (href: string, fromPath: string) => string | null;
-  /** CSS custom properties (`--kasi-*`) внешнего вида редактора. */
+  /** CSS custom properties (`--kasi-*`) for the editor's appearance. */
   vars?: Record<string, string>;
-  /** Клик по живой ссылке ведёт по ней. default true. */
+  /** Clicking a live link follows it. default true. */
   followLinks?: boolean;
-  /** Показывать frontmatter-блок сеткой. default true. */
+  /** `@path` (Claude @import) is clickable. default true. */
+  atLinks?: boolean;
+  /** Show the frontmatter block as a grid. default true. */
   frontmatter?: boolean;
+  /** Mermaid node style: "contrast" — filled chip; "soft" — soft (default). */
+  mermaidNodes?: "soft" | "contrast";
+  /**
+   * Extra element at the start of the header, before the internal back arrow
+   * (e.g. a button that returns to the host tab's outer list). Doesn't own its
+   * own navigation — it renders whatever the consumer passed. The package isn't
+   * tied to its behavior, so the header also shows without a file to edit (just
+   * for leading), see showHeader below.
+   */
+  leading?: ReactNode;
+  /**
+   * Replacement for the "Edit" button in view mode — e.g. an icon without text.
+   * The package doesn't know the host's icon set, so rendering is handed to the
+   * consumer; the component itself only passes the callback that enters edit
+   * mode. Default (not passed) — the previous text button.
+   */
+  editButton?: (onClick: () => void) => ReactNode;
 }
 
 export function MdDocView({
@@ -53,7 +72,11 @@ export function MdDocView({
   resolveLinkTarget,
   vars,
   followLinks,
+  atLinks,
   frontmatter,
+  mermaidNodes,
+  leading,
+  editButton,
 }: MdDocViewProps) {
   const [doc, setDoc] = useState<LoadedDoc | null>(null);
   const [stack, setStack] = useState<string[]>([]);
@@ -62,8 +85,8 @@ export function MdDocView({
   const [draft, setDraft] = useState("");
   const [saveNote, setSaveNote] = useState<string | null>(null);
 
-  // Один резолвер загрузки. push=true — прыжок (кладём в стек), false — возврат
-  // (стек уже подрезан вызывающим) или первичная загрузка.
+  // Single load resolver. push=true — a jump (pushed onto the stack), false —
+  // a return (the caller already trimmed the stack) or the initial load.
   const runLoad = (target: string, push: boolean) => {
     setLoading(true);
     setEditing(false);
@@ -77,7 +100,7 @@ export function MdDocView({
   const loadRef = useRef(runLoad);
   loadRef.current = runLoad;
 
-  // Первичная загрузка — по initialPath. Смена пути сбрасывает вкладку/черновик.
+  // Initial load — by initialPath. Changing the path resets the tab/draft.
   useEffect(() => {
     setStack([]);
     setLoading(true);
@@ -102,8 +125,8 @@ export function MdDocView({
 
   const current = stack[stack.length - 1] ?? doc?.path ?? initialPath;
 
-  // Внутривкладочная ссылка кликабельна, если resolveLinkTarget дал абсолютную
-  // цель; клик по несуществующей вернёт ошибку из load.
+  // An in-tab link is clickable if resolveLinkTarget returned an absolute
+  // target; clicking a missing one will surface an error from load.
   const linkResolver = (href: string) => {
     const abs = resolveLinkTarget(href, current);
     return abs ? { onClick: () => openAbs(abs) } : null;
@@ -118,8 +141,8 @@ export function MdDocView({
     setEditing(true);
   };
 
-  // CAS-сохранение: sha из последнего чтения. Конфликт — сообщение, правку не
-  // теряем; успех — обновляем содержимое и свежий sha, выходим из правки.
+  // CAS save: sha from the last read. Conflict — show a message, don't lose the
+  // edit; success — update the content and fresh sha, exit edit mode.
   const runSave = (content: string) => {
     if (!doc || doc.content == null) return;
     setSaveNote(null);
@@ -128,13 +151,13 @@ export function MdDocView({
         setDoc({ ...doc, content, sha256: res.sha256 ?? null });
         setEditing(false);
       } else {
-        setSaveNote(res.message ?? "Не удалось сохранить.");
+        setSaveNote(res.message ?? "Failed to save.");
       }
     });
   };
 
-  // Клик по тексту в просмотре — вход в правку. Ссылку ведёт сам редактор через
-  // linkResolver (класс .mde-link) — её клик не должен открывать правку.
+  // Clicking the text in view mode enters edit mode. The editor itself follows
+  // links via linkResolver (class .mde-link) — clicking one shouldn't open edit mode.
   const onDocClick = (event: ReactMouseEvent<HTMLDivElement>) => {
     if (editing) return;
     const el = event.target as HTMLElement;
@@ -143,23 +166,28 @@ export function MdDocView({
   };
 
   const fileName = (doc?.path || initialPath).split("/").pop() ?? "";
-  // Шапка появляется и когда файл можно править: там висит видимая кнопка
-  // «Редактировать» — вход в правку иначе неочевиден (клик по тексту не виден).
+  // The header also shows when the file is editable: it hosts a visible "Edit"
+  // button — entering edit mode is otherwise not discoverable (clicking the
+  // text isn't visible as an affordance). leading is the host tab's navigation
+  // (unrelated to editing), so it too keeps the header visible even when the
+  // file itself isn't loaded yet or isn't being edited.
   const showHeader =
-    editing || stack.length > 1 || !!saveNote || (canEdit && !editing);
+    editing || stack.length > 1 || !!saveNote || (canEdit && !editing) || !!leading;
 
   return (
     <div className="mdo-root">
-      {/* Шапки по умолчанию нет — как у родного. Появляется при возврате после
-          прыжка, в режиме правки или при ошибке сохранения. */}
+      {/* No header by default — matching the native experience. It appears on
+          return after a jump, in edit mode, on a save error, or when the host
+          tab passed leading. */}
       {showHeader && (
         <div className="mdo-header">
+          {leading}
           {!editing && stack.length > 1 && (
             <button
               type="button"
               onClick={back}
               className="mdo-back"
-              aria-label="Назад"
+              aria-label="Back"
             >
               ←
             </button>
@@ -175,7 +203,7 @@ export function MdDocView({
                 onClick={() => runSave(draft)}
                 className="mdo-btn mdo-btn-primary"
               >
-                Сохранить
+                Save
               </button>
               <button
                 type="button"
@@ -185,34 +213,39 @@ export function MdDocView({
                 }}
                 className="mdo-btn"
               >
-                Отмена
+                Cancel
               </button>
             </div>
           ) : (
-            canEdit && (
+            canEdit &&
+            (editButton ? (
+              editButton(startEdit)
+            ) : (
               <div className="mdo-actions">
                 <button
                   type="button"
                   onClick={startEdit}
                   className="mdo-btn mdo-btn-primary"
                 >
-                  Редактировать
+                  Edit
                 </button>
               </div>
-            )
+            ))
           )}
         </div>
       )}
 
       <div className="mdo-body">
-        {loading && <p className="mdo-msg">Загрузка…</p>}
+        {loading && <p className="mdo-msg">Loading…</p>}
         {!loading && doc?.error && <p className="mdo-msg mdo-err">{doc.error}</p>}
         {!loading && doc?.content != null && (
           <div className="mdo-doc" onClick={onDocClick}>
             <KasimovEditor
               editable={editing}
               followLinks={followLinks}
+              atLinks={atLinks}
               frontmatter={frontmatter}
+              mermaidNodes={mermaidNodes}
               vars={vars}
               value={editing ? draft : doc.content}
               onChange={setDraft}

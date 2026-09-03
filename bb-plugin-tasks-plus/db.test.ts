@@ -59,7 +59,7 @@ describe("tasks storage", () => {
             { count: number }
           >("SELECT COUNT(*) AS count FROM schema_version")
           .get()?.count,
-      ).toBe(9);
+      ).toBe(10);
     } finally {
       await harness.dispose();
     }
@@ -745,6 +745,33 @@ describe("tasks storage", () => {
       expect(() => store.createPreset(preset)).toThrow(
         /UNIQUE constraint failed: presets.name/,
       );
+    } finally {
+      await harness.dispose();
+    }
+  });
+});
+
+describe("file_tasks worktree-origin row", () => {
+  it("degrades to a main origin instead of throwing when a row breaks the worktree/environment-id pairing", async () => {
+    const { db, harness, store } = setup();
+    try {
+      const project = createProject(store, "FS");
+      const task = store.createTask({ projectId: project.id, title: "A" });
+      // SQLite's CHECK on file_tasks only constrains source_kind's own enum
+      // (see decisions/tasks-drop-chore-shallow-migration.md for why a
+      // cross-column CHECK isn't retrofitted here) — this row is reachable by
+      // anything writing SQL directly, not through upsertFileTask, which
+      // can't express it (FileTaskOrigin's "worktree" variant always carries
+      // an environmentId).
+      db.prepare(
+        `INSERT INTO file_tasks
+           (project_id, slug, task_id, file_path, content_sha,
+            source_kind, worktree_environment_id, worktree_name, worktree_branch,
+            updated_at)
+         VALUES (?, ?, ?, ?, ?, 'worktree', NULL, NULL, NULL, ?)`,
+      ).run(project.id, "a", task.id, "memory/tasks/todo/a.md", "sha-1", task.createdAt);
+
+      expect(store.getFileTask(project.id, "a")?.origin).toEqual({ kind: "main" });
     } finally {
       await harness.dispose();
     }

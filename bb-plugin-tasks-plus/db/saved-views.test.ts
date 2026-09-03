@@ -107,17 +107,17 @@ describe("saved views store", () => {
     }
   });
 
-  it("treats Cyrillic names as case-insensitively unique (beyond SQLite's ASCII-only NOCASE)", async () => {
+  it("treats accented names as case-insensitively unique (beyond SQLite's ASCII-only NOCASE)", async () => {
     const { harness, store } = setup();
     try {
       const first = store.createSavedView({
         scope: "all",
-        name: "Вид",
+        name: "Café",
         config: CONFIG_C1,
       });
       const second = store.createSavedView({
         scope: "all",
-        name: "вид",
+        name: "café",
         config: CONFIG_C2,
       });
 

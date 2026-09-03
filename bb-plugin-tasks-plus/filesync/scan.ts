@@ -1,6 +1,9 @@
+import type { FileTaskOrigin } from "../db/index.js";
 import { parseFrontmatter } from "./frontmatter.js";
 import { mapFrontmatter, statusFromFolder } from "./map.js";
 import { sha256, type ScannedFile } from "./sync.js";
+
+const MAIN_ORIGIN: FileTaskOrigin = { kind: "main" };
 
 /**
  * Minimal filesystem view the scanner needs, so the real bb.sdk-backed reader
@@ -39,10 +42,17 @@ export interface ScanResult {
  * and reported in `invalid` with its path and the parser's reason instead.
  * Callers must keep such a file's existing task untouched rather than delete
  * it (see `SyncOptions.invalidFilePaths` in filesync/sync.ts).
+ *
+ * `origin` is stamped onto every produced `ScannedFile` verbatim — the
+ * scanner has no notion of "where files come from", only `reader` does (see
+ * filesync/bb-reader.ts and filesync/run.ts, which pick a reader and its
+ * matching origin together). Defaults to the project's main checkout, which
+ * is what every caller other than a worktree scan wants.
  */
 export async function scanTaskFolder(
   reader: FileReader,
   folder: string,
+  origin: FileTaskOrigin = MAIN_ORIGIN,
 ): Promise<ScanResult> {
   const root = folder.replace(/\/+$/, "");
   const paths = await reader.listPaths(root);
@@ -69,7 +79,12 @@ export async function scanTaskFolder(
       continue;
     }
     const mapped = mapFrontmatter(data, status, filename, body);
-    files.push({ mapped, filePath: path, contentSha: sha256(JSON.stringify(mapped)) });
+    files.push({
+      mapped,
+      filePath: path,
+      contentSha: sha256(JSON.stringify(mapped)),
+      origin,
+    });
   }
   return { files, invalid };
 }

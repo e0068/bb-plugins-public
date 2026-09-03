@@ -8,9 +8,9 @@ export default defineConfig({
     alias: {
       "@": fileURLToPath(new URL(".", import.meta.url)),
     },
-    // Компоненты плагина импортируются из ./packages/* и тянут React из
-    // node_modules пакета — dedupe сводит все копии к node_modules плагина,
-    // иначе хуки падают (packages/plugin-base/vitest-react-dedupe.ts).
+    // Plugin components are imported from ./packages/* and pull in React from
+    // that package's node_modules — dedupe collapses all copies to the plugin's
+    // node_modules, otherwise hooks break (packages/plugin-base/vitest-react-dedupe.ts).
     dedupe: reactDedupe,
   },
 });

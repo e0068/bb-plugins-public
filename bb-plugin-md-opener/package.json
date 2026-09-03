@@ -8,7 +8,7 @@
   },
   "bb": {
     "name": "Kasimov",
-    "description": "Открывает .md-файлы редактором Kasimov: markdown-ссылки внутри кликабельны и ведут в той же вкладке, с крошками и возвратом. Правка сохраняется с CAS-защитой.",
+    "description": "Opens .md files with the Kasimov editor: markdown links inside are clickable and navigate within the same tab, with breadcrumbs and a back button. Edits are saved with CAS protection.",
     "branding": {
       "icon": "FileText"
     },
@@ -16,7 +16,6 @@
     "app": "./app.tsx"
   },
   "dependencies": {
-    "kasimov": "file:../packages/kasimov",
     "zod": "^4.3.6"
   },
   "devDependencies": {

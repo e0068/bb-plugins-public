@@ -214,8 +214,8 @@ export interface TasksTopbarProps {
   onNewTask: () => void;
   onBack: () => void;
   /**
-   * Левая колонка навигации открыта. Кнопка-переключатель рендерится только
-   * когда передан onToggleNav, поэтому проп обратносовместим.
+   * Whether the left navigation column is open. The toggle button only
+   * renders when onToggleNav is passed, so the prop is backward-compatible.
    */
   navOpen?: boolean;
   onToggleNav?: () => void;
@@ -347,7 +347,7 @@ export function TasksTopbar({
           variant="ghost"
           size="icon"
           className="-ml-1 size-7 shrink-0"
-          aria-label={navOpen ? "Скрыть навигацию" : "Показать навигацию"}
+          aria-label={navOpen ? "Hide navigation" : "Show navigation"}
           aria-pressed={navOpen ?? false}
           onClick={onToggleNav}
         >

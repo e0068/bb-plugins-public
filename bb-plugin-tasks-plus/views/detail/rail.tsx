@@ -27,6 +27,8 @@ import {
   TYPE_ICONS,
   TYPE_LABELS,
   TYPE_NONE_ICON,
+  describeWorktreeOrigin,
+  formatDateTime,
   formatDueDate,
   isActiveThread,
 } from "./meta.js";
@@ -686,7 +688,7 @@ function SourceRow({
       const { revealed, error } = await rpc.call("revealTaskSource", {
         taskId: task.id,
       });
-      if (!revealed) onError(error ?? "Не удалось раскрыть файл-источник");
+      if (!revealed) onError(error ?? "Failed to reveal the source file");
     } catch (error) {
       onError(error instanceof Error ? error.message : String(error));
     }
@@ -694,7 +696,7 @@ function SourceRow({
   return (
     <>
       <div className="mb-1 mt-3 text-2xs font-semibold text-muted-foreground">
-        Источник
+        Source
       </div>
       <button
         type="button"
@@ -710,6 +712,30 @@ function SourceRow({
         />
       </button>
     </>
+  );
+}
+
+/**
+ * Full-width banner above the Properties section for a task whose latest
+ * content came from an active worktree instead of the linked project's main
+ * checkout — see shared/contract.ts's fileTaskOriginSchema and
+ * filesync/merge.ts for when that's the case.
+ */
+function WorktreeSourceBanner({ task }: { task: Task }) {
+  if (task.source?.origin.kind !== "worktree") return null;
+  const { identity, detail } = describeWorktreeOrigin(task.source.origin);
+  return (
+    <div
+      className="mb-3 flex items-start gap-1.5 rounded-md border border-border bg-muted/40 px-2 py-1.5 text-2xs text-muted-foreground"
+      title={task.source.filePath}
+    >
+      <Icon name="FolderGit" className="mt-0.5 size-3.5 shrink-0" />
+      <span className="min-w-0">
+        Not merged into main — synced from{" "}
+        <span className="font-medium text-foreground">{identity}</span>
+        {detail ? ` (${detail})` : null}
+      </span>
+    </div>
   );
 }
 
@@ -739,6 +765,7 @@ export function PropertiesRail({
   );
   return (
     <aside className={cn("w-56 shrink-0 py-10 pl-2 pr-6", className)}>
+      <WorktreeSourceBanner task={task} />
       <h2 className="mb-1.5 text-xs font-semibold text-muted-foreground">
         Properties
       </h2>
@@ -899,6 +926,20 @@ export function PropertiesRail({
         ) : (
           <span className="text-muted-foreground">none active</span>
         )}
+      </div>
+
+      <div className="mb-1 mt-3 text-2xs font-semibold text-muted-foreground">
+        Created
+      </div>
+      <div className="py-0.5 text-sm text-muted-foreground">
+        {formatDateTime(task.createdAt)}
+      </div>
+
+      <div className="mb-1 mt-3 text-2xs font-semibold text-muted-foreground">
+        Updated
+      </div>
+      <div className="py-0.5 text-sm text-muted-foreground">
+        {formatDateTime(task.updatedAt)}
       </div>
     </aside>
   );

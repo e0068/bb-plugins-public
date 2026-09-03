@@ -27,7 +27,7 @@ describe("parseFrontmatter", () => {
 
   it("flags an unquoted title with a bare colon as an error", () => {
     const { data, error } = parseFrontmatter(
-      "---\ntitle: Свой плагин: кольца\n---\nbody",
+      "---\ntitle: Custom plugin: rings\n---\nbody",
     );
     expect(data).toEqual({});
     expect(error).toBeTruthy();
@@ -35,10 +35,10 @@ describe("parseFrontmatter", () => {
 
   it("accepts a quoted title with a colon, no error", () => {
     const { data, error } = parseFrontmatter(
-      '---\ntitle: "Свой плагин: кольца"\n---\nbody',
+      '---\ntitle: "Custom plugin: rings"\n---\nbody',
     );
     expect(error).toBeUndefined();
-    expect(data.title).toBe("Свой плагин: кольца");
+    expect(data.title).toBe("Custom plugin: rings");
   });
 
   it("flags frontmatter that parses to a scalar, not a mapping", () => {
