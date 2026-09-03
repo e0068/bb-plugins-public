@@ -51,10 +51,10 @@ const threadsVizSettingsSchema = z
   .strict();
 
 /**
- * Mirrors AgentTimelinePage.tsx's three persistable display toggles
- * (showHooks, relativeTime, groupedByTurn). `expanded`/`collapsedTurns` are
- * deliberately absent — per-timeline UI state, reset on every agent switch
- * already, not a standing preference.
+ * Mirrors AgentTimelinePage.tsx's four persistable display toggles
+ * (showHooks, relativeTime, groupedByTurn, groupWorkflows).
+ * `expanded`/`collapsedTurns` are deliberately absent — per-timeline UI
+ * state, reset on every agent switch already, not a standing preference.
  */
 const agentDetailVizSettingsSchema = z
   .object({
@@ -62,6 +62,8 @@ const agentDetailVizSettingsSchema = z
     /** false = absolute clock time, true = relative to the timeline's first event. */
     relativeTime: z.boolean().default(false),
     groupedByTurn: z.boolean().default(false),
+    /** true = merge each workflow run into one `workflow:<runId>` segment on the session chart, false = split it into its member agents. Default true preserves the chart's original (pre-toggle) behaviour. */
+    groupWorkflows: z.boolean().default(true),
   })
   .strict();
 

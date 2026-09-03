@@ -18,6 +18,7 @@ describe("DEFAULT_VIZ_SETTINGS", () => {
       showHooks: true,
       relativeTime: false,
       groupedByTurn: false,
+      groupWorkflows: true,
     });
   });
 });
@@ -49,6 +50,15 @@ describe("parseVizSettings", () => {
       showHooks: false,
     });
     expect(result.threads).toEqual(DEFAULT_VIZ_SETTINGS.threads);
+  });
+
+  it("keeps an explicit groupWorkflows: false and fills the rest with defaults", () => {
+    const result = parseVizSettings({ agentDetail: { groupWorkflows: false } });
+
+    expect(result.agentDetail).toEqual({
+      ...DEFAULT_VIZ_SETTINGS.agentDetail,
+      groupWorkflows: false,
+    });
   });
 
   it("preserves a saved agentColors map", () => {
@@ -117,7 +127,7 @@ describe("vizSettingsSchema strictness", () => {
         costMin: "0.1",
         costMax: "5",
       },
-      agentDetail: { showHooks: false, relativeTime: true, groupedByTurn: true },
+      agentDetail: { showHooks: false, relativeTime: true, groupedByTurn: true, groupWorkflows: false },
     };
 
     const result = vizSettingsSchema.safeParse(full);
