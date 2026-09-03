@@ -283,6 +283,11 @@ export function AgentTimelinePage({ subPath }: PluginNavPanelProps) {
   // threadsTimeline RPC's single-session slice (no new backend surface), so a
   // failure just hides the chart; the agent timeline below is the real content.
   const [sessionChart, setSessionChart] = useState<{ thread: ThreadEntry; agentLabels: Record<string, string> } | null>(null);
+  // Session chart only: true merges each workflow run into one segment, false
+  // splits it into its member agents. Declared here (ahead of the chart-fetch
+  // effect that reads it) because it drives the threadsTimeline RPC below; it
+  // persists with the page's other display toggles further down.
+  const [groupWorkflows, setGroupWorkflows] = useState(DEFAULT_VIZ_SETTINGS.agentDetail.groupWorkflows);
   // Chart geometry/behaviour — declared settings (bb.settings.define), read
   // live via useSettings(); this page never writes them (see
   // ThreadsTimelinePage.tsx's module doc comment for the full split).
@@ -315,7 +320,7 @@ export function AgentTimelinePage({ subPath }: PluginNavPanelProps) {
       return;
     }
     let cancelled = false;
-    rpc.call("threadsTimeline", { limit: 1, unit: gear.unit, session, groupWorkflows: true }).then(
+    rpc.call("threadsTimeline", { limit: 1, unit: gear.unit, session, groupWorkflows }).then(
       (result) => {
         if (cancelled || !mountedRef.current) return;
         setSessionChart(
@@ -334,7 +339,7 @@ export function AgentTimelinePage({ subPath }: PluginNavPanelProps) {
     // Agent switch keeps the same session chart — depends on `session` and
     // the bucket width, which also refetches if the gear's saved time-unit
     // setting changes.
-  }, [rpc, session, gear.unit]);
+  }, [rpc, session, gear.unit, groupWorkflows]);
 
   // --- Timeline display controls: NOT reset on agent change (they're
   // standing preferences, persisted below) — only `expanded`/`collapsedTurns`
@@ -367,6 +372,7 @@ export function AgentTimelinePage({ subPath }: PluginNavPanelProps) {
         setShowHooks(settings.agentDetail.showHooks);
         setRelativeTime(settings.agentDetail.relativeTime);
         setGroupedByTurn(settings.agentDetail.groupedByTurn);
+        setGroupWorkflows(settings.agentDetail.groupWorkflows);
         setVizHydrated(true);
       },
       () => {
@@ -394,7 +400,7 @@ export function AgentTimelinePage({ subPath }: PluginNavPanelProps) {
       rpc
         .call("saveVizSettings", {
           threads: threadsSettings,
-          agentDetail: { showHooks, relativeTime, groupedByTurn },
+          agentDetail: { showHooks, relativeTime, groupedByTurn, groupWorkflows },
         })
         .catch(() => {
           // Best-effort persistence — a failed save just means this
@@ -403,7 +409,7 @@ export function AgentTimelinePage({ subPath }: PluginNavPanelProps) {
         });
     }, 400);
     return () => clearTimeout(timer);
-  }, [vizHydrated, showHooks, relativeTime, groupedByTurn, threadsSettings, rpc]);
+  }, [vizHydrated, showHooks, relativeTime, groupedByTurn, groupWorkflows, threadsSettings, rpc]);
 
   const [expanded, setExpanded] = useState<Set<number>>(new Set());
   const [collapsedTurns, setCollapsedTurns] = useState<Set<number>>(new Set());
@@ -469,7 +475,19 @@ export function AgentTimelinePage({ subPath }: PluginNavPanelProps) {
       </div>
       {sessionChart && sessionChartThread && (
         <div className="shrink-0 px-4 pt-3 md:px-5">
-          <div className="mb-1 text-xs font-medium text-muted-foreground">Session chart</div>
+          <div className="mb-1 flex items-center justify-between gap-2">
+            <span className="text-xs font-medium text-muted-foreground">Session chart</span>
+            {/* Only meaningful when a workflow actually ran — otherwise there's nothing to merge or split. */}
+            {sessionChartThread.workflowCount > 0 && (
+              <ToggleButton
+                pressed={!groupWorkflows}
+                onClick={() => setGroupWorkflows((v) => !v)}
+                label="Workflow"
+                on="split"
+                off="merged"
+              />
+            )}
+          </div>
           <SessionChartCard
             thread={sessionChartThread}
             agentLabels={sessionChart.agentLabels}

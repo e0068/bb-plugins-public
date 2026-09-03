@@ -234,6 +234,49 @@ describe("threads-timeline panel — agent-detail sub-view", () => {
     await screen.findByText(/Workflow: arch-review/);
   });
 
+  it("splits a workflow into member agents and persists the choice when the Workflow toggle is switched off", async () => {
+    const inputs: unknown[] = [];
+    let savedInput: unknown;
+    const slot = await renderAgentDetail(buildAgentDetailSubPath({ session: "sess_abc123", agent: "main" }), {
+      agentTimeline: async () => READY_TIMELINE,
+      threadsTimeline: async (input) => {
+        inputs.push(input);
+        return threadsTimelineWithWorkflowMembers();
+      },
+      saveVizSettings: async (input) => {
+        savedInput = input;
+        return { ok: true as const };
+      },
+    });
+
+    await screen.findByText("Session chart");
+    // The chart's first fetch groups workflows (its original, default behaviour).
+    expect(inputs[0]).toEqual({ limit: 1, unit: 60, session: "sess_abc123", groupWorkflows: true });
+
+    fireEvent.click(await screen.findByRole("button", { name: /Workflow:\s*merged/ }));
+
+    // Switching the toggle re-fetches the same slice split by member agent...
+    await waitFor(() => expect(inputs.some((i) => (i as { groupWorkflows?: boolean }).groupWorkflows === false)).toBe(true));
+    const last = inputs[inputs.length - 1];
+    expect(last).toEqual({ limit: 1, unit: 60, session: "sess_abc123", groupWorkflows: false });
+    assertMatchesContract("threadsTimeline", last);
+
+    // ...and persists the choice into viz-settings.
+    await waitFor(() => expect(savedInput).toBeDefined());
+    expect((savedInput as { agentDetail: { groupWorkflows: boolean } }).agentDetail.groupWorkflows).toBe(false);
+    expect(slot.rpcCalls.some((call) => call.method === "saveVizSettings")).toBe(true);
+  });
+
+  it("hides the Workflow toggle when the session ran no workflow", async () => {
+    await renderAgentDetail(buildAgentDetailSubPath({ session: "sess_abc123", agent: "main" }), {
+      agentTimeline: async () => READY_TIMELINE,
+      threadsTimeline: threadsTimelineTwoAgents,
+    });
+
+    await screen.findByText("Session chart");
+    expect(screen.queryByRole("button", { name: /Workflow:\s*(merged|split)/ })).toBeNull();
+  });
+
   /** Two real (non-workflow) agent segments in one bin, for the fade-on-select tests below. */
   async function threadsTimelineTwoAgents() {
     return {
@@ -603,7 +646,7 @@ describe("threads-timeline panel — agent-detail sub-view", () => {
   it("hydrates showHooks/relativeTime/groupedByTurn from loadVizSettings on mount", async () => {
     const loadedSettings: VizSettings = {
       ...DEFAULT_VIZ_SETTINGS,
-      agentDetail: { showHooks: false, relativeTime: true, groupedByTurn: true },
+      agentDetail: { showHooks: false, relativeTime: true, groupedByTurn: true, groupWorkflows: true },
     };
     await renderAgentDetail(buildAgentDetailSubPath({ session: "sess_abc123", agent: "main" }), {
       agentTimeline: async () => READY_TIMELINE,
@@ -637,7 +680,7 @@ describe("threads-timeline panel — agent-detail sub-view", () => {
     await waitFor(() => expect(savedInput).toBeDefined());
     expect(savedInput).toEqual({
       threads: loadedSettings.threads,
-      agentDetail: { showHooks: false, relativeTime: false, groupedByTurn: false },
+      agentDetail: { showHooks: false, relativeTime: false, groupedByTurn: false, groupWorkflows: true },
     });
     assertMatchesContract("saveVizSettings", savedInput);
     expect(slot.rpcCalls.some((call) => call.method === "saveVizSettings")).toBe(true);
