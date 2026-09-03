@@ -21,7 +21,7 @@ interface FsFile {
   sha256: string;
 }
 
-// Виртуальная ФС по абсолютным путям + мок bb, отдающий захваченные RPC-хендлеры.
+// A virtual filesystem keyed by absolute paths + a bb mock that exposes the captured RPC handlers.
 function setup(files: Record<string, FsFile>, env = { path: "/env", hostId: "h1" }) {
   let handlers!: Handlers;
   const write = vi.fn(
@@ -83,10 +83,10 @@ const workspace = {
 };
 
 describe("readDoc", () => {
-  it("читает файл под корнем и размечает живые/мёртвые ссылки одним ответом", async () => {
+  it("reads a file under the root and annotates live/dead links in one response", async () => {
     const { handlers } = setup({
       "/env/notes/doc.md": {
-        content: "см. [сосед](sub.md) и [пропажа](missing.md)",
+        content: "see [neighbor](sub.md) and [missing](missing.md)",
         sha256: "sha-doc",
       },
       "/env/notes/sub.md": { content: "# sub", sha256: "sha-sub" },
@@ -103,21 +103,21 @@ describe("readDoc", () => {
     ]);
   });
 
-  it("прыжок по абсолютной ссылке вне корня отсекается фенсом", async () => {
+  it("jumping to an absolute link outside the root is blocked by the fence", async () => {
     const { handlers } = setup({ "/env/a.md": { content: "x", sha256: "s" } });
     const res = await handlers.readDoc({ path: "/etc/passwd", source: workspace });
     expect(res.content).toBeNull();
-    expect(res.error).toBe("Путь вне корня источника.");
+    expect(res.error).toBe("Path is outside the source root.");
   });
 
-  it("несуществующий файл — ошибка, а не исключение", async () => {
+  it("a nonexistent file is an error, not an exception", async () => {
     const { handlers } = setup({});
     const res = await handlers.readDoc({ path: "nope.md", source: workspace });
     expect(res.content).toBeNull();
-    expect(res.error).toBe("Файл не найден.");
+    expect(res.error).toBe("File not found.");
   });
 
-  it("host-путь читается абсолютным, без корня-фенса", async () => {
+  it("a host path is read as absolute, with no root fence", async () => {
     const { handlers } = setup({ "/abs/anywhere/n.md": { content: "hi", sha256: "s" } });
     const res = await handlers.readDoc({
       path: "/abs/anywhere/n.md",
@@ -129,7 +129,7 @@ describe("readDoc", () => {
 });
 
 describe("writeDoc", () => {
-  it("CAS-успех возвращает НОВЫЙ sha256 (не старый)", async () => {
+  it("a CAS success returns the NEW sha256 (not the old one)", async () => {
     const { handlers } = setup({
       "/env/doc.md": { content: "old", sha256: "sha-old" },
     });
@@ -144,7 +144,7 @@ describe("writeDoc", () => {
     expect(res.sha256).not.toBe("sha-old");
   });
 
-  it("конфликт CAS не пишет и отдаёт текущий sha", async () => {
+  it("a CAS conflict doesn't write and returns the current sha", async () => {
     const files = { "/env/doc.md": { content: "disk", sha256: "sha-disk" } };
     const { handlers } = setup(files);
     const res = await handlers.writeDoc({
@@ -158,7 +158,7 @@ describe("writeDoc", () => {
     expect(files["/env/doc.md"].content).toBe("disk");
   });
 
-  it("запись вне корня отклоняется", async () => {
+  it("a write outside the root is denied", async () => {
     const { handlers } = setup({});
     const res = await handlers.writeDoc({
       path: "/etc/evil",

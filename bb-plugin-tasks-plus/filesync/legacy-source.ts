@@ -5,14 +5,14 @@ export interface LegacySource {
 }
 
 // Tasks created before file_tasks-backed sync existed had their source
-// appended to the description as plain text: "Источник: <path> · slug:
+// appended to the description as plain text: "Source: <path> · slug:
 // <slug>". Real sync (filesync/sync.ts) never writes this — it links
 // file_tasks instead — so this only matches that earlier, superseded
 // convention.
-const SOURCE_MARKER = /Источник:\s*(\S+)\s*·\s*slug:\s*(\S+)/;
+const SOURCE_MARKER = /Source:\s*(\S+)\s*·\s*slug:\s*(\S+)/;
 
 /**
- * Recovers a legacy "Источник: …" marker from a task description, so a task
+ * Recovers a legacy "Source: …" marker from a task description, so a task
  * seeded that way can still resolve a clickable source before it has (or
  * without ever getting) a real file_tasks link. Returns null when the
  * marker is absent or malformed.

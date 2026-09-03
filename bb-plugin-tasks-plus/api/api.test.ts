@@ -1644,6 +1644,7 @@ describe("Tasks RPC domain API", () => {
       taskId: task.id,
       filePath: "memory/tasks/backlog/wgsl-e2-groups.md",
       contentSha: "sha-1",
+      origin: { kind: "main" },
     });
 
     const fetched = tasksRpcContract.getTask.output.parse(
@@ -1651,6 +1652,7 @@ describe("Tasks RPC domain API", () => {
     );
     expect(fetched.task?.source).toEqual({
       filePath: "memory/tasks/backlog/wgsl-e2-groups.md",
+      origin: { kind: "main" },
     });
 
     const reveal = tasksRpcContract.revealTaskSource.output.parse(
@@ -1701,6 +1703,7 @@ describe("Tasks RPC domain API", () => {
       taskId: task.id,
       filePath: "memory/tasks/backlog/wgsl-e2-groups.md",
       contentSha: "sha-1",
+      origin: { kind: "main" },
     });
 
     const reveal = tasksRpcContract.revealTaskSource.output.parse(
@@ -1713,7 +1716,7 @@ describe("Tasks RPC domain API", () => {
     await harness.dispose();
   });
 
-  it("does not fall back to a legacy 'Источник: … · slug: …' description marker when file_tasks has no link", async () => {
+  it("does not fall back to a legacy 'Source: … · slug: …' description marker when file_tasks has no link", async () => {
     // Runtime source resolution reads only file_tasks now — a task adopted
     // by a `bb tasks sync` run gets a real link; one that was never adopted
     // must show no source rather than a stale/ENOENT path parsed from free
@@ -1732,7 +1735,7 @@ describe("Tasks RPC domain API", () => {
       projectId: project.id,
       title: "WGSL groups",
       description:
-        "Body text.\n\n---\nИсточник: memory/tasks/backlog/wgsl-e2-groups.md · slug: wgsl-e2-groups\n",
+        "Body text.\n\n---\nSource: memory/tasks/backlog/wgsl-e2-groups.md · slug: wgsl-e2-groups\n",
     });
 
     const fetched = tasksRpcContract.getTask.output.parse(
@@ -1763,7 +1766,7 @@ describe("Tasks RPC domain API", () => {
     const task = store.tasks.createTask({
       projectId: project.id,
       title: "Groups translation",
-      description: "Источник: old/stale/path.md · slug: old-slug",
+      description: "Source: old/stale/path.md · slug: old-slug",
     });
     store.tasks.upsertFileTask({
       projectId: project.id,
@@ -1771,6 +1774,7 @@ describe("Tasks RPC domain API", () => {
       taskId: task.id,
       filePath: "memory/tasks/backlog/wgsl-e2-groups.md",
       contentSha: "sha-1",
+      origin: { kind: "main" },
     });
 
     const fetched = tasksRpcContract.getTask.output.parse(
@@ -1778,6 +1782,7 @@ describe("Tasks RPC domain API", () => {
     );
     expect(fetched.task?.source).toEqual({
       filePath: "memory/tasks/backlog/wgsl-e2-groups.md",
+      origin: { kind: "main" },
     });
 
     await harness.dispose();

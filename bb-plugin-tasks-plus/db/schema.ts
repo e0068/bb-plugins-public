@@ -280,27 +280,28 @@ const MIGRATIONS = [
     CREATE INDEX idx_file_tasks_task ON file_tasks(task_id);
   `,
   `
-    -- BBPL-27: тип chore убран, существующие строки переводим в refactor.
-    -- Сначала данные (CHECK на старых базах ещё разрешает chore); объявленную
-    -- схему выше правим отдельно. Пересборку таблицы не делаем — см.
+    -- BBPL-27: the chore type is removed; existing rows are migrated to
+    -- refactor. Data first (the CHECK on older databases still allows
+    -- chore); the declared schema above is fixed up separately. We don't
+    -- rebuild the table — see
     -- memory/decisions/tasks-drop-chore-shallow-migration.md
     UPDATE tasks SET type = 'refactor' WHERE type = 'chore';
   `,
   `
-    -- BP-63: сохранённые виды меню Display. config хранит JSON-документ, чью
-    -- схему держит shared/contract.ts (fieldDisplayConfigSchema) — здесь он
-    -- непрозрачная строка.
-    -- name COLLATE NOCASE НЕ делает имя регистронезависимым по правилу
-    -- продукта — SQLite NOCASE складывает только ASCII ("Вид"/"вид" остаются
-    -- разными строками), а решение владельца (см.
-    -- memory/decisions/saved-view-name-overwrite.md) требует полного Unicode
-    -- сравнения. Эту нормализацию делает db/store.ts (normalizeSavedViewName,
-    -- используется в createSavedView) — она источник истины для совпадения
-    -- имён. UNIQUE (scope, name) ниже — только страховка от гонки при
-    -- одновременной записи в пределах ASCII-совпадения NOCASE, не проверка
-    -- продуктового правила. Отдельного индекса на (scope, name) нет: его
-    -- целиком покрывает автоиндекс этого уникального ограничения (проверено
-    -- планом запроса listSavedViews).
+    -- BP-63: saved views for the Display menu. config holds a JSON document
+    -- whose schema is owned by shared/contract.ts (fieldDisplayConfigSchema)
+    -- — here it's just an opaque string.
+    -- name COLLATE NOCASE does NOT make the name case-insensitive per the
+    -- product rule — SQLite's NOCASE only folds ASCII ("Café"/"café" stay
+    -- distinct strings), while the owner's decision (see
+    -- memory/decisions/saved-view-name-overwrite.md) requires full Unicode
+    -- comparison. That normalization is done by db/store.ts
+    -- (normalizeSavedViewName, used in createSavedView) — it's the source
+    -- of truth for name matching. The UNIQUE (scope, name) below is only a
+    -- safety net against races on concurrent writes within the ASCII NOCASE
+    -- match, not an enforcement of the product rule. There's no separate
+    -- index on (scope, name): it's fully covered by this unique
+    -- constraint's auto-index (verified via listSavedViews' query plan).
     CREATE TABLE saved_views (
       id TEXT PRIMARY KEY,
       scope TEXT NOT NULL,
@@ -309,6 +310,17 @@ const MIGRATIONS = [
       created_at TEXT NOT NULL,
       UNIQUE (scope, name)
     );
+  `,
+  `
+    -- A file_tasks row can now come from an active worktree instead of the
+    -- linked bb project's main checkout (see filesync/worktrees.ts,
+    -- filesync/merge.ts). worktree_* columns are populated together and only
+    -- when source_kind = 'worktree' — see db/store.ts's fileTaskFromRow.
+    ALTER TABLE file_tasks ADD COLUMN source_kind TEXT NOT NULL DEFAULT 'main'
+      CHECK (source_kind IN ('main', 'worktree'));
+    ALTER TABLE file_tasks ADD COLUMN worktree_environment_id TEXT;
+    ALTER TABLE file_tasks ADD COLUMN worktree_name TEXT;
+    ALTER TABLE file_tasks ADD COLUMN worktree_branch TEXT;
   `,
 ] as const;
 

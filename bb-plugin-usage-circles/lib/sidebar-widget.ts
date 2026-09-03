@@ -19,8 +19,8 @@ const POLL_MS = 60_000;
 // Re-attaching to the footer is checked far more often than data is fetched.
 // A settings save (and any host re-render of the sidebar) replaces the footer
 // menu node and orphans our row; tying re-attach to the 60s data poll left the
-// widget gone for up to a minute after every save — the reported "исчез на
-// save, сам вернулся через время".
+// widget gone for up to a minute after every save — the reported "disappeared
+// on save, came back on its own after a while".
 const MOUNT_RETRY_MS = 2_000;
 const PANEL_WIDTH_PX = 288;
 const PANEL_GAP_PX = 8;
@@ -110,7 +110,7 @@ function buildDetailsPanel(models: UsageWindowModel[]): HTMLDivElement {
     boxShadow: "0 10px 15px -3px rgb(0 0 0 / 0.3), 0 4px 6px -4px rgb(0 0 0 / 0.3)",
   });
   panel.setAttribute("role", "dialog");
-  panel.setAttribute("aria-label", "Лимиты Claude Code");
+  panel.setAttribute("aria-label", "Claude Code limits");
   models.forEach((model) => panel.append(buildWindowRow(model)));
   return panel;
 }
@@ -204,7 +204,7 @@ export function mountSidebarUsageCircles(pluginId: string, signal: AbortSignal):
     button.setAttribute("aria-expanded", String(expanded));
     button.setAttribute(
       "aria-label",
-      visibleModels.length === 0 ? "Лимиты Claude Code" : `Лимиты Claude Code: ${visibleModels.map((m) => `${m.label} ${Math.round(m.usedPercent)}%`).join(", ")}`,
+      visibleModels.length === 0 ? "Claude Code limits" : `Claude Code limits: ${visibleModels.map((m) => `${m.label} ${Math.round(m.usedPercent)}%`).join(", ")}`,
     );
     visibleModels.forEach((model) => button.append(buildRingIcon(model)));
     if (visibleModels.length === 0) {

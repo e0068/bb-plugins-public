@@ -8,7 +8,7 @@
   },
   "bb": {
     "name": "Usage Circles",
-    "description": "Кольца лимитов Claude Code в подвале сайдбара.",
+    "description": "Claude Code usage-limit rings in the sidebar footer.",
     "branding": {
       "icon": "./assets/icon.svg"
     },

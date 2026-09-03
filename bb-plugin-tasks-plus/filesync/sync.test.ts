@@ -1,6 +1,6 @@
 import { createFakePluginHost } from "@get-bb/plugin-sdk/testing";
 import { describe, expect, it } from "vitest";
-import { createTasksStore } from "../db";
+import { createTasksStore, type FileTaskOrigin } from "../db";
 import { scanTaskFolder, type FileReader } from "./scan.js";
 import { syncProjectFiles } from "./sync.js";
 
@@ -32,10 +32,12 @@ async function sync(
   store: ReturnType<typeof createTasksStore>,
   project: { id: string },
   files: Record<string, string>,
+  origin?: FileTaskOrigin,
 ) {
   const { files: scanned, invalid } = await scanTaskFolder(
     reader(files),
     "memory/tasks",
+    origin,
   );
   return syncProjectFiles(store, project as never, scanned, {
     invalidFilePaths: new Set(invalid.map((f) => f.filePath)),
@@ -222,7 +224,7 @@ describe("syncProjectFiles + scanTaskFolder", () => {
         projectId: project.id,
         title: "WGSL groups (legacy)",
         description:
-          "Body text.\n\n---\nИсточник: memory/tasks/backlog/wgsl-e2-groups.md · slug: wgsl-e2-groups\n",
+          "Body text.\n\n---\nSource: memory/tasks/backlog/wgsl-e2-groups.md · slug: wgsl-e2-groups\n",
       });
       const summary = await sync(store, project, {
         "memory/tasks/backlog/wgsl-e2-groups.md": [
@@ -254,7 +256,7 @@ describe("syncProjectFiles + scanTaskFolder", () => {
     const { store, project, harness } = setup();
     try {
       const description =
-        "Hand-written on the board.\n\n---\nИсточник: memory/tasks/backlog/x.md · slug: x\n";
+        "Hand-written on the board.\n\n---\nSource: memory/tasks/backlog/x.md · slug: x\n";
       const legacy = store.createTask({
         projectId: project.id,
         title: "X (legacy)",
@@ -276,7 +278,7 @@ describe("syncProjectFiles + scanTaskFolder", () => {
       store.createTask({
         projectId: project.id,
         title: "Unrelated legacy task",
-        description: "Источник: some/other/path.md · slug: some-other-slug\n",
+        description: "Source: some/other/path.md · slug: some-other-slug\n",
       });
 
       const summary = await sync(store, project, {
@@ -299,7 +301,7 @@ describe("syncProjectFiles + scanTaskFolder", () => {
       const orphan = store.createTask({
         projectId: project.id,
         title: "No matching file",
-        description: "Источник: gone/path.md · slug: gone-slug\n",
+        description: "Source: gone/path.md · slug: gone-slug\n",
       });
 
       const summary = await sync(store, project, {
@@ -319,7 +321,7 @@ describe("syncProjectFiles + scanTaskFolder", () => {
     try {
       const summary = await sync(store, project, {
         "memory/tasks/todo/a.md":
-          "---\ntitle: Свой плагин: кольца\n---\nbody",
+          "---\ntitle: Custom plugin: rings\n---\nbody",
       });
       expect(summary.invalid).toBe(1);
       expect(summary.created).toBe(0);
@@ -361,7 +363,7 @@ describe("syncProjectFiles + scanTaskFolder", () => {
         projectId: project.id,
         title: "WGSL groups (legacy)",
         description:
-          "Источник: memory/tasks/backlog/wgsl-e2-groups.md · slug: wgsl-e2-groups\n",
+          "Source: memory/tasks/backlog/wgsl-e2-groups.md · slug: wgsl-e2-groups\n",
       });
 
       const files = {
@@ -387,6 +389,87 @@ describe("syncProjectFiles + scanTaskFolder", () => {
       expect(store.getFileTask(project.id, "brand-new")).toBeUndefined();
       expect(store.getFileTaskByTaskId(legacy.id)).toBeUndefined();
       expect(store.listTasks({ projectId: project.id })).toHaveLength(1);
+    } finally {
+      await harness.dispose();
+    }
+  });
+});
+
+describe("syncProjectFiles + scanTaskFolder — file origin", () => {
+  const worktreeOrigin: FileTaskOrigin = {
+    kind: "worktree",
+    environmentId: "env_a",
+    name: "agent-a",
+    branchName: "claude/a",
+  };
+
+  it("persists a worktree origin alongside the file link", async () => {
+    const { store, project, harness } = setup();
+    try {
+      await sync(
+        store,
+        project,
+        { "memory/tasks/todo/a.md": "---\nslug: a\ntitle: A\n---\n" },
+        worktreeOrigin,
+      );
+      expect(store.getFileTask(project.id, "a")?.origin).toEqual(worktreeOrigin);
+    } finally {
+      await harness.dispose();
+    }
+  });
+
+  it("defaults to a main origin", async () => {
+    const { store, project, harness } = setup();
+    try {
+      await sync(store, project, {
+        "memory/tasks/todo/a.md": "---\nslug: a\ntitle: A\n---\n",
+      });
+      expect(store.getFileTask(project.id, "a")?.origin).toEqual({ kind: "main" });
+    } finally {
+      await harness.dispose();
+    }
+  });
+
+  it("re-syncs when only the origin changes, even with identical content and path", async () => {
+    const { store, project, harness } = setup();
+    try {
+      const content = "---\nslug: a\ntitle: A\n---\n";
+      await sync(store, project, { "memory/tasks/todo/a.md": content });
+      expect(store.getFileTask(project.id, "a")?.origin).toEqual({ kind: "main" });
+
+      // Same bytes, same path — but now sourced from a worktree instead of
+      // main. Without an origin check in the "unchanged" fast path this would
+      // be silently skipped and the stale main origin would never clear.
+      const summary = await sync(
+        store,
+        project,
+        { "memory/tasks/todo/a.md": content },
+        worktreeOrigin,
+      );
+      expect(summary).toMatchObject({ unchanged: 0, updated: 1 });
+      expect(store.getFileTask(project.id, "a")?.origin).toEqual(worktreeOrigin);
+    } finally {
+      await harness.dispose();
+    }
+  });
+
+  it("skips as unchanged once content, path, and origin all match", async () => {
+    const { store, project, harness } = setup();
+    try {
+      const content = "---\nslug: a\ntitle: A\n---\n";
+      await sync(
+        store,
+        project,
+        { "memory/tasks/todo/a.md": content },
+        worktreeOrigin,
+      );
+      const summary = await sync(
+        store,
+        project,
+        { "memory/tasks/todo/a.md": content },
+        worktreeOrigin,
+      );
+      expect(summary).toMatchObject({ unchanged: 1, updated: 0 });
     } finally {
       await harness.dispose();
     }

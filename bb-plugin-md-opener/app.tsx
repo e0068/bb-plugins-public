@@ -1,8 +1,9 @@
-// bb-plugin-md-opener — слот fileOpener: .md открывается редактором Kasimov.
-// Рендер и вся интерактивность (стек прыжков в ТОЙ ЖЕ вкладке, правка, CAS) живут
-// в общем слое packages/md-doc-view; здесь только тонкая проводка RPC под его
-// контракт — load/save/resolveLinkTarget замыкают непрозрачный `source` вкладки.
-// Резолв путей/хоста и разметку живости ссылок считает server.ts.
+// bb-plugin-md-opener — the fileOpener slot: .md files open with the Kasimov
+// editor. Rendering and all interactivity (the jump stack within the SAME
+// tab, editing, CAS) live in the shared packages/md-doc-view layer; this file
+// is just thin RPC wiring for its contract — load/save/resolveLinkTarget
+// close over the tab's opaque `source`. Path/host resolution and
+// link-liveness annotation are computed by server.ts.
 import { useRef } from "react";
 import { definePluginApp, useRpc, useSettings } from "@get-bb/plugin-sdk/app";
 import type { PluginFileOpenerProps } from "@get-bb/plugin-sdk/app";
@@ -23,13 +24,15 @@ import type { rpcContract } from "./server";
 
 function DocOpener({ path, source }: PluginFileOpenerProps) {
   const rpc = useRpc<typeof rpcContract>();
-  // Свой вид и флаги Kasimov — из настроек этого плагина (раздельные с Cloud
-  // Config). parse тотален: пока useSettings грузится — дефолты из kasimov.css.
+  // Kasimov's own look and flags come from this plugin's settings (separate
+  // from Cloud Config). parse is total: while useSettings is still loading,
+  // defaults come from kasimov.css.
   const settings = parseKasimovSettings(useSettings().values);
   const vars = kasimovCssVars(settings);
   const flags = kasimovFlags(settings);
-  // Карта живых ссылок последнего прочитанного документа: href → abs (с сервера,
-  // `~` уже раскрыт). resolveLinkTarget берёт abs отсюда, не резолвя `~` сам.
+  // Map of live links for the last document read: href → abs (from the
+  // server, `~` already expanded). resolveLinkTarget takes abs from here
+  // instead of expanding `~` itself.
   const linksRef = useRef<Map<string, string>>(new Map());
 
   const load = async (target: string): Promise<LoadedDoc> => {
@@ -50,17 +53,19 @@ function DocOpener({ path, source }: PluginFileOpenerProps) {
   ): Promise<SaveResult> =>
     rpc.call("writeDoc", { path: target, source, content, expectedSha256 });
 
-  // Все внутривкладочные ссылки кликабельны (как в родном вьюере); внешняя (http)
-  // — null. Единый резолвер (memory/decisions/link-resolve-shared-layer.md).
+  // All in-tab links are clickable (as in the native viewer); external (http)
+  // links resolve to null. Single shared resolver
+  // (memory/decisions/link-resolve-shared-layer.md).
   const resolveLinkTarget = (href: string, fromPath: string): string | null =>
     isInTabLink(href)
       ? linksRef.current.get(href) ??
         resolveRelative(fromPath, parseHref(href).path)
       : null;
 
-  // Смена файла ИЛИ вкладки-источника пересобирает вид (стек/черновик). Ключ — по
-  // ПРИМИТИВАМ source, не по объекту: хост может пересоздать source тем же по
-  // значению, и это не должно ронять вкладку (memory/wiki/bb-plugin-file-opener-slot.md).
+  // Changing the file OR the source tab rebuilds the view (stack/draft). The
+  // key is over source's PRIMITIVES, not the object: the host may recreate
+  // source with the same values, and that shouldn't reset the tab
+  // (memory/wiki/bb-plugin-file-opener-slot.md).
   const resetKey = `${path}|${source.kind}|${source.threadId}|${source.environmentId}|${source.projectId}`;
 
   return (
@@ -72,7 +77,9 @@ function DocOpener({ path, source }: PluginFileOpenerProps) {
       resolveLinkTarget={resolveLinkTarget}
       vars={vars}
       followLinks={flags.followLinks}
+      atLinks={flags.atLinks}
       frontmatter={flags.frontmatter}
+      mermaidNodes={flags.mermaidNodes}
     />
   );
 }

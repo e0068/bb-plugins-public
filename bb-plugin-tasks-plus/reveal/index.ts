@@ -53,7 +53,7 @@ export function revealInFinder(
   if (deps.platform !== "darwin") {
     return Promise.resolve({
       revealed: false,
-      error: "Раскрытие в Finder доступно только на macOS",
+      error: "Revealing in Finder is only available on macOS",
     });
   }
   return new Promise((resolvePromise) => {

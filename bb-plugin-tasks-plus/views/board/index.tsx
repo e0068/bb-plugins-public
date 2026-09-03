@@ -42,7 +42,12 @@ import {
   formatTokenCount,
   PRIORITY_LABELS,
 } from "../list/lib.js";
-import { EstimateIcon, TYPE_ICONS, TYPE_LABELS } from "../detail/meta.js";
+import {
+  describeWorktreeOrigin,
+  EstimateIcon,
+  TYPE_ICONS,
+  TYPE_LABELS,
+} from "../detail/meta.js";
 
 const DRAG_THRESHOLD_PX = 5;
 
@@ -167,6 +172,25 @@ interface DragState {
   width: number;
   overStatus: TaskStatus | null;
   dropIndex: number;
+}
+
+/** Small marker for a task whose latest content came from an active
+ *  worktree rather than the linked project's main checkout — see
+ *  shared/contract.ts's fileTaskOriginSchema and filesync/merge.ts for when
+ *  that's the case. */
+function WorktreeSourceMark({ task }: { task: Task }) {
+  if (task.source?.origin.kind !== "worktree") return null;
+  const { identity, detail } = describeWorktreeOrigin(task.source.origin);
+  return (
+    <span
+      className="ml-auto flex shrink-0 items-center text-muted-foreground"
+      title={`Not merged into main — synced from ${identity}${
+        detail ? ` (${detail})` : ""
+      }`}
+    >
+      <Icon name="FolderGit" className="size-3" />
+    </span>
+  );
 }
 
 function WorkingAgentsChip({ threads }: { threads: TaskThread[] }) {
@@ -343,6 +367,7 @@ function TaskCard({
       <div className="flex items-center gap-1.5 text-2xs text-muted-foreground">
         <span className="tabular-nums">{task.key}</span>
         <WorkingAgentsChip threads={meta.workingThreads} />
+        <WorktreeSourceMark task={task} />
       </div>
       <div className="mt-1 line-clamp-2 text-sm leading-snug font-medium">
         {task.title}

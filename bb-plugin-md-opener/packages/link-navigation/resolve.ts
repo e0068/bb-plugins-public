@@ -1,25 +1,25 @@
 /**
- * Чистый слой резолва путей и разбора ссылок. НОЛЬ импортов — ни react, ни
- * node:path. Один и тот же код зовётся на сервере (обход тела файла) и во
- * фронте (linkResolver редактора на каждую ссылку).
+ * Pure layer for path resolution and link parsing. ZERO imports — neither
+ * react nor node:path. The same code is called on the server (walking a
+ * file's body) and on the front end (the editor's linkResolver on every link).
  *
- * См. memory/decisions/link-resolve-shared-layer.md — почему этот слой
- * отдельный и почему node:path сюда нельзя (фронтовый бандл браузерный).
+ * See memory/decisions/link-resolve-shared-layer.md — why this layer is
+ * separate and why node:path can't be used here (the front-end bundle runs in the browser).
  *
- * Семантика сверена с самодельной навигацией bb-plugin-claude-config/app.tsx
- * (resolveAbs/isInTabLink/fileRefFromCode) — она эталон поведения.
+ * Semantics were checked against bb-plugin-claude-config/app.tsx's own
+ * navigation (resolveAbs/isInTabLink/fileRefFromCode) — it's the reference behavior.
  */
 
-// Ссылку из `<a href>` (или сырой markdown-target) ведём внутрь вкладки,
-// если она локальный путь: не схемная http:/mailto:, не протокол-
-// относительная `//`, не якорь `#...`, не пустая.
+// A link from `<a href>` (or a raw markdown target) is followed inside the
+// tab if it's a local path: not a scheme like http:/mailto:, not
+// protocol-relative `//`, not an anchor `#...`, not empty.
 export function isInTabLink(href: string): boolean {
   if (!href || href.startsWith("#") || href.startsWith("//")) return false;
   return !/^[a-z][a-z0-9+.-]*:/i.test(href);
 }
 
-// Title в квадратных кавычках отрезаем ПЕРВЫМ (он может стоять перед якорем
-// в исходном markdown-target: `path "title"#anchor`), потом уже якорь.
+// The title in double quotes is stripped FIRST (it can sit before the
+// anchor in the source markdown target: `path "title"#anchor`), then the anchor.
 const TITLE_RE = /^([\s\S]*?)\s+"([^"]*)"([\s\S]*)$/;
 
 export function parseHref(href: string): { path: string; anchor: string | null } {
@@ -35,11 +35,10 @@ export function parseHref(href: string): { path: string; anchor: string | null }
   };
 }
 
-// Резолвит ref (относительный или абсолютный) относительно ДИРЕКТОРИИ файла
-// fromPath в абсолютный нормализованный путь: схлопывает `.`/`..`, срезает
-// хвостовой (и любой пустой) сегмент — «/a/b/» и «/a/b» дают один результат.
-// Алгоритм 1:1 с Config.resolveAbs, только база — путь файла, не текущий
-// открытый документ.
+// Resolves a ref (relative or absolute) against the DIRECTORY of fromPath
+// into an absolute normalized path: collapses `.`/`..`, strips the trailing
+// (and any empty) segment — "/a/b/" and "/a/b" give the same result.
+// Algorithm is 1:1 with Config.resolveAbs, just with the file's path as the base instead of the currently open document.
 export function resolveRelative(fromPath: string, ref: string): string {
   const start = ref.startsWith("/")
     ? []
@@ -53,9 +52,9 @@ export function resolveRelative(fromPath: string, ref: string): string {
   return `/${out.join("/")}`;
 }
 
-// Текст инлайн-кода вида `references/01-x.md` — файловая ссылка: относительный
-// путь с расширением, без пробелов, схем и знаков `=` (отсекает
-// `user-scalable=no`). Иначе — null.
+// Inline code text like `references/01-x.md` is a file reference: a relative
+// path with an extension, no spaces, schemes, or `=` signs (this excludes
+// `user-scalable=no`). Otherwise — null.
 export function fileRefFromCode(text: string): string | null {
   const trimmed = text.trim();
   return /^(\.\.?\/)?([\w.-]+\/)*[\w.-]+\.[a-z0-9]+$/i.test(trimmed)

@@ -1,7 +1,7 @@
 /**
- * Ярус навигации — react внешний (external в сборке bb), второго инстанса не
- * будет. Поверх чистых слоёв resolve.ts и jump-stack.ts: хук стека прыжков и
- * фабрика linkResolver для md-editor.
+ * The navigation tier — react is external (an external in the bb build), so
+ * there won't be a second instance. Built on top of the pure resolve.ts and
+ * jump-stack.ts layers: the jump-stack hook and a linkResolver factory for md-editor.
  */
 import { useCallback, useState } from "react";
 import {
@@ -40,10 +40,10 @@ export function useJumpStack(first: string): {
   };
 }
 
-// Строит linkResolver для md-editor: href, который ведёт локально
-// (isInTabLink) и (если задан isLive) живой — кликабелен и прыгает через
-// onNavigate на абсолютный путь, резолвнутый относительно fromPath. Иначе —
-// null (ссылка рендерится некликабельным текстом).
+// Builds a linkResolver for md-editor: an href that leads locally
+// (isInTabLink) and (if isLive is given) is live — clickable, and jumps via
+// onNavigate to the absolute path resolved against fromPath. Otherwise —
+// null (the link renders as non-clickable text).
 export function makeLinkResolver(opts: {
   fromPath: string;
   onNavigate: (abs: string) => void;

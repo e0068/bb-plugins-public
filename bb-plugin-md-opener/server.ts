@@ -1,8 +1,9 @@
-// bb-plugin-md-opener — бэкенд слота fileOpener. Слой проводки: резолвит
-// источник вкладки в хост+корень (src/opener-source), читает файл с confine по
-// корню, попутно размечает ссылки тела на «живые» (существующие) и отдаёт всё
-// одним ответом; пишет правку с CAS. Логика разбора ссылок — в чистых слоях
-// (src/opener-links + общий packages/link-navigation), здесь только bb-I/O.
+// bb-plugin-md-opener — the fileOpener slot's backend. Wiring layer: resolves
+// the tab's source into a host+root (src/opener-source), reads the file
+// confined to that root, along the way annotates body links as "live"
+// (existing) and returns everything in a single response; writes edits with
+// CAS. Link-parsing logic lives in pure layers (src/opener-links + the shared
+// packages/link-navigation); this file is bb-I/O only.
 import { homedir } from "node:os";
 import { defineRpcContract, type BbPluginApi } from "@get-bb/plugin-sdk";
 import { z } from "zod";
@@ -11,15 +12,20 @@ import {
   parseHref,
   resolveRelative,
 } from "./packages/link-navigation/resolve";
-// Прямой импорт чистого модуля (не barrel index): иначе сервер потянул бы
-// React-компонент MdDocView и его CSS в серверный бандл.
-import { descriptors as kasimovDescriptors } from "./packages/md-doc-view/kasimov-settings";
+// Direct import of the pure module (not the barrel index): otherwise the
+// server would pull in the MdDocView React component and its CSS into the
+// server bundle.
+import {
+  NATIVE_VIEWER_TOKEN_DEFAULTS,
+  buildDescriptors,
+} from "./packages/md-doc-view/kasimov-settings";
 import { extractLinkHrefs } from "./src/opener-links";
 import { resolveSource, type OpenerSource } from "./src/opener-source";
 
-// НЕ strict: хост в объекте source может нести поля сверх типизированных —
-// strict отверг бы их, и RPC упал бы до хендлера («Failed to load file»).
-// Лишнее просто отбрасываем, читаем только нужные четыре поля.
+// NOT strict: the host's source object may carry fields beyond the typed
+// ones — strict would reject them, and the RPC would fail before reaching the
+// handler ("Failed to load file"). We just drop the extras and read only the
+// four fields we need.
 const sourceSchema = z.object({
   kind: z.enum(["host", "thread-storage", "workspace"]),
   threadId: z.string().nullable(),
@@ -27,9 +33,10 @@ const sourceSchema = z.object({
   projectId: z.string().nullable(),
 });
 
-// Ссылка тела: href как в разметке, abs — резолв сервера (единый с фронтом),
-// exists — существует ли цель на хосте. Фронт берёт abs отсюда, не резолвя `~`
-// сам (см. computeLinks).
+// A body link: href as written in the markup, abs — the server's resolution
+// (shared with the front end), exists — whether the target exists on the
+// host. The front end takes abs from here instead of resolving `~` itself
+// (see computeLinks).
 const linkSchema = z.object({
   href: z.string(),
   abs: z.string(),
@@ -49,14 +56,15 @@ export type DocLink = z.infer<typeof linkSchema>;
 
 export const rpcContract = defineRpcContract({
   readDoc: {
-    // path: относительный (workspace/thread-storage) при первом открытии либо
-    // абсолютный при прыжке по ссылке. source — непрозрачный токен вкладки,
-    // резолв корня/хоста делает сервер.
+    // path: relative (workspace/thread-storage) on first open, or absolute
+    // when following a link. source is the tab's opaque token; the server
+    // resolves the root/host.
     input: z.object({ path: z.string(), source: sourceSchema }).strict(),
     output: docOutput,
   },
   writeDoc: {
-    // CAS-запись: expectedSha256 из readDoc. sha256 при успехе — новый.
+    // CAS write: expectedSha256 comes from readDoc. sha256 on success is the
+    // new one.
     input: z
       .object({
         path: z.string(),
@@ -73,7 +81,7 @@ export const rpcContract = defineRpcContract({
   },
 });
 
-// --- чистые path-хелперы (server-side, node-free кроме homedir) --------------
+// --- pure path helpers (server-side, node-free except homedir) --------------
 
 function joinPath(dir: string, rel: string): string {
   return dir.endsWith("/") ? `${dir}${rel}` : `${dir}/${rel}`;
@@ -94,7 +102,7 @@ function isWithin(root: string, target: string): boolean {
   return target.startsWith(root.endsWith("/") ? root : `${root}/`);
 }
 
-/** Раскрывает ведущий `~` в домашний каталог хоста сервера (для `~/…`-ссылок). */
+/** Expands a leading `~` to the server host's home directory (for `~/…` links). */
 function expandTilde(path: string): string {
   if (path === "~") return homedir();
   if (path.startsWith("~/")) return joinPath(homedir(), path.slice(2));
@@ -102,9 +110,10 @@ function expandTilde(path: string): string {
 }
 
 /**
- * Абсолютный путь документа из входного `path`: host — уже абсолютный (после
- * раскрытия `~`); иначе относительный клеим к корню (абсолютный, пришедший
- * прыжком, оставляем как есть — фенс проверит вызывающий).
+ * The document's absolute path from the input `path`: for host it's already
+ * absolute (after `~` expansion); otherwise a relative path is joined to the
+ * root (an absolute path arriving via a link jump is left as is — the caller
+ * checks the fence).
  */
 function toAbsolute(
   source: OpenerSource,
@@ -120,12 +129,19 @@ function toAbsolute(
 export default function plugin(bb: BbPluginApi) {
   bb.log.info("loaded");
 
-  // Свои (раздельные) настройки Kasimov: кегли/отступы/цвета/шрифты + флаги.
-  // Схема общая с Cloud Config (packages/md-doc-view/kasimov-settings), но
-  // значения этого плагина независимы. Фронт читает их через useSettings.
-  bb.settings.define(kasimovDescriptors);
+  // This plugin's own (separate) Kasimov settings: sizes/spacing/colors/fonts
+  // + flags. The schema is shared with Cloud Config
+  // (packages/md-doc-view/kasimov-settings), but this plugin's values are
+  // independent. The front end reads them via useSettings.
+  //
+  // Default presets are "to match the native bb viewer" (previously hardcoded
+  // in packages/md-doc-view/md-doc-view.css, see
+  // memory/decisions/kasimov-opener-css-uses-token-defaults.md), not
+  // CUSTOM_TOKEN: without this change, Kasimov settings in MD Opener couldn't
+  // override the hardcoded values.
+  bb.settings.define(buildDescriptors(NATIVE_VIEWER_TOKEN_DEFAULTS));
 
-  // Чтение файла: отсутствие — пустой результат (text=null), не исключение.
+  // File read: absence is an empty result (text=null), not an exception.
   async function readFile(
     path: string,
     hostId: string | undefined,
@@ -144,10 +160,11 @@ export default function plugin(bb: BbPluginApi) {
   }
 
   /**
-   * Размечает ссылки тела на живые. abs каждой ссылки резолвится тем же
-   * resolveRelative, что и во фронте (после раскрытия `~`) — чтобы стороны
-   * сошлись. Существование берём листингом папок (по одному listPaths на
-   * папку, не чтением файлов); для не-host папки вне корня в листинг не идут.
+   * Annotates body links as live. Each link's abs is resolved with the same
+   * resolveRelative as the front end (after `~` expansion) — so both sides
+   * agree. Existence is determined by listing directories (one listPaths per
+   * directory, not by reading files); for non-host, directories outside the
+   * root aren't listed.
    */
   async function computeLinks(
     body: string,
@@ -165,7 +182,7 @@ export default function plugin(bb: BbPluginApi) {
     const dirs = new Set(entries.map((e) => dirOf(e.abs)));
     for (const dir of dirs) {
       if (root && !isWithin(root, dir)) {
-        namesByDir.set(dir, null); // вне корня — не листаем, считаем мёртвыми
+        namesByDir.set(dir, null); // outside the root — don't list, treat as dead
         continue;
       }
       try {
@@ -198,7 +215,7 @@ export default function plugin(bb: BbPluginApi) {
         return {
           path,
           content: null,
-          error: `Не удалось прочитать: ${String(err)}`,
+          error: `Failed to read: ${String(err)}`,
           sha256: null,
           links: [],
         };
@@ -213,7 +230,7 @@ export default function plugin(bb: BbPluginApi) {
         return {
           outcome: "denied" as const,
           sha256: null,
-          message: `Не удалось сохранить: ${String(err)}`,
+          message: `Failed to save: ${String(err)}`,
         };
       }
     },
@@ -225,7 +242,7 @@ export default function plugin(bb: BbPluginApi) {
       return {
         path: "",
         content: null,
-        error: "Источник вкладки недоступен.",
+        error: "Tab source unavailable.",
         sha256: null,
         links: [],
       };
@@ -235,7 +252,7 @@ export default function plugin(bb: BbPluginApi) {
       return {
         path: abs,
         content: null,
-        error: "Путь вне корня источника.",
+        error: "Path is outside the source root.",
         sha256: null,
         links: [],
       };
@@ -245,7 +262,7 @@ export default function plugin(bb: BbPluginApi) {
       return {
         path: abs,
         content: null,
-        error: "Файл не найден.",
+        error: "File not found.",
         sha256: null,
         links: [],
       };
@@ -270,7 +287,7 @@ export default function plugin(bb: BbPluginApi) {
       return {
         outcome: "not-found",
         sha256: null,
-        message: "Источник вкладки недоступен.",
+        message: "Tab source unavailable.",
       };
     }
     const abs = toAbsolute(source, resolved.root, path);
@@ -278,7 +295,7 @@ export default function plugin(bb: BbPluginApi) {
       return {
         outcome: "denied",
         sha256: null,
-        message: "Путь вне корня источника.",
+        message: "Path is outside the source root.",
       };
     }
     const written = await bb.sdk.files.write({
@@ -292,7 +309,7 @@ export default function plugin(bb: BbPluginApi) {
       return {
         outcome: "conflict",
         sha256: written.currentSha256,
-        message: "Файл изменился на диске. Обновите и повторите.",
+        message: "The file changed on disk. Refresh and try again.",
       };
     }
     return { outcome: "written", sha256: written.sha256, message: null };

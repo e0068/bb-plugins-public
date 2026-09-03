@@ -377,7 +377,7 @@ function renderCommandWithFileLink(
 
 /**
  * Toggle switch on/off — same size and colors as bb's own native settings
- * switch (see bb-plugin-thread-handoff/components/ui/switch.tsx, the one
+ * switch (see archive/bb-plugin-thread-handoff/components/ui/switch.tsx, the one
  * design-system Switch in this repo): track h-4 w-7, thumb size-3 constant
  * bg-background. bg-primary is achromatic gray in bb's theme (see
  * doc-editor.css) — indistinguishable from bg-muted, hence bg-foreground for

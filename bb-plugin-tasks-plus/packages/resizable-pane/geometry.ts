@@ -1,12 +1,12 @@
-// Чистая геометрия резайза — без DOM, чтобы покрывалась тестами.
-// Сторона пана определяет знак: у правого пана ручка слева (тянем влево —
-// шире), у левого пана ручка справа (тянем вправо — шире).
+// Pure resize geometry — no DOM, so it's covered by tests.
+// The pane's side determines the sign: a right pane's handle is on the left
+// (drag left — wider), a left pane's handle is on the right (drag right — wider).
 
 export type PaneSide = "left" | "right";
 
 export function clampWidth(value: number, min: number, max: number): number {
-  // NaN не сравнивается — отдаём безопасный минимум. ±Infinity зажимаются
-  // естественно через min/max: +Inf → max, −Inf → min.
+  // NaN doesn't compare — fall back to a safe minimum. ±Infinity clamp
+  // naturally via min/max: +Inf → max, −Inf → min.
   if (Number.isNaN(value)) return min;
   return Math.min(max, Math.max(min, value));
 }

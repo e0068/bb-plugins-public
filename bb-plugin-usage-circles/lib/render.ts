@@ -177,7 +177,7 @@ export function buildWindowRow(model: UsageWindowModel): HTMLDivElement {
 
   const reset = div({ fontSize: "12px", color: "var(--muted-foreground)", opacity: "0.7" }, "usage-circles__window-reset");
   reset.textContent =
-    model.resetsAt === null ? "Нет данных о сбросе" : `Сброс через ${model.resetRelativeLabel} (${model.resetAbsoluteLabel})`;
+    model.resetsAt === null ? "No reset data available" : `Resets in ${model.resetRelativeLabel} (${model.resetAbsoluteLabel})`;
 
   row.append(heading, buildUsageBar(model), buildTimeBar(model), reset);
   return row;

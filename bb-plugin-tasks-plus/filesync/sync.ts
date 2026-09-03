@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import type { Project, TasksStore } from "../db/index.js";
+import type { FileTaskOrigin, Project, TasksStore } from "../db/index.js";
 import { parseLegacySourceMarker } from "./legacy-source.js";
 import type { MappedTaskFile } from "./map.js";
 
@@ -16,6 +16,24 @@ export interface ScannedFile {
    * costing an update.
    */
   contentSha: string;
+  /** Where this file was read from — main checkout or an active worktree
+   *  (see filesync/scan.ts, filesync/merge.ts). */
+  origin: FileTaskOrigin;
+}
+
+function originsEqual(a: FileTaskOrigin, b: FileTaskOrigin): boolean {
+  if (a.kind !== b.kind) return false;
+  if (a.kind === "main") return true;
+  // a.kind === b.kind === "worktree" was just proven above — TS can't
+  // correlate that fact across two different variables on its own, so this
+  // cast (rather than a second, runtime-redundant "b.kind === main" check)
+  // is what makes it explicit.
+  const other = b as Extract<FileTaskOrigin, { kind: "worktree" }>;
+  return (
+    a.environmentId === other.environmentId &&
+    a.name === other.name &&
+    a.branchName === other.branchName
+  );
 }
 
 export function sha256(content: string): string {
@@ -65,7 +83,7 @@ const SYNC_LABEL_COLOR = "#6b7280";
  * `slug` via the `file_tasks` link.
  *
  * Adoption: a file whose slug has no `file_tasks` link yet is first matched
- * against this project's unlinked tasks by their legacy "Источник: … · slug:
+ * against this project's unlinked tasks by their legacy "Source: … · slug:
  * …" description marker (see `filesync/legacy-source.ts`). A match links the
  * existing task to the real file instead of creating a duplicate — this is
  * the one-time migration path off the pre-sync marker convention. Each
@@ -138,7 +156,7 @@ export function syncProjectFiles(
   const seen = new Set<string>();
   const slugToTaskId = new Map<string, string>();
 
-  for (const { mapped, filePath, contentSha } of files) {
+  for (const { mapped, filePath, contentSha, origin } of files) {
     seen.add(mapped.slug);
     const existing = store.getFileTask(project.id, mapped.slug);
     const fields = {
@@ -161,7 +179,8 @@ export function syncProjectFiles(
     if (
       existing &&
       existing.contentSha === contentSha &&
-      existing.filePath === filePath
+      existing.filePath === filePath &&
+      originsEqual(existing.origin, origin)
     ) {
       slugToTaskId.set(mapped.slug, existing.taskId);
       summary.unchanged += 1;
@@ -202,6 +221,7 @@ export function syncProjectFiles(
         taskId,
         filePath,
         contentSha,
+        origin,
       });
     }
     slugToTaskId.set(mapped.slug, taskId);

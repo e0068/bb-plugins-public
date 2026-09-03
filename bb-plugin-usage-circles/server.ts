@@ -41,10 +41,10 @@ export const rpcContract = defineRpcContract({
 
 export default async function plugin(bb: BbPluginApi) {
   const settings = bb.settings.define({
-    fiveHour: { type: "boolean", label: "Кольцо 5-часового окна в подвале", default: true },
-    weekly: { type: "boolean", label: "Кольцо недельного окна в подвале", default: true },
-    fable: { type: "boolean", label: "Кольцо недельного окна Fable в подвале", default: true },
-    openOnHover: { type: "boolean", label: "Показывать окошко по наведению", default: true },
+    fiveHour: { type: "boolean", label: "5-hour window ring in the footer", default: true },
+    weekly: { type: "boolean", label: "Weekly window ring in the footer", default: true },
+    fable: { type: "boolean", label: "Fable weekly window ring in the footer", default: true },
+    openOnHover: { type: "boolean", label: "Show panel on hover", default: true },
   });
 
   const usageLimitsCache = createUsageLimitsCache(() => bb.sdk.system.usageLimits(), USAGE_CACHE_TTL_MS);
@@ -52,8 +52,8 @@ export default async function plugin(bb: BbPluginApi) {
   bb.rpc.register(rpcContract, {
     async getState() {
       const { fiveHour, weekly, fable, openOnHover } = await settings.get();
-      // Провайдер Claude Code лежит под дефисным ключом "claude-code"
-      // (selectClaudeCodeProvider знает про рассинхрон с типом SDK).
+      // The Claude Code provider sits under the hyphenated key "claude-code"
+      // (selectClaudeCodeProvider knows about the mismatch with the SDK type).
       const claudeCode = selectClaudeCodeProvider(await usageLimitsCache.get());
       return { toggles: { fiveHour, weekly, fable }, openOnHover, usage: normalizeUsage(claudeCode) };
     },

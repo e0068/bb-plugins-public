@@ -26,6 +26,7 @@ import type {
   CreateSavedViewInput,
   CreateTaskInput,
   FileTask,
+  FileTaskOrigin,
   Folder,
   Label,
   ListTasksFilters,
@@ -87,6 +88,10 @@ interface FileTaskRow {
   task_id: string;
   file_path: string;
   content_sha: string;
+  source_kind: "main" | "worktree";
+  worktree_environment_id: string | null;
+  worktree_name: string | null;
+  worktree_branch: string | null;
   updated_at: string;
 }
 
@@ -412,13 +417,34 @@ function projectFromRow(row: ProjectRow): Project {
   };
 }
 
+/**
+ * `source_kind = 'worktree'` implies a non-null `worktree_environment_id` by
+ * construction on every write this store makes (`upsertFileTask` takes a
+ * `FileTaskOrigin`, and TS can't express a "worktree" variant without an
+ * `environmentId`) — but nothing at the SQLite level enforces that same
+ * pairing on read (see decisions/tasks-drop-chore-shallow-migration.md for
+ * why a CHECK spanning two columns isn't added after the fact here either).
+ * So a row that breaks the pairing — hand-edited, or from data this store
+ * never wrote — degrades to "main" instead of asserting past a null with
+ * `!`, which would otherwise crash reads of every task in the project.
+ */
 function fileTaskFromRow(row: FileTaskRow): FileTask {
+  const origin: FileTaskOrigin =
+    row.source_kind === "worktree" && row.worktree_environment_id !== null
+      ? {
+          kind: "worktree",
+          environmentId: row.worktree_environment_id,
+          name: row.worktree_name,
+          branchName: row.worktree_branch,
+        }
+      : { kind: "main" };
   return {
     projectId: row.project_id,
     slug: row.slug,
     taskId: row.task_id,
     filePath: row.file_path,
     contentSha: row.content_sha,
+    origin,
     updatedAt: row.updated_at,
   };
 }
@@ -577,7 +603,7 @@ function savedViewFromRow(row: SavedViewRow): SavedView | null {
 /**
  * The client treats two saved-view names as the same view by
  * `name.trim().toLowerCase()` (full Unicode). SQLite's `COLLATE NOCASE` only
- * folds ASCII, so it cannot decide this comparison — "Вид" and "вид" collate
+ * folds ASCII, so it cannot decide this comparison — "Café" and "café" collate
  * as distinct there even though the client treats them as one view. This
  * normalization is the actual source of truth for the name-collision rule
  * `createSavedView` enforces below; see
@@ -1628,15 +1654,41 @@ export function createTasksStore(db: PluginDatabase) {
     taskId: string;
     filePath: string;
     contentSha: string;
+    origin: FileTaskOrigin;
   }): void {
-    db.prepare<[string, string, string, string, string, string]>(
+    const worktreeEnvironmentId =
+      input.origin.kind === "worktree" ? input.origin.environmentId : null;
+    const worktreeName =
+      input.origin.kind === "worktree" ? input.origin.name : null;
+    const worktreeBranch =
+      input.origin.kind === "worktree" ? input.origin.branchName : null;
+    db.prepare<
+      [
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string | null,
+        string | null,
+        string | null,
+        string,
+      ]
+    >(
       `INSERT INTO file_tasks
-         (project_id, slug, task_id, file_path, content_sha, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?)
+         (project_id, slug, task_id, file_path, content_sha,
+          source_kind, worktree_environment_id, worktree_name, worktree_branch,
+          updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT (project_id, slug) DO UPDATE SET
          task_id = excluded.task_id,
          file_path = excluded.file_path,
          content_sha = excluded.content_sha,
+         source_kind = excluded.source_kind,
+         worktree_environment_id = excluded.worktree_environment_id,
+         worktree_name = excluded.worktree_name,
+         worktree_branch = excluded.worktree_branch,
          updated_at = excluded.updated_at`,
     ).run(
       input.projectId,
@@ -1644,6 +1696,10 @@ export function createTasksStore(db: PluginDatabase) {
       input.taskId,
       input.filePath,
       input.contentSha,
+      input.origin.kind,
+      worktreeEnvironmentId,
+      worktreeName,
+      worktreeBranch,
       nowIso(),
     );
   }

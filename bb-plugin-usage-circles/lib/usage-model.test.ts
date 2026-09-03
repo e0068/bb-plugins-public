@@ -85,19 +85,19 @@ describe("formatRelativeReset", () => {
 
   it("formats days and hours", () => {
     const resetsAt = new Date(now + (3 * 24 + 7) * 60 * 60 * 1000).toISOString();
-    expect(formatRelativeReset(resetsAt, now)).toBe("3д 7ч");
+    expect(formatRelativeReset(resetsAt, now)).toBe("3d 7h");
   });
   it("formats hours and minutes", () => {
     const resetsAt = new Date(now + 61 * 60 * 1000).toISOString();
-    expect(formatRelativeReset(resetsAt, now)).toBe("1ч 1мин");
+    expect(formatRelativeReset(resetsAt, now)).toBe("1h 1m");
   });
   it("formats minutes only", () => {
     const resetsAt = new Date(now + 5 * 60 * 1000).toISOString();
-    expect(formatRelativeReset(resetsAt, now)).toBe("5мин");
+    expect(formatRelativeReset(resetsAt, now)).toBe("5m");
   });
   it("reads a past reset as already elapsed", () => {
     const resetsAt = new Date(now - 1000).toISOString();
-    expect(formatRelativeReset(resetsAt, now)).toBe("меньше минуты");
+    expect(formatRelativeReset(resetsAt, now)).toBe("less than a minute");
   });
   it("falls back to a dash with no resetsAt", () => {
     expect(formatRelativeReset(null, now)).toBe("—");
@@ -107,7 +107,7 @@ describe("formatRelativeReset", () => {
 describe("formatAbsoluteReset", () => {
   it("renders the weekday and zero-padded time", () => {
     // 2026-08-21 is a Friday.
-    expect(formatAbsoluteReset("2026-08-21T06:05:00Z")).toMatch(/^[а-я]{2} \d{2}:\d{2}$/);
+    expect(formatAbsoluteReset("2026-08-21T06:05:00Z")).toMatch(/^[A-Z][a-z]{2} \d{2}:\d{2}$/);
   });
   it("falls back to a dash with no resetsAt", () => {
     expect(formatAbsoluteReset(null)).toBe("—");
@@ -115,14 +115,14 @@ describe("formatAbsoluteReset", () => {
 });
 
 describe("statusLabel", () => {
-  it("gives a fixed Russian label for known statuses", () => {
-    expect(statusLabel("not_installed")).toBe("Claude Code не установлен");
-    expect(statusLabel("unauthenticated")).toBe("Не авторизовано");
-    expect(statusLabel("expired")).toBe("Сессия авторизации истекла");
+  it("gives a fixed label for known statuses", () => {
+    expect(statusLabel("not_installed")).toBe("Claude Code is not installed");
+    expect(statusLabel("unauthenticated")).toBe("Not authenticated");
+    expect(statusLabel("expired")).toBe("Authentication session expired");
   });
   it("prefers the provider message for an error status", () => {
     expect(statusLabel("error", "boom")).toBe("boom");
-    expect(statusLabel("error")).toBe("Не удалось получить данные");
+    expect(statusLabel("error")).toBe("Failed to fetch data");
   });
 });
 
@@ -156,19 +156,19 @@ describe("normalizeUsage", () => {
 
   it("carries the error message through, or falls back to a generic one", () => {
     expect(normalizeUsage({ status: "error", message: "boom" })).toEqual({ status: "error", message: "boom" });
-    expect(normalizeUsage({ status: "error" })).toEqual({ status: "error", message: "Не удалось получить данные" });
+    expect(normalizeUsage({ status: "error" })).toEqual({ status: "error", message: "Failed to fetch data" });
   });
 
   it("treats a missing claudeCode provider as not_installed instead of throwing", () => {
-    // usageLimits() может вернуть объект без claudeCode → в getState это undefined.
-    // Без guard'а чтение .status у undefined роняло getState на каждый вызов (BP-52).
+    // usageLimits() can return an object without claudeCode → that's undefined in getState.
+    // Without the guard, reading .status off undefined crashed getState on every call (BP-52).
     expect(normalizeUsage(undefined)).toEqual({ status: "not_installed" });
   });
 });
 
 describe("selectClaudeCodeProvider", () => {
   it("reads the hyphenated provider id the host actually returns", () => {
-    // Живой ответ host ключует провайдеров по id: "claude-code", "codex", ...
+    // The live host response keys providers by id: "claude-code", "codex", ...
     const live = {
       codex: { status: "unauthenticated" as const },
       "claude-code": { status: "ok" as const, windows: [{ label: "Current session", usedPercent: 5, resetsAt: null }] },

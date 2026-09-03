@@ -6,46 +6,82 @@ import type { PrState } from "./merge-readiness";
 const PR_STATES: readonly (PrState | null)[] = ["closed", "draft", "merged", "open", null];
 
 describe("decideArchiveVisible", () => {
-  it("merged + clean → visible", () => {
+  it("merged + clean + nothing ahead → visible", () => {
     expect(
-      decideArchiveVisible({ prState: "merged", hasUncommittedChanges: false }),
+      decideArchiveVisible({
+        prState: "merged",
+        hasUncommittedChanges: false,
+        hasUnlandedCommits: false,
+      }),
     ).toEqual({ visible: true, reason: "ready" });
   });
 
   it("merged + uncommitted changes → hidden (dirty)", () => {
     expect(
-      decideArchiveVisible({ prState: "merged", hasUncommittedChanges: true }),
+      decideArchiveVisible({
+        prState: "merged",
+        hasUncommittedChanges: true,
+        hasUnlandedCommits: false,
+      }),
     ).toEqual({ visible: false, reason: "dirty" });
+  });
+
+  it("merged + new committed changes not in a PR → hidden (unlanded-commits)", () => {
+    expect(
+      decideArchiveVisible({
+        prState: "merged",
+        hasUncommittedChanges: false,
+        hasUnlandedCommits: true,
+      }),
+    ).toEqual({ visible: false, reason: "unlanded-commits" });
   });
 
   it("open PR, clean → hidden (not-merged)", () => {
     expect(
-      decideArchiveVisible({ prState: "open", hasUncommittedChanges: false }),
+      decideArchiveVisible({
+        prState: "open",
+        hasUncommittedChanges: false,
+        hasUnlandedCommits: false,
+      }),
     ).toEqual({ visible: false, reason: "not-merged" });
   });
 
   it("closed without merging, clean → hidden (not-merged)", () => {
     expect(
-      decideArchiveVisible({ prState: "closed", hasUncommittedChanges: false }),
+      decideArchiveVisible({
+        prState: "closed",
+        hasUncommittedChanges: false,
+        hasUnlandedCommits: false,
+      }),
     ).toEqual({ visible: false, reason: "not-merged" });
   });
 
   it("no PR at all, clean → hidden (not-merged)", () => {
     expect(
-      decideArchiveVisible({ prState: null, hasUncommittedChanges: false }),
+      decideArchiveVisible({
+        prState: null,
+        hasUncommittedChanges: false,
+        hasUnlandedCommits: false,
+      }),
     ).toEqual({ visible: false, reason: "not-merged" });
   });
 
-  it("invariant: visible ⇒ merged ∧ clean", () => {
+  it("invariant: visible ⇒ merged ∧ clean ∧ nothing ahead", () => {
     fc.assert(
       fc.property(
         fc.constantFrom(...PR_STATES),
         fc.boolean(),
-        (prState, hasUncommittedChanges) => {
-          const { visible } = decideArchiveVisible({ prState, hasUncommittedChanges });
+        fc.boolean(),
+        (prState, hasUncommittedChanges, hasUnlandedCommits) => {
+          const { visible } = decideArchiveVisible({
+            prState,
+            hasUncommittedChanges,
+            hasUnlandedCommits,
+          });
           if (visible) {
             expect(prState).toBe("merged");
             expect(hasUncommittedChanges).toBe(false);
+            expect(hasUnlandedCommits).toBe(false);
           }
         },
       ),

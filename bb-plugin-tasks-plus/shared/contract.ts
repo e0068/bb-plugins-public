@@ -16,9 +16,9 @@ import {
   ROW_FIELDS,
 } from "./enums.js";
 
-// Перечисления и производные типы вынесены в enums.js (без @get-bb/plugin-sdk),
-// чтобы фронтенд-бандл не тянул сюда серверный SDK. Ре-экспорт сохраняет прежний
-// путь для серверного кода: import { TASK_STATUSES, ... } from "../shared/contract".
+// Enums and derived types live in enums.js (no @get-bb/plugin-sdk import),
+// so the frontend bundle doesn't pull in the server SDK. The re-export keeps
+// the old path working for server code: import { TASK_STATUSES, ... } from "../shared/contract".
 export * from "./enums.js";
 
 export const TASK_THREAD_LIVE_STATUSES = [
@@ -101,6 +101,24 @@ export const projectSchema = z
   })
   .strict();
 
+/**
+ * Where a task's backing markdown file was last read from. "worktree" means
+ * its content there diverges from the linked project's main checkout (or
+ * main has no copy at all) — see the server's filesync/merge.ts for the rule
+ * that decides this, and db/types.ts's FileTaskOrigin for the source type.
+ */
+export const fileTaskOriginSchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("main") }).strict(),
+  z
+    .object({
+      kind: z.literal("worktree"),
+      environmentId: z.string(),
+      name: z.string().nullable(),
+      branchName: z.string().nullable(),
+    })
+    .strict(),
+]);
+
 export const taskSchema = z
   .object({
     id: idSchema,
@@ -123,7 +141,9 @@ export const taskSchema = z
     labelIds: z.array(idSchema),
     checks: z.array(taskCheckSchema),
     /** The markdown file backing this task, when it is file-synced. */
-    source: z.object({ filePath: z.string() }).nullable(),
+    source: z
+      .object({ filePath: z.string(), origin: fileTaskOriginSchema })
+      .nullable(),
   })
   .strict();
 
@@ -248,9 +268,10 @@ export const presetSchema = z
   .strict();
 
 /**
- * Конфигурация меню Display, сохраняемая как именованный вид. Список полей —
- * подмножество ROW_FIELDS без повторов: вид, сохранённый старым клиентом, не
- * знает про поле, добавленное позже, и клиент дополняет список при применении.
+ * Display menu configuration, persisted as a named view. The field list is
+ * a subset of ROW_FIELDS with no duplicates: a view saved by an older client
+ * doesn't know about a field added later, and the client fills in the list
+ * when applying it.
  */
 export const fieldDisplayConfigSchema = z
   .object({
@@ -271,11 +292,11 @@ export const fieldDisplayConfigSchema = z
     { message: "fields must not repeat" },
   );
 
-// Область (scope) вида — непрозрачный для сервера partition-ключ раздела
-// («all», «active», «project:<id>», «board:<id>» и т.п.). Его грамматику
-// задаёт и толкует только клиент; сервер её не разбирает, чтобы слои не
-// связывались — иначе следующая правка вида на клиенте потребует правки
-// валидации на сервере.
+// The view's scope is a partition key that is opaque to the server
+// ("all", "active", "project:<id>", "board:<id>", etc.). Its grammar is
+// defined and interpreted only by the client; the server doesn't parse it,
+// so the layers stay decoupled — otherwise the next client-side view change
+// would require a server-side validation change too.
 const savedViewScopeSchema = nonBlankStringSchema.max(120);
 
 export const savedViewSchema = z

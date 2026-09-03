@@ -241,7 +241,7 @@ function publishViewsChanged(bb: BbPluginApi): void {
 /**
  * The file path backing a task, sourced only from a real `file_tasks` link
  * (kept current by `bb tasks sync`). Tasks that still carry a legacy
- * "Источник: …" description marker (see filesync/legacy-source.ts) but no
+ * "Source: …" description marker (see filesync/legacy-source.ts) but no
  * file_tasks row were never migrated by a sync adoption pass — surface no
  * source for them rather than a stale, possibly-ENOENT path parsed from
  * free text. The parser itself is retained only for that adoption pass in
@@ -255,8 +255,9 @@ function resolveTaskSourcePath(
 }
 
 function taskSource(store: TasksApiStore, task: StoredTask): Task["source"] {
-  const filePath = resolveTaskSourcePath(store, task);
-  return filePath ? { filePath } : null;
+  const fileTask = store.tasks.getFileTaskByTaskId(task.id);
+  if (!fileTask) return null;
+  return { filePath: fileTask.filePath, origin: fileTask.origin };
 }
 
 function apiTask(store: TasksApiStore, task: StoredTask): Task {
@@ -902,16 +903,16 @@ export function registerHandlers(
     },
     async revealTaskSource(input) {
       const task = store.tasks.getTask(input.taskId);
-      if (!task) return { revealed: false, error: "Задача не найдена" };
+      if (!task) return { revealed: false, error: "Task not found" };
       const filePath = resolveTaskSourcePath(store, task);
       if (!filePath) {
-        return { revealed: false, error: "У задачи нет файла-источника" };
+        return { revealed: false, error: "The task has no source file" };
       }
       const project = store.tasks.getProject(task.projectId);
       if (!project?.linkedBbProjectId) {
         return {
           revealed: false,
-          error: "Проект задачи не привязан к bb-проекту",
+          error: "The task's project isn't linked to a bb project",
         };
       }
       try {
@@ -922,7 +923,7 @@ export function registerHandlers(
           bbProject.sources.find((entry) => entry.isDefault) ??
           bbProject.sources[0];
         if (!source) {
-          return { revealed: false, error: "У bb-проекта нет источника" };
+          return { revealed: false, error: "The bb project has no source" };
         }
         // Finder belongs to the machine running bb's server: only reveal a
         // source whose host is that primary/local host, never a remote one.
@@ -930,14 +931,14 @@ export function registerHandlers(
         if (primaryHostId === null || source.hostId !== primaryHostId) {
           return {
             revealed: false,
-            error: "Раскрыть в Finder можно только локальный источник",
+            error: "Only a local source can be revealed in Finder",
           };
         }
         const absPath = resolveSourceAbsPath(source.path, filePath);
         if (!absPath) {
           return {
             revealed: false,
-            error: "Путь файла выходит за пределы репозитория",
+            error: "The file path is outside the repository",
           };
         }
         return await revealInFinder(absPath, {

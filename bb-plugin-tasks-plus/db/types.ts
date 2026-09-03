@@ -85,6 +85,21 @@ export interface Project {
   createdAt: string;
 }
 
+/**
+ * Where a synced file was read from: the linked bb project's main checkout,
+ * or an active worktree (an environment backing a live, non-archived
+ * thread — see filesync/worktrees.ts) whose copy of the file diverges from
+ * main (see filesync/merge.ts).
+ */
+export type FileTaskOrigin =
+  | { kind: "main" }
+  | {
+      kind: "worktree";
+      environmentId: string;
+      name: string | null;
+      branchName: string | null;
+    };
+
 /** Links one markdown task file to the board task it produced. */
 export interface FileTask {
   projectId: string;
@@ -92,6 +107,7 @@ export interface FileTask {
   taskId: string;
   filePath: string;
   contentSha: string;
+  origin: FileTaskOrigin;
   updatedAt: string;
 }
 

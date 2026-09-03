@@ -1,9 +1,10 @@
-// Перечисления задач и производные от них типы. Ни zod, ни @get-bb/plugin-sdk:
-// этот модуль тянут во фронтенд-бандл (вьюхи берут отсюда константы статусов,
-// приоритетов и т.п.). Определение RPC-контракта живёт в contract.js и тянет
-// серверный SDK — его хост при git-install шимит только серверной сборке, поэтому
-// фронтенд-безопасные значения вынесены сюда. contract.js ре-экспортит их, так
-// что серверный код по-прежнему импортирует их из contract.
+// Task enums and the types derived from them. No zod, no @get-bb/plugin-sdk:
+// this module is pulled into the frontend bundle (views take status,
+// priority, etc. constants from here). The RPC contract definition lives in
+// contract.js and pulls in the server SDK — the host shims that only for
+// the server build on a git install, so the frontend-safe values are kept
+// here instead. contract.js re-exports them, so server code still imports
+// them from contract.
 
 export const TASK_STATUSES = [
   "backlog",
@@ -47,13 +48,13 @@ export const PRESET_PERMISSION_MODES = [
   "full",
 ] as const;
 
-// Словарь полей меню Display (порядок отображения строки задачи в списке/на
-// доске). Порядок канонический — это порядок, в котором поля показываются по
-// умолчанию и в котором пользователь может их переставить. Словарь спущен в
-// слой 1: клиентский модуль настроек (views/list/row-field-preference.ts)
-// обязан импортировать ROW_FIELDS/RowField отсюда и не держать свою копию —
-// иначе список полей на клиенте и валидация сохранённого вида на сервере
-// разойдутся.
+// Dictionary of Display menu fields (the display order of a task row in the
+// list/on the board). The order is canonical — it's the order fields are
+// shown in by default and the order the user can rearrange them in. The
+// dictionary is pushed down to layer 1: the client settings module
+// (views/list/row-field-preference.ts) must import ROW_FIELDS/RowField from
+// here rather than keep its own copy — otherwise the client's field list
+// and the server's saved-view validation would drift apart.
 export const ROW_FIELDS = [
   "priority",
   "active",

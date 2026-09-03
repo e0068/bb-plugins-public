@@ -1,46 +1,48 @@
 # @bb-plugins/md-doc-view
 
-Общий слой: презентационный опыт **MD Opener** (редактор
-[Kasimov](https://github.com/e0068/Kasimov)) с инвертированными зависимостями.
-Компонент `MdDocView` владеет стеком прыжков, режимом правки и CAS-нотой, а
-эффекты приходят функциями-пропсами — плагин-потребитель подставляет свой RPC.
+Shared layer: the presentational experience of **MD Opener** (the
+[Kasimov](https://github.com/e0068/Kasimov) editor) with inverted
+dependencies. The `MdDocView` component owns the jump stack, edit mode, and
+the CAS note, while effects arrive as function props — the consuming plugin
+supplies its own RPC.
 
-Используется двумя плагинами: слотом `fileOpener` в
-[bb-plugin-md-opener](../../bb-plugin-md-opener) и встроенной колонкой
-[bb-plugin-claude-config](../../bb-plugin-claude-config) (режим опенера
-`md-opener`). Один компонент — один опыт, без дублирования кода и без обхода
-через хостовую вкладку
-([решение](../../memory/decisions/claude-config-opener-setting.md)).
+Used by two plugins: the `fileOpener` slot in
+[bb-plugin-md-opener](../../bb-plugin-md-opener) and the embedded column in
+[bb-plugin-claude-config](../../bb-plugin-claude-config) (`md-opener` opener
+mode). One component — one experience, no code duplication and no detour
+through the host tab
+([decision](../../memory/decisions/claude-config-opener-setting.md)).
 
-## Контракт
+## Contract
 
 ```ts
 interface MdDocViewProps {
   initialPath: string;
   load: (path) => Promise<LoadedDoc>;                       // {path, content, sha256, error?}
   save: (path, content, expectedSha256) => Promise<SaveResult>; // CAS
-  resolveLinkTarget: (href, fromPath) => string | null;     // abs внутривкладочной цели или null
+  resolveLinkTarget: (href, fromPath) => string | null;     // absolute in-tab target or null
 }
 ```
 
-Любой файл — и markdown, и не-markdown — правится сырым текстом; отдельного
-«только чтение» нет.
+Any file — markdown or not — is edited as raw text; there's no separate
+"read-only" mode.
 
-## Слои
+## Layers
 
-- `KasimovEditor.tsx` — React-обёртка над `kasimov` (внутренняя деталь пакета).
-- `MdDocView.tsx` — стек прыжков, правка, CAS; рендерит `KasimovEditor`.
-- Резолв ссылок и путей **инжектируется** — пакет не зависит от
-  [link-navigation](../link-navigation); его подставляет потребитель.
+- `KasimovEditor.tsx` — a React wrapper over `kasimov` (an internal detail of the package).
+- `MdDocView.tsx` — the jump stack, editing, CAS; renders `KasimovEditor`.
+- Link and path resolution is **injected** — the package doesn't depend on
+  [link-navigation](../link-navigation); the consumer supplies it.
 
-`kasimov` и `react` — peer-зависимости: их даёт потребитель (source-импорт
-резолвит из его `node_modules`).
+`kasimov` and `react` are peer dependencies: the consumer provides them (the
+source import resolves from its `node_modules`).
 
-## Тесты
+## Tests
 
 ```
 npm test
 ```
 
-`KasimovEditor` в тесте замокан (jsdom не воспроизводит contenteditable);
-проверяются загрузка, стек прыжков, правка+CAS, конфликт, сырой не-md и ошибка.
+`KasimovEditor` is mocked in the tests (jsdom doesn't reproduce
+contenteditable); loading, the jump stack, editing+CAS, conflicts, raw non-md,
+and errors are all tested.

@@ -1,0 +1,14 @@
+{
+  "name": "kasimov",
+  "version": "0.1.1",
+  "type": "module",
+  "private": true,
+  "description": "Vendored build of the Kasimov editor (github:e0068/Kasimov@3eb7ba5). Files live at the package root rather than in dist/, because the root .gitignore ignores any dist/ folder.",
+  "main": "./kasimov.js",
+  "module": "./kasimov.js",
+  "exports": {
+    ".": "./kasimov.js",
+    "./css": "./kasimov.css",
+    "./kasimov.css": "./kasimov.css"
+  }
+}

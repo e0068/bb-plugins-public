@@ -6,10 +6,11 @@ import { loadPluginApp, renderSlot } from "@get-bb/plugin-sdk/testing/app";
 
 afterEach(cleanup);
 
-// Настоящий KasimovEditor монтирует vanilla-движок в contenteditable — jsdom его
-// не воспроизводит, поэтому мокаем обёртку общего слоя: мок парсит markdown-ссылки
-// из value и зовёт linkResolver на каждую (как настоящий редактор), рендеря
-// кликабельную ссылку кнопкой с классом .mde-link (его onDocClick пропускает).
+// The real KasimovEditor mounts a vanilla engine into a contenteditable —
+// jsdom can't reproduce that, so we mock the shared-layer wrapper instead: the
+// mock parses markdown links out of value and calls linkResolver on each one
+// (like the real editor), rendering a clickable link as a button with the
+// .mde-link class (its onDocClick skips those).
 vi.mock("./packages/md-doc-view/KasimovEditor", () => ({
   KasimovEditor: ({
     value,
@@ -71,7 +72,7 @@ function makeRpc() {
     if (path === "notes/doc.md" || path === "/env/notes/doc.md") {
       return {
         path: "/env/notes/doc.md",
-        content: "[сосед](sub.md) и [внешняя](https://x.dev)",
+        content: "[neighbor](sub.md) and [external](https://x.dev)",
         error: null,
         sha256: "sha-doc",
         links: [{ href: "sub.md", abs: "/env/notes/sub.md", exists: true }],
@@ -79,7 +80,7 @@ function makeRpc() {
     }
     return {
       path: "/env/notes/sub.md",
-      content: "# сосед",
+      content: "# neighbor",
       error: null,
       sha256: "sha-sub",
       links: [],
@@ -89,13 +90,13 @@ function makeRpc() {
 }
 
 describe("bb-plugin-md-opener app", () => {
-  it("регистрирует слот fileOpener для .md", async () => {
+  it("registers the fileOpener slot for .md", async () => {
     const app = await loadPluginApp(() => import("./app"));
     expect(app.fileOpeners[0]?.title).toBe("Kasimov");
     expect(app.fileOpeners[0]?.extensions).toContain("md");
   });
 
-  it("внутривкладочная ссылка кликабельна, внешняя (http) — нет", async () => {
+  it("in-tab link is clickable, external (http) link is not", async () => {
     const app = await loadPluginApp(() => import("./app"));
     const slot = renderSlot(app.fileOpeners[0]!, props, { rpc: makeRpc() });
 
@@ -104,24 +105,24 @@ describe("bb-plugin-md-opener app", () => {
     expect(slot.queryByTestId("link-https://x.dev")).toBeNull();
   });
 
-  it("клик по ссылке проваливается в файл (abs с сервера), назад — возврат", async () => {
+  it("clicking a link drills into the file (abs from the server), back returns", async () => {
     const app = await loadPluginApp(() => import("./app"));
     const rpc = makeRpc();
     const slot = renderSlot(app.fileOpeners[0]!, props, { rpc });
 
     fireEvent.click(await slot.findByTestId("link-sub.md"));
 
-    await slot.findByText("# сосед");
+    await slot.findByText("# neighbor");
     expect(rpc.readDoc).toHaveBeenLastCalledWith({
       path: "/env/notes/sub.md",
       source,
     });
 
-    fireEvent.click(await slot.findByLabelText("Назад"));
+    fireEvent.click(await slot.findByLabelText("Back"));
     await slot.findByTestId("link-sub.md");
   });
 
-  it("настройки плагина долетают до редактора (свои, раздельные)", async () => {
+  it("plugin settings reach the editor (own, separate)", async () => {
     const app = await loadPluginApp(() => import("./app"));
     const slot = renderSlot(app.fileOpeners[0]!, props, {
       rpc: makeRpc(),
@@ -141,7 +142,7 @@ describe("bb-plugin-md-opener app", () => {
     expect(mde.getAttribute("data-frontmatter")).toBe("false");
   });
 
-  it("без заданных настроек — дефолты (кегль 14px, флаги включены)", async () => {
+  it("with no settings set — defaults apply (14px size, flags on)", async () => {
     const app = await loadPluginApp(() => import("./app"));
     const slot = renderSlot(app.fileOpeners[0]!, props, { rpc: makeRpc() });
 

@@ -453,6 +453,18 @@ describe("archiveState (wiring)", () => {
     ).toEqual({ visible: false, reason: "dirty" });
   });
 
+  it("PR merged but new commits ahead → hidden (unlanded-commits), never next to Pull Request", async () => {
+    // The "Pull Request" button lives on exactly these facts (settled PR, clean
+    // tree, commits ahead), so Archive must step aside instead of showing beside it.
+    expect(
+      await archiveState({
+        environmentId: "env1",
+        status: { hasUncommittedChanges: false, aheadCount: 1 },
+        pr: { outcome: "available", state: "merged" },
+      }),
+    ).toEqual({ visible: false, reason: "unlanded-commits" });
+  });
+
   it("PR still open → hidden (not-merged), status is never even fetched", async () => {
     expect(
       await archiveState({
@@ -613,6 +625,29 @@ describe("createAndMergePr", () => {
     await expect(
       harness.behavior.callRpc("createAndMergePr", { threadId: "t1" }),
     ).rejects.toThrow();
+  });
+});
+
+describe("createMergeArchivePr", () => {
+  // Same testable seam as createAndMergePr: the happy path runs gatherAndCreate
+  // against the real GitHub API (unreachable in the harness), so the branch we
+  // can exercise here is the pre-flight guard. The archive step it adds is
+  // covered on its own in the archiveThread describe; a failed/conflicting
+  // merge can't reach archive because mergePullRequest throws first.
+  it("the thread has no environment → throws before touching GitHub, archives nothing", async () => {
+    const calls: unknown[] = [];
+    const { bb, harness } = host({
+      environmentId: null,
+      archive: async () => {
+        calls.push("called");
+        return { ok: true };
+      },
+    });
+    await plugin(bb);
+    await expect(
+      harness.behavior.callRpc("createMergeArchivePr", { threadId: "t1" }),
+    ).rejects.toThrow();
+    expect(calls).toHaveLength(0);
   });
 });
 
