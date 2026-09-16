@@ -62,6 +62,9 @@ class BuildTimelineTest(unittest.TestCase):
     def _threads(self, **kwargs):
         return threads_timeline.build_timeline(self.root, **kwargs)["threads"]
 
+    def _report(self, **kwargs):
+        return threads_timeline.build_timeline(self.root, **kwargs)
+
     def test_empty_root_returns_no_threads(self):
         threads = self._threads(limit=20, unit=300)
         self.assertEqual(threads, [])
@@ -274,6 +277,44 @@ class BuildTimelineTest(unittest.TestCase):
         _write_raw(self._p("projA", "sess1.jsonl"), [_assistant("m1", "r1", 1, "2026-08-19T10:00:00.000Z")])
         threads = self._threads(limit=0, unit=300)
         self.assertEqual(threads, [])
+
+    def test_truncated_is_true_when_more_sessions_exist_than_limit(self):
+        for i in range(5):
+            path = self._p("projA", f"sess{i}.jsonl")
+            _write_raw(path, [_assistant(f"m{i}", f"r{i}", 1, "2026-08-19T10:00:00.000Z")])
+            os.utime(path, (1000 + i, 1000 + i))
+        self.assertTrue(self._report(limit=2, unit=300)["truncated"])
+
+    def test_truncated_is_false_when_limit_covers_every_session(self):
+        for i in range(3):
+            path = self._p("projA", f"sess{i}.jsonl")
+            _write_raw(path, [_assistant(f"m{i}", f"r{i}", 1, "2026-08-19T10:00:00.000Z")])
+            os.utime(path, (1000 + i, 1000 + i))
+        self.assertFalse(self._report(limit=20, unit=300)["truncated"])
+
+    def test_truncated_is_false_for_an_empty_root(self):
+        self.assertFalse(self._report(limit=20, unit=300)["truncated"])
+
+    def test_truncated_survives_the_empty_session_drop(self):
+        # Regression: a session sliced in by `limit` but later dropped for
+        # having no valid usage record (see test_session_with_no_usage_
+        # records_is_skipped) must not un-truncate the report — the cutoff
+        # already happened before that drop, against the full session list.
+        for i in range(3):
+            path = self._p("projA", f"sess{i}.jsonl")
+            _write_raw(path, [_assistant(f"m{i}", f"r{i}", 1, "2026-08-19T10:00:00.000Z")])
+            os.utime(path, (1000 + i, 1000 + i))
+        # The freshest session by mtime, but with no usage records — sliced
+        # in ahead of the three real ones by limit=3, then dropped by the
+        # empty-session filter, shrinking the final threads list to 2 even
+        # though limit=3 == the real session count.
+        empty_path = self._p("projA", "sess-empty.jsonl")
+        _write_raw(empty_path, [])
+        os.utime(empty_path, (2000, 2000))
+
+        report = self._report(limit=3, unit=300)
+        self.assertEqual(len(report["threads"]), 2)
+        self.assertTrue(report["truncated"])
 
     def test_project_filters_by_substring(self):
         _write_raw(

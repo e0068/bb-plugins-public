@@ -5,9 +5,10 @@ import {
   usePresets,
   useProjects,
   useSidebarSummary,
-} from "./data.js";
-import { TasksRefreshProvider } from "./refresh.js";
-import { parseTasksRoute, useTasksNavigation } from "./routes.js";
+  useWaitingTasks,
+} from "../client/data.js";
+import { TasksRefreshProvider } from "../client/refresh.js";
+import { parseTasksRoute, useTasksNavigation } from "../client/routes.js";
 import { TasksSidebar } from "./sidebar.js";
 import { NewProjectDialog } from "../views/manage/index.js";
 import { useState } from "react";
@@ -20,6 +21,7 @@ export function TasksNavigationPanelContent({ subPath }: PluginNavPanelProps) {
   const summaries = useSidebarSummary();
   const presets = usePresets();
   const activeTasks = useActiveTasks();
+  const waitingTasks = useWaitingTasks();
   const [newProjectOpen, setNewProjectOpen] = useState(false);
 
   return (
@@ -31,7 +33,11 @@ export function TasksNavigationPanelContent({ subPath }: PluginNavPanelProps) {
         summaries={summaries.data}
         presets={presets.data}
         activeTasks={activeTasks.data}
-        isLoading={projects.isLoading || summaries.isLoading}
+        waitingTasks={waitingTasks.data}
+        pendingSidebarData={[
+          ...(projects.isLoading ? (["projects"] as const) : []),
+          ...(summaries.isLoading ? (["summary"] as const) : []),
+        ]}
         onNavigate={navigation.go}
         onNewProject={() => setNewProjectOpen(true)}
       />

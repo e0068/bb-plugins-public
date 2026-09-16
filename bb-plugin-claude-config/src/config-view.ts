@@ -10,6 +10,7 @@ import {
   resolveEnableAllMcp,
   resolveMcpServer,
   resolvePlugin,
+  resolveRaw,
   resolveSkill,
   resolveToolSearch,
 } from "./effective";
@@ -23,6 +24,7 @@ import {
   parseMcpJson,
   type InstalledPlugin,
 } from "./catalog";
+import { GENERIC_SETTINGS, encodeSettingValue, type SettingDef } from "./settings-catalog";
 
 export interface PluginRow {
   key: string;
@@ -104,6 +106,18 @@ export interface HookRow {
   enabled: boolean;
 }
 
+export interface SettingRow {
+  key: string;
+  label: string;
+  description: string;
+  kind: SettingDef["kind"];
+  enumOptions: { value: string; label: string }[] | null;
+  /** Effective value, display-encoded by kind; null — unset at every level. */
+  value: string | null;
+  /** Project scope: the effective value matches the global one. */
+  dimmed: boolean;
+}
+
 export interface ConfigView {
   plugins: PluginRow[];
   connectors: ConnectorRow[];
@@ -111,6 +125,7 @@ export interface ConfigView {
   agents: AgentRow[];
   hooks: HookRow[];
   toolSearch: ToolSearchRow;
+  settings: SettingRow[];
 }
 
 /**
@@ -163,7 +178,38 @@ export function buildConfigView(input: ViewInput): ConfigView {
     agents: buildAgents(input),
     hooks: buildHooks(input),
     toolSearch: buildToolSearch(input),
+    settings: buildSettings(input),
   };
+}
+
+/**
+ * The generic "Settings" section: one row per GENERIC_SETTINGS entry,
+ * resolved across levels the same way toolSearch is — last explicit level
+ * wins, dimmed in the project scope when it matches the global value. Reuses
+ * `resolveRaw` (same "last non-inherit wins" contract as the typed
+ * resolvers), operating on each level's display-encoded text rather than a
+ * fixed enum of states.
+ */
+function buildSettings(input: ViewInput): SettingRow[] {
+  const globalDoc = input.levelDocs[0] ?? {};
+  return GENERIC_SETTINGS.map((def) => {
+    const levelTexts = input.levelDocs.map((level) =>
+      encodeSettingValue(def, doc.getRawSetting(level, def.key)),
+    );
+    const effective = resolveRaw(levelTexts);
+    const globalText = resolveRaw([
+      encodeSettingValue(def, doc.getRawSetting(globalDoc, def.key)),
+    ]);
+    return {
+      key: def.key,
+      label: def.label,
+      description: def.description,
+      kind: def.kind,
+      enumOptions: def.enumOptions ? [...def.enumOptions] : null,
+      value: effective === "inherit" ? null : effective,
+      dimmed: input.areaKind === "project" && effective === globalText,
+    };
+  });
 }
 
 function buildAgents(input: ViewInput): AgentRow[] {

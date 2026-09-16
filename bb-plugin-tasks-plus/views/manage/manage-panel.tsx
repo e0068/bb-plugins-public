@@ -6,7 +6,7 @@ import {
   useProjects,
   useTasksQuery,
   useTasksRpc,
-} from "../../shell/data.js";
+} from "../../client/data.js";
 import {
   Select,
   SelectContent,

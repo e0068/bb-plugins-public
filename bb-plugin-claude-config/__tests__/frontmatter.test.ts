@@ -1,29 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
-  fieldsFromJson,
   parseFrontmatter,
   serializeFrontmatter,
   setFieldValue,
 } from "../src/frontmatter";
-
-describe("fieldsFromJson", () => {
-  it("top-level fields: primitives as strings, objects as JSON", () => {
-    const fields = fieldsFromJson(
-      '{"name":"x","version":"1.0.0","author":{"name":"A"}}',
-    );
-    expect(fields).toEqual([
-      { kind: "field", key: "name", value: "x" },
-      { kind: "field", key: "version", value: "1.0.0" },
-      { kind: "field", key: "author", value: '{"name":"A"}' },
-    ]);
-  });
-
-  it("invalid JSON or a non-object → empty", () => {
-    expect(fieldsFromJson("not json")).toEqual([]);
-    expect(fieldsFromJson("[1,2]")).toEqual([]);
-    expect(fieldsFromJson("42")).toEqual([]);
-  });
-});
 
 describe("parseFrontmatter", () => {
   it("parses fields and body", () => {

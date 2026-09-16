@@ -12,7 +12,8 @@ import {
   type TaskType,
 } from "../../shared/enums.js";
 import type { Task } from "../../shared/contract.js";
-import { uploadAttachment } from "../detail/attachments.js";
+import { useUploadAttachment } from "../detail/attachments.js";
+import { PlacementPicker } from "../detail/placement-picker.js";
 import {
   AttachmentChip,
   stageFiles,
@@ -23,8 +24,8 @@ import {
   useProjects,
   useTasksQuery,
   useTasksRpc,
-} from "../../shell/data.js";
-import { useTasksNavigation } from "../../shell/routes.js";
+} from "../../client/data.js";
+import { useTasksNavigation } from "../../client/routes.js";
 import { TasksEditor } from "../../editor/tasks-editor.js";
 import {
   Dialog,
@@ -53,6 +54,7 @@ import { Button } from "@/components/ui/button";
 import { Icon } from "@/components/ui/icon";
 import { cn } from "@/lib/utils";
 import { CheckboxField, DEFAULT_COLOR } from "./shared.js";
+import { readDollars, readMinutes } from "../../shared/amounts.js";
 
 export const STATUS_LABELS: Record<TaskStatus, string> = {
   backlog: "Backlog",
@@ -90,6 +92,11 @@ export const ESTIMATE_LABELS: Record<TaskEstimate, string> = {
 
 const CHIP_TRIGGER =
   "h-7 w-auto gap-1.5 rounded-md px-2 text-xs text-muted-foreground";
+// A bare button styled like the select chips beside it.
+const PLACEMENT_TRIGGER = cn(
+  CHIP_TRIGGER,
+  "inline-flex items-center border border-input bg-transparent hover:text-foreground",
+);
 
 export interface NewTaskDialogProps {
   open: boolean;
@@ -124,8 +131,11 @@ export function NewTaskDialog({
   const [priority, setPriority] = useState<TaskPriority>("none");
   const [type, setType] = useState<TaskType | null>(null);
   const [estimate, setEstimate] = useState<TaskEstimate | null>(null);
+  const [assignee, setAssignee] = useState<string | null>(null);
+  const [epic, setEpic] = useState<string | null>(null);
   const [checks, setChecks] = useState<TaskCheck[]>([]);
-  const [planTokens, setPlanTokens] = useState("");
+  const [plannedMinutes, setPlannedMinutes] = useState("");
+  const [budget, setBudget] = useState("");
   const [labelIds, setLabelIds] = useState<string[]>([]);
   const [dueDate, setDueDate] = useState("");
   const [parentTaskId, setParentTaskId] = useState<string | null>(
@@ -154,8 +164,11 @@ export function NewTaskDialog({
     setPriority("none");
     setType(null);
     setEstimate(null);
+    setAssignee(null);
+    setEpic(null);
     setChecks([]);
-    setPlanTokens("");
+    setPlannedMinutes("");
+    setBudget("");
     setLabelIds([]);
     setDueDate("");
     setParentTaskId(defaultParentTaskId ?? null);
@@ -257,6 +270,7 @@ export function NewTaskDialog({
 
   // Synchronous single-flight guard: double-activating Retry before React
   // re-renders must not upload (and attach) the same file twice.
+  const uploadAttachment = useUploadAttachment();
   const retryingRef = useRef(new Set<number>());
   const retryUpload = async (entry: StagedAttachment) => {
     if (entry.owner === undefined || retryingRef.current.has(entry.id)) return;
@@ -321,9 +335,6 @@ export function NewTaskDialog({
     setSubmitting(true);
     setError(null);
     try {
-      const trimmedPlanTokens = planTokens.trim();
-      const parsedPlanTokens =
-        trimmedPlanTokens === "" ? null : Number(trimmedPlanTokens);
       const result = await rpc.call("createTask", {
         projectId: effectiveProjectId,
         title: title.trim(),
@@ -332,10 +343,12 @@ export function NewTaskDialog({
         priority,
         type,
         estimate,
-        planTokens:
-          parsedPlanTokens === null || Number.isNaN(parsedPlanTokens)
-            ? null
-            : parsedPlanTokens,
+        // Both optional: a task without them lands at the tasks root.
+        assignee,
+        epic,
+        // Blank or junk is simply left unset — the dialog captures fast.
+        plannedMinutes: readMinutes(plannedMinutes),
+        budget: readDollars(budget),
         dueDate: dueDate === "" ? null : dueDate,
         parentTaskId,
         labelIds,
@@ -606,6 +619,26 @@ export function NewTaskDialog({
               ))}
             </SelectContent>
           </Select>
+          <PlacementPicker
+            projectId={effectiveProjectId}
+            field="assignee"
+            value={assignee}
+            assignee={assignee}
+            onSelect={(next) => {
+              setAssignee(next);
+              // The epic folder lives inside the assignee's.
+              if (next === null) setEpic(null);
+            }}
+            triggerClassName={PLACEMENT_TRIGGER}
+          />
+          <PlacementPicker
+            projectId={effectiveProjectId}
+            field="epic"
+            value={epic}
+            assignee={assignee}
+            onSelect={setEpic}
+            triggerClassName={PLACEMENT_TRIGGER}
+          />
           <div
             role="group"
             aria-label="Checks"
@@ -623,11 +656,22 @@ export function NewTaskDialog({
           <input
             type="number"
             min={0}
-            value={planTokens}
-            onChange={(event) => setPlanTokens(event.target.value)}
-            placeholder="Plan tokens"
-            aria-label="Plan tokens"
-            className="h-7 w-28 rounded-md border border-input bg-transparent px-2 text-xs text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring"
+            step={1}
+            value={plannedMinutes}
+            onChange={(event) => setPlannedMinutes(event.target.value)}
+            placeholder="Planned Time, min"
+            aria-label="Planned Time"
+            className="h-7 w-32 rounded-md border border-input bg-transparent px-2 text-xs text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring"
+          />
+          <input
+            type="number"
+            min={0}
+            step={0.01}
+            value={budget}
+            onChange={(event) => setBudget(event.target.value)}
+            placeholder="Budget, $"
+            aria-label="Budget"
+            className="h-7 w-24 rounded-md border border-input bg-transparent px-2 text-xs text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring"
           />
           <Popover>
             <PopoverTrigger asChild>

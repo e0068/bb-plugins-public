@@ -27,18 +27,6 @@ export function commentByline(comment: DisplayComment): CommentByline {
   return { kind: "text", name: comment.authorName };
 }
 
-/** "just now" / "4m ago" / "3h ago" / "2d ago" — matches the mock's cadence. */
-export function formatRelativeTime(iso: string, nowMs: number): string {
-  const then = Date.parse(iso);
-  if (Number.isNaN(then)) return "";
-  const minutes = Math.max(0, Math.round((nowMs - then) / 60_000));
-  if (minutes < 1) return "just now";
-  if (minutes < 60) return `${minutes}m ago`;
-  const hours = Math.round(minutes / 60);
-  if (hours < 24) return `${hours}h ago`;
-  return `${Math.round(hours / 24)}d ago`;
-}
-
 export interface SystemBodySegment {
   text: string;
   bold: boolean;
@@ -62,13 +50,6 @@ export function splitSystemBody(
     ];
   }
   return [{ text: body, bold: false }];
-}
-
-export function formatFileSize(sizeBytes: number): string {
-  if (sizeBytes < 1024) return `${sizeBytes} B`;
-  const kb = sizeBytes / 1024;
-  if (kb < 1024) return `${Math.round(kb)} KB`;
-  return `${(kb / 1024).toFixed(1)} MB`;
 }
 
 /**

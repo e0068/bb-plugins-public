@@ -1,14 +1,12 @@
 import { useCallback, useMemo } from "react";
-import { useRpc } from "@get-bb/plugin-sdk/app";
-import type { FoldersRpcContract } from "../folders/contract.js";
 import type { Project, Task } from "../shared/contract.js";
-import { groupTasksByStatus } from "../views/list/lib.js";
-import { listAllTasks, useTasksQuery } from "./data.js";
+import { groupTasksByStatus, nestSubtasks } from "../views/list/lib.js";
+import { listAllTasks, useTasksQuery } from "../client/data.js";
 import type {
   ResolvedTasksRoute,
   TaskViewMode,
   TasksRoute,
-} from "./routes.js";
+} from "../client/routes.js";
 import { Button } from "@/components/ui/button";
 import { Icon } from "@/components/ui/icon";
 import { cn } from "@/lib/utils";
@@ -20,7 +18,7 @@ import {
 } from "@/components/ui/tooltip";
 import { boardFieldScope } from "../views/list/row-field-preference.js";
 import { FieldDisplayMenu } from "../views/list/field-display-menu.js";
-import { useTasksRefresh } from "./refresh.js";
+import { useTasksRefresh } from "../client/refresh.js";
 
 /** Accessible name + tooltip for the header refresh control. */
 export const REFRESH_TASKS_LABEL = "Refresh tasks";
@@ -43,7 +41,10 @@ export function pagerPosition(
   tasks: readonly Task[],
   taskKey: string,
 ): PagerPosition | null {
-  const ordered = groupTasksByStatus(tasks).flatMap((group) => group.tasks);
+  const ordered = groupTasksByStatus(nestSubtasks(tasks))
+    .flatMap((group) => group.entries)
+    .filter((entry) => entry.depth === 0)
+    .map((entry) => entry.task);
   const wanted = taskKey.toUpperCase();
   const index = ordered.findIndex((task) => task.key.toUpperCase() === wanted);
   if (index === -1) return null;
@@ -155,25 +156,17 @@ function ViewToggle({
  * generation-driven query work (spin + disabled) with fixed geometry so the
  * header does not shift.
  *
- * A click re-queries the DB immediately (the generation bump) and, in the
- * background, kicks a file sync of every connected folder so on-disk task
- * edits land without waiting for the sync loop's next tick — a second
- * generation bump surfaces whatever that sync brought in. The button never
- * blocks on the sync: `syncAllFolders` swallows its own errors, so a failed
- * or slow sync only forfeits the follow-up refresh.
+ * A click re-queries every task file fresh (the generation bump) — there is
+ * no separate sync step to kick, since tasks are read straight off disk on
+ * every request (see decisions/tasks-files-are-the-store.md).
  */
 function RefreshTasksButton() {
   const { refresh, isRefreshing } = useTasksRefresh();
-  const rpc = useRpc<FoldersRpcContract>();
 
   const handleRefresh = useCallback(() => {
     if (isRefreshing) return;
     refresh();
-    void rpc
-      .call("syncAllFolders", null)
-      .catch(() => {})
-      .finally(() => refresh());
-  }, [isRefreshing, refresh, rpc]);
+  }, [isRefreshing, refresh]);
 
   return (
     <TooltipProvider delayDuration={300}>

@@ -71,25 +71,11 @@ export interface Folder {
   createdAt: string;
 }
 
-export interface Project {
-  id: string;
-  name: string;
-  prefix: string;
-  nextTaskNumber: number;
-  color: string;
-  folderId: string | null;
-  linkedBbProjectId: string | null;
-  /** Repo-relative folder (in the linked BB project) whose markdown files back
-   * this project's tasks. null = file-sync disabled. */
-  tasksFolder: string | null;
-  createdAt: string;
-}
-
 /**
- * Where a synced file was read from: the linked bb project's main checkout,
- * or an active worktree (an environment backing a live, non-archived
- * thread — see filesync/worktrees.ts) whose copy of the file diverges from
- * main (see filesync/merge.ts).
+ * Where a task's backing markdown file was last read from: the linked bb
+ * project's main checkout, or дерево вызвавшего треда (окружение из
+ * filesync/caller-root.ts), чья копия файла расходится с main (см.
+ * filesync/fs-boards.ts).
  */
 export type FileTaskOrigin =
   | { kind: "main" }
@@ -99,49 +85,6 @@ export type FileTaskOrigin =
       name: string | null;
       branchName: string | null;
     };
-
-/** Links one markdown task file to the board task it produced. */
-export interface FileTask {
-  projectId: string;
-  slug: string;
-  taskId: string;
-  filePath: string;
-  contentSha: string;
-  origin: FileTaskOrigin;
-  updatedAt: string;
-}
-
-export interface Task {
-  id: string;
-  projectId: string;
-  number: number;
-  key: string;
-  title: string;
-  description: string;
-  status: TaskStatus;
-  priority: TaskPriority;
-  type: TaskType | null;
-  estimate: TaskEstimate | null;
-  planTokens: number | null;
-  factTokens: number | null;
-  dueDate: string | null;
-  parentTaskId: string | null;
-  position: number;
-  createdAt: string;
-  updatedAt: string;
-}
-
-export interface Label {
-  id: string;
-  projectId: string;
-  name: string;
-  color: string;
-}
-
-export interface TaskLabel {
-  taskId: string;
-  labelId: string;
-}
 
 export interface Comment {
   id: string;
@@ -167,6 +110,12 @@ export interface Attachment {
   createdAt: string;
 }
 
+/**
+ * A thread attached to a task, as the plugin serves it: the attachment fact
+ * from the task file plus the thread's current state, read from bb at
+ * request time and never stored (see threads/live-state.ts and
+ * memory/decisions/tasks-plus-thread-state-is-not-a-file-field.md).
+ */
 export interface TaskThread {
   id: string;
   taskId: string;
@@ -174,8 +123,9 @@ export interface TaskThread {
   presetName: string;
   title: string;
   liveStatus: TaskThreadLiveStatus;
+  /** Set when the underlying bb thread is archived; independent of liveStatus — see memory/decisions/tasks-plus-thread-archived-separate-column.md. */
+  archivedAt: string | null;
   attachedAt: string;
-  updatedAt: string;
 }
 
 export interface Preset {
@@ -204,25 +154,6 @@ export interface UpdateFolderInput {
   parentFolderId?: string | null;
 }
 
-export interface CreateProjectInput {
-  id?: string;
-  name: string;
-  prefix: string;
-  color: string;
-  folderId?: string | null;
-  linkedBbProjectId?: string | null;
-  tasksFolder?: string | null;
-}
-
-export interface UpdateProjectInput {
-  name?: string;
-  prefix?: string;
-  color?: string;
-  folderId?: string | null;
-  linkedBbProjectId?: string | null;
-  tasksFolder?: string | null;
-}
-
 export interface CreateTaskInput {
   id?: string;
   projectId: string;
@@ -232,25 +163,43 @@ export interface CreateTaskInput {
   priority?: TaskPriority;
   type?: TaskType | null;
   estimate?: TaskEstimate | null;
-  planTokens?: number | null;
-  factTokens?: number | null;
+  plannedMinutes?: number | null;
+  actualMinutes?: number | null;
+  budget?: number | null;
+  budgetLimit?: number | null;
+  cost?: number | null;
   checks?: readonly TaskCheck[];
   dueDate?: string | null;
   parentTaskId?: string | null;
+  /** Folder above the status folder; null keeps the task at the root. */
+  assignee?: string | null;
+  /** Folder inside the assignee's; needs an assignee. */
+  epic?: string | null;
 }
 
 export interface UpdateTaskInput {
+  /** New file name; the task's id changes with it (filesync/assemble.ts). */
+  slug?: string;
+  /** The board's label: a `PREFIX-NUMBER` to set, null to take it off. */
+  key?: string | null;
   title?: string;
   description?: string;
   status?: TaskStatus;
   priority?: TaskPriority;
   type?: TaskType | null;
   estimate?: TaskEstimate | null;
-  planTokens?: number | null;
-  factTokens?: number | null;
+  plannedMinutes?: number | null;
+  actualMinutes?: number | null;
+  budget?: number | null;
+  budgetLimit?: number | null;
+  cost?: number | null;
   checks?: readonly TaskCheck[];
   dueDate?: string | null;
   parentTaskId?: string | null;
+  /** Folder above the status folder; null keeps the task at the root. */
+  assignee?: string | null;
+  /** Folder inside the assignee's; needs an assignee. */
+  epic?: string | null;
 }
 
 export interface ListTasksFilters {
@@ -259,24 +208,12 @@ export interface ListTasksFilters {
   priorities?: readonly TaskPriority[];
   labelIds?: readonly string[];
   activeOnly?: boolean;
+  waitingOnly?: boolean;
   parentTaskId?: string | null;
   search?: string;
   sort?: TaskSort;
   limit?: number;
   cursor?: string;
-}
-
-export interface ListTasksPage {
-  tasks: Task[];
-  nextCursor: string | null;
-}
-
-export interface UpdateTaskPositionInput {
-  status: TaskStatus;
-  /** The task immediately before this task in the destination column. */
-  beforeTaskId?: string | null;
-  /** The task immediately after this task in the destination column. */
-  afterTaskId?: string | null;
 }
 
 export interface SubtaskDoneCounts {
@@ -337,13 +274,6 @@ export interface UpsertTaskThreadInput {
   threadId: string;
   presetName: string;
   title: string;
-  liveStatus: TaskThreadLiveStatus;
-}
-
-export interface UpdateTaskThreadInput {
-  presetName?: string;
-  title?: string;
-  liveStatus?: TaskThreadLiveStatus;
 }
 
 export interface CreatePresetInput {

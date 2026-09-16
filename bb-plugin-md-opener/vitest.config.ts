@@ -1,7 +1,11 @@
 import { fileURLToPath } from "node:url";
 import { defineConfig } from "vitest/config";
 
-import { reactDedupe } from "./packages/plugin-base/vitest-react-dedupe";
+import {
+  mdDocViewDedupe,
+  radixDedupe,
+  reactDedupe,
+} from "./packages/plugin-base/vitest-react-dedupe";
 
 export default defineConfig({
   resolve: {
@@ -11,6 +15,6 @@ export default defineConfig({
     // Plugin components are imported from ./packages/* and pull in React from
     // that package's node_modules — dedupe collapses all copies to the plugin's
     // node_modules, otherwise hooks break (packages/plugin-base/vitest-react-dedupe.ts).
-    dedupe: reactDedupe,
+    dedupe: [...reactDedupe, ...radixDedupe, ...mdDocViewDedupe],
   },
 });

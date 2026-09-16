@@ -2,22 +2,22 @@
 // vanilla editor owns the
 // contenteditable surface, format bar, tables, and its own markdown
 // round-trip; this wrapper only bridges it into React's value/onChange world
-// and the host's `--mde-*` theme variables (see ./theme.css).
+// and the host's `--mdb-*` theme variables (see ./theme.css).
 //
 // Mount is imperative (`new VanillaMarkdownEditor(host, opts)` in
 // useEffect) and torn down with `.destroy()` on unmount/editable-change —
 // the vanilla editor is not a React component and manages its own DOM
-// inside `host` entirely (it appends its own `.mde-root` as a CHILD of
+// inside `host` entirely (it appends its own `.mdb-root` as a CHILD of
 // `host`, it does not take over `host` itself).
 import { useEffect, useRef } from "react";
 
 import { VanillaMarkdownEditor } from "./vanilla";
 import type { MarkdownEditorInstance } from "./vanilla";
 import "./md-editor.css";
-// Theme: maps --mde-* onto host tokens. MUST be a selector that targets the
-// `.mde-root` element md-editor mounts as a CHILD of `host` — NOT the host
-// div itself, since md-editor.css declares every --mde-* var directly on
-// `.mde-root` with its own hardcoded defaults, and a var set on a
+// Theme: maps --mdb-* onto host tokens. MUST be a selector that targets the
+// `.mdb-root` element md-editor mounts as a CHILD of `host` — NOT the host
+// div itself, since md-editor.css declares every --mdb-* var directly on
+// `.mdb-root` with its own hardcoded defaults, and a var set on a
 // descendant always wins over one set on an ancestor regardless of the
 // ancestor rule's specificity. See ./theme.css for the full mapping.
 import "./theme.css";
@@ -45,7 +45,7 @@ export interface MarkdownEditorProps {
    */
   flush?: boolean;
   className?: string;
-  /** Base class of the host element. Default "bb-mde-host". */
+  /** Base class of the host element. Default "bb-mdb-host". */
   hostClassName?: string;
 }
 
@@ -132,8 +132,8 @@ export function MarkdownEditor({
   }, [value]);
 
   const hostClasses = [
-    hostClassName || "bb-mde-host",
-    flush ? "bb-mde-flush" : "",
+    hostClassName || "bb-mdb-host",
+    flush ? "bb-mdb-flush" : "",
     className || "",
   ]
     .filter(Boolean)

@@ -28,8 +28,12 @@ import { gitEventSchema } from "./git-events";
  * transcript — see git_events.scan_session; commit events are appended
  * later, client-independent of the script, by
  * src/service/threads-timeline-service.ts's enrichCommits).
+ * 5 -> 6: the report gained a top-level truncated (bool) — true when the
+ * script had more sessions available than --limit let through, even if the
+ * final `threads` array comes back a little shorter still (see
+ * RawThreadsTimelineSchema's doc comment on `truncated`).
  */
-export const EXPECTED_THREADS_TIMELINE_SCHEMA_VERSION = 5;
+export const EXPECTED_THREADS_TIMELINE_SCHEMA_VERSION = 6;
 
 const AgentBinSchema = z
   .object({
@@ -104,6 +108,17 @@ const RawThreadsTimelineSchema = z
     unit: z.number().finite(),
     threads: z.array(RawThreadEntrySchema),
     agentLabels: AgentLabelsSchema,
+    /**
+     * True when threads_timeline.py had more sessions available than
+     * `--limit` let through — computed before the script's own drop of
+     * sessions with no valid usage record, so `threads.length < limit` here
+     * doesn't mean "that's every session there is". A caller summing this
+     * slice's cost over a time window wider than the slice actually reaches
+     * (see project-costs.ts's rolling D/W/M windows) needs this to tell "the
+     * total is complete" from "the total is a lower bound, older sessions in
+     * the window may be missing".
+     */
+    truncated: z.boolean(),
   })
   .strict();
 

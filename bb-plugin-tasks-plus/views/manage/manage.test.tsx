@@ -196,7 +196,7 @@ describe("NewTaskDialog", () => {
     expect(slot.getByLabelText("Task title")).toBeDefined();
   });
 
-  it("shows type, estimate, checks, and plan tokens right away without expanding anything", async () => {
+  it("shows type, estimate, checks, planned time and budget right away without expanding anything", async () => {
     const slot = renderSlot(
       app.navPanels[0]!,
       { subPath: PROJECT_ID },
@@ -218,10 +218,12 @@ describe("NewTaskDialog", () => {
     expect(slot.getByLabelText("Type")).toBeDefined();
     expect(slot.getByLabelText("Estimate")).toBeDefined();
     expect(slot.getByRole("group", { name: "Checks" })).toBeDefined();
-    expect(slot.getByLabelText("Plan tokens")).toBeDefined();
+    expect(slot.getByLabelText("Planned Time")).toBeDefined();
+    expect(slot.getByLabelText("Budget")).toBeDefined();
+    expect(slot.queryByLabelText("Plan tokens")).toBeNull();
   });
 
-  it("submits type, estimate, checks, and plan tokens with createTask", async () => {
+  it("submits type, estimate, checks, planned time and budget with createTask", async () => {
     const createCalls: Array<Record<string, unknown>> = [];
     const slot = renderSlot(
       app.navPanels[0]!,
@@ -252,8 +254,11 @@ describe("NewTaskDialog", () => {
     fireEvent.click(await slot.findByRole("option", { name: "M" }));
     fireEvent.click(slot.getByRole("checkbox", { name: "Test" }));
     fireEvent.click(slot.getByRole("checkbox", { name: "Review" }));
-    fireEvent.change(slot.getByLabelText("Plan tokens"), {
-      target: { value: "120" },
+    fireEvent.change(slot.getByLabelText("Planned Time"), {
+      target: { value: "90" },
+    });
+    fireEvent.change(slot.getByLabelText("Budget"), {
+      target: { value: "34.10" },
     });
 
     fireEvent.click(slot.getByRole("button", { name: "Create task" }));
@@ -262,7 +267,8 @@ describe("NewTaskDialog", () => {
       type: "bugfix",
       estimate: "m",
       checks: ["test", "review"],
-      planTokens: 120,
+      plannedMinutes: 90,
+      budget: 34.1,
     });
   });
 
@@ -912,5 +918,63 @@ describe("NewProjectDialog", () => {
       linkedBbProjectId: "proj_personal",
     });
     expect(slot.queryByPlaceholderText("proj_…")).toBeNull();
+  });
+});
+
+describe("new task dialog: assignee and epic", () => {
+  function placementRpc(createCalls: Array<Record<string, unknown>>) {
+    return {
+      listProjects: () => ({ projects: [project] }),
+      listFolders: () => ({ folders: [] }),
+      listPresets: () => ({ presets: [] }),
+      sidebarSummary: () => ({ projects: [] }),
+      listTasks: () => ({ tasks: [] }),
+      listLabels: () => ({ labels: [] }),
+      listPlacements: () => ({
+        assignees: ["Claude"],
+        epics: [{ assignee: "Claude", name: "Tasks+" }],
+      }),
+      createTask: (input: Record<string, unknown>) => {
+        createCalls.push(input);
+        return { ok: true, task: createdTask(input) };
+      },
+    };
+  }
+
+  async function openWithTitle(slot: ReturnType<typeof renderSlot>) {
+    fireEvent.click(await slot.findByRole("button", { name: /New task/ }));
+    fireEvent.change(await slot.findByLabelText("Task title"), { target: { value: "Placed" } });
+  }
+
+  it("creates the task with every optional field left empty, assignee and epic included", async () => {
+    const createCalls: Array<Record<string, unknown>> = [];
+    const slot = renderSlot(app.navPanels[0]!, { subPath: PROJECT_ID }, { rpc: placementRpc(createCalls) });
+    await openWithTitle(slot);
+
+    expect((slot.getByRole("button", { name: "Edit epic" }) as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.click(slot.getByRole("button", { name: "Create task" }));
+
+    await waitFor(() => expect(createCalls).toHaveLength(1));
+    expect(createCalls[0]).toMatchObject({ title: "Placed", assignee: null, epic: null, type: null, estimate: null });
+  });
+
+  it("submits the picked assignee and epic, and a new epic typed into the picker", async () => {
+    const createCalls: Array<Record<string, unknown>> = [];
+    const slot = renderSlot(app.navPanels[0]!, { subPath: PROJECT_ID }, { rpc: placementRpc(createCalls) });
+    await openWithTitle(slot);
+
+    fireEvent.click(slot.getByRole("button", { name: "Edit assignee" }));
+    fireEvent.click(await slot.findByRole("option", { name: "Claude" }));
+    // Let the assignee popover finish closing: its focus return to the
+    // trigger would otherwise dismiss the epic popover the moment it opens.
+    await waitFor(() => expect(slot.queryByPlaceholderText("Assignee…")).toBeNull());
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    fireEvent.click(slot.getByRole("button", { name: "Edit epic" }));
+    fireEvent.change(await slot.findByPlaceholderText("Epic…"), { target: { value: "Flow" } });
+    fireEvent.click(await slot.findByRole("option", { name: "Create “Flow”" }));
+    fireEvent.click(slot.getByRole("button", { name: "Create task" }));
+
+    await waitFor(() => expect(createCalls).toHaveLength(1));
+    expect(createCalls[0]).toMatchObject({ assignee: "Claude", epic: "Flow" });
   });
 });

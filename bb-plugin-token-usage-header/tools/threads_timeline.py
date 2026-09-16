@@ -34,7 +34,11 @@ import git_events  # noqa: E402
 # git_events.scan_session) and events (pr/push facts mined from its own
 # transcript by the same function; commit events are appended later, by
 # src/service/threads-timeline-service.ts, not by this script).
-SCHEMA_VERSION = 5
+# 5 -> 6: the report gained a top-level truncated (bool) — true when more
+# sessions existed than --limit let through, so a caller summing this slice
+# over a wider time window than the slice actually covers can tell its total
+# is a lower bound rather than silently treating it as complete.
+SCHEMA_VERSION = 6
 
 # Truncation threshold for meta.description in agentLabels — the legend and
 # labels in the UI aren't elastic, a long task description would break the
@@ -177,6 +181,13 @@ def build_timeline(root, limit=20, unit=300, project=None, session=None, group_w
     sessions = _session_main_files(root, project=project, session=session)
     # the last N sessions by the transcript's last activity, freshest first
     sessions.sort(key=lambda row: row[3], reverse=True)
+    # True when there are more sessions than `limit` let through — captured
+    # before slicing (and before the empty-session drop further below, which
+    # can shrink the final `threads` list a little further): a caller summing
+    # this slice over a time window needs to know the cutoff was the fixed
+    # `limit`, not "that's every session there is", even when the final count
+    # comes back a little under `limit`.
+    truncated = len(sessions) > limit
     sessions = sessions[: max(limit, 0)]
 
     project_dirs = {}
@@ -277,8 +288,8 @@ def build_timeline(root, limit=20, unit=300, project=None, session=None, group_w
             bins_out.append({"t": _iso_from_epoch(bin_epoch), "agents": agents_out})
 
         total_tokens = sum(a["total"] for bo in bins_out for a in bo["agents"])
-        # Cost is computed from the same Buckets as tokens (one tier, one
-        # formula) — the sum over buckets equals the thread's full cost,
+        # Cost is computed from the same Buckets as tokens (each model at its
+        # own tier) — the sum over buckets equals the thread's full cost,
         # just as total_tokens equals the sum of b.total.
         total_cost = round(sum(b.cost for agents in bin_buckets.values() for b in agents.values()), 2)
         # Distinct workflow runs in the session: the agentId of a subagent
@@ -308,7 +319,7 @@ def build_timeline(root, limit=20, unit=300, project=None, session=None, group_w
             }
         )
 
-    return {"threads": threads, "agentLabels": agent_labels}
+    return {"threads": threads, "agentLabels": agent_labels, "truncated": truncated}
 
 
 def main():

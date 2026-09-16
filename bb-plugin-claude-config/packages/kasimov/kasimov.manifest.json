@@ -1,0 +1,30 @@
+{
+  "name": "kasimov",
+  "version": "0.1.2",
+  "commit": "b5b4f20645614f1bbe50960948a6d51f5cc4ee21",
+  "builtAt": "2026-09-13T13:59:11.581Z",
+  "exports": [
+    "alignCenter",
+    "alignLeft",
+    "alignRight",
+    "createEditor",
+    "lineDiff",
+    "maxH",
+    "maxNone",
+    "maxW",
+    "maxWH",
+    "withMaxHeight",
+    "withMaxWidth",
+    "workflow"
+  ],
+  "files": {
+    "kasimov.css": {
+      "bytes": 45307,
+      "sha256": "fe3bf669b22d671f67677cade92ef40cb2a50a03e81e53dfa478dc33683c3733"
+    },
+    "kasimov.js": {
+      "bytes": 181304,
+      "sha256": "d6b60847f863987982dd5bddad1a9df1f7497fafaee6fb8fbbcf3b0af7077dc2"
+    }
+  }
+}

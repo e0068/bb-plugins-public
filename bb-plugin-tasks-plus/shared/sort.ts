@@ -1,11 +1,12 @@
 import { TASK_ESTIMATES, TASK_PRIORITIES } from "./enums.js";
 import type { Task } from "./contract.js";
+import type { AmountField } from "./amounts.js";
 
 export { TASK_SORTS, type TaskSort } from "./pagination.js";
 
 /**
  * Client-side list sorts. A superset of the server's keyset sorts
- * (manual/priority/due): estimate and token sorts are applied in-memory over
+ * (manual/priority/due): estimate, time and money sorts are applied in-memory over
  * the fully-loaded list, so they never touch the server keyset pagination.
  */
 export const LIST_SORTS = [
@@ -13,8 +14,13 @@ export const LIST_SORTS = [
   "priority",
   "due",
   "estimate",
-  "plan_tokens",
-  "fact_tokens",
+  "planned_minutes",
+  "actual_minutes",
+  "budget",
+  "budget_limit",
+  "cost",
+  "created",
+  "updated",
 ] as const;
 
 export type ListSort = (typeof LIST_SORTS)[number];
@@ -48,8 +54,8 @@ function byEstimate(a: Task, b: Task): number {
   return rb - ra;
 }
 
-/** Highest token count first; tasks without a value sort last. */
-function byTokens(field: "planTokens" | "factTokens") {
+/** Highest amount first; tasks without a value sort last. */
+function byAmount(field: AmountField) {
   return (a: Task, b: Task): number => {
     const va = a[field];
     const vb = b[field];
@@ -59,13 +65,31 @@ function byTokens(field: "planTokens" | "factTokens") {
   };
 }
 
+/**
+ * Newest first. `createdAt`/`updatedAt` are non-nullable ISO-8601 UTC
+ * timestamps, so string order is chronological order — no Date parsing, and
+ * no "missing values last" branch the other sorts need.
+ */
+function byTimestamp(field: "createdAt" | "updatedAt") {
+  return (a: Task, b: Task): number => {
+    const va = a[field];
+    const vb = b[field];
+    return va < vb ? 1 : va > vb ? -1 : 0;
+  };
+}
+
 const PRIMARY: Record<Exclude<ListSort, "manual">, (a: Task, b: Task) => number> =
   {
     priority: byPriority,
     due: byDueDate,
     estimate: byEstimate,
-    plan_tokens: byTokens("planTokens"),
-    fact_tokens: byTokens("factTokens"),
+    planned_minutes: byAmount("plannedMinutes"),
+    actual_minutes: byAmount("actualMinutes"),
+    budget: byAmount("budget"),
+    budget_limit: byAmount("budgetLimit"),
+    cost: byAmount("cost"),
+    created: byTimestamp("createdAt"),
+    updated: byTimestamp("updatedAt"),
   };
 
 /**

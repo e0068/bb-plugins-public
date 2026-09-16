@@ -55,9 +55,16 @@ export interface KasimovSettings {
   atLinks: boolean;
   frontmatter: boolean;
   mermaidContrast: boolean;
+  // View behavior (MdDocView, not the engine): a document opens ready to edit.
+  startInEdit: boolean;
 }
 
-type FlagField = "followLinks" | "atLinks" | "frontmatter" | "mermaidContrast";
+type FlagField =
+  | "followLinks"
+  | "atLinks"
+  | "frontmatter"
+  | "mermaidContrast"
+  | "startInEdit";
 type TokenField =
   | "fontToken"
   | "monoToken"
@@ -372,6 +379,18 @@ export const FLAG_FIELDS: readonly FlagSpec[] = [
     label: "Kasimov: contrast mermaid nodes",
     description: "Filled chip with inverse text; off — \"soft\" nodes (default)",
   },
+  // Not a `kasimov*` key: this one doesn't reach the engine at all — MdDocView
+  // decides in what mode it shows a loaded document. It rides the same table
+  // because it travels the same road (descriptor → parse → toFlags → props),
+  // and a consumer spreading toFlags gets it without a hand-written prop.
+  {
+    field: "startInEdit",
+    key: "docStartInEdit",
+    default: false,
+    label: "Open documents in edit mode",
+    description:
+      "A document opens ready to edit; off — read mode with an \"Edit\" button",
+  },
 ];
 
 /** Default settings — from the field tables (match kasimov.css). */
@@ -476,11 +495,29 @@ const allowedTokenValues = new Map(
  * loading) — then everything is default. Junk and extra keys are dropped by
  * the parse itself (only known keys are read). A preset (select) is further
  * narrowed to its own `options` list — a stale value (the token list changed,
- * but the board still holds the old one) falls back to `CUSTOM_TOKEN` instead
- * of flying into CSS as-is.
+ * but the board still holds the old one) falls back instead of flying into
+ * CSS as-is.
+ *
+ * `tokenDefaults` — the SAME preset defaults the plugin registered with
+ * `buildDescriptors`. Without it a preset falls back to `CUSTOM_TOKEN`, i.e.
+ * to the text field's own default, and those defaults are the engine's
+ * (`#0e0e0e`, `#1c1c1e`) rather than the theme's. That gave one setting two
+ * different defaults, and which one a document got depended on whether
+ * `useSettings()` had answered yet: black on the first frame and on every
+ * remount that received no values, the theme's colour after a page reload.
+ * Passing the registered set here makes the unloaded state look exactly like
+ * the loaded one. `kasimov-settings.test.ts` guards the agreement between the
+ * two directly, so they cannot drift apart again.
  */
 export function parse(
-  values: Record<string, SettingValue> | undefined,
+  // `unknown` values, not `SettingValue`: the parse checks the type of every
+  // value it reads anyway (that is what makes it total), and the SDK's own
+  // settings map is not the same shape in every plugin — one of them types a
+  // value as `string | number | boolean`. Demanding the narrower map here
+  // bought nothing and cost a cast at the call site, which is the one place a
+  // cast can hide a real mismatch.
+  values: Readonly<Record<string, unknown>> | undefined,
+  tokenDefaults: Partial<Record<TokenField, string>> = {},
 ): KasimovSettings {
   const v = values ?? {};
   const css = Object.fromEntries(
@@ -491,9 +528,15 @@ export function parse(
   ) as Record<CssField, string>;
   const tokens = Object.fromEntries(
     TOKEN_SELECT_FIELDS.map((t) => {
+      const allowed = allowedTokenValues.get(t.field)!;
       const raw = v[t.key];
-      const valid = typeof raw === "string" && allowedTokenValues.get(t.field)!.has(raw);
-      return [t.field, valid ? (raw as string) : CUSTOM_TOKEN];
+      if (typeof raw === "string" && allowed.has(raw)) return [t.field, raw];
+      // The fallback goes through the SAME narrowing as the board's own value.
+      // It comes from a plugin rather than a user, but it is still an
+      // arbitrary string on its way into a CSS declaration, and a branch that
+      // narrows one source and waves the other through narrows nothing.
+      const fallback = tokenDefaults[t.field];
+      return [t.field, fallback !== undefined && allowed.has(fallback) ? fallback : CUSTOM_TOKEN];
     }),
   ) as Record<TokenField, string>;
   const flags = Object.fromEntries(
@@ -568,12 +611,18 @@ export function kasimovCssRule(
   return decls === "" ? null : `#${hostId} .mde-root { ${decls} }`;
 }
 
-/** Engine options for KasimovEditor: boolean flags + the string mermaid mode. */
+/**
+ * The MdDocView props a consumer derives from settings: the engine's flags
+ * (passed straight through to KasimovEditor) plus the view's own behavior
+ * (startInEdit, which MdDocView keeps to itself). Consumers spread the whole
+ * result, so a new field here reaches them without a pass-through of their own.
+ */
 export function toFlags(s: KasimovSettings): {
   followLinks: boolean;
   atLinks: boolean;
   frontmatter: boolean;
   mermaidNodes: "soft" | "contrast";
+  startInEdit: boolean;
 } {
   return {
     followLinks: s.followLinks,
@@ -581,5 +630,6 @@ export function toFlags(s: KasimovSettings): {
     frontmatter: s.frontmatter,
     // Binary mermaid mode choice → the engine's string option (soft — default).
     mermaidNodes: s.mermaidContrast ? "contrast" : "soft",
+    startInEdit: s.startInEdit,
   };
 }

@@ -8,7 +8,7 @@
     {
       "id": "claude-config",
       "displayName": "Claude Config",
-      "description": "Manage Claude Code config: plugins, connectors, skills, hooks and tool loading, per scope.",
+      "description": "Manage your Claude Code setup — plugins, connectors, skills, agents, hooks, workflows and settings — per scope.",
       "icon": "Brain",
       "tags": [
         "config",
@@ -32,7 +32,7 @@
     {
       "id": "md-opener",
       "displayName": "Kasimov",
-      "description": "Opens .md files with the Kasimov editor: markdown links inside are clickable and navigate within the same tab, with breadcrumbs and a back button. Edits are saved with CAS protection.",
+      "description": "Opens .md files in a Kasimov editor where markdown links are clickable and navigate within the same tab, with breadcrumbs, a back button, and CAS-safe saving.",
       "icon": "FileText",
       "author": {
         "name": "e0068",
@@ -49,7 +49,7 @@
     {
       "id": "tasks-plus",
       "displayName": "Tasks+",
-      "description": "Fork of Tasks with native workflow fields: Type, Check, Estimate, Plan/Fact tokens.",
+      "description": "A fork of the Tasks plugin that keeps tasks as Markdown files on disk and adds native workflow fields — Type, Estimate, Check, time and budget.",
       "icon": "ListTodo",
       "tags": [
         "tasks",
@@ -72,7 +72,7 @@
     {
       "id": "token-usage-header",
       "displayName": "Token Usage Analytics",
-      "description": "Claude Code token usage for the current session: a counter in the thread header.",
+      "description": "Tracks Claude Code token usage and cost — a live counter in the thread header plus session and project analytics.",
       "icon": "ChartColumn",
       "tags": [
         "tokens",
@@ -95,7 +95,7 @@
     {
       "id": "usage-circles",
       "displayName": "Usage Circles",
-      "description": "Claude Code usage-limit rings in the sidebar footer.",
+      "description": "Claude Code and Codex usage-limit rings in the footer of BB's left sidebar.",
       "icon": {
         "url": "bb-plugin-usage-circles/assets/icon.svg"
       },
@@ -103,6 +103,7 @@
         "usage",
         "limits",
         "claude-code",
+        "codex",
         "interface"
       ],
       "author": {
@@ -120,7 +121,7 @@
     {
       "id": "zz-pull-request",
       "displayName": "Pull Request",
-      "description": "Thread header buttons: opens a Pull Request on GitHub via the API without a push once everything is committed, and wakes up a thread whose environment got stuck retiring.",
+      "description": "Thread-header buttons that open and merge a GitHub Pull Request via the API without a push, and wake a thread whose environment got stuck retiring.",
       "icon": "GitPullRequest",
       "tags": [
         "pull-request",

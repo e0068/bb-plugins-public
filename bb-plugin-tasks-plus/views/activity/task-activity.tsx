@@ -21,11 +21,11 @@ import {
   useMentionItems,
   useTasksQuery,
   useTasksRpc,
-} from "../../shell/data.js";
+} from "../../client/data.js";
 import {
   attachmentDownloadUrl,
   Lightbox,
-  uploadAttachment,
+  useUploadAttachment,
 } from "../detail/attachments.js";
 import {
   AttachmentChip,
@@ -37,12 +37,8 @@ import type {
   Comment,
   DisplayComment,
 } from "../../shared/contract.js";
-import {
-  formatFileSize,
-  formatRelativeTime,
-  splitSystemBody,
-  useNowTick,
-} from "./time.js";
+import { formatFileSize, formatRelativeTime } from "../../shared/format.js";
+import { splitSystemBody, useNowTick } from "./time.js";
 import { CommentAuthor } from "./comment-author.js";
 import { CommentProviderAvatar } from "./provider-logo.js";
 
@@ -321,6 +317,7 @@ export function CommentComposer({ taskId, notificationTarget }: ComposerProps) {
 
   // Synchronous single-flight guard: double-activating Retry before React
   // re-renders must not upload (and attach) the same file twice.
+  const uploadAttachment = useUploadAttachment();
   const retryingRef = useRef(new Set<number>());
   const retryUpload = async (entry: StagedAttachment) => {
     if (entry.owner === undefined || retryingRef.current.has(entry.id)) return;

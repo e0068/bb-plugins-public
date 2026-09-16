@@ -58,10 +58,16 @@ export const PRESET_PERMISSION_MODES = [
 export const ROW_FIELDS = [
   "priority",
   "active",
+  "assignee",
+  "epic",
   "type",
   "estimate",
   "labels",
-  "tokens",
+  "plannedMinutes",
+  "actualMinutes",
+  "budget",
+  "budgetLimit",
+  "cost",
   "dueDate",
   "project",
   "createdAt",
@@ -74,3 +80,77 @@ export type TaskType = (typeof TASK_TYPES)[number];
 export type TaskEstimate = (typeof TASK_ESTIMATES)[number];
 export type TaskCheck = (typeof TASK_CHECKS)[number];
 export type RowField = (typeof ROW_FIELDS)[number];
+
+/**
+ * Имя служебного поля, которым интерфейс называет свой тред во входе RPC.
+ * Живёт здесь, а не в contract.js: поле знают обе стороны — обёртка
+ * обработчиков и клиент, — а contract.js тянет серверный SDK, которого во
+ * фронтенд-бандле нет (см. шапку файла).
+ */
+export const CALLER_THREAD_FIELD = "callerThreadId";
+
+/**
+ * Методы, которым нужно знать рабочее дерево вызывающего: они читают или
+ * пишут файлы задач. Доски, папки, метки, пресеты, виды и аналитика живут в
+ * kv плагина и дерева не знают; `deleteLabel` исключение — он обходит задачи
+ * и переписывает их файлы.
+ */
+export const CALLER_SCOPED_METHODS = [
+  "createTask",
+  "getTask",
+  "getTaskByKey",
+  "updateTask",
+  "deleteTask",
+  "revealTaskSource",
+  "listTasks",
+  "listPlacements",
+  "boardMove",
+  "createComment",
+  "listComments",
+  "listAttachments",
+  "deleteAttachment",
+  "listTaskThreads",
+  "tasksForThread",
+  "listTaskPullRequests",
+  "deleteLabel",
+  // Делегирование живёт в своём контракте, но правит тот же файл задачи:
+  // заводит тред, переводит задачу в работу и пишет системный комментарий.
+  "delegate",
+] as const;
+
+const CALLER_SCOPED = new Set<string>(CALLER_SCOPED_METHODS);
+
+/** Есть ли у метода понятие «из какого дерева пришёл вызов». */
+export function isCallerScopedMethod(method: string): boolean {
+  return CALLER_SCOPED.has(method);
+}
+
+/**
+ * Снимает служебное поле со входа: обработчику достаётся вход без него, а
+ * вызывающему — тред, из которого пришёл запрос. Обратная к `addCallerThread`,
+ * и обе живут рядом, чтобы переименование поля не разошлось на половины.
+ */
+export function takeCallerThread(input: unknown): {
+  threadId: string | null;
+  rest: unknown;
+} {
+  if (typeof input !== "object" || input === null) return { threadId: null, rest: input };
+  const { [CALLER_THREAD_FIELD]: value, ...rest } = input as Record<string, unknown>;
+  const threadId = typeof value === "string" && value !== "" ? value : null;
+  return { threadId, rest: threadId === null ? input : rest };
+}
+
+/**
+ * Подмешивает тред во вход задачного метода. Вход, который уже несёт тред, не
+ * перебивается: вызов, назвавший его сам, знает лучше контекста.
+ */
+export function addCallerThread(
+  method: string,
+  input: unknown,
+  threadId: string | null,
+): unknown {
+  if (threadId === null || !isCallerScopedMethod(method)) return input;
+  if (typeof input !== "object" || input === null) return input;
+  if (CALLER_THREAD_FIELD in input) return input;
+  return { ...input, [CALLER_THREAD_FIELD]: threadId };
+}

@@ -17,6 +17,7 @@ import {
   formatTokenCount,
   gitEventLabel,
   gitEventLinkUrl,
+  threadDisplayLabel,
   type AgentBin,
   type ChartSettings,
   type GitEvent,
@@ -60,23 +61,6 @@ export function segmentContainsAgent(agent: AgentBin, agentKey: string): boolean
 /** Segment key prefix for a workflow-merged bin (see tools/threads_timeline.py's `--group-workflows`); its label is the workflow's human name, not a real agentId. */
 export const WORKFLOW_KEY_PREFIX = "workflow:";
 
-/**
- * A workflow-merged segment has no single agentId of its own — clicking it
- * picks one of its real `members` to open a detail page for. Prefers
- * `activeAgentKey` when it's a member (stay on the agent already open, just
- * jump its highlight window to this bin); otherwise falls back to the first
- * member (arbitrary but stable — the same segment always opens the same
- * agent). `members` is the sorted list of real agentIds folded into this
- * workflow run (empty/undefined only if the backend schema predates
- * SCHEMA_VERSION 4 — memory/decisions/workflow-segment-membership-backend.md);
- * null means the segment has nowhere to send the click, which keeps it a
- * no-op instead of guessing.
- */
-export function resolveWorkflowClickTarget(agent: AgentBin, activeAgentKey: string | null | undefined): string | null {
-  if (activeAgentKey && agent.members?.includes(activeAgentKey)) return activeAgentKey;
-  return agent.members?.[0] ?? null;
-}
-
 export function hexToRgba(hex: string, alpha: number): string {
   let h = hex.replace("#", "");
   if (h.length === 3) h = h[0] + h[0] + h[1] + h[1] + h[2] + h[2];
@@ -117,14 +101,28 @@ export interface DisplayBin {
 }
 
 /**
- * Collapses a thread's raw per-unit bins into display columns. With
- * collapseEmpty off this is a 1:1 passthrough (every bin, empty or not, is
- * its own column) — the pre-feature behaviour. With it on, runs of
- * consecutive empty bins (no agents, or binTotal 0) merge into a single gap
- * column carrying their combined `gapUnits`; non-empty bins are never merged
- * and always keep their own column.
+ * Collapses a thread's raw per-unit bins into display columns, in two stages.
+ *
+ * Stage 1 (collapseEmpty): with it off this is a 1:1 passthrough (every bin,
+ * empty or not, is its own column) — the pre-feature behaviour. With it on,
+ * runs of consecutive empty bins (no agents, or binTotal 0) merge into a
+ * single gap column carrying their combined `gapUnits`; non-empty bins are
+ * never merged and always keep their own column.
+ *
+ * Stage 2 (collapseToZeroBelowMin): only when collapseEmpty is on and the
+ * threshold is > 0 — a gap column whose real duration (`gapUnits * unit`
+ * seconds) is ≤ the threshold is dropped entirely, so a short idle stretch
+ * leaves no column at all and its neighbours sit flush. Longer gaps keep
+ * their single collapsed column. Note: a dropped gap also drops any git-event
+ * markers that fell inside it — the whole point is that the short idle window
+ * disappears from the chart. `unit` is the bin width in seconds (GearSettings.unit).
  */
-export function computeDisplayBins(bins: readonly TimelineBin[], collapseEmpty: boolean): DisplayBin[] {
+export function computeDisplayBins(
+  bins: readonly TimelineBin[],
+  collapseEmpty: boolean,
+  unit: number,
+  collapseToZeroBelowMin = 0,
+): DisplayBin[] {
   const displayBins: DisplayBin[] = [];
   for (const bin of bins) {
     const isEmpty = bin.agents.length === 0 || binTotal(bin) === 0;
@@ -139,7 +137,9 @@ export function computeDisplayBins(bins: readonly TimelineBin[], collapseEmpty: 
     }
     displayBins.push({ t: bin.t, gapUnits: 1, bin: null });
   }
-  return displayBins;
+  if (!collapseEmpty || collapseToZeroBelowMin <= 0) return displayBins;
+  const maxGapSec = collapseToZeroBelowMin * 60;
+  return displayBins.filter((col) => col.bin !== null || col.gapUnits * unit > maxGapSec);
 }
 
 /** One icon per git event kind, for the marker lane and its tooltip section — see components/ui/icon.tsx's ICON_MAP. */
@@ -187,6 +187,7 @@ export function ThreadRow({
   fillWidth,
   hugWidth,
   collapseEmpty,
+  collapseToZeroBelowMin,
   colWidthPx,
   colGap,
   segGap,
@@ -225,6 +226,8 @@ export function ThreadRow({
   hugWidth: boolean;
   /** true = consecutive empty bins render as one collapsed gap column — see computeDisplayBins. */
   collapseEmpty: boolean;
+  /** minutes; when > 0 (and collapseEmpty on) a gap ≤ this duration is dropped entirely — see computeDisplayBins stage 2. */
+  collapseToZeroBelowMin: number;
   /** px, fixed width of EACH bin column — used only when fillWidth is off. */
   colWidthPx: number;
   /** px, gap between bin columns. */
@@ -244,10 +247,10 @@ export function ThreadRow({
 
   // Titles come from bb.sdk (bbThreadTitle, see threads-timeline-service.ts) —
   // not the raw `title` from threads_timeline.py, which always equals session.
-  // No match with a BB thread (the "Threads" bucket) — a short session id
-  // instead of blank; the full session stays in the tooltip, not duplicated
-  // in the header.
-  const headerTitle = thread.bbThreadTitle ?? thread.session.slice(0, 8);
+  // No thread match — threadDisplayLabel falls back to the recovered BB
+  // project name (or a short session id when even that's unknown); the full
+  // session stays in the tooltip, not duplicated in the header.
+  const headerTitle = threadDisplayLabel(thread);
   const headerTooltip = thread.bbThreadTitle ? `${thread.bbThreadTitle}\n${thread.session}` : thread.session;
   // Count of distinct agents in the thread — computed from its own bins
   // (main agent + subagents), not from the global agentKeys (that's
@@ -257,7 +260,10 @@ export function ThreadRow({
   // Displayed columns, not raw bins — collapseEmpty folds runs of empty bins
   // into one gap column each (see computeDisplayBins); binCount/graphWidthPx
   // below size the graph off however many columns are actually rendered.
-  const displayBins = useMemo(() => computeDisplayBins(thread.bins, collapseEmpty), [thread.bins, collapseEmpty]);
+  const displayBins = useMemo(
+    () => computeDisplayBins(thread.bins, collapseEmpty, unit, collapseToZeroBelowMin),
+    [thread.bins, collapseEmpty, unit, collapseToZeroBelowMin],
+  );
   const binCount = displayBins.length;
   // Git activity markers (commit/push/pr/merge), index-aligned with
   // displayBins — rendered as a lane below the bars and folded into the same
@@ -503,17 +509,14 @@ export function ThreadRow({
                         style={{ height: Math.max(segHeight, 1), backgroundColor: colorFor(a.key), borderRadius: segRadius }}
                         aria-label={`${labelFor(a.key)}: ${formatTokenCount(a.total)} tokens`}
                         onClick={(e) => {
-                          // The segment navigates to agent detail with a time
-                          // window — stop propagation so the card's own click
-                          // doesn't also fire. A workflow segment isn't tied
-                          // to a single agentId — resolveWorkflowClickTarget
-                          // picks whose detail to open (null — the segment
-                          // has nowhere to go, the click is a no-op).
+                          // The segment navigates to detail with a time window
+                          // — stop propagation so the card's own click doesn't
+                          // also fire. A workflow-merged segment's own key
+                          // (`workflow:<runId>`) is passed through as-is: the
+                          // detail page opens the whole run's flow view for it
+                          // (member agents in sequence), not a single agent.
                           e.stopPropagation();
-                          const targetKey = a.key.startsWith(WORKFLOW_KEY_PREFIX)
-                            ? resolveWorkflowClickTarget(a, activeAgentKey)
-                            : a.key;
-                          if (targetKey) onSegmentClick(targetKey, thread.session, bin.t, new Date(binEndMs).toISOString());
+                          onSegmentClick(a.key, thread.session, bin.t, new Date(binEndMs).toISOString());
                         }}
                       />
                     );
@@ -654,11 +657,11 @@ export function SessionChartCard({
    */
   fillWidth: boolean;
   /**
-   * A segment click navigates to agent detail with the bin's time window
+   * A segment click navigates to detail with the bin's time window
    * (fromIso/toIso), so the page highlights and scrolls to that window's
-   * events — the same highlight as a deep-link from the feed. For a
-   * workflow (merged) segment, agentKey is already resolved by ThreadRow via
-   * resolveWorkflowClickTarget to a real member, not "workflow:...".
+   * events — the same highlight as a deep-link from the feed. A workflow
+   * (merged) segment passes its own `workflow:<runId>` key, which the detail
+   * page opens as the whole run's flow view (member agents in sequence).
    */
   onSelectAgent?: (agentKey: string, fromIso: string, toIso: string) => void;
   /** Agent currently selected on the session page (right panel) — every other agent's segments fade to FADED_SEGMENT_OPACITY. */
@@ -675,8 +678,8 @@ export function SessionChartCard({
   }, [thread.bins]);
   const maxBinTotal = useMemo(() => thread.bins.reduce((m, bin) => Math.max(m, binTotal(bin)), 0), [thread.bins]);
   const maxBinCount = useMemo(
-    () => computeDisplayBins(thread.bins, settings.collapseEmpty).length,
-    [thread.bins, settings.collapseEmpty],
+    () => computeDisplayBins(thread.bins, settings.collapseEmpty, settings.unit, settings.collapseToZeroBelowMin).length,
+    [thread.bins, settings.collapseEmpty, settings.unit, settings.collapseToZeroBelowMin],
   );
 
   const colorFor = (key: string) =>
@@ -701,6 +704,7 @@ export function SessionChartCard({
       fillWidth={fillWidth}
       hugWidth={settings.hugWidth}
       collapseEmpty={settings.collapseEmpty}
+      collapseToZeroBelowMin={settings.collapseToZeroBelowMin}
       colWidthPx={settings.colWidthPx}
       colGap={settings.colGap}
       segGap={settings.segGap}

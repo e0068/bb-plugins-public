@@ -8,20 +8,27 @@
 // with the plugin's own readable text before raw git does — see
 // memory/tasks/in_progress/fast-forward-stale-ahead-status.md. Only the
 // command bodies live here; running them and their cwd are in the shell.
+//
+// `aheadCountArgs`/`fastForwardArgs`/`mergeTreeArgs`/`baseTreeArgs` take the
+// base ref already fully resolved (`origin/<x>` or the bare local `<x>`) —
+// they no longer decide the `origin/` prefix themselves. That decision is
+// the base-mode toggle's (see src/core/base-branch.ts's `ResolvedBase.mode`);
+// the callers that always mean the remote (fastForwardAtArgs, below) spell
+// `origin/<x>` out explicitly instead.
 
 /** `git fetch origin <base>` — pull a fresh `origin/<base>` before the fast-forward. */
 export function fetchBaseArgs(base: string): readonly string[] {
   return ["fetch", "origin", base];
 }
 
-/** `git rev-list --count origin/<base>..HEAD` — live commits of the branch ahead of the base. */
-export function aheadCountArgs(base: string): readonly string[] {
-  return ["rev-list", "--count", `origin/${base}..HEAD`];
+/** `git rev-list --count <ref>..HEAD` — live commits of the branch ahead of the base ref. */
+export function aheadCountArgs(ref: string): readonly string[] {
+  return ["rev-list", "--count", `${ref}..HEAD`];
 }
 
-/** `git merge --ff-only origin/<base>` — move the branch forward to the base or refuse. */
-export function fastForwardArgs(base: string): readonly string[] {
-  return ["merge", "--ff-only", `origin/${base}`];
+/** `git merge --ff-only <ref>` — move the branch forward to the base ref or refuse. */
+export function fastForwardArgs(ref: string): readonly string[] {
+  return ["merge", "--ff-only", ref];
 }
 
 // `<src>:<dst>` with no leading `+` is a refspec that git ITSELF refuses to
@@ -51,7 +58,7 @@ export function fetchBaseAtArgs(path: string, base: string): readonly string[] {
 
 /** `git -C <path> merge --ff-only origin/<base>` — fast-forward the branch checked out in `<path>`. */
 export function fastForwardAtArgs(path: string, base: string): readonly string[] {
-  return ["-C", path, ...fastForwardArgs(base)];
+  return ["-C", path, ...fastForwardArgs(`origin/${base}`)];
 }
 
 // The pair below answers "is the branch's content already in the base?" (see
@@ -61,12 +68,17 @@ export function fastForwardAtArgs(path: string, base: string): readonly string[]
 // resulting tree objects into the object database — they are unreachable and
 // get collected by gc, and the working copy is never touched, but this is not
 // a read-only command.
-/** `git merge-tree --write-tree origin/<base> HEAD` — merge in memory, print the resulting tree. */
-export function mergeTreeArgs(base: string): readonly string[] {
-  return ["merge-tree", "--write-tree", `origin/${base}`, "HEAD"];
+/** `git merge-tree --write-tree <ref> HEAD` — merge in memory, print the resulting tree. */
+export function mergeTreeArgs(ref: string): readonly string[] {
+  return ["merge-tree", "--write-tree", ref, "HEAD"];
 }
 
-/** `git rev-parse origin/<base>^{tree}` — the base's own tree, to compare the merge result against. */
-export function baseTreeArgs(base: string): readonly string[] {
-  return ["rev-parse", `origin/${base}^{tree}`];
+/** `git rev-parse HEAD` — the current commit of the working copy. Local, no network. */
+export function headShaArgs(): readonly string[] {
+  return ["rev-parse", "HEAD"];
+}
+
+/** `git rev-parse <ref>^{tree}` — the base ref's own tree, to compare the merge result against. */
+export function baseTreeArgs(ref: string): readonly string[] {
+  return ["rev-parse", `${ref}^{tree}`];
 }

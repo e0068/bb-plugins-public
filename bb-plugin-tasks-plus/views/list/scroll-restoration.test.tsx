@@ -14,16 +14,17 @@ import {
 describe("listScrollScopeKey", () => {
   const base = {
     projectId: null,
-    activeOnly: false,
+    listScope: null as null | "active" | "waiting",
     filters: EMPTY_FILTERS,
     sort: "manual" as const,
   };
 
-  it("distinguishes the all/active/project lists", () => {
+  it("distinguishes the all/active/waiting/project lists", () => {
     const all = listScrollScopeKey(base);
-    const active = listScrollScopeKey({ ...base, activeOnly: true });
+    const active = listScrollScopeKey({ ...base, listScope: "active" });
+    const waiting = listScrollScopeKey({ ...base, listScope: "waiting" });
     const project = listScrollScopeKey({ ...base, projectId: "proj_1" });
-    expect(new Set([all, active, project]).size).toBe(3);
+    expect(new Set([all, active, waiting, project]).size).toBe(4);
   });
 
   it("ignores filter member order but reflects filter content", () => {
@@ -31,11 +32,15 @@ describe("listScrollScopeKey", () => {
       statuses: ["todo", "done"],
       priorities: [],
       labelNames: ["b", "a"],
+      types: [],
+      estimates: [],
     };
     const b: ListFilterState = {
       statuses: ["done", "todo"],
       priorities: [],
       labelNames: ["a", "b"],
+      types: [],
+      estimates: [],
     };
     expect(listScrollScopeKey({ ...base, filters: a })).toBe(
       listScrollScopeKey({ ...base, filters: b }),
@@ -52,11 +57,15 @@ describe("listScrollScopeKey", () => {
       statuses: [],
       priorities: [],
       labelNames: ["a,b"],
+      types: [],
+      estimates: [],
     };
     const twoLabels: ListFilterState = {
       statuses: [],
       priorities: [],
       labelNames: ["a", "b"],
+      types: [],
+      estimates: [],
     };
     expect(listScrollScopeKey({ ...base, filters: withComma })).not.toBe(
       listScrollScopeKey({ ...base, filters: twoLabels }),

@@ -14,8 +14,11 @@ the `bb tasks` CLI name.
 | Type | single select, nullable | `tasks.type TEXT` | feature, bugfix, spike, refactor, migration, design |
 | Estimate | single select, nullable | `tasks.estimate TEXT` | xs, s, m, l, xl |
 | Check | multi-select | join `task_checks(task_id, check)` | test, review, design, browser |
-| Plan Tokens | integer ≥ 0, nullable | `tasks.plan_tokens INTEGER` | — |
-| Fact Tokens | integer ≥ 0, nullable | `tasks.fact_tokens INTEGER` | — |
+| Planned Time | integer minutes ≥ 0, nullable | frontmatter `minutes` | — |
+| Actual Time | integer minutes ≥ 0, nullable | frontmatter `minutes_actual` | — |
+| Budget | dollars ≥ 0 to the cent, nullable | frontmatter `budget` | — |
+| Limit | dollars ≥ 0 to the cent, nullable | frontmatter `limit` | — |
+| Cost | dollars ≥ 0 to the cent, nullable | frontmatter `cost` | — |
 
 Type/Estimate allow "empty" (NULL) — like `priority = 'none'`. Existing
 tasks remain unset after the migration.
@@ -31,9 +34,10 @@ tasks remain unset after the migration.
 3. **api** — thread fields through create/update/get, the checks-replace
    endpoint.
 4. **cli** — flags `--type`, `--estimate`, `--check` (repeatable),
-   `--plan-tokens`, `--fact-tokens`; output in `show`.
-5. **views/detail** — editors in `meta.tsx`/`rail.tsx`: select for Type and
-   Estimate, popover multi-select for Check, numeric inputs for Plan/Fact.
+   `--minutes`, `--minutes-actual`, `--budget`, `--limit`, `--cost` (each with
+   `--no-…` on update); output in `show`.
+5. **views/detail** — editors in `rail.tsx` (labels and icons in `components/task-meta.tsx`): select for Type and
+   Estimate, popover multi-select for Check, numeric inputs for time and money.
 
 Templates: `priority` (single select) → Type/Estimate; `labels`
 (many-to-many) → Check, but simplified — a fixed enum with no separate

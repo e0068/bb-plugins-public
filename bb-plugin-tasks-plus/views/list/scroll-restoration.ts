@@ -1,6 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, type RefObject } from "react";
 import type { ListFilterState } from "./filter-bar.js";
 import type { ListSort } from "../../shared/sort.js";
+import type { ListScope } from "./list-preference.js";
 
 /**
  * Remembering the task list's scroll offset so opening a task and coming back
@@ -34,15 +35,15 @@ function storage(): Storage | null {
  */
 export function listScrollScopeKey(params: {
   projectId: string | null;
-  activeOnly: boolean;
+  listScope: ListScope;
   filters: ListFilterState;
   sort: ListSort;
 }): string {
   const list =
-    params.projectId !== null
-      ? `project:${params.projectId}`
-      : params.activeOnly
-        ? "active"
+    params.listScope !== null
+      ? params.listScope
+      : params.projectId !== null
+        ? `project:${params.projectId}`
         : "all";
   // JSON-serialize each array (sorted for order independence). Label names are
   // arbitrary user strings, so a delimiter join would let e.g. `["a,b"]` and

@@ -14,22 +14,31 @@
 // text. So right after `fetch` (once `origin/<base>` is already fresh) we
 // count `ahead` live ourselves — and if it's positive, we refuse with the
 // plugin's own readable text before git gets the chance to.
+//
+// `base.mode` decides whether there's anything to fetch at all: "origin"
+// compares against the remote-tracking ref and needs it freshened first;
+// "local" compares against whatever `<base>` already is in the working copy
+// — nothing to fetch, nothing that can go stale between the click and the
+// measurement.
+import type { ResolvedBase } from "../core/base-branch";
 import { aheadCountArgs, fastForwardArgs, fetchBaseArgs } from "../core/git-commands";
 import { gitRunMessage, type GitPorts, type GitRun } from "./git-run";
 
 export type { GitPorts, GitRun };
 
-export async function runFastForward(ports: GitPorts, base: string): Promise<void> {
-  const fetched = await ports.run(fetchBaseArgs(base));
-  if (fetched.code !== 0) {
-    throw new Error(`git fetch origin ${base}: ${gitRunMessage(fetched)}`);
+export async function runFastForward(ports: GitPorts, base: ResolvedBase): Promise<void> {
+  if (base.mode === "origin") {
+    const fetched = await ports.run(fetchBaseArgs(base.githubBase));
+    if (fetched.code !== 0) {
+      throw new Error(`git fetch origin ${base.githubBase}: ${gitRunMessage(fetched)}`);
+    }
   }
-  if (await hasLiveAheadCommits(ports, base)) {
+  if (await hasLiveAheadCommits(ports, base.statusBase)) {
     throw new Error("Fast-forward is not possible right now (diverged).");
   }
-  const merged = await ports.run(fastForwardArgs(base));
+  const merged = await ports.run(fastForwardArgs(base.statusBase));
   if (merged.code !== 0) {
-    throw new Error(`could not fast-forward to origin/${base}: ${gitRunMessage(merged)}`);
+    throw new Error(`could not fast-forward to ${base.statusBase}: ${gitRunMessage(merged)}`);
   }
 }
 
@@ -37,13 +46,13 @@ export async function runFastForward(ports: GitPorts, base: string): Promise<voi
 // fast-forward: `--ff-only` is safe on its own; the live check only exists
 // to refuse earlier and more clearly in an already-diverged case, not as the
 // sole line of defense.
-async function hasLiveAheadCommits(ports: GitPorts, base: string): Promise<boolean> {
-  const count = await countAhead(ports, base);
+async function hasLiveAheadCommits(ports: GitPorts, ref: string): Promise<boolean> {
+  const count = await countAhead(ports, ref);
   return count !== null && count > 0;
 }
 
-async function countAhead(ports: GitPorts, base: string): Promise<number | null> {
-  const counted = await ports.run(aheadCountArgs(base));
+async function countAhead(ports: GitPorts, ref: string): Promise<number | null> {
+  const counted = await ports.run(aheadCountArgs(ref));
   if (counted.code !== 0) return null;
   const count = Number.parseInt(counted.stdout.trim(), 10);
   return Number.isInteger(count) ? count : null;
@@ -55,12 +64,14 @@ async function countAhead(ports: GitPorts, base: string): Promise<number | null>
 // branch that has in fact already diverged — every click then dies with
 // "diverged" and the button never fixes itself (see
 // memory/tasks/in_progress/fast-forward-stale-ahead-status.md). Fetch first
-// — a stale local `origin/<base>` would lie the same way checkMergedContent
-// avoids (merged-content.ts) — then count live. `null` when it can't be
-// measured (network hiccup): the caller falls back to the cached count
-// rather than hiding the button on a shrug.
-export async function liveAheadCount(ports: GitPorts, base: string): Promise<number | null> {
-  const fetched = await ports.run(fetchBaseArgs(base));
-  if (fetched.code !== 0) return null;
-  return countAhead(ports, base);
+// (mode "origin" only — a stale local `origin/<base>` would lie the same way
+// checkMergedContent avoids in merged-content.ts), then count live. `null`
+// when it can't be measured (network hiccup): the caller falls back to the
+// cached count rather than hiding the button on a shrug.
+export async function liveAheadCount(ports: GitPorts, base: ResolvedBase): Promise<number | null> {
+  if (base.mode === "origin") {
+    const fetched = await ports.run(fetchBaseArgs(base.githubBase));
+    if (fetched.code !== 0) return null;
+  }
+  return countAhead(ports, base.statusBase);
 }

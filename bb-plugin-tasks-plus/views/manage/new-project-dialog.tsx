@@ -4,8 +4,8 @@ import {
   useProjects,
   useTasksQuery,
   useTasksRpc,
-} from "../../shell/data.js";
-import { useTasksNavigation } from "../../shell/routes.js";
+} from "../../client/data.js";
+import { useTasksNavigation } from "../../client/routes.js";
 import {
   Dialog,
   DialogContent,

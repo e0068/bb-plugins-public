@@ -20,7 +20,7 @@ if (!window.matchMedia) {
 // loadPluginApp installs the fake SDK runtime; routes.ts (via the app) must
 // not be imported before that happens.
 const app = await loadPluginApp(() => import("../app"));
-const { parseTasksRoute, tasksRouteToSubPath } = await import("./routes.js");
+const { parseTasksRoute, tasksRouteToSubPath } = await import("../client/routes.js");
 const { pagerPosition } = await import("./topbar.js");
 const { loadViewMode } = await import("./view-preference.js");
 const { TasksNavigationPanel } = await import("./navigation-panel.js");
@@ -87,6 +87,7 @@ describe("tasks route grammar", () => {
     const routes = [
       { kind: "all" },
       { kind: "active" },
+      { kind: "waiting" },
       { kind: "manage" },
       { kind: "task", taskKey: "TSK-4" },
       { kind: "project", projectId: PROJECT_ID, view: "list" },
@@ -202,6 +203,15 @@ function pagerTask(key: string, status: string, position: number) {
     createdAt: "2026-07-15T00:00:00.000Z",
     updatedAt: "2026-07-15T00:00:00.000Z",
     labelIds: [],
+    type: null,
+    estimate: null,
+    plannedMinutes: null,
+    actualMinutes: null,
+    budget: null,
+    budgetLimit: null,
+    cost: null,
+    checks: [],
+    source: null,
     // Only key/status/position matter to the pager; the rest satisfies Task.
   } as never;
 }
@@ -277,6 +287,15 @@ describe("tasks app shell", () => {
       ...pagerTask("TSK-4", "todo", 1),
       description: "",
       labelIds: [],
+    type: null,
+    estimate: null,
+    plannedMinutes: null,
+    actualMinutes: null,
+    budget: null,
+    budgetLimit: null,
+    cost: null,
+    checks: [],
+    source: null,
     };
     const slot = renderSlot(
       app.navPanels[0]!,
@@ -316,6 +335,15 @@ describe("tasks app shell", () => {
       title: "Loaded after existing outage",
       description: "",
       labelIds: [],
+    type: null,
+    estimate: null,
+    plannedMinutes: null,
+    actualMinutes: null,
+    budget: null,
+    budgetLimit: null,
+    cost: null,
+    checks: [],
+    source: null,
     };
     const slot = renderSlot(
       app.navPanels[0]!,
@@ -353,6 +381,15 @@ describe("tasks app shell", () => {
       title,
       description: "",
       labelIds: [],
+    type: null,
+    estimate: null,
+    plannedMinutes: null,
+    actualMinutes: null,
+    budget: null,
+    budgetLimit: null,
+    cost: null,
+    checks: [],
+    source: null,
     };
     const slot = renderSlot(
       app.navPanels[0]!,
@@ -454,6 +491,15 @@ describe("tasks app shell", () => {
                 title: "Order probe",
                 description: "",
                 labelIds: [],
+    type: null,
+    estimate: null,
+    plannedMinutes: null,
+    actualMinutes: null,
+    budget: null,
+    budgetLimit: null,
+    cost: null,
+    checks: [],
+    source: null,
               },
             ],
           }),
@@ -507,6 +553,15 @@ describe("tasks app shell", () => {
       title,
       description: "",
       labelIds: [],
+    type: null,
+    estimate: null,
+    plannedMinutes: null,
+    actualMinutes: null,
+    budget: null,
+    budgetLimit: null,
+    cost: null,
+    checks: [],
+    source: null,
     };
     const slot = renderSlot(
       app.navPanels[0]!,
@@ -616,6 +671,15 @@ describe("tasks app shell", () => {
       title,
       description: "",
       labelIds: [],
+    type: null,
+    estimate: null,
+    plannedMinutes: null,
+    actualMinutes: null,
+    budget: null,
+    budgetLimit: null,
+    cost: null,
+    checks: [],
+    source: null,
     };
     const slot = renderSlot(
       app.navPanels[0]!,
@@ -664,6 +728,15 @@ describe("tasks app shell", () => {
       title,
       description: "",
       labelIds: [],
+    type: null,
+    estimate: null,
+    plannedMinutes: null,
+    actualMinutes: null,
+    budget: null,
+    budgetLimit: null,
+    cost: null,
+    checks: [],
+    source: null,
     };
     const slot = renderSlot(
       app.navPanels[0]!,
@@ -719,7 +792,8 @@ describe("tasks app shell", () => {
     // The real board renders its status columns (empty listTasks → 0 cards).
     await boardSlot.findByText("Backlog");
     await boardSlot.findByText("In Review");
-    expect(boardSlot.getByText("Tasks Plugin")).toBeDefined();
+    // Имя доски теперь стоит и в шапке, и в строке пути — важно, что оно есть.
+    expect(boardSlot.getAllByText("Tasks Plugin").length).toBeGreaterThan(0);
     expect(boardSlot.queryByRole("button", { name: /sidebar/i })).toBeNull();
     cleanup();
 
@@ -806,7 +880,7 @@ describe("tasks app shell", () => {
         rpc: seededRpc({ listLabels: () => ({ labels: [] }) }),
       },
     );
-    await slot.findByText("Labels, agent presets, and folders.");
+    await slot.findByText("Project, labels, agent presets, and folders.");
   });
 
   it("opens quick-create on bare 'c' but not from editable targets or dialogs", async () => {
@@ -817,7 +891,7 @@ describe("tasks app shell", () => {
         rpc: seededRpc(),
       },
     );
-    await slot.findByText("All tasks");
+    await slot.findAllByText("All tasks");
     fireEvent.keyDown(window, { key: "c" });
     // The New task dialog mounts (project select defaults to the only project).
     await slot.findByRole("dialog");

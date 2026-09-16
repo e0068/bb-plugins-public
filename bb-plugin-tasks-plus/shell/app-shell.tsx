@@ -1,13 +1,14 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { PluginNavPanelProps } from "@get-bb/plugin-sdk/app";
-import { useProjects } from "./data.js";
+import { useProjects } from "../client/data.js";
 import {
+  PANEL_PATH,
   parseTasksRoute,
   useTasksNavigation,
   type ResolvedTasksRoute,
   type TasksNavigation,
   type TasksRoute,
-} from "./routes.js";
+} from "../client/routes.js";
 import { loadViewMode, storeViewMode } from "./view-preference.js";
 import { TasksTopbar } from "./topbar.js";
 import { TasksNavigationPanelContent } from "./navigation-panel.js";
@@ -15,9 +16,11 @@ import {
   ResizeHandle,
   useResizableWidth,
 } from "../packages/resizable-pane/react";
+import { useRememberedRoute } from "../packages/panel-state/react";
 import { ListView } from "../views/list/index.js";
 import { BoardView } from "../views/board/index.js";
 import { DetailView } from "../views/detail/index.js";
+import { AnalyticsDashboard } from "../views/analytics/AnalyticsDashboard.js";
 import {
   ManagePanel,
   NewProjectDialog,
@@ -25,7 +28,7 @@ import {
 } from "../views/manage/index.js";
 import { Button } from "@/components/ui/button";
 import { Icon } from "@/components/ui/icon";
-import { TasksRefreshProvider } from "./refresh.js";
+import { TasksRefreshProvider } from "../client/refresh.js";
 
 /** Below this container width the board is unusable (columns get crushed), so
     project routes render the list and the topbar hides the List/Board toggle.
@@ -90,9 +93,13 @@ function RouteOutlet({
     case "all":
       return <ListView projectId={null} />;
     case "active":
-      return <ListView projectId={null} activeOnly />;
+      return <ListView projectId={null} listScope="active" />;
+    case "waiting":
+      return <ListView projectId={null} listScope="waiting" />;
     case "manage":
       return <ManagePanel />;
+    case "analytics":
+      return <AnalyticsDashboard />;
     case "task":
       return <DetailView taskKey={route.taskKey} />;
     case "project":
@@ -116,6 +123,21 @@ function resolveRoute(route: TasksRoute): ResolvedTasksRoute {
 function TasksAppShellContent({ subPath }: PluginNavPanelProps) {
   const route = resolveRoute(parseTasksRoute(subPath));
   const tasksNavigation = useTasksNavigation();
+  // Leaving the panel unmounts it and bb hands back an empty subPath on
+  // return, which dropped the user back on "all tasks" from whatever project
+  // or task they had open. The last route is remembered and reopened; a deep
+  // link (a task URL, a ::task card) still wins, being an explicit address.
+  useRememberedRoute(
+    PANEL_PATH,
+    subPath,
+    // Restoring goes through the raw navigation, not the wrapper below: it's
+    // putting back where the user was, not a fresh choice of view to store.
+    useCallback(
+      (next: string) =>
+        tasksNavigation.go(parseTasksRoute(next), { replace: true }),
+      [tasksNavigation],
+    ),
+  );
   // Every explicit project view in a navigation is a user choice worth
   // remembering — the topbar's List/Board toggle is the only source of one.
   const navigation = useMemo<TasksNavigation>(

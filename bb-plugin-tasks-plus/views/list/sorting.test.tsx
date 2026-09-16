@@ -71,6 +71,15 @@ function task(
     createdAt: "2026-07-15T00:00:00.000Z",
     updatedAt: "2026-07-15T00:00:00.000Z",
     labelIds: [],
+    type: null,
+    estimate: null,
+    plannedMinutes: null,
+    actualMinutes: null,
+    budget: null,
+    budgetLimit: null,
+    cost: null,
+    checks: [],
+    source: null,
   };
 }
 
@@ -160,10 +169,30 @@ describe("list sorting (compact viewport)", () => {
       "Manual",
       "Priority",
       "Due date",
+      "Estimate",
+      "Planned Time",
+      "Actual Time",
+      "Budget",
+      "Limit",
+      "Cost",
+      "Created",
+      "Updated",
     ]);
     expect(
       options.map((option) => option.getAttribute("aria-checked")),
-    ).toEqual(["true", "false", "false"]);
+    ).toEqual([
+      "true",
+      "false",
+      "false",
+      "false",
+      "false",
+      "false",
+      "false",
+      "false",
+      "false",
+      "false",
+      "false",
+    ]);
 
     fireEvent.click(
       await within(drawer).findByRole("menuitemcheckbox", {

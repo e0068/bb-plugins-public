@@ -1,16 +1,17 @@
 // Layer 3 (shell), the testable part — orchestrates the GitHub flow for
 // creating a PR.
 //
-// The sequencing logic (base → blobs → tree → commit → ref → pull) and
-// response parsing live here and are verified with a fake `send`, no real
-// network. The actual `send` (fetch, authorization) is in github-client.ts,
-// the single effect point.
+// The sequencing logic (base → merge-base commit → blobs → tree → commit →
+// ref → pull) and response parsing live here and are verified with a fake
+// `send`, no real network. The actual `send` (fetch, authorization) is in
+// github-client.ts, the single effect point.
 import {
   blobRequest,
   buildTreeEntries,
   commitRequest,
   createRefRequest,
   getBranchRequest,
+  getCommitRequest,
   pullRequestRequest,
   treeRequest,
   updateRefRequest,
@@ -31,8 +32,15 @@ export interface CreatePrPorts {
 
 export interface CreatePrInput {
   repo: RepoRef;
-  /** The PR's base branch (also the source of base_tree and the commit's parent). */
+  /** The PR's base branch. */
   baseBranch: string;
+  /**
+   * The merge-base of the branch with `origin/<baseBranch>` — the commit
+   * `files` were diffed against. It becomes the parent of the PR's commit
+   * and the source of base_tree, so the commit carries exactly the branch's
+   * own changes and GitHub merges them into the (possibly moved) base itself.
+   */
+  mergeBaseSha: string;
   /** The name of the head branch being created/updated on the remote. */
   headBranch: string;
   files: readonly ChangedFile[];
@@ -49,14 +57,16 @@ export async function runCreatePr(
   ports: CreatePrPorts,
   input: CreatePrInput,
 ): Promise<CreatePrResult> {
-  const { repo, baseBranch, headBranch } = input;
+  const { repo, baseBranch, headBranch, mergeBaseSha } = input;
 
   const base = await ports.send(getBranchRequest(repo, baseBranch));
   if (base.status !== 200) {
     throw new Error(`base "${baseBranch}" not found on GitHub (HTTP ${base.status})`);
   }
-  const baseCommitSha = pickString(base.data, ["commit", "sha"]);
-  const baseTreeSha = pickString(base.data, ["commit", "commit", "tree", "sha"]);
+
+  const mergeBase = await ports.send(getCommitRequest(repo, mergeBaseSha));
+  requireStatus(mergeBase, 200, `reading merge-base ${mergeBaseSha.slice(0, 7)}`);
+  const baseTreeSha = pickString(mergeBase.data, ["tree", "sha"]);
 
   const blobShaByPath = await createBlobs(ports, repo, input.files);
   const entries = buildTreeEntries(input.files, blobShaByPath);
@@ -66,7 +76,7 @@ export async function runCreatePr(
   const treeSha = pickString(tree.data, ["sha"]);
 
   const commit = await ports.send(
-    commitRequest(repo, { message: input.title, treeSha, parentSha: baseCommitSha }),
+    commitRequest(repo, { message: input.title, treeSha, parentSha: mergeBaseSha }),
   );
   requireStatus(commit, 201, "creating commit");
   const commitSha = pickString(commit.data, ["sha"]);
@@ -85,7 +95,7 @@ export async function runCreatePr(
   return { url: pickString(pr.data, ["html_url"]), number: pickNumber(pr.data, ["number"]) };
 }
 
-async function createBlobs(
+export async function createBlobs(
   ports: CreatePrPorts,
   repo: RepoRef,
   files: readonly ChangedFile[],
@@ -122,7 +132,7 @@ async function putHeadRef(
   throw new Error(`could not check branch ${headBranch} (HTTP ${existing.status})`);
 }
 
-function requireStatus(res: GithubResponse, expected: number, step: string): void {
+export function requireStatus(res: GithubResponse, expected: number, step: string): void {
   if (res.status !== expected) {
     throw new Error(`${step}: GitHub responded HTTP ${res.status} (${describe(res.data)})`);
   }
@@ -136,7 +146,7 @@ function describe(data: unknown): string {
   return "no message";
 }
 
-function pickString(data: unknown, path: readonly string[]): string {
+export function pickString(data: unknown, path: readonly string[]): string {
   const value = pluck(data, path);
   if (typeof value !== "string") {
     throw new Error(`expected a string in the GitHub response at path ${path.join(".")}`);

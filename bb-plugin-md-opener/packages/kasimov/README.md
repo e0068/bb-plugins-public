@@ -26,10 +26,21 @@ built files live at the package root, and `exports` points to them directly.
 
 ## How to update (bump Kasimov)
 
+Run the pull script from the repo root, pointing it at a local Kasimov clone
+where `npm run release` has just produced `dist/` and `dist/kasimov.manifest.json`:
+
 ```
-npm install github:e0068/Kasimov#<commit>     # builds dist via prepare
-cp node_modules/kasimov/dist/kasimov.js  packages/kasimov/kasimov.js
-cp node_modules/kasimov/dist/kasimov.css packages/kasimov/kasimov.css
+node scripts/pull-kasimov.mjs --from ../Kasimov [--accept-new-exports] [--dry-run]
 ```
 
-The pinned source commit is in `description` in [package.json](package.json).
+It verifies the build against the manifest (sizes + sha256), refuses to
+overwrite a hand-edited vendored copy (the copy must match the
+`kasimov.manifest.json` stored next to it), diffs the build's exports against
+the hand-written [kasimov.d.ts](kasimov.d.ts), runs typecheck/tests of every
+consumer in a temporary worktree of `origin/main` (only regressions block),
+and opens a pull request through the GitHub API — nothing is pushed and your
+checkout is not edited. After the merge, `scripts/publish-public.mjs` rolls
+the change out to the public showcase.
+
+The pinned source commit and version are in [package.json](package.json) and
+in `kasimov.manifest.json` (written by the script; do not edit by hand).

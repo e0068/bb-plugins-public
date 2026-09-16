@@ -12,9 +12,9 @@ import {
   activeWorkLabel,
   formatDueDate,
   formatTimestamp,
-  formatTokenCount,
   partitionLabels,
 } from "./lib.js";
+import { AmountChip } from "./amount-chip.js";
 import { planRowFields } from "./field-plan.js";
 import {
   ROW_FIELD_LABELS,
@@ -34,7 +34,7 @@ import {
   EstimateIcon,
   TYPE_ICONS,
   TYPE_LABELS,
-} from "../detail/meta.js";
+} from "../../components/task-meta.js";
 
 /**
  * Every trailing-rail element shares this pill treatment (Linear-style), so
@@ -91,22 +91,12 @@ function EstimateChip({ estimate }: { estimate: NonNullable<Task["estimate"]> })
   );
 }
 
-function TokensChip({
-  planTokens,
-  factTokens,
-}: {
-  planTokens: number | null;
-  factTokens: number | null;
-}) {
-  const plan = planTokens === null ? "—" : formatTokenCount(planTokens);
-  const fact = factTokens === null ? "—" : formatTokenCount(factTokens);
+/** The assignee or epic — a folder name, so truncated rather than wrapped. */
+function PlacementChip({ field, value }: { field: "assignee" | "epic"; value: string }) {
   return (
-    <span
-      title={`Tokens — plan ${plan}, fact ${fact}`}
-      className={`${RAIL_CHIP_CLASS} tabular-nums`}
-    >
-      <Icon name="AiContentGenerator01" className="size-3 shrink-0" />
-      {plan} / {fact}
+    <span title={`${ROW_FIELD_LABELS[field]}: ${value}`} className={`${RAIL_CHIP_CLASS} max-w-32`}>
+      <Icon name={field === "assignee" ? "UserRound" : "Layers"} className="size-3 shrink-0" />
+      <span className="truncate">{value}</span>
     </span>
   );
 }
@@ -224,6 +214,11 @@ function RailValue({
       return <PriorityChip priority={task.priority} />;
     case "active":
       return <ActiveChip threads={meta?.activeThreads ?? []} />;
+    case "assignee":
+    case "epic": {
+      const value = task[field];
+      return value ? <PlacementChip field={field} value={value} /> : null;
+    }
     case "type":
       return task.type !== null ? <TypeChip type={task.type} /> : null;
     case "estimate":
@@ -232,10 +227,16 @@ function RailValue({
       ) : null;
     case "labels":
       return <LabelChips labels={labels} />;
-    case "tokens":
-      return (
-        <TokensChip planTokens={task.planTokens} factTokens={task.factTokens} />
-      );
+    case "plannedMinutes":
+    case "actualMinutes":
+    case "budget":
+    case "budgetLimit":
+    case "cost": {
+      const value = task[field];
+      return value !== null ? (
+        <AmountChip field={field} value={value} className={RAIL_CHIP_CLASS} />
+      ) : null;
+    }
     case "dueDate":
       return task.dueDate !== null ? (
         <DateChip

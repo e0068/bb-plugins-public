@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { bucketGitEventsByBin, resolveWorkflowClickTarget, segmentContainsAgent, type DisplayBin } from "../pages/thread-chart";
-import type { AgentBin, GitEvent } from "../src/core";
+import { bucketGitEventsByBin, computeDisplayBins, segmentContainsAgent, type DisplayBin } from "../pages/thread-chart";
+import type { AgentBin, GitEvent, TimelineBin } from "../src/core";
 
 describe("segmentContainsAgent", () => {
   it("matches a plain (non-workflow) segment by its own key", () => {
@@ -23,25 +23,55 @@ describe("segmentContainsAgent", () => {
   });
 });
 
-describe("resolveWorkflowClickTarget", () => {
-  const agent: AgentBin = { key: "workflow:wf_1", total: 300, members: ["agent-x", "agent-y"] };
+describe("computeDisplayBins", () => {
+  const UNIT = 60; // seconds — 1-minute bins
+  const active = (t: string): TimelineBin => ({ t, agents: [{ key: "main", total: 100 }] });
+  const empty = (t: string): TimelineBin => ({ t, agents: [] });
+  // Distinct t values only to keep fixtures readable — the folding logic keys off
+  // emptiness and gapUnits, never the timestamp itself.
+  const at = (n: number) => `2026-08-20T10:${String(n).padStart(2, "0")}:00.000Z`;
+  const kinds = (columns: DisplayBin[]) => columns.map((c) => (c.bin === null ? `gap:${c.gapUnits}` : "bar"));
 
-  it("prefers the active agent when it is one of the workflow's members", () => {
-    expect(resolveWorkflowClickTarget(agent, "agent-y")).toBe("agent-y");
+  const withGap = (gapLen: number): TimelineBin[] => [
+    active(at(0)),
+    ...Array.from({ length: gapLen }, (_, i) => empty(at(1 + i))),
+    active(at(1 + gapLen)),
+  ];
+
+  it("collapseEmpty off, threshold 0 — 1:1 passthrough, every empty bin its own column", () => {
+    expect(kinds(computeDisplayBins(withGap(3), false, UNIT, 0))).toEqual(["bar", "gap:1", "gap:1", "gap:1", "bar"]);
   });
 
-  it("falls back to the first member when there is no active agent", () => {
-    expect(resolveWorkflowClickTarget(agent, null)).toBe("agent-x");
-    expect(resolveWorkflowClickTarget(agent, undefined)).toBe("agent-x");
+  it("collapseEmpty on, threshold 0 — a run of empty bins folds into one gap column", () => {
+    expect(kinds(computeDisplayBins(withGap(3), true, UNIT, 0))).toEqual(["bar", "gap:3", "bar"]);
   });
 
-  it("falls back to the first member when the active agent took no part in this workflow run", () => {
-    expect(resolveWorkflowClickTarget(agent, "main")).toBe("agent-x");
+  it("collapseEmpty on, threshold 5min — a 3-minute gap (≤5) is dropped entirely, neighbours sit flush", () => {
+    expect(kinds(computeDisplayBins(withGap(3), true, UNIT, 5))).toEqual(["bar", "bar"]);
   });
 
-  it("has nowhere to send the click when the segment carries no members (pre-SCHEMA_VERSION-4 data)", () => {
-    const noMembers: AgentBin = { key: "workflow:wf_1", total: 300 };
-    expect(resolveWorkflowClickTarget(noMembers, "agent-x")).toBeNull();
+  it("collapseEmpty on, threshold 2min — a 3-minute gap (>2) keeps its collapsed column", () => {
+    expect(kinds(computeDisplayBins(withGap(3), true, UNIT, 2))).toEqual(["bar", "gap:3", "bar"]);
+  });
+
+  it("drops a gap whose duration is exactly the threshold (≤ is inclusive)", () => {
+    // 5 empty 1-minute bins = 300s; threshold 5min = 300s → dropped.
+    expect(kinds(computeDisplayBins(withGap(5), true, UNIT, 5))).toEqual(["bar", "bar"]);
+  });
+
+  it("ignores the threshold when collapseEmpty is off (stage 2 is a refinement of stage 1)", () => {
+    expect(kinds(computeDisplayBins(withGap(3), false, UNIT, 5))).toEqual(["bar", "gap:1", "gap:1", "gap:1", "bar"]);
+  });
+
+  it("drops only the short gaps, keeping the long one, when both appear in one thread", () => {
+    const bins = [active(at(0)), empty(at(1)), empty(at(2)), active(at(3)), empty(at(4)), active(at(5))];
+    // First gap: 2min (kept at threshold 1), second gap: 1min (dropped at threshold 1).
+    expect(kinds(computeDisplayBins(bins, true, UNIT, 1))).toEqual(["bar", "gap:2", "bar", "bar"]);
+  });
+
+  it("treats a bin whose agents sum to zero as empty", () => {
+    const bins = [active(at(0)), { t: at(1), agents: [{ key: "main", total: 0 }] }, active(at(2))];
+    expect(kinds(computeDisplayBins(bins, true, UNIT, 5))).toEqual(["bar", "bar"]);
   });
 });
 

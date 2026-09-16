@@ -2,12 +2,12 @@
    — not in the package itself, so other consumers (Workflow Composer) aren't
    affected. The cc-doc-mde class is added to the editor host via the
    className prop, so these rules apply on top of the shared theme
-   (.bb-mde-host .mde-root) rather than replacing it. */
+   (.bb-mdb-host .mdb-root) rather than replacing it. */
 
 /* Transparent background: the editor blends into the panel surface instead
    of drawing its own var(--background) backdrop. */
-.cc-doc-mde .mde-root {
-  --mde-bg: transparent;
+.cc-doc-mde .mdb-root {
+  --mdb-bg: transparent;
   background: transparent;
 }
 
@@ -15,7 +15,7 @@
    margins" (padding: 4px 44px) only in editable mode — that made the text
    jump right when entering edit mode. Zero them out entirely; padding comes
    from the shared p-4 container in both modes, so the text looks identical. */
-.cc-doc-mde .mde-root.mde-editable {
+.cc-doc-mde .mdb-root.mdb-editable {
   padding: 0;
 }
 
@@ -27,31 +27,31 @@
 
 /* Text column is width-constrained like in Docs (doesn't stretch across the
    whole panel) and horizontally centered. */
-.cc-doc-mde .mde-root {
+.cc-doc-mde .mdb-root {
   max-width: 46rem;
   margin-left: auto;
   margin-right: auto;
   /* Body matches Docs text-sm (~14px); the engine's default was 13px.
      Headings are set in em, so they scale together with the base size. */
-  --mde-size: 0.875rem;
+  --mdb-size: 0.875rem;
   line-height: 1.65;
   color: var(--foreground);
 }
 
 /* Headings: contrasting foreground, semibold, generous top spacing. */
-.cc-doc-mde .mde-root .mde-h {
+.cc-doc-mde .mdb-root .mdb-h {
   font-size: 1.6em;
   font-weight: 600;
   margin: 1.4em 0 0.5em;
   color: var(--foreground);
 }
-.cc-doc-mde .mde-root .mde-h2 {
+.cc-doc-mde .mdb-root .mdb-h2 {
   font-size: 1.3em;
   font-weight: 600;
   margin: 1.1em 0 0.4em;
   color: var(--foreground);
 }
-.cc-doc-mde .mde-root .mde-h3 {
+.cc-doc-mde .mdb-root .mdb-h3 {
   font-size: 1.1em;
   font-weight: 600;
   margin: 0.9em 0 0.3em;
@@ -59,9 +59,9 @@
 }
 
 /* Inline code in a chip, like in Docs (bg-muted, rounded, mono, slightly
-   smaller). Block code is `pre.mde-code`, left untouched: the selector only
+   smaller). Block code is `pre.mdb-code`, left untouched: the selector only
    targets a bare inline `<code>`. */
-.cc-doc-mde .mde-root code:not(.mde-code) {
+.cc-doc-mde .mdb-root code:not(.mdb-code) {
   background: var(--muted);
   border-radius: 0.25rem;
   padding: 0.1em 0.35em;
@@ -73,7 +73,7 @@
    almost monochrome: --primary is achromatic (gray), so links would be
    colorless with it. The only blue host token is --timeline-accent (oklch
    hue 250), which adapts to light/dark theme. */
-.cc-doc-mde .mde-root .mde-link {
+.cc-doc-mde .mdb-root .mdb-link {
   color: var(--timeline-accent);
   text-decoration: none;
 }

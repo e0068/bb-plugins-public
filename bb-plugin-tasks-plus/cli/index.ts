@@ -20,7 +20,6 @@ import {
 } from "../attachments";
 import { delegationRpcContract } from "../delegate/contract";
 import { handlers as delegationHandlers } from "../delegate";
-import { runFileSync } from "../filesync/run";
 import {
   TASK_PRIORITIES,
   TASK_STATUSES,
@@ -48,11 +47,13 @@ import {
   requirePositionals,
   type ParsedArgs,
 } from "./args";
+import { currentCallerEnvironment, runInCallerScope } from "../filesync/caller-scope";
+import { resolveCallerEnvironment } from "../filesync/resolve-roots";
 import { bytes, detail, json, table } from "./format";
+import { formatDollars, formatMinutes, readDollars, readMinutes } from "../shared/amounts.js";
 import { seedDemo } from "./seed";
 
 const ULID_PATTERN = /^[0-7][0-9A-HJKMNP-TV-Z]{25}$/;
-const TASK_KEY_PATTERN = /^([A-Z][A-Z0-9]{0,9})-(\d+)$/;
 const ACTIVE_THREAD_STATUSES = new Set(["starting", "working"]);
 const DEFAULT_PROJECT_COLOR = "blue";
 const DEFAULT_LABEL_COLOR = "gray";
@@ -67,7 +68,7 @@ Commands:
   list                           List tasks
   show                           Show full task details
   update                         Update a task
-  sync                           Sync tasks from markdown frontmatter files
+  delete                         Remove a task's file for good (requires --yes)
   comment                        Add a task comment
   label create|list|delete
   attachment add|get|list|remove
@@ -75,6 +76,7 @@ Commands:
   dispatch                       Dispatch a task to a new agent thread
   attach                         Attach an agent thread to a task
   threads                        List threads attached to a task
+  current                        Show the task(s) the calling thread solves
   seed-demo                      Create sample data (requires --yes)
 
 Run bb tasks <command> --help for command usage.`;
@@ -90,12 +92,13 @@ const FOLDER_HELP = `Usage:
   bb tasks folder list [--json]
   bb tasks folder update <id-or-name> [--name <name>] [--parent <id-or-name> | --no-parent] [--json]`;
 
-const CREATE_HELP = `Usage: bb tasks create [--project <prefix-or-id>] --title <title> [--description <markdown> | --description-file <path>] [--priority <priority>] [--type <type>] [--estimate xs|s|m|l|xl] [--check test|review|design|browser]... [--plan-tokens <int>] [--fact-tokens <int>] [--label <name>]... [--due YYYY-MM-DD] [--parent <key-or-id>] [--attach <path>]... [--machine <id-or-name>] [--strict] [--json]
-Process fields (type, estimate, at least one check, plan-tokens) are recommended; missing ones print a warning by default, or block creation entirely with --strict.`;
-const LIST_HELP = `Usage: bb tasks list [--project <prefix-or-id>] [--status <status>]... [--priority <priority>]... [--label <name>]... [--active] [--search <query>] [--sort manual|priority|due] [--limit <1-${TASKS_PAGE_MAX_LIMIT}>] [--cursor <opaque>] [--json]`;
-const SHOW_HELP = "Usage: bb tasks show <key-or-id> [--json]";
+const CREATE_HELP = `Usage: bb tasks create [--project <prefix-or-id>] --title <title> [--description <markdown> | --description-file <path>] [--priority <priority>] [--type <type>] [--estimate xs|s|m|l|xl] [--check test|review|design|browser]... [--minutes <int>] [--minutes-actual <int>] [--budget <dollars>] [--limit <dollars>] [--cost <dollars>] [--label <name>]... [--due YYYY-MM-DD] [--parent <key-or-id>] [--assignee <name>] [--epic <name>] [--attach <path>]... [--machine <id-or-name>] [--strict] [--json]
+Process fields (type, estimate, at least one check, minutes, budget) are recommended; missing ones print a warning by default, or block creation entirely with --strict.`;
+const LIST_HELP = `Usage: bb tasks list [--project <prefix-or-id>] [--status <status>]... [--priority <priority>]... [--label <name>]... [--active] [--waiting] [--search <query>] [--sort manual|priority|due] [--limit <1-${TASKS_PAGE_MAX_LIMIT}>] [--cursor <opaque>] [--json]`;
+const SHOW_HELP = "Usage: bb tasks show <key-slug-or-id> [--json]";
+const DELETE_HELP = "Usage: bb tasks delete <key-slug-or-id> --yes [--json]";
 const UPDATE_HELP =
-  "Usage: bb tasks update <key-or-id> [--status <status>] [--priority <priority>] [--type <type> | --no-type] [--estimate xs|s|m|l|xl | --no-estimate] [--check test|review|design|browser]... | --no-check] [--plan-tokens <int> | --no-plan-tokens] [--fact-tokens <int> | --no-fact-tokens] [--title <title>] [--description <markdown> | --description-file <path>] [--due YYYY-MM-DD | --no-due] [--parent <key-or-id> | --no-parent] [--add-label <name>]... [--remove-label <name>]... [--machine <id-or-name>] [--json]";
+  "Usage: bb tasks update <key-slug-or-id> [--slug <file-name>] [--key <PREFIX-N> | --no-key] [--status <status>] [--priority <priority>] [--type <type> | --no-type] [--estimate xs|s|m|l|xl | --no-estimate] [--check test|review|design|browser]... | --no-check] [--minutes <int> | --no-minutes] [--minutes-actual <int> | --no-minutes-actual] [--budget <dollars> | --no-budget] [--limit <dollars> | --no-limit] [--cost <dollars> | --no-cost] [--title <title>] [--description <markdown> | --description-file <path>] [--due YYYY-MM-DD | --no-due] [--parent <key-or-id> | --no-parent] [--assignee <name> | --no-assignee] [--epic <name> | --no-epic] [--add-label <name>]... [--remove-label <name>]... [--machine <id-or-name>] [--json]";
 const COMMENT_HELP =
   "Usage: bb tasks comment <key-or-id> (--body <markdown> | --body-file <path>) [--author <name>] [--machine <id-or-name>] [--notify] [--json]";
 const LABEL_HELP = `Usage:
@@ -122,6 +125,8 @@ const DISPATCH_HELP =
 const ATTACH_HELP =
   "Usage: bb tasks attach <key> [--thread <thread-id>] [--json]";
 const THREADS_HELP = "Usage: bb tasks threads <key> [--json]";
+const CURRENT_HELP =
+  "Usage: bb tasks current [--thread <thread-id>] [--json]";
 
 interface PluginStatus {
   name: string;
@@ -154,12 +159,38 @@ async function resolveClientHostId(
   const machine = option(args, "machine");
   if (machine !== undefined) return resolveMachineId(domain, machine);
   if (!ctx.threadId) return undefined;
+  // Окружение вызывающего уже разрешено на входе в команду — второй раз
+  // спрашивать хост незачем. Пустая область означает, что разрешить его не
+  // удалось: тогда спрашиваем сами и даём ошибке дойти до пользователя, а не
+  // читаем молча диск сервера.
+  const caller = currentCallerEnvironment();
+  if (caller) return caller.hostId;
   const thread = await bb.sdk.threads.get({ threadId: ctx.threadId });
   if (!thread.environmentId) return undefined;
   const environment = await bb.sdk.environments.get({
     environmentId: thread.environmentId,
   });
   return environment.hostId;
+}
+
+/** The environment (worktree) the calling thread works in — задачи оно и
+ *  читает, и пишет: команда работает с main и со своим деревом. Не бросает:
+ *  недоступный тред означает «своего дерева нет», и команда работает с main,
+ *  а не падает целиком — этот путь общий для всех команд. */
+async function callerEnvironmentId(
+  bb: BbPluginApi,
+  ctx: PluginCliContext,
+): Promise<string | null> {
+  if (!ctx.threadId) return null;
+  try {
+    const thread = await bb.sdk.threads.get({ threadId: ctx.threadId });
+    return thread.environmentId ?? null;
+  } catch (error) {
+    bb.log.warn(
+      `tasks-plus: не удалось прочитать тред ${ctx.threadId}: ${error instanceof Error ? error.message : String(error)}`,
+    );
+    return null;
+  }
 }
 
 function isMissingClientFileError(error: unknown): boolean {
@@ -352,28 +383,30 @@ async function resolveFolder(
   return byName[0]!;
 }
 
+/** A task the way a person or agent names it: the board's key (`ABC-12`,
+ *  any case), the file's slug, the file id `<boardId>:<slug>`, or a legacy
+ *  ULID. Key and slug go through one lookup — a hand-written file has no
+ *  key, its slug IS its key (filesync/assemble.ts), and a keyed file
+ *  answers to both. */
 async function resolveTask(
   domain: TasksDomain,
   address: string,
 ): Promise<Task> {
-  const normalized = address.trim().toUpperCase();
-  if (ULID_PATTERN.test(normalized)) {
-    const result = tasksRpcContract.getTask.output.parse(
-      await domain.getTask(
-        tasksRpcContract.getTask.input.parse({ taskId: normalized }),
-      ),
-    );
-    if (!result.task) throw new CliError(`task not found: ${address}`);
-    return result.task;
-  }
-  if (!TASK_KEY_PATTERN.test(normalized)) {
-    throw new CliError(`task not found: ${address}`);
-  }
-  const result = tasksRpcContract.getTaskByKey.output.parse(
-    await domain.getTaskByKey(
-      tasksRpcContract.getTaskByKey.input.parse({ taskKey: normalized }),
-    ),
-  );
+  const trimmed = address.trim();
+  if (trimmed === "") throw new CliError(`task not found: ${address}`);
+  const upper = trimmed.toUpperCase();
+  const taskId = ULID_PATTERN.test(upper) ? upper : trimmed.includes(":") ? trimmed : null;
+  const result = taskId
+    ? tasksRpcContract.getTask.output.parse(
+        await domain.getTask(
+          tasksRpcContract.getTask.input.parse({ taskId }),
+        ),
+      )
+    : tasksRpcContract.getTaskByKey.output.parse(
+        await domain.getTaskByKey(
+          tasksRpcContract.getTaskByKey.input.parse({ taskKey: trimmed }),
+        ),
+      );
   if (!result.task) throw new CliError(`task not found: ${address}`);
   return result.task;
 }
@@ -412,17 +445,40 @@ function taskPageLimit(args: ParsedArgs): number {
   return limit;
 }
 
-function tokenCountOption(
+function minutesOption(
   args: ParsedArgs,
   name: string,
 ): number | undefined {
   const raw = option(args, name);
   if (raw === undefined) return undefined;
-  const value = Number(raw);
-  if (!Number.isInteger(value) || value < 0) {
+  const value = readMinutes(raw);
+  if (value === null) {
     throw new CliError(`--${name} must be a non-negative integer`);
   }
   return value;
+}
+
+function dollarsOption(
+  args: ParsedArgs,
+  name: string,
+): number | undefined {
+  const raw = option(args, name);
+  if (raw === undefined) return undefined;
+  const value = readDollars(raw);
+  if (value === null) {
+    throw new CliError(`--${name} must be a non-negative amount in dollars`);
+  }
+  return value;
+}
+
+/** `--<name> <value>` sets the field, `--no-<name>` clears it (null), neither leaves it (undefined). */
+function clearableOption(
+  args: ParsedArgs,
+  name: string,
+  read: (args: ParsedArgs, name: string) => number | undefined,
+): number | null | undefined {
+  validateSingleFlagChoice(option(args, name), args.flags.has(`no-${name}`), name, `no-${name}`);
+  return args.flags.has(`no-${name}`) ? null : read(args, name);
 }
 
 function resolvePreset(presets: readonly Preset[], address: string): Preset {
@@ -710,7 +766,7 @@ async function runProject(
         `Project prefix is already in use: ${renameInput.prefix}`,
       );
     }
-    const updated = store.transaction(() =>
+    const updated = await store.transaction(() =>
       store.tasks.updateProject(project.id, {
         prefix: renameInput?.prefix,
         name: updateInput?.name,
@@ -828,7 +884,7 @@ async function runFolder(
             folderId: folder.id,
             parentFolderId: parent?.id ?? null,
           });
-    const updated = store.transaction(() =>
+    const updated = await store.transaction(() =>
       store.tasks.updateFolder(folder.id, {
         name: renameInput?.name,
         parentFolderId: moveInput?.parentFolderId,
@@ -863,18 +919,23 @@ async function runCreate(
       "type",
       "estimate",
       "check",
-      "plan-tokens",
-      "fact-tokens",
+      "minutes",
+      "minutes-actual",
+      "budget",
+      "limit",
+      "cost",
       "label",
       "due",
       "parent",
+      "assignee",
+      "epic",
       "attach",
       "machine",
     ],
     ["strict"],
   );
   requirePositionals(args, 0, CREATE_HELP);
-  // The four process fields are optional so a task can still be captured
+  // The process fields are optional so a task can still be captured
   // quickly, but a missing one is worth flagging: --strict refuses to
   // create the task at all, while the default mode only warns (exit 0,
   // so scripts checking the exit code keep working).
@@ -882,7 +943,8 @@ async function runCreate(
     option(args, "type") === undefined ? "type" : null,
     option(args, "estimate") === undefined ? "estimate" : null,
     options(args, "check").length === 0 ? "check" : null,
-    option(args, "plan-tokens") === undefined ? "plan-tokens" : null,
+    option(args, "minutes") === undefined ? "minutes" : null,
+    option(args, "budget") === undefined ? "budget" : null,
   ].filter((field): field is string => field !== null);
   if (args.flags.has("strict") && missingProcessFields.length > 0) {
     return {
@@ -941,11 +1003,16 @@ async function runCreate(
     priority: option(args, "priority") ?? "none",
     type: option(args, "type") ?? null,
     estimate: option(args, "estimate") ?? null,
-    planTokens: tokenCountOption(args, "plan-tokens") ?? null,
-    factTokens: tokenCountOption(args, "fact-tokens") ?? null,
+    plannedMinutes: minutesOption(args, "minutes") ?? null,
+    actualMinutes: minutesOption(args, "minutes-actual") ?? null,
+    budget: dollarsOption(args, "budget") ?? null,
+    budgetLimit: dollarsOption(args, "limit") ?? null,
+    cost: dollarsOption(args, "cost") ?? null,
     checks: options(args, "check"),
     dueDate: option(args, "due") ?? null,
     parentTaskId: parent?.id ?? null,
+    assignee: option(args, "assignee") ?? null,
+    epic: option(args, "epic") ?? null,
     labelIds,
   });
   const task = unwrapTask(
@@ -1041,7 +1108,7 @@ async function runList(
       "limit",
       "cursor",
     ],
-    ["active"],
+    ["active", "waiting"],
   );
   requirePositionals(args, 0, LIST_HELP);
   const sortOption = option(args, "sort") ?? "manual";
@@ -1086,6 +1153,7 @@ async function runList(
             : undefined,
         labelIds: labelIds.length > 0 ? labelIds : undefined,
         activeOnly: args.flags.has("active"),
+        waitingOnly: args.flags.has("waiting"),
         search: option(args, "search"),
         sort,
         limit: taskPageLimit(args),
@@ -1201,10 +1269,15 @@ async function runShow(domain: TasksDomain, argv: string[]): Promise<string> {
       ["Type", task.type ?? "-"],
       ["Estimate", task.estimate ?? "-"],
       ["Checks", task.checks.join(", ") || "-"],
-      ["Plan tokens", task.planTokens === null ? "-" : String(task.planTokens)],
-      ["Fact tokens", task.factTokens === null ? "-" : String(task.factTokens)],
+      ["Planned time", task.plannedMinutes === null ? "-" : formatMinutes(task.plannedMinutes)],
+      ["Actual time", task.actualMinutes === null ? "-" : formatMinutes(task.actualMinutes)],
+      ["Budget", task.budget === null ? "-" : formatDollars(task.budget)],
+      ["Limit", task.budgetLimit === null ? "-" : formatDollars(task.budgetLimit)],
+      ["Cost", task.cost === null ? "-" : formatDollars(task.cost)],
       ["Due", task.dueDate ?? "-"],
       ["Parent", task.parentTaskId ?? "-"],
+      ["Assignee", task.assignee ?? "-"],
+      ["Epic", task.epic ?? "-"],
       ["Labels", labels.map((label) => label.name).join(", ") || "-"],
       ["Created", task.createdAt],
       ["Updated", task.updatedAt],
@@ -1271,79 +1344,11 @@ async function runShow(domain: TasksDomain, argv: string[]): Promise<string> {
   return sections.join("\n\n");
 }
 
-const SYNC_HELP =
-  "Usage: bb tasks sync [--project <prefix-or-id>] [--dry-run] [--json]";
-
-async function runSync(
-  bb: BbPluginApi,
-  store: TasksApiStore,
-  argv: string[],
-): Promise<string> {
-  const args = parseArgs(argv);
-  if (args.flags.has("help")) return SYNC_HELP;
-  assertAllowed(args, ["project"], ["dry-run"]);
-  requirePositionals(args, 0, SYNC_HELP);
-
-  let projectId: string | undefined;
-  const address = option(args, "project");
-  if (address !== undefined) {
-    const normalized = address.trim().toLowerCase();
-    const match = store.tasks
-      .listProjects()
-      .find(
-        (project) =>
-          project.id.toLowerCase() === normalized ||
-          project.prefix.toLowerCase() === normalized,
-      );
-    if (!match) throw new CliError(`project not found: ${address}`);
-    projectId = match.id;
-  }
-
-  const dryRun = args.flags.has("dry-run");
-  const results = await runFileSync(bb, store, { projectId, dryRun });
-  // A dry run computes the summary from reads only (see syncProjectFiles) —
-  // nothing changed, so there is nothing to tell listeners about.
-  if (!dryRun) {
-    for (const result of results) publishProjectsChanged(bb, result.projectId);
-  }
-  if (args.flags.has("json")) return json({ dryRun, projects: results });
-  if (results.length === 0) {
-    return "No file-backed projects. Enable one with: bb tasks project update <prefix> --tasks-folder memory/tasks";
-  }
-  const columns = dryRun
-    ? ["PROJECT", "FOLDER", "FILES", "WOULD-CREATE", "WOULD-UPDATE", "WOULD-ADOPT", "WOULD-DELETE", "SAME", "INVALID"]
-    : ["PROJECT", "FOLDER", "FILES", "NEW", "UPD", "ADOPT", "DEL", "SAME", "INVALID"];
-  const rendered = table(
-    columns,
-    results.map((result) => [
-      result.prefix,
-      result.tasksFolder,
-      result.fileCount,
-      result.created,
-      result.updated,
-      result.adopted,
-      result.deleted,
-      result.unchanged,
-      result.invalid.length,
-    ]),
-    "No file-backed projects.",
-  );
-  // Files whose frontmatter didn't parse are excluded from the sync entirely
-  // (their existing task, if any, is left alone — see filesync/sync.ts's
-  // invalidFilePaths) — surface path + reason so they don't vanish silently.
-  const invalidBlock = results
-    .filter((result) => result.invalid.length > 0)
-    .map((result) =>
-      [
-        `${result.prefix} (${result.tasksFolder}):`,
-        ...result.invalid.map((file) => `  ${file.filePath} — ${file.reason}`),
-      ].join("\n"),
-    )
-    .join("\n");
-  const withInvalid = invalidBlock
-    ? `${rendered}\n\nInvalid frontmatter (skipped, not deleted):\n${invalidBlock}`
-    : rendered;
-  return dryRun ? `Dry run — nothing was changed.\n\n${withInvalid}` : withInvalid;
+/** `--<name> <value>` sets, `--no-<name>` clears, neither leaves it be. */
+function clearableName(args: ParsedArgs, name: string): string | null | undefined {
+  const value = option(args, name);
+  validateSingleFlagChoice(value, args.flags.has(`no-${name}`), name, `no-${name}`);
+  return args.flags.has(`no-${name}`) ? null : value;
 }
 
 async function runUpdate(
@@ -1357,34 +1362,50 @@ async function runUpdate(
   assertAllowed(
     args,
     [
+      "slug",
+      "key",
       "status",
       "priority",
       "type",
       "estimate",
       "check",
-      "plan-tokens",
-      "fact-tokens",
+      "minutes",
+      "minutes-actual",
+      "budget",
+      "limit",
+      "cost",
       "title",
       "description",
       "description-file",
       "due",
       "parent",
+      "assignee",
+      "epic",
       "add-label",
       "remove-label",
       "machine",
     ],
     [
+      "no-assignee",
+      "no-epic",
       "no-due",
+      "no-key",
       "no-parent",
       "no-type",
       "no-estimate",
       "no-check",
-      "no-plan-tokens",
-      "no-fact-tokens",
+      "no-minutes",
+      "no-minutes-actual",
+      "no-budget",
+      "no-limit",
+      "no-cost",
     ],
   );
   const [address] = requirePositionals(args, 1, UPDATE_HELP);
   const task = await resolveTask(domain, address!);
+  const slugOpt = option(args, "slug");
+  const keyOpt = option(args, "key");
+  validateSingleFlagChoice(keyOpt, args.flags.has("no-key"), "key", "no-key");
   const typeOpt = option(args, "type");
   validateSingleFlagChoice(
     typeOpt,
@@ -1403,24 +1424,11 @@ async function runUpdate(
   if (checkOpts.length > 0 && args.flags.has("no-check")) {
     throw new CliError("--check and --no-check cannot be combined");
   }
-  validateSingleFlagChoice(
-    option(args, "plan-tokens"),
-    args.flags.has("no-plan-tokens"),
-    "plan-tokens",
-    "no-plan-tokens",
-  );
-  validateSingleFlagChoice(
-    option(args, "fact-tokens"),
-    args.flags.has("no-fact-tokens"),
-    "fact-tokens",
-    "no-fact-tokens",
-  );
-  const planTokens = args.flags.has("no-plan-tokens")
-    ? null
-    : tokenCountOption(args, "plan-tokens");
-  const factTokens = args.flags.has("no-fact-tokens")
-    ? null
-    : tokenCountOption(args, "fact-tokens");
+  const plannedMinutes = clearableOption(args, "minutes", minutesOption);
+  const actualMinutes = clearableOption(args, "minutes-actual", minutesOption);
+  const budget = clearableOption(args, "budget", dollarsOption);
+  const budgetLimit = clearableOption(args, "limit", dollarsOption);
+  const cost = clearableOption(args, "cost", dollarsOption);
   const dueDate = option(args, "due");
   validateSingleFlagChoice(dueDate, args.flags.has("no-due"), "due", "no-due");
   const parentAddress = option(args, "parent");
@@ -1434,6 +1442,8 @@ async function runUpdate(
     parentAddress === undefined
       ? undefined
       : await resolveTask(domain, parentAddress);
+  const assignee = clearableName(args, "assignee");
+  const epic = clearableName(args, "epic");
   if (
     option(args, "machine") !== undefined &&
     option(args, "description-file") === undefined
@@ -1465,14 +1475,20 @@ async function runUpdate(
     options(args, "remove-label").length > 0;
   const checksChanged = checkOpts.length > 0 || args.flags.has("no-check");
   if (
+    slugOpt === undefined &&
+    keyOpt === undefined &&
+    !args.flags.has("no-key") &&
     option(args, "status") === undefined &&
     option(args, "priority") === undefined &&
     typeOpt === undefined &&
     !args.flags.has("no-type") &&
     estimateOpt === undefined &&
     !args.flags.has("no-estimate") &&
-    planTokens === undefined &&
-    factTokens === undefined &&
+    plannedMinutes === undefined &&
+    actualMinutes === undefined &&
+    budget === undefined &&
+    budgetLimit === undefined &&
+    cost === undefined &&
     !checksChanged &&
     option(args, "title") === undefined &&
     description === undefined &&
@@ -1480,6 +1496,8 @@ async function runUpdate(
     !args.flags.has("no-due") &&
     parentAddress === undefined &&
     !args.flags.has("no-parent") &&
+    assignee === undefined &&
+    epic === undefined &&
     !labelsChanged
   ) {
     throw new CliError("no task changes were provided");
@@ -1488,12 +1506,17 @@ async function runUpdate(
     await domain.updateTask(
       tasksRpcContract.updateTask.input.parse({
         taskId: task.id,
+        slug: slugOpt,
+        key: args.flags.has("no-key") ? null : keyOpt,
         status: option(args, "status"),
         priority: option(args, "priority"),
         type: args.flags.has("no-type") ? null : typeOpt,
         estimate: args.flags.has("no-estimate") ? null : estimateOpt,
-        planTokens,
-        factTokens,
+        plannedMinutes,
+        actualMinutes,
+        budget,
+        budgetLimit,
+        cost,
         checks: args.flags.has("no-check")
           ? []
           : checkOpts.length > 0
@@ -1502,6 +1525,8 @@ async function runUpdate(
         title: option(args, "title"),
         description,
         dueDate: args.flags.has("no-due") ? null : dueDate,
+        assignee,
+        epic,
         parentTaskId:
           parentAddress === undefined && !args.flags.has("no-parent")
             ? undefined
@@ -1515,6 +1540,26 @@ async function runUpdate(
   return args.flags.has("json")
     ? json({ task: updated })
     : `Updated ${updated.key}  ${updated.title}`;
+}
+
+async function runDelete(domain: TasksDomain, argv: string[]): Promise<string> {
+  const args = parseArgs(argv);
+  if (args.flags.has("help")) return DELETE_HELP;
+  assertAllowed(args, [], ["yes"]);
+  const [address] = requirePositionals(args, 1, DELETE_HELP);
+  const task = await resolveTask(domain, address!);
+  if (!args.flags.has("yes")) {
+    throw new CliError("delete removes the task file for good; re-run with --yes");
+  }
+  const result = tasksRpcContract.deleteTask.output.parse(
+    await domain.deleteTask(
+      tasksRpcContract.deleteTask.input.parse({ taskId: task.id }),
+    ),
+  );
+  if (!result.deleted) throw new CliError(`task not found: ${address}`);
+  return args.flags.has("json")
+    ? json({ deleted: true, task })
+    : `Deleted ${task.key}  ${task.title} (${task.source?.filePath ?? "-"})`;
 }
 
 async function runComment(
@@ -1663,7 +1708,7 @@ async function runAttachment(
     const sourcePath = resolve(ctx.cwd ?? process.cwd(), sourceOption);
     const normalizedOwner = ownerAddress!.trim().toUpperCase();
     const comment = ULID_PATTERN.test(normalizedOwner)
-      ? store.tasks.getComment(normalizedOwner)
+      ? await store.tasks.getComment(normalizedOwner)
       : undefined;
     if (ULID_PATTERN.test(normalizedOwner) && !comment) {
       throw new CliError(`comment not found: ${ownerAddress}`);
@@ -2061,6 +2106,43 @@ async function runThreads(
       );
 }
 
+// The mirror of `attach`: which task(s) the calling thread is attached to.
+// Reads the thread the same way `attach` does — an explicit --thread, else
+// BB_THREAD_ID, else the calling thread — so an agent can ask "what am I
+// working on" without knowing its own thread id.
+async function runCurrent(
+  domain: TasksDomain,
+  ctx: PluginCliContext,
+  argv: string[],
+): Promise<string> {
+  const args = parseArgs(argv);
+  if (args.flags.has("help")) return CURRENT_HELP;
+  assertAllowed(args, ["thread"]);
+  requirePositionals(args, 0, CURRENT_HELP);
+  const threadId =
+    option(args, "thread") ?? process.env.BB_THREAD_ID ?? ctx.threadId;
+  if (!threadId) {
+    throw new CliError("missing --thread and BB_THREAD_ID is not set");
+  }
+  const result = tasksRpcContract.tasksForThread.output.parse(
+    await domain.tasksForThread(
+      tasksRpcContract.tasksForThread.input.parse({ threadId }),
+    ),
+  );
+  return args.flags.has("json")
+    ? json({ threadId, tasks: result.tasks })
+    : table(
+        ["KEY", "STATUS", "PRIORITY", "TITLE"],
+        result.tasks.map((task) => [
+          task.key,
+          task.status,
+          task.priority,
+          task.title,
+        ]),
+        "No task attached to this thread.",
+      );
+}
+
 function friendlyError(error: unknown): string {
   if (error instanceof CliError) return error.message;
   if (error instanceof z.ZodError) {
@@ -2134,9 +2216,9 @@ export function registerTasksCli(
         usage: UPDATE_HELP,
       },
       {
-        name: "sync",
-        summary: "Import tasks from markdown frontmatter files into the board",
-        usage: SYNC_HELP,
+        name: "delete",
+        summary: "Remove a task's file for good",
+        usage: DELETE_HELP,
       },
       {
         name: "comment",
@@ -2174,110 +2256,137 @@ export function registerTasksCli(
         usage: THREADS_HELP,
       },
       {
+        name: "current",
+        summary: "Show the task(s) the calling thread is attached to",
+        usage: CURRENT_HELP,
+      },
+      {
         name: "seed-demo",
         summary: "Create sample folders, projects, labels, tasks, and comments",
         usage: "bb tasks seed-demo --yes [--json]",
       },
     ],
     async run(argv, ctx): Promise<PluginCliResult> {
+      // Два точечных обращения к хосту на команду — тред и его окружение;
+      // дальше и чтение, и запись знают, из какого дерева пришёл вызов
+      // (filesync/caller-scope.ts), и этим же знанием пользуется
+      // resolveClientHostId. Обхода живых деревьев здесь нет — BBPL-293.
       try {
-        const [command, ...rest] = argv;
-        if (!command || command === "--help" || command === "help") {
-          return { exitCode: 0, stdout: ROOT_HELP };
-        }
-        let stdout: string;
-        switch (command) {
-          case "status": {
-            const args = parseArgs(rest);
-            assertAllowed(args, []);
-            requirePositionals(args, 0, "bb tasks status [--json]");
-            stdout = args.flags.has("json")
-              ? JSON.stringify(status)
-              : `${status.name} ${status.version}`;
-            break;
-          }
-          case "project":
-            stdout = await runProject(bb, store, domain, rest);
-            break;
-          case "folder":
-            stdout = await runFolder(bb, store, domain, rest);
-            break;
-          case "create": {
-            const result = await runCreate(bb, store, domain, ctx, rest);
-            // Partial attachment failure returns a full result: truthful
-            // stdout (task + per-file outcomes) with a non-zero exit.
-            if (typeof result !== "string") return result;
-            stdout = result;
-            break;
-          }
-          case "list":
-            stdout = await runList(domain, ctx, rest);
-            break;
-          case "show":
-            stdout = await runShow(domain, rest);
-            break;
-          case "update":
-            stdout = await runUpdate(bb, domain, ctx, rest);
-            break;
-          case "sync":
-            stdout = await runSync(bb, store, rest);
-            break;
-          case "comment":
-            stdout = await runComment(bb, store, domain, ctx, rest);
-            break;
-          case "label":
-            stdout = await runLabel(domain, rest);
-            break;
-          case "attachment":
-            stdout = await runAttachment(bb, store, domain, ctx, rest);
-            break;
-          case "preset":
-            stdout = await runPreset(domain, rest);
-            break;
-          case "dispatch":
-          // Hidden alias kept for compatibility; help advertises "dispatch".
-          case "delegate":
-            stdout = await runDispatch(bb, store, domain, rest);
-            break;
-          case "attach":
-            stdout = await runAttach(bb, store, domain, ctx, rest);
-            break;
-          case "threads":
-            stdout = await runThreads(domain, rest);
-            break;
-          case "seed-demo": {
-            const args = parseArgs(rest);
-            assertAllowed(args, [], ["yes"]);
-            requirePositionals(args, 0, "bb tasks seed-demo --yes [--json]");
-            if (!args.flags.has("yes")) {
-              throw new CliError(
-                "seed-demo creates sample data; re-run with --yes",
-              );
-            }
-            const result = await seedDemo(domain, ctx.projectId);
-            stdout = args.flags.has("json")
-              ? json(result)
-              : detail([
-                  ["Folders", result.foldersCreated],
-                  ["Projects", result.projectsCreated],
-                  ["Labels", result.labelsCreated],
-                  ["Tasks", result.tasksCreated],
-                  ["Comments", result.commentsCreated],
-                  ["BB project", result.linkedBbProjectId ?? "-"],
-                ]);
-            break;
-          }
-          default:
-            throw new CliError(
-              `unknown command: ${command}; run bb tasks --help`,
-            );
-        }
-        return { exitCode: 0, stdout };
+        const caller = await resolveCallerEnvironment(
+          bb,
+          await callerEnvironmentId(bb, ctx),
+        );
+        return await runInCallerScope(caller, () => runCommand(argv, ctx));
       } catch (error) {
         return { exitCode: 1, stderr: singleLine(friendlyError(error)) };
       }
     },
   });
+
+  async function runCommand(
+    argv: string[],
+    ctx: PluginCliContext,
+  ): Promise<PluginCliResult> {
+    try {
+      const [command, ...rest] = argv;
+      if (!command || command === "--help" || command === "help") {
+        return { exitCode: 0, stdout: ROOT_HELP };
+      }
+      let stdout: string;
+      switch (command) {
+        case "status": {
+          const args = parseArgs(rest);
+          assertAllowed(args, []);
+          requirePositionals(args, 0, "bb tasks status [--json]");
+          stdout = args.flags.has("json")
+            ? JSON.stringify(status)
+            : `${status.name} ${status.version}`;
+          break;
+        }
+        case "project":
+          stdout = await runProject(bb, store, domain, rest);
+          break;
+        case "folder":
+          stdout = await runFolder(bb, store, domain, rest);
+          break;
+        case "create": {
+          const result = await runCreate(bb, store, domain, ctx, rest);
+          // Partial attachment failure returns a full result: truthful
+          // stdout (task + per-file outcomes) with a non-zero exit.
+          if (typeof result !== "string") return result;
+          stdout = result;
+          break;
+        }
+        case "list":
+          stdout = await runList(domain, ctx, rest);
+          break;
+        case "show":
+          stdout = await runShow(domain, rest);
+          break;
+        case "update":
+          stdout = await runUpdate(bb, domain, ctx, rest);
+          break;
+        case "delete":
+          stdout = await runDelete(domain, rest);
+          break;
+        case "comment":
+          stdout = await runComment(bb, store, domain, ctx, rest);
+          break;
+        case "label":
+          stdout = await runLabel(domain, rest);
+          break;
+        case "attachment":
+          stdout = await runAttachment(bb, store, domain, ctx, rest);
+          break;
+        case "preset":
+          stdout = await runPreset(domain, rest);
+          break;
+        case "dispatch":
+        // Hidden alias kept for compatibility; help advertises "dispatch".
+        case "delegate":
+          stdout = await runDispatch(bb, store, domain, rest);
+          break;
+        case "attach":
+          stdout = await runAttach(bb, store, domain, ctx, rest);
+          break;
+        case "threads":
+          stdout = await runThreads(domain, rest);
+          break;
+        case "current":
+          stdout = await runCurrent(domain, ctx, rest);
+          break;
+        case "seed-demo": {
+          const args = parseArgs(rest);
+          assertAllowed(args, [], ["yes"]);
+          requirePositionals(args, 0, "bb tasks seed-demo --yes [--json]");
+          if (!args.flags.has("yes")) {
+            throw new CliError(
+              "seed-demo creates sample data; re-run with --yes",
+            );
+          }
+          const result = await seedDemo(domain, ctx.projectId);
+          stdout = args.flags.has("json")
+            ? json(result)
+            : detail([
+                ["Folders", result.foldersCreated],
+                ["Projects", result.projectsCreated],
+                ["Labels", result.labelsCreated],
+                ["Tasks", result.tasksCreated],
+                ["Comments", result.commentsCreated],
+                ["BB project", result.linkedBbProjectId ?? "-"],
+              ]);
+          break;
+        }
+        default:
+          throw new CliError(
+            `unknown command: ${command}; run bb tasks --help`,
+          );
+      }
+      return { exitCode: 0, stdout };
+    } catch (error) {
+      return { exitCode: 1, stderr: singleLine(friendlyError(error)) };
+    }
+  }
 }
 
 export { TASK_PRIORITIES, TASK_STATUSES };

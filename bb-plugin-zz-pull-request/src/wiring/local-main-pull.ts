@@ -27,6 +27,7 @@ import {
   fetchIntoLocalBranchArgs,
   worktreeListArgs,
 } from "../core/git-commands";
+import { describeMainPullFailure } from "../core/main-pull-reason";
 import { gitRunMessage, type GitPorts, type GitRun } from "./git-run";
 
 export type LocalMainPullResult = { ok: true } | { ok: false; reason: string };
@@ -64,5 +65,11 @@ async function pullAtCheckout(
 }
 
 function toResult(run: GitRun): LocalMainPullResult {
-  return run.code === 0 ? { ok: true } : { ok: false, reason: gitRunMessage(run) };
+  // A refusal is expected (diverged, busy, or uncommitted changes), not a
+  // defect — describeMainPullFailure turns git's raw advice block into one
+  // readable line and names which of those it was. See
+  // memory/decisions/main-pull-reason-humanized.md.
+  return run.code === 0
+    ? { ok: true }
+    : { ok: false, reason: describeMainPullFailure(gitRunMessage(run)) };
 }

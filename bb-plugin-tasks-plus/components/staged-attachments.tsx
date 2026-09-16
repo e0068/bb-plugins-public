@@ -2,8 +2,8 @@ import { useEffect, useState } from "react";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { Cancel01Icon, File01Icon } from "@hugeicons/core-free-icons";
 import { cn } from "@/lib/utils";
-import { formatFileSize } from "../views/activity/time.js";
-import type { AttachmentOwnerRef } from "../views/detail/attachments.js";
+import type { AttachmentOwnerRef } from "../shared/contract.js";
+import { formatFileSize } from "../shared/format.js";
 
 /** Frontend mirror of attachments/index.ts `MAX_ATTACHMENT_SIZE_BYTES`. */
 export const MAX_ATTACHMENT_BYTES = 25 * 1024 * 1024;

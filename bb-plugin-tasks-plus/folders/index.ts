@@ -1,48 +1,29 @@
 import type { BbPluginApi, PluginRpcHandlers } from "@get-bb/plugin-sdk";
 import type { TasksApiStore } from "../api/index.js";
-import { attachmentsForTasks, publishProjectsChanged } from "../api/index.js";
-import { removeAttachmentBlobs } from "../attachments/index.js";
-import { runFileSync } from "../filesync/run.js";
-import type { Project } from "../db/index.js";
+import { publishProjectsChanged } from "../api/index.js";
+import type { BoardConfig } from "../filesync/board-config.js";
+import type { BoardRoot } from "../filesync/fs-boards.js";
+import { resolveMainRoot } from "../filesync/resolve-roots.js";
+import { defaultSourcePath } from "../filesync/resolve-roots.js";
 import {
   foldersRpcContract,
   type FolderDomainError,
-  type FolderSyncChangedEvent,
   type SyncedFolder,
 } from "./contract.js";
 import { deriveUniquePrefix } from "./prefix.js";
-import { runFolderSync } from "./sync-runner.js";
-import { FolderSyncStatusStore } from "./status-store.js";
 
 const DEFAULT_FOLDER_PROJECT_COLOR = "steelblue";
-const FOLDER_SYNC_INTERVAL_MS = 2 * 60_000;
-
-type SyncEligibleProject = Project & {
+type SyncEligibleProject = BoardConfig & {
   tasksFolder: string;
   linkedBbProjectId: string;
 };
 
-function isSyncEligible(project: Project): project is SyncEligibleProject {
+function isSyncEligible(project: BoardConfig): project is SyncEligibleProject {
   return project.tasksFolder !== null && project.linkedBbProjectId !== null;
 }
 
 function domainError(error: FolderDomainError) {
   return { ok: false as const, error };
-}
-
-function waitFor(signal: AbortSignal, ms: number): Promise<void> {
-  if (signal.aborted) return Promise.resolve();
-  return new Promise((resolve) => {
-    const onAbort = () => {
-      clearTimeout(timer);
-      resolve();
-    };
-    const timer = setTimeout(() => {
-      signal.removeEventListener("abort", onAbort);
-      resolve();
-    }, ms);
-    signal.addEventListener("abort", onAbort, { once: true });
-  });
 }
 
 async function resolveBbProjectSourcePath(
@@ -51,10 +32,7 @@ async function resolveBbProjectSourcePath(
 ): Promise<{ name: string | null; repoPath: string | null }> {
   try {
     const bbProject = await bb.sdk.projects.get({ projectId: bbProjectId });
-    const source =
-      bbProject.sources.find((entry) => entry.isDefault) ??
-      bbProject.sources[0];
-    return { name: bbProject.name, repoPath: source?.path ?? null };
+    return { name: bbProject.name, repoPath: defaultSourcePath(bbProject.sources) };
   } catch {
     // Best-effort display data only — a stale/unreachable link still lists.
     return { name: null, repoPath: null };
@@ -62,48 +40,47 @@ async function resolveBbProjectSourcePath(
 }
 
 export function registerFolders(bb: BbPluginApi, store: TasksApiStore): void {
-  const statusStore = new FolderSyncStatusStore(bb.storage.kv);
-  const inFlight = new Map<string, Promise<void>>();
-
-  function publishFolderSync(projectId: string): void {
-    bb.realtime.publish("folderSync:changed", {
-      projectId,
-    } satisfies FolderSyncChangedEvent);
+  /**
+   * Доске принадлежит одна папка: главный чекаут её bb-проекта. Обхода
+   * живых worktree здесь нет и не будет — он умножал каждое чтение задач на
+   * число чекаутов (5 досок × 8 чекаутов × ~150 файлов ≈ 6000 чтений на
+   * запрос, всё по одному репозиторию), и именно от этого доска вставала
+   * (decisions/tasks-plus-board-roots-blocks-rpc.md).
+   *
+   * Дерево вызвавшего треда доске не принадлежит: оно принадлежит запросу и
+   * резолвится точечно, по известному id окружения — см.
+   * filesync/caller-scope.ts и filesync/resolve-roots.ts.
+   *
+   * Главный чекаут после подключения доски почти никогда не переезжает,
+   * поэтому резолвится один раз на проект и хранится.
+   */
+  async function refreshRoots(project: SyncEligibleProject): Promise<void> {
+    const mainRoot = await resolveMainRoot(
+      bb,
+      project.linkedBbProjectId,
+      project.tasksFolder,
+    );
+    store.tasks.setBoardRoots(project.id, mainRoot ? [mainRoot] : []);
   }
 
-  function syncFolder(projectId: string): Promise<void> {
-    const existing = inFlight.get(projectId);
-    if (existing) return existing;
-    const run = runFolderSync(
-      {
-        runFileSync: (options) => runFileSync(bb, store, options),
-        hasFileLinks: (id) => store.tasks.listFileTasks(id).length > 0,
-        statusStore,
-        publish: publishFolderSync,
-      },
-      projectId,
-    ).finally(() => inFlight.delete(projectId));
-    inFlight.set(projectId, run);
-    return run;
+  async function refreshAllRoots(): Promise<void> {
+    const projects = store.tasks.listProjects().filter(isSyncEligible);
+    await Promise.all(projects.map((project) => refreshRoots(project)));
   }
 
   async function buildSyncedFolderRow(
     project: SyncEligibleProject,
   ): Promise<SyncedFolder> {
-    const [status, bbProject] = await Promise.all([
-      statusStore.load(project.id),
-      resolveBbProjectSourcePath(bb, project.linkedBbProjectId),
-    ]);
+    const bbProject = await resolveBbProjectSourcePath(bb, project.linkedBbProjectId);
     return {
       projectId: project.id,
       projectName: project.name,
       projectPrefix: project.prefix,
-      taskCount: store.projectTaskCount(project.id),
+      taskCount: await store.projectTaskCount(project.id),
       tasksFolder: project.tasksFolder,
       linkedBbProjectId: project.linkedBbProjectId,
       linkedBbProjectName: bbProject.name,
       repoPath: bbProject.repoPath,
-      status,
     };
   }
 
@@ -162,7 +139,7 @@ export function registerFolders(bb: BbPluginApi, store: TasksApiStore): void {
 
   const handlers: PluginRpcHandlers<typeof foldersRpcContract> = {
     async listSyncedFolders() {
-      const projects = store.tasks.listSyncProjects().filter(isSyncEligible);
+      const projects = store.tasks.listProjects().filter(isSyncEligible);
       const folders = await Promise.all(
         projects.map((project) => buildSyncedFolderRow(project)),
       );
@@ -205,86 +182,29 @@ export function registerFolders(bb: BbPluginApi, store: TasksApiStore): void {
       );
       if (!resolved.ok) return resolved;
       publishProjectsChanged(bb, resolved.project.id);
-
-      // Initial sync, run inline: the dialog waits for this so it can show
-      // the result (or the error) immediately instead of a bare "connected".
-      await syncFolder(resolved.project.id);
-
-      const refreshed = store.tasks.getProject(resolved.project.id);
-      if (!refreshed || !isSyncEligible(refreshed)) {
-        return domainError({
-          code: "folder_connect_failed",
-          message: "The folder was disconnected before its first sync finished",
-        });
-      }
-      return { ok: true, folder: await buildSyncedFolderRow(refreshed) };
+      await refreshRoots(resolved.project);
+      return { ok: true, folder: await buildSyncedFolderRow(resolved.project) };
     },
 
     async removeSyncedFolder(input) {
       const project = store.tasks.getProject(input.projectId);
       if (!project) throw new Error(`Project not found: ${input.projectId}`);
-
-      let deletedTaskCount = 0;
-      if (input.alsoDeleteTasks) {
-        for (const fileTask of store.tasks.listFileTasks(project.id)) {
-          const attachments = attachmentsForTasks(store.tasks, [
-            fileTask.taskId,
-          ]);
-          const deleted = store.tasks.deleteTask(fileTask.taskId);
-          if (deleted) {
-            deletedTaskCount += 1;
-            await removeAttachmentBlobs(bb, store.tasks, attachments);
-          }
-        }
-      } else {
-        store.tasks.clearFileTasksForProject(project.id);
-      }
-
       store.tasks.updateProject(project.id, { tasksFolder: null });
-      await statusStore.clear(project.id);
-
+      store.tasks.setBoardRoots(project.id, []);
       publishProjectsChanged(bb, project.id);
-      publishFolderSync(project.id);
-      return { ok: true, deletedTaskCount };
-    },
-
-    async syncFolderNow(input) {
-      const project = store.tasks.getProject(input.projectId);
-      if (!project || !isSyncEligible(project)) return { folder: null };
-      await syncFolder(project.id);
-      const refreshed = store.tasks.getProject(project.id);
-      if (!refreshed || !isSyncEligible(refreshed)) return { folder: null };
-      return { folder: await buildSyncedFolderRow(refreshed) };
-    },
-
-    async syncAllFolders() {
-      // Same catch-up the background loop and post-load bootstrap run, on
-      // demand. syncFolder de-dupes per project, so a click that overlaps a
-      // background tick coalesces onto the in-flight run instead of doubling.
-      const projects = store.tasks.listSyncProjects();
-      for (const project of projects) await syncFolder(project.id);
-      return { synced: projects.length };
+      return { ok: true };
     },
   };
 
   bb.rpc.register(foldersRpcContract, handlers);
 
-  bb.background.service("folder-sync", {
-    async start(signal) {
-      while (!signal.aborted) {
-        await waitFor(signal, FOLDER_SYNC_INTERVAL_MS);
-        if (signal.aborted) break;
-        for (const project of store.tasks.listSyncProjects()) {
-          if (signal.aborted) break;
-          await syncFolder(project.id);
-        }
-      }
-    },
-  });
-
-  // Catch up any already-connected folders right after (re)load, rather than
-  // waiting up to FOLDER_SYNC_INTERVAL_MS for the first background tick.
-  for (const project of store.tasks.listSyncProjects()) {
-    void syncFolder(project.id);
-  }
+  // Resolve the main root of already-connected boards right after (re)load.
+  // Nothing else re-resolves it: a board's checkout moves only when someone
+  // edits the underlying bb project's sources, and that path already calls
+  // refreshRoots itself.
+  void refreshAllRoots().catch((error: unknown) =>
+    bb.log.warn(
+      `board-roots refresh failed: ${error instanceof Error ? error.message : String(error)}`,
+    ),
+  );
 }

@@ -32,6 +32,13 @@ export interface GearSettings {
   contentMaxWidthPx: number;
   heightMode: GearHeightMode;
   collapseEmpty: boolean;
+  /**
+   * Minutes. When > 0 (and collapseEmpty is on), an empty gap whose real
+   * duration is ≤ this many minutes is dropped entirely — not even a gap
+   * column is drawn. 0 disables it: gaps of any length keep their single
+   * collapsed column, the pre-feature collapseEmpty behaviour. Natural number.
+   */
+  collapseToZeroBelowMin: number;
   /** px, used only on a view where that view's own fillWidth field is off. */
   colWidthPx: number;
   heightScale: number;
@@ -53,6 +60,7 @@ export const DEFAULT_GEAR_SETTINGS: GearSettings = {
   contentMaxWidthPx: 1400,
   heightMode: "perCard",
   collapseEmpty: true,
+  collapseToZeroBelowMin: 0,
   colWidthPx: 8,
   heightScale: 1,
   colGap: 1,
@@ -80,6 +88,12 @@ function parseNumber(raw: string | boolean | undefined, fallback: number, min: n
   const n = typeof raw === "string" ? Number.parseFloat(raw) : NaN;
   if (!Number.isFinite(n)) return fallback;
   return Math.min(max, Math.max(min, n));
+}
+
+/** Parses a natural number (0, 1, 2, …); rejects decimals, negatives and non-numeric input to `fallback`, then clamps to max. */
+function parseNaturalNumber(raw: string | boolean | undefined, fallback: number, max: number): number {
+  if (typeof raw !== "string" || !/^\d+$/.test(raw.trim())) return fallback;
+  return Math.min(max, Number.parseInt(raw, 10));
 }
 
 function parseBoolean(raw: string | boolean | undefined, fallback: boolean): boolean {
@@ -115,6 +129,7 @@ export function parseGearSettings(values: RawSettingsValues): GearSettings {
     contentMaxWidthPx: parseNumber(values?.contentMaxWidthPx, DEFAULT_GEAR_SETTINGS.contentMaxWidthPx, 600, 4000),
     heightMode: parseEnum(values?.heightMode, GEAR_HEIGHT_MODE_OPTIONS, DEFAULT_GEAR_SETTINGS.heightMode),
     collapseEmpty: parseBoolean(values?.collapseEmpty, DEFAULT_GEAR_SETTINGS.collapseEmpty),
+    collapseToZeroBelowMin: parseNaturalNumber(values?.collapseToZeroBelowMin, DEFAULT_GEAR_SETTINGS.collapseToZeroBelowMin, 24 * 60),
     colWidthPx: parseNumber(values?.colWidthPx, DEFAULT_GEAR_SETTINGS.colWidthPx, 1, 40),
     heightScale: parseNumber(values?.heightScale, DEFAULT_GEAR_SETTINGS.heightScale, 0.3, 3),
     colGap: parseNumber(values?.colGap, DEFAULT_GEAR_SETTINGS.colGap, 0, 8),

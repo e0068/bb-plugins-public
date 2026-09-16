@@ -158,6 +158,40 @@ function createHistory(env) {
   return { record, recordInput, batch, undo, redo, destroy };
 }
 
+// editor/md-editor/line-diff.js
+function linesOf(s) {
+  return typeof s === "string" && s ? s.split("\n") : [];
+}
+function lineDiff(a, b) {
+  const al = linesOf(a);
+  const bl = linesOf(b);
+  const m = al.length, n = bl.length;
+  const dp = Array.from({ length: m + 1 }, () => new Array(n + 1).fill(0));
+  for (let i2 = m - 1; i2 >= 0; i2--) {
+    for (let j2 = n - 1; j2 >= 0; j2--) {
+      dp[i2][j2] = al[i2] === bl[j2] ? dp[i2 + 1][j2 + 1] + 1 : Math.max(dp[i2 + 1][j2], dp[i2][j2 + 1]);
+    }
+  }
+  const out = [];
+  let i = 0, j = 0;
+  while (i < m && j < n) {
+    if (al[i] === bl[j]) {
+      out.push({ t: " ", s: al[i] });
+      i++;
+      j++;
+    } else if (dp[i + 1][j] >= dp[i][j + 1]) {
+      out.push({ t: "-", s: al[i] });
+      i++;
+    } else {
+      out.push({ t: "+", s: bl[j] });
+      j++;
+    }
+  }
+  while (i < m) out.push({ t: "-", s: al[i++] });
+  while (j < n) out.push({ t: "+", s: bl[j++] });
+  return out;
+}
+
 // editor/shell/composer-edit-shell.js
 function createEditShell(env) {
   var el2 = env.el, node = env.node, contentOf = env.contentOf, edits = env.edits, render = env.render, closeDiffModal = env.closeModal;
@@ -193,34 +227,7 @@ function createEditShell(env) {
     env.setEditing(null);
     render();
   }
-  function lineDiff(a, b) {
-    var al = (a || "").split("\n"), bl = (b || "").split("\n"), m = al.length, n = bl.length;
-    var dp = [];
-    for (var i = 0; i <= m; i++) {
-      dp[i] = [];
-      for (var j = 0; j <= n; j++) dp[i][j] = 0;
-    }
-    for (var i2 = m - 1; i2 >= 0; i2--) for (var j2 = n - 1; j2 >= 0; j2--)
-      dp[i2][j2] = al[i2] === bl[j2] ? dp[i2 + 1][j2 + 1] + 1 : Math.max(dp[i2 + 1][j2], dp[i2][j2 + 1]);
-    var out = [], i = 0, j = 0;
-    while (i < m && j < n) {
-      if (al[i] === bl[j]) {
-        out.push({ t: " ", s: al[i] });
-        i++;
-        j++;
-      } else if (dp[i + 1][j] >= dp[i][j + 1]) {
-        out.push({ t: "-", s: al[i] });
-        i++;
-      } else {
-        out.push({ t: "+", s: bl[j] });
-        j++;
-      }
-    }
-    while (i < m) out.push({ t: "-", s: al[i++] });
-    while (j < n) out.push({ t: "+", s: bl[j++] });
-    return out;
-  }
-  function openDiffModal() {
+  function openDiffModal2() {
     var editing = env.getEditing();
     if (editing == null || document.getElementById("cg-diffmodal")) return;
     if (env.closeMenus) env.closeMenus();
@@ -316,12 +323,12 @@ function createEditShell(env) {
       scrim.id = "cg-scrim";
       scrim.addEventListener("mousedown", function(e) {
         e.preventDefault();
-        openDiffModal();
+        openDiffModal2();
       });
       document.body.appendChild(scrim);
     }
   }
-  return { syncEditScrim, cancelEdit, saveEdit, openDiffModal, noteEdit };
+  return { syncEditScrim, cancelEdit, saveEdit, openDiffModal: openDiffModal2, noteEdit };
 }
 
 // editor/shell/composer-editor.js
@@ -728,6 +735,117 @@ function createLegacyEditor(env) {
   return { bodyOf, attachPathPicker, closeMenus: closeMenus2 };
 }
 
+// editor/md-editor/image-md.js
+var MAX_DIM = 99999;
+var isDim = (n) => Number.isInteger(n) && n >= 1 && n <= MAX_DIM;
+var IMAGE_PATTERN = "!\\[[^\\]]*\\]\\([^)]*\\)";
+var TOKEN_RE = new RegExp("^" + IMAGE_PATTERN + "$");
+var PARTS_RE = /^!\[([^\]]*)\]\(([^)]*)\)$/;
+var SCAN_RE = new RegExp(IMAGE_PATTERN, "g");
+var TAIL_RE = /^(?:([1-9]\d*)(?:x([1-9]\d*))?|x([1-9]\d*))?([cr]?)(h?)$/;
+var ALIGN_CHAR = { center: "c", right: "r" };
+var maxNone = Object.freeze({ tag: "none" });
+var maxW = (w) => isDim(w) ? Object.freeze({ tag: "w", w }) : maxNone;
+var maxH = (h) => isDim(h) ? Object.freeze({ tag: "h", h }) : maxNone;
+var maxWH = (w, h) => isDim(w) && isDim(h) ? Object.freeze({ tag: "wh", w, h }) : maxNone;
+var widthOfMax = (max) => max.tag === "w" || max.tag === "wh" ? max.w : 0;
+var heightOfMax = (max) => max.tag === "h" || max.tag === "wh" ? max.h : 0;
+var withMaxWidth = (max, w) => {
+  const h = heightOfMax(max);
+  return w <= 0 ? h > 0 ? maxH(h) : maxNone : h > 0 ? maxWH(w, h) : maxW(w);
+};
+var withMaxHeight = (max, h) => {
+  const w = widthOfMax(max);
+  return h <= 0 ? w > 0 ? maxW(w) : maxNone : w > 0 ? maxWH(w, h) : maxH(h);
+};
+var alignLeft = Object.freeze({ tag: "left" });
+var alignCenter = Object.freeze({ tag: "center" });
+var alignRight = Object.freeze({ tag: "right" });
+var sizeCore = (max) => {
+  switch (max.tag) {
+    case "none":
+      return "";
+    case "w":
+      return String(max.w);
+    case "h":
+      return "x" + max.h;
+    case "wh":
+      return max.w + "x" + max.h;
+  }
+};
+var tailToken = (max, align, hideCaption) => sizeCore(max) + (ALIGN_CHAR[align.tag] || "") + (hideCaption ? "h" : "");
+function parseTail(tail) {
+  const m = TAIL_RE.exec(tail);
+  if (!m) return null;
+  const hasSize = m[1] != null || m[3] != null, hasAlign = m[4] === "c" || m[4] === "r", hideCaption = m[5] === "h";
+  if (!hasSize && !hasAlign && !hideCaption) return null;
+  const max = hasSize ? m[3] != null ? maxH(Number(m[3])) : m[2] != null ? maxWH(Number(m[1]), Number(m[2])) : maxW(Number(m[1])) : maxNone;
+  if (hasSize && max.tag === "none") return null;
+  const align = m[4] === "c" ? alignCenter : m[4] === "r" ? alignRight : alignLeft;
+  return { max, align, hideCaption };
+}
+function lastPipe(s) {
+  let esc = false, last = -1;
+  for (let i = 0; i < s.length; i++) {
+    if (esc) {
+      esc = false;
+      continue;
+    }
+    if (s[i] === "\\") {
+      esc = true;
+      continue;
+    }
+    if (s[i] === "|") last = i;
+  }
+  return last;
+}
+var decodeAlt = (s) => s.replace(/\\([\\|])/g, "$1");
+function encodeAlt(alt, appendsPipe) {
+  let out = "";
+  for (let i = 0; i < alt.length; i++) {
+    const c = alt[i], next = alt[i + 1];
+    out += c === "\\" && (next === "\\" || next === "|" || next === void 0 && appendsPipe) ? "\\\\" : c;
+  }
+  if (appendsPipe) return out;
+  const at = lastPipe(out);
+  return at >= 0 && parseTail(out.slice(at + 1)) ? out.slice(0, at) + "\\|" + out.slice(at + 1) : out;
+}
+function mkImage(alt, src, max, align = alignLeft, hideCaption = false) {
+  if (/[\]\n]/.test(alt)) return { ok: false, why: "\u043F\u043E\u0434\u043F\u0438\u0441\u044C \u043D\u0435 \u043C\u043E\u0436\u0435\u0442 \u0441\u043E\u0434\u0435\u0440\u0436\u0430\u0442\u044C `]` \u0438\u043B\u0438 \u043F\u0435\u0440\u0435\u043D\u043E\u0441 \u0441\u0442\u0440\u043E\u043A\u0438" };
+  if (/[)\n]/.test(src)) return { ok: false, why: "\u043F\u0443\u0442\u044C \u043D\u0435 \u043C\u043E\u0436\u0435\u0442 \u0441\u043E\u0434\u0435\u0440\u0436\u0430\u0442\u044C `)` \u0438\u043B\u0438 \u043F\u0435\u0440\u0435\u043D\u043E\u0441 \u0441\u0442\u0440\u043E\u043A\u0438" };
+  return { ok: true, image: Object.freeze({ alt, src, max, align, hideCaption: !!hideCaption }) };
+}
+function parseImage(raw) {
+  const m = TOKEN_RE.test(String(raw || "")) && PARTS_RE.exec(String(raw || ""));
+  if (!m) return null;
+  const altPart = m[1], at = lastPipe(altPart), tail = at >= 0 ? parseTail(altPart.slice(at + 1)) : null;
+  const built = mkImage(
+    decodeAlt(tail ? altPart.slice(0, at) : altPart),
+    m[2],
+    tail ? tail.max : maxNone,
+    tail ? tail.align : alignLeft,
+    tail ? tail.hideCaption : false
+  );
+  return built.ok ? built.image : null;
+}
+function imageMd({ alt, src, max, align, hideCaption }) {
+  const tail = tailToken(max, align, hideCaption);
+  return "![" + encodeAlt(alt, tail !== "") + (tail ? "|" + tail : "") + "](" + src + ")";
+}
+function scanImages(text) {
+  const s = String(text || ""), out = [];
+  SCAN_RE.lastIndex = 0;
+  for (let m; m = SCAN_RE.exec(s); ) {
+    const image = parseImage(m[0]);
+    if (image) out.push({ start: m.index, end: m.index + m[0].length, raw: m[0], image });
+  }
+  return out;
+}
+function imageOnly(line) {
+  const s = String(line || "").trim(), found = scanImages(s);
+  return found.length === 1 && found[0].start === 0 && found[0].end === s.length;
+}
+
 // editor/md-editor/markdown.js
 function el(tag, cls, text) {
   const e = document.createElement(tag);
@@ -747,6 +865,7 @@ function splitFront(src) {
   if (!yamlish) return { fm: "", body: src };
   return { fm: m[1] + m[2] + m[3], body: m[4] };
 }
+var isBlockScalarIndicator = (v) => /^[|>][0-9]*[+-]?$/.test(v);
 function parseFrontmatter(fm) {
   const inner = String(fm || "").replace(/^---\r?\n/, "").replace(/\r?\n?---\r?\n?$/, "");
   const rows = [];
@@ -755,7 +874,7 @@ function parseFrontmatter(fm) {
     if (m) rows.push({ key: m[1], value: m[2] });
     else if (rows.length && line.trim() !== "") {
       const last = rows[rows.length - 1], cont = line.replace(/^\s+/, "");
-      last.value = last.value ? last.value + "\n" + cont : cont;
+      last.value = isBlockScalarIndicator(last.value) ? cont : last.value ? last.value + "\n" + cont : cont;
     }
   }
   return rows;
@@ -765,10 +884,15 @@ function isFrontmatterFlat(fm) {
   const lines = inner.split("\n").filter((l) => l.trim() !== "");
   return lines.length > 0 && lines.every((l) => /^[\w.-]+:/.test(l));
 }
+function fmInner(fm) {
+  return String(fm || "").replace(/^---\r?\n/, "").replace(/\r?\n?---\r?\n?$/, "");
+}
 function buildFrontmatter(fm, editable) {
   const rows = parseFrontmatter(fm);
   if (!rows.length) return null;
-  const canEdit = !!editable && isFrontmatterFlat(fm);
+  const flat = isFrontmatterFlat(fm);
+  if (editable && !flat) return buildFrontmatterRaw(fm);
+  const canEdit = !!editable && flat;
   const wrap = el("div", "mde-ln mde-fmwrap" + (canEdit ? " mde-fm-editable" : ""));
   wrap.setAttribute("contenteditable", "false");
   const grid = el("div", "mde-fm");
@@ -793,17 +917,36 @@ function serializeFrontmatter(wrap) {
   });
   return "---\n" + lines.join("\n") + "\n---\n";
 }
+function buildFrontmatterRaw(fm) {
+  const inner = fmInner(fm);
+  const wrap = el("div", "mde-ln mde-fmwrap mde-fmraw");
+  wrap.setAttribute("contenteditable", "false");
+  const ta = el("textarea", "mde-fmraw-src");
+  ta.setAttribute("spellcheck", "false");
+  ta.value = inner;
+  ta.rows = Math.max(1, inner.split("\n").length);
+  wrap.appendChild(ta);
+  return wrap;
+}
+function serializeFrontmatterRaw(wrap) {
+  const ta = wrap.querySelector(".mde-fmraw-src");
+  return "---\n" + (ta ? ta.value : "") + "\n---\n";
+}
 var ESCAPABLE = "\\`*~_[]()#+-.!>{}";
 var isEscapable = (ch) => ESCAPABLE.indexOf(ch) >= 0;
 function inlineDOM(text, linkResolver, atLinks = true) {
   const frag = document.createDocumentFragment();
-  const linkRe = atLinks ? /\[([^\]]*)\]\(([^)]+)\)|(@[~.\w][\w./~-]*)/g : /\[([^\]]*)\]\(([^)]+)\)/g;
+  const tokenRe = new RegExp(
+    "(" + IMAGE_PATTERN + ")|\\[([^\\]]*)\\]\\(([^)]+)\\)" + (atLinks ? "|(@[~.\\w][\\w./~-]*)" : ""),
+    "g"
+  );
   let last = 0, m;
-  while (m = linkRe.exec(text)) {
+  while (m = tokenRe.exec(text)) {
     if (m.index > 0 && text[m.index - 1] === "\\") continue;
     if (m.index > last) styleRuns(frag, text.slice(last, m.index));
-    if (m[3] != null) frag.appendChild(mkAtLink(m[3], linkResolver));
-    else frag.appendChild(mkLink(m[1], m[0], m[2], linkResolver));
+    if (m[1] != null) frag.appendChild(mkImageNode(m[1]));
+    else if (m[4] != null) frag.appendChild(mkAtLink(m[4], linkResolver));
+    else frag.appendChild(mkLink(m[2], m[0], m[3], linkResolver));
     last = m.index + m[0].length;
   }
   if (last < text.length) styleRuns(frag, text.slice(last));
@@ -871,6 +1014,11 @@ function escapeInline(text) {
       i += m[0].length;
       continue;
     }
+    if (m = new RegExp("^" + IMAGE_PATTERN).exec(rest)) {
+      out += "\\" + m[0];
+      i += m[0].length;
+      continue;
+    }
     if (m = /^\[[^\]]*\]\([^)]+\)/.exec(rest)) {
       out += "\\" + m[0];
       i += m[0].length;
@@ -885,6 +1033,12 @@ function escapeInline(text) {
     i++;
   }
   return out;
+}
+function mkImageNode(raw) {
+  const s = el("span", "mde-img");
+  s.setAttribute("contenteditable", "false");
+  s.dataset.md = raw;
+  return s;
 }
 function mkLink(label, raw, href, linkResolver) {
   const resolved = linkResolver ? linkResolver(href) : null;
@@ -974,12 +1128,13 @@ function segmentRun(lines, start, end) {
   }
   return segs;
 }
+var MIN_COL_W = 3;
 function tSpec(cell) {
   const c = cell.trim(), L = c.charAt(0) === ":", R = c.charAt(c.length - 1) === ":";
-  return { align: L && R ? "c" : L ? "l" : R ? "r" : "", width: Math.max(3, (c.match(/[-:]/g) || []).length) };
+  return { align: L && R ? "c" : L ? "l" : R ? "r" : "", width: Math.max(MIN_COL_W, (c.match(/[-:]/g) || []).length) };
 }
 function tSepCell(sp) {
-  const w = Math.max(3, sp.width | 0);
+  const w = Math.max(MIN_COL_W, sp.width | 0);
   if (sp.align === "c") return ":" + "-".repeat(Math.max(1, w - 2)) + ":";
   if (sp.align === "l") return ":" + "-".repeat(w - 1);
   if (sp.align === "r") return "-".repeat(w - 1) + ":";
@@ -1057,7 +1212,7 @@ function buildTable(run, linkResolver, sepIdx, atLinks = true) {
 }
 function serializeTable(wrap) {
   const table = wrap.querySelector("table.mde-table");
-  const cols = [].map.call(table.querySelectorAll("col"), (c) => ({ width: +c.dataset.w || 3, align: c.dataset.align || "" }));
+  const cols = [].map.call(table.querySelectorAll("col"), (c) => ({ width: +c.dataset.w || MIN_COL_W, align: c.dataset.align || "" }));
   const rows = [].slice.call(table.querySelectorAll("tr.mde-trow"));
   let hc = 0;
   rows.forEach((tr) => {
@@ -1075,6 +1230,12 @@ function serializeTable(wrap) {
 }
 function lineBlock(line, linkResolver, atLinks = true) {
   const h = /^(#{1,6})\s+(.*)$/.exec(line), li = /^(\s*[-*]\s+)(.*)$/.exec(line), hr = /^\s*(---|\*\*\*|___)\s*$/.exec(line), bq = /^(\s*>+\s?)(.*)$/.exec(line), ol = /^(\s*)(\d+[.)])(\s+)(.*)$/.exec(line);
+  if (imageOnly(line)) {
+    const d2 = el("div", "mde-ln mde-imgblock");
+    d2.setAttribute("contenteditable", "false");
+    d2.dataset.md = line;
+    return d2;
+  }
   if (hr) {
     const d2 = el("div", "mde-ln mde-hr");
     d2.dataset.md = hr[0];
@@ -1111,6 +1272,20 @@ function lineBlock(line, linkResolver, atLinks = true) {
   const d = el("div", "mde-ln mde-body");
   d.appendChild(inlineDOM(line, linkResolver, atLinks));
   return d;
+}
+var BLOCK_MARKERS = [
+  /^#{1,6}$/,
+  // заголовок
+  /^\s*[-*]$/,
+  // маркированный список (тот же набор символов, что у li в lineBlock)
+  /^\s*\d+[.)]$/,
+  // нумерованный список
+  /^\s*>+$/
+  // цитата
+];
+function blockMarker(text) {
+  const t = typeof text === "string" ? text : "";
+  return BLOCK_MARKERS.some((rx) => rx.test(t)) ? t : "";
 }
 var INDENT_STEP = 2;
 function parseListItem(pre) {
@@ -1338,6 +1513,58 @@ function serializeBody(root) {
   return out.join("\n");
 }
 
+// vendor/kasi-table/table-edit.js
+var inRange = (list, i) => Number.isInteger(i) && i >= 0 && i < list.length;
+var without = (list, i) => [...list.slice(0, i), ...list.slice(i + 1)];
+var movedTo = (list, from, to) => {
+  const rest = without(list, from), at = to > from ? to - 1 : to;
+  return [...rest.slice(0, at), list[from], ...rest.slice(at)];
+};
+var staysPut = (list, from, to) => !inRange(list, from) || !Number.isInteger(to) || to < 0 || to > list.length || to === from || to === from + 1;
+var tableGone = (m) => m.rows.length === 0 || m.specs.length === 0;
+var addColumn = (m, width) => ({
+  ...m,
+  specs: [...m.specs, { align: "", width }],
+  rows: m.rows.map((r) => [...r, ""])
+});
+var addRow = (m) => ({ ...m, rows: [...m.rows, m.specs.map(() => "")] });
+var deleteColumn = (m, ci) => inRange(m.specs, ci) ? { ...m, specs: without(m.specs, ci), rows: m.rows.map((r) => without(r, ci)) } : m;
+var deleteRow = (m, ri) => {
+  if (!inRange(m.rows, ri)) return m;
+  const rows = without(m.rows, ri), shrunk = ri < m.headerCount ? m.headerCount - 1 : m.headerCount;
+  return { ...m, rows, headerCount: shrunk < 1 && rows.length ? 1 : shrunk };
+};
+var moveColumnTo = (m, from, to) => staysPut(m.specs, from, to) ? m : { ...m, specs: movedTo(m.specs, from, to), rows: m.rows.map((r) => movedTo(r, from, to)) };
+var moveRowTo = (m, from, to) => staysPut(m.rows, from, to) ? m : { ...m, rows: movedTo(m.rows, from, to) };
+var alignColumn = (m, ci, align) => inRange(m.specs, ci) ? { ...m, specs: m.specs.map((s, i) => i === ci ? { ...s, align } : s) } : m;
+var resizeColumns = (m, ci, left, right) => inRange(m.specs, ci + 1) && ci >= 0 ? { ...m, specs: m.specs.map((s, i) => i === ci ? { ...s, width: left } : i === ci + 1 ? { ...s, width: right } : s) } : m;
+
+// vendor/kasi-table/table-tools.js
+var TOOL_ROOM = 64;
+var DRAG_THRESHOLD = 4;
+var isDrag = (dx, dy) => Math.abs(dx) + Math.abs(dy) > DRAG_THRESHOLD;
+var under = (i, count) => Number.isInteger(i) && i >= 0 && i < count ? i : -1;
+function tableTools({ columns, rows = 0, column = -1, columnSize = 0, row = -1, rowSize = 0, dragging = false }) {
+  const c = under(column, columns), r = under(row, rows);
+  const grips = dragging || c < 0 ? [] : [c - 1, c].filter((k) => k >= 0 && k < columns - 1);
+  return {
+    column: c,
+    columnDelete: c >= 0 && columnSize >= TOOL_ROOM,
+    row: r,
+    rowDelete: r >= 0 && rowSize >= TOOL_ROOM,
+    grips
+  };
+}
+
+// vendor/kasi-table/drop-index.js
+function dropIndex(rects, pos, axis) {
+  for (let k = 0; k < rects.length; k++) {
+    const mid = axis === "x" ? rects[k].left + rects[k].width / 2 : rects[k].top + rects[k].height / 2;
+    if (pos < mid) return k;
+  }
+  return rects.length;
+}
+
 // editor/md-editor/tables.js
 function ctlBtn(txt, title, fn) {
   const b = el("span", "mde-ctl mde-tctl-btn", txt);
@@ -1350,16 +1577,15 @@ function ctlBtn(txt, title, fn) {
   });
   return b;
 }
-function editTable(ctx, ti, fn) {
+function editTable(ctx, ti, edit) {
   const lines = ctx.getBody().split("\n"), t = findTables(lines)[ti];
   if (!t) return;
-  const m = readModel(lines, t);
-  if (fn(m) === false) return;
-  const repl = m.rows.length === 0 || m.specs.length === 0 ? [] : writeModel(m);
+  const m = readModel(lines, t), next = edit(m);
+  if (next === m) return;
+  const repl = tableGone(next) ? [] : writeModel(next);
   ctx.setBody(lines.slice(0, t.s).concat(repl, lines.slice(t.e + 1)).join("\n"));
 }
-var DRAG_THRESH = 4;
-function pressDragClick(handle, { onClick, onDragMove, onDragEnd }) {
+function pressDragClick(handle, { onClick, onDragStart, onDragMove, onDragEnd }) {
   handle.addEventListener("mousedown", (e) => {
     if (e.button !== 0) return;
     e.preventDefault();
@@ -1368,10 +1594,11 @@ function pressDragClick(handle, { onClick, onDragMove, onDragEnd }) {
     let dragging = false;
     const prevSel = document.body.style.userSelect, prevCur = document.body.style.cursor;
     const move = (ev) => {
-      if (!dragging && Math.abs(ev.clientX - x0) + Math.abs(ev.clientY - y0) > DRAG_THRESH) {
+      if (!dragging && isDrag(ev.clientX - x0, ev.clientY - y0)) {
         dragging = true;
         document.body.style.userSelect = "none";
         document.body.style.cursor = "grabbing";
+        if (onDragStart) onDragStart(ev);
       }
       if (dragging && onDragMove) onDragMove(ev);
     };
@@ -1387,17 +1614,6 @@ function pressDragClick(handle, { onClick, onDragMove, onDragEnd }) {
     document.addEventListener("mousemove", move);
     document.addEventListener("mouseup", up);
   });
-}
-function arrayMove(arr, from, insertAt) {
-  const [x] = arr.splice(from, 1);
-  arr.splice(insertAt > from ? insertAt - 1 : insertAt, 0, x);
-}
-function dropIndex(rects, pos, axis) {
-  for (let k = 0; k < rects.length; k++) {
-    const mid = axis === "x" ? rects[k].left + rects[k].width / 2 : rects[k].top + rects[k].height / 2;
-    if (pos < mid) return k;
-  }
-  return rects.length;
 }
 function showLine(line, wrap, box, pos, axis) {
   const wr = wrap.getBoundingClientRect();
@@ -1420,35 +1636,24 @@ function closeMenus() {
     mn.remove();
   });
 }
-function openColMenu(anchor, ci, ti, ctx, curAlign) {
+function openMenu(anchor, items) {
   closeMenus();
   const menu = el("div", "mde-ctl mde-menu");
   menu.setAttribute("contenteditable", "false");
-  const item = (label, active, danger, fn) => {
-    const row = el("div", "mde-menurow" + (active ? " mde-on" : "") + (danger ? " mde-danger" : ""), label);
+  items.forEach((it) => {
+    if (it.sep) {
+      menu.appendChild(el("div", "mde-menusep"));
+      return;
+    }
+    const row = el("div", "mde-menurow" + (it.active ? " mde-on" : "") + (it.danger ? " mde-danger" : ""), it.label);
     row.addEventListener("mousedown", (e) => {
       e.preventDefault();
       e.stopPropagation();
       closeMenus();
-      fn();
+      it.run();
     });
     menu.appendChild(row);
-  };
-  const isL = (curAlign || "l") === "l";
-  item("Align left", isL, false, () => editTable(ctx, ti, (m) => {
-    if (m.specs[ci]) m.specs[ci].align = "l";
-  }));
-  item("Align center", curAlign === "c", false, () => editTable(ctx, ti, (m) => {
-    if (m.specs[ci]) m.specs[ci].align = "c";
-  }));
-  item("Align right", curAlign === "r", false, () => editTable(ctx, ti, (m) => {
-    if (m.specs[ci]) m.specs[ci].align = "r";
-  }));
-  menu.appendChild(el("div", "mde-menusep"));
-  item("Delete column", false, true, () => editTable(ctx, ti, (m) => {
-    m.specs.splice(ci, 1);
-    m.rows.forEach((r) => r.splice(ci, 1));
-  }));
+  });
   document.body.appendChild(menu);
   const br = anchor.getBoundingClientRect(), mw = menu.offsetWidth, mh = menu.offsetHeight, gap = 6;
   const left = Math.max(gap, Math.min(Math.round(br.left), window.innerWidth - mw - gap));
@@ -1471,7 +1676,20 @@ function openColMenu(anchor, ci, ti, ctx, curAlign) {
     document.removeEventListener("keydown", onKey, true);
   };
 }
-var NEW_COL_W = 6;
+function openColMenu(anchor, ci, ti, ctx, curAlign) {
+  const align = (a) => () => editTable(ctx, ti, (m) => alignColumn(m, ci, a));
+  openMenu(anchor, [
+    { label: "Align left", active: (curAlign || "l") === "l", run: align("l") },
+    { label: "Align center", active: curAlign === "c", run: align("c") },
+    { label: "Align right", active: curAlign === "r", run: align("r") },
+    { sep: true },
+    { label: "Delete column", danger: true, run: () => editTable(ctx, ti, (m) => deleteColumn(m, ci)) }
+  ]);
+}
+function openRowMenu(anchor, ri, ti, ctx) {
+  openMenu(anchor, [{ label: "Delete row", danger: true, run: () => editTable(ctx, ti, (m) => deleteRow(m, ri)) }]);
+}
+var NEW_COL_W = MIN_COL_W * 2;
 function insertStarterTable(root, ref, ctx, headers) {
   const cols = headers && headers.length ? headers.map((w) => String(w).replace(/\|/g, "\\|")) : ["Column", "Column"];
   const dash = "-".repeat(NEW_COL_W);
@@ -1486,19 +1704,32 @@ function insertStarterTable(root, ref, ctx, headers) {
   else root.appendChild(wrap);
   ctx.commitDOM();
 }
-function colResize(grip, ci, ti, ctx, onMove) {
+function colResize(grip, ci, ti, ctx, { onStart, onMove, onEnd }) {
   grip.addEventListener("mousedown", (e) => {
     e.preventDefault();
     e.stopPropagation();
     const wrap = grip.closest(".mde-tablewrap"), table = wrap.querySelector("table.mde-table");
     const cols = [].slice.call(table.querySelectorAll("col")), a = cols[ci], b = cols[ci + 1];
     if (!b) return;
-    const startX = e.clientX, aW0 = +a.dataset.w || 3, bW0 = +b.dataset.w || 3;
-    const unit = grip.closest("td").getBoundingClientRect().width / aW0 || 1;
-    const sum = cols.reduce((s, c) => s + (+c.dataset.w || 3), 0);
+    const origW0 = +a.dataset.w || MIN_COL_W, origW1 = +b.dataset.w || MIN_COL_W;
+    const k = origW0 <= MIN_COL_W && origW1 <= MIN_COL_W ? Math.ceil(NEW_COL_W / MIN_COL_W) : 1;
+    const preScale = k > 1 ? cols.map((c) => +c.dataset.w || MIN_COL_W) : null;
+    if (preScale) cols.forEach((c, i) => {
+      c.dataset.w = preScale[i] * k;
+    });
+    const restoreScale = () => {
+      if (preScale) cols.forEach((c, i) => {
+        c.dataset.w = preScale[i];
+      });
+    };
+    const startX = e.clientX, aW0 = +a.dataset.w || MIN_COL_W, bW0 = +b.dataset.w || MIN_COL_W;
+    const cell = table.querySelector("tr.mde-trow").children[ci];
+    const unit = cell.getBoundingClientRect().width / aW0 || 1;
+    const sum = cols.reduce((s, c) => s + (+c.dataset.w || MIN_COL_W), 0);
     const prevSel = document.body.style.userSelect, prevCur = document.body.style.cursor;
     document.body.style.userSelect = "none";
     document.body.style.cursor = "col-resize";
+    if (onStart) onStart();
     let aW = aW0, bW = bW0;
     const apply = () => {
       a.style.width = (aW / sum * 100).toFixed(3) + "%";
@@ -1506,7 +1737,7 @@ function colResize(grip, ci, ti, ctx, onMove) {
     };
     const move = (ev) => {
       let d = Math.round((ev.clientX - startX) / unit);
-      d = Math.max(-(aW0 - 3), Math.min(bW0 - 3, d));
+      d = Math.max(-(aW0 - MIN_COL_W), Math.min(bW0 - MIN_COL_W, d));
       aW = aW0 + d;
       bW = bW0 - d;
       a.dataset.w = aW;
@@ -1519,10 +1750,9 @@ function colResize(grip, ci, ti, ctx, onMove) {
       document.removeEventListener("mouseup", up);
       document.body.style.userSelect = prevSel;
       document.body.style.cursor = prevCur;
-      if (aW !== aW0) editTable(ctx, ti, (m) => {
-        if (m.specs[ci]) m.specs[ci].width = aW;
-        if (m.specs[ci + 1]) m.specs[ci + 1].width = bW;
-      });
+      if (onEnd) onEnd();
+      if (aW !== aW0) editTable(ctx, ti, (m) => resizeColumns(m, ci, aW, bW));
+      else restoreScale();
     };
     document.addEventListener("mousemove", move);
     document.addEventListener("mouseup", up);
@@ -1531,7 +1761,7 @@ function colResize(grip, ci, ti, ctx, onMove) {
 function decorateTables(root, ctx) {
   closeMenus();
   [].forEach.call(root.querySelectorAll(":scope > .mde-tablewrap"), (wrap, ti) => {
-    const table = wrap.querySelector("table.mde-table"), tbody = table.querySelector("tbody");
+    const table = wrap.querySelector("table.mde-table");
     const cols = [].slice.call(table.querySelectorAll("col")), rows = [].slice.call(table.querySelectorAll("tr.mde-trow"));
     const dropline = el("div", "mde-ctl mde-dropline");
     wrap.appendChild(dropline);
@@ -1541,11 +1771,12 @@ function decorateTables(root, ctx) {
       const rr = rowRects(), cr = colRects();
       return { top: rr[0].top, bottom: rr[rr.length - 1].bottom, left: cr[0].left, right: cr[cr.length - 1].right };
     };
+    const state = { column: -1, row: -1, dragging: false, resizing: false };
+    const ctlTds = [], rowBars = [], grips = [];
     const ctlBar = el("div", "mde-ctl mde-tctlrow");
     ctlBar.setAttribute("contenteditable", "false");
-    const ctlTds = [];
-    const syncCtlBar = () => {
-      const wr = wrap.getBoundingClientRect(), cr = colRects();
+    const syncTools = () => {
+      const wr = wrap.getBoundingClientRect(), cr = colRects(), box = bodyBox();
       cr.forEach((r, ci) => {
         const td = ctlTds[ci];
         if (td) {
@@ -1553,13 +1784,48 @@ function decorateTables(root, ctx) {
           td.style.width = r.width + "px";
         }
       });
+      grips.forEach((g, k) => {
+        g.style.left = (cr[k].right + cr[k + 1].left) / 2 - wr.left + "px";
+        g.style.top = box.top - wr.top + "px";
+        g.style.height = box.bottom - box.top + "px";
+      });
     };
+    const render = () => {
+      if (state.column >= 0 || state.row >= 0) syncTools();
+      const t = tableTools({
+        columns: cols.length,
+        rows: rows.length,
+        column: state.column,
+        columnSize: state.column >= 0 ? rows[0].children[state.column].getBoundingClientRect().width : 0,
+        row: state.row,
+        rowSize: state.row >= 0 ? rows[state.row].getBoundingClientRect().height : 0,
+        dragging: state.dragging
+      });
+      ctlTds.forEach((td, i) => {
+        td.classList.toggle("mde-colon", i === t.column);
+        td.classList.toggle("mde-narrow", i === t.column && !t.columnDelete);
+      });
+      rowBars.forEach((bar, i) => {
+        bar.classList.toggle("mde-rowon", i === t.row);
+        bar.classList.toggle("mde-narrow", i === t.row && !t.rowDelete);
+      });
+      grips.forEach((g, k) => g.classList.toggle("mde-gripshow", t.grips.includes(k)));
+      wrap.classList.toggle("mde-dragging", state.dragging);
+    };
+    const drag = { onDragStart: () => {
+      state.dragging = true;
+      render();
+    }, onDragEnd: () => {
+      dropline.style.display = "none";
+      state.dragging = false;
+      render();
+    } };
     cols.forEach((col, ci) => {
       const td = el("div", "mde-tctlcell"), bar = el("div", "mde-tctlbar");
       const menuBtn = el("span", "mde-ctl mde-tctl-btn mde-tmenu", "\u22EF");
       menuBtn.setAttribute("contenteditable", "false");
       menuBtn.title = "Column options \u2014 drag to move";
-      const del = el("span", "mde-ctl mde-tctl-btn mde-delcol", "\u2715");
+      const del = el("span", "mde-ctl mde-tctl-btn mde-delcol", "+");
       del.setAttribute("contenteditable", "false");
       del.title = "Delete column";
       bar.appendChild(menuBtn);
@@ -1567,100 +1833,96 @@ function decorateTables(root, ctx) {
       td.appendChild(bar);
       ctlBar.appendChild(td);
       ctlTds.push(td);
-      pressDragClick(td, {
+      const colDrag = {
+        ...drag,
         onDragMove: (ev) => {
           const cr = colRects(), to = dropIndex(cr, ev.clientX, "x");
           showLine(dropline, wrap, bodyBox(), to < cr.length ? cr[to].left : cr[cr.length - 1].right, "x");
         },
         onDragEnd: (ev) => {
-          dropline.style.display = "none";
-          const to = dropIndex(colRects(), ev.clientX, "x");
-          if (to !== ci && to !== ci + 1) editTable(ctx, ti, (m) => {
-            arrayMove(m.specs, ci, to);
-            m.rows.forEach((r) => arrayMove(r, ci, to));
-          });
+          drag.onDragEnd();
+          editTable(ctx, ti, (m) => moveColumnTo(m, ci, dropIndex(colRects(), ev.clientX, "x")));
         }
-      });
-      pressDragClick(menuBtn, { onClick: () => openColMenu(menuBtn, ci, ti, ctx, col.dataset.align || "") });
-      pressDragClick(del, { onClick: () => editTable(ctx, ti, (m) => {
-        m.specs.splice(ci, 1);
-        m.rows.forEach((r) => r.splice(ci, 1));
-      }) });
+      };
+      pressDragClick(td, colDrag);
+      pressDragClick(menuBtn, { ...colDrag, onClick: () => openColMenu(menuBtn, ci, ti, ctx, col.dataset.align || "") });
+      pressDragClick(del, { onClick: () => editTable(ctx, ti, (m) => deleteColumn(m, ci)) });
     });
     wrap.appendChild(ctlBar);
-    rows.forEach((tr, ri) => {
-      const cells = [].slice.call(tr.children);
-      cells.forEach((td, ci) => {
-        if (ci < cols.length - 1) {
-          const grip = el("span", "mde-ctl mde-grip");
-          grip.dataset.col = ci;
-          grip.setAttribute("contenteditable", "false");
-          grip.title = "Drag to resize column";
-          colResize(grip, ci, ti, ctx, syncCtlBar);
-          td.appendChild(grip);
+    for (let ci = 0; ci < cols.length - 1; ci++) {
+      const grip = el("div", "mde-ctl mde-grip");
+      grip.dataset.col = ci;
+      grip.setAttribute("contenteditable", "false");
+      grip.title = "Drag to resize column";
+      colResize(grip, ci, ti, ctx, { onStart: () => {
+        state.resizing = true;
+      }, onMove: syncTools, onEnd: () => {
+        state.resizing = false;
+        if (!wrap.matches(":hover")) {
+          state.column = -1;
+          state.row = -1;
         }
-      });
+        render();
+      } });
+      wrap.appendChild(grip);
+      grips.push(grip);
+    }
+    rows.forEach((tr, ri) => {
       const handle = el("span", "mde-ctl mde-rowdel");
       handle.setAttribute("contenteditable", "false");
       handle.title = "Drag to move row";
-      const rx = el("span", "mde-ctl mde-tctl-btn mde-rowdelx", "\u2715");
+      const rmenu = el("span", "mde-ctl mde-tctl-btn mde-rmenu", "\u22EE");
+      rmenu.setAttribute("contenteditable", "false");
+      rmenu.title = "Row options \u2014 drag to move";
+      const rx = el("span", "mde-ctl mde-tctl-btn mde-rowdelx", "+");
       rx.setAttribute("contenteditable", "false");
       rx.title = "Delete row";
+      handle.appendChild(rmenu);
       handle.appendChild(rx);
-      pressDragClick(handle, {
+      rowBars.push(handle);
+      const rowDrag = {
+        ...drag,
         onDragMove: (ev) => {
           const rr = rowRects(), to = dropIndex(rr, ev.clientY, "y");
           showLine(dropline, wrap, bodyBox(), to < rr.length ? rr[to].top : rr[rr.length - 1].bottom, "y");
         },
         onDragEnd: (ev) => {
-          dropline.style.display = "none";
-          const to = dropIndex(rowRects(), ev.clientY, "y");
-          if (to !== ri && to !== ri + 1) editTable(ctx, ti, (m) => {
-            arrayMove(m.rows, ri, to);
-          });
+          drag.onDragEnd();
+          editTable(ctx, ti, (m) => moveRowTo(m, ri, dropIndex(rowRects(), ev.clientY, "y")));
         }
-      });
-      pressDragClick(rx, { onClick: () => editTable(ctx, ti, (m) => {
-        m.rows.splice(ri, 1);
-        if (ri < m.headerCount) m.headerCount--;
-        if (m.headerCount < 1 && m.rows.length) m.headerCount = 1;
-      }) });
-      cells[0].appendChild(handle);
+      };
+      pressDragClick(handle, rowDrag);
+      pressDragClick(rmenu, { ...rowDrag, onClick: () => openRowMenu(rmenu, ri, ti, ctx) });
+      pressDragClick(rx, { onClick: () => editTable(ctx, ti, (m) => deleteRow(m, ri)) });
+      tr.children[0].appendChild(handle);
     });
-    const addCol = ctlBtn("\uFF0B", "Add column", () => editTable(ctx, ti, (m) => {
-      m.specs.push({ align: "", width: NEW_COL_W });
-      m.rows.forEach((r) => r.push(""));
-    }));
+    const addCol = ctlBtn("+", "Add column", () => editTable(ctx, ti, (m) => addColumn(m, NEW_COL_W)));
     addCol.classList.add("mde-addcol");
     wrap.appendChild(addCol);
-    const addRow = ctlBtn("\uFF0B", "Add row", () => editTable(ctx, ti, (m) => {
-      m.rows.push(m.specs.map(() => ""));
-    }));
-    addRow.classList.add("mde-addrow");
-    wrap.appendChild(addRow);
-    const grips = wrap.querySelectorAll(".mde-grip");
-    const setHover = (ci) => {
-      syncCtlBar();
-      ctlTds.forEach((td, i) => td.classList.toggle("mde-colon", i === ci));
-      if (ci >= 0 && ctlTds[ci]) {
-        const w = rows[0].children[ci].getBoundingClientRect().width;
-        ctlTds[ci].classList.toggle("mde-narrow", w > 0 && w < 64);
-      }
-      [].forEach.call(grips, (g) => {
-        const gc = +g.dataset.col;
-        g.classList.toggle("mde-gripshow", ci >= 0 && (gc === ci || gc === ci - 1));
-      });
-    };
+    const addRowBtn = ctlBtn("+", "Add row", () => editTable(ctx, ti, addRow));
+    addRowBtn.classList.add("mde-addrow");
+    wrap.appendChild(addRowBtn);
     wrap.addEventListener("mouseover", (e) => {
-      const dtd = e.target.closest && e.target.closest("td.mde-cell");
-      if (dtd && dtd.parentElement && dtd.parentElement.classList.contains("mde-trow")) {
-        setHover(dtd.cellIndex);
+      if (state.resizing || !e.target.closest) return;
+      if (e.target.closest(".mde-grip")) return;
+      const dtd = e.target.closest("td.mde-cell"), tr = dtd && dtd.parentElement;
+      if (tr && tr.classList.contains("mde-trow")) {
+        state.column = dtd.cellIndex;
+        state.row = rows.indexOf(tr);
+        render();
         return;
       }
-      const ctd = e.target.closest && e.target.closest(".mde-tctlcell");
-      setHover(ctd ? ctlTds.indexOf(ctd) : -1);
+      const ctd = e.target.closest(".mde-tctlcell");
+      state.column = ctd ? ctlTds.indexOf(ctd) : -1;
+      state.row = -1;
+      render();
     });
-    wrap.addEventListener("mouseleave", () => setHover(-1));
+    wrap.addEventListener("mouseleave", () => {
+      if (state.resizing) return;
+      state.column = -1;
+      state.row = -1;
+      render();
+    });
   });
 }
 
@@ -1670,13 +1932,34 @@ function fenceLang(open) {
   const m = FENCE_INFO.exec(open || "");
   return m ? m[1].toLowerCase() : "";
 }
+function colorProbe() {
+  if (typeof document === "undefined" || typeof document.createElement !== "function") return null;
+  const canvas = document.createElement("canvas");
+  canvas.width = canvas.height = 1;
+  return canvas.getContext("2d", { willReadFrequently: true }) || null;
+}
+function toParseableColor(ctx, value) {
+  if (!ctx || !value) return value;
+  ctx.fillStyle = "#000";
+  ctx.fillStyle = value;
+  const black = ctx.fillStyle;
+  ctx.fillStyle = "#fff";
+  ctx.fillStyle = value;
+  if (ctx.fillStyle !== black) return value;
+  ctx.clearRect(0, 0, 1, 1);
+  ctx.fillRect(0, 0, 1, 1);
+  const [r, g, b, a] = ctx.getImageData(0, 0, 1, 1).data;
+  return a === 255 ? `rgb(${r}, ${g}, ${b})` : `rgba(${r}, ${g}, ${b}, ${+(a / 255).toFixed(3)})`;
+}
 function themeVarsFrom(root) {
   const cs = typeof window !== "undefined" && window.getComputedStyle ? window.getComputedStyle(root) : null;
   const v = (name, fallback) => {
     const x = cs ? cs.getPropertyValue(name).trim() : "";
     return x || fallback;
   };
-  const fg = v("--kasi-fg", "#e8e8ea"), bg = v("--kasi-bg", "#0e0e0e"), cell = v("--kasi-cell-bg", "#1c1c1e");
+  const probe = colorProbe();
+  const color = (name, fallback) => toParseableColor(probe, v(name, fallback));
+  const fg = color("--kasi-fg", "#e8e8ea"), bg = color("--kasi-surface", "#1c1c1e"), cell = color("--kasi-mermaid-bg", "#1c1c1e");
   return {
     background: bg,
     edgeLabelBackground: cell,
@@ -1711,7 +1994,7 @@ function tintEdgeLabels(box) {
     clusters.forEach((c) => {
       if (cx >= c.left && cx <= c.right && cy >= c.top && cy <= c.bottom) depth++;
     });
-    let color = "var(--kasi-cell-bg)";
+    let color = "var(--kasi-mermaid-bg)";
     for (let i = 0; i < depth; i++) color = "color-mix(in srgb, var(--kasi-fg) 7%, " + color + ")";
     lbl.style.setProperty("--mmd-labelbg", color);
   });
@@ -1724,13 +2007,19 @@ function finalizeSvg(box) {
   });
   tintEdgeLabels(box);
 }
+var NOOP = () => {
+};
+function readSize(root) {
+  const cs = typeof window !== "undefined" && window.getComputedStyle ? window.getComputedStyle(root) : null;
+  return cs ? cs.getPropertyValue("--kasi-size").trim() : "";
+}
 function decorateMermaid(root, ctx) {
-  if (!ctx.renderer) return;
+  if (!ctx.renderer) return NOOP;
   const blocks = [].filter.call(
     root.querySelectorAll(":scope > pre.mde-code"),
     (pre) => fenceLang(pre.dataset.open) === "mermaid"
   );
-  if (!blocks.length) return;
+  if (!blocks.length) return NOOP;
   let editing = null;
   const softCls = ctx.softNodes ? "mde-mmd-soft" : "mde-mmd-contrast";
   const paint = (pre) => {
@@ -1783,7 +2072,7 @@ function decorateMermaid(root, ctx) {
     const modal = el("div", "mde-mmd-zoom");
     if (typeof window !== "undefined" && window.getComputedStyle) {
       const cs = window.getComputedStyle(root);
-      ["--kasi-fg", "--kasi-fg-dim", "--kasi-bg", "--kasi-cell-bg", "--kasi-accent", "--kasi-radius", "--kasi-gap", "--kasi-font", "--kasi-mono", "--kasi-size"].forEach((k) => modal.style.setProperty(k, cs.getPropertyValue(k)));
+      ["--kasi-fg", "--kasi-fg-dim", "--kasi-surface", "--kasi-cell-bg", "--kasi-mermaid-bg", "--kasi-accent", "--kasi-radius", "--kasi-gap", "--kasi-font", "--kasi-mono", "--kasi-size"].forEach((k) => modal.style.setProperty(k, cs.getPropertyValue(k)));
     }
     const scroller = el("div", "mde-mmd-zoomscroll");
     const panel = el("div", "mde-mermaid mde-mmd-zoompanel");
@@ -1855,6 +2144,249 @@ function decorateMermaid(root, ctx) {
       if (!a || !editing.contains(a)) exitEdit(editing);
     });
   }
+  if (typeof ResizeObserver === "undefined") return NOOP;
+  let lastSize = readSize(root);
+  const probe = el("div", "mde-ctl mde-mmd-probe");
+  probe.setAttribute("contenteditable", "false");
+  Object.assign(probe.style, { position: "absolute", width: "1em", height: "1em", visibility: "hidden", pointerEvents: "none" });
+  const ro = new ResizeObserver(() => {
+    const size = readSize(root);
+    if (size === lastSize) return;
+    lastSize = size;
+    blocks.forEach((pre) => {
+      if (editing !== pre) paint(pre);
+    });
+  });
+  root.appendChild(probe);
+  ro.observe(probe);
+  return () => {
+    ro.disconnect();
+    probe.remove();
+  };
+}
+
+// editor/md-editor/svg-mono.js
+var NEUTRAL = /* @__PURE__ */ new Set(["none", "transparent", "inherit", "initial", "unset", "currentcolor"]);
+var NAMED = {
+  black: "#000000",
+  white: "#ffffff",
+  red: "#ff0000",
+  lime: "#00ff00",
+  blue: "#0000ff",
+  yellow: "#ffff00",
+  aqua: "#00ffff",
+  cyan: "#00ffff",
+  fuchsia: "#ff00ff",
+  magenta: "#ff00ff",
+  silver: "#c0c0c0",
+  gray: "#808080",
+  grey: "#808080",
+  maroon: "#800000",
+  olive: "#808000",
+  green: "#008000",
+  purple: "#800080",
+  teal: "#008080",
+  navy: "#000080",
+  orange: "#ffa500"
+};
+var ATTR_RE = /\b(fill|stroke|stop-color|color|flood-color|lighting-color)\s*=\s*("([^"]*)"|'([^']*)')/gi;
+var PROP_RE = /\b(fill|stroke|stop-color|color|flood-color|lighting-color)\s*:\s*([^;"'}\n]+)/gi;
+var hex2 = (n) => Math.max(0, Math.min(255, Math.round(n))).toString(16).padStart(2, "0");
+function normalizeColor(raw) {
+  const s = String(raw == null ? "" : raw).trim().toLowerCase();
+  if (!s || NEUTRAL.has(s)) return null;
+  if (/^#[0-9a-f]{3}$/.test(s)) return "#" + s[1] + s[1] + s[2] + s[2] + s[3] + s[3];
+  if (/^#[0-9a-f]{6}$/.test(s)) return s;
+  const rgb = /^rgba?\(\s*([\d.]+)\s*[,\s]\s*([\d.]+)\s*[,\s]\s*([\d.]+)/.exec(s);
+  if (rgb) return "#" + hex2(Number(rgb[1])) + hex2(Number(rgb[2])) + hex2(Number(rgb[3]));
+  return NAMED[s] || s;
+}
+function svgColors(text) {
+  const s = String(text || ""), seen = [];
+  const add = (v) => {
+    const c = normalizeColor(v);
+    if (c && seen.indexOf(c) < 0) seen.push(c);
+  };
+  for (let m; m = ATTR_RE.exec(s); ) add(m[3] != null ? m[3] : m[4]);
+  for (let m; m = PROP_RE.exec(s); ) add(m[2]);
+  ATTR_RE.lastIndex = PROP_RE.lastIndex = 0;
+  return seen;
+}
+function isMonoSvg(text) {
+  return svgColors(text).length <= 1;
+}
+function recolorMono(text) {
+  const s = String(text || ""), colors = svgColors(s);
+  if (colors.length > 1) return s;
+  if (colors.length === 0) {
+    const neutralized = /\b(?:fill|stroke|stop-color|color|flood-color|lighting-color)\s*[=:]\s*["']?\s*currentcolor/i.test(s);
+    return neutralized || /<svg\b[^>]*\bfill\s*=/i.test(s) ? s : s.replace(/<svg\b/i, '<svg fill="currentColor"');
+  }
+  const only = colors[0];
+  const swapAttr = (whole, name, _q, dq2, sq) => normalizeColor(dq2 != null ? dq2 : sq) === only ? `${name}="currentColor"` : whole;
+  const swapProp = (whole, name, value) => normalizeColor(value) === only ? `${name}: currentColor` : whole;
+  return s.replace(ATTR_RE, swapAttr).replace(PROP_RE, swapProp);
+}
+
+// editor/md-editor/svg-safe.js
+var DENY_TAGS = /* @__PURE__ */ new Set(["script", "foreignobject", "iframe", "object", "embed", "link", "meta", "handler", "audio", "video"]);
+var LINK_ATTRS = /* @__PURE__ */ new Set(["href", "xlink:href", "src"]);
+var SAFE_LINK = /^(?:#|data:image\/(?:png|jpeg|gif|webp|svg\+xml);)/i;
+var parsers = () => {
+  const w = typeof window !== "undefined" ? window : null;
+  const P = w && w.DOMParser || (typeof DOMParser !== "undefined" ? DOMParser : null);
+  const S = w && w.XMLSerializer || (typeof XMLSerializer !== "undefined" ? XMLSerializer : null);
+  return P && S ? { P, S } : null;
+};
+function sanitizeSvg(text) {
+  const src = String(text || "").trim(), api = parsers();
+  if (!src || !api) return "";
+  let doc;
+  try {
+    doc = new api.P().parseFromString(src, "image/svg+xml");
+  } catch {
+    return "";
+  }
+  const root = doc && doc.documentElement;
+  if (!root || root.nodeName.toLowerCase() !== "svg" || doc.getElementsByTagName("parsererror").length) return "";
+  scrub(root);
+  return new api.S().serializeToString(root);
+}
+function scrub(node) {
+  for (let i = node.children.length - 1; i >= 0; i--) {
+    const child = node.children[i];
+    if (DENY_TAGS.has(child.nodeName.toLowerCase())) {
+      node.removeChild(child);
+      continue;
+    }
+    scrub(child);
+  }
+  const attrs = node.attributes;
+  for (let i = attrs.length - 1; i >= 0; i--) {
+    const name = attrs[i].name, lower = name.toLowerCase();
+    const drop = lower.startsWith("on") || LINK_ATTRS.has(lower) && !SAFE_LINK.test(attrs[i].value.trim());
+    if (drop) node.removeAttribute(name);
+  }
+}
+
+// editor/md-editor/images.js
+var SELF_SERVING = /^(?:data:|https?:|blob:|\/)/i;
+var IS_SVG = /^data:image\/svg\+xml/i;
+var IS_SVG_PATH = /\.svg(?:[?#].*)?$/i;
+var resolveSrc = (src, resolver) => SELF_SERVING.test(src) ? src : resolver ? resolver(src) || null : null;
+function applyMax(node, max) {
+  switch (max.tag) {
+    case "none":
+      return;
+    case "w":
+      node.style.maxWidth = max.w + "px";
+      return;
+    case "h":
+      node.style.maxHeight = max.h + "px";
+      return;
+    case "wh":
+      node.style.maxWidth = max.w + "px";
+      node.style.maxHeight = max.h + "px";
+      return;
+  }
+}
+function decodeDataSvg(url) {
+  const comma = url.indexOf(",");
+  if (comma < 0) return "";
+  const head = url.slice(0, comma), body = url.slice(comma + 1);
+  try {
+    if (/;base64/i.test(head)) return typeof window !== "undefined" && window.atob ? window.atob(body) : "";
+    return decodeURIComponent(body);
+  } catch {
+    return "";
+  }
+}
+function placeholder(image, note) {
+  const box = el("span", "mde-ctl mde-imgerr");
+  box.appendChild(el("span", "mde-imgerr-mark", "\u{1F5BC}"));
+  box.appendChild(el("span", "mde-imgerr-text", (image.alt ? image.alt + " \u2014 " : "") + (note || image.src)));
+  return box;
+}
+function rasterNode(image, url) {
+  const img = el("img", "mde-ctl mde-imgpic");
+  img.setAttribute("src", url);
+  img.setAttribute("alt", image.alt);
+  img.setAttribute("loading", "lazy");
+  applyMax(img, image.max);
+  return img;
+}
+function svgNode(text, image) {
+  const safe = sanitizeSvg(text);
+  if (!safe) return null;
+  const box = el("span", "mde-ctl mde-imgsvg");
+  box.innerHTML = isMonoSvg(safe) ? recolorMono(safe) : safe;
+  const svg = box.querySelector("svg");
+  if (!svg) return null;
+  applyMax(svg, image.max);
+  if (image.alt) svg.setAttribute("aria-label", image.alt);
+  return box;
+}
+function contentFor(image, url, loadSvg, onLate) {
+  if (IS_SVG.test(url)) return svgNode(decodeDataSvg(url), image) || placeholder(image, "SVG \u043D\u0435 \u0440\u0430\u0437\u043E\u0431\u0440\u0430\u043D");
+  if (IS_SVG_PATH.test(url) && loadSvg) {
+    const box = el("span", "mde-ctl mde-imgsvg");
+    loadSvg(url).then((text) => onLate(svgNode(text, image) || placeholder(image)), () => onLate(placeholder(image)));
+    return box;
+  }
+  return rasterNode(image, url);
+}
+function menuButton(index, image, opts) {
+  const btn = el("span", "mde-ctl mde-imgmenubtn", "\u22EF");
+  btn.setAttribute("contenteditable", "false");
+  btn.tabIndex = 0;
+  btn.title = "\u041D\u0430\u0441\u0442\u0440\u043E\u0439\u043A\u0438 \u043A\u0430\u0440\u0442\u0438\u043D\u043A\u0438";
+  btn.addEventListener("mousedown", (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    opts.onImageMenu(btn, image, {
+      setWidth: (w) => opts.setImage(index, { width: w }),
+      setHeight: (h) => opts.setImage(index, { height: h }),
+      setAlign: (align) => opts.setImage(index, { align }),
+      setHideCaption: (hideCaption) => opts.setImage(index, { hideCaption }),
+      remove: () => opts.removeImage(index)
+    });
+  });
+  return btn;
+}
+function decorateImages(root, ctx) {
+  const opts = ctx || {};
+  [].forEach.call(root.querySelectorAll(".mde-img, .mde-imgblock"), (node, index) => {
+    const raw = (node.dataset.md || "").trim();
+    const image = parseImage(raw);
+    if (!image) {
+      node.textContent = "";
+      node.appendChild(el("span", "mde-ctl mde-imgerr", raw));
+      return;
+    }
+    if (image.max.tag !== "none") node.classList.add("mde-img-fixed");
+    const isBlock = node.classList.contains("mde-imgblock");
+    if (isBlock && image.align.tag !== "left") node.classList.add("mde-img-" + image.align.tag);
+    const showCaption = isBlock && image.alt && !image.hideCaption;
+    const showMenuBtn = isBlock && !!opts.onImageMenu;
+    const swap = (child) => {
+      node.textContent = "";
+      if (isBlock) {
+        const wrap = el("span", "mde-ctl mde-imgwrap");
+        wrap.appendChild(child);
+        if (showMenuBtn) wrap.appendChild(menuButton(index, image, opts));
+        node.appendChild(wrap);
+      } else {
+        node.appendChild(child);
+      }
+      if (showCaption) {
+        const row = el("span", "mde-ctl mde-imgcaprow");
+        row.appendChild(el("span", "mde-imgcap", image.alt));
+        node.appendChild(row);
+      }
+    };
+    const url = resolveSrc(image.src, opts.resolver);
+    swap(url ? contentFor(image, url, opts.loadSvg, (late) => swap(late)) : placeholder(image));
+  });
 }
 
 // editor/md-editor/mermaid-render.js
@@ -1941,7 +2473,114 @@ function createHistory2(get, set) {
   };
 }
 
+// editor/md-editor/diff-modal.js
+function openDiffModal({ id, before, after, onConfirm }) {
+  if (document.getElementById(id)) return;
+  if (before === after) return;
+  const diff = lineDiff(before, after);
+  let added = 0, removed = 0;
+  diff.forEach((d) => {
+    if (d.t === "+") added++;
+    else if (d.t === "-") removed++;
+  });
+  const box = el("div", "mde-modalbox");
+  box.appendChild(el("div", "mde-modaltitle", "\u0421\u043E\u0445\u0440\u0430\u043D\u0438\u0442\u044C \u0438\u0437\u043C\u0435\u043D\u0435\u043D\u0438\u044F?"));
+  box.appendChild(el("div", "mde-modalsub", `+${added}  \u2212${removed}`));
+  const dv = el("div", "mde-diff");
+  diff.forEach((d) => {
+    const cls = d.t === "+" ? " mde-diff-add" : d.t === "-" ? " mde-diff-del" : "";
+    dv.appendChild(el("div", "mde-diffline" + cls, (d.t === " " ? "   " : d.t + "  ") + d.s));
+  });
+  box.appendChild(dv);
+  const btns = el("div", "mde-modalbtns");
+  const mk = (label, cls, fn) => {
+    const b = el("button", "mde-modalbtn" + (cls ? " " + cls : ""), label);
+    b.addEventListener("click", fn);
+    return b;
+  };
+  const wrap = el("div", "mde-modal");
+  wrap.id = id;
+  btns.appendChild(mk("\u0421\u043E\u0445\u0440\u0430\u043D\u0438\u0442\u044C", "mde-primary", (e) => {
+    const b = e.currentTarget;
+    b.textContent = "\u0421\u043E\u0445\u0440\u0430\u043D\u044F\u044E\u2026";
+    b.disabled = true;
+    Promise.resolve(onConfirm(after)).then(() => wrap.remove()).catch((err) => {
+      b.disabled = false;
+      b.textContent = "\u041E\u0448\u0438\u0431\u043A\u0430 \u2014 \u043F\u043E\u0432\u0442\u043E\u0440\u0438\u0442\u044C";
+      if (window.console) console.error(err);
+    });
+  }));
+  btns.appendChild(mk("\u041E\u0442\u043C\u0435\u043D\u0430", "", () => wrap.remove()));
+  box.appendChild(btns);
+  wrap.appendChild(box);
+  document.body.appendChild(wrap);
+  return wrap;
+}
+
+// editor/md-editor/search.js
+function findMatches(text, query) {
+  if (!query) return [];
+  const hay = text.toLowerCase();
+  const needle = query.toLowerCase();
+  const matches = [];
+  let from = 0, at;
+  while ((at = hay.indexOf(needle, from)) !== -1) {
+    matches.push({ start: at, end: at + needle.length });
+    from = at + needle.length;
+  }
+  return matches;
+}
+var HIT_CLASS = "mde-search-hit";
+var SKIP_ANCESTOR = ".mde-ctl, .mde-fmwrap";
+function collectTextSpans(root) {
+  const NF = (root.ownerDocument.defaultView || window).NodeFilter;
+  const walker = document.createTreeWalker(root, NF.SHOW_TEXT, {
+    acceptNode: (n) => n.parentElement && n.parentElement.closest(SKIP_ANCESTOR) ? NF.FILTER_REJECT : NF.FILTER_ACCEPT
+  });
+  const spans = [];
+  let text = "";
+  for (let n; n = walker.nextNode(); ) {
+    const start = text.length;
+    text += n.textContent;
+    spans.push({ node: n, start, end: text.length });
+  }
+  return { text, spans };
+}
+function decorateSearch(root, query) {
+  clearSearch(root);
+  if (!query) return 0;
+  const { text, spans } = collectTextSpans(root);
+  const matches = findMatches(text, query);
+  for (let i = matches.length - 1; i >= 0; i--) {
+    const { start, end } = matches[i];
+    for (const s of spans) {
+      const segStart = Math.max(start, s.start), segEnd = Math.min(end, s.end);
+      if (segStart >= segEnd) continue;
+      const range = document.createRange();
+      range.setStart(s.node, segStart - s.start);
+      range.setEnd(s.node, segEnd - s.start);
+      const mark = document.createElement("mark");
+      mark.className = HIT_CLASS;
+      range.surroundContents(mark);
+    }
+  }
+  return matches.length;
+}
+function clearSearch(root) {
+  root.querySelectorAll("." + HIT_CLASS).forEach((mark) => {
+    const parent = mark.parentNode;
+    while (mark.firstChild) parent.insertBefore(mark.firstChild, mark);
+    parent.removeChild(mark);
+    parent.normalize();
+  });
+}
+
 // editor/md-editor/md-editor.js
+var MAX_DROPPED_IMAGE_BYTES = 8 * 1024 * 1024;
+var altFromFileName = (name) => String(name || "").replace(/\.[^./]+$/, "").replace(/[\]\n]/g, "_") || "\u0438\u0437\u043E\u0431\u0440\u0430\u0436\u0435\u043D\u0438\u0435";
+var DROP_CARET_MARK = String.fromCharCode(57344);
+var DROP_END_MARK = String.fromCharCode(57345);
+var IMAGE_EDIT_MARK = String.fromCharCode(57346);
 var svgIcon = (inner) => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${inner}</svg>`;
 var ICON = {
   code: svgIcon(`<polyline points="8 8 4 12 8 16"/><polyline points="16 8 20 12 16 16"/>`),
@@ -1951,9 +2590,9 @@ var ICON = {
   numbered: svgIcon(`<line x1="10" y1="6" x2="20" y2="6"/><line x1="10" y1="12" x2="20" y2="12"/><line x1="10" y1="18" x2="20" y2="18"/><text x="2" y="8.5" font-size="7" font-family="sans-serif" fill="currentColor" stroke="none">1</text><text x="2" y="20" font-size="7" font-family="sans-serif" fill="currentColor" stroke="none">2</text>`),
   quote: svgIcon(`<line x1="5" y1="5" x2="5" y2="19" stroke-width="2.5"/><line x1="9" y1="8" x2="19" y2="8"/><line x1="9" y1="12" x2="19" y2="12"/><line x1="9" y1="16" x2="15" y2="16"/>`),
   table: svgIcon(`<rect x="4" y="4" width="16" height="16" rx="1.5"/><line x1="4" y1="12" x2="20" y2="12"/><line x1="12" y1="4" x2="12" y2="20"/>`),
-  // 2×2 grid
+  // сетка 2×2
   remove: svgIcon(`<line x1="6" y1="6" x2="18" y2="18"/><line x1="18" y1="6" x2="6" y2="18"/>`),
-  // ✕ over the active link
+  // ✕ поверх активной ссылки
   linkgo: svgIcon(`<path d="M14 5h5v5"/><path d="M19 5l-8 8"/><path d="M18 13v5a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5"/>`)
 };
 function renderGlyph(btn, f) {
@@ -1992,10 +2631,14 @@ var MarkdownEditor = class {
     this.linkResolver = opts.linkResolver || null;
     this.followLinks = opts.followLinks === true;
     this.atLinks = opts.atLinks !== false;
+    this.linkChip = opts.linkChip === true;
     this.showFrontmatter = opts.frontmatter !== false;
+    this.imageResolver = opts.imageResolver || null;
+    this.imageMenu = opts.imageMenu || null;
     this.pathProvider = opts.pathProvider || null;
     this.onSave = opts.onSave || null;
     this._fm = "";
+    this._searchQuery = "";
     this._listeners = [];
     this._persist = [];
     this.historyOn = opts.history !== false;
@@ -2011,6 +2654,7 @@ var MarkdownEditor = class {
     }, redo() {
     } };
     this._render();
+    this._savedValue = this.getValue();
   }
   // ---- public API ----
   getValue() {
@@ -2019,11 +2663,33 @@ var MarkdownEditor = class {
   setValue(v) {
     this._value = v;
     this._render();
+    this._savedValue = this.getValue();
   }
+  // search — highlights every case-insensitive match of `query` in place (accent-coloured <mark>,
+  // see search.js/decorateSearch) and returns the match count; "" clears the highlight. Survives
+  // structural re-renders (paste, undo, setValue…) — _render() reapplies the last query it was given.
+  search(query) {
+    this._searchQuery = query || "";
+    return this.root ? decorateSearch(this.root, this._searchQuery) : 0;
+  }
+  // opts (e.g. {preventScroll:true}) forwarded so a host can focus without yanking scroll; atStart:true
+  // additionally drops the caret at the very beginning of the document (host use case: a freshly created
+  // empty file — caret should land where typing starts, not wherever a stale selection happened to be)
   focus(opts) {
-    this.root && this.root.focus(opts);
+    if (!this.root) return;
+    this.root.focus(opts);
+    if (opts && opts.atStart) this._caretToStart();
   }
-  // opts (e.g. {preventScroll:true}) forwarded so a host can focus without yanking scroll
+  _caretToStart() {
+    const first = this.root.firstChild;
+    if (!first) return;
+    const sel = window.getSelection();
+    const r = document.createRange();
+    r.setStart(first, 0);
+    r.collapse(true);
+    sel.removeAllRanges();
+    sel.addRange(r);
+  }
   destroy() {
     this._teardown();
     this._persist.forEach(([t, e, f, o]) => t.removeEventListener(e, f, o));
@@ -2052,6 +2718,45 @@ var MarkdownEditor = class {
     this._value = v;
     this.opts.onChange && this.opts.onChange(v);
   }
+  // Popovers (format bar, tooltip, path picker) live on document.body — outside `.mde-root`, where every
+  // `--kasi-*` is scoped (engine defaults on `.mde-root`; host overrides on `#host .mde-root`). Without this
+  // they render unthemed (transparent background). Copy the resolved theme onto them; names are read from the
+  // `.mde-root` rules themselves (defaults + host override), so the set can't drift from the stylesheet. KAS-121.
+  // The set of `--kasi-*` names declared for `.mde-root` (engine defaults + host override + any inline on root).
+  // Names are static after mount (theming is declarative), so compute once — _applyTheme runs on the selection/scroll
+  // hot path and must not re-scan every stylesheet each tick. Assumption: the host doesn't add `.mde-root` rules later.
+  _themeVarNames() {
+    if (this._themeVars) return this._themeVars;
+    const names = /* @__PURE__ */ new Set();
+    for (let i = 0; i < this.root.style.length; i++) {
+      const p = this.root.style[i];
+      if (p.indexOf("--kasi-") === 0) names.add(p);
+    }
+    for (const sheet of document.styleSheets || []) {
+      let rules;
+      try {
+        rules = sheet.cssRules;
+      } catch (_) {
+        continue;
+      }
+      for (const r of rules || []) {
+        if (!r.style || !r.selectorText || r.selectorText.indexOf(".mde-root") < 0) continue;
+        for (let i = 0; i < r.style.length; i++) {
+          const p = r.style[i];
+          if (p.indexOf("--kasi-") === 0) names.add(p);
+        }
+      }
+    }
+    return this._themeVars = names;
+  }
+  _applyTheme(elm) {
+    if (!this.root || !elm) return;
+    const cs = getComputedStyle(this.root);
+    for (const name of this._themeVarNames()) {
+      const v = (cs.getPropertyValue(name) || this.root.style.getPropertyValue(name) || "").trim();
+      if (v) elm.style.setProperty(name, v);
+    }
+  }
   _on(target, ev, fn, opt) {
     target.addEventListener(ev, fn, opt);
     this._listeners.push([target, ev, fn, opt]);
@@ -2065,12 +2770,20 @@ var MarkdownEditor = class {
   _teardown() {
     this._listeners.forEach(([t, e, f, o]) => t.removeEventListener(e, f, o));
     this._listeners = [];
+    if (this._mermaidCleanup) {
+      this._mermaidCleanup();
+      this._mermaidCleanup = null;
+    }
   }
   _syncFrontmatter() {
+    const raw = this.root && this.root.querySelector(".mde-fmwrap.mde-fmraw");
+    if (raw) {
+      this._fm = serializeFrontmatterRaw(raw);
+      return;
+    }
     const g = this.root && this.root.querySelector(".mde-fmwrap.mde-fm-editable");
     if (g) this._fm = serializeFrontmatter(g);
   }
-  // editable grid is the source now; keep _fm in step so getValue and _tableCtx stay correct
   _tableCtx(root) {
     return {
       editable: true,
@@ -2107,18 +2820,116 @@ var MarkdownEditor = class {
       softNodes: this.opts.mermaidNodes !== "contrast"
     };
   }
+  // Эффект загрузки SVG по адресу живёт ЗДЕСЬ, в оболочке, а не в декораторе: ядру и декоратору
+  // сеть не нужна, им нужен текст. Нет fetch (jsdom, десктоп без сети) — SVG просто покажется как
+  // обычная картинка, без перекраски.
+  _imageCtx() {
+    const canFetch = typeof window !== "undefined" && typeof window.fetch === "function";
+    return {
+      resolver: this.imageResolver,
+      loadSvg: canFetch ? (url) => window.fetch(url).then((r) => r.ok ? r.text() : Promise.reject(new Error(String(r.status)))) : null,
+      onImageMenu: this.editable ? this.imageMenu : null,
+      // read-only: no edit/delete actions to offer
+      setImage: (index, patch) => this._replaceImageNodeAt(index, patch),
+      removeImage: (index) => this._removeImageNodeAt(index)
+    };
+  }
+  // `index` is the image's ordinal among ".mde-img, .mde-imgblock" at the moment its menu button was
+  // built (images.js decorates them in that same order) — NOT a live node reference. A full `_render()`
+  // tears the whole DOM down and rebuilds it (as every structural edit here does), so a node captured
+  // by an earlier decoration pass is detached by the time a SECOND menu action fires; re-querying by
+  // index every time gets whatever is CURRENTLY at that position instead of a stale, disconnected node.
+  _imageNodeAt(index) {
+    return this.root.querySelectorAll(".mde-img, .mde-imgblock")[index] || null;
+  }
+  // Finds THIS SPECIFIC image node's own text in the serialized source — not by searching for its
+  // markdown (which could match a duplicate image elsewhere), but by planting a positional sentinel
+  // right before the node in the DOM and reading where it landed in getValue(). Same technique as
+  // the drop/paste caret marks above, applied to a node instead of a selection.
+  _locateImageNode(node) {
+    const mark = document.createTextNode(IMAGE_EDIT_MARK);
+    node.parentNode.insertBefore(mark, node);
+    const marked = this.getValue();
+    mark.remove();
+    const at = marked.indexOf(IMAGE_EDIT_MARK);
+    if (at < 0) return null;
+    const before = marked.slice(0, at), afterMark = marked.slice(at + IMAGE_EDIT_MARK.length), oldRaw = node.dataset.md;
+    const afterAt = afterMark.startsWith(oldRaw) ? afterMark : afterMark.startsWith("\n" + oldRaw) ? afterMark.slice(1) : null;
+    if (afterAt == null) return null;
+    return { before, oldRaw, after: afterAt.slice(oldRaw.length) };
+  }
+  // `patch` is PARTIAL ({width}/{height}/{align}/{hideCaption} — exactly one field, never a
+  // full image) — the CURRENT model is re-parsed fresh from the node's own `dataset.md` right here,
+  // not taken from whatever snapshot the menu was opened with, so a second edit builds on the first
+  // instead of reverting it. `width`/`height` (raw numbers, 0 = clear) go through `withMaxWidth`/
+  // `withMaxHeight` against THIS fresh `current.max` — a second bug of the exact same shape lived one
+  // level up, in the desktop menu: it computed the merged max itself from the model snapshot the menu
+  // was opened WITH, so setting height after width silently dropped the width (and vice versa). Doing
+  // the merge here, against freshly-read state, is what actually closes that class of bug for good —
+  // any caller that hands over a delta gets it merged onto the true current value, not a stale one.
+  _replaceImageNodeAt(index, patch) {
+    const node = this._imageNodeAt(index);
+    if (!node) return;
+    const current = parseImage((node.dataset.md || "").trim());
+    if (!current) return;
+    const max = "width" in patch ? withMaxWidth(current.max, patch.width) : "height" in patch ? withMaxHeight(current.max, patch.height) : current.max;
+    const built = mkImage(
+      current.alt,
+      current.src,
+      max,
+      "align" in patch ? patch.align : current.align,
+      "hideCaption" in patch ? patch.hideCaption : current.hideCaption
+    );
+    if (!built.ok) return;
+    const newRaw = imageMd(built.image);
+    if (newRaw === node.dataset.md) return;
+    this.history.batch(() => {
+      const loc = this._locateImageNode(node);
+      if (!loc) {
+        this._render();
+        return;
+      }
+      this._value = loc.before + newRaw + loc.after;
+      this._render();
+    });
+    this._emit();
+  }
+  _removeImageNodeAt(index) {
+    const node = this._imageNodeAt(index);
+    if (!node) return;
+    const isBlock = node.classList.contains("mde-imgblock");
+    this.history.batch(() => {
+      const loc = this._locateImageNode(node);
+      if (!loc) {
+        this._render();
+        return;
+      }
+      let { before, after } = loc;
+      if (isBlock) {
+        const beforeTrim = before.replace(/\n+$/, ""), afterTrim = after.replace(/^\n+/, "");
+        const nls = before.length - beforeTrim.length + (after.length - afterTrim.length);
+        before = beforeTrim;
+        after = beforeTrim === "" || afterTrim === "" ? afterTrim : (nls >= 3 ? "\n\n" : "\n") + afterTrim;
+      }
+      this._value = before + after;
+      this._render();
+    });
+    this._emit();
+  }
   _render() {
     this._teardown();
     const parts = splitFront(this._value);
     this._fm = parts.fm;
-    const root = el("div", "mde-root" + (this.editable ? " mde-editable" : " mde-readonly") + (this.followLinks ? " mde-follow-links" : ""));
+    const root = el("div", "mde-root" + (this.editable ? " mde-editable" : " mde-readonly") + (this.followLinks ? " mde-follow-links" : "") + (this.linkChip ? " mde-link-chip" : ""));
     root.setAttribute("contenteditable", this.editable ? "true" : "false");
     root.setAttribute("spellcheck", "false");
     renderBody(root, parts.body, this.linkResolver, this.atLinks);
     const fmEl = this.showFrontmatter ? buildFrontmatter(parts.fm, this.editable) : null;
     if (fmEl) root.insertBefore(fmEl, root.firstChild);
     if (this.editable) decorateTables(root, this._tableCtx(root));
-    decorateMermaid(root, this._mermaidCtx());
+    this._mermaidCleanup = decorateMermaid(root, this._mermaidCtx());
+    decorateImages(root, this._imageCtx());
+    decorateSearch(root, this._searchQuery);
     this.host.innerHTML = "";
     this.host.appendChild(root);
     this.root = root;
@@ -2130,21 +2941,37 @@ var MarkdownEditor = class {
       this._on(root, "click", (e) => this._followLink(e));
       return;
     }
-    this._on(root, "beforeinput", () => this.history.recordInput());
+    this._on(root, "beforeinput", (e) => {
+      if (this._maybeBlockMarker(e)) {
+        e.preventDefault();
+        return;
+      }
+      this.history.recordInput();
+    });
     this._on(root, "input", (e) => {
-      if (e && e.target && e.target.closest && e.target.closest(".mde-fm-editable")) this._syncFrontmatter();
+      if (e && e.target && e.target.closest && e.target.closest(".mde-fm-editable, .mde-fmraw")) this._syncFrontmatter();
       else this._maybeListShortcut();
       this._emit();
       if (this.pathProvider) this._schedulePathPicker(root);
     });
     this._on(root, "paste", (e) => this._onPaste(e));
+    this._on(root, "dragover", (e) => this._onImageDragOver(e));
+    this._on(root, "drop", (e) => this._onImageDrop(e));
     this._on(root, "click", (e) => {
       if (this._focusFmCell(e)) return;
       if (this.followLinks && this._followLink(e)) return;
       this._onClick(e);
     });
     this._on(root, "keydown", (e) => this._onKeydown(e, root));
-    this._on(document, "selectionchange", () => this._normalizeTableCaret());
+    this._on(document, "selectionchange", () => {
+      this._normalizeTableCaret();
+      this._markCaretLine();
+    });
+    const fmRaw = root.querySelector(".mde-fmraw-src");
+    if (fmRaw) {
+      this._on(fmRaw, "keydown", (e) => e.stopPropagation());
+      this._on(fmRaw, "mousedown", (e) => e.stopPropagation());
+    }
   }
   _schedulePathPicker(root) {
     if (this._ppTimer) clearTimeout(this._ppTimer);
@@ -2300,16 +3127,21 @@ var MarkdownEditor = class {
       const s = window.getSelection();
       if (s.rangeCount && this.root.contains(s.anchorNode)) {
         const block = this._lineOf(s.getRangeAt(0).startContainer), info = block && parseListItem(block.dataset.pre);
-        if (info) {
-          if (e.key === "Tab") {
+        if (info && e.key === "Tab") {
+          e.preventDefault();
+          this._reindentListItem(block, indentListItem(info, e.shiftKey ? -1 : 1));
+          return;
+        }
+        if (e.key === "Backspace" && s.isCollapsed && block && this._atBlockStart(block, s.getRangeAt(0))) {
+          if (info && info.indent.length) {
             e.preventDefault();
-            this._reindentListItem(block, indentListItem(info, e.shiftKey ? -1 : 1));
+            this._reindentListItem(block, indentListItem(info, -1));
             return;
           }
-          if (e.key === "Backspace" && s.isCollapsed && this._atBlockStart(block, s.getRangeAt(0))) {
+          const marker = blockMarker(String(block.dataset.pre || "").replace(/\s+$/, ""));
+          if (marker) {
             e.preventDefault();
-            if (info.indent.length) this._reindentListItem(block, indentListItem(info, -1));
-            else this._demoteToBody(block);
+            this._demoteToBody(block, marker);
             return;
           }
         }
@@ -2476,7 +3308,15 @@ var MarkdownEditor = class {
     });
     this._emit();
   }
-  _demoteToBody(block) {
+  // Снимает разметку со строки: маркер уходит из dataset.pre, строка становится обычным абзацем на
+  // своём месте. `marker` — что вернуть в текст строки взамен снятого префикса: пустая строка (Enter
+  // в пустом пункте) стирает маркер совсем, непустая (Backspace в нуле) кладёт его в текст обратным
+  // ходом к _applyBlockMarker, и каретка встаёт сразу за ним. Съеденный пробел не возвращается: он
+  // и есть событие, применяющее разметку, — вернись он, следующий же ввод увёз бы маркер обратно.
+  // Заметка про цитату: `>цитата` без пробела markdown всё ещё считает цитатой, поэтому строка,
+  // прочитанная из этого значения заново, снова станет размеченной. Обратный ход всё равно нужен
+  // здесь и сейчас: следующий Backspace сотрёт `>` как обычный символ.
+  _demoteToBody(block, marker = "") {
     this.history.batch(() => {
       const prev = block.previousSibling, nextSib = block.nextSibling;
       delete block.dataset.pre;
@@ -2485,6 +3325,15 @@ var MarkdownEditor = class {
       applyListDepth(block);
       this._renumberList(prev);
       this._renumberList(nextSib);
+      if (!marker) return;
+      const text = document.createTextNode(marker);
+      block.insertBefore(text, block.firstChild);
+      const rg = document.createRange();
+      rg.setStart(text, marker.length);
+      rg.collapse(true);
+      const sel = window.getSelection();
+      sel.removeAllRanges();
+      sel.addRange(rg);
     });
     this._emit();
   }
@@ -2578,6 +3427,19 @@ var MarkdownEditor = class {
     sel.removeAllRanges();
     sel.addRange(r);
   }
+  // Строка, в которой стоит каретка, помечается классом mde-caret — по нему CSS показывает выносной
+  // маркер разметки («# » в левом поле) только здесь, а не по всему документу.
+  // Признак снимается запросом по DOM, а не запомненной ссылкой: блок мог быть заменён перерисовкой,
+  // и тогда запомненный узел указывал бы в никуда, а класс остался бы висеть на живом. Отсюда и
+  // гарантия «не более одного помеченного блока» — она читается прямо из кода.
+  _markCaretLine() {
+    const prev = this.root.querySelector(".mde-caret");
+    const sel = window.getSelection();
+    const line = sel && sel.rangeCount && this.root.contains(sel.anchorNode) ? this._lineOf(sel.anchorNode) : null;
+    if (prev === line) return;
+    if (prev) prev.classList.remove("mde-caret");
+    if (line) line.classList.add("mde-caret");
+  }
   // is the caret at the very start / end of a cell's content? (used for edge-aware ←/→ cell hopping)
   _cellCaretEdge(clab) {
     const sel = window.getSelection();
@@ -2626,6 +3488,47 @@ var MarkdownEditor = class {
     sel.addRange(rg);
   }
   // ---- format bar ----
+  // Разметка, набранная руками, применяется на лету: «# » превращает строку в заголовок в тот момент,
+  // когда набран ПРОБЕЛ, а сам маркер уезжает в dataset.pre и рисуется в левом поле приглушённым
+  // (CSS .mde-h::before и родня). Пробел — обязательное условие, а не удобство: без него нельзя
+  // отличить начало разметки от текста, который просто начинается с решётки или дефиса.
+  //
+  // Возвращает true, если событие обработано — тогда вызывающий гасит сам ввод пробела: пробел
+  // становится РАЗДЕЛИТЕЛЕМ маркера и текста внутри markdown-строки, а не символом в тексте.
+  _maybeBlockMarker(e) {
+    if (e.inputType !== "insertText" || e.data !== " ") return false;
+    const sel = window.getSelection();
+    if (!sel || !sel.rangeCount || !sel.isCollapsed) return false;
+    const r = sel.getRangeAt(0);
+    if (!this.root.contains(r.startContainer)) return false;
+    const block = this._lineOf(r.startContainer);
+    if (!block || block.dataset.pre != null || block.dataset.md != null) return false;
+    if (!block.classList.contains("mde-body") && !block.classList.contains("mde-blank")) return false;
+    const before = document.createRange();
+    before.setStart(block, 0);
+    before.setEnd(r.startContainer, r.startOffset);
+    const marker = blockMarker(before.toString());
+    if (!marker) return false;
+    this._applyBlockMarker(block, marker);
+    return true;
+  }
+  // Перестраивает строку из её же markdown с отделённым пробелом маркером — тем же lineBlock, что
+  // строит документ при загрузке, а не ручной правкой классов: разметка остаётся одним источником,
+  // и «набрал руками» приходит ровно к тому же DOM, что «прочитал из файла».
+  _applyBlockMarker(block, marker) {
+    const rest = inlineMd(block).slice(marker.length);
+    this.history.batch(() => {
+      const fresh = lineBlock(marker + " " + rest, this.linkResolver, this.atLinks);
+      block.parentNode.replaceChild(fresh, block);
+      const rg = document.createRange();
+      rg.setStart(fresh, 0);
+      rg.collapse(true);
+      const sel = window.getSelection();
+      sel.removeAllRanges();
+      sel.addRange(rg);
+    });
+    this._emit();
+  }
   _lineOf(nd) {
     let b = nd && (nd.nodeType === 1 ? nd : nd.parentElement);
     while (b && b.parentElement !== this.root) b = b.parentElement;
@@ -2681,6 +3584,7 @@ var MarkdownEditor = class {
     this._tip = tip;
     const showTip = (btn, f) => {
       tip.textContent = f.name + (f.hot ? "  " + f.hot : "");
+      this._applyTheme(tip);
       tip.classList.add("on");
       const br = btn.getBoundingClientRect(), tr = tip.getBoundingClientRect();
       let left = Math.round(br.left + br.width / 2 - tr.width / 2);
@@ -2702,6 +3606,7 @@ var MarkdownEditor = class {
         this.root.focus();
       }
     });
+    linkInput.addEventListener("blur", () => this._dropEmptyLink());
     const linkGo = el("button", "mde-fmtgo");
     linkGo.type = "button";
     linkGo.title = "\u041F\u0435\u0440\u0435\u0439\u0442\u0438 \u043F\u043E \u0441\u0441\u044B\u043B\u043A\u0435";
@@ -2754,6 +3659,7 @@ var MarkdownEditor = class {
         hideTip();
         return;
       }
+      this._applyTheme(bar);
       bar.classList.add("on");
       const active = this._activeFormats(sel);
       const link = this._linkAt(sel);
@@ -2849,12 +3755,35 @@ var MarkdownEditor = class {
     });
     this._emit();
   }
+  // Адрес спрашивает тот же ряд URL, что правит адрес уже готовой ссылки (_buildFormatBar): ссылка
+  // создаётся сразу пустой, ряд открывается на ней, фокус встаёт в поле. Браузерного prompt здесь
+  // быть не может — окно текстового ввода в WKWebView рисует ui-делегат обёртки, а он его не
+  // реализует: prompt отдаёт null, не показавшись, и вставка срывалась молча, ни хот-кеем, ни
+  // кнопкой. Второго способа спросить адрес заводить незачем — этот уже стоит у выделения.
   _insertLink(sel) {
     const text = sel.toString();
     if (!text) return;
-    const href = prompt("URL:", "https://");
-    if (!href) return;
-    this._insertLinkWith(sel.getRangeAt(0), text, href);
+    this._openLinkUrl(this._insertLinkWith(sel.getRangeAt(0), text, ""));
+  }
+  // Открывает ряд URL на конкретной ссылке и отдаёт ему фокус. Панель пересобирается по
+  // selectionchange, а он приходит асинхронно — новую ссылку показываем сразу, не дожидаясь его,
+  // иначе поле моргнуло бы закрытым. Пока фокус внутри панели, reposition её не трогает.
+  _openLinkUrl(link) {
+    if (!link || !this._linkInput) return;
+    this._activeLink = link;
+    this._bar.classList.add("on");
+    this._linkrow.classList.add("on");
+    this._linkInput.value = link.dataset.href || "";
+    this._linkInput.focus();
+    this._linkInput.select();
+  }
+  // Ссылку создаёт вставка, адрес приходит потом — а не придя вовсе, оставил бы в документе
+  // `[текст]()`: разметку без цели, которую в файле глазами не отличить от рабочей ссылки. Уход
+  // фокуса из пустого поля снимает её, оставляя текст: «передумал» стоит ровно столько же, сколько
+  // стоило при диалоге, где отмена не вставляла ничего.
+  _dropEmptyLink() {
+    const lk = this._activeLink;
+    if (lk && !lk.dataset.href) this._removeLink(lk);
   }
   _makeLink(text, href) {
     const span = el("span", "mde-link" + (this.linkResolver && this.linkResolver(href) ? " mde-link-live" : " mde-link-plain"));
@@ -2864,6 +3793,7 @@ var MarkdownEditor = class {
     return span;
   }
   _insertLinkWith(range, text, href) {
+    let link = null;
     this.history.batch(() => {
       const span = this._makeLink(text, href);
       range.deleteContents();
@@ -2873,8 +3803,10 @@ var MarkdownEditor = class {
       const sel = window.getSelection();
       sel.removeAllRanges();
       sel.addRange(rg);
+      link = span;
     });
     this._emit();
+    return link;
   }
   _isUrl(s) {
     return /^https?:\/\/\S+$/i.test(s) || /^www\.\S+$/i.test(s);
@@ -2924,6 +3856,70 @@ var MarkdownEditor = class {
     this._value = before + pre + text + "\uE001" + post + after;
     this._render();
     this._landCaretAtMark("\uE001");
+    this._emit();
+  }
+  // dragover only needs to allow the drop; whether the payload is actually an image is decided on drop itself
+  // (dataTransfer.files is empty during dragover in most browsers — only .types is populated by then).
+  _onImageDragOver(e) {
+    const dt = e.dataTransfer;
+    if (dt && dt.types && [].indexOf.call(dt.types, "Files") >= 0) e.preventDefault();
+  }
+  _onImageDrop(e) {
+    const dt = e.dataTransfer;
+    if (!dt || !dt.files || !dt.files.length) return;
+    const images = [].filter.call(dt.files, (f) => /^image\//.test(f.type));
+    if (!images.length) return;
+    e.preventDefault();
+    this.history.batch(() => {
+    });
+    const sel = window.getSelection();
+    if (!sel.rangeCount || !this.root.contains(sel.anchorNode)) return;
+    const range = sel.getRangeAt(0).cloneRange();
+    range.collapse(true);
+    range.insertNode(document.createTextNode(DROP_CARET_MARK));
+    const marked = this.getValue();
+    if (marked.indexOf(DROP_CARET_MARK) < 0) {
+      this._render();
+      return;
+    }
+    return this._readImagesAsDataUrls(images).then((tokens) => this._insertLinesBelowMark(marked, tokens.join("\n")));
+  }
+  // File → data:-URI, one promise per file; oversized or unreadable files drop out (null → filtered), the rest
+  // still get inserted. Each token is a lone-image line so it renders as its own block (images-render-model).
+  _readImagesAsDataUrls(files) {
+    const reads = [].map.call(files, (file) => {
+      if (file.size > MAX_DROPPED_IMAGE_BYTES) {
+        console.warn(`Kasimov: \u0438\u0437\u043E\u0431\u0440\u0430\u0436\u0435\u043D\u0438\u0435 \xAB${file.name}\xBB \u043F\u0440\u043E\u043F\u0443\u0449\u0435\u043D\u043E \u2014 \u0431\u043E\u043B\u044C\u0448\u0435 ${Math.floor(MAX_DROPPED_IMAGE_BYTES / (1024 * 1024))} \u041C\u0411`);
+        return Promise.resolve(null);
+      }
+      return new Promise((resolve) => {
+        const reader = new window.FileReader();
+        reader.onload = () => resolve(String(reader.result || ""));
+        reader.onerror = () => resolve(null);
+        reader.readAsDataURL(file);
+      }).then((url) => {
+        if (!url) return null;
+        const built = mkImage(altFromFileName(file.name), url, maxNone);
+        return built.ok ? imageMd(built.image) : null;
+      });
+    });
+    return Promise.all(reads).then((tokens) => tokens.filter(Boolean));
+  }
+  // Splices `linesText` onto a fresh line right after the line the caret mark sits on — never at the mark
+  // itself — so the current line's own content, before and after the caret, is reconstructed unchanged.
+  _insertLinesBelowMark(marked, linesText) {
+    const at = marked.indexOf(DROP_CARET_MARK);
+    if (at < 0 || !linesText) {
+      this._render();
+      return;
+    }
+    const before = marked.slice(0, at), afterMark = marked.slice(at + 1);
+    const nl = afterMark.indexOf("\n");
+    const restOfLine = nl < 0 ? afterMark : afterMark.slice(0, nl);
+    const after = nl < 0 ? "" : afterMark.slice(nl + 1);
+    this._value = before + restOfLine + "\n" + linesText + "\n" + DROP_END_MARK + after;
+    this._render();
+    this._landCaretAtMark(DROP_END_MARK);
     this._emit();
   }
   _landCaretAtMark(mark) {
@@ -3112,26 +4108,36 @@ var MarkdownEditor = class {
     dd.style.left = Math.round(rect.left) + "px";
     dd.style.top = Math.round(rect.bottom + 4) + "px";
     document.body.appendChild(dd);
+    this._applyTheme(dd);
     this._pathdd = dd;
     this._highlightPathPick();
   }
   _highlightPathPick() {
     if (this._ppRows) this._ppRows.forEach((r, i) => r.classList.toggle("mde-on", i === this._ppIdx));
   }
-  // shared insert logic — used by both a mouse click on a row and Enter with a row keyboard-selected
+  // shared insert logic — used by both a mouse click on a row and Enter with a row keyboard-selected.
+  // Builds the SAME live DOM node a normal render would (mkLink/mkAtLink — the private helpers
+  // inlineDOM itself calls), so the picked suggestion is a clickable link immediately, not just
+  // after the next full setValue/re-render (a plain textContent splice would leave raw "@path" or
+  // "[label](href)" characters sitting inert until then).
   _acceptPathPick(i) {
     const it = this._ppItems && this._ppItems[i];
     if (!it) return;
     const node = this._ppNode, m = this._ppMatch, mode = this._ppMode;
     const sel = window.getSelection();
     if (!sel.rangeCount) return;
-    const insert = mode === "import" ? "@" + it.path : it.path;
     const start = sel.anchorOffset - m[0].length;
+    const label = it.label || it.path;
+    const linkNode = mode === "import" ? mkAtLink("@" + it.path, this.linkResolver) : mkLink(label, "[" + label + "](" + it.path + ")", it.path, this.linkResolver);
     this.history.batch(() => {
-      node.textContent = node.textContent.slice(0, start) + insert + node.textContent.slice(sel.anchorOffset);
+      const r2 = document.createRange();
+      r2.setStart(node, start);
+      r2.setEnd(node, sel.anchorOffset);
+      r2.deleteContents();
+      r2.insertNode(linkNode);
     });
     const r = document.createRange();
-    r.setStart(node, start + insert.length);
+    r.setStartAfter(linkNode);
     r.collapse(true);
     sel.removeAllRanges();
     sel.addRange(r);
@@ -3148,35 +4154,14 @@ var MarkdownEditor = class {
   }
   // ---- save shell (diff confirm) ----
   _openSaveDiff() {
-    if (document.getElementById("mde-diffmodal")) return;
-    const cur = this.getValue();
-    const box = el("div", "mde-modalbox");
-    box.appendChild(el("div", "mde-modaltitle", "\u0421\u043E\u0445\u0440\u0430\u043D\u0438\u0442\u044C \u0438\u0437\u043C\u0435\u043D\u0435\u043D\u0438\u044F?"));
-    const pre = el("pre", "mde-modaldiff");
-    pre.textContent = cur;
-    box.appendChild(pre);
-    const btns = el("div", "mde-modalbtns");
-    const mk = (label, cls, fn) => {
-      const b = el("button", "mde-modalbtn" + (cls ? " " + cls : ""), label);
-      b.addEventListener("click", fn);
-      return b;
-    };
-    const wrap = el("div", "mde-modal");
-    wrap.id = "mde-diffmodal";
-    btns.appendChild(mk("\u0421\u043E\u0445\u0440\u0430\u043D\u0438\u0442\u044C", "mde-primary", (e) => {
-      const b = e.currentTarget;
-      b.textContent = "\u0421\u043E\u0445\u0440\u0430\u043D\u044F\u044E\u2026";
-      b.disabled = true;
-      Promise.resolve(this.onSave(cur)).then(() => wrap.remove()).catch((err) => {
-        b.disabled = false;
-        b.textContent = "\u041E\u0448\u0438\u0431\u043A\u0430 \u2014 \u043F\u043E\u0432\u0442\u043E\u0440\u0438\u0442\u044C";
-        if (window.console) console.error(err);
-      });
-    }));
-    btns.appendChild(mk("\u041E\u0442\u043C\u0435\u043D\u0430", "", () => wrap.remove()));
-    box.appendChild(btns);
-    wrap.appendChild(box);
-    document.body.appendChild(wrap);
+    openDiffModal({
+      id: "mde-diffmodal",
+      before: this._savedValue,
+      after: this.getValue(),
+      onConfirm: (cur) => Promise.resolve(this.onSave(cur)).then(() => {
+        this._savedValue = cur;
+      })
+    });
   }
 };
 
@@ -3239,7 +4224,7 @@ function createAdapter(env) {
       var live = env.getEditing() === n.id;
       if (!live) {
         var ro = env.el("div", "cg-sec cg-mdbody cg-mdhost");
-        var roOpts = { value: env.contentOf(n), editable: false, linkResolver: mkLinkResolver(n, colIndex), frontmatter: env.frontmatter, atLinks: env.atLinks !== false };
+        var roOpts = { value: env.contentOf(n), editable: false, linkResolver: mkLinkResolver(n, colIndex), imageResolver: env.imageResolver || null, frontmatter: env.frontmatter, atLinks: env.atLinks !== false, linkChip: env.linkChip === true };
         ro._mde = new MarkdownEditor(ro, roOpts);
         instances.push({ host: ro, mde: ro._mde });
         ro.addEventListener("mousedown", function(e) {
@@ -3259,31 +4244,37 @@ function createAdapter(env) {
         value: env.contentOf(n),
         editable: true,
         history: false,
-        // the app owns undo
+        // отменой владеет приложение
         onBeforeChange: function() {
           env.record && env.record("edit");
         },
-        // the format bar/tables/"/"-insert don't send beforeinput — checkpoint manually, before the mutation
+        // формат-бар/таблицы/"/"-вставка не шлют beforeinput — чекпоинт вручную, до мутации
         onChange: function(md) {
           env.edits[n.id] = md;
           env.noteEdit && env.noteEdit(n);
         },
-        // commit (the value includes front matter); autosave hook (no-op in manual)
+        // коммит (значение включает фронт-маттер); autosave hook (no-op in manual)
         pathProvider: env.pathProvider || function(query, mode) {
           return env.nodeMatches(query).map(function(nd) {
             return { path: nd.path, label: nd.name || nd.path.split("/").pop(), comment: nd.kind };
           });
         },
         linkResolver: mkLinkResolver(n, colIndex),
-        // clicking a link in the body → drill into the graph (or env.linkResolver directly — minimal env)
+        // клик по ссылке в теле → drill в графе (или env.linkResolver напрямую — минимальный env)
+        imageResolver: env.imageResolver || null,
+        // src картинки → загружаемый адрес; политика путей — за хостом
+        imageMenu: env.imageMenu || null,
+        // меню картинки (выключка/размер/удаление); read-only-инстанс выше его не берёт вовсе
         onSave: env.onSave || void 0,
-        // minimal env (create-editor.js): ⌘S → md-editor's own save-diff dialog
+        // минимальный env (create-editor.js): ⌘S → md-editor's own save-diff dialog
         followLinks: env.followLinks,
-        // clicking a link → navigates (linkResolver.onClick) instead of selecting the token
+        // клик по ссылке → переход (linkResolver.onClick), а не выделение токена
         frontmatter: env.frontmatter,
-        // front matter as a grid (on by default; env.frontmatter=false doesn't show it at all)
-        atLinks: env.atLinks !== false
-        // `@path` (Claude @import) is recognized — on by default; env.atLinks=false → plain text
+        // фронтметр сеткой (по умолчанию вкл; env.frontmatter=false вовсе не отображает)
+        atLinks: env.atLinks !== false,
+        // `@path` (Claude @import) распознаётся — по умолчанию вкл; env.atLinks=false → обычный текст
+        linkChip: env.linkChip === true
+        // вид ссылок: chip (подчёркнута + фон, как инлайн-код) при true, иначе просто акцентный текст без подчёркивания
       };
       function settleCaret() {
         if (!host.isConnected) return;
@@ -3314,6 +4305,7 @@ function createEditor(hostEl, opts) {
   var node = { id: NODE_ID, editable: true, links: [] };
   var draft = { value: opts.value != null ? opts.value : "" };
   var snapshot = draft.value;
+  var savedValue = opts.savedValue != null ? opts.savedValue : draft.value;
   var editingId = opts.editable ? NODE_ID : null;
   function contentOf(n) {
     return Object.prototype.hasOwnProperty.call(env.edits, n.id) ? env.edits[n.id] : draft.value;
@@ -3334,14 +4326,27 @@ function createEditor(hostEl, opts) {
     var m = document.getElementById("cg-diffmodal");
     if (m) m.remove();
   }
-  function el2(tag, cls) {
+  function el2(tag, cls, text) {
     var e = document.createElement(tag);
     if (cls) e.className = cls;
+    if (text != null) e.textContent = text;
     return e;
   }
   function render() {
     hostEl.innerHTML = "";
     hostEl.appendChild(adapter.bodyOf(node, 0));
+  }
+  function confirmSave(writeToDisk) {
+    openDiffModal({
+      id: "kasi-diffmodal",
+      before: savedValue,
+      after: contentOf(node),
+      onConfirm: function(cur) {
+        return Promise.resolve(writeToDisk(cur)).then(function() {
+          savedValue = cur;
+        });
+      }
+    });
   }
   var env = {
     el: el2,
@@ -3373,12 +4378,18 @@ function createEditor(hostEl, opts) {
     setSnapshot,
     closeModal,
     linkResolver: opts.linkResolver || null,
+    imageResolver: opts.imageResolver || null,
+    // src картинки → адрес; без него относительные пути показываются заглушкой
+    imageMenu: opts.imageMenu || null,
+    // (anchor, image, actions) => void — меню картинки (выключка/размер/удаление); без хоста кнопка не появляется
     followLinks: opts.followLinks === true,
-    // clicking a link → navigates instead of selecting the token (see md-editor followLinks)
+    // клик по ссылке → переход вместо выделения токена (см. md-editor followLinks)
     atLinks: opts.atLinks !== false,
-    // recognizing `@path` (Claude @import) — on by default; false → renders as plain text
+    // распознавание `@path` (Claude @import) — по умолчанию включено; false → рендерится обычным текстом
+    linkChip: opts.linkChip === true,
+    // вид ссылок: true → chip (фон, как инлайн-код), иначе просто акцентный текст
     frontmatter: opts.frontmatter !== false,
-    // front matter as a grid — on by default; pass false to not show it at all (the value is preserved)
+    // фронтметр сеткой — по умолчанию включён; передать false, чтобы вовсе не отображать (значение сохраняется)
     pathProvider: opts.pathProvider ? function(query, mode) {
       return opts.pathProvider(query, mode) || [];
     } : null,
@@ -3414,11 +4425,27 @@ function createEditor(hostEl, opts) {
     setValue: function(v) {
       draft.value = v == null ? "" : v;
       delete env.edits[NODE_ID];
+      savedValue = draft.value;
       render();
     },
+    // setDraft — a live edit from a host-owned surface OUTSIDE this editor's own DOM (desktop's Raw
+    // textarea): updates the content and repaints, but — unlike setValue — does NOT move confirmSave's
+    // savedValue baseline. setValue means "a host loaded a (possibly different) file"; setDraft means
+    // "the same file, edited a different way" — conflating the two would make confirmSave a permanent
+    // no-op the moment anything typed into Raw, hiding real unsaved changes from the save-diff dialog.
+    setDraft: function(v) {
+      draft.value = v == null ? "" : v;
+      delete env.edits[NODE_ID];
+      render();
+    },
+    confirmSave,
     focus: function(o) {
       var mounted = hostEl.firstElementChild;
       if (mounted && mounted._mde) mounted._mde.focus(o);
+    },
+    search: function(query) {
+      var mounted = hostEl.firstElementChild;
+      return mounted && mounted._mde ? mounted._mde.search(query) : 0;
     },
     undo: function() {
       return history.undo();
@@ -3541,6 +4568,16 @@ function blankTree(name) {
   return { name: name || "workflow", description: "", phases: [blankPhase("Phase 1")] };
 }
 export {
+  alignCenter,
+  alignLeft,
+  alignRight,
   createEditor,
+  lineDiff,
+  maxH,
+  maxNone,
+  maxW,
+  maxWH,
+  withMaxHeight,
+  withMaxWidth,
   composer_workflow_exports as workflow
 };

@@ -8,13 +8,13 @@
 // content for, and a HEAD already known to be merged skips even that. So the
 // expensive step (a `git fetch` plus a merge) runs once per new HEAD, not on
 // every poll.
-import { resolveAlreadyMerged, type MergedContent } from "../core/merged-content";
 import {
   decideVisibility,
   refineWithMergedContent,
   type PrPresence,
   type VisibilityDecision,
 } from "../core/visibility";
+import { measureContentCached, type ContentCachePorts } from "./content-cache";
 
 /** The slice of `environments.status().workspace` the decision actually reads. */
 export interface VisibilityWorkspace {
@@ -23,14 +23,8 @@ export interface VisibilityWorkspace {
   aheadCount: number;
 }
 
-export interface VisibilityPorts {
-  /** Has this exact HEAD already been recorded as merged? */
-  cachedHeadMatches(headSha: string | null): Promise<boolean>;
-  /** Remember a HEAD whose content was measured as already in the base. */
-  rememberMerged(headSha: string): Promise<void>;
-  /** Measure the fact with git. The expensive step. */
-  measure(): Promise<MergedContent>;
-}
+/** The measure-once-per-HEAD protocol, shared with the "Done & Archive" button. */
+export type VisibilityPorts = ContentCachePorts;
 
 export async function resolveVisibility(
   ports: VisibilityPorts,
@@ -43,12 +37,8 @@ export async function resolveVisibility(
     pr,
   });
   if (!decision.visible) return decision;
-
-  const cached = await ports.cachedHeadMatches(workspace.headSha);
-  const content = cached ? "unknown" : await ports.measure();
-  if (content === "merged" && workspace.headSha) {
-    await ports.rememberMerged(workspace.headSha);
-  }
-
-  return refineWithMergedContent(decision, resolveAlreadyMerged(content, cached));
+  return refineWithMergedContent(
+    decision,
+    await measureContentCached(ports, workspace.headSha),
+  );
 }

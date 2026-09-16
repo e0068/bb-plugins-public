@@ -21,6 +21,7 @@ describe("parseGearSettings", () => {
       contentMaxWidthPx: "2000",
       heightMode: "perCard",
       collapseEmpty: true,
+      collapseToZeroBelowMin: "10",
       colWidthPx: "20",
       heightScale: "2",
       colGap: "4",
@@ -40,6 +41,7 @@ describe("parseGearSettings", () => {
       contentMaxWidthPx: 2000,
       heightMode: "perCard",
       collapseEmpty: true,
+      collapseToZeroBelowMin: 10,
       colWidthPx: 20,
       heightScale: 2,
       colGap: 4,
@@ -91,6 +93,24 @@ describe("parseGearSettings", () => {
   it("accepts colWidthPx exactly at its bounds (1 and 40)", () => {
     expect(parseGearSettings({ colWidthPx: "1" }).colWidthPx).toBe(1);
     expect(parseGearSettings({ colWidthPx: "40" }).colWidthPx).toBe(40);
+  });
+
+  it("parses a natural number for collapseToZeroBelowMin", () => {
+    expect(parseGearSettings({ collapseToZeroBelowMin: "5" }).collapseToZeroBelowMin).toBe(5);
+  });
+
+  it("treats 0 as the disabled value for collapseToZeroBelowMin", () => {
+    expect(parseGearSettings({ collapseToZeroBelowMin: "0" }).collapseToZeroBelowMin).toBe(0);
+  });
+
+  it("falls back to default for a non-natural collapseToZeroBelowMin (decimal, negative, or non-numeric)", () => {
+    expect(parseGearSettings({ collapseToZeroBelowMin: "2.5" }).collapseToZeroBelowMin).toBe(DEFAULT_GEAR_SETTINGS.collapseToZeroBelowMin);
+    expect(parseGearSettings({ collapseToZeroBelowMin: "-3" }).collapseToZeroBelowMin).toBe(DEFAULT_GEAR_SETTINGS.collapseToZeroBelowMin);
+    expect(parseGearSettings({ collapseToZeroBelowMin: "soon" }).collapseToZeroBelowMin).toBe(DEFAULT_GEAR_SETTINGS.collapseToZeroBelowMin);
+  });
+
+  it("clamps collapseToZeroBelowMin above its 1440-minute maximum down to the maximum", () => {
+    expect(parseGearSettings({ collapseToZeroBelowMin: "99999" }).collapseToZeroBelowMin).toBe(1440);
   });
 
   it("returns a fresh object each call, not a shared reference", () => {

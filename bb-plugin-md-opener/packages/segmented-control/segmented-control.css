@@ -1,0 +1,65 @@
+/* The control's whole look, in plain CSS on bb's tokens.
+
+   It used to be a string of Tailwind utilities, which works only where the
+   consumer's Tailwind pass has seen those class names — and `bb plugin build`
+   scans the PLUGIN's own tree, not the packages it imports. In Projects, whose
+   own files happen to use the same utilities, the control was styled; in MD
+   Opener, whose sources use no utilities at all, its stylesheet came out with
+   none of them and the control rendered as bare text; in Cloud Config two of
+   them were missing and the segments came out the wrong colour. A shared
+   component whose appearance depends on what ELSE the consumer happens to
+   write is not shared.
+
+   The values are the ones those utilities compiled to, token for token, so
+   Projects looks exactly as it did. */
+
+.sgc-track {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  padding: 2px;
+  border-radius: calc(var(--radius) - 2px);
+  background: transparent;
+}
+
+.sgc-segment {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  padding: 2px 6px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--subtle-foreground);
+  font-size: 10.5px;
+  font-weight: 400;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: all 150ms;
+}
+
+.sgc-segment:hover {
+  background: var(--state-hover);
+  color: var(--foreground);
+}
+
+/* Radix writes data-state on the trigger; the filled pill is the only mark of
+   which option is on — there is no border on the track to carry it. */
+.sgc-segment[data-state="active"] {
+  background: var(--state-active);
+  color: var(--foreground);
+  box-shadow: var(--shadow-xs, 0 1px 2px 0 rgb(0 0 0 / 0.05));
+}
+
+.sgc-segment:disabled {
+  pointer-events: none;
+  opacity: 0.5;
+}
+
+.sgc-segment:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+}

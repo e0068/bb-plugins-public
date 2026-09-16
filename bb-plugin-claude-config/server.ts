@@ -18,16 +18,18 @@ import { HookDefinitionParseError, SettingsParseError } from "./src/settings-doc
 import {
   decideMcpOwn,
   resolvePlugin,
+  resolveRaw,
   resolveSkill,
   resolveToolSearch,
 } from "./src/effective";
 import { buildConfigView } from "./src/config-view";
-import { estimateTokens } from "./src/weight";
 import {
-  parseClaudeJsonServers,
-  parseInstalledPlugins,
-  parseMcpJson,
-} from "./src/catalog";
+  decodeSettingText,
+  encodeSettingValue,
+  findSettingDef,
+} from "./src/settings-catalog";
+import { estimateTokens } from "./src/weight";
+import { parseClaudeJsonServers, parseMcpJson } from "./src/catalog";
 import { parseImports, resolveImportPath } from "./src/imports";
 import { extractCommandFile } from "./src/hook-script";
 import {
@@ -48,6 +50,8 @@ import {
 // here only reads/writes files and calls `bb workflows` — same as in the
 // original plugin.
 import { parse as parseWorkflow, readMetaDescription } from "./src/workflow/workflow-model";
+import { engineForStore } from "./src/workflow/store";
+import { OPENER_DESCRIPTORS } from "./src/open-action";
 
 // --- schemas shared between the server and the panel --------------------
 
@@ -62,8 +66,11 @@ const toolSearchTarget = z.enum(["on", "off", "auto"]);
 
 // Write outcome: ok — written; conflict — file changed under us; parse-error —
 // file can't be safely edited; not-found — area didn't resolve.
+// `denied` — the edit was refused by the server's own rules (a blank hook
+// command, a delete aimed outside the area's directories), as opposed to a
+// broken file (`parse-error`) or a missing target (`not-found`).
 const writeResult = z.object({
-  outcome: z.enum(["ok", "conflict", "parse-error", "not-found"]),
+  outcome: z.enum(["ok", "conflict", "parse-error", "not-found", "denied"]),
   message: z.string().nullable(),
 });
 
@@ -125,6 +132,9 @@ const configOutput = z.object({
       dimmed: z.boolean(),
       // Plugin directory — present if the row can be opened.
       installPath: z.string().nullable(),
+      // README path, if the plugin has one — opened the same way as a skill's
+      // SKILL.md, through the shared file-opener setting; null — nothing to open.
+      readmePath: z.string().nullable(),
       // Estimated "weight" in tokens (manifest+README); null — couldn't read it.
       tokens: z.number().nullable(),
     }),
@@ -188,6 +198,21 @@ const configOutput = z.object({
     mode: toolSearchModeOn,
     dimmed: z.boolean(),
   }),
+  settings: z.array(
+    z.object({
+      key: z.string(),
+      label: z.string(),
+      description: z.string(),
+      kind: z.enum(["boolean", "number", "string", "enum", "json"]),
+      enumOptions: z
+        .array(z.object({ value: z.string(), label: z.string() }))
+        .nullable(),
+      // Effective value, display-encoded by kind (see settings-catalog);
+      // null — unset at every level, Claude Code's own default applies.
+      value: z.string().nullable(),
+      dimmed: z.boolean(),
+    }),
+  ),
 });
 
 // --- workflow builder schemas (port of bb-plugin-workflow-composer) -----
@@ -243,6 +268,17 @@ export const rpcContract = defineRpcContract({
   },
   setToolSearch: {
     input: z.object({ areaId: z.string(), mode: toolSearchTarget }).strict(),
+    output: writeResult,
+  },
+  setSetting: {
+    // A generic "Settings" row: `value` is display text matching the key's
+    // kind (see settings-catalog) — `null` clears it back to inherit. The
+    // server validates the text against the key's kind before writing;
+    // malformed text comes back as `parse-error` with a message, the same
+    // outcome a corrupt settings file already uses.
+    input: z
+      .object({ areaId: z.string(), key: z.string(), value: z.string().nullable() })
+      .strict(),
     output: writeResult,
   },
   readConnector: {
@@ -383,26 +419,19 @@ export const rpcContract = defineRpcContract({
     output: z.object({ paths: z.array(z.string()) }),
   },
   resolveOpenTarget: {
-    // Host for a file within the area's bounds: the panel opens it with bb's
-    // native opener (experimental_openFilePreview) targeting
-    // { kind: "host", hostId, path }. For project files — the project
-    // source's host, for personal ones (~/.claude) — the server's
-    // primaryHostId. hostId=null — the path is out of bounds or the host is
-    // unknown.
+    // Host AND absolute path for a file within the area's bounds: the panel
+    // opens it with bb's native opener (experimental_openFilePreview)
+    // targeting { kind: "host", hostId, path }. For project files — the
+    // project source's host, for personal ones (~/.claude) — the server's
+    // primaryHostId. The path comes back expanded (`~` resolved, like
+    // readDoc's): the host has no shell to expand it, and following a Claude
+    // `@~/...` import is exactly how a tilde path reaches here. hostId=null —
+    // the path is out of bounds or the host is unknown; then there's no path
+    // to open either.
     input: z.object({ areaId: z.string(), path: z.string() }).strict(),
     output: z.object({
       hostId: z.string().nullable(),
-      error: z.string().nullable(),
-    }),
-  },
-  readPlugin: {
-    // Plugin reference: the manifest (definition) and README, if present.
-    input: z.object({ areaId: z.string(), key: z.string() }).strict(),
-    output: z.object({
-      manifestPath: z.string(),
-      manifest: z.string().nullable(),
-      readmePath: z.string().nullable(),
-      readme: z.string().nullable(),
+      path: z.string().nullable(),
       error: z.string().nullable(),
     }),
   },
@@ -438,6 +467,48 @@ export const rpcContract = defineRpcContract({
     // createSkill.
     input: z.object({ areaId: z.string(), name: z.string() }).strict(),
     output: createResult,
+  },
+  createHook: {
+    // Adds a hook to the file the panel edits. `matcher: null` — a group with
+    // no matcher, matching everything. No `exists` outcome: two identical
+    // commands under one event are legal in Claude Code.
+    input: z
+      .object({
+        areaId: z.string(),
+        event: z.string(),
+        matcher: z.string().nullable(),
+        command: z.string(),
+      })
+      .strict(),
+    output: writeResult,
+  },
+  removeHook: {
+    // Deletes the hook from whichever side holds it — the level's file, or
+    // the disabled store if the toggle had moved it there. Unlike
+    // setHookEnabled(false), which keeps it in order to restore it.
+    input: z
+      .object({
+        areaId: z.string(),
+        origin: z.enum(["user", "project", "local"]),
+        event: z.string(),
+        matcher: z.string().nullable(),
+        command: z.string(),
+      })
+      .strict(),
+    output: writeResult,
+  },
+  removeSkill: {
+    // Deletes the whole folder: the folder is the skill, and removing a lone
+    // SKILL.md would leave a husk.
+    input: z.object({ areaId: z.string(), name: z.string() }).strict(),
+    output: writeResult,
+  },
+  removeAgent: {
+    // Deletes one agent file by the same absolute path the panel opens,
+    // confined to the area's agents directories — plugin READMEs and memory
+    // files come through the same column and are not this button's business.
+    input: z.object({ areaId: z.string(), path: z.string() }).strict(),
+    output: writeResult,
   },
 
   // ---- workflow builder (port of bb-plugin-workflow-composer) ----
@@ -1015,21 +1086,56 @@ const TOOLSEARCH_SECTION: LeveledSection<sd.ToolSearchMode> = {
   resolve: resolveToolSearch,
 };
 
+// Generic "Settings" section: one LeveledSection instance handles every
+// GENERIC_SETTINGS key — `key` (threaded through by writeLeveled) picks
+// which one. Values are display text (settings-catalog's encode/decode);
+// "inherit" is both the sentinel for "absent" and the section's own
+// default, so — unlike plugins/skills, which collapse to inherit when a
+// write matches a known Claude Code default — an explicit value here is
+// never collapsed on the global level (there's no assumed default besides
+// unset); it still collapses on a narrower level when it matches what the
+// broader levels already resolve to (see writeLeveled's project branch).
+const GENERIC_SETTING_SECTION: LeveledSection<string> = {
+  default: "inherit",
+  get: (document, key) => {
+    const def = findSettingDef(key);
+    return def ? encodeSettingValue(def, sd.getRawSetting(document, key)) : "inherit";
+  },
+  set: (document, key, own) => {
+    const def = findSettingDef(key);
+    if (!def || own === "inherit") return sd.setRawSetting(document, key, undefined);
+    const decoded = decodeSettingText(def, own);
+    return decoded.ok ? sd.setRawSetting(document, key, decoded.value) : document;
+  },
+  resolve: resolveRaw,
+};
+
 export default function plugin(bb: BbPluginApi) {
   bb.log.info("loaded");
 
   // What to open a real file with (skill, agent, document, link, hook file)
-  // — one setting for the whole plugin, read live by the front end via
-  // useSettings.
-  //   md-opener — in the embedded column, with the Kasimov editor (MdDocView);
-  //   builtin    — in the embedded column, with the stock MarkdownEditor + field table;
-  //   host       — delegate to bb's host tab (previous behavior, def088e).
-  // Supersedes decision claude-config-delegate-file-open: a choice instead of
-  // a hardcode (memory/decisions/claude-config-opener-setting.md).
+  // — two independent settings for the whole plugin, declared once in
+  // src/open-action.ts (OPENER_DESCRIPTORS, read back via readOpenerSettings
+  // in app.tsx — one place owns both keys, so a rename can't drift the two
+  // apart), read live by the front end via useSettings.
+  //   fileOpenerLocation: inline — in the embedded column; host — delegate
+  //     to bb's host tab (previous behavior, def088e).
+  //   fileOpenerRenderer: md-opener — Kasimov editor (MdDocView); builtin —
+  //     the stock MarkdownEditor + field table. Only takes effect when
+  //     fileOpenerLocation is "inline" — bb's host tab always renders its
+  //     own generic preview, with no way for a plugin to request a specific
+  //     registered fileOpener there (checked against
+  //     ExperimentalFileOpenOptions in @get-bb/plugin-sdk/app). Both
+  //     settings stay visible regardless of each other's value: bb's
+  //     settings schema has no conditional visibility, and a dedicated
+  //     settingsSection to hide the moot field was ruled not worth it.
+  // Supersedes decision claude-config-opener-setting.md's single three-way
+  // enum (memory/decisions/claude-config-opener-two-axes.md).
   // Kasimov settings (font size/spacing/colors/fonts + flags) are declared as
   // a single table in src/kasimov-settings; here we just mix them into the
-  // plugin's settings alongside fileOpener. The front end reads them live via
-  // useSettings and applies them to the editor column (ColumnMdDocView).
+  // plugin's settings alongside the two opener settings. The front end reads
+  // them live via useSettings and applies them to the editor column
+  // (ColumnMdDocView).
   //
   // Default presets are "to match the native bb viewer", the same as MD
   // Opener: both render Kasimov through the same MdDocView/md-doc-view.css
@@ -1040,12 +1146,7 @@ export default function plugin(bb: BbPluginApi) {
   // packages/md-editor with the cc-doc-mde class; it has nothing to do with
   // Kasimov.)
   bb.settings.define({
-    fileOpener: {
-      type: "select",
-      label: "What to open files with",
-      options: ["md-opener", "builtin", "host"],
-      default: "md-opener",
-    },
+    ...OPENER_DESCRIPTORS,
     ...buildDescriptors(NATIVE_VIEWER_TOKEN_DEFAULTS),
   });
 
@@ -1205,7 +1306,7 @@ export default function plugin(bb: BbPluginApi) {
       let hasTree = false;
       try {
         const file = await bb.sdk.files.read({ hostId, path: abs });
-        const tree = parseWorkflow(file.content);
+        const tree = parseWorkflow(file.content, engineForStore(store));
         hasTree = tree !== null;
         // A composer-written file carries its description in the mirrored tree; a hand-written one has no
         // mirror, so fall back to its `export const meta` description rather than showing a blank row.
@@ -1423,21 +1524,25 @@ export default function plugin(bb: BbPluginApi) {
         ),
         Promise.all(
           view.plugins.map(async (plugin) => {
-            if (!plugin.installPath) return { ...plugin, tokens: null };
+            if (!plugin.installPath)
+              return { ...plugin, tokens: null, readmePath: null };
             const manifest = await readFile(
               join(plugin.installPath, ".claude-plugin", "plugin.json"),
               area.hostId,
               area.claudeHome,
             );
             let readme = "";
+            let readmePath: string | null = null;
             for (const name of ["README.md", "readme.md"]) {
+              const candidate = join(plugin.installPath, name);
               const { text } = await readFile(
-                join(plugin.installPath, name),
+                candidate,
                 area.hostId,
                 area.claudeHome,
               );
               if (text != null) {
                 readme = text;
+                readmePath = candidate;
                 break;
               }
             }
@@ -1445,6 +1550,7 @@ export default function plugin(bb: BbPluginApi) {
             return {
               ...plugin,
               tokens: combined.length ? estimateTokens(combined) : null,
+              readmePath,
             };
           }),
         ),
@@ -1480,6 +1586,27 @@ export default function plugin(bb: BbPluginApi) {
 
     setToolSearch({ areaId, mode }) {
       return writeLeveled(areaId, "", TOOLSEARCH_SECTION, mode);
+    },
+
+    setSetting({ areaId, key, value }) {
+      const def = findSettingDef(key);
+      if (!def) {
+        return Promise.resolve({
+          outcome: "parse-error" as const,
+          message: "Unknown setting.",
+        });
+      }
+      if (value === null) {
+        return writeLeveled(areaId, key, GENERIC_SETTING_SECTION, "inherit");
+      }
+      const decoded = decodeSettingText(def, value);
+      if (!decoded.ok) {
+        return Promise.resolve({
+          outcome: "parse-error" as const,
+          message: decoded.message,
+        });
+      }
+      return writeLeveled(areaId, key, GENERIC_SETTING_SECTION, value);
     },
 
     async readConnector({ areaId, name, origin }) {
@@ -1891,18 +2018,20 @@ export default function plugin(bb: BbPluginApi) {
 
     async resolveOpenTarget({ areaId, path }) {
       const area = await resolveArea(bb, areaId);
-      if (!area) return { hostId: null, error: "Area not found." };
+      if (!area) return { hostId: null, path: null, error: "Area not found." };
       const abs = expandTilde(path);
       const match = matchRoot(area, abs);
-      if (!match) return { hostId: null, error: "Path outside the available folders." };
+      if (!match) {
+        return { hostId: null, path: null, error: "Path outside the available folders." };
+      }
       // A project root carries its own host; the personal level (~/.claude)
       // lives on the server's local host — take its id from primaryHostId.
-      if (match.hostId) return { hostId: match.hostId, error: null };
+      if (match.hostId) return { hostId: match.hostId, path: abs, error: null };
       const { primaryHostId } = await bb.sdk.system.config();
       if (!primaryHostId) {
-        return { hostId: null, error: "Primary host not determined." };
+        return { hostId: null, path: null, error: "Primary host not determined." };
       }
-      return { hostId: primaryHostId, error: null };
+      return { hostId: primaryHostId, path: abs, error: null };
     },
 
     async listDocPaths({ areaId, path }) {
@@ -1937,48 +2066,6 @@ export default function plugin(bb: BbPluginApi) {
       } catch {
         return { paths: [] };
       }
-    },
-
-    async readPlugin({ areaId, key }) {
-      const empty = {
-        manifestPath: "",
-        manifest: null,
-        readmePath: null,
-        readme: null,
-      };
-      const area = await resolveArea(bb, areaId);
-      if (!area) return { ...empty, error: "Area not found." };
-
-      // installPath comes from installed_plugins.json (it's on the local host).
-      const installed = await readFile(area.installedPath, undefined);
-      const plugin = parseInstalledPlugins(installed.text).find(
-        (entry) => entry.key === key,
-      );
-      if (!plugin?.installPath) return { ...empty, error: "Plugin not found." };
-
-      const base = plugin.installPath;
-      const manifestPath = join(base, ".claude-plugin", "plugin.json");
-      const manifest = await readFile(manifestPath, undefined, area.claudeHome);
-
-      // README is optional: some plugins don't have one — then readme = null.
-      let readmePath: string | null = null;
-      let readme: string | null = null;
-      for (const name of ["README.md", "readme.md"]) {
-        const candidate = join(base, name);
-        const { text } = await readFile(candidate, undefined, area.claudeHome);
-        if (text !== null) {
-          readmePath = candidate;
-          readme = text;
-          break;
-        }
-      }
-      return {
-        manifestPath,
-        manifest: manifest.text,
-        readmePath,
-        readme,
-        error: manifest.text === null ? "Manifest not found." : null,
-      };
     },
 
     async writeDoc({ areaId, path, content, expectedSha256 }) {
@@ -2025,6 +2112,105 @@ export default function plugin(bb: BbPluginApi) {
       });
     },
 
+    async createHook({ areaId, event, matcher, command }): Promise<WriteOutcome> {
+      const trimmedEvent = event.trim();
+      const trimmedCommand = command.trim();
+      // Either one empty lands in settings.json as noise Claude Code walks
+      // over on every turn.
+      if (!trimmedEvent) return { outcome: "denied", message: "Pick an event." };
+      if (!trimmedCommand) {
+        return { outcome: "denied", message: "The command can't be empty." };
+      }
+      const area = await resolveArea(bb, areaId);
+      if (!area) return { outcome: "not-found", message: "Area not found." };
+
+      const trimmedMatcher = matcher?.trim() ?? "";
+      return applyEditToPath(area.editedPath, area.hostId, (doc) =>
+        sd.addHook(doc, {
+          event: trimmedEvent,
+          matcher: trimmedMatcher === "" ? null : trimmedMatcher,
+          command: trimmedCommand,
+        }),
+      );
+    },
+
+    async removeHook({ areaId, origin, event, matcher, command }): Promise<WriteOutcome> {
+      const area = await resolveArea(bb, areaId);
+      if (!area) return { outcome: "not-found", message: "Area not found." };
+      const path = area.levelPaths[{ user: 0, project: 1, local: 2 }[origin]];
+      if (!path) return { outcome: "not-found", message: "Level not found." };
+
+      const entry: sd.HookEntry = { event, matcher, command };
+      const parsed = await readParsedDoc(path, area.hostId);
+      if ("error" in parsed) return { outcome: "parse-error", message: parsed.error };
+
+      const { doc: next, removed } = sd.removeHook(parsed.doc, entry);
+      if (removed) {
+        const written = await bb.sdk.files.write({
+          path,
+          hostId: area.hostId,
+          content: sd.serialize(next),
+          expectedSha256: parsed.sha256 ?? null,
+          createParents: true,
+        });
+        if (written.outcome === "conflict") {
+          return {
+            outcome: "conflict",
+            message: "Another session changed the file. Refresh and try again.",
+          };
+        }
+        return { outcome: "ok", message: null };
+      }
+
+      // Not in the file — a disabled hook lives in kv instead, and deleting
+      // it there is what makes the row go away for good.
+      const disabled = await readDisabledHooks(path);
+      const remaining = disabled.filter((existing) => !sameHook(existing, entry));
+      if (remaining.length === disabled.length) {
+        return { outcome: "not-found", message: "Hook not found." };
+      }
+      if (remaining.length === 0) await bb.storage.kv.delete(disabledHooksKey(path));
+      else await bb.storage.kv.set(disabledHooksKey(path), remaining);
+      return { outcome: "ok", message: null };
+    },
+
+    async removeSkill({ areaId, name }): Promise<WriteOutcome> {
+      const area = await resolveArea(bb, areaId);
+      if (!area) return { outcome: "not-found", message: "Area not found." };
+
+      // findSkill only looks inside the area's own skills directories, so its
+      // answer is already confined — the folder it points at is the skill.
+      const found = await findSkill(area, name);
+      if (!found) return { outcome: "not-found", message: "Skill not found." };
+
+      await bb.sdk.files.remove({
+        path: found.base,
+        hostId: area.hostId,
+        recursive: true,
+      });
+      // A skillOverrides entry outlives the folder, and the view lists such an
+      // orphan as a row — after a delete it would point at nothing.
+      return applyEdit(areaId, (document) => sd.setSkill(document, name, "inherit"));
+    },
+
+    async removeAgent({ areaId, path }): Promise<WriteOutcome> {
+      const area = await resolveArea(bb, areaId);
+      if (!area) return { outcome: "not-found", message: "Area not found." };
+
+      const dirs = [area.projectAgentsDir, area.personalAgentsDir].filter(
+        (dir): dir is string => dir !== null,
+      );
+      if (!dirs.some((dir) => isWithin(dir, path))) {
+        return {
+          outcome: "denied",
+          message: "This file isn't in the agents directory.",
+        };
+      }
+
+      await bb.sdk.files.remove({ path, hostId: area.hostId });
+      return { outcome: "ok", message: null };
+    },
+
     // ---- workflow builder (port of bb-plugin-workflow-composer) ----
 
     async wfList({ projectId }) {
@@ -2035,7 +2221,7 @@ export default function plugin(bb: BbPluginApi) {
     async wfRead({ projectId, store, path }) {
       const { hostId } = await wfResolveFile(store, projectId, path);
       const file = await bb.sdk.files.read({ hostId, path });
-      return { source: file.content, tree: parseWorkflow(file.content) };
+      return { source: file.content, tree: parseWorkflow(file.content, engineForStore(store)) };
     },
 
     async wfSave({ projectId, store, name, source }) {
@@ -2403,5 +2589,6 @@ function emptyConfig(
     agents: [],
     hooks: [],
     toolSearch: { enabled: true as const, mode: "auto" as const, dimmed: false },
+    settings: [],
   };
 }

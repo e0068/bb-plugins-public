@@ -20,7 +20,7 @@ describe("atLinks: @path recognised as a link (opt-in)", () => {
     const root = document.createElement("div");
     renderBody(root, src, undefined as any, true);
 
-    const link = root.querySelector(".mde-atlink");
+    const link = root.querySelector(".mdb-atlink");
     expect(link).not.toBeNull();
     expect(link!.textContent).toBe(src);
     expect((link as HTMLElement).dataset.href).toBe("~/.claude/skills/git-hygiene/SKILL.md");
@@ -33,8 +33,8 @@ describe("atLinks: @path recognised as a link (opt-in)", () => {
     const root = document.createElement("div");
     renderBody(root, src, undefined as any, true);
 
-    expect(root.querySelectorAll(".mde-atlink").length).toBe(1);
-    expect(root.querySelectorAll(".mde-link:not(.mde-atlink)").length).toBe(1);
+    expect(root.querySelectorAll(".mdb-atlink").length).toBe(1);
+    expect(root.querySelectorAll(".mdb-link:not(.mdb-atlink)").length).toBe(1);
 
     expect(serializeBody(root)).toBe(src);
   });
@@ -44,7 +44,7 @@ describe("atLinks: @path recognised as a link (opt-in)", () => {
     const root = document.createElement("div");
     renderBody(root, src, undefined as any, true);
 
-    expect(root.querySelector(".mde-atlink")).toBeNull();
+    expect(root.querySelector(".mdb-atlink")).toBeNull();
     expect(serializeBody(root)).toBe(src);
   });
 
@@ -53,7 +53,7 @@ describe("atLinks: @path recognised as a link (opt-in)", () => {
     const root = document.createElement("div");
     renderBody(root, src, undefined as any, false);
 
-    expect(root.querySelector(".mde-atlink")).toBeNull();
+    expect(root.querySelector(".mdb-atlink")).toBeNull();
     expect(serializeBody(root)).toBe(src);
   });
 

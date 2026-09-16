@@ -1,22 +1,21 @@
 import type { BbPluginApi, PluginRpcHandlers } from "@get-bb/plugin-sdk";
 import { z } from "zod";
-import type {
-  Attachment,
-  Comment,
-  Preset,
-  Project,
-  Task,
-  TasksStore,
-  TaskThreadLiveStatus,
-} from "../db";
+import type { Attachment, Preset } from "../db/types.js";
+import type { BoardConfig as Project } from "../filesync/board-config.js";
+import type { FileTasksStore } from "../filesync/store.js";
 import type { TasksApiStore } from "../api";
 import {
   presetPermissionModeSchema,
+  type Comment,
   type CommentsChangedEvent,
+  type Task,
   type TasksChangedEvent,
   type ThreadsChangedEvent,
 } from "../shared/contract";
 import { delegationRpcContract } from "./contract";
+import { withCallerScope } from "../api/caller-scope.js";
+import type { CallerEnvironmentCache } from "../filesync/caller-cache.js";
+import { threadLiveState } from "../threads/live-state.js";
 
 const MAX_DELEGATED_THREAD_TITLE_LENGTH = 120;
 const SYSTEM_AUTHOR_NAME = "Tasks";
@@ -112,7 +111,7 @@ export function buildSeedPrompt(input: SeedPromptInput): string {
     markdownSection("Recent comments", formatComments(input.recentComments)),
     markdownSection(
       "Report-back contract",
-      `You are working on task ${input.task.key}. Use the bb tasks CLI: comment substantive updates (bb tasks comment ${input.task.key} --body ...), attach result artifacts, set status when done (bb tasks update ${input.task.key} --status in_review) or explain blockage in a comment. Your thread is already attached to the task.`,
+      `You are working on task ${input.task.key}. Use the bb tasks CLI: comment substantive updates (bb tasks comment ${input.task.key} --body ...), attach result artifacts, set status when done (bb tasks update ${input.task.key} --status in_review) or explain blockage in a comment. Your thread is already attached to the task; run bb tasks current to reread which task(s) it solves.`,
     ),
   ];
 
@@ -140,19 +139,19 @@ function delegatedThreadTitle(task: Task): string {
   );
 }
 
-function requireTask(store: TasksStore, taskId: string): Task {
-  const task = store.getTask(taskId);
+async function requireTask(store: FileTasksStore, taskId: string): Promise<Task> {
+  const task = await store.getTask(taskId);
   if (!task) throw new Error(`Task not found: ${taskId}`);
   return task;
 }
 
-function requireProject(store: TasksStore, projectId: string): Project {
+function requireProject(store: FileTasksStore, projectId: string): Project {
   const project = store.getProject(projectId);
   if (!project) throw new Error(`Project not found: ${projectId}`);
   return project;
 }
 
-function requirePreset(store: TasksStore, presetId: string): Preset {
+function requirePreset(store: FileTasksStore, presetId: string): Preset {
   const preset = store.getPreset(presetId);
   if (!preset) throw new Error(`Preset not found: ${presetId}`);
   return preset;
@@ -166,17 +165,17 @@ function requireLinkedBbProject(project: Project): string {
   );
 }
 
-function collectAttachments(
-  store: TasksStore,
+async function collectAttachments(
+  store: FileTasksStore,
   taskId: string,
   comments: readonly Comment[],
-): Attachment[] {
+): Promise<Attachment[]> {
   const attachments = new Map<string, Attachment>();
-  for (const attachment of store.listAttachmentsForTask(taskId)) {
+  for (const attachment of await store.listAttachmentsForTask(taskId)) {
     attachments.set(attachment.id, attachment);
   }
   for (const comment of comments) {
-    for (const attachment of store.listAttachmentsForComment(comment.id)) {
+    for (const attachment of await store.listAttachmentsForComment(comment.id)) {
       attachments.set(attachment.id, attachment);
     }
   }
@@ -255,16 +254,39 @@ function mapSpawnTargetError(error: unknown, preset: Preset): never {
   throw error;
 }
 
-export function createSystemComment(
-  store: TasksStore,
+/**
+ * backlog/todo → in_progress the moment a thread gets linked to a task —
+ * whether that link comes from a board dispatch or from `bb tasks attach`.
+ * No-op once the task is already in_progress or further along, so a second
+ * thread attaching to the same task never bounces its status backwards.
+ */
+export async function promoteToInProgressOnThreadLink(
+  store: TasksApiStore,
+  task: Task,
+  presetName: string,
+  threadId: string,
+  reasonBody: string,
+): Promise<void> {
+  if (task.status !== "backlog" && task.status !== "todo") return;
+  await store.tasks.updateTask(task.id, { status: "in_progress" });
+  await createSystemComment(store.tasks, {
+    taskId: task.id,
+    presetName,
+    threadId,
+    body: reasonBody,
+  });
+}
+
+export async function createSystemComment(
+  store: FileTasksStore,
   input: {
     taskId: string;
     presetName: string;
     threadId: string;
     body: string;
   },
-): void {
-  store.createComment({
+): Promise<void> {
+  await store.createComment({
     taskId: input.taskId,
     kind: "system",
     authorName: SYSTEM_AUTHOR_NAME,
@@ -294,34 +316,17 @@ export function publishCommentsChanged(bb: BbPluginApi, taskId: string): void {
   bb.realtime.publish("comments:changed", payload);
 }
 
-type SdkThread = Awaited<ReturnType<BbPluginApi["sdk"]["threads"]["get"]>>;
-
-function taskThreadLiveStatus(thread: SdkThread): TaskThreadLiveStatus {
-  if (thread.deletedAt != null) return "completed";
-  switch (thread.status) {
-    case "starting":
-      return "starting";
-    case "active":
-    case "stopping":
-      return "working";
-    case "idle":
-      return "idle";
-    case "error":
-      return "failed";
-  }
-}
-
 export function handlers(
   bb: BbPluginApi,
   store: TasksApiStore,
 ): PluginRpcHandlers<typeof delegationRpcContract> {
   return {
     async delegate(input) {
-      const task = requireTask(store.tasks, input.taskId);
+      const task = await requireTask(store.tasks, input.taskId);
       const project = requireProject(store.tasks, task.projectId);
       const linkedBbProjectId = requireLinkedBbProject(project);
       const preset = requirePreset(store.tasks, input.presetId);
-      const comments = store.tasks.listComments(task.id);
+      const comments = await store.tasks.listComments(task.id);
       const recentComments = comments.slice(-5);
       const title = delegatedThreadTitle(task);
       const execution = presetExecutionSchema.parse({
@@ -333,8 +338,8 @@ export function handlers(
       const prompt = buildSeedPrompt({
         task,
         project,
-        subtasks: store.tasks.listSubtasks(task.id),
-        attachments: collectAttachments(store.tasks, task.id, comments),
+        subtasks: await store.tasks.listSubtasks(task.id),
+        attachments: await collectAttachments(store.tasks, task.id, comments),
         recentComments,
         presetInstructions: preset.instructions,
         extraInstructions: input.extraInstructions,
@@ -354,26 +359,27 @@ export function handlers(
         })
         .catch((error: unknown) => mapSpawnTargetError(error, preset));
 
-      const taskThread = store.transaction(() => {
-        const attached = store.tasks.upsertTaskThread({
+      const taskThread = await store.transaction(async () => {
+        store.tasks.setThreadLiveState(thread.id, {
+          liveStatus: "starting",
+          archivedAt: null,
+        });
+        const attached = await store.tasks.upsertTaskThread({
           taskId: task.id,
           threadId: thread.id,
           presetName: preset.name,
           title,
-          liveStatus: "starting",
         });
 
-        if (task.status === "backlog" || task.status === "todo") {
-          store.tasks.updateTask(task.id, { status: "in_progress" });
-          createSystemComment(store.tasks, {
-            taskId: task.id,
-            presetName: preset.name,
-            threadId: thread.id,
-            body: `Status changed to In Progress · dispatched to ${preset.name}`,
-          });
-        }
+        await promoteToInProgressOnThreadLink(
+          store,
+          task,
+          preset.name,
+          thread.id,
+          `Status changed to In Progress · dispatched to ${preset.name}`,
+        );
 
-        createSystemComment(store.tasks, {
+        await createSystemComment(store.tasks, {
           taskId: task.id,
           presetName: preset.name,
           threadId: thread.id,
@@ -383,11 +389,10 @@ export function handlers(
       });
 
       try {
-        const currentThread = await bb.sdk.threads.get({ threadId: thread.id });
-        const currentLiveStatus = taskThreadLiveStatus(currentThread);
-        if (currentLiveStatus !== taskThread.liveStatus) {
-          store.tasks.updateTaskThreadStatus(taskThread.id, currentLiveStatus);
-        }
+        store.tasks.setThreadLiveState(
+          thread.id,
+          threadLiveState(await bb.sdk.threads.get({ threadId: thread.id })),
+        );
       } catch (error) {
         bb.log.warn(
           `Could not read delegated thread ${thread.id} after attach: ${
@@ -403,7 +408,7 @@ export function handlers(
     },
 
     async taskThreadsAttach(input) {
-      const task = requireTask(store.tasks, input.taskId);
+      const task = await requireTask(store.tasks, input.taskId);
       const thread = await bb.sdk.threads.get({ threadId: input.threadId });
       const title = (
         thread.title ??
@@ -411,12 +416,22 @@ export function handlers(
         delegatedThreadTitle(task)
       ).slice(0, MAX_DELEGATED_THREAD_TITLE_LENGTH);
 
-      store.tasks.upsertTaskThread({
-        taskId: task.id,
-        threadId: thread.id,
-        presetName: MANUAL_PRESET_NAME,
-        title,
-        liveStatus: taskThreadLiveStatus(thread),
+      await store.transaction(async () => {
+        store.tasks.setThreadLiveState(thread.id, threadLiveState(thread));
+        await store.tasks.upsertTaskThread({
+          taskId: task.id,
+          threadId: thread.id,
+          presetName: MANUAL_PRESET_NAME,
+          title,
+        });
+
+        await promoteToInProgressOnThreadLink(
+          store,
+          task,
+          MANUAL_PRESET_NAME,
+          thread.id,
+          "Status changed to In Progress · thread attached",
+        );
       });
 
       publishThreadsChanged(bb, task.id);
@@ -429,6 +444,13 @@ export function handlers(
 export function registerDelegation(
   bb: BbPluginApi,
   store: TasksApiStore,
+  callerEnvironments: CallerEnvironmentCache,
 ): void {
-  bb.rpc.register(delegationRpcContract, handlers(bb, store));
+  // Кнопка «Делегировать» стоит в панели треда, поэтому её вызов обязан
+  // знать рабочее дерево так же, как остальные задачные методы: иначе
+  // задача ветки для неё не существует, а общая правится в main.
+  bb.rpc.register(
+    delegationRpcContract,
+    withCallerScope(callerEnvironments, handlers(bb, store)),
+  );
 }

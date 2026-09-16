@@ -68,7 +68,7 @@ function emptyAgentTimeline(): AgentTimeline {
 }
 
 function emptyThreadsTimeline(): ThreadsTimeline {
-  return { schemaVersion: 1, unit: 60, threads: [], agentLabels: {} };
+  return { schemaVersion: 1, unit: 60, threads: [], agentLabels: {}, truncated: false };
 }
 
 const EMPTY_COSTS = { input: 0, cacheWrite: 0, cacheRead: 0, output: 0, thinking: 0 };
@@ -581,7 +581,7 @@ describe("server.ts threadsTimeline", () => {
 
     const result = await harness.callRpc("threadsTimeline", { limit: 20, unit: 60 });
 
-    expect(result).toEqual({ status: "ready", unit: 60, threads: [], agentLabels: {} });
+    expect(result).toEqual({ status: "ready", unit: 60, threads: [], agentLabels: {}, truncated: false });
   });
 
   it("rejects limit=0 (below the minimum)", async () => {
@@ -590,10 +590,19 @@ describe("server.ts threadsTimeline", () => {
     await expect(harness.callRpc("threadsTimeline", { limit: 0, unit: 60 })).rejects.toThrow();
   });
 
-  it("rejects limit=1000 (above the maximum)", async () => {
+  it("rejects limit=1001 (above the maximum)", async () => {
     const harness = await loadPluginWithDeps({});
 
-    await expect(harness.callRpc("threadsTimeline", { limit: 1000, unit: 60 })).rejects.toThrow();
+    await expect(harness.callRpc("threadsTimeline", { limit: 1001, unit: 60 })).rejects.toThrow();
+  });
+
+  it("accepts limit=1000 (the maximum, used by UsageProjectsSummary's lazy widen fetch)", async () => {
+    const threadsTimelineService = fakeThreadsTimelineService();
+    const harness = await loadPluginWithDeps({ threadsTimelineService });
+
+    const result = await harness.callRpc("threadsTimeline", { limit: 1000, unit: 60 });
+
+    expect(result).toMatchObject({ status: "ready" });
   });
 
   it("rejects a non-positive unit", async () => {
@@ -656,6 +665,7 @@ describe("server.ts threadsTimeline", () => {
         },
       ],
       agentLabels: { main: "Main agent" },
+      truncated: false,
     };
     const threadsTimelineService = fakeThreadsTimelineService({
       query: vi.fn(async (): Promise<ThreadsTimelineRunResult> => ({ ok: true, data: timeline })),
@@ -669,7 +679,20 @@ describe("server.ts threadsTimeline", () => {
       unit: timeline.unit,
       threads: timeline.threads,
       agentLabels: timeline.agentLabels,
+      truncated: timeline.truncated,
     });
+  });
+
+  it("passes truncated through to the RPC output as-is", async () => {
+    const timeline: ThreadsTimeline = { schemaVersion: 1, unit: 60, threads: [], agentLabels: {}, truncated: true };
+    const threadsTimelineService = fakeThreadsTimelineService({
+      query: vi.fn(async (): Promise<ThreadsTimelineRunResult> => ({ ok: true, data: timeline })),
+    });
+    const harness = await loadPluginWithDeps({ threadsTimelineService });
+
+    const result = await harness.callRpc("threadsTimeline", { limit: 20, unit: 60 });
+
+    expect(result).toMatchObject({ truncated: true });
   });
 
   it("returns error with the backend's message when the query fails", async () => {
@@ -720,6 +743,7 @@ describe("server.ts threadsTimeline", () => {
         },
       ],
       agentLabels: {},
+      truncated: false,
     };
     const threadsTimelineService = fakeThreadsTimelineService({
       query: vi.fn(async (): Promise<ThreadsTimelineRunResult> => ({ ok: true, data: timeline })),
@@ -742,7 +766,13 @@ describe("server.ts threadsTimeline", () => {
       totalTokens: 1500,
       bins: [],
     };
-    const timeline = { schemaVersion: 1, unit: 60, threads: [badThread], agentLabels: {} } as unknown as ThreadsTimeline;
+    const timeline = {
+      schemaVersion: 1,
+      unit: 60,
+      threads: [badThread],
+      agentLabels: {},
+      truncated: false,
+    } as unknown as ThreadsTimeline;
     const threadsTimelineService = fakeThreadsTimelineService({
       query: vi.fn(async (): Promise<ThreadsTimelineRunResult> => ({ ok: true, data: timeline })),
     });
@@ -759,6 +789,7 @@ describe("server.ts threadsTimeline", () => {
       unit: 60,
       threads: [],
       agentLabels: { main: 42 },
+      truncated: false,
     } as unknown as ThreadsTimeline;
     const threadsTimelineService = fakeThreadsTimelineService({
       query: vi.fn(async (): Promise<ThreadsTimelineRunResult> => ({ ok: true, data: timeline })),
@@ -774,6 +805,7 @@ describe("server.ts threadsTimeline", () => {
       unit: 60,
       threads: [],
       agentLabels: { main: "Main agent", "agent-abc": "PR review" },
+      truncated: false,
     };
     const threadsTimelineService = fakeThreadsTimelineService({
       query: vi.fn(async (): Promise<ThreadsTimelineRunResult> => ({ ok: true, data: timeline })),
@@ -912,7 +944,7 @@ describe("server.ts loadVizSettings / saveVizSettings", () => {
 });
 
 describe("server.ts gear settings (bb.settings.define)", () => {
-  it("declares exactly the 16 former gear-popover fields, each carrying DEFAULT_GEAR_SETTINGS's own default (single source of truth)", async () => {
+  it("declares exactly the 17 former gear-popover fields, each carrying DEFAULT_GEAR_SETTINGS's own default (single source of truth)", async () => {
     const { harness } = await loadPluginFull();
     const descriptors = harness.inspection.registrations.settingsDescriptors;
 
@@ -927,6 +959,7 @@ describe("server.ts gear settings (bb.settings.define)", () => {
         "contentMaxWidthPx",
         "heightMode",
         "collapseEmpty",
+        "collapseToZeroBelowMin",
         "colWidthPx",
         "heightScale",
         "colGap",

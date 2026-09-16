@@ -7,6 +7,7 @@ import {
   toggleMode,
   renameNode,
   setAgentField,
+  setGroupSettings,
   applyTemplate,
 } from "../src/workflow/outline-ops";
 import { blankAgent, blankContainer, blankTree, type Agent, type Tree } from "../src/workflow/workflow-model";
@@ -22,7 +23,6 @@ function nestedTree(): Tree {
   t.phases[0].title = "P1";
   t.phases[0].mode = "parallel";
   const container = blankContainer("parallel");
-  container.title = "Group";
   container.steps = [agent({ label: "a1" }), agent({ label: "a2" })];
   t.phases[0].steps = [agent({ label: "a0" }), container];
   return t;
@@ -102,6 +102,9 @@ describe("addPhase", () => {
     expect(added.mode).toBe("parallel");
     expect(added.title).toBe("Phase " + t.phases.length);
     expect(added.steps).toEqual([blankAgent()]);
+    expect(added.iterateOver).toBe("");
+    expect(added.maxParallel).toBeNull();
+    expect(added.repeat).toBeNull();
   });
 
   it("numbers subsequent phases by count", () => {
@@ -191,11 +194,12 @@ describe("renameNode", () => {
     expect(t.phases[0].title).toBe("Renamed");
   });
 
-  it("sets a container's title", () => {
+  it("is a no-op on a container (a group has no name anymore)", () => {
     const t = nestedTree();
+    const before = JSON.parse(JSON.stringify(t));
     renameNode(t, [0, 1], "New group name");
-    const container = t.phases[0].steps[1];
-    if (container.type === "container") expect(container.title).toBe("New group name");
+    expect(t).toEqual(before);
+    expect("title" in t.phases[0].steps[1]).toBe(false);
   });
 
   it("is a no-op on an agent or an invalid path", () => {
@@ -220,6 +224,38 @@ describe("setAgentField", () => {
     const before = JSON.parse(JSON.stringify(t));
     setAgentField(t, [0, 1], { label: "nope" }); // [0,1] is a container
     setAgentField(t, [9], { label: "nope" });
+    expect(t).toEqual(before);
+  });
+});
+
+describe("setGroupSettings", () => {
+  it("patches iterateOver/maxParallel/repeat on a phase", () => {
+    const t = nestedTree();
+    setGroupSettings(t, [0], { iterateOver: "units", maxParallel: 2, repeat: { maxLoops: 3, until: "result.ok" } });
+    expect(t.phases[0].iterateOver).toBe("units");
+    expect(t.phases[0].maxParallel).toBe(2);
+    expect(t.phases[0].repeat).toEqual({ maxLoops: 3, until: "result.ok" });
+  });
+
+  it("patches iterateInWaves alongside iterateOver on a phase", () => {
+    const t = nestedTree();
+    setGroupSettings(t, [0], { iterateOver: "waves", iterateInWaves: true });
+    expect(t.phases[0].iterateOver).toBe("waves");
+    expect(t.phases[0].iterateInWaves).toBe(true);
+  });
+
+  it("patches the same fields on a nested container", () => {
+    const t = nestedTree();
+    setGroupSettings(t, [0, 1], { maxParallel: 4 });
+    const container = t.phases[0].steps[1];
+    if (container.type === "container") expect(container.maxParallel).toBe(4);
+  });
+
+  it("is a no-op on an agent or an invalid path", () => {
+    const t = nestedTree();
+    const before = JSON.parse(JSON.stringify(t));
+    setGroupSettings(t, [0, 0], { maxParallel: 2 }); // [0,0] is an agent
+    setGroupSettings(t, [9], { maxParallel: 2 });
     expect(t).toEqual(before);
   });
 });

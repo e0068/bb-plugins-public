@@ -1,6 +1,6 @@
 {
   "name": "bb-plugin-zz-pull-request",
-  "version": "0.1.9",
+  "version": "0.1.29",
   "type": "module",
   "engines": {
     "bb": ">=0.40",
@@ -8,7 +8,7 @@
   },
   "bb": {
     "name": "Pull Request",
-    "description": "Thread header buttons: opens a Pull Request on GitHub via the API without a push once everything is committed, and wakes up a thread whose environment got stuck retiring.",
+    "description": "Thread-header buttons that open and merge a GitHub Pull Request via the API without a push, and wake a thread whose environment got stuck retiring.",
     "branding": {
       "icon": "GitPullRequest"
     },

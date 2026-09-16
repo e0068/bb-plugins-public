@@ -6,6 +6,7 @@ import {
   type PrPresence,
   type VisibilityDecision,
 } from "./visibility";
+import type { MergedContent } from "./merged-content";
 
 const presences: PrPresence[] = ["absent", "open", "settled", "unknown"];
 
@@ -69,31 +70,47 @@ describe("refineWithMergedContent", () => {
   const ready: VisibilityDecision = { visible: true, reason: "ready" };
 
   it("the branch's content is already in the base → hides, even with aheadCount > 0", () => {
-    expect(refineWithMergedContent(ready, true)).toEqual({
+    expect(refineWithMergedContent(ready, "merged")).toEqual({
       visible: false,
       reason: "already-merged",
     });
   });
 
   it("the content is not in the base yet → the decision stands", () => {
-    expect(refineWithMergedContent(ready, false)).toEqual(ready);
+    expect(refineWithMergedContent(ready, "not-merged")).toEqual(ready);
+  });
+
+  // git couldn't answer at all (no working copy, fetch failed, git itself
+  // broke) and there was no cached fact to fall back on — a refusal to
+  // answer is not "already merged", so the button stays up, just relabeled
+  // so the front end can flag the uncertainty instead of calling it "ready".
+  it("git gave no answer and there is no cached fact → stays visible, flagged", () => {
+    expect(refineWithMergedContent(ready, "unknown")).toEqual({
+      visible: true,
+      reason: "content-unknown",
+    });
   });
 
   it("an already-hidden decision keeps its own reason — the fact cannot un-hide it", () => {
     const dirty: VisibilityDecision = { visible: false, reason: "dirty" };
-    expect(refineWithMergedContent(dirty, false)).toEqual(dirty);
-    expect(refineWithMergedContent(dirty, true)).toEqual(dirty);
+    expect(refineWithMergedContent(dirty, "not-merged")).toEqual(dirty);
+    expect(refineWithMergedContent(dirty, "merged")).toEqual(dirty);
+    expect(refineWithMergedContent(dirty, "unknown")).toEqual(dirty);
   });
 
-  it("property: refining never turns a hidden decision into a visible one", () => {
+  it("property: only a confirmed `merged` verdict ever hides a visible decision", () => {
     fc.assert(
-      fc.property(fc.boolean(), fc.boolean(), (visible, alreadyMerged) => {
-        const decision: VisibilityDecision = visible
-          ? { visible: true, reason: "ready" }
-          : { visible: false, reason: "nothing-to-pr" };
-        const refined = refineWithMergedContent(decision, alreadyMerged);
-        expect(refined.visible).toBe(visible && !alreadyMerged);
-      }),
+      fc.property(
+        fc.boolean(),
+        fc.constantFrom<MergedContent>("merged", "not-merged", "unknown"),
+        (visible, verdict) => {
+          const decision: VisibilityDecision = visible
+            ? { visible: true, reason: "ready" }
+            : { visible: false, reason: "nothing-to-pr" };
+          const refined = refineWithMergedContent(decision, verdict);
+          expect(refined.visible).toBe(visible && verdict !== "merged");
+        },
+      ),
     );
   });
 });

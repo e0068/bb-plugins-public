@@ -1,6 +1,8 @@
-import { useEffect, useState } from "react";
-import type { Attachment } from "../../shared/contract.js";
-import { formatBytes } from "./meta.js";
+import { CALLER_THREAD_FIELD } from "../../shared/enums.js";
+import { useCallerThreadId } from "../../client/caller-thread.js";
+import { useCallback, useEffect, useState } from "react";
+import type { Attachment, AttachmentOwnerRef } from "../../shared/contract.js";
+import { formatFileSize } from "../../shared/format.js";
 import { ConfirmDialog } from "../../components/confirm-dialog.js";
 import { Icon } from "@/components/ui/icon";
 
@@ -39,18 +41,19 @@ function pluginToken(): Promise<string> {
   return tokenPromise;
 }
 
-/** Client-side twin of attachments/index.ts `AttachmentOwner`. */
-export type AttachmentOwnerRef = { taskId: string } | { commentId: string };
-
 export async function uploadAttachment(
   file: File,
   owner: AttachmentOwnerRef,
+  callerThreadId: string | null = null,
 ): Promise<{ attachmentId: string; url: string }> {
   const token = await pluginToken();
   const query = new URLSearchParams({
     ...owner,
     fileName: file.name || "attachment",
     mime: file.type || "application/octet-stream",
+    // Загрузка идёт своим HTTP-роутом, а не RPC, поэтому тред едет в
+    // запросе: без него файл задачи ветки сервер не найдёт.
+    ...(callerThreadId === null ? {} : { [CALLER_THREAD_FIELD]: callerThreadId }),
   });
   const response = await fetch(
     `/api/v1/plugins/tasks/http/attachments/upload?${query.toString()}`,
@@ -110,7 +113,7 @@ export function Lightbox({
       <div className="absolute bottom-3 left-1/2 flex -translate-x-1/2 items-center gap-2 rounded-md bg-popover/90 px-3 py-1.5 text-xs text-popover-foreground shadow-md">
         <span className="max-w-72 truncate">{attachment.fileName}</span>
         <span className="text-muted-foreground">
-          {formatBytes(attachment.sizeBytes)}
+          {formatFileSize(attachment.sizeBytes)}
         </span>
       </div>
       <button
@@ -221,7 +224,7 @@ export function AttachmentsGrid({
         <span className="min-w-0">
           <span className="block max-w-48 truncate">{attachment.fileName}</span>
           <span className="block text-2xs text-muted-foreground">
-            {formatBytes(attachment.sizeBytes)}
+            {formatFileSize(attachment.sizeBytes)}
           </span>
         </span>
       </a>
@@ -237,7 +240,7 @@ export function AttachmentsGrid({
       <button
         type="button"
         className="block"
-        title={`${attachment.fileName} · ${formatBytes(attachment.sizeBytes)}`}
+        title={`${attachment.fileName} · ${formatFileSize(attachment.sizeBytes)}`}
         onClick={() => setLightbox(attachment)}
       >
         <img
@@ -292,5 +295,19 @@ export function AttachmentsGrid({
         }}
       />
     </div>
+  );
+}
+
+/**
+ * Загрузка вложения идёт своим HTTP-роутом, а не RPC, поэтому тред не
+ * подмешивается клиентом сам: его замыкает этот хук. Внутри поверхности
+ * треда файл ложится в задачу его рабочего дерева, на доске — в задачу main.
+ */
+export function useUploadAttachment() {
+  const callerThreadId = useCallerThreadId();
+  return useCallback(
+    (file: File, owner: AttachmentOwnerRef) =>
+      uploadAttachment(file, owner, callerThreadId),
+    [callerThreadId],
   );
 }

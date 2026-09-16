@@ -4,7 +4,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { loadPluginApp, renderSlot } from "@get-bb/plugin-sdk/testing/app";
 import { COMPACT_VIEWPORT_QUERY } from "@/components/ui/hooks/use-compact-viewport";
 import type { Task } from "../../shared/contract.js";
-import { LIST_PREFERENCE_STORAGE_KEY } from "./list-preference.js";
 
 // Compact viewport so sort/filter menus render as clickable drawers in jsdom.
 window.matchMedia = (query: string) => ({
@@ -25,6 +24,10 @@ window.ResizeObserver ??= class {
 Element.prototype.scrollIntoView ??= () => {};
 
 const app = await loadPluginApp(() => import("../../app"));
+// Модуль настроек списка тянет за собой вид фильтров, а тот — рантайм SDK:
+// статический импорт поднял бы SDK раньше поддельного хоста, и регистрация
+// приложения упала бы на `definePluginApp is not a function`.
+const { LIST_PREFERENCE_STORAGE_KEY } = await import("./list-preference.js");
 
 beforeEach(() => {
   window.localStorage.clear();
@@ -82,6 +85,15 @@ function task(
     createdAt: "2026-07-15T00:00:00.000Z",
     updatedAt: "2026-07-15T00:00:00.000Z",
     labelIds: [],
+    type: null,
+    estimate: null,
+    plannedMinutes: null,
+    actualMinutes: null,
+    budget: null,
+    budgetLimit: null,
+    cost: null,
+    checks: [],
+    source: null,
   };
 }
 

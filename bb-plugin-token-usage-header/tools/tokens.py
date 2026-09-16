@@ -42,22 +42,34 @@ FIELDS = ("inp", "cw5", "cw1h", "cr", "out")
 class ModelCounts:
     """Counters for one model within a bucket: how many tokens it accounted for."""
     def __init__(self):
-        self.inp = self.cw5 = self.cw1h = self.cr = self.out = 0
+        self.inp = self.cw5 = self.cw1h = self.cr = self.out = self.think = 0
 
     @property
     def total(self):
         return self.inp + self.cw5 + self.cw1h + self.cr + self.out
 
-    def add(self, inp, cw5, cw1h, cr, out):
-        self.inp  += inp
-        self.cw5  += cw5
-        self.cw1h += cw1h
-        self.cr   += cr
-        self.out  += out
+    def add(self, inp, cw5, cw1h, cr, out, think=0):
+        self.inp   += inp
+        self.cw5   += cw5
+        self.cw1h  += cw1h
+        self.cr    += cr
+        self.out   += out
+        self.think += think
 
     def merge(self, other):
-        for f in FIELDS:
+        for f in FIELDS + ("think",):
             setattr(self, f, getattr(self, f) + getattr(other, f))
+
+    def cost_parts(self, t):
+        """This model's cost by token kind, at tier `t`'s prices (thinking is part of output)."""
+        pi, po = PRICES[t]
+        return {
+            "input":      self.inp * pi / 1e6,
+            "cacheWrite": (self.cw5 * CACHE_5M + self.cw1h * CACHE_1H) * pi / 1e6,
+            "cacheRead":  self.cr * pi * CACHE_READ / 1e6,
+            "output":     self.out * po / 1e6,
+            "thinking":   self.think * po / 1e6,
+        }
 
 
 def models_json(models):
@@ -92,16 +104,17 @@ class Bucket:
             cw5 += u.get("cache_creation_input_tokens", 0)
         cr    = u.get("cache_read_input_tokens", 0)
         out   = u.get("output_tokens", 0)
+        think = (u.get("output_tokens_details") or {}).get("thinking_tokens", 0)
 
         self.inp   += inp
         self.cw5   += cw5
         self.cw1h  += cw1h
         self.cr    += cr
         self.out   += out
-        self.think += (u.get("output_tokens_details") or {}).get("thinking_tokens", 0)
+        self.think += think
         self.msgs  += 1
 
-        self.models[tier(model)].add(inp, cw5, cw1h, cr, out)
+        self.models[tier(model)].add(inp, cw5, cw1h, cr, out, think)
 
         if ts:
             self.t0 = min(self.t0, ts) if self.t0 else ts
@@ -115,36 +128,25 @@ class Bucket:
     def cw(self):
         return self.cw5 + self.cw1h
 
-    def _tier_prices(self):
-        # take the tier from the model that produced the most output in this
-        # bucket — this is NOT the same ordering as in "models" (there the
-        # order is by total usage, which is dominated by cache reads). The
-        # model listed first in "models" and the model whose price we use
-        # for cost can differ.
-        t = max(self.models, key=lambda k: self.models[k].out) if self.models else "sonnet"
-        return PRICES[t]
-
     @property
     def cost(self):
-        pi, po = self._tier_prices()
-        return (self.inp*pi + self.cw5*pi*CACHE_5M + self.cw1h*pi*CACHE_1H
-                + self.cr*pi*CACHE_READ + self.out*po) / 1e6
+        c = self.cost_parts
+        return c["input"] + c["cacheWrite"] + c["cacheRead"] + c["output"]
 
     @property
     def cost_parts(self):
-        """Cost broken down by token kind, using the same tier pricing as cost.
+        """Cost broken down by token kind — each model's tokens at its own tier.
 
+        A bucket is rarely one model (the main agent switches between them),
+        and pricing all of it at one tier over- or undercharges the rest.
         input+cacheWrite+cacheRead+output sum up to cost; thinking is part
         of output (priced as output) and is not part of that sum — it's added on top.
         """
-        pi, po = self._tier_prices()
-        return {
-            "input":      self.inp * pi / 1e6,
-            "cacheWrite": (self.cw5 * CACHE_5M + self.cw1h * CACHE_1H) * pi / 1e6,
-            "cacheRead":  self.cr * pi * CACHE_READ / 1e6,
-            "output":     self.out * po / 1e6,
-            "thinking":   self.think * po / 1e6,
-        }
+        parts = {"input": 0.0, "cacheWrite": 0.0, "cacheRead": 0.0, "output": 0.0, "thinking": 0.0}
+        for t, counts in self.models.items():
+            for kind, value in counts.cost_parts(t).items():
+                parts[kind] += value
+        return parts
 
 
 def merge_buckets(buckets):
@@ -565,9 +567,8 @@ def main():
 
     grand = merge_buckets(buckets.values())
     total_cost = float(sum(b.cost for b in buckets.values()))
-    # Per-phase total cost is the sum over buckets (each with its own tier),
-    # not cost_parts of a merged bucket: only this way do input+cacheWrite+
-    # cacheRead+output match total_cost, which is also a sum over buckets.
+    # Per-phase total cost is the sum over buckets, the same way total_cost
+    # is — so input+cacheWrite+cacheRead+output match total_cost by construction.
     total_costs = {"input": 0.0, "cacheWrite": 0.0, "cacheRead": 0.0, "output": 0.0, "thinking": 0.0}
     for b in buckets.values():
         for phase, value in b.cost_parts.items():

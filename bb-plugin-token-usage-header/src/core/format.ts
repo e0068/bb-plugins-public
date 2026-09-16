@@ -48,6 +48,18 @@ export function formatPercent(part: number, whole: number): string {
   return formatPercentValue((part / whole) * 100);
 }
 
+/**
+ * Clock time (HH:MM, ru-RU locale) for an epoch ms — the same locale/format
+ * thread-chart.tsx's own `fmtClock` uses, but taking a number instead of an
+ * ISO string, for a caller (like the hourly burn chart) that only has a
+ * bucket boundary as ms. Unparseable input reads as "—", never throws.
+ */
+export function formatClockTime(ms: number): string {
+  const d = new Date(ms);
+  if (Number.isNaN(d.getTime())) return "—";
+  return d.toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" });
+}
+
 function truncateLabel(raw: string, maxLength: number): string {
   if (raw.length <= maxLength) return raw;
   if (maxLength <= 1) return raw.slice(0, Math.max(maxLength, 0));

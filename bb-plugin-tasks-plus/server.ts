@@ -6,6 +6,7 @@ import { registerAttachments } from "./attachments";
 import { registerTasksCli } from "./cli";
 import { registerDelegation } from "./delegate";
 import { registerFolders } from "./folders";
+import { createCallerEnvironmentCache } from "./filesync/caller-cache";
 import { registerLifecycle } from "./lifecycle";
 import { registerMentions } from "./mentions";
 
@@ -26,11 +27,14 @@ function statusPayload() {
 export default async function plugin(bb: BbPluginApi) {
   bb.log.info(`${TASKS_PLUGIN_NAME} ${TASKS_PLUGIN_VERSION} loaded`);
 
-  const store = createStore(bb);
-  registerTasksApi(bb, store);
-  registerAttachments(bb, store.tasks);
+  const store = await createStore(bb);
+  // Одна память об окружениях на процесс: второй экземпляр удвоил бы
+  // обращения к хосту и развёл бы сроки (api/caller-scope.ts).
+  const callerEnvironments = createCallerEnvironmentCache(bb);
+  registerTasksApi(bb, store, callerEnvironments);
+  registerAttachments(bb, store.tasks, { callerEnvironments });
   registerTasksCli(bb, store, statusPayload());
-  registerDelegation(bb, store);
+  registerDelegation(bb, store, callerEnvironments);
   registerMentions(bb, store);
   registerFolders(bb, store);
   await registerLifecycle(bb, store);

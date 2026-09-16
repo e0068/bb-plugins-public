@@ -28,8 +28,13 @@ export const SORT_LABELS: Record<ListSort, string> = {
   priority: "Priority",
   due: "Due date",
   estimate: "Estimate",
-  plan_tokens: "Tokens - Plan",
-  fact_tokens: "Tokens - Fact",
+  planned_minutes: "Planned Time",
+  actual_minutes: "Actual Time",
+  budget: "Budget",
+  budget_limit: "Limit",
+  cost: "Cost",
+  created: "Created",
+  updated: "Updated",
 };
 
 export interface TaskTreeEntry {
@@ -141,18 +146,6 @@ export function selectedLabelIds(
     .flatMap((option) => option.labelIds);
 }
 
-/** 12000 → "12k", 1500000 → "1.5M"; below 1000 renders the exact count. */
-export function formatTokenCount(value: number): string {
-  const abs = Math.abs(value);
-  if (abs >= 1_000_000) {
-    return `${(value / 1_000_000).toFixed(1).replace(/\.0$/, "")}M`;
-  }
-  if (abs >= 1_000) {
-    return `${(value / 1_000).toFixed(1).replace(/\.0$/, "")}k`;
-  }
-  return String(value);
-}
-
 /** "2026-07-18" → "Jul 18" (with the year appended when it isn't this year). */
 export function formatDueDate(dueDate: string, today = new Date()): string {
   const date = new Date(`${dueDate}T00:00:00`);
@@ -165,14 +158,30 @@ export function formatDueDate(dueDate: string, today = new Date()): string {
   });
 }
 
+function isSameCalendarDay(a: Date, b: Date): boolean {
+  return (
+    a.getFullYear() === b.getFullYear() &&
+    a.getMonth() === b.getMonth() &&
+    a.getDate() === b.getDate()
+  );
+}
+
 /**
- * ISO timestamp (createdAt/updatedAt) → "Jul 18", with the year appended when
- * it isn't this year. Parses the full datetime; `formatDueDate` handles the
- * date-only due field, which must not shift across timezones.
+ * ISO timestamp (createdAt/updatedAt) → "14:34" for today, otherwise
+ * "Jul 18" with the year appended when it isn't this year. Parses the full
+ * datetime; `formatDueDate` handles the date-only due field, which must not
+ * shift across timezones.
  */
 export function formatTimestamp(iso: string, today = new Date()): string {
   const date = new Date(iso);
   if (Number.isNaN(date.valueOf())) return "";
+  if (isSameCalendarDay(date, today)) {
+    return date.toLocaleTimeString("en-US", {
+      hour: "numeric",
+      minute: "2-digit",
+      hour12: false,
+    });
+  }
   return date.toLocaleDateString("en-US", {
     month: "short",
     day: "numeric",

@@ -40,9 +40,10 @@ export function parseHref(href: string): { path: string; anchor: string | null }
 // (and any empty) segment — "/a/b/" and "/a/b" give the same result.
 // Algorithm is 1:1 with Config.resolveAbs, just with the file's path as the base instead of the currently open document.
 export function resolveRelative(fromPath: string, ref: string): string {
-  const start = ref.startsWith("/")
-    ? []
-    : fromPath.slice(0, fromPath.lastIndexOf("/")).split("/");
+  // A file at the root has no slash at all: its directory is the root, not
+  // the file's name minus its last character (what slice(0, -1) would give).
+  const slash = fromPath.lastIndexOf("/");
+  const start = ref.startsWith("/") || slash === -1 ? [] : fromPath.slice(0, slash).split("/");
   const out: string[] = [];
   for (const seg of [...start, ...ref.split("/")]) {
     if (seg === "" || seg === ".") continue;

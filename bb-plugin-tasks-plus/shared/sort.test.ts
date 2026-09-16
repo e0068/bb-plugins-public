@@ -14,7 +14,16 @@ function task(
   overrides: Partial<
     Pick<
       Task,
-      "priority" | "dueDate" | "estimate" | "planTokens" | "factTokens"
+      | "priority"
+      | "dueDate"
+      | "estimate"
+      | "plannedMinutes"
+      | "actualMinutes"
+      | "budget"
+      | "budgetLimit"
+      | "cost"
+      | "createdAt"
+      | "updatedAt"
     >
   > = {},
 ): Task {
@@ -29,8 +38,11 @@ function task(
     priority: "none",
     type: null,
     estimate: null,
-    planTokens: null,
-    factTokens: null,
+    plannedMinutes: null,
+    actualMinutes: null,
+    budget: null,
+    budgetLimit: null,
+    cost: null,
     dueDate: null,
     parentTaskId: null,
     position: 0,
@@ -65,28 +77,34 @@ describe("sortTasks", () => {
     expect(keys(sorted)).toEqual(["T-3", "T-4", "T-1", "T-2"]);
   });
 
-  it("orders plan tokens highest first with missing values last", () => {
+  it("orders planned time highest first with missing values last", () => {
     const sorted = sortTasks(
       [
-        task("T-1", { planTokens: 100 }),
-        task("T-2", { planTokens: null }),
-        task("T-3", { planTokens: 500 }),
-        task("T-4", { planTokens: 250 }),
+        task("T-1", { plannedMinutes: 30 }),
+        task("T-2", { plannedMinutes: null }),
+        task("T-3", { plannedMinutes: 240 }),
+        task("T-4", { plannedMinutes: 90 }),
       ],
-      "plan_tokens",
+      "planned_minutes",
     );
     expect(keys(sorted)).toEqual(["T-3", "T-4", "T-1", "T-2"]);
   });
 
-  it("orders fact tokens independently of plan tokens", () => {
+  it.each([
+    ["actual_minutes", "actualMinutes"],
+    ["budget", "budget"],
+    ["budget_limit", "budgetLimit"],
+    ["cost", "cost"],
+  ] as const)("orders %s by its own field, highest first, missing last", (sort, field) => {
     const sorted = sortTasks(
       [
-        task("T-1", { factTokens: 10 }),
-        task("T-2", { factTokens: 90 }),
+        task("T-1", { [field]: 10.5 }),
+        task("T-2", { [field]: null }),
+        task("T-3", { [field]: 90 }),
       ],
-      "fact_tokens",
+      sort,
     );
-    expect(keys(sorted)).toEqual(["T-2", "T-1"]);
+    expect(keys(sorted)).toEqual(["T-3", "T-1", "T-2"]);
   });
 
   it("orders priority urgent → none with due date breaking ties", () => {
@@ -113,6 +131,46 @@ describe("sortTasks", () => {
       "due",
     );
     expect(keys(sorted)).toEqual(["T-4", "T-3", "T-2", "T-1"]);
+  });
+
+  it("orders created newest first", () => {
+    const sorted = sortTasks(
+      [
+        task("T-1", { createdAt: "2026-07-01T00:00:00.000Z" }),
+        task("T-2", { createdAt: "2026-07-03T00:00:00.000Z" }),
+        task("T-3", { createdAt: "2026-07-02T00:00:00.000Z" }),
+      ],
+      "created",
+    );
+    expect(keys(sorted)).toEqual(["T-2", "T-3", "T-1"]);
+  });
+
+  it("orders updated newest first, independently of created", () => {
+    const sorted = sortTasks(
+      [
+        task("T-1", {
+          createdAt: "2026-07-09T00:00:00.000Z",
+          updatedAt: "2026-07-10T00:00:00.000Z",
+        }),
+        task("T-2", {
+          createdAt: "2026-07-01T00:00:00.000Z",
+          updatedAt: "2026-07-20T09:30:00.000Z",
+        }),
+      ],
+      "updated",
+    );
+    expect(keys(sorted)).toEqual(["T-2", "T-1"]);
+  });
+
+  it("separates timestamps within the same day", () => {
+    const sorted = sortTasks(
+      [
+        task("T-1", { updatedAt: "2026-07-10T08:00:00.000Z" }),
+        task("T-2", { updatedAt: "2026-07-10T19:45:00.000Z" }),
+      ],
+      "updated",
+    );
+    expect(keys(sorted)).toEqual(["T-2", "T-1"]);
   });
 
   it("preserves the incoming order when all sort keys tie", () => {
