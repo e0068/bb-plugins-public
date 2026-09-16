@@ -164,6 +164,20 @@ describe("parseAgentTimeline", () => {
     expect(event.cost).toBe(0.03);
   });
 
+  it("parses a tool event carrying the price of a model call that answered with tools only", () => {
+    const timeline = {
+      ...validTimeline,
+      events: [{ ts: "2026-08-20T14:40:01.000Z", kind: "tool", name: "Read", target: "/repo/file.ts", tokens: 80_400, cost: 0.0542 }],
+    };
+    const result = parseAgentTimeline(JSON.stringify(timeline));
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const event = result.data.events[0];
+    if (event.kind !== "tool") throw new Error("expected a tool event");
+    expect(event.tokens).toBe(80_400);
+    expect(event.cost).toBe(0.0542);
+  });
+
   it("parses a user message without tokens/cost fields", () => {
     const timeline = {
       ...validTimeline,

@@ -39,6 +39,15 @@ const task = {
   createdAt: "2026-07-15T00:00:00.000Z",
   updatedAt: "2026-07-15T00:00:00.000Z",
   labelIds: [],
+  type: null,
+  estimate: null,
+  plannedMinutes: null,
+  actualMinutes: null,
+  budget: null,
+  budgetLimit: null,
+  cost: null,
+  checks: [],
+  source: null,
 };
 
 function directiveProps(attributes: Record<string, string>) {
@@ -95,10 +104,14 @@ describe("Task directive card", () => {
       name: "TSK-4 — Ship task embeds, in progress, high priority — open in side panel",
     });
     expect(main).toBeTruthy();
-    expect(slot.rpcCalls).toContainEqual({
-      method: "getTaskByKey",
-      input: { taskKey: "TSK-4" },
-    });
+    // Адрес задачи резолвит бэкенд; вход вызова несёт ещё и тред сообщения,
+    // поэтому сверяется адрес, а не объект целиком.
+    expect(slot.rpcCalls).toContainEqual(
+      expect.objectContaining({
+        method: "getTaskByKey",
+        input: expect.objectContaining({ taskKey: "TSK-4" }),
+      }),
+    );
     // Visible key/title/glyphs are duplicated by the accessible name and
     // must stay hidden from the accessibility tree.
     expect(slot.getByText("TSK-4").closest("[aria-hidden]")).toBeTruthy();
@@ -205,6 +218,26 @@ describe("Task directive card", () => {
       expect(slot.rpcCalls).toHaveLength(0);
       cleanup();
     }
+  });
+
+  it("accepts a slug key and resolves it through the backend", async () => {
+    const slot = renderSlot(
+      app.messageDirectives[0]!,
+      directiveProps({ key: "scene-as-data-not-code" }),
+      {
+        rpc: { getTaskByKey: () => ({ task }) },
+      },
+    );
+    await slot.findByText("Ship task embeds");
+    expect(slot.rpcCalls).toContainEqual(
+      expect.objectContaining({
+        method: "getTaskByKey",
+        input: expect.objectContaining({ taskKey: "scene-as-data-not-code" }),
+      }),
+    );
+    expect(
+      slot.queryByText("Invalid task link. Expected a task key like TSK-4."),
+    ).toBeNull();
   });
 
   it("offers a retry that refetches after a transport error", async () => {
@@ -323,4 +356,66 @@ describe("Task embed panel", () => {
     );
     slot.getByText("Open a task card from a message to view it here.");
   });
+
+  it("resolves a slug key instead of showing the hint", () => {
+    const slot = renderSlot(
+      app.threadPanelActions[0]!,
+      { threadId: "thr_1", params: { taskKey: "scene-as-data-not-code" } },
+      { rpc: taskDetailRpc(() => ({ task })) },
+    );
+    // The gate passed the slug through: the panel header addresses it and the
+    // "no task" hint is gone. (DetailView itself mounts below the header.)
+    slot.getByRole("button", {
+      name: "Open scene-as-data-not-code in Tasks",
+    });
+    expect(
+      slot.queryByText("Open a task card from a message to view it here."),
+    ).toBeNull();
+  });
 });
+
+/**
+ * Поверхности треда работают с его рабочим деревом: вызов RPC несёт тред, и
+ * сервер читает файлы задач из дерева этого треда (api/caller-scope.ts).
+ * Доска треда не называет и остаётся на main.
+ */
+describe("тред в вызовах поверхностей треда", () => {
+  it("панель задачи называет тред, из которого открыта", async () => {
+    const seen: unknown[] = [];
+    const slot = renderSlot(
+      app.threadPanelActions[0]!,
+      { threadId: "thr_worktree", params: { taskKey: "TSK-4" } },
+      {
+        rpc: {
+          ...taskDetailRpc(() => ({ task })),
+          getTaskByKey: (input: unknown) => {
+            seen.push(input);
+            return { task };
+          },
+        },
+      },
+    );
+    await slot.findByRole("button", { name: "Open TSK-4 in Tasks" });
+    await waitFor(() => expect(seen.length).toBeGreaterThan(0));
+    expect(seen[0]).toMatchObject({ callerThreadId: "thr_worktree" });
+  });
+
+  it("карточка ::task называет тред своего сообщения", async () => {
+    const seen: unknown[] = [];
+    const slot = renderSlot(
+      app.messageDirectives[0]!,
+      directiveProps({ key: "TSK-4" }),
+      {
+        rpc: {
+          getTaskByKey: (input: unknown) => {
+            seen.push(input);
+            return { task };
+          },
+        },
+      },
+    );
+    await slot.findByText("Ship task embeds");
+    expect(seen[0]).toMatchObject({ callerThreadId: "thr_1" });
+  });
+});
+

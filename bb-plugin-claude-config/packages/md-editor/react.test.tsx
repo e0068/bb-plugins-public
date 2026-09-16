@@ -13,41 +13,41 @@ import { MarkdownEditor } from "./react";
 afterEach(cleanup);
 
 describe("MarkdownEditor wrapper", () => {
-  it("renders its host element with the bb-mde-host class the theme CSS targets", () => {
+  it("renders its host element with the bb-mdb-host class the theme CSS targets", () => {
     const { container } = render(<MarkdownEditor value="# hi" />);
 
-    const host = container.querySelector(".bb-mde-host");
+    const host = container.querySelector(".bb-mdb-host");
     expect(host).not.toBeNull();
   });
 
-  it("mounts the vanilla editor's .mde-root as a CHILD of the host (not styled on the host itself)", () => {
+  it("mounts the vanilla editor's .mdb-root as a CHILD of the host (not styled on the host itself)", () => {
     const { container } = render(<MarkdownEditor value="# hi" />);
 
-    const host = container.querySelector(".bb-mde-host");
-    // .mde-root must be a descendant, never the host element itself — this
-    // is exactly the structural fact that makes `.bb-mde-host .mde-root`
-    // (as opposed to `.bb-mde-host { --mde-*: … }` alone) the correct fix.
-    expect(host?.classList.contains("mde-root")).toBe(false);
-    expect(host?.querySelector(".mde-root")).not.toBeNull();
+    const host = container.querySelector(".bb-mdb-host");
+    // .mdb-root must be a descendant, never the host element itself — this
+    // is exactly the structural fact that makes `.bb-mdb-host .mdb-root`
+    // (as opposed to `.bb-mdb-host { --mdb-*: … }` alone) the correct fix.
+    expect(host?.classList.contains("mdb-root")).toBe(false);
+    expect(host?.querySelector(".mdb-root")).not.toBeNull();
   });
 
-  it("sets contenteditable=false on .mde-root when editable=false", () => {
+  it("sets contenteditable=false on .mdb-root when editable=false", () => {
     const { container } = render(
       <MarkdownEditor value="# hi" editable={false} />,
     );
 
-    const root = container.querySelector(".mde-root");
+    const root = container.querySelector(".mdb-root");
     expect(root?.getAttribute("contenteditable")).toBe("false");
   });
 
   it("defaults to editable (contenteditable=true) when editable is not passed", () => {
     const { container } = render(<MarkdownEditor value="# hi" />);
 
-    const root = container.querySelector(".mde-root");
+    const root = container.querySelector(".mdb-root");
     expect(root?.getAttribute("contenteditable")).toBe("true");
   });
 
-  it("gives a link the mde-link-live class when linkResolver resolves it", () => {
+  it("gives a link the mdb-link-live class when linkResolver resolves it", () => {
     const { container } = render(
       <MarkdownEditor
         value="[t](x)"
@@ -57,16 +57,16 @@ describe("MarkdownEditor wrapper", () => {
       />,
     );
 
-    const link = container.querySelector(".mde-link");
-    expect(link?.classList.contains("mde-link-live")).toBe(true);
-    expect(link?.classList.contains("mde-link-plain")).toBe(false);
+    const link = container.querySelector(".mdb-link");
+    expect(link?.classList.contains("mdb-link-live")).toBe(true);
+    expect(link?.classList.contains("mdb-link-plain")).toBe(false);
   });
 
-  it("gives a link the mde-link-plain class when no linkResolver is provided", () => {
+  it("gives a link the mdb-link-plain class when no linkResolver is provided", () => {
     const { container } = render(<MarkdownEditor value="[t](x)" />);
 
-    const link = container.querySelector(".mde-link");
-    expect(link?.classList.contains("mde-link-plain")).toBe(true);
-    expect(link?.classList.contains("mde-link-live")).toBe(false);
+    const link = container.querySelector(".mdb-link");
+    expect(link?.classList.contains("mdb-link-plain")).toBe(true);
+    expect(link?.classList.contains("mdb-link-live")).toBe(false);
   });
 });

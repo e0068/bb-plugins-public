@@ -34,9 +34,17 @@ import type { rpcContract } from "../server";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { DEFAULT_VIZ_SETTINGS, binTotal, parseGearSettings, type ThreadEntry } from "../src/core";
+import {
+  DEFAULT_VIZ_SETTINGS,
+  THREADS_BUCKET_LABEL,
+  allProjectKeys,
+  binTotal,
+  parseGearSettings,
+  type ThreadEntry,
+} from "../src/core";
 import { DEFAULT_PALETTE, ThreadRow, computeDisplayBins } from "./thread-chart";
 import { THREADS_TIMELINE_PANEL_PATH, buildAgentDetailSubPath } from "./AgentTimelinePage";
+import { UsageProjectsSummary } from "./UsageProjectsSummary";
 
 const SORT_OPTIONS: ReadonlyArray<{ label: string; value: SortMode }> = [
   { label: "Latest", value: "recent" },
@@ -64,7 +72,12 @@ function projectKeyOf(thread: ThreadEntry): string | null {
 
 const INITIAL_LIMIT = 20;
 const LIMIT_STEP = 20;
-/** Mirrors the RPC input's `z.number().int().min(1).max(100)` in server.ts. */
+// The feed's own growth ceiling — a deliberate choice independent of the
+// RPC schema's own max (1000, raised for UsageProjectsSummary's wide slice;
+// see server.ts). Scroll-triggered incremental growth still stops at 100:
+// past that, a single vertical feed of cards is the wrong UI for "find one
+// session among a thousand" — the point where it stops helping is exactly
+// where the cost-summary block above takes over instead.
 const MAX_LIMIT = 100;
 const PAGE_SIZE = 12;
 const BASE_CHART_HEIGHT = 72;
@@ -149,19 +162,13 @@ export function ThreadsTimelinePage(_props: PluginNavPanelProps) {
   // "Threads" bucket for sessions with no BB thread match (bbProjectName
   // null) — the raw transcript-directory slug (`project`) is no longer
   // shown at all; it isn't a real BB project and confused the old picker.
-  const projectOptions = useMemo<ProjectOption[]>(() => {
-    const names = new Set<string>();
-    let hasThreadsBucket = false;
-    threads.forEach((t) => {
-      if (t.bbProjectName) names.add(t.bbProjectName);
-      else hasThreadsBucket = true;
-    });
-    const options: ProjectOption[] = Array.from(names)
-      .sort()
-      .map((name) => ({ key: name, label: name }));
-    if (hasThreadsBucket) options.push({ key: null, label: "Threads" });
-    return options;
-  }, [threads]);
+  // Shares its bucketing rule with the cost summary block above (same
+  // `allProjectKeys`, not a second hand-rolled pass over `threads`) so the
+  // two never disagree on what counts as "no BB project".
+  const projectOptions = useMemo<ProjectOption[]>(
+    () => allProjectKeys(threads).map((key) => ({ key, label: key ?? THREADS_BUCKET_LABEL })),
+    [threads],
+  );
 
   const filteredSorted = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
@@ -317,9 +324,10 @@ export function ThreadsTimelinePage(_props: PluginNavPanelProps) {
   // columns", so this uses computeDisplayBins too.
   const maxBinCount = useMemo(() => {
     let max = 1;
-    for (const t of visibleThreads) max = Math.max(max, computeDisplayBins(t.bins, gear.collapseEmpty).length);
+    for (const t of visibleThreads)
+      max = Math.max(max, computeDisplayBins(t.bins, gear.collapseEmpty, gear.unit, gear.collapseToZeroBelowMin).length);
     return max;
-  }, [visibleThreads, gear.collapseEmpty]);
+  }, [visibleThreads, gear.collapseEmpty, gear.unit, gear.collapseToZeroBelowMin]);
   const chartHeight = BASE_CHART_HEIGHT * gear.heightScale;
 
   function openAgentDetail(agentKey: string, session: string, fromIso: string, toIso: string) {
@@ -346,6 +354,8 @@ export function ThreadsTimelinePage(_props: PluginNavPanelProps) {
           <h1 className="text-lg font-semibold text-foreground">Usage Analytics</h1>
           <p className="text-sm text-muted-foreground">Token usage by agent, left to right chronologically within each thread</p>
         </header>
+
+        <UsageProjectsSummary onOpenSession={openSession} />
 
         {/* One control row: projects on the left, sort/search/agent colors on
             the right. Time unit, geometry, and the rest of the chart's visuals
@@ -465,6 +475,7 @@ export function ThreadsTimelinePage(_props: PluginNavPanelProps) {
                   fillWidth={gear.fillWidthFeed}
                   hugWidth={gear.hugWidth}
                   collapseEmpty={gear.collapseEmpty}
+                  collapseToZeroBelowMin={gear.collapseToZeroBelowMin}
                   colWidthPx={gear.colWidthPx}
                   colGap={gear.colGap}
                   segGap={gear.segGap}

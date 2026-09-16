@@ -74,7 +74,7 @@ export class MarkdownEditor {
     if (this._ppTimer) { clearTimeout(this._ppTimer); this._ppTimer = null; }
     this._closePathPicker();                                             // remove any open path dropdown from document.body
     closeMenus();                                                        // remove any open table dropdown from document.body
-    const dm = document.getElementById("mde-diffmodal"); if (dm) dm.remove();   // remove any open save-diff modal
+    const dm = document.getElementById("mdb-diffmodal"); if (dm) dm.remove();   // remove any open save-diff modal
     this.host.innerHTML = "";
     if (this._bar) { this._bar.remove(); this._bar = null; }
     if (this._tip) { this._tip.remove(); this._tip = null; }
@@ -100,7 +100,7 @@ export class MarkdownEditor {
   _render() {
     this._teardown();
     const parts = splitFront(this._value); this._fm = parts.fm;
-    const root = el("div", "mde-root" + (this.editable ? " mde-editable" : " mde-readonly"));
+    const root = el("div", "mdb-root" + (this.editable ? " mdb-editable" : " mdb-readonly"));
     root.setAttribute("contenteditable", this.editable ? "true" : "false");
     root.setAttribute("spellcheck", "false");
     renderBody(root, parts.body, this.linkResolver, this.atLinks);
@@ -119,7 +119,7 @@ export class MarkdownEditor {
     }
     this._on(root, "beforeinput", () => this.history.recordInput());
     this._on(root, "input", () => { this._emit(); if (this.pathProvider) this._schedulePathPicker(root); });   // one handler → one serialize per keystroke
-    this._on(root, "click", (e) => this._onClick(e));
+    this._on(root, "click", (e) => { if (!this._followLink(e)) this._onClick(e); });   // a live link is followed in edit mode too — otherwise a document opened for editing has dead links (leaving an unsaved draft is deliberate, same as the Kasimov engine)
     this._on(root, "keydown", (e) => this._onKeydown(e, root));
     this._on(document, "selectionchange", () => this._normalizeTableCaret());   // keep the caret out of the gaps between table cells
   }
@@ -128,9 +128,13 @@ export class MarkdownEditor {
     this._ppTimer = setTimeout(() => { this._ppTimer = null; this._updatePathPicker(root); }, 120);
   }
 
+  // true — the click was a jump (the caller must not also treat it as a caret/selection click).
   _followLink(e) {
-    const lk = e.target.closest && e.target.closest(".mde-link[data-href]");
-    if (lk && this.linkResolver) { const r = this.linkResolver(lk.dataset.href); if (r && r.onClick) { e.preventDefault(); r.onClick(); } }
+    const lk = e.target.closest && e.target.closest(".mdb-link[data-href]");
+    if (!lk || !this.linkResolver) return false;
+    const r = this.linkResolver(lk.dataset.href);
+    if (!r || !r.onClick) return false;
+    e.preventDefault(); r.onClick(); return true;
   }
 
   // 1st click on a run selects it whole (bold/code/link/heading text, or a table cell's label — which also
@@ -165,16 +169,16 @@ export class MarkdownEditor {
     // inside a table cell: Enter must not split the row; Tab / Shift-Tab hop cells
     const sel = window.getSelection(); if (!sel.rangeCount) return;
     let node = sel.getRangeAt(0).startContainer; node = node.nodeType === 1 ? node : node.parentElement;
-    const cell = node && node.closest ? node.closest(".mde-trow > .mde-cell") : null;
+    const cell = node && node.closest ? node.closest(".mdb-trow > .mdb-cell") : null;
     if (!cell) return;
     const put = (td, mode) => {   // mode "whole": select the cell's text; "start"/"end": drop a collapsed caret there
-      const cl = td.querySelector(".mde-clab") || td, r = document.createRange(); r.selectNodeContents(cl);
+      const cl = td.querySelector(".mdb-clab") || td, r = document.createRange(); r.selectNodeContents(cl);
       if (mode === "start") r.collapse(true); else if (mode === "end") r.collapse(false);
       sel.removeAllRanges(); sel.addRange(r);
     };
-    const tds = [].filter.call(cell.parentElement.children, (x) => x.classList && x.classList.contains("mde-cell"));
+    const tds = [].filter.call(cell.parentElement.children, (x) => x.classList && x.classList.contains("mdb-cell"));
     const colIdx = tds.indexOf(cell);
-    const edge = this._cellCaretEdge(cell.querySelector(".mde-clab") || cell);
+    const edge = this._cellCaretEdge(cell.querySelector(".mdb-clab") || cell);
     const wholeSel = !sel.isCollapsed && edge.atStart && edge.atEnd;   // the whole cell is currently selected
     if (e.key === "ArrowRight" || e.key === "ArrowLeft") {   // ←/→ move to the prev/next cell in the SAME row
       const target = tds[colIdx + (e.key === "ArrowRight" ? 1 : -1)];
@@ -184,7 +188,7 @@ export class MarkdownEditor {
       return;                                                                                                  // otherwise: not at an edge → let the browser move the caret within the cell
     }
     if (e.key === "ArrowDown" || e.key === "ArrowUp") {      // ↑/↓ move to the cell in the SAME column of the adjacent row
-      const rows = [].slice.call(root.querySelectorAll("table.mde-table tr.mde-trow"));
+      const rows = [].slice.call(root.querySelectorAll("table.mdb-table tr.mdb-trow"));
       const target = rows[rows.indexOf(cell.parentElement) + (e.key === "ArrowDown" ? 1 : -1)];
       const tc = target && target.children[colIdx];
       if (tc) { e.preventDefault(); put(tc, wholeSel ? "whole" : (e.key === "ArrowDown" ? "start" : "end")); }   // whole → select neighbour; else drop a caret
@@ -193,16 +197,16 @@ export class MarkdownEditor {
     if (e.key === "Enter") { e.preventDefault(); }
     else if (e.key === "Tab") {
       e.preventDefault();
-      const cells = [].slice.call(root.querySelectorAll(".mde-trow > .mde-cell"));
+      const cells = [].slice.call(root.querySelectorAll(".mdb-trow > .mdb-cell"));
       const t = cells[cells.indexOf(cell) + (e.shiftKey ? -1 : 1)];
-      if (t) { const clab = t.querySelector(".mde-clab") || t, r = document.createRange(); r.selectNodeContents(clab); sel.removeAllRanges(); sel.addRange(r); }
+      if (t) { const clab = t.querySelector(".mdb-clab") || t, r = document.createRange(); r.selectNodeContents(clab); sel.removeAllRanges(); sel.addRange(r); }
     }
     else if (e.key === "Backspace" || e.key === "Delete") {   // deleting the last character of a row removes the row (and the table if it was the last row)
-      const tr = cell.closest("tr.mde-trow");
-      const rowText = tr ? [].map.call(tr.querySelectorAll(":scope > td .mde-clab"), (c) => c.textContent).join("") : "x";
+      const tr = cell.closest("tr.mdb-trow");
+      const rowText = tr ? [].map.call(tr.querySelectorAll(":scope > td .mdb-clab"), (c) => c.textContent).join("") : "x";
       if (rowText.length <= 1) {
         e.preventDefault();
-        const rd = tr.querySelector(".mde-rowdelx");   // fire its click via mousedown+mouseup (no move → counts as a click, not a drag)
+        const rd = tr.querySelector(".mdb-rowdelx");   // fire its click via mousedown+mouseup (no move → counts as a click, not a drag)
         if (rd) { rd.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true, button: 0 })); document.dispatchEvent(new MouseEvent("mouseup", { bubbles: true })); }
       }
     }
@@ -215,15 +219,15 @@ export class MarkdownEditor {
     if (!sel.rangeCount || !sel.isCollapsed) return;                    // a real text selection is left alone
     const a = sel.anchorNode; if (!a || !this.root.contains(a)) return;
     const anchorEl = a.nodeType === 1 ? a : a.parentElement;
-    if (!anchorEl || anchorEl.closest(".mde-clab")) return;             // already inside cell content — fine
-    const table = anchorEl.closest("table.mde-table"); if (!table) return;   // not inside a table
-    const dataRows = [].slice.call(table.querySelectorAll("tr.mde-trow"));
-    let td = anchorEl.closest("td.mde-cell");
+    if (!anchorEl || anchorEl.closest(".mdb-clab")) return;             // already inside cell content — fine
+    const table = anchorEl.closest("table.mdb-table"); if (!table) return;   // not inside a table
+    const dataRows = [].slice.call(table.querySelectorAll("tr.mdb-trow"));
+    let td = anchorEl.closest("td.mdb-cell");
     if (!td) {
-      const ctlCell = anchorEl.closest("td.mde-tctlcell"), tr = anchorEl.closest("tr.mde-trow");
+      const ctlCell = anchorEl.closest("td.mdb-tctlcell"), tr = anchorEl.closest("tr.mdb-trow");
       if (ctlCell) td = dataRows[0] && dataRows[0].children[ctlCell.cellIndex];   // drifted into the (non-editable) control row → first data cell of that column
       else if (tr) {
-        const cells = tr.querySelectorAll(":scope > td.mde-cell");
+        const cells = tr.querySelectorAll(":scope > td.mdb-cell");
         const off = a === tr ? sel.anchorOffset : 0;
         td = cells[Math.max(0, Math.min(off - 1, cells.length - 1))];            // gap in a data row → the cell on its left
       } else {                                                                    // caret at tbody / table level (the empty band) → nearest data row, first cell
@@ -233,7 +237,7 @@ export class MarkdownEditor {
         td = row && row.children[0];
       }
     }
-    const clab = td && td.querySelector(".mde-clab"); if (!clab) return;
+    const clab = td && td.querySelector(".mdb-clab"); if (!clab) return;
     const r = document.createRange(); r.selectNodeContents(clab); r.collapse(false);   // caret at the end of that cell
     sel.removeAllRanges(); sel.addRange(r);
   }
@@ -254,18 +258,18 @@ export class MarkdownEditor {
     const host = this.root, r = sel.getRangeAt(0); if (!host.contains(r.endContainer)) return null;
     const node = r.endContainer.nodeType === 3 ? r.endContainer.parentElement : r.endContainer;
     let tok = node;
-    while (tok && tok !== host && !/^(B|STRONG|I|EM|S|DEL|STRIKE|CODE)$/.test(tok.tagName) && !(tok.classList && tok.classList.contains("mde-link"))) tok = tok.parentElement;
+    while (tok && tok !== host && !/^(B|STRONG|I|EM|S|DEL|STRIKE|CODE)$/.test(tok.tagName) && !(tok.classList && tok.classList.contains("mdb-link"))) tok = tok.parentElement;
     if (tok && tok !== host) return tok;
     let cell = node;
-    while (cell && cell !== host && !(cell.classList && cell.classList.contains("mde-cell"))) cell = cell.parentElement;
-    if (cell && cell !== host && cell.parentElement && cell.parentElement.classList.contains("mde-trow")) return cell.querySelector(".mde-clab") || cell;
-    let ln = node; const head = (x) => x && x.classList && (x.classList.contains("mde-h") || x.classList.contains("mde-h2") || x.classList.contains("mde-h3"));
+    while (cell && cell !== host && !(cell.classList && cell.classList.contains("mdb-cell"))) cell = cell.parentElement;
+    if (cell && cell !== host && cell.parentElement && cell.parentElement.classList.contains("mdb-trow")) return cell.querySelector(".mdb-clab") || cell;
+    let ln = node; const head = (x) => x && x.classList && (x.classList.contains("mdb-h") || x.classList.contains("mdb-h2") || x.classList.contains("mdb-h3"));
     while (ln && ln !== host && !head(ln)) ln = ln.parentElement;
     return ln && ln !== host ? ln : null;
   }
   _selectToken(tok) {
     const sel = window.getSelection(), rg = document.createRange();
-    const whole = tok.classList && (tok.classList.contains("mde-clab") || tok.classList.contains("mde-h") || tok.classList.contains("mde-h2") || tok.classList.contains("mde-h3"));
+    const whole = tok.classList && (tok.classList.contains("mdb-clab") || tok.classList.contains("mdb-h") || tok.classList.contains("mdb-h2") || tok.classList.contains("mdb-h3"));
     whole ? rg.selectNodeContents(tok) : rg.selectNode(tok);
     sel.removeAllRanges(); sel.addRange(rg);
   }
@@ -289,8 +293,8 @@ export class MarkdownEditor {
     return res;
   }
   _buildFormatBar() {
-    const bar = el("div", "mde-fmtbar");
-    const tip = el("div", "mde-tip"); document.body.appendChild(tip); this._tip = tip;   // custom tooltip → appears instantly (native title lags)
+    const bar = el("div", "mdb-fmtbar");
+    const tip = el("div", "mdb-tip"); document.body.appendChild(tip); this._tip = tip;   // custom tooltip → appears instantly (native title lags)
     const showTip = (btn, f) => {
       tip.textContent = f.name + (f.hot ? "  " + f.hot : "");
       tip.classList.add("on");
@@ -302,8 +306,8 @@ export class MarkdownEditor {
     };
     const hideTip = () => tip.classList.remove("on");
     FMT.forEach((f) => {
-      if (f.sep) { bar.appendChild(el("span", "mde-fmtsep")); return; }
-      const b = el("button", "mde-fmtbtn" + (f.cls ? " mde-" + f.cls : ""), f.l);
+      if (f.sep) { bar.appendChild(el("span", "mdb-fmtsep")); return; }
+      const b = el("button", "mdb-fmtbtn" + (f.cls ? " mdb-" + f.cls : ""), f.l);
       b.addEventListener("mousedown", (e) => { e.preventDefault(); this._applyFmt(f); });
       b.addEventListener("mouseenter", () => showTip(b, f));
       b.addEventListener("mouseleave", hideTip);
@@ -323,7 +327,7 @@ export class MarkdownEditor {
       top = Math.max(m, Math.min(top, window.innerHeight - bh - m));
       bar.style.left = left + "px"; bar.style.top = top + "px";
       const active = this._activeFormats(sel);
-      FMT.forEach((f) => { if (f._btn) f._btn.classList.toggle("mde-active", !!active[f.key]); });
+      FMT.forEach((f) => { if (f._btn) f._btn.classList.toggle("mdb-active", !!active[f.key]); });
     };
     this._onPersist(document, "selectionchange", reposition);   // persistent: the bar is built once and must keep working across re-renders
     this._onPersist(window, "scroll", reposition, true);
@@ -366,7 +370,7 @@ export class MarkdownEditor {
     const href = prompt("URL:", "https://"); if (!href) return;
     this.history.batch(() => {
       const r = sel.getRangeAt(0);
-      const span = el("span", "mde-link" + (this.linkResolver && this.linkResolver(href) ? " mde-link-live" : " mde-link-plain"));
+      const span = el("span", "mdb-link" + (this.linkResolver && this.linkResolver(href) ? " mdb-link-live" : " mdb-link-plain"));
       span.textContent = text; span.dataset.md = "[" + text + "](" + href + ")"; span.dataset.href = href;
       r.deleteContents(); r.insertNode(span);
       const rg = document.createRange(); rg.selectNode(span); sel.removeAllRanges(); sel.addRange(rg);
@@ -376,7 +380,7 @@ export class MarkdownEditor {
   // toggle a line-level format on every line block the selection touches — rebuilt from source so it never double-prefixes
   _applyLineFmt(f, sel) {
     const r = sel.getRangeAt(0);
-    let blocks = [].filter.call(this.root.children, (b) => b.nodeType === 1 && b.dataset.md == null && !b.classList.contains("mde-ctl") && !b.classList.contains("mde-table") && r.intersectsNode(b));
+    let blocks = [].filter.call(this.root.children, (b) => b.nodeType === 1 && b.dataset.md == null && !b.classList.contains("mdb-ctl") && !b.classList.contains("mdb-table") && r.intersectsNode(b));
     if (!blocks.length) { const one = this._lineOf(r.startContainer); if (one && one.dataset.md == null) blocks = [one]; }
     if (!blocks.length) return;
     const remove = !!this._activeFormats(sel)[f.key];
@@ -419,11 +423,11 @@ export class MarkdownEditor {
     const m = /([\/@])([^\s\/@]*)$/.exec(before); if (!m) return;
     const mode = m[1] === "@" ? "import" : "path", query = m[2];
     const items = (this.pathProvider(query, mode) || []).slice(0, 8); if (!items.length) return;
-    const dd = el("div", "mde-pathdd"); dd.setAttribute("contenteditable", "false");
+    const dd = el("div", "mdb-pathdd"); dd.setAttribute("contenteditable", "false");
     this._ppItems = items; this._ppNode = node; this._ppMatch = m; this._ppMode = mode; this._ppRows = []; this._ppIdx = 0;
     items.forEach((it, i) => {
-      const row = el("div", "mde-pathrow"); row.appendChild(el("span", "mde-pathname", it.label || it.path));
-      if (it.comment) row.appendChild(el("span", "mde-pathcmt", it.comment));
+      const row = el("div", "mdb-pathrow"); row.appendChild(el("span", "mdb-pathname", it.label || it.path));
+      if (it.comment) row.appendChild(el("span", "mdb-pathcmt", it.comment));
       row.addEventListener("mousedown", (e) => { e.preventDefault(); this._acceptPathPick(i); });
       dd.appendChild(row); this._ppRows.push(row);
     });
@@ -432,7 +436,7 @@ export class MarkdownEditor {
     document.body.appendChild(dd); this._pathdd = dd;
     this._highlightPathPick();
   }
-  _highlightPathPick() { if (this._ppRows) this._ppRows.forEach((r, i) => r.classList.toggle("mde-on", i === this._ppIdx)); }
+  _highlightPathPick() { if (this._ppRows) this._ppRows.forEach((r, i) => r.classList.toggle("mdb-on", i === this._ppIdx)); }
   // shared insert logic — used by both a mouse click on a row and Enter with a row keyboard-selected
   _acceptPathPick(i) {
     const it = this._ppItems && this._ppItems[i]; if (!it) return;
@@ -451,15 +455,15 @@ export class MarkdownEditor {
 
   // ---- save shell (diff confirm) ----
   _openSaveDiff() {
-    if (document.getElementById("mde-diffmodal")) return;
+    if (document.getElementById("mdb-diffmodal")) return;
     const cur = this.getValue();
-    const box = el("div", "mde-modalbox");
-    box.appendChild(el("div", "mde-modaltitle", "Save changes?"));
-    const pre = el("pre", "mde-modaldiff"); pre.textContent = cur; box.appendChild(pre);
-    const btns = el("div", "mde-modalbtns");
-    const mk = (label, cls, fn) => { const b = el("button", "mde-modalbtn" + (cls ? " " + cls : ""), label); b.addEventListener("click", fn); return b; };
-    const wrap = el("div", "mde-modal"); wrap.id = "mde-diffmodal";
-    btns.appendChild(mk("Save", "mde-primary", (e) => {
+    const box = el("div", "mdb-modalbox");
+    box.appendChild(el("div", "mdb-modaltitle", "Save changes?"));
+    const pre = el("pre", "mdb-modaldiff"); pre.textContent = cur; box.appendChild(pre);
+    const btns = el("div", "mdb-modalbtns");
+    const mk = (label, cls, fn) => { const b = el("button", "mdb-modalbtn" + (cls ? " " + cls : ""), label); b.addEventListener("click", fn); return b; };
+    const wrap = el("div", "mdb-modal"); wrap.id = "mdb-diffmodal";
+    btns.appendChild(mk("Save", "mdb-primary", (e) => {
       const b = e.currentTarget; b.textContent = "Saving…"; b.disabled = true;
       Promise.resolve(this.onSave(cur)).then(() => wrap.remove()).catch((err) => { b.disabled = false; b.textContent = "Error — retry"; if (window.console) console.error(err); });
     }));

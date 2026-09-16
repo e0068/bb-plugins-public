@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { Label } from "../../shared/contract.js";
-import { useProjects } from "../../shell/data.js";
-import { useTasksNavigation } from "../../shell/routes.js";
+import { useProjects } from "../../client/data.js";
+import { useTasksNavigation } from "../../client/routes.js";
 import { NewTaskDialog } from "../manage/index.js";
 import { DetailToasts, useDetailToasts } from "../detail/toast.js";
 import { Button } from "@/components/ui/button";
@@ -20,6 +20,7 @@ import {
   loadListPreference,
   storeListPreference,
   type ListPreference,
+  type ListScope,
 } from "./list-preference.js";
 import {
   listFieldScope,
@@ -45,8 +46,12 @@ import { TaskRow } from "./row.js";
 export interface ListViewProps {
   /** null renders the cross-project "All tasks" list. */
   projectId: string | null;
-  /** Only tasks with agents currently working (the Active route). */
-  activeOnly?: boolean;
+  /**
+   * The Active/Waiting routes: mutually exclusive cross-project surfaces, so
+   * a sum type rather than two independent booleans (D4 — see
+   * views/list/list-preference.ts's ListScope).
+   */
+  listScope?: ListScope;
 }
 
 function EmptyState({
@@ -97,12 +102,12 @@ function LoadingRows() {
   );
 }
 
-export function ListView({ projectId, activeOnly = false }: ListViewProps) {
+export function ListView({ projectId, listScope = null }: ListViewProps) {
   const navigation = useTasksNavigation();
   const projects = useProjects();
   const { toasts, push, dismiss } = useDetailToasts();
-  const preferenceScope = listPreferenceScope(projectId, activeOnly);
-  const fieldScope = listFieldScope(projectId, activeOnly);
+  const preferenceScope = listPreferenceScope(projectId, listScope);
+  const fieldScope = listFieldScope(projectId, listScope);
   const fieldConfig = useFieldDisplay(fieldScope);
   const [preference, setPreference] = useState<ListPreference>(() =>
     loadListPreference(preferenceScope),
@@ -152,7 +157,7 @@ export function ListView({ projectId, activeOnly = false }: ListViewProps) {
     return selectedLabelIds(labelOptions, filters.labelNames);
   }, [filters.labelNames, labelOptions, labels.data]);
 
-  const tasksQuery = useListTasks(projectId, activeOnly, {
+  const tasksQuery = useListTasks(projectId, listScope, {
     statuses: filters.statuses,
     priorities: filters.priorities,
     labelIds,
@@ -218,7 +223,7 @@ export function ListView({ projectId, activeOnly = false }: ListViewProps) {
   // context, so opening a task and returning (or refreshing) lands where the
   // user left off. Restore only once the real rows have loaded.
   const scrollRef = useRef<HTMLDivElement>(null);
-  const scopeKey = listScrollScopeKey({ projectId, activeOnly, filters, sort });
+  const scopeKey = listScrollScopeKey({ projectId, listScope, filters, sort });
   // `useListTasks` keeps the previous scope's rows on screen while it refetches
   // and only flips `isLoading` in a later effect, so on the first render after a
   // filter/sort change the rows are stale but `isLoading` is still false. Treat
@@ -264,12 +269,20 @@ export function ListView({ projectId, activeOnly = false }: ListViewProps) {
           }
         />
       );
-    } else if (activeOnly) {
+    } else if (listScope === "active") {
       body = (
         <EmptyState
           icon="Zap"
           title="No agents working right now"
           description="Dispatch a task to an agent preset and it will show up here while it runs."
+        />
+      );
+    } else if (listScope === "waiting") {
+      body = (
+        <EmptyState
+          icon="Clock"
+          title="Nothing is waiting on you"
+          description="Tasks show up here once their agent goes idle — dispatched, but not yet archived."
         />
       );
     } else {

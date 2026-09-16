@@ -38,14 +38,21 @@ export function isRowFieldEmpty(
       return task.priority === "none";
     case "active":
       return ctx.activeCount === 0;
+    case "assignee":
+    case "epic":
+      return !task[field];
     case "type":
       return task.type === null;
     case "estimate":
       return task.estimate === null;
     case "labels":
       return task.labelIds.length === 0;
-    case "tokens":
-      return task.planTokens === null && task.factTokens === null;
+    case "plannedMinutes":
+    case "actualMinutes":
+    case "budget":
+    case "budgetLimit":
+    case "cost":
+      return task[field] === null;
     case "dueDate":
       return task.dueDate === null;
     case "project":

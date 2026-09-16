@@ -2,31 +2,8 @@ import { describe, expect, it } from "vitest";
 import type { DisplayComment } from "../../shared/contract.js";
 import {
   commentByline,
-  formatFileSize,
-  formatRelativeTime,
   splitSystemBody,
 } from "./time.js";
-
-const NOW = Date.parse("2026-07-15T12:00:00.000Z");
-const at = (offsetMs: number) => new Date(NOW - offsetMs).toISOString();
-
-describe("formatRelativeTime", () => {
-  it("covers the just-now/minutes/hours/days ladder", () => {
-    expect(formatRelativeTime(at(20_000), NOW)).toBe("just now");
-    expect(formatRelativeTime(at(5 * 60_000), NOW)).toBe("5m ago");
-    expect(formatRelativeTime(at(59 * 60_000), NOW)).toBe("59m ago");
-    expect(formatRelativeTime(at(3 * 3_600_000), NOW)).toBe("3h ago");
-    expect(formatRelativeTime(at(50 * 3_600_000), NOW)).toBe("2d ago");
-  });
-
-  it("clamps future timestamps (clock skew) to just now", () => {
-    expect(formatRelativeTime(at(-90_000), NOW)).toBe("just now");
-  });
-
-  it("returns empty for an unparseable timestamp", () => {
-    expect(formatRelativeTime("not-a-date", NOW)).toBe("");
-  });
-});
 
 describe("splitSystemBody", () => {
   it("bolds the trailing author of a server system comment", () => {
@@ -94,13 +71,5 @@ describe("commentByline", () => {
         threadTitle: "Should be ignored",
       }),
     ).toEqual({ kind: "text", name: "You" });
-  });
-});
-
-describe("formatFileSize", () => {
-  it("scales bytes to KB and MB", () => {
-    expect(formatFileSize(512)).toBe("512 B");
-    expect(formatFileSize(204 * 1024)).toBe("204 KB");
-    expect(formatFileSize(2.5 * 1024 * 1024)).toBe("2.5 MB");
   });
 });

@@ -18,6 +18,7 @@
     "lib",
     "hooks",
     "db",
+    "filesync",
     "api",
     "cli",
     "shared",
@@ -28,6 +29,7 @@
     "mentions",
     "lifecycle",
     "steer",
-    "shell"
+    "shell",
+    "client"
   ]
 }

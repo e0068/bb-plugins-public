@@ -383,3 +383,110 @@ describe("kasimovCssRule", () => {
     }
   });
 });
+
+// BBPL-250: "open the document in edit mode" is a view behavior, not an engine
+// flag — but it travels the same way (one table → descriptor → parse →
+// toFlags → MdDocView props), so a consumer that already spreads toFlags picks
+// it up without a hand-written pass-through.
+describe("startInEdit", () => {
+  it("is off by default — opening a document stays a read", () => {
+    expect(DEFAULTS.startInEdit).toBe(false);
+    expect(parse({}).startInEdit).toBe(false);
+    expect(parse(undefined).startInEdit).toBe(false);
+  });
+
+  it("is declared as a boolean setting on the board", () => {
+    const d = descriptors.docStartInEdit as {
+      type: string;
+      default: boolean;
+      label: string;
+    };
+    expect(d.type).toBe("boolean");
+    expect(d.default).toBe(false);
+    expect(d.label.length).toBeGreaterThan(0);
+  });
+
+  it("a board value turns it on, junk falls back to the default", () => {
+    expect(parse({ docStartInEdit: true }).startInEdit).toBe(true);
+    expect(parse({ docStartInEdit: "yes" }).startInEdit).toBe(false);
+  });
+
+  it("reaches the consumer through toFlags", () => {
+    expect(toFlags({ ...DEFAULTS, startInEdit: true }).startInEdit).toBe(true);
+    expect(toFlags({ ...DEFAULTS, startInEdit: false }).startInEdit).toBe(false);
+  });
+});
+
+// Two sources of one default. The board registers presets with
+// buildDescriptors(tokenDefaults); the panel reads them with parse(). While
+// useSettings() has not answered — the first frame, and every remount that
+// gets no values — parse() used to fall back to its OWN defaults, which are
+// the engine's black (#0e0e0e), not the theme's var(--background). The
+// document therefore flipped colour depending on whether the settings had
+// arrived. parse() now takes the same tokenDefaults the plugin registered, and
+// the last test below is the guard: it fails the moment the two diverge again.
+describe("parse with tokenDefaults", () => {
+  it("an unset preset takes its value from tokenDefaults", () => {
+    const parsed = parse(undefined, NATIVE_VIEWER_TOKEN_DEFAULTS);
+    for (const t of TOKEN_SELECT_FIELDS) {
+      expect(parsed[t.field]).toBe(NATIVE_VIEWER_TOKEN_DEFAULTS[t.field]);
+    }
+  });
+
+  it("a stale preset value falls back to tokenDefaults, not to custom", () => {
+    for (const t of TOKEN_SELECT_FIELDS) {
+      const parsed = parse({ [t.key]: "var(--obsolete-token)" }, NATIVE_VIEWER_TOKEN_DEFAULTS);
+      expect(parsed[t.field]).toBe(NATIVE_VIEWER_TOKEN_DEFAULTS[t.field]);
+    }
+  });
+
+  it("a value set on the board wins over tokenDefaults", () => {
+    for (const t of TOKEN_SELECT_FIELDS) {
+      const picked = t.options[t.options.length - 1];
+      expect(parse({ [t.key]: picked }, NATIVE_VIEWER_TOKEN_DEFAULTS)[t.field]).toBe(picked);
+    }
+  });
+
+  it("custom chosen explicitly stays custom — tokenDefaults is a default, not an override", () => {
+    for (const t of TOKEN_SELECT_FIELDS) {
+      expect(parse({ [t.key]: CUSTOM_TOKEN }, NATIVE_VIEWER_TOKEN_DEFAULTS)[t.field]).toBe(CUSTOM_TOKEN);
+    }
+  });
+
+  it("without tokenDefaults the behaviour is unchanged", () => {
+    expect(parse(undefined, {})).toEqual(DEFAULTS);
+    expect(parse(undefined)).toEqual(DEFAULTS);
+  });
+
+  it("the fields that are not presets are untouched by tokenDefaults", () => {
+    const parsed = parse(undefined, NATIVE_VIEWER_TOKEN_DEFAULTS);
+    for (const f of FLAG_FIELDS) expect(parsed[f.field]).toBe(f.default);
+  });
+
+  it("agrees with the registered descriptors on every preset field", () => {
+    const registered = buildDescriptors(NATIVE_VIEWER_TOKEN_DEFAULTS);
+    const parsed = parse(undefined, NATIVE_VIEWER_TOKEN_DEFAULTS);
+    for (const t of TOKEN_SELECT_FIELDS) {
+      expect(parsed[t.field]).toBe(registered[t.key].default);
+    }
+  });
+});
+
+// tokenDefaults comes from a plugin, not from a user, but it is still an
+// arbitrary string reaching CSS: the branch that exists to narrow a stale
+// preset to its options list has to narrow this one too, or the narrowing is
+// only as good as the caller. The guard above cannot catch it — both sides of
+// that comparison are fed by the same constant.
+describe("tokenDefaults is narrowed like any other value", () => {
+  it("a value outside the field's options falls back to custom", () => {
+    for (const t of TOKEN_SELECT_FIELDS) {
+      expect(parse(undefined, { [t.field]: "url(evil)" })[t.field]).toBe(CUSTOM_TOKEN);
+    }
+  });
+
+  it("every value shipped in NATIVE_VIEWER_TOKEN_DEFAULTS is one of its field's options", () => {
+    for (const t of TOKEN_SELECT_FIELDS) {
+      expect(t.options as readonly string[]).toContain(NATIVE_VIEWER_TOKEN_DEFAULTS[t.field]);
+    }
+  });
+});

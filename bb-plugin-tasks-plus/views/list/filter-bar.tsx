@@ -23,7 +23,7 @@ import {
   ESTIMATE_LABELS,
   TYPE_ICONS,
   TYPE_LABELS,
-} from "../detail/meta.js";
+} from "../../components/task-meta.js";
 import {
   PRIORITY_LABELS,
   SORT_LABELS,

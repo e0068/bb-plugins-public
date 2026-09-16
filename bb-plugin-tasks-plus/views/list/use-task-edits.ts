@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Task } from "../../shared/contract.js";
-import { useTasksRpc } from "../../shell/data.js";
+import { useTasksRpc } from "../../client/data.js";
 import {
   beginEdit,
   pendingIds,

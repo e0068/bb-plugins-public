@@ -12,8 +12,8 @@
 // source — this plugin has no JSX at all, so utility classes used here
 // previously compiled to nothing and the whole widget rendered as an empty,
 // unstyled box (see lib/render/ring.ts for the same note).
-import { buildUsageWindowModel, statusLabel, type UsageResultWire, type UsageWindowModel } from "./usage-model";
-import { buildRingIcon, buildWindowRow } from "./render";
+import { buildUsageWindowModel, statusLabel, type ProviderStateWire, type StateWire } from "./usage-model";
+import { buildProviderLogo, buildRingIcon, buildWindowRow } from "./render";
 
 const POLL_MS = 60_000;
 // Re-attaching to the footer is checked far more often than data is fetched.
@@ -24,12 +24,8 @@ const POLL_MS = 60_000;
 const MOUNT_RETRY_MS = 2_000;
 const PANEL_WIDTH_PX = 288;
 const PANEL_GAP_PX = 8;
-
-interface StateWire {
-  toggles: { fiveHour: boolean; weekly: boolean; fable: boolean };
-  openOnHover: boolean;
-  usage: UsageResultWire;
-}
+const FOOTER_LOGO_PX = 14;
+const HEADER_LOGO_PX = 16;
 
 // Grace period before a hover-opened panel closes, so the pointer can cross the
 // gap between the footer button and the portalled panel without it snapping shut.
@@ -59,11 +55,12 @@ function isFableWindow(label: string): boolean {
   return /fable/i.test(label);
 }
 
-/** Which sidebar toggle governs one window, by its label. Anything that is
- * neither hour-cycle nor Fable-labelled is treated as the plain weekly window. */
-function toggleForWindow(label: string, toggles: StateWire["toggles"]): boolean {
-  if (isFiveHourWindow(label)) return toggles.fiveHour;
-  if (isFableWindow(label)) return toggles.fable;
+/** Which footer ring switch governs one window, by its label. Anything that is
+ * neither hour-cycle nor Fable-labelled is the plain weekly window; a window
+ * whose switch the provider does not have stays visible. */
+function toggleForWindow(label: string, toggles: ProviderStateWire["toggles"]): boolean {
+  if (isFiveHourWindow(label)) return toggles.session;
+  if (isFableWindow(label)) return toggles.fable ?? true;
   return toggles.weekly;
 }
 
@@ -90,7 +87,31 @@ function footerMenu(): HTMLElement | null {
   return footer?.querySelector<HTMLElement>('[data-sidebar="menu"]') ?? null;
 }
 
-function buildDetailsPanel(models: UsageWindowModel[]): HTMLDivElement {
+function buildPanelHeader(provider: ProviderStateWire): HTMLDivElement {
+  const header = div("usage-circles__panel-header", {
+    display: "flex",
+    alignItems: "center",
+    gap: "8px",
+    fontSize: "13px",
+    fontWeight: "600",
+    color: "var(--foreground)",
+  });
+  const title = document.createElement("span");
+  title.textContent = `${provider.title} Limits`;
+  header.append(buildProviderLogo(provider, HEADER_LOGO_PX), title);
+  return header;
+}
+
+function buildStatusLine(provider: ProviderStateWire): HTMLSpanElement | null {
+  if (provider.usage.status === "ok") return null;
+  const message = document.createElement("span");
+  message.className = "usage-circles__status";
+  Object.assign(message.style, { fontSize: "12px", color: "var(--muted-foreground)" });
+  message.textContent = statusLabel(provider.usage.status, provider.usage.status === "error" ? provider.usage.message : undefined);
+  return message;
+}
+
+function buildDetailsPanel(provider: ProviderStateWire, state: StateWire, nowMs: number): HTMLDivElement {
   // Fixed + portalled to document.body (not appended under the sidebar
   // footer's own DOM), with a z-index above every other overlay: the footer
   // menu is a narrow, potentially clipped/scrolling container, and a
@@ -110,8 +131,18 @@ function buildDetailsPanel(models: UsageWindowModel[]): HTMLDivElement {
     boxShadow: "0 10px 15px -3px rgb(0 0 0 / 0.3), 0 4px 6px -4px rgb(0 0 0 / 0.3)",
   });
   panel.setAttribute("role", "dialog");
-  panel.setAttribute("aria-label", "Claude Code limits");
-  models.forEach((model) => panel.append(buildWindowRow(model)));
+  panel.setAttribute("aria-label", `${provider.title} Limits`);
+  panel.dataset.providerId = provider.id;
+  panel.append(buildPanelHeader(provider));
+  const status = buildStatusLine(provider);
+  if (status !== null) panel.append(status);
+  if (provider.usage.status === "ok") {
+    // Every window, whatever its footer switch says: the switches trim the
+    // footer strip, not the details.
+    for (const window of provider.usage.windows) {
+      panel.append(buildWindowRow(buildUsageWindowModel(window, nowMs, state.coloring)));
+    }
+  }
   return panel;
 }
 
@@ -125,7 +156,8 @@ function positionPanel(panel: HTMLDivElement, anchor: HTMLElement): void {
 export function mountSidebarUsageCircles(pluginId: string, signal: AbortSignal): () => void {
   let root: HTMLLIElement | null = null;
   let panel: HTMLDivElement | null = null;
-  let expanded = false;
+  /** The provider whose panel is open, or null. */
+  let expanded: string | null = null;
   let state: StateWire | null = null;
   let hoverCloseTimer: number | null = null;
   const controller = new AbortController();
@@ -142,8 +174,8 @@ export function mountSidebarUsageCircles(pluginId: string, signal: AbortSignal):
     cancelHoverClose();
     hoverCloseTimer = window.setTimeout(() => {
       hoverCloseTimer = null;
-      if (expanded) {
-        expanded = false;
+      if (expanded !== null) {
+        expanded = null;
         render();
       }
     }, HOVER_CLOSE_MS);
@@ -154,37 +186,11 @@ export function mountSidebarUsageCircles(pluginId: string, signal: AbortSignal):
     panel = null;
   };
 
-  const render = (): void => {
-    if (root === null) return;
-    root.replaceChildren();
-    closePanel();
-
-    if (state === null) return;
-
-    if (state.usage.status !== "ok") {
-      const message = document.createElement("span");
-      message.className = "usage-circles__status";
-      Object.assign(message.style, { padding: "0 8px", fontSize: "12px", color: "var(--muted-foreground)" });
-      message.textContent = statusLabel(state.usage.status, state.usage.status === "error" ? state.usage.message : undefined);
-      root.append(message);
-      return;
-    }
-
-    const now = Date.now();
-    const allModels = state.usage.windows.map((window) => buildUsageWindowModel(window, now));
-    const visibleModels = allModels.filter((model) => toggleForWindow(model.label, state!.toggles));
-
-    const wrapper = div("usage-circles__strip", {
-      position: "relative",
-      display: "flex",
-      alignItems: "center",
-      gap: "4px",
-      padding: "4px 8px",
-    });
-
+  const buildGroup = (provider: ProviderStateWire, current: StateWire, nowMs: number): HTMLButtonElement => {
     const button = document.createElement("button");
     button.type = "button";
     button.className = "usage-circles__toggle";
+    button.dataset.providerId = provider.id;
     Object.assign(button.style, {
       display: "flex",
       alignItems: "center",
@@ -194,6 +200,8 @@ export function mountSidebarUsageCircles(pluginId: string, signal: AbortSignal):
       backgroundColor: "transparent",
       border: "none",
       cursor: "pointer",
+      // An untinted logo takes the text color; the tinted one keeps its own.
+      color: "var(--muted-foreground)",
     });
     button.addEventListener("mouseenter", () => {
       button.style.backgroundColor = "var(--accent)";
@@ -201,53 +209,77 @@ export function mountSidebarUsageCircles(pluginId: string, signal: AbortSignal):
     button.addEventListener("mouseleave", () => {
       button.style.backgroundColor = "transparent";
     });
-    button.setAttribute("aria-expanded", String(expanded));
+    button.setAttribute("aria-expanded", String(expanded === provider.id));
+    button.append(buildProviderLogo(provider, FOOTER_LOGO_PX));
+
+    // Signed out, expired or failing: the logo alone; the panel says why.
+    const models =
+      provider.usage.status === "ok"
+        ? provider.usage.windows
+            .map((window) => buildUsageWindowModel(window, nowMs, current.coloring))
+            .filter((model) => toggleForWindow(model.label, provider.toggles))
+        : [];
+    models.forEach((model) => button.append(buildRingIcon(model)));
     button.setAttribute(
       "aria-label",
-      visibleModels.length === 0 ? "Claude Code limits" : `Claude Code limits: ${visibleModels.map((m) => `${m.label} ${Math.round(m.usedPercent)}%`).join(", ")}`,
+      models.length === 0
+        ? `${provider.title} limits`
+        : `${provider.title} limits: ${models.map((m) => `${m.label} ${Math.round(m.usedPercent)}%`).join(", ")}`,
     );
-    visibleModels.forEach((model) => button.append(buildRingIcon(model)));
-    if (visibleModels.length === 0) {
-      const dot = document.createElement("span");
-      dot.className = "usage-circles__empty";
-      Object.assign(dot.style, {
-        width: "8px",
-        height: "8px",
-        borderRadius: "9999px",
-        backgroundColor: "var(--muted-foreground)",
-        opacity: "0.4",
-      });
-      button.append(dot);
-    }
+
     button.addEventListener("click", () => {
       cancelHoverClose();
-      expanded = !expanded;
+      expanded = expanded === provider.id ? null : provider.id;
       render();
     });
-    if (state.openOnHover) {
+    if (current.openOnHover) {
       button.addEventListener("mouseenter", () => {
         cancelHoverClose();
-        if (!expanded) {
-          expanded = true;
+        if (expanded !== provider.id) {
+          expanded = provider.id;
           render();
         }
       });
       button.addEventListener("mouseleave", scheduleHoverClose);
     }
-    wrapper.append(button);
+    return button;
+  };
+
+  const render = (): void => {
+    if (root === null) return;
+    root.replaceChildren();
+    closePanel();
+
+    if (state === null) return;
+    const current = state;
+    const now = Date.now();
+
+    const wrapper = div("usage-circles__strip", {
+      position: "relative",
+      display: "flex",
+      alignItems: "center",
+      gap: "8px",
+      padding: "4px 8px",
+    });
+    const shown = current.providers.filter((provider) => provider.usage.status !== "not_installed");
+    shown.forEach((provider) => wrapper.append(buildGroup(provider, current, now)));
     root.append(wrapper);
 
-    if (expanded) {
-      panel = buildDetailsPanel(allModels);
-      // Keep a hover-opened panel open while the pointer is over it, and let it
-      // close once the pointer leaves — mirroring the button's own handlers.
-      if (state.openOnHover) {
-        panel.addEventListener("mouseenter", cancelHoverClose);
-        panel.addEventListener("mouseleave", scheduleHoverClose);
-      }
-      document.body.append(panel);
-      positionPanel(panel, button);
+    const open = shown.find((provider) => provider.id === expanded);
+    if (open === undefined) {
+      expanded = null;
+      return;
     }
+    panel = buildDetailsPanel(open, current, now);
+    // Keep a hover-opened panel open while the pointer is over it, and let it
+    // close once the pointer leaves — mirroring the group's own handlers.
+    if (current.openOnHover) {
+      panel.addEventListener("mouseenter", cancelHoverClose);
+      panel.addEventListener("mouseleave", scheduleHoverClose);
+    }
+    document.body.append(panel);
+    const anchor = wrapper.querySelector<HTMLElement>(`.usage-circles__toggle[data-provider-id="${open.id}"]`);
+    if (anchor !== null) positionPanel(panel, anchor);
   };
 
   // Re-checked on its own MOUNT_RETRY_MS tick (see below), separate from the
@@ -270,16 +302,18 @@ export function mountSidebarUsageCircles(pluginId: string, signal: AbortSignal):
     root = document.createElement("li");
     root.className = "usage-circles";
     root.setAttribute("data-sidebar", "menu-item");
-    // The sidebar footer menu is a horizontal row of icon buttons (Settings,
-    // the mobile handoff, devtools), not a vertical stack. To sit in the
-    // bottom-right corner the rings must be the LAST item (append, not
-    // prepend) and hug the right edge: in a flex row an `auto` inline-start
-    // margin absorbs the free space to its left, shoving this <li> — and only
-    // it — against the far right, leaving BB's own controls on the left. The
-    // earlier `width:100%`+`flex-end` on the inner strip was a no-op here: the
-    // <li> is content-width in a row, so there was nothing to right-align
-    // against, and prepend left the rings on the far left.
-    root.style.marginLeft = "auto";
+    // Owner ask (2026-09-14): sit in the same row as BB's own footer buttons
+    // (Settings, Archive, Remote Access, Report Bug), not pinned apart from
+    // them. A prior version added an `auto` inline-start margin to shove this
+    // <li> against the far right, which read as a separate cluster rather
+    // than a member of the row — see
+    // memory/decisions/sidebar-footer-managed-slot-icon-only.md for why this
+    // stays a raw content-script append (no drag-reorder membership) instead
+    // of moving to the host's managed `experimental_sidebarFooter` slot: that
+    // slot only takes a named icon per row, and the live ring stays the
+    // point. Appending last with no forced margin keeps the rings adjacent to
+    // the last native button, in the row's own flow and gap, and they follow
+    // that end of the row as native buttons are added or hidden.
     menu.append(root);
     render();
   };
@@ -302,11 +336,11 @@ export function mountSidebarUsageCircles(pluginId: string, signal: AbortSignal):
   document.addEventListener(
     "pointerdown",
     (event) => {
-      if (!expanded || !(event.target instanceof Node)) return;
+      if (expanded === null || !(event.target instanceof Node)) return;
       const insideRoot = root !== null && root.contains(event.target);
       const insidePanel = panel !== null && panel.contains(event.target);
       if (!insideRoot && !insidePanel) {
-        expanded = false;
+        expanded = null;
         render();
       }
     },
@@ -315,8 +349,8 @@ export function mountSidebarUsageCircles(pluginId: string, signal: AbortSignal):
   document.addEventListener(
     "keydown",
     (event) => {
-      if (event.key === "Escape" && expanded) {
-        expanded = false;
+      if (event.key === "Escape" && expanded !== null) {
+        expanded = null;
         render();
       }
     },
@@ -325,7 +359,8 @@ export function mountSidebarUsageCircles(pluginId: string, signal: AbortSignal):
   window.addEventListener(
     "resize",
     () => {
-      const button = root === null ? null : root.querySelector<HTMLElement>(".usage-circles__toggle");
+      const button =
+        root === null || expanded === null ? null : root.querySelector<HTMLElement>(`.usage-circles__toggle[data-provider-id="${expanded}"]`);
       if (panel !== null && button !== null) positionPanel(panel, button);
     },
     { signal: controller.signal },

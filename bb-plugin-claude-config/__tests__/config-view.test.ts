@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { buildConfigView, type ViewInput } from "../src/config-view";
+import { GENERIC_SETTINGS } from "../src/settings-catalog";
 
 const installed = JSON.stringify({
   version: 2,
@@ -517,5 +518,88 @@ describe("buildConfigView — tool search", () => {
       mode: "on",
       dimmed: true,
     });
+  });
+});
+
+describe("buildConfigView — settings (generic)", () => {
+  it("one row per catalog entry, in catalog order", () => {
+    const view = buildConfigView(input({}));
+    expect(view.settings.map((row) => row.key)).toEqual(
+      GENERIC_SETTINGS.map((def) => def.key),
+    );
+  });
+
+  it("a key absent from every level reads as unset (null)", () => {
+    const view = buildConfigView(input({}));
+    const model = view.settings.find((row) => row.key === "model")!;
+    expect(model).toMatchObject({ value: null, dimmed: false });
+  });
+
+  it("reads the effective value across levels, display-encoded by kind", () => {
+    const view = buildConfigView(
+      input({ levelDocs: [{ model: "claude-sonnet-5", cleanupPeriodDays: 30 }] }),
+    );
+    expect(view.settings.find((row) => row.key === "model")).toMatchObject({
+      value: "claude-sonnet-5",
+    });
+    expect(
+      view.settings.find((row) => row.key === "cleanupPeriodDays"),
+    ).toMatchObject({ value: "30" });
+  });
+
+  it("a narrower level overrides a wider one", () => {
+    const view = buildConfigView(
+      input({
+        editedDoc: { model: "claude-haiku-4-5" },
+        levelDocs: [{ model: "claude-sonnet-5" }, {}, { model: "claude-haiku-4-5" }],
+      }),
+    );
+    expect(view.settings.find((row) => row.key === "model")).toMatchObject({
+      value: "claude-haiku-4-5",
+    });
+  });
+
+  it("a json-kind key is pretty-printed", () => {
+    const view = buildConfigView(
+      input({ levelDocs: [{ statusLine: { type: "command", command: "x" } }] }),
+    );
+    expect(view.settings.find((row) => row.key === "statusLine")).toMatchObject(
+      { value: '{\n  "type": "command",\n  "command": "x"\n}' },
+    );
+  });
+
+  it("project: a value matching the global one dims the row", () => {
+    const view = buildConfigView(
+      input({
+        areaKind: "project",
+        levelDocs: [{ model: "claude-sonnet-5" }, {}, { model: "claude-sonnet-5" }],
+      }),
+    );
+    expect(view.settings.find((row) => row.key === "model")).toMatchObject({
+      value: "claude-sonnet-5",
+      dimmed: true,
+    });
+  });
+
+  it("project: a value overriding the global one is not dimmed", () => {
+    const view = buildConfigView(
+      input({
+        areaKind: "project",
+        levelDocs: [{ model: "claude-sonnet-5" }, {}, { model: "claude-haiku-4-5" }],
+      }),
+    );
+    expect(view.settings.find((row) => row.key === "model")).toMatchObject({
+      value: "claude-haiku-4-5",
+      dimmed: false,
+    });
+  });
+
+  it("garbage of the wrong shape for the kind reads as unset, not a crash", () => {
+    const view = buildConfigView(
+      input({ levelDocs: [{ alwaysThinkingEnabled: "not-a-boolean" }] }),
+    );
+    expect(
+      view.settings.find((row) => row.key === "alwaysThinkingEnabled"),
+    ).toMatchObject({ value: null });
   });
 });

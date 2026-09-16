@@ -590,32 +590,9 @@ class BuildTimelineTest(unittest.TestCase):
 
 
 class MessageCostTest(unittest.TestCase):
-    """Cost on assistant messages (not on tool-use lines) — owner's
-    decision: pricing per model call. Pricing is reused from
-    tools/tokens.py (Bucket); here it's checked that the result matches."""
-
-    def test_assistant_message_carries_tokens_and_cost(self):
-        usage = {
-            "input_tokens": 100,
-            "cache_read_input_tokens": 40,
-            "output_tokens": 50,
-        }
-        record = assistant_text_with_usage("2026-01-01T00:00:00Z", "Done", usage, model="claude-sonnet-4")
-
-        events = agent_timeline.extract_events([record])
-
-        self.assertEqual(len(events), 1)
-        event = events[0]
-        self.assertEqual(event["role"], "assistant")
-
-        expected = tokens.Bucket()
-        expected.add(usage, "claude-sonnet-4", "2026-01-01T00:00:00Z")
-        self.assertEqual(event["tokens"], expected.total)
-        self.assertAlmostEqual(event["cost"], round(expected.cost, 2))
-        # manual cross-check against sonnet pricing, to not rely solely on Bucket
-        pi, po = tokens.PRICES["sonnet"]
-        manual_cost = round((100 * pi + 40 * pi * tokens.CACHE_READ + 50 * po) / 1e6, 2)
-        self.assertAlmostEqual(event["cost"], manual_cost)
+    """Cost on assistant messages — owner's decision: pricing per model call.
+    Pricing is reused from tools/tokens.py (Bucket); here it's checked that
+    the result matches. How one call is priced exactly once — CallPricingTest."""
 
     def test_user_message_has_no_price(self):
         record = user_message("2026-01-01T00:00:00Z", "Do the thing")
@@ -657,6 +634,251 @@ class MessageCostTest(unittest.TestCase):
         turn_bucket.add(usage_b, "claude-sonnet-4", records[1]["timestamp"])
 
         self.assertAlmostEqual(sum(e["cost"] for e in message_events), round(turn_bucket.cost, 2), places=2)
+
+
+def assistant_call_record(ts, content, usage, msg_id, request_id="req_1", model="claude-opus-4-5"):
+    """One transcript line of a model call: Claude Code writes a response as
+    several lines sharing (message.id, requestId), one content block each."""
+    return {
+        "type": "assistant",
+        "timestamp": ts,
+        "requestId": request_id,
+        "message": {"id": msg_id, "role": "assistant", "model": model, "content": content, "usage": usage},
+    }
+
+
+def priced(events):
+    return [e for e in events if "cost" in e]
+
+
+class CallPricingTest(unittest.TestCase):
+    """Every model call is priced exactly once, from its last transcript line
+    — the same dedup tools/tokens.py applies — so a turn's events add up to
+    the totals panel."""
+
+    def _cost(self, usage, model="claude-opus-4-5"):
+        b = tokens.Bucket()
+        b.add(usage, model, "2026-01-01T00:00:00Z")
+        return b
+
+    def test_call_split_into_lines_is_priced_once_on_its_text_with_the_last_usage(self):
+        partial = {"input_tokens": 10, "cache_read_input_tokens": 5000, "output_tokens": 3}
+        final = {"input_tokens": 10, "cache_read_input_tokens": 5000, "output_tokens": 900}
+        records = [
+            assistant_call_record("2026-01-01T00:00:00Z", [{"type": "thinking", "thinking": "hm"}], partial, "msg_1"),
+            assistant_call_record("2026-01-01T00:00:01Z", [{"type": "text", "text": "Reading"}], partial, "msg_1"),
+            assistant_call_record(
+                "2026-01-01T00:00:02Z",
+                [{"type": "tool_use", "id": "t1", "name": "Read", "input": {"file_path": "a"}}],
+                final,
+                "msg_1",
+            ),
+        ]
+
+        events = agent_timeline.extract_events(records)
+
+        self.assertEqual([(e["kind"], e.get("role")) for e in priced(events)], [("message", "assistant")])
+        self.assertEqual(priced(events)[0]["tokens"], self._cost(final).total)
+        self.assertAlmostEqual(priced(events)[0]["cost"], self._cost(final).cost, places=9)
+
+    def test_call_with_only_tool_use_is_priced_on_its_first_tool_event(self):
+        usage = {"input_tokens": 4, "cache_read_input_tokens": 80_000, "output_tokens": 200}
+        records = [
+            assistant_call_record(
+                "2026-01-01T00:00:00Z",
+                [{"type": "tool_use", "id": "t1", "name": "Read", "input": {"file_path": "a"}}],
+                usage,
+                "msg_1",
+            ),
+            assistant_call_record(
+                "2026-01-01T00:00:00Z",
+                [{"type": "tool_use", "id": "t2", "name": "Bash", "input": {"command": "ls"}}],
+                usage,
+                "msg_1",
+            ),
+        ]
+
+        events = agent_timeline.extract_events(records)
+
+        self.assertEqual([e["kind"] for e in events], ["tool", "tool"])
+        self.assertEqual(priced(events), [events[0]])
+        self.assertEqual(events[0]["name"], "Read")
+        self.assertAlmostEqual(events[0]["cost"], self._cost(usage).cost, places=9)
+
+    def test_call_with_two_text_lines_is_priced_once(self):
+        usage = {"input_tokens": 4, "cache_read_input_tokens": 80_000, "output_tokens": 200}
+        records = [
+            assistant_call_record("2026-01-01T00:00:00Z", [{"type": "text", "text": "one"}], usage, "msg_1"),
+            assistant_call_record("2026-01-01T00:00:01Z", [{"type": "text", "text": "two"}], usage, "msg_1"),
+        ]
+
+        events = agent_timeline.extract_events(records)
+
+        self.assertEqual(len(priced(events)), 1)
+        self.assertEqual(priced(events)[0]["text"], "one")
+
+    def test_cost_keeps_fractions_of_a_cent(self):
+        usage = {"input_tokens": 100, "cache_read_input_tokens": 40, "output_tokens": 50}
+        record = assistant_call_record("2026-01-01T00:00:00Z", [{"type": "text", "text": "ok"}], usage, "msg_1")
+
+        (event,) = agent_timeline.extract_events([record])
+
+        self.assertAlmostEqual(event["cost"], self._cost(usage).cost, places=9)
+        self.assertNotEqual(event["cost"], round(event["cost"], 2))
+
+    def test_event_costs_of_a_session_add_up_to_the_totals_counter(self):
+        read = [{"type": "tool_use", "id": "t1", "name": "Read", "input": {"file_path": "a"}}]
+        records = [
+            user_message("2026-01-01T00:00:00Z", "go"),
+            assistant_call_record("2026-01-01T00:00:01Z", [{"type": "thinking", "thinking": "x"}],
+                                  {"input_tokens": 3, "cache_creation_input_tokens": 9000, "output_tokens": 1}, "m1", "r1"),
+            assistant_call_record("2026-01-01T00:00:01Z", read,
+                                  {"input_tokens": 3, "cache_creation_input_tokens": 9000, "output_tokens": 70}, "m1", "r1"),
+            user_tool_result("2026-01-01T00:00:02Z", "t1"),
+            assistant_call_record("2026-01-01T00:00:03Z", [{"type": "text", "text": "half"}],
+                                  {"input_tokens": 1, "cache_read_input_tokens": 9000, "output_tokens": 5}, "m2", "r2"),
+            assistant_call_record("2026-01-01T00:00:03Z", [{"type": "text", "text": "done"}],
+                                  {"input_tokens": 1, "cache_read_input_tokens": 9000, "output_tokens": 400}, "m2", "r2"),
+        ]
+        with tempfile.TemporaryDirectory() as root:
+            path = os.path.join(root, "proj", "sess.jsonl")
+            write_jsonl(path, records)
+            totals = tokens.Bucket()
+            for rec in tokens.walk([path]):
+                totals.add(rec["usage"], rec["model"], rec["ts"])
+
+        events = agent_timeline.extract_events(records)
+
+        self.assertEqual(len(priced(events)), 2)
+        self.assertAlmostEqual(sum(e["cost"] for e in events if "cost" in e), totals.cost, places=9)
+        self.assertEqual(sum(e["tokens"] for e in events if "tokens" in e), totals.total)
+
+
+    def test_call_with_neither_text_nor_tools_is_still_priced_once(self):
+        # A response interrupted mid-thinking: no text to show, no tool to
+        # hang the price on — it still costs money and must reach the turn.
+        usage = {"input_tokens": 2, "cache_read_input_tokens": 120_000, "output_tokens": 800}
+        records = [
+            user_message("2026-01-01T00:00:00Z", "go"),
+            assistant_call_record("2026-01-01T00:00:01Z", [{"type": "thinking", "thinking": "a"}], usage, "m1"),
+            assistant_call_record("2026-01-01T00:00:02Z", [{"type": "thinking", "thinking": "b"}], usage, "m1"),
+        ]
+
+        events = agent_timeline.extract_events(records)
+
+        self.assertEqual(len(priced(events)), 1)
+        self.assertEqual((priced(events)[0]["kind"], priced(events)[0]["role"]), ("message", "assistant"))
+        self.assertAlmostEqual(priced(events)[0]["cost"], self._cost(usage).cost, places=9)
+
+    def test_event_costs_of_a_mixed_model_session_add_up_to_the_totals_counter(self):
+        records = [
+            user_message("2026-01-01T00:00:00Z", "go"),
+            assistant_call_record("2026-01-01T00:00:01Z", [{"type": "text", "text": "opus"}],
+                                  {"input_tokens": 3, "cache_read_input_tokens": 900_000, "output_tokens": 5}, "m1", "r1",
+                                  model="claude-opus-4-5"),
+            assistant_call_record("2026-01-01T00:00:02Z", [{"type": "text", "text": "sonnet"}],
+                                  {"input_tokens": 3, "cache_creation_input_tokens": 9000, "output_tokens": 4000}, "m2", "r2",
+                                  model="claude-sonnet-4-5"),
+        ]
+        with tempfile.TemporaryDirectory() as root:
+            path = os.path.join(root, "proj", "sess.jsonl")
+            write_jsonl(path, records)
+            totals = tokens.Bucket()
+            for rec in tokens.walk([path]):
+                totals.add(rec["usage"], rec["model"], rec["ts"])
+
+        events = agent_timeline.extract_events(records)
+
+        self.assertAlmostEqual(sum(e["cost"] for e in priced(events)), totals.cost, places=9)
+
+class WorkflowFlowTest(unittest.TestCase):
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.root = self._tmp.name
+        self.project = os.path.join(self.root, "proj")
+        self.session = "sess-wf"
+        self.run_id = "wf_run-1"
+        # Empty main transcript — a workflow run's members are launched by the
+        # engine, not by Task blocks in the main file.
+        write_jsonl(os.path.join(self.project, f"{self.session}.jsonl"), [])
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def _member_dir(self):
+        return os.path.join(self.project, self.session, "subagents", "workflows", self.run_id)
+
+    def _write_member(self, agent_key, records, meta=None):
+        write_jsonl(os.path.join(self._member_dir(), f"{agent_key}.jsonl"), records)
+        if meta is not None:
+            with open(os.path.join(self._member_dir(), f"{agent_key}.meta.json"), "w") as f:
+                json.dump(meta, f)
+
+    def _write_script(self, name):
+        scripts_dir = os.path.join(self.project, self.session, "workflows", "scripts")
+        os.makedirs(scripts_dir, exist_ok=True)
+        open(os.path.join(scripts_dir, f"{name}-{self.run_id}.js"), "w").close()
+
+    def test_flow_has_a_section_per_member_ordered_by_first_event_time(self):
+        # agent-b starts LATER than agent-a — despite sorting after nothing in
+        # particular by hash, the section order is launch (first-event) order.
+        self._write_member(
+            "agent-b",
+            [assistant_text("2026-01-01T00:00:05Z", "b done", is_sidechain=True)],
+            meta={"agentType": "reviewer", "spawnDepth": 1},
+        )
+        self._write_member(
+            "agent-a",
+            [assistant_text("2026-01-01T00:00:01Z", "a done", is_sidechain=True)],
+            meta={"agentType": "implementer", "spawnDepth": 1},
+        )
+
+        out = agent_timeline.build_timeline(self.root, self.session, f"workflow:{self.run_id}")
+
+        self.assertEqual([s["agent"]["key"] for s in out["flow"]], ["agent-a", "agent-b"])
+        self.assertEqual(out["flow"][0]["agent"]["agentType"], "implementer")
+        self.assertEqual(out["flow"][0]["events"][0]["text"], "a done")
+        self.assertEqual(out["flow"][1]["events"][0]["text"], "b done")
+
+    def test_top_level_events_concatenate_member_events_in_flow_order(self):
+        self._write_member("agent-a", [assistant_text("2026-01-01T00:00:01Z", "a1", is_sidechain=True)])
+        self._write_member("agent-b", [assistant_text("2026-01-01T00:00:05Z", "b1", is_sidechain=True)])
+
+        out = agent_timeline.build_timeline(self.root, self.session, f"workflow:{self.run_id}")
+
+        self.assertEqual([e["text"] for e in out["events"]], ["a1", "b1"])
+        self.assertEqual(out["agent"]["key"], f"workflow:{self.run_id}")
+
+    def test_agent_description_is_the_workflow_name_from_its_script(self):
+        self._write_member("agent-a", [assistant_text("2026-01-01T00:00:01Z", "a", is_sidechain=True)])
+        self._write_script("review-changes")
+
+        out = agent_timeline.build_timeline(self.root, self.session, f"workflow:{self.run_id}")
+
+        self.assertEqual(out["agent"]["description"], "review-changes")
+
+    def test_workflow_name_falls_back_to_run_id_without_a_script(self):
+        self._write_member("agent-a", [assistant_text("2026-01-01T00:00:01Z", "a", is_sidechain=True)])
+
+        out = agent_timeline.build_timeline(self.root, self.session, f"workflow:{self.run_id}")
+
+        self.assertEqual(out["agent"]["description"], self.run_id)
+
+    def test_workflow_with_no_members_gives_an_empty_flow(self):
+        out = agent_timeline.build_timeline(self.root, self.session, f"workflow:{self.run_id}")
+
+        self.assertEqual(out["flow"], [])
+        self.assertEqual(out["events"], [])
+
+    def test_regular_agent_has_no_flow_field(self):
+        write_jsonl(
+            os.path.join(self.project, f"{self.session}.jsonl"),
+            [user_message("2026-01-01T00:00:00Z", "hi")],
+        )
+
+        out = agent_timeline.build_timeline(self.root, self.session, "main")
+
+        self.assertNotIn("flow", out)
 
 
 if __name__ == "__main__":

@@ -12,9 +12,9 @@ bb plugin install <id>@e0068
 
 ## Плагины
 
-- **Claude Config** (`claude-config`) — Manage Claude Code config: plugins, connectors, skills, hooks and tool loading, per scope.
-- **Kasimov** (`md-opener`) — Opens .md files with the Kasimov editor: markdown links inside are clickable and navigate within the same tab, with breadcrumbs and a back button. Edits are saved with CAS protection.
-- **Tasks+** (`tasks-plus`) — Fork of Tasks with native workflow fields: Type, Check, Estimate, Plan/Fact tokens.
-- **Token Usage Analytics** (`token-usage-header`) — Claude Code token usage for the current session: a counter in the thread header.
-- **Usage Circles** (`usage-circles`) — Claude Code usage-limit rings in the sidebar footer.
-- **Pull Request** (`zz-pull-request`) — Thread header buttons: opens a Pull Request on GitHub via the API without a push once everything is committed, and wakes up a thread whose environment got stuck retiring.
+- **Claude Config** (`claude-config`) — Manage your Claude Code setup — plugins, connectors, skills, agents, hooks, workflows and settings — per scope.
+- **Kasimov** (`md-opener`) — Opens .md files in a Kasimov editor where markdown links are clickable and navigate within the same tab, with breadcrumbs, a back button, and CAS-safe saving.
+- **Tasks+** (`tasks-plus`) — A fork of the Tasks plugin that keeps tasks as Markdown files on disk and adds native workflow fields — Type, Estimate, Check, time and budget.
+- **Token Usage Analytics** (`token-usage-header`) — Tracks Claude Code token usage and cost — a live counter in the thread header plus session and project analytics.
+- **Usage Circles** (`usage-circles`) — Claude Code and Codex usage-limit rings in the footer of BB's left sidebar.
+- **Pull Request** (`zz-pull-request`) — Thread-header buttons that open and merge a GitHub Pull Request via the API without a push, and wake a thread whose environment got stuck retiring.

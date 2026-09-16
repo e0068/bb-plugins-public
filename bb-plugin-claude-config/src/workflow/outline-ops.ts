@@ -10,7 +10,7 @@
  * a stale path (e.g. the node was just removed by another action) must not crash the app.
  */
 
-import { type Agent, type Container, type Phase, type Step, type Tree, blankAgent, blankContainer } from "./workflow-model";
+import { type Agent, type Container, type Phase, type RepeatSpec, type Step, type Tree, blankAgent, blankContainer, blankPhase } from "./workflow-model";
 
 // path[0] = phase index; every further index is a step index, descending into nested containers.
 export type OutlinePath = number[];
@@ -49,7 +49,7 @@ export function addStep(tree: Tree, basePath: OutlinePath, kind: "agent" | "grou
 
 export function addPhase(tree: Tree): void {
   const title = "Phase " + (tree.phases.length + 1);
-  tree.phases.push({ title, mode: "parallel", repeatBudget: null, steps: [blankAgent()] });
+  tree.phases.push({ ...blankPhase(title), mode: "parallel" });
 }
 
 export function removeNode(tree: Tree, path: OutlinePath): void {
@@ -88,15 +88,37 @@ export function toggleMode(tree: Tree, path: OutlinePath): void {
   node.mode = nextMode(node.mode);
 }
 
+// Only a Phase carries a `title` now — a Container's name was dropped (it wasn't recoverable from the
+// compiled body). A Phase is the node with no `type` field at all.
+function isPhase(node: Phase | Step): node is Phase {
+  return !("type" in node);
+}
+
 export function renameNode(tree: Tree, path: OutlinePath, title: string): void {
   const node = nodeAt(tree, path);
-  if (!node || !isModal(node)) return;
+  if (!node || !isPhase(node)) return;
   node.title = title;
 }
 
 export function setAgentField(tree: Tree, path: OutlinePath, patch: Partial<Agent>): void {
   const node = nodeAt(tree, path);
   if (!node || !isAgent(node)) return;
+  Object.assign(node, patch);
+}
+
+// The three BP-134 node settings (see decision workflow-node-settings-model) — patched as a group of
+// fields on whatever Phase/Container the path names, the same shape setAgentField already uses for an
+// Agent's own `repeat`. Mode and title keep their dedicated ops (toggleMode/renameNode) unchanged.
+export interface GroupSettingsPatch {
+  iterateOver?: string;
+  iterateInWaves?: boolean;
+  maxParallel?: number | null;
+  repeat?: RepeatSpec | null;
+}
+
+export function setGroupSettings(tree: Tree, path: OutlinePath, patch: GroupSettingsPatch): void {
+  const node = nodeAt(tree, path);
+  if (!node || !isModal(node)) return;
   Object.assign(node, patch);
 }
 
@@ -112,5 +134,4 @@ export function applyTemplate(
   node.model = info.model;
   node.effort = info.effort;
   node.provider = info.provider;
-  // tools intentionally untouched: for a templated agent they are read-only, sourced from the .md agent.
 }

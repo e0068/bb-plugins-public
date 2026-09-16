@@ -14,6 +14,7 @@ import {
   PRESET_ENVIRONMENT_KINDS,
   PRESET_PERMISSION_MODES,
   ROW_FIELDS,
+  CALLER_THREAD_FIELD,
 } from "./enums.js";
 
 // Enums and derived types live in enums.js (no @get-bb/plugin-sdk import),
@@ -34,7 +35,18 @@ const PROJECT_PREFIX_PATTERN = /^[A-Z][A-Z0-9]{0,9}$/;
 const ISO_DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 
 const idSchema = z.string().regex(ULID_PATTERN, "must be a ULID");
+/** Task.id is `<boardId>:<slug>` (see filesync/assemble.ts) — a stable,
+ *  file-derived identity, not a ULID. */
+const taskIdSchema = z.string().min(1, "must not be blank");
+/** Label.id IS the label's name (see filesync/store.ts's boardLabels) —
+ *  there is no separate label entity to generate a ULID for. */
+const labelIdSchema = z.string().min(1, "must not be blank");
 const nonBlankStringSchema = z.string().trim().min(1, "must not be blank");
+/** An assignee or epic as a caller names it; the store checks it can be a
+ *  folder. Output carries the folder name verbatim — trimming it would offer
+ *  a value no folder has. */
+const placementNameSchema = nonBlankStringSchema;
+const placementFolderSchema = z.string();
 const presetReasoningLevelSchema = z.enum([
   "low",
   "medium",
@@ -68,8 +80,36 @@ const taskTypeSchema = z.enum(TASK_TYPES);
 const taskEstimateSchema = z.enum(TASK_ESTIMATES);
 const taskCheckSchema = z.enum(TASK_CHECKS);
 const rowFieldSchema = z.enum(ROW_FIELDS);
-const tokenCountSchema = z.number().int().min(0);
+const minutesSchema = z.number().int().min(0);
+const dollarsSchema = z.number().finite().min(0);
 const taskSortSchema = z.enum(TASK_SORTS);
+
+// Analytics aggregates (BBPL-258). Counts are partial records over each enum —
+// the handler fills every key, but a record keeps the contract terse against
+// six statuses / five priorities / seven type buckets. "untyped" is the bucket
+// for tasks whose type is null.
+const analyticsTypeKeySchema = z.union([taskTypeSchema, z.literal("untyped")]);
+const nonNegIntSchema = z.number().int().nonnegative();
+const tasksSnapshotSchema = z
+  .object({
+    total: nonNegIntSchema,
+    byStatus: z.record(taskStatusSchema, nonNegIntSchema),
+    byPriority: z.record(taskPrioritySchema, nonNegIntSchema),
+    byType: z.record(analyticsTypeKeySchema, nonNegIntSchema),
+    plannedMinutes: nonNegIntSchema,
+    actualMinutes: nonNegIntSchema,
+    budget: dollarsSchema,
+    budgetLimit: dollarsSchema,
+    cost: dollarsSchema,
+  })
+  .strict();
+const statusSeriesSchema = z
+  .object({
+    bins: z.array(z.number()),
+    total: z.array(nonNegIntSchema),
+    byToStatus: z.record(taskStatusSchema, z.array(nonNegIntSchema)),
+  })
+  .strict();
 const threadSearchStatusSchema = z.enum([
   "idle",
   "starting",
@@ -104,7 +144,7 @@ export const projectSchema = z
 /**
  * Where a task's backing markdown file was last read from. "worktree" means
  * its content there diverges from the linked project's main checkout (or
- * main has no copy at all) — see the server's filesync/merge.ts for the rule
+ * main has no copy at all) — see the server's filesync/fs-boards.ts for the rule
  * that decides this, and db/types.ts's FileTaskOrigin for the source type.
  */
 export const fileTaskOriginSchema = z.discriminatedUnion("kind", [
@@ -121,9 +161,13 @@ export const fileTaskOriginSchema = z.discriminatedUnion("kind", [
 
 export const taskSchema = z
   .object({
-    id: idSchema,
+    id: taskIdSchema,
     projectId: idSchema,
-    number: z.number().int().positive(),
+    /** The board's issued number, null for a file that never got a
+     *  `key` — see filesync/assemble.ts. */
+    number: z.number().int().positive().nullable(),
+    /** The board's short label, falling back to the file's slug when
+     *  the file carries no `key`. Always addressable. */
     key: z.string(),
     title: z.string(),
     description: z.string(),
@@ -131,15 +175,23 @@ export const taskSchema = z
     priority: taskPrioritySchema,
     type: taskTypeSchema.nullable(),
     estimate: taskEstimateSchema.nullable(),
-    planTokens: tokenCountSchema.nullable(),
-    factTokens: tokenCountSchema.nullable(),
+    plannedMinutes: minutesSchema.nullable(),
+    actualMinutes: minutesSchema.nullable(),
+    budget: dollarsSchema.nullable(),
+    budgetLimit: dollarsSchema.nullable(),
+    cost: dollarsSchema.nullable(),
     dueDate: dueDateSchema.nullable(),
-    parentTaskId: idSchema.nullable(),
+    parentTaskId: taskIdSchema.nullable(),
     position: z.number(),
     createdAt: z.string(),
     updatedAt: z.string(),
-    labelIds: z.array(idSchema),
+    labelIds: z.array(labelIdSchema),
     checks: z.array(taskCheckSchema),
+    /** The folder above the task's status folder, null at the root. Optional
+     *  so a task built without it reads as unassigned. */
+    assignee: placementFolderSchema.nullable().optional(),
+    /** The folder inside the assignee's, null when there is none. */
+    epic: placementFolderSchema.nullable().optional(),
     /** The markdown file backing this task, when it is file-synced. */
     source: z
       .object({ filePath: z.string(), origin: fileTaskOriginSchema })
@@ -149,7 +201,7 @@ export const taskSchema = z
 
 export const labelSchema = z
   .object({
-    id: idSchema,
+    id: labelIdSchema,
     projectId: idSchema,
     name: z.string(),
     color: z.string(),
@@ -159,7 +211,7 @@ export const labelSchema = z
 export const commentSchema = z
   .object({
     id: idSchema,
-    taskId: idSchema,
+    taskId: taskIdSchema,
     kind: z.enum(["user", "agent", "system"]),
     authorName: z.string(),
     presetName: z.string().nullable(),
@@ -205,10 +257,17 @@ export const displayCommentSchema = commentSchema
   })
   .strict();
 
+/** Who an attachment hangs off: a task or one of its comments. */
+export const attachmentOwnerSchema = z.union([
+  z.object({ taskId: taskIdSchema }).strict(),
+  z.object({ commentId: idSchema }).strict(),
+]);
+export type AttachmentOwnerRef = z.infer<typeof attachmentOwnerSchema>;
+
 export const attachmentSchema = z
   .object({
     id: idSchema,
-    taskId: idSchema.nullable(),
+    taskId: taskIdSchema.nullable(),
     commentId: idSchema.nullable(),
     fileName: z.string(),
     mime: z.string(),
@@ -221,13 +280,13 @@ export const attachmentSchema = z
 export const taskThreadSchema = z
   .object({
     id: idSchema,
-    taskId: idSchema,
+    taskId: taskIdSchema,
     threadId: z.string().startsWith("thr_"),
     presetName: z.string(),
     title: z.string(),
     liveStatus: z.enum(TASK_THREAD_LIVE_STATUSES),
+    archivedAt: z.string().nullable(),
     attachedAt: z.string(),
-    updatedAt: z.string(),
   })
   .strict();
 
@@ -358,7 +417,7 @@ const attachmentDeleteResultSchema = z.union([
 ]);
 
 const taskLabelsSchema = z
-  .array(idSchema)
+  .array(labelIdSchema)
   .max(100)
   .refine(
     (ids) => new Set(ids).size === ids.length,
@@ -374,36 +433,52 @@ const taskChecksSchema = z
 
 const updateTaskInputSchema = z
   .object({
-    taskId: idSchema,
+    taskId: taskIdSchema,
+    /** New file name — the task's id changes with it (see Task.id). */
+    slug: nonBlankStringSchema.optional(),
+    /** The board's label to set, or null to take it off the file. */
+    key: nonBlankStringSchema.nullable().optional(),
     title: nonBlankStringSchema.optional(),
     description: z.string().optional(),
     status: taskStatusSchema.optional(),
     priority: taskPrioritySchema.optional(),
     type: taskTypeSchema.nullable().optional(),
     estimate: taskEstimateSchema.nullable().optional(),
-    planTokens: tokenCountSchema.nullable().optional(),
-    factTokens: tokenCountSchema.nullable().optional(),
+    plannedMinutes: minutesSchema.nullable().optional(),
+    actualMinutes: minutesSchema.nullable().optional(),
+    budget: dollarsSchema.nullable().optional(),
+    budgetLimit: dollarsSchema.nullable().optional(),
+    cost: dollarsSchema.nullable().optional(),
     dueDate: dueDateSchema.nullable().optional(),
-    parentTaskId: idSchema.nullable().optional(),
+    parentTaskId: taskIdSchema.nullable().optional(),
     labelIds: taskLabelsSchema.optional(),
     checks: taskChecksSchema.optional(),
+    assignee: placementNameSchema.nullable().optional(),
+    epic: placementNameSchema.nullable().optional(),
     authorName: nonBlankStringSchema.default("You"),
   })
   .strict()
   .refine(
     (input) =>
+      input.slug !== undefined ||
+      input.key !== undefined ||
       input.title !== undefined ||
       input.description !== undefined ||
       input.status !== undefined ||
       input.priority !== undefined ||
       input.type !== undefined ||
       input.estimate !== undefined ||
-      input.planTokens !== undefined ||
-      input.factTokens !== undefined ||
+      input.plannedMinutes !== undefined ||
+      input.actualMinutes !== undefined ||
+      input.budget !== undefined ||
+      input.budgetLimit !== undefined ||
+      input.cost !== undefined ||
       input.dueDate !== undefined ||
       input.parentTaskId !== undefined ||
       input.labelIds !== undefined ||
-      input.checks !== undefined,
+      input.checks !== undefined ||
+      input.assignee !== undefined ||
+      input.epic !== undefined,
     { message: "at least one task field must be updated" },
   );
 
@@ -429,7 +504,7 @@ const updateProjectInputSchema = z
 
 const updateLabelInputSchema = z
   .object({
-    labelId: idSchema,
+    labelId: labelIdSchema,
     name: nonBlankStringSchema.optional(),
     color: nonBlankStringSchema.optional(),
   })
@@ -489,6 +564,26 @@ const updatePresetInputSchema = z
       });
     }
   });
+
+/**
+ * Тред, из которого пришёл запрос, — служебное поле входа. Обработчик RPC по
+ * контракту SDK получает только вход метода, поэтому другого места для него
+ * нет; `.strict()` отверг бы поле, которого в схеме не объявлено. Пустое
+ * значение означает «спрашивает доска» — и тогда запрос читает main.
+ */
+export function withCallerThread<Schema extends z.ZodObject>(schema: Schema) {
+  return schema.extend({ [CALLER_THREAD_FIELD]: z.string().optional() });
+}
+
+
+/**
+ * Владелец вложений — объединение двух форм, а расширять надо каждую: у
+ * объединения нет собственной формы, к которой можно добавить поле.
+ */
+const attachmentOwnerWithCallerSchema = z.union([
+  withCallerThread(z.object({ taskId: taskIdSchema }).strict()),
+  withCallerThread(z.object({ commentId: idSchema }).strict()),
+]);
 
 export const tasksRpcContract = defineRpcContract({
   createFolder: {
@@ -557,7 +652,7 @@ export const tasksRpcContract = defineRpcContract({
     output: z.object({ projects: z.array(projectSchema) }).strict(),
   },
   createTask: {
-    input: z
+    input: withCallerThread(z
       .object({
         projectId: idSchema,
         title: nonBlankStringSchema,
@@ -566,18 +661,23 @@ export const tasksRpcContract = defineRpcContract({
         priority: taskPrioritySchema.default("none"),
         type: taskTypeSchema.nullable().default(null),
         estimate: taskEstimateSchema.nullable().default(null),
-        planTokens: tokenCountSchema.nullable().default(null),
-        factTokens: tokenCountSchema.nullable().default(null),
+        plannedMinutes: minutesSchema.nullable().default(null),
+        actualMinutes: minutesSchema.nullable().default(null),
+        budget: dollarsSchema.nullable().default(null),
+        budgetLimit: dollarsSchema.nullable().default(null),
+        cost: dollarsSchema.nullable().default(null),
         dueDate: dueDateSchema.nullable().default(null),
-        parentTaskId: idSchema.nullable().default(null),
+        parentTaskId: taskIdSchema.nullable().default(null),
         labelIds: taskLabelsSchema.default([]),
         checks: taskChecksSchema.default([]),
+        assignee: placementNameSchema.nullable().default(null),
+        epic: placementNameSchema.nullable().default(null),
       })
-      .strict(),
+      .strict()),
     output: taskMutationResultSchema,
   },
   getTask: {
-    input: z.object({ taskId: idSchema }).strict(),
+    input: withCallerThread(z.object({ taskId: taskIdSchema }).strict()),
     output: z.object({ task: taskSchema.nullable() }).strict(),
   },
   /**
@@ -586,15 +686,15 @@ export const tasksRpcContract = defineRpcContract({
    * erroring so stale chat references degrade to the card's not-found state.
    */
   getTaskByKey: {
-    input: z.object({ taskKey: nonBlankStringSchema }).strict(),
+    input: withCallerThread(z.object({ taskKey: nonBlankStringSchema }).strict()),
     output: z.object({ task: taskSchema.nullable() }).strict(),
   },
   updateTask: {
-    input: updateTaskInputSchema,
+    input: withCallerThread(updateTaskInputSchema),
     output: taskMutationResultSchema,
   },
   deleteTask: {
-    input: z.object({ taskId: idSchema }).strict(),
+    input: withCallerThread(z.object({ taskId: taskIdSchema }).strict()),
     output: z.object({ deleted: z.boolean() }).strict(),
   },
   /**
@@ -605,7 +705,7 @@ export const tasksRpcContract = defineRpcContract({
    * explains any other outcome.
    */
   revealTaskSource: {
-    input: z.object({ taskId: idSchema }).strict(),
+    input: withCallerThread(z.object({ taskId: taskIdSchema }).strict()),
     output: z
       .object({ revealed: z.boolean(), error: z.string().nullable() })
       .strict(),
@@ -616,14 +716,15 @@ export const tasksRpcContract = defineRpcContract({
    * mutation makes it stale so callers restart instead of mixing snapshots.
    */
   listTasks: {
-    input: z
+    input: withCallerThread(z
       .object({
         projectId: idSchema.optional(),
         statuses: z.array(taskStatusSchema).optional(),
         priorities: z.array(taskPrioritySchema).optional(),
-        labelIds: z.array(idSchema).optional(),
+        labelIds: z.array(labelIdSchema).optional(),
         activeOnly: z.boolean().default(false),
-        parentTaskId: idSchema.nullable().optional(),
+        waitingOnly: z.boolean().default(false),
+        parentTaskId: taskIdSchema.nullable().optional(),
         search: z.string().optional(),
         sort: taskSortSchema.default("manual"),
         limit: z
@@ -634,7 +735,7 @@ export const tasksRpcContract = defineRpcContract({
           .default(TASKS_PAGE_DEFAULT_LIMIT),
         cursor: nonBlankStringSchema.optional(),
       })
-      .strict(),
+      .strict()),
     output: z
       .object({
         tasks: z.array(taskSchema),
@@ -643,15 +744,15 @@ export const tasksRpcContract = defineRpcContract({
       .strict(),
   },
   boardMove: {
-    input: z
+    input: withCallerThread(z
       .object({
-        taskId: idSchema,
+        taskId: taskIdSchema,
         status: taskStatusSchema,
-        beforeTaskId: idSchema.nullable().optional(),
-        afterTaskId: idSchema.nullable().optional(),
+        beforeTaskId: taskIdSchema.nullable().optional(),
+        afterTaskId: taskIdSchema.nullable().optional(),
         authorName: nonBlankStringSchema.default("You"),
       })
-      .strict(),
+      .strict()),
     output: taskMutationResultSchema,
   },
   createLabel: {
@@ -669,17 +770,30 @@ export const tasksRpcContract = defineRpcContract({
     output: z.object({ label: labelSchema }).strict(),
   },
   deleteLabel: {
-    input: z.object({ labelId: idSchema }).strict(),
+    input: withCallerThread(z.object({ labelId: labelIdSchema }).strict()),
     output: z.object({ deleted: z.boolean() }).strict(),
+  },
+  /** Assignees and epics already in use on the board — the folders its
+   *  tasks sit in. A new value needs no call: it is created by assigning it. */
+  listPlacements: {
+    input: withCallerThread(z.object({ projectId: idSchema }).strict()),
+    output: z
+      .object({
+        assignees: z.array(placementFolderSchema),
+        epics: z.array(
+          z.object({ assignee: placementFolderSchema, name: placementFolderSchema }).strict(),
+        ),
+      })
+      .strict(),
   },
   listLabels: {
     input: z.object({ projectId: idSchema }).strict(),
     output: z.object({ labels: z.array(labelSchema) }).strict(),
   },
   createComment: {
-    input: z
+    input: withCallerThread(z
       .object({
-        taskId: idSchema,
+        taskId: taskIdSchema,
         body: z.string(),
         notify: z.boolean(),
         // Attachment-only comments opt in explicitly so existing text-only
@@ -690,32 +804,35 @@ export const tasksRpcContract = defineRpcContract({
       .refine((input) => input.allowEmptyBody || input.body.trim().length > 0, {
         path: ["body"],
         message: "Comment body cannot be empty",
-      }),
+      })),
     output: z.object({ comment: commentSchema }).strict(),
   },
   listComments: {
-    input: z.object({ taskId: idSchema }).strict(),
+    input: withCallerThread(z.object({ taskId: taskIdSchema }).strict()),
     output: z.object({ comments: z.array(displayCommentSchema) }).strict(),
   },
   listAttachments: {
-    input: z.union([
-      z.object({ taskId: idSchema }).strict(),
-      z.object({ commentId: idSchema }).strict(),
-    ]),
+    input: attachmentOwnerWithCallerSchema,
     output: z.object({ attachments: z.array(attachmentSchema) }).strict(),
   },
   deleteAttachment: {
-    input: z
+    input: withCallerThread(z
       .object({
         attachmentId: idSchema,
         removeDescriptionReferences: z.boolean().default(false),
       })
-      .strict(),
+      .strict()),
     output: attachmentDeleteResultSchema,
   },
   listTaskThreads: {
-    input: z.object({ taskId: idSchema }).strict(),
+    input: withCallerThread(z.object({ taskId: taskIdSchema }).strict()),
     output: z.object({ taskThreads: z.array(taskThreadSchema) }).strict(),
+  },
+  // Reverse of listTaskThreads: the tasks a single thread is attached to,
+  // in attach order. Backs the thread-header chip and `bb tasks current`.
+  tasksForThread: {
+    input: withCallerThread(z.object({ threadId: z.string().startsWith("thr_") }).strict()),
+    output: z.object({ tasks: z.array(taskSchema) }).strict(),
   },
   // Pull requests reached through the task's attached threads, deduplicated
   // by URL. Threads whose PR lookup failed (deleted thread, gh missing or
@@ -724,7 +841,7 @@ export const tasksRpcContract = defineRpcContract({
   // threads with no environment or a genuinely absent PR, which produce
   // nothing.
   listTaskPullRequests: {
-    input: z.object({ taskId: idSchema }).strict(),
+    input: withCallerThread(z.object({ taskId: taskIdSchema }).strict()),
     output: z
       .object({
         pullRequests: z.array(taskPullRequestSchema),
@@ -906,9 +1023,26 @@ export const tasksRpcContract = defineRpcContract({
       })
       .strict(),
   },
+  analyticsSnapshot: {
+    input: z.object({ projectId: idSchema.nullable().optional() }).strict(),
+    output: tasksSnapshotSchema,
+  },
+  analyticsSeries: {
+    input: z
+      .object({
+        fromMs: z.number(),
+        toMs: z.number(),
+        binMs: z.number().int().positive(),
+        projectId: idSchema.nullable().optional(),
+      })
+      .strict(),
+    output: statusSeriesSchema,
+  },
 });
 
 export type TasksRpcContract = typeof tasksRpcContract;
+export type TasksSnapshot = z.infer<typeof tasksSnapshotSchema>;
+export type StatusSeries = z.infer<typeof statusSeriesSchema>;
 export type Folder = z.infer<typeof folderSchema>;
 export type Project = z.infer<typeof projectSchema>;
 export type Task = z.infer<typeof taskSchema>;
@@ -933,7 +1067,9 @@ export type SidebarProjectSummary = z.infer<
 >["projects"][number];
 
 export interface TasksChangedEvent {
-  taskId: string;
+  /** null when a batch touched several tasks of the project at once (file
+   * sync) — subscribers keyed on one task must treat it as "maybe mine". */
+  taskId: string | null;
   projectId: string;
 }
 

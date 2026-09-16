@@ -46,12 +46,12 @@ describe("resolveVisibility", () => {
     });
   });
 
-  it("no answer from git and no cache → visible, the button is not withheld on a guess", async () => {
+  it("no answer from git and no cache → visible, flagged as unverified rather than \"ready\"", async () => {
     const { ports } = fakePorts({ cached: false, measured: "unknown" });
 
     expect(await resolveVisibility(ports, { workspace: READY, pr: "absent" })).toEqual({
       visible: true,
-      reason: "ready",
+      reason: "content-unknown",
     });
   });
 

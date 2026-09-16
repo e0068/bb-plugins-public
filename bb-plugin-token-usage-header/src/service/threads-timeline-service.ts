@@ -15,6 +15,7 @@ import {
   type ThreadEntry,
   type ThreadsTimeline,
 } from "../core/threads-timeline";
+import { bbManagedEnvironmentId, fallbackProjectName, projectIdForCwd, UNKNOWN_PROJECT_LABEL, type ProjectPath } from "../core/project-attribution";
 import { githubRepoSlugFromRemoteUrl, type CommitEvent, type GitEvent, type PrEvent } from "../core/git-events";
 import {
   DEFAULT_MAX_OUTPUT_BYTES,
@@ -42,8 +43,17 @@ const DEFAULT_LIMIT = 20;
  * enrichment pass to a fixed, reasonable cost rather than walking every
  * thread BB has ever seen — see enrichBbProjects's doc comment for why a
  * per-thread identity call can't be avoided entirely.
+ *
+ * `bb.sdk.threads.list`'s notion of "recent" tracks visible message
+ * activity, not background execution — a thread that dispatched a long
+ * workflow and has been quietly spending tokens in the background for hours
+ * can rank below a smaller, chattier one and fall out of a tight window,
+ * landing its session in the unmatched "Threads" bucket despite being very
+ * much alive. 300 was too tight on a busy instance with many parallel
+ * background workflows; raised once, empirically, no decision doc — bump
+ * further if the same unmatched-but-alive pattern recurs.
  */
-const THREADS_SCAN_LIMIT = 300;
+const THREADS_SCAN_LIMIT = 1000;
 
 /**
  * Walks up from `startDir` looking for a directory that has
@@ -333,7 +343,13 @@ async function buildSessionToBbThreadMap(
   bb: BbPluginApi,
   resolver: ThreadSessionResolver,
 ): Promise<Map<string, SessionBbThread>> {
-  const threads = await bb.sdk.threads.list({ limit: THREADS_SCAN_LIMIT });
+  // `includeHidden` matters a lot here: a workflow run's own background agent
+  // dispatches each get their own BB thread, and those are hidden by default
+  // (out of sidebar/unread noise — see ThreadListArgs's doc) — without this
+  // flag every one of them reads as unmatched, which is most of a busy
+  // account's spend over a week/month (measured: 17 active + 311 archived
+  // threads visible without it, 484 + 466 with it — the majority were hidden).
+  const threads = await bb.sdk.threads.list({ limit: THREADS_SCAN_LIMIT, includeHidden: true });
   const map = new Map<string, SessionBbThread>();
   await Promise.all(
     threads.map(async (thread) => {
@@ -361,13 +377,42 @@ async function buildSessionToBbThreadMap(
   return map;
 }
 
-/** projectId -> display name, for every BB project (including the personal one — a session may well belong to it). */
-async function buildProjectNameMap(bb: BbPluginApi): Promise<Map<string, string>> {
+/** Every BB project's id -> display name, plus its own checkout root(s) — for {@link projectIdForCwd}'s path fallback. Includes the personal project — a session may well belong to it. */
+async function buildProjectDirectory(bb: BbPluginApi): Promise<{ names: Map<string, string>; paths: ProjectPath[] }> {
   const projects = await bb.sdk.projects.list({ includePersonal: true });
-  const map = new Map<string, string>();
+  const names = new Map<string, string>();
+  const paths: ProjectPath[] = [];
   for (const project of projects) {
-    map.set(project.id, project.name);
+    names.set(project.id, project.name);
+    for (const source of project.sources ?? []) {
+      paths.push({ id: project.id, path: source.path });
+    }
   }
+  return { names, paths };
+}
+
+/**
+ * Resolves each of `environmentIds` to its owning project, via
+ * `bb.sdk.environments.get` — the environment record survives its own
+ * destruction (a finished/cleaned-up worktree) and even its thread's
+ * deletion, as long as the project itself still exists. One id unresolvable
+ * (project deleted too, host unreachable for that one lookup) doesn't fail
+ * the rest — it's simply absent from the returned map, same as a session
+ * with no match at all.
+ */
+async function resolveEnvironmentProjects(bb: BbPluginApi, environmentIds: readonly string[]): Promise<Map<string, string>> {
+  const map = new Map<string, string>();
+  await Promise.all(
+    environmentIds.map(async (environmentId) => {
+      try {
+        const environment = await bb.sdk.environments.get({ environmentId });
+        map.set(environmentId, environment.projectId);
+      } catch {
+        // Left unresolved — the cwd path-match and label-guess fallbacks in
+        // enrichBbProjects take over for this session.
+      }
+    }),
+  );
   return map;
 }
 
@@ -375,16 +420,42 @@ async function buildProjectNameMap(bb: BbPluginApi): Promise<Map<string, string>
  * Enriches each parsed thread entry with its matching BB project, so the
  * "Projects" picker on the feed page can group by BB's actual projects (a
  * handful) instead of raw `~/.claude/projects` directory slugs (dozens) —
- * see this group's task description. A session that doesn't match any of
- * the scanned BB threads (older than THREADS_SCAN_LIMIT, or from outside BB
- * entirely) gets `{ bbProjectId: null, bbProjectName: null, threadId: null
- * }`, which the UI renders as the catch-all "Threads" bucket.
+ * see this group's task description.
+ *
+ * Three tiers, tried in order, each catching what the one before it misses:
+ *
+ * 1. **Session identity** (buildSessionToBbThreadMap): a thread whose latest
+ *    `thread/identity` event still points at this exact session. The
+ *    precise, thread-level match — carries threadId/title/liveness, not
+ *    just a project.
+ * 2. **Managed environment** (bbManagedEnvironmentId + environments.get): a
+ *    session that ran inside a `.bb/worktrees/`/`.bb/personal-workspaces/`
+ *    copy whose environment record still names a project, even when its
+ *    owning thread fell outside THREADS_SCAN_LIMIT, switched to a different
+ *    provider session mid-life (a compaction/resume the identity event
+ *    never re-fired for), or was deleted outright — the environment record
+ *    outlives all three. Project-level only: threadId stays null.
+ * 3. **Checkout path** (projectIdForCwd): a session that ran directly in a
+ *    project's own primary checkout — an "unmanaged" environment, never
+ *    `.bb/`-prefixed at all, so tier 2 can't see it. Matched by cwd falling
+ *    under a registered project's own path. Project-level only.
+ *
+ * A session tier 3 also misses (no BB project anywhere on record for that
+ * cwd — genuinely run outside BB, or its project was deleted) gets
+ * `fallbackProjectName`'s verdict: merged into a registered project's own
+ * slice when its cwd-guessed name matches one exactly, else the shared
+ * UNKNOWN_PROJECT_LABEL bucket — see that function's doc for why `bbProjectName`
+ * is never actually null coming out of this function; the type still
+ * allows it defensively (the catch-all failure path below, and any future
+ * caller of the same fields).
  *
  * Never throws and never fails the slice: bb.sdk is a live round trip to the
- * host and can reject (daemon unreachable, thread deleted mid-scan) the same
- * way the python process can — an enrichment failure degrades to "every
- * thread unmatched", not a lost slice. Logged softly (console.error) since
- * there's no RPC-level error channel for a partial/degraded success.
+ * host and can reject (daemon unreachable) the same way the python process
+ * can — an enrichment failure degrades every thread straight to
+ * UNKNOWN_PROJECT_LABEL (no project directory fetched in this path, so
+ * there's nothing to merge-match against), not a lost slice. Logged softly
+ * (console.error) since there's no RPC-level error channel for a
+ * partial/degraded success.
  */
 async function enrichBbProjects(
   bb: BbPluginApi,
@@ -395,37 +466,68 @@ async function enrichBbProjects(
   if (timeline.threads.length === 0) return timeline;
 
   try {
-    const [sessionMap, projectNames] = await Promise.all([
-      buildSessionToBbThreadMap(bb, resolver),
-      buildProjectNameMap(bb),
-    ]);
+    const [sessionMap, directory] = await Promise.all([buildSessionToBbThreadMap(bb, resolver), buildProjectDirectory(bb)]);
+    const knownProjectNames = new Set(directory.names.values());
+
+    const environmentIds = Array.from(
+      new Set(
+        timeline.threads
+          .filter((thread) => !sessionMap.has(thread.session))
+          .map((thread) => bbManagedEnvironmentId(thread.cwd))
+          .filter((id): id is string => id !== null),
+      ),
+    );
+    const envProjects = await resolveEnvironmentProjects(bb, environmentIds);
 
     const threads = timeline.threads.map((thread): ThreadEntry => {
       const match = sessionMap.get(thread.session);
-      if (!match) return { ...thread, ...UNMATCHED_BB_PROJECT };
-      // Working = alive + recent last activity (`end`) or running background
-      // work — see deriveThreadLiveness and the decision doc.
-      const liveness = deriveThreadLiveness({
-        archivedAt: match.archivedAt,
-        lastActivityMs: Date.parse(thread.end),
-        nowMs,
-        workingWindowMs: WORKING_WINDOW_MS,
-        activeWorkCount: match.activeWorkCount,
-      });
-      return {
-        ...thread,
-        bbProjectId: match.projectId,
-        bbProjectName: projectNames.get(match.projectId) ?? null,
-        threadId: match.threadId,
-        bbThreadTitle: match.title,
-        isAlive: liveness.isAlive,
-        isWorking: liveness.isWorking,
-      };
+      if (match) {
+        // Working = alive + recent last activity (`end`) or running
+        // background work — see deriveThreadLiveness and the decision doc.
+        const liveness = deriveThreadLiveness({
+          archivedAt: match.archivedAt,
+          lastActivityMs: Date.parse(thread.end),
+          nowMs,
+          workingWindowMs: WORKING_WINDOW_MS,
+          activeWorkCount: match.activeWorkCount,
+        });
+        return {
+          ...thread,
+          bbProjectId: match.projectId,
+          bbProjectName: directory.names.get(match.projectId) ?? null,
+          threadId: match.threadId,
+          bbThreadTitle: match.title,
+          isAlive: liveness.isAlive,
+          isWorking: liveness.isWorking,
+        };
+      }
+
+      const envId = bbManagedEnvironmentId(thread.cwd);
+      const envProjectId = envId !== null ? envProjects.get(envId) : undefined;
+      const envProjectName = envProjectId !== undefined ? directory.names.get(envProjectId) : undefined;
+      if (envProjectId !== undefined && envProjectName !== undefined) {
+        return { ...thread, ...UNMATCHED_BB_PROJECT, bbProjectId: envProjectId, bbProjectName: envProjectName };
+      }
+
+      const pathProjectId = projectIdForCwd(thread.cwd, directory.paths);
+      const pathProjectName = pathProjectId !== null ? directory.names.get(pathProjectId) : undefined;
+      if (pathProjectId !== null && pathProjectName !== undefined) {
+        return { ...thread, ...UNMATCHED_BB_PROJECT, bbProjectId: pathProjectId, bbProjectName: pathProjectName };
+      }
+
+      return { ...thread, ...UNMATCHED_BB_PROJECT, bbProjectName: fallbackProjectName(thread.cwd, thread.project, knownProjectNames) };
     });
     return { ...timeline, threads };
   } catch (err) {
-    console.error("[threads-timeline-service] BB project enrichment failed, falling back to unmatched:", err);
-    return { ...timeline, threads: timeline.threads.map((thread) => ({ ...thread, ...UNMATCHED_BB_PROJECT })) };
+    console.error("[threads-timeline-service] BB project enrichment failed, falling back to the unknown-project bucket:", err);
+    return {
+      ...timeline,
+      threads: timeline.threads.map((thread) => ({
+        ...thread,
+        ...UNMATCHED_BB_PROJECT,
+        bbProjectName: UNKNOWN_PROJECT_LABEL,
+      })),
+    };
   }
 }
 

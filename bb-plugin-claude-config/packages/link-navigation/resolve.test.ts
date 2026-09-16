@@ -58,6 +58,11 @@ describe("resolveRelative", () => {
     expect(resolveRelative("dir/a.md", "b.md")).toBe("/dir/b.md");
   });
 
+  it("resolves against the root for a file that has no directory", () => {
+    expect(resolveRelative("README.md", "guide.md")).toBe("/guide.md");
+    expect(resolveRelative("README.md", "./docs/guide.md")).toBe("/docs/guide.md");
+  });
+
   it("collapses ..", () => {
     expect(resolveRelative("dir/a.md", "../c.md")).toBe("/c.md");
   });

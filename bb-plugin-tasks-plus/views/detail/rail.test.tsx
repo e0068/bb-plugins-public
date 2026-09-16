@@ -53,8 +53,11 @@ const task = {
   dueDate: null,
   parentTaskId: null,
   position: 1,
-  planTokens: null,
-  factTokens: null,
+  plannedMinutes: null,
+  actualMinutes: null,
+  budget: null,
+  budgetLimit: null,
+  cost: null,
   checks: [],
   source: null,
   createdAt: "2026-07-15T00:00:00.000Z",
@@ -155,5 +158,133 @@ describe("dispatch target rail control", () => {
       projectId: PROJECT_ID,
       linkedBbProjectId: null,
     });
+  });
+});
+
+describe("time and budget fields", () => {
+  it("shows planned and actual time and three money fields instead of tokens", async () => {
+    const slot = renderSlot(
+      app.navPanels[0]!,
+      { subPath: "task/TSK-5" },
+      { rpc: detailRpc(null) },
+    );
+    for (const label of ["Planned Time", "Actual Time", "Budget", "Limit", "Cost"]) {
+      expect(await slot.findByLabelText(label)).toBeDefined();
+    }
+    expect(slot.queryByLabelText("Tokens - Plan")).toBeNull();
+    expect(slot.queryByLabelText("Tokens - Fact")).toBeNull();
+  });
+
+  it("commits minutes as a whole number, dollars to the cent, and a blank as null", async () => {
+    const updateCalls: Array<Record<string, unknown>> = [];
+    const slot = renderSlot(
+      app.navPanels[0]!,
+      { subPath: "task/TSK-5" },
+      {
+        rpc: detailRpc(null, {
+          getTaskByKey: () => ({ task: { ...task, budgetLimit: 60 } }),
+          listTasks: (input: { parentTaskId?: string } | null) =>
+            input?.parentTaskId ? { tasks: [] } : { tasks: [{ ...task, budgetLimit: 60 }] },
+          updateTask: (input: Record<string, unknown>) => {
+            updateCalls.push(input);
+            return { ok: true, task: { ...task, ...input } };
+          },
+        }),
+      },
+    );
+
+    const planned = await slot.findByLabelText("Planned Time");
+    fireEvent.change(planned, { target: { value: "90" } });
+    fireEvent.blur(planned);
+    await waitFor(() => expect(updateCalls).toHaveLength(1));
+    expect(updateCalls[0]).toMatchObject({ plannedMinutes: 90 });
+
+    const cost = slot.getByLabelText("Cost");
+    fireEvent.change(cost, { target: { value: "12.345" } });
+    fireEvent.blur(cost);
+    await waitFor(() => expect(updateCalls).toHaveLength(2));
+    expect(updateCalls[1]).toMatchObject({ cost: 12.35 });
+
+    const limit = slot.getByLabelText("Limit");
+    fireEvent.change(limit, { target: { value: "" } });
+    fireEvent.blur(limit);
+    await waitFor(() => expect(updateCalls).toHaveLength(3));
+    expect(updateCalls[2]).toMatchObject({ budgetLimit: null });
+  });
+});
+
+// The pickers are cmdk lists, which measure themselves.
+window.ResizeObserver ??= class {
+  observe() {}
+  unobserve() {}
+  disconnect() {}
+};
+
+describe("assignee and epic", () => {
+  function placementRpc(current: Record<string, unknown>, updateCalls: Array<Record<string, unknown>>) {
+    const shown = { ...task, ...current };
+    return detailRpc(null, {
+      getTaskByKey: () => ({ task: shown }),
+      listTasks: (input: { parentTaskId?: string } | null) =>
+        input?.parentTaskId ? { tasks: [] } : { tasks: [shown] },
+      listPlacements: () => ({
+        assignees: ["Claude", "Sergey"],
+        epics: [
+          { assignee: "Claude", name: "Tasks+" },
+          { assignee: "Sergey", name: "Flow" },
+        ],
+      }),
+      updateTask: (input: Record<string, unknown>) => {
+        updateCalls.push(input);
+        return { ok: true, task: { ...shown, ...input } };
+      },
+    });
+  }
+
+  it("picks an existing assignee from the folders in use", async () => {
+    const updateCalls: Array<Record<string, unknown>> = [];
+    const slot = renderSlot(app.navPanels[0]!, { subPath: "task/TSK-5" }, { rpc: placementRpc({}, updateCalls) });
+
+    fireEvent.click((await slot.findAllByRole("button", { name: "Edit assignee" }))[0]!);
+    fireEvent.click(await slot.findByRole("option", { name: "Sergey" }));
+
+    await waitFor(() => expect(updateCalls).toHaveLength(1));
+    expect(updateCalls[0]).toMatchObject({ assignee: "Sergey" });
+  });
+
+  it("creates a new assignee from the typed name", async () => {
+    const updateCalls: Array<Record<string, unknown>> = [];
+    const slot = renderSlot(app.navPanels[0]!, { subPath: "task/TSK-5" }, { rpc: placementRpc({}, updateCalls) });
+
+    fireEvent.click((await slot.findAllByRole("button", { name: "Edit assignee" }))[0]!);
+    fireEvent.change(await slot.findByPlaceholderText("Assignee…"), { target: { value: "Codex" } });
+    fireEvent.click(await slot.findByRole("option", { name: "Create “Codex”" }));
+
+    await waitFor(() => expect(updateCalls).toHaveLength(1));
+    expect(updateCalls[0]).toMatchObject({ assignee: "Codex" });
+  });
+
+  it("offers only the current assignee's epics and clears the epic", async () => {
+    const updateCalls: Array<Record<string, unknown>> = [];
+    const slot = renderSlot(
+      app.navPanels[0]!,
+      { subPath: "task/TSK-5" },
+      { rpc: placementRpc({ assignee: "Claude", epic: "Tasks+" }, updateCalls) },
+    );
+
+    fireEvent.click((await slot.findAllByRole("button", { name: "Edit epic" }))[0]!);
+    expect(await slot.findByRole("option", { name: "Tasks+" })).toBeDefined();
+    expect(slot.queryByRole("option", { name: "Flow" })).toBeNull();
+    fireEvent.click(slot.getByRole("option", { name: "No epic" }));
+
+    await waitFor(() => expect(updateCalls).toHaveLength(1));
+    expect(updateCalls[0]).toMatchObject({ epic: null });
+  });
+
+  it("keeps the epic picker disabled until the task has an assignee", async () => {
+    const slot = renderSlot(app.navPanels[0]!, { subPath: "task/TSK-5" }, { rpc: placementRpc({}, []) });
+
+    const [epic] = await slot.findAllByRole("button", { name: "Edit epic" });
+    expect((epic as HTMLButtonElement).disabled).toBe(true);
   });
 });

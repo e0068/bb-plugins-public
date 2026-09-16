@@ -1,102 +1,83 @@
-# Claude Config — config panel
+# Claude Config
 
-A **bb** plugin that edits the **Claude Code** config: which plugins,
-connectors and skills are loaded, which hooks are configured, and whether
-tools are loaded up front or on demand. Everything is scoped: separately
-global, separately per project.
+> Manage your Claude Code setup — plugins, connectors, skills, agents, hooks, workflows and settings — per scope.
 
-## Why
+## What it does
 
-Claude Code plugins and skills are enabled by default at the user level and
-from then on load into every session in every project. State is spread
-across four levels of settings, the list of what's installed lives in a
-fifth place, and untangling it by hand from the files is hard. The panel
-shows the effective value and lets you toggle it in the right scope.
+Claude Code spreads its configuration across several settings files and levels (user → project → local → managed), while the list of what's actually installed lives somewhere else again. Plugins and skills are enabled by default at the user level and then load into every session in every project, and untangling the effective state by hand is hard. This plugin gives you one panel that shows the effective value for each thing and lets you change it in the right scope: global (your account) or the current project.
 
-## What it toggles
+The panel is a single sidebar view with an area picker at the top and a rail of sections down the side — **Hooks**, **Plugins**, **Connectors**, **Skills**, **Agents**, **Workflows** and a generic **Settings** section. Selecting a section lists its items with their effective state and the toggle appropriate to each (a plugin is on/off/inherit, a skill has five modes, tool loading is on/off/auto/inherit, a generic key gets a switch, dropdown, text field or JSON block matching its shape). Sections that can create a new item (Hooks, Skills, Agents, Workflows) carry a **+**; Plugins and Connectors come from external sources and have none. Selecting a real file (a skill's `SKILL.md`, an agent, a memory doc, the file a hook runs) opens it in a second column for reading and editing.
 
-| Section | Settings key | States |
-| --- | --- | --- |
-| Claude Code plugins | `enabledPlugins` | on / off / inherit |
-| Connectors | `enabledMcpjsonServers` / `disabledMcpjsonServers` | on / off / inherit |
-| Skills | `skillOverrides` | full / name-only / slash-only / disabled / inherit |
-| Agents | `agents/` files | view and create only |
-| Hooks | `hooks` | view only |
-| Tool loading | `env.ENABLE_TOOL_SEARCH` | on / off / auto / inherit |
+## How it works
 
-Skills that come from plugins don't show up in the list: `skillOverrides`
-doesn't apply to them — they're disabled by disabling the plugin itself.
+The whole UI is one host slot: `app.slots.navPanel` (id `claude-config`, title "Claude Config", icon `Brain`), registered via `definePluginApp` in [app.tsx](app.tsx). There is no composer, message-action or thread-panel surface — it is purely a nav panel plus one plugin setting. The section list is driven by the single table in [src/panel-sections.ts](src/panel-sections.ts) (which also decides which sections get a **+**), and the panel remembers where you were via `panel-state` and the per-section route.
 
-**Skills and agents** can be created right from the panel — a button in the
-section header asks for a name, normalizes it into a slug, drops a
-scaffold into the scope's directory (project, if a project is open,
-otherwise personal) and opens the file for editing: a skill goes to
-`<skills dir>/<name>/SKILL.md`, an agent to `<agents dir>/<name>.md`.
-Agents aren't gated by settings, so that section has no toggles — just a
-list and a create action; clicking a row opens the agent file.
+Data and writes go over an RPC contract (`defineRpcContract` in [server.ts](server.ts), consumed with `useRpc` in the panel): `getConfig`/`listAreas` to read a section, `setPlugin`/`setConnector`/`setSkill`/`setToolSearch`/`setSetting` to toggle, `readHook`/`writeHook`/`writeHookDefinition`/`setHookEnabled` for hooks, `createSkill`/`createAgent`/`createHook`/`removeSkill`/`removeAgent`/`removeHook` for scaffolding and deletion, `readDoc`/`writeDoc`/`resolveOpenTarget`/`listMemory` for the document column, and the `wf*` family for the workflow builder. The server itself is only I/O: it resolves area paths, reads files, hands them to the pure `src/` layer, and writes the result back. All data comes from the SDK — `bb.sdk.files` (read/write/listPaths/remove), `bb.sdk.projects`, `bb.sdk.providers`/`.models` (the workflow agent catalog), `bb.sdk.system.config` (primary host) and `bb.storage.kv` (disabled hooks kept aside to restore) — never from DOM scraping. The `wfValidate`/`wfRun`/`wfStatus` procedures shell out to the `bb workflows` CLI.
 
-## What opens the files
+Effective state is computed by merging the settings levels broad-to-narrow in [src/effective.ts](src/effective.ts); the last level that actually sets a value wins. Writes go through `bb.sdk.files` with a hash check (`expectedSha256`): if a parallel Claude Code session changed the file, the panel reports a conflict instead of overwriting. Two scopes are written — **Global** to `~/.claude/settings.json`, **Project** to `<project>/.claude/settings.local.json` (the local file, usually gitignored, so personal toggles don't leak into the team's `settings.json`). A write that just restores a value the broader levels already provide collapses the key back to unset (minimal diff). User/local-scope connectors from `~/.claude.json` are shown read-only since their enablement isn't gated by `settings.json`.
 
-Real files (a skill, an agent, a memory doc, links inside docs, the file a
-hook points to) open according to the plugin's **"What opens files"**
-setting (`fileOpener`, on the Extensions → Plugins page). Three modes:
+Real files open according to two independent settings (both declared with `bb.settings.define` in `OPENER_DESCRIPTORS`, alongside the Kasimov editor descriptors, and shown on Extensions → Plugins): **"Where to open files"** (`fileOpenerLocation`) — `inline` (default) in the embedded column, or `host` delegating to the bb host tab (`experimental_openFilePreview`); and **"What to open files with"** (`fileOpenerRenderer`) — `md-opener` (default) renders markdown with the Kasimov editor from [packages/md-doc-view](../packages/md-doc-view) — the same layer as the [MD Opener](../bb-plugin-md-opener) slot — or `builtin`, the stock `MarkdownEditor` from [packages/md-editor](../packages/md-editor) with a frontmatter field table. The renderer setting only takes effect when the location is `inline`: bb's host tab always renders its own generic preview, with no way for a plugin to request a specific registered `fileOpener` there — both settings stay visible regardless of each other's value. Synthesized views (a plugin, a connector, a hook command) are not files and always render in the embedded column. Why two settings instead of one three-way enum: [decisions/claude-config-opener-two-axes.md](../memory/decisions/claude-config-opener-two-axes.md) (supersedes [decisions/claude-config-opener-setting.md](../memory/decisions/claude-config-opener-setting.md)). The generic Settings section covers a curated subset of `settings.json` keys, not the full schema — [decisions/claude-config-generic-settings-section.md](../memory/decisions/claude-config-generic-settings-section.md). Why only some sections get a **+**: [decisions/plus-button-only-where-creation-exists.md](../memory/decisions/plus-button-only-where-creation-exists.md).
 
-- **`md-opener`** (default) — in the built-in column, with the **Kasimov**
-  editor via the shared [packages/md-doc-view](../packages/md-doc-view)
-  layer: clickable markdown links with a jump stack in the same column and
-  CAS-based saving. The same component used by the
-  [MD Opener](../bb-plugin-md-opener) slot. Non-markdown files are edited
-  as raw text.
-- **`builtin`** — in the built-in column, with the standard `MarkdownEditor`
-  from [packages/md-editor](../packages/md-editor), including a
-  frontmatter field table.
-- **`host`** — delegate to the bb host tab (`experimental_openFilePreview`);
-  the file opens with whatever opener bb settings assign to that format.
-
-Synthesized views (a plugin, a connector, a hook command) aren't files —
-they always open in the built-in column, and this setting doesn't affect
-them. Why this is a choice rather than hardcoded —
-[decision](../memory/decisions/claude-config-opener-setting.md), which
-supersedes the previous default delegation.
-
-## Connectors and hooks
-
-**Connectors** are Claude Code MCP servers from three sources. Servers from
-the project's `.mcp.json` are toggled with a switch (via
-`enabledMcpjsonServers` / `disabledMcpjsonServers`, honoring
-`enableAllProjectMcpServers`). User- and local-scope servers from
-`~/.claude.json` are shown read-only: their enablement isn't gated by
-`settings.json`. Clicking a row opens the server definition (JSON).
-
-**Hooks** are the panel's first section, built from the `hooks` key across
-all setting levels (event, matcher, command, origin). View-only: Claude
-Code has no built-in way to disable a single hook. A row is clickable — it
-opens the hook command in the right-hand tab.
-
-## Where it writes
-
-- **Global** — `~/.claude/settings.json`.
-- **Project** — `<project path>/.claude/settings.local.json`, not the
-  shared `settings.json`: the local file is usually in `.gitignore`, so
-  personal toggles don't leak into the repo's team config.
-
-Writes go through `bb.sdk.files` with a hash check: if a parallel Claude
-Code session has changed the settings file, the panel reports a conflict
-instead of overwriting the other change.
-
-## Development
-
-```sh
-npm test        # pure functions in the src/ layer
-npm run typecheck
-bb plugin install .
-bb plugin dev   # rebuild and reload on every save
-```
+A separate **"Open documents in edit mode"** setting (`docStartInEdit`, off by default) chooses which mode a document arrives in: off — Read, on — Write, with no click in between. It applies to both in-column renderers and only to real files; an unreadable file, a connector view and a hook command stay read-only. This field is shared with [MD Opener](../bb-plugin-md-opener), so each plugin carries its own value: [decisions/doc-start-in-edit-setting.md](../memory/decisions/doc-start-in-edit-setting.md).
 
 ## Layers
 
-- `src/` — pure functions with no I/O, fully covered by tests: parsing and
-  editing the settings document, merging levels, parsing the catalog of
-  what's installed.
-- `server.ts` — the RPC contract and registration with bb.
-- `app.tsx` — the panel.
+Dependencies run strictly downward; the `src/` layer is pure (no I/O) and fully test-covered, `server.ts` is the I/O boundary, and `app.tsx` is the view.
+
+| Layer | File | Responsibility |
+| --- | --- | --- |
+| View | [app.tsx](app.tsx) | The nav panel: area picker, section rail, list column, document/editor column, toggles and dialogs |
+| I/O boundary | [server.ts](server.ts) | RPC contract and registration, area/path resolution, reading and CAS-protected writing of settings files, `bb workflows` shell-out |
+| L3 — view assembly | [src/config-view.ts](src/config-view.ts) | Builds each section's state rows from already-parsed documents and path lists |
+| L2 — catalog | [src/catalog.ts](src/catalog.ts) | Parses what's installed on the machine (plugins, skills) from file contents |
+| L1 — settings document | [src/settings-doc.ts](src/settings-doc.ts) | Pure edits to a Claude Code settings document (round-trip preserving) |
+| L1 — level merge | [src/effective.ts](src/effective.ts) | Merges scopes into one effective value (plugin, connector, skill, tool search) |
+| L1 — settings catalog | [src/settings-catalog.ts](src/settings-catalog.ts) | Curated generic-key catalog plus encode/decode between JSON value and display text |
+| L1 — hooks | [src/hook-events.ts](src/hook-events.ts), [src/hook-script.ts](src/hook-script.ts) | Hook event/matcher catalog for the dialog; extracting the file a hook command points to |
+| L1 — scaffolding | [src/scaffold.ts](src/scaffold.ts) | Name normalization (slug) and skill/agent templates |
+| L1 — panel data | [src/panel-sections.ts](src/panel-sections.ts), [src/panel-memory.ts](src/panel-memory.ts), [src/open-action.ts](src/open-action.ts) | Section table and "+" rule; remembered area/section; the host-tab-vs-column open decision |
+| L1 — docs helpers | [src/frontmatter.ts](src/frontmatter.ts), [src/imports.ts](src/imports.ts), [src/suggest.ts](src/suggest.ts), [src/weight.ts](src/weight.ts) | Frontmatter round-trip; CLAUDE.md `@`-imports; autocomplete ranking; token-weight estimate |
+| L1 — workflow builder | [src/workflow/](src/workflow/) | Tree ↔ `.js` model/compile/parse, outline mutations, validity, identity, editor store (ported from workflow-composer) |
+
+---
+
+# Claude Config — по-русски
+
+> Управление конфигурацией Claude Code — плагины, коннекторы, навыки, агенты, хуки, workflow и настройки — по областям.
+
+## Для чего нужен
+
+Claude Code размазывает конфигурацию по нескольким файлам настроек и уровням (user → project → local → managed), а список того, что реально установлено, лежит ещё в отдельном месте. Плагины и навыки по умолчанию включены на уровне пользователя и с этого момента загружаются в каждую сессию в каждом проекте, и распутать вручную, что действует, а что нет, тяжело. Этот плагин даёт одну панель: она показывает действующее значение для каждой вещи и позволяет поменять его в нужной области — глобально (ваш аккаунт) или в текущем проекте.
+
+Панель — единственный вид в сайдбаре: сверху выбор области, сбоку список секций — **Hooks**, **Plugins**, **Connectors**, **Skills**, **Agents**, **Workflows** и общая секция **Settings**. Выбор секции показывает её элементы с действующим состоянием и подходящим переключателем (плагин — on/off/inherit, навык — пять режимов, загрузка инструментов — on/off/auto/inherit, общий ключ — свитч, выпадающий список, текстовое поле или блок JSON под форму значения). Секции, где можно создать элемент (Hooks, Skills, Agents, Workflows), несут **+**; Plugins и Connectors приходят из внешних источников и его не имеют. Выбор реального файла (`SKILL.md` навыка, агент, документ памяти, файл, который запускает хук) открывает его во второй колонке для чтения и правки.
+
+## Как устроено
+
+Весь интерфейс — один слот хоста: `app.slots.navPanel` (id `claude-config`, заголовок "Claude Config", иконка `Brain`), регистрируется через `definePluginApp` в [app.tsx](app.tsx). Ни composer, ни message-action, ни thread-panel не заняты — это только нав-панель плюс одна настройка плагина. Список секций задаётся единственной таблицей в [src/panel-sections.ts](src/panel-sections.ts) (она же решает, какие секции получают **+**), а панель помнит, где вы были, через `panel-state` и маршрут по секциям.
+
+Данные и записи идут по RPC-контракту (`defineRpcContract` в [server.ts](server.ts), потребляется через `useRpc` в панели): `getConfig`/`listAreas` — прочитать секцию, `setPlugin`/`setConnector`/`setSkill`/`setToolSearch`/`setSetting` — переключить, `readHook`/`writeHook`/`writeHookDefinition`/`setHookEnabled` — хуки, `createSkill`/`createAgent`/`createHook`/`removeSkill`/`removeAgent`/`removeHook` — скаффолд и удаление, `readDoc`/`writeDoc`/`resolveOpenTarget`/`listMemory` — колонка документа, и семейство `wf*` — построитель workflow. Сам сервер — только I/O: резолвит пути области, читает файлы, отдаёт их чистому слою `src/` и пишет результат обратно. Все данные — из SDK: `bb.sdk.files` (read/write/listPaths/remove), `bb.sdk.projects`, `bb.sdk.providers`/`.models` (каталог агентов для workflow), `bb.sdk.system.config` (основной хост) и `bb.storage.kv` (отключённые хуки, отложенные для восстановления) — никакого скрейпинга DOM. Процедуры `wfValidate`/`wfRun`/`wfStatus` вызывают CLI `bb workflows`.
+
+Действующее состояние вычисляется слиянием уровней настроек от широкого к узкому в [src/effective.ts](src/effective.ts); побеждает последний уровень, где значение реально задано. Записи идут через `bb.sdk.files` с проверкой хеша (`expectedSha256`): если параллельная сессия Claude Code изменила файл, панель сообщает о конфликте вместо перезаписи. Пишутся две области — **Global** в `~/.claude/settings.json`, **Project** в `<project>/.claude/settings.local.json` (локальный файл, обычно в gitignore, чтобы личные переключатели не утекали в командный `settings.json`). Запись, которая лишь возвращает значение, уже даваемое более широкими уровнями, схлопывает ключ обратно в unset (минимальный дифф). Коннекторы уровня user/local из `~/.claude.json` показаны только для чтения — их включение не управляется `settings.json`.
+
+Реальные файлы открываются согласно двум независимым настройкам (обе объявлены через `bb.settings.define` в `OPENER_DESCRIPTORS`, рядом с дескрипторами редактора Kasimov, показаны на Extensions → Plugins): **"Where to open files"** (`fileOpenerLocation`) — `inline` (по умолчанию) во встроенной колонке, либо `host` — делегирование хост-вкладке bb (`experimental_openFilePreview`); и **"What to open files with"** (`fileOpenerRenderer`) — `md-opener` (по умолчанию) рендерит markdown редактором Kasimov из [packages/md-doc-view](../packages/md-doc-view) — тот же слой, что и слот [MD Opener](../bb-plugin-md-opener), либо `builtin` — штатный `MarkdownEditor` из [packages/md-editor](../packages/md-editor) с таблицей полей frontmatter. Настройка рендерера действует только при `inline`: у хостовой вкладки нет способа затребовать конкретный зарегистрированный `fileOpener`, она всегда рисует свой общий превьюер — обе настройки при этом остаются видимыми независимо от значения друг друга. Синтезированные виды (плагин, коннектор, команда хука) — не файлы и всегда рендерятся во встроенной колонке. Почему две настройки вместо одного three-way enum: [decisions/claude-config-opener-two-axes.md](../memory/decisions/claude-config-opener-two-axes.md) (отменяет [decisions/claude-config-opener-setting.md](../memory/decisions/claude-config-opener-setting.md)). Общая секция Settings покрывает выверенное подмножество ключей `settings.json`, не всю схему — [decisions/claude-config-generic-settings-section.md](../memory/decisions/claude-config-generic-settings-section.md). Почему **+** есть только у части секций: [decisions/plus-button-only-where-creation-exists.md](../memory/decisions/plus-button-only-where-creation-exists.md).
+
+Отдельная настройка **"Open documents in edit mode"** (`docStartInEdit`, по умолчанию выключена) выбирает, в каком режиме документ приходит в колонку: выключено — Read, включено — сразу Write, без клика между ними. Действует для обоих встроенных рендереров и только для реальных файлов; нечитаемый файл, вид коннектора и команда хука остаются только для чтения. Это поле общее с [MD Opener](../bb-plugin-md-opener), поэтому у каждого плагина своё значение: [decisions/doc-start-in-edit-setting.md](../memory/decisions/doc-start-in-edit-setting.md).
+
+## Слои
+
+Зависимости идут строго вниз; слой `src/` чистый (без I/O) и полностью покрыт тестами, `server.ts` — граница I/O, `app.tsx` — вид.
+
+| Слой | Файл | Ответственность |
+| --- | --- | --- |
+| View | [app.tsx](app.tsx) | Нав-панель: выбор области, рейл секций, колонка списка, колонка документа/редактора, переключатели и диалоги |
+| Граница I/O | [server.ts](server.ts) | RPC-контракт и регистрация, резолв путей области, чтение и запись файлов настроек с CAS, вызов `bb workflows` |
+| L3 — сборка вида | [src/config-view.ts](src/config-view.ts) | Строит строки состояния каждой секции из уже разобранных документов и списков путей |
+| L2 — каталог | [src/catalog.ts](src/catalog.ts) | Разбирает установленное на машине (плагины, навыки) из содержимого файлов |
+| L1 — документ настроек | [src/settings-doc.ts](src/settings-doc.ts) | Чистые правки документа настроек Claude Code (round-trip без потерь) |
+| L1 — слияние уровней | [src/effective.ts](src/effective.ts) | Сливает области в одно действующее значение (плагин, коннектор, навык, tool search) |
+| L1 — каталог настроек | [src/settings-catalog.ts](src/settings-catalog.ts) | Каталог выверенных общих ключей плюс encode/decode между JSON-значением и текстом для правки |
+| L1 — хуки | [src/hook-events.ts](src/hook-events.ts), [src/hook-script.ts](src/hook-script.ts) | Каталог событий/матчеров для диалога; извлечение файла, на который указывает команда хука |
+| L1 — скаффолд | [src/scaffold.ts](src/scaffold.ts) | Нормализация имени (slug) и шаблоны навыка/агента |
+| L1 — данные панели | [src/panel-sections.ts](src/panel-sections.ts), [src/panel-memory.ts](src/panel-memory.ts), [src/open-action.ts](src/open-action.ts) | Таблица секций и правило **+**; запомненные область/секция; решение «хост-вкладка или колонка» |
+| L1 — помощники документов | [src/frontmatter.ts](src/frontmatter.ts), [src/imports.ts](src/imports.ts), [src/suggest.ts](src/suggest.ts), [src/weight.ts](src/weight.ts) | Round-trip frontmatter; `@`-импорты CLAUDE.md; ранжирование автодополнения; оценка веса в токенах |
+| L1 — построитель workflow | [src/workflow/](src/workflow/) | Модель Tree ↔ `.js` (compile/parse), правки аутлайна, валидность, идентичность, стор редактора (порт из workflow-composer) |

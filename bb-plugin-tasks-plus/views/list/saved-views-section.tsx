@@ -3,7 +3,7 @@ import { Icon } from "@/components/ui/icon";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 import type { SavedView } from "../../shared/contract.js";
-import { useSavedViews, useTasksRpc } from "../../shell/data.js";
+import { useSavedViews, useTasksRpc } from "../../client/data.js";
 import {
   applyFieldDisplay,
   type FieldDisplayConfig,

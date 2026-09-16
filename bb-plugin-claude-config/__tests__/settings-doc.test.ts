@@ -7,6 +7,7 @@ import {
   getEnableAllMcp,
   getMcpServer,
   getPlugin,
+  getRawSetting,
   getSkill,
   getToolSearch,
   listHooks,
@@ -20,6 +21,7 @@ import {
   setHookCommandAt,
   setMcpServer,
   setPlugin,
+  setRawSetting,
   setSkill,
   setToolSearch,
   type HookEntry,
@@ -579,5 +581,55 @@ describe("tool search", () => {
   it("doesn't wipe out neighboring environment variables", () => {
     const doc = parse('{"env":{"DEBUG":"1","ENABLE_TOOL_SEARCH":"false"}}');
     expect(setToolSearch(doc, "inherit")).toEqual({ env: { DEBUG: "1" } });
+  });
+});
+
+describe("raw settings (generic top-level keys)", () => {
+  it("reads a present key's native value", () => {
+    const doc = parse('{"cleanupPeriodDays":30,"includeCoAuthoredBy":false}');
+    expect(getRawSetting(doc, "cleanupPeriodDays")).toBe(30);
+    expect(getRawSetting(doc, "includeCoAuthoredBy")).toBe(false);
+  });
+
+  it("an absent key reads as undefined, including a falsy stored value", () => {
+    expect(getRawSetting({}, "cleanupPeriodDays")).toBeUndefined();
+    expect(getRawSetting(parse('{"includeCoAuthoredBy":false}'), "spinnerTipsEnabled")).toBeUndefined();
+  });
+
+  it("writes a value of any JSON type without touching other keys", () => {
+    const doc = parse('{"theme":"light"}');
+    expect(setRawSetting(doc, "cleanupPeriodDays", 30)).toEqual({
+      theme: "light",
+      cleanupPeriodDays: 30,
+    });
+    expect(
+      setRawSetting(doc, "permissions", { allow: ["Bash(git:*)"] }),
+    ).toEqual({
+      theme: "light",
+      permissions: { allow: ["Bash(git:*)"] },
+    });
+  });
+
+  it("undefined removes the key entirely, leaving neighbors intact", () => {
+    const doc = parse('{"theme":"light","cleanupPeriodDays":30}');
+    expect(setRawSetting(doc, "cleanupPeriodDays", undefined)).toEqual({
+      theme: "light",
+    });
+  });
+
+  it("removing an absent key is a no-op", () => {
+    const doc = parse('{"theme":"light"}');
+    expect(setRawSetting(doc, "cleanupPeriodDays", undefined)).toEqual(doc);
+  });
+
+  it("doesn't mutate the source document", () => {
+    const doc = parse('{"theme":"light"}');
+    setRawSetting(doc, "cleanupPeriodDays", 30);
+    expect(doc).toEqual({ theme: "light" });
+  });
+
+  it("a stored false survives the round trip (not treated as absent)", () => {
+    const doc = setRawSetting({}, "includeCoAuthoredBy", false);
+    expect(getRawSetting(doc, "includeCoAuthoredBy")).toBe(false);
   });
 });

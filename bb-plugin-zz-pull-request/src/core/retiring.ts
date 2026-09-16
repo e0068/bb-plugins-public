@@ -18,3 +18,18 @@ export type EnvironmentStatus =
 export function decideWakeUpVisible(status: EnvironmentStatus): boolean {
   return status === "retiring";
 }
+
+/**
+ * Whether bb will answer git questions about this environment at all. Its
+ * `environments.status` and `environments.pullRequest` routes both go through
+ * `requireReadyEnvironment`, which THROWS for anything but `ready` — so any
+ * other status means the plugin has to measure with local git instead of
+ * reading the refusal as a negative answer.
+ *
+ * Deliberately an exact negation of `ready` rather than a list of "bad"
+ * statuses: a status added on bb's side must fall on the safe side here
+ * automatically, the same way `requireReadyEnvironment` treats it.
+ */
+export function bbReportsGitFacts(status: EnvironmentStatus): boolean {
+  return status === "ready";
+}

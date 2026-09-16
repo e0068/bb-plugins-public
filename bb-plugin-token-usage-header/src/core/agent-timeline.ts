@@ -32,8 +32,20 @@ import type { GitEvent } from "./git-events";
  * to look up each PR's live merge status (`gh pr view`) and turn a merged
  * one into a "merge" GitEvent for the session chart — see
  * src/core/git-events.ts.
+ *
+ * 5 -> 6: a workflow selector (agent == "workflow:<runId>") gains a `flow`
+ * field — the ordered per-member sections of the whole workflow run
+ * ({agent, events} for each member subagent, in launch order). Absent for a
+ * regular agent, whose own `agent`/`events` are the timeline. Lets the
+ * session page render the whole workflow flow (member agents in sequence)
+ * from one call — see AgentTimelinePage's flow view.
+ *
+ * 6 -> 7: every model call is priced exactly once, deduped by
+ * (message.id, requestId) like tools/tokens.py. A call that answered with
+ * tools only carries tokens/cost on its first tool event, and cost keeps
+ * fractions of a cent — so a turn's rows add up to the totals panel.
  */
-export const EXPECTED_AGENT_TIMELINE_SCHEMA_VERSION = 5;
+export const EXPECTED_AGENT_TIMELINE_SCHEMA_VERSION = 7;
 
 const toolEventSchema = z
   .object({
@@ -43,6 +55,13 @@ const toolEventSchema = z
     name: z.string(),
     /** One meaningful call argument (file_path/pattern/command/…), or null. */
     target: z.string().nullable(),
+    /**
+     * Price of the model call this tool_use belongs to — present only on the
+     * first tool event of a call that has no text message to carry it (see
+     * tools/agent_timeline.py::extract_events).
+     */
+    tokens: z.number().finite().optional(),
+    cost: z.number().finite().optional(),
   })
   .strict();
 
@@ -70,11 +89,11 @@ const messageEventSchema = z
     fullText: z.string(),
     fullTextTruncated: z.boolean(),
     /**
-     * Cost of the model call that produced this message — priced on the
-     * whole assistant record (owner's decision: not on individual tool_use
-     * entries within it). Present only on role:"assistant" records that have
-     * usage in the transcript; absent, not null, for user messages and
-     * records without usage (see tools/agent_timeline.py::message_event).
+     * Price of the model call that produced this message — once per call
+     * (owner's decision: not spread over its tool_use entries). Present only
+     * on the first assistant message of a call with usage in the transcript;
+     * absent, not null, for user messages and records without usage (see
+     * tools/agent_timeline.py::extract_events).
      */
     tokens: z.number().finite().optional(),
     cost: z.number().finite().optional(),
@@ -133,6 +152,21 @@ const agentTimelinePrNumberSchema = z
 
 export type AgentTimelinePrNumber = z.infer<typeof agentTimelinePrNumberSchema>;
 
+/**
+ * One member of a workflow flow — a member subagent's own agent info and its
+ * timeline. Present (as an ordered list) only when a workflow selector is
+ * opened (agent == "workflow:<runId>"); for a regular agent the top-level
+ * `agent`/`events` are the whole timeline and no `flow` is emitted.
+ */
+const agentTimelineFlowSectionSchema = z
+  .object({
+    agent: agentTimelineAgentInfoSchema,
+    events: z.array(agentTimelineEventSchema),
+  })
+  .strict();
+
+export type AgentTimelineFlowSection = z.infer<typeof agentTimelineFlowSectionSchema>;
+
 const agentTimelineSchema = z
   .object({
     schemaVersion: z.number(),
@@ -140,6 +174,8 @@ const agentTimelineSchema = z
     events: z.array(agentTimelineEventSchema),
     /** Every PR referenced anywhere in the session (main + subagents), deduped by number — see tools/agent_timeline.py's own doc. */
     prNumbers: z.array(agentTimelinePrNumberSchema),
+    /** Ordered member sections of a workflow run — present only for a "workflow:<runId>" selector (see the 5 -> 6 note above). */
+    flow: z.array(agentTimelineFlowSectionSchema).optional(),
   })
   .strict();
 

@@ -1,5 +1,5 @@
 // markdown.js — the lossless markdown ↔ DOM round-trip the editor is built on.
-// One contenteditable surface: block lines become `.mde-ln` blocks, inline runs become real styled elements
+// One contenteditable surface: block lines become `.mdb-ln` blocks, inline runs become real styled elements
 // (no zero-width markers). Tables render as a NATIVE <table> with a <colgroup> and table-layout:fixed, so the
 // browser owns column geometry — cells, controls and resize grips all share the exact same column borders.
 //
@@ -103,16 +103,16 @@ function escapeInline(text) {
 }
 function mkLink(label, raw, href, linkResolver) {
   const resolved = linkResolver ? linkResolver(href) : null;
-  const s = el("span", "mde-link" + (resolved ? " mde-link-live" : " mde-link-plain"));
+  const s = el("span", "mdb-link" + (resolved ? " mdb-link-live" : " mdb-link-plain"));
   s.textContent = label; s.dataset.md = raw; s.dataset.href = href;
   return s;
 }
 // `@path` import token → link span. href passed to linkResolver is the path WITHOUT the leading `@`; the visible
-// label is the whole `@path`. `.mde-atlink` also carries `.mde-link` so `_followLink`'s `.mde-link[data-href]`
+// label is the whole `@path`. `.mdb-atlink` also carries `.mdb-link` so `_followLink`'s `.mdb-link[data-href]`
 // click handler picks it up for free.
 function mkAtLink(path, linkResolver) {
   const resolved = linkResolver ? linkResolver(path) : null;
-  const s = el("span", "mde-link mde-atlink" + (resolved ? " mde-link-live" : " mde-link-plain"));
+  const s = el("span", "mdb-link mdb-atlink" + (resolved ? " mdb-link-live" : " mdb-link-plain"));
   s.textContent = "@" + path; s.dataset.md = "@" + path; s.dataset.href = path;
   return s;
 }
@@ -122,12 +122,12 @@ function mkAtLink(path, linkResolver) {
 export function inlineMd(nd, literal) {
   let out = "";
   for (let c = nd.firstChild; c; c = c.nextSibling) {
-    if (c.nodeType === 1 && c.classList && c.classList.contains("mde-ctl")) continue;   // injected control — never source
+    if (c.nodeType === 1 && c.classList && c.classList.contains("mdb-ctl")) continue;   // injected control — never source
     if (c.nodeType === 3) out += literal ? c.textContent : escapeInline(c.textContent);
     else if (c.nodeName === "BR") out += "\n";                                          // soft line break → newline
-    else if (c.nodeType === 1 && c.classList && c.classList.contains("mde-atlink"))     // `@path` token — its OWN form, not `[..](..)`
+    else if (c.nodeType === 1 && c.classList && c.classList.contains("mdb-atlink"))     // `@path` token — its OWN form, not `[..](..)`
       out += c.textContent;
-    else if (c.nodeType === 1 && c.classList && c.classList.contains("mde-link"))       // reconstruct from LIVE state so label edits round-trip
+    else if (c.nodeType === 1 && c.classList && c.classList.contains("mdb-link"))       // reconstruct from LIVE state so label edits round-trip
       out += "[" + c.textContent + "](" + (c.dataset.href || "") + ")";
     else if (c.dataset && c.dataset.md != null) out += c.dataset.md;
     else if (c.tagName === "B" || c.tagName === "STRONG") out += "**" + inlineMd(c, true) + "**";
@@ -202,20 +202,20 @@ export function buildTable(run, linkResolver, atLinks, sepIdx) {
   if (sepIdx == null) sepIdx = run.findIndex(isSep);
   const specs = cellsOf(run[sepIdx]).map(tSpec), ncol = specs.length;
   const sum = specs.reduce((s, c) => s + c.width, 0) || ncol;
-  const wrap = el("div", "mde-ln mde-tablewrap");
-  const table = el("table", "mde-table"); wrap.appendChild(table);
+  const wrap = el("div", "mdb-ln mdb-tablewrap");
+  const table = el("table", "mdb-table"); wrap.appendChild(table);
   const cg = el("colgroup");
   specs.forEach((sp) => { const c = el("col"); c.dataset.w = sp.width; c.dataset.align = sp.align; c.style.width = (sp.width / sum * 100).toFixed(3) + "%"; cg.appendChild(c); });
   table.appendChild(cg);
   const tb = el("tbody"); table.appendChild(tb);
   run.forEach((line, i) => {
     if (i === sepIdx) return;
-    const tr = el("tr", "mde-trow" + (i < sepIdx ? " mde-thead" : "")); tr.dataset.md = line;
+    const tr = el("tr", "mdb-trow" + (i < sepIdx ? " mdb-thead" : "")); tr.dataset.md = line;
     const cells = cellsOf(line);
     for (let ci = 0; ci < ncol; ci++) {
-      const td = el("td", "mde-cell"), sp = specs[ci] || { align: "" };
+      const td = el("td", "mdb-cell"), sp = specs[ci] || { align: "" };
       if (sp.align) td.style.textAlign = sp.align === "c" ? "center" : sp.align === "r" ? "right" : "left";
-      const lb = el("span", "mde-clab"); lb.appendChild(inlineDOM(cells[ci] || "", linkResolver, atLinks)); td.appendChild(lb);
+      const lb = el("span", "mdb-clab"); lb.appendChild(inlineDOM(cells[ci] || "", linkResolver, atLinks)); td.appendChild(lb);
       tr.appendChild(td);
     }
     tb.appendChild(tr);
@@ -223,10 +223,10 @@ export function buildTable(run, linkResolver, atLinks, sepIdx) {
   return wrap;
 }
 export function serializeTable(wrap) {
-  const table = wrap.querySelector("table.mde-table");
+  const table = wrap.querySelector("table.mdb-table");
   const cols = [].map.call(table.querySelectorAll("col"), (c) => ({ width: +c.dataset.w || 3, align: c.dataset.align || "" }));
-  const rows = [].slice.call(table.querySelectorAll("tr.mde-trow"));
-  let hc = 0; rows.forEach((tr) => { if (tr.classList.contains("mde-thead")) hc++; });
+  const rows = [].slice.call(table.querySelectorAll("tr.mdb-trow"));
+  let hc = 0; rows.forEach((tr) => { if (tr.classList.contains("mdb-thead")) hc++; });
   const sep = "| " + cols.map(tSepCell).join(" | ") + " |", out = [];
   rows.forEach((tr, idx) => {
     const cells = [].map.call(tr.querySelectorAll(":scope > td"), (td) => inlineMd(td).trim());
@@ -243,13 +243,13 @@ export function lineBlock(line, linkResolver, atLinks) {
   const h = /^(#{1,6})\s+(.*)$/.exec(line), li = /^(\s*[-*]\s+)(.*)$/.exec(line),
         hr = /^\s*(---|\*\*\*|___)\s*$/.exec(line), bq = /^(\s*>+\s?)(.*)$/.exec(line),
         ol = /^(\s*)(\d+[.)])(\s+)(.*)$/.exec(line);
-  if (hr) { const d = el("div", "mde-ln mde-hr"); d.dataset.md = hr[0]; return d; }
-  if (h) { const lvl = h[1].length, d = el("div", "mde-ln " + (lvl <= 1 ? "mde-h" : lvl === 2 ? "mde-h2" : "mde-h3")); d.dataset.pre = h[1] + " "; d.appendChild(inlineDOM(h[2], linkResolver, atLinks)); return d; }
-  if (li) { const d = el("div", "mde-ln mde-li"); d.dataset.pre = li[1]; d.appendChild(inlineDOM(li[2], linkResolver, atLinks)); return d; }
-  if (ol) { const d = el("div", "mde-ln mde-oli"); d.dataset.pre = ol[1] + ol[2] + ol[3]; d.dataset.num = ol[2]; d.appendChild(inlineDOM(ol[4], linkResolver, atLinks)); return d; }
-  if (bq) { const d = el("div", "mde-ln mde-quote"); d.dataset.pre = bq[1]; d.appendChild(inlineDOM(bq[2], linkResolver, atLinks)); return d; }
-  if (line === "") return el("div", "mde-ln mde-blank");
-  const d = el("div", "mde-ln mde-body"); d.appendChild(inlineDOM(line, linkResolver, atLinks)); return d;
+  if (hr) { const d = el("div", "mdb-ln mdb-hr"); d.dataset.md = hr[0]; return d; }
+  if (h) { const lvl = h[1].length, d = el("div", "mdb-ln " + (lvl <= 1 ? "mdb-h" : lvl === 2 ? "mdb-h2" : "mdb-h3")); d.dataset.pre = h[1] + " "; d.appendChild(inlineDOM(h[2], linkResolver, atLinks)); return d; }
+  if (li) { const d = el("div", "mdb-ln mdb-li"); d.dataset.pre = li[1]; d.appendChild(inlineDOM(li[2], linkResolver, atLinks)); return d; }
+  if (ol) { const d = el("div", "mdb-ln mdb-oli"); d.dataset.pre = ol[1] + ol[2] + ol[3]; d.dataset.num = ol[2]; d.appendChild(inlineDOM(ol[4], linkResolver, atLinks)); return d; }
+  if (bq) { const d = el("div", "mdb-ln mdb-quote"); d.dataset.pre = bq[1]; d.appendChild(inlineDOM(bq[2], linkResolver, atLinks)); return d; }
+  if (line === "") return el("div", "mdb-ln mdb-blank");
+  const d = el("div", "mdb-ln mdb-body"); d.appendChild(inlineDOM(line, linkResolver, atLinks)); return d;
 }
 
 export function blockText(elem) {
@@ -271,7 +271,7 @@ export function renderBody(root, body, linkResolver, atLinks) {
     if (!fence) return;
     const closed = fence.length > 1 && /^\s*```/.test(fence[fence.length - 1]);
     const inner = fence.slice(1, closed ? -1 : undefined).join("\n");
-    const pre = el("pre", "mde-ln mde-code");
+    const pre = el("pre", "mdb-ln mdb-code");
     pre.dataset.md = fence.join("\n"); pre.dataset.open = fence[0]; pre.dataset.close = closed ? fence[fence.length - 1] : ""; pre.dataset.code = inner;
     pre.textContent = inner; root.appendChild(pre); fence = null;
   };
@@ -300,9 +300,9 @@ export function renderBody(root, body, linkResolver, atLinks) {
 
 function emitBlock(b, out) {
   if (b.nodeType !== 1) { if (b.nodeType === 3 && b.textContent !== "") out.push(b.textContent); return; }
-  if (b.classList.contains("mde-ctl")) return;
-  if (b.classList.contains("mde-tablewrap")) { serializeTable(b).forEach((l) => out.push(l)); return; }
-  if (b.classList.contains("mde-code")) {
+  if (b.classList.contains("mdb-ctl")) return;
+  if (b.classList.contains("mdb-tablewrap")) { serializeTable(b).forEach((l) => out.push(l)); return; }
+  if (b.classList.contains("mdb-code")) {
     const code = blockText(b);
     if (b.dataset.code != null && code === b.dataset.code) out.push(b.dataset.md);
     else out.push((b.dataset.open || "```") + "\n" + code + (b.dataset.close ? "\n" + b.dataset.close : ""));

@@ -1,6 +1,6 @@
 {
   "name": "@bb-plugins/md-doc-view",
-  "version": "0.1.1",
+  "version": "0.1.7",
   "type": "module",
   "private": true,
   "main": "./index.ts",
@@ -14,10 +14,14 @@
     }
   },
   "devDependencies": {
+    "@pierre/diffs": "^1.4.2",
+    "@radix-ui/react-dialog": "^1.1.23",
+    "@radix-ui/react-tabs": "^1.1.21",
     "@testing-library/jest-dom": "^7.0.1",
     "@testing-library/react": "^16.3.2",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
+    "fast-check": "^4.10.0",
     "jsdom": "^30.0.1",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",

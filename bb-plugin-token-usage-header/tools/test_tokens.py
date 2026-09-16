@@ -309,24 +309,21 @@ class CountingTest(unittest.TestCase):
             ],
         )
 
-    def test_cost_uses_model_with_highest_output_not_highest_total(self):
-        # opus accounts for almost the entire bucket's usage via cache reads,
-        # but produced almost no output. sonnet is the opposite: little usage,
-        # more output. The tier must be taken from sonnet (output), not opus
-        # (total usage).
-        b = tokens.Bucket()
-        b.add({"cache_read_input_tokens": 1_000_000, "output_tokens": 1}, "claude-opus-4", None)
-        b.add({"cache_read_input_tokens": 0, "output_tokens": 100}, "claude-sonnet-4", None)
-        self.assertGreater(b.models["opus"].total, b.models["sonnet"].total)
-        self.assertGreater(b.models["sonnet"].out, b.models["opus"].out)
+    def test_cost_of_a_mixed_model_bucket_prices_each_model_at_its_own_tier(self):
+        # A main agent that switched between opus and sonnet: each model's
+        # tokens cost what that model charges, so the bucket costs exactly the
+        # sum of the same records counted in single-model buckets.
+        opus_usage = {"input_tokens": 3, "cache_read_input_tokens": 1_000_000, "output_tokens": 1}
+        sonnet_usage = {"input_tokens": 5, "cache_creation_input_tokens": 20_000, "output_tokens": 100}
+        mixed = tokens.Bucket()
+        mixed.add(opus_usage, "claude-opus-4", None)
+        mixed.add(sonnet_usage, "claude-sonnet-4", None)
+        opus_only = tokens.Bucket()
+        opus_only.add(opus_usage, "claude-opus-4", None)
+        sonnet_only = tokens.Bucket()
+        sonnet_only.add(sonnet_usage, "claude-sonnet-4", None)
 
-        pi, po = tokens.PRICES["sonnet"]
-        expected = (b.cr * pi * tokens.CACHE_READ + b.out * po) / 1e6
-        self.assertAlmostEqual(b.cost, expected)
-
-        pi_opus, po_opus = tokens.PRICES["opus"]
-        wrong = (b.cr * pi_opus * tokens.CACHE_READ + b.out * po_opus) / 1e6
-        self.assertNotAlmostEqual(b.cost, wrong)
+        self.assertAlmostEqual(mixed.cost, opus_only.cost + sonnet_only.cost, places=12)
 
     def test_merge_buckets_sums_model_counts_across_buckets(self):
         b1 = tokens.Bucket()
@@ -387,10 +384,9 @@ class CostPartsTest(unittest.TestCase):
         self.assertAlmostEqual(without_thinking, b.cost)
 
     def test_cost_parts_and_cost_use_the_same_tier_price(self):
-        # The tier for cost_parts comes from the same _tier_prices() as for
-        # cost — if they diverged (e.g. cost_parts took the tier by total
-        # usage while cost took it by output), the sum of parts would stop
-        # matching cost precisely on buckets that are heterogeneous by model.
+        # cost and cost_parts must price a bucket that is heterogeneous by
+        # model the same way — otherwise the sum of parts stops matching cost
+        # exactly on such buckets.
         b = tokens.Bucket()
         b.add({"cache_read_input_tokens": 1_000_000, "output_tokens": 1}, "claude-opus-4", None)
         b.add({"cache_read_input_tokens": 0, "output_tokens": 100}, "claude-sonnet-4", None)
@@ -399,9 +395,55 @@ class CostPartsTest(unittest.TestCase):
         without_thinking = parts["input"] + parts["cacheWrite"] + parts["cacheRead"] + parts["output"]
         self.assertAlmostEqual(without_thinking, b.cost)
 
+    def test_cost_parts_of_a_mixed_model_bucket_price_every_kind_at_its_own_models_tier(self):
+        opus_usage = {"input_tokens": 3, "cache_read_input_tokens": 900_000, "output_tokens": 400,
+                      "output_tokens_details": {"thinking_tokens": 300}}
+        sonnet_usage = {"input_tokens": 5, "cache_creation": {"ephemeral_1h_input_tokens": 20_000},
+                        "output_tokens": 100, "output_tokens_details": {"thinking_tokens": 60}}
+        mixed = tokens.Bucket()
+        mixed.add(opus_usage, "claude-opus-4", None)
+        mixed.add(sonnet_usage, "claude-sonnet-4", None)
+        opus_only = tokens.Bucket()
+        opus_only.add(opus_usage, "claude-opus-4", None)
+        sonnet_only = tokens.Bucket()
+        sonnet_only.add(sonnet_usage, "claude-sonnet-4", None)
+
+        for kind, value in mixed.cost_parts.items():
+            self.assertAlmostEqual(value, opus_only.cost_parts[kind] + sonnet_only.cost_parts[kind], places=12, msg=kind)
+
+    def test_merged_mixed_model_buckets_cost_the_sum_of_their_costs(self):
+        b1 = tokens.Bucket()
+        b1.add({"cache_read_input_tokens": 500_000, "output_tokens": 10}, "claude-opus-4", None)
+        b2 = tokens.Bucket()
+        b2.add({"input_tokens": 1_000, "output_tokens": 900, "output_tokens_details": {"thinking_tokens": 50}}, "claude-haiku-4", None)
+
+        grand = tokens.merge_buckets([b1, b2])
+
+        self.assertAlmostEqual(grand.cost, b1.cost + b2.cost, places=12)
+        self.assertAlmostEqual(grand.cost_parts["thinking"], b1.cost_parts["thinking"] + b2.cost_parts["thinking"], places=12)
+
+    def test_mixed_model_bucket_matches_a_hand_computed_bill_at_each_models_list_price(self):
+        # Checked against PRICES by hand, not against Bucket itself: the
+        # relational tests above hold for any single tier applied to every model.
+        b = tokens.Bucket()
+        b.add({"input_tokens": 3, "cache_read_input_tokens": 1_000_000, "output_tokens": 1,
+               "output_tokens_details": {"thinking_tokens": 1}}, "claude-opus-4", None)
+        b.add({"input_tokens": 5, "cache_creation": {"ephemeral_5m_input_tokens": 20_000, "ephemeral_1h_input_tokens": 10_000},
+               "output_tokens": 100, "output_tokens_details": {"thinking_tokens": 40}}, "claude-sonnet-4", None)
+        opus_in, opus_out = tokens.PRICES["opus"]
+        sonnet_in, sonnet_out = tokens.PRICES["sonnet"]
+
+        opus_bill = (3 * opus_in + 1_000_000 * opus_in * tokens.CACHE_READ + 1 * opus_out) / 1e6
+        sonnet_bill = (5 * sonnet_in + 20_000 * sonnet_in * tokens.CACHE_5M
+                       + 10_000 * sonnet_in * tokens.CACHE_1H + 100 * sonnet_out) / 1e6
+
+        self.assertAlmostEqual(b.cost, opus_bill + sonnet_bill, places=12)
+        self.assertAlmostEqual(b.cost_parts["output"], (1 * opus_out + 100 * sonnet_out) / 1e6, places=12)
+        self.assertAlmostEqual(b.cost_parts["thinking"], (1 * opus_out + 40 * sonnet_out) / 1e6, places=12)
+
     def test_cost_parts_on_empty_bucket_is_zero_and_does_not_raise(self):
-        # _tier_prices() falls back to "sonnet" when models is empty —
-        # cost_parts must not raise on a bucket that never saw a record.
+        # A bucket that never saw a record has no models to price —
+        # cost_parts must not raise on it.
         b = tokens.Bucket()
         parts = b.cost_parts
         self.assertEqual(parts, {"input": 0.0, "cacheWrite": 0.0, "cacheRead": 0.0, "output": 0.0, "thinking": 0.0})

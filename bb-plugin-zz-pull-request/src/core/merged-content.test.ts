@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import fc from "fast-check";
 import {
   decideMergedContent,
-  resolveAlreadyMerged,
+  resolveContentVerdict,
   type MergedContent,
 } from "./merged-content";
 
@@ -83,23 +83,23 @@ describe("decideMergedContent", () => {
   });
 });
 
-describe("resolveAlreadyMerged", () => {
+describe("resolveContentVerdict", () => {
   it("a fact outweighs the cache in both directions", () => {
-    expect(resolveAlreadyMerged("merged", false)).toBe(true);
-    expect(resolveAlreadyMerged("not-merged", true)).toBe(false);
+    expect(resolveContentVerdict("merged", false)).toBe("merged");
+    expect(resolveContentVerdict("not-merged", true)).toBe("not-merged");
   });
 
-  it("without a fact the cached HEAD decides", () => {
-    expect(resolveAlreadyMerged("unknown", true)).toBe(true);
-    expect(resolveAlreadyMerged("unknown", false)).toBe(false);
+  it("without a fact, a cache hit stands in for the fact — a miss stays unknown", () => {
+    expect(resolveContentVerdict("unknown", true)).toBe("merged");
+    expect(resolveContentVerdict("unknown", false)).toBe("unknown");
   });
 
   it("property: the cache is consulted only for `unknown`", () => {
     const contents: MergedContent[] = ["merged", "not-merged", "unknown"];
     fc.assert(
       fc.property(fc.constantFrom(...contents), (content) => {
-        const withCache = resolveAlreadyMerged(content, true);
-        const withoutCache = resolveAlreadyMerged(content, false);
+        const withCache = resolveContentVerdict(content, true);
+        const withoutCache = resolveContentVerdict(content, false);
         expect(withCache === withoutCache).toBe(content !== "unknown");
       }),
     );

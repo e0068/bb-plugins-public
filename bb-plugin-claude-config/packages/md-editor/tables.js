@@ -14,7 +14,7 @@
 import { el, buildTable, findTables, readModel, writeModel } from "./markdown.js";
 
 function ctlBtn(txt, title, fn) {
-  const b = el("span", "mde-ctl mde-tctl-btn", txt); b.title = title; b.setAttribute("contenteditable", "false");
+  const b = el("span", "mdb-ctl mdb-tctl-btn", txt); b.title = title; b.setAttribute("contenteditable", "false");
   b.addEventListener("mousedown", (e) => { e.preventDefault(); e.stopPropagation(); fn(); });
   return b;
 }
@@ -74,15 +74,15 @@ function showLine(line, wrap, box, pos, axis) {
 }
 
 export function closeMenus() {
-  [].forEach.call(document.querySelectorAll(".mde-menu"), (mn) => { if (mn._cleanup) mn._cleanup(); mn.remove(); });
+  [].forEach.call(document.querySelectorAll(".mdb-menu"), (mn) => { if (mn._cleanup) mn._cleanup(); mn.remove(); });
 }
 
 // dropdown for a column's "⋯": all options (alignment + delete), since three icons no longer fit inline
 function openColMenu(anchor, ci, ti, ctx, curAlign) {
   closeMenus();
-  const menu = el("div", "mde-ctl mde-menu"); menu.setAttribute("contenteditable", "false");
+  const menu = el("div", "mdb-ctl mdb-menu"); menu.setAttribute("contenteditable", "false");
   const item = (label, active, danger, fn) => {
-    const row = el("div", "mde-menurow" + (active ? " mde-on" : "") + (danger ? " mde-danger" : ""), label);
+    const row = el("div", "mdb-menurow" + (active ? " mdb-on" : "") + (danger ? " mdb-danger" : ""), label);
     row.addEventListener("mousedown", (e) => { e.preventDefault(); e.stopPropagation(); closeMenus(); fn(); });
     menu.appendChild(row);
   };
@@ -90,7 +90,7 @@ function openColMenu(anchor, ci, ti, ctx, curAlign) {
   item("Align left", isL, false, () => editTable(ctx, ti, (m) => { if (m.specs[ci]) m.specs[ci].align = "l"; }));
   item("Align center", curAlign === "c", false, () => editTable(ctx, ti, (m) => { if (m.specs[ci]) m.specs[ci].align = "c"; }));
   item("Align right", curAlign === "r", false, () => editTable(ctx, ti, (m) => { if (m.specs[ci]) m.specs[ci].align = "r"; }));
-  menu.appendChild(el("div", "mde-menusep"));
+  menu.appendChild(el("div", "mdb-menusep"));
   item("Delete column", false, true, () => editTable(ctx, ti, (m) => { m.specs.splice(ci, 1); m.rows.forEach((r) => r.splice(ci, 1)); }));
   document.body.appendChild(menu);
   const br = anchor.getBoundingClientRect(), mw = menu.offsetWidth, mh = menu.offsetHeight, gap = 6;
@@ -123,7 +123,7 @@ export function insertStarterTable(root, ref, ctx, headers) {
 function colResize(grip, ci, ti, ctx, onMove) {
   grip.addEventListener("mousedown", (e) => {
     e.preventDefault(); e.stopPropagation();
-    const wrap = grip.closest(".mde-tablewrap"), table = wrap.querySelector("table.mde-table");
+    const wrap = grip.closest(".mdb-tablewrap"), table = wrap.querySelector("table.mdb-table");
     const cols = [].slice.call(table.querySelectorAll("col")), a = cols[ci], b = cols[ci + 1];
     if (!b) return;                                          // last border has no neighbour to trade with
     const startX = e.clientX, aW0 = +a.dataset.w || 3, bW0 = +b.dataset.w || 3;
@@ -150,11 +150,11 @@ function colResize(grip, ci, ti, ctx, onMove) {
 
 export function decorateTables(root, ctx) {
   closeMenus();                                            // drop any dropdown left over from before this re-render
-  [].forEach.call(root.querySelectorAll(":scope > .mde-tablewrap"), (wrap, ti) => {
-    const table = wrap.querySelector("table.mde-table"), tbody = table.querySelector("tbody");
-    const cols = [].slice.call(table.querySelectorAll("col")), rows = [].slice.call(table.querySelectorAll("tr.mde-trow"));
+  [].forEach.call(root.querySelectorAll(":scope > .mdb-tablewrap"), (wrap, ti) => {
+    const table = wrap.querySelector("table.mdb-table"), tbody = table.querySelector("tbody");
+    const cols = [].slice.call(table.querySelectorAll("col")), rows = [].slice.call(table.querySelectorAll("tr.mdb-trow"));
 
-    const dropline = el("div", "mde-ctl mde-dropline"); wrap.appendChild(dropline);   // drop indicator during a reorder drag
+    const dropline = el("div", "mdb-ctl mdb-dropline"); wrap.appendChild(dropline);   // drop indicator during a reorder drag
     const colRects = () => [].map.call(rows[0].children, (td) => td.getBoundingClientRect());
     const rowRects = () => rows.map((tr) => tr.getBoundingClientRect());
     const bodyBox = () => { const rr = rowRects(), cr = colRects(); return { top: rr[0].top, bottom: rr[rr.length - 1].bottom, left: cr[0].left, right: cr[cr.length - 1].right }; };   // the data cells' bounding rect (no control row, no outer spacing)
@@ -165,16 +165,16 @@ export function decorateTables(root, ctx) {
     // plain overlay `<div>` on `wrap` (absolute, pinned above the table via CSS — md-editor.css), so it takes
     // ZERO layout height; each cell's left/width is set inline here, mirrored off the real column geometry
     // (colRects()), so it still tracks the columns exactly — including live, during a resize drag.
-    const ctlBar = el("div", "mde-ctl mde-tctlrow"); ctlBar.setAttribute("contenteditable", "false");
+    const ctlBar = el("div", "mdb-ctl mdb-tctlrow"); ctlBar.setAttribute("contenteditable", "false");
     const ctlTds = [];
     const syncCtlBar = () => {   // re-measure and re-place every column cell against the table's live geometry
       const wr = wrap.getBoundingClientRect(), cr = colRects();
       cr.forEach((r, ci) => { const td = ctlTds[ci]; if (td) { td.style.left = (r.left - wr.left) + "px"; td.style.width = r.width + "px"; } });
     };
     cols.forEach((col, ci) => {
-      const td = el("div", "mde-tctlcell"), bar = el("div", "mde-tctlbar");
-      const menuBtn = el("span", "mde-ctl mde-tctl-btn mde-tmenu", "⋯"); menuBtn.setAttribute("contenteditable", "false"); menuBtn.title = "Column options — drag to move";
-      const del = el("span", "mde-ctl mde-tctl-btn mde-delcol", "✕"); del.setAttribute("contenteditable", "false"); del.title = "Delete column";
+      const td = el("div", "mdb-tctlcell"), bar = el("div", "mdb-tctlbar");
+      const menuBtn = el("span", "mdb-ctl mdb-tctl-btn mdb-tmenu", "⋯"); menuBtn.setAttribute("contenteditable", "false"); menuBtn.title = "Column options — drag to move";
+      const del = el("span", "mdb-ctl mdb-tctl-btn mdb-delcol", "✕"); del.setAttribute("contenteditable", "false"); del.title = "Delete column";
       bar.appendChild(menuBtn); bar.appendChild(del); td.appendChild(bar);
       ctlBar.appendChild(td); ctlTds.push(td);
       // grab the cell's EMPTY area (between the glyphs) to reorder the column; ⋯ and ✕ act on click and, by
@@ -195,11 +195,11 @@ export function decorateTables(root, ctx) {
     rows.forEach((tr, ri) => {
       const cells = [].slice.call(tr.children);
       cells.forEach((td, ci) => {
-        if (ci < cols.length - 1) { const grip = el("span", "mde-ctl mde-grip"); grip.dataset.col = ci; grip.setAttribute("contenteditable", "false"); grip.title = "Drag to resize column"; colResize(grip, ci, ti, ctx, syncCtlBar); td.appendChild(grip); }
+        if (ci < cols.length - 1) { const grip = el("span", "mdb-ctl mdb-grip"); grip.dataset.col = ci; grip.setAttribute("contenteditable", "false"); grip.title = "Drag to resize column"; colResize(grip, ci, ti, ctx, syncCtlBar); td.appendChild(grip); }
       });
       // left-margin bar the height of its row: grab its EMPTY area to reorder the row; the ✕ glyph inside deletes it
-      const handle = el("span", "mde-ctl mde-rowdel"); handle.setAttribute("contenteditable", "false"); handle.title = "Drag to move row";
-      const rx = el("span", "mde-ctl mde-tctl-btn mde-rowdelx", "✕"); rx.setAttribute("contenteditable", "false"); rx.title = "Delete row";
+      const handle = el("span", "mdb-ctl mdb-rowdel"); handle.setAttribute("contenteditable", "false"); handle.title = "Drag to move row";
+      const rx = el("span", "mdb-ctl mdb-tctl-btn mdb-rowdelx", "✕"); rx.setAttribute("contenteditable", "false"); rx.title = "Delete row";
       handle.appendChild(rx);
       pressDragClick(handle, {
         onDragMove: (ev) => { const rr = rowRects(), to = dropIndex(rr, ev.clientY, "y"); showLine(dropline, wrap, bodyBox(), to < rr.length ? rr[to].top : rr[rr.length - 1].bottom, "y"); },
@@ -210,22 +210,22 @@ export function decorateTables(root, ctx) {
     });
 
     // add-column (right margin), add-row (bottom) — on the wrapper
-    const addCol = ctlBtn("＋", "Add column", () => editTable(ctx, ti, (m) => { m.specs.push({ align: "", width: 3 }); m.rows.forEach((r) => r.push("")); })); addCol.classList.add("mde-addcol"); wrap.appendChild(addCol);
-    const addRow = ctlBtn("＋", "Add row", () => editTable(ctx, ti, (m) => { m.rows.push(m.specs.map(() => "")); })); addRow.classList.add("mde-addrow"); wrap.appendChild(addRow);
+    const addCol = ctlBtn("＋", "Add column", () => editTable(ctx, ti, (m) => { m.specs.push({ align: "", width: 3 }); m.rows.forEach((r) => r.push("")); })); addCol.classList.add("mdb-addcol"); wrap.appendChild(addCol);
+    const addRow = ctlBtn("＋", "Add row", () => editTable(ctx, ti, (m) => { m.rows.push(m.specs.map(() => "")); })); addRow.classList.add("mdb-addrow"); wrap.appendChild(addRow);
 
     // per-column controls reveal only while that column is hovered; the resize bars show only on the separators
     // adjacent to the hovered column (its left = grip of col ci-1, its right = grip of col ci)
-    const grips = wrap.querySelectorAll(".mde-grip");
+    const grips = wrap.querySelectorAll(".mdb-grip");
     const setHover = (ci) => {
       syncCtlBar();   // re-measure before revealing — the table may have reflowed since the last hover
-      ctlTds.forEach((td, i) => td.classList.toggle("mde-colon", i === ci));
-      if (ci >= 0 && ctlTds[ci]) { const w = rows[0].children[ci].getBoundingClientRect().width; ctlTds[ci].classList.toggle("mde-narrow", w > 0 && w < 64); }   // measured live on hover (real geometry, no rAF/visibility dependency): too narrow → the inline ✕ folds into the ⋯ menu
-      [].forEach.call(grips, (g) => { const gc = +g.dataset.col; g.classList.toggle("mde-gripshow", ci >= 0 && (gc === ci || gc === ci - 1)); });
+      ctlTds.forEach((td, i) => td.classList.toggle("mdb-colon", i === ci));
+      if (ci >= 0 && ctlTds[ci]) { const w = rows[0].children[ci].getBoundingClientRect().width; ctlTds[ci].classList.toggle("mdb-narrow", w > 0 && w < 64); }   // measured live on hover (real geometry, no rAF/visibility dependency): too narrow → the inline ✕ folds into the ⋯ menu
+      [].forEach.call(grips, (g) => { const gc = +g.dataset.col; g.classList.toggle("mdb-gripshow", ci >= 0 && (gc === ci || gc === ci - 1)); });
     };
     wrap.addEventListener("mouseover", (e) => {
-      const dtd = e.target.closest && e.target.closest("td.mde-cell");
-      if (dtd && dtd.parentElement && dtd.parentElement.classList.contains("mde-trow")) { setHover(dtd.cellIndex); return; }
-      const ctd = e.target.closest && e.target.closest(".mde-tctlcell");   // hovering the floating control cell itself keeps its own column revealed
+      const dtd = e.target.closest && e.target.closest("td.mdb-cell");
+      if (dtd && dtd.parentElement && dtd.parentElement.classList.contains("mdb-trow")) { setHover(dtd.cellIndex); return; }
+      const ctd = e.target.closest && e.target.closest(".mdb-tctlcell");   // hovering the floating control cell itself keeps its own column revealed
       setHover(ctd ? ctlTds.indexOf(ctd) : -1);
     });
     wrap.addEventListener("mouseleave", () => setHover(-1));

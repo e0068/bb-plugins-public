@@ -14,12 +14,7 @@
 // nothing — the content is already in. This also survives the base moving
 // ahead with other people's commits, which a plain "diff against base is
 // empty" check does not.
-
-/** What a git command returned: its exit code and stdout. The shell maps its own run type onto this. */
-export interface CommandOutcome {
-  code: number;
-  stdout: string;
-}
+import type { CommandOutcome } from "./command-outcome";
 
 /**
  * - `merged` — merging the branch into the base would change nothing;
@@ -50,17 +45,20 @@ export function decideMergedContent(input: {
 /**
  * Folds the measured fact together with the cached "this HEAD was already
  * merged" flag: the fact wins whenever there is one, the cache answers only
- * when there is none. The cache exists so the expensive git run happens once
- * per HEAD rather than on every poll.
+ * when there is none — and a cache miss leaves the verdict `unknown` rather
+ * than guessing "not merged". The cache exists so the expensive git run
+ * happens once per HEAD rather than on every poll.
  */
-export function resolveAlreadyMerged(content: MergedContent, cachedHeadMatches: boolean): boolean {
+export function resolveContentVerdict(
+  content: MergedContent,
+  cachedHeadMatches: boolean,
+): MergedContent {
   switch (content) {
     case "merged":
-      return true;
     case "not-merged":
-      return false;
+      return content;
     case "unknown":
-      return cachedHeadMatches;
+      return cachedHeadMatches ? "merged" : "unknown";
   }
 }
 

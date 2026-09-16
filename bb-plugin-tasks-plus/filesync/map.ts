@@ -10,6 +10,7 @@ import {
   type TaskStatus,
   type TaskType,
 } from "../db/types.js";
+import { readDollars, readMinutes } from "../shared/amounts.js";
 
 /** A task assembled from one markdown file's frontmatter + its folder. */
 export interface MappedTaskFile {
@@ -21,8 +22,11 @@ export interface MappedTaskFile {
   priority: TaskPriority;
   type: TaskType | null;
   estimate: TaskEstimate | null;
-  planTokens: number | null;
-  factTokens: number | null;
+  plannedMinutes: number | null;
+  actualMinutes: number | null;
+  budget: number | null;
+  budgetLimit: number | null;
+  cost: number | null;
   dueDate: string | null;
   labels: string[];
   /** Parent task's slug or key, when the file declares one. */
@@ -32,36 +36,27 @@ export interface MappedTaskFile {
 
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
 
-// project-memory-v2 renamed these folders; accept the old spellings on read.
+// Spaces and hyphens read as underscores, so "In progress" and the old
+// project-memory-v2 "in-progress" both land on in_progress; "to do" and
+// "to-do" still need a word joined.
 const STATUS_ALIASES: Record<string, TaskStatus> = {
-  "to-do": "todo",
-  "in-progress": "in_progress",
-  "in-review": "in_review",
+  to_do: "todo",
 };
 
 /** Maps an immediate subfolder name to a task status, or null if unknown. */
 export function statusFromFolder(folder: string): TaskStatus | null {
-  const normalized = folder.trim().toLowerCase();
+  const normalized = folder.trim().toLowerCase().replace(/[\s-]+/g, "_");
   if ((TASK_STATUSES as readonly string[]).includes(normalized)) {
     return normalized as TaskStatus;
   }
   return STATUS_ALIASES[normalized] ?? null;
 }
 
-/** "120k" → 120000, "1.5m" → 1500000, 240 → 240, junk → null (floored, ≥0). */
-export function parseTokens(value: unknown): number | null {
-  if (typeof value === "number") {
-    return Number.isFinite(value) && value >= 0 ? Math.floor(value) : null;
-  }
-  if (typeof value !== "string") return null;
-  const match = /^(\d+(?:\.\d+)?)\s*([km])?$/i.exec(value.trim());
-  if (!match) return null;
-  const base = Number(match[1]);
-  if (!Number.isFinite(base)) return null;
-  const unit = match[2]?.toLowerCase();
-  const scale = unit === "k" ? 1_000 : unit === "m" ? 1_000_000 : 1;
-  return Math.floor(base * scale);
-}
+/** Frontmatter `minutes`/`minutes_actual`: whole minutes, junk reads as null. */
+export const parseMinutes = readMinutes;
+
+/** Frontmatter `budget`/`limit`/`cost`: dollars on whole cents, junk reads as null. */
+export const parseDollars = readDollars;
 
 function enumOr<T extends string>(
   value: unknown,
@@ -138,8 +133,9 @@ function firstString(...values: unknown[]): string | null {
  * Builds a task from parsed frontmatter, its resolved status and the file's
  * markdown `body`, which becomes the task description verbatim. `slugFallback`
  * (e.g. the filename) is used when the frontmatter omits `slug`. Unknown enum
- * values fall back (type/estimate → null, priority → "none"); invalid dates and
- * token strings drop to null. The mapping never throws.
+ * values fall back (type/estimate → null, priority → "none"); invalid dates,
+ * minutes and dollar amounts drop to null. Legacy `tokens`/`tokens_actual`
+ * lines are not read. The mapping never throws.
  */
 export function mapFrontmatter(
   data: Record<string, unknown>,
@@ -157,8 +153,11 @@ export function mapFrontmatter(
     priority: enumOr<TaskPriority>(data.priority, TASK_PRIORITIES, "none") ?? "none",
     type: mapType(data.type),
     estimate: enumOr<TaskEstimate>(data.estimate, TASK_ESTIMATES, null),
-    planTokens: parseTokens(data.tokens),
-    factTokens: parseTokens(data.tokens_actual),
+    plannedMinutes: parseMinutes(data.minutes),
+    actualMinutes: parseMinutes(data.minutes_actual),
+    budget: parseDollars(data.budget),
+    budgetLimit: parseDollars(data.limit),
+    cost: parseDollars(data.cost),
     dueDate: due !== null && ISO_DATE.test(due) ? due : null,
     labels: stringArray(data.labels),
     parentRef: firstString(data.parent),

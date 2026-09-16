@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import type { ResolvedBase } from "../core/base-branch";
 import { liveAheadCount, runFastForward, type GitPorts, type GitRun } from "./fast-forward";
 
 // Fake run: queues replies by argv + records calls. The reply is picked by a
@@ -21,12 +22,15 @@ function fakePorts(
 const ok: GitRun = { code: 0, stdout: "", stderr: "" };
 const aheadZero: GitRun = { code: 0, stdout: "0\n", stderr: "" };
 
-describe("runFastForward", () => {
+const originMain: ResolvedBase = { mode: "origin", statusBase: "origin/main", githubBase: "main" };
+const localMain: ResolvedBase = { mode: "local", statusBase: "main", githubBase: "main" };
+
+describe("runFastForward — mode origin", () => {
   it("success: fetch → live ahead=0 → merge --ff-only, in that order", async () => {
     const { ports, calls } = fakePorts((args) =>
       args[0] === "rev-list" ? aheadZero : ok,
     );
-    await runFastForward(ports, "main");
+    await runFastForward(ports, originMain);
     expect(calls).toEqual([
       ["fetch", "origin", "main"],
       ["rev-list", "--count", "origin/main..HEAD"],
@@ -38,7 +42,7 @@ describe("runFastForward", () => {
     const { ports, calls } = fakePorts((args) =>
       args[0] === "fetch" ? { code: 1, stdout: "", stderr: "no network" } : ok,
     );
-    await expect(runFastForward(ports, "main")).rejects.toThrow("no network");
+    await expect(runFastForward(ports, originMain)).rejects.toThrow("no network");
     expect(calls).toEqual([["fetch", "origin", "main"]]);
   });
 
@@ -46,7 +50,7 @@ describe("runFastForward", () => {
     const { ports, calls } = fakePorts((args) =>
       args[0] === "rev-list" ? { code: 0, stdout: "2\n", stderr: "" } : ok,
     );
-    await expect(runFastForward(ports, "main")).rejects.toThrow(
+    await expect(runFastForward(ports, originMain)).rejects.toThrow(
       "Fast-forward is not possible right now (diverged).",
     );
     expect(calls).toEqual([
@@ -59,7 +63,7 @@ describe("runFastForward", () => {
     const { ports, calls } = fakePorts((args) =>
       args[0] === "rev-list" ? { code: 1, stdout: "", stderr: "boom" } : ok,
     );
-    await runFastForward(ports, "main");
+    await runFastForward(ports, originMain);
     expect(calls).toEqual([
       ["fetch", "origin", "main"],
       ["rev-list", "--count", "origin/main..HEAD"],
@@ -75,7 +79,7 @@ describe("runFastForward", () => {
       }
       return ok;
     });
-    await expect(runFastForward(ports, "main")).rejects.toThrow(
+    await expect(runFastForward(ports, originMain)).rejects.toThrow(
       "Not possible to fast-forward",
     );
   });
@@ -86,16 +90,39 @@ describe("runFastForward", () => {
       if (args[0] === "merge") return { code: 128, stdout: "", stderr: "" };
       return ok;
     });
-    await expect(runFastForward(ports, "main")).rejects.toThrow("code 128");
+    await expect(runFastForward(ports, originMain)).rejects.toThrow("code 128");
   });
 });
 
-describe("liveAheadCount", () => {
+describe("runFastForward — mode local", () => {
+  it("no fetch — measures and merges straight against the bare local ref", async () => {
+    const { ports, calls } = fakePorts((args) =>
+      args[0] === "rev-list" ? aheadZero : ok,
+    );
+    await runFastForward(ports, localMain);
+    expect(calls).toEqual([
+      ["rev-list", "--count", "main..HEAD"],
+      ["merge", "--ff-only", "main"],
+    ]);
+  });
+
+  it("live ahead > 0 → readable plugin refusal, merge does not run", async () => {
+    const { ports, calls } = fakePorts((args) =>
+      args[0] === "rev-list" ? { code: 0, stdout: "2\n", stderr: "" } : ok,
+    );
+    await expect(runFastForward(ports, localMain)).rejects.toThrow(
+      "Fast-forward is not possible right now (diverged).",
+    );
+    expect(calls).toEqual([["rev-list", "--count", "main..HEAD"]]);
+  });
+});
+
+describe("liveAheadCount — mode origin", () => {
   it("fetches first, then reports the live count — the fresh answer bb's status cache can miss", async () => {
     const { ports, calls } = fakePorts((args) =>
       args[0] === "rev-list" ? { code: 0, stdout: "2\n", stderr: "" } : ok,
     );
-    expect(await liveAheadCount(ports, "main")).toBe(2);
+    expect(await liveAheadCount(ports, originMain)).toBe(2);
     expect(calls).toEqual([
       ["fetch", "origin", "main"],
       ["rev-list", "--count", "origin/main..HEAD"],
@@ -106,7 +133,7 @@ describe("liveAheadCount", () => {
     const { ports, calls } = fakePorts((args) =>
       args[0] === "fetch" ? { code: 1, stdout: "", stderr: "no network" } : ok,
     );
-    expect(await liveAheadCount(ports, "main")).toBeNull();
+    expect(await liveAheadCount(ports, originMain)).toBeNull();
     expect(calls).toEqual([["fetch", "origin", "main"]]);
   });
 
@@ -114,13 +141,23 @@ describe("liveAheadCount", () => {
     const { ports } = fakePorts((args) =>
       args[0] === "rev-list" ? { code: 1, stdout: "", stderr: "boom" } : ok,
     );
-    expect(await liveAheadCount(ports, "main")).toBeNull();
+    expect(await liveAheadCount(ports, originMain)).toBeNull();
   });
 
   it("non-numeric stdout → null", async () => {
     const { ports } = fakePorts((args) =>
       args[0] === "rev-list" ? { code: 0, stdout: "not a number\n", stderr: "" } : ok,
     );
-    expect(await liveAheadCount(ports, "main")).toBeNull();
+    expect(await liveAheadCount(ports, originMain)).toBeNull();
+  });
+});
+
+describe("liveAheadCount — mode local", () => {
+  it("no fetch — counts straight against the bare local ref", async () => {
+    const { ports, calls } = fakePorts((args) =>
+      args[0] === "rev-list" ? { code: 0, stdout: "3\n", stderr: "" } : ok,
+    );
+    expect(await liveAheadCount(ports, localMain)).toBe(3);
+    expect(calls).toEqual([["rev-list", "--count", "main..HEAD"]]);
   });
 });

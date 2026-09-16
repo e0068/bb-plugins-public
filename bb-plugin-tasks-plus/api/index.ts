@@ -1,11 +1,18 @@
 import type { BbPluginApi, PluginRpcHandlers } from "@get-bb/plugin-sdk";
 import {
-  createTasksStore,
-  type Attachment as StoredAttachment,
-  type Comment as StoredComment,
-  type Task as StoredTask,
-  type TasksStore,
-} from "../db";
+  loadFileTasksStore,
+  type FileTasksStore,
+} from "../filesync/store.js";
+import { currentCallerEnvironment } from "../filesync/caller-scope.js";
+import type { CallerEnvironmentCache } from "../filesync/caller-cache.js";
+import { withCallerScope } from "./caller-scope.js";
+import { nextTaskNumber, type BoardConfig } from "../filesync/board-config.js";
+import type {
+  Attachment as StoredAttachment,
+  Comment as StoredComment,
+} from "../db/types.js";
+import { createTransitionLog, type TransitionLog } from "../db/transition-log.js";
+import { seriesFromTransitions, snapshotOf } from "../analytics/aggregate.js";
 import {
   AttachmentReferencedError,
   deleteAttachmentById,
@@ -15,12 +22,12 @@ import { deliverCommentToLatestAgent } from "../steer";
 import { isSideChatShapedThread } from "../shared/side-chat";
 import {
   resolveSourceAbsPath,
-  revealInFinder,
-  revealExecFileProvider,
-} from "../reveal";
+  revealInFinderHere,
+} from "../packages/reveal-in-finder";
 import {
   tasksRpcContract,
   type Attachment as AttachmentMetadata,
+  type Project,
   type ProjectsChangedEvent,
   type SidebarProjectSummary,
   type Task,
@@ -32,26 +39,7 @@ import {
   type CommentProvider,
 } from "../shared/contract";
 
-type PluginDatabase = ReturnType<BbPluginApi["storage"]["database"]>;
-
-interface TaskLabelIdRow {
-  task_id: string;
-  label_id: string;
-}
-
-interface CountRow {
-  count: number;
-}
-
-interface PrefixRow {
-  found: number;
-}
-
-interface SummaryRow {
-  project_id: string;
-  task_count: number;
-  active_agent_count: number;
-}
+type StoredTask = Task;
 
 const PRESET_REASONING_LEVELS = [
   "low",
@@ -64,108 +52,84 @@ const PRESET_REASONING_LEVELS = [
 const MAX_THREAD_SEARCH_RESULTS = 10;
 
 export interface TasksApiStore {
-  readonly tasks: TasksStore;
-  transaction<T>(operation: () => T): T;
-  taskLabelIds(taskIds: readonly string[]): Map<string, string[]>;
-  projectTaskCount(projectId: string): number;
+  readonly tasks: FileTasksStore;
+  /** Append-only status-transition journal on the plugin's sqlite db (BBPL-260). */
+  readonly transitions: TransitionLog;
+  transaction<T>(operation: () => T | Promise<T>): Promise<T>;
+  projectTaskCount(projectId: string): Promise<number>;
   projectPrefixExists(prefix: string, excludingProjectId: string): boolean;
-  openTaskCount(): number;
-  sidebarSummary(): SidebarProjectSummary[];
+  openTaskCount(): Promise<number>;
+  sidebarSummary(): Promise<SidebarProjectSummary[]>;
 }
 
-export function createStore(bb: BbPluginApi): TasksApiStore {
-  const database = bb.storage.database();
-  const tasks = createTasksStore(database);
+/**
+ * Loads the file-backed store (boards/folders/presets/saved views from kv,
+ * tasks read fresh from disk on every call — see decisions/tasks-files-are-
+ * the-store.md) and wraps it with the handful of cross-cutting queries the
+ * SQL store used to answer with raw SQL. Every field these compute (labels,
+ * counts, sidebar summary) is already on the `Task`/`Project` records the
+ * store returns, so no separate query layer is needed.
+ */
+export async function createStore(bb: BbPluginApi): Promise<TasksApiStore> {
+  const tasks = await loadFileTasksStore(
+    bb.storage.kv,
+    (error) =>
+      bb.log.warn(`tasks-plus: failed to persist store state: ${String(error)}`),
+    currentCallerEnvironment,
+  );
+
+  const transitions = createTransitionLog(bb.storage.database());
 
   return {
     tasks,
-    transaction<T>(operation: () => T): T {
-      return database.transaction(operation)();
+    transitions,
+    transaction<T>(operation: () => T | Promise<T>): Promise<T> {
+      return tasks.transaction(operation);
     },
-    taskLabelIds(taskIds: readonly string[]): Map<string, string[]> {
-      const labelsByTask = new Map<string, string[]>();
-      for (const taskId of taskIds) labelsByTask.set(taskId, []);
-
-      for (let offset = 0; offset < taskIds.length; offset += 500) {
-        const ids = taskIds.slice(offset, offset + 500);
-        if (ids.length === 0) continue;
-        const placeholders = ids.map(() => "?").join(", ");
-        const rows = database
-          .prepare<string[], TaskLabelIdRow>(
-            `
-              SELECT task_id, label_id
-              FROM task_labels
-              WHERE task_id IN (${placeholders})
-              ORDER BY task_id, label_id
-            `,
-          )
-          .all(...ids);
-        for (const row of rows)
-          labelsByTask.get(row.task_id)?.push(row.label_id);
-      }
-      return labelsByTask;
-    },
-    projectTaskCount(projectId: string): number {
-      return (
-        database
-          .prepare<
-            [string],
-            CountRow
-          >("SELECT COUNT(*) AS count FROM tasks WHERE project_id = ?")
-          .get(projectId)?.count ?? 0
-      );
+    async projectTaskCount(projectId: string): Promise<number> {
+      return (await tasks.listTasks({ projectId })).length;
     },
     projectPrefixExists(prefix: string, excludingProjectId: string): boolean {
-      return Boolean(
-        database
-          .prepare<[string, string], PrefixRow>(
-            `
-              SELECT 1 AS found FROM projects
-              WHERE prefix = ? COLLATE NOCASE AND id <> ?
-              LIMIT 1
-            `,
-          )
-          .get(prefix, excludingProjectId),
-      );
+      return tasks
+        .listProjects()
+        .some(
+          (project) =>
+            project.id !== excludingProjectId &&
+            project.prefix.toLowerCase() === prefix.toLowerCase(),
+        );
     },
-    openTaskCount(): number {
-      return (
-        database
-          .prepare<[], CountRow>(
-            `
-              SELECT COUNT(*) AS count
-              FROM tasks
-              WHERE status NOT IN ('done', 'canceled')
-            `,
-          )
-          .get()?.count ?? 0
-      );
+    async openTaskCount(): Promise<number> {
+      return (await tasks.listTasks({}))
+        .filter((task) => task.status !== "done" && task.status !== "canceled")
+        .length;
     },
-    sidebarSummary(): SidebarProjectSummary[] {
-      return database
-        .prepare<[], SummaryRow>(
-          `
-            SELECT
-              p.id AS project_id,
-              COUNT(DISTINCT t.id) AS task_count,
-              COUNT(DISTINCT CASE
-                WHEN tt.live_status IN ('starting', 'working') THEN tt.thread_id
-              END) AS active_agent_count
-            FROM projects p
-            LEFT JOIN tasks t
-              ON t.project_id = p.id
-              AND t.parent_task_id IS NULL
-            LEFT JOIN task_threads tt ON tt.task_id = t.id
-            GROUP BY p.id
-            ORDER BY p.name COLLATE NOCASE, p.id
-          `,
-        )
-        .all()
-        .map((row) => ({
-          projectId: row.project_id,
-          taskCount: row.task_count,
-          activeAgentCount: row.active_agent_count,
-        }));
+    async sidebarSummary(): Promise<SidebarProjectSummary[]> {
+      return Promise.all(
+        [...tasks.listProjects()]
+          .sort((a, b) => a.name.localeCompare(b.name) || a.id.localeCompare(b.id))
+          .map(async (project) => {
+            // One board read for all of the project's tasks and threads —
+            // listTaskThreads per task would re-read the whole board once per
+            // task (see decisions/tasks-plus-board-roots-blocks-rpc.md).
+            const [topLevel, threadsByTask] = await Promise.all([
+              tasks.listTasks({ projectId: project.id, parentTaskId: null }),
+              tasks.threadsByTaskId(project.id),
+            ]);
+            const activeThreadIds = new Set<string>();
+            for (const task of topLevel) {
+              for (const thread of threadsByTask.get(task.id) ?? []) {
+                if (thread.liveStatus === "starting" || thread.liveStatus === "working") {
+                  activeThreadIds.add(thread.threadId);
+                }
+              }
+            }
+            return {
+              projectId: project.id,
+              taskCount: topLevel.length,
+              activeAgentCount: activeThreadIds.size,
+            };
+          }),
+      );
     },
   };
 }
@@ -209,6 +173,15 @@ function publishTasksChanged(
   bb.realtime.publish("tasks:changed", payload);
 }
 
+/** File sync changed an unknown subset of the project's tasks. */
+export function publishProjectTasksChanged(
+  bb: BbPluginApi,
+  projectId: string,
+): void {
+  const payload: TasksChangedEvent = { taskId: null, projectId };
+  bb.realtime.publish("tasks:changed", payload);
+}
+
 export function publishProjectsChanged(
   bb: BbPluginApi,
   projectId: string | null,
@@ -241,56 +214,52 @@ function publishViewsChanged(bb: BbPluginApi): void {
 /**
  * The file path backing a task, sourced only from a real `file_tasks` link
  * (kept current by `bb tasks sync`). Tasks that still carry a legacy
- * "Source: …" description marker (see filesync/legacy-source.ts) but no
+ * "Source: …" description marker left by the old SQL store but no
  * file_tasks row were never migrated by a sync adoption pass — surface no
  * source for them rather than a stale, possibly-ENOENT path parsed from
  * free text. The parser itself is retained only for that adoption pass in
- * filesync/sync.ts, not for this runtime lookup.
+ * the board's own files, not for this runtime lookup.
  */
-function resolveTaskSourcePath(
-  store: TasksApiStore,
-  task: StoredTask,
-): string | null {
-  return store.tasks.getFileTaskByTaskId(task.id)?.filePath ?? null;
+/** The file the task lives in is already on the record itself (see
+ *  filesync/assemble.ts) — there is no separate file_tasks link to resolve. */
+function resolveTaskSourcePath(task: StoredTask): string | null {
+  return task.source?.filePath ?? null;
 }
 
-function taskSource(store: TasksApiStore, task: StoredTask): Task["source"] {
-  const fileTask = store.tasks.getFileTaskByTaskId(task.id);
-  if (!fileTask) return null;
-  return { filePath: fileTask.filePath, origin: fileTask.origin };
+/** `store.tasks.getTask`/`listTasks` already return the full API shape
+ *  (labelIds, checks, source) — see filesync/assemble.ts — so these are
+ *  identity functions kept only so call sites don't need to change. */
+function apiTask(_store: TasksApiStore, task: StoredTask): Task {
+  return task;
 }
 
-function apiTask(store: TasksApiStore, task: StoredTask): Task {
-  return {
-    ...task,
-    labelIds: store.taskLabelIds([task.id]).get(task.id) ?? [],
-    checks: store.tasks.listTaskChecks(task.id),
-    source: taskSource(store, task),
-  };
+function apiTasks(_store: TasksApiStore, tasks: StoredTask[]): Task[] {
+  return tasks;
 }
 
-function apiTasks(store: TasksApiStore, tasks: StoredTask[]): Task[] {
-  const labelsByTask = store.taskLabelIds(tasks.map((task) => task.id));
-  return tasks.map((task) => ({
-    ...task,
-    labelIds: labelsByTask.get(task.id) ?? [],
-    checks: store.tasks.listTaskChecks(task.id),
-    source: taskSource(store, task),
-  }));
+/**
+ * `nextTaskNumber` isn't stored on a board (see filesync/board-config.ts —
+ * there's nothing to keep in sync when a file is added by hand), but the
+ * API contract still exposes it, so it's computed here from the board's
+ * current files each time a Project crosses the wire.
+ */
+async function apiProject(store: TasksApiStore, board: BoardConfig): Promise<Project> {
+  const keys = (await store.tasks.listTasks({ projectId: board.id })).map((task) => task.key);
+  return { ...board, nextTaskNumber: nextTaskNumber(keys, board.prefix) };
 }
 
-function validateTaskParent(
+async function validateTaskParent(
   store: TasksApiStore,
   projectId: string,
   parentTaskId: string | null,
   ownTaskId?: string,
-): void {
+): Promise<void> {
   if (parentTaskId === null) return;
   if (parentTaskId === ownTaskId) {
     fail("task_parent_invalid", "A task cannot be its own parent");
   }
 
-  const parent = store.tasks.getTask(parentTaskId);
+  const parent = await store.tasks.getTask(parentTaskId);
   if (!parent) throw new Error(`Task not found: ${parentTaskId}`);
   if (parent.projectId !== projectId) {
     fail(
@@ -304,7 +273,7 @@ function validateTaskParent(
       "Tasks support at most one level of sub-tasks",
     );
   }
-  if (ownTaskId && store.tasks.listSubtasks(ownTaskId).length > 0) {
+  if (ownTaskId && (await store.tasks.listSubtasks(ownTaskId)).length > 0) {
     fail(
       "subtask_depth_exceeded",
       "A task with sub-tasks cannot itself become a sub-task",
@@ -312,36 +281,20 @@ function validateTaskParent(
   }
 }
 
-function validateTaskLabels(
-  store: TasksApiStore,
-  projectId: string,
-  labelIds: readonly string[],
-): void {
-  for (const labelId of labelIds) {
-    const label = store.tasks.getLabel(labelId);
-    if (!label || label.projectId !== projectId) {
-      fail(
-        "label_project_mismatch",
-        `Task labels must belong to the task project: ${labelId}`,
-      );
-    }
-  }
-}
-
-function replaceTaskLabels(
+async function replaceTaskLabels(
   store: TasksApiStore,
   taskId: string,
   labelIds: readonly string[],
-): void {
+): Promise<void> {
   const current = new Set(
-    store.tasks.listTaskLabels(taskId).map((link) => link.labelId),
+    (await store.tasks.listTaskLabels(taskId)).map((link) => link.labelId),
   );
   const next = new Set(labelIds);
   for (const labelId of current) {
-    if (!next.has(labelId)) store.tasks.removeTaskLabel(taskId, labelId);
+    if (!next.has(labelId)) await store.tasks.removeTaskLabel(taskId, labelId);
   }
   for (const labelId of next) {
-    if (!current.has(labelId)) store.tasks.addTaskLabel(taskId, labelId);
+    if (!current.has(labelId)) await store.tasks.addTaskLabel(taskId, labelId);
   }
 }
 
@@ -354,13 +307,12 @@ function labelsChanged(
   return before.some((labelId) => !afterSet.has(labelId));
 }
 
-function labelChangeBody(
+async function labelChangeBody(
   store: TasksApiStore,
   taskId: string,
   authorName: string,
-): string {
-  const names = store.tasks
-    .listLabelsForTask(taskId)
+): Promise<string> {
+  const names = (await store.tasks.listLabelsForTask(taskId))
     .map((label) => label.name)
     .sort((left, right) => left.localeCompare(right));
   return names.length === 0
@@ -368,14 +320,14 @@ function labelChangeBody(
     : `Labels changed to ${names.join(", ")} by ${authorName}`;
 }
 
-function writeSystemComments(
+async function writeSystemComments(
   store: TasksApiStore,
   taskId: string,
   authorName: string,
   bodies: readonly string[],
-): void {
+): Promise<void> {
   for (const body of bodies) {
-    store.tasks.createComment({
+    await store.tasks.createComment({
       taskId,
       kind: "system",
       authorName,
@@ -399,16 +351,21 @@ function attachmentMetadata(attachment: StoredAttachment): AttachmentMetadata {
 }
 
 /** Every attachment reachable from these tasks (their own + their comments'). */
-export function attachmentsForTasks(
-  store: TasksStore,
+export async function attachmentsForTasks(
+  store: FileTasksStore,
   taskIds: readonly string[],
-): StoredAttachment[] {
-  return taskIds.flatMap((taskId) => [
-    ...store.listAttachmentsForTask(taskId),
-    ...store
-      .listComments(taskId)
-      .flatMap((comment) => store.listAttachmentsForComment(comment.id)),
-  ]);
+): Promise<StoredAttachment[]> {
+  const perTask = await Promise.all(
+    taskIds.map(async (taskId) => {
+      const ownAttachments = await store.listAttachmentsForTask(taskId);
+      const comments = await store.listComments(taskId);
+      const commentAttachments = await Promise.all(
+        comments.map((comment) => store.listAttachmentsForComment(comment.id)),
+      );
+      return [...ownAttachments, ...commentAttachments.flat()];
+    }),
+  );
+  return perTask.flat();
 }
 
 /**
@@ -519,7 +476,7 @@ export async function createComment(
   store: TasksApiStore,
   input: CreateCommentInput,
 ): Promise<StoredComment> {
-  let comment = store.transaction(() =>
+  let comment = await store.transaction(() =>
     store.tasks.createComment({
       taskId: input.taskId,
       kind: input.kind,
@@ -538,7 +495,7 @@ export async function createComment(
       body: comment.body,
       authorName: comment.authorName,
     });
-    comment = store.transaction(() =>
+    comment = await store.transaction(() =>
       store.tasks.updateComment(comment.id, {
         notifiedCount: delivery.notifiedCount,
       }),
@@ -599,7 +556,7 @@ async function listTaskPullRequests(
   store: TasksApiStore,
   taskId: string,
 ): Promise<TaskPullRequestsResult> {
-  const taskThreads = store.tasks.listTaskThreads(taskId);
+  const taskThreads = await store.tasks.listTaskThreads(taskId);
 
   const unavailable = new Set<string>();
   const threadIdsByEnvironment = new Map<string, string[]>();
@@ -727,18 +684,18 @@ export function registerHandlers(
     listFolders() {
       return { folders: store.tasks.listFolders() };
     },
-    createProject(input) {
+    async createProject(input) {
       const project = store.tasks.createProject(input);
       publishProjectsChanged(bb, project.id);
-      return { project };
+      return { project: await apiProject(store, project) };
     },
-    updateProject(input) {
+    async updateProject(input) {
       const { projectId, ...changes } = input;
       const project = store.tasks.updateProject(projectId, changes);
       publishProjectsChanged(bb, project.id);
-      return { project };
+      return { project: await apiProject(store, project) };
     },
-    renameProjectPrefix(input) {
+    async renameProjectPrefix(input) {
       try {
         if (store.projectPrefixExists(input.prefix, input.projectId)) {
           fail(
@@ -750,7 +707,7 @@ export function registerHandlers(
           prefix: input.prefix,
         });
         publishProjectsChanged(bb, project.id);
-        return { ok: true, project };
+        return { ok: true, project: await apiProject(store, project) };
       } catch (error) {
         if (error instanceof TasksDomainFailure) return projectFailure(error);
         throw error;
@@ -758,16 +715,15 @@ export function registerHandlers(
     },
     async deleteProject(input) {
       try {
-        if (!input.force && store.projectTaskCount(input.projectId) > 0) {
+        if (!input.force && (await store.projectTaskCount(input.projectId)) > 0) {
           fail(
             "project_not_empty",
             "A project must be empty before it can be deleted; pass force: true to delete its tasks",
           );
         }
-        const taskIds = store.tasks
-          .listTasks({ projectId: input.projectId })
+        const taskIds = (await store.tasks.listTasks({ projectId: input.projectId }))
           .map((task) => task.id);
-        const attachments = attachmentsForTasks(store.tasks, taskIds);
+        const attachments = await attachmentsForTasks(store.tasks, taskIds);
         const deleted = store.tasks.deleteProject(input.projectId);
         if (deleted) {
           await removeAttachmentBlobs(bb, store.tasks, attachments);
@@ -779,15 +735,20 @@ export function registerHandlers(
         throw error;
       }
     },
-    listProjects(input) {
-      return { projects: store.tasks.listProjects(input.folderId) };
+    async listProjects(input) {
+      return {
+        projects: await Promise.all(
+          store.tasks
+            .listProjects(input.folderId)
+            .map((project) => apiProject(store, project)),
+        ),
+      };
     },
-    createTask(input) {
+    async createTask(input) {
       try {
-        validateTaskParent(store, input.projectId, input.parentTaskId);
-        validateTaskLabels(store, input.projectId, input.labelIds);
-        const task = store.transaction(() => {
-          const created = store.tasks.createTask({
+        await validateTaskParent(store, input.projectId, input.parentTaskId);
+        const task = await store.transaction(async () => {
+          const created = await store.tasks.createTask({
             projectId: input.projectId,
             title: input.title,
             description: input.description,
@@ -795,14 +756,19 @@ export function registerHandlers(
             priority: input.priority,
             type: input.type,
             estimate: input.estimate,
-            planTokens: input.planTokens,
-            factTokens: input.factTokens,
+            plannedMinutes: input.plannedMinutes,
+            actualMinutes: input.actualMinutes,
+            budget: input.budget,
+            budgetLimit: input.budgetLimit,
+            cost: input.cost,
             checks: input.checks,
             dueDate: input.dueDate,
             parentTaskId: input.parentTaskId,
+            assignee: input.assignee,
+            epic: input.epic,
           });
-          replaceTaskLabels(store, created.id, input.labelIds);
-          return apiTask(store, created);
+          await replaceTaskLabels(store, created.id, input.labelIds);
+          return apiTask(store, (await store.tasks.getTask(created.id))!);
         });
         publishTasksChanged(bb, task.id, task.projectId);
         return { ok: true, task };
@@ -811,46 +777,51 @@ export function registerHandlers(
         throw error;
       }
     },
-    getTask(input) {
-      const task = store.tasks.getTask(input.taskId);
+    async getTask(input) {
+      const task = await store.tasks.getTask(input.taskId);
       return { task: task ? apiTask(store, task) : null };
     },
-    getTaskByKey(input) {
-      const task = store.tasks.getTaskByKey(input.taskKey);
+    async getTaskByKey(input) {
+      const task = await store.tasks.getTaskByKey(input.taskKey);
       return { task: task ? apiTask(store, task) : null };
     },
-    updateTask(input) {
+    async updateTask(input) {
       try {
-        const current = store.tasks.getTask(input.taskId);
+        const current = await store.tasks.getTask(input.taskId);
         if (!current) throw new Error(`Task not found: ${input.taskId}`);
         const parentTaskId =
           input.parentTaskId === undefined
             ? current.parentTaskId
             : input.parentTaskId;
-        validateTaskParent(store, current.projectId, parentTaskId, current.id);
-        if (input.labelIds) {
-          validateTaskLabels(store, current.projectId, input.labelIds);
-        }
+        await validateTaskParent(store, current.projectId, parentTaskId, current.id);
 
-        const result = store.transaction(() => {
-          const beforeLabelIds = store.tasks
-            .listTaskLabels(current.id)
+        const result = await store.transaction(async () => {
+          const beforeLabelIds = (await store.tasks.listTaskLabels(current.id))
             .map((link) => link.labelId);
-          const updated = store.tasks.updateTask(current.id, {
+          const updated = await store.tasks.updateTask(current.id, {
+            slug: input.slug,
+            key: input.key,
             title: input.title,
             description: input.description,
             status: input.status,
             priority: input.priority,
             type: input.type,
             estimate: input.estimate,
-            planTokens: input.planTokens,
-            factTokens: input.factTokens,
+            plannedMinutes: input.plannedMinutes,
+            actualMinutes: input.actualMinutes,
+            budget: input.budget,
+            budgetLimit: input.budgetLimit,
+            cost: input.cost,
             checks: input.checks,
             dueDate: input.dueDate,
             parentTaskId: input.parentTaskId,
+            assignee: input.assignee,
+            epic: input.epic,
           });
+          // From here on the task answers to `updated.id` — a slug change
+          // renamed the file and the id with it.
           if (input.labelIds) {
-            replaceTaskLabels(store, current.id, input.labelIds);
+            await replaceTaskLabels(store, updated.id, input.labelIds);
           }
 
           const bodies: string[] = [];
@@ -858,6 +829,14 @@ export function registerHandlers(
             bodies.push(
               `Status changed to ${statusName(updated.status)} by ${input.authorName}`,
             );
+            store.transitions.record({
+              taskId: updated.id,
+              projectId: updated.projectId,
+              fromStatus: current.status,
+              toStatus: updated.status,
+              atMs: Date.now(),
+              actor: input.authorName,
+            });
           }
           if (updated.priority !== current.priority) {
             bodies.push(
@@ -872,11 +851,11 @@ export function registerHandlers(
             );
           }
           if (input.labelIds && labelsChanged(beforeLabelIds, input.labelIds)) {
-            bodies.push(labelChangeBody(store, current.id, input.authorName));
+            bodies.push(await labelChangeBody(store, updated.id, input.authorName));
           }
-          writeSystemComments(store, current.id, input.authorName, bodies);
+          await writeSystemComments(store, updated.id, input.authorName, bodies);
           return {
-            task: apiTask(store, updated),
+            task: apiTask(store, (await store.tasks.getTask(updated.id))!),
             systemCommentsWritten: bodies.length,
           };
         });
@@ -892,9 +871,9 @@ export function registerHandlers(
       }
     },
     async deleteTask(input) {
-      const task = store.tasks.getTask(input.taskId);
-      const attachments = attachmentsForTasks(store.tasks, [input.taskId]);
-      const deleted = store.tasks.deleteTask(input.taskId);
+      const task = await store.tasks.getTask(input.taskId);
+      const attachments = await attachmentsForTasks(store.tasks, [input.taskId]);
+      const deleted = await store.tasks.deleteTask(input.taskId);
       if (deleted && task) {
         await removeAttachmentBlobs(bb, store.tasks, attachments);
         publishTasksChanged(bb, task.id, task.projectId);
@@ -902,9 +881,9 @@ export function registerHandlers(
       return { deleted };
     },
     async revealTaskSource(input) {
-      const task = store.tasks.getTask(input.taskId);
+      const task = await store.tasks.getTask(input.taskId);
       if (!task) return { revealed: false, error: "Task not found" };
-      const filePath = resolveTaskSourcePath(store, task);
+      const filePath = resolveTaskSourcePath(task);
       if (!filePath) {
         return { revealed: false, error: "The task has no source file" };
       }
@@ -941,10 +920,7 @@ export function registerHandlers(
             error: "The file path is outside the repository",
           };
         }
-        return await revealInFinder(absPath, {
-          platform: process.platform,
-          execFile: revealExecFileProvider.current,
-        });
+        return await revealInFinderHere(absPath);
       } catch (error) {
         return {
           revealed: false,
@@ -952,13 +928,14 @@ export function registerHandlers(
         };
       }
     },
-    listTasks(input) {
-      const page = store.tasks.listTasksPage({
+    async listTasks(input) {
+      const page = await store.tasks.listTasksPage({
         projectId: input.projectId,
         statuses: input.statuses,
         priorities: input.priorities,
         labelIds: input.labelIds,
         activeOnly: input.activeOnly,
+        waitingOnly: input.waitingOnly,
         parentTaskId: input.parentTaskId,
         search: input.search,
         sort: input.sort,
@@ -970,22 +947,33 @@ export function registerHandlers(
         nextCursor: page.nextCursor,
       };
     },
-    boardMove(input) {
-      const current = store.tasks.getTask(input.taskId);
+    async boardMove(input) {
+      const current = await store.tasks.getTask(input.taskId);
       if (!current) throw new Error(`Task not found: ${input.taskId}`);
-      const result = store.transaction(() => {
-        const moved = store.tasks.updatePosition(current.id, {
-          status: input.status,
-          beforeTaskId: input.beforeTaskId,
-          afterTaskId: input.afterTaskId,
-        });
+      const result = await store.transaction(async () => {
+        // Board columns are statuses; there is no manual order within a
+        // column to preserve (see decisions/tasks-files-are-the-store.md) —
+        // beforeTaskId/afterTaskId are accepted for wire compatibility but
+        // unused.
+        const moved = await store.tasks.updateTask(current.id, { status: input.status });
         const statusChanged = moved.status !== current.status;
         if (statusChanged) {
-          writeSystemComments(store, current.id, input.authorName, [
+          // Record before the system comment (a separate md write that could
+          // fail): the transition log is the source of truth for "every
+          // transition writes a row", and mirrors updateTask's own order.
+          store.transitions.record({
+            taskId: moved.id,
+            projectId: moved.projectId,
+            fromStatus: current.status,
+            toStatus: moved.status,
+            atMs: Date.now(),
+            actor: input.authorName,
+          });
+          await writeSystemComments(store, current.id, input.authorName, [
             `Status changed to ${statusName(moved.status)} by ${input.authorName}`,
           ]);
         }
-        return { task: apiTask(store, moved), statusChanged };
+        return { task: apiTask(store, (await store.tasks.getTask(moved.id))!), statusChanged };
       });
       publishTasksChanged(bb, result.task.id, result.task.projectId);
       if (result.statusChanged) publishCommentsChanged(bb, result.task.id);
@@ -996,22 +984,25 @@ export function registerHandlers(
       publishProjectsChanged(bb, label.projectId);
       return { label };
     },
-    updateLabel(input) {
-      const label = store.tasks.updateLabel(input.labelId, {
+    async updateLabel(input) {
+      const label = await store.tasks.updateLabel(input.labelId, {
         name: input.name,
         color: input.color,
       });
       publishProjectsChanged(bb, label.projectId);
       return { label };
     },
-    deleteLabel(input) {
-      const label = store.tasks.getLabel(input.labelId);
-      const deleted = store.tasks.deleteLabel(input.labelId);
+    async deleteLabel(input) {
+      const label = await store.tasks.getLabel(input.labelId);
+      const deleted = await store.tasks.deleteLabel(input.labelId);
       if (deleted && label) publishProjectsChanged(bb, label.projectId);
       return { deleted };
     },
-    listLabels(input) {
-      return { labels: store.tasks.listLabels(input.projectId) };
+    async listPlacements(input) {
+      return store.tasks.listPlacements(input.projectId);
+    },
+    async listLabels(input) {
+      return { labels: await store.tasks.listLabels(input.projectId) };
     },
     async createComment(input) {
       const comment = await createComment(bb, store, {
@@ -1026,7 +1017,7 @@ export function registerHandlers(
       return { comment };
     },
     async listComments(input) {
-      const comments = store.tasks.listComments(input.taskId);
+      const comments = await store.tasks.listComments(input.taskId);
       const threadInfo = await resolveAgentThreadInfo(bb, comments);
       const providerBadges = await resolveProviderBadges(bb, threadInfo);
       return {
@@ -1050,11 +1041,11 @@ export function registerHandlers(
         }),
       };
     },
-    listAttachments(input) {
+    async listAttachments(input) {
       const attachments =
         "taskId" in input
-          ? store.tasks.listAttachmentsForTask(input.taskId)
-          : store.tasks.listAttachmentsForComment(input.commentId);
+          ? await store.tasks.listAttachmentsForTask(input.taskId)
+          : await store.tasks.listAttachmentsForComment(input.commentId);
       return {
         attachments: attachments.map(attachmentMetadata),
       };
@@ -1089,8 +1080,13 @@ export function registerHandlers(
         throw error;
       }
     },
-    listTaskThreads(input) {
-      return { taskThreads: store.tasks.listTaskThreads(input.taskId) };
+    async listTaskThreads(input) {
+      return { taskThreads: await store.tasks.listTaskThreads(input.taskId) };
+    },
+    async tasksForThread(input) {
+      return {
+        tasks: apiTasks(store, await store.tasks.listTasksForThread(input.threadId)),
+      };
     },
     async listTaskPullRequests(input) {
       return listTaskPullRequests(bb, store, input.taskId);
@@ -1225,15 +1221,43 @@ export function registerHandlers(
         })),
       };
     },
-    sidebarOpenTaskCount() {
-      return { openTaskCount: store.openTaskCount() };
+    async sidebarOpenTaskCount() {
+      return { openTaskCount: await store.openTaskCount() };
     },
-    sidebarSummary() {
-      return { projects: store.sidebarSummary() };
+    async sidebarSummary() {
+      return { projects: await store.sidebarSummary() };
+    },
+    async analyticsSnapshot(input) {
+      const tasks = await store.tasks.listTasks(
+        input.projectId != null ? { projectId: input.projectId } : {},
+      );
+      return snapshotOf(tasks);
+    },
+    analyticsSeries(input) {
+      const rows = store.transitions.range(
+        input.fromMs,
+        input.toMs,
+        input.projectId != null ? { projectId: input.projectId } : undefined,
+      );
+      return seriesFromTransitions(rows, {
+        fromMs: input.fromMs,
+        toMs: input.toMs,
+        binMs: input.binMs,
+      });
     },
   };
 }
 
-export function registerTasksApi(bb: BbPluginApi, store: TasksApiStore): void {
-  bb.rpc.register(tasksRpcContract, registerHandlers(bb, store));
+export function registerTasksApi(
+  bb: BbPluginApi,
+  store: TasksApiStore,
+  callerEnvironments: CallerEnvironmentCache,
+): void {
+  // Область вызова открывается здесь, вокруг обработчиков: до этого её знал
+  // только CLI, и запрос от интерфейса всегда выглядел бестредовым — см.
+  // api/caller-scope.ts.
+  bb.rpc.register(
+    tasksRpcContract,
+    withCallerScope(callerEnvironments, registerHandlers(bb, store)),
+  );
 }

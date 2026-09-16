@@ -23,6 +23,7 @@ const VALID_STDOUT = JSON.stringify({
   unit: 300,
   threads: [],
   agentLabels: {},
+  truncated: false,
 });
 
 /** One thread entry as threads_timeline.py --json prints it — pre-enrichment, no BB fields yet. */
@@ -53,6 +54,7 @@ function stdoutWithThreads(...sessions: string[]) {
     unit: 300,
     threads: sessions.map(rawThread),
     agentLabels: {},
+    truncated: false,
   });
 }
 
@@ -364,6 +366,106 @@ describe("createThreadsTimelineService: BB project enrichment", () => {
     ]);
   });
 
+  it("falls back to the session's own managed-worktree environment when no scanned thread's identity matches it (thread deleted, session drifted, or outside THREADS_SCAN_LIMIT)", async () => {
+    const { bb, harness } = createFakePluginHost();
+    harness.sdk.stub("threads.list", async () => []); // nothing to scan — thread-level match can't happen at all
+    const environmentGetStub = vi.fn(async ({ environmentId }: { environmentId: string }) => {
+      if (environmentId !== "env_suki2mvjxj") throw new Error("no such environment");
+      return { id: environmentId, projectId: "proj-1", path: null };
+    });
+    harness.sdk.stub("environments.get", environmentGetStub);
+    harness.sdk.stub("projects.list", async () => [{ id: "proj-1", name: "bb-plugins" }]);
+    const stdout = JSON.stringify({
+      schemaVersion: EXPECTED_THREADS_TIMELINE_SCHEMA_VERSION,
+      unit: 300,
+      threads: [{ ...rawThread("sess-1"), cwd: "/Users/e0068/.bb/worktrees/env_suki2mvjxj/bb-plugins" }],
+      agentLabels: {},
+      truncated: false,
+    });
+    const { runner } = fakeRunner(() => ({ ok: true, stdout, stderr: "", code: 0 }));
+    const service = createThreadsTimelineService(bb, { processRunner: runner });
+
+    const result = await service.query({ unit: 300 });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.data.threads).toEqual([
+      expect.objectContaining({ session: "sess-1", bbProjectId: "proj-1", bbProjectName: "bb-plugins", threadId: null, bbThreadTitle: null }),
+    ]);
+    expect(environmentGetStub).toHaveBeenCalledWith({ environmentId: "env_suki2mvjxj" });
+  });
+
+  it("falls back to matching the session's cwd against a registered project's own checkout path when it ran outside any bb-managed worktree at all", async () => {
+    const { bb, harness } = createFakePluginHost();
+    harness.sdk.stub("threads.list", async () => []);
+    harness.sdk.stub("projects.list", async () => [
+      { id: "proj-1", name: "Cellular", sources: [{ path: "/Users/e0068/Documents/Projects/Cellular" }] },
+    ]);
+    const stdout = JSON.stringify({
+      schemaVersion: EXPECTED_THREADS_TIMELINE_SCHEMA_VERSION,
+      unit: 300,
+      threads: [{ ...rawThread("sess-1"), cwd: "/Users/e0068/Documents/Projects/Cellular/public" }],
+      agentLabels: {},
+      truncated: false,
+    });
+    const { runner } = fakeRunner(() => ({ ok: true, stdout, stderr: "", code: 0 }));
+    const service = createThreadsTimelineService(bb, { processRunner: runner });
+
+    const result = await service.query({ unit: 300 });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.data.threads).toEqual([
+      expect.objectContaining({ session: "sess-1", bbProjectId: "proj-1", bbProjectName: "Cellular", threadId: null, bbThreadTitle: null }),
+    ]);
+  });
+
+  it("prefers a scanned thread's own session identity over the environment/path fallbacks when both are available", async () => {
+    const { bb, harness } = createFakePluginHost();
+    harness.sdk.stub("threads.list", async () => [{ id: "thread-1", projectId: "proj-real", title: "Real thread" }]);
+    harness.sdk.stub("threads.events.list", async () => [identityEvent("thread-1", "sess-1")]);
+    const environmentGetStub = vi.fn(async () => ({ id: "env_x", projectId: "proj-wrong", path: null }));
+    harness.sdk.stub("environments.get", environmentGetStub);
+    harness.sdk.stub("projects.list", async () => [
+      { id: "proj-real", name: "Real Project" },
+      { id: "proj-wrong", name: "Wrong Project" },
+    ]);
+    const stdout = JSON.stringify({
+      schemaVersion: EXPECTED_THREADS_TIMELINE_SCHEMA_VERSION,
+      unit: 300,
+      threads: [{ ...rawThread("sess-1"), cwd: "/Users/e0068/.bb/worktrees/env_x/whatever" }],
+      agentLabels: {},
+      truncated: false,
+    });
+    const { runner } = fakeRunner(() => ({ ok: true, stdout, stderr: "", code: 0 }));
+    const service = createThreadsTimelineService(bb, { processRunner: runner });
+
+    const result = await service.query({ unit: 300 });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.data.threads).toEqual([
+      expect.objectContaining({ session: "sess-1", bbProjectId: "proj-real", bbProjectName: "Real Project", threadId: "thread-1" }),
+    ]);
+    // The identity match already resolved this session — the environment
+    // fallback never needed to run for it.
+    expect(environmentGetStub).not.toHaveBeenCalled();
+  });
+
+  it("scans hidden threads too, not just the visible sidebar ones — a workflow's own background agent dispatches are hidden by default", async () => {
+    const { bb, harness } = createFakePluginHost();
+    const threadsListStub = vi.fn(async () => [{ id: "thread-1", projectId: "proj-1", title: "Background workflow run" }]);
+    harness.sdk.stub("threads.list", threadsListStub);
+    harness.sdk.stub("threads.events.list", async () => [identityEvent("thread-1", "sess-1")]);
+    harness.sdk.stub("projects.list", async () => [{ id: "proj-1", name: "bb-plugins" }]);
+    const { runner } = fakeRunner(() => ({ ok: true, stdout: stdoutWithThreads("sess-1"), stderr: "", code: 0 }));
+    const service = createThreadsTimelineService(bb, { processRunner: runner });
+
+    await service.query({ unit: 300 });
+
+    expect(threadsListStub).toHaveBeenCalledWith(expect.objectContaining({ includeHidden: true }));
+  });
+
   it("derives isAlive from archivedAt and isWorking from recent activity (`end`) or background work", async () => {
     const NOW = Date.parse("2026-08-25T10:00:00.000Z");
     const recentEnd = "2026-08-25T09:59:00.000Z"; // 60s before NOW → within the 2-min window
@@ -380,6 +482,7 @@ describe("createThreadsTimelineService: BB project enrichment", () => {
         threadWithEnd("sess-arch", recentEnd),
       ],
       agentLabels: {},
+      truncated: false,
     });
 
     const { bb, harness } = createFakePluginHost();
@@ -463,12 +566,19 @@ describe("createThreadsTimelineService: BB project enrichment", () => {
     expect(result.data.threads).toEqual([expect.objectContaining({ session: "sess-1", bbThreadTitle: null })]);
   });
 
-  it("leaves a session unmatched to any scanned BB thread as null (renders as the 'Threads' bucket)", async () => {
+  it("leaves a session unmatched to any scanned BB thread, project, or environment in the shared Unknown Project bucket, not a pseudo-project named after its directory", async () => {
     const { bb, harness } = createFakePluginHost();
     harness.sdk.stub("threads.list", async () => [{ id: "thread-1", projectId: "proj-1", title: "Some other thread" }]);
     harness.sdk.stub("threads.events.list", async () => [identityEvent("thread-1", "some-other-session")]);
     harness.sdk.stub("projects.list", async () => [{ id: "proj-1", name: "bb-plugins" }]);
-    const { runner } = fakeRunner(() => ({ ok: true, stdout: stdoutWithThreads("sess-unmatched"), stderr: "", code: 0 }));
+    const stdout = JSON.stringify({
+      schemaVersion: EXPECTED_THREADS_TIMELINE_SCHEMA_VERSION,
+      unit: 300,
+      threads: [{ ...rawThread("sess-unmatched"), cwd: "/Users/e0068/Documents/Claude/Orchestrator WIP/Orchestrator v0.2" }],
+      agentLabels: {},
+      truncated: false,
+    });
+    const { runner } = fakeRunner(() => ({ ok: true, stdout, stderr: "", code: 0 }));
     const service = createThreadsTimelineService(bb, { processRunner: runner });
 
     const result = await service.query({ unit: 300 });
@@ -479,20 +589,28 @@ describe("createThreadsTimelineService: BB project enrichment", () => {
       expect.objectContaining({
         session: "sess-unmatched",
         bbProjectId: null,
-        bbProjectName: null,
+        bbProjectName: "Unknown Project",
         threadId: null,
         bbThreadTitle: null,
       }),
     ]);
   });
 
-  it("does not fail the slice when bb.sdk.threads.list rejects — every thread comes back unmatched", async () => {
+  it("merges an unmatched session into a registered project's own slice when its cwd-guessed name matches that project exactly", async () => {
     const { bb, harness } = createFakePluginHost();
-    harness.sdk.stub("threads.list", async () => {
-      throw new Error("daemon unavailable");
+    harness.sdk.stub("threads.list", async () => []);
+    harness.sdk.stub("projects.list", async () => [{ id: "proj-1", name: "Cellular" }]);
+    const stdout = JSON.stringify({
+      schemaVersion: EXPECTED_THREADS_TIMELINE_SCHEMA_VERSION,
+      unit: 300,
+      // No registered source path for "Cellular", so tier 3 (projectIdForCwd)
+      // can't match this — only the cwd's last segment happening to equal
+      // the registered project's own name should merge it in.
+      threads: [{ ...rawThread("sess-1"), cwd: "/Users/e0068/Documents/Elsewhere/Cellular" }],
+      agentLabels: {},
+      truncated: false,
     });
-    harness.sdk.stub("projects.list", async () => [{ id: "proj-1", name: "bb-plugins" }]);
-    const { runner } = fakeRunner(() => ({ ok: true, stdout: stdoutWithThreads("sess-1"), stderr: "", code: 0 }));
+    const { runner } = fakeRunner(() => ({ ok: true, stdout, stderr: "", code: 0 }));
     const service = createThreadsTimelineService(bb, { processRunner: runner });
 
     const result = await service.query({ unit: 300 });
@@ -500,18 +618,50 @@ describe("createThreadsTimelineService: BB project enrichment", () => {
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     expect(result.data.threads).toEqual([
-      expect.objectContaining({ session: "sess-1", bbProjectId: null, bbProjectName: null, threadId: null, bbThreadTitle: null }),
+      expect.objectContaining({ session: "sess-1", bbProjectId: null, bbProjectName: "Cellular", threadId: null, bbThreadTitle: null }),
     ]);
   });
 
-  it("does not fail the slice when bb.sdk.projects.list rejects — every thread comes back unmatched", async () => {
+  it("does not fail the slice when bb.sdk.threads.list rejects — every thread falls back to the Unknown Project bucket", async () => {
+    const { bb, harness } = createFakePluginHost();
+    harness.sdk.stub("threads.list", async () => {
+      throw new Error("daemon unavailable");
+    });
+    harness.sdk.stub("projects.list", async () => [{ id: "proj-1", name: "bb-plugins" }]);
+    const stdout = JSON.stringify({
+      schemaVersion: EXPECTED_THREADS_TIMELINE_SCHEMA_VERSION,
+      unit: 300,
+      threads: [{ ...rawThread("sess-1"), cwd: "/Users/e0068/Documents/Projects/Track" }],
+      agentLabels: {},
+      truncated: false,
+    });
+    const { runner } = fakeRunner(() => ({ ok: true, stdout, stderr: "", code: 0 }));
+    const service = createThreadsTimelineService(bb, { processRunner: runner });
+
+    const result = await service.query({ unit: 300 });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.data.threads).toEqual([
+      expect.objectContaining({ session: "sess-1", bbProjectId: null, bbProjectName: "Unknown Project", threadId: null, bbThreadTitle: null }),
+    ]);
+  });
+
+  it("does not fail the slice when bb.sdk.projects.list rejects — every thread falls back to the Unknown Project bucket", async () => {
     const { bb, harness } = createFakePluginHost();
     harness.sdk.stub("threads.list", async () => [{ id: "thread-1", projectId: "proj-1", title: "Design review" }]);
     harness.sdk.stub("threads.events.list", async () => [identityEvent("thread-1", "sess-1")]);
     harness.sdk.stub("projects.list", async () => {
       throw new Error("daemon unavailable");
     });
-    const { runner } = fakeRunner(() => ({ ok: true, stdout: stdoutWithThreads("sess-1"), stderr: "", code: 0 }));
+    const stdout = JSON.stringify({
+      schemaVersion: EXPECTED_THREADS_TIMELINE_SCHEMA_VERSION,
+      unit: 300,
+      threads: [{ ...rawThread("sess-1"), cwd: "/Users/e0068/Documents/Projects/Track" }],
+      agentLabels: {},
+      truncated: false,
+    });
+    const { runner } = fakeRunner(() => ({ ok: true, stdout, stderr: "", code: 0 }));
     const service = createThreadsTimelineService(bb, { processRunner: runner });
 
     const result = await service.query({ unit: 300 });
@@ -519,7 +669,7 @@ describe("createThreadsTimelineService: BB project enrichment", () => {
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     expect(result.data.threads).toEqual([
-      expect.objectContaining({ session: "sess-1", bbProjectId: null, bbProjectName: null, threadId: null, bbThreadTitle: null }),
+      expect.objectContaining({ session: "sess-1", bbProjectId: null, bbProjectName: "Unknown Project", threadId: null, bbThreadTitle: null }),
     ]);
   });
 
@@ -591,6 +741,7 @@ describe("createThreadsTimelineService: commit enrichment", () => {
       unit: 300,
       threads: [thread],
       agentLabels: {},
+      truncated: false,
     });
     const gitLogOut = "a5ee9a4b3c2d1e0f\x1f2026-08-20T13:50:00+00:00\x1ffix bug\x1e";
     const { runner, calls } = fakeGitAwareRunner({ scriptStdout, gitLogOut });
@@ -623,6 +774,7 @@ describe("createThreadsTimelineService: commit enrichment", () => {
       unit: 300,
       threads: [thread],
       agentLabels: {},
+      truncated: false,
     });
     const gitLogOut = "a5ee9a4\x1f2026-08-20T13:50:00+00:00\x1ffix bug\x1e";
     const { runner } = fakeGitAwareRunner({ scriptStdout, gitLogOut, gitConfigOut: "git@github.com:e0068/bb-plugins.git\n" });
@@ -651,6 +803,7 @@ describe("createThreadsTimelineService: commit enrichment", () => {
       unit: 300,
       threads: [thread],
       agentLabels: {},
+      truncated: false,
     });
     const { runner, calls } = fakeGitAwareRunner({ scriptStdout });
     const service = createThreadsTimelineService(fakeBb, { processRunner: runner });
@@ -670,6 +823,7 @@ describe("createThreadsTimelineService: commit enrichment", () => {
       unit: 300,
       threads: [thread],
       agentLabels: {},
+      truncated: false,
     });
     const { runner, calls } = fakeGitAwareRunner({ scriptStdout });
     const service = createThreadsTimelineService(fakeBb, { processRunner: runner });
@@ -690,6 +844,7 @@ describe("createThreadsTimelineService: commit enrichment", () => {
       unit: 300,
       threads: [thread],
       agentLabels: {},
+      truncated: false,
     });
     const { runner } = fakeGitAwareRunner({ scriptStdout, gitLogFails: true });
     const service = createThreadsTimelineService(fakeBb, { processRunner: runner });

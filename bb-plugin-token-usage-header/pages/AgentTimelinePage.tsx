@@ -24,6 +24,7 @@ import type * as React from "react";
 import { useBbNavigate, useRpc, useSettings, type PluginNavPanelProps, type PluginRpcResult } from "@get-bb/plugin-sdk/app";
 import type { rpcContract } from "../server";
 import { Button } from "@/components/ui/button";
+import { Switch } from "@/components/ui/switch";
 import { cn } from "@/lib/utils";
 import {
   DEFAULT_VIZ_SETTINGS,
@@ -145,6 +146,58 @@ function computeTurns(events: readonly AgentTimelineEvent[]): { turns: Turn[]; i
     turn.itemIndices.forEach((i) => indexToTurn.set(i, t));
   });
   return { turns, indexToTurn };
+}
+
+interface SectionRange<A> {
+  agent: A;
+  /** Index of this section's first event in the concatenated `events` array. */
+  start: number;
+  count: number;
+}
+
+/**
+ * Concatenates one or more agent sections into a single flat timeline, with
+ * per-section turns/tool-grouping preserved: each section's turns are
+ * computed on its own events and re-based onto the concatenated indices, so
+ * expanding a message never pulls in a neighbouring member's tools. A single
+ * section (the regular, non-workflow case) reduces to plain `computeTurns` on
+ * that section's events — same turns, same indices as before this existed.
+ * `sectionRanges` lets the flow view draw a header before each member's rows.
+ */
+function buildSectionedTimeline<A>(
+  sections: readonly { agent: A; events: AgentTimelineEvent[] }[],
+): { events: AgentTimelineEvent[]; turns: Turn[]; indexToTurn: Map<number, number>; sectionRanges: SectionRange<A>[] } {
+  const events: AgentTimelineEvent[] = [];
+  const turns: Turn[] = [];
+  const indexToTurn = new Map<number, number>();
+  const sectionRanges: SectionRange<A>[] = [];
+  for (const section of sections) {
+    const start = events.length;
+    const turnBase = turns.length;
+    const local = computeTurns(section.events);
+    local.turns.forEach((turn) =>
+      turns.push({
+        headerIndex: turn.headerIndex === null ? null : turn.headerIndex + start,
+        itemIndices: turn.itemIndices.map((i) => i + start),
+      }),
+    );
+    local.indexToTurn.forEach((t, i) => indexToTurn.set(i + start, t + turnBase));
+    section.events.forEach((event) => events.push(event));
+    sectionRanges.push({ agent: section.agent, start, count: section.events.length });
+  }
+  return { events, turns, indexToTurn, sectionRanges };
+}
+
+/**
+ * Indices of the user-prompt rows — the only rows the "Expand prompts" switch
+ * owns. Assistant replies expand row-by-row and tools belong to the turn
+ * arrow, so the switch can raise every prompt while the rest stays folded.
+ */
+function userPromptIndices(events: readonly AgentTimelineEvent[]): number[] {
+  return events.reduce<number[]>((acc, event, i) => {
+    if (event.kind === "message" && event.role === "user") acc.push(i);
+    return acc;
+  }, []);
 }
 
 /**
@@ -460,6 +513,20 @@ export function AgentTimelinePage({ subPath }: PluginNavPanelProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [timelineState, linkParams.from, linkParams.to]);
 
+  // Flow view (a "workflow:<runId>" selector): the run's member agent keys,
+  // so the left panel highlights the whole group at once. null for a regular
+  // agent — the left panel then highlights only the single active row.
+  const flowMemberKeys = useMemo(
+    () =>
+      timelineState.kind === "ready" && timelineState.data.flow
+        ? new Set(timelineState.data.flow.map((section) => section.agent.key))
+        : null,
+    [timelineState],
+  );
+  // The Workflow merged/split toggle is only meaningful when a workflow
+  // actually ran in this session — otherwise there's nothing to merge or split.
+  const showWorkflowToggle = Boolean(sessionChartThread && sessionChartThread.workflowCount > 0);
+
   return (
     <div className="flex h-full flex-col overflow-y-auto">
       <div className="shrink-0 border-b border-border px-4 py-2 md:px-5">
@@ -475,18 +542,10 @@ export function AgentTimelinePage({ subPath }: PluginNavPanelProps) {
       </div>
       {sessionChart && sessionChartThread && (
         <div className="shrink-0 px-4 pt-3 md:px-5">
-          <div className="mb-1 flex items-center justify-between gap-2">
+          {/* The Workflow merged/split toggle used to sit here; it now lives
+              in the timeline toolbar below, alongside Hooks/Time/Grouping. */}
+          <div className="mb-1 flex items-center gap-2">
             <span className="text-xs font-medium text-muted-foreground">Session chart</span>
-            {/* Only meaningful when a workflow actually ran — otherwise there's nothing to merge or split. */}
-            {sessionChartThread.workflowCount > 0 && (
-              <ToggleButton
-                pressed={!groupWorkflows}
-                onClick={() => setGroupWorkflows((v) => !v)}
-                label="Workflow"
-                on="split"
-                off="merged"
-              />
-            )}
           </div>
           <SessionChartCard
             thread={sessionChartThread}
@@ -503,6 +562,7 @@ export function AgentTimelinePage({ subPath }: PluginNavPanelProps) {
         session={session}
         timelineState={timelineState}
         activeAgentKey={activeAgentKey}
+        memberKeys={flowMemberKeys}
         onSelectAgent={selectAgent}
       />
       <RightPanel
@@ -510,6 +570,9 @@ export function AgentTimelinePage({ subPath }: PluginNavPanelProps) {
         session={session}
         linkParams={linkParams}
         timelineState={timelineState}
+        groupWorkflows={groupWorkflows}
+        onToggleGroupWorkflows={() => setGroupWorkflows((v) => !v)}
+        showWorkflowToggle={showWorkflowToggle}
         showHooks={showHooks}
         onToggleShowHooks={() => setShowHooks((v) => !v)}
         relativeTime={relativeTime}
@@ -517,6 +580,7 @@ export function AgentTimelinePage({ subPath }: PluginNavPanelProps) {
         groupedByTurn={groupedByTurn}
         onToggleGroupedByTurn={() => setGroupedByTurn((v) => !v)}
         expanded={expanded}
+        onSetExpanded={setExpanded}
         onToggleExpanded={(i) =>
           setExpanded((prev) => {
             const next = new Set(prev);
@@ -560,11 +624,14 @@ function LeftPanel({
   session,
   timelineState,
   activeAgentKey,
+  memberKeys,
   onSelectAgent,
 }: {
   session: string | null;
   timelineState: TimelineLoadState;
   activeAgentKey: string;
+  /** In the flow view, the run's member agent keys — every one is highlighted as a group. null for a regular agent (only the single active row highlights). */
+  memberKeys: Set<string> | null;
   onSelectAgent: (agentKey: string) => void;
 }) {
   if (!session) {
@@ -633,7 +700,9 @@ function LeftPanel({
               <span className="text-xs font-medium text-muted-foreground">Agents</span>
               <ul className="space-y-1">
                 {timelineState.data.agents.map((agent) => {
-                  const active = agent.key === activeAgentKey;
+                  // In the flow view every member row lights up as a group;
+                  // otherwise only the single open agent's row does.
+                  const active = memberKeys ? memberKeys.has(agent.key) : agent.key === activeAgentKey;
                   return (
                     <li key={agent.key}>
                       <button
@@ -716,6 +785,11 @@ interface RightPanelProps {
   session: string | null;
   linkParams: AgentDetailLinkParams;
   timelineState: TimelineLoadState;
+  /** Session-chart merged/split state — the toggle lives in this toolbar now (moved from the chart header). */
+  groupWorkflows: boolean;
+  onToggleGroupWorkflows: () => void;
+  /** Whether the session had any workflow run — the toggle is hidden otherwise (nothing to merge or split). */
+  showWorkflowToggle: boolean;
   showHooks: boolean;
   onToggleShowHooks: () => void;
   relativeTime: boolean;
@@ -724,6 +798,8 @@ interface RightPanelProps {
   onToggleGroupedByTurn: () => void;
   expanded: Set<number>;
   onToggleExpanded: (i: number) => void;
+  /** Bulk replacement of the expanded set — the "Expand prompts" switch, which knows which indices are prompts. */
+  onSetExpanded: (next: Set<number>) => void;
   collapsedTurns: Set<number>;
   onToggleTurnCollapsed: (t: number) => void;
   onSetAllTurnsCollapsed: (collapsed: boolean) => void;
@@ -760,16 +836,32 @@ function RightPanel(props: RightPanelProps) {
     return <p className="text-sm text-destructive">{timelineState.message}</p>;
   }
 
-  return <ReadyRightPanel {...props} agent={timelineState.data.agent} events={timelineState.data.events} />;
+  return (
+    <ReadyRightPanel
+      {...props}
+      agent={timelineState.data.agent}
+      events={timelineState.data.events}
+      flow={timelineState.data.flow}
+    />
+  );
 }
 
 function ReadyRightPanel(
-  props: RightPanelProps & { agent: ReadyAgentTimeline["agent"]; events: AgentTimelineEvent[] },
+  props: RightPanelProps & {
+    agent: ReadyAgentTimeline["agent"];
+    events: AgentTimelineEvent[];
+    /** Ordered member sections when a workflow selector is open — the flow view; undefined for a regular agent. */
+    flow?: ReadyAgentTimeline["flow"];
+  },
 ) {
   const {
     containerRef,
     agent,
-    events,
+    events: topLevelEvents,
+    flow,
+    groupWorkflows,
+    onToggleGroupWorkflows,
+    showWorkflowToggle,
     showHooks,
     onToggleShowHooks,
     relativeTime,
@@ -778,6 +870,7 @@ function ReadyRightPanel(
     onToggleGroupedByTurn,
     expanded,
     onToggleExpanded,
+    onSetExpanded,
     collapsedTurns,
     onToggleTurnCollapsed,
     onSetAllTurnsCollapsed,
@@ -787,8 +880,29 @@ function ReadyRightPanel(
     onToggleShowFullContent,
   } = props;
 
-  const { turns, indexToTurn } = useMemo(() => computeTurns(events), [events]);
+  // One flat timeline whether this is a single agent or a whole workflow
+  // flow: the member sections (or the lone agent) are concatenated with
+  // per-section turns preserved. `events`/`turns`/`indexToTurn` below then
+  // drive the same row renderers in both cases.
+  const isFlow = Boolean(flow && flow.length > 0);
+  const { events, turns, indexToTurn, sectionRanges } = useMemo(
+    () => buildSectionedTimeline(flow ?? [{ agent, events: topLevelEvents }]),
+    [flow, agent, topLevelEvents],
+  );
   const firstTs = events.length > 0 ? Date.parse(events[0].ts) : NaN;
+
+  // The "Expand prompts" switch is DERIVED from `expanded`, not a state of its
+  // own: it reads "on" exactly while every prompt is open. Collapsing one
+  // prompt therefore switches it off by itself, with the other prompts left
+  // open — the "select all" checkbox semantics — and no second copy of the
+  // truth to keep in sync.
+  const promptIndices = useMemo(() => userPromptIndices(events), [events]);
+  const allPromptsExpanded = promptIndices.length > 0 && promptIndices.every((i) => expanded.has(i));
+  function setPromptsExpanded(expand: boolean): void {
+    const next = new Set(expanded);
+    promptIndices.forEach((i) => (expand ? next.add(i) : next.delete(i)));
+    onSetExpanded(next);
+  }
 
   function formatTime(ts: string): string {
     if (!relativeTime) return formatAbsoluteTime(ts);
@@ -809,10 +923,10 @@ function ReadyRightPanel(
   }
 
   // Two right-aligned columns (tokens, $) appended to every event row —
-  // filled only for assistant-message rows that carry usage (see
-  // messageEventSchema in src/core/agent-timeline.ts); blank cells on
-  // tool/hook/user rows keep the columns aligned without implying a cost
-  // that wasn't tracked for that row.
+  // filled only on the row that carries its model call's price (an assistant
+  // message, or the first tool of a call without text — see
+  // src/core/agent-timeline.ts); blank cells elsewhere keep the columns
+  // aligned without implying a cost that belongs to another row.
   function costCells(tokens: number | undefined, cost: number | undefined): React.ReactNode {
     return (
       <>
@@ -826,11 +940,14 @@ function ReadyRightPanel(
     );
   }
 
-  /** Sum of `cost` across a turn's own assistant messages — shown in that turn's header row when grouped. */
+  /** Whether the Hooks toggle lets this event through — the one filter every count and row list shares. */
+  const isShown = (i: number): boolean => showHooks || events[i].kind !== "hook";
+
+  /** Sum of `cost` across every priced row of a turn — each model call is priced exactly once, so this is the turn's full cost. */
   function turnCost(turn: Turn): number {
     return turn.itemIndices.reduce((sum, idx) => {
       const e = events[idx];
-      return e.kind === "message" && e.role === "assistant" && e.cost !== undefined ? sum + e.cost : sum;
+      return e.kind !== "hook" && e.cost !== undefined ? sum + e.cost : sum;
     }, 0);
   }
 
@@ -858,7 +975,7 @@ function ReadyRightPanel(
           <span className="w-[74px] shrink-0 font-mono text-xs tabular-nums text-subtle-foreground">{formatTime(event.ts)}</span>
           <span className="w-14 shrink-0 text-xs font-medium text-muted-foreground">{event.name}</span>
           <span className="min-w-0 flex-1 truncate font-mono text-xs text-muted-foreground">{event.target ?? ""}</span>
-          {costCells(undefined, undefined)}
+          {costCells(event.tokens, event.cost)}
         </div>
       );
     }
@@ -869,12 +986,8 @@ function ReadyRightPanel(
     const label = event.role === "assistant" ? "assistant" : "user";
     const isExpanded = expanded.has(i);
     const turnIdx = indexToTurn.get(i);
-    const tools =
-      turnIdx !== undefined
-        ? turns[turnIdx].itemIndices.map((idx) => events[idx]).filter((e): e is Extract<AgentTimelineEvent, { kind: "tool" }> => e.kind === "tool")
-        : [];
     const turnCollapsed = isHeader && turnIdx !== undefined && collapsedTurns.has(turnIdx);
-    const itemCount = isHeader && turnIdx !== undefined ? turns[turnIdx].itemIndices.length : 0;
+    const itemCount = isHeader && turnIdx !== undefined ? turns[turnIdx].itemIndices.filter(isShown).length : 0;
     // Header rows (the turn's own leading user message) show the turn's
     // aggregate cost instead of this one message's own tokens/cost — a user
     // message never carries usage itself (see messageEventSchema).
@@ -905,52 +1018,65 @@ function ReadyRightPanel(
           {isHeader && <span className="shrink-0 text-xs text-subtle-foreground">{itemCount}</span>}
           {costCells(isHeader ? undefined : event.tokens, isHeader ? headerTurnCost : event.cost)}
         </div>
+        {/* The message's own text and nothing else: the turn's tools belong to
+            the turn arrow above, so expanding every prompt at once (the
+            "Expand prompts" switch) never drags the rest of the turn open. */}
         {isExpanded && (
-          <div className="space-y-2 px-3 pb-1.5 pl-[104px]">
-            <div className="space-y-1">
-              {event.fullTextTruncated && <p className="text-xs text-subtle-foreground">not everything is shown</p>}
-              <pre className="whitespace-pre-wrap break-words rounded bg-card p-2 font-mono text-xs text-muted-foreground">{event.fullText}</pre>
-            </div>
-            {tools.length === 0 ? (
-              <div className="text-xs text-subtle-foreground">No tools were used</div>
-            ) : (
-              <div className="space-y-0.5">
-                {tools.map((tool, idx) => (
-                  <div key={idx} className="flex items-center gap-2 text-xs">
-                    <span className="w-14 shrink-0 text-muted-foreground">{tool.name}</span>
-                    <span className="min-w-0 flex-1 truncate font-mono text-subtle-foreground">{tool.target ?? ""}</span>
-                  </div>
-                ))}
-              </div>
-            )}
+          <div className="space-y-1 px-3 pb-1.5 pl-[104px]">
+            {event.fullTextTruncated && <p className="text-xs text-subtle-foreground">not everything is shown</p>}
+            <pre className="whitespace-pre-wrap break-words rounded bg-card p-2 font-mono text-xs text-muted-foreground">{event.fullText}</pre>
           </div>
         )}
       </div>
     );
   }
 
-  let visibleCount = 0;
+  // A thin header above each member's rows in the flow view — names the agent
+  // whose stretch of the timeline follows, so the concatenated run reads as a
+  // sequence of agents rather than one anonymous stream.
+  function sectionHeaderRow(range: SectionRange<ReadyAgentTimeline["agent"]>, shown: readonly number[], key: string): React.ReactNode {
+    return (
+      <div key={key} className="flex items-center gap-2 bg-muted/40 px-3 py-1.5">
+        <span className="min-w-0 truncate text-xs font-semibold text-foreground">{displayAgentName(range.agent)}</span>
+        {range.agent.agentType && <Badge>{range.agent.agentType}</Badge>}
+        <span className="ml-auto shrink-0 text-xs text-subtle-foreground">{shown.length} events</span>
+      </div>
+    );
+  }
+
+  // Events the Hooks toggle lets through — not the rows currently unfolded,
+  // so collapsing a turn doesn't make the session look shorter.
+  const shownCount = events.filter((_, i) => isShown(i)).length;
   let rows: React.ReactNode[] = [];
-  if (!groupedByTurn) {
-    events.forEach((event, i) => {
-      if (event.kind === "hook" && !showHooks) return;
-      visibleCount++;
-      rows.push(eventRow(i));
+  if (isFlow) {
+    // Flow view: always flat (grouping-by-turn is meaningless across members),
+    // one section per member agent in launch order.
+    sectionRanges.forEach((range, s) => {
+      const shown = Array.from({ length: range.count }, (_, k) => range.start + k).filter(isShown);
+      rows.push(sectionHeaderRow(range, shown, `section-${s}`));
+      shown.forEach((i) => rows.push(eventRow(i)));
+      if (shown.length === 0) {
+        rows.push(
+          <div key={`section-empty-${s}`} className="px-3 py-1.5 text-xs text-subtle-foreground">
+            No events.
+          </div>,
+        );
+      }
+    });
+  } else if (!groupedByTurn) {
+    events.forEach((_, i) => {
+      if (isShown(i)) rows.push(eventRow(i));
     });
   } else {
     turns.forEach((turn, t) => {
       if (turn.headerIndex !== null) {
         const headerEvent = events[turn.headerIndex];
-        if (headerEvent.kind === "message") {
-          visibleCount++;
-          rows.push(messageRow(turn.headerIndex, headerEvent, true));
-        }
+        if (headerEvent.kind === "message") rows.push(messageRow(turn.headerIndex, headerEvent, true));
       }
       const collapsed = turn.headerIndex !== null && collapsedTurns.has(t);
       if (collapsed) return;
-      const visibleItems = turn.itemIndices.filter((i) => !(events[i].kind === "hook" && !showHooks));
+      const visibleItems = turn.itemIndices.filter(isShown);
       if (visibleItems.length === 0) return;
-      visibleCount += visibleItems.length;
       rows.push(
         <div key={`turn-${t}`} className={turn.headerIndex !== null ? "ml-5 border-l border-border pl-2" : undefined}>
           {visibleItems.map((i) => eventRow(i))}
@@ -963,12 +1089,20 @@ function ReadyRightPanel(
     <div className="min-w-0 space-y-3">
       <div className="border-b border-border pb-3">
         <div className="flex flex-wrap items-center gap-2">
-          <h1 className="truncate font-mono text-sm font-semibold text-foreground">{agent.key}</h1>
-          {agent.agentType && <Badge>{agent.agentType}</Badge>}
-          {agent.model && <Badge>{agent.model}</Badge>}
-          {agent.spawnDepth !== null && <Badge>{`depth ${agent.spawnDepth}`}</Badge>}
+          {isFlow ? (
+            <h1 className="truncate text-sm font-semibold text-foreground">Workflow: {agent.description ?? agent.key}</h1>
+          ) : (
+            <>
+              <h1 className="truncate font-mono text-sm font-semibold text-foreground">{agent.key}</h1>
+              {agent.agentType && <Badge>{agent.agentType}</Badge>}
+              {agent.model && <Badge>{agent.model}</Badge>}
+              {agent.spawnDepth !== null && <Badge>{`depth ${agent.spawnDepth}`}</Badge>}
+            </>
+          )}
         </div>
-        <p className="text-sm text-muted-foreground">{displayAgentName(agent)}</p>
+        <p className="text-sm text-muted-foreground">
+          {isFlow ? `${flow?.length ?? 0} agents in this flow` : displayAgentName(agent)}
+        </p>
         {agent.promptExcerpt && (
           <div className="mt-3 border-l-2 border-border pl-2">
             <div className="mb-1 text-xs font-medium text-muted-foreground">Prompt</div>
@@ -998,25 +1132,46 @@ function ReadyRightPanel(
       </div>
 
       <div className="flex flex-wrap items-center gap-2 border-b border-border pb-2">
+        {/* Moved here from the session-chart header: merges each workflow run
+            into one chart segment (merged) or splits it into its member
+            agents (split). Hidden when no workflow ran this session. */}
+        {showWorkflowToggle && (
+          <ToggleButton pressed={!groupWorkflows} onClick={onToggleGroupWorkflows} label="Workflow" on="split" off="merged" />
+        )}
         <ToggleButton pressed={showHooks} onClick={onToggleShowHooks} label="Hooks" on="on" off="off" />
         <ToggleButton pressed={relativeTime} onClick={onToggleRelativeTime} label="Time" on="relative" off="absolute" />
-        <ToggleButton pressed={groupedByTurn} onClick={onToggleGroupedByTurn} label="Grouping" on="by turn" off="flat" />
-        {groupedByTurn && (
+        {/* Grouping-by-turn is meaningless across a flow's member agents — the
+            flow view is always the flat per-agent sequence. */}
+        {!isFlow && (
+          <ToggleButton pressed={groupedByTurn} onClick={onToggleGroupedByTurn} label="Grouping" on="by turn" off="flat" />
+        )}
+        {/* Named "turns", not "all": these two move only the turn arrows —
+            the prompts have their own switch beside them. */}
+        {!isFlow && groupedByTurn && (
           <span className="flex items-center gap-2">
             <Button type="button" variant="ghost" size="sm" className="h-7 border border-input px-2.5 text-xs font-medium text-muted-foreground" onClick={() => onSetAllTurnsCollapsed(true)}>
-              Collapse all
+              Collapse turns
             </Button>
             <Button type="button" variant="ghost" size="sm" className="h-7 border border-input px-2.5 text-xs font-medium text-muted-foreground" onClick={() => onSetAllTurnsCollapsed(false)}>
-              Expand all
+              Expand turns
             </Button>
           </span>
         )}
+        <label className="flex h-7 items-center gap-2 text-xs font-medium text-muted-foreground">
+          <Switch
+            checked={allPromptsExpanded}
+            onCheckedChange={setPromptsExpanded}
+            aria-label="Expand prompts"
+            disabled={promptIndices.length === 0}
+          />
+          Expand prompts
+        </label>
       </div>
 
       <div className="rounded-lg border border-border">
         <div className="flex items-center justify-between border-b border-border px-3 py-1.5">
           <span className="text-xs font-medium text-muted-foreground">Session timeline</span>
-          <span className="text-xs text-subtle-foreground">{visibleCount} events</span>
+          <span className="text-xs text-subtle-foreground">{shownCount} events</span>
         </div>
         <div
           ref={containerRef}

@@ -20,6 +20,15 @@ not already exist. Dispatch requires an existing preset.
    bb tasks show ABC-12
    ```
 
+   A task answers to its key (`ABC-12`, any case), to its file's slug (the
+   file name under the tasks folder without `.md`), or to its id
+   `<boardId>:<slug>`. Two kinds of task have no key: a file written by
+   hand, and — more often — a task you created from a thread working in a
+   worktree. A key is the board's name for a task, and the board sees a task
+   only once its file is in the main checkout, so a branch-born task carries
+   none until it lands there. Address such a task by its slug — that is what
+   `show`, `list`, and a task card print as its key.
+
    The detail includes the description, status, priority, labels, subtasks,
    comments, attachments, attached worker threads, and the GitHub pull
    requests those threads produced (from environment metadata, with state
@@ -108,6 +117,33 @@ not already exist. Dispatch requires an existing preset.
    with `bb tasks update ABC-12 --no-parent`; the two parent flags cannot be
    combined.
 
+   Who does the task and which epic it belongs to are folders, not
+   frontmatter: `<tasks>/<status>/` has neither, `<tasks>/<Assignee>/<status>/`
+   has an assignee, `<tasks>/<Assignee>/<Epic>/<status>/` has both. Set them
+   with `--assignee <name>` and `--epic <name>` on `create` or `update` — the
+   file moves, the key, id and comments stay. `--no-assignee` returns the file
+   to the root and drops the epic with it; `--no-epic` keeps the assignee. An
+   epic without an assignee is refused. A new name is created by using it.
+
+   The file itself is yours to change through the same command. `--slug
+   <name>` renames the file (the id follows; subtasks keep pointing at it).
+   `--key ABC-40` gives a keyless file a key or replaces one. `--no-key`
+   takes a key off, but only for a task living in a branch: in the main
+   checkout every task has a board name, and a removed one would come back
+   with the very next write, so the command is refused there. A task that
+   arrived in main by a merge gets its key on the first write of any kind —
+   a status change, a field edit, a comment. To drop a duplicate or a stray
+   file for good:
+
+   ```sh
+   bb tasks delete ABC-12 --yes
+   ```
+
+   Cancelling is a status (`--status canceled`), not a deletion. Never edit
+   or move a task file by hand in a checkout the board publishes — the
+   board is the file's writer, and a second writer makes the merge conflict
+   on the task journal.
+
    If the work cannot proceed, leave the status accurate and comment with the
    specific blocker, what you tried, and what would unblock it. Do not mark a
    blocked task complete.
@@ -129,7 +165,9 @@ key as plain text:
 ::task{key="ABC-12"}
 ```
 
-`key` is required. Optionally add `title="…"` as a display fallback shown
+`key` is required, and it takes either form of address: a board key
+(`ABC-12`) or a file slug (`scene-as-data-not-code`) for a task that has no
+key yet. Optionally add `title="…"` as a display fallback shown
 while the card loads and when the key no longer resolves. The rendered card
 shows the live status, title, and priority, opens the task in the thread
 side panel, and links to the full Tasks app. Emit one directive per line;
@@ -146,5 +184,7 @@ each renders its own card.
   repeated status messages.
 - Comments should say what changed or was learned, what validation ran, and any
   remaining risk or blocker.
-- Prefer stable task keys such as `ABC-12` for task commands. Use `--json` for
-  machine-readable output and human output for quick inspection.
+- Prefer stable task keys such as `ABC-12` for task commands; for a task that
+  has none yet, its slug is the stable address and works everywhere a key
+  does. Use `--json` for machine-readable output and human output for quick
+  inspection.

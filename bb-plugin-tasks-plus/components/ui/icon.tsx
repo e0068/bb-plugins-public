@@ -1,6 +1,5 @@
 import { HugeiconsIcon, type IconSvgElement } from "@hugeicons/react";
 import {
-  AiContentGenerator01Icon,
   Alert02Icon,
   AlertCircleIcon,
   Archive03Icon,
@@ -42,6 +41,7 @@ import {
   Clock01Icon,
   CloudIcon,
   Coffee02Icon,
+  Coins01Icon,
   CollapseIcon,
   Book02Icon,
   BrainIcon,
@@ -50,6 +50,7 @@ import {
   DashedLine02Icon,
   DashedLineCircleIcon,
   DateTimeIcon,
+  DollarCircleIcon,
   Delete02Icon,
   Download01Icon,
   DiscordIcon,
@@ -101,6 +102,7 @@ import {
   MessageAdd02Icon,
   MessageQuestionIcon,
   Mic02Icon,
+  MoneyBag02Icon,
   MoreHorizontalIcon,
   PackageReceiveIcon,
   PauseIcon,
@@ -124,10 +126,12 @@ import {
   SourceCodeIcon,
   SquareIcon,
   StarIcon,
+  StopWatchIcon,
   Target02Icon,
   TestTube01Icon,
   TextWrapIcon,
   Tick02Icon,
+  Timer02Icon,
   TimeScheduleIcon,
   ToolboxIcon,
   ToolCaseIcon,
@@ -275,7 +279,6 @@ const SectionAddStrokeRoundedIcon: IconSvgElement = [
 ];
 
 const ICON_MAP = {
-  AiContentGenerator01: AiContentGenerator01Icon,
   AlertCircle: AlertCircleIcon,
   AlertTriangle: Alert02Icon,
   AlignLeft: Menu02Icon,
@@ -317,6 +320,7 @@ const ICON_MAP = {
   Clean: CleanIcon,
   Clock: Clock01Icon,
   Coffee: Coffee02Icon,
+  Coins: Coins01Icon,
   Code: SourceCodeIcon,
   ComputerTerminal01: ComputerTerminal01Icon,
   Columns2: LayoutTwoColumnIcon,
@@ -324,6 +328,7 @@ const ICON_MAP = {
   Copy: Copy01Icon,
   CornerDownLeft: ArrowMoveDownLeftIcon,
   CornerDownRight: ArrowMoveDownRightIcon,
+  DollarCircle: DollarCircleIcon,
   Discord: DiscordIcon,
   DateTime: DateTimeIcon,
   Github: GithubIcon,
@@ -374,6 +379,7 @@ const ICON_MAP = {
   MessageSquarePlus: BubbleChatAddIcon,
   MessageSquare: BubbleChatIcon,
   Mic: Mic02Icon,
+  MoneyBag: MoneyBag02Icon,
   Minimize2: CollapseIcon,
   MoreHorizontal: MoreHorizontalIcon,
   NewTab: DashedLine02Icon,
@@ -407,8 +413,10 @@ const ICON_MAP = {
   LightbulbOff: LightbulbOffIcon,
   Square: SquareIcon,
   Star: StarIcon,
+  StopWatch: StopWatchIcon,
   Target: Target02Icon,
   Terminal: ComputerTerminal01Icon,
+  Timer: Timer02Icon,
   TextWrap: TextWrapIcon,
   TimeSchedule: TimeScheduleIcon,
   Toolbox: ToolboxIcon,
@@ -440,9 +448,32 @@ export function Icon({
   "aria-hidden": ariaHidden,
   "aria-label": ariaLabel,
 }: IconProps) {
+  const glyph = ICON_MAP[name];
+  // Имя приходит не только из кода: виды берут его из карт, ключом которых
+  // служит поле задачи (`TYPE_ICONS[task.type]`). Значение, которого карта не
+  // знает, давало `undefined`, а `HugeiconsIcon` разворачивает иконку через
+  // spread — и один неизвестный глиф ронял всё дерево до пустого экрана.
+  // Глиф — украшение, поэтому пропуск занимает своё место молча и виден в
+  // отладке по `data-icon-missing`.
+  if (glyph === undefined) {
+    return (
+      <svg
+        xmlns="http://www.w3.org/2000/svg"
+        width={24}
+        height={24}
+        viewBox="0 0 24 24"
+        fill="none"
+        className={cn(className)}
+        aria-hidden={ariaHidden}
+        aria-label={ariaLabel}
+        data-icon={String(name)}
+        data-icon-missing=""
+      />
+    );
+  }
   return (
     <HugeiconsIcon
-      icon={ICON_MAP[name]}
+      icon={glyph}
       className={cn(className)}
       aria-hidden={ariaHidden}
       aria-label={ariaLabel}
