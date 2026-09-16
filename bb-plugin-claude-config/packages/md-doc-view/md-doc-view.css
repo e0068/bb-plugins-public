@@ -17,7 +17,7 @@
 
 .mdo-header {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   gap: 8px;
   padding: 8px 12px;
   border-bottom: 1px solid var(--border);
@@ -41,9 +41,25 @@
   min-width: 0;
   flex: 1;
 }
-.mdo-title {
-  font-size: 13px;
+.mdo-path {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
   color: var(--muted-foreground);
+  opacity: 0.7;
+}
+.mdo-path-clickable {
+  display: block;
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+}
+.mdo-path-clickable:hover {
+  text-decoration: underline;
 }
 .mdo-note {
   font-size: 12px;
@@ -79,6 +95,126 @@
   padding: 4px;
 }
 
+/* The second row exists only while the draft differs from the file. It carries
+   Save and Cancel so the first row never changes shape: the mode switcher has
+   to stay where the eye left it, including mid-edit. */
+.mdo-row2 {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 4px 12px;
+  border-bottom: 1px solid var(--border);
+}
+/* Save and Cancel on the header's own scale. .mdo-btn is 14px because it was
+   drawn for a header that held nothing but the Edit button; next to a 10.5px
+   switcher and an 11px counter it read as the loudest thing on the screen,
+   which a pair of actions under the header is not. Scoped to the second row:
+   the icon button and the older renderer keep .mdo-btn as it was. */
+.mdo-row2 .mdo-btn {
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 11px;
+}
+.mdo-diff {
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+.mdo-diff-add {
+  color: var(--success);
+}
+.mdo-diff-del {
+  color: var(--destructive);
+}
+/* The reload control sits with the switcher, not with the actions: re-reading
+   the file is about WHICH text is on screen, like the mode is, and not about
+   what to do with the draft. */
+.mdo-reload {
+  flex: none;
+  color: var(--muted-foreground);
+}
+.mdo-reload:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+.mdo-reload:disabled:hover {
+  background: transparent;
+}
+
+/* The draft guard (DraftGuard.tsx). The shade sits over the host's own chrome
+   and under the dialog; the dialog's overlay dims the document as well, so
+   the question is the one thing on screen. */
+.mdo-shade {
+  position: fixed;
+  z-index: 40;
+  background: rgb(0 0 0 / 0.5);
+  cursor: pointer;
+}
+.mdo-dialog-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  background: rgb(0 0 0 / 0.4);
+}
+.mdo-dialog {
+  position: fixed;
+  left: 50%;
+  top: 50%;
+  z-index: 51;
+  transform: translate(-50%, -50%);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  width: min(880px, calc(100vw - 48px));
+  max-height: calc(100vh - 96px);
+  padding: 20px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--background);
+  color: var(--foreground);
+  box-shadow: 0 8px 32px rgb(0 0 0 / 0.3);
+}
+.mdo-dialog:focus {
+  outline: none;
+}
+.mdo-dialog-title {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+}
+.mdo-dialog-description {
+  margin: 0;
+  font-size: 13px;
+  color: var(--muted-foreground);
+}
+.mdo-dialog-diff {
+  min-height: 0;
+  flex: 1;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+.mdo-dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+.mdo-dialog-actions .mdo-btn {
+  padding: 4px 12px;
+  font-size: 13px;
+}
+.mdo-btn-destructive {
+  color: var(--destructive);
+}
+.mdo-btn-solid {
+  color: var(--primary-foreground);
+  background: var(--primary);
+}
+.mdo-btn-solid:hover {
+  background: var(--primary);
+  opacity: 0.9;
+}
+
 .mdo-body {
   min-height: 0;
   flex: 1;
@@ -93,24 +229,68 @@
   color: var(--destructive);
 }
 
-/* Padding matching the native viewer: generous side margins, content at full
-   width. Side margins — via --kasi-pad-x (the padX preset), top/bottom are
-   fixed (tab layout, outside the --kasi-* contract). */
+/* Top and bottom only (tab layout, outside the --kasi-* contract). The side
+   margins are the engine's — see the note on the format margins below. */
 .mdo-doc {
-  padding: 12px var(--kasi-pad-x, 44px) 48px;
+  padding: 12px 0 48px;
 }
 .mdo-mde {
   height: 100%;
 }
 
+/* Raw — the source in a code editor. The one thing that has to match the other
+   two modes is where the text starts: switching modes must not move the left
+   edge of the first line. The side margin is therefore the engine's own
+   --kasi-pad-x (hung on .mdo-raw by MdDocView, since Raw has no .mde-root to
+   read it from), and the line numbers live INSIDE that margin rather than
+   beside it — the same margin Kasimov keeps its table controls in. A gutter
+   that took its own width would push the text right by exactly its own size,
+   which is the sideways step this task exists to remove.
+
+   The gutter's divider is dropped with it: a vertical rule down the left of a
+   document reads as a quote bar, not as a ruler. */
+.mdo-raw {
+  height: 100%;
+}
+.mdo-raw .cm-gutters {
+  border-right: 0;
+  min-width: var(--kasi-pad-x, 40px);
+}
+.mdo-raw .cm-lineNumbers .cm-gutterElement {
+  padding-right: 10px;
+}
+.mdo-raw .cm-content {
+  padding-left: 0;
+  padding-right: var(--kasi-pad-x, 40px);
+}
+/* CodeMirror gives every line six pixels of its own on the left. Measured in a
+   browser, that was the whole difference between the modes: the rendering
+   started at 44px and the source at 50px. The gutter carries the margin, the
+   line carries nothing. */
+.mdo-raw .cm-line {
+  padding-left: 0;
+}
+
 /* --- editor layout for the opener tab (color/background/font — via --kasi-* presets) --- */
 
-/* We suppress the engine's format-margins (padding in editable) — the padding
-   comes from the .mdo-doc container (side margins — the same --kasi-pad-x)
-   the same for both editing and viewing, so the text doesn't jump. */
-.mdo-mde .mde-root.mde-editable {
-  padding: 0;
-}
+/* The side margins belong to the engine alone, and it draws them in both modes
+   itself: `.mde-root { padding: 4px var(--kasi-pad-x) }` (read-only included —
+   upstream treats the format margins as a property of the document's layout,
+   not of editability), with table controls living out in that margin.
+
+   There used to be a second one here: .mdo-doc added its own side padding, and
+   the engine's was zeroed for `.mde-editable` only. The read therefore stacked
+   the two — 88px against the edit's 44px — and the text stepped sideways on
+   every switch between the modes. Zeroing the engine's padding in both modes
+   would have evened them out and killed the "Kasimov: side padding" setting at
+   the same time: `--kasi-pad-x` is declared on .mde-root, BELOW .mdo-doc, so
+   the container can never read it and would have been stuck on its literal
+   44px. Dropping .mdo-doc's side padding instead leaves one source, and it is
+   the one the setting reaches.
+
+   No unit test: this is layout, and jsdom computes none — reading padding-left
+   there returns an empty string whichever selector wins. It is checked by
+   looking at the document in both modes. */
 
 /* Headings: size/weight/spacing "like the native one" — layout, not in the
    --kasi-* contract (heading color comes from the inherited --kasi-fg). */

@@ -12,7 +12,13 @@ export function gitClient(cwd: string): GitPorts {
   return {
     async run(args: readonly string[]): Promise<GitRun> {
       try {
-        const { stdout, stderr } = await run("git", [...args], { cwd, timeout: 20000 });
+        // LC_ALL=C pins git's human messages to English so the plugin parses
+        // and humanizes them regardless of the user's locale — main-pull-reason
+        // keys on stable English phrases, not the localized "Быстрая перемотка
+        // невозможна" a Russian locale would print. Porcelain data output
+        // (worktree list, rev-parse) is locale-independent to begin with.
+        const env = { ...process.env, LC_ALL: "C" };
+        const { stdout, stderr } = await run("git", [...args], { cwd, timeout: 20000, env });
         return { code: 0, stdout, stderr };
       } catch (error) {
         // execFile throws on a non-zero exit; the code and streams are on the error.

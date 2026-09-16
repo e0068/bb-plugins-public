@@ -4,8 +4,9 @@ import { ROW_FIELDS } from "../../shared/enums.js";
 import type { RowField as SharedRowField } from "../../shared/enums.js";
 // Type-only: erased at compile time, so this never pulls zod or the server
 // SDK (shared/contract.ts's runtime dependencies) into the frontend bundle.
-// Same trick as shell/data.ts's `TasksRpcContract`/`Task` imports.
+// Same trick as client/data.ts's `TasksRpcContract`/`Task` imports.
 import type { FieldDisplayConfig as ContractFieldDisplayConfig } from "../../shared/contract.js";
+import type { ListScope } from "./list-preference.js";
 
 /**
  * Client-local choice of which task fields a surface shows, in what order, and
@@ -17,7 +18,7 @@ import type { FieldDisplayConfig as ContractFieldDisplayConfig } from "../../sha
  * list row / board card render their rail by walking this config. State lives in
  * a module-level store so the menu and the surfaces it controls — separate
  * subtrees under the shell — share it through `useSyncExternalStore` without a
- * provider, mirroring `shell/refresh.tsx`.
+ * provider, mirroring `client/refresh.tsx`.
  */
 export const ROW_FIELD_PREFERENCE_STORAGE_KEY = "bb-tasks:row-field-preferences";
 export const ROW_FIELD_PREFERENCE_VERSION = 2 as const;
@@ -39,10 +40,16 @@ export const CANONICAL_FIELD_ORDER: readonly RowField[] = ROW_FIELDS;
 export const ROW_FIELD_LABELS: Record<RowField, string> = {
   priority: "Priority",
   active: "Active",
+  assignee: "Assignee",
+  epic: "Epic",
   type: "Type",
   estimate: "Estimate",
   labels: "Labels",
-  tokens: "Tokens",
+  plannedMinutes: "Planned Time",
+  actualMinutes: "Actual Time",
+  budget: "Budget",
+  budgetLimit: "Limit",
+  cost: "Cost",
   dueDate: "Due date",
   project: "Project",
   createdAt: "Created",
@@ -58,10 +65,16 @@ const FIELD_SET = new Set<string>(CANONICAL_FIELD_ORDER);
  */
 const LIST_DEFAULT_VISIBLE: readonly RowField[] = [
   "active",
+  "assignee",
+  "epic",
   "type",
   "estimate",
   "labels",
-  "tokens",
+  "plannedMinutes",
+  "actualMinutes",
+  "budget",
+  "budgetLimit",
+  "cost",
   "dueDate",
   "project",
 ];
@@ -72,6 +85,7 @@ export type FieldSurface = "list" | "board";
 export type FieldScope =
   | "all"
   | "active"
+  | "waiting"
   | `project:${string}`
   | `board:${string}`;
 
@@ -85,9 +99,9 @@ export type FieldEntry = FieldDisplayConfig["fields"][number];
 /** List surfaces reuse the list-filter scope strings; board scopes its own. */
 export function listFieldScope(
   projectId: string | null,
-  activeOnly: boolean,
+  listScope: ListScope,
 ): FieldScope {
-  if (activeOnly) return "active";
+  if (listScope !== null) return listScope;
   if (projectId !== null) return `project:${projectId}`;
   return "all";
 }

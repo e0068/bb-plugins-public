@@ -1,4 +1,4 @@
-import { listAllTasks, useTasksQuery } from "../../shell/data.js";
+import { listAllTasks, useTasksQuery } from "../../client/data.js";
 import type {
   Label,
   Task,
@@ -6,6 +6,7 @@ import type {
   TaskStatus,
   TaskThread,
 } from "../../shared/contract.js";
+import type { ListScope } from "./list-preference.js";
 
 export interface ListTaskFilters {
   statuses: readonly TaskStatus[];
@@ -25,7 +26,7 @@ export interface ListTaskFilters {
  */
 export function useListTasks(
   projectId: string | null,
-  activeOnly: boolean,
+  listScope: ListScope,
   filters: ListTaskFilters,
 ) {
   return useTasksQuery(
@@ -41,12 +42,13 @@ export function useListTasks(
         ...(filters.labelIds !== null
           ? { labelIds: [...filters.labelIds] }
           : {}),
-        activeOnly,
+        ...(listScope === "active" ? { activeOnly: true } : {}),
+        ...(listScope === "waiting" ? { waitingOnly: true } : {}),
       }),
     ["tasks:changed", "threads:changed"],
     [
       projectId,
-      activeOnly,
+      listScope,
       filters.statuses.join(),
       filters.priorities.join(),
       filters.labelIds === null ? "" : `active:${filters.labelIds.join()}`,

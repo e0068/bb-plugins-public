@@ -3,6 +3,7 @@ import type { TokensBucket } from "../types";
 import {
   cacheWriteTotal,
   formatBucketDisplay,
+  formatClockTime,
   formatCost,
   formatPercent,
   formatPercentValue,
@@ -70,6 +71,19 @@ describe("formatCost", () => {
 
   it("formats zero", () => {
     expect(formatCost(0)).toBe("$0.00");
+  });
+});
+
+describe("formatClockTime", () => {
+  it("formats as HH:MM", () => {
+    // Not a fixed "HH:MM" string: toLocaleTimeString depends on the running
+    // machine's timezone (same as thread-chart.tsx's own fmtClock, which
+    // mirrors this shape) — only the format is this function's contract.
+    expect(formatClockTime(Date.parse("2026-09-03T12:00:00.000Z"))).toMatch(/^\d{2}:\d{2}$/);
+  });
+
+  it("reads an unparseable ms value as an em dash instead of throwing", () => {
+    expect(formatClockTime(NaN)).toBe("—");
   });
 });
 

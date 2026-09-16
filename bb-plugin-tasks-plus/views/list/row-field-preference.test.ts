@@ -38,16 +38,20 @@ function visibleOrder(scope: FieldScope): RowField[] {
 
 describe("scope helpers", () => {
   it("maps list surfaces to independent scopes and board apart", () => {
-    expect(listFieldScope(null, false)).toBe("all");
-    expect(listFieldScope(null, true)).toBe("active");
-    expect(listFieldScope("P1", false)).toBe("project:P1");
-    // activeOnly wins over a project id (Active is cross-project).
-    expect(listFieldScope("P1", true)).toBe("active");
+    expect(listFieldScope(null, null)).toBe("all");
+    expect(listFieldScope(null, "active")).toBe("active");
+    expect(listFieldScope(null, "waiting")).toBe("waiting");
+    expect(listFieldScope("P1", null)).toBe("project:P1");
+    // A list scope wins over a project id (Active/Waiting are cross-project).
+    expect(listFieldScope("P1", "active")).toBe("active");
+    expect(listFieldScope("P1", "waiting")).toBe("waiting");
     expect(boardFieldScope("P1")).toBe("board:P1");
   });
 
   it("classifies a scope's surface", () => {
     expect(surfaceOfScope("all")).toBe("list");
+    expect(surfaceOfScope("active")).toBe("list");
+    expect(surfaceOfScope("waiting")).toBe("list");
     expect(surfaceOfScope("project:P1")).toBe("list");
     expect(surfaceOfScope("board:P1")).toBe("board");
   });
@@ -57,19 +61,6 @@ describe("defaultConfig", () => {
   it("lists every canonical field once, in canonical order", () => {
     const fields = defaultConfig("list").fields.map((entry) => entry.field);
     expect(fields).toEqual([...CANONICAL_FIELD_ORDER]);
-  });
-
-  it("reproduces today's list rail (priority off the rail)", () => {
-    expect(visibleOrder("all")).toEqual([
-      "active",
-      "type",
-      "estimate",
-      "labels",
-      "tokens",
-      "dueDate",
-      "project",
-    ]);
-    expect(defaultConfig("list").showEmpty).toBe(false);
   });
 
   it("reproduces today's board card (priority + labels)", () => {
@@ -107,7 +98,7 @@ describe("loadFieldDisplay defaults and sanitation", () => {
               { field: "labels", visible: true },
               { field: "labels", visible: false }, // duplicate ignored
               { field: "not-a-field", visible: true }, // unknown dropped
-              { field: "tokens", visible: false },
+              { field: "cost", visible: false },
             ],
             showEmpty: true,
           },
@@ -119,7 +110,7 @@ describe("loadFieldDisplay defaults and sanitation", () => {
     // hidden (a field the user never ordered must not appear on its own).
     expect(config.fields.slice(0, 2)).toEqual([
       { field: "labels", visible: true },
-      { field: "tokens", visible: false },
+      { field: "cost", visible: false },
     ]);
     const appended = config.fields.slice(2);
     expect(appended.every((entry) => entry.visible === false)).toBe(true);
@@ -130,24 +121,6 @@ describe("loadFieldDisplay defaults and sanitation", () => {
 });
 
 describe("mutations persist per scope", () => {
-  it("toggles visibility without reordering", () => {
-    // priority is canon-first and hidden by default; enabling it keeps its
-    // position (toggle never reorders) so it appears at the front of the rail.
-    toggleFieldVisible("all", "priority");
-    expect(visibleOrder("all")).toEqual([
-      "priority",
-      "active",
-      "type",
-      "estimate",
-      "labels",
-      "tokens",
-      "dueDate",
-      "project",
-    ]);
-    toggleFieldVisible("all", "labels"); // on → off
-    expect(visibleOrder("all")).not.toContain("labels");
-  });
-
   it("moves a field and the order survives a reload", () => {
     // priority is last in canon; move it to the front.
     const from = defaultConfig("list").fields.findIndex(
@@ -166,14 +139,14 @@ describe("mutations persist per scope", () => {
   });
 
   it("keeps list scopes, board, and showEmpty/showDescription independent", () => {
-    toggleFieldVisible("all", "tokens"); // off tokens on All
+    toggleFieldVisible("all", "cost"); // off cost on All
     setShowEmpty("project:P1", true);
     setShowDescription("board:P1", true);
     toggleFieldVisible("board:P1", "createdAt"); // board gains createdAt
 
-    expect(visibleOrder("all")).not.toContain("tokens");
+    expect(visibleOrder("all")).not.toContain("cost");
     // Another list scope is untouched by All's change.
-    expect(visibleOrder("project:P1")).toContain("tokens");
+    expect(visibleOrder("project:P1")).toContain("cost");
     expect(loadFieldDisplay("project:P1").showEmpty).toBe(true);
     expect(loadFieldDisplay("all").showEmpty).toBe(false);
     expect(loadFieldDisplay("board:P1").showDescription).toBe(true);
@@ -201,41 +174,11 @@ describe("mutations persist per scope", () => {
 });
 
 describe("applyFieldDisplay", () => {
-  it("applies a full config verbatim: order, visibility, and the flags", () => {
-    const config: FieldDisplayConfig = {
-      fields: [
-        "dueDate",
-        "labels",
-        "priority",
-        "active",
-        "type",
-        "estimate",
-        "tokens",
-        "project",
-        "createdAt",
-        "updatedAt",
-      ].map((field) => ({
-        field: field as RowField,
-        visible: field === "labels" || field === "dueDate",
-      })),
-      showEmpty: true,
-      showDescription: false,
-    };
-    applyFieldDisplay("all", config);
-    expect(loadFieldDisplay("all").fields.map((entry) => entry.field)).toEqual(
-      config.fields.map((entry) => entry.field),
-    );
-    // Visible order follows the applied order (dueDate before labels), not
-    // the canonical one.
-    expect(visibleOrder("all")).toEqual(["dueDate", "labels"]);
-    expect(loadFieldDisplay("all").showEmpty).toBe(true);
-  });
-
   it("survives a reload from localStorage, not just the in-memory session", () => {
     applyFieldDisplay("all", {
       fields: CANONICAL_FIELD_ORDER.map((field) => ({
         field,
-        visible: field === "tokens",
+        visible: field === "cost",
       })),
       showEmpty: false,
       showDescription: false,
@@ -243,16 +186,16 @@ describe("applyFieldDisplay", () => {
     const stored = JSON.parse(
       window.localStorage.getItem(ROW_FIELD_PREFERENCE_STORAGE_KEY)!,
     );
-    expect(stored.scopes.all.fields.find((e: FieldEntry) => e.field === "tokens").visible).toBe(
+    expect(stored.scopes.all.fields.find((e: FieldEntry) => e.field === "cost").visible).toBe(
       true,
     );
-    expect(visibleOrder("all")).toEqual(["tokens"]);
+    expect(visibleOrder("all")).toEqual(["cost"]);
   });
 
   it("appends canonical fields a partial config omits, hidden, keeping the given order first", () => {
     applyFieldDisplay("all", {
       fields: [
-        { field: "tokens", visible: true },
+        { field: "cost", visible: true },
         { field: "priority", visible: false },
       ],
       showEmpty: false,
@@ -260,7 +203,7 @@ describe("applyFieldDisplay", () => {
     });
     const fields = loadFieldDisplay("all").fields;
     expect(fields.slice(0, 2)).toEqual([
-      { field: "tokens", visible: true },
+      { field: "cost", visible: true },
       { field: "priority", visible: false },
     ]);
     expect(fields.slice(2).every((entry) => entry.visible === false)).toBe(
@@ -274,7 +217,7 @@ describe("applyFieldDisplay", () => {
       fields: [
         { field: "labels", visible: true },
         { field: "bogus" as unknown as RowField, visible: true },
-        { field: "tokens", visible: false },
+        { field: "cost", visible: false },
       ],
       showEmpty: false,
       showDescription: false,
@@ -358,34 +301,10 @@ describe("applyFieldDisplay", () => {
 });
 
 describe("v1 migration", () => {
-  it("carries a global v1 hidden list into list scopes, leaving board default", () => {
-    window.localStorage.setItem(
-      ROW_FIELD_PREFERENCE_STORAGE_KEY,
-      JSON.stringify({ version: 1, hidden: ["tokens", "project", "bogus"] }),
-    );
-    // List scopes: today's defaults minus the v1-hidden fields.
-    expect(visibleOrder("all")).toEqual([
-      "active",
-      "type",
-      "estimate",
-      "labels",
-      "dueDate",
-    ]);
-    expect(visibleOrder("project:P1")).toEqual([
-      "active",
-      "type",
-      "estimate",
-      "labels",
-      "dueDate",
-    ]);
-    // Board never existed in v1 → its own default.
-    expect(loadFieldDisplay("board:P1")).toEqual(defaultConfig("board"));
-  });
-
   it("stops honoring v1 hidden once a scope is written as v2", () => {
     window.localStorage.setItem(
       ROW_FIELD_PREFERENCE_STORAGE_KEY,
-      JSON.stringify({ version: 1, hidden: ["tokens"] }),
+      JSON.stringify({ version: 1, hidden: ["cost"] }),
     );
     toggleFieldVisible("all", "priority"); // first v2 write
     const stored = JSON.parse(
@@ -405,7 +324,7 @@ describe("future version and storage failures", () => {
     });
     window.localStorage.setItem(ROW_FIELD_PREFERENCE_STORAGE_KEY, future);
     expect(visibleOrder("all")).toEqual(["labels"]);
-    toggleFieldVisible("all", "tokens");
+    toggleFieldVisible("all", "cost");
     // Older client must not rewrite a newer document.
     expect(window.localStorage.getItem(ROW_FIELD_PREFERENCE_STORAGE_KEY)).toBe(
       future,
@@ -424,5 +343,50 @@ describe("future version and storage failures", () => {
       throw new DOMException("Storage is disabled", "SecurityError");
     });
     expect(loadFieldDisplay("all")).toEqual(defaultConfig("list"));
+  });
+});
+
+// The field dictionary grows; these promises are stated against it rather
+// than against a spelled-out copy of it.
+const DEFAULT_LIST_RAIL = CANONICAL_FIELD_ORDER.filter(
+  (field) => !["priority", "createdAt", "updatedAt"].includes(field),
+);
+
+describe("field display against the dictionary", () => {
+  it("the list rail shows every field but priority and the timestamps, assignee and epic right after active", () => {
+    expect(visibleOrder("all")).toEqual(DEFAULT_LIST_RAIL);
+    expect(DEFAULT_LIST_RAIL.slice(0, 3)).toEqual(["active", "assignee", "epic"]);
+    expect(defaultConfig("list").showEmpty).toBe(false);
+  });
+
+  it("toggling priority on puts it at its canonical place, the front, without reordering the rest", () => {
+    toggleFieldVisible("all", "priority");
+    expect(visibleOrder("all")).toEqual(["priority", ...DEFAULT_LIST_RAIL]);
+    toggleFieldVisible("all", "labels");
+    expect(visibleOrder("all")).not.toContain("labels");
+  });
+
+  it("applies a full config verbatim: order, visibility, and the flags", () => {
+    const order = [...CANONICAL_FIELD_ORDER].reverse();
+    applyFieldDisplay("all", {
+      fields: order.map((field) => ({ field, visible: field === "labels" || field === "dueDate" })),
+      showEmpty: true,
+      showDescription: false,
+    });
+    expect(loadFieldDisplay("all").fields.map((entry) => entry.field)).toEqual(order);
+    expect(visibleOrder("all")).toEqual(["dueDate", "labels"]);
+    expect(loadFieldDisplay("all").showEmpty).toBe(true);
+  });
+
+  it("carries a global v1 hidden list into list scopes, leaving board default", () => {
+    const hidden = ["plannedMinutes", "actualMinutes", "budget", "budgetLimit", "cost", "project"];
+    window.localStorage.setItem(
+      ROW_FIELD_PREFERENCE_STORAGE_KEY,
+      JSON.stringify({ version: 1, hidden: [...hidden, "bogus"] }),
+    );
+    const expected = DEFAULT_LIST_RAIL.filter((field) => !hidden.includes(field));
+    expect(visibleOrder("all")).toEqual(expected);
+    expect(visibleOrder("project:P1")).toEqual(expected);
+    expect(loadFieldDisplay("board:P1")).toEqual(defaultConfig("board"));
   });
 });

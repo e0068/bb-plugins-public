@@ -49,6 +49,7 @@ const validTimeline = {
     main: "Main agent",
     "agent-a9e92d5bea00f5cb7": "H4: tests",
   },
+  truncated: false,
 };
 
 describe("parseThreadsTimeline", () => {
@@ -59,6 +60,7 @@ describe("parseThreadsTimeline", () => {
     expect(result.data.unit).toBe(300);
     expect(result.data.threads).toHaveLength(1);
     expect(result.data.threads[0].bins[0].agents).toHaveLength(2);
+    expect(result.data.truncated).toBe(false);
   });
 
   it("carries a thread's cwd/gitBranch/events through as-is", () => {
@@ -158,6 +160,24 @@ describe("parseThreadsTimeline", () => {
 
   it("fails with invalid_shape when agentLabels is missing", () => {
     const { agentLabels: _drop, ...rest } = validTimeline;
+    const result = parseThreadsTimeline(JSON.stringify(rest));
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.reason).toBe("invalid_shape");
+  });
+
+  it("carries truncated through as-is, both true and false", () => {
+    const notTruncated = parseThreadsTimeline(JSON.stringify(validTimeline));
+    expect(notTruncated.ok).toBe(true);
+    if (notTruncated.ok) expect(notTruncated.data.truncated).toBe(false);
+
+    const truncated = parseThreadsTimeline(JSON.stringify({ ...validTimeline, truncated: true }));
+    expect(truncated.ok).toBe(true);
+    if (truncated.ok) expect(truncated.data.truncated).toBe(true);
+  });
+
+  it("fails with invalid_shape when truncated is missing", () => {
+    const { truncated: _drop, ...rest } = validTimeline;
     const result = parseThreadsTimeline(JSON.stringify(rest));
     expect(result.ok).toBe(false);
     if (result.ok) return;

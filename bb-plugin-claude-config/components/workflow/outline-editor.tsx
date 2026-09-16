@@ -7,13 +7,14 @@
 // `selectedPath`/`onSelect` as props instead of owning local useState, so the parent can render the
 // AgentDetails panel itself (e.g. as a separate layout column).
 import { useEffect, useState, useSyncExternalStore, type ReactNode } from "react";
-import { EFFORTS, MODELS, type Agent, type Phase, type Step, type Tree } from "../../src/workflow/workflow-model";
+import { EFFORTS, MODELS, type Agent, type Container, type Phase, type Step, type Tree } from "../../src/workflow/workflow-model";
 import {
   addPhase,
   addStep,
   removeNode,
   renameNode,
   toggleMode,
+  type GroupSettingsPatch,
   type OutlinePath,
 } from "../../src/workflow/outline-ops";
 import { editorStore, type EditorSnapshot } from "../../src/workflow/store";
@@ -21,7 +22,9 @@ import { MarkdownEditor } from "../../packages/md-editor/react";
 
 // A discovered agent (from the `agents` RPC): its agentType value, frontmatter-derived
 // model/effort/provider, and — for the Save/Override decision and the tools written back to the
-// agent's .md — its tools list and which agents/ directory it lives in.
+// agent's .md — its tools list and which agents/ directory it lives in. "builtin" is the one scope
+// with no source file — a Claude Code agent type the client pins into the list itself (there is
+// nothing on disk for wfAgents to discover), so Save/Override never applies to it.
 export interface AgentOption {
   value: string;
   model: string;
@@ -30,7 +33,7 @@ export interface AgentOption {
   description?: string;
   path?: string;
   tools?: string[];
-  scope?: "user" | "project" | "plugin";
+  scope?: "user" | "project" | "plugin" | "builtin";
 }
 export interface ProviderCatalogEntry {
   id: string;
@@ -112,6 +115,7 @@ function TitleCell({
   strong,
   glyph,
   renameLabel,
+  selected,
   onRename,
 }: {
   value: string;
@@ -119,12 +123,13 @@ function TitleCell({
   strong?: boolean;
   glyph: ReactNode;
   renameLabel?: string;
+  selected?: boolean;
   onRename: (v: string) => void;
 }) {
   const [editing, setEditing] = useState(false);
   const empty = isPlaceholder(value);
   return (
-    <div className={`${CELL} min-w-0 flex-1 gap-2 bg-muted`}>
+    <div className={`${CELL} min-w-0 flex-1 gap-2 ${selected ? "bg-background" : "bg-muted"}`}>
       {glyph}
       {editing ? (
         <input
@@ -276,16 +281,26 @@ function Rows({
                   onDelete={() => cb.onRemove(path)}
                 />
               ) : (
-                <>
-                  <TitleCell
-                    value={step.title}
-                    placeholderText="Group"
-                    renameLabel="group title"
-                    glyph={<ModeGlyph mode={step.mode} onToggle={() => cb.onToggleMode(path)} />}
-                    onRename={(v) => cb.onRename(path, v)}
+                <div
+                  role="button"
+                  tabIndex={0}
+                  onClick={() => cb.onSelect(path)}
+                  className="flex flex-1 cursor-pointer items-center gap-1.5 rounded"
+                >
+                  {/* A container has no name (it isn't recoverable from the compiled body) — show a
+                      static mode label, not an editable title. */}
+                  <div className={`${CELL} min-w-0 flex-1 gap-2 ${samePath(selected, path) ? "bg-background" : "bg-muted"}`}>
+                    <ModeGlyph mode={step.mode} onToggle={() => cb.onToggleMode(path)} />
+                    <span className="min-w-0 flex-1 truncate text-left text-muted-foreground">
+                      {step.mode === "pipeline" ? "Pipeline group" : "Parallel group"}
+                    </span>
+                  </div>
+                  <XCell
+                    label="delete group"
+                    bg={samePath(selected, path) ? "bg-background" : "bg-muted"}
+                    onDelete={() => cb.onRemove(path)}
                   />
-                  <XCell label="delete group" onDelete={() => cb.onRemove(path)} />
-                </>
+                </div>
               )}
             </div>
             {step.type === "container" && (
@@ -311,16 +326,26 @@ function PhaseBlock({
 }: RowsCallbacks & { phase: Phase; index: number; selected: OutlinePath | null }) {
   return (
     <div className="space-y-1.5 rounded-md border border-border bg-muted/40 p-1">
-      <div className="flex items-center gap-1.5">
+      <div
+        role="button"
+        tabIndex={0}
+        onClick={() => cb.onSelect([index])}
+        className="flex cursor-pointer items-center gap-1.5 rounded"
+      >
         <TitleCell
           value={phase.title}
           placeholderText="Phase"
           strong
           renameLabel="phase title"
+          selected={samePath(selected, [index])}
           glyph={<ModeGlyph mode={phase.mode} onToggle={() => cb.onToggleMode([index])} />}
           onRename={(v) => cb.onRename([index], v)}
         />
-        <XCell label={`delete ${phase.title || "phase"}`} onDelete={() => cb.onRemove([index])} />
+        <XCell
+          label={`delete ${phase.title || "phase"}`}
+          bg={samePath(selected, [index]) ? "bg-background" : "bg-muted"}
+          onDelete={() => cb.onRemove([index])}
+        />
       </div>
       <Rows steps={phase.steps} parentMode={phase.mode} base={[index]} selected={selected} {...cb} />
       <AddRow onAdd={(kind) => cb.onAdd([index], kind)} />
@@ -398,6 +423,102 @@ export function AgentDetails({
             placeholder='{ "type": "object", "required": ["verdict"] }'
             className="min-h-24 w-full rounded-md border border-border bg-transparent p-2 font-mono text-[11px] text-foreground outline-none placeholder:text-foreground/60 focus-visible:ring-1 focus-visible:ring-ring"
           />
+        </section>
+      </div>
+    </div>
+  );
+}
+
+// The three BP-134 node settings (decision workflow-node-settings-model) for a Phase or Container:
+// Maximum Parallel / Iterate over apply only to a "parallel" node (they configure the branch list
+// itself); Repeat applies regardless of mode — any node can be re-run until its own result satisfies a
+// condition. Fills the whole right panel when a group/phase header is selected (owner's rule: group
+// settings take the full panel, unlike an agent's own per-item context, which — when it exists — is a
+// section here too, not a floating card in the tree).
+export function GroupDetails({ node, onSetField }: { node: Phase | Container; onSetField: (patch: GroupSettingsPatch) => void }) {
+  const parallel = node.mode === "parallel";
+  const repeat = node.repeat;
+  return (
+    <div className="flex h-full w-full flex-col overflow-hidden bg-background">
+      <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto p-4">
+        {parallel && (
+          <section className="space-y-1.5">
+            <span className="text-xs text-muted-foreground">Maximum Parallel</span>
+            <input
+              type="number"
+              min={1}
+              aria-label="group maximum parallel"
+              value={node.maxParallel ?? ""}
+              placeholder="No cap"
+              onChange={(e) => onSetField({ maxParallel: e.target.value === "" ? null : Math.max(1, Number(e.target.value)) })}
+              className="h-8 w-full rounded-md border border-border bg-transparent px-2 text-xs text-foreground outline-none placeholder:text-foreground/60 focus-visible:ring-1 focus-visible:ring-ring"
+            />
+            <p className="text-[11px] text-foreground/60">
+              Neither engine's parallel() takes a concurrency option — a cap batches the branches into chunks of N instead.
+            </p>
+          </section>
+        )}
+
+        {parallel && (
+          <section className="space-y-1.5">
+            <span className="text-xs text-muted-foreground">Iterate over (field on the incoming value — blank = authored branches)</span>
+            <input
+              aria-label="group iterate over"
+              value={node.iterateOver}
+              placeholder="e.g. units"
+              onChange={(e) => onSetField({ iterateOver: e.target.value })}
+              className={SELECT_CLS}
+            />
+            {node.iterateOver.trim() !== "" && (
+              <div className="space-y-1 rounded-md border border-border bg-muted/40 p-2 text-[11px] text-foreground/60">
+                <p>First branch is the per-item template, run once per element of the incoming value's field.</p>
+                <p>
+                  <code>{"{{prev}}"}</code> — the whole incoming value · <code>{"{{item}}"}</code> — the current element ·{" "}
+                  <code>{"{{results}}"}</code> — what earlier items already returned
+                </p>
+                <label className="flex items-center gap-1.5 pt-1 text-foreground/80">
+                  <input
+                    type="checkbox"
+                    aria-label="group iterate in waves"
+                    checked={node.iterateInWaves}
+                    onChange={(e) => onSetField({ iterateInWaves: e.target.checked })}
+                    className="h-3.5 w-3.5 rounded border-border accent-foreground"
+                  />
+                  Elements are groups (waves) — run one group to completion, then the next
+                </label>
+              </div>
+            )}
+          </section>
+        )}
+
+        <section className="space-y-1.5">
+          <span className="text-xs text-muted-foreground">Repeat</span>
+          <div className="grid grid-cols-2 gap-2">
+            <input
+              type="number"
+              min={1}
+              aria-label="group repeat max loops"
+              value={repeat?.maxLoops ?? ""}
+              placeholder="Max loops"
+              onChange={(e) => {
+                const v = e.target.value;
+                onSetField({ repeat: v === "" ? null : { maxLoops: Math.max(1, Number(v)), until: repeat?.until ?? "" } });
+              }}
+              className="h-8 rounded-md border border-border bg-transparent px-2 text-xs text-foreground outline-none placeholder:text-foreground/60 focus-visible:ring-1 focus-visible:ring-ring"
+            />
+            <input
+              aria-label="group repeat until"
+              value={repeat?.until ?? ""}
+              disabled={!repeat}
+              placeholder="until (e.g. result.satisfied)"
+              onChange={(e) => repeat && onSetField({ repeat: { ...repeat, until: e.target.value } })}
+              className="h-8 rounded-md border border-border bg-transparent px-2 text-xs text-foreground outline-none placeholder:text-foreground/60 focus-visible:ring-1 focus-visible:ring-ring disabled:opacity-60"
+            />
+          </div>
+          <p className="text-[11px] text-foreground/60">
+            Re-runs this whole node up to Max loops times, checking Until against the last run's result after each pass. Blank
+            Until — no early exit, always runs Max loops times.
+          </p>
         </section>
       </div>
     </div>

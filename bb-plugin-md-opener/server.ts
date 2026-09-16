@@ -19,6 +19,9 @@ import {
   NATIVE_VIEWER_TOKEN_DEFAULTS,
   buildDescriptors,
 } from "./packages/md-doc-view/kasimov-settings";
+import {
+  revealInFinderHere,
+} from "./packages/reveal-in-finder";
 import { extractLinkHrefs } from "./src/opener-links";
 import { resolveSource, type OpenerSource } from "./src/opener-source";
 
@@ -78,6 +81,24 @@ export const rpcContract = defineRpcContract({
       sha256: z.string().nullable(),
       message: z.string().nullable(),
     }),
+  },
+  revealDoc: {
+    // path: absolute (doc.path from a prior readDoc). Finder belongs to the
+    // machine running bb's server — a source on a remote host is refused.
+    input: z.object({ path: z.string(), source: sourceSchema }).strict(),
+    output: z.object({
+      revealed: z.boolean(),
+      error: z.string().nullable(),
+    }),
+  },
+  // Read by the composer format-bar content script via plain fetch, not
+  // useSettings: SDK data hooks throw inside a content script's headless
+  // root (no QueryClientProvider —
+  // memory/decisions/row-status-rpc-not-frontend-hooks.md, the same finding
+  // for a different content script in this repo).
+  composerBarEnabled: {
+    input: z.object({}).strict().default({}),
+    output: z.object({ enabled: z.boolean() }),
   },
 });
 
@@ -139,7 +160,22 @@ export default function plugin(bb: BbPluginApi) {
   // memory/decisions/kasimov-opener-css-uses-token-defaults.md), not
   // CUSTOM_TOKEN: without this change, Kasimov settings in MD Opener couldn't
   // override the hardcoded values.
-  bb.settings.define(buildDescriptors(NATIVE_VIEWER_TOKEN_DEFAULTS));
+  //
+  // kasimovComposerBar is this plugin's own flag, not part of the shared
+  // kasimov-settings schema: Cloud Config doesn't register the composer
+  // content script, so the shared table (which only feeds MdDocView's
+  // engine flags/CSS vars) has no use for it — see
+  // memory/decisions/kasimov-composer-bar-flag.md.
+  const settingsHandle = bb.settings.define({
+    ...buildDescriptors(NATIVE_VIEWER_TOKEN_DEFAULTS),
+    kasimovComposerBar: {
+      type: "boolean" as const,
+      label: "Kasimov: use in Composer",
+      description:
+        "Show Kasimov's floating format bar over the thread composer when text is selected",
+      default: false,
+    },
+  });
 
   // File read: absence is an empty result (text=null), not an exception.
   async function readFile(
@@ -234,6 +270,20 @@ export default function plugin(bb: BbPluginApi) {
         };
       }
     },
+
+    async revealDoc({ path, source }) {
+      try {
+        return await doReveal(path, source);
+      } catch (err) {
+        bb.log.error(`revealDoc failed: ${String(err)}`);
+        return { revealed: false, error: `Failed to reveal: ${String(err)}` };
+      }
+    },
+
+    async composerBarEnabled() {
+      const values = await settingsHandle.get();
+      return { enabled: values.kasimovComposerBar === true };
+    },
   });
 
   async function doRead(path: string, source: OpenerSource): Promise<DocContent> {
@@ -313,5 +363,34 @@ export default function plugin(bb: BbPluginApi) {
       };
     }
     return { outcome: "written", sha256: written.sha256, message: null };
+  }
+
+  async function doReveal(
+    path: string,
+    source: OpenerSource,
+  ): Promise<{ revealed: boolean; error: string | null }> {
+    const resolved = await resolveSource(bb, source);
+    if (!resolved) return { revealed: false, error: "Tab source unavailable." };
+    const abs = toAbsolute(source, resolved.root, path);
+    if (resolved.root && !isWithin(resolved.root, abs)) {
+      return { revealed: false, error: "Path is outside the source root." };
+    }
+    // Finder belongs to the machine running bb's server: only reveal a
+    // source whose host is that primary/local host, never a remote one.
+    // resolved.hostId is undefined when the source carries no environment at
+    // all (e.g. a bare "host" tab) — that case has no host to compare and is
+    // treated as local, matching resolveSource's own contract. Same check as
+    // revealTaskSource in bb-plugin-tasks-plus/api/index.ts.
+    const { primaryHostId } = await bb.sdk.system.config();
+    if (
+      primaryHostId === null ||
+      (resolved.hostId !== undefined && resolved.hostId !== primaryHostId)
+    ) {
+      return {
+        revealed: false,
+        error: "Only a local source can be revealed in Finder",
+      };
+    }
+    return await revealInFinderHere(abs);
   }
 }

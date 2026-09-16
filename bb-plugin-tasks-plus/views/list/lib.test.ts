@@ -3,6 +3,7 @@ import type { Label, Task } from "../../shared/contract.js";
 import {
   activeWorkLabel,
   formatDueDate,
+  formatTimestamp,
   groupTasksByStatus,
   labelFilterOptions,
   nestSubtasks,
@@ -130,6 +131,34 @@ describe("formatDueDate", () => {
     const today = new Date("2026-07-15T12:00:00");
     expect(formatDueDate("2026-07-18", today)).toBe("Jul 18");
     expect(formatDueDate("2027-01-02", today)).toBe("Jan 2, 2027");
+  });
+});
+
+describe("formatTimestamp", () => {
+  const today = new Date(2026, 6, 15, 12, 0, 0);
+
+  it("shows the time for a timestamp on today's calendar day", () => {
+    const earlier = new Date(2026, 6, 15, 14, 34, 0);
+    expect(formatTimestamp(earlier.toISOString(), today)).toBe(
+      earlier.toLocaleTimeString("en-US", {
+        hour: "numeric",
+        minute: "2-digit",
+        hour12: false,
+      }),
+    );
+  });
+
+  it("shows the date for a timestamp on an earlier day, omitting the current year", () => {
+    const yesterday = new Date(2026, 6, 14, 23, 59, 0);
+    const lastYear = new Date(2025, 0, 2, 0, 0, 0);
+    expect(formatTimestamp(yesterday.toISOString(), today)).toBe("Jul 14");
+    expect(formatTimestamp(lastYear.toISOString(), today)).toBe(
+      "Jan 2, 2025",
+    );
+  });
+
+  it("returns an empty string for an unparsable timestamp", () => {
+    expect(formatTimestamp("not-a-date", today)).toBe("");
   });
 });
 

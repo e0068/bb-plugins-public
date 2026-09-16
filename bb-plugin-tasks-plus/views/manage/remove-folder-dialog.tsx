@@ -10,7 +10,6 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { CheckboxField } from "./shared.js";
 
 function describeError(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
@@ -24,9 +23,9 @@ export interface RemoveFolderDialogProps {
 }
 
 /**
- * Disconnects a synced folder. Always stops sync and never touches files on
- * disk; the checkbox controls only whether the tasks this folder created stay
- * on the board (unlinked, default) or are deleted with it.
+ * Disconnects a folder from its board. Files on disk are never touched —
+ * they're the tasks themselves, not a synced copy — so disconnecting just
+ * stops this board from reading that folder.
  */
 export function RemoveFolderDialog({
   folder,
@@ -35,7 +34,6 @@ export function RemoveFolderDialog({
   onRemoved,
 }: RemoveFolderDialogProps) {
   const rpc = useRpc<FoldersRpcContract>();
-  const [alsoDeleteTasks, setAlsoDeleteTasks] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -43,10 +41,7 @@ export function RemoveFolderDialog({
     setSubmitting(true);
     setError(null);
     try {
-      await rpc.call("removeSyncedFolder", {
-        projectId: folder.projectId,
-        alsoDeleteTasks,
-      });
+      await rpc.call("removeSyncedFolder", { projectId: folder.projectId });
       onOpenChange(false);
       onRemoved();
     } catch (removeError) {
@@ -62,18 +57,12 @@ export function RemoveFolderDialog({
         <DialogHeader>
           <DialogTitle>Disconnect "{folder.tasksFolder}"?</DialogTitle>
           <DialogDescription>
-            Stops syncing this folder to {folder.projectName}. Files on disk
-            are never touched.{" "}
-            {alsoDeleteTasks
-              ? `The ${folder.taskCount} task${folder.taskCount === 1 ? "" : "s"} this folder created will also be deleted from the board.`
-              : "Tasks this folder created stay on the board as regular tasks, unlinked from their files."}
+            Stops {folder.projectName} from reading this folder. Files on disk
+            are never touched — the {folder.taskCount} task
+            {folder.taskCount === 1 ? "" : "s"} it holds simply stop showing
+            up on this board.
           </DialogDescription>
         </DialogHeader>
-        <CheckboxField
-          checked={alsoDeleteTasks}
-          onCheckedChange={setAlsoDeleteTasks}
-          label="Also delete these tasks from the board"
-        />
         {error ? (
           <p role="alert" className="text-xs text-destructive">
             {error}

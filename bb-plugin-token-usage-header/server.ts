@@ -215,6 +215,13 @@ export const rpcContract = defineRpcContract({
         // The session page splices these into its chart's own thread.events
         // (from threadsTimeline, which never carries them) before rendering.
         mergeEvents: z.array(gitEventSchema),
+        // Ordered member sections of a workflow run — present only when the
+        // selector is a "workflow:<runId>" key (the session page's flow
+        // view); absent for a regular agent. Mirrors agent-timeline.ts's own
+        // `flow` field (agent + events per member).
+        flow: z
+          .array(z.object({ agent: agentTimelineAgentInfoSchema, events: z.array(agentTimelineEventSchema) }).strict())
+          .optional(),
       }),
       z.object({ status: z.literal("error"), message: z.string() }),
     ]),
@@ -224,7 +231,11 @@ export const rpcContract = defineRpcContract({
     // one doesn't scope to one thread's Claude Code session.
     input: z
       .object({
-        limit: z.number().int().min(1).max(100),
+        // Ceiling raised from 100 to 1000 for the cost-summary block's own
+        // lazily-fetched wide slice (pages/UsageProjectsSummary.tsx's
+        // WIDE_LIMIT) — the feed itself (ThreadsTimelinePage.tsx) still caps
+        // its own incremental growth at 100, unrelated to this schema max.
+        limit: z.number().int().min(1).max(1000),
         unit: z.number().int().positive(),
         project: z.string().optional(),
         // Single-session slice (the session page): exact session id, and
@@ -239,6 +250,8 @@ export const rpcContract = defineRpcContract({
         unit: finiteNumber,
         threads: z.array(threadsTimelineEntrySchema),
         agentLabels: threadsTimelineAgentLabelsSchema,
+        /** True when the slice was cut off by `limit` — see ThreadsTimeline's `truncated` doc in threads-timeline.ts. */
+        truncated: z.boolean(),
       }),
       z.object({ status: z.literal("error"), message: z.string() }),
     ]),
@@ -374,6 +387,10 @@ async function loadAgentTimeline(
       agent: timelineResult.data.agent,
       events: timelineResult.data.events,
       mergeEvents: timelineResult.data.mergeEvents,
+      // Omit the key entirely for a regular agent — the RPC transport is JSON,
+      // where an explicit `flow: undefined` is not a valid value (it must be
+      // absent, not undefined). Present only for a "workflow:<runId>" selector.
+      ...(timelineResult.data.flow ? { flow: timelineResult.data.flow } : {}),
     };
   } catch (err) {
     return {
@@ -398,6 +415,7 @@ async function loadThreadsTimeline(
       unit: result.data.unit,
       threads: result.data.threads,
       agentLabels: result.data.agentLabels,
+      truncated: result.data.truncated,
     };
   } catch (err) {
     return {
@@ -518,9 +536,16 @@ function defineGearSettings(bb: BbPluginApi) {
     },
     collapseEmpty: {
       type: "boolean",
-      label: "Collapse empty intervals",
+      label: "Collapse Empty Intervals to Gap",
       description: "Several consecutive empty bins are drawn as a single gap column instead of one column each.",
       default: DEFAULT_GEAR_SETTINGS.collapseEmpty,
+    },
+    collapseToZeroBelowMin: {
+      type: "string",
+      label: "Collapse to zero empty intervals less than…",
+      description:
+        "Minutes. Only applies when «Collapse Empty Intervals to Gap» is on. An empty interval of this many minutes or less leaves no column at all; longer ones keep their gap column. 0 — off. Natural numbers only.",
+      default: String(DEFAULT_GEAR_SETTINGS.collapseToZeroBelowMin),
     },
     colWidthPx: {
       type: "string",

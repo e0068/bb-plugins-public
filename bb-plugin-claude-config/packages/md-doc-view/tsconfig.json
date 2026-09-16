@@ -8,6 +8,8 @@
     "MdDocView.tsx",
     "KasimovEditor.tsx",
     "kasimov.d.ts",
+    "libraries.ts",
+    "test-support/libraries.tsx",
     "MdDocView.test.tsx"
   ]
 }

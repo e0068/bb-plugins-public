@@ -1,0 +1,32 @@
+{
+  "bb-plugin-claude-config": {
+    "version": "0.2.18",
+    "commit": "0e99a018f865128aea398c6500943c70ca1efa4c",
+    "publishedAt": "2026-09-16T12:11:24.695Z"
+  },
+  "bb-plugin-md-opener": {
+    "version": "0.1.11",
+    "commit": "0e99a018f865128aea398c6500943c70ca1efa4c",
+    "publishedAt": "2026-09-16T12:11:24.695Z"
+  },
+  "bb-plugin-tasks-plus": {
+    "version": "0.1.18",
+    "commit": "0e99a018f865128aea398c6500943c70ca1efa4c",
+    "publishedAt": "2026-09-16T12:11:24.695Z"
+  },
+  "bb-plugin-token-usage-header": {
+    "version": "0.4.8",
+    "commit": "0e99a018f865128aea398c6500943c70ca1efa4c",
+    "publishedAt": "2026-09-16T12:11:24.695Z"
+  },
+  "bb-plugin-usage-circles": {
+    "version": "0.2.2",
+    "commit": "0e99a018f865128aea398c6500943c70ca1efa4c",
+    "publishedAt": "2026-09-16T12:11:24.695Z"
+  },
+  "bb-plugin-zz-pull-request": {
+    "version": "0.1.29",
+    "commit": "0e99a018f865128aea398c6500943c70ca1efa4c",
+    "publishedAt": "2026-09-16T12:11:24.695Z"
+  }
+}

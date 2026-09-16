@@ -436,31 +436,7 @@ describe("threads-timeline panel — agent-detail sub-view", () => {
     });
   });
 
-  it("clicking a workflow-merged segment opens the active member's own timeline at that bin's window, instead of doing nothing", async () => {
-    const slot = await renderAgentDetail(buildAgentDetailSubPath({ session: "sess_abc123", agent: "agent-x11" }), {
-      agentTimeline: async () => READY_TIMELINE,
-      threadsTimeline: threadsTimelineWithWorkflowMembers,
-    });
-
-    await screen.findByText("Session chart");
-    fireEvent.click(screen.getByRole("button", { name: /Workflow: arch-review: 200 tokens/ }));
-
-    expect(slot.navigateCalls).toContainEqual({
-      method: "toPluginPanel",
-      path: "threads",
-      options: {
-        subPath: buildAgentDetailSubPath({
-          session: "sess_abc123",
-          agent: "agent-x11",
-          from: "2026-08-25T09:00:00.000Z",
-          to: "2026-08-25T09:01:00.000Z",
-        }),
-        replace: true,
-      },
-    });
-  });
-
-  it("clicking a workflow-merged segment falls back to its first member when the currently open agent took no part in that run", async () => {
+  it("clicking a workflow-merged segment opens the whole run's flow (the workflow key itself), regardless of which agent is currently open", async () => {
     const slot = await renderAgentDetail(buildAgentDetailSubPath({ session: "sess_abc123", agent: "agent-z99" }), {
       agentTimeline: async () => READY_TIMELINE,
       threadsTimeline: threadsTimelineWithWorkflowMembers,
@@ -469,19 +445,91 @@ describe("threads-timeline panel — agent-detail sub-view", () => {
     await screen.findByText("Session chart");
     fireEvent.click(screen.getByRole("button", { name: /Workflow: arch-review: 200 tokens/ }));
 
+    // No longer picks a single member (that was the pre-flow-view behavior):
+    // the segment's own "workflow:<runId>" key is passed through, so the
+    // detail page opens the whole run's flow view for it.
     expect(slot.navigateCalls).toContainEqual({
       method: "toPluginPanel",
       path: "threads",
       options: {
         subPath: buildAgentDetailSubPath({
           session: "sess_abc123",
-          agent: "agent-x11",
+          agent: "workflow:wf_1",
           from: "2026-08-25T09:00:00.000Z",
           to: "2026-08-25T09:01:00.000Z",
         }),
         replace: true,
       },
     });
+  });
+
+  it("renders a workflow selector as the flow view — one section per member agent in order, and highlights the whole member group on the left", async () => {
+    const memberInfo = (key: string, description: string) => ({
+      key,
+      agentType: "general-purpose",
+      description,
+      model: "sonnet",
+      spawnDepth: 1,
+      promptExcerpt: null,
+      requestFull: null,
+      requestFullTruncated: false,
+      responseFull: null,
+      responseFullTruncated: false,
+    });
+    const memberMessage = (ts: string, text: string) => ({
+      ts,
+      kind: "message" as const,
+      role: "assistant" as const,
+      text,
+      fullText: text,
+      fullTextTruncated: false,
+    });
+    const flowTimeline = {
+      status: "ready" as const,
+      totals: READY_TIMELINE.totals,
+      // The left panel lists every agent of the session — including the two
+      // workflow members whose rows the flow view highlights as a group.
+      agents: [
+        { key: "main", name: "Main agent", caption: "opus 700", total: 700, cost: 0.2 },
+        { key: "agent-x11", name: "implementer", caption: "implementer · sonnet", total: 200, cost: 0.05 },
+        { key: "agent-y22", name: "reviewer", caption: "reviewer · sonnet", total: 100, cost: 0.03 },
+      ],
+      agent: {
+        key: "workflow:wf_1",
+        agentType: null,
+        description: "arch-review",
+        model: null,
+        spawnDepth: null,
+        promptExcerpt: null,
+        requestFull: null,
+        requestFullTruncated: false,
+        responseFull: null,
+        responseFullTruncated: false,
+      },
+      events: [memberMessage("2026-08-25T09:00:01.000Z", "implementer step"), memberMessage("2026-08-25T09:00:05.000Z", "reviewer step")],
+      flow: [
+        { agent: memberInfo("agent-x11", "implementer"), events: [memberMessage("2026-08-25T09:00:01.000Z", "implementer step")] },
+        { agent: memberInfo("agent-y22", "reviewer"), events: [memberMessage("2026-08-25T09:00:05.000Z", "reviewer step")] },
+      ],
+      mergeEvents: [],
+    };
+
+    await renderAgentDetail(buildAgentDetailSubPath({ session: "sess_abc123", agent: "workflow:wf_1" }), {
+      agentTimeline: async () => flowTimeline,
+    });
+
+    // Right panel: the run's own header, then each member's events in order.
+    await screen.findByText("Workflow: arch-review");
+    await screen.findByText("implementer step");
+    await screen.findByText("reviewer step");
+
+    // Left panel: both member rows are highlighted as a group, main is not.
+    // Query the agent-list buttons (the section headers on the right are
+    // plain divs, so a role=button match is unambiguously the left panel).
+    const memberRow = (name: RegExp) => screen.getByRole("button", { name });
+    expect(memberRow(/implementer · sonnet/).className).toContain("bg-state-active");
+    expect(memberRow(/reviewer · sonnet/).className).toContain("bg-state-active");
+    expect(memberRow(/Main agent/).className).not.toContain("bg-state-active");
   });
 
   it("renders tool and message rows from the agent's events with their labels", async () => {
@@ -518,22 +566,6 @@ describe("threads-timeline panel — agent-detail sub-view", () => {
 
     await screen.findByText(/Look at the distort function/);
     expect(screen.queryByText("not everything is shown")).toBeNull();
-  });
-
-  it("shows tokens/cost only on assistant message rows, leaving tool/hook rows blank", async () => {
-    await renderAgentDetail(buildAgentDetailSubPath({ session: "sess_abc123", agent: "main" }), {
-      agentTimeline: async () => READY_TIMELINE,
-    });
-
-    const assistantRow = (await screen.findByText("Done, breakdown below.")).closest("[data-ev-index]");
-    expect(assistantRow).not.toBeNull();
-    expect(assistantRow?.textContent).toContain("452");
-    expect(assistantRow?.textContent).toContain("$0.01");
-
-    const toolRow = (await screen.findByText("signal/distort.ts")).closest("[data-ev-index]");
-    expect(toolRow).not.toBeNull();
-    // No stray token/cost figure leaking onto a tool row.
-    expect(toolRow?.textContent).not.toMatch(/\$/);
   });
 
   it("shows a toggle that reveals the agent's full request/response text, hidden by default", async () => {
@@ -684,6 +716,238 @@ describe("threads-timeline panel — agent-detail sub-view", () => {
     });
     assertMatchesContract("saveVizSettings", savedInput);
     expect(slot.rpcCalls.some((call) => call.method === "saveVizSettings")).toBe(true);
+  });
+  /**
+   * Two user turns, each with its own tool call and assistant reply — the
+   * minimum needed to tell "all prompts" apart from "this one prompt", and
+   * to check that a turn's tools stay behind the turn's own arrow.
+   */
+  const TWO_TURN_TIMELINE = {
+    ...READY_TIMELINE,
+    events: [
+      {
+        ts: "2026-08-25T09:14:03.000Z",
+        kind: "message" as const,
+        role: "user" as const,
+        text: "Ask one.",
+        fullText: "Ask one — the full first prompt.",
+        fullTextTruncated: false,
+      },
+      { ts: "2026-08-25T09:14:05.000Z", kind: "tool" as const, name: "Read", target: "signal/one.ts" },
+      {
+        ts: "2026-08-25T09:14:20.000Z",
+        kind: "message" as const,
+        role: "assistant" as const,
+        text: "Reply one.",
+        fullText: "Reply one — the full first answer.",
+        fullTextTruncated: false,
+        tokens: 100,
+        cost: 0.01,
+      },
+      {
+        ts: "2026-08-25T09:15:03.000Z",
+        kind: "message" as const,
+        role: "user" as const,
+        text: "Ask two.",
+        fullText: "Ask two — the full second prompt.",
+        fullTextTruncated: false,
+      },
+      { ts: "2026-08-25T09:15:05.000Z", kind: "tool" as const, name: "Read", target: "signal/two.ts" },
+      {
+        ts: "2026-08-25T09:15:20.000Z",
+        kind: "message" as const,
+        role: "assistant" as const,
+        text: "Reply two.",
+        fullText: "Reply two — the full second answer.",
+        fullTextTruncated: false,
+        tokens: 200,
+        cost: 0.02,
+      },
+    ],
+  };
+
+  async function renderTwoTurns() {
+    return renderAgentDetail(buildAgentDetailSubPath({ session: "sess_abc123", agent: "main" }), {
+      agentTimeline: async () => TWO_TURN_TIMELINE,
+    });
+  }
+
+  it("expanding a prompt reveals its own text only — the turn's tools stay with the turn's arrow", async () => {
+    await renderTwoTurns();
+
+    fireEvent.click(await screen.findByText("Ask one."));
+
+    await screen.findByText("Ask one — the full first prompt.");
+    // The tool shows up once, as its own timeline row: the expanded prompt no
+    // longer re-lists the turn's tools underneath itself.
+    expect(screen.getAllByText("signal/one.ts")).toHaveLength(1);
+  });
+
+  it("the Expand prompts switch expands every user prompt and leaves assistant messages collapsed", async () => {
+    await renderTwoTurns();
+
+    fireEvent.click(await screen.findByRole("switch", { name: "Expand prompts" }));
+
+    await screen.findByText("Ask one — the full first prompt.");
+    expect(screen.getByText("Ask two — the full second prompt.")).not.toBeNull();
+    expect(screen.queryByText("Reply one — the full first answer.")).toBeNull();
+    expect(screen.queryByText("Reply two — the full second answer.")).toBeNull();
+  });
+
+  it("collapsing one prompt under the switch turns the switch off and keeps the other prompts expanded", async () => {
+    await renderTwoTurns();
+
+    const promptSwitch = await screen.findByRole("switch", { name: "Expand prompts" });
+    fireEvent.click(promptSwitch);
+    await screen.findByText("Ask one — the full first prompt.");
+
+    fireEvent.click(screen.getByText("Ask one."));
+
+    await waitFor(() => expect(promptSwitch.getAttribute("aria-checked")).toBe("false"));
+    expect(screen.queryByText("Ask one — the full first prompt.")).toBeNull();
+    expect(screen.getByText("Ask two — the full second prompt.")).not.toBeNull();
+  });
+
+  it("expands every prompt while the turns themselves stay collapsed", async () => {
+    await renderTwoTurns();
+
+    fireEvent.click(await screen.findByRole("button", { name: /Grouping:\s*flat/ }));
+    fireEvent.click(await screen.findByRole("button", { name: "Collapse turns" }));
+    fireEvent.click(await screen.findByRole("switch", { name: "Expand prompts" }));
+
+    await screen.findByText("Ask one — the full first prompt.");
+    expect(screen.getByText("Ask two — the full second prompt.")).not.toBeNull();
+    // Everything the turn arrows own — tools and assistant replies — stays folded.
+    expect(screen.queryByText("signal/one.ts")).toBeNull();
+    expect(screen.queryByText("Reply one.")).toBeNull();
+  });
+
+  it("turning the switch back off collapses the prompts again", async () => {
+    await renderTwoTurns();
+
+    const promptSwitch = await screen.findByRole("switch", { name: "Expand prompts" });
+    fireEvent.click(promptSwitch);
+    await screen.findByText("Ask one — the full first prompt.");
+
+    fireEvent.click(promptSwitch);
+
+    await waitFor(() => expect(screen.queryByText("Ask one — the full first prompt.")).toBeNull());
+    expect(screen.queryByText("Ask two — the full second prompt.")).toBeNull();
+    expect(promptSwitch.getAttribute("aria-checked")).toBe("false");
+  });
+
+  /**
+   * One turn as the script sends it since every model call is priced once:
+   * a call that answered with tools only carries its price on its first tool
+   * row, a call with text on its assistant row; hooks sit between them.
+   */
+  const PRICED_TURN_TIMELINE = {
+    ...READY_TIMELINE,
+    events: [
+      {
+        ts: "2026-08-25T09:14:03.000Z",
+        kind: "message" as const,
+        role: "user" as const,
+        text: "Ask priced.",
+        fullText: "Ask priced.",
+        fullTextTruncated: false,
+      },
+      { ts: "2026-08-25T09:14:04.000Z", kind: "hook" as const, hookName: "PreToolUse:Read", hookEvent: "PreToolUse" },
+      { ts: "2026-08-25T09:14:05.000Z", kind: "tool" as const, name: "Read", target: "signal/priced.ts", tokens: 80_000, cost: 0.2534 },
+      { ts: "2026-08-25T09:14:06.000Z", kind: "tool" as const, name: "Grep", target: "unpriced-pattern" },
+      { ts: "2026-08-25T09:14:07.000Z", kind: "hook" as const, hookName: "PostToolUse:Read", hookEvent: "PostToolUse" },
+      {
+        ts: "2026-08-25T09:14:20.000Z",
+        kind: "message" as const,
+        role: "assistant" as const,
+        text: "Priced reply.",
+        fullText: "Priced reply.",
+        fullTextTruncated: false,
+        tokens: 90_000,
+        cost: 0.0104,
+      },
+    ],
+  };
+
+  async function renderPricedTurn() {
+    await renderAgentDetail(buildAgentDetailSubPath({ session: "sess_abc123", agent: "main" }), {
+      agentTimeline: async () => PRICED_TURN_TIMELINE,
+    });
+    return (await screen.findByText("Ask priced.")).closest("[data-ev-index]") as HTMLElement;
+  }
+
+  it("shows tokens/cost on every row that carries its call's price — a tool row as well as an assistant row — and nothing on the rest", async () => {
+    await renderPricedTurn();
+
+    const toolRow = screen.getByText("signal/priced.ts").closest("[data-ev-index]");
+    expect(toolRow?.textContent).toContain("$0.25");
+    const assistantRow = screen.getByText("Priced reply.").closest("[data-ev-index]");
+    expect(assistantRow?.textContent).toContain("$0.01");
+    const unpricedToolRow = screen.getByText("unpriced-pattern").closest("[data-ev-index]");
+    expect(unpricedToolRow?.textContent).not.toMatch(/\$/);
+  });
+
+  it("a turn header shows the full cost of the turn, tool-priced calls included", async () => {
+    await renderPricedTurn();
+
+    fireEvent.click(await screen.findByRole("button", { name: /Grouping:\s*flat/ }));
+
+    const header = (await screen.findByText("Ask priced.")).closest("[data-ev-index]") as HTMLElement;
+    expect(header.textContent).toContain("$0.26");
+  });
+
+  it("a turn header counts only the rows the Hooks toggle shows", async () => {
+    await renderPricedTurn();
+    fireEvent.click(await screen.findByRole("button", { name: /Grouping:\s*flat/ }));
+    const header = () => screen.getByText("Ask priced.").closest("[data-ev-index]") as HTMLElement;
+
+    await waitFor(() => expect(within(header()).getByText("5")).not.toBeNull());
+
+    fireEvent.click(screen.getByRole("button", { name: /Hooks:\s*on/ }));
+
+    await waitFor(() => expect(within(header()).getByText("3")).not.toBeNull());
+  });
+
+  it("the events caption counts the events the Hooks toggle shows, whether or not the turns are collapsed", async () => {
+    await renderPricedTurn();
+
+    await screen.findByText("6 events");
+    fireEvent.click(screen.getByRole("button", { name: /Hooks:\s*on/ }));
+    await screen.findByText("4 events");
+
+    fireEvent.click(screen.getByRole("button", { name: /Grouping:\s*flat/ }));
+    fireEvent.click(await screen.findByRole("button", { name: "Collapse turns" }));
+
+    await waitFor(() => expect(screen.queryByText("signal/priced.ts")).toBeNull());
+    expect(screen.getByText("4 events")).not.toBeNull();
+  });
+
+  it("a workflow member's section caption counts the events the Hooks toggle shows", async () => {
+    const member = {
+      key: "agent-x11",
+      agentType: "general-purpose",
+      description: "implementer",
+      model: "sonnet",
+      spawnDepth: 1,
+      promptExcerpt: null,
+      requestFull: null,
+      requestFullTruncated: false,
+      responseFull: null,
+      responseFullTruncated: false,
+    };
+    const memberEvents = PRICED_TURN_TIMELINE.events;
+    await renderAgentDetail(buildAgentDetailSubPath({ session: "sess_abc123", agent: "workflow:wf_1" }), {
+      agentTimeline: async () => ({
+        ...PRICED_TURN_TIMELINE,
+        agent: { ...member, key: "workflow:wf_1", agentType: null, description: "arch-review", model: null, spawnDepth: null },
+        flow: [{ agent: member, events: memberEvents }],
+      }),
+    });
+    await screen.findByText("Workflow: arch-review");
+
+    fireEvent.click(screen.getByRole("button", { name: /Hooks:\s*on/ }));
+
+    await waitFor(() => expect(screen.getAllByText("4 events")).toHaveLength(2));
   });
 });
 

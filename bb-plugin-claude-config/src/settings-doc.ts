@@ -152,6 +152,37 @@ export function setToolSearch(
   return writeEntry(doc, "env", "ENABLE_TOOL_SEARCH", value);
 }
 
+// --- generic top-level settings (the "Settings" section) -----------------
+
+/**
+ * Reads a top-level key's native value as-is (any JSON type, including
+ * `false`/`0`/`""`) — unlike the section helpers above, there's no "on"/
+ * "off" encoding: the caller (settings-catalog) knows the key's shape.
+ * Absent — `undefined`, distinguishable from a stored falsy value.
+ */
+export function getRawSetting(doc: SettingsDoc, key: string): unknown {
+  return Object.prototype.hasOwnProperty.call(doc, key) ? doc[key] : undefined;
+}
+
+/**
+ * Writes a top-level key to any JSON-compatible value. `undefined` removes
+ * the key (reverting to Claude Code's own default) instead of storing a
+ * literal `undefined`, which JSON can't represent anyway.
+ */
+export function setRawSetting(
+  doc: SettingsDoc,
+  key: string,
+  value: unknown,
+): SettingsDoc {
+  if (value === undefined) {
+    if (!Object.prototype.hasOwnProperty.call(doc, key)) return doc;
+    const result = { ...doc };
+    delete result[key];
+    return result;
+  }
+  return { ...doc, [key]: value };
+}
+
 // --- connectors (MCP servers) ------------------------------------------
 
 /**

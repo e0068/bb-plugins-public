@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
-import { afterEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, screen, waitFor, waitForElementToBeRemoved } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { cleanup, fireEvent, screen, waitFor, waitForElementToBeRemoved, within } from "@testing-library/react";
 import { loadPluginApp, renderSlot, type PluginRpcTestHandlers } from "@get-bb/plugin-sdk/testing/app";
 import type { PluginNavPanelProps } from "@get-bb/plugin-sdk/app";
 import { rpcContract } from "../server";
@@ -10,6 +10,15 @@ import { rpcContract } from "../server";
 import { DEFAULT_VIZ_SETTINGS, type VizSettings } from "../src/core";
 
 afterEach(cleanup);
+
+// Radix Select (the row-count picker next to D/W/M) scrolls the chosen item
+// into view when its portal opens; jsdom does not implement that browser API.
+if (typeof Element !== "undefined" && !Element.prototype.scrollIntoView) {
+  Object.defineProperty(Element.prototype, "scrollIntoView", {
+    configurable: true,
+    value: () => {},
+  });
+}
 
 // Same reasoning as agent-timeline-page.test.tsx: not imported from
 // ../pages/AgentTimelinePage, to avoid evaluating "@get-bb/plugin-sdk/app"
@@ -112,6 +121,7 @@ const THREADS_READY = {
   // exercises the labelFor fallback (agentLabels[key] ?? key) alongside the
   // mapped case, in the same fixture used by most tests below.
   agentLabels: { main: "Main agent" },
+  truncated: false,
 };
 
 // Fixture for the collapseEmpty ("Collapse gaps") feature tests below —
@@ -148,6 +158,7 @@ const THREADS_WITH_GAPS = {
     },
   ],
   agentLabels: { main: "Main agent" },
+  truncated: false,
 };
 
 async function renderThreadsTimeline(
@@ -368,6 +379,7 @@ describe("threads-timeline nav panel", () => {
         },
       ],
       agentLabels: THREADS_READY.agentLabels,
+      truncated: false,
     };
     await renderThreadsTimeline({ threadsTimeline: async () => withCommit });
     const title = await screen.findByText("Thread A");
@@ -513,6 +525,31 @@ describe("threads-timeline nav panel", () => {
     // Never the full raw session id either — the fallback is short, not a
     // second copy of the UUID.
     expect(screen.queryByText(THREAD_B_SESSION)).toBeNull();
+  });
+
+  it("falls back to the recovered BB project name plus a short session id when a project matched but no thread did", async () => {
+    const session = "sess_ccc333";
+    await renderThreadsTimeline({
+      threadsTimeline: async () => ({
+        ...THREADS_READY,
+        threads: [
+          {
+            ...THREADS_READY.threads[1],
+            session,
+            title: session,
+            // Managed-environment/cwd-path fallback (tier 2/3 of enrichBbProjects)
+            // recovers a project even without a thread match — see
+            // threads-timeline-service.ts.
+            bbProjectId: "bb-proj-2",
+            bbProjectName: "Workflow Composer",
+            threadId: null,
+            bbThreadTitle: null,
+          },
+        ],
+      }),
+    });
+
+    await screen.findByText(`Workflow Composer · ${session.slice(0, 8)}`);
   });
 
   it("renders every card at a constant full container width, regardless of thread duration/bin count (no more proportional widthFractions sizing)", async () => {
@@ -936,6 +973,7 @@ describe("threads-timeline nav panel — liveness indicators", () => {
       },
     ],
     agentLabels: { main: "Main agent" },
+    truncated: false,
   };
 
   it("paints a live thread's title green and an archived thread's title with the default foreground", async () => {
@@ -963,4 +1001,375 @@ describe("threads-timeline nav panel — liveness indicators", () => {
     const workingCard = screen.getByRole("button", { name: "Live, in progress" }).closest(".rounded-md.border.border-border");
     expect(workingCard!.contains(dots[0])).toBe(true);
   });
+});
+
+// UsageProjectsSummary (the donut + thread-bar block above the feed) has no
+// standalone render harness of its own — like the feed below it, it calls
+// useRpc() from "@get-bb/plugin-sdk/app", which only works inside the plugin
+// test runtime that renderThreadsTimeline sets up. It reads the wall clock
+// once per fetch (see that file's module doc comment on why "now" isn't a
+// prop) — fake timers pin it here so the day/week/month windows are
+// deterministic against the fixture timestamps below.
+describe("cost summary block (UsageProjectsSummary)", () => {
+  const NOW = Date.parse("2026-09-03T12:00:00.000Z");
+
+  beforeEach(() => {
+    // Fakes only `Date` (not setTimeout/setInterval): testing-library's
+    // findBy*/waitFor poll via real setTimeout, which would otherwise hang
+    // forever under a fully-faked clock.
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(NOW);
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  // Inside every window (1 hour ago).
+  const alphaThread = {
+    session: "sess_alpha",
+    project: "alpha-proj",
+    title: "sess_alpha",
+    start: "2026-09-03T10:00:00.000Z",
+    end: "2026-09-03T11:00:00.000Z",
+    durationSec: 3600,
+    totalTokens: 100,
+    totalCost: 6,
+    workflowCount: 0,
+    bins: [{ t: "2026-09-03T11:00:00.000Z", agents: [{ key: "main", total: 100 }] }],
+    cwd: null,
+    gitBranch: null,
+    events: [],
+    bbProjectId: "bb-alpha",
+    bbProjectName: "Alpha",
+    threadId: "thread-alpha",
+    bbThreadTitle: "Alpha session",
+  };
+
+  // Outside the day (24h) and week (7d) windows, inside the month (30d) one
+  // (10 days ago). Costs more than Alpha on purpose: in the month window Beta
+  // outranks Alpha by cost, while in the day window only Alpha is visible at
+  // all — the two windows disagree about which project is "first", which is
+  // exactly the condition that catches a colour keyed by cost-rank instead of
+  // project identity (see the "keeps a project's legend colour stable…" test).
+  const betaThread = {
+    session: "sess_beta",
+    project: "beta-proj",
+    title: "sess_beta",
+    start: "2026-08-24T11:00:00.000Z",
+    end: "2026-08-24T12:00:00.000Z",
+    durationSec: 3600,
+    totalTokens: 100,
+    totalCost: 9,
+    workflowCount: 0,
+    bins: [{ t: "2026-08-24T12:00:00.000Z", agents: [{ key: "main", total: 100 }] }],
+    cwd: null,
+    gitBranch: null,
+    events: [],
+    bbProjectId: "bb-beta",
+    bbProjectName: "Beta",
+    threadId: "thread-beta",
+    bbThreadTitle: "Beta session",
+  };
+
+  // Dispatches on `limit`: the summary's own two calls (the fast 100-session
+  // one on mount, and the lazily-fetched 1000-session widen — see
+  // UsageProjectsSummary.tsx) both get the Alpha/Beta fixtures above; the
+  // feed's own (smaller, growing) call gets the unrelated THREADS_READY
+  // fixture — its content is irrelevant here.
+  function rpcWithProjectSummary() {
+    return {
+      threadsTimeline: async (input: unknown) => {
+        const { limit } = input as { limit: number };
+        if (limit === 100 || limit === 1000) {
+          return { status: "ready" as const, unit: 3600, threads: [alphaThread, betaThread], agentLabels: {}, truncated: false };
+        }
+        return THREADS_READY;
+      },
+    };
+  }
+
+  function summarySection(container: HTMLElement): HTMLElement | null {
+    return container.querySelector('section[aria-label="Cost by project"]');
+  }
+
+  function donutTotalText(container: HTMLElement): string | null {
+    const section = summarySection(container);
+    if (!section) return null;
+    return within(section).getByLabelText(/^Total cost:/).textContent ?? null;
+  }
+
+  it("requests a fast 100-session slice on mount, then lazily widens to 1000 exactly once when the window first needs it", async () => {
+    const slot = await renderThreadsTimeline(rpcWithProjectSummary());
+    await screen.findByText("Thread A"); // the feed's own row, proves both calls resolved
+    await screen.findByText("Alpha session");
+
+    const callsWithLimit = (limit: number) =>
+      slot.rpcCalls.filter((call) => call.method === "threadsTimeline" && (call.input as { limit: number }).limit === limit);
+    expect(callsWithLimit(100)).toHaveLength(1);
+    expect(callsWithLimit(100)[0]?.input).toEqual({ limit: 100, unit: 3600 });
+    // "day" (the default) never needs more than the fast slice — see
+    // UsageProjectsSummary.tsx's widening effect doc comment.
+    expect(callsWithLimit(1000)).toHaveLength(0);
+
+    // Switching to a longer window fires the widen fetch exactly once…
+    fireEvent.click(screen.getByRole("button", { name: "Last 30 days" }));
+    await screen.findByText("Beta session");
+    expect(callsWithLimit(1000)).toHaveLength(1);
+    expect(callsWithLimit(1000)[0]?.input).toEqual({ limit: 1000, unit: 3600 });
+
+    // …and further period switches reuse it — no additional calls of either size.
+    fireEvent.click(screen.getByRole("button", { name: "Last 7 days" }));
+    fireEvent.click(screen.getByRole("button", { name: "Last 30 days" }));
+    expect(callsWithLimit(100)).toHaveLength(1);
+    expect(callsWithLimit(1000)).toHaveLength(1);
+  });
+
+  it("shows only threads active in the default day window", async () => {
+    const slot = await renderThreadsTimeline(rpcWithProjectSummary());
+    await screen.findByText("Alpha session");
+
+    expect(donutTotalText(slot.container)).toBe("$6.00");
+    expect(screen.queryByText("Beta session")).toBeNull();
+  });
+
+  it("widening to the month window reveals older threads and updates the donut total", async () => {
+    const slot = await renderThreadsTimeline(rpcWithProjectSummary());
+    await screen.findByText("Alpha session");
+
+    fireEvent.click(screen.getByRole("button", { name: "Last 30 days" }));
+
+    await screen.findByText("Beta session");
+    expect(donutTotalText(slot.container)).toBe("$15.00"); // Alpha $6 + Beta $9
+  });
+
+  it("clicking a project's legend entry filters the thread list to that project; clicking again clears it", async () => {
+    await renderThreadsTimeline(rpcWithProjectSummary());
+    await screen.findByText("Alpha session");
+    fireEvent.click(screen.getByRole("button", { name: "Last 30 days" }));
+    await screen.findByText("Beta session");
+
+    const alphaLegend = screen.getByText("Alpha").closest("button")!;
+    fireEvent.click(alphaLegend);
+    expect(screen.queryByText("Beta session")).toBeNull();
+    screen.getByText("Alpha session");
+
+    fireEvent.click(alphaLegend);
+    await screen.findByText("Beta session");
+  });
+
+  it("clicking a donut sector filters the thread list the same way as its legend entry", async () => {
+    const slot = await renderThreadsTimeline(rpcWithProjectSummary());
+    await screen.findByText("Alpha session");
+    fireEvent.click(screen.getByRole("button", { name: "Last 30 days" }));
+    await screen.findByText("Beta session");
+
+    // Sectors are aria-hidden (the legend is the reachable control for the
+    // same action — see UsageProjectsSummary.tsx), so they're targeted by
+    // `data-project` rather than role or DOM position — the month window
+    // sorts Beta ahead of Alpha by cost, so a position-based index would be
+    // fragile against exactly the ordering this file's fixtures exercise.
+    const section = summarySection(slot.container)!;
+    const alphaSector = section.querySelector('circle[data-project="Alpha"]')!;
+    fireEvent.click(alphaSector);
+
+    expect(screen.queryByText("Beta session")).toBeNull();
+    screen.getByText("Alpha session");
+  });
+
+  it("keeps a project's legend colour stable across D/W/M, even when the window changes its cost rank", async () => {
+    await renderThreadsTimeline(rpcWithProjectSummary());
+    await screen.findByText("Alpha session");
+    const swatch = () => screen.getByText("Alpha").closest("button")!.querySelector("span.inline-block")!.getAttribute("style");
+    const dayColor = swatch();
+
+    fireEvent.click(screen.getByRole("button", { name: "Last 30 days" }));
+    await screen.findByText("Beta session");
+    // In the month window Beta (the pricier of the two) sorts before Alpha —
+    // a colour keyed by cost-rank would swap here; one keyed by project
+    // identity (allProjectKeys' alphabetical order) doesn't.
+    expect(swatch()).toBe(dayColor);
+  });
+
+  it("a project selection that has no slice in the narrower window falls back to 'all' instead of showing an empty list", async () => {
+    // Select Beta while both threads are visible (month window)…
+    await renderThreadsTimeline(rpcWithProjectSummary());
+    await screen.findByText("Alpha session");
+    fireEvent.click(screen.getByRole("button", { name: "Last 30 days" }));
+    await screen.findByText("Beta session");
+    fireEvent.click(screen.getByText("Beta").closest("button")!);
+    expect(screen.queryByText("Alpha session")).toBeNull();
+
+    // …then narrow to the day window, where Beta has no spend at all: the
+    // stuck selection must not leave the list empty.
+    fireEvent.click(screen.getByRole("button", { name: "Last 24 hours" }));
+    await screen.findByText("Alpha session");
+  });
+
+  it("clicking a thread row navigates to the session's internal page, same as clicking a feed card", async () => {
+    const slot = await renderThreadsTimeline(rpcWithProjectSummary());
+    await screen.findByText("Alpha session");
+
+    fireEvent.click(screen.getByText("Alpha session"));
+
+    expect(slot.navigateCalls).toContainEqual({
+      method: "toPluginPanel",
+      path: "threads",
+      options: { subPath: buildAgentDetailSubPath({ agent: "main", session: "sess_alpha" }) },
+    });
+  });
+
+  it("renders nothing when its own rpc call errors — the feed below already surfaces that failure", async () => {
+    const slot = await renderThreadsTimeline({
+      threadsTimeline: async (input: unknown) => {
+        const { limit } = input as { limit: number };
+        if (limit === 100) return { status: "error" as const, message: "boom" };
+        return THREADS_READY;
+      },
+    });
+    await screen.findByText("Thread A");
+
+    await waitFor(() => expect(summarySection(slot.container)).toBeNull());
+  });
+
+  it("shows the empty states for a period with no spend and no threads", async () => {
+    const slot = await renderThreadsTimeline({
+      threadsTimeline: async (input: unknown) => {
+        const { limit } = input as { limit: number };
+        if (limit === 100) return { status: "ready" as const, unit: 3600, threads: [], agentLabels: {}, truncated: false };
+        return THREADS_READY;
+      },
+    });
+    await screen.findByText("Thread A");
+
+    await screen.findByText("No spend in this period.");
+    screen.getByText("No threads in this period.");
+  });
+
+  it("shows the capped-slice caveat when the backend reports truncated AND the window reaches past the oldest fetched thread", async () => {
+    const slot = await renderThreadsTimeline({
+      threadsTimeline: async (input: unknown) => {
+        const { limit } = input as { limit: number };
+        // A single thread is enough — what makes the window "incomplete" is
+        // the backend's own truncated flag combined with the window
+        // reaching further back than this thread's activity, not the raw
+        // count (see windowMayBeIncomplete's doc comment for why a bare
+        // length check on the returned array isn't reliable: the script can
+        // drop an empty session after slicing to `limit`, so a genuinely
+        // truncated response can come back shorter than `limit`).
+        if (limit === 100) return { status: "ready" as const, unit: 3600, threads: [alphaThread], agentLabels: {}, truncated: true };
+        return THREADS_READY;
+      },
+    });
+    await screen.findByText("Thread A");
+
+    await screen.findByText(/Limited to the last 100 sessions/);
+  });
+
+  it("does not show the capped-slice caveat when the backend reports truncated but the selected window is already fully covered", async () => {
+    const slot = await renderThreadsTimeline({
+      threadsTimeline: async (input: unknown) => {
+        const { limit } = input as { limit: number };
+        // Truncated overall, but the only fetched thread (Beta, 10 days old)
+        // is already older than the default "day" window's own start (24h
+        // ago) — the day cut has nothing to be missing, whatever was
+        // truncated is further back still than Beta, well outside "day"
+        // regardless.
+        if (limit === 100) return { status: "ready" as const, unit: 3600, threads: [betaThread], agentLabels: {}, truncated: true };
+        return THREADS_READY;
+      },
+    });
+    await screen.findByText("Thread A");
+
+    expect(screen.queryByText(/Limited to the last 100 sessions/)).toBeNull();
+    expect(donutTotalText(slot.container)).toBe("$0.00");
+  });
+
+  // 20 threads, all inside every window, cost descending with the fixture
+  // index — sorted order (threadCostRows sorts by cost desc) is therefore
+  // "Session 1"..."Session 20" in that same order, so a row-count cap of N
+  // is checked by asserting "Session N" is visible and "Session N+1" isn't.
+  function manyThreadsFixture(count: number) {
+    return Array.from({ length: count }, (_, i) => ({
+      ...alphaThread,
+      session: `sess_many_${i + 1}`,
+      threadId: `thread-many-${i + 1}`,
+      bbThreadTitle: `Session ${i + 1}`,
+      totalCost: count - i,
+    }));
+  }
+
+  function rpcWithManyThreads(count: number) {
+    return {
+      threadsTimeline: async (input: unknown) => {
+        const { limit } = input as { limit: number };
+        if (limit === 100 || limit === 1000) {
+          return { status: "ready" as const, unit: 3600, threads: manyThreadsFixture(count), agentLabels: {}, truncated: false };
+        }
+        return THREADS_READY;
+      },
+    };
+  }
+
+  it("shows only the default row count (15) even when more threads have spend in the window", async () => {
+    await renderThreadsTimeline(rpcWithManyThreads(20));
+    await screen.findByText("Session 15");
+
+    expect(screen.queryByText("Session 16")).toBeNull();
+  });
+
+  it("shows more rows once a larger row count is picked from the dropdown next to D/W/M", async () => {
+    await renderThreadsTimeline(rpcWithManyThreads(20));
+    await screen.findByText("Session 15");
+    expect(screen.queryByText("Session 16")).toBeNull();
+
+    fireEvent.click(screen.getByRole("combobox", { name: "Rows shown" }));
+    fireEvent.click(await screen.findByRole("option", { name: "25" }));
+
+    await screen.findByText("Session 16");
+    screen.getByText("Session 20");
+  });
+
+  it("keeps the picked row count across a D/W/M period switch", async () => {
+    await renderThreadsTimeline(rpcWithManyThreads(20));
+    await screen.findByText("Session 15");
+
+    fireEvent.click(screen.getByRole("combobox", { name: "Rows shown" }));
+    fireEvent.click(await screen.findByRole("option", { name: "25" }));
+    await screen.findByText("Session 16");
+
+    fireEvent.click(screen.getByRole("button", { name: "Last 30 days" }));
+
+    await screen.findByText("Session 16");
+  });
+
+  function burnByHourBlock(container: HTMLElement): HTMLElement | null {
+    const section = summarySection(container);
+    return section ? section.querySelector('[aria-label="Burn by hour"]') : null;
+  }
+
+  it("renders one bar per hour of the selected window, with the hour's own token total in its tooltip", async () => {
+    const slot = await renderThreadsTimeline(rpcWithProjectSummary());
+    await screen.findByText("Alpha session");
+
+    const block = burnByHourBlock(slot.container)!;
+    // Day window = 24 one-hour buckets; Alpha's single bin (100 tokens, 1h ago) lands in the last one.
+    expect(block.querySelectorAll("[title]")).toHaveLength(24);
+    expect(block.querySelector('[title*="100 tokens"]')).not.toBeNull();
+  });
+
+  it("shows the empty state when no bin falls inside the selected window", async () => {
+    const slot = await renderThreadsTimeline({
+      threadsTimeline: async (input: unknown) => {
+        const { limit } = input as { limit: number };
+        if (limit === 100 || limit === 1000) {
+          return { status: "ready" as const, unit: 3600, threads: [], agentLabels: {}, truncated: false };
+        }
+        return THREADS_READY;
+      },
+    });
+    await screen.findByText("Thread A");
+
+    await waitFor(() => within(burnByHourBlock(slot.container)!).getByText("No token usage in this period."));
+  });
+
 });

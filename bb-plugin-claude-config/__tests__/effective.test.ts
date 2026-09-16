@@ -5,6 +5,7 @@ import {
   resolveEnableAllMcp,
   resolveMcpServer,
   resolvePlugin,
+  resolveRaw,
   resolveSkill,
   resolveToolSearch,
 } from "../src/effective";
@@ -55,6 +56,22 @@ describe("resolving levels", () => {
     expect(resolveEnableAllMcp([])).toBe(false);
     expect(resolveEnableAllMcp([true, undefined])).toBe(true);
     expect(resolveEnableAllMcp([true, false])).toBe(false);
+  });
+
+  describe("resolveRaw — generic settings, arbitrary string encoding", () => {
+    it("a narrower level overrides a wider one", () => {
+      expect(resolveRaw(["inherit", "30"])).toBe("30");
+      expect(resolveRaw(["30", "inherit"])).toBe("30");
+    });
+
+    it("no value anywhere — inherit (no built-in default is assumed)", () => {
+      expect(resolveRaw(["inherit", "inherit"])).toBe("inherit");
+      expect(resolveRaw([])).toBe("inherit");
+    });
+
+    it("the last non-inherit level wins, regardless of position", () => {
+      expect(resolveRaw(["1", "2", "inherit"])).toBe("2");
+    });
   });
 
   describe("decideMcpOwn — minimal connector entry", () => {

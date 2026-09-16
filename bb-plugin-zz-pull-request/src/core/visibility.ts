@@ -13,6 +13,7 @@
 // data bb already has at hand; only when it says "ready" is it worth paying
 // for the content check, whose answer `refineWithMergedContent` folds in. See
 // merged-content.ts for why the content — and not SHAs — is what gets checked.
+import type { MergedContent } from "./merged-content";
 
 /**
  * What bb knows about this branch's PR:
@@ -35,6 +36,7 @@ export type VisibilityReason =
   | "ready"
   | "dirty"
   | "already-merged"
+  | "content-unknown"
   | "nothing-to-pr"
   | "pr-exists"
   | "pr-unknown";
@@ -62,13 +64,22 @@ export function decideVisibility(input: VisibilityInput): VisibilityDecision {
  * already in the base. That happens after ANY kind of merge — the plugin's
  * own squash, bb's native button, a merge on github.com — because all of them
  * land the content under a different SHA, leaving `aheadCount` above zero
- * forever. Refining can only hide, never reveal: a decision that hides for
- * its own reason keeps that reason.
+ * forever. A confirmed `merged` is the only verdict that hides the button; a
+ * decision that already hides for its own reason keeps that reason.
+ *
+ * An `unknown` verdict (no working copy on this environment, the fetch
+ * failed, or `merge-tree` itself broke, and no cached fact stood in for it)
+ * does NOT hide the button — a refusal to answer is not "already merged",
+ * and withholding the button on a guess is worse than showing it (the
+ * create path re-measures anyway). It does relabel the reason so the front
+ * end can flag the uncertainty instead of silently calling it "ready".
  */
 export function refineWithMergedContent(
   decision: VisibilityDecision,
-  alreadyMerged: boolean,
+  verdict: MergedContent,
 ): VisibilityDecision {
-  if (!decision.visible || !alreadyMerged) return decision;
-  return { visible: false, reason: "already-merged" };
+  if (!decision.visible || verdict === "not-merged") return decision;
+  return verdict === "merged"
+    ? { visible: false, reason: "already-merged" }
+    : { visible: true, reason: "content-unknown" };
 }

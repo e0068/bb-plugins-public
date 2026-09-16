@@ -8,16 +8,16 @@ import {
   useMentionItems,
   useTasksQuery,
   useTasksRpc,
-} from "../../shell/data.js";
-import { useTasksNavigation } from "../../shell/routes.js";
+} from "../../client/data.js";
+import { useTasksNavigation } from "../../client/routes.js";
 import { TasksEditor } from "../../editor/tasks-editor.js";
 import { TaskActivity } from "../activity/index.js";
-import { AttachmentsGrid, uploadAttachment } from "./attachments.js";
+import { AttachmentsGrid, useUploadAttachment } from "./attachments.js";
 import {
   createDescriptionSaver,
   type DescriptionSaver,
 } from "./description-save.js";
-import { STATUS_LABELS, StatusIcon } from "./meta.js";
+import { STATUS_LABELS, StatusIcon } from "../../components/task-meta.js";
 import {
   InlineProperties,
   PropertiesRail,
@@ -317,6 +317,7 @@ function TaskDetail({ task }: { task: Task }) {
     return () => saverRef.current?.flush(task.id);
   }, [task.id]);
 
+  const uploadAttachment = useUploadAttachment();
   const uploadForTask = async (file: File) => {
     const result = await uploadAttachment(file, { taskId: task.id });
     attachments.refresh();

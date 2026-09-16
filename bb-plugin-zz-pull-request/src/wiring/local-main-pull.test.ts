@@ -66,7 +66,7 @@ describe("runLocalMainPull", () => {
     ]);
   });
 
-  it("the copy with the base has diverged (ff impossible) → ok: false with git's text, ref is not touched directly", async () => {
+  it("the copy with the base has diverged (ff impossible) → ok: false with a humanized reason, ref is not touched directly", async () => {
     const { ports } = fakePorts((args) => {
       if (args[0] === "worktree") return CHECKED_OUT_AT_INTEGRATION_COPY;
       if (args.includes("merge"))
@@ -74,7 +74,8 @@ describe("runLocalMainPull", () => {
       return ok;
     });
     const result = await runLocalMainPull(ports, "main");
-    expect(result).toEqual({ ok: false, reason: "Not possible to fast-forward, aborting." });
+    expect(result.ok).toBe(false);
+    expect(result).toMatchObject({ reason: expect.stringContaining("diverged") });
   });
 
   it("uncommitted changes in the target copy → merge refuses, ok: false", async () => {

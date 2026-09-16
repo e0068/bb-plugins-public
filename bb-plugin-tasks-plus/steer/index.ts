@@ -1,5 +1,5 @@
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
-import type { TasksStore } from "../db";
+import type { FileTasksStore } from "../filesync/store.js";
 import { isSideChatShapedThread } from "../shared/side-chat";
 
 export interface DeliverCommentInput {
@@ -37,15 +37,15 @@ function errorMessage(error: unknown): string {
 
 export async function deliverCommentToLatestAgent(
   bb: BbPluginApi,
-  store: TasksStore,
+  store: FileTasksStore,
   input: DeliverCommentInput,
 ): Promise<CommentDeliveryResult> {
-  const task = store.getTask(input.taskId);
+  const task = await store.getTask(input.taskId);
   if (!task) throw new Error(`Task not found: ${input.taskId}`);
 
   // The CLI can explicitly notify while preserving an agent-authored comment.
   // Exclude the comment being delivered so it cannot select its own thread.
-  const latestReply = store.getLatestAgentComment(
+  const latestReply = await store.getLatestAgentComment(
     input.taskId,
     input.commentId,
   );

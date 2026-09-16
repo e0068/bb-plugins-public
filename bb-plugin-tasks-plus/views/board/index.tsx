@@ -12,8 +12,8 @@ import {
   useTasksQuery,
   useTasksRpc,
   type TasksRpc,
-} from "../../shell/data.js";
-import { useTasksNavigation } from "../../shell/routes.js";
+} from "../../client/data.js";
+import { useTasksNavigation } from "../../client/routes.js";
 import { NewTaskDialog } from "../manage/index.js";
 import {
   applyBoardMove,
@@ -35,11 +35,11 @@ import {
   type FieldDisplayConfig,
   type RowField,
 } from "../list/row-field-preference.js";
+import { AmountChip } from "../list/amount-chip.js";
 import { planRowFields } from "../list/field-plan.js";
 import {
   formatDueDate,
   formatTimestamp,
-  formatTokenCount,
   PRIORITY_LABELS,
 } from "../list/lib.js";
 import {
@@ -47,7 +47,7 @@ import {
   EstimateIcon,
   TYPE_ICONS,
   TYPE_LABELS,
-} from "../detail/meta.js";
+} from "../../components/task-meta.js";
 
 const DRAG_THRESHOLD_PX = 5;
 
@@ -176,7 +176,7 @@ interface DragState {
 
 /** Small marker for a task whose latest content came from an active
  *  worktree rather than the linked project's main checkout — see
- *  shared/contract.ts's fileTaskOriginSchema and filesync/merge.ts for when
+ *  shared/contract.ts's fileTaskOriginSchema and filesync/fs-boards.ts for when
  *  that's the case. */
 function WorktreeSourceMark({ task }: { task: Task }) {
   if (task.source?.origin.kind !== "worktree") return null;
@@ -244,6 +244,16 @@ function CardFieldValue({
           {activeCount === 1 ? "Active" : `${activeCount} agents`}
         </span>
       );
+    case "assignee":
+    case "epic": {
+      const value = task[field];
+      return value ? (
+        <span title={`${field === "assignee" ? "Assignee" : "Epic"}: ${value}`} className={`${CARD_CHIP_CLASS} max-w-32`}>
+          <Icon name={field === "assignee" ? "UserRound" : "Layers"} className="size-3 shrink-0" />
+          <span className="truncate">{value}</span>
+        </span>
+      ) : null;
+    }
     case "type":
       return task.type !== null ? (
         <span title={TYPE_LABELS[task.type]} className={CARD_GLYPH_CLASS}>
@@ -271,20 +281,15 @@ function CardFieldValue({
           ))}
         </>
       );
-    case "tokens": {
-      const plan =
-        task.planTokens === null ? "—" : formatTokenCount(task.planTokens);
-      const fact =
-        task.factTokens === null ? "—" : formatTokenCount(task.factTokens);
-      return (
-        <span
-          title={`Tokens — plan ${plan}, fact ${fact}`}
-          className={`${CARD_CHIP_CLASS} tabular-nums`}
-        >
-          <Icon name="AiContentGenerator01" className="size-3 shrink-0" />
-          {plan} / {fact}
-        </span>
-      );
+    case "plannedMinutes":
+    case "actualMinutes":
+    case "budget":
+    case "budgetLimit":
+    case "cost": {
+      const value = task[field];
+      return value !== null ? (
+        <AmountChip field={field} value={value} className={CARD_CHIP_CLASS} />
+      ) : null;
     }
     case "dueDate":
       return task.dueDate !== null ? (

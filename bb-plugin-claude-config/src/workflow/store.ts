@@ -28,6 +28,13 @@ export interface EditorSnapshot {
   // refuses to save — saving would compile a placeholder tree over the author's real code. null in the
   // normal tree-editing mode.
   rawSource: string | null;
+  // A new workflow the user started and hasn't saved. Together with identity
+  // this tells the panel's three states apart: a file is open (identity set),
+  // a new one is being written (draft, no identity), or nothing is open at
+  // all (neither) — which is what the builder shows on a fresh start, and
+  // what keeps the list from highlighting a row for a workflow that isn't
+  // there.
+  draft: boolean;
   previewEngine: Engine; // which engine the code tab renders (defaults to bb, this IDE's own)
   version: number;
 }
@@ -36,6 +43,7 @@ let snapshot: EditorSnapshot = {
   tree: blankTree("workflow"),
   identity: null,
   rawSource: null,
+  draft: false,
   previewEngine: "bb",
   version: 0,
 };
@@ -78,9 +86,9 @@ export const editorStore = {
   // Pass rawSource (non-null) for a hand-written file with no composer tree → read-only code mode.
   load(tree: Tree, identity: Identity | null, rawSource: string | null = null): void {
     const previewEngine: Engine = identity?.store === "global" ? "claude" : "bb";
-    emit({ tree, identity, rawSource, previewEngine, version: snapshot.version + 1 });
+    emit({ tree, identity, rawSource, draft: false, previewEngine, version: snapshot.version + 1 });
   },
   newWorkflow(): void {
-    emit({ tree: blankTree("workflow"), identity: null, rawSource: null, previewEngine: "bb", version: snapshot.version + 1 });
+    emit({ tree: blankTree("workflow"), identity: null, rawSource: null, draft: true, previewEngine: "bb", version: snapshot.version + 1 });
   },
 };

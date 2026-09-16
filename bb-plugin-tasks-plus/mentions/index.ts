@@ -1,32 +1,12 @@
 import type { BbPluginApi, PluginMentionItem } from "@get-bb/plugin-sdk";
 
 import type { TasksApiStore } from "../api";
-import type { Attachment, Comment, Task, TaskThread } from "../db";
+import { attachmentsForTasks } from "../api/index.js";
+import type { Attachment, TaskThread } from "../db";
+import type { Comment, Task } from "../shared/contract.js";
 
 const SEARCH_LIMIT = 10;
 const RECENT_COMMENT_LIMIT = 5;
-
-type PluginDatabase = ReturnType<BbPluginApi["storage"]["database"]>;
-
-interface MentionTaskRow {
-  id: string;
-  key: string;
-  title: string;
-  project_name: string;
-  status: Task["status"];
-}
-
-interface AttachmentManifestRow {
-  id: string;
-  file_name: string;
-}
-
-function escapeLike(value: string): string {
-  return value
-    .replaceAll("\\", "\\\\")
-    .replaceAll("%", "\\%")
-    .replaceAll("_", "\\_");
-}
 
 function displayName(value: string): string {
   return value
@@ -35,63 +15,41 @@ function displayName(value: string): string {
     .join(" ");
 }
 
-function searchTasks(
-  database: PluginDatabase,
+/**
+ * Tasks matching `query` (an empty query matches everything — see
+ * filesync/query.ts's `matchesSearch`), boards linked to the calling bb
+ * project sorted first, then most recently updated.
+ */
+async function searchTasks(
+  store: TasksApiStore,
   query: string,
   bbProjectId: string | null,
-): PluginMentionItem[] {
-  const normalizedQuery = query.trim();
-  const search = `%${escapeLike(normalizedQuery)}%`;
-  const rows = database
-    .prepare<{ bbProjectId: string | null; search: string }, MentionTaskRow>(
-      `
-        SELECT
-          t.id,
-          p.prefix || '-' || t.number AS key,
-          t.title,
-          p.name AS project_name,
-          t.status
-        FROM tasks t
-        JOIN projects p ON p.id = t.project_id
-        WHERE @search = '%%'
-          OR (p.prefix || '-' || t.number) LIKE @search ESCAPE '\\'
-          OR CAST(t.number AS TEXT) LIKE @search ESCAPE '\\'
-          OR t.title LIKE @search ESCAPE '\\'
-        ORDER BY
-          CASE
-            WHEN @bbProjectId IS NOT NULL
-              AND p.linked_bb_project_id = @bbProjectId THEN 0
-            ELSE 1
-          END,
-          t.updated_at DESC,
-          t.id DESC
-        LIMIT ${SEARCH_LIMIT}
-      `,
-    )
-    .all({ bbProjectId, search });
+): Promise<PluginMentionItem[]> {
+  const linkedProjectIds = new Set(
+    store.tasks
+      .listProjects()
+      .filter((project) => bbProjectId !== null && project.linkedBbProjectId === bbProjectId)
+      .map((project) => project.id),
+  );
 
-  return rows.map((row) => ({
-    id: row.id,
-    title: `${row.key} · ${row.title}`,
-    subtitle: `${row.project_name} · ${displayName(row.status)}`,
-  }));
-}
+  const results = (await store.tasks.listTasks({ search: query }))
+    .sort((a, b) => {
+      const aLinked = linkedProjectIds.has(a.projectId) ? 0 : 1;
+      const bLinked = linkedProjectIds.has(b.projectId) ? 0 : 1;
+      if (aLinked !== bLinked) return aLinked - bLinked;
+      if (a.updatedAt !== b.updatedAt) return a.updatedAt < b.updatedAt ? 1 : -1;
+      return a.id < b.id ? 1 : -1;
+    })
+    .slice(0, SEARCH_LIMIT);
 
-function attachmentManifest(
-  database: PluginDatabase,
-  taskId: string,
-): AttachmentManifestRow[] {
-  return database
-    .prepare<[string, string], AttachmentManifestRow>(
-      `
-        SELECT a.id, a.file_name
-        FROM attachments a
-        LEFT JOIN comments c ON c.id = a.comment_id
-        WHERE a.task_id = ? OR c.task_id = ?
-        ORDER BY a.created_at, a.id
-      `,
-    )
-    .all(taskId, taskId);
+  return results.map((task) => {
+    const project = store.tasks.getProject(task.projectId);
+    return {
+      id: task.id,
+      title: `${task.key} · ${task.title}`,
+      subtitle: `${project?.name ?? ""} · ${displayName(task.status)}`,
+    };
+  });
 }
 
 function formatSubtasks(subtasks: readonly Task[]): string {
@@ -137,27 +95,19 @@ function formatThreads(threads: readonly TaskThread[]): string {
     .join("\n");
 }
 
-function buildTaskContext(
-  store: TasksApiStore,
-  database: PluginDatabase,
-  taskId: string,
-): string {
-  const task = store.tasks.getTask(taskId);
+async function buildTaskContext(store: TasksApiStore, taskId: string): Promise<string> {
+  const task = await store.tasks.getTask(taskId);
   if (!task) throw new Error(`Task not found: ${taskId}`);
 
   const project = store.tasks.getProject(task.projectId);
   if (!project) throw new Error(`Project not found: ${task.projectId}`);
 
-  const labels = store.tasks.listLabelsForTask(task.id);
-  const comments = store.tasks
-    .listComments(task.id)
+  const labels = await store.tasks.listLabelsForTask(task.id);
+  const comments = (await store.tasks.listComments(task.id))
     .slice(-RECENT_COMMENT_LIMIT);
-  const attachments = attachmentManifest(database, task.id).map(
-    (attachment) => ({
-      id: attachment.id,
-      fileName: attachment.file_name,
-    }),
-  );
+  const attachments = await attachmentsForTasks(store.tasks, [task.id]);
+  const subtasks = await store.tasks.listSubtasks(task.id);
+  const threads = await store.tasks.listTaskThreads(task.id);
 
   return `# ${task.key} · ${task.title}
 
@@ -175,7 +125,7 @@ ${task.description.trim() || "No description provided."}
 
 ## Sub-tasks
 
-${formatSubtasks(store.tasks.listSubtasks(task.id))}
+${formatSubtasks(subtasks)}
 
 ## Attachments
 
@@ -187,7 +137,7 @@ ${formatComments(comments)}
 
 ## Attached threads
 
-${formatThreads(store.tasks.listTaskThreads(task.id))}
+${formatThreads(threads)}
 
 ## Action contract
 
@@ -196,16 +146,14 @@ You can act on this task with the bb tasks CLI. If you begin working on it, firs
 }
 
 export function registerMentions(bb: BbPluginApi, store: TasksApiStore): void {
-  const database = bb.storage.database();
-
   bb.ui.registerMentionProvider({
     id: "task",
     label: "Tasks",
-    search({ query, projectId }) {
-      return searchTasks(database, query, projectId);
+    async search({ query, projectId }) {
+      return searchTasks(store, query, projectId);
     },
-    resolve(itemId) {
-      return { context: buildTaskContext(store, database, itemId) };
+    async resolve(itemId) {
+      return { context: await buildTaskContext(store, itemId) };
     },
   });
 }

@@ -10,6 +10,7 @@ import glob
 import json
 import os
 import sys
+from collections import defaultdict
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from tokens import ROOT, Bucket, JsonAwareParser, load_meta, _session_files  # noqa: E402
@@ -40,7 +41,19 @@ import git_events  # noqa: E402
 # live merge status via `gh pr view` — see the "merge" marker on the session
 # page's chart, which (unlike commit/push/pr) is only ever fetched here, not
 # in the feed/popup.
-SCHEMA_VERSION = 5
+#
+# 5 -> 6: a "workflow:<runId>" selector gains a top-level `flow` field — the
+# ordered per-member sections of the whole run ({agent, events} for each
+# member subagent, in launch order, read from
+# subagents/workflows/<runId>/). Absent for a regular agent, whose own
+# agent/events are the timeline. Lets the session page render the whole
+# workflow flow (member agents in sequence) from one call.
+#
+# 6 -> 7: every model call is priced exactly once, deduped by
+# (message.id, requestId) with the last line's usage, like tools/tokens.py.
+# A call without text carries tokens/cost on its first tool event, and cost
+# keeps fractions of a cent, so a turn's events add up to the totals panel.
+SCHEMA_VERSION = 7
 
 # The tools that launch a subagent have appeared under two names across
 # different Claude Code versions ("Task" in the docs/spec, "Agent" — what
@@ -193,20 +206,31 @@ def _message_usage(record):
     """
     message = record.get("message") or {}
     usage = message.get("usage")
-    if not isinstance(usage, dict):
+    # An empty usage is skipped, as tools/tokens.py::walk skips it.
+    if record.get("type") != "assistant" or not isinstance(usage, dict) or not usage:
         return None
     b = Bucket()
     b.add(usage, message.get("model"), record.get("timestamp"))
     return b
 
 
+def _call_key(record, index):
+    """Identity of the model call a transcript line belongs to.
+
+    Claude Code writes one response as several lines sharing
+    (message.id, requestId) — the tools/tokens.py dedup key. A line without
+    message.id (legacy/synthetic data; none in real transcripts) is a call of
+    its own here, while tools/tokens.py folds all such lines into one.
+    """
+    message_id = (record.get("message") or {}).get("id")
+    return (message_id, record.get("requestId")) if message_id else ("line", index)
+
+
 def message_event(record, own_file=False):
     """A real message (human or assistant) -> a kind="message" event.
 
-    Owner's decision: cost is accounted per model call (the whole
-    assistant record), not spread across its individual tool_use blocks —
-    that's why tokens/cost appear here, not in tool_events. User messages
-    have no price: they're not a model call, but input to one.
+    Carries no price: tokens/cost are attached per model call by
+    extract_events, which sees every line of the call.
 
     own_file — see _is_real_user_message: True when `record` came from the
     subagent's own file, not from the session's main transcript.
@@ -232,7 +256,7 @@ def message_event(record, own_file=False):
     text = _assistant_text(record, own_file=own_file)
     if text is not None:
         full_text, full_truncated = truncate_full(text)
-        event = {
+        return {
             "ts": ts,
             "kind": "message",
             "role": "assistant",
@@ -240,11 +264,6 @@ def message_event(record, own_file=False):
             "fullText": full_text,
             "fullTextTruncated": full_truncated,
         }
-        bucket = _message_usage(record)
-        if bucket is not None:
-            event["tokens"] = bucket.total
-            event["cost"] = round(bucket.cost, 2)
-        return event
     return None
 
 
@@ -317,22 +336,53 @@ def read_records(path):
     return records
 
 
+def _price_carrier(call_events):
+    """The row that shows a call's price: its first assistant text, else its first tool, else None."""
+    replies = [e for e in call_events if e["kind"] == "message" and e["role"] == "assistant"]
+    tools = [e for e in call_events if e["kind"] == "tool"]
+    return next(iter(replies or tools), None)
+
+
+def _no_text_message(ts):
+    """A stand-in row for a call with neither text nor tools (e.g. interrupted while thinking) — it still cost money."""
+    return {"ts": ts, "kind": "message", "role": "assistant", "text": "(no text)", "fullText": "", "fullTextTruncated": False}
+
+
 def extract_events(records, own_file=False):
     """All transcript events, chronologically by ts (records without ts go last).
 
     own_file — see _is_real_user_message: True for records from a
     subagent's own file, where isSidechain is set on every record and must
     not drop its text.
+
+    Owner's decision: cost is accounted per model call, not spread across its
+    tool_use blocks. Each call is priced exactly once, with the usage of its
+    last line (earlier lines are streaming snapshots — see tools/tokens.py):
+    on its first text message, else on its first tool event, else on a
+    "(no text)" stand-in row. User messages have no price: they're not a
+    model call, but input to one.
     """
+    usage = {}  # call key -> Bucket of the call's last line with usage
+    by_call = defaultdict(list)  # call key -> the call's own events, in line order
     events = []
-    for record in records:
-        events.extend(tool_events(record))
-        hook = hook_event(record)
-        if hook:
-            events.append(hook)
+    for i, record in enumerate(records):
+        key = _call_key(record, i)
+        bucket = _message_usage(record)
+        if bucket:
+            usage[key] = bucket
         message = message_event(record, own_file=own_file)
-        if message:
-            events.append(message)
+        hook = hook_event(record)
+        line_events = tool_events(record) + [e for e in (hook, message) if e]
+        by_call[key].extend(line_events)
+        events.extend(line_events)
+
+    for key, bucket in usage.items():
+        carrier = _price_carrier(by_call[key])
+        if carrier is None:
+            carrier = _no_text_message(bucket.t1)
+            events.append(carrier)
+        carrier["tokens"] = bucket.total
+        carrier["cost"] = bucket.cost
     events.sort(key=lambda e: e["ts"] or "")
     return events
 
@@ -409,20 +459,16 @@ def find_agent_file(project_dir, full_session, agent):
     return matches[0] if matches else direct
 
 
-def build_timeline(root, session, agent):
-    """Builds {schemaVersion, agent, events} for one (session, agent)."""
-    project_dir, full_session = find_session(root, session)
-    if project_dir is None:
-        raise RuntimeError(f"Session not found: {session!r}")
+WORKFLOW_KEY_PREFIX = "workflow:"
 
-    main_path = os.path.join(project_dir, f"{full_session}.jsonl")
-    main_records = read_records(main_path)
 
-    if agent == "main":
-        events = extract_events(main_records)
-        request, request_truncated = full_request(main_records)
-        response, response_truncated = full_response(main_records)
-        agent_info = {
+def _main_section(main_records):
+    """{agent, events} for the main agent."""
+    events = extract_events(main_records)
+    request, request_truncated = full_request(main_records)
+    response, response_truncated = full_response(main_records)
+    return {
+        "agent": {
             "key": "main",
             "agentType": None,
             "description": None,
@@ -433,29 +479,33 @@ def build_timeline(root, session, agent):
             "requestFullTruncated": request_truncated,
             "responseFull": response,
             "responseFullTruncated": response_truncated,
-        }
-    else:
-        agent_path = find_agent_file(project_dir, full_session, agent)
-        agent_records = read_records(agent_path)
-        # own_file=True: in a subagent's own file, isSidechain is set on
-        # EVERY record (it's a marker that "the whole file is a side
-        # branch," not "this message is internal") — without own_file,
-        # _is_real_user_message/_assistant_text would drop the agent's
-        # entire text, including its own prompt. See the discussion in
-        # _is_real_user_message.
-        events = extract_events(agent_records, own_file=True)
-        meta = load_meta(agent_path) or {}
-        # From the agent's OWN transcript (agent_records), not from
-        # main_records like promptExcerpt/find_task_prompt: subagents of
-        # workflow runs have no toolUseId in meta.json (they're launched
-        # not by a Task/Agent block in the main transcript, but by the
-        # workflow engine itself) — find_task_prompt always gives None for
-        # them. The first real user record in the agent's own transcript,
-        # however, is always present (it's the agent's assignment), so
-        # requestFull works even where promptExcerpt can't.
-        request, request_truncated = full_request(agent_records, own_file=True)
-        response, response_truncated = full_response(agent_records, own_file=True)
-        agent_info = {
+        },
+        "events": events,
+    }
+
+
+def _subagent_section(project_dir, full_session, main_records, agent):
+    """{agent, events} for one subagent (agent != "main")."""
+    agent_path = find_agent_file(project_dir, full_session, agent)
+    agent_records = read_records(agent_path)
+    # own_file=True: in a subagent's own file, isSidechain is set on EVERY
+    # record (it's a marker that "the whole file is a side branch," not "this
+    # message is internal") — without own_file, _is_real_user_message/
+    # _assistant_text would drop the agent's entire text, including its own
+    # prompt. See the discussion in _is_real_user_message.
+    events = extract_events(agent_records, own_file=True)
+    meta = load_meta(agent_path) or {}
+    # From the agent's OWN transcript (agent_records), not from main_records
+    # like promptExcerpt/find_task_prompt: subagents of workflow runs have no
+    # toolUseId in meta.json (they're launched not by a Task/Agent block in
+    # the main transcript, but by the workflow engine itself) —
+    # find_task_prompt always gives None for them. The first real user record
+    # in the agent's own transcript, however, is always present (it's the
+    # agent's assignment), so requestFull works even where promptExcerpt can't.
+    request, request_truncated = full_request(agent_records, own_file=True)
+    response, response_truncated = full_response(agent_records, own_file=True)
+    return {
+        "agent": {
             "key": agent,
             "agentType": meta.get("agentType"),
             "description": meta.get("description"),
@@ -466,7 +516,97 @@ def build_timeline(root, session, agent):
             "requestFullTruncated": request_truncated,
             "responseFull": response,
             "responseFullTruncated": response_truncated,
+        },
+        "events": events,
+    }
+
+
+def _workflow_name(project_dir, full_session, run_id):
+    """Human-readable name of a workflow run, or the run_id as a fallback.
+
+    The run's script lives in `<session>/workflows/scripts/` named
+    `<name>-<run_id>.js` (same layout tools/threads_timeline.py reads) — the
+    name is the filename minus the `-<run_id>.js` suffix. Missing script or
+    unreadable directory: the run_id itself (better the id than nothing).
+    """
+    scripts_dir = os.path.join(project_dir, full_session, "workflows", "scripts")
+    suffix = "-" + run_id + ".js"
+    try:
+        for name in os.listdir(scripts_dir):
+            if name.endswith(suffix):
+                return name[: -len(suffix)]
+    except OSError:
+        pass
+    return run_id
+
+
+def _workflow_member_keys(project_dir, full_session, run_id):
+    """Sorted, de-duplicated member agent keys of a workflow run.
+
+    Members are the `agent-<hash>.jsonl` transcripts under the run's own
+    directory `<session>/subagents/workflows/<runId>/` (recursive, to catch a
+    nested layout). Sorted for a deterministic base order before the caller
+    re-orders sections by first-event time.
+    """
+    run_dir = os.path.join(project_dir, full_session, "subagents", "workflows", run_id)
+    keys = set()
+    for path in glob.glob(os.path.join(run_dir, "**", "agent-*.jsonl"), recursive=True):
+        keys.add(os.path.basename(path)[: -len(".jsonl")])
+    return sorted(keys)
+
+
+def _section_start_ts(section):
+    """First event ts of a flow section, or "" (empty sections sort first)."""
+    return section["events"][0]["ts"] if section["events"] else ""
+
+
+def build_timeline(root, session, agent):
+    """Builds {schemaVersion, agent, events, prNumbers[, flow]} for a selector.
+
+    A regular selector ("main" or "agent-<hash>") yields that one agent's own
+    `agent`/`events`. A "workflow:<runId>" selector additionally yields `flow`
+    — the run's member sections in launch order — with the top-level
+    `agent`/`events` describing the run as a whole (synthetic agent info, and
+    all members' events concatenated in the same order as `flow`).
+    """
+    project_dir, full_session = find_session(root, session)
+    if project_dir is None:
+        raise RuntimeError(f"Session not found: {session!r}")
+
+    main_path = os.path.join(project_dir, f"{full_session}.jsonl")
+    main_records = read_records(main_path)
+
+    flow = None
+    if agent.startswith(WORKFLOW_KEY_PREFIX):
+        run_id = agent[len(WORKFLOW_KEY_PREFIX):]
+        member_keys = _workflow_member_keys(project_dir, full_session, run_id)
+        flow = [_subagent_section(project_dir, full_session, main_records, key) for key in member_keys]
+        # Launch order — sections read top-to-bottom as the run unfolded,
+        # regardless of the filesystem's own agent-hash ordering.
+        flow.sort(key=_section_start_ts)
+        # The top-level agent/events describe the run as a whole: a synthetic
+        # workflow agent_info, and every member's events concatenated in the
+        # same order the sections are shown (each member already chronological
+        # from extract_events; not re-merged across members).
+        events = [e for section in flow for e in section["events"]]
+        agent_info = {
+            "key": agent,
+            "agentType": None,
+            "description": _workflow_name(project_dir, full_session, run_id),
+            "model": None,
+            "spawnDepth": None,
+            "promptExcerpt": None,
+            "requestFull": None,
+            "requestFullTruncated": False,
+            "responseFull": None,
+            "responseFullTruncated": False,
         }
+    elif agent == "main":
+        section = _main_section(main_records)
+        agent_info, events = section["agent"], section["events"]
+    else:
+        section = _subagent_section(project_dir, full_session, main_records, agent)
+        agent_info, events = section["agent"], section["events"]
 
     # Session-wide (not per-agent): a PR referenced by ANY agent in this
     # session — main or a subagent that ran `gh pr create` — is relevant to
@@ -486,7 +626,13 @@ def build_timeline(root, session, agent):
         pr_numbers.append({"number": event["number"], "repository": event["repository"]})
     pr_numbers.sort(key=lambda p: p["number"])
 
-    return {"schemaVersion": SCHEMA_VERSION, "agent": agent_info, "events": events, "prNumbers": pr_numbers}
+    out = {"schemaVersion": SCHEMA_VERSION, "agent": agent_info, "events": events, "prNumbers": pr_numbers}
+    # `flow` only for a workflow selector — a regular agent omits the key
+    # entirely (the frontend schema has it optional), keeping its output shape
+    # byte-for-byte what it was before this field existed.
+    if flow is not None:
+        out["flow"] = flow
+    return out
 
 
 def main():

@@ -37,6 +37,19 @@ export function resolveToolSearch(
   return resolve(levels, TOOL_SEARCH_DEFAULT);
 }
 
+/**
+ * Resolves a generic setting (the "Settings" section): unlike the typed
+ * resolvers above, there's no known Claude Code built-in default to fall
+ * back to — an unset key across every level stays `"inherit"`, which the
+ * caller reads as "not shown, Claude Code's own default applies".
+ */
+export function resolveRaw(levels: string[]): string {
+  for (let index = levels.length - 1; index >= 0; index -= 1) {
+    if (levels[index] !== "inherit") return levels[index];
+  }
+  return "inherit";
+}
+
 export type EffectiveMcpServer = Exclude<McpServerState, "inherit">;
 
 /**

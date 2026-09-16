@@ -1,4 +1,4 @@
-import { useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import type {
   Folder,
   Preset,
@@ -6,8 +6,8 @@ import type {
   SidebarProjectSummary,
   Task,
 } from "../shared/contract.js";
-import { useTasksRpc } from "./data.js";
-import type { TasksRoute } from "./routes.js";
+import { useTasksRpc } from "../client/data.js";
+import type { TasksRoute } from "../client/routes.js";
 import {
   PresetDialog,
   savePresetDraft,
@@ -142,18 +142,42 @@ function ProjectRow({
   );
 }
 
-function SidebarSkeleton() {
+function SidebarSkeleton({ pending }: { pending: readonly string[] }) {
   return (
     <DelayedLoading>
-      <div className="space-y-2 px-2 pt-2">
-        {["w-3/4", "w-2/3", "w-4/5", "w-3/5", "w-2/3"].map((width, index) => (
-          <div className="flex h-7 items-center gap-2 px-2" key={index}>
-            <Skeleton className="size-3 rounded-sm" />
-            <Skeleton className={cn("h-3", width)} />
-          </div>
-        ))}
-      </div>
+      <SidebarSkeletonContent pending={pending} />
     </DelayedLoading>
+  );
+}
+
+// The sidebar's data RPCs (listProjects, sidebarSummary — plain local DB
+// reads) have no timeout, so a stuck request looks identical to a fast one:
+// endless shimmer. Naming what's still pending, plus elapsed time, turns "is
+// this ever going to load, and what for?" into a fact instead of a guess.
+function SidebarSkeletonContent({ pending }: { pending: readonly string[] }) {
+  const [elapsedMs, setElapsedMs] = useState(0);
+
+  useEffect(() => {
+    const startedAt = Date.now();
+    const tick = () => setElapsedMs(Date.now() - startedAt);
+    tick();
+    const id = window.setInterval(tick, 250);
+    return () => window.clearInterval(id);
+  }, []);
+
+  return (
+    <div className="space-y-2 px-2 pt-2">
+      {["w-3/4", "w-2/3", "w-4/5", "w-3/5", "w-2/3"].map((width, index) => (
+        <div className="flex h-7 items-center gap-2 px-2" key={index}>
+          <Skeleton className="size-3 rounded-sm" />
+          <Skeleton className={cn("h-3", width)} />
+        </div>
+      ))}
+      <div className="px-2 pt-1 text-xs tabular-nums text-muted-foreground">
+        Waiting on {pending.length > 0 ? pending.join(", ") : "…"} —{" "}
+        {(elapsedMs / 1000).toFixed(1)}s
+      </div>
+    </div>
   );
 }
 
@@ -164,7 +188,9 @@ export interface TasksSidebarProps {
   summaries: SidebarProjectSummary[] | undefined;
   presets: Preset[] | undefined;
   activeTasks: Task[] | undefined;
-  isLoading: boolean;
+  waitingTasks: Task[] | undefined;
+  /** Which sidebar data sets are still in flight — empty once all have loaded. */
+  pendingSidebarData: readonly string[];
   onNavigate: (route: TasksRoute) => void;
   onNewProject: () => void;
 }
@@ -176,7 +202,8 @@ export function TasksSidebar({
   summaries,
   presets,
   activeTasks,
-  isLoading,
+  waitingTasks,
+  pendingSidebarData,
   onNavigate,
   onNewProject,
 }: TasksSidebarProps) {
@@ -269,9 +296,24 @@ export function TasksSidebar({
             {activeTasks && activeTasks.length > 0 ? <WorkingDot /> : null}
             {activeTasks ? <RowCount value={activeTasks.length} /> : null}
           </SidebarRow>
+          <SidebarRow
+            active={route.kind === "waiting"}
+            onClick={() => onNavigate({ kind: "waiting" })}
+          >
+            <Icon name="Clock" className="size-3.5 shrink-0" />
+            <span className="flex-1">Waiting</span>
+            {waitingTasks ? <RowCount value={waitingTasks.length} /> : null}
+          </SidebarRow>
+          <SidebarRow
+            active={route.kind === "analytics"}
+            onClick={() => onNavigate({ kind: "analytics" })}
+          >
+            <Icon name="ChartColumn" className="size-3.5 shrink-0" />
+            <span className="flex-1">Analytics</span>
+          </SidebarRow>
         </div>
-        {isLoading ? (
-          <SidebarSkeleton />
+        {pendingSidebarData.length > 0 ? (
+          <SidebarSkeleton pending={pendingSidebarData} />
         ) : (
           <>
             {ungrouped.length > 0 ? (

@@ -15,7 +15,7 @@ import {
   TASK_TYPES,
 } from "../../shared/enums.js";
 import type { Preset } from "../../shared/contract.js";
-import { useTasksQuery, useTasksRpc } from "../../shell/data.js";
+import { useTasksQuery, useTasksRpc } from "../../client/data.js";
 import {
   CHECK_LABELS,
   ESTIMATE_LABELS,
@@ -31,8 +31,9 @@ import {
   formatDateTime,
   formatDueDate,
   isActiveThread,
-} from "./meta.js";
+} from "../../components/task-meta.js";
 import { DispatchControl } from "./threads.js";
+import { PlacementPicker } from "./placement-picker.js";
 import { DEFAULT_COLOR } from "../manage/shared.js";
 import {
   BbProjectLinkPicker,
@@ -64,6 +65,7 @@ import {
 } from "@/components/ui/popover";
 import { Icon } from "@/components/ui/icon";
 import { Input } from "@/components/ui/input";
+import { readDollars, readMinutes } from "../../shared/amounts.js";
 import { cn } from "@/lib/utils";
 
 export interface TaskPropertyUpdate {
@@ -71,11 +73,16 @@ export interface TaskPropertyUpdate {
   priority?: TaskPriority;
   type?: TaskType | null;
   estimate?: TaskEstimate | null;
-  planTokens?: number | null;
-  factTokens?: number | null;
+  plannedMinutes?: number | null;
+  actualMinutes?: number | null;
+  budget?: number | null;
+  budgetLimit?: number | null;
+  cost?: number | null;
   checks?: TaskCheck[];
   dueDate?: string | null;
   labelIds?: string[];
+  assignee?: string | null;
+  epic?: string | null;
 }
 
 export interface TaskPropertiesProps {
@@ -329,12 +336,15 @@ function ChecksMenu({
   );
 }
 
-function TokenField({
+/** A time (whole minutes) or money (dollars) field: blank clears it, junk reverts. */
+function AmountInput({
   label,
+  unit,
   value,
   onCommit,
 }: {
   label: string;
+  unit: "minutes" | "dollars";
   value: number | null;
   onCommit: (next: number | null) => void;
 }) {
@@ -345,12 +355,14 @@ function TokenField({
       if (value !== null) onCommit(null);
       return;
     }
-    const next = Number(trimmed);
-    if (!Number.isInteger(next) || next < 0) {
+    const next = unit === "minutes" ? readMinutes(trimmed) : readDollars(trimmed);
+    if (next === null) {
       // Reject junk by reverting to the persisted value.
       setDraft(value === null ? "" : String(value));
       return;
     }
+    // Show what is stored: 12.345 is committed as 12.35.
+    setDraft(String(next));
     if (next !== value) onCommit(next);
   };
   return (
@@ -361,7 +373,9 @@ function TokenField({
       <Input
         type="number"
         min={0}
-        inputMode="numeric"
+        step={unit === "minutes" ? 1 : 0.01}
+        inputMode={unit === "minutes" ? "numeric" : "decimal"}
+        placeholder={unit === "minutes" ? "min" : "$"}
         value={draft}
         onChange={(event) => setDraft(event.target.value)}
         onBlur={commit}
@@ -719,7 +733,7 @@ function SourceRow({
  * Full-width banner above the Properties section for a task whose latest
  * content came from an active worktree instead of the linked project's main
  * checkout — see shared/contract.ts's fileTaskOriginSchema and
- * filesync/merge.ts for when that's the case.
+ * filesync/fs-boards.ts for when that's the case.
  */
 function WorktreeSourceBanner({ task }: { task: Task }) {
   if (task.source?.origin.kind !== "worktree") return null;
@@ -799,6 +813,22 @@ export function PropertiesRail({
         onSelect={(estimate) => onUpdate({ estimate })}
         triggerClassName={RAIL_ROW_CLASS}
       />
+      <PlacementPicker
+        projectId={task.projectId}
+        field="assignee"
+        value={task.assignee ?? null}
+        assignee={task.assignee ?? null}
+        onSelect={(assignee) => onUpdate({ assignee })}
+        triggerClassName={RAIL_ROW_CLASS}
+      />
+      <PlacementPicker
+        projectId={task.projectId}
+        field="epic"
+        value={task.epic ?? null}
+        assignee={task.assignee ?? null}
+        onSelect={(epic) => onUpdate({ epic })}
+        triggerClassName={RAIL_ROW_CLASS}
+      />
 
       <div className="mb-1 mt-3 text-2xs font-semibold text-muted-foreground">
         Checks
@@ -853,15 +883,37 @@ export function PropertiesRail({
       </div>
 
       <div className="mt-3 grid grid-cols-2 gap-2">
-        <TokenField
-          label="Tokens - Plan"
-          value={task.planTokens}
-          onCommit={(planTokens) => onUpdate({ planTokens })}
+        <AmountInput
+          label="Planned Time"
+          unit="minutes"
+          value={task.plannedMinutes}
+          onCommit={(plannedMinutes) => onUpdate({ plannedMinutes })}
         />
-        <TokenField
-          label="Tokens - Fact"
-          value={task.factTokens}
-          onCommit={(factTokens) => onUpdate({ factTokens })}
+        <AmountInput
+          label="Actual Time"
+          unit="minutes"
+          value={task.actualMinutes}
+          onCommit={(actualMinutes) => onUpdate({ actualMinutes })}
+        />
+      </div>
+      <div className="mt-2 grid grid-cols-3 gap-2">
+        <AmountInput
+          label="Budget"
+          unit="dollars"
+          value={task.budget}
+          onCommit={(budget) => onUpdate({ budget })}
+        />
+        <AmountInput
+          label="Limit"
+          unit="dollars"
+          value={task.budgetLimit}
+          onCommit={(budgetLimit) => onUpdate({ budgetLimit })}
+        />
+        <AmountInput
+          label="Cost"
+          unit="dollars"
+          value={task.cost}
+          onCommit={(cost) => onUpdate({ cost })}
         />
       </div>
 
@@ -1019,6 +1071,24 @@ export function InlineProperties({
             noneLabel="No estimate"
             onSelect={(estimate) => onUpdate({ estimate })}
             triggerClassName={CHIP_CLASS}
+          />
+        ) : null}
+        <PlacementPicker
+          projectId={task.projectId}
+          field="assignee"
+          value={task.assignee ?? null}
+          assignee={task.assignee ?? null}
+          onSelect={(assignee) => onUpdate({ assignee })}
+          triggerClassName={task.assignee ? CHIP_CLASS : CHIP_GHOST_CLASS}
+        />
+        {task.assignee ? (
+          <PlacementPicker
+            projectId={task.projectId}
+            field="epic"
+            value={task.epic ?? null}
+            assignee={task.assignee}
+            onSelect={(epic) => onUpdate({ epic })}
+            triggerClassName={task.epic ? CHIP_CLASS : CHIP_GHOST_CLASS}
           />
         ) : null}
         {project ? (

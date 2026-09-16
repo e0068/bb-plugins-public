@@ -8,11 +8,12 @@ import { Button } from "@/components/ui/button";
 import { Icon } from "@/components/ui/icon";
 import { Skeleton } from "@/components/ui/skeleton";
 import type { Task } from "../../shared/contract.js";
-import { useTasksRpc } from "../../shell/data.js";
-import { TasksRefreshProvider } from "../../shell/refresh.js";
-import { PANEL_PATH, tasksRouteToSubPath } from "../../shell/routes.js";
+import { useTasksRpc } from "../../client/data.js";
+import { TasksRefreshProvider } from "../../client/refresh.js";
+import { CallerThreadProvider } from "../../client/caller-thread.js";
+import { PANEL_PATH, tasksRouteToSubPath } from "../../client/routes.js";
 import { DetailView } from "../detail/index.js";
-import { PRIORITY_LABELS, STATUS_LABELS } from "../detail/meta.js";
+import { PRIORITY_LABELS, STATUS_LABELS } from "../../components/task-meta.js";
 import { PriorityIcon, StatusIcon } from "../list/icons.js";
 
 /**
@@ -22,7 +23,20 @@ import { PriorityIcon, StatusIcon } from "../list/icons.js";
  * due date, labels, comments, threads, editing — lives in those surfaces.
  */
 
-const TASK_KEY_PATTERN = /^[A-Za-z][A-Za-z0-9]{0,9}-\d+$/;
+/**
+ * A task's address as it appears in `::task{key="…"}` or the panel params:
+ * its board key (`TSK-4`) OR its file slug (`scene-as-data-not-code`) — the
+ * backend resolves either (filesync/store.ts `getTaskByKey`), and a keyless
+ * task's key IS its slug. So the view must not re-decide "what a key looks
+ * like"; that rule lives once, in filesync/assemble.ts. Here we only reject
+ * the string that could never address a task — blank, or carrying the
+ * whitespace a key/slug never has — and let the backend answer `not_found`
+ * for anything else.
+ */
+function isTaskAddress(raw: string): boolean {
+  const trimmed = raw.trim();
+  return trimmed !== "" && !/\s/.test(trimmed);
+}
 
 type TaskEmbedState =
   | { kind: "loading" }
@@ -156,11 +170,11 @@ function embedAriaLabel(task: Task): string {
   return `${parts.join(", ")} — open in side panel`;
 }
 
-export function TaskDirectiveCard({ attributes }: PluginMessageDirectiveProps) {
+function TaskDirectiveCardContent({ attributes }: PluginMessageDirectiveProps) {
   const navigate = useBbNavigate();
   const taskKey = attributes.key?.trim() ?? "";
   const fallbackTitle = attributes.title?.trim() || null;
-  const validKey = TASK_KEY_PATTERN.test(taskKey);
+  const validKey = isTaskAddress(taskKey);
   const { state, retry } = useTaskEmbed(validKey ? taskKey : "");
 
   if (!validKey) {
@@ -297,7 +311,7 @@ function TaskEmbedPanelContent({ params }: PluginThreadPanelProps) {
     isRecord(params) && typeof params.taskKey === "string"
       ? params.taskKey
       : null;
-  if (taskKey === null || !TASK_KEY_PATTERN.test(taskKey.trim())) {
+  if (taskKey === null || !isTaskAddress(taskKey)) {
     return (
       <div className="p-3 text-sm text-muted-foreground">
         Open a task card from a message to view it here.
@@ -322,10 +336,28 @@ function TaskEmbedPanelContent({ params }: PluginThreadPanelProps) {
   );
 }
 
-export function TaskEmbedPanel(props: PluginThreadPanelProps) {
+/**
+ * Карточка живёт в сообщении треда, поэтому и задачу ищет в его рабочем
+ * дереве: `::task` со слагом задачи, рождённой в ветке, резолвится в треде
+ * этой ветки и остаётся ненайденной в чужом.
+ */
+export function TaskDirectiveCard(props: PluginMessageDirectiveProps) {
   return (
-    <TasksRefreshProvider>
-      <TaskEmbedPanelContent {...props} />
-    </TasksRefreshProvider>
+    <CallerThreadProvider threadId={props.message.threadId}>
+      <TaskDirectiveCardContent {...props} />
+    </CallerThreadProvider>
+  );
+}
+
+export function TaskEmbedPanel(props: PluginThreadPanelProps) {
+  // Панель принадлежит треду, поэтому и задачи показывает его: вызовы RPC
+  // внутри уезжают с этим тредом, и сервер читает файлы его рабочего дерева
+  // (client/caller-thread.tsx, api/caller-scope.ts).
+  return (
+    <CallerThreadProvider threadId={props.threadId}>
+      <TasksRefreshProvider>
+        <TaskEmbedPanelContent {...props} />
+      </TasksRefreshProvider>
+    </CallerThreadProvider>
   );
 }

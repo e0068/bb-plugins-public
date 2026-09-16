@@ -1,15 +1,29 @@
 import { HugeiconsIcon, type IconSvgElement } from "@hugeicons/react";
-import { AlertCircleIcon, ChartColumnIcon, GitCommitIcon, GitMergeIcon, GitPullRequestIcon, Upload01Icon } from "@hugeicons/core-free-icons";
+import {
+  AlertCircleIcon,
+  ArrowDown01Icon,
+  ArrowUp01Icon,
+  ChartColumnIcon,
+  GitCommitIcon,
+  GitMergeIcon,
+  GitPullRequestIcon,
+  Tick02Icon,
+  Upload01Icon,
+} from "@hugeicons/core-free-icons";
 import { cn } from "../../lib/utils";
 
 // Trimmed to the icons this plugin actually uses (the header button's own
-// two, plus one per git-event marker kind on the chart — see
-// pages/thread-chart.tsx's GIT_EVENT_ICON) — the shared design-system Icon
-// component vendors the full set; this plugin needs neither the rest of the
-// map nor its custom inline glyphs.
+// two, one per git-event marker kind on the chart — see
+// pages/thread-chart.tsx's GIT_EVENT_ICON — plus the row-count Select's own
+// chevrons/checkmark) — the shared design-system Icon component vendors the
+// full set; this plugin needs neither the rest of the map nor its custom
+// inline glyphs.
 const ICON_MAP = {
   AlertCircle: AlertCircleIcon,
   ChartColumn: ChartColumnIcon,
+  Check: Tick02Icon,
+  ChevronDown: ArrowDown01Icon,
+  ChevronUp: ArrowUp01Icon,
   GitCommit: GitCommitIcon,
   GitPullRequest: GitPullRequestIcon,
   GitMerge: GitMergeIcon,

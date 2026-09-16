@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { parseFrontmatter } from "./frontmatter.js";
-import { mapFrontmatter, parseTokens, statusFromFolder } from "./map.js";
+import { mapFrontmatter, parseDollars, parseMinutes, statusFromFolder } from "./map.js";
 
 describe("parseFrontmatter", () => {
   it("splits a leading --- block from the body", () => {
@@ -51,20 +51,44 @@ describe("parseFrontmatter", () => {
     const { error } = parseFrontmatter("# Plain\n\nNo frontmatter here.\n");
     expect(error).toBeUndefined();
   });
+
+  it("takes the last value when a union merge leaves a key twice", () => {
+    const { data, error } = parseFrontmatter(
+      "---\ntitle: Task\nestimate: s\nestimate: m\n---\nbody",
+    );
+    expect(error).toBeUndefined();
+    expect(data.estimate).toBe("m");
+  });
 });
 
-describe("parseTokens", () => {
-  it("parses k/m suffixes and plain integers", () => {
-    expect(parseTokens("120k")).toBe(120_000);
-    expect(parseTokens("1.5m")).toBe(1_500_000);
-    expect(parseTokens("240")).toBe(240);
-    expect(parseTokens(300)).toBe(300);
+describe("parseMinutes", () => {
+  it("reads whole minutes from a number or a numeric string", () => {
+    expect(parseMinutes(90)).toBe(90);
+    expect(parseMinutes("45")).toBe(45);
+    expect(parseMinutes(0)).toBe(0);
   });
 
-  it("rejects junk and negatives", () => {
-    expect(parseTokens("lots")).toBeNull();
-    expect(parseTokens(-5)).toBeNull();
-    expect(parseTokens(null)).toBeNull();
+  it("rejects fractions, junk and negatives", () => {
+    expect(parseMinutes(1.5)).toBeNull();
+    expect(parseMinutes("an hour")).toBeNull();
+    expect(parseMinutes(-5)).toBeNull();
+    expect(parseMinutes(null)).toBeNull();
+  });
+});
+
+describe("parseDollars", () => {
+  it("reads dollars with or without a $ sign, rounded to cents", () => {
+    expect(parseDollars(34.1)).toBe(34.1);
+    expect(parseDollars("$60")).toBe(60);
+    expect(parseDollars("12.345")).toBe(12.35);
+    expect(parseDollars(0)).toBe(0);
+  });
+
+  it("rejects junk, negatives and non-finite values", () => {
+    expect(parseDollars("cheap")).toBeNull();
+    expect(parseDollars(-1)).toBeNull();
+    expect(parseDollars(Number.POSITIVE_INFINITY)).toBeNull();
+    expect(parseDollars(undefined)).toBeNull();
   });
 });
 
@@ -75,10 +99,17 @@ describe("statusFromFolder", () => {
     expect(statusFromFolder("in-progress")).toBe("in_progress");
     expect(statusFromFolder("nonsense")).toBeNull();
   });
+
+  it("принимает написание с пробелами и заглавными: «In progress», «To do»", () => {
+    expect(statusFromFolder("In progress")).toBe("in_progress");
+    expect(statusFromFolder("In Review")).toBe("in_review");
+    expect(statusFromFolder("To do")).toBe("todo");
+    expect(statusFromFolder("Done")).toBe("done");
+  });
 });
 
 describe("mapFrontmatter", () => {
-  it("maps known fields, parses tokens, and drops invalid values", () => {
+  it("maps known fields, reads time and money, ignores legacy tokens, and drops invalid values", () => {
     const { data, body } = parseFrontmatter(
       [
         "---",
@@ -89,6 +120,11 @@ describe("mapFrontmatter", () => {
         "checks: [design, test, bogus]",
         "tokens: 120k",
         "tokens_actual: 140k",
+        "minutes: 90",
+        "minutes_actual: 120",
+        "budget: 34.1",
+        "limit: 60",
+        "cost: 41.5",
         "due: 2026-09-01",
         "labels: [frontend, editor]",
         "parent: toolbar-redesign",
@@ -106,8 +142,11 @@ describe("mapFrontmatter", () => {
       priority: "high",
       type: "feature",
       estimate: "m",
-      planTokens: 120_000,
-      factTokens: 140_000,
+      plannedMinutes: 90,
+      actualMinutes: 120,
+      budget: 34.1,
+      budgetLimit: 60,
+      cost: 41.5,
       dueDate: "2026-09-01",
       labels: ["frontend", "editor"],
       parentRef: "toolbar-redesign",

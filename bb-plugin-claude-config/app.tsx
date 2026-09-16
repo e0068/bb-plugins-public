@@ -1,19 +1,26 @@
 // bb-plugin-claude-config — panel: area picker up top plus sections (hooks,
 // plugins, connectors, skills, agents, tool search). Data and writes go
 // through RPC to server.ts; this file only handles display and toggling.
-// Skills and agents can be created via a button in the section header
-// (name dialog → createSkill/createAgent). .mcp.json connectors
-// are toggled by a switch; user/local and hooks are read-only (a hook is
-// clickable and opens its contents in the second column).
+// Every section's list carries the same header (SectionHeader): its title,
+// from the one table in ./src/panel-sections, plus the "+" of the sections
+// that can create — hooks, skills, agents, workflows. Deleting isn't there:
+// it lives on the surface where the file is shown (DocTab's `actions`), so
+// the button sits with the file rather than with its row. .mcp.json
+// connectors are toggled by a switch; user/local ones are read-only.
 //
 // The SKILL.md of the selected skill (or any open document) is shown in the
-// second column inside the panel itself — the DocTab component keyed off the
-// same `subPath` route segment (which already carries the area and name) that
-// the panel receives. This used to be a fixed tab in the right-hand host panel
+// second column inside the panel itself — the DocTab component, handed what
+// the panel's address says is open. This used to be a fixed tab in the right-hand host panel
 // (experimental_fixedTabs), but in bb 0.40.0 navPanel with that option doesn't
 // mount and the entry disappears from the sidebar (see task BP-53), so the
 // content was moved into the column.
-import { useEffect, useRef, useState, useSyncExternalStore } from "react";
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from "react";
 import type { MouseEvent as ReactMouseEvent, ReactNode } from "react";
 import {
   definePluginApp,
@@ -27,12 +34,18 @@ import { toast } from "sonner";
 import type { AreaConfig, rpcContract, WriteOutcome } from "./server";
 import { MdDocView } from "./packages/md-doc-view";
 import type { LoadedDoc, SaveResult } from "./packages/md-doc-view";
+import { docLibraries } from "./libraries";
 import {
+  NATIVE_VIEWER_TOKEN_DEFAULTS,
   parseKasimovSettings,
   kasimovCssVars,
   kasimovFlags,
 } from "./packages/md-doc-view";
-import { isHostOpen, normalizeOpener } from "./src/open-action";
+import {
+  isHostOpen,
+  opensInEditMode,
+  readOpenerSettings,
+} from "./src/open-action";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Icon } from "@/components/ui/icon";
@@ -47,13 +60,35 @@ import {
 import { cn } from "@/lib/utils";
 import { isValidName, slugifyName } from "./src/scaffold";
 import {
-  fieldsFromJson,
+  CREATE_LABEL,
+  SECTION_SPECS,
+  sectionSpec,
+  type CreateKind,
+  type SectionId,
+} from "./src/panel-sections";
+import { HOOK_EVENTS, matcherHint, supportsMatcher } from "./src/hook-events";
+import {
+  DEFAULT_PLACE,
+  panelRoute,
+  parsePanelRoute,
+  openKey,
+  type ConnectorOrigin,
+  type DocTarget,
+  type HookOrigin,
+  type OpenTarget,
+  type PanelPlace,
+  type WorkflowTarget,
+} from "./src/panel-route";
+import { useRememberedRoute } from "./packages/panel-state/react";
+import {
   type FrontmatterEntry,
   parseFrontmatter,
   serializeFrontmatter,
   setFieldValue,
 } from "./src/frontmatter";
 import { MarkdownEditor } from "./packages/md-editor/react";
+// The built-in editor's link classes — not Kasimov's: the two engines use different prefixes.
+import { LINK_TOKEN_SELECTOR } from "./packages/md-editor/link-tokens";
 import { formatWeight } from "./src/weight";
 import {
   fileRefFromCode,
@@ -78,29 +113,32 @@ import "./doc-editor.css";
 // RPC glue for the wf*-procedures in server.ts and the multi-column layout
 // inside the panel.
 import { editorStore, engineForStore, type StoreKind, type Identity } from "./src/workflow/store";
-import { compile, blankTree, type Engine, type Tree, type Agent, type Phase, type Step } from "./src/workflow/workflow-model";
-import { applyTemplate, setAgentField, nodeAt, type OutlinePath } from "./src/workflow/outline-ops";
+import { isSameWorkflow } from "./src/workflow/identity";
+import { compile, blankTree, type Engine, type Tree, type Agent, type Container, type Phase, type Step } from "./src/workflow/workflow-model";
+import { applyTemplate, setAgentField, setGroupSettings, nodeAt, type OutlinePath } from "./src/workflow/outline-ops";
 import { agentsMissingTemplate } from "./src/workflow/validity";
 import {
   OutlineEditor,
   AgentDetails,
+  GroupDetails,
   type AgentOption,
   type ProviderCatalogEntry,
 } from "./components/workflow/outline-editor";
 
 const PANEL_PATH = "claude-config";
 
+/**
+ * Move within the panel's current area and section: open something, or close
+ * what's open (null). `replace` — putting a place back rather than taking a
+ * step the user could go Back from.
+ */
+type GoTo = (open: OpenTarget | null, replace?: boolean) => void;
+
 type Rpc = ReturnType<typeof useRpc<typeof rpcContract>>;
 
-// Middle-column sections — picked from the rail, determine what is shown.
-type SectionId =
-  | "hooks"
-  | "plugins"
-  | "connectors"
-  | "skills"
-  | "agents"
-  | "toolSearch"
-  | "workflows";
+// Middle-column sections — picked from the rail, they determine what is
+// shown. Their ids, titles and create actions live in ./src/panel-sections,
+// so the rail and the section header read one table instead of two literals.
 
 // Enabled-skill mode and write target (including off) — matches the contract.
 type SkillMode = "on" | "name-only" | "user-invocable-only";
@@ -140,122 +178,51 @@ function connectorSubtitle(origin: ConnectorOrigin, transport: string): string {
   return transport ? `${label} · ${transport}` : label;
 }
 
-// What's open in the right-hand tab lives in subPath. A skill is
-// `skill/<area>/<name>` (the server resolves its SKILL.md itself). Any file
-// by absolute path (plugin README, memory file) is `doc/<area>/<b64>`, where
-// the path is base64url-encoded so its slashes don't collide with the segment
-// separator.
-type ConnectorOrigin = "mcpjson" | "user" | "local";
-type HookOrigin = "user" | "project" | "local";
+// Where the panel is — area, section and what's open — is its address, and
+// the grammar of that address lives in ./src/panel-route: one parser, one
+// builder, both tested. Nothing here assembles a subPath by hand.
 
-type DocTarget =
-  | { kind: "skill"; areaId: string; name: string }
-  | { kind: "plugin"; areaId: string; key: string }
-  | { kind: "connector"; areaId: string; name: string; origin: ConnectorOrigin }
-  | {
-      kind: "hook";
-      areaId: string;
-      origin: HookOrigin;
-      index: number;
-      event: string;
-    }
-  | { kind: "doc"; areaId: string; path: string };
-
-function encodePath(path: string): string {
-  return btoa(path).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
-}
-function decodePath(encoded: string): string {
-  const b64 = encoded.replace(/-/g, "+").replace(/_/g, "/");
-  return atob(b64 + "=".repeat((4 - (b64.length % 4)) % 4));
-}
-
-function skillSubPath(areaId: string, name: string): string {
-  return `skill/${areaId}/${name}`;
-}
-function pluginSubPath(areaId: string, key: string): string {
-  return `plugin/${areaId}/${encodePath(key)}`;
-}
-function connectorSubPath(
+// Open a real file per the `fileOpenerLocation` setting (memory/decisions/
+// claude-config-opener-two-axes.md — supersedes claude-config-opener-setting.md).
+// "inline" — in the embedded column (DocTab, which picks how to render what's
+// open, per the separate `fileOpenerRenderer` setting). "host" — delegate to
+// a bb host tab: the server resolves the host for the area and path, and bb's
+// own generic preview renders it there. Skills, agents, and plugin READMEs
+// are all real files and go through here. Synthesized views (connector, hook
+// command) aren't files and don't.
+function useOpenFile(
   areaId: string,
-  origin: ConnectorOrigin,
-  name: string,
-): string {
-  return `connector/${areaId}/${origin}/${encodePath(name)}`;
-}
-function hookSubPath(
-  areaId: string,
-  origin: HookOrigin,
-  index: number,
-  event: string,
-): string {
-  return `hook/${areaId}/${origin}/${index}/${encodePath(event)}`;
-}
-function docSubPath(areaId: string, path: string): string {
-  return `doc/${areaId}/${encodePath(path)}`;
-}
-function parseDocSubPath(subPath: string): DocTarget | null {
-  const seg = subPath.split("/").filter(Boolean);
-  if (seg[0] === "skill" && seg[1] && seg[2]) {
-    return { kind: "skill", areaId: seg[1], name: seg[2] };
-  }
-  if (seg[0] === "plugin" && seg[1] && seg[2]) {
-    return { kind: "plugin", areaId: seg[1], key: decodePath(seg[2]) };
-  }
-  if (seg[0] === "connector" && seg[1] && seg[2] && seg[3]) {
-    return {
-      kind: "connector",
-      areaId: seg[1],
-      origin: seg[2] as ConnectorOrigin,
-      name: decodePath(seg[3]),
-    };
-  }
-  if (seg[0] === "hook" && seg[1] && seg[2] && seg[3] && seg[4]) {
-    return {
-      kind: "hook",
-      areaId: seg[1],
-      origin: seg[2] as HookOrigin,
-      index: Number(seg[3]),
-      event: decodePath(seg[4]),
-    };
-  }
-  if (seg[0] === "doc" && seg[1] && seg[2]) {
-    return { kind: "doc", areaId: seg[1], path: decodePath(seg[2]) };
-  }
-  return null;
-}
-
-// Open a real file per the `fileOpener` setting (memory/decisions/
-// claude-config-opener-setting.md). `md-opener`/`builtin` — in the embedded
-// column (DocTab by subPath, the editor itself picks the DocTab). `host` —
-// delegate to a bb host tab: the server resolves the host for the area and
-// path, and it opens the file with the format's opener. Synthesized views
-// (plugin, connector, hook command) aren't files and don't go through here.
-function useOpenFile(areaId: string): (path: string) => Promise<void> {
+  /**
+   * Where the panel lands: with the file open in its column (the path), or
+   * with the file gone to a host tab and nothing of it here (null).
+   */
+  land: (path: string | null) => void,
+): (path: string) => Promise<void> {
   const rpc = useRpc<typeof rpcContract>();
   const navigate = useBbNavigate();
   const settings = useSettings();
-  const fileOpener = (settings.values as { fileOpener?: unknown } | undefined)
-    ?.fileOpener;
+  const { location } = readOpenerSettings(settings.values as Record<string, unknown> | undefined);
   return async (path: string) => {
-    if (!isHostOpen(fileOpener)) {
-      navigate.toPluginPanel(PANEL_PATH, {
-        subPath: docSubPath(areaId, path),
-      });
+    if (!isHostOpen(location)) {
+      land(path);
       return;
     }
-    const { hostId, error } = await rpc.call("resolveOpenTarget", {
+    const { hostId, path: abs, error } = await rpc.call("resolveOpenTarget", {
       areaId,
       path,
     });
-    if (!hostId) {
+    if (!hostId || !abs) {
       toast.error(error ?? "Failed to open the file.");
       return;
     }
+    // The path the SERVER resolved, not the one clicked: a Claude `@~/...`
+    // import carries a tilde, and the host opener takes a plain absolute path.
     const opened = navigate.experimental_openFilePreview({
-      target: { kind: "host", hostId, path },
+      target: { kind: "host", hostId, path: abs },
       location: null,
     });
-    if (!opened) toast.error("The host declined to open the file.");
+    if (opened) land(null);
+    else toast.error("The host declined to open the file.");
   };
 }
 
@@ -268,21 +235,21 @@ function ColumnMdDocView({
   areaId,
   initialPath,
   leading,
-  editButton,
 }: {
   areaId: string;
   initialPath: string;
   // Passed through to MdDocView as-is — the tab owner decides what to show at
-  // the start of the shared header and what replaces the default "Edit" button
-  // (see md-doc-view).
+  // the start of the shared header (see md-doc-view).
   leading?: ReactNode;
-  editButton?: (onClick: () => void) => ReactNode;
 }) {
   const rpc = useRpc<typeof rpcContract>();
   // Kasimov look and flags — from the plugin settings (kasimov*). The parser
   // is total: while useSettings is loading (values === undefined) it returns
   // defaults that match kasimov.css.
-  const settings = parseKasimovSettings(useSettings().values);
+  // The same preset defaults server.ts registered with buildDescriptors. Hand
+  // them over, or the document is the engine's black until useSettings()
+  // answers — and stays black on a remount that gets no values.
+  const settings = parseKasimovSettings(useSettings().values, NATIVE_VIEWER_TOKEN_DEFAULTS);
   const vars = kasimovCssVars(settings);
   const flags = kasimovFlags(settings);
   const load = async (path: string): Promise<LoadedDoc> => {
@@ -310,15 +277,18 @@ function ColumnMdDocView({
   return (
     <MdDocView
       key={initialPath}
+      libraries={docLibraries}
       initialPath={initialPath}
       load={load}
       save={save}
       resolveLinkTarget={resolveLinkTarget}
       vars={vars}
-      followLinks={flags.followLinks}
-      frontmatter={flags.frontmatter}
+      // All engine flags at once (toFlags returns exactly the MdDocView flag
+      // props): a hand-written list is one `atLinks` away from a setting that
+      // silently does nothing — see
+      // memory/decisions/kasimov-atlink-click-guard.md.
+      {...flags}
       leading={leading}
-      editButton={editButton}
     />
   );
 }
@@ -531,6 +501,124 @@ function PlainTextBlock({
   );
 }
 
+/** Single-line click-to-edit text field for a string/number setting. */
+function TextSettingInput({
+  value,
+  onSave,
+}: {
+  value: string;
+  onSave: (next: string) => void;
+}) {
+  const [draft, setDraft] = useState(value);
+  useEffect(() => setDraft(value), [value]);
+  const commit = () => {
+    if (draft !== value) onSave(draft);
+  };
+  return (
+    <Input
+      value={draft}
+      onChange={(event) => setDraft(event.target.value)}
+      onBlur={commit}
+      onKeyDown={(event) => event.key === "Enter" && commit()}
+      // Fills the control box (min 100px), instead of a fixed width that
+      // couldn't shrink and forced the label's text into a sliver.
+      className="h-8 w-full min-w-0"
+    />
+  );
+}
+
+/**
+ * One row of the generic "Settings" section — the control depends on the
+ * key's kind (see settings-catalog): a Switch for booleans (same widget and
+ * "no explicit revert" convention as Plugins), a Dropdown for enums (as
+ * Skills), a single-line field for strings/numbers, and a JSON block (the
+ * same PlainTextBlock hooks uses for a script file) for nested objects. A
+ * value already set explicitly gets a "Reset" action — the only way back to
+ * "unset, Claude Code's own default applies" for kinds without an implicit
+ * off/inherit position.
+ */
+function SettingField({
+  setting,
+  onChange,
+}: {
+  setting: AreaConfig["settings"][number];
+  onChange: (value: string | null) => void;
+}) {
+  const label = (
+    // The text never squeezes below 200px: in this column it used to share a
+    // flex row with the control and got wrung out to one word per line.
+    <div className="min-w-[200px] flex-1">
+      <div className="text-sm font-medium">{setting.label}</div>
+      <div className="text-xs text-muted-foreground">{setting.description}</div>
+    </div>
+  );
+
+  const resetButton = setting.value !== null && (
+    <button
+      type="button"
+      onClick={() => onChange(null)}
+      className="shrink-0 text-xs text-muted-foreground hover:underline"
+    >
+      Reset
+    </button>
+  );
+
+  // A JSON value is a multi-line block — it's full width under the label by
+  // nature, and never sits beside it.
+  if (setting.kind === "json") {
+    return (
+      <div
+        className={cn("rounded-md px-2 py-1.5", setting.dimmed && "opacity-60")}
+      >
+        <div className="mb-1 flex items-start justify-between gap-2">
+          {label}
+          {resetButton}
+        </div>
+        <PlainTextBlock value={setting.value ?? ""} onSave={onChange} />
+      </div>
+    );
+  }
+
+  const options = setting.kind === "enum" ? (setting.enumOptions ?? []) : [];
+  const control =
+    setting.kind === "boolean" ? (
+      <Switch
+        checked={setting.value === "true"}
+        onChange={(next) => onChange(next ? "true" : "false")}
+      />
+    ) : setting.kind === "enum" ? (
+      <Dropdown
+        value={setting.value ?? (options[0]?.value ?? "")}
+        options={options}
+        disabled={options.length === 0}
+        onChange={(next) => onChange(next)}
+      />
+    ) : (
+      <>
+        <TextSettingInput value={setting.value ?? ""} onSave={onChange} />
+        {resetButton}
+      </>
+    );
+
+  // One wrapping row for every kind but JSON: the text keeps its 200px, the
+  // control its 100px, and when the column can't hold both (under ~300px)
+  // flex-wrap drops the control onto its own line under the label instead of
+  // strangling the text.
+  return (
+    <div
+      className={cn(
+        "flex flex-wrap items-center gap-x-3 gap-y-2 rounded-md px-2 py-1.5",
+        setting.dimmed && "opacity-60",
+      )}
+    >
+      {label}
+      <div className="flex min-w-[100px] flex-1 basis-56 items-center justify-end gap-2">
+        {control}
+      </div>
+    </div>
+  );
+}
+
 /**
  * Dialog for creating a skill or agent: a single name field. The name is
  * normalized into a slug (latin letters, digits, hyphens) — if it differs, we
@@ -612,7 +700,252 @@ function CreateDialog({
 }
 
 /**
- * Right-hand tab: shows the document selected via `subPath` — a skill's
+ * Header above a section's list. One component for all seven — they used to
+ * be seven `h2` rows and had drifted apart. A section with no create path
+ * (see panel-sections) gets no "+".
+ */
+function SectionHeader({
+  section,
+  onCreate,
+}: {
+  section: SectionId;
+  onCreate?: () => void;
+}) {
+  const spec = sectionSpec(section);
+  return (
+    <ColumnHeading
+      title={spec.title}
+      action={
+        spec.create !== null && onCreate ? (
+          <Button
+            variant="outline"
+            size="sm"
+            className="w-8 px-0"
+            onClick={onCreate}
+            // Button drops `title` on purpose (see components/ui/button) — the
+            // accessible name is what names this button.
+            aria-label={CREATE_LABEL[spec.create]}
+          >
+            <Icon name="Plus" />
+          </Button>
+        ) : null
+      }
+    />
+  );
+}
+
+/**
+ * Heading of any column in the panel — the rail's groups and the section
+ * lists alike. The rail used to have its own smaller uppercase caption and
+ * tighter padding, which made the two columns read as two different panels.
+ */
+function ColumnHeading({
+  title,
+  action,
+}: {
+  title: string;
+  action?: ReactNode;
+}) {
+  return (
+    <div className="mb-2 flex h-8 items-center justify-between gap-2">
+      <h2 className="truncate text-sm font-semibold">{title}</h2>
+      {action}
+    </div>
+  );
+}
+
+/**
+ * Confirmation around a delete; the trigger is the caller's (an icon in a
+ * file's header, a button in the builder's row). Deleting isn't undoable from
+ * the panel, so every delete asks first — one dialog, one wording.
+ */
+function ConfirmDelete({
+  what,
+  detail,
+  onDelete,
+  trigger,
+}: {
+  /** What is being deleted, for the labels: "skill", "agent", "hook". */
+  what: string;
+  /** Which one — name or path, shown in the confirmation. */
+  detail: string;
+  onDelete: () => void;
+  trigger: (ask: () => void) => ReactNode;
+}) {
+  const [asking, setAsking] = useState(false);
+  return (
+    <>
+      {trigger(() => setAsking(true))}
+      <Dialog open={asking} onOpenChange={setAsking}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle>Delete {what}?</DialogTitle>
+            <DialogDescription>
+              {detail} will be deleted from disk. This can't be undone from the
+              panel.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setAsking(false)}>
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={() => {
+                setAsking(false);
+                onDelete();
+              }}
+              aria-label={`Confirm delete ${what}`}
+            >
+              Delete
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </>
+  );
+}
+
+/** Trigger for a file's own header: icon only, destructive on hover. */
+const deleteIconTrigger =
+  (what: string) =>
+  (ask: () => void): ReactNode => (
+    <Button
+      variant="ghost"
+      size="sm"
+      className="w-8 px-0 text-muted-foreground hover:text-destructive"
+      onClick={ask}
+      aria-label={`Delete ${what}`}
+    >
+      <Icon name="Trash2" />
+    </Button>
+  );
+
+/**
+ * Dialog for creating a hook: the three fields Claude Code reads. A hook is
+ * an entry in settings.json, not a file, so there's no name to slugify. The
+ * matcher field only shows for events that group by one (see hook-events).
+ */
+function HookCreateDialog({
+  open,
+  onClose,
+  onCreate,
+}: {
+  open: boolean;
+  onClose: () => void;
+  onCreate: (hook: {
+    event: string;
+    matcher: string | null;
+    command: string;
+  }) => Promise<string | null>;
+}) {
+  const [event, setEvent] = useState(HOOK_EVENTS[0]!.event);
+  const [matcher, setMatcher] = useState("");
+  const [command, setCommand] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    if (open) {
+      setEvent(HOOK_EVENTS[0]!.event);
+      setMatcher("");
+      setCommand("");
+      setError(null);
+      setBusy(false);
+    }
+  }, [open]);
+
+  const withMatcher = supportsMatcher(event);
+  const hint = matcherHint(event);
+  const canSubmit = command.trim() !== "" && !busy;
+
+  const submit = () => {
+    if (!canSubmit) return;
+    setBusy(true);
+    setError(null);
+    void onCreate({
+      event,
+      // The field is hidden for events that don't group — don't smuggle a
+      // stale value from a previously picked event into the file.
+      matcher: withMatcher && matcher.trim() !== "" ? matcher.trim() : null,
+      command,
+    }).then((message) => {
+      setBusy(false);
+      if (message) setError(message);
+    });
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={(next) => !next && onClose()}>
+      <DialogContent className="max-w-sm">
+        <DialogHeader>
+          <DialogTitle>New hook</DialogTitle>
+          <DialogDescription>
+            Adds a hook to the file this area edits.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="space-y-3">
+          <label className="block space-y-1.5">
+            <span className="text-xs text-muted-foreground">Event</span>
+            <select
+              aria-label="hook event"
+              value={event}
+              onChange={(e) => setEvent(e.target.value)}
+              className="flex h-9 w-full items-center rounded-md border border-border bg-transparent px-3 text-sm text-foreground outline-none focus-visible:ring-1 focus-visible:ring-ring"
+            >
+              {HOOK_EVENTS.map((spec) => (
+                <option key={spec.event} value={spec.event}>
+                  {spec.event}
+                </option>
+              ))}
+            </select>
+          </label>
+          {withMatcher && (
+            <label className="block space-y-1.5">
+              <span className="text-xs text-muted-foreground">
+                Matcher (optional)
+              </span>
+              <Input
+                aria-label="hook matcher"
+                placeholder={hint ?? ""}
+                value={matcher}
+                onChange={(e) => setMatcher(e.target.value)}
+              />
+              {hint && (
+                <span className="block text-xs text-muted-foreground">
+                  Matches: {hint}
+                </span>
+              )}
+            </label>
+          )}
+          <label className="block space-y-1.5">
+            <span className="text-xs text-muted-foreground">Command</span>
+            <Input
+              autoFocus
+              aria-label="hook command"
+              placeholder="~/.claude/hooks/my-hook.sh"
+              value={command}
+              onChange={(e) => setCommand(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && submit()}
+            />
+          </label>
+          {error && <p className="text-xs text-destructive">{error}</p>}
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose} disabled={busy}>
+            Cancel
+          </Button>
+          <Button onClick={submit} disabled={!canSubmit}>
+            Create
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+/**
+ * Right-hand tab: shows the document the address names — a skill's
  * SKILL.md or a file by absolute path (plugin README, memory) — rendered with
  * the host Markdown component. File links inside the document (both `<a>`
  * tags and backtick code spans like `references/x.md`) open in this same tab
@@ -633,11 +966,9 @@ type Loaded = {
 function FrontmatterTable({
   entries,
   onChange,
-  readOnly = false,
 }: {
   entries: FrontmatterEntry[];
-  onChange?: (index: number, value: string) => void;
-  readOnly?: boolean;
+  onChange: (index: number, value: string) => void;
 }) {
   // Only top-level fields; keep the original index for onChange.
   const fields: { key: string; value: string; index: number }[] = [];
@@ -676,20 +1007,14 @@ function FrontmatterTable({
                       notLast && "border-b border-border",
                     )}
                   >
-                    {readOnly ? (
-                      <div className="whitespace-pre-wrap break-words">
-                        {field.value}
-                      </div>
-                    ) : (
-                      <textarea
-                        rows={1}
-                        value={field.value}
-                        onChange={(event) =>
-                          onChange?.(field.index, event.target.value)
-                        }
-                        className="cc-fm-value"
-                      />
-                    )}
+                    <textarea
+                      rows={1}
+                      value={field.value}
+                      onChange={(event) =>
+                        onChange(field.index, event.target.value)
+                      }
+                      className="cc-fm-value"
+                    />
                   </td>
                 </tr>
               );
@@ -701,18 +1026,37 @@ function FrontmatterTable({
   );
 }
 
-function DocTab({ subPath }: PluginNavPanelProps) {
+function DocTab({
+  areaId,
+  target,
+  goTo,
+  actions,
+}: {
+  areaId: string;
+  /** What to show; null — nothing is open. Never a workflow: that section
+   * has its own builder, not this column. */
+  target: DocTarget | null;
+  /** Move within the current place — open another file, or close this one. */
+  goTo: GoTo;
+  /**
+   * Actions for the open file — delete lives on the surface where the file is
+   * shown, not next to its row. What is deletable is the section's business,
+   * so the buttons are passed in: a plugin README and a memory file come
+   * through this same column and are nobody's to delete.
+   */
+  actions?: ReactNode;
+}) {
   const rpc = useRpc<typeof rpcContract>();
   const navigate = useBbNavigate();
-  const opener = normalizeOpener(
-    (useSettings().values as { fileOpener?: unknown } | undefined)?.fileOpener,
-  );
-  const target = parseDocSubPath(subPath);
-  const areaId = target?.areaId ?? "";
-  // A real file in `md-opener` mode is rendered by MdDocView (which also
-  // loads and edits it). The composite/hook branches and `builtin` mode
-  // follow the old path below.
-  const mdOpenerDoc = target?.kind === "doc" && opener === "md-opener";
+  const settingValues = useSettings().values;
+  const { renderer } = readOpenerSettings(settingValues as Record<string, unknown> | undefined);
+  // Same setting the Kasimov column honours through MdDocView's startInEdit
+  // prop (see ColumnMdDocView) — read here for the older renderer below.
+  const { startInEdit } = parseKasimovSettings(settingValues, NATIVE_VIEWER_TOKEN_DEFAULTS);
+  // A real file with the `md-opener` renderer is rendered by MdDocView
+  // (which also loads and edits it). The composite/hook branches and the
+  // `builtin` renderer follow the old path below.
+  const mdOpenerDoc = target?.kind === "doc" && renderer === "md-opener";
 
   // Stack of visited absolute paths (last one is current) and the loaded file.
   const [stack, setStack] = useState<string[]>([]);
@@ -748,16 +1092,14 @@ function DocTab({ subPath }: PluginNavPanelProps) {
   const [hasFm, setHasFm] = useState(false);
   const [fmEntries, setFmEntries] = useState<FrontmatterEntry[]>([]);
   const [fmBody, setFmBody] = useState("");
-  // Plugin manifest (JSON) — its "frontmatter", shown as a table above the README.
-  const [pluginManifest, setPluginManifest] = useState<string | null>(null);
 
   // Assemble the file's content from the fields and body: with frontmatter —
   // serialize the block, without it — the body is the whole file.
   const composeContent = (entries: FrontmatterEntry[], body: string) =>
     hasFm ? serializeFrontmatter(entries, body) : body;
 
-  // Split the document into frontmatter and body. Composite (plugin/connector)
-  // and hook have their own representation — leave them alone, body = the
+  // Split the document into frontmatter and body. Composite (connector) and
+  // hook have their own representation — leave them alone, body = the
   // whole content.
   const splitDoc = (loaded: Loaded | null, isComposite: boolean) => {
     if (!loaded || loaded.content == null || isComposite) {
@@ -773,15 +1115,23 @@ function DocTab({ subPath }: PluginNavPanelProps) {
   };
 
   // Showing any new file exits edit mode.
-  const present = (result: Loaded) => {
+  // `kind` — what is being shown. "file" is a standalone document, the thing
+  // the "open documents in edit mode" setting talks about; "synthesized" is a
+  // connector view the server assembled or a hook command lifted out of
+  // settings.json — those stay a read even with the setting on.
+  const present = (result: Loaded, kind: "file" | "synthesized" = "file") => {
+    const startEditing = opensInEditMode(
+      startInEdit,
+      result,
+      kind === "synthesized",
+    );
     setDoc(result);
-    setEditing(false);
+    setEditing(startEditing);
+    if (startEditing) setDraft(result.content ?? "");
     setSaveNote(null);
     setLoading(false);
     // Extra hook data is only set by the hook branch; reset it for other documents.
     setHookExtra(null);
-    // The manifest is only set by the plugin branch; reset it for other documents.
-    setPluginManifest(null);
     // Prefetch paths for / suggestions (silently; errors don't block display).
     if (result.path && result.content != null) {
       void rpc
@@ -816,10 +1166,9 @@ function DocTab({ subPath }: PluginNavPanelProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [doc, composite]);
 
-  // First render by subPath: the server resolves a skill (readSkillFile), a
-  // plugin — manifest + README (readPlugin, composite), any file — by absolute
-  // path (readDoc). We push the absolute path onto the stack — "back" and
-  // links use it.
+  // First render of a target: the server resolves a skill (readSkillFile), any
+  // file — by absolute path (readDoc, this covers plugin READMEs too). We
+  // push the absolute path onto the stack — "back" and links use it.
   useEffect(() => {
     if (!target) {
       setDoc(null);
@@ -837,45 +1186,10 @@ function DocTab({ subPath }: PluginNavPanelProps) {
     setLoading(true);
     setDoc(null);
 
-    if (target.kind === "plugin") {
-      void rpc
-        .call("readPlugin", { areaId: target.areaId, key: target.key })
-        .then((result) => {
-          if (!ok) return;
-          // README links are resolved relative to the plugin folder (the README's folder).
-          const base = result.readmePath ?? result.manifestPath;
-          setStack(base ? [base] : []);
-          if (result.error && result.manifest == null) {
-            setComposite(false);
-            present({
-              path: result.manifestPath,
-              content: null,
-              error: result.error,
-              sha256: null,
-            });
-            return;
-          }
-          // The manifest goes into the "frontmatter" table (pluginManifest),
-          // the body is the README as-is. present() resets pluginManifest, so
-          // we set it after calling present.
-          setComposite(true);
-          present({
-            path: result.manifestPath,
-            content: result.readme ?? "",
-            error: null,
-            sha256: null,
-          });
-          setPluginManifest(result.manifest);
-        });
-      return () => {
-        ok = false;
-      };
-    }
-
     if (target.kind === "connector") {
       void rpc
         .call("readConnector", {
-          areaId: target.areaId,
+          areaId,
           name: target.name,
           origin: target.origin,
         })
@@ -894,12 +1208,15 @@ function DocTab({ subPath }: PluginNavPanelProps) {
           }
           // The definition is a slice of a larger file, shown as a JSON block, not editable.
           setComposite(true);
-          present({
-            path: result.path,
-            content: "```json\n" + result.content + "\n```",
-            error: null,
-            sha256: null,
-          });
+          present(
+            {
+              path: result.path,
+              content: "```json\n" + result.content + "\n```",
+              error: null,
+              sha256: null,
+            },
+            "synthesized",
+          );
         });
       return () => {
         ok = false;
@@ -909,7 +1226,7 @@ function DocTab({ subPath }: PluginNavPanelProps) {
     if (target.kind === "hook") {
       void rpc
         .call("readHook", {
-          areaId: target.areaId,
+          areaId,
           origin: target.origin,
           index: target.index,
         })
@@ -919,12 +1236,15 @@ function DocTab({ subPath }: PluginNavPanelProps) {
           // A raw command (bash), not markdown assembly — edited with the same
           // MarkdownEditor as a regular document (see writeHook in save()).
           setComposite(false);
-          present({
-            path: result.path,
-            content: result.command,
-            error: result.error,
-            sha256: result.sha256,
-          });
+          present(
+            {
+              path: result.path,
+              content: result.command,
+              error: result.error,
+              sha256: result.sha256,
+            },
+            "synthesized",
+          );
           setHookExtra({
             definition: result.definition,
             filePath: result.filePath,
@@ -941,11 +1261,11 @@ function DocTab({ subPath }: PluginNavPanelProps) {
     const request =
       target.kind === "skill"
         ? rpc.call("readSkillFile", {
-            areaId: target.areaId,
+            areaId,
             name: target.name,
             relPath: "SKILL.md",
           })
-        : rpc.call("readDoc", { areaId: target.areaId, path: target.path });
+        : rpc.call("readDoc", { areaId, path: target.path });
     void request.then((result) => {
       if (!ok) return;
       setStack(result.path ? [result.path] : []);
@@ -954,19 +1274,21 @@ function DocTab({ subPath }: PluginNavPanelProps) {
     return () => {
       ok = false;
     };
-    // target is derived from subPath.
+    // What's open is the address, and openKey is its identity.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [subPath, rpc, mdOpenerDoc]);
+  }, [openKey(target), rpc, mdOpenerDoc]);
 
-  // A file link inside the shown document (plugin README, editor link) is a
-  // real file: open it with bb's native opener rather than loading it into
-  // the embedded column.
-  const openFile = useOpenFile(areaId);
+  // A file link inside the shown document (README, editor link) is a real
+  // file: open it with bb's native opener rather than loading it into the
+  // embedded column.
+  const openFile = useOpenFile(areaId, (path) => {
+    if (path !== null) goTo({ kind: "doc", path });
+  });
   const openAbs = (abs: string) => void openFile(abs);
 
-  // Click on a file link inside a composite (plugin/connector/hook) document:
-  // it's rendered by the host `Markdown` component, not MarkdownEditor, since
-  // it's an assembled view — not a standalone markdown file. We catch `<a>`
+  // Click on a file link inside a composite (connector) document: it's
+  // rendered by the host `Markdown` component, not MarkdownEditor, since it's
+  // an assembled view — not a standalone markdown file. We catch `<a>`
   // and inline code like `references/x.md`. The target is resolved relative
   // to the current file.
   const onCompositeClick = (event: ReactMouseEvent<HTMLDivElement>) => {
@@ -1085,7 +1407,7 @@ function DocTab({ subPath }: PluginNavPanelProps) {
 
   // Definition edit can move the hook to a different event or matcher group
   // (see sd.replaceHook) — that shifts its flat index within the level's
-  // file, so `target.index` (baked into the current subPath) may no longer
+  // file, so `target.index` (baked into the current address) may no longer
   // point at this hook. Rather than guess the new index, land back on the
   // Hooks list on success; the edited hook shows up there, in its new spot.
   const saveHookDefinition = (definition: string) => {
@@ -1101,7 +1423,7 @@ function DocTab({ subPath }: PluginNavPanelProps) {
       .then((result) => {
         if (result.outcome === "written") {
           toast.success("Hook saved.");
-          navigate.toPluginPanel(PANEL_PATH, { subPath: "", replace: true });
+          goTo(null, true);
         } else {
           toast.error(result.message ?? "Failed to save.");
         }
@@ -1149,7 +1471,17 @@ function DocTab({ subPath }: PluginNavPanelProps) {
   if (mdOpenerDoc && target.kind === "doc") {
     return (
       <div className="flex h-full min-h-0 flex-col">
-        <ColumnMdDocView areaId={target.areaId} initialPath={target.path} />
+        {/* MdDocView's header isn't extended with a slot of its own — see
+            memory/decisions/file-actions-stay-in-plugin.md — so the file's
+            actions get a thin row above it. */}
+        {actions && (
+          <div className="flex shrink-0 items-center justify-end gap-1 border-b border-border px-2 py-1">
+            {actions}
+          </div>
+        )}
+        <div className="min-h-0 flex-1 overflow-hidden">
+          <ColumnMdDocView areaId={areaId} initialPath={target.path} />
+        </div>
       </div>
     );
   }
@@ -1159,20 +1491,18 @@ function DocTab({ subPath }: PluginNavPanelProps) {
       ? target.name
       : target.kind === "hook"
         ? target.event
-        : target.kind === "plugin"
-          ? target.key.split("@")[0]
-          : (doc?.path?.split("/").pop() ?? "");
-  // Composite (plugin) is not editable — it's an assembly of two files.
+        : (doc?.path?.split("/").pop() ?? "");
+  // Composite (connector) is not editable — it's a slice of a larger file.
   const canEdit = !!doc && doc.content != null && !doc.error && !composite;
 
-  // Clicking text in view mode enters edit mode. Links are handled by the
-  // editor itself via linkResolver, inline code like `references/x.md` — a
-  // navigation; everything else — startEdit. In edit mode, clicks are handled
-  // by the editor.
+  // Clicking text in view mode enters edit mode. Links (LINK_TOKEN_SELECTOR —
+  // `[..](..)` AND `@import`) are handled by the editor itself via
+  // linkResolver, inline code like `references/x.md` — a navigation;
+  // everything else — startEdit. In edit mode, clicks are handled by the editor.
   const onDocClick = (event: ReactMouseEvent<HTMLDivElement>) => {
     if (editing) return;
     const el = event.target as HTMLElement;
-    if (el.closest(".mde-link")) return;
+    if (el.closest(LINK_TOKEN_SELECTOR)) return;
     const code = el.closest("code");
     if (code) {
       const current = stack[stack.length - 1];
@@ -1201,13 +1531,6 @@ function DocTab({ subPath }: PluginNavPanelProps) {
         )}
         <div className="min-w-0 flex-1">
           <div className="text-sm font-medium">{heading}</div>
-          {/* The plugin's marketplace lives in the key (name@marketplace) — we
-              show it by the body's header, not as a second line in the list. */}
-          {target.kind === "plugin" && target.key.includes("@") && (
-            <div className="truncate text-xs text-muted-foreground">
-              {target.key.slice(target.key.indexOf("@") + 1)}
-            </div>
-          )}
           {doc?.path && (
             <div className="truncate text-xs text-muted-foreground">
               {doc.path}
@@ -1217,6 +1540,11 @@ function DocTab({ subPath }: PluginNavPanelProps) {
             <div className="text-xs text-destructive">{saveNote}</div>
           )}
         </div>
+        {/* Not editing — the file's own actions (delete) sit in this header,
+            the same row as its name and path. */}
+        {!editing && actions && (
+          <div className="flex shrink-0 items-center gap-1">{actions}</div>
+        )}
         {editing && (
           <div className="flex shrink-0 gap-1">
             <button
@@ -1251,37 +1579,12 @@ function DocTab({ subPath }: PluginNavPanelProps) {
         {!loading && doc?.error && (
           <p className="p-4 text-sm text-destructive">{doc.error}</p>
         )}
-        {/* Plugin: manifest as a full-width table, README below — the README
-            is a real markdown file, so it opens through the same Kasimov
-            engine (MarkdownEditor) as skills and docs, not the plain host
-            Markdown renderer. Read-only: the manifest isn't edited through
-            this path (memory/decisions/kasimov-settings-first-in-cloud-config.md). */}
-        {!loading && doc?.content != null && composite && target.kind === "plugin" && (
-          <div className="flex h-full flex-col">
-            {pluginManifest && (
-              <FrontmatterTable
-                entries={fieldsFromJson(pluginManifest)}
-                readOnly
-              />
-            )}
-            {doc.content && (
-              <div className="min-h-0 flex-1 p-4">
-                <MarkdownEditor
-                  editable={false}
-                  atLinks
-                  value={doc.content}
-                  linkResolver={linkResolver}
-                  pathProvider={pathProvider}
-                  className="h-full cc-doc-mde"
-                />
-              </div>
-            )}
-          </div>
-        )}
         {/* Connector: the definition is a JSON slice, not a standalone
             document — the plain host Markdown renderer fits a fenced code
-            block just as well and keeps the composite-link click handling. */}
-        {!loading && doc?.content != null && composite && target.kind !== "plugin" && (
+            block just as well and keeps the composite-link click handling.
+            (The only composite target left — plugins now open their README
+            as a real file, same path as skills.) */}
+        {!loading && doc?.content != null && composite && (
           <div onClick={onCompositeClick}>
             {doc.content && (
               <div className="p-4">
@@ -1330,9 +1633,7 @@ function DocTab({ subPath }: PluginNavPanelProps) {
                     hookExtra?.filePath ?? null,
                     () =>
                       hookExtra?.filePath &&
-                      navigate.toPluginPanel(PANEL_PATH, {
-                        subPath: docSubPath(areaId, hookExtra.filePath),
-                      }),
+                      goTo({ kind: "doc", path: hookExtra.filePath }),
                   )}
                 </div>
               )}
@@ -1404,18 +1705,25 @@ interface WfItem {
   description: string;
   hasTree: boolean;
 }
-const AGENT_SCOPE_LABEL: Record<"user" | "project" | "plugin", string> = {
+const AGENT_SCOPE_LABEL: Record<"user" | "project" | "plugin" | "builtin", string> = {
   user: "personal",
   project: "project",
   plugin: "plugin",
+  builtin: "builtin",
 };
+
+// Claude Code agent types with no `.md` file for wfAgents to discover — pinned ahead of the
+// scanned catalog so they're always reachable as a template, not lost among alphabetical results.
+const BUILTIN_AGENTS: AgentOption[] = [
+  { value: "general-purpose", model: "", effort: "", provider: "", description: "General-purpose agent for researching complex questions, searching for code, and executing multi-step tasks.", scope: "builtin" },
+];
 
 function useWfAgents(rpc: Rpc, projectId: string | null): AgentOption[] {
   const [agents, setAgents] = useState<AgentOption[]>([]);
   useEffect(() => {
     void rpc.call("wfAgents", { projectId }).then((r) => setAgents(r.agents));
   }, [rpc, projectId]);
-  return agents;
+  return [...BUILTIN_AGENTS, ...agents.filter((a) => !BUILTIN_AGENTS.some((b) => b.value === a.value))];
 }
 
 // Workflow count for the rail ("Workflows" section). Updates on area change,
@@ -1443,16 +1751,6 @@ function useWfProviderCatalog(rpc: Rpc): ProviderCatalogEntry[] {
   return catalog;
 }
 
-// Polling the run status: `wfStatus` is a free read operation, we show the CLI text as-is.
-function pollStatus(rpc: Rpc, runId: string, setOutput: (s: string) => void): void {
-  let ticks = 0;
-  const timer = setInterval(() => {
-    ticks += 1;
-    void rpc.call("wfStatus", { runId }).then((r) => setOutput(r.output));
-    if (ticks >= 15) clearInterval(timer);
-  }, 2000);
-}
-
 // A hand-written .js file without a builder mirror tree — we show the source
 // as-is, read-only: saving over it would compile a stub tree and wipe out the
 // real code.
@@ -1472,14 +1770,26 @@ function CodeOnlyView({ source }: { source: string }) {
 function WfList({
   items,
   onOpen,
-  activePath,
+  open,
+  draft,
 }: {
   items: WfItem[];
   onOpen: (i: WfItem) => void;
-  activePath?: string;
+  /** The workflow the builder has open — its row is highlighted. */
+  open: Identity | null;
+  /** A new workflow is being written — it has no file, so it gets a row of its own. */
+  draft: boolean;
 }) {
   return (
     <div className="space-y-1">
+      {draft && (
+        // Without this row the builder would be showing a workflow while the
+        // list highlighted nothing — which reads as a lost selection.
+        <div className="flex w-full items-center gap-2 rounded-md bg-accent px-2 py-1.5 text-left text-sm">
+          <span className="min-w-0 flex-1 truncate">New workflow</span>
+          <span className="shrink-0 text-xs text-muted-foreground">unsaved</span>
+        </div>
+      )}
       {items.length === 0 && <div className="px-1 py-0.5 text-xs text-muted-foreground">empty</div>}
       {items.map((item) => (
         <button
@@ -1487,8 +1797,11 @@ function WfList({
           type="button"
           onClick={() => onOpen(item)}
           className={cn(
-            "flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm hover:bg-muted",
-            activePath === item.path && "bg-accent",
+            "flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm transition-colors hover:bg-muted",
+            // Comparing paths alone lost the highlight whenever the listed
+            // path came from another checkout of the same project — see
+            // isSameWorkflow.
+            isSameWorkflow(open, item) && "bg-accent",
           )}
           title={item.description || item.name}
         >
@@ -1608,16 +1921,45 @@ function WfSaveDialog({
 // resize independently, each with its own localStorage key — the same way the
 // rail and section list do in ConfigPanel; column 4 doesn't resize, it takes
 // up the rest of the page width.
-function WorkflowsView({ rpc, areaId }: { rpc: Rpc; areaId: string }) {
-  const { tree, identity, rawSource } = useEditor();
+//
+// Column 2 is shaped like any other section's list: header with "+", then the
+// rows. Delete and Save belong to the workflow that's open, so they sit at
+// the foot of column 3 — under the tree they act on. Validating and running a
+// workflow left the panel with them (the wfValidate/wfRun/wfStatus procedures
+// are still on the server); `bb workflows` is where a run belongs.
+function WorkflowsView({
+  rpc,
+  areaId,
+  target,
+  goTo,
+}: {
+  rpc: Rpc;
+  areaId: string;
+  /** The workflow the address names; null — none. */
+  target: WorkflowTarget | null;
+  goTo: GoTo;
+}) {
+  const { tree, identity, rawSource, draft } = useEditor();
   const codeOnly = rawSource != null;
+  // Nothing open at all: no file, no new workflow started. The builder shows
+  // an empty state rather than a blank tree that looks like an open document
+  // with no row highlighted next to it.
+  const nothingOpen = identity === null && !draft;
 
   // Workflow project — the same axis as "Area" in the Cloud Config header: the
   // sentinel "global" means the global area, any other areaId value is a
   // bb project id.
   const projectId = areaId === "global" ? null : areaId;
-  const [items, setItems] = useState<WfItem[]>([]);
-  const [output, setOutput] = useState("");
+  // The list and the area it was fetched for are one value, so "a list left
+  // over from the previous area" is not a state this can hold: a reply that
+  // arrives after the area changed simply isn't this area's list, and the
+  // effect below waits instead of acting on it.
+  const [listing, setListing] = useState<{
+    projectId: string | null;
+    items: WfItem[];
+  } | null>(null);
+  const listed = listing !== null && listing.projectId === projectId;
+  const items = listed ? listing.items : [];
   const [saveOpen, setSaveOpen] = useState(false);
   const [selectedPath, setSelectedPath] = useState<OutlinePath | null>(null);
   // Combined column 4 (agents + detail): the agent list or the detail of an
@@ -1634,7 +1976,9 @@ function WorkflowsView({ rpc, areaId }: { rpc: Rpc; areaId: string }) {
   }, [projectId]);
 
   const refresh = () => {
-    void rpc.call("wfList", { projectId }).then((r) => setItems(r.items as WfItem[]));
+    void rpc
+      .call("wfList", { projectId })
+      .then((r) => setListing({ projectId, items: r.items as WfItem[] }));
   };
   // rpc — a stable reference for the panel's lifetime, refresh — a new
   // function on every render; the dependency list only needs what actually
@@ -1642,56 +1986,53 @@ function WorkflowsView({ rpc, areaId }: { rpc: Rpc; areaId: string }) {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(refresh, [projectId]);
 
-  const openItem = async (item: WfItem) => {
-    const res = await rpc.call("wfRead", { projectId: projectId, store: item.store, path: item.path });
+  // Opening is addressed by store+path+name — the three things both a list
+  // row and the remembered note carry.
+  const openWorkflow = async (ref: Identity) => {
+    const res = await rpc.call("wfRead", { projectId, store: ref.store, path: ref.path });
     const parsedTree = res.tree as Tree | null;
     // No builder tree → a hand-written file: open it as-is, read-only.
     editorStore.load(
-      parsedTree ?? blankTree(item.name),
-      { store: item.store, path: item.path, name: item.name },
+      parsedTree ?? blankTree(ref.name),
+      ref,
       parsedTree ? null : res.source,
     );
     setSelectedPath(null);
   };
+  // Clicking a row only changes the address; opening is the effect below, so
+  // there is one way in — a click, a link and the Back button all take it.
+  const openItem = (item: WfItem) =>
+    goTo({ kind: "workflow", store: item.store, name: item.name });
 
-  // `bb workflows` only works with project (bb) workflows. Global ones
-  // (~/.claude) are Claude Code — validate/run aren't available for them from
-  // this panel.
-  const bbRunnable = identity?.store === "project";
-
-  const doValidate = async () => {
-    if (!identity) {
-      toast.error("Save the workflow first — validation reads the file on disk");
+  // Open what the address names. The builder's store is module-level and
+  // survives leaving the panel, so a file is re-read only when the address
+  // names one OTHER than the one already open — coming back to the same
+  // workflow must not throw away unsaved edits. The list is what turns a
+  // name into a path (paths differ between a project's checkouts, names
+  // don't — see src/workflow/identity.ts), so this waits for the list.
+  const targetName = target === null ? "" : `${target.store}/${target.name}`;
+  useEffect(() => {
+    if (target === null) return;
+    if (identity?.store === target.store && identity.name === target.name) return;
+    const row = items.find(
+      (item) => item.store === target.store && item.name === target.name,
+    );
+    if (!row) {
+      // No such row in a list that HAS arrived — the address names a workflow
+      // that is gone. Drop it, or the panel sits on "open" with an empty
+      // builder for good, restart included. An empty list that hasn't arrived
+      // yet says nothing, so it waits.
+      if (listed) goTo(null, true);
       return;
     }
-    if (!bbRunnable) {
-      toast.error("Validation is only available for project workflows; global ones run through Claude Code");
-      return;
-    }
-    const res = await rpc.call("wfValidate", { projectId: projectId, store: identity.store, path: identity.path });
-    setOutput(res.output || (res.ok ? "No errors" : "Has errors"));
-    if (res.ok) toast.success("Validation passed");
-    else toast.error("Validation found errors — see the output below");
-  };
-
-  const doRun = async () => {
-    if (!identity) {
-      toast.error("Save the workflow first — running executes the file on disk");
-      return;
-    }
-    if (!bbRunnable) {
-      toast.error("Running is only available for project workflows; global ones run through Claude Code");
-      return;
-    }
-    const res = await rpc.call("wfRun", { projectId: projectId, store: identity.store, path: identity.path });
-    setOutput(res.output);
-    if (res.runId) {
-      toast.success("Started");
-      pollStatus(rpc, res.runId, setOutput);
-    } else {
-      toast.error("Failed to run — see the output below");
-    }
-  };
+    openWorkflow({ store: row.store, path: row.path, name: row.name }).catch(() =>
+      // The row is in the list but won't read — a file removed underneath us.
+      goTo(null, true),
+    );
+    // Identity is deliberately not a dependency: this reacts to the address
+    // and to the list arriving, not to the builder's own state.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [targetName, items, listed]);
 
   const doDelete = async () => {
     if (!identity) return;
@@ -1699,12 +2040,17 @@ function WorkflowsView({ rpc, areaId }: { rpc: Rpc; areaId: string }) {
     toast.success("Workflow deleted");
     editorStore.newWorkflow();
     setSelectedPath(null);
+    goTo(null, true);
     refresh();
   };
 
-  // Selected agent step (for the combined column 4): the node at selectedPath, if it's an agent rather than a phase/group.
+  // Selected node (for the combined column 4): the node at selectedPath, whichever kind it is.
   const node: Phase | Step | null = selectedPath ? nodeAt(tree, selectedPath) : null;
   const selAgent: Agent | null = node && "type" in node && node.type === "agent" ? node : null;
+  // A Phase has no `type` field at all; a Container's is "container" — either owns the BP-134 node
+  // settings (Maximum Parallel / Iterate over / Repeat), shown by GroupDetails in the same column.
+  const selGroup: Phase | Container | null = node && (!("type" in node) || node.type === "container") ? node : null;
+  const previewEngine: Engine = engineForStore(identity?.store ?? (projectId ? "project" : "global"));
   // The file for the selected agent template — shown by the upper half of the
   // detail in Kasimov rendering (the same MdDocView as the MD Opener slot). No
   // template or path — no upper half.
@@ -1761,65 +2107,110 @@ function WorkflowsView({ rpc, areaId }: { rpc: Rpc; areaId: string }) {
     // full page width and would shrink to fit its content — which meant the
     // combined column 4 below couldn't reach the right edge.
     <div className="flex h-full min-h-0 min-w-0 flex-1 overflow-x-auto">
+      {/* Column 2 — the list, shaped like every other section: a header with
+          the section's "+" and nothing else. Save / Validate / Run / Delete
+          used to live here even though they act on the workflow shown in the
+          next column; they moved there. */}
       <div style={{ width: listWidth }} className="flex h-full shrink-0 flex-col overflow-hidden border-r border-border">
-        <div className="flex flex-col gap-2 border-b border-border p-2">
-          <div className="flex flex-wrap gap-1.5">
-            <Button size="sm" onClick={() => setSaveOpen(true)} disabled={codeOnly || invalidAgents > 0}>
-              Save
-            </Button>
-            <Button size="sm" variant="outline" onClick={doValidate} disabled={!bbRunnable}>
-              Validate
-            </Button>
-            <Button size="sm" variant="outline" onClick={doRun} disabled={!bbRunnable}>
-              Run
-            </Button>
-            <Button size="sm" variant="outline" onClick={doDelete} disabled={!identity}>
-              Delete
-            </Button>
-          </div>
+        <div className="min-h-0 flex-1 overflow-y-auto p-4">
+          <SectionHeader
+            section="workflows"
+            onCreate={() => {
+              editorStore.newWorkflow();
+              setSelectedPath(null);
+              goTo(null);
+            }}
+          />
+          {/* Flat list: separation by project is already defined by "Area" in the Cloud Config header. */}
+          <WfList items={items} onOpen={openItem} open={identity} draft={draft} />
+        </div>
+      </div>
+
+      <ResizeHandle onPointerDown={startListResize} />
+
+      {/* Nothing open — the builder is the last column: it takes the rest of
+          the width instead of reserving room for a preview of nothing. */}
+      <div
+        style={nothingOpen ? undefined : { width: constructorWidth }}
+        className={cn(
+          "flex h-full min-h-0 min-w-0 flex-col overflow-hidden",
+          nothingOpen ? "flex-1" : "shrink-0",
+        )}
+      >
+        <div className="min-h-0 flex-1 overflow-hidden">
+          {nothingOpen ? (
+            <div className="flex h-full items-center justify-center px-4 text-center text-sm text-muted-foreground">
+              Pick a workflow on the left, or press + to start a new one.
+            </div>
+          ) : codeOnly ? (
+            <CodeOnlyView source={rawSource!} />
+          ) : (
+            <OutlineEditor
+              agents={agents}
+              selectedPath={selectedPath}
+              onSelect={setSelectedPath}
+            />
+          )}
+        </div>
+        {/* The workflow's own surface, so its actions belong to it — at the
+            foot of the tree they act on, not in a header above it. No tree,
+            no actions: Save and Delete would have nothing to work on. */}
+        {!nothingOpen && (
+        <div className="flex flex-col gap-2 border-t border-border p-2">
           {!codeOnly && invalidAgents > 0 && (
             <p className="text-xs text-muted-foreground">
               Workflow is invalid: {invalidAgents} {invalidAgents === 1 ? "agent" : "agents"} without a
               chosen template. Select an agent in the "Agents" column.
             </p>
           )}
+          <div className="flex items-center justify-between gap-1.5">
+            <ConfirmDelete
+              what="workflow"
+              detail={identity?.path ?? identity?.name ?? "The workflow"}
+              onDelete={doDelete}
+              trigger={(ask) => (
+                <Button size="sm" variant="outline" onClick={ask} disabled={!identity}>
+                  Delete
+                </Button>
+              )}
+            />
+            <Button
+              size="sm"
+              onClick={() => setSaveOpen(true)}
+              disabled={codeOnly || invalidAgents > 0}
+            >
+              Save
+            </Button>
+          </div>
         </div>
-        {output && (
-          <pre className="max-h-32 shrink-0 overflow-auto border-b border-border bg-muted p-2 text-xs text-foreground" aria-label="output">
-            {output}
+        )}
+      </div>
+
+      {!nothingOpen && <ResizeHandle onPointerDown={startConstructorResize} />}
+
+      {!nothingOpen && !codeOnly && !selAgent && !selGroup && (
+        // Nothing selected — the owner's third panel rule: show what the tree compiles to right now,
+        // instead of an empty column. Read-only; editing still happens in the builder / detail panels.
+        <div className="flex h-full min-h-0 min-w-0 flex-1 flex-col overflow-hidden border-l border-border">
+          <div className="shrink-0 border-b border-border px-3 py-1.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+            Compiles to
+          </div>
+          <pre className="min-h-0 flex-1 overflow-auto p-3 font-mono text-[11px] text-foreground">
+            {compile(tree, previewEngine)}
           </pre>
-        )}
-        <div className="min-h-0 flex-1 overflow-y-auto p-2">
-          <button
-            type="button"
-            onClick={() => {
-              editorStore.newWorkflow();
-              setSelectedPath(null);
-            }}
-            className="mb-3 flex w-full items-center justify-center rounded-md border border-border bg-muted/40 py-1.5 text-xs text-muted-foreground hover:text-foreground"
-          >
-            + New workflow
-          </button>
-          {/* Flat list: separation by project is already defined by "Area" in the Cloud Config header. */}
-          <WfList items={items} onOpen={openItem} activePath={identity?.path} />
         </div>
-      </div>
+      )}
 
-      <ResizeHandle onPointerDown={startListResize} />
-
-      <div style={{ width: constructorWidth }} className="h-full min-h-0 min-w-0 shrink-0 overflow-hidden">
-        {codeOnly ? (
-          <CodeOnlyView source={rawSource!} />
-        ) : (
-          <OutlineEditor
-            agents={agents}
-            selectedPath={selectedPath}
-            onSelect={setSelectedPath}
+      {!codeOnly && selGroup && (
+        // A phase/group header is selected — its settings take the whole panel (owner's rule), not a
+        // detail alongside something else.
+        <div className="flex h-full min-h-0 min-w-0 flex-1 flex-col overflow-hidden border-l border-border">
+          <GroupDetails
+            node={selGroup}
+            onSetField={(patch) => editorStore.update((draft) => setGroupSettings(draft, selectedPath!, patch))}
           />
-        )}
-      </div>
-
-      <ResizeHandle onPointerDown={startConstructorResize} />
+        </div>
+      )}
 
       {!codeOnly && selAgent && (
         // Column 4 — combined: agent list (template picker) or, after
@@ -1857,7 +2248,8 @@ function WorkflowsView({ rpc, areaId }: { rpc: Rpc; areaId: string }) {
                   — AgentDetails below has no header of its own, so the back
                   button is kept here separately. Once the file exists, it
                   moves into MdDocView's shared header (leading below) — so the
-                  arrow, file path, and "Edit" end up on one line. */}
+                  arrow, the file path and the mode switcher end up on one
+                  line. */}
               {!selAgentPath && (
                 <div className="flex shrink-0 items-center border-b border-border p-1">
                   <button
@@ -1886,17 +2278,6 @@ function WorkflowsView({ rpc, areaId }: { rpc: Rpc; areaId: string }) {
                           ←
                         </button>
                       }
-                      editButton={(onClick) => (
-                        <button
-                          type="button"
-                          onClick={onClick}
-                          className="mdo-btn mdo-btn-icon"
-                          aria-label="Edit"
-                          title="Edit"
-                        >
-                          <Icon name="Edit" className="size-4" />
-                        </button>
-                      )}
                     />
                   </div>
                   <HorizontalResizeHandle onPointerDown={startAgentFileResize} />
@@ -1925,6 +2306,8 @@ function WorkflowsView({ rpc, areaId }: { rpc: Rpc; areaId: string }) {
         defaultStore={identity?.store ?? (projectId ? "project" : "global")}
         onSaved={(nextIdentity) => {
           editorStore.load(structuredClone(editorStore.getSnapshot().tree), nextIdentity);
+          // A draft that just became a file belongs in the address.
+          goTo({ kind: "workflow", store: nextIdentity.store, name: nextIdentity.name });
           refresh();
         }}
       />
@@ -1936,23 +2319,25 @@ function ConfigPanel({ subPath }: PluginNavPanelProps) {
   const rpc = useRpc<typeof rpcContract>();
   const navigate = useBbNavigate();
   const [areas, setAreas] = useState<{ id: string; label: string }[]>([]);
-  const [areaId, setAreaId] = useState("global");
+  // Where the panel is — area, section, open file — is the address and
+  // nothing else (memory/decisions/panel-route-grammar.md). Leaving the panel
+  // unmounts it and bb hands back an empty address on return; putting the
+  // last one back is useRememberedRoute's job, below.
+  const { areaId, section, open } = parsePanelRoute(subPath);
   const [config, setConfig] = useState<AreaConfig | null>(null);
   const [loading, setLoading] = useState(true);
   const [notice, setNotice] = useState<string | null>(null);
   const [memory, setMemory] = useState<
     { id: string; label: string; path: string }[]
   >([]);
-  // Which creation dialog is open: skill, agent, or none.
-  const [createKind, setCreateKind] = useState<"skill" | "agent" | null>(null);
-  // Active section in the middle column; null → empty state.
-  const [section, setSection] = useState<SectionId | null>(null);
+  // Which creation dialog is open — one of the sections' create kinds, or
+  // none. "workflow" never lands here: the workflow builder creates in place,
+  // without a dialog.
+  const [createKind, setCreateKind] = useState<CreateKind | null>(null);
   // Enabled-skills mode — shared across the whole section (one dropdown in
   // the header, not per skill). Enabling a skill applies this mode.
   const [skillMode, setSkillMode] = useState<SkillMode>("on");
 
-  // What's open in the second column (for highlighting), if it belongs to this area.
-  const open = parseDocSubPath(subPath);
   // The rail and middle column (section list) — bounded, resizable width; the
   // handle sits on the right edge of each one (side "left"). The document
   // takes up the rest (flex-1) and has no handle of its own.
@@ -1970,13 +2355,47 @@ function ConfigPanel({ subPath }: PluginNavPanelProps) {
     side: "left",
     storageKey: "claude-config:section-width",
   });
-  const openHere = open && open.areaId === areaId ? open : null;
-  const selectedName = openHere?.kind === "skill" ? openHere.name : null;
-  const selectedPluginKey = openHere?.kind === "plugin" ? openHere.key : null;
-  const selectedConnector = openHere?.kind === "connector" ? openHere : null;
-  const selectedHook = openHere?.kind === "hook" ? openHere : null;
-  // Open file by path (plugin README or memory) — highlighted on match.
-  const openDocPath = openHere?.kind === "doc" ? openHere.path : null;
+  // The panel's place is remembered under one constant key: the whole place
+  // is the address now, so there is no second key that could change under
+  // the hook and no route to put back but the last one.
+  useRememberedRoute(
+    PANEL_PATH,
+    subPath,
+    useCallback(
+      (next: string) =>
+        navigate.toPluginPanel(PANEL_PATH, { subPath: next, replace: true }),
+      [navigate],
+    ),
+  );
+  // Every move in the panel goes through these two. `replace` is for putting
+  // a place back or dropping a file that no longer exists — not a step the
+  // user took, so not a step in their history.
+  const goPlace = useCallback(
+    (next: PanelPlace, replace = false) =>
+      navigate.toPluginPanel(PANEL_PATH, {
+        subPath: panelRoute(next),
+        replace,
+      }),
+    [navigate],
+  );
+  const goTo = useCallback<GoTo>(
+    (next, replace = false) => goPlace({ areaId, section, open: next }, replace),
+    [goPlace, areaId, section],
+  );
+  // Picking a section is a step of its own: Back walks sections, and a
+  // section is a link. It opens with nothing selected in it.
+  const openSection = (next: SectionId) =>
+    goPlace({ areaId, section: next, open: null });
+
+  // A workflow belongs to its own builder (WorkflowsView), everything else to
+  // the document column — two disjoint cases of one address.
+  const workflowTarget = open?.kind === "workflow" ? open : null;
+  const openDoc = open !== null && open.kind !== "workflow" ? open : null;
+  const selectedName = openDoc?.kind === "skill" ? openDoc.name : null;
+  const selectedConnector = openDoc?.kind === "connector" ? openDoc : null;
+  const selectedHook = openDoc?.kind === "hook" ? openDoc : null;
+  // Open file by path (plugin README, agent, or memory file) — highlighted on match.
+  const openDocPath = openDoc?.kind === "doc" ? openDoc.path : null;
 
   useEffect(() => {
     void rpc.call("listAreas").then((result) => {
@@ -1994,15 +2413,20 @@ function ConfigPanel({ subPath }: PluginNavPanelProps) {
     };
   }, [areaId, rpc]);
 
+  const [loadingSinceMs, setLoadingSinceMs] = useState<number | null>(null);
+  const [loadingElapsedMs, setLoadingElapsedMs] = useState(0);
+
   useEffect(() => {
     let alive = true;
     setLoading(true);
+    setLoadingSinceMs(Date.now());
     void rpc
       .call("getConfig", { areaId })
       .then((next) => {
         if (alive) {
           setConfig(next as AreaConfig);
           setLoading(false);
+          setLoadingSinceMs(null);
         }
       })
       // An RPC rejection (e.g. the output failed its own contract) left this
@@ -2012,6 +2436,7 @@ function ConfigPanel({ subPath }: PluginNavPanelProps) {
         if (alive) {
           setNotice(error instanceof Error ? error.message : "Failed to load.");
           setLoading(false);
+          setLoadingSinceMs(null);
         }
       });
     return () => {
@@ -2020,6 +2445,20 @@ function ConfigPanel({ subPath }: PluginNavPanelProps) {
     // Reset notice on area change — the old reason no longer applies.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [areaId, rpc]);
+
+  // Ticks while a request is in flight so the loading state can show how
+  // long the current attempt has been waiting — the RPC call itself has no
+  // timeout, so this is the only visible sign that it's still trying.
+  useEffect(() => {
+    if (loadingSinceMs === null) return;
+    const tick = () => setLoadingElapsedMs(Date.now() - loadingSinceMs);
+    tick();
+    const id = setInterval(tick, 250);
+    return () => clearInterval(id);
+  }, [loadingSinceMs]);
+
+  const loadingAreaLabel =
+    areas.find((area) => area.id === areaId)?.label ?? areaId;
 
   // Reloading after a write does NOT touch loading: the cards stay mounted,
   // values update in place — the page doesn't jump back to the top.
@@ -2049,6 +2488,8 @@ function ConfigPanel({ subPath }: PluginNavPanelProps) {
     void rpc.call("setSkill", { areaId, name, state }).then(handleResult);
   const setToolSearch = (mode: ToolSearchTarget) =>
     void rpc.call("setToolSearch", { areaId, mode }).then(handleResult);
+  const setSetting = (key: string, value: string | null) =>
+    void rpc.call("setSetting", { areaId, key, value }).then(handleResult);
   const setHookEnabled = (
     hook: {
       origin: HookOrigin;
@@ -2061,7 +2502,7 @@ function ConfigPanel({ subPath }: PluginNavPanelProps) {
   ) => {
     // Toggling moves the hook in or out of the level's flat hook list (cut
     // to/from the disabled kv store) — the same index-shift `saveHookDefinition`
-    // already guards against. If this exact hook is open, its subPath's index
+    // already guards against. If this exact hook is open, the address's index
     // is about to go stale; land back on the list rather than show a
     // confusing "not found" for a hook whose state just changed.
     if (
@@ -2070,7 +2511,7 @@ function ConfigPanel({ subPath }: PluginNavPanelProps) {
       selectedHook.event === hook.event &&
       selectedHook.index === hook.index
     ) {
-      navigate.toPluginPanel(PANEL_PATH, { subPath: "", replace: true });
+      goTo(null, true);
     }
     void rpc
       .call("setHookEnabled", {
@@ -2086,22 +2527,30 @@ function ConfigPanel({ subPath }: PluginNavPanelProps) {
 
   const changeArea = (id: string) => {
     setNotice(null);
-    setAreaId(id);
-    // The skill selection belongs to the previous area — clear it.
-    navigate.toPluginPanel(PANEL_PATH, { subPath: "", replace: true });
+    // The section carries over — the same rail row exists in every area — but
+    // what was open does not: that file belonged to the area being left.
+    goPlace({ areaId: id, section, open: null });
   };
-  // Skill, agent, document — real files: open with bb's native opener.
-  const openFile = useOpenFile(areaId);
-  const openPlugin = (key: string) =>
-    navigate.toPluginPanel(PANEL_PATH, { subPath: pluginSubPath(areaId, key) });
+  // Skill, agent, plugin README, document — real files: open with bb's native opener.
+  const openFile = useOpenFile(areaId, (path) => {
+    // Gone to a host tab: the section keeps whatever it had open.
+    if (path !== null) goTo({ kind: "doc", path });
+  });
+  // A memory file belongs to no section, so opening one leaves the section
+  // behind — in ONE navigation. Two (clear the section, then open the file)
+  // would now write the same address twice, and the second would put back the
+  // section the first had just dropped.
+  const openMemoryFile = useOpenFile(areaId, (path) =>
+    goPlace({
+      areaId,
+      section: null,
+      open: path === null ? null : { kind: "doc", path },
+    }),
+  );
   const openConnector = (origin: ConnectorOrigin, name: string) =>
-    navigate.toPluginPanel(PANEL_PATH, {
-      subPath: connectorSubPath(areaId, origin, name),
-    });
+    goTo({ kind: "connector", origin, name });
   const openHook = (origin: HookOrigin, index: number, event: string) =>
-    navigate.toPluginPanel(PANEL_PATH, {
-      subPath: hookSubPath(areaId, origin, index, event),
-    });
+    goTo({ kind: "hook", origin, index, event });
 
   // Creating a skill: on success, reload the list and open the new SKILL.md
   // with the native opener; otherwise the dialog stays open with a message
@@ -2129,23 +2578,126 @@ function ConfigPanel({ subPath }: PluginNavPanelProps) {
       return result.message ?? "Failed to create the agent.";
     });
 
+  // Creating a hook: there's no file to open — it's an entry in the settings
+  // file — so the new hook simply shows up in the list after the reload.
+  const createHook = (hook: {
+    event: string;
+    matcher: string | null;
+    command: string;
+  }): Promise<string | null> =>
+    rpc.call("createHook", { areaId, ...hook }).then((result) => {
+      if (result.outcome === "ok") {
+        setCreateKind(null);
+        reload();
+        return null;
+      }
+      return result.message ?? "Failed to create the hook.";
+    });
+
+  // A delete takes away what the third column was showing: land back on the
+  // list, reload the section.
+  const afterDelete = (result: WriteOutcome, what: string) => {
+    if (result.outcome === "ok") {
+      toast.success(`Deleted the ${what}.`);
+      goTo(null, true);
+    } else {
+      toast.error(result.message ?? `Failed to delete the ${what}.`);
+    }
+    // Reload either way: on failure the list shows the file's actual state.
+    reload();
+  };
+  const deleteSkill = (name: string) =>
+    void rpc
+      .call("removeSkill", { areaId, name })
+      .then((result) => afterDelete(result, "skill"));
+  const deleteAgent = (path: string) =>
+    void rpc
+      .call("removeAgent", { areaId, path })
+      .then((result) => afterDelete(result, "agent"));
+  const deleteHook = (hook: {
+    origin: HookOrigin;
+    event: string;
+    matcher: string | null;
+    command: string;
+  }) =>
+    void rpc
+      .call("removeHook", { areaId, ...hook })
+      .then((result) => afterDelete(result, "hook"));
+
   // Workflow count for the rail — from wfList for the current area (config doesn't carry it).
   const wfCount = useWfCount(rpc, areaId);
 
-  // Rail sections: id → title and item count. Derived from config so the
-  // rail and content don't drift apart. A null count — a section without a
-  // list.
-  const sections: { id: SectionId; title: string; count: number | null }[] =
+  // What's deletable in the third column: this area's own rows only — a
+  // plugin README or a memory file comes through the same column.
+  //
+  // A skill is matched by path: clicking one opens its SKILL.md as a plain
+  // document (see useOpenFile), so `openHere.kind` is "doc", not "skill" —
+  // matching by name alone left even the highlight off.
+  const openSkill =
+    config?.skills.find(
+      (skill) =>
+        skill.name === selectedName ||
+        (skill.path !== null && skill.path === openDocPath),
+    ) ?? null;
+  const openAgent =
+    openDocPath === null
+      ? null
+      : (config?.agents.find((agent) => agent.path === openDocPath) ?? null);
+  const openHookRow =
+    selectedHook === null
+      ? null
+      : (config?.hooks.find(
+          (hook) =>
+            hook.origin === selectedHook.origin &&
+            hook.event === selectedHook.event &&
+            hook.index === selectedHook.index,
+        ) ?? null);
+  const docActions =
+    openSkill !== null ? (
+      <ConfirmDelete
+        what="skill"
+        detail={`The skill "${openSkill.name}" and its whole folder`}
+        onDelete={() => deleteSkill(openSkill.name)}
+        trigger={deleteIconTrigger("skill")}
+      />
+    ) : openAgent !== null ? (
+      <ConfirmDelete
+        what="agent"
+        detail={`The agent "${openAgent.name}"`}
+        onDelete={() => deleteAgent(openAgent.path)}
+        trigger={deleteIconTrigger("agent")}
+      />
+    ) : openHookRow !== null ? (
+      <ConfirmDelete
+        what="hook"
+        detail={`The ${openHookRow.event} hook running "${openHookRow.command}"`}
+        onDelete={() =>
+          deleteHook({
+            origin: openHookRow.origin,
+            event: openHookRow.event,
+            matcher: openHookRow.matcher,
+            command: openHookRow.command,
+          })
+        }
+        trigger={deleteIconTrigger("hook")}
+      />
+    ) : null;
+
+  // Rail rows: the spec table (its titles are the ones the section header
+  // reads, so the two can't disagree) plus this area's counts. A null count —
+  // a section without a list to count.
+  const counts: Record<SectionId, number | null> = {
+    hooks: config?.hooks.length ?? null,
+    plugins: config?.plugins.length ?? null,
+    connectors: config?.connectors.length ?? null,
+    skills: config?.skills.length ?? null,
+    agents: config?.agents.length ?? null,
+    workflows: wfCount,
+    settings: null,
+  };
+  const sections =
     config && !config.error
-      ? [
-          { id: "hooks", title: "Hooks", count: config.hooks.length },
-          { id: "plugins", title: "Plugins", count: config.plugins.length },
-          { id: "connectors", title: "Connectors", count: config.connectors.length },
-          { id: "skills", title: "Skills", count: config.skills.length },
-          { id: "agents", title: "Agents", count: config.agents.length },
-          { id: "workflows", title: "Workflows", count: wfCount },
-          { id: "toolSearch", title: "Tool search", count: null },
-        ]
+      ? SECTION_SPECS.map((spec) => ({ ...spec, count: counts[spec.id] }))
       : [];
 
   return (
@@ -2176,23 +2728,19 @@ function ConfigPanel({ subPath }: PluginNavPanelProps) {
         {/* Outer navigation level: memory + sections. */}
         <nav
           style={{ width: railWidth }}
-          className="flex shrink-0 flex-col gap-4 overflow-y-auto p-2"
+          className="flex shrink-0 flex-col gap-4 overflow-y-auto p-4"
         >
           {memory.length > 0 && (
             <div>
-              <div className="px-2 pb-1 text-xs font-medium uppercase tracking-wide text-muted-foreground">
-                Memory
-              </div>
+              <ColumnHeading title="Memory" />
               {memory.map((entry) => (
                 <button
                   key={entry.id}
                   type="button"
                   title={entry.path}
-                  // A memory file supersedes the section: there should be no middle column.
-                  onClick={() => {
-                    setSection(null);
-                    void openFile(entry.path);
-                  }}
+                  // A memory file supersedes the section: there should be no
+                  // middle column, so the place it opens into has none.
+                  onClick={() => void openMemoryFile(entry.path)}
                   className={cn(
                     "flex w-full items-center rounded-md px-2 py-1.5 text-left text-sm transition-colors hover:bg-muted",
                     openDocPath === entry.path && "bg-accent",
@@ -2205,23 +2753,15 @@ function ConfigPanel({ subPath }: PluginNavPanelProps) {
           )}
 
           <div>
-            <div className="px-2 pb-1 text-xs font-medium uppercase tracking-wide text-muted-foreground">
-              Sections
-            </div>
+            <ColumnHeading title="Sections" />
             {sections.map((item) => (
               <button
                 key={item.id}
                 type="button"
-                // Changing the section clears both the list (it re-renders)
-                // and the document (close the open file — the 3rd column
-                // empties).
-                onClick={() => {
-                  setSection(item.id);
-                  navigate.toPluginPanel(PANEL_PATH, {
-                    subPath: "",
-                    replace: true,
-                  });
-                }}
+                // Changing the section re-renders the list and puts back
+                // whatever that section had open (nothing, for a section not
+                // visited yet).
+                onClick={() => openSection(item.id)}
                 className={cn(
                   "flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm transition-colors hover:bg-muted",
                   section === item.id && "bg-accent",
@@ -2241,8 +2781,11 @@ function ConfigPanel({ subPath }: PluginNavPanelProps) {
         <ResizeHandle onPointerDown={startRailResize} />
 
         {loading ? (
-          <div className="flex min-h-0 flex-1 items-center justify-center text-sm text-muted-foreground">
-            Loading…
+          <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-1 text-sm text-muted-foreground">
+            <span>Connecting to {loadingAreaLabel}…</span>
+            <span className="text-xs tabular-nums">
+              {(loadingElapsedMs / 1000).toFixed(1)}s
+            </span>
           </div>
         ) : config?.error ? (
           <div className="min-h-0 flex-1 overflow-y-auto p-4 md:p-5">
@@ -2250,13 +2793,18 @@ function ConfigPanel({ subPath }: PluginNavPanelProps) {
               Failed to parse file {config.error.file}: {config.error.message}
             </div>
           </div>
-        ) : open && section === null ? (
+        ) : openDoc && section === null ? (
           // Memory file: the document takes the full remaining width, no middle column.
           <div className="min-h-0 flex-1 overflow-hidden">
-            <DocTab subPath={subPath} />
+            <DocTab areaId={areaId} target={openDoc} goTo={goTo} />
           </div>
         ) : section === "workflows" ? (
-          <WorkflowsView rpc={rpc} areaId={areaId} />
+          <WorkflowsView
+            rpc={rpc}
+            areaId={areaId}
+            target={workflowTarget}
+            goTo={goTo}
+          />
         ) : section !== null ? (
           <>
             {/* Middle column — the section list, bounded resizable width. */}
@@ -2267,7 +2815,10 @@ function ConfigPanel({ subPath }: PluginNavPanelProps) {
               <div className="space-y-4">
             {config && !config.error && section === "hooks" && (
               <div>
-                <h2 className="mb-2 text-sm font-semibold">Hooks</h2>
+                <SectionHeader
+                  section="hooks"
+                  onCreate={() => setCreateKind("hook")}
+                />
                 {config.hooks.length === 0 ? (
                   <p className="text-sm text-muted-foreground">
                     No hooks found.
@@ -2342,9 +2893,7 @@ function ConfigPanel({ subPath }: PluginNavPanelProps) {
 
             {!loading && config && !config.error && section === "plugins" && (
               <div>
-                <h2 className="mb-2 text-sm font-semibold">
-                  Claude Code plugins
-                </h2>
+                <SectionHeader section="plugins" />
                 {config.plugins.length === 0 && (
                   <p className="text-sm text-muted-foreground">
                     No installed plugins found.
@@ -2357,14 +2906,20 @@ function ConfigPanel({ subPath }: PluginNavPanelProps) {
                       className={cn(
                         "flex items-center gap-3 rounded-md px-2 py-1.5 transition-colors",
                         plugin.installPath && "hover:bg-muted",
-                        selectedPluginKey === plugin.key && "bg-accent",
+                        plugin.readmePath != null &&
+                          openDocPath === plugin.readmePath &&
+                          "bg-accent",
                         plugin.dimmed && "opacity-60",
                       )}
                     >
                       {plugin.installPath ? (
                         <button
                           type="button"
-                          onClick={() => openPlugin(plugin.key)}
+                          onClick={() =>
+                            plugin.readmePath
+                              ? void openFile(plugin.readmePath)
+                              : toast.error("Plugin has no README.")
+                          }
                           className="min-w-0 flex-1 text-left"
                         >
                           <div className="truncate text-sm font-medium">
@@ -2396,7 +2951,7 @@ function ConfigPanel({ subPath }: PluginNavPanelProps) {
 
             {!loading && config && !config.error && section === "connectors" && (
               <div>
-                <h2 className="mb-2 text-sm font-semibold">Connectors</h2>
+                <SectionHeader section="connectors" />
                 {config.connectors.length === 0 && (
                   <p className="text-sm text-muted-foreground">
                     No connectors found.
@@ -2455,17 +3010,10 @@ function ConfigPanel({ subPath }: PluginNavPanelProps) {
 
             {!loading && config && !config.error && section === "skills" && (
               <div>
-                <div className="mb-2 flex items-center justify-between gap-2">
-                  <h2 className="text-sm font-semibold">Skills</h2>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => setCreateKind("skill")}
-                  >
-                    <Icon name="Plus" />
-                    New skill
-                  </Button>
-                </div>
+                <SectionHeader
+                  section="skills"
+                  onCreate={() => setCreateKind("skill")}
+                />
                 {/* Mode is shared for the section: applied to all enabled
                     skills and to each one being enabled. Shown as its own
                     labeled row. */}
@@ -2496,7 +3044,7 @@ function ConfigPanel({ subPath }: PluginNavPanelProps) {
                       key={skill.name}
                       className={cn(
                         "flex items-center gap-3 rounded-md px-2 py-1.5 transition-colors hover:bg-muted",
-                        selectedName === skill.name && "bg-accent",
+                        openSkill?.name === skill.name && "bg-accent",
                         skill.dimmed && "opacity-60",
                       )}
                     >
@@ -2534,17 +3082,10 @@ function ConfigPanel({ subPath }: PluginNavPanelProps) {
 
             {!loading && config && !config.error && section === "agents" && (
               <div>
-                <div className="mb-2 flex items-center justify-between gap-2">
-                  <h2 className="text-sm font-semibold">Agents</h2>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => setCreateKind("agent")}
-                  >
-                    <Icon name="Plus" />
-                    New agent
-                  </Button>
-                </div>
+                <SectionHeader
+                  section="agents"
+                  onCreate={() => setCreateKind("agent")}
+                />
                 {config.agents.length === 0 && (
                   <p className="text-sm text-muted-foreground">
                     No agents found.
@@ -2576,32 +3117,48 @@ function ConfigPanel({ subPath }: PluginNavPanelProps) {
               </div>
             )}
 
-            {!loading && config && !config.error && section === "toolSearch" && (
-              <div className={cn(config.toolSearch.dimmed && "opacity-60")}>
-                <h2 className="mb-2 text-sm font-semibold">
-                  Tool search
-                </h2>
+            {!loading && config && !config.error && section === "settings" && (
+              <div>
+                <SectionHeader section="settings" />
                 <p className="mb-3 text-xs text-muted-foreground">
-                  Plugin and MCP tool schemas aren't all loaded into context at
-                  once — only the list of names is visible, and the full schema
-                  is fetched on demand when a tool is needed. Saves context,
-                  especially with many MCP servers. "Always" — defer loading
-                  always; "Automatic" — only when there are many tools; off —
-                  load all schemas up front.
+                  The rest of settings.json — everything not already covered
+                  by Hooks, Plugins, Connectors, Skills, or Agents.
                 </p>
-                <div className="flex shrink-0 items-center gap-3">
-                  <Dropdown
-                    value={config.toolSearch.mode}
-                    options={TOOL_SEARCH_MODE_OPTIONS}
-                    disabled={!config.toolSearch.enabled}
-                    onChange={(mode) => setToolSearch(mode)}
-                  />
-                  <Switch
-                    checked={config.toolSearch.enabled}
-                    onChange={(next) =>
-                      setToolSearch(next ? config.toolSearch.mode : "off")
-                    }
-                  />
+
+                <div className={cn("mb-4", config.toolSearch.dimmed && "opacity-60")}>
+                  <div className="text-sm font-medium">Tool search</div>
+                  <p className="mb-2 text-xs text-muted-foreground">
+                    Plugin and MCP tool schemas aren't all loaded into context
+                    at once — only the list of names is visible, and the full
+                    schema is fetched on demand when a tool is needed. Saves
+                    context, especially with many MCP servers. "Always" —
+                    defer loading always; "Automatic" — only when there are
+                    many tools; off — load all schemas up front.
+                  </p>
+                  <div className="flex shrink-0 items-center gap-3">
+                    <Dropdown
+                      value={config.toolSearch.mode}
+                      options={TOOL_SEARCH_MODE_OPTIONS}
+                      disabled={!config.toolSearch.enabled}
+                      onChange={(mode) => setToolSearch(mode)}
+                    />
+                    <Switch
+                      checked={config.toolSearch.enabled}
+                      onChange={(next) =>
+                        setToolSearch(next ? config.toolSearch.mode : "off")
+                      }
+                    />
+                  </div>
+                </div>
+
+                <div className="space-y-1">
+                  {config.settings.map((setting) => (
+                    <SettingField
+                      key={setting.key}
+                      setting={setting}
+                      onChange={(value) => setSetting(setting.key, value)}
+                    />
+                  ))}
                 </div>
               </div>
             )}
@@ -2611,8 +3168,13 @@ function ConfigPanel({ subPath }: PluginNavPanelProps) {
             {/* Divider between the middle column and the document — takes the rest of the width. */}
             <ResizeHandle onPointerDown={startMidResize} />
             <div className="min-h-0 flex-1 overflow-hidden">
-              {open ? (
-                <DocTab subPath={subPath} />
+              {openDoc ? (
+                <DocTab
+                  areaId={areaId}
+                  target={openDoc}
+                  goTo={goTo}
+                  actions={docActions}
+                />
               ) : (
                 <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
                   Select an item from the list
@@ -2641,6 +3203,11 @@ function ConfigPanel({ subPath }: PluginNavPanelProps) {
         description="Creates an agent file and opens it for editing."
         onClose={() => setCreateKind(null)}
         onCreate={createAgent}
+      />
+      <HookCreateDialog
+        open={createKind === "hook"}
+        onClose={() => setCreateKind(null)}
+        onCreate={createHook}
       />
     </div>
   );

@@ -9,11 +9,13 @@ import type {
 import {
   PR_STATE_META,
   THREAD_STATUS_META,
-  formatRelativeTime,
   isActiveThread,
-} from "./meta.js";
+} from "../../components/task-meta.js";
+import { formatRelativeTime } from "../../shared/format.js";
 import { PresetDialog, savePresetDraft } from "../manage/preset-dialog.js";
-import { useTasksRpc } from "../../shell/data.js";
+import { useTasksRpc } from "../../client/data.js";
+import { useCallerThreadId } from "../../client/caller-thread.js";
+import { addCallerThread } from "../../shared/enums.js";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -93,10 +95,19 @@ function ThreadCard({
         />
         {meta.label}
       </span>
+      {thread.archivedAt !== null ? (
+        <span
+          title={`Archived ${formatRelativeTime(thread.archivedAt, Date.now())}`}
+          className="flex shrink-0 items-center gap-1 text-xs font-medium text-muted-foreground"
+        >
+          <Icon name="Archive" className="size-3" />
+          Archived
+        </span>
+      ) : null}
       <div className="min-w-0 flex-1">
         <div className="truncate text-sm font-medium">{thread.title}</div>
         <div className="text-xs text-muted-foreground">
-          {thread.presetName} · attached {formatRelativeTime(thread.attachedAt)}
+          {thread.presetName} · attached {formatRelativeTime(thread.attachedAt, Date.now())}
         </div>
       </div>
       <ThreadPullRequestPill
@@ -160,6 +171,7 @@ export function DispatchControl({
   className,
 }: DispatchControlProps) {
   const rpc = useRpc<DelegationRpcContract>();
+  const callerThreadId = useCallerThreadId();
   const tasksRpc = useTasksRpc();
   const [dispatching, setDispatching] = useState(false);
   const [lastPresetId, setLastPresetId] = useState(loadLastPresetId);
@@ -169,7 +181,15 @@ export function DispatchControl({
   const dispatch = async (presetId: string) => {
     setDispatching(true);
     try {
-      await rpc.call("delegate", { taskId, presetId });
+      // Панель треда работает с его деревом, и делегирование — тоже:
+      // без треда задача ветки для сервера не существует.
+      await rpc.call(
+        "delegate",
+        addCallerThread("delegate", { taskId, presetId }, callerThreadId) as {
+          taskId: string;
+          presetId: string;
+        },
+      );
     } catch (error) {
       onError(error instanceof Error ? error.message : String(error));
     } finally {

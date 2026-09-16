@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   aheadCountArgs,
   baseTreeArgs,
+  headShaArgs,
   fastForwardAtArgs,
   fastForwardArgs,
   fetchBaseAtArgs,
@@ -16,16 +17,24 @@ describe("git-commands", () => {
     expect(fetchBaseArgs("main")).toEqual(["fetch", "origin", "main"]);
   });
 
-  it("aheadCountArgs — rev-list --count of HEAD's commits ahead of origin/<base>", () => {
-    expect(aheadCountArgs("main")).toEqual(["rev-list", "--count", "origin/main..HEAD"]);
+  it("aheadCountArgs — rev-list --count of HEAD's commits ahead of the ref", () => {
+    expect(aheadCountArgs("origin/main")).toEqual(["rev-list", "--count", "origin/main..HEAD"]);
   });
 
-  it("fastForwardArgs — merge --ff-only onto origin/<base>", () => {
-    expect(fastForwardArgs("main")).toEqual(["merge", "--ff-only", "origin/main"]);
+  it("aheadCountArgs — a bare local ref (base mode: local) is used as is", () => {
+    expect(aheadCountArgs("main")).toEqual(["rev-list", "--count", "main..HEAD"]);
   });
 
-  it("a base name with a slash is kept as is", () => {
-    expect(fastForwardArgs("release/1.2")).toEqual([
+  it("fastForwardArgs — merge --ff-only onto the ref", () => {
+    expect(fastForwardArgs("origin/main")).toEqual(["merge", "--ff-only", "origin/main"]);
+  });
+
+  it("fastForwardArgs — a bare local ref (base mode: local) is used as is", () => {
+    expect(fastForwardArgs("main")).toEqual(["merge", "--ff-only", "main"]);
+  });
+
+  it("a ref with a slash is kept as is", () => {
+    expect(fastForwardArgs("origin/release/1.2")).toEqual([
       "merge",
       "--ff-only",
       "origin/release/1.2",
@@ -60,8 +69,8 @@ describe("git-commands", () => {
     ]);
   });
 
-  it("mergeTreeArgs — merge HEAD into origin/<base> without a working copy", () => {
-    expect(mergeTreeArgs("main")).toEqual([
+  it("mergeTreeArgs — merge HEAD into the ref without a working copy", () => {
+    expect(mergeTreeArgs("origin/main")).toEqual([
       "merge-tree",
       "--write-tree",
       "origin/main",
@@ -69,17 +78,29 @@ describe("git-commands", () => {
     ]);
   });
 
-  it("baseTreeArgs — rev-parse of the base's own tree", () => {
-    expect(baseTreeArgs("main")).toEqual(["rev-parse", "origin/main^{tree}"]);
+  it("mergeTreeArgs — a bare local ref (base mode: local) is used as is", () => {
+    expect(mergeTreeArgs("main")).toEqual(["merge-tree", "--write-tree", "main", "HEAD"]);
   });
 
-  it("a base name with a slash is kept as is in the content commands too", () => {
-    expect(mergeTreeArgs("release/1.2")).toEqual([
+  it("baseTreeArgs — rev-parse of the base ref's own tree", () => {
+    expect(baseTreeArgs("origin/main")).toEqual(["rev-parse", "origin/main^{tree}"]);
+  });
+
+  it("baseTreeArgs — a bare local ref (base mode: local) is used as is", () => {
+    expect(baseTreeArgs("main")).toEqual(["rev-parse", "main^{tree}"]);
+  });
+
+  it("headShaArgs — the local HEAD, asked without a base and without the network", () => {
+    expect(headShaArgs()).toEqual(["rev-parse", "HEAD"]);
+  });
+
+  it("a ref with a slash is kept as is in the content commands too", () => {
+    expect(mergeTreeArgs("origin/release/1.2")).toEqual([
       "merge-tree",
       "--write-tree",
       "origin/release/1.2",
       "HEAD",
     ]);
-    expect(baseTreeArgs("release/1.2")).toEqual(["rev-parse", "origin/release/1.2^{tree}"]);
+    expect(baseTreeArgs("origin/release/1.2")).toEqual(["rev-parse", "origin/release/1.2^{tree}"]);
   });
 });

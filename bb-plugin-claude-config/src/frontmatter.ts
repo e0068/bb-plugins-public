@@ -55,34 +55,6 @@ export function serializeFrontmatter(
   return ["---", ...block, "---", body].join("\n");
 }
 
-// A plugin's "frontmatter" is its JSON manifest (plugin.json). We parse
-// top-level fields into the same entry shape as YAML: primitives as a
-// string, objects and arrays as compact JSON. Invalid JSON or a non-object
-// → empty.
-export function fieldsFromJson(text: string): FrontmatterEntry[] {
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(text);
-  } catch {
-    return [];
-  }
-  if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
-    return [];
-  }
-  return Object.entries(parsed as Record<string, unknown>).map(
-    ([key, value]) => ({
-      kind: "field" as const,
-      key,
-      value:
-        typeof value === "string"
-          ? value
-          : typeof value === "number" || typeof value === "boolean"
-            ? String(value)
-            : JSON.stringify(value),
-    }),
-  );
-}
-
 // Replaces the value of the i-th field — pure, returns a new array (for setState).
 export function setFieldValue(
   entries: FrontmatterEntry[],

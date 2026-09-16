@@ -15,8 +15,11 @@ function task(overrides: Partial<Task> = {}): Task {
     priority: "none",
     type: null,
     estimate: null,
-    planTokens: null,
-    factTokens: null,
+    plannedMinutes: null,
+    actualMinutes: null,
+    budget: null,
+    budgetLimit: null,
+    cost: null,
     dueDate: null,
     parentTaskId: null,
     position: 1,
@@ -46,6 +49,13 @@ describe("isRowFieldEmpty", () => {
     expect(isRowFieldEmpty("active", task(), { ...CTX, activeCount: 1 })).toBe(false);
   });
 
+  it("assignee and epic are empty exactly when the task sits outside such a folder", () => {
+    expect(isRowFieldEmpty("assignee", task(), CTX)).toBe(true);
+    expect(isRowFieldEmpty("epic", task({ assignee: "Claude", epic: null }), CTX)).toBe(true);
+    expect(isRowFieldEmpty("assignee", task({ assignee: "Claude" }), CTX)).toBe(false);
+    expect(isRowFieldEmpty("epic", task({ assignee: "Claude", epic: "Tasks+" }), CTX)).toBe(false);
+  });
+
   it("createdAt and updatedAt (Edited) are never empty — every task has both", () => {
     expect(isRowFieldEmpty("createdAt", task(), CTX)).toBe(false);
     expect(isRowFieldEmpty("updatedAt", task({ status: "todo" }), CTX)).toBe(false);
@@ -53,10 +63,15 @@ describe("isRowFieldEmpty", () => {
     expect(isRowFieldEmpty("updatedAt", task({ status: "done" }), CTX)).toBe(false);
   });
 
-  it("tokens is empty only when both plan and fact are absent", () => {
-    expect(isRowFieldEmpty("tokens", task(), CTX)).toBe(true);
-    expect(isRowFieldEmpty("tokens", task({ planTokens: 10 }), CTX)).toBe(false);
-    expect(isRowFieldEmpty("tokens", task({ factTokens: 10 }), CTX)).toBe(false);
+  it.each([
+    ["plannedMinutes"],
+    ["actualMinutes"],
+    ["budget"],
+    ["budgetLimit"],
+    ["cost"],
+  ] as const)("%s is empty only while its own value is absent — zero counts", (field) => {
+    expect(isRowFieldEmpty(field, task(), CTX)).toBe(true);
+    expect(isRowFieldEmpty(field, task({ [field]: 0 }), CTX)).toBe(false);
   });
 
   it("project depends on the surface showing a resolved project", () => {
@@ -93,21 +108,14 @@ describe("planRowFields", () => {
     expect(cells.map((cell) => cell.field)).not.toContain("labels");
   });
 
-  it("renders placeholders for empty visible fields when showEmpty is on", () => {
+  it("renders a placeholder for every default-visible field of a bare task when showEmpty is on", () => {
     const config: FieldDisplayConfig = { ...defaultConfig("list"), showEmpty: true };
     const cells = planRowFields(config, task(), CTX);
-    // Every default-visible field is empty for a bare task → all placeholders.
     expect(cells.length).toBeGreaterThan(0);
     expect(cells.every((cell) => cell.mode === "placeholder")).toBe(true);
-    expect(cells.map((cell) => cell.field)).toEqual([
-      "active",
-      "type",
-      "estimate",
-      "labels",
-      "tokens",
-      "dueDate",
-      "project",
-    ]);
+    expect(cells.map((cell) => cell.field)).toEqual(
+      config.fields.filter((entry) => entry.visible).map((entry) => entry.field),
+    );
   });
 
   it("mixes values and placeholders by each field's own emptiness", () => {

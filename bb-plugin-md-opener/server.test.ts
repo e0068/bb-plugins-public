@@ -1,6 +1,10 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 
+import {
+  resetRevealExecFileProvider,
+  revealExecFileProvider,
+} from "./packages/reveal-in-finder";
 import plugin, { type rpcContract } from "./server";
 
 type Handlers = {
@@ -14,6 +18,10 @@ type Handlers = {
     content: string;
     expectedSha256: string | null;
   }) => Promise<{ outcome: string; sha256: string | null; message: string | null }>;
+  revealDoc: (input: {
+    path: string;
+    source: unknown;
+  }) => Promise<{ revealed: boolean; error: string | null }>;
 };
 
 interface FsFile {
@@ -22,7 +30,11 @@ interface FsFile {
 }
 
 // A virtual filesystem keyed by absolute paths + a bb mock that exposes the captured RPC handlers.
-function setup(files: Record<string, FsFile>, env = { path: "/env", hostId: "h1" }) {
+function setup(
+  files: Record<string, FsFile>,
+  env = { path: "/env", hostId: "h1" },
+  primaryHostId: string | null = "h1",
+) {
   let handlers!: Handlers;
   const write = vi.fn(
     async (args: { path: string; content: string; expectedSha256: string | null }) => {
@@ -46,6 +58,7 @@ function setup(files: Record<string, FsFile>, env = { path: "/env", hostId: "h1"
     sdk: {
       environments: { get: vi.fn(async () => env) },
       threads: { storageFiles: vi.fn(async () => ({ storageRootPath: "/store" })) },
+      system: { config: vi.fn(async () => ({ primaryHostId })) },
       files: {
         read: vi.fn(async (args: { path: string }) => {
           const f = files[args.path];
@@ -167,5 +180,84 @@ describe("writeDoc", () => {
       expectedSha256: null,
     });
     expect(res.outcome).toBe("denied");
+  });
+});
+
+// revealDoc shells out to `open -R` (node:child_process.execFile). These
+// tests swap in a fake execFile via the shared package's provider seam (see
+// packages/reveal-in-finder/index.ts) so the handler wiring is exercised
+// without ever spawning a real Finder process.
+describe("revealDoc", () => {
+  const revealCalls: { file: string; args: readonly string[] }[] = [];
+
+  beforeEach(() => {
+    revealCalls.length = 0;
+    revealExecFileProvider.current = (file, args, callback) => {
+      revealCalls.push({ file, args });
+      callback(null);
+    };
+  });
+
+  afterEach(() => {
+    resetRevealExecFileProvider();
+  });
+
+  it("reveals a file whose environment's host matches the server's primary host", async () => {
+    // The realistic shape: environments.get().hostId is a required string in
+    // the SDK, never undefined, for a workspace tab. "Local" means it equals
+    // the server's own primaryHostId, not that hostId is absent.
+    const { handlers } = setup(
+      { "/env/doc.md": { content: "x", sha256: "s" } },
+      { path: "/env", hostId: "h1" },
+      "h1",
+    );
+    const res = await handlers.revealDoc({ path: "/env/doc.md", source: workspace });
+    expect(res).toEqual({ revealed: true, error: null });
+    expect(revealCalls).toEqual([{ file: "open", args: ["-R", "/env/doc.md"] }]);
+  });
+
+  it("a source with no environment at all (undefined hostId) is treated as local", async () => {
+    const { handlers } = setup(
+      { "/abs/doc.md": { content: "x", sha256: "s" } },
+      { path: "/env", hostId: "h1" },
+      "h1",
+    );
+    const res = await handlers.revealDoc({
+      path: "/abs/doc.md",
+      source: { kind: "host", threadId: null, environmentId: null, projectId: null },
+    });
+    expect(res).toEqual({ revealed: true, error: null });
+  });
+
+  it("refuses a source whose environment host differs from the server's primary host", async () => {
+    const { handlers } = setup(
+      { "/env/doc.md": { content: "x", sha256: "s" } },
+      { path: "/env", hostId: "h2" },
+      "h1",
+    );
+    const res = await handlers.revealDoc({ path: "/env/doc.md", source: workspace });
+    expect(res.revealed).toBe(false);
+    expect(res.error).toMatch(/local/);
+    expect(revealCalls).toEqual([]);
+  });
+
+  it("refuses when the server has no primary host, without shelling out", async () => {
+    const { handlers } = setup(
+      { "/env/doc.md": { content: "x", sha256: "s" } },
+      { path: "/env", hostId: "h1" },
+      null,
+    );
+    const res = await handlers.revealDoc({ path: "/env/doc.md", source: workspace });
+    expect(res.revealed).toBe(false);
+    expect(res.error).toMatch(/local/);
+    expect(revealCalls).toEqual([]);
+  });
+
+  it("refuses a path outside the source root, without shelling out", async () => {
+    const { handlers } = setup({}, { path: "/env", hostId: "h1" }, "h1");
+    const res = await handlers.revealDoc({ path: "/etc/passwd", source: workspace });
+    expect(res.revealed).toBe(false);
+    expect(res.error).toBe("Path is outside the source root.");
+    expect(revealCalls).toEqual([]);
   });
 });

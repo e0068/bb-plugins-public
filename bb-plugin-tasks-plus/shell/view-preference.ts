@@ -1,4 +1,4 @@
-import type { TaskViewMode } from "./routes.js";
+import type { TaskViewMode } from "../client/routes.js";
 
 /**
  * Client-local List/Board choice per project. Stored in the browser profile so

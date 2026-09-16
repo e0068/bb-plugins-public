@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import type { ResolvedBase } from "../core/base-branch";
 import { checkMergedContent } from "./merged-content";
 import type { GitPorts, GitRun } from "./git-run";
 
@@ -7,6 +8,9 @@ const OTHER_TREE = "1a2b3c4d5e6f708192a3b4c5d6e7f8091a2b3c4d";
 
 const ok = (stdout = ""): GitRun => ({ code: 0, stdout, stderr: "" });
 const fail = (code = 1, stderr = "boom"): GitRun => ({ code, stdout: "", stderr });
+
+const originMain: ResolvedBase = { mode: "origin", statusBase: "origin/main", githubBase: "main" };
+const localMain: ResolvedBase = { mode: "local", statusBase: "main", githubBase: "main" };
 
 /** Records the argv of every call and answers from the queue in order. */
 function fakeGit(answers: readonly GitRun[]): GitPorts & { calls: string[][] } {
@@ -21,11 +25,11 @@ function fakeGit(answers: readonly GitRun[]): GitPorts & { calls: string[][] } {
   };
 }
 
-describe("checkMergedContent", () => {
+describe("checkMergedContent — mode origin", () => {
   it("fetches the base first, then measures — a stale ref would lie", async () => {
     const git = fakeGit([ok(), ok(`${TREE}\n`), ok(`${TREE}\n`)]);
 
-    expect(await checkMergedContent(git, "main")).toBe("merged");
+    expect(await checkMergedContent(git, originMain)).toBe("merged");
     expect(git.calls).toEqual([
       ["fetch", "origin", "main"],
       ["merge-tree", "--write-tree", "origin/main", "HEAD"],
@@ -36,13 +40,13 @@ describe("checkMergedContent", () => {
   it("the merge result differs from the base tree → the branch has its own content", async () => {
     const git = fakeGit([ok(), ok(`${OTHER_TREE}\n`), ok(`${TREE}\n`)]);
 
-    expect(await checkMergedContent(git, "main")).toBe("not-merged");
+    expect(await checkMergedContent(git, originMain)).toBe("not-merged");
   });
 
   it("a conflict is an answer, and the base tree is not even asked for", async () => {
     const git = fakeGit([ok(), { code: 1, stdout: `${OTHER_TREE}\n`, stderr: "" }]);
 
-    expect(await checkMergedContent(git, "main")).toBe("not-merged");
+    expect(await checkMergedContent(git, originMain)).toBe("not-merged");
     expect(git.calls).toHaveLength(2);
   });
 
@@ -53,25 +57,47 @@ describe("checkMergedContent", () => {
   it("a failed fetch stops the check — no measuring against a stale ref", async () => {
     const git = fakeGit([fail(128, "could not resolve host")]);
 
-    expect(await checkMergedContent(git, "main")).toBe("unknown");
+    expect(await checkMergedContent(git, originMain)).toBe("unknown");
     expect(git.calls).toEqual([["fetch", "origin", "main"]]);
   });
 
   it("a git failure inside the measurement gives no answer", async () => {
     const git = fakeGit([ok(), fail(128), ok(`${TREE}\n`)]);
 
-    expect(await checkMergedContent(git, "main")).toBe("unknown");
+    expect(await checkMergedContent(git, originMain)).toBe("unknown");
   });
 
   it("a base name with a slash reaches git unchanged", async () => {
     const git = fakeGit([ok(), ok(`${TREE}\n`), ok(`${TREE}\n`)]);
 
-    await checkMergedContent(git, "release/1.2");
+    await checkMergedContent(git, {
+      mode: "origin",
+      statusBase: "origin/release/1.2",
+      githubBase: "release/1.2",
+    });
     expect(git.calls[1]).toEqual([
       "merge-tree",
       "--write-tree",
       "origin/release/1.2",
       "HEAD",
     ]);
+  });
+});
+
+describe("checkMergedContent — mode local", () => {
+  it("no fetch — measures straight against the bare local ref", async () => {
+    const git = fakeGit([ok(`${TREE}\n`), ok(`${TREE}\n`)]);
+
+    expect(await checkMergedContent(git, localMain)).toBe("merged");
+    expect(git.calls).toEqual([
+      ["merge-tree", "--write-tree", "main", "HEAD"],
+      ["rev-parse", "main^{tree}"],
+    ]);
+  });
+
+  it("the merge result differs from the base tree → the branch has its own content", async () => {
+    const git = fakeGit([ok(`${OTHER_TREE}\n`), ok(`${TREE}\n`)]);
+
+    expect(await checkMergedContent(git, localMain)).toBe("not-merged");
   });
 });

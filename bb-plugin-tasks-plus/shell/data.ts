@@ -19,6 +19,7 @@ export interface TaskListQuery {
   priorities?: TaskPriority[];
   labelIds?: string[];
   activeOnly?: boolean;
+  waitingOnly?: boolean;
   parentTaskId?: string | null;
   search?: string;
   sort?: TaskSort;
@@ -229,6 +230,14 @@ export function useMentionItems() {
 export function useActiveTasks() {
   return useTasksQuery(
     async (rpc) => listAllTasks(rpc, { activeOnly: true }),
+    ["tasks:changed", "threads:changed"],
+  );
+}
+
+/** Tasks with an idle, non-archived thread, for the Waiting view count. */
+export function useWaitingTasks() {
+  return useTasksQuery(
+    async (rpc) => listAllTasks(rpc, { waitingOnly: true }),
     ["tasks:changed", "threads:changed"],
   );
 }

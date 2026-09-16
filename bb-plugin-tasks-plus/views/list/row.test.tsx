@@ -64,6 +64,15 @@ function task(overrides: Partial<Task> & Pick<Task, "id" | "number">): Task {
     createdAt: "2026-07-15T00:00:00.000Z",
     updatedAt: "2026-07-15T00:00:00.000Z",
     labelIds: [],
+    type: null,
+    estimate: null,
+    plannedMinutes: null,
+    actualMinutes: null,
+    budget: null,
+    budgetLimit: null,
+    cost: null,
+    checks: [],
+    source: null,
     ...overrides,
   };
 }
@@ -227,5 +236,37 @@ describe("inline row editing", () => {
     expect(slot.rpcCalls.some((call) => call.method === "updateTask")).toBe(
       false,
     );
+  });
+});
+
+describe("time and money chips", () => {
+  it("draws each filled time and money field with its own format, skipping empty ones", async () => {
+    const slot = renderList([
+      task({ id: "01HZT1", number: 1, plannedMinutes: 150, actualMinutes: null, budget: 34.1, budgetLimit: null, cost: 41 }),
+    ]);
+    const row = await rowFor(slot, "TSK-1");
+
+    expect(within(row).getByTitle("Planned Time: 2h 30m").textContent).toBe("2h 30m");
+    expect(within(row).getByTitle("Budget: $34.10").textContent).toBe("$34.10");
+    expect(within(row).getByTitle("Cost: $41").textContent).toBe("$41");
+    expect(within(row).queryByTitle(/^Actual Time/)).toBeNull();
+    expect(within(row).queryByTitle(/^Limit/)).toBeNull();
+  });
+});
+
+describe("assignee and epic in the row", () => {
+  it("shows the assignee and the epic by default and skips them when absent", async () => {
+    const slot = renderList([
+      task({ id: "01HZT1", number: 1, assignee: "Claude", epic: "Tasks+" }),
+      task({ id: "01HZT2", number: 2 }),
+    ]);
+
+    const placed = await rowFor(slot, "TSK-1");
+    expect(within(placed).getByTitle("Assignee: Claude").textContent).toBe("Claude");
+    expect(within(placed).getByTitle("Epic: Tasks+").textContent).toBe("Tasks+");
+
+    const plain = await rowFor(slot, "TSK-2");
+    expect(within(plain).queryByTitle(/^Assignee/)).toBeNull();
+    expect(within(plain).queryByTitle(/^Epic/)).toBeNull();
   });
 });

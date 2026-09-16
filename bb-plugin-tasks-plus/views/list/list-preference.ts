@@ -28,7 +28,16 @@ export const LIST_PREFERENCE_VERSION = 1 as const;
 export type ListPreferenceScope =
   | "all"
   | "active"
+  | "waiting"
   | `project:${string}`;
+
+/**
+ * Which cross-project surface a ListView renders — mutually exclusive with a
+ * project scope, hence a sum rather than a second boolean flag alongside a
+ * hypothetical `activeOnly`/`waitingOnly` pair (see code-standards-fp D4).
+ * `null` means no special surface: All tasks, or a project's own list.
+ */
+export type ListScope = "active" | "waiting" | null;
 
 export interface ListPreference {
   filters: ListFilterState;
@@ -47,9 +56,9 @@ interface StoredDocumentV1 {
 
 export function listPreferenceScope(
   projectId: string | null,
-  activeOnly: boolean,
+  listScope: ListScope,
 ): ListPreferenceScope {
-  if (activeOnly) return "active";
+  if (listScope !== null) return listScope;
   if (projectId !== null) return `project:${projectId}`;
   return "all";
 }

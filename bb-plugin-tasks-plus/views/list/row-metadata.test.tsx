@@ -61,6 +61,15 @@ function task(number: number, labelIds: string[] = []): Task {
     createdAt: "2026-07-15T00:00:00.000Z",
     updatedAt: "2026-07-15T00:00:00.000Z",
     labelIds,
+    type: null,
+    estimate: null,
+    plannedMinutes: null,
+    actualMinutes: null,
+    budget: null,
+    budgetLimit: null,
+    cost: null,
+    checks: [],
+    source: null,
   };
 }
 
@@ -76,8 +85,8 @@ function thread(
     presetName: "Sonnet · high",
     title: "Worker",
     liveStatus,
+    archivedAt: null,
     attachedAt: "2026-07-15T00:00:00.000Z",
-    updatedAt: "2026-07-15T00:00:00.000Z",
   };
 }
 

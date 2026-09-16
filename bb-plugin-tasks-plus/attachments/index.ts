@@ -1,7 +1,11 @@
 import { mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { dirname, join, resolve, sep } from "node:path";
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
-import type { Attachment, TasksStore } from "../db";
+import type { Attachment } from "../db/types.js";
+import type { FileTasksStore } from "../filesync/store.js";
+import type { CallerEnvironmentCache } from "../filesync/caller-cache.js";
+import { runInCallerScope } from "../filesync/caller-scope.js";
+import { CALLER_THREAD_FIELD } from "../shared/enums.js";
 
 export const MAX_ATTACHMENT_SIZE_BYTES = 25 * 1024 * 1024;
 
@@ -27,7 +31,7 @@ const DOWNLOAD_PATH = "/attachments/download";
 const DELETE_PATH = "/attachments/delete";
 const MIME_PATTERN =
   /^(application|audio|font|image|message|model|multipart|text|video)\/[!#$&^_.+\-A-Za-z0-9]+$/;
-const storeRoots = new WeakMap<TasksStore, string>();
+const storeRoots = new WeakMap<FileTasksStore, string>();
 
 export type AttachmentOwner =
   | { taskId: string; commentId?: never }
@@ -99,7 +103,7 @@ function pluginDataDirectory(bb: BbPluginApi): string {
   return dirname(main.file);
 }
 
-function requireStoreRoot(store: TasksStore): string {
+function requireStoreRoot(store: FileTasksStore): string {
   const root = storeRoots.get(store);
   if (!root) {
     throw new Error(
@@ -123,7 +127,7 @@ function pathInside(root: string, blobPath: string): string {
 
 export async function removeAttachmentBlobs(
   bb: BbPluginApi,
-  store: TasksStore,
+  store: FileTasksStore,
   attachments: readonly Pick<Attachment, "id" | "blobPath">[],
 ): Promise<void> {
   if (attachments.length === 0) return;
@@ -293,6 +297,9 @@ function attachmentParameters(context: PluginHttpContext): {
   owner: AttachmentOwner;
   fileName: string;
   mime: string;
+  /** Тред, из которого грузят файл: загрузка идёт своим HTTP-роутом, и
+   *  другого места для него в запросе нет. */
+  callerThreadId: string | null;
 } {
   const query = context.req.query();
   const owner = normalizeOwner(
@@ -309,8 +316,10 @@ function attachmentParameters(context: PluginHttpContext): {
     context.req.header("x-mime-type") ??
     context.req.header("content-type") ??
     "";
+  const callerThreadId = query[CALLER_THREAD_FIELD] ?? null;
   return {
     owner,
+    callerThreadId,
     fileName: sanitizeFileName(requestedFileName),
     mime: normalizeMime(requestedMime),
   };
@@ -357,7 +366,7 @@ async function readRequestBody(request: Request): Promise<Uint8Array> {
 }
 
 async function persistAttachment(
-  store: TasksStore,
+  store: FileTasksStore,
   owner: AttachmentOwner,
   fileName: string,
   mime: string,
@@ -369,7 +378,7 @@ async function persistAttachment(
   }
   const safeFileName = sanitizeFileName(fileName);
   const safeMime = normalizeMime(mime);
-  const attachment = store.createAttachment({
+  const attachment = await store.createAttachment({
     ...owner,
     fileName: safeFileName,
     mime: safeMime,
@@ -383,11 +392,11 @@ async function persistAttachment(
   try {
     await mkdir(dirname(absolutePath), { recursive: true });
     await writeBlob(absolutePath);
-    return store.updateAttachment(attachment.id, {
+    return await store.updateAttachment(attachment.id, {
       blobPath,
     });
   } catch (error) {
-    store.deleteAttachment(attachment.id);
+    await store.deleteAttachment(attachment.id);
     await rm(dirname(absolutePath), { recursive: true, force: true });
     throw error;
   }
@@ -398,7 +407,7 @@ export function buildAttachmentUrl(attachmentId: string): string {
 }
 
 export async function saveAttachmentFromBytes(
-  store: TasksStore,
+  store: FileTasksStore,
   bytes: Uint8Array,
   options: SaveAttachmentFromBytesOptions,
 ): Promise<Attachment> {
@@ -413,10 +422,10 @@ export async function saveAttachmentFromBytes(
 }
 
 export async function readAttachmentContent(
-  store: TasksStore,
+  store: FileTasksStore,
   attachmentId: string,
 ): Promise<{ attachment: Attachment; content: Buffer }> {
-  const attachment = store.getAttachment(attachmentId);
+  const attachment = await store.getAttachment(attachmentId);
   if (!attachment) throw new Error(`Attachment not found: ${attachmentId}`);
   const sourcePath = pathInside(requireStoreRoot(store), attachment.blobPath);
   return { attachment, content: await readFile(sourcePath) };
@@ -445,22 +454,22 @@ function errorResponse(context: PluginHttpContext, error: unknown): Response {
  */
 export async function deleteAttachmentById(
   bb: BbPluginApi,
-  store: TasksStore,
+  store: FileTasksStore,
   attachmentId: string,
   options: {
     removeBlobs?: typeof removeAttachmentBlobs;
     removeDescriptionReferences?: boolean;
   } = {},
 ): Promise<Attachment | null> {
-  const attachment = store.getAttachment(attachmentId);
+  const attachment = await store.getAttachment(attachmentId);
   if (!attachment) return null;
 
   const taskId =
     attachment.taskId ??
     (attachment.commentId
-      ? store.getComment(attachment.commentId)?.taskId
+      ? (await store.getComment(attachment.commentId))?.taskId
       : undefined);
-  const ownerTask = taskId ? store.getTask(taskId) : undefined;
+  const ownerTask = taskId ? await store.getTask(taskId) : undefined;
   let nextDescription: string | undefined;
   if (ownerTask?.description.includes(buildAttachmentUrl(attachment.id))) {
     if (!options.removeDescriptionReferences) {
@@ -483,24 +492,24 @@ export async function deleteAttachmentById(
     throw new AttachmentCleanupError(attachment, error);
   }
   if (ownerTask && nextDescription !== undefined) {
-    store.updateTask(ownerTask.id, { description: nextDescription });
+    await store.updateTask(ownerTask.id, { description: nextDescription });
   }
-  if (!store.deleteAttachment(attachment.id)) return null;
-  publishAttachmentChanged(bb, store, attachment);
+  if (!(await store.deleteAttachment(attachment.id))) return null;
+  await publishAttachmentChanged(bb, store, attachment);
   return attachment;
 }
 
-export function publishAttachmentChanged(
+export async function publishAttachmentChanged(
   bb: BbPluginApi,
-  store: TasksStore,
+  store: FileTasksStore,
   attachment: Attachment,
-): void {
+): Promise<void> {
   const taskId =
     attachment.taskId ??
     (attachment.commentId
-      ? store.getComment(attachment.commentId)?.taskId
+      ? (await store.getComment(attachment.commentId))?.taskId
       : undefined);
-  const task = taskId ? store.getTask(taskId) : undefined;
+  const task = taskId ? await store.getTask(taskId) : undefined;
   if (!task) {
     bb.log.warn(`failed to publish attachment change ${attachment.id}`);
     return;
@@ -518,9 +527,12 @@ export function publishAttachmentChanged(
  */
 export function registerAttachments(
   bb: BbPluginApi,
-  store: TasksStore,
+  store: FileTasksStore,
   options: {
     removeBlobs?: typeof removeAttachmentBlobs;
+    /** Та же память об окружениях, что у RPC: загрузка из панели треда
+     *  обязана попадать в файл задачи его рабочего дерева. */
+    callerEnvironments?: CallerEnvironmentCache;
   } = {},
 ): void {
   const root = pluginDataDirectory(bb);
@@ -533,15 +545,21 @@ export function registerAttachments(
       try {
         const parameters = attachmentParameters(context);
         const body = await readRequestBody(context.req.raw);
-        const attachment = await persistAttachment(
-          store,
-          parameters.owner,
-          parameters.fileName,
-          parameters.mime,
-          body.byteLength,
-          (destinationPath) => writeFile(destinationPath, body),
+        const environment =
+          parameters.callerThreadId === null || !options.callerEnvironments
+            ? null
+            : await options.callerEnvironments.get(parameters.callerThreadId);
+        const attachment = await runInCallerScope(environment, () =>
+          persistAttachment(
+            store,
+            parameters.owner,
+            parameters.fileName,
+            parameters.mime,
+            body.byteLength,
+            (destinationPath) => writeFile(destinationPath, body),
+          ),
         );
-        publishAttachmentChanged(bb, store, attachment);
+        await publishAttachmentChanged(bb, store, attachment);
         return context.json(
           {
             attachmentId: attachment.id,
@@ -559,7 +577,7 @@ export function registerAttachments(
   bb.http.route("GET", DOWNLOAD_PATH, async (context) => {
     const attachmentId = context.req.query("attachmentId")?.trim();
     const attachment = attachmentId
-      ? store.getAttachment(attachmentId)
+      ? await store.getAttachment(attachmentId)
       : undefined;
     if (!attachment)
       return context.json({ error: "attachment not found" }, 404);

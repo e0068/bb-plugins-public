@@ -43,6 +43,15 @@ const task = {
   createdAt: "2026-07-15T00:00:00.000Z",
   updatedAt: "2026-07-15T00:00:00.000Z",
   labelIds: [],
+  type: null,
+  estimate: null,
+  plannedMinutes: null,
+  actualMinutes: null,
+  budget: null,
+  budgetLimit: null,
+  cost: null,
+  checks: [],
+  source: null,
 };
 
 function taskThreadRow(id: string, threadId: string, title: string) {
@@ -53,8 +62,8 @@ function taskThreadRow(id: string, threadId: string, title: string) {
     presetName: "Attached",
     title,
     liveStatus: "working",
+    archivedAt: null,
     attachedAt: "2026-07-15T00:00:00.000Z",
-    updatedAt: "2026-07-15T00:00:00.000Z",
   };
 }
 
@@ -153,6 +162,29 @@ describe("task detail pull request pills", () => {
     expect(slot.getAllByText("PR unavailable")).toHaveLength(1);
     // The healthy thread with no PR renders no pill and no link.
     expect(slot.queryByRole("link")).toBeNull();
+  });
+
+  it("shows an Archived badge for an archived thread and hides it otherwise", async () => {
+    const slot = renderSlot(
+      app.navPanels[0]!,
+      { subPath: "task/TSK-5" },
+      {
+        rpc: detailRpc({
+          listTaskThreads: () => ({
+            taskThreads: [
+              {
+                ...taskThreadRow(THREAD_ROW_ID, "thr_worker000", "Worker"),
+                archivedAt: "2026-07-20T00:00:00.000Z",
+              },
+              taskThreadRow(OFFLINE_ROW_ID, "thr_offline00", "Offline worker"),
+            ],
+          }),
+        }),
+      },
+    );
+
+    await slot.findByText("Worker");
+    expect(slot.getAllByText("Archived")).toHaveLength(1);
   });
 
   it("revalidates PR state on window focus without a task-thread mutation", async () => {
