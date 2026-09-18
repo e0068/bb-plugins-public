@@ -9,6 +9,11 @@
     "commit": "0e99a018f865128aea398c6500943c70ca1efa4c",
     "publishedAt": "2026-09-16T12:11:36.283Z"
   },
+  "bb-plugin-prompt-drafts": {
+    "version": "0.1.5",
+    "commit": "fc8cc5177e8bcbf1b0eeee3e5e18954c60e455de",
+    "publishedAt": "2026-09-18T05:09:53.776Z"
+  },
   "bb-plugin-tasks-plus": {
     "version": "0.1.18",
     "commit": "0e99a018f865128aea398c6500943c70ca1efa4c",

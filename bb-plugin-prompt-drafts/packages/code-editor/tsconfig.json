@@ -1,0 +1,20 @@
+{
+  "extends": "../plugin-base/tsconfig.base.json",
+  "compilerOptions": {
+    "jsx": "react-jsx",
+    "types": [
+      "@testing-library/jest-dom"
+    ]
+  },
+  "include": [
+    "index.ts",
+    "CodeEditor.tsx",
+    "codemirror-kit.ts",
+    "test-support/codemirror-kit.tsx",
+    "editor-language.ts",
+    "use-host-color-mode.ts",
+    "editor-language.test.ts",
+    "use-host-color-mode.test.tsx",
+    "vitest.setup.ts"
+  ]
+}
