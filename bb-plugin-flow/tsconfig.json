@@ -1,0 +1,35 @@
+{
+  "extends": "../packages/plugin-base/tsconfig.base.json",
+  "compilerOptions": {
+    "types": [
+      "node"
+    ],
+    "lib": [
+      "ES2022",
+      "DOM",
+      "DOM.Iterable"
+    ],
+    "jsx": "react-jsx",
+    "paths": {
+      "@/*": [
+        "./*"
+      ],
+      "@get-bb/plugin-sdk": [
+        "./node_modules/@get-bb/plugin-sdk"
+      ]
+    }
+  },
+  "include": [
+    "server.ts",
+    "server.test.ts",
+    "app.tsx",
+    "architecture.test.ts",
+    "vitest.config.ts",
+    "lib",
+    "shared",
+    "core",
+    "components",
+    "server",
+    "app"
+  ]
+}
