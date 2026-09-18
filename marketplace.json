@@ -30,6 +30,25 @@
       }
     },
     {
+      "id": "flow",
+      "displayName": "Flow",
+      "description": "Agent questions as a brief in the thread: every option with cost and risks, the recommended one marked, an answer of your own always possible.",
+      "icon": {
+        "url": "bb-plugin-flow/assets/icon.svg"
+      },
+      "author": {
+        "name": "e0068",
+        "github": "e0068"
+      },
+      "source": {
+        "git": {
+          "url": "https://github.com/e0068/bb-plugins-public.git",
+          "subdir": "bb-plugin-flow",
+          "ref": "main"
+        }
+      }
+    },
+    {
       "id": "md-opener",
       "displayName": "Kasimov",
       "description": "Opens .md files in a Kasimov editor where markdown links are clickable and navigate within the same tab, with breadcrumbs, a back button, and CAS-safe saving.",

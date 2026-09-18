@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none"
+     stroke="#000" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+  <!-- A mirrored S running from top to bottom, arrowhead at the end: work flows
+       stage by stage. stroke is an opaque literal, not currentColor: BB renders
+       the plugin icon as a CSS mask, and currentColor has nothing to resolve
+       against inside a mask. -->
+  <path d="M6 2.25h7.25a4.25 4.25 0 0 1 0 8.5h-2.5a4.25 4.25 0 0 0 0 8.5H17" />
+  <path d="M14 16.25l3 3-3 3" />
+</svg>
