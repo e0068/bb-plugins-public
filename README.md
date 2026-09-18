@@ -15,6 +15,7 @@ bb plugin install <id>@e0068
 - **Claude Config** (`claude-config`) — Manage your Claude Code setup — plugins, connectors, skills, agents, hooks, workflows and settings — per scope.
 - **Kasimov** (`md-opener`) — Opens .md files in a Kasimov editor where markdown links are clickable and navigate within the same tab, with breadcrumbs, a back button, and CAS-safe saving.
 - **Tasks+** (`tasks-plus`) — A fork of the Tasks plugin that keeps tasks as Markdown files on disk and adds native workflow fields — Type, Estimate, Check, time and budget.
+- **Threads Overview** (`threads-overview`) — A home-screen section listing threads that need you: any thread where no work is going on and that you have not postponed. Postpone a thread to snooze it; it returns on its own once work resumes.
 - **Token Usage Analytics** (`token-usage-header`) — Tracks Claude Code token usage and cost — a live counter in the thread header plus session and project analytics.
 - **Usage Circles** (`usage-circles`) — Claude Code and Codex usage-limit rings in the footer of BB's left sidebar.
 - **Pull Request** (`zz-pull-request`) — Thread-header buttons that open and merge a GitHub Pull Request via the API without a push, and wake a thread whose environment got stuck retiring.
