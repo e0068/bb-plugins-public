@@ -47,6 +47,28 @@
       }
     },
     {
+      "id": "prompt-drafts",
+      "displayName": "Prompt Drafts",
+      "description": "Save the composer's text as a draft and bring it back later. Drafts show as cards under the Home composer and above a thread's composer.",
+      "icon": "EditFile",
+      "tags": [
+        "composer",
+        "drafts",
+        "interface"
+      ],
+      "author": {
+        "name": "e0068",
+        "github": "e0068"
+      },
+      "source": {
+        "git": {
+          "url": "https://github.com/e0068/bb-plugins-public.git",
+          "subdir": "bb-plugin-prompt-drafts",
+          "ref": "main"
+        }
+      }
+    },
+    {
       "id": "tasks-plus",
       "displayName": "Tasks+",
       "description": "A fork of the Tasks plugin that keeps tasks as Markdown files on disk and adds native workflow fields — Type, Estimate, Check, time and budget.",
