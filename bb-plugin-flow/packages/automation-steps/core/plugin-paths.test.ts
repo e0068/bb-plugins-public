@@ -7,7 +7,7 @@ describe("touchedPluginIds", () => {
   });
 
   it("paths outside any bb-plugin-* directory are ignored", () => {
-    expect(touchedPluginIds(["memory/INDEX.md", "README.md", "packages/plugin-base/tsconfig.json"])).toEqual([]);
+    expect(touchedPluginIds(["docs/INDEX.md", "README.md", "packages/plugin-base/tsconfig.json"])).toEqual([]);
   });
 
   it("a path inside a plugin directory yields that plugin's id", () => {
@@ -28,7 +28,7 @@ describe("touchedPluginIds", () => {
     expect(
       touchedPluginIds([
         "bb-plugin-tasks-plus/server.ts",
-        "memory/INDEX.md",
+        "docs/INDEX.md",
         "bb-plugin-plugins-monitor/app.tsx",
         "bb-plugin-tasks-plus/app.tsx",
       ]),

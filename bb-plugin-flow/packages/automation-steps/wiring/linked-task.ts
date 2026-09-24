@@ -8,14 +8,14 @@
 // promised about the name, and a missing task only means the name comes from
 // a poorer source (see choosePrTitle in ../core/pr-title.ts). Failing to open
 // the PR because the board could not be reached would be the worse trade.
-import { currentTasksArgs, parseLinkedTasks, type LinkedTask } from "../core/bb-tasks-commands";
+import { currentTasksArgs, linkedTaskEnv, parseLinkedTasks, type LinkedTask } from "../core/bb-tasks-commands";
 import type { CliPorts } from "./bb-cli-run";
 
 export async function readLinkedTask(
   ports: CliPorts,
   threadId: string,
 ): Promise<LinkedTask | null> {
-  const listed = await ports.run(currentTasksArgs(threadId));
+  const listed = await ports.run(currentTasksArgs(threadId), linkedTaskEnv(threadId));
   if (listed.kind !== "ran" || listed.code !== 0) return null;
   return parseLinkedTasks(listed.stdout)[0] ?? null;
 }

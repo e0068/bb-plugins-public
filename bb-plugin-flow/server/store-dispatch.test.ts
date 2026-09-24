@@ -28,23 +28,3 @@ describe("отметка запущенной работы", () => {
     expect(await s.isLaunched("thr_1")).toBe(false);
   });
 });
-
-describe("последний выбор места в проекте", () => {
-  it("проект без выбора идёт «в этом треде»", async () => {
-    const { store: s } = store();
-    expect(await s.getPlace("proj_1")).toBe("here");
-  });
-
-  it("выбор помнится по проекту", async () => {
-    const { store: s } = store();
-    await s.putPlace("proj_1", "worktree");
-    expect(await s.getPlace("proj_1")).toBe("worktree");
-    expect(await s.getPlace("proj_2")).toBe("here");
-  });
-
-  it("чужое значение не ломает чтение", async () => {
-    const { store: s, kv } = store();
-    await kv.set("dispatch-place", { proj_1: "somewhere" });
-    expect(await s.getPlace("proj_1")).toBe("here");
-  });
-});

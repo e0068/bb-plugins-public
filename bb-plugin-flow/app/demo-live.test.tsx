@@ -56,7 +56,7 @@ const open = (brief: DecisionBrief, handlers: { answerBrief?: (input: { answer: 
       rpc: {
         getBrief: () => ({ kind: "found", brief, answer: null }),
         answerBrief: (handlers.answerBrief ?? (() => ({ kind: "not_found" }))) as never,
-        getDispatchPlace: () => ({ place: "here" }),
+        getDispatchPlace: () => ({ place: "here" }), listProjects: () => ({ kind: "found" as const, projects: [] }),
         runOutcomeCommand: (handlers.runOutcomeCommand ?? (() => ({ kind: "sent", created: false }))) as never,
       },
     },
@@ -73,7 +73,7 @@ describe("результаты Демонстрации — живые", () => {
   });
 
   it("итог с отметкой documentsOnly говорит, что живой ссылки нет — сделаны только документы", async () => {
-    const slot = open({ ...demo, outcome: { ...demo.outcome!, results: [{ label: "spec.md", target: "memory/specs/spec.md" }], documentsOnly: true } });
+    const slot = open({ ...demo, outcome: { ...demo.outcome!, results: [{ label: "spec.md", target: "docs/specs/spec.md" }], documentsOnly: true } });
     const card = within(await slot.findByRole("group", { name: "Демонстрация" }));
     expect(card.getByText("Только документы — живой ссылки нет")).toBeTruthy();
   });

@@ -27,7 +27,7 @@ const host = async (launched: boolean) => {
 const textOf = (result: unknown): string =>
   typeof result === "string" ? result : ((result as { content?: Array<{ text?: string }> }).content ?? []).map((c) => c.text ?? "").join("");
 
-const link = { label: "task.md", target: "memory/tasks/task.md" };
+const link = { label: "task.md", target: "docs/tasks/task.md" };
 const secondSelect = [
   { id: "questions", state: "done" },
   { id: "select", state: "done" },

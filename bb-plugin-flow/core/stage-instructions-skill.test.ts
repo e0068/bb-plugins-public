@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 
 import { builtinStage } from "../lib/stage-constants";
 import { DEFAULT_STAGES } from "./flows";
+import { planner, stage } from "./stages-fixtures";
 import { stageInstructions } from "./stages";
 
 const lines = (text: string | null): string[] => (text ?? "").split("\n");
@@ -32,11 +33,28 @@ describe("инструкции встроенного этапа называю�
   });
 });
 
+describe("инструкции этапа-навыка", () => {
+  it("этап с навыком велит его загрузить — как встроенный", () => {
+    const [, task] = lines(stageInstructions([stage("task-flow", { skill: "task-flow", name: "Task" })]));
+    expect(task).toBe("1. task-flow \"Task\" — skill task-flow: load it for the stage's work; you execute it yourself");
+  });
+
+  it("этап без навыка про загрузку молчит", () => {
+    const [, release] = lines(stageInstructions([stage("release", { skill: "", name: "Release" })]));
+    expect(release).toBe("1. release \"Release\"; you execute it yourself");
+  });
+
+  it("исполнители этапа стоят после указания про навык", () => {
+    const [, plan] = lines(stageInstructions([stage("plan", { skill: "plan", name: "Plan", executors: [planner] })]));
+    expect(plan).toBe("1. plan \"Plan\" — skill plan: load it for the stage's work; executors: self, agent:planner");
+  });
+});
+
 describe("инструкции смешанного flow", () => {
   it("номера идут через этапы навыков, повторный вид называет свой id и навык, Review by User нет", () => {
-    const text = stageInstructions([builtinStage("questions", []), builtinStage("select", []), { id: "spec", kind: "skill", skill: "spec", name: "Spec", executors: [] }, builtinStage("demo", []), builtinStage("select", ["select"])]);
+    const text = stageInstructions([builtinStage("questions", []), builtinStage("select", []), stage("spec", { skill: "spec", name: "Spec" }), builtinStage("demo", []), builtinStage("select", ["select"])]);
     const [, , , spec, , again] = lines(text);
-    expect(spec).toMatch(/^3\. spec "Spec" — skill spec;/);
+    expect(spec).toMatch(/^3\. spec "Spec" — skill spec: load it for the stage's work;/);
     expect(again).toMatch(/^5\. select-2 "Stage selection" — skill flow-stage-selection\b/);
     expect(text).not.toMatch(/Review by User/);
   });

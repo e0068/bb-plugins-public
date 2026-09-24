@@ -16,7 +16,8 @@ import {
  * `shared` — схемы брифа и контракт RPC; `core` — чистые функции над ними;
  * `server` и `server.ts` — один слой, `app` и `app.tsx` — тоже. Фронт берёт
  * у `shared` только типы: контракт тянет значение из SDK, которого в бандле
- * фронта нет.
+ * фронта нет. `tools` — разовые скрипты: оболочка над ядром, рядом с `app`
+ * и без права звать его.
  */
 const LAYERS: Layers = [
   ["lib"],
@@ -24,7 +25,7 @@ const LAYERS: Layers = [
   ["core"],
   ["components"],
   ["server"],
-  ["app"],
+  ["app", "tools"],
 ];
 
 const ROOT = fileURLToPath(new URL(".", import.meta.url));

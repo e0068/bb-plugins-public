@@ -9,7 +9,7 @@
 // branch CAN still be updated: with a regular `fetch`+`merge --ff-only` run
 // DIRECTLY in that working copy (`git -C <path> ...`) — the same thing a
 // human would do by hand. See
-// memory/decisions/local-main-pull-targets-actual-checkout.md.
+// docs/decisions/local-main-pull-targets-actual-checkout.md.
 //
 // So first we ask `git worktree list --porcelain` (cheap, read-only, doesn't
 // matter where it's run from — worktrees are shared across the whole
@@ -68,7 +68,7 @@ function toResult(run: GitRun): LocalMainPullResult {
   // A refusal is expected (diverged, busy, or uncommitted changes), not a
   // defect — describeMainPullFailure turns git's raw advice block into one
   // readable line and names which of those it was. See
-  // memory/decisions/main-pull-reason-humanized.md.
+  // docs/decisions/main-pull-reason-humanized.md.
   return run.code === 0
     ? { ok: true }
     : { ok: false, reason: describeMainPullFailure(gitRunMessage(run)) };

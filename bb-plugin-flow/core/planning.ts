@@ -73,5 +73,20 @@ export const windowCost = (lines: Iterable<string>, from: number, to: number): n
     }),
   );
 
+/**
+ * Минуты окна `[from, to)`, в которых лог сессии писался: минута считается, если
+ * в ней есть хоть одна запись. Минутные корзины — та же мера, которой чарт Usage
+ * Analytics схлопывает пустоту, поэтому ожидание владельца и простой между
+ * ходами в число не попадают.
+ */
+export const activeMinutes = (lines: Iterable<string>, from: number, to: number): number => {
+  const minutes = new Set<number>();
+  for (const line of lines) {
+    const at = timestampOf(line);
+    if (at !== undefined && at >= from && at < to) minutes.add(Math.floor(at / 60_000));
+  }
+  return minutes.size;
+};
+
 /** Целые минуты от создания треда до брифа — вместе с ожиданием владельца. */
 export const planningMinutes = (threadCreatedAt: number, now: number): number => Math.max(0, Math.floor((now - threadCreatedAt) / 60_000));

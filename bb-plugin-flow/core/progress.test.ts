@@ -46,7 +46,7 @@ describe("прогресс flow", () => {
   it("отметки агента: начатый этап идёт, законченный сделан со ссылками, минутами и стоимостью", () => {
     const started = onMark(EMPTY_PROGRESS, "task", "started", T1);
     expect(progressView(started, STAGES).stages[2]).toMatchObject({ state: "now", minutes: null });
-    const link = { label: "task.md", target: "memory/tasks/task.md" };
+    const link = { label: "task.md", target: "docs/tasks/task.md" };
     const done = progressView(onMark(started, "task", "done", T2, [link], 1.8), STAGES).stages[2];
     expect(done).toMatchObject({ state: "done", minutes: 12, cost: 1.8, results: [link] });
   });

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { DecisionBrief } from "../shared/contract";
-import { emptyDraft, setOutcomeNote, setOutcomeRework, toAnswer } from "./draft";
+import { emptyDraft, setOutcomeNote, toAnswer } from "./draft";
 
 const brief: DecisionBrief = {
   id: "dec_demo",
@@ -18,13 +18,7 @@ describe("исход Демонстрации в черновике", () => {
     expect(toAnswer(brief, emptyDraft()).outcome).toEqual({ accepted: true });
   });
 
-  it("комментарий без выбранной кнопки — на доработку, как главная кнопка", () => {
-    expect(toAnswer(brief, setOutcomeNote(emptyDraft(), "переделай")).outcome).toEqual({ accepted: false, note: "переделай" });
-  });
-
-  it("«Учесть и продолжить» — принято с комментарием, «На доработку» — не принято", () => {
-    const noted = setOutcomeNote(emptyDraft(), "учти");
-    expect(toAnswer(brief, setOutcomeRework(noted, false)).outcome).toEqual({ accepted: true, note: "учти" });
-    expect(toAnswer(brief, setOutcomeRework(noted, true)).outcome).toEqual({ accepted: false, note: "учти" });
+  it("написанный комментарий — не принято, с комментарием", () => {
+    expect(toAnswer(brief, setOutcomeNote(emptyDraft(), "почему так?")).outcome).toEqual({ accepted: false, note: "почему так?" });
   });
 });

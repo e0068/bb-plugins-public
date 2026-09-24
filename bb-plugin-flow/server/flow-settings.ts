@@ -3,6 +3,8 @@
 // через схему: чужое значение — это умолчания, а не падение.
 import type { PluginKvStorage } from "@get-bb/plugin-sdk";
 
+import { STEP_LABELS } from "../packages/automation-steps/catalog";
+import { stepOrderMessage, stepOrderProblem } from "../core/automation-order";
 import { fromLegacy, migrateFlows } from "../core/flows";
 import { flowSettingsSchema, stageSettingsSchema, type FlowSettings } from "../shared/contract";
 
@@ -34,15 +36,24 @@ const readOrMigrate = async (kv: PluginKvStorage): Promise<FlowSettings> => {
   return migrated;
 };
 
-export const createFlowSettings = async (kv: PluginKvStorage): Promise<FlowSettingsStore> => {
+/** `onSave` — вслед за каждой записью, уже с сохранённой коллекцией; его сбой запись не отменяет. */
+export const createFlowSettings = async (kv: PluginKvStorage, options: { onSave?: (settings: FlowSettings) => Promise<void> } = {}): Promise<FlowSettingsStore> => {
   let current = await readOrMigrate(kv);
   return {
     current: () => current,
     async save(settings) {
       // Сохранённое — уже коллекция на видах: без версии следующее чтение перенесло бы её снова и вернуло удалённые этапы.
       const valid = { ...flowSettingsSchema.parse(settings), version: 2 as const };
+      // Цепочка, где бамп или мёрдж стоит раньше открытия PR, падает на первом
+      // же прогоне любого треда. Отказ здесь один на всех: через эту запись
+      // идут и страница, и инструмент save_flow.
+      const problem = stepOrderProblem(valid.flows);
+      if (problem !== null) {
+        throw new Error(stepOrderMessage(problem, STEP_LABELS[problem.step].en, STEP_LABELS["git.create-pr"].en));
+      }
       await kv.set(FLOW_SETTINGS_KEY, valid);
       current = valid;
+      await options.onSave?.(valid).catch(() => undefined);
       return valid;
     },
   };

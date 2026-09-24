@@ -91,3 +91,18 @@ describe("reinstallOutcome", () => {
     });
   });
 });
+
+describe("bumpOutcome — пробелы, а не поломки", () => {
+  it("PR ещё не открыт: успех, который говорит, когда поднимется версия", () => {
+    expect(
+      bumpOutcome(bump({ gap: "no-pull-request", unavailable: "bb reports no pull request for this branch", problems: ["versions not settled: bb reports no pull request for this branch"] })),
+    ).toEqual({ ok: true, detail: "no pull request yet — versions are raised by the bump step before the merge" });
+  });
+
+  it("ветки нет на origin: тоже успех с названной причиной", () => {
+    expect(bumpOutcome(bump({ gap: "branch-not-published", problems: ["could not compare bb/thr with main (HTTP 404)"] }))).toEqual({
+      ok: true,
+      detail: "the branch is not on origin yet — versions are raised by the bump step before the merge",
+    });
+  });
+});

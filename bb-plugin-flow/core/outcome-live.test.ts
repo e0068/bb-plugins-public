@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 
 import { isLiveResult, liveIssues } from "./outcome";
 
-const file = { label: "spec.md", target: "memory/specs/spec.md" };
+const file = { label: "spec.md", target: "docs/specs/spec.md" };
 const page = { label: "страница", target: "https://host--5173.getbb.app/" };
 const local = { label: "localhost", target: "http://localhost:5173/" };
 const launch = { label: "Приложение", command: "open -a Calculator" };

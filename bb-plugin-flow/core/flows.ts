@@ -78,6 +78,15 @@ export const renameFlow = (settings: FlowSettings, id: string, name: string): Fl
   return trimmed === "" ? settings : mapFlow(settings, id, (flow) => ({ ...flow, name: trimmed }));
 };
 
+/** Описание flow без краевых пробелов; пустое снимает поле — flow без описания корневой навык так и помечает. */
+export const withDescription = (flow: Flow, description: string): Flow => {
+  const { description: _, ...rest } = flow;
+  const trimmed = description.trim();
+  return trimmed === "" ? rest : { ...rest, description: trimmed };
+};
+
+export const describeFlow = (settings: FlowSettings, id: string, description: string): FlowSettings => mapFlow(settings, id, (flow) => withDescription(flow, description));
+
 /** Последний flow не удаляется: треду нужен хоть какой-то. */
 export const removeFlow = (settings: FlowSettings, id: string): FlowSettings =>
   settings.flows.length <= 1 ? settings : { ...settings, flows: settings.flows.filter((flow) => flow.id !== id) };
@@ -102,6 +111,23 @@ export const defaultFlow = (settings: FlowSettings): Flow => settings.flows[0]!;
 
 /** Flow по id; неизвестный, удалённый или не заданный id — flow по умолчанию. Так же выбирается flow треда. */
 export const flowById = (settings: FlowSettings, id: string | undefined): Flow => settings.flows.find((flow) => flow.id === id) ?? defaultFlow(settings);
+
+/**
+ * Выбор «без flow»: тред идёт без этапов и без вклада Flow в ход. Id занят под
+ * этот выбор и ни одному flow не достаётся: свои раздаёт страница — `flow-…` у
+ * созданных и `default` у первого.
+ */
+export const NO_FLOW = "none";
+
+/** Тред без flow по выбору агента: выбор агентом ему больше не предлагается. */
+export const AGENT_NO_FLOW = "none-by-agent";
+
+/**
+ * Flow треда или его отсутствие. `NO_FLOW` — отсутствие, остальное — как
+ * `flowById`: отличает отказ от flow от неизвестного id, который читается как
+ * flow по умолчанию.
+ */
+export const flowOrNone = (settings: FlowSettings, id: string | undefined): Flow | null => (id === NO_FLOW || id === AGENT_NO_FLOW ? null : flowById(settings, id));
 
 /** Этапы flow с общей шириной кнопки — форма, которую проверяет бриф и видят инструкции. */
 export const stageSettingsOf = (settings: FlowSettings, flow: Flow): StageSettings => ({ stages: flow.stages, minButtonWidth: settings.minButtonWidth });

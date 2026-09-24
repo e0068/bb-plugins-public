@@ -81,9 +81,9 @@ function bodyOf(calls: readonly GithubRequest[], suffix: string): Record<string,
 
 describe("bumpVersionsBeforeMerge", () => {
   it("the PR touches no plugin at all → nothing read, nothing written", async () => {
-    const { ports, calls } = fakeGithub({ behindBy: 0, changedPaths: ["memory/INDEX.md"], files: {} });
+    const { ports, calls } = fakeGithub({ behindBy: 0, changedPaths: ["docs/INDEX.md"], files: {} });
     expect(await bumpVersionsBeforeMerge(ports, input)).toEqual({
-      changedPaths: ["memory/INDEX.md"],
+      changedPaths: ["docs/INDEX.md"],
       bumped: [],
       problems: [],
       headMoved: false,
@@ -213,14 +213,21 @@ describe("bumpVersionsBeforeMerge", () => {
     expect(calls.some((c) => c.path.includes("/git/blobs"))).toBe(false);
   });
 
-  it("the comparison itself fails → reported, never read as \"nothing changed\"", async () => {
+  it("сравнение не прошло → это названо, а не прочитано как «ничего не изменилось»", async () => {
+    const { ports } = fakeGithub({ behindBy: 0, compareStatus: 500, changedPaths: [], files: {} });
+    const report = await bumpVersionsBeforeMerge(ports, input);
+    expect(report.bumped).toEqual([]);
+    expect(report.changedPaths).toEqual([]);
+    expect(report.headMoved).toBe(false);
+    expect(report.problems).toEqual(["could not compare bb/thr_x with main (HTTP 500)"]);
+    expect(report.gap ?? null).toBeNull();
+  });
+
+  it("сравнения нет, потому что ветки нет на origin — это пробел, а не поломка", async () => {
     const { ports } = fakeGithub({ behindBy: 0, compareStatus: 404, changedPaths: [], files: {} });
-    expect(await bumpVersionsBeforeMerge(ports, input)).toEqual({
-      changedPaths: [],
-      bumped: [],
-      problems: ["could not compare bb/thr_x with main (HTTP 404)"],
-      headMoved: false,
-    });
+    const report = await bumpVersionsBeforeMerge(ports, input);
+    expect(report.problems).toEqual(["could not compare bb/thr_x with main (HTTP 404)"]);
+    expect(report.gap).toBe("branch-not-published");
   });
 
   it("a touched root with no package.json anywhere is not a versioned root, and not a problem", async () => {

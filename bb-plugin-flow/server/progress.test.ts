@@ -48,7 +48,7 @@ describe("прогресс flow на сервере", () => {
     expect(await harness.callRpc("getFlowProgress", { threadId: THREAD })).toMatchObject({ current: "task", done: 2 });
     await harness.callAgentTool(FLOW_STAGE_TOOL, { stage: "task", state: "started" }, { threadId: THREAD });
     tick(12);
-    const link = { label: "task.md", target: "memory/tasks/task.md" };
+    const link = { label: "task.md", target: "docs/tasks/task.md" };
     await harness.callAgentTool(FLOW_STAGE_TOOL, { stage: "task", state: "done", results: [link] }, { threadId: THREAD });
     const view = (await harness.callRpc("getFlowProgress", { threadId: THREAD })) as { stages: Array<{ id: string; state: string; minutes: number | null; cost: number | null }>; current: string | null };
     expect(view.stages.find((s) => s.id === "task")).toMatchObject({ state: "done", minutes: 12, cost: 1.8 });

@@ -17,8 +17,12 @@ import type { GitPorts } from "./git-run";
 export async function checkMergedContent(
   ports: GitPorts,
   base: ResolvedBase,
+  // Вызывающий, который только что сам сходил за базой (wiring/catch-up.ts),
+  // говорит об этом здесь: второй fetch подряд ничего не уточняет и стоит
+  // ещё одного похода в сеть посреди шага.
+  options: { fetched?: boolean } = {},
 ): Promise<MergedContent> {
-  if (base.mode === "origin") {
+  if (base.mode === "origin" && options.fetched !== true) {
     const fetched = await ports.run(fetchBaseArgs(base.githubBase));
     if (fetched.code !== 0) return "unknown";
   }

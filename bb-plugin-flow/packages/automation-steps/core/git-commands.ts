@@ -5,7 +5,7 @@
 // (`fetch`), counts `behind`/`ahead` live, and then either moves the branch
 // strictly forward (`merge --ff-only`) or merges the base in — the merge
 // command itself is in core/catch-up.ts. Live counts, not the bb status cache,
-// see memory/tasks/in_progress/fast-forward-stale-ahead-status.md. Only the
+// see docs/tasks/in_progress/fast-forward-stale-ahead-status.md. Only the
 // command bodies live here; running them and their cwd are in the shell.
 //
 // `aheadCountArgs`/`fastForwardArgs`/`mergeTreeArgs`/`baseTreeArgs` take the
@@ -39,7 +39,7 @@ export function fastForwardArgs(ref: string): readonly string[] {
 // apply non-fast-forward, and refuses to update a branch checked out in any
 // worktree of the repository. Only fits when `<base>` isn't checked out
 // anywhere — otherwise see fetchBaseAtArgs/fastForwardAtArgs below (see
-// memory/decisions/local-main-pull-targets-actual-checkout.md).
+// docs/decisions/local-main-pull-targets-actual-checkout.md).
 /** `git fetch origin <base>:<base>` — pull origin/<base> straight into the local ref `<base>`. */
 export function fetchIntoLocalBranchArgs(base: string): readonly string[] {
   return ["fetch", "origin", `${base}:${base}`];
@@ -72,9 +72,24 @@ export function fastForwardAtArgs(path: string, base: string): readonly string[]
 // resulting tree objects into the object database — they are unreachable and
 // get collected by gc, and the working copy is never touched, but this is not
 // a read-only command.
-/** `git merge-tree --write-tree <ref> HEAD` — merge in memory, print the resulting tree. */
-export function mergeTreeArgs(ref: string): readonly string[] {
-  return ["merge-tree", "--write-tree", ref, "HEAD"];
+/** `git merge-tree --write-tree <ref> <commit>` — merge in memory, print the resulting tree. The commit defaults to HEAD; the cutoff search asks the same question of the branch's earlier commits. */
+export function mergeTreeArgs(ref: string, commit = "HEAD"): readonly string[] {
+  return ["merge-tree", "--write-tree", ref, commit];
+}
+
+/** `git rev-list <ref>..HEAD` — the branch's own commits, newest first. */
+export function ownCommitsArgs(ref: string): readonly string[] {
+  return ["rev-list", `${ref}..HEAD`];
+}
+
+/** `git rebase --onto <ref> <cutoff>` — replay onto the base only what the branch has after the cutoff. */
+export function replayOntoArgs(ref: string, cutoff: string): readonly string[] {
+  return ["rebase", "--onto", ref, cutoff];
+}
+
+/** `git rebase --abort` — put the branch and the tree back as they were before the replay. */
+export function replayAbortArgs(): readonly string[] {
+  return ["rebase", "--abort"];
 }
 
 /** `git rev-parse HEAD` — the current commit of the working copy. Local, no network. */

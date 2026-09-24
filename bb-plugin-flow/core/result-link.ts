@@ -17,3 +17,17 @@ export const fileTarget = (path: string, where: StorageWhere): FileTarget => {
   const root = where.storageRootPath.endsWith("/") ? where.storageRootPath : `${where.storageRootPath}/`;
   return path.startsWith(root) ? { kind: "thread-storage", threadId: where.threadId, path: path.slice(root.length) } : { kind: "host", hostId: where.hostId, path };
 };
+
+/**
+ * Строка успеха шага автоматизации: адрес PR открывается, остальное — тема
+ * коммита, ключи переведённых задач, «no linked tasks» — читается текстом.
+ * Схема из подписи убрана: в ряду шагов её длины всё равно не хватает.
+ */
+export type StepDetail = { kind: "link"; url: string; label: string } | { kind: "text"; text: string };
+
+export const stepDetail = (detail: string | null | undefined): StepDetail | null => {
+  const text = detail?.trim() ?? "";
+  if (text === "") return null;
+  const link = resultLink(text);
+  return link.kind === "url" ? { kind: "link", url: link.url, label: link.url.replace(/^https?:\/\//, "") } : { kind: "text", text };
+};

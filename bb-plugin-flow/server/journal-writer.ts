@@ -3,7 +3,7 @@
 // реплика агенту не зависят от того, лёг ли журнал на диск.
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 
-import { decisionDocument, decisionFileName, suffixedName } from "../core/journal-doc";
+import { decisionDocument, decisionFileName, journalPaths, suffixedName } from "../core/journal-doc";
 import type { Locale } from "../lib/i18n";
 import type { DecisionAnswer, DecisionBrief } from "../shared/contract";
 import type { JournalDirStore } from "./dir-settings";
@@ -42,17 +42,18 @@ const write = async (
     const base = decisionFileName(args.brief.title);
     const content = decisionDocument({ brief: args.brief, answer: args.answer, decidedAt: args.decidedAt, locale: args.locale });
     for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt += 1) {
-      const path = `${configured.path}/${suffixedName(base, attempt)}.md`;
+      // Хосту — абсолютный путь: `rootPath` для него граница песочницы, а не база склейки.
+      const path = journalPaths(environment.path, configured.path, `${suffixedName(base, attempt)}.md`);
       const written = await bb.sdk.files.write({
         hostId: environment.hostId,
         rootPath: environment.path,
-        path,
+        path: path.absolute,
         content,
         contentEncoding: "utf8",
         createParents: true,
         expectedSha256: null,
       });
-      if (written.outcome === "written") return { kind: "written", path };
+      if (written.outcome === "written") return { kind: "written", path: path.relative };
     }
     return { kind: "failed", error: "name collision limit reached" };
   } catch (error) {

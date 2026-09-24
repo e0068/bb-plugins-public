@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 
 import { askDecisionParamsSchema, decisionAnswerSchema, decisionBriefSchema, stageSettingsSchema } from "./contract";
 
-const result = { label: "spec.md", target: "memory/specs/spec.md" };
+const result = { label: "spec.md", target: "docs/specs/spec.md" };
 
 const params = (stages: unknown[]) => ({ title: "Этапы", setup: { stages } });
 

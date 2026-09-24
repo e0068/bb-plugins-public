@@ -17,14 +17,14 @@ describe("createJournalDirStore", () => {
 
   it("записывает и читает относительный путь", async () => {
     const dirs = await store();
-    expect(await dirs.set("proj_1", "memory/decisions")).toEqual({ kind: "saved", path: "memory/decisions" });
-    expect(await dirs.get("proj_1")).toEqual({ kind: "configured", path: "memory/decisions" });
+    expect(await dirs.set("proj_1", "docs/decisions")).toEqual({ kind: "saved", path: "docs/decisions" });
+    expect(await dirs.get("proj_1")).toEqual({ kind: "configured", path: "docs/decisions" });
   });
 
   it("режет хвостовой слэш и ведущее ./", async () => {
     const dirs = await store();
-    await dirs.set("proj_1", "./memory/decisions/");
-    expect(await dirs.get("proj_1")).toEqual({ kind: "configured", path: "memory/decisions" });
+    await dirs.set("proj_1", "./docs/decisions/");
+    expect(await dirs.get("proj_1")).toEqual({ kind: "configured", path: "docs/decisions" });
   });
 
   it("отбивает абсолютный путь", async () => {
@@ -35,20 +35,20 @@ describe("createJournalDirStore", () => {
 
   it("отбивает путь с выходом наверх", async () => {
     const dirs = await store();
-    expect(await dirs.set("proj_1", "memory/../../escape")).toEqual({ kind: "invalid", reason: "traversal" });
+    expect(await dirs.set("proj_1", "docs/../../escape")).toEqual({ kind: "invalid", reason: "traversal" });
   });
 
   it("пустая строка снимает настройку", async () => {
     const dirs = await store();
-    await dirs.set("proj_1", "memory/decisions");
+    await dirs.set("proj_1", "docs/decisions");
     expect(await dirs.set("proj_1", "  ")).toEqual({ kind: "saved", path: null });
     expect(await dirs.get("proj_1")).toEqual({ kind: "not_configured" });
   });
 
   it("list отдаёт карту всех настроенных проектов", async () => {
     const dirs = await store();
-    await dirs.set("proj_1", "memory/decisions");
+    await dirs.set("proj_1", "docs/decisions");
     await dirs.set("proj_2", "docs/decisions");
-    expect(await dirs.list()).toEqual({ proj_1: "memory/decisions", proj_2: "docs/decisions" });
+    expect(await dirs.list()).toEqual({ proj_1: "docs/decisions", proj_2: "docs/decisions" });
   });
 });

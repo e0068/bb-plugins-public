@@ -36,7 +36,7 @@ describe("answerBrief пишет журнал решения", () => {
     const calls: unknown[] = [];
     const { harness } = await setup(async (args) => {
       calls.push(args);
-      return { kind: "written", path: "memory/decisions/kuda-zhurnalit.md" };
+      return { kind: "written", path: "docs/decisions/kuda-zhurnalit.md" };
     });
     const result = await harness.callRpc("answerBrief", { id: "dec_j", answer, messageId: "msg_1", locale: "en" });
     expect(result).toMatchObject({ kind: "accepted" });

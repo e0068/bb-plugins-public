@@ -1,7 +1,7 @@
 // Черновики брифов живут в localStorage окна. Node 26 перекрывает localStorage
 // jsdom своим, а без `--localstorage-file` тот пуст — ставится хранилище в памяти.
 // Между тестами оно очищается, иначе черновик одного теста всплывает в следующем.
-import { afterEach } from "vitest";
+import { afterAll, afterEach } from "vitest";
 
 class MemoryStorage implements Storage {
   private readonly items = new Map<string, string>();
@@ -38,3 +38,12 @@ if (typeof window !== "undefined") {
 afterEach(() => {
   globalThis.localStorage?.clear();
 });
+
+// Flow пишет корневой навык в ~/.claude/skills: у тестов свой дом во временной папке, настоящий навык владельца они не трогают.
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
+const home = mkdtempSync(join(tmpdir(), "flow-home-"));
+process.env.HOME = home;
+afterAll(() => rmSync(home, { recursive: true, force: true }));

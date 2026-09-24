@@ -33,7 +33,7 @@ const outcome = {
   next: "Спецификация",
   done: ["Задача заведена"],
   pending: [],
-  results: [{ label: "task.md", target: "memory/tasks/task.md" }],
+  results: [{ label: "task.md", target: "docs/tasks/task.md" }],
 };
 
 describe("бриф в запущенном треде", () => {

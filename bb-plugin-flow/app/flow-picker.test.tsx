@@ -3,6 +3,7 @@ import { cleanup, fireEvent, within } from "@testing-library/react";
 import { loadPluginApp, renderSlot } from "@get-bb/plugin-sdk/testing/app";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { NO_FLOW } from "../core/flows";
 import type { flowPickerRpcContract } from "../shared/contract";
 
 const app = await loadPluginApp(() => import("../app"));
@@ -12,9 +13,9 @@ afterEach(cleanup);
 const customization = () => app.composerCustomizations.find((c) => c.id === "flow")!;
 const choice = { flows: [{ id: "default", name: "Default" }, { id: "quick", name: "Quick" }], selected: "default" };
 
-const open = (scope: { kind: "new-thread"; projectId: string | null } | { kind: "thread"; threadId: string }) =>
+const open = (scope: { kind: "new-thread"; projectId: string | null } | { kind: "thread"; threadId: string }, selected = "default") =>
   renderSlot<object, typeof flowPickerRpcContract>(customization().actions![0]!, {}, {
-    rpc: { getFlowChoice: () => choice, setFlowChoice: (input: { flowId: string }) => ({ selected: input.flowId }) } as never,
+    rpc: { getFlowChoice: () => ({ ...choice, selected }), setFlowChoice: (input: { flowId: string }) => ({ selected: input.flowId }) } as never,
     composer: { scope },
     settings: { language: "Русский" },
   });
@@ -52,5 +53,21 @@ describe("кнопка flow в композере", () => {
     fireEvent.click(await slot.findByRole("menuitemradio", { name: "Quick" }));
     await vi.waitFor(() => expect(slot.rpcCalls.at(-1)).toEqual({ method: "setFlowChoice", input: { projectId: "proj_a", flowId: "quick" } }));
     expect(await slot.findByRole("button", { name: /Quick/ })).toBeTruthy();
+  });
+
+  it("в списке есть «Без flow»: им тред отказывается от flow", async () => {
+    const slot = open({ kind: "new-thread", projectId: "proj_a" });
+    const trigger = await slot.findByRole("button", { name: /Default/ });
+    fireEvent.pointerDown(trigger, { button: 0, ctrlKey: false });
+    fireEvent.click(trigger);
+    fireEvent.click(await slot.findByRole("menuitemradio", { name: "Без flow" }));
+    await vi.waitFor(() => expect(slot.rpcCalls.at(-1)).toEqual({ method: "setFlowChoice", input: { projectId: "proj_a", flowId: NO_FLOW } }));
+  });
+
+  it("при выбранном «Без flow» на кнопке остаётся одна иконка без подписи", async () => {
+    const slot = open({ kind: "new-thread", projectId: "proj_a" }, NO_FLOW);
+    const trigger = await slot.findByRole("button", { name: "Без flow" });
+    expect(trigger.textContent).toBe("");
+    expect(trigger.querySelector("svg")).toBeTruthy();
   });
 });

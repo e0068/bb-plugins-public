@@ -1,10 +1,12 @@
 // Кнопка flow в композере нового треда — рядом с выбором модели и того же
 // вида: ghost, h-8, text-xs, без рамки и фона. Выбор запоминается сервером по
 // проекту и достаётся треду, который из этого композера создадут. На узком
-// экране подпись — только имя flow, без «Flow:».
+// экране подпись — только имя flow, без «Flow:». Последний пункт списка —
+// «без flow»: тред идёт сам по себе, и на кнопке остаётся один знак плагина.
 import { useEffect, useState } from "react";
 import { useComposerView, useRpc } from "@get-bb/plugin-sdk/app";
 
+import { NO_FLOW } from "../core/flows";
 import { Button } from "../components/ui/button";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuLabel, DropdownMenuRadioGroup, DropdownMenuRadioItem, DropdownMenuTrigger } from "../components/ui/dropdown-menu";
 import type { flowPickerRpcContract } from "../shared/contract";
@@ -54,6 +56,7 @@ function ProjectPicker({ projectId }: { projectId: string }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps -- перечитываем при смене проекта, а не на новый объект клиента
   }, [projectId]);
   if (choice === null) return null;
+  const none = choice.selected === NO_FLOW;
   const name = choice.flows.find((f) => f.id === choice.selected)?.name ?? choice.selected;
   const pick = (flowId: string) => {
     setChoice({ ...choice, selected: flowId });
@@ -62,10 +65,10 @@ function ProjectPicker({ projectId }: { projectId: string }) {
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
-        <Button type="button" variant="ghost" size="sm" className={PICKER_LOOK} aria-label={t.flows.picker(name)} aria-description={t.flows.pickerTitle}>
+        <Button type="button" variant="ghost" size="sm" className={PICKER_LOOK} aria-label={none ? t.flows.pickerNone : t.flows.picker(name)} aria-description={t.flows.pickerTitle}>
           <FlowMark />
-          <span className="truncate max-md:hidden">{t.flows.picker(name)}</span>
-          <span className="truncate md:hidden">{name}</span>
+          {!none && <span className="truncate max-md:hidden">{t.flows.picker(name)}</span>}
+          {!none && <span className="truncate md:hidden">{name}</span>}
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end">
@@ -76,6 +79,7 @@ function ProjectPicker({ projectId }: { projectId: string }) {
               {flow.name}
             </DropdownMenuRadioItem>
           ))}
+          <DropdownMenuRadioItem value={NO_FLOW}>{t.flows.pickerNone}</DropdownMenuRadioItem>
         </DropdownMenuRadioGroup>
       </DropdownMenuContent>
     </DropdownMenu>

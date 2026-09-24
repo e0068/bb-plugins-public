@@ -300,6 +300,7 @@ describe("prOpenedNotifications", () => {
     inReviewTasks: ["BP-195"],
     failedTasks: [],
     taskCliError: null,
+    versionBump: { bumped: [], problems: [] },
   };
 
   it("names the PR number and links to it", () => {
@@ -315,6 +316,18 @@ describe("prOpenedNotifications", () => {
 
   it("says nothing about tasks when the thread had none", () => {
     expect(prOpenedNotifications({ ...opened, inReviewTasks: [] })[0]?.details).toEqual([]);
+  });
+
+  it("names the versions the bump raised right after opening", () => {
+    const withBump = { ...opened, versionBump: { bumped: [{ root: "bb-plugin-flow", to: "0.4.2" }], problems: [] } };
+    expect(prOpenedNotifications(withBump)[0]?.details).toEqual(["Marked BP-195 in review", "Bumped bb-plugin-flow to 0.4.2"]);
+  });
+
+  it("a bump that did not go through is a warning of its own, not silence", () => {
+    const refused = { ...opened, versionBump: { bumped: [], problems: ["could not catch the branch up with main (HTTP 409)"] } };
+    expect(prOpenedNotifications(refused).filter((n) => n.tone === "warning")).toEqual([
+      { tone: "warning", title: "Version not bumped: could not catch the branch up with main (HTTP 409)", details: [], link: null },
+    ]);
   });
 });
 
@@ -660,6 +673,7 @@ describe("every builder", () => {
               inReviewTasks: [],
               failedTasks,
               taskCliError,
+              versionBump,
             }),
             prOpenedAndMergedNotifications(
               {

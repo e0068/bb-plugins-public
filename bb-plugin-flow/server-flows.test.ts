@@ -2,7 +2,7 @@
 import { createFakePluginHost, makeThreadResponse } from "@get-bb/plugin-sdk/testing";
 import { describe, expect, it } from "vitest";
 
-import { addFlow, DEFAULT_STAGES, newFlow, setFlowStages } from "./core/flows";
+import { addFlow, DEFAULT_STAGES, newFlow, NO_FLOW, setFlowStages } from "./core/flows";
 import plugin from "./server";
 
 const text = (result: unknown) => (typeof result === "string" ? result : JSON.stringify(result));
@@ -20,10 +20,12 @@ const withQuick = async () => {
 };
 
 describe("плагин Flow: flow и треды", () => {
-  it("из штатных настроек — только язык; RPC страницы Flow и выбора flow зарегистрированы, старых RPC этапов нет", async () => {
+  it("из штатных настроек — язык и два порога второй полосы; RPC страницы Flow и выбора flow зарегистрированы, старых RPC этапов нет", async () => {
     const { bb, harness } = createFakePluginHost({ pluginId: "flow" });
     await plugin(bb);
-    expect(Object.keys(harness.registrations.settingsDescriptors)).toEqual(["language"]);
+    expect(Object.keys(harness.registrations.settingsDescriptors)).toEqual(["language", "contextWarnPercent", "contextAlertPercent"]);
+    expect(harness.registrations.settingsDescriptors.contextWarnPercent).toMatchObject({ type: "number", default: 25 });
+    expect(harness.registrations.settingsDescriptors.contextAlertPercent).toMatchObject({ type: "number", default: 40 });
     expect(harness.registrations.rpcMethods).toEqual(expect.arrayContaining(["getFlowSettings", "saveFlowSettings", "getStageCatalog", "getFlowChoice", "setFlowChoice"]));
     expect(harness.registrations.rpcMethods).not.toContain("getStageSettings");
   });
@@ -58,4 +60,23 @@ describe("плагин Flow: flow и треды", () => {
     await expect(harness.callRpc("setFlowChoice", { projectId: "proj_a", flowId: "gone" })).rejects.toThrow();
   });
 
+  it("«без flow» записывается выбором проекта и читается кнопкой", async () => {
+    const { harness } = await withQuick();
+    expect(await harness.callRpc("setFlowChoice", { projectId: "proj_a", flowId: NO_FLOW })).toEqual({ selected: NO_FLOW });
+    expect(await harness.callRpc("getFlowChoice", { projectId: "proj_a" })).toEqual({ flows: [{ id: "default", name: "Default" }, { id: "quick", name: "Quick" }], selected: NO_FLOW });
+  });
+
+  it("тред, созданный при выборе «без flow», не получает от Flow ни правила, ни этапов", async () => {
+    const { harness } = await withQuick();
+    await harness.callRpc("setFlowChoice", { projectId: "proj_a", flowId: NO_FLOW });
+    await harness.emitThreadEvent("thread.created", { thread: makeThreadResponse({ id: "thr_none", projectId: "proj_a", parentThreadId: null }) });
+    expect(harness.registrations.instructionProvider?.({ threadId: "thr_none", projectId: "proj_a" }) ?? "").toBe("");
+  });
+
+  it("тред с flow по-прежнему получает правило и этапы", async () => {
+    const { harness } = await withQuick();
+    await harness.callRpc("setFlowChoice", { projectId: "proj_a", flowId: "quick" });
+    await harness.emitThreadEvent("thread.created", { thread: makeThreadResponse({ id: "thr_flow", projectId: "proj_a", parentThreadId: null }) });
+    expect(harness.registrations.instructionProvider?.({ threadId: "thr_flow", projectId: "proj_a" }) ?? "").toMatch(/only through its stages/);
+  });
 });

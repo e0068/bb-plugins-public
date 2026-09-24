@@ -6,12 +6,12 @@ import type { DecisionAnswer, StageAnswer } from "../shared/contract";
 import { answerMessageText, deviationTotal, deviations, openQuestions } from "./answer-message";
 import { STAGES, planner, report, stagedBrief } from "./stages-fixtures";
 
-const results = [{ label: "spec.md", target: "memory/specs/spec.md" }];
+const results = [{ label: "spec.md", target: "docs/specs/spec.md" }];
 const demo = builtinStage("demo", STAGES.map((s) => s.id));
 
 /** Этапы со старым состоянием review — бриф, записанный до Демонстрации. */
 const brief = stagedBrief(
-  [report("task", { state: "done", results: [{ label: "BBPL-1", target: "memory/tasks/BBPL-1.md" }] }), report("spec", { state: "review", results }), report("plan", { recommended: true }), report("demo", { recommended: true })],
+  [report("task", { state: "done", results: [{ label: "BBPL-1", target: "docs/tasks/BBPL-1.md" }] }), report("spec", { state: "review", results }), report("plan", { recommended: true }), report("demo", { recommended: true })],
   { stages: { list: [...STAGES, { ...demo, name: "Демонстрация" }], minButtonWidth: 170 } },
 );
 

@@ -18,7 +18,7 @@ const kv = () => {
 };
 
 /** SDK с тем, что шаги спрашивают у треда и окружения; всё остальное падает, как упал бы bb без окружения. */
-const sdk = (over: { archive?: () => Promise<unknown>; environment?: { path: string | null } }) =>
+const sdk = (over: { archive?: () => Promise<unknown>; environment?: { path: string | null }; merge?: (args: { method: string }) => Promise<unknown> }) =>
   ({
     threads: {
       get: async () => ({ id: "t1", environmentId: over.environment === undefined ? null : "e1", title: "T" }),
@@ -26,6 +26,7 @@ const sdk = (over: { archive?: () => Promise<unknown>; environment?: { path: str
     },
     environments: {
       get: async () => ({ id: "e1", hostId: "h", path: over.environment?.path ?? null, branchName: "b", baseBranch: "main", remoteUrl: null }),
+      mergePullRequest: over.merge ?? (async () => ({})),
     },
   }) as unknown as StepPorts["sdk"];
 
@@ -85,6 +86,22 @@ describe("createSteps", () => {
   it("переведённые задачи называются в итоге шага", async () => {
     const cli: CliPorts = { run: async (args) => (args[1] === "current" ? ran(JSON.stringify({ tasks: [{ key: "BBPL-1" }] })) : ran("")) };
     expect(await createSteps(ports({}, cli))["bb.tasks-in-review"]("t1")).toEqual({ ok: true, detail: "BBPL-1" });
+  });
+
+  // Ветка в main должна ложиться коммитом слияния: сквош оставлял в main
+  // коммит с одним родителем, и локальный main после него расходился с origin.
+  it("PR вливается коммитом слияния, а не сквошем", async () => {
+    const methods: string[] = [];
+    const steps = createSteps(ports({ environment: { path: "/tmp/w" }, merge: async ({ method }) => void methods.push(method) }));
+    expect(await steps["git.merge"]("t1")).toEqual({ ok: true, detail: null });
+    expect(methods).toEqual(["merge"]);
+  });
+
+  // Пустой список — законный случай, но молчаливая галочка под ним прятала
+  // поломку: шаг отмечался сделанным, а задача оставалась в работе.
+  it("шаг, не нашедший ни одной задачи, говорит об этом строкой", async () => {
+    const cli: CliPorts = { run: async () => ran(JSON.stringify({ tasks: [] })) };
+    expect(await createSteps(ports({}, cli))["bb.tasks-done"]("t1")).toEqual({ ok: true, detail: "no linked tasks" });
   });
 
   it("у каждого id есть подписи на двух языках и распознавание id", () => {

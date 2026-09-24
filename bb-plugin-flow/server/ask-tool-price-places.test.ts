@@ -29,3 +29,13 @@ describe("вариант со снятыми пунктами", () => {
     expect(skill).toContain("the plugin subtracts the shares of the items in removes itself");
   });
 });
+
+describe("пункт, который зависит от ответа", () => {
+  it("инструкции и навык говорят, что снятый владельцем вариант оставляет свой пункт зачёркнутым", () => {
+    for (const text of [ASK_INSTRUCTIONS, skill]) expect(text).toContain("an item of an option the owner drops themselves stays in the list struck through");
+  });
+
+  it("инструкции и навык велят писать такой пункт в вариант, а не в setup.criteria", () => {
+    for (const text of [ASK_INSTRUCTIONS, skill]) expect(text).toContain("goes on the option, not into setup.criteria");
+  });
+});

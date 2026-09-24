@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import fc from "fast-check";
 
-import { bumpBy, bumpPatch, type BumpLevel } from "./plugin-version-bump";
+import { bumpBy, type BumpLevel } from "./plugin-version-bump";
 
 const LEVELS: readonly BumpLevel[] = ["major", "minor", "patch"];
 
@@ -27,14 +27,10 @@ describe("bumpBy", () => {
     expect(bumpBy(2, 7, 9, "minor")).toBe("2.8.0");
   });
 
-  it("patch answers exactly what bumpPatch does", () => {
-    for (const [major, minor, patch] of [
-      [0, 1, 4],
-      [2, 7, 9],
-      [10, 0, 0],
-    ] as const) {
-      expect(bumpBy(major, minor, patch, "patch")).toBe(bumpPatch(major, minor, patch));
-    }
+  it("patch raises the patch component by one and leaves major.minor alone", () => {
+    expect(bumpBy(0, 1, 4, "patch")).toBe("0.1.5");
+    expect(bumpBy(2, 7, 9, "patch")).toBe("2.7.10");
+    expect(bumpBy(10, 0, 0, "patch")).toBe("10.0.1");
   });
 
   it("answers a version strictly above the input at every level", () => {

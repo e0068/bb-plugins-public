@@ -1,12 +1,12 @@
 // Layer 3 (shell) — after a PR has merged, bring every plugin the PR itself
 // touched onto the merged code. Uses the host SDK (bb.sdk.plugins) directly —
 // no runtime dependency on Plugins Monitor being installed. See
-// memory/decisions/reinstall-touched-plugins-direct-sdk.md.
+// docs/decisions/reinstall-touched-plugins-direct-sdk.md.
 //
 // Which plugins: the ones named by the merged PR's own file list (the same
 // comparison the merge-time version bump reads, see merge-time-bump.ts) —
 // NOT the range the local `main` happened to advance by in the plugin's own
-// post-merge pull. See memory/decisions/reinstall-from-merged-pr-files.md.
+// post-merge pull. See docs/decisions/reinstall-from-merged-pr-files.md.
 //
 // Which command: decided in src/core/reinstall-plan.ts from the source bb
 // holds under the id. An update and a fresh install run here and now; a

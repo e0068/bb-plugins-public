@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { DecisionAnswer, DecisionBrief } from "../shared/contract";
-import { decisionDocument, decisionFileName, suffixedName } from "./journal-doc";
+import { decisionDocument, decisionFileName, journalPaths, suffixedName } from "./journal-doc";
 
 describe("decisionFileName", () => {
   it("транслитерирует кириллицу в слаг", () => {
@@ -70,5 +70,22 @@ describe("decisionDocument", () => {
     const en = decisionDocument({ brief, answer, decidedAt: "2026-09-15T12:00:00.000Z", locale: "en" });
     expect(ru).toContain("Бриф «Как вести работу» — ответ:");
     expect(en).toContain('Brief "Как вести работу" — answer:');
+  });
+});
+
+describe("journalPaths", () => {
+  it("хосту — абсолютный путь внутри дерева, владельцу — относительный", () => {
+    expect(journalPaths("/work/tree", "docs/flows", "kak-vesti-rabotu.md")).toEqual({
+      relative: "docs/flows/kak-vesti-rabotu.md",
+      absolute: "/work/tree/docs/flows/kak-vesti-rabotu.md",
+    });
+  });
+
+  it("хвостовой слеш в корне дерева не задваивается", () => {
+    expect(journalPaths("/work/tree/", "docs/flows", "x.md").absolute).toBe("/work/tree/docs/flows/x.md");
+  });
+
+  it("корень дерева — сам слеш", () => {
+    expect(journalPaths("/", "docs/flows", "x.md").absolute).toBe("/docs/flows/x.md");
   });
 });

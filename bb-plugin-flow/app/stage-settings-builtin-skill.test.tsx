@@ -76,20 +76,6 @@ describe("охват встроенных этапов", () => {
   });
 });
 
-describe("корневой навык на странице Flow", () => {
-  it("ссылка открывает файл корневого навыка превью bb на его хосте", async () => {
-    const slot = open(() => ({ hostId: "host_local", path: "/home/owner/.claude/skills/flow/SKILL.md" }));
-    fireEvent.click(await slot.findByRole("button", { name: "Корневой навык flow" }));
-    expect(slot.navigateCalls.at(-1)).toMatchObject({ method: "experimental_openFilePreview", options: { target: { kind: "host", hostId: "host_local", path: "/home/owner/.claude/skills/flow/SKILL.md" } } });
-  });
-
-  it("нет корневого навыка — подпись, где его ждут, без ссылки", async () => {
-    const slot = open();
-    expect(await slot.findByText("Корневой навык flow не найден в ~/.claude/skills")).toBeTruthy();
-    expect(slot.queryByRole("button", { name: "Корневой навык flow" })).toBeNull();
-  });
-});
-
 describe("иконки файла навыка в поле навыка", () => {
   const openWith = (skillFile: (input: { name: string }) => RootSkill) =>
     renderSlot<PluginNavPanelProps, typeof flowSettingsRpcContract>(app.navPanels.find((p) => p.id === "flows")!, { subPath: "" }, {

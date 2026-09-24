@@ -13,21 +13,24 @@ import { useEffect, useRef, useState, type ChangeEvent, type DragEvent } from "r
 
 import { isStepId, STEP_IDS, type StepId } from "../packages/automation-steps/catalog";
 import { automationsClient, type AutomationSummary, type CatalogResponse, type ClientResult } from "../packages/automations-contract/index";
+import { FieldOverlay, overlayItem, useFieldOverlay } from "../components/ui/field-overlay";
 import { Icon } from "../components/ui/icon";
 import { builtinAutomationStage } from "../core/automation-run";
+import { NEEDS_OPEN_PR, opensPrBefore } from "../core/automation-order";
 import { addScript, MAX_SCRIPT_CHARS, removeStep, scriptOf } from "../core/automation-scripts";
 import { applySet, isSaved, removeSet, saveSet } from "../core/automation-sets";
 import { moveItem } from "../core/reorder";
-import { automationStage, automationStageId } from "../lib/stage-constants";
-import { BUILTIN_AUTOMATION_ICON, EXTERNAL_AUTOMATION_ICON } from "./stage-icons";
+import { actionStage, automationStage, automationStageId, stageKindOf } from "../lib/stage-constants";
+import { BUILTIN_AUTOMATION_ICON, EXTERNAL_AUTOMATION_ICON, KIND_ICONS } from "./stage-icons";
 import { cn } from "../lib/utils";
 import type { AutomationSet, AutomationStep, BuiltinAutomation, WorkStage } from "../shared/contract";
 import { useMessages } from "./locale-context";
 
-const popover = "absolute left-0 top-full z-20 mt-1 max-h-80 w-max min-w-full max-w-[22rem] overflow-auto rounded-lg border border-border bg-card p-1 shadow-lg";
-const popoverItem = "flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-[13px] hover:bg-state-hover disabled:cursor-default disabled:opacity-40 disabled:hover:bg-transparent";
+/** Строка списка поля, недоступная для уже выбранного шага. */
+const menuItem = cn(overlayItem, "disabled:cursor-default disabled:opacity-40 disabled:hover:bg-transparent");
 const addButton = "flex h-7 shrink-0 items-center gap-1.5 rounded-md px-2 text-[13px] text-muted-foreground hover:bg-state-hover hover:text-foreground";
 const tag = "inline-flex h-7 max-w-full items-center gap-1.5 rounded-md bg-card text-xs";
+
 
 type Loaded = { kind: "loading" } | { kind: "ready"; automations: AutomationSummary[] } | { kind: "missing" } | { kind: "failed" };
 
@@ -39,19 +42,6 @@ const loadedOf = (result: ClientResult<CatalogResponse>): Loaded =>
       : { kind: "failed" };
 
 /** Закрывает всплывающее по нажатию вне корня. */
-function useOutside(open: boolean, close: () => void) {
-  const root = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    if (!open) return;
-    const onDown = (event: PointerEvent) => {
-      if (root.current !== null && !root.current.contains(event.target as Node)) close();
-    };
-    document.addEventListener("pointerdown", onDown);
-    return () => document.removeEventListener("pointerdown", onDown);
-  }, [open, close]);
-  return root;
-}
-
 type ScriptFile = { name: string; content: string };
 
 /** Сохранённые наборы и их правка — от таблицы этапов: этот модуль не тянет SDK, его импортируют до загрузки приложения. */
@@ -71,11 +61,16 @@ const useStepLabels = () => {
 };
 
 /** Меню шагов Flow: сверху — сохранённые наборы, если меню их показывает; уже стоящие шаги недоступны; «Добавить скрипт…» открывает выбор файла. */
-function StepsMenu({ taken, onPick, onScript, sets }: { taken: readonly AutomationStep[]; onPick: (id: StepId) => void; onScript: (file: ScriptFile) => void; sets?: SetsMenu }) {
+function StepsMenu({ open, onClose, taken, onPick, onScript, sets, prOpened = true }: { open: boolean; onClose: () => void; taken: readonly AutomationStep[]; onPick: (id: StepId) => void; onScript: (file: ScriptFile) => void; sets?: SetsMenu; prOpened?: boolean }) {
   const t = useMessages();
   const labels = useStepLabels();
   const input = useRef<HTMLInputElement>(null);
   const [tooBig, setTooBig] = useState(false);
+  // Меню живёт между открытиями — раньше оно пересоздавалось каждый раз, и
+  // жалоба на слишком длинный скрипт уходила сама; теперь её снимает закрытие.
+  useEffect(() => {
+    if (!open) setTooBig(false);
+  }, [open]);
   const onFile = async (event: ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     event.target.value = "";
@@ -87,7 +82,7 @@ function StepsMenu({ taken, onPick, onScript, sets }: { taken: readonly Automati
     if (content.length <= MAX_SCRIPT_CHARS) onScript({ name: file.name, content });
   };
   return (
-    <div role="menu" aria-label={t.settings.automationSteps} className={cn(popover, "min-w-[16rem]")}>
+    <FieldOverlay open={open} onClose={onClose} role="menu" label={t.settings.automationSteps} className="min-w-[16rem]">
       {sets !== undefined && sets.sets.length > 0 && (
         <>
           <div className="px-2 pb-1 pt-1.5 text-[11px] text-muted-foreground">{t.settings.savedSets}</div>
@@ -95,7 +90,7 @@ function StepsMenu({ taken, onPick, onScript, sets }: { taken: readonly Automati
             const label = labels({ source: "flow", ...set }).join(" · ");
             return (
               <div key={`${i}-${label}`} className="flex items-center gap-0.5">
-                <button type="button" role="menuitem" title={label} onClick={() => sets.onSet(set)} className={cn(popoverItem, "min-w-0 flex-1")}>
+                <button type="button" role="menuitem" title={label} onClick={() => sets.onSet(set)} className={cn(menuItem, "min-w-0 flex-1")}>
                   <span className="min-w-0 truncate">{label}</span>
                 </button>
                 <button
@@ -112,19 +107,34 @@ function StepsMenu({ taken, onPick, onScript, sets }: { taken: readonly Automati
           <div role="separator" className="my-1 h-px bg-border" />
         </>
       )}
-      {STEP_IDS.map((id) => (
-        <button key={id} type="button" role="menuitem" aria-disabled={taken.includes(id)} disabled={taken.includes(id)} onClick={() => onPick(id)} className={popoverItem}>
-          {t.steps[id]}
-        </button>
-      ))}
+      {STEP_IDS.map((id) => {
+        // Шаг по номеру открытого PR раньше самого открытия — цепочка, падающая
+        // на первом же прогоне. Такой пункт не выбрать, и подпись говорит почему.
+        const needsPr = !prOpened && NEEDS_OPEN_PR.includes(id);
+        const disabled = taken.includes(id) || needsPr;
+        return (
+          <button
+            key={id}
+            type="button"
+            role="menuitem"
+            title={needsPr ? t.settings.stepNeedsOpenPr(t.steps["git.create-pr"]) : undefined}
+            aria-disabled={disabled}
+            disabled={disabled}
+            onClick={() => onPick(id)}
+            className={menuItem}
+          >
+            {t.steps[id]}
+          </button>
+        );
+      })}
       <div role="separator" className="my-1 h-px bg-border" />
-      <button type="button" role="menuitem" onClick={() => input.current?.click()} className={popoverItem}>
+      <button type="button" role="menuitem" onClick={() => input.current?.click()} className={menuItem}>
         <Icon name="Code" aria-hidden="true" className="size-3.5" />
         {t.settings.addScript}
       </button>
       {tooBig && <div className="px-2 py-1.5 text-xs text-destructive">{t.settings.scriptTooBig}</div>}
       <input ref={input} type="file" hidden onChange={(event) => void onFile(event)} />
-    </div>
+    </FieldOverlay>
   );
 }
 
@@ -143,8 +153,12 @@ const withScript = (file: ScriptFile, id: string) => (stage: WorkStage) => withA
 export function AddBuiltinAutomation({ stages, sets, onAdd, onChange }: { stages: readonly WorkStage[]; sets: AutomationSets; onAdd: (stage: WorkStage) => void; onChange: (id: string, change: (stage: WorkStage) => WorkStage) => void }) {
   const t = useMessages();
   const [added, setAdded] = useState<string | null>(null);
-  const root = useOutside(added !== null, () => setAdded(null));
+  const close = () => setAdded(null);
+  const { root } = useFieldOverlay(added !== null, close);
   const current = stages.find((s) => s.id === added);
+  // Меню смонтировано и при закрытом этапе — ради выезда шторы; цель правки
+  // сужается здесь один раз, а не стражем в каждом колбэке.
+  const change = (patch: (stage: WorkStage) => WorkStage) => added !== null && onChange(added, patch);
   const labels = useStepLabels();
   const onSet = (set: AutomationSet) => {
     if (added === null) return;
@@ -166,15 +180,51 @@ export function AddBuiltinAutomation({ stages, sets, onAdd, onChange }: { stages
         <Icon name={BUILTIN_AUTOMATION_ICON} aria-hidden="true" className="size-3.5" />
         {t.settings.addBuiltinAutomation}
       </button>
-      {added !== null && (
-        <StepsMenu
-          taken={current === undefined ? [] : builtinOf(current).steps}
-          onPick={(id) => onChange(added, withStep(id))}
-          onScript={(file) => onChange(added, withScript(file, crypto.randomUUID()))}
-          // Набор ставится только в пустой этап: к уже выбранным шагам его не подмешать.
-          {...(current === undefined || builtinOf(current).steps.length === 0 ? { sets: { ...sets, onSet } } : {})}
-        />
-      )}
+      <StepsMenu
+        open={added !== null}
+        onClose={close}
+        taken={current === undefined ? [] : builtinOf(current).steps}
+        onPick={(id) => change(withStep(id))}
+        onScript={(file) => change(withScript(file, crypto.randomUUID()))}
+        prOpened={added === null || opensPrBefore(stages, added)}
+        // Набор ставится только в пустой этап: к уже выбранным шагам его не подмешать.
+        {...(current === undefined || builtinOf(current).steps.length === 0 ? { sets: { ...sets, onSet } } : {})}
+      />
+    </div>
+  );
+}
+
+/** «Action»: новый этап Action в конец таблицы и меню его шагов под кнопкой — те же шаги, что у автоматизации. */
+export function AddAction({ stages, onAdd, onChange }: { stages: readonly WorkStage[]; onAdd: (stage: WorkStage) => void; onChange: (id: string, change: (stage: WorkStage) => WorkStage) => void }) {
+  const t = useMessages();
+  const [added, setAdded] = useState<string | null>(null);
+  const close = () => setAdded(null);
+  const { root } = useFieldOverlay(added !== null, close);
+  const current = stages.find((s) => s.id === added);
+  const change = (patch: (stage: WorkStage) => WorkStage) => added !== null && onChange(added, patch);
+  return (
+    <div ref={root} className="relative">
+      <button
+        type="button"
+        aria-label={t.settings.addStage(t.stages.action)}
+        onClick={() => {
+          const stage = actionStage(stages.map((s) => s.id));
+          onAdd(stage);
+          setAdded(stage.id);
+        }}
+        className={cn(addButton, "text-foreground")}
+      >
+        <Icon name={KIND_ICONS.action} aria-hidden="true" className="size-3.5" />
+        {t.settings.addAction}
+      </button>
+      <StepsMenu
+        open={added !== null}
+        onClose={close}
+        taken={current === undefined ? [] : builtinOf(current).steps}
+        onPick={(id) => change(withStep(id))}
+        onScript={(file) => change(withScript(file, crypto.randomUUID()))}
+        prOpened={added === null || opensPrBefore(stages, added)}
+      />
     </div>
   );
 }
@@ -183,7 +233,8 @@ export function AddBuiltinAutomation({ stages, sets, onAdd, onChange }: { stages
 export function AddAutomation({ stages, onAdd }: { stages: readonly WorkStage[]; onAdd: (stage: WorkStage) => void }) {
   const t = useMessages();
   const [open, setOpen] = useState(false);
-  const root = useOutside(open, () => setOpen(false));
+  const close = () => setOpen(false);
+  const { root } = useFieldOverlay(open, close);
   const [query, setQuery] = useState("");
   const [loaded, setLoaded] = useState<Loaded>({ kind: "loading" });
 
@@ -218,8 +269,7 @@ export function AddAutomation({ stages, onAdd }: { stages: readonly WorkStage[];
         <Icon name={EXTERNAL_AUTOMATION_ICON} aria-hidden="true" className="size-3.5" />
         {t.settings.addFromAutomations}
       </button>
-      {open && (
-        <div role="listbox" aria-label={t.settings.automations} className={cn(popover, "min-w-[18rem] max-w-[24rem]")}>
+      <FieldOverlay open={open} onClose={close} role="listbox" label={t.settings.automations} className="min-w-[18rem] max-w-[24rem]">
           <input
             autoFocus
             value={query}
@@ -246,34 +296,35 @@ export function AddAutomation({ stages, onAdd }: { stages: readonly WorkStage[];
                 onAdd(automation.steps === undefined ? stage : { ...stage, automation: { ...stage.automation, steps: [...automation.steps] } });
                 setOpen(false);
               }}
-              className={popoverItem}
+              className={menuItem}
             >
               <span className="min-w-0 truncate">{automation.name}</span>
               {automation.steps !== undefined && <span className="ml-auto shrink-0 pl-3 text-[11px] text-muted-foreground">{t.settings.stepCount(automation.steps.length)}</span>}
             </button>
           ))}
-        </div>
-      )}
+      </FieldOverlay>
     </div>
   );
 }
 
-/** Ячейка вида этапа-автоматизации: значок и чья она. */
-export function AutomationKindCell({ stage }: { stage: WorkStage }) {
+/** Ячейка вида этапа с шагами: Action, встроенная автоматизация или автоматизация Automations. */
+export function AutomationKindCell({ stage, className }: { stage: WorkStage; className?: string }) {
   const t = useMessages();
   const builtin = stage.automation !== undefined && "source" in stage.automation;
+  const name = stageKindOf(stage) === "action" ? t.stages.action : builtin ? t.settings.automationStage : t.settings.automationsSource;
   return (
-    <span role="cell" className="flex h-7 min-w-0 items-center px-2 text-xs text-muted-foreground">
-      <span className="truncate">{builtin ? t.settings.automationStage : t.settings.automationsSource}</span>
+    <span role="cell" className={cn("flex h-7 min-w-0 items-center px-2 text-xs text-muted-foreground", className)}>
+      <span className="truncate">{name}</span>
     </span>
   );
 }
 
 /** Теги шагов этапа-автоматизации: у встроенной — правка, у автоматизации Automations — только чтение. */
-export function AutomationStepTags({ stage, sets, onChange }: { stage: WorkStage; sets: AutomationSets; onChange: (change: (stage: WorkStage) => WorkStage) => void }) {
+export function AutomationStepTags({ stage, stages, sets, onChange }: { stage: WorkStage; stages: readonly WorkStage[]; sets: AutomationSets; onChange: (change: (stage: WorkStage) => WorkStage) => void }) {
   const t = useMessages();
   const [open, setOpen] = useState(false);
-  const root = useOutside(open, () => setOpen(false));
+  const close = () => setOpen(false);
+  const { root } = useFieldOverlay(open, close);
   const [dragged, setDragged] = useState<number | null>(null);
   const label = useStepLabel();
   const automation = stage.automation;
@@ -337,19 +388,20 @@ export function AutomationStepTags({ stage, sets, onChange }: { stage: WorkStage
           <Icon name="Bookmark" aria-hidden="true" className="size-3.5" />
         </button>
       )}
-      {open && (
-        <StepsMenu
-          taken={steps}
-          onPick={(id) => {
-            onChange(withStep(id));
-            setOpen(false);
-          }}
-          onScript={(file) => {
-            onChange(withScript(file, crypto.randomUUID()));
-            setOpen(false);
-          }}
-        />
-      )}
+      <StepsMenu
+        open={open}
+        onClose={close}
+        prOpened={opensPrBefore(stages, stage.id)}
+        taken={steps}
+        onPick={(id) => {
+          onChange(withStep(id));
+          close();
+        }}
+        onScript={(file) => {
+          onChange(withScript(file, crypto.randomUUID()));
+          close();
+        }}
+      />
     </div>
   );
 }

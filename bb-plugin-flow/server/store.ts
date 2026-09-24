@@ -9,11 +9,9 @@ import {
   awaitingEntrySchema,
   carriedSchema,
   decisionBriefSchema,
-  dispatchPlaceSchema,
   dispatchRouteSchema,
   type AnswerRecord,
   type DecisionBrief,
-  type DispatchPlace,
   type DispatchRoute,
 } from "../shared/contract";
 
@@ -23,12 +21,7 @@ const briefKey = (id: string) => `decision:${id}`;
 const answerKey = (id: string) => `decision-answer:${id}`;
 const threadCarryKey = (threadId: string) => `decision-thread-carry:${threadId}`;
 const launchedKey = (threadId: string) => `decision-launched:${threadId}`;
-/** Место исполнения по проектам — одним значением: у настроек плагина нет попроектного разреза. */
-const PLACES_KEY = "dispatch-place";
-
-const placesSchema = z.record(z.string(), dispatchPlaceSchema);
-
-/** Маршрут нового треда по проектам — рядом с местом, своим ключом: старая запись мест читается как была. */
+/** Маршрут нового треда по проектам. Места рядом нет: бриф всегда открывается «в этом треде». */
 const ROUTES_KEY = "dispatch-route";
 
 const routesSchema = z.record(z.string(), dispatchRouteSchema);
@@ -59,9 +52,6 @@ export type DecisionStore = {
   /** Работа треда уже отправлена на исполнение: этапы и бюджет в нём больше не спрашиваются. */
   isLaunched(threadId: string): Promise<boolean>;
   markLaunched(threadId: string): Promise<void>;
-  /** Последний выбор места исполнения в проекте; нет записи или она чужая — «в этом треде». */
-  getPlace(projectId: string): Promise<DispatchPlace>;
-  putPlace(projectId: string, place: DispatchPlace): Promise<void>;
   /** Последний маршрут нового треда в проекте; нет записи или она чужая — `null`. */
   getRoute(projectId: string): Promise<DispatchRoute | null>;
   putRoute(projectId: string, route: DispatchRoute): Promise<void>;
@@ -135,14 +125,6 @@ export const createStore = (kv: PluginKvStorage): DecisionStore => {
     },
     async markLaunched(threadId) {
       await kv.set(launchedKey(threadId), true);
-    },
-    async getPlace(projectId) {
-      const parsed = placesSchema.safeParse(await kv.get(PLACES_KEY));
-      return (parsed.success ? parsed.data[projectId] : undefined) ?? "here";
-    },
-    async putPlace(projectId, place) {
-      const parsed = placesSchema.safeParse(await kv.get(PLACES_KEY));
-      await kv.set(PLACES_KEY, { ...(parsed.success ? parsed.data : {}), [projectId]: place });
     },
     async getRoute(projectId) {
       const parsed = routesSchema.safeParse(await kv.get(ROUTES_KEY));

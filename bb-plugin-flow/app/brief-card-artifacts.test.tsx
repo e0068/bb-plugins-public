@@ -18,7 +18,7 @@ const brief: DecisionBrief = {
   kind: "brief",
   setup: {
     artifacts: [
-      { id: "task", name: "Задача", state: "approved", recommended: false, link: { label: "SL-1", target: "memory/tasks/todo/sl-1.md" } },
+      { id: "task", name: "Задача", state: "approved", recommended: false, link: { label: "SL-1", target: "docs/tasks/todo/sl-1.md" } },
       { id: "spec", name: "Спецификация", state: "missing", recommended: true },
       { id: "prototype", name: "HTML-прототип", state: "ready", recommended: true, link: { label: "prototype.html", target: "https://example.com/p.html" } },
       { id: "plan", name: "План", state: "missing", recommended: false },

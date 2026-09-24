@@ -11,17 +11,22 @@ import { isDeletion } from "../core/changed-files";
 import { configPathFromGitdir, originUrlFromGitConfig, parseGitdirPointer } from "../core/git-config";
 import {
   compareRequest,
+  getPullRequestRequest,
   listOpenPullRequestsRequest,
   parseComparison,
   parseOpenPullRequest,
+  parsePullState,
   type ChangedFile,
   type OpenPullRequest,
+  type PullState,
   type RepoRef,
 } from "../core/github-requests";
 import { parseMergeBaseRef } from "../core/merge-base";
 import { parseMergeability } from "../core/merge-readiness";
+import type { BumpGap, StepOutcome } from "../core/step-outcomes";
 import type { ArchiveFailure, MergeFailure } from "../core/notification";
-import { type PrSignal, refineWithLiveOpenPr } from "../core/open-pr-refinement";
+import { alreadyOpenPr, type PrSignal, refineWithLiveOpenPr } from "../core/open-pr-refinement";
+import { afterAnswer, decideLiveAsk, type AwaitMark } from "../core/pr-await";
 import { choosePrTitle } from "../core/pr-title";
 import { parseGithubRemote } from "../core/remote";
 import { chooseToken } from "../core/token";
@@ -36,10 +41,11 @@ import { githubClient } from "../wiring/github-client";
 import { readLinkedTask } from "../wiring/linked-task";
 import { type LocalMainPullResult, runLocalMainPull } from "../wiring/local-main-pull";
 import { checkMergedContent } from "../wiring/merged-content";
-import { findLiveOpenPr } from "../wiring/open-pr-lookup";
+import { waitForMergeability } from "../wiring/mergeability-wait";
+import { askLiveOpenPr, findLiveOpenPr, type OpenPrAnswer } from "../wiring/open-pr-lookup";
+import { readMark, writeMark } from "../wiring/pr-await-store";
 import { bumpVersionsBeforeMerge, type MergeTimeBumpReport } from "../wiring/merge-time-bump";
 import { reinstallTouchedPlugins, type PluginsPort, type ReinstallReport } from "../wiring/plugin-reinstall";
-import { applyPluginVersionBumps, githubVersionBumpPorts } from "../wiring/plugin-version-bump";
 import { type VisibilityPorts, type VisibilityWorkspace, resolveVisibility } from "../wiring/visibility-decision";
 
 export type Sdk = BbPluginApi["sdk"];
@@ -96,7 +102,7 @@ export async function gatherAndCreate(
   kv: PluginKvStorage,
   token: string,
   threadId: string,
-): Promise<{ url: string; number: number }> {
+): Promise<{ url: string; number: number; existed: boolean }> {
   // The whole thread, not just its environment id: its name is one of the
   // sources the PR is named from (see choosePrTitle below).
   const thread = await sdk.threads.get({ threadId });
@@ -119,6 +125,16 @@ export async function gatherAndCreate(
   // wrapped instead of re-resolving via settings, so refining a `settled`
   // signal here never spawns a second `gh auth token` for the same call.
   const pr = await resolvePrSignal(sdk, () => Promise.resolve(token), environmentId, env, base);
+  // Повтор шага не открывает второй PR и не объявляет отказ по уже сделанной
+  // работе: открытый PR ветки — это его собственный итог. Вопрос идёт к самому
+  // GitHub, а не к кэшу bb: кэш и отстаёт сразу после создания, и держит
+  // открытым PR, которого уже нет, — по такому шаг отчитался бы чужим адресом.
+  const open = alreadyOpenPr(pr, await askLiveOpenPrForEnv(sdk, () => Promise.resolve(token), env, base));
+  if (open !== null) {
+    // bb ещё держит прошлый PR — значку нужно время, чтобы увидеть этот.
+    if (pr.presence !== "open") await markAwaiting(sdk, environmentId, "publish");
+    return { ...open, existed: true };
+  }
   const { mergeBase } = status.workspace;
   const liveAhead = await liveAheadOf(env.path, base);
   const decision = await resolveVisibility(
@@ -143,14 +159,11 @@ export async function gatherAndCreate(
   }
 
   const repo = await readOrigin(sdk, env.hostId, path);
-  const changedFiles = await buildChangedFiles(sdk, env.hostId, path, mergeBase.files);
+  // Версию здесь не поднимают: это делает шаг бампа, стоящий сразу за созданием
+  // PR (wiring/merge-time-bump.ts). Он вливает базу в ветку и считает от того,
+  // что в базе сейчас, поэтому обходится без защиты от расхождения с ней.
+  const files = await buildChangedFiles(sdk, env.hostId, path, mergeBase.files);
   const github = githubClient(token);
-  const files = await applyPluginVersionBumps(
-    githubVersionBumpPorts(github.send, repo),
-    { mergeBase: mergeBaseSha, baseTip: base.githubBase },
-    mergeBase.files.map((file) => file.path),
-    changedFiles,
-  );
   const title = choosePrTitle({
     task: await readLinkedTask(bbCliClient(), threadId),
     threadName: thread.title ?? thread.titleFallback,
@@ -158,7 +171,8 @@ export async function gatherAndCreate(
     branch: headBranch,
   });
 
-  return runCreatePr(github, {
+  await markAwaiting(sdk, environmentId, "publish");
+  const created = await runCreatePr(github, {
     repo,
     baseBranch: base.githubBase,
     mergeBaseSha,
@@ -167,6 +181,7 @@ export async function gatherAndCreate(
     title,
     body: prBody(mergeBase.commits),
   });
+  return { ...created, existed: false };
 }
 
 // The step "catch the branch up with main": the tip of the base comes in by
@@ -183,13 +198,66 @@ export async function catchUpBranch(sdk: Sdk, kv: PluginKvStorage, threadId: str
   return runCatchUp(gitClient(env.path), base);
 }
 
-// We merge with the same method (squash) the project already uses to land a
-// branch onto main — see memory/decisions/fast-forward-ff-only-safe.md. bb
-// itself makes the request to GitHub (sdk.environments.mergePullRequest),
+// A merge commit, not a squash. A squash put a single-parent commit on main,
+// so local main diverged from the branch it came from and the next piece of
+// work in the same checkout started by reconciling them. A merge commit keeps
+// the branch's commit as a parent and lets local main fast-forward to origin.
+// What it does NOT do: the PR's head is one synthetic commit built through the
+// API without a push (see wiring/create-pr.ts), so the branch's own commits
+// still never reach main — only that single commit does, as the second parent.
+// bb itself makes the request to GitHub (sdk.environments.mergePullRequest),
 // the plugin doesn't need to build it by hand like it does for createPr.
-export const MERGE_METHOD = "squash";
+export const MERGE_METHOD = "merge";
 
 export const messageOf = (error: unknown): string => (error instanceof Error ? error.message : String(error));
+
+/**
+ * The merge step's whole answer: what GitHub says about the PR, the merge
+ * itself, and what to tell the owner when it did not happen.
+ *
+ * Three things are asked before the merge is fired. A PR already merged —
+ * a repeat of the step, or a merge made by hand — is the step's own goal
+ * reached, so it answers success instead of the host's "not currently
+ * mergeable". A PR closed without a merge is a refusal no retry can fix, and
+ * it is named as such. A branch GitHub calls conflicting is named too,
+ * because "HTTP 409" tells the owner nothing about which of the two it is.
+ *
+ * What is NOT handled here is the window in which GitHub recomputes
+ * mergeability after the head moved: the merge is simply fired, and its 409
+ * comes back as a transient failure that steps.ts repeats. The repeat runs
+ * this whole helper again, so a PR that landed meanwhile answers success and
+ * a branch that turned out to conflict answers with its named reason.
+ */
+export async function mergeWithVerdict(gh: GithubPull, merge: () => Promise<void>): Promise<StepOutcome> {
+  // Не смогли спросить GitHub — мёрдж всё равно пробуется: его делает сам bb,
+  // и наша неудача с токеном или сетью не повод не сделать работу. Ответит
+  // тогда bb, своей ошибкой.
+  if (!gh.ok) return reportMerge(await attemptMerge(merge));
+
+  const before = await readPullState(gh);
+  if (before === "merged") return { ok: true, detail: "already merged" };
+  if (before === "closed") {
+    return { ok: false, error: "the pull request is closed without a merge — reopen it or open a new one" };
+  }
+  if ((await waitForMergeability(gh.ports, gh.repo, gh.number)) === "conflicting") {
+    return { ok: false, error: `the branch conflicts with ${gh.baseBranch} — catch the branch up with the base, resolve the conflicts and run the step again` };
+  }
+
+  const failure = await attemptMerge(merge);
+  if (failure === null) return { ok: true, detail: null };
+  // Мёрдж мог и пройти: bb отвечает ошибкой и на потерянный ответ тоже.
+  // Спрашиваем GitHub, а не гадаем по тексту.
+  return (await readPullState(gh)) === "merged" ? { ok: true, detail: "already merged" } : reportMerge(failure);
+}
+
+const reportMerge = (failure: MergeFailure | null): StepOutcome =>
+  failure === null ? { ok: true, detail: null } : { ok: false, error: failure.message };
+
+/** Состояние PR у самого GitHub; не 200 — это «не смогли спросить», а не состояние. */
+async function readPullState(gh: GithubPull & { ok: true }): Promise<PullState> {
+  const answer = await gh.ports.send(getPullRequestRequest(gh.repo, gh.number));
+  return answer.status === 200 ? parsePullState(answer.data) : "unknown";
+}
 
 /** The merge itself, once the version bump above it has already been made. */
 export async function attemptMerge(run: () => Promise<void>): Promise<MergeFailure | null> {
@@ -229,7 +297,7 @@ export type GithubPull =
       headBranch: string;
       number: number;
     }
-  | { ok: false; reason: string };
+  | { ok: false; reason: string; gap?: BumpGap | null };
 
 // Everything the merge-time steps need to talk to GitHub about this PR: the
 // REST port, the repository, both branches and the PR number. Every way of
@@ -261,7 +329,10 @@ export async function githubPullOf(
       host.number !== null
         ? host
         : refineWithLiveOpenPr(host, await findLiveOpenPr(ports, repo, headBranch, baseBranch));
-    if (pr.number === null) return { ok: false, reason: "bb reports no pull request for this branch" };
+    // PR нет ни у bb, ни у самого GitHub — значит, шаг стоит в цепочке до его
+    // открытия. Это пробел, а не поломка: версия поднимется тем же шагом перед
+    // мёрджем, и цепочку останавливать незачем.
+    if (pr.number === null) return { ok: false, reason: "bb reports no pull request for this branch", gap: "no-pull-request" };
     return { ok: true, ports, repo, baseBranch, headBranch, number: pr.number };
   } catch (error) {
     return { ok: false, reason: error instanceof Error ? error.message : String(error) };
@@ -273,7 +344,7 @@ export async function githubPullOf(
  * needs that is not the pull request itself. Split out of `githubPullOf`
  * because a step that never uses the PR's number must not fail when bb's own
  * PR cache has nothing to say: right after a merge that cache goes quiet (see
- * memory/decisions/republish-catchup-burst-after-mutation.md), and a step
+ * docs/decisions/republish-catchup-burst-after-mutation.md), and a step
  * demanding a number there would refuse work it can plainly do.
  */
 export type GithubBranches =
@@ -357,7 +428,7 @@ export function checkoutHeadSha(checkout: WorkspaceCheckout): string | null {
 // The value is only ever trusted as "already merged"; nothing hides behind
 // its absence, so a cache that was never written (a merge through bb's own
 // button, through github.com, through `gh`) costs one measurement, not a
-// ghost button — see memory/decisions/pr-button-merged-by-content.md.
+// ghost button — see docs/decisions/pr-button-merged-by-content.md.
 export function mergedHeadKey(environmentId: string): string {
   return `merged-head:${environmentId}`;
 }
@@ -446,40 +517,95 @@ export async function lookupPullRequest(sdk: Sdk, environmentId: string): Promis
 
 // Best-effort direct GitHub measurement for "is there a live open PR on this
 // branch" — bypasses the host's own signal entirely. Used by resolvePrSignal
-// to refine a stale host verdict, and by computeRowFacts alongside it.
-// Degrades to `null` on any missing piece (no base, no working copy, no
-// branch name) or any failure (no token, origin unreadable, GitHub
-// unreachable) — never throws, same spirit as lookupPullRequest.
-export async function findLiveOpenPrForEnv(
+// for a thread that is waiting (core/pr-await.ts), and by gatherAndCreate as
+// its guard against a second PR. Degrades to `{ asked: false }` on any missing
+// piece (no base, no working copy, no branch name) or any failure (no token,
+// origin unreadable, GitHub unreachable or rate-limited) — never throws, same
+// spirit as lookupPullRequest.
+export async function askLiveOpenPrForEnv(
   sdk: Sdk,
   getToken: () => Promise<string>,
   env: { hostId: string; path: string | null; branchName: string | null },
   base: ResolvedBase | null,
-): Promise<OpenPullRequest | null> {
-  if (!base || !env.path || !env.branchName) return null;
+): Promise<OpenPrAnswer> {
+  if (!base || !env.path || !env.branchName) return { asked: false };
   try {
     const repo = await readOrigin(sdk, env.hostId, env.path);
     const token = await getToken();
-    return await findLiveOpenPr(githubClient(token), repo, env.branchName, base.githubBase);
+    return await askLiveOpenPr(githubClient(token), repo, env.branchName, base.githubBase);
   } catch {
-    return null;
+    return { asked: false };
   }
 }
 
-// The single point where a stale host `pr` signal is upgraded to `open` when
-// GitHub itself already has a live PR for the branch that the host stopped
-// tracking (see memory/decisions/open-pr-bypass-host-terminal-signal.md).
-// Every call site that used to read `lookupPullRequest` directly reads this
-// instead, so the header buttons, the archive gate, the create-PR guard and
-// the sidebar row-status glyph all agree on the same, unstuck signal.
+/** Мир уточнения сигнала: сигнал bb, отметка «ждёт» ветки, живой вопрос GitHub и часы. `key` склеивает одновременные опросы одного окружения. */
+export interface PrSignalPorts {
+  key: string;
+  host(): Promise<PrSignal>;
+  readMark(): Promise<AwaitMark | null>;
+  writeMark(mark: AwaitMark | null): Promise<void>;
+  askLive(): Promise<OpenPrAnswer>;
+  now(): number;
+}
+
+const inFlight = new Map<string, Promise<PrSignal>>();
+
+// Опрос значков спрашивает каждую строку в каждом окне разом; вопросы по
+// одному окружению, пришедшие, пока первый ещё идёт, получают его ответ, а не
+// свой поход в GitHub.
+export function refinePrSignal(ports: PrSignalPorts): Promise<PrSignal> {
+  const running = inFlight.get(ports.key);
+  if (running) return running;
+  const next = refineOnce(ports).finally(() => inFlight.delete(ports.key));
+  inFlight.set(ports.key, next);
+  return next;
+}
+
+async function refineOnce(ports: PrSignalPorts): Promise<PrSignal> {
+  const host = await ports.host();
+  const mark = await ports.readMark();
+  if (mark === null) return host;
+  const now = ports.now();
+  const decision = decideLiveAsk(mark, host.presence, now);
+  switch (decision) {
+    case "host":
+      return host;
+    case "reuse":
+      return refineWithLiveOpenPr(host, mark.found);
+    case "drop":
+      await writeUnlessReplaced(ports, mark, null);
+      return host;
+    case "ask": {
+      const next = afterAnswer(mark, await ports.askLive(), now);
+      await writeUnlessReplaced(ports, mark, next);
+      return refineWithLiveOpenPr(host, next?.found ?? null);
+    }
+    default:
+      return absurd(decision);
+  }
+}
+
+// Пока шёл вопрос к GitHub, нажатие могло поставить свежую отметку; ответ на
+// старую её не затирает.
+async function writeUnlessReplaced(ports: PrSignalPorts, read: AwaitMark, next: AwaitMark | null): Promise<void> {
+  if ((await ports.readMark())?.since !== read.since) return;
+  await ports.writeMark(next);
+}
+
+const absurd = (value: never): never => {
+  throw new Error(`unreachable: ${String(value)}`);
+};
+
+// The single point where the host's PR signal is refined with a live GitHub
+// answer (see docs/decisions/open-pr-bypass-host-terminal-signal.md). Every
+// call site reads this, so the header buttons, the archive gate, the
+// create-PR guard and the sidebar row-status glyph all agree on one signal.
 //
-// Only `settled` is the one gap worth double-checking — a host verdict of
-// merged/closed for a branch that has since grown a fresh open PR (the
-// normal flow once a settled PR lets the "Pull Request" button reappear).
-// `absent` and `unknown` are trusted as-is too: paying for a GitHub round
-// trip there wouldn't fix anything a `settled`→`open` upgrade doesn't
-// already cover, and `open` is already live and correct. Either way the
-// network is only ever touched for the one case it can actually fix.
+// GitHub is asked only for a thread that is waiting — the owner pressed
+// "publish PR" and bb doesn't see it yet, or a merge was attempted and the PR
+// is still open — and at most once a minute (core/pr-await.ts). Asking on
+// every `settled` verdict of every sidebar poll burned the 5000-per-hour REST
+// quota. A thread without the mark gets bb's own signal, with no network.
 export async function resolvePrSignal(
   sdk: Sdk,
   getToken: () => Promise<string>,
@@ -487,10 +613,32 @@ export async function resolvePrSignal(
   env: { hostId: string; path: string | null; branchName: string | null },
   base: ResolvedBase | null,
 ): Promise<PrSignal> {
-  const host = await lookupPullRequest(sdk, environmentId);
-  if (host.presence !== "settled") return host;
-  const found = await findLiveOpenPrForEnv(sdk, getToken, env, base);
-  return refineWithLiveOpenPr(host, found);
+  const host = () => lookupPullRequest(sdk, environmentId);
+  if (!env.path || !env.branchName) return host();
+  const git = gitClient(env.path);
+  const branch = env.branchName;
+  return refinePrSignal({
+    key: environmentId,
+    host,
+    readMark: () => readMark(git, branch),
+    // Несохранённая отметка стоит лишнего вопроса через минуту, а не сломанного значка.
+    writeMark: (mark) => writeMark(git, branch, mark).catch(() => undefined),
+    askLive: () => askLiveOpenPrForEnv(sdk, getToken, env, base),
+    now: Date.now,
+  });
+}
+
+// Ставит отметку «ждёт» перед действием, после которого bb какое-то время
+// не видит правды о PR: публикацией и мёрджем. Отметка помогает значку, но
+// не держит действие: сбой записи проглатывается.
+export async function markAwaiting(sdk: Sdk, environmentId: string, kind: AwaitMark["kind"]): Promise<void> {
+  try {
+    const env = await sdk.environments.get({ environmentId });
+    if (!env.path || !env.branchName) return;
+    await writeMark(gitClient(env.path), env.branchName, { kind, since: Date.now(), askedAt: null, found: null });
+  } catch {
+    // Без отметки значок покажет сигнал bb — это прежнее поведение, не поломка.
+  }
 }
 
 export type GithubTokenSettings = { get(): Promise<{ githubToken: string | undefined }> };
@@ -600,14 +748,15 @@ export async function settleVersionsForMerge(
   gh: GithubPull,
   level: BumpLevel,
 ): Promise<MergeTimeBumpReport & { unavailable: string | null }> {
-  const skipped = (reason: string): MergeTimeBumpReport & { unavailable: string | null } => ({
+  const skipped = (reason: string, gap: BumpGap | null = null): MergeTimeBumpReport & { unavailable: string | null } => ({
     changedPaths: [],
     bumped: [],
     problems: [`versions not settled: ${reason}`],
     headMoved: false,
+    gap,
     unavailable: reason,
   });
-  if (!gh.ok) return skipped(gh.reason);
+  if (!gh.ok) return skipped(gh.reason, gh.gap ?? null);
   try {
     const report = await bumpVersionsBeforeMerge(gh.ports, {
       repo: gh.repo,
@@ -632,7 +781,7 @@ export async function settleVersionsForMerge(
  * Which files the PR changed is asked of GitHub by comparing the base with
  * the head, not of the local main: the local branch advances by whatever else
  * landed meanwhile, and that range names plugins this merge never touched
- * (memory/decisions/reinstall-from-merged-pr-files.md). The comparison still
+ * (docs/decisions/reinstall-from-merged-pr-files.md). The comparison still
  * answers after the merge because bb leaves the head branch on origin.
  *
  * The plugin running the chain is never updated here: bb drops its API handle
@@ -657,7 +806,7 @@ export async function reinstallAfterMerge(
     // Обновление тянет плагин с базовой ветки, поэтому до мёрджа оно
     // поставило бы код БЕЗ этой ветки и отрапортовало бы «обновлено». Влит
     // ли PR, спрашивается у самого GitHub, а не у кэша bb: сразу после
-    // мёрджа тот ещё показывает PR открытым (memory/decisions/
+    // мёрджа тот ещё показывает PR открытым (docs/decisions/
     // republish-catchup-burst-after-mutation.md), и шаг, поверивший ему,
     // падал бы ровно на штатной цепочке «смёрджить → обновить». Ответ не
     // 200 — это «не смогли спросить», а не «влит»: иначе отвалившийся токен

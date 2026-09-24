@@ -14,6 +14,7 @@ const fake = (state: { behind: number; ahead: number; dirty?: boolean; merge?: G
       calls.push([...args]);
       const line = args.join(" ");
       if (args[0] === "fetch") return state.fetch ?? ok();
+      if (args[0] === "symbolic-ref") return ok("work\n");
       if (args[0] === "status") return ok(state.dirty === true ? " M a.ts\n" : "");
       if (line.startsWith("rev-list --count HEAD..")) return ok(`${state.behind}\n`);
       if (args[0] === "rev-list") return ok(`${state.ahead}\n`);

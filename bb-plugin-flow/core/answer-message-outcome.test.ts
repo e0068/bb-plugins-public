@@ -16,7 +16,7 @@ const brief: DecisionBrief = {
     next: "Спецификация",
     done: ["Место исполнения слева от «Отправить»"],
     pending: [{ text: "Итог этапа — одна секция", why: "делаю следующим шагом" }],
-    results: [{ label: "prototype.html", target: "memory/assets/x/prototype.html" }],
+    results: [{ label: "prototype.html", target: "docs/assets/x/prototype.html" }],
   },
   stages: { list: [{ id: "prototype", skill: "prototype", name: "HTML-прототип", review: true, executors: [] }], minButtonWidth: 160 },
 };

@@ -4,13 +4,16 @@ import type { CliPorts, CliRun } from "./bb-cli-run";
 
 function fakePorts(
   reply: (args: readonly string[]) => CliRun,
-): { ports: CliPorts; calls: string[][] } {
+): { ports: CliPorts; calls: string[][]; envs: (Record<string, string> | undefined)[] } {
   const calls: string[][] = [];
+  const envs: (Record<string, string> | undefined)[] = [];
   return {
     calls,
+    envs,
     ports: {
-      async run(args) {
+      async run(args, env) {
         calls.push([...args]);
+        envs.push(env === undefined ? undefined : { ...env });
         return reply(args);
       },
     },
@@ -143,5 +146,18 @@ describe("splitTaskStatusResults", () => {
       successKeys: ["BBPL-1", "BBPL-3"],
       failedTasks: [{ key: "BBPL-2", reason: "not found" }],
     });
+  });
+});
+
+describe("the tree the CLI looks into", () => {
+  // Both calls run in the plugin host's process, which has no thread of its
+  // own: without naming one, `bb tasks` sees main alone and a task that still
+  // lives in the branch's worktree reads as "no linked tasks".
+  it("every call names the thread whose tasks are being moved", async () => {
+    const { ports, envs } = fakePorts((args) =>
+      args[1] === "current" ? currentReply([{ key: "BBPL-1" }]) : ok,
+    );
+    await markLinkedTasksStatus(ports, "thr_abc", "done");
+    expect(envs).toEqual([{ BB_THREAD_ID: "thr_abc" }, { BB_THREAD_ID: "thr_abc" }]);
   });
 });

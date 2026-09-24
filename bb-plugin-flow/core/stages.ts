@@ -5,7 +5,7 @@
 import type { Locale } from "../lib/i18n";
 import { messages } from "../lib/messages";
 import { isDefaultName, SELF_EXECUTOR, stageKindOf, stageSkillOf, type BuiltinKind } from "../lib/stage-constants";
-import { automationInstruction } from "./automation-run";
+import { actionInstruction, automationInstruction } from "./automation-run";
 import type { Add, DecisionAnswer, DecisionBrief, StageAnswer, StageReport, WorkStage } from "../shared/contract";
 import { sumAdds } from "./adds";
 
@@ -157,10 +157,22 @@ const BUILTIN_ANSWERS: Record<BuiltinKind, string> = {
 export const FLOW_RULE =
   "This thread runs a flow: talk to the owner only through its stages — a brief for questions, criteria and stage selection (consecutive ones go into one brief), a brief with outcome for a demo. For anything the stages do not cover, ask a clarify brief.";
 
+/**
+ * Исполнитель «Сам» для агента: этап ведётся в его сессии, без помощников.
+ * Перехватить вызов субагента плагин не может, поэтому нужду в нём агент
+ * заявляет заранее — в брифе, пока владелец выбирает исполнителя.
+ */
+export const SELF_ONLY_RULE =
+  "self means you do the stage's work in your own session: no subagents and no workflows; if you think a stage needs one, say so up front in the stage-selection brief: recommend that executor in setup.stages, or, when the stage has no such executor, name the need in the brief's intro.";
+
+/** Правило треда без flow, когда flow выбирает агент: сперва flow, потом работа. */
+export const CHOOSE_FLOW_RULE = (skill: string, tool: string, noFlow: string): string =>
+  `This thread has no flow yet, and the owner lets you choose one. Before any other work, load the skill \`${skill}\` — it lists the owner's flows and when to pick each — and call \`${tool}\` with the id of the flow that fits the request. Its answer lists the stages of that flow; follow them from the first one. If no flow fits, call \`${tool}\` with \`${noFlow}\` and work without a flow.`;
+
 /** Название этапа на экране: свой и переименованный владельцем встроенный — как назван, встроенный с именем по умолчанию — по виду и языку интерфейса. */
-export const stageLabel = (stage: Pick<WorkStage, "id" | "name" | "kind">, names: Record<BuiltinKind, string>): string => {
+export const stageLabel = (stage: Pick<WorkStage, "id" | "name" | "kind">, names: Readonly<Partial<Record<BuiltinKind | "action", string>>>): string => {
   const kind = stageKindOf(stage);
-  return kind === "skill" || !isDefaultName(stage) ? stage.name : names[kind];
+  return kind === "skill" || !isDefaultName(stage) ? stage.name : (names[kind] ?? stage.name);
 };
 
 /** Этапы настроек строкой для инструкций агенту; без этапов — `null`. */
@@ -171,9 +183,13 @@ export const stageInstructions = (stages: readonly WorkStage[]): string | null =
         "Work stages in the Flow settings — send all of them in setup.stages, in this order:",
         ...stages.map((s, i) => {
           const kind = stageKindOf(s);
+          if (kind === "action") return actionInstruction(s, i);
           if (kind !== "skill") return `${i + 1}. ${s.id} "${s.name}" — skill ${stageSkillOf(s)}: load it for the stage's work; ${BUILTIN_ANSWERS[kind]}; you execute it yourself, a done stage needs no results`;
           if (s.automation !== undefined) return automationInstruction(s, i);
           const executors = s.executors.length === 0 ? "you execute it yourself" : `executors: self, ${s.executors.map((e) => e.id).join(", ")}`;
-          return `${i + 1}. ${s.id} "${s.name}"${s.skill === "" ? "" : ` — skill ${s.skill}`}; ${executors}`;
+          // Названного навыка мало: агент дойдёт до этапа и уйдёт работать, не
+          // прочитав его, — поэтому этап-навык, как и встроенный, велит его загрузить.
+          const skill = s.skill === "" ? "" : ` — skill ${s.skill}: load it for the stage's work`;
+          return `${i + 1}. ${s.id} "${s.name}"${skill}; ${executors}`;
         }),
       ].join("\n");

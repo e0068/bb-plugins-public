@@ -2,14 +2,9 @@
 import fc from "fast-check";
 import { describe, expect, it } from "vitest";
 
-import { BUILTIN_KINDS, builtinStage, STAGE_KINDS, stageKindOf } from "./stage-constants";
+import { BUILTIN_KINDS, builtinStage, stageKindOf } from "./stage-constants";
 
 describe("виды этапов", () => {
-  it("вид этапа — навык или один из четырёх встроенных", () => {
-    expect(STAGE_KINDS).toEqual(["skill", "questions", "criteria", "select", "demo"]);
-    expect(BUILTIN_KINDS).toEqual(["questions", "criteria", "select", "demo"]);
-  });
-
   it("вид берётся из поля, а у записи без поля — из прежних id Уточнения и Критериев", () => {
     expect(stageKindOf({ id: "x", kind: "demo" })).toBe("demo");
     expect(stageKindOf({ id: "clarify" })).toBe("questions");

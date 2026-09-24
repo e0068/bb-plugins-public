@@ -6,7 +6,7 @@
 // refreshes, a merged one does not". A new PR opened on the same branch
 // afterwards (the normal flow once a settled PR lets the "Pull Request"
 // button reappear, see visibility.ts) never reaches the host's signal again.
-// See memory/decisions/open-pr-bypass-host-terminal-signal.md.
+// See docs/decisions/open-pr-bypass-host-terminal-signal.md.
 import type { OpenPullRequest } from "./github-requests";
 import type { ChecksState, Mergeability, PrState } from "./merge-readiness";
 import type { PrPresence } from "./visibility";
@@ -42,4 +42,21 @@ export function refineWithLiveOpenPr(host: PrSignal, found: OpenPullRequest | nu
     checksState: "unknown",
     mergeability: "unknown",
   };
+}
+
+/**
+ * Открытый PR этой ветки, если он уже есть, — адрес и номер. Шаг открытия PR
+ * спрашивает это первым делом: повтор шага (сеть оборвалась ровно на ответе
+ * GitHub, слой повторов пробует снова) не должен ни создавать второй PR, ни
+ * рапортовать отказ по работе, которая уже сделана.
+ *
+ * Живой ответ GitHub сильнее кэша хоста в обе стороны: нашёлся PR — он и есть
+ * итог шага; GitHub ответил, что открытого PR нет, — открывается новый, даже
+ * если кэш всё ещё держит открытым PR прошлого цикла, иначе шаг отчитался бы
+ * чужим адресом и работа уехала бы без своего PR. Кэшу верят только когда
+ * спросить не вышло совсем.
+ */
+export function alreadyOpenPr(host: PrSignal, answer: { asked: true; pr: { url: string; number: number } | null } | { asked: false }): { url: string; number: number } | null {
+  if (answer.asked) return answer.pr === null ? null : { url: answer.pr.url, number: answer.pr.number };
+  return host.presence === "open" && host.url !== null && host.number !== null ? { url: host.url, number: host.number } : null;
 }

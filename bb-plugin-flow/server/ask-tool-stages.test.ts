@@ -22,7 +22,7 @@ const textOf = (result: unknown): string =>
   typeof result === "string" ? result : ((result as { content?: Array<{ text?: string }> }).content ?? []).map((c) => c.text ?? "").join("");
 
 const reports = [
-  { id: "task", state: "done", results: [{ label: "BBPL-1", target: "memory/tasks/BBPL-1.md" }] },
+  { id: "task", state: "done", results: [{ label: "BBPL-1", target: "docs/tasks/BBPL-1.md" }] },
   { id: "spec", state: "todo", recommended: true },
   { id: "plan", state: "todo", executor: planner.id, adds: { [planner.id]: { target: 1, max: 2, risk: 0 } } },
 ];

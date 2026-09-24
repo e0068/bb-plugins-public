@@ -21,9 +21,9 @@ const brief: DecisionBrief = {
   revocable: true,
   setup: {
     artifacts: [
-      { id: "task", name: "Задача", state: "approved", recommended: false, link: { label: "SL-1", target: "memory/tasks/todo/sl-1.md" } },
-      { id: "prototype", name: "HTML-прототип", state: "ready", recommended: true, link: { label: "p.html", target: "memory/assets/p.html" } },
-      { id: "spec", name: "Спецификация", state: "stale", recommended: true, link: { label: "spec.md", target: "memory/specs/spec.md" } },
+      { id: "task", name: "Задача", state: "approved", recommended: false, link: { label: "SL-1", target: "docs/tasks/todo/sl-1.md" } },
+      { id: "prototype", name: "HTML-прототип", state: "ready", recommended: true, link: { label: "p.html", target: "docs/assets/p.html" } },
+      { id: "spec", name: "Спецификация", state: "stale", recommended: true, link: { label: "spec.md", target: "docs/specs/spec.md" } },
       { id: "plan", name: "План", state: "missing", recommended: false },
     ],
     executor: { recommended: "subagents" },
@@ -84,7 +84,7 @@ describe("кнопки артефактов", () => {
     const slot = open(openFile);
     const group = await artifacts(slot);
     fireEvent.click(group.getByRole("button", { name: "p.html" }));
-    expect(openFile).toHaveBeenCalledWith("memory/assets/p.html");
+    expect(openFile).toHaveBeenCalledWith("docs/assets/p.html");
     expect(group.getByRole("button", { name: "HTML-прототип: утвердить" }).getAttribute("aria-pressed")).toBe("true");
   });
 

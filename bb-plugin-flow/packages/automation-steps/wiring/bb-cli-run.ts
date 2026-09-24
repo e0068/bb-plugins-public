@@ -13,9 +13,16 @@ export type CliRun =
   | { kind: "ran"; code: number; stdout: string; stderr: string }
   | { kind: "unavailable"; reason: string };
 
-/** The single effect port: run `bb` with argv and return the outcome. Does not throw, on a non-zero code or on a failure to spawn. */
+/**
+ * The single effect port: run `bb` with argv and return the outcome. Does not
+ * throw, on a non-zero code or on a failure to spawn.
+ *
+ * `env` is added to the caller's environment for that one call — see
+ * `linkedTaskEnv` in ../core/bb-tasks-commands.ts for why a `bb tasks` call
+ * must name its thread itself.
+ */
 export interface CliPorts {
-  run(args: readonly string[]): Promise<CliRun>;
+  run(args: readonly string[], env?: Readonly<Record<string, string>>): Promise<CliRun>;
 }
 
 export function cliRunMessage(run: CliRun): string {

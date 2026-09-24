@@ -252,13 +252,13 @@ describe("compareRequest", () => {
 describe("parseComparison", () => {
   const body = {
     behind_by: 3,
-    files: [{ filename: "bb-plugin-x/app.tsx" }, { filename: "memory/INDEX.md" }],
+    files: [{ filename: "bb-plugin-x/app.tsx" }, { filename: "docs/INDEX.md" }],
   };
 
   it("reads how far behind the head is and which files it touches", () => {
     expect(parseComparison(body)).toEqual({
       behindBy: 3,
-      changedPaths: ["bb-plugin-x/app.tsx", "memory/INDEX.md"],
+      changedPaths: ["bb-plugin-x/app.tsx", "docs/INDEX.md"],
     });
   });
 

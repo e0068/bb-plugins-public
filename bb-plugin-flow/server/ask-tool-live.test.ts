@@ -25,7 +25,7 @@ const setup = async () => {
   return { store, call, harness };
 };
 
-const file = { label: "spec.md", target: "memory/specs/spec.md" };
+const file = { label: "spec.md", target: "docs/specs/spec.md" };
 
 describe("живая ссылка на Демонстрации", () => {
   it("итог только с файлами не принимается, ошибка называет, что добавить", async () => {

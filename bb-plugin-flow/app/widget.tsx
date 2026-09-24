@@ -38,6 +38,7 @@ import { attachmentsPayload, clearAttachments } from "./attachments";
 import { AnsweredBriefCard, BriefCard, ClarifyCard, useDispatchPicker } from "./brief-card";
 import { clearStoredDraft } from "./draft-storage";
 import { Frame, NoteField, RecommendedStar, Titles, answeredAt, useStoredDraft, useSubmit, type FormProps } from "./parts";
+import { RunSummaryBlock } from "./run-summary";
 import { LocaleProvider } from "./locale";
 import { ProviderLogosProvider } from "./provider-logos-source";
 import { useLocale, useMessages } from "./locale-context";
@@ -104,7 +105,11 @@ function Directive({ attributes, source, message, openWorkspaceFile }: PluginMes
   const t = useMessages();
   const parsed = readDecisionId(attributes);
   return parsed.kind === "ok" ? (
-    <BriefLoader id={parsed.id} source={source} messageId={message.id} threadId={message.threadId} openWorkspaceFile={openWorkspaceFile} />
+    <>
+      <BriefLoader id={parsed.id} source={source} messageId={message.id} threadId={message.threadId} openWorkspaceFile={openWorkspaceFile} />
+      {/* Итог завершённого прогона растёт из карточки, которую назвал сервер: своего слота в ленте у плагина нет. */}
+      <RunSummaryBlock briefId={parsed.id} />
+    </>
   ) : (
     <Dashed source={source}>{t.legacy.badId}</Dashed>
   );
@@ -494,7 +499,7 @@ function BriefForm({ brief, send, onResult, place, route }: FormProps & { place:
   const trySubmit = () => {
     if (complete && !sending) void submit(settleDispatch(draft, place, route));
   };
-  const picker = useDispatchPicker({ draft, setDraft, place, route, disabled: sending, joined: true });
+  const picker = useDispatchPicker({ threadId: brief.threadId, draft, setDraft, place, route, disabled: sending, inRow: true });
 
   return (
     <Frame

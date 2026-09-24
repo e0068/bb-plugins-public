@@ -12,7 +12,7 @@ const brief: DecisionBrief = {
   createdAt: "2026-09-16T10:00:00.000Z",
   kind: "brief",
   questions: [],
-  outcome: { stage: "demo", final: false, next: "Спецификация", done: ["Прототип собран"], pending: [], results: [{ label: "prototype.html", target: "memory/assets/x/prototype.html" }] },
+  outcome: { stage: "demo", final: false, next: "Спецификация", done: ["Прототип собран"], pending: [], results: [{ label: "prototype.html", target: "docs/assets/x/prototype.html" }] },
   stages: { list: [{ ...builtinStage("demo", []), name: "Демонстрация" }], minButtonWidth: 160 },
 };
 
@@ -26,16 +26,11 @@ describe("реплика агенту на Демонстрацию", () => {
     expect(next(text)).toContain("Спецификация");
   });
 
-  it("«Учесть и продолжить» — комментарий и продолжение с ним", () => {
-    const text = reply({ accepted: true, note: "Подпись короче" });
-    expect(text).toContain("Демонстрация — продолжить с комментарием: prototype.html — «Подпись короче»");
-    expect(next(text)).toMatch(/Спецификация.*учти комментарий/);
-  });
-
-  it("«На доработку» — переделать и снова показать, дальше по flow не идти", () => {
+  it("«Отправить» — комментарий: ответить на него, демонстрация остаётся открытой, дальше по flow не идти", () => {
     const text = reply({ accepted: false, note: "Баннер ниже" });
-    expect(text).toContain("Демонстрация — на доработку: prototype.html — «Баннер ниже»");
-    expect(next(text)).toMatch(/переделай по комментарию и снова пришли демонстрацию.*дальше по flow не иди/);
+    expect(text).toContain("Демонстрация — комментарий: prototype.html — «Баннер ниже»");
+    expect(next(text)).toMatch(/ответь на комментарий.*остаётся открытой.*дальше по flow не иди/);
+    expect(next(text)).not.toContain("Спецификация");
   });
 
   it("финальная Демонстрация с продолжением закрывает работу", () => {

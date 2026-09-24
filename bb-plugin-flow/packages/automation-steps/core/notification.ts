@@ -164,6 +164,15 @@ const failureIf = (
 /** Lines only when there is something to say — an empty list must add no line. */
 const lineIf = (present: boolean, line: () => string): readonly string[] => (present ? [line()] : []);
 
+const bumpDetails = (versionBump: VersionBumpOutcome): readonly string[] =>
+  lineIf(
+    versionBump.bumped.length > 0,
+    () => `Bumped ${versionBump.bumped.map(({ root, to }) => `${root} to ${to}`).join(", ")}`,
+  );
+
+const bumpWarnings = (versionBump: VersionBumpOutcome): readonly Notification[] =>
+  versionBump.problems.map((problem) => warning(`Version not bumped: ${problem}`));
+
 /** What a merge did besides merging, in the order it happened. */
 export function mergeEffectDetails({ versionBump, reinstall }: MergeEffects): readonly string[] {
   // The local main is fast-forwarded after the merge too, but silently: its
@@ -171,10 +180,7 @@ export function mergeEffectDetails({ versionBump, reinstall }: MergeEffects): re
   // and its failure is already shown by the "main not pulled" badge that takes
   // the Merge button's place on the next refetch.
   return [
-    ...lineIf(
-      versionBump.bumped.length > 0,
-      () => `Bumped ${versionBump.bumped.map(({ root, to }) => `${root} to ${to}`).join(", ")}`,
-    ),
+    ...bumpDetails(versionBump),
     ...lineIf(reinstall.reinstalled.length > 0, () => `Reinstalled ${reinstall.reinstalled.join(", ")}`),
     ...lineIf(reinstall.installed.length > 0, () => `Installed ${reinstall.installed.join(", ")}`),
   ];
@@ -215,7 +221,7 @@ export function mergeEffectWarnings({
   reinstall,
 }: MergeEffects): readonly Notification[] {
   return [
-    ...versionBump.problems.map((problem) => warning(`Version not bumped: ${problem}`)),
+    ...bumpWarnings(versionBump),
     ...reinstall.problems.map((problem) => warning(`Plugin not reinstalled: ${problem}`)),
     ...reinstall.repoints.map(repointPrompt),
   ];
@@ -307,15 +313,28 @@ const taskTroubles = ({ failedTasks, taskCliError }: TaskOutcome, did: string, t
   ...cliWarnings(taskCliError),
 ];
 
+/**
+ * "Pull Request" — без мёрджа. Бамп версии входит сюда наравне с задачами:
+ * шаг поднятия версии стоит сразу за созданием PR, и его отказ — конфликт
+ * вливания базы, нечитаемая версия — виден только здесь. Поле обязательно
+ * намеренно: молчаливый пропуск бампа и есть тот дефект, ради которого шаг
+ * поставили рано (docs/decisions/version-bump-decided-at-merge.md).
+ */
 export function prOpenedNotifications(
   result: TaskOutcome & {
     readonly number: number;
     readonly url: string;
     readonly inReviewTasks: readonly string[];
+    readonly versionBump: VersionBumpOutcome;
   },
 ): readonly Notification[] {
   return [
-    success(`Pull Request #${result.number} opened`, markedInReview(result.inReviewTasks), prLink(result.url)),
+    success(
+      `Pull Request #${result.number} opened`,
+      [...markedInReview(result.inReviewTasks), ...bumpDetails(result.versionBump)],
+      prLink(result.url),
+    ),
+    ...bumpWarnings(result.versionBump),
     ...taskTroubles(result, "Opened the PR", "in review"),
   ];
 }

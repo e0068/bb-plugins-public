@@ -5,12 +5,11 @@ import { describe, expect, it } from "vitest";
 import { demoVerdict, paragraphs } from "./outcome";
 
 describe("исход Демонстрации", () => {
-  it("«Продолжить», «Учесть и продолжить», «На доработку» и неотвеченный итог", () => {
+  it("комментарий не принимает Демонстрацию: принятая — «продолжить», непринятая с комментарием — «комментарий»", () => {
     expect(demoVerdict({ outcome: { accepted: true } })).toBe("continue");
-    expect(demoVerdict({ outcome: { accepted: true, note: "  " } })).toBe("continue");
-    expect(demoVerdict({ outcome: { accepted: true, note: "учти подпись" } })).toBe("comment");
-    expect(demoVerdict({ outcome: { accepted: false, note: "переделай" } })).toBe("rework");
-    expect(demoVerdict({ outcome: { accepted: false } })).toBeNull();
+    expect(demoVerdict({ outcome: { accepted: true, note: "учти подпись" } })).toBe("continue");
+    expect(demoVerdict({ outcome: { accepted: false, note: "почему баннер ниже?" } })).toBe("comment");
+    expect(demoVerdict({ outcome: { accepted: false, note: "  " } })).toBeNull();
     expect(demoVerdict({})).toBeNull();
   });
 });

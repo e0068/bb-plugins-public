@@ -10,21 +10,20 @@ import { useBbNavigate, useRpc } from "@get-bb/plugin-sdk/app";
 import { dropIndex, moveItem } from "../core/reorder";
 import { setFlowStages } from "../core/flows";
 import { stageLabel } from "../core/stages";
+import { FieldOverlay, overlayItem, useFieldOverlay } from "../components/ui/field-overlay";
 import { Icon } from "../components/ui/icon";
 import { Input } from "../components/ui/input";
 import { BUILTIN_KINDS, BUILTIN_SKILLS, builtinStage, stageKindOf, stageSkillOf, STAGE_BUTTON_WIDTH as WIDTH, type BuiltinKind } from "../lib/stage-constants";
 import { cn } from "../lib/utils";
 import type { flowSettingsRpcContract, StageCatalog, StageExecutor, WorkStage } from "../shared/contract";
-import { AddAutomation, AddBuiltinAutomation, type AutomationSets, AutomationKindCell, AutomationStepTags } from "./automation-stage";
+import { AddAction, AddAutomation, AddBuiltinAutomation, type AutomationSets, AutomationKindCell, AutomationStepTags } from "./automation-stage";
 import { useMessages } from "./locale-context";
 import { ExecutorMark } from "./provider-logos";
-import { KIND_ICONS, SKILL_ICON, automationIcon } from "./stage-icons";
+import { KIND_ICONS, SKILL_ICON, stageIcon } from "./stage-icons";
 import { commitFlowSettings, updateFlowSettings, useAutomationSets, useFlowSettings } from "./stage-settings-store";
 
 const field = "h-7 min-h-7 w-full min-w-0 rounded-md border-0 bg-card px-2 py-0 text-[13px] shadow-none focus-visible:ring-1";
 const square = "flex size-7 shrink-0 items-center justify-center rounded-md";
-const popover = "absolute left-0 top-full z-20 mt-1 max-h-80 w-max min-w-full max-w-[22rem] overflow-auto rounded-lg border border-border bg-card p-1 shadow-lg";
-const popoverItem = "flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-[13px] hover:bg-state-hover";
 
 const newStageId = (): string => `stage-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
 
@@ -56,18 +55,6 @@ function useSetStage() {
   return (id: string, change: (stage: WorkStage) => WorkStage, save = true) => update((stages) => stages.map((stage) => (stage.id === id ? change(stage) : stage)), save);
 }
 
-/** Закрывает всплывающий список по нажатию вне его корня. */
-function useDismiss(open: boolean, root: React.RefObject<HTMLElement | null>, close: () => void) {
-  useEffect(() => {
-    if (!open) return;
-    const onDown = (event: PointerEvent) => {
-      if (root.current !== null && !root.current.contains(event.target as Node)) close();
-    };
-    document.addEventListener("pointerdown", onDown);
-    return () => document.removeEventListener("pointerdown", onDown);
-  }, [open, root, close]);
-}
-
 function ExecutorIcon({ executor }: { executor: StageExecutor }) {
   return <ExecutorMark executor={executor} className="size-3.5 shrink-0 text-muted-foreground" />;
 }
@@ -87,7 +74,7 @@ function SkillOptions({ catalog, query, current, onPick }: { catalog: StageCatal
           role="option"
           aria-selected={skill.name === current}
           onClick={() => onPick(skill.name)}
-          className={cn(popoverItem, skill.name === current && "bg-state-active")}
+          className={cn(overlayItem, skill.name === current && "bg-state-active")}
         >
           <span className="flex min-w-0 flex-col leading-tight">
             <span className="font-mono text-xs">{skill.name}</span>
@@ -137,46 +124,73 @@ function SkillFileButtons({ skill }: { skill: string }) {
 function SkillField({ stage, index, catalog }: { stage: WorkStage; index: number; catalog: StageCatalog }) {
   const t = useMessages();
   const setStage = useSetStage();
-  const root = useRef<HTMLDivElement>(null);
   const [query, setQuery] = useState<string | null>(null);
   const open = query !== null;
   const close = () => setQuery(null);
-  useDismiss(open, root, close);
+  const { root, compact } = useFieldOverlay(open, close);
   const kind = stageKindOf(stage);
   const current = stageSkillOf(stage);
   // Встроенный этап хранит навык вида пустым полем и не берёт имя навыка в название.
   const pick = (skill: string) => {
     setStage(stage.id, (s) =>
-      kind === "skill" ? { ...s, skill, name: s.name.trim() === "" || s.name === s.skill ? skill : s.name } : { ...s, skill: skill === BUILTIN_SKILLS[kind] ? "" : skill },
+      kind === "skill" ? { ...s, skill, name: s.name.trim() === "" || s.name === s.skill ? skill : s.name } : { ...s, skill: kind !== "action" && skill === BUILTIN_SKILLS[kind] ? "" : skill },
     );
     close();
   };
   const listId = `stage-skills-${stage.id}`;
   return (
     <div ref={root} className="relative min-w-0">
-      <Input
-        role="combobox"
-        aria-label={t.settings.stageSkill(index + 1)}
-        aria-expanded={open}
-        aria-controls={listId}
-        value={query ?? current}
-        placeholder={current}
-        onFocus={() => setQuery("")}
-        onChange={(e) => setQuery(e.target.value)}
-        onBlur={(e) => {
-          // Уход фокуса в список — это выбор, а не набор своего навыка.
-          if (root.current?.contains(e.relatedTarget as Node | null)) return;
-          if (query !== null && query.trim() !== "") pick(query.trim());
-          else close();
-        }}
-        className={cn(field, "pr-14 font-mono text-xs")}
-      />
-      <SkillFileButtons skill={current} />
-      {open && (
-        <div id={listId} role="listbox" aria-label={t.settings.skills} className={popover}>
-          <SkillOptions catalog={catalog} query={query} current={current} onPick={pick} />
-        </div>
+      {compact ? (
+        // На телефоне поле — кнопка: тап поднимает штору, а набор живёт в ней.
+        // Поле, открывающее список фокусом, выехавшей клавиатурой закрыло бы
+        // список собой в тот же момент, когда его открыло.
+        <button
+          type="button"
+          role="combobox"
+          aria-label={t.settings.stageSkill(index + 1)}
+          aria-expanded={open}
+          aria-controls={listId}
+          onClick={() => setQuery("")}
+          className={cn(field, "flex items-center pr-14 text-left font-mono text-xs")}
+        >
+          <span className="min-w-0 truncate">{current}</span>
+        </button>
+      ) : (
+        <Input
+          role="combobox"
+          aria-label={t.settings.stageSkill(index + 1)}
+          aria-expanded={open}
+          aria-controls={listId}
+          value={query ?? current}
+          placeholder={current}
+          onFocus={() => setQuery("")}
+          onChange={(e) => setQuery(e.target.value)}
+          onBlur={(e) => {
+            // Уход фокуса в список — это выбор, а не набор своего навыка.
+            if (root.current?.contains(e.relatedTarget as Node | null)) return;
+            if (query !== null && query.trim() !== "") pick(query.trim());
+            else close();
+          }}
+          className={cn(field, "pr-14 font-mono text-xs")}
+        />
       )}
+      <SkillFileButtons skill={current} />
+      <FieldOverlay open={open} onClose={close} role="listbox" label={t.settings.skills} id={listId}>
+        {compact && (
+          <Input
+            aria-label={t.settings.findSkill}
+            value={query ?? ""}
+            placeholder={current}
+            onChange={(e) => setQuery(e.target.value)}
+            onKeyDown={(e) => {
+              // В шторе фокус не уходит наружу, поэтому свой навык подтверждает Enter, а не уход фокуса.
+              if (e.key === "Enter" && (query ?? "").trim() !== "") pick((query ?? "").trim());
+            }}
+            className={cn(field, "mb-1 font-mono text-xs")}
+          />
+        )}
+        <SkillOptions catalog={catalog} query={query ?? ""} current={current} onPick={pick} />
+      </FieldOverlay>
     </div>
   );
 }
@@ -184,9 +198,9 @@ function SkillField({ stage, index, catalog }: { stage: WorkStage; index: number
 function ExecutorTags({ stage, catalog }: { stage: WorkStage; catalog: StageCatalog }) {
   const t = useMessages();
   const setStage = useSetStage();
-  const root = useRef<HTMLDivElement>(null);
   const [open, setOpen] = useState(false);
-  useDismiss(open, root, () => setOpen(false));
+  const close = () => setOpen(false);
+  const { root } = useFieldOverlay(open, close);
   const toggle = (executor: StageExecutor) =>
     setStage(stage.id, (s) => ({ ...s, executors: s.executors.some((e) => e.id === executor.id) ? s.executors.filter((e) => e.id !== executor.id) : [...s.executors, executor] }));
   const group = (title: string, kind: StageExecutor["kind"]) => {
@@ -197,7 +211,7 @@ function ExecutorTags({ stage, catalog }: { stage: WorkStage; catalog: StageCata
         {items.map((executor) => {
           const on = stage.executors.some((e) => e.id === executor.id);
           return (
-            <button key={executor.id} type="button" role="menuitemcheckbox" aria-checked={on} onClick={() => toggle(executor)} className={popoverItem}>
+            <button key={executor.id} type="button" role="menuitemcheckbox" aria-checked={on} onClick={() => toggle(executor)} className={overlayItem}>
               <ExecutorIcon executor={executor} />
               <span className="flex min-w-0 flex-1 flex-col leading-tight">
                 <span>{executor.name}</span>
@@ -227,24 +241,44 @@ function ExecutorTags({ stage, catalog }: { stage: WorkStage; catalog: StageCata
           </button>
         </span>
       ))}
-      {open && (
-        <div role="menu" aria-label={t.settings.executorsMenu} className={popover}>
-          {catalog.executors.length === 0 ? (
-            <div className="px-2 py-1.5 text-xs text-muted-foreground">{t.settings.noExecutors}</div>
-          ) : (
-            <>
-              {group(t.settings.agents, "agent")}
-              {group(t.settings.workflows, "workflow")}
-            </>
-          )}
-        </div>
-      )}
+      <FieldOverlay open={open} onClose={close} role="menu" label={t.settings.executorsMenu}>
+        {catalog.executors.length === 0 ? (
+          <div className="px-2 py-1.5 text-xs text-muted-foreground">{t.settings.noExecutors}</div>
+        ) : (
+          <>
+            {group(t.settings.agents, "agent")}
+            {group(t.settings.workflows, "workflow")}
+          </>
+        )}
+      </FieldOverlay>
     </div>
   );
 }
 
-/** Сетка строки: номер с ручкой и иконка вида, навык или вид, название, исполнение, крест; на узкой странице — в столбик. */
-const rowGrid = "grid grid-cols-[46px_minmax(0,1fr)_28px] items-start gap-2 @[44rem]:grid-cols-[46px_minmax(150px,1fr)_minmax(120px,1fr)_minmax(220px,2.2fr)_28px]";
+/** Сетка строки: номер с ручкой и иконка вида, средние ячейки одной группой, крест. */
+const rowGrid = "grid grid-cols-[46px_minmax(0,1fr)_28px] items-start gap-2";
+
+/**
+ * Средние ячейки — навык или вид, название, исполнение. Стоят в ряд, пока каждой хватает её основы, и переносятся
+ * сами, когда перестаёт хватать: сначала исполнение уходит под поля, потом название под навык. Перенос считает
+ * flex-wrap по основе ячейки, а не ширина страницы, поэтому поля не встают в столбик раньше времени.
+ */
+const cellGroup = "flex min-w-0 flex-wrap items-start gap-2";
+
+/** Основа ячейки — 200px: ниже неё поля уже не читаются, и ряд переносится. */
+const cell = "min-w-0 grow basis-[200px]";
+
+/** Исполнение тянется шире полей — там теги, а не одна строка текста. */
+const cellWide = "min-w-0 grow-[2.2] basis-[200px]";
+
+/** Ячейки строки между номером и крестом. Группа в тексте роли не имеет: ячейки остаются ячейками строки. */
+function StageCells({ children }: { children: ReactNode }) {
+  return (
+    <span role="none" className={cellGroup}>
+      {children}
+    </span>
+  );
+}
 
 /** Пауза набора названия перед сохранением. */
 const NAME_SAVE_DELAY_MS = 400;
@@ -275,13 +309,6 @@ function useStageName(stage: WorkStage) {
   };
   return { name, change, flush: () => flush.current() };
 }
-
-/** Иконка вида этапа: автоматизация — чья она, встроенный вид — свой знак, навык — книга. */
-const stageIcon = (stage: WorkStage): string => {
-  if (stage.automation !== undefined) return automationIcon(stage.automation);
-  const kind = stageKindOf(stage);
-  return kind === "skill" ? SKILL_ICON : KIND_ICONS[kind];
-};
 
 /** Номер этапа, под наведением — ручка перетаскивания, и сразу за ним иконка вида этапа. */
 function StageLead({ stage, index, dragging, onGrab }: { stage: WorkStage; index: number; dragging: boolean; onGrab: () => void }) {
@@ -349,16 +376,18 @@ function BuiltinStageRow({ stage, index, stages, catalog, dragging, onGrab }: Ro
   return (
     <div role="row" aria-label={t.settings.stage(index + 1)} data-stage-row={stage.id} className={cn("group", rowGrid, "bg-surface-recessed-solid py-2 pl-1 pr-2", dragging && "bg-state-active")}>
       <StageLead stage={stage} index={index} dragging={dragging} onGrab={onGrab} />
-      <span role="cell" className="min-w-0">
-        <SkillField stage={stage} index={index} catalog={catalog} />
-      </span>
-      <span role="cell" className="col-start-2 min-w-0 @[44rem]:col-start-auto">
-        <Input aria-label={t.settings.stageName(index + 1)} placeholder={t.settings.namePlaceholder} value={name} onChange={(e) => change(e.target.value)} onBlur={flush} className={field} />
-      </span>
-      <span role="cell" className="col-start-2 flex h-7 min-w-0 items-center gap-1.5 text-xs text-muted-foreground @[44rem]:col-start-auto">
-        <span className="shrink-0">{t.stages[kind]}</span>
-        {scopeText !== "" && <span className="truncate">{scopeText}</span>}
-      </span>
+      <StageCells>
+        <span role="cell" className={cell}>
+          <SkillField stage={stage} index={index} catalog={catalog} />
+        </span>
+        <span role="cell" className={cell}>
+          <Input aria-label={t.settings.stageName(index + 1)} placeholder={t.settings.namePlaceholder} value={name} onChange={(e) => change(e.target.value)} onBlur={flush} className={field} />
+        </span>
+        <span role="cell" className={cn(cellWide, "flex h-7 items-center gap-1.5 text-xs text-muted-foreground")}>
+          <span className="shrink-0">{t.stages[kind]}</span>
+          {scopeText !== "" && <span className="truncate">{scopeText}</span>}
+        </span>
+      </StageCells>
       <DeleteStage stage={stage} />
     </div>
   );
@@ -368,7 +397,7 @@ function BuiltinStageRow({ stage, index, stages, catalog, dragging, onGrab }: Ro
  * Этап-автоматизация: вместо навыка — чья автоматизация, вместо исполнителей — шаги тегами. Встроенная правит название и шаги;
  * у автоматизации Automations название и шаги — снимок, правятся в том плагине. Исполняет этап Flow (server/automation-runner.ts).
  */
-function AutomationStageRow({ stage, index, dragging, onGrab }: RowProps) {
+function AutomationStageRow({ stage, index, stages, dragging, onGrab }: RowProps) {
   const t = useMessages();
   const setStage = useSetStage();
   const sets = useSets();
@@ -377,19 +406,21 @@ function AutomationStageRow({ stage, index, dragging, onGrab }: RowProps) {
   return (
     <div role="row" aria-label={t.settings.stage(index + 1)} data-stage-row={stage.id} className={cn("group", rowGrid, "bg-surface-recessed-solid py-2 pl-1 pr-2", dragging && "bg-state-active")}>
       <StageLead stage={stage} index={index} dragging={dragging} onGrab={onGrab} />
-      <AutomationKindCell stage={stage} />
-      <span role="cell" className="col-start-2 min-w-0 @[44rem]:col-start-auto">
-        {builtin ? (
-          <Input aria-label={t.settings.stageName(index + 1)} placeholder={t.settings.namePlaceholder} value={name} onChange={(e) => change(e.target.value)} onBlur={flush} className={field} />
-        ) : (
-          <span title={stage.name} className="flex h-7 min-w-0 items-center truncate px-2 text-[13px]">
-            {stage.name}
-          </span>
-        )}
-      </span>
-      <span role="cell" className="col-start-2 min-w-0 @[44rem]:col-start-auto">
-        <AutomationStepTags stage={stage} sets={sets} onChange={(change) => setStage(stage.id, change)} />
-      </span>
+      <StageCells>
+        <AutomationKindCell stage={stage} className={cell} />
+        <span role="cell" className={cell}>
+          {builtin ? (
+            <Input aria-label={t.settings.stageName(index + 1)} placeholder={t.settings.namePlaceholder} value={name} onChange={(e) => change(e.target.value)} onBlur={flush} className={field} />
+          ) : (
+            <span title={stage.name} className="flex h-7 min-w-0 items-center truncate px-2 text-[13px]">
+              {stage.name}
+            </span>
+          )}
+        </span>
+        <span role="cell" className={cellWide}>
+          <AutomationStepTags stage={stage} stages={stages} sets={sets} onChange={(change) => setStage(stage.id, change)} />
+        </span>
+      </StageCells>
       <DeleteStage stage={stage} />
     </div>
   );
@@ -404,22 +435,24 @@ function StageRow(props: RowProps) {
   return (
     <div role="row" aria-label={t.settings.stage(index + 1)} data-stage-row={stage.id} className={cn("group", rowGrid, "bg-surface-recessed-solid py-2 pl-1 pr-2", dragging && "bg-state-active")}>
       <StageLead stage={stage} index={index} dragging={dragging} onGrab={onGrab} />
-      <span role="cell" className="min-w-0">
-        <SkillField stage={stage} index={index} catalog={catalog} />
-      </span>
-      <span role="cell" className="col-start-2 min-w-0 @[44rem]:col-start-auto">
-        <Input
-          aria-label={t.settings.stageName(index + 1)}
-          placeholder={t.settings.namePlaceholder}
-          value={name}
-          onChange={(e) => change(e.target.value)}
-          onBlur={flush}
-          className={field}
-        />
-      </span>
-      <span role="cell" className="col-start-2 min-w-0 @[44rem]:col-start-auto">
-        <ExecutorTags stage={stage} catalog={catalog} />
-      </span>
+      <StageCells>
+        <span role="cell" className={cell}>
+          <SkillField stage={stage} index={index} catalog={catalog} />
+        </span>
+        <span role="cell" className={cell}>
+          <Input
+            aria-label={t.settings.stageName(index + 1)}
+            placeholder={t.settings.namePlaceholder}
+            value={name}
+            onChange={(e) => change(e.target.value)}
+            onBlur={flush}
+            className={field}
+          />
+        </span>
+        <span role="cell" className={cellWide}>
+          <ExecutorTags stage={stage} catalog={catalog} />
+        </span>
+      </StageCells>
       <DeleteStage stage={stage} />
     </div>
   );
@@ -432,9 +465,9 @@ function AddStage({ catalog, stages }: { catalog: StageCatalog; stages: readonly
   const t = useMessages();
   const update = useStagesUpdate();
   const sets = useSets();
-  const root = useRef<HTMLDivElement>(null);
   const [open, setOpen] = useState(false);
-  useDismiss(open, root, () => setOpen(false));
+  const close = () => setOpen(false);
+  const { root } = useFieldOverlay(open, close);
   const add = (skill: string) => {
     update((current) => [...current, { id: newStageId(), kind: "skill", skill, name: skill, executors: [] }]);
     setOpen(false);
@@ -464,11 +497,14 @@ function AddStage({ catalog, stages }: { catalog: StageCatalog; stages: readonly
         onChange={(id, change) => update((current) => current.map((stage) => (stage.id === id ? change(stage) : stage)))}
       />
       <AddAutomation stages={stages} onAdd={(stage) => update((current) => [...current, stage])} />
-      {open && (
-        <div role="listbox" aria-label={t.settings.skills} className={cn(popover, "left-9 min-w-[18rem]")}>
-          <SkillOptions catalog={catalog} query="" current={null} onPick={add} />
-        </div>
-      )}
+      <AddAction
+        stages={stages}
+        onAdd={(stage) => update((current) => [...current, stage])}
+        onChange={(id, change) => update((current) => current.map((stage) => (stage.id === id ? change(stage) : stage)))}
+      />
+      <FieldOverlay open={open} onClose={close} role="listbox" label={t.settings.skills} className="left-9 min-w-[18rem]">
+        <SkillOptions catalog={catalog} query="" current={null} onPick={add} />
+      </FieldOverlay>
     </div>
   );
 }
@@ -520,20 +556,33 @@ export function WorkStagesTable({ flowId }: { flowId: string }) {
 
 function WorkStages({ flowId }: { flowId: string }) {
   const t = useMessages();
-  const { settings, catalog, failed } = useFlowSettings();
+  const { settings, catalog, failed, saveError, saveProblem } = useFlowSettings();
   const table = useRef<HTMLDivElement>(null);
   const { dragged, grab } = useRowDrag(table);
   const stages = settings?.flows.find((f) => f.id === flowId)?.stages ?? [];
   return (
     <Loading failed={failed}>
+      {(saveProblem !== null || saveError !== null) && (
+        <div role="alert" className="mb-1 text-xs text-destructive">
+          {saveProblem === null ? saveError : t.settings.stepOrderRefused(t.steps[saveProblem.step], saveProblem.stageName, t.steps["git.create-pr"])}
+        </div>
+      )}
       <div ref={table} role="table" aria-label={t.settings.table} aria-busy={settings === null || undefined} className="@container flex flex-col gap-px overflow-visible [&>*:first-child]:rounded-t-lg [&>*:last-child]:rounded-b-lg">
-        <div role="row" className={cn(rowGrid, "hidden bg-surface-recessed-solid py-1 pl-1 pr-2 text-[11px] text-muted-foreground @[44rem]:grid")}>
+        <div role="row" className={cn(rowGrid, "hidden bg-surface-recessed-solid py-1 pl-1 pr-2 text-[11px] text-muted-foreground @[46rem]:grid")}>
           <span role="columnheader" className="text-center">
             №
           </span>
-          <span role="columnheader">{t.settings.colSkill}</span>
-          <span role="columnheader">{t.settings.colName}</span>
-          <span role="columnheader">{t.settings.colExecution}</span>
+          <StageCells>
+            <span role="columnheader" className={cell}>
+              {t.settings.colSkill}
+            </span>
+            <span role="columnheader" className={cell}>
+              {t.settings.colName}
+            </span>
+            <span role="columnheader" className={cellWide}>
+              {t.settings.colExecution}
+            </span>
+          </StageCells>
           <span role="columnheader">
             <span className="sr-only">{t.settings.colDelete}</span>
           </span>

@@ -16,7 +16,7 @@ import { AddMeta, CardText, CheckSquare, DocumentName, RESULT_ROW, type OpenFile
 import { pickStageExecutor, stageChoiceIn, toggleStageRun, type Draft } from "./draft";
 import { useLocale, useMessages } from "./locale-context";
 import { ROW_CELL, cellOrder, panelOrder, useRowEnds } from "./row-order";
-import { automationIcon } from "./stage-icons";
+import { automationIcon, stageIcon } from "./stage-icons";
 import { copyText, useFlash } from "./flash";
 import { ExecutorMark } from "./provider-logos";
 
@@ -105,16 +105,19 @@ function StageCell({ state, view, openFile, order, width }: { state: StageState;
           </span>
         )}
         {expandable && (
-          // Зона шеврона — отступ шеврона до правого края ячейки с обеих сторон.
+          // На месте шеврона — значок самого этапа, как у автоматизации: список
+          // исполнителей за ним почти всегда из одного пункта «Сам», и обещать
+          // подсветкой, что там что-то есть, — значит обещать лишнее. Нажатие
+          // список по-прежнему раскрывает.
           <button
             type="button"
             aria-label={stageLabel(item.stage, t.stages)}
             aria-expanded={open}
             disabled={view.sending}
             onClick={expand}
-            className="flex shrink-0 items-center px-3 enabled:hover:bg-state-hover disabled:cursor-default"
+            className="flex shrink-0 items-center px-3 disabled:cursor-default"
           >
-            <Icon name="ChevronDown" aria-hidden="true" className={cn("size-3.5 text-muted-foreground", open && "rotate-180")} />
+            <Icon name={stageIcon(item.stage)} aria-hidden="true" className="size-3.5 text-muted-foreground" />
           </button>
         )}
       </div>

@@ -31,7 +31,7 @@ const brief: DecisionBrief = {
     notes: "Сегменты обрезают подписи.\n\nСветлая тема проверена скриншотом.",
     sections: [{ title: "Как проверено", text: "Тесты плагина зелёные." }],
     tasks: [{ key: "BBPL-1", done: true }],
-    results: [{ label: "prototype.html", target: "memory/assets/x/prototype.html" }, { label: "screenshots", target: "memory/assets/x/screenshots" }],
+    results: [{ label: "prototype.html", target: "docs/assets/x/prototype.html" }, { label: "screenshots", target: "docs/assets/x/screenshots" }],
   },
   stages: { list: [{ ...builtinStage("demo", []), name: "Демонстрация" }], minButtonWidth: 160 },
 };
@@ -42,7 +42,7 @@ const open = (options: { patch?: Partial<DecisionBrief>; answerBrief?: typeof ac
   renderSlot<PluginMessageDirectiveProps, typeof decisionsRpcContract & typeof dispatchRpcContract>(
     app.messageDirectives[0]!,
     { attributes: { id: brief.id }, source: `::decision{id="${brief.id}"}`, message: { id: "msg_1", threadId: "thr_1", turnId: "turn_1", projectId: null }, openWorkspaceFile: () => true },
-    { rpc: { getBrief: () => ({ kind: "found", brief: { ...brief, ...options.patch }, answer: options.record ?? null }), answerBrief: options.answerBrief ?? accepted, getDispatchPlace: () => ({ place: "here" }) } },
+    { rpc: { getBrief: () => ({ kind: "found", brief: { ...brief, ...options.patch }, answer: options.record ?? null }), answerBrief: options.answerBrief ?? accepted, getDispatchPlace: () => ({ place: "here" }), listProjects: () => ({ kind: "found" as const, projects: [] }) } },
   );
 
 type Slot = ReturnType<typeof open>;
@@ -111,31 +111,22 @@ describe("карточка Демонстрации", () => {
     expect(slot.getByRole("button", { name: "Завершить" })).toBeTruthy();
   });
 
-  it("написанный комментарий — «Учесть и продолжить» уходит принятым с комментарием", async () => {
-    const answerBrief = vi.fn(accepted);
-    const slot = open({ answerBrief });
-    await card(slot);
-    comment(slot, "Подпись короче");
-    expect(slot.queryByRole("button", { name: "Продолжить" })).toBeNull();
-    fireEvent.click(slot.getByRole("button", { name: "Учесть и продолжить" }));
-    expect(await sentOutcome(answerBrief)).toEqual({ accepted: true, note: "Подпись короче" });
-  });
-
-  it("написанный комментарий — «На доработку» уходит непринятым", async () => {
+  it("написанный комментарий — одна кнопка «Отправить», она уходит непринятой с комментарием", async () => {
     const answerBrief = vi.fn(accepted);
     const slot = open({ answerBrief });
     await card(slot);
     comment(slot, "Баннер ниже");
-    fireEvent.click(slot.getByRole("button", { name: "На доработку" }));
+    expect(slot.queryByRole("button", { name: /Продолжить|Учесть и продолжить|На доработку/ })).toBeNull();
+    fireEvent.click(slot.getByRole("button", { name: "Отправить" }));
     expect(await sentOutcome(answerBrief)).toEqual({ accepted: false, note: "Баннер ниже" });
   });
 
-  it("отвеченная Демонстрация — та же карточка без поля и строка исхода с комментарием", async () => {
+  it("Демонстрация с отправленным комментарием — строка исхода «Комментарий» и сам комментарий", async () => {
     const record: AnswerRecord = { messageId: "msg_1", answeredAt: "2026-09-16T10:05:00.000Z", answer: { briefId: brief.id, answers: [], outcome: { accepted: false, note: "Баннер ниже" } } };
     const slot = open({ record });
     const c = await card(slot);
     expect(c.queryByRole("textbox")).toBeNull();
-    expect(slot.getByText(/На доработку/)).toBeTruthy();
+    expect(slot.getByText("Комментарий", { selector: "b" })).toBeTruthy();
     expect(slot.getByText(/Баннер ниже/)).toBeTruthy();
   });
 });

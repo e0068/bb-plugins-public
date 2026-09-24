@@ -34,21 +34,12 @@ const mount = async () => {
 };
 
 describe("свёрнутый баннер прогресса", () => {
-  it("«N из M» — номер текущего этапа среди этапов прогона, сегменты — только этапы прогона; план времени и бюджета на месте", async () => {
+  it("сегменты — только у этапов прогона, план времени и бюджета на месте", async () => {
     const slot = await mount();
     const head = await screen.findByRole("button", { name: /Прогресс flow/ });
     expect(head.getAttribute("aria-expanded")).toBe("false");
-    expect(within(head).getByText("5 из 6")).toBeTruthy();
-    expect(head.getAttribute("aria-label")).toContain("5 из 6");
     expect(within(head).getByText("30 м")).toBeTruthy();
     expect(within(head).getByText("$8.5–16")).toBeTruthy();
     expect(slot.container.querySelectorAll("[data-progress-segment]")).toHaveLength(6);
-  });
-
-  it("свёрнутый показывает иконку текущего этапа, но не его название", async () => {
-    await mount();
-    const head = await screen.findByRole("button", { name: /Прогресс flow/ });
-    expect(head.querySelector('[data-icon="Diamond"]')).not.toBeNull();
-    expect(head.textContent).not.toContain("code");
   });
 });

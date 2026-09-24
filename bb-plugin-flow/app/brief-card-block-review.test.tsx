@@ -22,8 +22,8 @@ const brief: DecisionBrief = {
   planning: { minutes: 42, cost: 4.2 },
   setup: {
     artifacts: [
-      { id: "task", name: "Задача", state: "approved", recommended: false, link: { label: "SL-1", target: "memory/tasks/todo/sl-1.md" } },
-      { id: "prototype", name: "HTML-прототип", state: "ready", recommended: true, link: { label: "p.html", target: "memory/assets/p.html" } },
+      { id: "task", name: "Задача", state: "approved", recommended: false, link: { label: "SL-1", target: "docs/tasks/todo/sl-1.md" } },
+      { id: "prototype", name: "HTML-прототип", state: "ready", recommended: true, link: { label: "p.html", target: "docs/assets/p.html" } },
       { id: "spec", name: "Спецификация", state: "missing", recommended: true, add: { target: 2, max: 4, risk: -2 } },
       { id: "plan", name: "План", state: "missing", recommended: false },
     ],

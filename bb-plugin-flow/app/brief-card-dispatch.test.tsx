@@ -49,7 +49,7 @@ const open = (handlers: { answerBrief?: typeof accepted; place?: { place: "here"
       rpc: {
         getBrief: () => ({ kind: "found", brief, answer: null }),
         answerBrief: handlers.answerBrief ?? accepted,
-        getDispatchPlace: () => handlers.place ?? { place: "here" },
+        getDispatchPlace: () => handlers.place ?? { place: "here" }, listProjects: () => ({ kind: "found" as const, projects: [] }),
       },
     },
   );
@@ -116,7 +116,7 @@ describe("бриф уже запущенной работы", () => {
         rpc: {
           getBrief: () => ({ kind: "found", brief: shown, answer: null }),
           answerBrief: accepted,
-          getDispatchPlace: () => ({ place: "here" }),
+          getDispatchPlace: () => ({ place: "here" }), listProjects: () => ({ kind: "found" as const, projects: [] }),
         },
       },
     );
@@ -159,7 +159,7 @@ describe("отвеченный бриф с передачей", () => {
             },
           }),
           answerBrief: accepted,
-          getDispatchPlace: () => ({ place: "here" }),
+          getDispatchPlace: () => ({ place: "here" }), listProjects: () => ({ kind: "found" as const, projects: [] }),
         },
       },
     );

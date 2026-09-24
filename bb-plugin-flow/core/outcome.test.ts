@@ -10,7 +10,7 @@ const outcome: StageOutcome = {
   next: "Спецификация",
   done: ["Место исполнения слева от «Отправить»"],
   pending: [{ text: "Итог этапа — одна секция", why: "делаю следующим шагом" }, { text: "Счётчик на кнопке" }],
-  results: [{ label: "prototype.html", target: "memory/assets/x/prototype.html" }],
+  results: [{ label: "prototype.html", target: "docs/assets/x/prototype.html" }],
 };
 
 const briefWith = (patch: Partial<DecisionBrief> = {}): DecisionBrief => ({

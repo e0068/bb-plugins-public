@@ -6,6 +6,7 @@ import { automationStage, builtinStage } from "../lib/stage-constants";
 import type { FlowProgress, WorkStage } from "../shared/contract";
 import {
   automationInstruction,
+  automationView,
   builtinAutomationStage,
   failedAutomations,
   nextAutomation,
@@ -68,7 +69,7 @@ describe("какую автоматизацию запускать", () => {
   });
 
   it("упавший шаг не даёт запустить ни этот, ни следующий этап", () => {
-    const failed = onStepFailed(onRunStart(done(EMPTY_PROGRESS, "review"), "publish", stepsOf(publish), T0), "publish", "no token");
+    const failed = onStepFailed(onRunStart(done(EMPTY_PROGRESS, "review"), "publish", stepsOf(publish), T0), "publish", "no token", T1);
     expect(nextAutomation([review, publish, land], failed)).toBeNull();
     expect(failedAutomations(failed)).toEqual(["publish"]);
   });
@@ -87,9 +88,9 @@ describe("шаги в прогрессе", () => {
   });
 
   it("повтор возвращает этап к упавшему шагу", () => {
-    const failed = onStepFailed(onStepDone(onRunStart(EMPTY_PROGRESS, "land", stepsOf(land), T0), "land", T1), "land", "busy");
+    const failed = onStepFailed(onStepDone(onRunStart(EMPTY_PROGRESS, "land", stepsOf(land), T0), "land", T1), "land", "busy", T1);
     const retried = onRunRetry(failed, "land");
-    expect(retried.stages.land?.run).toEqual({ steps: stepsOf(land), at: 1, error: null });
+    expect(retried.stages.land?.run).toMatchObject({ steps: stepsOf(land), at: 1, error: null });
     expect(failedAutomations(retried)).toEqual([]);
   });
 
@@ -100,7 +101,7 @@ describe("шаги в прогрессе", () => {
 
 describe("вид автоматизации в полосе", () => {
   it("шаги показывают сделанный, упавший с ошибкой и впереди, этап — упавший", () => {
-    const failed = onStepFailed(onStepDone(onRunStart(done(EMPTY_PROGRESS, "review"), "land", stepsOf(land), T0), "land", T1), "land", "not mergeable");
+    const failed = onStepFailed(onStepDone(onRunStart(done(EMPTY_PROGRESS, "review"), "land", stepsOf(land), T0), "land", T1), "land", "not mergeable", T1);
     const view = progressView(failed, [review, land]).stages[1]!;
     expect(view.state).toBe("fail");
     expect(view.automation?.steps.map((s) => [s.id, s.state, s.error])).toEqual([
@@ -122,7 +123,7 @@ describe("значок идущего этапа", () => {
   it("идущая автоматизация — молния, упавшая и законченная — без значка", () => {
     const running = onRunStart(EMPTY_PROGRESS, "publish", stepsOf(publish), T0);
     expect(runningIcon(publish, running.stages.publish!)).toBe("automation");
-    expect(runningIcon(publish, onStepFailed(running, "publish", "x").stages.publish!)).toBeNull();
+    expect(runningIcon(publish, onStepFailed(running, "publish", "x", T1).stages.publish!)).toBeNull();
     expect(runningIcon(publish, runThrough(EMPTY_PROGRESS, publish).stages.publish!)).toBeNull();
   });
 
@@ -155,7 +156,24 @@ describe("незаконченный прогон после перезапус�
     expect(pendingAutomation([review, land], base)).toEqual({ stage: land, from: null });
     const interrupted = onStepDone(onRunStart(base, "land", stepsOf(land), T0), "land", T1);
     expect(pendingAutomation([review, land], interrupted)).toEqual({ stage: land, from: 1 });
-    expect(pendingAutomation([review, land], onStepFailed(interrupted, "land", "x"))).toBeNull();
+    expect(pendingAutomation([review, land], onStepFailed(interrupted, "land", "x", T1))).toBeNull();
     expect(pendingAutomation([review, land], EMPTY_PROGRESS)).toBeNull();
+  });
+});
+
+describe("что шаг сделал", () => {
+  // Исполнитель выбрасывал строку успеха шага, и у сделанной автоматизации
+  // в раскрытом списке не было видно ни адреса PR, ни темы коммита.
+  it("строка успеха шага доезжает от прогона до вида", () => {
+    const started = onRunStart(EMPTY_PROGRESS, "publish", stepsOf(publish), T0);
+    const withDetail = onStepDone(started, "publish", T1, "https://github.com/o/r/pull/7");
+    const [first] = automationView(publish, withDetail.stages.publish!).steps;
+    expect(first).toMatchObject({ id: "git.create-pr", state: "done", detail: "https://github.com/o/r/pull/7" });
+  });
+
+  it("шаг без строки успеха остаётся без неё", () => {
+    const started = onRunStart(EMPTY_PROGRESS, "publish", stepsOf(publish), T0);
+    const [first] = automationView(publish, onStepDone(started, "publish", T1).stages.publish!).steps;
+    expect(first).toMatchObject({ state: "done", detail: null });
   });
 });

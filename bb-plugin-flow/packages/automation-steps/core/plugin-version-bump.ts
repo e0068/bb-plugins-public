@@ -1,18 +1,15 @@
 // Layer 1 — which plugin/package a changed path belongs to, and how a
 // package.json's "version" field grows: `bumpBy` raises whichever component
-// the chain's step named (major, minor or patch), `bumpPatch` is that
-// arithmetic for the level every chain used before the levels existed. Zero
-// effects.
-
-import { decodeBase64, encodeBase64 } from "./base64";
-import type { ChangedFile } from "./github-requests";
+// the chain's step named (major, minor or patch). Значение версии здесь
+// только считается и записывается — какой ей быть, решает план
+// merge-time-бампа (core/merge-time-bump.ts). Zero effects.
 
 const PLUGIN_ROOT = /^(bb-plugin-[^/]+)\//;
 const PACKAGE_ROOT = /^(packages\/[^/]+)\//;
 
 /**
  * The plugin/package root a changed file's path belongs to, or null when the
- * path is outside any (e.g. memory/, scripts/, a repo-root file).
+ * path is outside any (e.g. docs/, scripts/, a repo-root file).
  */
 export function pluginRootOf(path: string): string | null {
   return PLUGIN_ROOT.exec(path)?.[1] ?? PACKAGE_ROOT.exec(path)?.[1] ?? null;
@@ -26,11 +23,6 @@ export function affectedPluginRoots(paths: readonly string[]): string[] {
     if (root) roots.add(root);
   }
   return [...roots].sort();
-}
-
-/** Increments a plain semver's patch component; total over its (already-parsed) input. */
-export function bumpPatch(major: number, minor: number, patch: number): string {
-  return `${major}.${minor}.${patch + 1}`;
 }
 
 /**
@@ -53,39 +45,16 @@ export function bumpBy(major: number, minor: number, patch: number, level: BumpL
     case "minor":
       return `${major}.${minor + 1}.0`;
     case "patch":
-      return bumpPatch(major, minor, patch);
+      return `${major}.${minor}.${patch + 1}`;
   }
-}
-
-const PLAIN_SEMVER = /^(\d+)\.(\d+)\.(\d+)$/;
-
-/**
- * Bumps the patch component of a package.json's top-level "version" field.
- * The field is found by parsing the JSON — not by pattern-matching a line —
- * so a same-named field nested deeper (e.g. a "bb": { "version": … } block,
- * or a dependency literally named "version") can never be picked up instead
- * of the real one. Once the top-level value is known, only that exact
- * literal is rewritten in the text, leaving everything else byte-for-byte.
- * Returns null when the content isn't valid JSON, has no top-level "version"
- * string, or that string isn't a plain `x.y.z` (e.g. a prerelease suffix).
- */
-export function bumpPackageJsonVersion(
-  content: string,
-): { content: string; from: string; to: string } | null {
-  const from = topLevelVersion(content);
-  if (!from) return null;
-  const parts = PLAIN_SEMVER.exec(from);
-  if (!parts) return null;
-  return setPackageJsonVersion(content, bumpPatch(Number(parts[1]), Number(parts[2]), Number(parts[3])));
 }
 
 /**
  * Writes an explicit version into a package.json's top-level "version",
- * leaving the rest of the text byte-for-byte. Unlike
- * {@link bumpPackageJsonVersion} it does not derive the value and does not
- * insist the existing one is a plain `x.y.z` — deciding what the version
- * should become is somebody else's job (see merge-time-bump.ts). Returns
- * null when the text is not JSON or carries no top-level "version" string.
+ * leaving the rest of the text byte-for-byte. Значение сюда приходит готовым —
+ * какой версии быть, решает план merge-time-бампа (см. merge-time-bump.ts), —
+ * поэтому существующее значение не обязано быть простым `x.y.z`. Returns null
+ * when the text is not JSON or carries no top-level "version" string.
  */
 export function setPackageJsonVersion(
   content: string,
@@ -126,42 +95,6 @@ function escapeForRegExp(literal: string): string {
 }
 
 /**
- * Bumps one changed file's content if it's a plugin/package.json with a
- * plain-semver "version" field; a deletion, a non-JSON file, or a version
- * that doesn't parse is left alone (null). Decoding/encoding follows the
- * file's own declared encoding, so the result round-trips exactly like the
- * input.
- */
-export function bumpChangedFileVersion(file: ChangedFile): ChangedFile | null {
-  if (file.kind === "delete") return null;
-  const text = file.encoding === "base64" ? decodeBase64(file.content) : file.content;
-  const bump = bumpPackageJsonVersion(text);
-  if (!bump) return null;
-  return {
-    kind: "upsert",
-    path: file.path,
-    content: file.encoding === "base64" ? encodeBase64(bump.content) : bump.content,
-    encoding: file.encoding,
-  };
-}
-
-/**
- * Bumps a changed package.json and reports the resulting version alongside
- * it — the wiring layer needs `to` to drive the matching package-lock.json
- * bump onto the exact same value, not an independent patch increment of
- * whatever the lockfile itself last said.
- */
-export function bumpChangedFileVersionWithTarget(
-  file: ChangedFile,
-): { file: ChangedFile; to: string } | null {
-  const bumped = bumpChangedFileVersion(file);
-  if (!bumped || bumped.kind === "delete") return null;
-  const text = bumped.encoding === "base64" ? decodeBase64(bumped.content) : bumped.content;
-  const to = topLevelVersion(text);
-  return to ? { file: bumped, to } : null;
-}
-
-/**
  * Sets a package-lock.json's version to `to` — not an independent patch
  * bump: npm requires the lockfile's version to equal package.json's, so it
  * must track whatever `to` the sibling package.json bump already landed on,
@@ -169,7 +102,7 @@ export function bumpChangedFileVersionWithTarget(
  *
  * lockfileVersion 2/3 duplicates the version at `packages[""].version`
  * alongside the top-level one; lockfileVersion 1 has only the top-level
- * field. Both are set when present. Unlike `bumpPackageJsonVersion`, this
+ * field. Both are set when present. Unlike `setPackageJsonVersion`, this
  * rewrites via parse → patch → re-stringify rather than a targeted literal
  * replace: the same value appears in at least two places here by design (not
  * as an accidental collision), so there's no single "first occurrence" a
@@ -201,55 +134,4 @@ export function bumpPackageLockVersion(content: string, to: string): string | nu
     };
   }
   return `${JSON.stringify(next, null, 2)}\n`;
-}
-
-/**
- * Bumps one changed file's content if it's a package-lock.json — same
- * decode/encode round-trip as `bumpChangedFileVersion`, targeting `to`
- * instead of deriving its own increment.
- */
-export function bumpChangedLockFileVersion(file: ChangedFile, to: string): ChangedFile | null {
-  if (file.kind === "delete") return null;
-  const text = file.encoding === "base64" ? decodeBase64(file.content) : file.content;
-  const bumped = bumpPackageLockVersion(text, to);
-  if (!bumped) return null;
-  return {
-    kind: "upsert",
-    path: file.path,
-    content: file.encoding === "base64" ? encodeBase64(bumped) : bumped,
-    encoding: file.encoding,
-  };
-}
-
-export interface FilePayload {
-  content: string;
-  encoding: "utf-8" | "base64";
-}
-
-/**
- * Chooses which reading of a not-yet-diffed package.json is safe to bump:
- * the base branch's live tip — but only when it's textually identical to
- * the same file at the PR's merge-base.
- *
- * The PR's commit is built with the merge-base as its parent (see
- * memory/decisions/pr-commit-parent-is-merge-base.md), so anything the
- * commit writes is compared against the merge-base's version of that file,
- * not the live tip. If the base already moved this file since the
- * merge-base, that "from" value has silently gone stale: bumping from the
- * live tip would build a commit whose base_tree still shows the old value,
- * so GitHub's three-way merge sees the base's real edit and the injected
- * bump as two different changes to the same line — a conflict this PR
- * didn't otherwise have. Skipping is the only choice that's never wrong;
- * the next PR from a branch whose merge-base has caught up bumps normally.
- */
-export function resolveLiveBumpSource(
-  atMergeBase: FilePayload | null,
-  atBaseTip: FilePayload | null,
-): FilePayload | null {
-  if (!atMergeBase || !atBaseTip) return null;
-  return textOf(atMergeBase) === textOf(atBaseTip) ? atBaseTip : null;
-}
-
-function textOf(file: FilePayload): string {
-  return file.encoding === "base64" ? decodeBase64(file.content) : file.content;
 }

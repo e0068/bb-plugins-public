@@ -25,9 +25,9 @@ const setup = () => {
 describe("RPC настроек пути журнала", () => {
   it("getJournalProjects сшивает список проектов с настроенными путями", async () => {
     const { harness, dirs } = setup();
-    await dirs.set("proj_1", "memory/decisions");
+    await dirs.set("proj_1", "docs/decisions");
     expect(await harness.callRpc("getJournalProjects", {})).toEqual([
-      { id: "proj_1", name: "bb-plugins", path: "memory/decisions" },
+      { id: "proj_1", name: "bb-plugins", path: "docs/decisions" },
       { id: "proj_2", name: "Corpus", path: null },
     ]);
   });

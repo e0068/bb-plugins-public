@@ -120,10 +120,10 @@ describe("встроенная автоматизация", () => {
 
   it("шаг убирается крестом", async () => {
     stubAutomations(() => new Response("{}", { status: 404 }));
-    const slot = open(settings([builtin(["git.create-pr", "git.merge"])]));
+    const slot = open(settings([builtin(["git.create-pr", "bb.tasks-in-review"])]));
     const row = within(await slot.findByRole("row", { name: "Этап 3" }));
-    fireEvent.click(row.getByRole("button", { name: "Убрать шаг Открыть PR" }));
-    await vi.waitFor(() => expect(lastSaved(slot)?.at(-1)?.automation).toEqual({ source: "flow", steps: ["git.merge"] }));
+    fireEvent.click(row.getByRole("button", { name: "Убрать шаг Задача → in_review" }));
+    await vi.waitFor(() => expect(lastSaved(slot)?.at(-1)?.automation).toEqual({ source: "flow", steps: ["git.create-pr"] }));
   });
 
   it("шаг переставляется перетаскиванием тега", async () => {

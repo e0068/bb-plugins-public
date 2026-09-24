@@ -28,9 +28,13 @@ const repos = () => {
   dirs.push(root);
   const origin = join(root, "origin.git");
   git(root, "init", "-q", "--bare", "-b", "main", origin);
+  // Глобальные хуки владельца запрещают коммит в локальной копии; временный
+  // репозиторий теста от них отвязывается, иначе прогон падает на хуке.
+  git(origin, "config", "core.hooksPath", "/dev/null");
   const clone = (name: string) => {
     const path = join(root, name);
     git(root, "clone", "-q", origin, path);
+    git(path, "config", "core.hooksPath", "/dev/null");
     git(path, "config", "user.email", "t@t");
     git(path, "config", "user.name", "t");
     return path;

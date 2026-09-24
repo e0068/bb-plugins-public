@@ -80,3 +80,22 @@ describe("доля пункта при итоге без уже потрачен
     expect([f.target, f.max]).toEqual([0, 0]);
   });
 });
+
+describe("цена варианта, снятого владельцем", () => {
+  const chose = (ids: string[]): DecisionAnswer => ({
+    briefId: brief.id,
+    answers: [{ questionId: "docs", optionIds: ids }],
+    stages: run(true),
+    criteria: { removed: [], edited: [], added: [] },
+  });
+
+  it("зачёркнутая рекомендация не приносит в прогноз ни своей цены, ни своей строки", () => {
+    const notes = forecast(brief, chose(["long"])).lines.map((l) => l.note);
+    expect(notes).toContain("Подробно");
+    expect(notes).not.toContain("Коротко");
+  });
+
+  it("взятая рекомендация свою строку в разбивку приносит", () => {
+    expect(forecast(brief, chose(["short"])).lines.map((l) => l.note)).toContain("Коротко");
+  });
+});

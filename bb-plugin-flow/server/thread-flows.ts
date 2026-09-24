@@ -8,6 +8,8 @@ const PROJECT_PREFIX = "project-flow:";
 
 export type ThreadFlows = {
   flowOf(threadId: string): string | undefined;
+  /** Ставит треду flow: следующий прогон в нём пойдёт по нему, а не по выбору проекта. */
+  assign(threadId: string, flowId: string): Promise<void>;
   choiceOf(projectId: string): string | undefined;
   choose(projectId: string, flowId: string): Promise<void>;
   onThreadCreated(payload: { thread: { id: string; projectId: string; parentThreadId: string | null } }): void;
@@ -28,6 +30,10 @@ export const createThreadFlows = async (kv: PluginKvStorage): Promise<ThreadFlow
   let writes: Promise<unknown> = Promise.resolve();
   return {
     flowOf: (threadId) => threads.get(threadId),
+    async assign(threadId, flowId) {
+      threads.set(threadId, flowId);
+      await kv.set(`${THREAD_PREFIX}${threadId}`, flowId);
+    },
     choiceOf: (projectId) => projects.get(projectId),
     async choose(projectId, flowId) {
       projects.set(projectId, flowId);

@@ -32,7 +32,7 @@ describe("исполнитель и проверяющий в первой ча�
   });
 
   it("у неактуального артефакта может быть ссылка на прежний документ", () => {
-    const stale = { id: "spec", name: "Спецификация", state: "stale", recommended: true, link: { label: "spec.md", target: "memory/specs/spec.md" } };
+    const stale = { id: "spec", name: "Спецификация", state: "stale", recommended: true, link: { label: "spec.md", target: "docs/specs/spec.md" } };
     const artifacts = [
       { id: "task", name: "Задача", state: "missing" },
       { id: "prototype", name: "HTML-прототип", state: "missing" },

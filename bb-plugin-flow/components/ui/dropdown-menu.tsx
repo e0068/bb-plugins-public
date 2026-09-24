@@ -424,23 +424,48 @@ DropdownMenuCheckboxItem.displayName = "DropdownMenuCheckboxItem";
 
 // ---------------------------------------------------------------------------
 // RadioGroup + RadioItem
-// Desktop-only Radix primitives. On mobile these components render nothing
-// because they require DropdownMenuPrimitive.Root context which is not
-// mounted on the mobile path. No current callers use these on mobile.
+// Radix keeps the picked value in the Root context, which the mobile path never
+// mounts, so the compact branch carries that value itself: the group hands it
+// down, the item reads it and reports the pick back. Touch items look like the
+// checkbox ones — full-width button with a touch-sized check on the right.
 // ---------------------------------------------------------------------------
+
+interface ResponsiveRadioGroupValue {
+  value?: string;
+  onValueChange?: (value: string) => void;
+}
+
+const ResponsiveRadioGroupContext =
+  React.createContext<ResponsiveRadioGroupValue>({});
 
 function DropdownMenuRadioGroup({
   children,
+  value,
+  onValueChange,
   ...props
 }: React.ComponentProps<typeof DropdownMenuPrimitive.RadioGroup>) {
   const { isCompactViewport } = useResponsiveMenu();
+  const group = React.useMemo(
+    () => ({ value, onValueChange }),
+    [value, onValueChange],
+  );
 
   if (isCompactViewport) {
-    return null;
+    return (
+      <ResponsiveRadioGroupContext.Provider value={group}>
+        <div role="group" className="flex flex-col gap-0.5">
+          {children}
+        </div>
+      </ResponsiveRadioGroupContext.Provider>
+    );
   }
 
   return (
-    <DropdownMenuPrimitive.RadioGroup {...props}>
+    <DropdownMenuPrimitive.RadioGroup
+      value={value}
+      onValueChange={onValueChange}
+      {...props}
+    >
       {children}
     </DropdownMenuPrimitive.RadioGroup>
   );
@@ -454,20 +479,63 @@ const DropdownMenuRadioItem = React.forwardRef<
     {
       className,
       children,
+      value,
+      onSelect,
+      disabled,
+      textValue: _textValue,
       onPointerEnter: callerPointerEnter,
       onKeyDown: callerKeyDown,
-      ...props
+      ...domProps
     },
     ref,
   ) => {
-    const { isCompactViewport } = useResponsiveMenu();
+    const { isCompactViewport, onOpenChange } = useResponsiveMenu();
+    const group = React.useContext(ResponsiveRadioGroupContext);
     const { hoverProps } = useMenuItemHover({
       onPointerEnter: callerPointerEnter,
       onKeyDown: callerKeyDown,
     });
 
     if (isCompactViewport) {
-      return null;
+      const checked = group.value === value;
+      return (
+        <button
+          ref={ref as React.RefCallback<HTMLButtonElement> | null}
+          type="button"
+          role="menuitemradio"
+          aria-checked={checked}
+          disabled={disabled}
+          aria-disabled={disabled || undefined}
+          className={cn(
+            "relative flex w-full cursor-default select-none items-center rounded-sm py-2 pl-2 pr-8 text-left text-xs outline-none transition-colors focus:bg-state-hover focus:text-foreground active:bg-state-active active:text-foreground data-[disabled]:pointer-events-none data-[disabled]:opacity-50",
+            className,
+          )}
+          data-disabled={disabled ? "" : undefined}
+          onClick={() => {
+            if (disabled) return;
+            const event = createSelectEvent();
+            onSelect?.(event);
+            // Radix semantics: preventDefault() on onSelect keeps the menu
+            // open but does not cancel the pick.
+            group.onValueChange?.(value);
+            if (!event.defaultPrevented) {
+              onOpenChange(false);
+            }
+          }}
+        >
+          <span
+            className={cn(
+              "absolute right-2 flex items-center justify-center",
+              COARSE_POINTER_CHECK_SLOT_CLASS,
+            )}
+          >
+            {checked && (
+              <Icon name="Check" className={COARSE_POINTER_CHECK_SLOT_CLASS} />
+            )}
+          </span>
+          {children}
+        </button>
+      );
     }
 
     return (
@@ -479,7 +547,11 @@ const DropdownMenuRadioItem = React.forwardRef<
           MENU_ITEM_LAST_HOVERED_CLASS,
           className,
         )}
-        {...props}
+        value={value}
+        onSelect={onSelect}
+        disabled={disabled}
+        textValue={_textValue}
+        {...domProps}
         {...hoverProps}
       >
         <span className="absolute left-2 flex h-3.5 w-3.5 items-center justify-center">

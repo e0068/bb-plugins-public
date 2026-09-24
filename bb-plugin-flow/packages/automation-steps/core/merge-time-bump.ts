@@ -2,16 +2,16 @@
 // merged, given the branch's package.json and the base branch's. Zero
 // effects; reading either file and writing the result are in the shell.
 //
-// Why the decision is made here and not (only) at PR creation: the bump
-// written when the PR is opened is computed from a snapshot that goes stale.
-// Any neighbouring PR touching the same plugin moves that plugin's version
-// on the base, and every branch cut before it then carries a version that is
-// no longer ahead. The create-time gate (resolveLiveBumpSource in
-// plugin-version-bump.ts) reacts by skipping the bump entirely — correct in
-// that it never builds a conflicting commit, but it means a merged change
-// can land with no version growth at all, which is what happened to a third
-// of the plugin merges in this repo. See
-// memory/decisions/version-bump-decided-at-merge.md.
+// Why the version is decided here and not inside PR creation itself: a bump
+// written into the PR's own commit is computed from a snapshot that goes
+// stale. Any neighbouring PR touching the same plugin moves that plugin's
+// version on the base, and every branch cut before it then carries a version
+// that is no longer ahead. The mechanism that used to do this inside PR
+// creation guarded itself with a gate that simply skipped such a bump — it
+// never built a conflicting commit, but a third of the merges reached main
+// with no version growth at all. It is gone; here the base is merged into
+// the branch first, so no gate is needed. See
+// docs/decisions/version-bump-decided-at-merge.md.
 //
 // The rule here is the one that survives any interleaving: the version must
 // end up strictly greater than what the base already has, so it is computed

@@ -9,7 +9,7 @@ const outcome = {
   next: "Спецификация",
   done: ["Место исполнения слева от «Отправить»"],
   pending: [{ text: "Итог этапа — одна секция", why: "делаю следующим шагом" }],
-  results: [{ label: "prototype.html", target: "memory/assets/x/prototype.html" }],
+  results: [{ label: "prototype.html", target: "docs/assets/x/prototype.html" }],
 };
 
 describe("место исполнения в ответе", () => {

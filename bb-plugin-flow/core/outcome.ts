@@ -23,13 +23,15 @@ export const outcomeStageName = (brief: DecisionBrief): string => {
   return (brief.stages?.list ?? []).find((stage) => stage.id === id)?.name ?? id;
 };
 
-/** Исход Демонстрации: продолжить, продолжить с комментарием или на доработку; `null` — итог не отвечен. */
-export type DemoVerdict = "continue" | "comment" | "rework";
+/**
+ * Исход Демонстрации: продолжить или комментарий; `null` — итог не отвечен. Комментарий Демонстрацию не принимает:
+ * она остаётся открытой, агент отвечает, flow дальше не идёт.
+ */
+export type DemoVerdict = "continue" | "comment";
 
 export const demoVerdict = (answer: Pick<DecisionAnswer, "outcome">): DemoVerdict | null => {
-  const noted = (answer.outcome?.note ?? "").trim().length > 0;
-  if (answer.outcome?.accepted === true) return noted ? "comment" : "continue";
-  return noted ? "rework" : null;
+  if (answer.outcome?.accepted === true) return "continue";
+  return (answer.outcome?.note ?? "").trim().length > 0 ? "comment" : null;
 };
 
 /** Абзацы текста Демонстрации: разделены пустой строкой, пустые отброшены. */
@@ -39,7 +41,7 @@ export const paragraphs = (text: string): string[] =>
     .map((part) => part.replace(/^\n+|\n+$/g, "").trim())
     .filter((part) => part.length > 0);
 
-/** Демонстрация отвечена одним из трёх исходов. */
+/** Демонстрация отвечена одним из двух исходов. */
 export const outcomeAnswered = (answer: Pick<DecisionAnswer, "outcome">): boolean => demoVerdict(answer) !== null;
 
 /** Живой результат — то, что владелец видит работающим: страница по адресу http(s) или запуск командой. */

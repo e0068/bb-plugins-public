@@ -21,8 +21,8 @@ const fresh = stagedBrief([
 
 /** Бриф, записанный до Демонстрации: этап Спецификация ждал приёмки. */
 const oldReview = stagedBrief([
-  report("task", { state: "done", results: [{ label: "BBPL-1", target: "memory/tasks/BBPL-1.md" }] }),
-  report("spec", { state: "review", results: [{ label: "spec.md", target: "memory/specs/spec.md" }] }),
+  report("task", { state: "done", results: [{ label: "BBPL-1", target: "docs/tasks/BBPL-1.md" }] }),
+  report("spec", { state: "review", results: [{ label: "spec.md", target: "docs/specs/spec.md" }] }),
   report("plan", { recommended: true }),
 ]);
 
