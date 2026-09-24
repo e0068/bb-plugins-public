@@ -175,30 +175,6 @@
           "ref": "main"
         }
       }
-    },
-    {
-      "id": "zz-pull-request",
-      "displayName": "Pull Request",
-      "description": "Thread-header buttons that open and merge a GitHub Pull Request via the API without a push, and wake a thread whose environment got stuck retiring.",
-      "icon": "GitPullRequest",
-      "tags": [
-        "pull-request",
-        "github",
-        "git",
-        "interface",
-        "claude-code"
-      ],
-      "author": {
-        "name": "e0068",
-        "github": "e0068"
-      },
-      "source": {
-        "git": {
-          "url": "https://github.com/e0068/bb-plugins-public.git",
-          "subdir": "bb-plugin-zz-pull-request",
-          "ref": "main"
-        }
-      }
     }
   ]
 }
