@@ -28,12 +28,14 @@ While there is no task yet, send its "Done when" as items in `setup.criteria` �
 
 The owner sets the work stages on the Flow page in the bb left menu, one table per flow. The order in the table is the stage order. A thread follows the flow the owner picked in the new-thread composer; a thread without a pick follows the default flow, the first in the list. In a thread with a flow, talk to the owner only through its stages; for anything the stages do not cover, send a `clarify` brief.
 
-A stage has a kind. A **skill** stage has a skill, a name and who besides you may execute it (agents `agent:<name>` and workflows `workflow:<name>`). Four **built-in** kinds have no executors, and each may stand in a flow any number of times, under ids like `select` and `select-2`. The work of a built-in stage lives in its skill — `flow-questions`, `flow-criteria`, `flow-stage-selection`, `flow-demo` by default, or the skill the owner set on the stage; the Flow instructions name it, load it when the run reaches the stage. The same skills work outside bb, where there is no `ask_decision`:
+A stage has a kind. A **skill** stage has a skill, a name and who besides you may execute it (agents `agent:<name>` and workflows `workflow:<name>`); its skill is loaded when the run reaches the stage, exactly like a built-in one's — the stage's work lives in the skill, not in the stage name. Four **built-in** kinds have no executors, and each may stand in a flow any number of times, under ids like `select` and `select-2`. The work of a built-in stage lives in its skill — `flow-questions`, `flow-criteria`, `flow-stage-selection`, `flow-demo` by default, or the skill the owner set on the stage; the Flow instructions name it, load it when the run reaches the stage. The same skills work outside bb, where there is no `ask_decision`:
 
 - **Questions** — ask the owner with `ask_decision` the questions that block the work.
 - **Criteria** — agree "Done when" as `setup.criteria` before you create the task.
 - **Stage selection** — send `setup.stages`: the owner picks which stages go into the run and who executes them, and sees the budget. Stages already passed are `done` and cannot be taken out.
 - **Demo** — stop and send a brief with `outcome` for this stage: briefly show everything done since the previous demo (the first demo — since the flow started).
+
+An **action** stage carries the same steps as an automation — Flow steps, scripts, Automations automations — but the owner runs them, one step per button press above the composer. Do not run it, do not mark it: when the next stage is an action stage, mark the stage before it done and end your turn. Flow marks the action stage itself and, when its last step passes, wakes you to carry on.
 
 Questions, criteria and stage selection that stand next to each other go into **one** brief. A done built-in stage needs no `results`. The list of stages with ids and kinds comes in the Flow instructions for every turn; send all of them in `setup.stages`, in that order, otherwise the tool returns an error with the list. The tool no longer accepts the old `artifacts`, `executor`, `checker` and `testing`, nor the stage state `review`.
 
@@ -54,12 +56,14 @@ Answering a brief with a stage in the run **launches** the thread. From then on 
     "pending": [{ "text": "The outcome section", "why": "doing it next" }],
     "notes": "Segments clip the label on a narrow feed.\n\nThe light theme is checked on screenshots only.",
     "tasks": [{ "key": "BBPL-1", "done": true }, { "key": "BBPL-2", "done": false, "note": "another thread runs it" }],
-    "results": [{ "label": "localhost:5173", "target": "http://localhost:5173/settings" }, { "label": "Desktop app", "command": "cd app && npm run tauri dev" }, { "label": "prototype.html", "target": "memory/assets/x/prototype.html" }]
+    "results": [{ "label": "localhost:5173", "target": "http://localhost:5173/settings" }, { "label": "Desktop app", "command": "cd app && npm run tauri dev" }, { "label": "prototype.html", "target": "docs/assets/x/prototype.html" }]
   }
 }
 ```
 
-`stage` is the id of a demo stage of the flow, `final` says whether this is the last demo of the work, `next` names the stage after it (only when `final` is false). `done` and `pending` cover every stage since the previous demo — the first demo covers the whole flow so far, including the answers to questions and the stage selection. `notes` is what else the owner should know, split into paragraphs with a blank line. `tasks` are the task keys with their state, `results` are links to every result, at least one. A result is `{ label, target }` — a file, a path or a page URL — or `{ label, command }` — a launch command the card shows as a command block with a "Run in terminal" button. The widget draws a card with the comment field attached. The owner continues, continues with a comment you take into account, or sends the work back for rework — then rework it and send the demo again; the flow does not go further until then.
+Flow measures the time a stage stood waiting for the owner — a failed automation step until the owner retries or skips it, an action stage between presses — and names it in the answer of `flow_stage` and in the reply it wakes you with. Carry that idle time into the flow report: a line per stage that stood, with its minutes, in the `notes` of the demo and in the report of the task. Stage minutes never include it, so without the line the hours a broken automation ate leave no trace.
+
+`stage` is the id of a demo stage of the flow, `final` says whether this is the last demo of the work, `next` names the stage after it (only when `final` is false). `done` and `pending` cover every stage since the previous demo — the first demo covers the whole flow so far, including the answers to questions and the stage selection. `notes` is what else the owner should know, split into paragraphs with a blank line. `tasks` are the task keys with their state, `results` are links to every result, at least one. A result is `{ label, target }` — a file, a path or a page URL — or `{ label, command }` — a launch command the card shows as a command block with a "Run in terminal" button. The widget draws a card with the comment field attached. The owner either continues or sends a comment. A comment does not accept the demo: it stays open and the flow does not go further — answer the comment, rework what it asks for, and send the demo again; only "Continue" on a demo moves the flow on. An answer that leaves no agent stage in the run does not reach you at all — the work is over, the stages close and the automations behind them run without you; a comment or an image in the answer reaches you as usual.
 
 ### Live result
 
@@ -70,7 +74,7 @@ The owner judges the work by seeing it run, not by reading about it. When code c
 - **Check before sending** — request every page URL and send the demo only when it responds with 200; a command you have run once yourself.
 - **A bug** — put in `notes` the steps on the live result that showed the bug before and show it is gone now.
 - **Only documents** — a spec, a plan, a task, a prototype file with nothing to run: set `documentsOnly: true`; the card says there is no live link.
-- **After the answer** — the owner continues or sends the work back: stop the servers and apps you started for the demo and run `bb connect unexpose <port>`. A rework demo starts them again.
+- **After the answer** — the owner continues or sends a comment: stop the servers and apps you started for the demo and run `bb connect unexpose <port>`. The demo you send again after a comment starts them again.
 
 ## Where the work runs
 
@@ -88,7 +92,7 @@ Another new brief only if something in the answer is really unclear: an item con
 
 **The `add`** is `{ "target", "max", "risk", "minutes" }`: how much a stage, item or option adds to the budget in dollars, as target and ceiling, to risk as an integer and to time in whole minutes. One work has one price: the price of the work is on the stages. An item's `add` is its share inside the stages, not on top of them — it does not raise the budget, and an item the owner removes subtracts its share from the stages in the run. An option's `add` is its difference from the recommended option: the recommended one is usually zero. Every part goes both ways: a third-party reviewer lowers risk, a workflow may save time. Saving money is negative numbers, `max` is not below `target`: saving $2 to $4 is `{ "target": -4, "max": -2 }`. For a stage executor, the add in `adds` is **the difference from executing the stage yourself**.
 
-**The risk of a stage** is how the stage changes the risk of the whole work, not how much can break inside the stage itself. 1r ≈ 10% chance that a blocking defect reaches the owner. Only implementation raises it; spec, plan, prototype, review and testing lower it; questions, criteria, stage selection, demos and automations are 0. A check with a plus makes skipping checks look safer — never send one. The scale:
+**The risk of a stage** is how the stage changes the risk of the whole work, not how much can break inside the stage itself. 1r ≈ 10% chance that a blocking defect reaches the owner. Only implementation raises it; spec, plan, prototype, review and testing lower it; questions, criteria, stage selection, demos, automations and action stages are 0. A check with a plus makes skipping checks look safer — never send one. The scale:
 
 | Stage | Risk | What the number rests on |
 | --- | --- | --- |
@@ -99,7 +103,7 @@ Another new brief only if something in the answer is really unclear: an item con
 | Plan | −1 | Estimate, not measured: all 6 tasks with a plan still failed the first review — a plan does not replace review |
 | Prototype | −1 when the look is not obvious, otherwise 0 | Estimate, not measured |
 
-For a change that is smaller or larger than its estimate, move along the scale and say why in the intro. Recount the measured lines from `memory/tasks/done/` when the history grows: tasks with `SATISFIED` in their comments, the share with `NOT SATISFIED` by `estimate`.
+For a change that is smaller or larger than its estimate, move along the scale and say why in the intro. Recount the measured lines from `docs/tasks/done/` when the history grows: tasks with `SATISFIED` in their comments, the share with `NOT SATISFIED` by `estimate`.
 
 The widget writes an add small as "+$2–4 –2r +20 min" (a part with no change is omitted; plus risk is red, minus green) on the stage button — for the chosen executor — and next to the executors in the expanded list, and sums the run stages minus the shares of removed items and the chosen options into the "Budget · target · up to ceiling" button — never below zero; what is already spent on the thread is not in the total — with a breakdown by columns time, risk, target, ceiling. The button's second line is the planned work time. The answer carries a line "Budget — forecast $18 · up to $31, risk +2, time +40 min" or "Budget — own price $25 · up to $40 (forecast …)". The plugin adds the time already spent on planning itself as the first breakdown line marked "already spent", for reference only; do not send it.
 
@@ -116,7 +120,7 @@ The widget draws the labels. Your recommendation is preselected on the stage but
 
 Mark a question that only matters for one of the answers to another question with the option field `hides` — an array of `id`s of questions of the same brief, placed below, that lose their meaning with this choice: you cannot hide a question above or the option's own question. The owner does not see hidden questions, does not answer them, and they are not in the answer; the owner does not see the mark either.
 
-Put "Done when" items that only matter for one answer in criteria on an option — an array of strings: they stand in the "Done when" list while the option is chosen and leave it when it is not, and the answer names them as items of the chosen options. Do not repeat them in `setup.criteria` or price them twice. An option that makes items of `setup.criteria` pointless — "look first", "postpone" — lists their indexes from zero in `removes`: the widget strikes them out while the option is chosen and brings them back when it is not, and the answer names them as removed. Do not count those items in the option's `add`: the plugin subtracts the shares of the items in removes itself.
+Put "Done when" items that only matter for one answer in criteria on an option — an array of strings: they stand in the "Done when" list while the option is chosen, and an item of an option the owner drops themselves stays in the list struck through until the brief is answered, so the owner sees what their refusal took away. An option the owner never touched shows nothing. The answer names the live ones as items of the chosen options and the struck ones as dropped, so an item that depends on one answer goes on the option, not into setup.criteria — that way the list settles itself and nobody edits it twice. Do not repeat them in `setup.criteria` or price them twice. An option that makes items of `setup.criteria` pointless — "look first", "postpone" — lists their indexes from zero in `removes`: the widget strikes them out while the option is chosen and brings them back when it is not, and the answer names them as removed. Do not count those items in the option's `add`: the plugin subtracts the shares of the items in removes itself.
 
 The owner can answer any question in their own words. A question id does not start with `setup.`. Do not save on text length: the wording, description and price are shown in full.
 
@@ -132,8 +136,8 @@ The owner can answer any question in their own words. A question id does not sta
       { "id": "questions", "state": "todo" },
       { "id": "criteria", "state": "todo" },
       { "id": "select", "state": "todo" },
-      { "id": "task", "state": "done", "results": [{ "label": "CEL-115", "target": "memory/tasks/in_progress/cel-115.md" }] },
-      { "id": "prototype", "state": "done", "results": [{ "label": "prototype.html", "target": "memory/assets/cel-115/prototype.html" }] },
+      { "id": "task", "state": "done", "results": [{ "label": "CEL-115", "target": "docs/tasks/in_progress/cel-115.md" }] },
+      { "id": "prototype", "state": "done", "results": [{ "label": "prototype.html", "target": "docs/assets/cel-115/prototype.html" }] },
       { "id": "demo", "state": "done" },
       { "id": "spec", "state": "todo", "recommended": true, "add": { "target": 4, "max": 7, "risk": -1, "minutes": 20 } },
       { "id": "plan", "state": "todo", "recommended": true, "executor": "agent:planner", "add": { "target": 3, "max": 5, "risk": -1, "minutes": 15 }, "adds": { "agent:planner": { "target": 2, "max": 4, "risk": -1, "minutes": -5 } } },

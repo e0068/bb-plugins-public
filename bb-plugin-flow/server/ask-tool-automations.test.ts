@@ -6,7 +6,7 @@ import { ASK_TOOL_NAME, registerAskTool } from "./ask-tool";
 import { createStore } from "./store";
 
 const STAGES = { minButtonWidth: 170, stages: [{ id: "review", skill: "code-review", name: "Review", review: false, executors: [] }] };
-const outcome = (stage = "review") => ({ title: "Ревью", outcome: { stage, final: true, done: ["Ревью пройдено"], pending: [], results: [{ label: "review.md", target: "memory/review.md" }] } });
+const outcome = (stage = "review") => ({ title: "Ревью", outcome: { stage, final: true, done: ["Ревью пройдено"], pending: [], results: [{ label: "review.md", target: "docs/review.md" }] } });
 const isError = (result: unknown): boolean => typeof result === "object" && result !== null && (result as { isError?: boolean }).isError === true;
 
 async function setup(launched: boolean) {

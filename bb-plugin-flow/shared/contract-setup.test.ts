@@ -17,8 +17,8 @@ const artifact = (overrides: Record<string, unknown> = {}) => ({
 
 const setup = (overrides: Record<string, unknown> = {}) => ({
   artifacts: [
-    artifact({ id: "task", name: "Задача", state: "approved", recommended: false, link: { label: "SL-312", target: "memory/tasks/todo/sl-312.md" } }),
-    artifact({ id: "prototype", name: "HTML-прототип", state: "ready", recommended: false, link: { label: "prototype-312", target: "memory/assets/p.html" } }),
+    artifact({ id: "task", name: "Задача", state: "approved", recommended: false, link: { label: "SL-312", target: "docs/tasks/todo/sl-312.md" } }),
+    artifact({ id: "prototype", name: "HTML-прототип", state: "ready", recommended: false, link: { label: "prototype-312", target: "docs/assets/p.html" } }),
     artifact({ id: "spec", name: "Спецификация", state: "stale" }),
     artifact({ id: "plan", name: "План", state: "missing" }),
   ],

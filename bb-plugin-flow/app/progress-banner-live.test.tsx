@@ -58,12 +58,12 @@ describe("мерцание в полосе этапов — только при 
     expect(row.querySelector("[data-stage-icon]")!.hasAttribute("data-pulse")).toBe(true);
   });
 
-  it("идущая автоматизация — молния с контуром на сегменте мерцает", async () => {
+  it("идущая автоматизация мерцает своим сегментом — значка на сегменте больше нет", async () => {
     const slot = await mount(view(land("now", true)));
     await pulsing(slot.container);
-    const mark = slot.container.querySelectorAll<HTMLElement>("[data-progress-segment]")[1]!.querySelector<HTMLElement>("[data-automation-mark]")!;
-    expect(mark.className).toMatch(/ring-2/);
-    expect(mark.hasAttribute("data-pulse")).toBe(true);
+    const segment = slot.container.querySelectorAll<HTMLElement>("[data-progress-segment]")[1]!;
+    expect(segment.querySelector("[data-stage-mark]")).toBeNull();
+    expect(segment.hasAttribute("data-pulse")).toBe(true);
   });
 
   it("упавшая автоматизация — сегмент красный, ничего не мерцает", async () => {

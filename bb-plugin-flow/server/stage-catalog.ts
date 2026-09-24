@@ -9,7 +9,7 @@ import { join } from "node:path";
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 
 import { parseAgentFile, parseWorkflowFile } from "../core/catalog";
-import { ROOT_SKILL } from "../lib/stage-constants";
+import { rootSkillPath } from "./root-skill-writer";
 import type { RootSkill, StageCatalog, StageExecutor } from "../shared/contract";
 
 export type CatalogSources = {
@@ -59,7 +59,7 @@ export type RootSkillSources = {
 
 /** Корневой навык flow в `~/.claude/skills`: путь и хост сервера, чтобы страница открыла файл; нет файла, хоста или источник упал — `null`. */
 export const readRootSkill = async (sources: RootSkillSources): Promise<RootSkill> => {
-  const path = join(sources.home, ".claude", "skills", ROOT_SKILL, "SKILL.md");
+  const path = rootSkillPath(sources.home);
   const [hostId, exists] = await Promise.all([settled(sources.primaryHostId, null), settled(() => sources.exists(path), false)]);
   return hostId === null || !exists ? null : { hostId, path };
 };

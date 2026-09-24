@@ -25,7 +25,7 @@ describe("живой этап — идёт работа агента или ав
 
   it("идущая автоматизация живая при любом агенте, упавшая — ни при каком", () => {
     const running = onRunStart(EMPTY_PROGRESS, "publish", stepsOf(publish), T0);
-    const failed = onStepFailed(running, "publish", "x");
+    const failed = onStepFailed(running, "publish", "x", T0);
     fc.assert(
       fc.property(fc.boolean(), (agentActive) => {
         expect(liveIcon(publish, running.stages.publish!, agentActive)).toBe("automation");

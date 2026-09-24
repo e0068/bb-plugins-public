@@ -59,10 +59,10 @@ export async function runCreatePr(
 ): Promise<CreatePrResult> {
   const { repo, baseBranch, headBranch, mergeBaseSha } = input;
 
+  // Only 404 means the base is missing; a refusal (rate limit, access) is named with GitHub's own message.
   const base = await ports.send(getBranchRequest(repo, baseBranch));
-  if (base.status !== 200) {
-    throw new Error(`base "${baseBranch}" not found on GitHub (HTTP ${base.status})`);
-  }
+  if (base.status === 404) throw new Error(`base "${baseBranch}" not found on GitHub (HTTP 404)`);
+  requireStatus(base, 200, `reading base "${baseBranch}"`);
 
   const mergeBase = await ports.send(getCommitRequest(repo, mergeBaseSha));
   requireStatus(mergeBase, 200, `reading merge-base ${mergeBaseSha.slice(0, 7)}`);

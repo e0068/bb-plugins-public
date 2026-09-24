@@ -5,7 +5,7 @@
 // обычным POST, язык берётся у браузера, а рисунок и мигание подменяются
 // стилем-маской по подписи: в реестре хоста иконок видов нет.
 import type { PluginAppBuilder, PluginContentScriptContext } from "@get-bb/plugin-sdk/app";
-import { BotIcon, CheckListIcon, DiamondIcon, MessageQuestionIcon, PresentationBarChart01Icon, WorkflowCircle03Icon, ZapIcon } from "@hugeicons/core-free-icons";
+import { BotIcon, CheckListIcon, DiamondIcon, MessageQuestionIcon, PlayIcon, PresentationBarChart01Icon, WorkflowCircle03Icon, ZapIcon } from "@hugeicons/core-free-icons";
 
 import { awaitingChanges } from "../core/awaiting";
 import { glyphCss } from "../core/row-glyph-css";
@@ -20,15 +20,16 @@ const POLL_MS = 10_000;
 type SetStatus = NonNullable<PluginContentScriptContext["experimental_setThreadRowStatus"]>;
 type IconData = ReadonlyArray<readonly [string, Readonly<Record<string, string | number>>]>;
 
-type AwaitingKind = BuiltinKind | "automation";
+type AwaitingKind = BuiltinKind | "automation" | "action";
 type Provider = NonNullable<RunningThread["provider"]>;
 /** Значок строки: ждущий вид, идущий этап или идущий этап с логотипом провайдера. */
 type GlyphId = AwaitingKind | `running:${RunningIcon}` | `running:${RunningIcon}:${string}`;
 
-const RUNNING_ICONS: readonly RunningIcon[] = ["automation", "self", "agent", "workflow"];
-const AWAITING: readonly AwaitingKind[] = ["questions", "criteria", "select", "demo", "automation"];
+const RUNNING_ICONS: readonly RunningIcon[] = ["automation", "action", "self", "agent", "workflow"];
+const AWAITING: readonly AwaitingKind[] = ["questions", "criteria", "select", "demo", "automation", "action"];
 
 const ICON_DATA: Record<BuiltinKind | RunningIcon, IconData> = {
+  action: PlayIcon as unknown as IconData,
   questions: MessageQuestionIcon as unknown as IconData,
   criteria: CheckListIcon as unknown as IconData,
   select: WorkflowCircle03Icon as unknown as IconData,
@@ -40,7 +41,7 @@ const ICON_DATA: Record<BuiltinKind | RunningIcon, IconData> = {
 };
 
 /** Имя иконки хоста — запасной рисунок, если стиль перестанет совпадать с разметкой. */
-const FALLBACK_ICON: Record<BuiltinKind | RunningIcon, string> = { questions: "MessageQuestion", criteria: "ListTodo", select: "Workflow", demo: "Presentation", automation: "Zap", self: "Diamond", agent: "Bot", workflow: "Workflow" };
+const FALLBACK_ICON: Record<BuiltinKind | RunningIcon, string> = { action: "Play", questions: "MessageQuestion", criteria: "ListTodo", select: "Workflow", demo: "Presentation", automation: "Zap", self: "Diamond", agent: "Bot", workflow: "Workflow" };
 
 const kebab = (name: string): string => name.replace(/[A-Z]/g, (c) => `-${c.toLowerCase()}`);
 
@@ -86,6 +87,8 @@ export function registerAwaitingStatus(app: PluginAppBuilder): void {
         select: { icon: "select", label: `Flow — ${t.stages.select}`, tone: "default", blink: false },
         demo: { icon: "demo", label: `Flow — ${t.stages.demo}`, tone: "default", blink: false },
         automation: { icon: "automation", label: `Flow — ${t.rowStatus.automationFailed}`, tone: "error", blink: false },
+        action: { icon: "action", label: `Flow — ${t.stages.action}`, tone: "default", blink: false },
+        "running:action": { icon: "action", label: `Flow — ${t.rowStatus.running(t.stages.action)}`, tone: "default", blink: true },
         "running:automation": { icon: "automation", label: `Flow — ${t.rowStatus.running(t.rowStatus.automation)}`, tone: "default", blink: true },
         "running:self": { icon: "self", label: `Flow — ${t.rowStatus.running(t.rowStatus.self)}`, tone: "default", blink: true },
         "running:agent": { icon: "agent", label: `Flow — ${t.rowStatus.running(t.rowStatus.agent)}`, tone: "default", blink: true },
@@ -107,7 +110,9 @@ export function registerAwaitingStatus(app: PluginAppBuilder): void {
         if (provider === undefined) return plain;
         const id: GlyphId = `${plain}:${provider.logoUrl}`;
         if (!withLogo.has(id)) {
-          withLogo.set(id, { ...glyphs[plain], label: `Flow — ${t.rowStatus.running(`${t.rowStatus[icon]} · ${provider.name}`)}`, logo: { url: provider.logoUrl, framed: icon === "agent" } });
+          // Имя исполнителя: у Action — название вида, у остальных — подпись исполнителя.
+          const who = icon === "action" ? t.stages.action : t.rowStatus[icon];
+          withLogo.set(id, { ...glyphs[plain], label: `Flow — ${t.rowStatus.running(`${who} · ${provider.name}`)}`, logo: { url: provider.logoUrl, framed: icon === "agent" } });
           paint();
         }
         return id;

@@ -4,7 +4,7 @@ import type { PluginMessageDirectiveProps } from "@get-bb/plugin-sdk/app";
 import { loadPluginApp, renderSlot } from "@get-bb/plugin-sdk/testing/app";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import type { DecisionBrief, decisionsRpcContract } from "../shared/contract";
+import type { AnswerRecord, DecisionBrief, decisionsRpcContract } from "../shared/contract";
 
 const app = await loadPluginApp(() => import("../app"));
 
@@ -60,6 +60,16 @@ describe("пункты варианта в «Готово, когда»", () => 
   });
 });
 
+describe("строка пункта варианта в «Готово, когда»", () => {
+  it("несёт только метку и текст пункта: название варианта остаётся в секции вопросов", async () => {
+    const slot = open();
+    const done = within(await slot.findByRole("group", { name: "Готово, когда" }));
+    fireEvent.click(within(slot.getByRole("group", { name: "Документация?" })).getByRole("button", { name: /Сайт/ }));
+    const row = done.getByText("Страница на сайте").closest("[data-item-row]");
+    expect(row?.textContent).toBe("↳Страница на сайте");
+  });
+});
+
 describe("список «Готово, когда» только из пунктов вариантов", () => {
   const { setup: _setup, ...withoutSetup } = brief;
   const bare: DecisionBrief = { ...withoutSetup, id: "dec_bare", questions: brief.questions.map((q) => ({ ...q, options: q.options.map(({ removes: _removes, ...o }) => o) })) };
@@ -97,5 +107,69 @@ describe("заголовок «Готово, когда» в брифе с эт�
     const slot = openStaged();
     const done = await slot.findByRole("group", { name: "Готово, когда" });
     expect(done.firstElementChild?.textContent).not.toContain("+$5–9");
+  });
+});
+
+describe("вариант, снятый владельцем, оставляет свои пункты зачёркнутыми", () => {
+  const recommended: DecisionBrief = {
+    ...brief,
+    id: "dec_dropped",
+    questions: [{ ...brief.questions[0]!, options: brief.questions[0]!.options.map((o) => (o.id === "readme" ? { ...o, recommended: true } : o)) }],
+  };
+  const openWith = (answer: AnswerRecord | null) =>
+    renderSlot<PluginMessageDirectiveProps, typeof decisionsRpcContract>(
+      app.messageDirectives[0]!,
+      { attributes: { id: recommended.id }, source: `::decision{id="${recommended.id}"}`, message: { id: "msg_1", threadId: "thr_1", turnId: "turn_1", projectId: null }, openWorkspaceFile: () => true },
+      { rpc: { getBrief: () => ({ kind: "found", brief: recommended, answer }), answerBrief: () => ({ kind: "not_found" }) } as never },
+    );
+
+  it("ответ мимо рекомендации зачёркивает её пункт и оставляет целым пункт выбранного варианта", async () => {
+    const slot = openWith(null);
+    const done = within(await slot.findByRole("group", { name: "Готово, когда" }));
+    expect(done.queryByText("README описывает витрину")).toBeNull();
+    fireEvent.click(within(slot.getByRole("group", { name: "Документация?" })).getByRole("button", { name: /Сайт/ }));
+    expect(done.getByText("README описывает витрину").className).toContain("line-through");
+    expect(done.getByText("Страница на сайте").className).not.toContain("line-through");
+  });
+
+  it("владелец взял рекомендацию — её пункт цел, а чужие в списке не появляются", async () => {
+    const slot = openWith(null);
+    const done = within(await slot.findByRole("group", { name: "Готово, когда" }));
+    fireEvent.click(within(slot.getByRole("group", { name: "Документация?" })).getByRole("button", { name: /README/ }));
+    expect(done.getByText("README описывает витрину").className).not.toContain("line-through");
+    expect(done.queryByText("Страница на сайте")).toBeNull();
+  });
+
+  it("смена выбора зачёркивает пункт прежнего варианта и распрямляет пункт нового", async () => {
+    const slot = openWith(null);
+    const done = within(await slot.findByRole("group", { name: "Готово, когда" }));
+    const question = within(slot.getByRole("group", { name: "Документация?" }));
+    fireEvent.click(question.getByRole("button", { name: /README/ }));
+    expect(done.getByText("README описывает витрину").className).not.toContain("line-through");
+    fireEvent.click(question.getByRole("button", { name: /Сайт/ }));
+    expect(done.getByText("README описывает витрину").className).toContain("line-through");
+    expect(done.getByText("Страница на сайте").className).not.toContain("line-through");
+  });
+
+  it("зачёркивание не сдвигает нумерацию пунктов брифа и не теряет правку владельца", async () => {
+    const slot = openWith(null);
+    const done = within(await slot.findByRole("group", { name: "Готово, когда" }));
+    fireEvent.change(done.getByRole("textbox", { name: "Пункт 1" }), { target: { value: "Тесты зелёные и быстрые" } });
+    fireEvent.click(within(slot.getByRole("group", { name: "Документация?" })).getByRole("button", { name: /Сайт/ }));
+    expect(done.getByText("README описывает витрину").className).toContain("line-through");
+    expect((done.getByRole("textbox", { name: "Пункт 1" }) as HTMLTextAreaElement).value).toBe("Тесты зелёные и быстрые");
+    expect(done.queryByRole("textbox", { name: "Пункт 2" })).toBeNull();
+  });
+
+  it("отвеченная карточка показывает только живые пункты", async () => {
+    const record: AnswerRecord = {
+      answer: { briefId: recommended.id, answers: [{ questionId: "docs", optionIds: ["site"] }] },
+      messageId: "msg_1",
+      answeredAt: "2026-09-15T10:00:00.000Z",
+    };
+    const slot = openWith(record);
+    const done = within(await slot.findByRole("group", { name: "Готово, когда" }));
+    expect(done.getByText("Страница на сайте")).toBeTruthy();
+    expect(done.queryByText("README описывает витрину")).toBeNull();
   });
 });

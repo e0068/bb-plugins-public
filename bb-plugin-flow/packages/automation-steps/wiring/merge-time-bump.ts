@@ -1,16 +1,14 @@
-// Layer 3 (shell), the testable part — right before a PR is merged, makes
-// sure every plugin it touches leaves the merge with a version strictly
-// above what the base branch has. Verified with a fake `send`, no network;
-// the real `send` is github-client.ts.
+// Layer 3 (shell), the testable part — makes sure every plugin a PR touches
+// ends up with a version strictly above what the base branch has. Verified
+// with a fake `send`, no network; the real `send` is github-client.ts.
 //
-// This is the second half of the version bump. The first half — written
-// into the PR's own commit when it is opened (plugin-version-bump.ts) — is
-// computed from a snapshot that goes stale as neighbouring PRs land, and its
-// safety gate then skips the bump rather than build a conflicting commit.
-// Here the decision is re-made against the base as it stands at the moment
-// of merging (src/core/merge-time-bump.ts), so the version can no longer be
-// used up by someone else in between. See
-// memory/decisions/version-bump-decided-at-merge.md.
+// This is the only place a version is raised. A chain runs it right after
+// opening the PR, and a chain that also merges runs it again right before
+// the merge — the version decided at opening can be taken by a neighbouring
+// PR while the checks run. Running it twice costs nothing: the plan is made
+// first (core/merge-time-bump.ts), and a branch already standing above the
+// base answers `ahead`, so the head is not rewritten at all. See
+// docs/decisions/version-bump-decided-at-merge.md.
 //
 // Why the branch is caught up with the base first: the PR's commit is
 // parented on its merge-base, so a version set on the branch is three-way
@@ -44,6 +42,7 @@ import {
   type RepoRef,
 } from "../core/github-requests";
 import { planMergeTimeBump } from "../core/merge-time-bump";
+import type { BumpGap } from "../core/step-outcomes";
 import {
   affectedPluginRoots,
   bumpPackageLockVersion,
@@ -71,6 +70,8 @@ export interface MergeTimeBumpReport {
   bumped: readonly { root: string; to: string }[];
   /** Human-readable reasons something that should have been bumped was not. Empty means every touched plugin is ahead. */
   problems: readonly string[];
+  /** Ветки нет на origin — поднимать версию пока не на чем; поля нет — пробела нет. */
+  gap?: BumpGap | null;
   /**
    * The PR's head branch was rewritten (caught up with the base and/or given
    * a bump commit). GitHub recomputes the PR's mergeability after that, and
@@ -96,6 +97,10 @@ export async function bumpVersionsBeforeMerge(
       bumped: [],
       problems: [`could not compare ${headBranch} with ${baseBranch} (HTTP ${compared.status})`],
       headMoved: false,
+      // Сравнения нет, потому что ветки ещё (или уже) нет на origin: PR по ней
+      // не открывали или его ветку удалили после мёрджа. Версия поднимется
+      // вторым вызовом шага, перед мёрджем.
+      gap: compared.status === 404 ? "branch-not-published" : null,
     };
   }
 

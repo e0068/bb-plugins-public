@@ -20,7 +20,7 @@ async function countAhead(ports: GitPorts, ref: string): Promise<number | null> 
 // 0 well past the run of a thread's own commits, showing "ready" for a
 // branch that has in fact already diverged — every click then dies with
 // "diverged" and the button never fixes itself (see
-// memory/tasks/in_progress/fast-forward-stale-ahead-status.md). Fetch first
+// docs/tasks/in_progress/fast-forward-stale-ahead-status.md). Fetch first
 // (mode "origin" only — a stale local `origin/<base>` would lie the same way
 // checkMergedContent avoids in merged-content.ts), then count live. `null`
 // when it can't be measured (network hiccup): the caller falls back to the

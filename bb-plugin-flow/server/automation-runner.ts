@@ -8,7 +8,26 @@ import type { BbPluginApi, PluginKvStorage } from "@get-bb/plugin-sdk";
 import { isStepId } from "../packages/automation-steps/catalog";
 import { SELF_UPDATE_PENDING_PREFIX, type PluginsPort, type StepOutcome, type Steps } from "../packages/automation-steps/index";
 import { scriptIdOf, scriptOf } from "../core/automation-scripts";
-import { onRunRetry, pendingAutomation, onRunStart, onStepDone, onStepFailed, executorProvider, stageLiveIcon, stepsOf, type RunStep } from "../core/automation-run";
+import { waitsForAnswer } from "../core/awaiting";
+import {
+  executorProvider,
+  idleStages,
+  isActionStage,
+  isAgentStage,
+  onIdleClose,
+  onIdleOpen,
+  onRunRetry,
+  onRunStart,
+  onStepDone,
+  onStepFailed,
+  onStepStarted,
+  pendingAction,
+  pendingAutomation,
+  stageLiveIcon,
+  stepsOf,
+  wakeText,
+  type RunStep,
+} from "../core/automation-run";
 import { automationRpcContract, type AutomationScript, type FlowProgress, type RunningIcon, type RunningThread, type StageSettings, type WorkStage } from "../shared/contract";
 import type { AutomationsBridge } from "./automations";
 import type { ProgressStore, ThreadState } from "./progress";
@@ -21,7 +40,7 @@ export type ExternalStep = (automationId: string, threadId: string) => Promise<S
 
 export interface AutomationRunnerDeps {
   progress: ProgressStore;
-  store: Pick<DecisionStore, "putAwaiting" | "clearAwaiting">;
+  store: Pick<DecisionStore, "putAwaiting" | "clearAwaiting" | "listAwaiting">;
   stages: (threadId: string) => StageSettings;
   steps: Steps;
   external: ExternalStep;
@@ -31,6 +50,8 @@ export interface AutomationRunnerDeps {
   thread: (threadId: string) => Promise<Pick<ThreadState, "active" | "providerId">>;
   /** Провайдеры хоста с логотипами. */
   providers: () => Promise<readonly HostProvider[]>;
+  /** Реплика агенту готовым текстом: доигранный прогон Flow пускает работу дальше. Нет — тред просто стоит на следующем этапе. */
+  wake?: (threadId: string, text: string) => Promise<void>;
   /** kv прогона: шаг `bb.reinstall` кладёт сюда отложенное самообновление, цепочка его снимает. */
   kv: PluginKvStorage;
   /** Плагины хоста: ими применяется отложенное самообновление, когда цепочка доиграна. */
@@ -49,6 +70,8 @@ export interface AutomationRunner {
   retry(threadId: string, stageId: string): Promise<boolean>;
   /** Закрывает упавший шаг без исполнения — эффект уже есть или не нужен — и в фоне продолжает цепочку. */
   skip(threadId: string, stageId: string): Promise<boolean>;
+  /** Нажатие владельца на шаг этапа Action: `false` — этап не ждёт нажатия или шаг уже идёт. */
+  runActionStep(threadId: string, stageId: string): Promise<boolean>;
   /** Треды, где сейчас идёт работа — ход агента на этапе или прогон автоматизации, — и значок этапа; ждущие владельца не входят. */
   running(): Promise<RunningThread[]>;
 }
@@ -83,6 +106,9 @@ export const externalStep =
 
 const awaitingId = (stageId: string) => `automation:${stageId}`;
 
+/** Ожидание владельца на этапе Action — своё: его снимает нажатие, а не повтор упавшей автоматизации. */
+const actionAwaitingId = (stageId: string) => `action:${stageId}`;
+
 export const createAutomationRunner = (deps: AutomationRunnerDeps): AutomationRunner => {
   // Один прогон на тред: отметка, ответ и запись самого исполнителя зовут advance, пока шаги ещё идут.
   const active = new Set<string>();
@@ -104,26 +130,52 @@ export const createAutomationRunner = (deps: AutomationRunnerDeps): AutomationRu
     for (const step of steps.slice(from)) {
       const outcome = await execute(stage, step, threadId);
       if (!outcome.ok) {
-        await deps.progress.update(threadId, (p) => onStepFailed(p, stage.id, outcome.error));
+        // Упавший шаг ждёт владельца: с этой минуты этап простаивает, а не работает.
+        await deps.progress.update(threadId, (p) => onIdleOpen(onStepFailed(p, stage.id, outcome.error, deps.now()), stage.id, deps.now()));
         await deps.store.putAwaiting(threadId, { briefId: awaitingId(stage.id), kind: "automation" });
         return false;
       }
-      await deps.progress.update(threadId, (p) => onStepDone(p, stage.id, deps.now()));
+      await deps.progress.update(threadId, (p) => onStepDone(p, stage.id, deps.now(), outcome.detail));
     }
     return true;
   };
 
-  /** Цепочка: следующая автоматизация за следующей, пока они стоят подряд и ни одна не упала; `resumeOnly` — только прерванная. */
-  const chain = async (threadId: string, resumeOnly = false): Promise<void> => {
+  /**
+   * Этап Action, до которого дошёл прогон: шаги записываются снимком, тред встаёт в ожидание владельца.
+   * Уже начатый этап не трогается — снимок и ожидание у него есть.
+   */
+  const awaitAction = async (threadId: string): Promise<boolean> => {
+    const record = await deps.progress.get(threadId);
+    const pending = record === null ? null : pendingAction(deps.stages(threadId).stages, record);
+    if (pending === null) return false;
+    if (record?.stages[pending.stage.id]?.run === undefined) {
+      const steps = stepsOf(pending.stage);
+      await deps.progress.update(threadId, (p) => onRunStart(p, pending.stage.id, steps, deps.now()));
+      // Этап без шагов закрывается сразу — как пустая автоматизация; ждать владельца тогда нечего.
+      if (steps.length === 0) return await chain(threadId);
+    }
+    // Ожидание нажатия — простой этапа: работой оно не считается ни в минутах, ни в отчёте. Запись — мимо `update`: она не двигает работу.
+    await deps.progress.annotate(threadId, (p) => onIdleOpen(p, pending.stage.id, deps.now()));
+    await deps.store.putAwaiting(threadId, { briefId: actionAwaitingId(pending.stage.id), kind: "action" });
+    return false;
+  };
+
+  /**
+   * Цепочка: следующая автоматизация за следующей, пока они стоят подряд и ни одна не упала; `resumeOnly` — только прерванная.
+   * Ответ — доиграна ли хоть одна автоматизация: по нему Flow решает, будить ли агента.
+   */
+  const chain = async (threadId: string, resumeOnly = false): Promise<boolean> => {
+    let ran = false;
     for (;;) {
       const record = await deps.progress.get(threadId);
       const pending = record === null ? null : pendingAutomation(deps.stages(threadId).stages, record);
-      if (pending === null || (resumeOnly && pending.from === null)) return;
+      if (pending === null || (resumeOnly && pending.from === null)) return (await awaitAction(threadId)) || ran;
       const { stage, from } = pending;
       // Прерванный прогон идёт по своему снимку шагов, новый — по шагам этапа сейчас.
       const steps = from === null ? stepsOf(stage) : (record?.stages[stage.id]?.run?.steps ?? []);
       if (from === null) await deps.progress.update(threadId, (p) => onRunStart(p, stage.id, steps, deps.now()));
-      if (!(await runSteps(threadId, stage, steps, from ?? 0))) return;
+      if (!(await runSteps(threadId, stage, steps, from ?? 0))) return ran;
+      ran = true;
     }
   };
 
@@ -167,11 +219,22 @@ export const createAutomationRunner = (deps: AutomationRunnerDeps): AutomationRu
     for (const pluginId of pluginIds) await deps.plugins.applyUpdate({ pluginId });
   };
 
-  const release = async (threadId: string, work: Promise<void>): Promise<void> => {
-    await work.catch(deps.onError);
-    while (woken.delete(threadId)) await chain(threadId).catch(deps.onError);
-    active.delete(threadId);
-    await settleSelfUpdate().catch(deps.onError);
+  // Работа Flow над тредом, которую можно дождаться: нажатие на шаг Action не отказывает, пока цепочка доводит своё.
+  const settling = new Map<string, Promise<void>>();
+
+  const release = (threadId: string, work: Promise<void>): Promise<void> => {
+    const done = (async () => {
+      await work.catch(deps.onError);
+      while (woken.delete(threadId)) await drive(threadId).catch(deps.onError);
+      active.delete(threadId);
+      await settleSelfUpdate().catch(deps.onError);
+    })();
+    const settled = done.catch(() => undefined);
+    settling.set(threadId, settled);
+    void settled.then(() => {
+      if (settling.get(threadId) === settled) settling.delete(threadId);
+    });
+    return done;
   };
 
   /** Упавший шаг этапа, если он есть; нет — ожидание этого этапа снимается, чтобы не висело. */
@@ -195,22 +258,83 @@ export const createAutomationRunner = (deps: AutomationRunnerDeps): AutomationRu
     const work = async () => {
       await deps.progress.update(threadId, change);
       await deps.store.clearAwaiting(threadId, awaitingId(stageId));
-      if (await runSteps(threadId, failed.stage, failed.run.steps, from(failed.run.at))) await chain(threadId);
+      if (!(await runSteps(threadId, failed.stage, failed.run.steps, from(failed.run.at)))) return;
+      await chain(threadId);
+      await wakeIfAgentNext(threadId, isActionStage(failed.stage) ? "action" : "automation");
     };
     void release(threadId, work());
     return true;
   };
 
+  /** Ждёт ли тред ответа владельца на бриф: тогда работа продолжится с ответа, и будить агента нечем. */
+  const holdsOwner = async (threadId: string): Promise<boolean> =>
+    (await deps.store.listAwaiting()).some((entry) => entry.threadId === threadId && waitsForAnswer(entry.kind));
+
+  /** Этап за доигранным прогоном ведёт агент — его надо разбудить; автоматизацию и этап Action Flow тянет сам. Реплика несёт простой по этапам. */
+  const wakeIfAgentNext = async (threadId: string, kind: "automation" | "action"): Promise<void> => {
+    const record = await deps.progress.get(threadId);
+    if (record === null) return;
+    const stages = deps.stages(threadId).stages;
+    const next = stages.find((stage) => record.stages[stage.id]?.finishedAt === undefined && record.stages[stage.id]?.skipped !== true);
+    if (next === undefined || !isAgentStage(next)) return;
+    // Бриф этого этапа уже у владельца — Демонстрация ждёт кнопки: реплика
+    // разбудила бы агента там, где его работа сделана и решает владелец.
+    if (await holdsOwner(threadId)) return;
+    await deps.wake?.(threadId, wakeText(kind, idleStages(record, stages)));
+  };
+
+  /** Цепочка и реплика за ней: агент будится, только когда Flow действительно доиграл автоматизацию. */
+  const drive = async (threadId: string, resumeOnly = false): Promise<void> => {
+    if (await chain(threadId, resumeOnly)) await wakeIfAgentNext(threadId, "automation");
+  };
+
   return {
     advance: async (threadId) => {
-      if (claim(threadId)) await release(threadId, chain(threadId));
+      if (claim(threadId)) await release(threadId, drive(threadId));
       else woken.add(threadId);
     },
     resume: async (threadId) => {
-      if (claim(threadId)) await release(threadId, chain(threadId, true));
+      if (claim(threadId)) await release(threadId, drive(threadId, true));
     },
-    retry: (threadId, stageId) => unblock(threadId, stageId, (p) => onRunRetry(p, stageId), (at) => at),
-    skip: (threadId, stageId) => unblock(threadId, stageId, (p) => onStepDone(p, stageId, deps.now()), (at) => at + 1),
+    // Повтор снимает ошибку и закрывает простой: этап снова пошёл.
+    retry: (threadId, stageId) => unblock(threadId, stageId, (p) => onRunRetry(onIdleClose(p, stageId, deps.now()), stageId), (at) => at),
+    runActionStep: async (threadId, stageId) => {
+      // Идущий шаг не перезапускается: второе нажатие отказывает сразу, не дожидаясь первого.
+      if ((await deps.progress.get(threadId).catch(() => null))?.stages[stageId]?.run?.busy === true) return false;
+      // Нажатие пришло, пока Flow доводит цепочку до этапа Action: ждём её, а не отказываем владельцу.
+      await settling.get(threadId);
+      if (!claim(threadId)) return false;
+      const record = await deps.progress.get(threadId).catch(() => null);
+      const pending = record === null ? null : pendingAction(deps.stages(threadId).stages, record);
+      // Нажатие принимается только на ждущем шаге ждущего этапа.
+      if (pending === null || pending.stage.id !== stageId || record?.stages[stageId]?.run?.busy === true) {
+        active.delete(threadId);
+        return false;
+      }
+      const { stage, at } = pending;
+      const step = (record?.stages[stageId]?.run?.steps ?? stepsOf(stage))[at];
+      if (step === undefined) {
+        active.delete(threadId);
+        return false;
+      }
+      const work = async () => {
+        // Нажатие закрывает простой ожидания: с этой минуты этап работает.
+        await deps.progress.update(threadId, (p) => onStepStarted(onIdleClose(p, stageId, deps.now()), stageId));
+        const outcome = await execute(stage, step, threadId);
+        if (!outcome.ok) return void (await deps.progress.update(threadId, (p) => onIdleOpen(onStepFailed(p, stageId, outcome.error, deps.now()), stageId, deps.now())));
+        await deps.progress.update(threadId, (p) => onStepDone(p, stageId, deps.now(), outcome.detail));
+        const closed = (await deps.progress.get(threadId))?.stages[stageId]?.finishedAt !== undefined;
+        // Этап не закрылся — он снова ждёт нажатия, и это снова простой.
+        if (!closed) return void (await deps.progress.annotate(threadId, (p) => onIdleOpen(p, stageId, deps.now())));
+        await deps.store.clearAwaiting(threadId, actionAwaitingId(stageId));
+        await chain(threadId);
+        await wakeIfAgentNext(threadId, "action");
+      };
+      void release(threadId, work());
+      return true;
+    },
+    // Пропуск тоже снимает этап с простоя: владелец ответил, ждать больше нечего.
+    skip: (threadId, stageId) => unblock(threadId, stageId, (p) => onStepDone(onIdleClose(p, stageId, deps.now()), stageId, deps.now()), (at) => at + 1),
     running: async () => {
       // Список провайдеров один на опрос и только когда он нужен.
       let brands: Promise<readonly HostProvider[]> | undefined;
@@ -249,6 +373,8 @@ export const registerAutomationRunner = (bb: Pick<BbPluginApi, "rpc">, runner: A
     // Повтор отвечает сразу, шаги идут в фоне: мёрдж ждёт GitHub минутами.
     retryAutomation: async ({ threadId, stage }) => ({ started: await runner.retry(threadId, stage) }),
     skipAutomationStep: async ({ threadId, stage }) => ({ started: await runner.skip(threadId, stage) }),
+    // Шаг Action идёт в фоне: ответ приходит сразу, а кнопка держит лоадер до записи прогресса.
+    runActionStep: async ({ threadId, stage }) => ({ started: await runner.runActionStep(threadId, stage) }),
     runningThreads: () => runner.running(),
   });
 };

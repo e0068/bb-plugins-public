@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import fc from "fast-check";
 import {
   currentTasksArgs,
+  linkedTaskEnv,
   markTaskStatusArgs,
   parseLinkedTaskKeys,
   parseLinkedTasks,
@@ -144,5 +145,13 @@ describe("parseLinkedTasks", () => {
         );
       }),
     );
+  });
+});
+
+describe("linkedTaskEnv", () => {
+  // Без этой переменной Tasks+ смотрит только main, а до шага «Pull Main»
+  // файл задачи лежит лишь в рабочем дереве треда — и список приходит пустым.
+  it("names the thread whose tree the CLI must look into", () => {
+    expect(linkedTaskEnv("thr_abc")).toEqual({ BB_THREAD_ID: "thr_abc" });
   });
 });

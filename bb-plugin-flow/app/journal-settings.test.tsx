@@ -35,20 +35,20 @@ describe("секция пути журнала решений", () => {
   });
 
   it("показывает уже настроенный путь в поле", async () => {
-    const slot = open([{ id: "proj_1", name: "bb-plugins", path: "memory/decisions" }]);
+    const slot = open([{ id: "proj_1", name: "bb-plugins", path: "docs/decisions" }]);
     const input = (await slot.findByLabelText("bb-plugins")) as HTMLInputElement;
-    expect(input.value).toBe("memory/decisions");
+    expect(input.value).toBe("docs/decisions");
   });
 
   it("сохраняет по уходу фокуса одним вызовом RPC", async () => {
-    const slot = open([{ id: "proj_1", name: "bb-plugins", path: null }], { kind: "saved", path: "memory/decisions" });
+    const slot = open([{ id: "proj_1", name: "bb-plugins", path: null }], { kind: "saved", path: "docs/decisions" });
     const input = await slot.findByLabelText("bb-plugins");
-    fireEvent.change(input, { target: { value: "memory/decisions" } });
+    fireEvent.change(input, { target: { value: "docs/decisions" } });
     fireEvent.blur(input);
     await new Promise((r) => setTimeout(r, 0));
     const saves = slot.rpcCalls.filter((c) => c.method === "setJournalDir");
     expect(saves).toHaveLength(1);
-    expect(saves[0]!.input).toEqual({ projectId: "proj_1", path: "memory/decisions" });
+    expect(saves[0]!.input).toEqual({ projectId: "proj_1", path: "docs/decisions" });
   });
 
   it("неверный путь показывает причину и не теряет введённый текст", async () => {
@@ -73,10 +73,10 @@ describe("секция пути журнала решений", () => {
       throw new Error("host unreachable");
     });
     const input = (await slot.findByLabelText("bb-plugins")) as HTMLInputElement;
-    fireEvent.change(input, { target: { value: "memory/decisions" } });
+    fireEvent.change(input, { target: { value: "docs/decisions" } });
     fireEvent.blur(input);
     expect(await slot.findByText("Не удалось сохранить — проверь соединение и попробуй снова")).toBeTruthy();
-    expect(input.value).toBe("memory/decisions");
+    expect(input.value).toBe("docs/decisions");
   });
 
   it("сбой RPC при загрузке — сообщение об ошибке вместо списка", async () => {
@@ -88,7 +88,7 @@ describe("секция пути журнала решений", () => {
 
   it("несколько проектов — по строке на каждый", async () => {
     const slot = open([
-      { id: "proj_1", name: "bb-plugins", path: "memory/decisions" },
+      { id: "proj_1", name: "bb-plugins", path: "docs/decisions" },
       { id: "proj_2", name: "Corpus", path: null },
     ]);
     await slot.findByText("bb-plugins");

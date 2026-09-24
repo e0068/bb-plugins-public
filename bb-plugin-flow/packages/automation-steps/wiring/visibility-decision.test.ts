@@ -27,7 +27,7 @@ describe("resolveVisibility", () => {
   // The regression this whole layer exists for: a PR merged by any route
   // (bb's native button, github.com, `gh`) leaves the branch's old commits
   // "ahead" forever, and nothing was ever written to KV. The content is what
-  // settles it — see memory/decisions/pr-button-merged-by-content.md.
+  // settles it — see docs/decisions/pr-button-merged-by-content.md.
   it("content already in the base → hidden, even with ahead > 0 and an empty cache", async () => {
     const { ports } = fakePorts({ cached: false, measured: "merged" });
 

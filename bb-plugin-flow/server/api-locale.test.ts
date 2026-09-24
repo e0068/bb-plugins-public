@@ -11,7 +11,7 @@ import { registerApi } from "./api";
 import { createStore } from "./store";
 
 const brief: DecisionBrief = {
-  ...stagedBrief([report("task", { state: "review", results: [{ label: "spec.md", target: "memory/specs/spec.md" }] }), report("spec", { recommended: true, add: add(4, 8, 1, 30) })], {
+  ...stagedBrief([report("task", { state: "review", results: [{ label: "spec.md", target: "docs/specs/spec.md" }] }), report("spec", { recommended: true, add: add(4, 8, 1, 30) })], {
     title: "Rename to Flow",
     stages: { list: STAGES.map((stage) => ({ ...stage, name: stage.id })), minButtonWidth: 170 },
   }),
@@ -25,7 +25,15 @@ const setup = async (location: () => Promise<{ hostId: string; storageRootPath: 
   const root = await mkdtemp(join(tmpdir(), "flow-locale-"));
   const { bb, harness } = createFakePluginHost({
     pluginId: "flow",
-    sdk: { threads: { send: async () => ({ delivery: "started" }), storageLocation: async () => ({ ...(await location()), storageRootPath: root }) } },
+    sdk: {
+      threads: {
+        send: async () => ({ delivery: "started" }),
+        get: async () => ({ id: "thr_1", projectId: "prj_1", environmentId: "env_1", title: "Thread" }),
+        storageLocation: async () => ({ ...(await location()), storageRootPath: root }),
+      },
+      // Загрузка отвечает именем файла: строке картинок хватает, что путь есть.
+      projects: { attachments: { upload: (async (args: { filename: string }) => ({ type: "localImage", path: args.filename, name: args.filename, sizeBytes: 3 })) as never } },
+    },
   });
   const store = createStore(bb.storage.kv);
   await store.putBrief(brief);

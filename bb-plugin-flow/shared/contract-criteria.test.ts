@@ -5,7 +5,7 @@ import { askDecisionParamsSchema, decisionAnswerSchema, decisionBriefSchema } fr
 
 type Overrides = Record<string, Record<string, unknown>>;
 
-const link = (label: string) => ({ label, target: `memory/${label}` });
+const link = (label: string) => ({ label, target: `docs/${label}` });
 
 /** Четыре артефакта в порядке брифа: задача, прототип, спецификация, план; `overrides` правит артефакт по id. */
 const artifacts = (overrides: Overrides = {}) =>

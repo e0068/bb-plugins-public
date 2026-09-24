@@ -13,6 +13,16 @@ describe("bbCliClient", () => {
     expect(run.kind === "ran" && run.stdout.trim()).toBe("tasks current");
   });
 
+  // The env of a call, not of the plugin host: `bb tasks` resolves a task
+  // against the tree of BB_THREAD_ID, and the host process has no thread.
+  it("passes the call's own environment variables to the process", async () => {
+    const run = await bbCliClient({ BB_CLI: "/bin/sh" }).run(
+      ["-c", 'printf %s "$BB_THREAD_ID"'],
+      { BB_THREAD_ID: "thr_abc" },
+    );
+    expect(run.kind === "ran" && run.stdout).toBe("thr_abc");
+  });
+
   it("a non-zero exit is an ordinary outcome, not a throw", async () => {
     const run = await bbCliClient({ BB_CLI: "/bin/sh" }).run(["-c", "exit 7"]);
     expect(run).toMatchObject({ kind: "ran", code: 7 });

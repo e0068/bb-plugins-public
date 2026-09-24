@@ -163,7 +163,7 @@ describe("reinstallTouchedPlugins", () => {
 
   it("no plugin directory among the paths → nothing called, nothing reported", async () => {
     const { port, calls } = fakePlugins([{ id: "tasks-plus", source: pathSource }]);
-    expect(await reinstallTouchedPlugins(port, ["memory/INDEX.md", "README.md"], target)).toEqual({
+    expect(await reinstallTouchedPlugins(port, ["docs/INDEX.md", "README.md"], target)).toEqual({
       reinstalled: [],
       installed: [],
       repoints: [],

@@ -19,8 +19,8 @@ const fresh = stagedBrief([
 ]);
 
 const inReview = stagedBrief([
-  report("task", { state: "done", results: [{ label: "BBPL-1", target: "memory/tasks/BBPL-1.md" }] }),
-  report("spec", { state: "review", results: [{ label: "spec.md", target: "memory/specs/spec.md" }, { label: "prototype.html", target: "memory/assets/prototype.html" }] }),
+  report("task", { state: "done", results: [{ label: "BBPL-1", target: "docs/tasks/BBPL-1.md" }] }),
+  report("spec", { state: "review", results: [{ label: "spec.md", target: "docs/specs/spec.md" }, { label: "prototype.html", target: "docs/assets/prototype.html" }] }),
   report("plan", { recommended: true }),
 ]);
 
@@ -50,7 +50,7 @@ describe("кнопки этапов", () => {
     expect(task.queryByRole("button", { name: /в ближайший прогон/ })).toBeNull();
     expect(task.getByLabelText("Этап сделан")).toBeTruthy();
     fireEvent.click(task.getByRole("button", { name: /BBPL-1/ }));
-    expect(opened).toHaveBeenCalledWith("memory/tasks/BBPL-1.md");
+    expect(opened).toHaveBeenCalledWith("docs/tasks/BBPL-1.md");
     expect(slot.queryByRole("group", { name: "Задача: результаты" })).toBeNull();
     fireEvent.click(task.getByRole("button", { name: "Задача" }));
     expect(slot.getByRole("group", { name: "Задача: результаты" })).toBeTruthy();

@@ -5,14 +5,28 @@
 import { useEffect, useSyncExternalStore } from "react";
 import { useRpc } from "@get-bb/plugin-sdk/app";
 
+import { stepOrderProblem, type StepOrderProblem } from "../core/automation-order";
 import type { FlowSettings, StageCatalog, flowSettingsRpcContract } from "../shared/contract";
 
 type Rpc = ReturnType<typeof useRpc<typeof flowSettingsRpcContract>>;
 
-export type FlowSettingsSnapshot = { settings: FlowSettings | null; catalog: StageCatalog; failed: boolean };
+/**
+ * `failed` — не прочиталась коллекция: показывать нечего. `saveError` — правка
+ * не сохранена, и причина известна: таблица остаётся на экране, потому что
+ * прятать её за «не удалось загрузить» значит скрыть от владельца и сам
+ * запрещённый порядок, и то, чем он запрещён.
+ */
+export type FlowSettingsSnapshot = {
+  settings: FlowSettings | null;
+  catalog: StageCatalog;
+  failed: boolean;
+  saveError: string | null;
+  /** Запрещённый порядок шагов, найденный до отправки: страница пишет о нём на своём языке. */
+  saveProblem: StepOrderProblem | null;
+};
 
 const EMPTY_CATALOG: StageCatalog = { skills: [], executors: [] };
-const INITIAL: FlowSettingsSnapshot = { settings: null, catalog: EMPTY_CATALOG, failed: false };
+const INITIAL: FlowSettingsSnapshot = { settings: null, catalog: EMPTY_CATALOG, failed: false, saveError: null, saveProblem: null };
 
 let snapshot = INITIAL;
 let mounted = 0;
@@ -33,7 +47,7 @@ const subscribe = (listener: () => void) => {
 const load = async (client: Rpc) => {
   try {
     const [settings, catalog] = await Promise.all([client.call("getFlowSettings", {}), client.call("getStageCatalog", {}).catch(() => EMPTY_CATALOG)]);
-    publish({ settings, catalog, failed: false });
+    publish({ settings, catalog, failed: false, saveError: null, saveProblem: null });
   } catch {
     publish({ ...snapshot, failed: true });
   }
@@ -53,10 +67,20 @@ export const commitFlowSettings = (): void => {
   const client = rpc;
   const settings = snapshot.settings;
   if (client === null || settings === null) return;
+  // Порядок шагов проверяется здесь же, до отправки: тем же правилом, каким
+  // отказывает сервер, — но на экране остаётся сообщение на языке страницы, а
+  // не текст серверной ошибки, довезённый транспортом RPC.
+  const problem = stepOrderProblem(settings.flows);
+  if (problem !== null) {
+    publish({ ...snapshot, saveProblem: problem, saveError: null });
+    return;
+  }
   saving = saving
     .then(() => client.call("saveFlowSettings", settings))
-    .then(() => snapshot.failed && publish({ ...snapshot, failed: false }))
-    .catch(() => publish({ ...snapshot, failed: true }));
+    .then(() => (snapshot.failed || snapshot.saveError !== null || snapshot.saveProblem !== null) && publish({ ...snapshot, failed: false, saveError: null, saveProblem: null }))
+    // Сервер отказал по существу — причина едет на экран целиком: на ней
+    // написано, какой шаг какого этапа переставить.
+    .catch((error: unknown) => publish({ ...snapshot, saveError: error instanceof Error ? error.message : String(error) }));
 };
 
 export function useFlowSettings(): FlowSettingsSnapshot {

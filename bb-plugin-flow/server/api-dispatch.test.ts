@@ -110,20 +110,7 @@ describe("частичный успех передачи", () => {
   });
 });
 
-describe("память места и отметка запуска", () => {
-  it("выбор места помнится по проекту", async () => {
-    const { call, store } = await setup();
-    await call({ id: "dec_1", answer: answer("worktree"), messageId: "msg_1" });
-    expect(await store.getPlace("proj_1")).toBe("worktree");
-  });
-
-  it("ответ без места память проекта не трогает", async () => {
-    const { call, store } = await setup();
-    await store.putPlace("proj_1", "worktree");
-    await call({ id: "dec_1", answer: answer(), messageId: "msg_1" });
-    expect(await store.getPlace("proj_1")).toBe("worktree");
-  });
-
+describe("отметка запуска", () => {
   it("ответ с этапами в прогоне помечает тред запущенным", async () => {
     const { call, store } = await setup();
     await call({ id: "dec_1", answer: answer("here"), messageId: "msg_1" });
@@ -140,13 +127,6 @@ describe("память места и отметка запуска", () => {
     const { call, store } = await setup();
     await call({ id: "dec_1", answer: answer("thread", false), messageId: "msg_1" });
     expect(await store.isLaunched("thr_new")).toBe(true);
-  });
-
-  it("getDispatchPlace отдаёт последний выбор места в проекте", async () => {
-    const { call, harness } = await setup();
-    expect(await harness.callRpc("getDispatchPlace", { threadId: "thr_src" })).toEqual({ place: "here" });
-    await call({ id: "dec_1", answer: answer("worktree"), messageId: "msg_1" });
-    expect(await harness.callRpc("getDispatchPlace", { threadId: "thr_src" })).toEqual({ place: "worktree" });
   });
 
   it("ответ на бриф запущенной работы снимка прогноза не пишет", async () => {

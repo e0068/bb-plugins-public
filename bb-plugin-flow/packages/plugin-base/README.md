@@ -7,7 +7,7 @@ separately from the repo anyway).
 
 The list of dependencies already used by other plugins (so you don't pull in
 a duplicate under a different name) lives in
-[memory/wiki/plugin-dependency-stack.md](../../memory/wiki/plugin-dependency-stack.md).
+[docs/wiki/plugin-dependency-stack.md](../../docs/wiki/plugin-dependency-stack.md).
 
 ## tsconfig.base.json
 

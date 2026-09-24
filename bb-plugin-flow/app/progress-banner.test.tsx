@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it } from "vitest";
 
 afterEach(cleanup);
 
-const link = { label: "prototype.html", target: "memory/assets/x/prototype.html" };
+const link = { label: "prototype.html", target: "docs/assets/x/prototype.html" };
 
 const view = {
   current: "demo",
@@ -16,8 +16,8 @@ const view = {
   stages: [
     { id: "questions", kind: "questions", name: "Questions", executor: "self", state: "done", results: [], minutes: 3, cost: 0.4 },
     { id: "select", kind: "select", name: "Stage selection", executor: "self", state: "done", results: [], minutes: 1, cost: 0.2 },
-    { id: "task", kind: "skill", name: "Задача", executor: "self", state: "done", results: [{ label: "task.md", target: "memory/tasks/task.md" }], minutes: 6, cost: 1.8 },
-    { id: "prototype", kind: "skill", name: "HTML-прототип", executor: "agent", state: "done", results: [link, { label: "screenshots", target: "memory/assets/x/screenshots" }], minutes: 34, cost: 11.2 },
+    { id: "task", kind: "skill", name: "Задача", executor: "self", state: "done", results: [{ label: "task.md", target: "docs/tasks/task.md" }], minutes: 6, cost: 1.8 },
+    { id: "prototype", kind: "skill", name: "HTML-прототип", executor: "agent", state: "done", results: [link, { label: "screenshots", target: "docs/assets/x/screenshots" }], minutes: 34, cost: 11.2 },
     { id: "plan", kind: "skill", name: "План", executor: "workflow", state: "skip", results: [], minutes: null, cost: null },
     { id: "demo", kind: "demo", name: "Demonstration", executor: "self", state: "now", results: [], minutes: null, cost: null },
     { id: "code", kind: "skill", name: "Реализация", executor: "self", state: "todo", results: [], minutes: null, cost: null },

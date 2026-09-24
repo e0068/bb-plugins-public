@@ -112,6 +112,17 @@ describe("runCreatePr", () => {
     await expect(runCreatePr(ports, input)).rejects.toThrow(/base "main" not found/);
   });
 
+  it("base refused for another reason (rate limit, access) — the error names the status and GitHub's message, not a missing base", async () => {
+    const { ports } = fakePorts((req) =>
+      req.path.endsWith("/branches/main")
+        ? { status: 403, data: { message: "API rate limit exceeded for user ID 1." } }
+        : { status: 200, data: {} },
+    );
+    const error = await runCreatePr(ports, input).catch((e: unknown) => e as Error);
+    expect(error.message).toMatch(/reading base "main".*HTTP 403.*API rate limit exceeded/);
+    expect(error.message).not.toMatch(/not found/);
+  });
+
   it("merge-base not on GitHub (base force-pushed) — an error naming the step and the sha", async () => {
     const missing = { status: 404, data: { message: "Not Found" } };
     const { ports, calls } = fakePorts(happyReply(false, missing));

@@ -38,7 +38,7 @@ const open = () =>
   renderSlot<PluginMessageDirectiveProps, typeof decisionsRpcContract & typeof dispatchRpcContract & typeof outcomeRpcContract>(
     app.messageDirectives[0]!,
     { attributes: { id: demo.id }, source: `::decision{id="${demo.id}"}`, message: { id: "msg_1", threadId: "thr_1", turnId: "turn_1", projectId: null }, openWorkspaceFile: () => true },
-    { rpc: { getBrief: () => ({ kind: "found", brief: demo, answer: null }), answerBrief: () => ({ kind: "not_found" }), getDispatchPlace: () => ({ place: "here" }), runOutcomeCommand: () => ({ kind: "sent", created: false }) } },
+    { rpc: { getBrief: () => ({ kind: "found", brief: demo, answer: null }), answerBrief: () => ({ kind: "not_found" }), getDispatchPlace: () => ({ place: "thread" }), listProjects: () => ({ kind: "found" as const, projects: [] }), runOutcomeCommand: () => ({ kind: "sent", created: false }) } },
   );
 
 const classes = (element: Element, prefix: RegExp) => element.className.split(" ").filter((c) => prefix.test(c));
@@ -60,15 +60,14 @@ describe("результаты Демонстрации — ссылка и ко
   });
 });
 
-describe("кнопки Демонстрации выровнены", () => {
-  it("кнопки ряда одной ширины, а раскрытые списки «Исполнять» — колонками с тем же зазором", async () => {
+describe("кнопки Демонстрации с комментарием выровнены", () => {
+  it("«Исполнять» и «Отправить» — одной ширины в ряду, раскрытые списки «Исполнять» — колонками с тем же зазором", async () => {
     const slot = open();
     fireEvent.change(await slot.findByRole("textbox", { name: "Комментарий к демонстрации" }), { target: { value: "Поправь" } });
     const place = slot.getByRole("button", { name: /^Исполнять/ });
-    const rework = slot.getByRole("button", { name: "На доработку" });
-    const row = rework.parentElement!;
+    const row = slot.getByRole("button", { name: "Отправить" }).parentElement!;
     expect(row.className).toContain("grid-cols-[repeat(auto-fit,minmax(10rem,1fr))]");
-    expect([...row.children]).toHaveLength(3);
+    expect([...row.children]).toHaveLength(2);
     expect(row.contains(place)).toBe(true);
     expect(slot.getByRole("group", { name: "Демонстрация" }).contains(row)).toBe(false);
     fireEvent.click(place);
@@ -86,12 +85,16 @@ describe("заголовки разделов Демонстрации", () => {
 });
 
 describe("раскрытые списки «Исполнять» у Демонстрации", () => {
-  it("один скруглённый контейнер на три списка", async () => {
+  it("каждая колонка — своя скруглённая группа, все в одном ряду с зазором", async () => {
     const slot = open();
     fireEvent.click(await slot.findByRole("button", { name: /^Исполнять/ }));
-    const lists = slot.getByRole("group", { name: "Тред" }).parentElement!;
-    for (const name of ["Тред", "Рабочее дерево", "Ветка"]) expect(slot.getByRole("group", { name }).parentElement).toBe(lists);
-    expect(lists.className).toMatch(/\brounded-lg\b/);
-    expect(lists.className).toMatch(/\boverflow-hidden\b/);
+    const row = slot.getByRole("group", { name: "Тред" }).parentElement!;
+    for (const name of ["Тред", "Рабочее дерево", "Ветка"]) {
+      const column = slot.getByRole("group", { name });
+      expect(column.parentElement).toBe(row);
+      expect(column.className).toMatch(/\brounded-lg\b/);
+      expect(column.className).toMatch(/\boverflow-hidden\b/);
+    }
+    expect(row.className).toMatch(/\bgap-2\b/);
   });
 });

@@ -80,3 +80,54 @@ describe("выход из упавшего шага", () => {
     await waitFor(() => expect(slot.rpcCalls.find((c) => c.method === "skipAutomationStep")?.input).toEqual({ threadId: "thr_1", stage: "land" }));
   });
 });
+
+describe("что сделал шаг автоматизации", () => {
+  // Исполнитель выбрасывал строку успеха, и у сделанной автоматизации в списке
+  // не было видно ни адреса PR, ни темы коммита, ни переведённых задач.
+  const done = (id: string, label: string, detail: string | null) => ({ id, label, state: "done", error: null, detail });
+
+  const withDetails = {
+    current: "land",
+    done: 1,
+    step: 1,
+    total: 1,
+    planned: null,
+    environmentId: null,
+    stages: [
+      {
+        id: "land",
+        kind: "skill",
+        name: "Влить и закрыть",
+        executor: "self",
+        state: "done",
+        results: [],
+        minutes: 2,
+        cost: 0.3,
+        automation: {
+          steps: [
+            done("git.commit", "Commit", "fix(flow): номер этапа в полосе"),
+            done("git.create-pr", "Open a PR", "https://github.com/e0068/bb-plugins/pull/474"),
+            done("bb.tasks-done", "Task → done", "no linked tasks"),
+          ],
+        },
+      },
+    ],
+  };
+
+  it("адрес PR показан ссылкой, остальное — текстом", async () => {
+    const slot = await mount(withDetails);
+    fireEvent.click(await screen.findByRole("button", { name: /Прогресс flow/ }));
+    const steps = [...slot.container.querySelectorAll<HTMLElement>("[data-progress-step]")];
+    expect(steps[0]!.textContent).toContain("fix(flow): номер этапа в полосе");
+    expect(steps[0]!.querySelector("[data-step-detail-link]")).toBeNull();
+    expect(steps[1]!.querySelector<HTMLElement>("[data-step-detail-link]")!.textContent).toContain("pull/474");
+    expect(steps[2]!.textContent).toContain("no linked tasks");
+  });
+
+  it("шаг без строки успеха остаётся одним именем", async () => {
+    const slot = await mount(view("now"));
+    fireEvent.click(await screen.findByRole("button", { name: /Прогресс flow/ }));
+    const steps = [...slot.container.querySelectorAll<HTMLElement>("[data-progress-step]")];
+    expect(steps[0]!.querySelector("[data-step-detail]")).toBeNull();
+  });
+});

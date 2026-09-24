@@ -47,34 +47,6 @@ const lastSaved = (slot: Slot): FlowSettings | undefined => [...slot.rpcCalls].r
 const flowOf = (saved: FlowSettings | undefined, id: string) => saved?.flows.find((f) => f.id === id);
 const row = async (slot: Slot, n: number) => within(await slot.findByRole("row", { name: `Этап ${n}` }));
 
-describe("страница Flow в левом меню", () => {
-  it("пункт Flow зарегистрирован в левом меню, этапов в настройках плагина нет", () => {
-    expect(app.navPanels.map((p) => [p.id, p.title, p.path])).toEqual([["flows", "Flow", "flows"]]);
-    expect(app.settingsSections.map((s) => s.id)).toEqual(["journal-dirs"]);
-  });
-
-  it("выбор flow в списке показывает его таблицу и адрес", async () => {
-    const slot = open();
-    fireEvent.click(within(await slot.findByRole("navigation", { name: "Flow" })).getByRole("button", { name: "Quick" }));
-    expect((await row(slot, 2)).getByRole("textbox", { name: "Название этапа 2" }).getAttribute("value")).toBe("Код");
-    expect(slot.navigateCalls.at(-1)).toMatchObject({ method: "toPluginPanel", path: "flows", options: { subPath: "quick" } });
-  });
-
-  it("новый flow получает этапы по умолчанию с Вопросами, Критериями и Выбором этапов впереди", async () => {
-    const slot = open();
-    fireEvent.click(await slot.findByRole("button", { name: "Новый flow" }));
-    await vi.waitFor(() => expect(lastSaved(slot)?.flows).toHaveLength(3));
-    expect(lastSaved(slot)!.flows[2]!.stages.slice(0, 3).map(stageKindOf)).toEqual(["questions", "criteria", "select"]);
-  });
-
-  it("flow удаляется, у единственного flow креста нет", async () => {
-    const slot = open();
-    fireEvent.click(await slot.findByRole("button", { name: "Удалить flow Default" }));
-    await vi.waitFor(() => expect(lastSaved(slot)?.flows.map((f) => f.id)).toEqual(["quick"]));
-    expect(slot.queryByRole("button", { name: /Удалить flow/ })).toBeNull();
-  });
-});
-
 describe("таблица этапов выбранного flow", () => {
   it("в таблице нет Review by User — ни в шапке, ни в строках", async () => {
     const slot = open();
@@ -134,14 +106,6 @@ describe("таблица этапов выбранного flow", () => {
     fireEvent.pointerMove(window, { clientY: 500 });
     fireEvent.pointerUp(window);
     await vi.waitFor(() => expect(flowOf(lastSaved(slot), "default")?.stages.map((s) => s.id).at(-1)).toBe("questions"));
-  });
-
-  it("ширина кнопки этапа сохраняется для всех flow", async () => {
-    const slot = open();
-    const input = await slot.findByRole("spinbutton", { name: "Минимальная ширина кнопки, px" });
-    fireEvent.change(input, { target: { value: "220" } });
-    fireEvent.blur(input);
-    await vi.waitFor(() => expect(lastSaved(slot)?.minButtonWidth).toBe(220));
   });
 
   it("с настройкой English страница без кириллицы, виды подписаны по-английски", async () => {

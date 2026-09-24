@@ -19,7 +19,7 @@ const brief: DecisionBrief = {
       { id: "look", action: "Сначала посмотреть", recommended: false, description: "…", removes: [0, 1], add: { target: 0, max: 0, risk: 0 } },
     ] },
     { id: "depth", question: "Глубина?", kind: "pick", allowOwn: false, options: [
-      { id: "api", action: "API", recommended: false, description: "…", criteria: ["Описан API"] },
+      { id: "api", action: "API", recommended: true, description: "…", criteria: ["Описан API"] },
       { id: "cli", action: "CLI", recommended: false, description: "…" },
     ] },
   ],
@@ -32,11 +32,6 @@ describe("пункты «Готово, когда» у вариантов", () =
     expect(decisionBriefSchema.safeParse(brief).success).toBe(true);
   });
 
-  it("выбранный вариант добавляет свои пункты, не выбранный — нет", () => {
-    expect(optionCriteria(brief, answer([{ questionId: "docs", optionIds: ["site"] }])).map((c) => c.text)).toEqual(["Страница на сайте", "Ссылка из README"]);
-    expect(optionCriteria(brief, answer([{ questionId: "docs", optionIds: [] }]))).toEqual([]);
-  });
-
   it("смена выбора убирает пункты прежнего варианта", () => {
     const texts = optionCriteria(brief, answer([{ questionId: "docs", optionIds: ["readme"] }])).map((c) => c.text);
     expect(texts).toEqual(["README описывает витрину"]);
@@ -46,12 +41,6 @@ describe("пункты «Готово, когда» у вариантов", () =
   it("выбор в скрытом вопросе пунктов не добавляет", () => {
     const texts = optionCriteria(brief, answer([{ questionId: "docs", optionIds: ["readme"] }, { questionId: "depth", optionIds: ["api"] }])).map((c) => c.text);
     expect(texts).not.toContain("Описан API");
-  });
-
-  it("агент получает пункты выбранных вариантов в строке «Готово, когда»", () => {
-    const text = answerMessageText(brief, answer([{ questionId: "docs", optionIds: ["site"] }]));
-    expect(text).toContain("пункты выбранных вариантов: «Страница на сайте», «Ссылка из README»");
-    expect(text).not.toContain("README описывает витрину");
   });
 
   it("бриф без своих пунктов, но с пунктами выбранного варианта, называет их агенту", () => {
@@ -73,5 +62,46 @@ describe("пункты «Готово, когда» у вариантов", () =
   it("вариант снимает только пункты брифа — чужой номер бриф не принимает", () => {
     const broken = { ...brief, questions: [{ ...brief.questions[0]!, options: [{ ...brief.questions[0]!.options[2]!, removes: [5] }] }] };
     expect(decisionBriefSchema.safeParse(broken).success).toBe(false);
+  });
+});
+
+describe("пункты варианта, снятого владельцем", () => {
+  const texts = (answers: DecisionAnswer["answers"], state: "live" | "struck") =>
+    optionCriteria(brief, answer(answers)).filter((c) => c.state === state).map((c) => c.text);
+
+  it("нетронутый вопрос не даёт ни живых, ни зачёркнутых пунктов", () => {
+    expect(optionCriteria(brief, answer([]))).toEqual([]);
+    expect(optionCriteria(brief, answer([{ questionId: "docs", optionIds: [] }]))).toEqual([]);
+  });
+
+  it("рекомендация, мимо которой владелец ответил, зачёркнута, а выбранный вариант цел", () => {
+    const answers = [{ questionId: "docs", optionIds: ["site"] }];
+    expect(texts(answers, "live")).toEqual(["Страница на сайте", "Ссылка из README"]);
+    expect(texts(answers, "struck")).toEqual(["README описывает витрину"]);
+  });
+
+  it("свой ответ владельца — тоже ответ: рекомендация мимо него зачёркнута", () => {
+    expect(texts([{ questionId: "docs", optionIds: [], own: "сделаем иначе" }], "struck")).toEqual(["README описывает витрину"]);
+  });
+
+  it("вариант, которого агент не предлагал и владелец не выбрал, в списке не показывается", () => {
+    expect(optionCriteria(brief, answer([{ questionId: "docs", optionIds: ["readme"] }])).map((c) => c.text)).toEqual(["README описывает витрину"]);
+  });
+
+  it("скрытый вопрос не даёт даже зачёркнутых пунктов: его рекомендация тоже молчит", () => {
+    const shown = [{ questionId: "docs", optionIds: ["site"] }, { questionId: "depth", optionIds: ["cli"] }];
+    expect(texts(shown, "struck")).toContain("Описан API");
+    const hidden = [{ questionId: "docs", optionIds: ["readme"] }, { questionId: "depth", optionIds: ["cli"] }];
+    expect(optionCriteria(brief, answer(hidden)).map((c) => c.text)).not.toContain("Описан API");
+  });
+
+  it("пункты снятой рекомендации агент получает как снятые, а не как отсутствующие", () => {
+    const text = answerMessageText(brief, answer([{ questionId: "docs", optionIds: ["site"] }]));
+    expect(text).toContain("пункты выбранных вариантов: «Страница на сайте», «Ссылка из README»");
+    expect(text).toContain("снятые пункты вариантов: «README описывает витрину»");
+  });
+
+  it("владелец взял рекомендацию — строки о снятых пунктах в реплике нет", () => {
+    expect(answerMessageText(brief, answer([{ questionId: "docs", optionIds: ["readme"] }]))).not.toContain("снятые пункты вариантов");
   });
 });

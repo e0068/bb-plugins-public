@@ -19,9 +19,12 @@ const run = promisify(execFile);
 export function bbCliClient(env: BbCliEnv = process.env): CliPorts {
   const executable = bbExecutable(env);
   return {
-    async run(args: readonly string[]): Promise<CliRun> {
+    async run(args: readonly string[], callEnv?: Readonly<Record<string, string>>): Promise<CliRun> {
       try {
-        const { stdout, stderr } = await run(executable, [...args], { timeout: 20000 });
+        const { stdout, stderr } = await run(executable, [...args], {
+          timeout: 20000,
+          ...(callEnv === undefined ? {} : { env: { ...process.env, ...callEnv } }),
+        });
         return { kind: "ran", code: 0, stdout, stderr };
       } catch (error) {
         // execFile throws both when the process ran and exited non-zero (a

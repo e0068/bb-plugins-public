@@ -4,7 +4,7 @@ import { describe, expect, it } from "vitest";
 
 import { stageKindOf } from "../lib/stage-constants";
 import type { FlowSettings, WorkStage } from "../shared/contract";
-import { addFlow, DEFAULT_STAGES, defaultFlow, flowById, fromLegacy, migrateFlows, newFlow, removeFlow, renameFlow, setFlowStages, stageSettingsOf } from "./flows";
+import { addFlow, DEFAULT_STAGES, defaultFlow, flowById, flowOrNone, fromLegacy, migrateFlows, newFlow, NO_FLOW, removeFlow, renameFlow, setFlowStages, stageSettingsOf } from "./flows";
 import { planner } from "./stages-fixtures";
 
 const ids = (stages: readonly { id: string }[]) => stages.map((s) => s.id);
@@ -104,6 +104,14 @@ describe("коллекция flow", () => {
     expect(flowById(two, "quick").id).toBe("quick");
     expect(flowById(two, "gone").id).toBe("default");
     expect(flowById(two, undefined).id).toBe("default");
+  });
+
+  it("«без flow» — не flow: отдаётся отсутствие, а не flow по умолчанию", () => {
+    expect(flowOrNone(two, NO_FLOW)).toBeNull();
+    expect(flowOrNone(two, "quick")?.id).toBe("quick");
+    expect(flowOrNone(two, "gone")?.id).toBe("default");
+    expect(flowOrNone(two, undefined)?.id).toBe("default");
+    expect(two.flows.map((flow) => flow.id)).not.toContain(NO_FLOW);
   });
 
   it("этапы flow с общей шириной кнопки — то, что проверяет бриф и видят инструкции", () => {

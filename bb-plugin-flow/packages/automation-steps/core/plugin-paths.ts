@@ -13,7 +13,7 @@ const PLUGIN_DIR_PREFIX = "bb-plugin-";
  * Paths outside any `bb-plugin-*` directory are ignored. Same rule as
  * bb-plugin-plugins-monitor's `idFromPackageName`, kept as its own tiny copy
  * here rather than a cross-plugin import — see
- * memory/decisions/reinstall-touched-plugins-direct-sdk.md.
+ * docs/decisions/reinstall-touched-plugins-direct-sdk.md.
  */
 export function touchedPluginIds(changedPaths: readonly string[]): readonly string[] {
   const ids = new Set<string>();

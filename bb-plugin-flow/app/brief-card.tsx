@@ -7,13 +7,14 @@
 // владелец; ✦ рекомендации — только в раскрытом списке.
 // Отвеченный бриф рисуется теми же частями, без переключателей и полей: контрастно
 // то, что владелец выбрал сам, а бюджет раскрывает снимок прогноза на момент отправки.
-import { useState, type KeyboardEvent, type ReactNode } from "react";
+import { useEffect, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
+import { useRpc } from "@get-bb/plugin-sdk/app";
 
 import { deviationTotal, deviations } from "../core/answer-message";
 import { requiredOf } from "../core/required";
 import { changeOf, spentLines, criteriaSum, criterionEditable, criterionTitle, forecast, hasForecast, minutesText, money, ownBudgetText, plannedMinutes } from "../core/budget";
 import { optionCriteria, optionRemoved, removedCriteria } from "../core/option-criteria";
-import { DEFAULT_ROUTE, OFFERED_PLACES, ROUTE_BRANCHES, ROUTE_TREES, branchAllowed, withBranch, withTree } from "../core/places";
+import { DEFAULT_ROUTE, offeredPlace, placeColumns, withBranch, withPlace, withProject, withTree } from "../core/places";
 import { stageItems } from "../core/stages";
 import { demoVerdict } from "../core/outcome";
 import { REVIEW_ROWS, SETUP_ROW, artifactVerb, checkerAllowed, rowsOf } from "../core/rows";
@@ -21,7 +22,7 @@ import { Button } from "../components/ui/button";
 import { Icon } from "../components/ui/icon";
 import { cn } from "../lib/utils";
 import type { Locale } from "../lib/i18n";
-import type { AnswerRecord, Artifact, Criterion, DecisionBrief, DecisionOption, DecisionQuestion, DispatchPlace, DispatchRoute, RouteBranch, RouteTree } from "../shared/contract";
+import type { AnswerRecord, Artifact, Criterion, DecisionBrief, DecisionOption, DecisionQuestion, DispatchPlace, DispatchRoute, RouteBranch, RouteTree, dispatchRpcContract } from "../shared/contract";
 import {
   decidedCount,
   editCriterion,
@@ -38,12 +39,12 @@ import {
   toAnswer,
   toggleCriterion,
   type Draft,
+  setCompact,
   setPlace,
   placeIn,
   setRoute,
   routeIn,
   settleDispatch,
-  setOutcomeRework,
 } from "./draft";
 import { AddRow, addRowText } from "./add-row";
 import { AttachmentThumbs, AttachmentsProvider, usePasteImages } from "./attachments";
@@ -650,7 +651,8 @@ function AddedRow({ view, index, text, removable }: { view: View; index: number;
 function CriteriaSection({ brief, view }: { brief: DecisionBrief; view: View }) {
   const t = useMessages();
   const answer = toAnswer(brief, view.draft);
-  const fromOptions = optionCriteria(brief, answer);
+  // Зачёркнутый пункт — обратная связь на отказ, пока бриф открыт; в отвеченной карточке остаются только живые.
+  const fromOptions = optionCriteria(brief, answer).filter((c) => !view.answered || c.state === "live");
   const items = brief.setup?.criteria ?? (fromOptions.length === 0 ? undefined : []);
   if (items === undefined) return null;
   const { added } = view.draft.criteria;
@@ -674,10 +676,10 @@ function CriteriaSection({ brief, view }: { brief: DecisionBrief; view: View }) 
         {items.map((item, i) => (
           <CriterionRow key={`item-${i}`} item={item} index={i} view={view} byOption={byOption.includes(i)} />
         ))}
+        {/* Строка пункта — только метка и текст: что выбор между вариантами значит, говорит секция вопросов. */}
         {fromOptions.map((c, i) => (
           <ItemRow key={`option-${c.questionId}-${c.optionId}-${i}`} mark="↳">
-            <span className={itemText}>{c.text}</span>
-            <span className="shrink-0 text-xs text-muted-foreground">{c.action}</span>
+            <span className={cn(itemText, c.state === "struck" && "text-muted-foreground line-through")}>{c.text}</span>
           </ItemRow>
         ))}
         {[...(ownItems ? added : []), ...tail].map((text, i) =>
@@ -848,18 +850,36 @@ function QuestionsSection({ brief, view }: { brief: DecisionBrief; view: View })
 const footerCell = "flex min-h-10 min-w-0 flex-1 basis-0 items-center break-words bg-surface-recessed-solid px-3.5 py-2 text-left text-xs leading-snug";
 
 /** Иконка места: ветка — новый тред идёт по ветке этого треда, ветвление — по своей, отведённой от неё. */
-const PLACE_ICON = { here: null, thread: "GitBranch", worktree: "Fork" } as const;
+const PLACE_ICON = { here: null, thread: "GitBranch", worktree: "Fork", child: "Fork", other: "GridView" } as const;
 
-const THREAD_ICON = { here: "MessageSquare", thread: "MessageSquarePlus" } as const;
+/** Пункты первой колонки: этот тред, новый соседом и дочерний — у дочернего значок ветвления от треда. */
+const THREAD_ICON = { here: "MessageSquare", thread: "MessageSquarePlus", child: "Fork", worktree: "Fork", other: "GridView" } as const;
 
-const TREE_ICON = { same: "FolderGit", new: "FolderPlus", local: "Laptop" } as const satisfies Record<RouteTree, string>;
+const PLACE_NAME = { here: "dispatchHere", thread: "dispatchThread", child: "dispatchChild", worktree: "dispatchThread", other: "dispatchOther" } as const;
+
+const PLACE_LIST_NAME = { here: "dispatchInThread", thread: "dispatchInNewThread", child: "dispatchInChildThread", worktree: "dispatchInNewThread", other: "dispatchInOtherProject" } as const;
+
+const TREE_ICON = { same: "FolderGit", new: "FolderPlus", local: "FolderOpen" } as const satisfies Record<RouteTree, string>;
 
 const BRANCH_ICON = { current: "GitBranch", "from-current": "Fork", "from-origin-main": "Cloud", "from-main": "GitMerge", none: "CircleX" } as const satisfies Record<RouteBranch, string>;
 
 /** Выбор места исполнения ячейкой ряда; нерешённые вопросы его не запирают — это не ответ, а адрес работы. */
-function PlaceCell(props: { place: DispatchPlace; route: DispatchRoute; open: boolean; disabled: boolean; onToggle: () => void }) {
+function PlaceCell(props: { place: DispatchPlace; route: DispatchRoute; compact: boolean; projects: ProjectsState; open: boolean; disabled: boolean; onToggle: () => void }) {
   const t = useMessages();
   const here = props.place === "here";
+  const other = props.place === "other";
+  // У чужого проекта ветку не выбирают, поэтому в ячейке стоят проект и дерево.
+  // Список ещё не пришёл или проекта в нём нет — подпись места, чтобы ячейка не мигала пустым.
+  const chosen = props.projects.kind === "ready" ? props.projects.projects.find((project) => project.id === props.route.projectId) : undefined;
+  const tree = t.common.routeTreeShort[props.route.tree];
+  // В этом треде дерева и ветки нет — хвостом стоит только компактация, если она выбрана.
+  const tail = here
+    ? props.compact
+      ? ` · ${t.common.contextCompactShort}`
+      : ""
+    : other
+      ? ` · ${chosen?.name ?? t.common.dispatchOther} · ${tree}`
+      : ` · ${tree} · ${t.common.routeBranchShort[props.route.branch]}`;
   const icon = PLACE_ICON[props.place];
   return (
     <button
@@ -875,8 +895,8 @@ function PlaceCell(props: { place: DispatchPlace; route: DispatchRoute; open: bo
         <span className="flex min-w-0 items-center gap-1 text-[13px] font-medium">
           {icon !== null && <Icon name={icon} className="size-3.5 shrink-0 text-muted-foreground" />}
           <span className="truncate">
-            {here ? t.common.dispatchHere : t.common.dispatchThread}
-            {!here && <span className="font-normal text-muted-foreground"> · {t.common.routeTreeShort[props.route.tree]} · {t.common.routeBranchShort[props.route.branch]}</span>}
+            {t.common[PLACE_NAME[props.place]]}
+            {tail !== "" && <span className="font-normal text-muted-foreground">{tail}</span>}
           </span>
         </span>
       </span>
@@ -885,20 +905,22 @@ function PlaceCell(props: { place: DispatchPlace; route: DispatchRoute; open: bo
   );
 }
 
-/** Один из трёх списков места: пункт с иконкой, выбранный — с галочкой. */
-function RouteGroup<Id extends string>(props: { label: string; items: ReadonlyArray<{ id: Id; name: string; icon: string; disabled: boolean }>; chosen: Id; onPick: (id: Id) => void; className?: string }) {
+/** Колонка места — отдельная скруглённая группа; невозможного в ней нет, поэтому нет и выключенных пунктов. */
+const LIST_GROUP = "flex min-w-0 flex-col gap-px self-start overflow-hidden rounded-lg bg-background";
+
+/** Одна колонка места: пункт с иконкой, выбранный — с галочкой. */
+function RouteGroup<Id extends string>(props: { label: string; items: ReadonlyArray<{ id: Id; name: string; icon: string }>; chosen: Id; onPick: (id: Id) => void }) {
   return (
-    <div role="group" aria-label={props.label} className={cn("flex min-w-0 flex-col gap-px", props.className)}>
-      {props.items.map(({ id, name, icon, disabled }) => {
+    <div role="group" aria-label={props.label} className={LIST_GROUP}>
+      {props.items.map(({ id, name, icon }) => {
         const on = id === props.chosen;
         return (
           <button
             key={id}
             type="button"
             aria-pressed={on}
-            disabled={disabled}
             onClick={() => props.onPick(id)}
-            className="flex min-h-9 items-center justify-between gap-2 bg-state-active px-3.5 py-2 text-left text-[13px] enabled:hover:bg-state-hover disabled:cursor-default disabled:text-muted-foreground/60"
+            className="flex min-h-9 items-center justify-between gap-2 bg-state-active px-3.5 py-2 text-left text-[13px] hover:bg-state-hover"
           >
             <span className={cn("flex min-w-0 items-center gap-1.5", on && "font-semibold")}>
               <Icon name={icon} aria-hidden="true" className="size-3.5 shrink-0 text-muted-foreground" />
@@ -912,38 +934,170 @@ function RouteGroup<Id extends string>(props: { label: string; items: ReadonlyAr
   );
 }
 
+/** Список проектов виджета: пока не пришёл — колонки проектов нет, пришёл с отказом — в ней ошибка и «Повторить». */
+type ProjectsState = { kind: "loading" } | { kind: "ready"; projects: ReadonlyArray<{ id: string; name: string }> } | { kind: "failed" };
+
 /**
- * Три списка места — строкой под рядом, как раскрытый выбор этапа: поповер над лентой уезжал бы при прокрутке.
- * В этом треде дерево и ветку не выбирают; ветки, невозможные в выбранном дереве, выключены.
+ * Место «В другом проекте» предлагается, только когда есть что выбрать: иначе
+ * маршрут остался бы без проекта и работа уехала бы в свой. Уже выбранное место
+ * колонка показывает и при отказе списка — тогда в колонке проектов ошибка и «Повторить».
  */
-function PlaceLists(props: { place: DispatchPlace; route: DispatchRoute; onPlace: (place: DispatchPlace) => void; onRoute: (route: DispatchRoute) => void; gap?: string; joined?: boolean }) {
+const otherOffered = (state: ProjectsState): boolean => state.kind === "ready" && state.projects.length > 0;
+
+/** Первый проект списка: щелчок по «В другом проекте» сразу ставит его, чтобы маршрут не остался без проекта. */
+const firstProject = (state: ProjectsState): string | undefined => (state.kind === "ready" ? state.projects[0]?.id : undefined);
+
+/** Ширина сетки — литералами: Tailwind собирает bb при установке, собранной строки в CSS не будет. */
+const LIST_COLUMNS = ["", "", "@[34rem]:grid-cols-2", "@[34rem]:grid-cols-3"] as const;
+
+/** Третья колонка при чужом проекте: проекты, полосы загрузки или отказ с «Повторить». */
+function ProjectGroup(props: { state: ProjectsState; chosen: string | undefined; onPick: (projectId: string) => void; onRetry: () => void }) {
   const t = useMessages();
-  const here = props.place === "here";
-  const threads = OFFERED_PLACES.map((id) => ({ id, name: id === "here" ? t.common.dispatchInThread : t.common.dispatchInNewThread, icon: THREAD_ICON[id], disabled: false }));
-  const trees = ROUTE_TREES.map((id) => ({ id, name: t.common.routeTree[id], icon: TREE_ICON[id], disabled: here }));
-  const branches = ROUTE_BRANCHES.map((id) => ({ id, name: t.common.routeBranch[id], icon: BRANCH_ICON[id], disabled: here || !branchAllowed(props.route.tree, id) }));
-  // Одним контейнером: подложка контейнера заполняет зазоры колонок и место под короткими, швы между пунктами — фоном колонки.
-  const column = props.joined ? "self-start bg-background" : undefined;
+  const label = t.common.dispatchProjectGroup;
+  if (props.state.kind === "failed")
+    return (
+      <div role="group" aria-label={label} className={cn(LIST_GROUP, "gap-1.5 bg-state-active px-3.5 py-2.5")}>
+        <span className="text-[12px] text-destructive">{t.common.dispatchProjectsFailed}</span>
+        <button type="button" onClick={props.onRetry} className="self-start text-[12px] underline underline-offset-2 hover:no-underline">
+          {t.common.dispatchProjectsRetry}
+        </button>
+      </div>
+    );
+  if (props.state.kind === "loading")
+    return (
+      <div role="group" aria-label={label} className={LIST_GROUP}>
+        {[0, 1, 2].map((row) => (
+          <div key={row} className="min-h-9 bg-state-active" aria-hidden="true" />
+        ))}
+      </div>
+    );
   return (
-    <div className={cn("grid grid-cols-1 @[34rem]:grid-cols-3", props.gap ?? "gap-px", props.joined && JOINED_LISTS)}>
-      <RouteGroup label={t.common.dispatchThreadGroup} items={threads} chosen={props.place === "worktree" ? "thread" : props.place} onPick={props.onPlace} className={column} />
-      <RouteGroup label={t.common.dispatchTreeGroup} items={trees} chosen={props.route.tree} onPick={(tree) => props.onRoute(withTree(props.route, tree))} className={column} />
-      <RouteGroup label={t.common.dispatchBranchGroup} items={branches} chosen={props.route.branch} onPick={(branch) => props.onRoute(withBranch(props.route, branch))} className={column} />
+    <RouteGroup
+      label={label}
+      items={props.state.projects.map((project) => ({ id: project.id, name: project.name, icon: PLACE_ICON.other }))}
+      chosen={props.chosen ?? ""}
+      onPick={props.onPick}
+    />
+  );
+}
+
+/**
+ * Колонки места — строкой под рядом, как раскрытый выбор этапа: поповер над лентой уезжал бы при прокрутке.
+ * Что показывает каждая колонка, решает ядро: пустая колонка не рисуется вовсе, выключенных пунктов нет.
+ */
+function PlaceLists(props: {
+  place: DispatchPlace;
+  route: DispatchRoute;
+  projects: ProjectsState;
+  onRetry: () => void;
+  onPlace: (place: DispatchPlace) => void;
+  onRoute: (route: DispatchRoute) => void;
+  compact: boolean;
+  onCompact: (compact: boolean) => void;
+  gap?: string;
+  /** Колонки стоят под рядом отдельных кнопок и зазор берут у него — свой отступ сверху им не нужен. */
+  inRow?: boolean;
+}) {
+  const t = useMessages();
+  const columns = placeColumns(props.place, props.route, otherOffered(props.projects));
+  const threads = columns.places.map((id) => ({ id, name: t.common[PLACE_LIST_NAME[id]], icon: THREAD_ICON[id] }));
+  const trees = columns.trees.map((id) => ({ id, name: t.common.routeTree[id], icon: TREE_ICON[id] }));
+  const branches = columns.branches.map((id) => ({ id, name: t.common.routeBranch[id], icon: BRANCH_ICON[id] }));
+  // В этом треде дерева и ветки не выбирают, зато можно сперва сжать его контекст.
+  const here = props.place === "here";
+  const contexts = [
+    { id: "keep" as const, name: t.common.contextKeep, icon: "MessageSquare" },
+    { id: "compact" as const, name: t.common.contextCompact, icon: "Minimize2" },
+  ];
+  const count = 1 + (trees.length > 0 || here ? 1 : 0) + (branches.length > 0 || columns.projects ? 1 : 0);
+  return (
+    <div className={cn("grid grid-cols-1", LIST_COLUMNS[count], props.gap ?? "gap-1.5", props.inRow !== true && "mt-1.5")}>
+      <RouteGroup label={t.common.dispatchThreadGroup} items={threads} chosen={offeredPlace(props.place)} onPick={props.onPlace} />
+      {here && (
+        <RouteGroup label={t.common.dispatchContextGroup} items={contexts} chosen={props.compact ? "compact" : "keep"} onPick={(id) => props.onCompact(id === "compact")} />
+      )}
+      {trees.length > 0 && (
+        <RouteGroup label={t.common.dispatchTreeGroup} items={trees} chosen={columns.tree} onPick={(tree) => props.onRoute(withTree(props.route, props.place, tree))} />
+      )}
+      {columns.projects ? (
+        <ProjectGroup state={props.projects} chosen={props.route.projectId} onPick={(projectId) => props.onRoute(withProject(props.route, projectId))} onRetry={props.onRetry} />
+      ) : (
+        branches.length > 0 && (
+          <RouteGroup label={t.common.dispatchBranchGroup} items={branches} chosen={props.route.branch} onPick={(branch) => props.onRoute(withBranch(props.route, branch))} />
+        )
+      )}
     </div>
   );
+}
+
+/**
+ * Проекты bb, кроме проекта треда. Запрос идёт, только когда список нужен:
+ * раскрыт выбор места или маршрут уже ведёт в чужой проект и ячейке нужно его имя.
+ * Закрытая карточка брифа в ленте лишнего RPC не делает. «Повторить» повторяет запрос.
+ */
+function useProjects(threadId: string, needed: boolean): { state: ProjectsState; retry: () => void } {
+  const rpc = useRpc<typeof dispatchRpcContract>();
+  const rpcRef = useRef(rpc);
+  rpcRef.current = rpc;
+  const [state, setState] = useState<ProjectsState>({ kind: "loading" });
+  const [attempt, setAttempt] = useState(0);
+  useEffect(() => {
+    if (!needed) return;
+    let alive = true;
+    setState({ kind: "loading" });
+    void rpcRef.current
+      .call("listProjects", { threadId })
+      .then((result) => {
+        if (alive) setState(result.kind === "found" ? { kind: "ready", projects: result.projects } : { kind: "failed" });
+      })
+      .catch(() => {
+        if (alive) setState({ kind: "failed" });
+      });
+    return () => {
+      alive = false;
+    };
+  }, [threadId, needed, attempt]);
+  return { state, retry: () => setAttempt((value) => value + 1) };
 }
 
 /**
  * «Исполнять» у любой отправки: ячейка встаёт слева в ряд кнопок, раскрытые списки — строкой под рядом.
  * Место и маршрут берутся из черновика, а без выбора владельца — запомненные в проекте.
  */
-export function useDispatchPicker(props: { draft: Draft; setDraft: (update: (draft: Draft) => Draft) => void; place: DispatchPlace; route: DispatchRoute; disabled: boolean; gap?: string; joined?: boolean }): { cell: ReactNode; lists: ReactNode } {
+export function useDispatchPicker(props: { threadId: string; draft: Draft; setDraft: (update: (draft: Draft) => Draft) => void; place: DispatchPlace; route: DispatchRoute; disabled: boolean; gap?: string; inRow?: boolean }): { cell: ReactNode; lists: ReactNode } {
   const [open, setOpen] = useState(false);
   const place = placeIn(props.draft, props.place);
-  const route = routeIn(props.draft, props.route);
+  // Место берётся из черновика, а маршрут может прийти из памяти проекта: пара сводится здесь,
+  // иначе показанное в колонках разошлось бы с тем, что уедет в ответе.
+  const route = withPlace(routeIn(props.draft, props.route), place);
+  const compact = place === "here" && props.draft.compact === true;
+  const projects = useProjects(props.threadId, open || place === "other");
+  const first = firstProject(projects.state);
+  /**
+   * Смена места правит и маршрут: у чужого проекта своё дерево, ветки там нет,
+   * а проект берётся первым из списка — маршрут без проекта невозможен.
+   */
+  const pickPlace = (picked: DispatchPlace) =>
+    props.setDraft((d) => {
+      const settled = withPlace(routeIn(d, props.route), picked);
+      return setRoute(setPlace(d, picked), picked === "other" && settled.projectId === undefined && first !== undefined ? withProject(settled, first) : settled);
+    });
   return {
-    cell: <PlaceCell place={place} route={route} open={open} disabled={props.disabled} onToggle={() => setOpen((value) => !value)} />,
-    lists: open ? <PlaceLists gap={props.gap} joined={props.joined} place={place} route={route} onPlace={(picked) => props.setDraft((d) => setPlace(d, picked))} onRoute={(picked) => props.setDraft((d) => setRoute(d, picked))} /> : null,
+    cell: <PlaceCell place={place} route={route} compact={compact} projects={projects.state} open={open} disabled={props.disabled} onToggle={() => setOpen((value) => !value)} />,
+    lists: open ? (
+      <PlaceLists
+        gap={props.gap}
+        inRow={props.inRow}
+        place={place}
+        route={route}
+        projects={projects.state}
+        onRetry={projects.retry}
+        onPlace={pickPlace}
+        onRoute={(picked) => props.setDraft((d) => setRoute(d, picked))}
+        compact={compact}
+        onCompact={(picked) => props.setDraft((d) => setCompact(d, picked))}
+      />
+    ) : null,
   };
 }
 
@@ -964,7 +1118,7 @@ function BriefFooter(props: {
 }) {
   const { sending } = props;
   const t = useMessages();
-  const picker = useDispatchPicker({ draft: props.draft, setDraft: props.setDraft, place: props.place, route: props.route, disabled: sending });
+  const picker = useDispatchPicker({ threadId: props.brief.threadId, draft: props.draft, setDraft: props.setDraft, place: props.place, route: props.route, disabled: sending });
 
   return (
     <>
@@ -995,9 +1149,6 @@ function BriefFooter(props: {
   );
 }
 
-/** Раскрытые списки «Исполнять» одним скруглённым контейнером — под рядом отдельных кнопок. */
-const JOINED_LISTS = "overflow-hidden rounded-lg bg-state-active";
-
 /** Зазор ряда кнопок Демонстрации; раскрытые списки «Исполнять» под ним — с тем же зазором, чтобы колонки стояли под кнопками. */
 const DEMO_GAP = "gap-2";
 
@@ -1006,40 +1157,23 @@ const DEMO_ROW = "grid grid-cols-[repeat(auto-fit,minmax(10rem,1fr))]";
 
 /**
  * Кнопки Демонстрации — отдельным рядом с отступом от карточки, чтобы не нажать случайно.
- * Пустой комментарий — одна «Продолжить» («Завершить» у финальной); написанный — «Учесть и продолжить» тихой кнопкой и «На доработку» главной.
+ * Пустой комментарий — одна «Продолжить» («Завершить» у финальной); написанный — одна «Отправить»: Демонстрация не принимается, агент отвечает на комментарий.
  */
 function DemoActions(props: { brief: DecisionBrief; draft: Draft; setDraft: (update: (draft: Draft) => Draft) => void; sending: boolean; failed: boolean; complete: boolean; place: DispatchPlace; route: DispatchRoute; onSubmit: (draft: Draft) => void }) {
   const t = useMessages();
-  const picker = useDispatchPicker({ draft: props.draft, setDraft: props.setDraft, place: props.place, route: props.route, disabled: props.sending, gap: DEMO_GAP, joined: true });
+  const picker = useDispatchPicker({ threadId: props.brief.threadId, draft: props.draft, setDraft: props.setDraft, place: props.place, route: props.route, disabled: props.sending, gap: DEMO_GAP, inRow: true });
   const commented = (props.draft.outcomeNote ?? "").trim() !== "";
-  const send = (rework: boolean) => {
-    const next = setOutcomeRework(props.draft, rework);
-    props.setDraft(() => next);
-    props.onSubmit(next);
-  };
-    const button = "h-auto min-h-10 min-w-0 rounded-lg px-4 text-[13px] font-semibold";
+  const button = "h-auto min-h-10 min-w-0 rounded-lg px-4 text-[13px] font-semibold";
   // Вопросы того же брифа должны быть решены до исхода: неполный ответ иначе отбил бы только сервер.
   const blocked = props.sending || !props.complete;
   return (
     <div className="-mt-2 flex flex-col items-stretch gap-1.5">
       <div className={cn(DEMO_ROW, DEMO_GAP)}>
         <div data-demo-action className="flex min-w-0 overflow-hidden rounded-lg">{picker.cell}</div>
-        {commented ? (
-          <>
-            <Button type="button" variant="ghost" disabled={blocked} onClick={() => send(false)} className={cn(button, "bg-surface-recessed-solid font-medium")}>
-              {t.outcome.withComment}
-            </Button>
-            <Button type="button" disabled={blocked} onClick={() => send(true)} className={button}>
-              {props.sending && <Icon name="Spinner" className="size-3.5 animate-spin" />}
-              {t.outcome.rework}
-            </Button>
-          </>
-        ) : (
-          <Button type="button" disabled={blocked} onClick={() => props.onSubmit(props.draft)} className={button}>
-            {props.sending && <Icon name="Spinner" className="size-3.5 animate-spin" />}
-            {props.brief.outcome?.final === true ? t.outcome.finish : t.outcome.continue}
-          </Button>
-        )}
+        <Button type="button" disabled={blocked} onClick={() => props.onSubmit(props.draft)} className={button}>
+          {props.sending && <Icon name="Spinner" className="size-3.5 animate-spin" />}
+          {commented ? t.outcome.send : props.brief.outcome?.final === true ? t.outcome.finish : t.outcome.continue}
+        </Button>
       </div>
       {picker.lists}
       {props.failed && <div className="text-right text-xs text-destructive">{t.common.sendFailed}</div>}
@@ -1225,7 +1359,7 @@ export function AnsweredBriefCard({ brief, record, openFile }: { brief: Decision
           <DemoCard brief={brief} openFile={openFile} />
           <Body brief={brief} view={view} />
           <div className="break-words text-xs text-muted-foreground">
-            <b className="font-semibold text-foreground">{t.outcome.verdict(demoVerdict(record.answer) ?? "rework")}</b>
+            <b className="font-semibold text-foreground">{t.outcome.verdict(demoVerdict(record.answer) ?? "comment")}</b>
             {!blank(record.answer.outcome?.note ?? "") && ` — ${record.answer.outcome?.note ?? ""}`}
           </div>
         </>

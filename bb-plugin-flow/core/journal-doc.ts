@@ -32,6 +32,16 @@ export const decisionFileName = (title: string): string => {
 /** Имя попытки: базовое на нулевой, дальше с суффиксом `-2`, `-3`, … — тот же ряд, что уже мог лечь на диск раньше. */
 export const suffixedName = (base: string, attempt: number): string => (attempt === 0 ? base : `${base}-${attempt + 1}`);
 
+/**
+ * Два вида одного пути. Хост принимает только абсолютный: демон bb проверяет `path` на
+ * абсолютность и отвечает 400, а `rootPath` держит лишь границей песочницы. Владельцу в
+ * ссылку идёт тот же путь от корня рабочего дерева.
+ */
+export const journalPaths = (root: string, dir: string, name: string): { relative: string; absolute: string } => {
+  const relative = `${dir}/${name}`;
+  return { relative, absolute: `${root.replace(/\/+$/, "")}/${relative}` };
+};
+
 /** Файл журнала: `decided_at` шапкой, дальше — та же реплика, что ушла агенту, на том же языке. */
 export const decisionDocument = (args: { brief: DecisionBrief; answer: DecisionAnswer; decidedAt: string; locale?: Locale }): string =>
   `---\ndecided_at: ${args.decidedAt}\n---\n\n${answerMessageText(args.brief, args.answer, args.locale)}\n`;

@@ -7,12 +7,13 @@ import { stageKindOf } from "../lib/stage-constants";
 import type { CriteriaAnswer, DecisionAnswer, DecisionBrief, DecisionQuestion, QuestionAnswer } from "../shared/contract";
 import { budgetLine, changeOf, criterionTitle, hasForecast, hasOwnBudget } from "./budget";
 import { carriedFor } from "./carry";
-import { optionCriteria, removedCriteria } from "./option-criteria";
+import { optionCriteria, removedCriteria, type OptionCriterion } from "./option-criteria";
 import { OUTCOME_ROW, demoVerdict, isOutcomeBrief, outcomeAnswered, outcomeStageName } from "./outcome";
 import { requiredOf } from "./required";
 import { REVIEW_ROWS, SETUP_ROW, checkerAllowed, rowsOf } from "./rows";
 import { hiddenQuestions } from "./visibility";
 import {
+  SELF,
   answeredStageChoice,
   executorLabel,
   knownExecutor,
@@ -135,7 +136,7 @@ const outcomeLines = (brief: DecisionBrief, answer: DecisionAnswer, locale: Loca
   const m = messages(locale).answer;
   const note = blank(answer.outcome?.note) ? "" : m.stageNote(answer.outcome?.note ?? "");
   const links = outcome.results.map((r) => r.label).join(", ");
-  return [m.stagesHeader, `- ${m.demoVerdict(outcomeStageName(brief), demoVerdict(answer) ?? "rework", links)}${note}`];
+  return [m.stagesHeader, `- ${m.demoVerdict(outcomeStageName(brief), demoVerdict(answer) ?? "comment", links)}${note}`];
 };
 
 const stagesLines = (brief: DecisionBrief, answer: DecisionAnswer, locale: Locale | undefined): string[] => {
@@ -143,22 +144,25 @@ const stagesLines = (brief: DecisionBrief, answer: DecisionAnswer, locale: Local
   return items.length === 0 ? [] : [messages(locale).answer.stagesHeader, ...items.map((item) => `- ${stageWords(brief, answer, item, locale)}`)];
 };
 
-/** Дальше после Демонстрации: продолжить — следующий этап или конец работы, с комментарием — учесть его; на доработку — переделать и показать снова, не идя дальше. */
+/** Дальше после Демонстрации: продолжить — следующий этап или конец работы; комментарий — ответить на него, Демонстрация остаётся открытой. */
 const outcomeNextStep = (brief: DecisionBrief, answer: DecisionAnswer, m: Messages["answer"]): string => {
-  const verdict = demoVerdict(answer);
-  if (verdict !== "continue" && verdict !== "comment") return m.outcomeRedo(outcomeStageName(brief));
+  if (demoVerdict(answer) !== "continue") return m.outcomeComment(outcomeStageName(brief));
   const next = brief.outcome?.next;
-  const step = next === undefined ? m.outcomeFinal : m.outcomeNext(next);
-  return verdict === "comment" ? m.withComment(step) : step;
+  return next === undefined ? m.outcomeFinal : m.outcomeNext(next);
 };
 
-/** Дальше по этапам: прогон по порядку и остановки на Демонстрациях из прогона. */
+/** Этап-навык прогона, который владелец оставил агенту треда: субагентов и workflow на нём нет. */
+const ranBySelf = (brief: DecisionBrief, answer: DecisionAnswer, item: StageItem): boolean =>
+  stageKindOf(item.stage) === "skill" && item.stage.automation === undefined && answeredStageChoice(brief, answer, item).executor === SELF;
+
+/** Дальше по этапам: прогон по порядку, остановки на Демонстрациях из прогона и этапы без субагентов. */
 const stagesNextStep = (brief: DecisionBrief, answer: DecisionAnswer, m: Messages["answer"]): string => {
   const run = stageItems(brief).filter((item) => !finished(item) && answeredStageChoice(brief, answer, item).run);
   const stops = run.filter((item) => stageKindOf(item.stage) === "demo").map((item) => item.stage.name);
+  const self = run.filter((item) => ranBySelf(brief, answer, item)).map((item) => item.stage.name);
   const plan = run.length === 0 ? m.noRun : m.run(run.map((item) => item.stage.name).join(", "));
   const halt = stops.length === 0 ? m.noStops : m.stops(stops.join(", "));
-  return m.next(plan, halt);
+  return self.length === 0 ? m.next(plan, halt) : `${m.next(plan, halt)} ${m.selfOnly(self.join(", "))}.`;
 };
 
 /** Выбранное словами и рекомендованное словами; `null` у рекомендации — агент её не ставил. `carried` — владелец оставил перенесённое. */
@@ -244,12 +248,22 @@ const revokedLine = (brief: DecisionBrief, answer: DecisionAnswer, m: Messages["
   return revoked.length === 0 ? "" : m.revoked(revoked.join(", "));
 };
 
-/** Строка о критерии: каждая правка названа номером пункта и текстом, чтобы агент не сверял номера с брифом; пункты выбранных вариантов — текстом. */
+/**
+ * Строка о критерии: каждая правка названа номером пункта и текстом, чтобы агент не сверял номера
+ * с брифом; пункты выбранных вариантов — текстом, снятые владельцем — отдельным перечнем, иначе
+ * отказ читался бы как отсутствие пункта и агент предложил бы его заново.
+ */
 const criteriaLine = (brief: DecisionBrief, answer: DecisionAnswer, m: Messages["answer"]): string[] => {
-  const fromOptions = optionCriteria(brief, answer).map((c) => c.text);
-  const optionPart = fromOptions.length === 0 ? [] : [m.optionItems(fromOptions.map(m.optionItem).join(", "))];
+  const fromOptions = optionCriteria(brief, answer);
+  const listOf = (state: OptionCriterion["state"]) => fromOptions.filter((c) => c.state === state).map((c) => m.optionItem(c.text));
+  const live = listOf("live");
+  const dropped = listOf("struck");
+  const optionPart = [
+    ...(live.length === 0 ? [] : [m.optionItems(live.join(", "))]),
+    ...(dropped.length === 0 ? [] : [m.droppedOptionItems(dropped.join(", "))]),
+  ];
   const items = brief.setup?.criteria;
-  if (items === undefined) return optionPart.length === 0 ? [] : [m.criteria(optionPart.join(""))];
+  if (items === undefined) return optionPart.length === 0 ? [] : [m.criteria(optionPart.join("; "))];
   const criteria = answer.criteria ?? NO_EDITS;
   const changes = [
     ...removedCriteria(brief, answer).map((i) => m.removedItem(i + 1, items[i] === undefined ? "" : criterionTitle(items[i]))),

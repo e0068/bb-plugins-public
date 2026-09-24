@@ -15,7 +15,7 @@
 // update is likewise kept — the caller now knows there was a promise to
 // keep; see archiveThread/createPr in server.ts, which surface both instead
 // of reporting a plain success.
-import { currentTasksArgs, markTaskStatusArgs, parseLinkedTaskKeys, type LinkedTaskStatus } from "../core/bb-tasks-commands";
+import { currentTasksArgs, linkedTaskEnv, markTaskStatusArgs, parseLinkedTaskKeys, type LinkedTaskStatus } from "../core/bb-tasks-commands";
 import { cliRunMessage, type CliPorts } from "./bb-cli-run";
 
 export type TaskStatusResult = { key: string; ok: true } | { key: string; ok: false; reason: string };
@@ -31,14 +31,15 @@ export async function markLinkedTasksStatus(
   threadId: string,
   status: LinkedTaskStatus,
 ): Promise<TaskStatusReport> {
-  const listed = await ports.run(currentTasksArgs(threadId));
+  const env = linkedTaskEnv(threadId);
+  const listed = await ports.run(currentTasksArgs(threadId), env);
   if (listed.kind === "unavailable") return { unavailable: listed.reason, results: [] };
   if (listed.code !== 0) return { unavailable: null, results: [] };
 
   const keys = parseLinkedTaskKeys(listed.stdout);
   const results: TaskStatusResult[] = [];
   for (const key of keys) {
-    const updated = await ports.run(markTaskStatusArgs(key, status));
+    const updated = await ports.run(markTaskStatusArgs(key, status), env);
     results.push(
       updated.kind === "ran" && updated.code === 0
         ? { key, ok: true }

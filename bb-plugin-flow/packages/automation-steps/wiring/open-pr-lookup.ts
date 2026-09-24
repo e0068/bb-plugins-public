@@ -10,12 +10,30 @@ import {
 } from "../core/github-requests";
 import type { CreatePrPorts } from "./create-pr";
 
+/**
+ * Ответ GitHub целиком: `asked: false` — спросить не вышло, и это не то же
+ * самое, что «открытого PR нет». Шаг открытия PR на этой разнице стоит: на
+ * «нет» он открывает новый, на «не спросили» — верит кэшу хоста, потому что
+ * второй PR дороже отчёта чужим адресом.
+ */
+export type OpenPrAnswer = { asked: true; pr: OpenPullRequest | null } | { asked: false };
+
+export async function askLiveOpenPr(
+  ports: CreatePrPorts,
+  repo: RepoRef,
+  headBranch: string,
+  baseBranch: string,
+): Promise<OpenPrAnswer> {
+  const res = await ports.send(listOpenPullRequestsRequest(repo, headBranch, baseBranch));
+  return res.status === 200 ? { asked: true, pr: parseOpenPullRequest(res.data) } : { asked: false };
+}
+
 export async function findLiveOpenPr(
   ports: CreatePrPorts,
   repo: RepoRef,
   headBranch: string,
   baseBranch: string,
 ): Promise<OpenPullRequest | null> {
-  const res = await ports.send(listOpenPullRequestsRequest(repo, headBranch, baseBranch));
-  return res.status === 200 ? parseOpenPullRequest(res.data) : null;
+  const answer = await askLiveOpenPr(ports, repo, headBranch, baseBranch);
+  return answer.asked ? answer.pr : null;
 }

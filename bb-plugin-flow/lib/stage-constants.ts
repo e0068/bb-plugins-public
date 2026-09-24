@@ -7,8 +7,11 @@ export const SELF_EXECUTOR = "self";
 /** Пределы и начальное значение минимальной ширины кнопки этапа, px. */
 export const STAGE_BUTTON_WIDTH = { min: 100, max: 400, initial: 170 } as const;
 
-/** Вид этапа: навык или встроенный — Вопросы, Критерии, Выбор этапов, Демонстрация. Встроенные ставятся в flow сколько угодно раз. */
-export const STAGE_KINDS = ["skill", "questions", "criteria", "select", "demo"] as const;
+/**
+ * Вид этапа: навык, встроенный — Вопросы, Критерии, Выбор этапов, Демонстрация — или Action.
+ * Встроенные ставятся в flow сколько угодно раз. Action — шаги автоматизации, которые запускает владелец кнопкой.
+ */
+export const STAGE_KINDS = ["skill", "questions", "criteria", "select", "demo", "action"] as const;
 
 export type StageKind = (typeof STAGE_KINDS)[number];
 
@@ -28,10 +31,13 @@ export const BUILTIN_SKILLS: Record<BuiltinKind, string> = { questions: "flow-qu
 /** Корневой навык: через него агент выбирает flow, когда тред не идёт по flow. */
 export const ROOT_SKILL = "flow";
 
-/** Навык этапа: у встроенного пустое поле значит навык его вида — так смена навыка по умолчанию доезжает до сохранённых flow. */
+/** Инструмент агента, которым тред без flow получает flow, выбранный по корневому навыку. */
+export const CHOOSE_FLOW_TOOL = "choose_flow";
+
+/** Навык этапа: у встроенного пустое поле значит навык его вида — так смена навыка по умолчанию доезжает до сохранённых flow. У Action навыка нет: его шаги исполняет Flow по нажатию владельца. */
 export const stageSkillOf = (stage: { id: string; kind?: StageKind | undefined; skill: string }): string => {
   const kind = stageKindOf(stage);
-  return kind === "skill" || stage.skill !== "" ? stage.skill : BUILTIN_SKILLS[kind];
+  return kind === "skill" || kind === "action" || stage.skill !== "" ? stage.skill : BUILTIN_SKILLS[kind];
 };
 
 /** Название в хранилище — английское: сервер языка не знает, по языку подписывает фронт. */
@@ -40,10 +46,15 @@ const BUILTIN_NAMES: Record<BuiltinKind, string> = { questions: "Questions", cri
 /** Прежние английские имена Уточнения и Критериев — тоже имена по умолчанию. */
 const LEGACY_NAMES: readonly string[] = ["Clarification"];
 
-/** Имя встроенного этапа не менялось владельцем: подписывается по виду и языку интерфейса. */
+/** Имя этапа Action в хранилище, пока владелец не назвал его своим. */
+const ACTION_NAME = "Action";
+
+/** Имя этапа вида не менялось владельцем: подписывается по виду и языку интерфейса. */
 export const isDefaultName = (stage: { id: string; kind?: StageKind | undefined; name: string }): boolean => {
   const kind = stageKindOf(stage);
-  return kind !== "skill" && (stage.name === BUILTIN_NAMES[kind] || LEGACY_NAMES.includes(stage.name));
+  if (kind === "skill") return false;
+  if (kind === "action") return stage.name === ACTION_NAME;
+  return stage.name === BUILTIN_NAMES[kind] || LEGACY_NAMES.includes(stage.name);
 };
 
 /** Свободный id по основе: сама основа, а занятая — с номером со второго. */
@@ -57,6 +68,19 @@ export const freeId = (base: string, taken: readonly string[]): string => {
 
 /** Встроенный этап вида `kind` с id, не совпадающим ни с одним из `taken`. */
 export const builtinStage = (kind: BuiltinKind, taken: readonly string[]) => ({ id: freeId(kind, taken), kind, skill: "", name: BUILTIN_NAMES[kind], executors: [] as never[] });
+
+/**
+ * Этап Action: те же шаги, что у встроенной автоматизации, но запускает их владелец кнопкой в баннере прогресса,
+ * по одному шагу за нажатие. Прогон, дойдя до такого этапа, останавливается и ждёт владельца.
+ */
+export const actionStage = (taken: readonly string[]) => ({
+  id: freeId("flow-action", taken),
+  kind: "action" as const,
+  skill: "",
+  name: ACTION_NAME,
+  executors: [] as never[],
+  automation: { source: "flow" as const, steps: [] as never[] },
+});
 
 /** Автоматизация плагина Automations, встроенная этапом: снимок её id и имени на момент добавления. */
 export interface StageAutomation {

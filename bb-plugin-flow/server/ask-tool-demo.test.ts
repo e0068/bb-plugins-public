@@ -11,7 +11,7 @@ import { createStore } from "./store";
 const THREAD = "thr_demo";
 const settings: StageSettings = { stages: [...STAGES, builtinStage("demo", STAGES.map((s) => s.id))], minButtonWidth: 190 };
 
-const outcome = { stage: "demo", final: true, done: ["План написан"], pending: [], results: [{ label: "plan.md", target: "memory/plans/plan.md" }], documentsOnly: true };
+const outcome = { stage: "demo", final: true, done: ["План написан"], pending: [], results: [{ label: "plan.md", target: "docs/plans/plan.md" }], documentsOnly: true };
 
 describe("Демонстрация в запущенном треде", () => {
   it("итог Демонстрации принимается, помечен запуском и хранит снимок этапов flow", async () => {

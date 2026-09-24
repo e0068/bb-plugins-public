@@ -6,7 +6,7 @@
 // synthetic and never equals the local HEAD, while squash and merge both put
 // a differently-SHA'd commit into the base. Content is the only thing that
 // survives all three representations — see
-// memory/decisions/pr-button-merged-by-content.md.
+// docs/decisions/pr-button-merged-by-content.md.
 //
 // The measurement itself is `git merge-tree --write-tree <base> HEAD`: it
 // merges the branch into the base WITHOUT a working copy and prints the

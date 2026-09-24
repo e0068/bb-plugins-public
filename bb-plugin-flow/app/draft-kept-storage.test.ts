@@ -1,12 +1,12 @@
 // @vitest-environment jsdom
 import { describe, expect, it } from "vitest";
 
-import { emptyDraft, setOutcomeNote, setOutcomeRework, setPlace, setRoute } from "./draft";
+import { emptyDraft, setOutcomeNote, setPlace, setRoute } from "./draft";
 import { decodeDraft, encodeDraft } from "./draft-storage";
 
 describe("черновик хранит всё, что набрал и выбрал владелец", () => {
-  it("комментарий Демонстрации, нажатая кнопка, место и маршрут переживают уход во вкладку", () => {
-    const draft = setRoute(setPlace(setOutcomeRework(setOutcomeNote(emptyDraft(), "Поправь подпись"), false), "thread"), { tree: "new", branch: "from-current" });
+  it("комментарий Демонстрации, место и маршрут переживают уход во вкладку", () => {
+    const draft = setRoute(setPlace(setOutcomeNote(emptyDraft(), "Поправь подпись"), "thread"), { tree: "new", branch: "from-current" });
     expect(decodeDraft(encodeDraft(draft))).toEqual(draft);
   });
 

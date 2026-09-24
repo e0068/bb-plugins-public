@@ -3,7 +3,7 @@ import fc from "fast-check";
 import { describe, expect, it } from "vitest";
 
 import type { DecisionBrief } from "../shared/contract";
-import { awaitingChanges, awaitingKind } from "./awaiting";
+import { awaitingChanges, awaitingKind, waitsForAnswer } from "./awaiting";
 import { report } from "./stages-fixtures";
 
 const brief = (patch: Partial<DecisionBrief>): DecisionBrief => ({ id: "dec_1", threadId: "thr_1", title: "Бриф", createdAt: "2026-09-16T10:00:00.000Z", kind: "brief", questions: [], ...patch });
@@ -39,5 +39,12 @@ describe("разница списков ждущих", () => {
         expect([...applied.entries()].sort()).toEqual([...next.entries()].sort());
       }),
     );
+  });
+});
+
+describe("ожидание держит владелец", () => {
+  it("бриф ждёт владельца, а ожидание автоматизации и этапа Action снимает сам прогон", () => {
+    expect((["questions", "criteria", "select", "demo"] as const).map(waitsForAnswer)).toEqual([true, true, true, true]);
+    expect((["automation", "action"] as const).map(waitsForAnswer)).toEqual([false, false]);
   });
 });

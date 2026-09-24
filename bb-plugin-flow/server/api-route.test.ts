@@ -46,15 +46,22 @@ describe("маршрут нового треда в ответе", () => {
     expect(spawned[0]?.environment).toEqual({ type: "host", hostId: "host_1", workspace: { type: "managed-worktree", baseBranch: { kind: "named", name: "origin/main" } } });
   });
 
-  it("маршрут помнится по проекту и отдаётся виджету вместе с местом", async () => {
-    const { harness, call } = await setup();
-    await call({ briefId: "dec_1", answers: [], place: "thread", route: { tree: "local", branch: "none" } });
-    expect(await harness.callRpc("getDispatchPlace", { threadId: "thr_src" })).toEqual({ place: "thread", route: { tree: "local", branch: "none" } });
+  it("место «в другом проекте» без маршрута не принимается: адрес проекта взять неоткуда", async () => {
+    const { spawned, call } = await setup();
+    await expect(call({ briefId: "dec_1", answers: [], place: "other" })).rejects.toThrow();
+    expect(spawned).toHaveLength(0);
+  });
+
+  it("чужой проект без выбранного проекта не принимается: молча уехать в свой работа не должна", async () => {
+    const { spawned, call } = await setup();
+    await expect(call({ briefId: "dec_1", answers: [], place: "other", route: { tree: "new", branch: "none" } })).rejects.toThrow();
+    expect(spawned).toHaveLength(0);
   });
 
   it("недоступное сочетание дерева и ветки не принимается", async () => {
     const { spawned, call } = await setup();
-    await expect(call({ briefId: "dec_1", answers: [], place: "thread", route: { tree: "same", branch: "from-main" } })).rejects.toThrow();
+    await expect(call({ briefId: "dec_1", answers: [], place: "thread", route: { tree: "same", branch: "none" } })).rejects.toThrow();
+    await expect(call({ briefId: "dec_1", answers: [], place: "other", route: { tree: "same", branch: "none", projectId: "proj_2" } })).rejects.toThrow();
     expect(spawned).toHaveLength(0);
   });
 });

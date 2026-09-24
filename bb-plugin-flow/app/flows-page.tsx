@@ -1,27 +1,28 @@
-// Страница Flow в левом меню bb: слева список flow, справа выбранный flow —
-// имя правится на месте, ссылка на корневой навык flow, таблица его этапов и
-// общая ширина кнопки этапа.
-// Выбранный flow живёт в адресе страницы, чтобы ссылка открывала его. На узком
-// экране страница не сжимает таблицу, а листается вбок: 46rem хватает широкой
-// раскладке таблицы (контейнер от 44rem) вместе с отступом справа.
-import { useEffect, useState } from "react";
-import { useBbNavigate, useRpc, type PluginNavPanelProps } from "@get-bb/plugin-sdk/app";
+// Страница Flow в левом меню bb: выбранный flow — имя и описание «когда
+// выбирать» правятся на месте, таблица его этапов и удаление flow внизу. Сам
+// выбор и создание — в шапке панели (./flows-header); общее на все flow — ширина
+// кнопки и выбор flow агентом — в настройках плагина (./flow-settings-sections).
+// Выбранный flow живёт в адресе страницы, чтобы ссылка открывала его; адрес
+// `history` вместо flow открывает историю прогонов (./run-history). Своей
+// ширины содержимое не держит: таблица этапов сама перестраивается по ширине
+// контейнера и на телефоне встаёт в колонку — держать её широкой раскладке
+// 46rem значило бы листать страницу вбок там, где листать некуда.
+import { useState } from "react";
+import type { PluginNavPanelProps } from "@get-bb/plugin-sdk/app";
 
-import { addFlow, flowById, newFlow, removeFlow, renameFlow } from "../core/flows";
-import { Icon } from "../components/ui/icon";
+import { describeFlow, flowById, removeFlow, renameFlow } from "../core/flows";
+import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
-import { ROOT_SKILL } from "../lib/stage-constants";
-import { cn } from "../lib/utils";
-import type { Flow, flowSettingsRpcContract, RootSkill } from "../shared/contract";
+import { Textarea } from "../components/ui/textarea";
+import type { Flow } from "../shared/contract";
 import { LocaleProvider } from "./locale";
 import { ProviderLogosProvider } from "./provider-logos-source";
 import { useMessages } from "./locale-context";
 import { updateFlowSettings, useFlowSettings } from "./stage-settings-store";
-import { StageButtonWidth, WorkStagesTable } from "./stage-settings";
+import { WorkStagesTable } from "./stage-settings";
+import { HISTORY_SUB_PATH, RunHistory } from "./run-history";
 
 export const FLOWS_PANEL_PATH = "flows";
-
-const newFlowId = (): string => `flow-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
 
 export function FlowsPage(props: PluginNavPanelProps) {
   return (
@@ -33,6 +34,11 @@ export function FlowsPage(props: PluginNavPanelProps) {
   );
 }
 
+/**
+ * Имя выбранного flow правкой на месте. Рамка фокуса рисуется внутрь поля
+ * (`ring-inset`): поле стоит вплотную к краю области с прокруткой, и снаружи
+ * её срезало бы слева, справа и сверху.
+ */
 function FlowName({ flow }: { flow: Flow }) {
   const t = useMessages();
   const [name, setName] = useState<string | null>(null);
@@ -47,104 +53,85 @@ function FlowName({ flow }: { flow: Flow }) {
       onChange={(e) => setName(e.target.value)}
       onBlur={save}
       onKeyDown={(e) => e.key === "Enter" && e.currentTarget.blur()}
-      className="h-9 min-h-9 min-w-0 flex-1 rounded-md border-0 bg-card px-2.5 py-0 text-lg font-semibold shadow-none focus-visible:ring-1"
+      className="h-9 min-h-9 w-full min-w-0 rounded-md border-0 bg-card px-2.5 py-0 text-lg font-semibold shadow-none focus-visible:ring-1 focus-visible:ring-inset"
     />
   );
 }
 
-/** Ссылка на корневой навык flow: файл открывается превью bb на хосте сервера; нет навыка — подпись, где его ждут. */
-function RootSkillLink() {
+/** Описание «когда выбирать» под названием: сохраняется по уходу фокуса и уходит в корневой навык, по которому агент выбирает flow. */
+function FlowDescription({ flow }: { flow: Flow }) {
   const t = useMessages();
-  const rpc = useRpc<typeof flowSettingsRpcContract>();
-  const navigate = useBbNavigate();
-  const [root, setRoot] = useState<RootSkill | undefined>(undefined);
-  useEffect(() => {
-    let live = true;
-    rpc.call("getRootSkill", {}).then(
-      (found) => live && setRoot(found),
-      () => live && setRoot(null),
-    );
-    return () => {
-      live = false;
-    };
-  }, [rpc]);
-  if (root === undefined) return null;
-  if (root === null) return <p className="text-xs text-muted-foreground">{t.flows.rootSkillMissing}</p>;
+  const [description, setDescription] = useState<string | null>(null);
+  const save = () => {
+    if (description !== null) updateFlowSettings((s) => describeFlow(s, flow.id, description));
+    setDescription(null);
+  };
   return (
-    <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
-      {t.flows.rootSkillLabel}
-      <button
-        type="button"
-        aria-label={t.flows.rootSkill}
-        onClick={() => navigate.experimental_openFilePreview({ target: { kind: "host", hostId: root.hostId, path: root.path }, location: null })}
-        className="font-mono text-foreground underline-offset-2 hover:underline"
-      >
-        {ROOT_SKILL}
-      </button>
-    </p>
+    <Textarea
+      aria-label={t.flows.description}
+      placeholder={t.flows.descriptionPlaceholder}
+      rows={2}
+      value={description ?? flow.description ?? ""}
+      onChange={(e) => setDescription(e.target.value)}
+      onBlur={save}
+      className="min-h-0 resize-none rounded-md border-0 bg-card px-2.5 py-1.5 text-[13px] shadow-none focus-visible:ring-1 focus-visible:ring-inset"
+    />
+  );
+}
+
+/** Удаление flow внизу страницы: первый клик спрашивает, второй удаляет — этапы не должны пропадать с одного промаха. */
+function DeleteFlow({ flow }: { flow: Flow }) {
+  const t = useMessages();
+  const [asking, setAsking] = useState(false);
+  if (!asking)
+    return (
+      <Button variant="outline" size="sm" aria-label={t.flows.remove(flow.name)} onClick={() => setAsking(true)} className="text-muted-foreground hover:text-destructive">
+        {t.flows.removeAction}
+      </Button>
+    );
+  return (
+    <div className="flex flex-wrap items-center gap-2">
+      <p className="text-[13px]">{t.flows.removeQuestion(flow.name)}</p>
+      <Button variant="destructive" size="sm" onClick={() => updateFlowSettings((s) => removeFlow(s, flow.id))}>
+        {t.flows.removeYes}
+      </Button>
+      <Button variant="ghost" size="sm" onClick={() => setAsking(false)}>
+        {t.flows.removeNo}
+      </Button>
+    </div>
   );
 }
 
 function Flows({ subPath }: PluginNavPanelProps) {
+  if (subPath === HISTORY_SUB_PATH) return <RunHistory />;
+  return <FlowEditor subPath={subPath} />;
+}
+
+function FlowEditor({ subPath }: { subPath: string }) {
   const t = useMessages();
-  const navigate = useBbNavigate();
   const { settings } = useFlowSettings();
-  const [selected, setSelected] = useState(subPath);
-  // Назад и вперёд браузера меняют адрес — выбор идёт за ним.
-  useEffect(() => setSelected(subPath), [subPath]);
   if (settings === null) return <div aria-busy="true" className="p-6" />;
-  const flow = flowById(settings, selected);
-  const open = (id: string) => {
-    setSelected(id);
-    navigate.toPluginPanel(FLOWS_PANEL_PATH, { subPath: id });
-  };
-  const create = () => {
-    const id = newFlowId();
-    updateFlowSettings((s) => addFlow(s, newFlow(id, t.flows.newName)));
-    open(id);
-  };
+  // Выбранный flow приходит адресом панели: его пишет лента в шапке, а кнопки
+  // «назад» и «вперёд» браузера ходят по той же истории.
+  const flow = flowById(settings, subPath);
   return (
-    <div className="flex h-full min-h-0 gap-6 p-6 max-md:gap-4 max-md:overflow-x-auto max-md:pr-0">
-      <nav aria-label={t.flows.list} className="flex w-52 shrink-0 flex-col gap-0.5 max-md:w-36">
-        {settings.flows.map((item) => (
-          <button
-            key={item.id}
-            type="button"
-            aria-current={item.id === flow.id ? "page" : undefined}
-            onClick={() => open(item.id)}
-            className={cn("flex h-8 items-center rounded-md px-2 text-left text-[13px] hover:bg-state-hover", item.id === flow.id && "bg-state-active font-medium")}
-          >
-            <span className="truncate">{item.name}</span>
-          </button>
-        ))}
-        <button type="button" onClick={create} className="flex h-8 items-center gap-1.5 rounded-md px-2 text-[13px] text-muted-foreground hover:bg-state-hover hover:text-foreground">
-          <Icon name="Plus" aria-hidden="true" className="size-3.5" />
-          {t.flows.add}
-        </button>
-      </nav>
-      <section className="flex min-w-0 flex-1 flex-col gap-4 overflow-auto max-md:min-w-[46rem] max-md:pr-6">
-        <div className="flex items-center gap-2">
-          <FlowName key={flow.id} flow={flow} />
+    <div className="flex h-full min-h-0 flex-col p-6">
+      <section className="flex min-h-0 flex-1 flex-col overflow-auto">
+        <div className="flex min-w-0 flex-col gap-4">
+          <div key={flow.id} className="flex flex-col gap-1">
+            <FlowName flow={flow} />
+            <FlowDescription flow={flow} />
+          </div>
+          <div className="flex flex-col gap-2">
+            <h2 className="text-[13px] font-medium">{t.settings.stagesTitle}</h2>
+            <p className="text-xs text-muted-foreground">{t.settings.stagesDescription}</p>
+            <WorkStagesTable flowId={flow.id} />
+          </div>
           {settings.flows.length > 1 && (
-            <button
-              type="button"
-              aria-label={t.flows.remove(flow.name)}
-              onClick={() => updateFlowSettings((s) => removeFlow(s, flow.id))}
-              className="flex size-8 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-state-hover hover:text-foreground"
-            >
-              <Icon name="X" aria-hidden="true" className="size-4" />
-            </button>
+            <div className="mt-2 border-t border-border pt-4">
+              <DeleteFlow key={flow.id} flow={flow} />
+            </div>
           )}
-        </div>
-        <div className="flex flex-col gap-2">
-          <h2 className="text-[13px] font-medium">{t.settings.stagesTitle}</h2>
-          <p className="text-xs text-muted-foreground">{t.settings.stagesDescription}</p>
-          <RootSkillLink />
-          <WorkStagesTable flowId={flow.id} />
-        </div>
-        <div className="flex flex-col gap-2">
-          <h2 className="text-[13px] font-medium">{t.settings.buttonsTitle}</h2>
-          <StageButtonWidth />
         </div>
       </section>
     </div>

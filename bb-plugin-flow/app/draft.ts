@@ -8,6 +8,7 @@ import { REVIEW_NONE, REVIEW_ROWS, SETUP_ROW, checkerAllowed, rowsOf } from "../
 import { criterionEditable } from "../core/budget";
 import { carriedFor } from "../core/carry";
 import { initialStageChoice, stageItems, type StageChoice, type StageItem } from "../core/stages";
+import { withPlace } from "../core/places";
 import { hiddenQuestions } from "../core/visibility";
 import type { Criterion, DecisionAnswer, DecisionBrief, DecisionQuestion, DispatchPlace, DispatchRoute, StageAnswer } from "../shared/contract";
 
@@ -32,10 +33,10 @@ export type Draft = {
   place?: DispatchPlace;
   /** Дерево и ветка нового треда — выбор владельца поверх последнего в проекте. */
   route?: DispatchRoute;
-  /** Комментарий к Демонстрации; пустой — «Продолжить». */
+  /** Сперва компактировать тред — только при «в этом треде»; каждый бриф открывается без неё. */
+  compact?: boolean;
+  /** Комментарий к Демонстрации; пустой — «Продолжить», написанный — «Отправить». */
   outcomeNote?: string;
-  /** Нажатая кнопка при написанном комментарии: `false` — «Учесть и продолжить», иначе — «На доработку». */
-  outcomeRework?: boolean;
 };
 
 export const emptyCriteria = (): CriteriaDraft => ({ removed: [], edited: {}, added: [] });
@@ -71,16 +72,23 @@ export const setRoute = (draft: Draft, route: DispatchRoute): Draft => ({ ...dra
 
 export const routeIn = (draft: Draft, fallback: DispatchRoute): DispatchRoute => draft.route ?? fallback;
 
-/** Место и маршрут на отправку: маршрут едет только с новым тредом — в этом треде дерева и ветки не выбирают. */
+export const setCompact = (draft: Draft, compact: boolean): Draft => ({ ...draft, compact });
+
+/**
+ * Место и маршрут на отправку: маршрут едет только с новым тредом — в этом треде
+ * дерева и ветки не выбирают, а компактация — только с этим тредом. Место живёт в
+ * черновике, а маршрут может прийти из памяти проекта, поэтому пара сводится
+ * `withPlace`: уезжает ровно то, что показано.
+ */
 export const settleDispatch = (draft: Draft, place: DispatchPlace, route: DispatchRoute): Draft => {
-  const { route: _dropped, ...rest } = draft;
+  const { route: _route, compact, ...rest } = draft;
   const settled = placeIn(draft, place);
-  return settled === "here" ? { ...rest, place: settled } : { ...rest, place: settled, route: routeIn(draft, route) };
+  return settled === "here"
+    ? { ...rest, place: settled, ...(compact === true ? { compact } : {}) }
+    : { ...rest, place: settled, route: withPlace(routeIn(draft, route), settled) };
 };
 
 export const setOutcomeNote = (draft: Draft, note: string): Draft => ({ ...draft, outcomeNote: note });
-
-export const setOutcomeRework = (draft: Draft, rework: boolean): Draft => ({ ...draft, outcomeRework: rework });
 
 const stageAnswers = (brief: DecisionBrief, draft: Draft): StageAnswer[] =>
   stageItems(brief).map((item) => {
@@ -237,10 +245,9 @@ export const toAnswer = (brief: DecisionBrief, draft: Draft): DecisionAnswer => 
     ...(draft.note.trim() === "" ? {} : { note: draft.note }),
     ...(draft.place === undefined ? {} : { place: draft.place }),
     ...(draft.route === undefined ? {} : { route: draft.route }),
-    // Пустой комментарий — «Продолжить»; написанный — «Учесть и продолжить», только если нажата эта кнопка, иначе «На доработку»: главная кнопка не пускает flow дальше по ошибке.
-    ...(brief.outcome === undefined
-      ? {}
-      : { outcome: (draft.outcomeNote ?? "").trim() === "" ? { accepted: true } : { accepted: draft.outcomeRework === false, note: draft.outcomeNote ?? "" } }),
+    ...(draft.compact === true ? { compact: true } : {}),
+    // Пустой комментарий — «Продолжить»; написанный — «Отправить»: Демонстрация не принята, flow дальше не идёт.
+    ...(brief.outcome === undefined ? {} : { outcome: (draft.outcomeNote ?? "").trim() === "" ? { accepted: true } : { accepted: false, note: draft.outcomeNote ?? "" } }),
   };
 };
 

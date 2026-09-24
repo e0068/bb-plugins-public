@@ -208,14 +208,24 @@ export const stageSettingsSchema = z
 
 /** Flow — именованная таблица этапов. Тред идёт по одному flow: из него инструкции агенту и проверка брифа. */
 export const flowSchema = z
-  .object({ id: text, name: text, stages: z.array(workStageSchema) })
+  // `description` — когда выбирать этот flow: из описаний Flow пишет корневой навык, по которому агент выбирает flow сам.
+  .object({ id: text, name: text, description: z.string().optional(), stages: z.array(workStageSchema) })
   .superRefine((f, ctx) => {
     if (!uniqueIds(f.stages)) ctx.addIssue({ code: "custom", message: "stage ids must be unique within a flow", path: ["stages"] });
   });
 
-/** Все flow владельца; первый — flow по умолчанию. Ширина кнопки этапа общая на все flow. `version: 2` — flow перенесены на виды этапов. */
+/**
+ * Все flow владельца; первый — flow по умолчанию. Ширина кнопки этапа общая на все flow. `agentChoosesFlow` — тред, где
+ * выбрано «без flow», получает flow от агента по корневому навыку. `version: 2` — flow перенесены на виды этапов.
+ */
 export const flowSettingsSchema = z
-  .object({ flows: z.array(flowSchema).min(1), minButtonWidth: stageSettingsSchema.shape.minButtonWidth, automationSets: z.array(automationSetSchema).optional(), version: z.literal(2).optional() })
+  .object({
+    flows: z.array(flowSchema).min(1),
+    minButtonWidth: stageSettingsSchema.shape.minButtonWidth,
+    agentChoosesFlow: z.boolean().optional(),
+    automationSets: z.array(automationSetSchema).optional(),
+    version: z.literal(2).optional(),
+  })
   .superRefine((s, ctx) => {
     if (!uniqueIds(s.flows)) ctx.addIssue({ code: "custom", message: "flow ids must be unique", path: ["flows"] });
   });
@@ -237,6 +247,7 @@ export const stageDraftSchema = z.object({
 export const flowDraftSchema = z.object({
   id: text.optional(),
   name: text,
+  description: z.string().optional(),
   position: z.number().int().nonnegative().optional(),
   stages: z.array(stageDraftSchema),
 });
@@ -263,10 +274,12 @@ export const stageReportSchema = z
   });
 
 /**
- * Где исполнять работу: `here` — этот тред; `thread` — новый тред в том же рабочем дереве, на той же ветке;
- * `worktree` — новый тред в новом рабочем дереве, ветка отводится от ветки этого треда.
+ * Где исполнять работу: `here` — этот тред; `thread` — новый тред соседом этого, без родителя;
+ * `child` — тот же новый тред, но дочерний этому; `other` — новый тред в другом проекте bb;
+ * `worktree` — прежнее место, новый тред в новом рабочем дереве: его не предлагают, но
+ * запомненный выбор читается.
  */
-export const dispatchPlaceSchema = z.enum(["here", "thread", "worktree"]);
+export const dispatchPlaceSchema = z.enum(["here", "thread", "worktree", "child", "other"]);
 
 /** Рабочее дерево нового треда: это же, новое или чекаут проекта. */
 export const routeTreeSchema = z.enum(["same", "new", "local"]);
@@ -274,8 +287,11 @@ export const routeTreeSchema = z.enum(["same", "new", "local"]);
 /** Ветка нового треда: текущая, отведённая от текущей, от origin/main, от main или без смены ветки. */
 export const routeBranchSchema = z.enum(["current", "from-current", "from-origin-main", "from-main", "none"]);
 
-/** Маршрут нового треда; какие ветки возможны в каком дереве, решает ядро. */
-export const dispatchRouteSchema = z.object({ tree: routeTreeSchema, branch: routeBranchSchema });
+/**
+ * Маршрут нового треда; какие деревья и ветки возможны в каком месте, решает ядро.
+ * `projectId` есть только у места `other`; маршруты, записанные раньше, читаются без него.
+ */
+export const dispatchRouteSchema = z.object({ tree: routeTreeSchema, branch: routeBranchSchema, projectId: text.optional() });
 
 /**
  * Итог этапа: что из «Готово, когда» сделано, что нет и почему, что ещё важно знать и какие задачи закрыты.
@@ -542,6 +558,8 @@ export const decisionAnswerSchema = z.object({
   place: dispatchPlaceSchema.optional(),
   /** Дерево и ветка нового треда; без маршрута новый тред идёт по старому месту. */
   route: dispatchRouteSchema.optional(),
+  /** Сперва компактировать тред, потом отдать ответ агенту; только у места «в этом треде». */
+  compact: z.boolean().optional(),
   /** Ответ на итог этапа: «Продолжить» и свой ответ. Есть только у брифа с итогом. */
   outcome: z.object({ accepted: z.boolean(), note: z.string().optional() }).optional(),
 });
@@ -617,6 +635,14 @@ export const dispatchRpcContract = defineRpcContract({
   getDispatchPlace: {
     input: z.object({ threadId: text }),
     output: z.object({ place: dispatchPlaceSchema, route: dispatchRouteSchema.optional() }),
+  },
+  /** Проекты bb, кроме проекта треда: третья колонка выбора места. Список — удобство, поэтому сбой возвращается отказом, а не ошибкой. */
+  listProjects: {
+    input: z.object({ threadId: text }),
+    output: z.discriminatedUnion("kind", [
+      z.object({ kind: z.literal("found"), projects: z.array(z.object({ id: text, name: z.string() })) }),
+      z.object({ kind: z.literal("unavailable") }),
+    ]),
   },
 });
 
@@ -706,16 +732,36 @@ export const journalSettingsRpcContract = defineRpcContract({
 
 const resultSchema = z.object({ label: text, target: text });
 
-/** Отметки этапа в треде: начат и закончен (ISO), ссылки, стоимость окна, вне прогона и выбранный исполнитель. */
+/** Отметки этапа в треде: начат и закончен (ISO), ссылки, стоимость и активные минуты окна, вне прогона и выбранный исполнитель. */
 export const stageTrackSchema = z.object({
   startedAt: z.string().optional(),
   finishedAt: z.string().optional(),
   results: z.array(resultSchema).optional(),
   cost: z.number().nonnegative().optional(),
+  /** Минуты окна этапа, в которые лог сессии писался; поля нет — минуты этапа ещё не считались. */
+  activeMinutes: z.number().int().nonnegative().optional(),
+  /** Накопленный простой этапа с шагами, мс: время, пока упавший шаг ждал владельца, а этап Action — нажатия. */
+  idleMs: z.number().int().nonnegative().optional(),
+  /** Начало открытого интервала простоя (ISO); поля нет — этап сейчас не стоит. */
+  idleSince: z.string().optional(),
   skipped: z.boolean().optional(),
   executor: z.string().optional(),
-  /** Прогон автоматизации этапа: шаги снимком, номер текущего шага и ошибка упавшего; `null` — шаг не падал. */
-  run: z.object({ steps: z.array(z.object({ id: text, label: text })), at: z.number().int().nonnegative(), error: z.string().nullable() }).optional(),
+  /**
+   * Прогон этапа: шаги снимком, номер текущего шага, ошибка упавшего (`null` —
+   * не падал), `busy` — шаг Action сейчас исполняется, и `failures` — история
+   * падений. История не чистится ни повтором, ни пропуском: `error` говорит,
+   * чем прогон занят сейчас, а `failures` — что с ним случалось, и по ней
+   * видно, какой шаг ломается раз за разом.
+   */
+  run: z
+    .object({
+      steps: z.array(z.object({ id: text, label: text, detail: z.string().optional() })),
+      at: z.number().int().nonnegative(),
+      error: z.string().nullable(),
+      busy: z.boolean().optional(),
+      failures: z.array(z.object({ step: text, at: text, error: text })).optional(),
+    })
+    .optional(),
 });
 
 export const plannedSchema = z.object({ minutes: z.number().nullable(), target: z.number(), max: z.number() });
@@ -725,6 +771,35 @@ export const flowProgressSchema = z.object({
   stages: z.record(z.string(), stageTrackSchema),
   waiting: z.array(z.string()),
   planned: plannedSchema.optional(),
+  /** Последний бриф треда, коснувшийся прогресса: под его карточкой встаёт итог завершённого прогона. */
+  lastBriefId: z.string().optional(),
+  /** Тред, который ведёт прогон сейчас; у записи до переноса прогресса на прогон поля нет — её ведёт тред, под чьим id она лежит. */
+  thread: z.string().optional(),
+  /** Минуты и доллары этапов считаны по логам всех тредов прогона и их потомков; у записи без пометки их однажды пересчитывают. */
+  countedAcrossRun: z.literal(true).optional(),
+});
+
+/** Исполнитель этапов прогона в итоге: кем он был и сколько на нём сделано. */
+export const runExecutorSchema = z.object({
+  id: text,
+  kind: z.enum(["self", "agent", "workflow"]),
+  name: text,
+  model: z.string().optional(),
+  stages: z.number().int().positive(),
+  cost: z.number().nonnegative(),
+});
+
+/** Итог завершённого прогона: окно, время, деньги, состав этапов и исполнители. */
+export const runSummarySchema = z.object({
+  startedAt: z.string(),
+  finishedAt: z.string(),
+  minutes: z.number().int().nonnegative(),
+  wallMinutes: z.number().int().nonnegative(),
+  idleMinutes: z.number().int().nonnegative(),
+  cost: z.number().nonnegative(),
+  stages: z.number().int().nonnegative(),
+  skipped: z.number().int().nonnegative(),
+  executors: z.array(runExecutorSchema),
 });
 
 export const progressStageSchema = z.object({
@@ -738,12 +813,46 @@ export const progressStageSchema = z.object({
   /** Провайдер исполнителя этапа навыка — треда или субагента; по нему фронт берёт логотип. */
   provider: z.string().optional(),
   results: z.array(resultSchema),
+  /** Место этапа среди этапов прогона, с 1; вычеркнутый номера не получает. */
+  number: z.number().int().positive().nullable().optional(),
+  /** Минуты работы на этапе: активные, а без них — от начала до конца этапа. */
   minutes: z.number().int().nonnegative().nullable(),
+  /** Всё время этапа от начала до конца, вместе с ожиданием владельца. */
+  wallMinutes: z.number().int().nonnegative().nullable().optional(),
+  /** Минуты простоя этапа с шагами: ожидание владельца у упавшего шага или нажатия. У этапа без шагов — `null`. */
+  idleMinutes: z.number().int().nonnegative().nullable().optional(),
   cost: z.number().nonnegative().nullable(),
-  /** Шаги этапа-автоматизации с состояниями; у остальных этапов поля нет. */
+  /** Шаги этапа-автоматизации или этапа Action с состояниями; `wait` — шаг Action ждёт нажатия владельца. У остальных этапов поля нет. */
   automation: z
-    .object({ steps: z.array(z.object({ id: text, label: text, state: z.enum(["done", "now", "fail", "todo"]), error: z.string().nullable() })) })
+    .object({
+      steps: z.array(
+        z.object({
+          id: text,
+          label: text,
+          state: z.enum(["done", "now", "fail", "todo", "wait"]),
+          error: z.string().nullable(),
+          /** Что шаг сделал: адрес PR, тема коммита, ключи переведённых задач. Не сказал — `null`; поля нет у шагов, снятых до того, как строку успеха начали хранить. */
+          detail: z.string().nullable().default(null),
+        }),
+      ),
+    })
     .optional(),
+});
+
+/**
+ * Заполненность окна контекста треда — вторая полоса баннера. Доля считается
+ * на сервере, пороги едут рядом: фронт не делит числа заново и не читает
+ * настройки вторым путём.
+ */
+export const contextFillSchema = z.object({
+  /** Доля занятого окна в `0..1`. */
+  share: z.number(),
+  usedTokens: z.number(),
+  windowTokens: z.number(),
+  // Пара разобрана на границе: оба на шкале, жёлтый строго меньше красного.
+  // Схема сторожит то, что подсказка полосы печатает дословно.
+  warnPercent: z.number().min(0).max(100),
+  alertPercent: z.number().min(0).max(100),
 });
 
 /** Вид прогресса для баннера: этапы flow треда по порядку, счёт сделанных, номер текущего этапа среди этапов прогона и их число, текущий этап и план. */
@@ -758,11 +867,44 @@ export const progressViewSchema = z.object({
   environmentId: z.string().nullable().optional(),
   /** Название flow, по которому идёт тред: строкой над этапами раскрытого баннера. */
   flowName: z.string().optional(),
+  /** Прогон закрыт целиком: баннер над композером снимается, а в ленту встаёт итог. */
+  finished: z.boolean().optional(),
+  /** Итог завершённого прогона; `null` — прогон идёт или закрытых этапов ещё нет. */
+  summary: runSummarySchema.nullable().optional(),
+  /** Бриф, под карточкой которого рисуется итог; `null` — брифа в записи нет. */
+  summaryBriefId: z.string().nullable().optional(),
+  /** Заполненность окна контекста для второй полосы; поля нет — полосы нет. */
+  context: contextFillSchema.optional(),
+  /** Тред, который ведёт прогон, когда это не сам тред баннера: работа передана, и баннер её только показывает. */
+  carrier: z.object({ threadId: text, title: z.string().nullable() }).optional(),
 });
 
 /** Баннер прогресса — своим контрактом: брифу он не нужен. */
+/** Замороженный итог прогона: то, что рисует блок под карточкой брифа, когда сам прогон уже сменился следующим. */
+export const frozenRunSchema = z.object({
+  threadId: text,
+  summary: runSummarySchema,
+  stages: z.array(progressStageSchema),
+  done: z.number().int().nonnegative(),
+  total: z.number().int().nonnegative(),
+  planned: plannedSchema.nullable(),
+  flowName: z.string().optional(),
+  environmentId: z.string().nullable(),
+});
+
+/** Строка истории прогонов: замороженный итог с брифом, под которым он лежит, и названием треда; `exists: false` — треда больше нет. */
+export const runHistoryEntrySchema = frozenRunSchema.extend({
+  briefId: text,
+  title: z.string().nullable(),
+  exists: z.boolean(),
+});
+
 export const progressRpcContract = defineRpcContract({
   getFlowProgress: { input: z.object({ threadId: text }), output: progressViewSchema.nullable() },
+  /** Итог прогона, замороженный под этим брифом; `null` — прогона под ним не завершалось. */
+  getRunSummary: { input: z.object({ briefId: text }), output: frozenRunSchema.nullable() },
+  /** Все завершённые прогоны всех тредов, свежие сверху. */
+  getRunHistory: { input: z.object({}), output: z.array(runHistoryEntrySchema) },
 });
 
 export const flowStageParamsSchema = z.object({
@@ -773,24 +915,45 @@ export const flowStageParamsSchema = z.object({
 
 /** Треды, ждущие владельца на брифе Flow, с видом ожидания — для значка в левой панели. */
 /** Вид ожидания: встроенный этап брифа или упавшая автоматизация — у неё `briefId` вида `automation:<этап>`. */
-export const awaitingEntrySchema = z.object({ briefId: text, kind: z.enum(["questions", "criteria", "select", "demo", "automation"]) });
+export const awaitingEntrySchema = z.object({ briefId: text, kind: z.enum(["questions", "criteria", "select", "demo", "automation", "action"]) });
 
 export const awaitingRpcContract = defineRpcContract({
   awaitingThreads: { input: z.object({}), output: z.array(z.object({ threadId: text, kind: awaitingEntrySchema.shape.kind })) },
 });
 
 /** Значок идущего этапа в левой панели: автоматизация или исполнитель этапа навыка. */
-export const runningIconSchema = z.enum(["automation", "self", "agent", "workflow"]);
+export const runningIconSchema = z.enum(["automation", "action", "self", "agent", "workflow"]);
 
 /** Прогон автоматизаций Flow: повтор и пропуск упавшего шага, треды с идущим этапом. */
 export const automationRpcContract = defineRpcContract({
   retryAutomation: { input: z.object({ threadId: text, stage: text }), output: z.object({ started: z.boolean() }) },
   skipAutomationStep: { input: z.object({ threadId: text, stage: text }), output: z.object({ started: z.boolean() }) },
+  /** Нажатие владельца на кнопку шага этапа Action: `started` — шаг взят в работу, `false` — этап не ждёт нажатия или шаг уже идёт. */
+  runActionStep: { input: z.object({ threadId: text, stage: text }), output: z.object({ started: z.boolean() }) },
   /** `provider` — имя и логотип провайдера исполнителя, когда у него есть логотип. */
   runningThreads: { input: z.object({}), output: z.array(z.object({ threadId: text, icon: runningIconSchema, provider: z.object({ name: text, logoUrl: text }).optional() })) },
 });
 
 /** Кнопка flow в композере нового треда: выбор запоминается по проекту и достаётся новому треду. */
+/**
+ * Следующий прогон в том же треде: сообщение владельца в тред с завершённым
+ * прогоном Flow придерживает хуком `message.dispatch`, а форма над композером
+ * спрашивает flow и компактацию; ответ отпускает придержанное сообщение.
+ */
+export const nextRunRpcContract = defineRpcContract({
+  /** Flow владельца для формы следующего прогона: у области композера треда своего проекта нет, а список от него и не зависит. */
+  nextRunFlows: { input: z.object({ threadId: text }), output: z.object({ flows: z.array(z.object({ id: text, name: text })) }) },
+  /** Есть ли в очереди треда сообщение, придержанное Flow до выбора flow: форма стоит только над ним. */
+  nextRunHeld: { input: z.object({ threadId: text }), output: z.object({ held: z.boolean() }) },
+  startNextRun: {
+    input: z.object({ threadId: text, flowId: text, compact: z.boolean() }),
+    output: z.discriminatedUnion("kind", [
+      z.object({ kind: z.literal("sent") }),
+      z.object({ kind: z.literal("failed"), reason: z.string() }),
+    ]),
+  },
+});
+
 export const flowPickerRpcContract = defineRpcContract({
   getFlowChoice: {
     input: z.object({ projectId: text }),
@@ -872,4 +1035,9 @@ export type OutcomeResult = StageOutcome["results"][number];
 export type FlowProgress = z.output<typeof flowProgressSchema>;
 export type ProgressView = z.output<typeof progressViewSchema>;
 export type ProgressStage = z.output<typeof progressStageSchema>;
+export type RunSummaryView = z.output<typeof runSummarySchema>;
+export type FrozenRun = z.output<typeof frozenRunSchema>;
+export type RunHistoryEntry = z.output<typeof runHistoryEntrySchema>;
 export type Planned = z.output<typeof plannedSchema>;
+export type ContextFillView = z.output<typeof contextFillSchema>;
+export type AwaitingKind = z.output<typeof awaitingEntrySchema>["kind"];

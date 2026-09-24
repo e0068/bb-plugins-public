@@ -23,8 +23,8 @@ const brief: DecisionBrief = {
   kind: "brief",
   setup: {
     artifacts: [
-      { id: "task", name: "Задача", state: "approved", recommended: false, link: { label: "SL-312", target: "memory/tasks/todo/sl-312.md" } },
-      { id: "proto", name: "Прототип", state: "ready", recommended: false, link: { label: "prototype-312", target: "memory/assets/p.html" } },
+      { id: "task", name: "Задача", state: "approved", recommended: false, link: { label: "SL-312", target: "docs/tasks/todo/sl-312.md" } },
+      { id: "proto", name: "Прототип", state: "ready", recommended: false, link: { label: "prototype-312", target: "docs/assets/p.html" } },
       { id: "spec", name: "Спека", state: "stale", recommended: true },
       { id: "plan", name: "План", state: "missing", recommended: true },
     ],
@@ -88,7 +88,7 @@ describe("первая часть брифа", () => {
     const openFile = vi.fn(() => true);
     const artifacts = await group(open(openFile), "Артефакты");
     fireEvent.click(artifacts.getByRole("button", { name: "SL-312" }));
-    expect(openFile).toHaveBeenCalledWith("memory/tasks/todo/sl-312.md");
+    expect(openFile).toHaveBeenCalledWith("docs/tasks/todo/sl-312.md");
   });
 
   it("целевой и максимальный бюджет — две строки, у каждой своя цена", async () => {
@@ -178,7 +178,7 @@ describe("отвеченный бриф с первой частью", () => {
     const slot = openAnswered(openFile);
     await slot.findByText("Бриф отвечен");
     fireEvent.click(slot.getByRole("button", { name: "prototype-312" }));
-    expect(openFile).toHaveBeenCalledWith("memory/assets/p.html");
+    expect(openFile).toHaveBeenCalledWith("docs/assets/p.html");
   });
 });
 

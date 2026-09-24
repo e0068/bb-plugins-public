@@ -7,7 +7,7 @@ import type { Carried } from "../core/carry";
 import { awaitingKind } from "../core/awaiting";
 import { liveIssues } from "../core/outcome";
 import { DECISION_ID_PREFIX, directiveLine } from "../core/directive";
-import { FLOW_RULE, isStageCarryKey, reportIssues, stageInstructions } from "../core/stages";
+import { FLOW_RULE, SELF_ONLY_RULE, isStageCarryKey, reportIssues, stageInstructions } from "../core/stages";
 import { stageKindOf, type BuiltinKind } from "../lib/stage-constants";
 import { askDecisionParamsSchema, type AskDecisionParams, type DecisionBrief, type Planning, type StageSettings } from "../shared/contract";
 import type { ProgressStore } from "./progress";
@@ -34,18 +34,18 @@ questions — the second part; an id does not start with "setup.".
 - pick — several answers. Every option requires description; add if it changes the budget.
 - confirm — "did I get this right": exactly one option "Yes", and context says what you understood.
 hides on an option — ids of questions below it that lose their meaning when it is chosen: the owner does not see them and you do not get their answers.
-criteria on an option — items it adds while chosen; removes — setup.criteria indexes it strikes then.
+criteria on an option — items it adds while chosen; an item of an option the owner drops themselves stays in the list struck through, so an item that depends on one answer goes on the option, not into setup.criteria; removes — setup.criteria indexes it strikes then.
 The owner can answer any question in their own words.
 
-outcome — a demo of running work instead of setup: { stage (a demo stage id), final, next (only when not final), done ([text] — closed since the previous demo), pending ([{ text, why }]), notes, tasks ([{ key, done, note }]), results (at least one: { label, target } — a file, path or page URL; { label, command } — a launch command the owner runs with one click), documentsOnly (true only when nothing but documents changed since the previous demo) }. Unless documentsOnly, results hold a live one: an http(s) page URL or a command.
+outcome — a demo of running work instead of setup: { stage (a demo stage id), final, next (only when not final), done ([text] — closed since the previous demo), pending ([{ text, why }]), notes, tasks ([{ key, done, note }]), results (at least one: { label, target } — a file, path or page URL; { label, command } — a command the owner runs with one click), documentsOnly (only when nothing but documents changed since the previous demo) }. Unless documentsOnly, results hold a live one: an http(s) URL or a command.
 
 After the owner launches work (an answered brief with a stage in the run), setup.stages is accepted only while a stage selection or criteria stage in it is todo, setup.criteria only while a criteria stage is todo.
 
-The owner also chooses where the work runs: this thread or a new sibling thread of the same working tree. A new thread takes the answer over — this thread stops.
+The owner also chooses where the work runs; a new thread takes the answer over and this thread stops.
 
-Brief kind: brief — you wait for the answer; clarify — exactly one yesno question with options "Yes" and "No", no setup, and you continue on your own understanding.
+Brief kind: brief — you wait for the answer; clarify — one yesno question with "Yes" and "No", no setup, and you continue on your own understanding.
 
-After the call, paste the directive line from the result into your reply as a standalone line, without quotes or backticks. For a brief, end the turn right after it. The answer arrives as "Brief … — answer:" in the owner's language: "Work stages:", "Budget — forecast …", "Done when — …", "Next — …".
+After the call, paste the directive line from the result into your reply as a standalone line, without quotes or backticks. For a brief, end the turn right after it. The answer arrives as "Brief … — answer:" in the owner's language.
 
 One brief per run: go through the run stages in order; on a demo stage, stop with a brief carrying its outcome. Another brief only if it is unclear how to proceed, and only about that.`;
 
@@ -103,6 +103,12 @@ const legacyIssues = (setup: AskDecisionParams["setup"]): string[] => {
 
 const toolError = (text: string) => ({ isError: true as const, content: [{ type: "text" as const, text }] });
 
+/** Вклад Flow в ход треда с flow: правило брифа и этапы flow. Его же отдаёт выбор flow агентом — этапы нужны в том же ходе. */
+export const flowTurnInstructions = (stages: StageSettings["stages"]): string => {
+  const listed = stageInstructions(stages);
+  return [RULE, ...(listed === null ? [] : [FLOW_RULE, listed, SELF_ONLY_RULE])].join("\n\n");
+};
+
 export const registerAskTool = (
   bb: Pick<BbPluginApi, "agents">,
   store: DecisionStore,
@@ -111,6 +117,10 @@ export const registerAskTool = (
     newId: () => string;
     now: () => string;
     stages?: (threadId: string) => StageSettings;
+    /** Идёт ли тред по flow; `false` — владелец выбрал «без flow», и Flow не вкладывает в ход ничего, кроме `chooseFlow`. */
+    hasFlow?: (threadId: string) => boolean;
+    /** Указание треду без flow выбрать его самому; `null` — выбор агентом выключен. */
+    chooseFlow?: (threadId: string) => string | null;
     /** Длительность и стоимость планирования в треде; `undefined` — неизвестно. */
     planning?: (threadId: string) => Promise<Planning | undefined>;
     /** Прогресс flow треда: бриф отмечает ждущие и сделанные этапы. */
@@ -170,7 +180,8 @@ export const registerAskTool = (
 
   // Этапы — у flow треда и меняются на странице Flow, поэтому их список идёт вкладом к ходу, а не в неизменных инструкциях инструмента.
   bb.agents.contributeInstructions(({ threadId }) => {
-    const stages = stageInstructions(deps.stages?.(threadId).stages ?? []);
-    return [RULE, ...(stages === null ? [] : [FLOW_RULE, stages])].join("\n\n");
+    // Тред без flow Flow не ведёт: ни правила про бриф, ни этапов. Инструмент остаётся, агент зовёт его сам.
+    if (deps.hasFlow?.(threadId) === false) return deps.chooseFlow?.(threadId) ?? "";
+    return flowTurnInstructions(deps.stages?.(threadId).stages ?? []);
   });
 };

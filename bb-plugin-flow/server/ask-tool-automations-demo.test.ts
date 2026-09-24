@@ -15,7 +15,7 @@ describe("событие «этап завершён» для Automations на �
     await store.markLaunched("thr_1");
     const emitted: unknown[][] = [];
     registerAskTool(bb, store, { newId: () => "E1", now: () => "2026-09-16T12:00:00.000Z", stages: () => STAGES, emit: (...args) => void emitted.push(args) });
-    const outcome = { stage: "demo", final: true, done: ["Ревью пройдено"], pending: [], results: [{ label: "review.md", target: "memory/review.md" }], documentsOnly: true };
+    const outcome = { stage: "demo", final: true, done: ["Ревью пройдено"], pending: [], results: [{ label: "review.md", target: "docs/review.md" }], documentsOnly: true };
     await harness.callAgentTool(ASK_TOOL_NAME, { title: "Демонстрация", outcome }, { threadId: "thr_1" });
     expect(emitted).toEqual([["flow.stage-done", "thr_1", { stageId: "demo" }]]);
   });

@@ -127,7 +127,7 @@ describe("reinstallAfterMerge", () => {
   });
 
   it("the plugins to update are the ones the branch changed", async () => {
-    const { gh } = pull({ changedPaths: ["bb-plugin-tasks-plus/server.ts", "memory/INDEX.md"] });
+    const { gh } = pull({ changedPaths: ["bb-plugin-tasks-plus/server.ts", "docs/INDEX.md"] });
     const { port, updated } = fakePlugins([
       { id: "tasks-plus", source: "git:https://github.com/e0068/bb-plugins.git@main" },
       { id: "decisions", source: "git:https://github.com/e0068/bb-plugins.git@main" },

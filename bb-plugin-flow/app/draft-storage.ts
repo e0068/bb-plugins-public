@@ -23,17 +23,19 @@ const readCriteria = (value: unknown): CriteriaDraft | null => {
   return { removed: value.removed, added: value.added, edited: Object.fromEntries(edited.map(([k, v]) => [Number(k), v as string])) };
 };
 
-const PLACES: readonly DispatchPlace[] = ["here", "thread", "worktree"];
+const PLACES: readonly DispatchPlace[] = ["here", "thread", "child", "other", "worktree"];
 
 const isRoute = (value: unknown): value is DispatchRoute =>
-  isRecord(value) && (ROUTE_TREES as readonly unknown[]).includes(value.tree) && (ROUTE_BRANCHES as readonly unknown[]).includes(value.branch);
+  isRecord(value) &&
+  (ROUTE_TREES as readonly unknown[]).includes(value.tree) &&
+  (ROUTE_BRANCHES as readonly unknown[]).includes(value.branch) &&
+  (value.projectId === undefined || typeof value.projectId === "string");
 
 /** Выбор места и Демонстрации: поле чужого вида отбрасывается, черновик остаётся. */
-const readChoices = (value: Record<string, unknown>): Pick<Draft, "place" | "route" | "outcomeNote" | "outcomeRework"> => ({
+const readChoices = (value: Record<string, unknown>): Pick<Draft, "place" | "route" | "outcomeNote"> => ({
   ...((PLACES as readonly unknown[]).includes(value.place) ? { place: value.place as DispatchPlace } : {}),
   ...(isRoute(value.route) ? { route: value.route } : {}),
   ...(typeof value.outcomeNote === "string" ? { outcomeNote: value.outcomeNote } : {}),
-  ...(typeof value.outcomeRework === "boolean" ? { outcomeRework: value.outcomeRework } : {}),
 });
 
 export const encodeDraft = (draft: Draft): string => JSON.stringify(draft);

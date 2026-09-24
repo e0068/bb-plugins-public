@@ -16,8 +16,8 @@ const STORAGE = "/Users/me/.bb/thread-storage/thr_1";
 const PROTOTYPE = `${STORAGE}/CEL-131/prototype.html`;
 
 const brief = stagedBrief([
-  report("task", { state: "done", results: [{ label: "BBPL-1", target: "memory/tasks/BBPL-1.md" }] }),
-  report("spec", { state: "done", results: [{ label: "prototype.html", target: PROTOTYPE }, { label: "spec.md", target: "memory/specs/spec.md" }] }),
+  report("task", { state: "done", results: [{ label: "BBPL-1", target: "docs/tasks/BBPL-1.md" }] }),
+  report("spec", { state: "done", results: [{ label: "prototype.html", target: PROTOTYPE }, { label: "spec.md", target: "docs/specs/spec.md" }] }),
   report("plan", { recommended: true }),
 ]);
 
@@ -61,7 +61,7 @@ describe("результаты сделанного этапа", () => {
     const opened = vi.fn(() => true);
     const slot = open(opened);
     fireEvent.click((await results(slot)).getByRole("button", { name: /^spec\.md/ }));
-    expect(opened).toHaveBeenCalledWith("memory/specs/spec.md");
+    expect(opened).toHaveBeenCalledWith("docs/specs/spec.md");
   });
 
   it("клик по пути копирует его в буфер и на миг показывает «Путь скопирован»", async () => {

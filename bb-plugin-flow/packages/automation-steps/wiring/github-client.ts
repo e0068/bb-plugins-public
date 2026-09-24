@@ -1,11 +1,17 @@
 // Layer 3 — the single network effect point: fetch to api.github.com.
 // Implements the CreatePrPorts port without throwing on an HTTP error code:
 // the status and body go to the orchestrator (create-pr.ts), which decides
-// whether it's a success or a failure.
+// whether it's a success or a failure. The one exception is an exhausted rate
+// limit: no caller can do anything with it but tell the owner when it resets,
+// so it throws that text (core/rate-limit.ts) instead.
 import type { GithubRequest } from "../core/github-requests";
+import { rateLimitError } from "../core/rate-limit";
 import type { CreatePrPorts, GithubResponse } from "./create-pr";
 
 const API_BASE = "https://api.github.com";
+
+/** The plugin server runs on the owner's machine, so its local time is the owner's clock. */
+const ownerClock = (at: Date): string => at.toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" });
 
 export function githubClient(token: string): CreatePrPorts {
   return {
@@ -21,6 +27,11 @@ export function githubClient(token: string): CreatePrPorts {
         },
         body: hasBody ? JSON.stringify(req.body) : undefined,
       });
+      const limit = rateLimitError(
+        { status: res.status, remaining: res.headers.get("x-ratelimit-remaining"), reset: res.headers.get("x-ratelimit-reset") },
+        ownerClock,
+      );
+      if (limit !== null) throw new Error(limit);
       return { status: res.status, data: await parseBody(res) };
     },
   };

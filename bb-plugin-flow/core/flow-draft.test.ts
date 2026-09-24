@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 
 import { flowDraftSchema, flowSchema, type FlowDraft, type StageCatalog } from "../shared/contract";
 import { resolveFlowDraft } from "./flow-draft";
+import { NO_FLOW } from "./flows";
 
 const tester = { id: "agent:tester", kind: "agent" as const, name: "tester", model: "haiku", provider: "claude-code" };
 const catalog: StageCatalog = { skills: [{ name: "task-flow" }, { name: "practice" }, { name: "spec" }], executors: [tester] };
@@ -14,6 +15,11 @@ const problemsOf = (d: FlowDraft, c?: StageCatalog) => {
 };
 
 describe("черновик flow", () => {
+  it("id «без flow» занят выбором композера и flow не достаётся", () => {
+    expect(problemsOf(draft([{ kind: "questions" }], { id: NO_FLOW }))).toEqual([`the flow id "${NO_FLOW}" is reserved for the "no flow" choice of the composer`]);
+    expect(resolve(draft([{ kind: "questions" }], { id: "quick" })).ok).toBe(true);
+  });
+
   it("встроенные этапы получают id и английское название вида, этап-навык — id и название по навыку, исполнители — из каталога", () => {
     const result = resolve(draft([{ kind: "questions" }, { kind: "criteria" }, { kind: "skill", skill: "task-flow" }, { kind: "skill", skill: "practice", name: "Execution", executors: ["agent:tester"] }, { kind: "demo" }]));
     expect(result).toEqual({

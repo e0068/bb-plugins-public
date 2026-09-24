@@ -43,7 +43,7 @@ export const registerFlowTools = (
   bb.agents.registerTool({
     name: SAVE_FLOW_TOOL_NAME,
     description:
-      "Create or replace one flow of the owner. Stages in order: built-in kinds (questions, criteria, select, demo), skill stages with a skill from the catalog and executor ids, and automation stages (kind skill, no skill) — Flow's built-in automation { source: \"flow\", steps, scripts } where a script step is \"script:<id>\" with its script { id, name, content } in the same stage, or an Automations automation { id, name }. Ids and names left out are filled in. A flow without id is new; position puts it at that place, 0 makes it the default. Stages whose skill or executor is not in the catalog are rejected, and nothing is saved.",
+      "Create or replace one flow of the owner. Stages in order: built-in kinds (questions, criteria, select, demo), skill stages with a skill from the catalog and executor ids, automation stages (kind skill, no skill) and action stages (kind action, same steps, run by the owner with a button) — Flow's built-in automation { source: \"flow\", steps, scripts } where a script step is \"script:<id>\" with its script { id, name, content } in the same stage, or an Automations automation { id, name }. Ids and names left out are filled in. A flow without id is new; position puts it at that place, 0 makes it the default. Stages whose skill or executor is not in the catalog are rejected, and nothing is saved.",
     presentation: { label: { pending: "Saving the flow", completed: "Flow saved" } },
     parameters: flowDraftSchema,
     async execute(params) {

@@ -11,11 +11,26 @@
 /** The answer of a step: the same shape steps.ts hands the runner. */
 export type StepOutcome = { ok: true; detail: string | null } | { ok: false; error: string };
 
+/**
+ * Почему поднимать версию было нечему и не на чем. Это не поломка: цепочка
+ * ставит шаг бампа дважды — сразу за созданием PR и перед мёрджем, — и в обоих
+ * пробелах версия поднимется вторым вызовом. Провал здесь останавливал цепочку
+ * на первом же прогоне любого треда со старым порядком шагов.
+ */
+export type BumpGap = "no-pull-request" | "branch-not-published";
+
+const GAP_DETAIL: Record<BumpGap, string> = {
+  "no-pull-request": "no pull request yet — versions are raised by the bump step before the merge",
+  "branch-not-published": "the branch is not on origin yet — versions are raised by the bump step before the merge",
+};
+
 /** What raising versions before a merge reported (wiring/merge-time-bump.ts plus the shell's "could not get there"). */
 export interface BumpSummary {
   readonly bumped: readonly { readonly root: string; readonly to: string }[];
   readonly problems: readonly string[];
   readonly unavailable: string | null;
+  /** Пробел, а не поломка; поля нет — обычный разбор ниже. */
+  readonly gap?: BumpGap | null;
 }
 
 /** What updating the touched plugins reported (wiring/plugin-reinstall.ts plus the shell's "could not get there"). */
@@ -35,6 +50,8 @@ export interface ReinstallSummary {
  * raise, on the other hand, is success — the branch is simply already ahead.
  */
 export function bumpOutcome(summary: BumpSummary): StepOutcome {
+  const gap = summary.gap ?? null;
+  if (gap !== null) return { ok: true, detail: GAP_DETAIL[gap] };
   if (summary.unavailable !== null) return { ok: false, error: `Versions not raised: ${summary.unavailable}` };
   if (summary.problems.length > 0) return { ok: false, error: `Versions not raised: ${summary.problems.join("; ")}` };
   if (summary.bumped.length === 0) return { ok: true, detail: "nothing to raise" };

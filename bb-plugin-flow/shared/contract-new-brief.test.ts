@@ -8,8 +8,8 @@ const scale = (...actions: string[]) => ({ options: actions.map((action, i) => (
 
 const setup = (overrides: Record<string, unknown> = {}) => ({
   artifacts: [
-    { id: "task", name: "Задача", state: "approved", link: { label: "SL-312", target: "memory/tasks/todo/sl-312.md" } },
-    { id: "prototype", name: "HTML-прототип", state: "ready", link: { label: "p.html", target: "memory/assets/p.html" } },
+    { id: "task", name: "Задача", state: "approved", link: { label: "SL-312", target: "docs/tasks/todo/sl-312.md" } },
+    { id: "prototype", name: "HTML-прототип", state: "ready", link: { label: "p.html", target: "docs/assets/p.html" } },
     { id: "spec", name: "Спецификация", state: "stale", recommended: true },
     { id: "plan", name: "План", state: "missing", recommended: true },
   ],

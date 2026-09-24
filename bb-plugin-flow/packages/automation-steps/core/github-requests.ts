@@ -8,7 +8,7 @@
 // it, so applied on top of it they are exactly the branch's own work, and
 // GitHub three-way merges them into the moved base itself — showing a
 // conflict where the base changed the same file, instead of the PR silently
-// overwriting it (see memory/decisions/pr-commit-parent-is-merge-base.md).
+// overwriting it (see docs/decisions/pr-commit-parent-is-merge-base.md).
 // Only the request bodies live here;
 // their sequencing and the network are in the shell (Layer 3), because there
 // is a dependency between steps through the returned shas.
@@ -70,6 +70,24 @@ export function getCommitRequest(repo: RepoRef, sha: string): GithubRequest {
  */
 export function getPullRequestRequest(repo: RepoRef, number: number): GithubRequest {
   return { method: "GET", path: `${base(repo)}/pulls/${number}` };
+}
+
+/**
+ * The state of a pull request as the merge step needs it: `merged` is the
+ * step's own goal already reached (a repeat, or a merge someone made by
+ * hand), `closed` is a refusal nothing can fix by retrying, `open` is work to
+ * do. Anything malformed is `unknown` — the step then behaves as it did
+ * before this reading existed.
+ */
+export type PullState = "merged" | "open" | "closed" | "unknown";
+
+export function parsePullState(data: unknown): PullState {
+  if (!data || typeof data !== "object") return "unknown";
+  const { merged, state } = data as { merged?: unknown; state?: unknown };
+  if (merged === true) return "merged";
+  if (state === "open") return "open";
+  if (state === "closed") return "closed";
+  return "unknown";
 }
 
 /** `mergeable` as a verdict: true and false are answers; null (still computing) and anything malformed are not. */
@@ -229,7 +247,7 @@ export function parseNextPrNumber(data: unknown): number | null {
 /**
  * GET the open pull request(s) for one head→base pair. Used to measure the
  * live truth directly when the host's own PR signal is stuck on a stale
- * verdict (see memory/decisions/open-pr-bypass-host-terminal-signal.md) —
+ * verdict (see docs/decisions/open-pr-bypass-host-terminal-signal.md) —
  * unlike {@link latestIssueRequest}, this asks GitHub itself, not "what did
  * bb last see".
  */

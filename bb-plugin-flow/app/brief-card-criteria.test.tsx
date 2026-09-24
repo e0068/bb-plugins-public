@@ -20,7 +20,7 @@ const brief: DecisionBrief = {
   setup: {
     artifacts: [
       { id: "task", name: "Задача", state: "missing", recommended: true },
-      { id: "prototype", name: "HTML-прототип", state: "ready", recommended: true, link: { label: "p.html", target: "memory/p.html" } },
+      { id: "prototype", name: "HTML-прототип", state: "ready", recommended: true, link: { label: "p.html", target: "docs/p.html" } },
       { id: "spec", name: "Спецификация", state: "missing", recommended: false },
       { id: "plan", name: "План", state: "missing", recommended: false },
     ],
