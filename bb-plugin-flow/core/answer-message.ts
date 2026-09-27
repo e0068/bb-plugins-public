@@ -3,7 +3,6 @@
 // виджету, поэтому из контракта берутся только типы.
 import type { Locale } from "../lib/i18n";
 import { messages, type Messages } from "../lib/messages";
-import { stageKindOf } from "../lib/stage-constants";
 import type { CriteriaAnswer, DecisionAnswer, DecisionBrief, DecisionQuestion, QuestionAnswer } from "../shared/contract";
 import { budgetLine, changeOf, criterionTitle, hasForecast, hasOwnBudget } from "./budget";
 import { carriedFor } from "./carry";
@@ -114,55 +113,48 @@ const finished = (item: StageItem): boolean => stagePhase(item) !== "todo";
 const stageDiffers = (brief: DecisionBrief, answer: DecisionAnswer, item: StageItem): boolean =>
   !finished(item) && !sameChoice(answeredStageChoice(brief, answer, item), recommendedStageChoice(item));
 
-const choiceWords = (item: StageItem, choice: StageChoice, locale: Locale | undefined): string => {
-  const m = messages(locale).answer;
-  return choice.run ? m.inRun(executorLabel(item.stage, choice.executor, locale)) : m.notInRun;
+/** Этап строки прогона: исполнитель назван, только когда этап исполняет не сам агент — у автоматизации его нет. */
+const runWords = (brief: DecisionBrief, answer: DecisionAnswer, item: StageItem, m: Messages["answer"], locale: Locale | undefined): string => {
+  const executor = answeredStageChoice(brief, answer, item).executor;
+  return executor === SELF ? item.stage.name : m.runStage(item.stage.name, executorLabel(item.stage, executor, locale));
 };
 
-/** Этап словами: сделан со ссылками или в прогон с исполнителем; расхождение с рекомендацией — в скобках. */
-const stageWords = (brief: DecisionBrief, answer: DecisionAnswer, item: StageItem, locale: Locale | undefined): string => {
-  const m = messages(locale).answer;
-  const links = (item.report?.results ?? []).map((r) => r.label).join(", ");
-  if (finished(item)) return m.stageDone(item.stage.name, links);
-  const choice = answeredStageChoice(brief, answer, item);
+/** Расхождение по несделанному этапу словами: снят, добавлен или другой исполнитель; этап вне прогона с обеих сторон молчит. */
+const offWords = (brief: DecisionBrief, answer: DecisionAnswer, item: StageItem, m: Messages["answer"], locale: Locale | undefined): string[] => {
+  const chosen = answeredStageChoice(brief, answer, item);
   const recommended = recommendedStageChoice(item);
-  return `${item.stage.name} — ${choiceWords(item, choice, locale)}${sameChoice(choice, recommended) ? "" : m.recommendedChoice(choiceWords(item, recommended, locale))}`;
+  const name = item.stage.name;
+  if (recommended.run && !chosen.run) return [m.dropped(name)];
+  if (chosen.run && !recommended.run) return [m.added(name)];
+  if (!chosen.run) return [];
+  return [m.swapped(name, executorLabel(item.stage, chosen.executor, locale), executorLabel(item.stage, recommended.executor, locale))];
 };
 
-/** Демонстрация агенту: исход, ссылки результатов и комментарий владельца. */
-const outcomeLines = (brief: DecisionBrief, answer: DecisionAnswer, locale: Locale | undefined): string[] => {
-  const outcome = brief.outcome;
-  if (outcome === undefined) return [];
-  const m = messages(locale).answer;
-  const note = blank(answer.outcome?.note) ? "" : m.stageNote(answer.outcome?.note ?? "");
-  const links = outcome.results.map((r) => r.label).join(", ");
-  return [m.stagesHeader, `- ${m.demoVerdict(outcomeStageName(brief), demoVerdict(answer) ?? "comment", links)}${note}`];
-};
-
+/**
+ * Этапы агенту — строка прогона по порядку и строка расхождений с рекомендацией. Сделанные этапы агент прислал сам,
+ * а правила — остановка на Демонстрации, «сам» без субагентов, один бриф на прогон — живут в инструкциях инструмента.
+ */
 const stagesLines = (brief: DecisionBrief, answer: DecisionAnswer, locale: Locale | undefined): string[] => {
   const items = stageItems(brief);
-  return items.length === 0 ? [] : [messages(locale).answer.stagesHeader, ...items.map((item) => `- ${stageWords(brief, answer, item, locale)}`)];
+  if (items.length === 0) return [];
+  const m = messages(locale).answer;
+  const run = items.filter((item) => !finished(item) && answeredStageChoice(brief, answer, item).run);
+  const off = items.filter((item) => stageDiffers(brief, answer, item)).flatMap((item) => offWords(brief, answer, item, m, locale));
+  return [
+    run.length === 0 ? m.noRun : m.run(run.map((item) => runWords(brief, answer, item, m, locale)).join(" → ")),
+    ...(off.length === 0 ? [] : [m.offRecommendation(off.join("; "))]),
+  ];
 };
 
-/** Дальше после Демонстрации: продолжить — следующий этап или конец работы; комментарий — ответить на него, Демонстрация остаётся открытой. */
+/** Комментарий владельца к Демонстрации — строкой под заголовком. */
+const outcomeLines = (brief: DecisionBrief, answer: DecisionAnswer, locale: Locale | undefined): string[] =>
+  !isOutcomeBrief(brief) || blank(answer.outcome?.note) ? [] : [messages(locale).answer.outcomeNote(answer.outcome?.note ?? "")];
+
+/** Дальше после Демонстрации: продолжить — следующий этап или конец работы; комментарий — ответить и прислать её снова. */
 const outcomeNextStep = (brief: DecisionBrief, answer: DecisionAnswer, m: Messages["answer"]): string => {
-  if (demoVerdict(answer) !== "continue") return m.outcomeComment(outcomeStageName(brief));
+  if (demoVerdict(answer) !== "continue") return m.outcomeComment;
   const next = brief.outcome?.next;
   return next === undefined ? m.outcomeFinal : m.outcomeNext(next);
-};
-
-/** Этап-навык прогона, который владелец оставил агенту треда: субагентов и workflow на нём нет. */
-const ranBySelf = (brief: DecisionBrief, answer: DecisionAnswer, item: StageItem): boolean =>
-  stageKindOf(item.stage) === "skill" && item.stage.automation === undefined && answeredStageChoice(brief, answer, item).executor === SELF;
-
-/** Дальше по этапам: прогон по порядку, остановки на Демонстрациях из прогона и этапы без субагентов. */
-const stagesNextStep = (brief: DecisionBrief, answer: DecisionAnswer, m: Messages["answer"]): string => {
-  const run = stageItems(brief).filter((item) => !finished(item) && answeredStageChoice(brief, answer, item).run);
-  const stops = run.filter((item) => stageKindOf(item.stage) === "demo").map((item) => item.stage.name);
-  const self = run.filter((item) => ranBySelf(brief, answer, item)).map((item) => item.stage.name);
-  const plan = run.length === 0 ? m.noRun : m.run(run.map((item) => item.stage.name).join(", "));
-  const halt = stops.length === 0 ? m.noStops : m.stops(stops.join(", "));
-  return self.length === 0 ? m.next(plan, halt) : `${m.next(plan, halt)} ${m.selfOnly(self.join(", "))}.`;
 };
 
 /** Выбранное словами и рекомендованное словами; `null` у рекомендации — агент её не ставил. `carried` — владелец оставил перенесённое. */
@@ -215,7 +207,8 @@ export const deviations = (brief: DecisionBrief, answer: DecisionAnswer): number
 /** Реплика ответа агенту на языке интерфейса владельца; без языка — русская, как ответы до выбора языка. */
 export const answerMessageText = (brief: DecisionBrief, answer: DecisionAnswer, locale?: Locale): string => {
   const m = messages(locale).answer;
-  const heading = m.heading(brief.kind === "clarify", brief.title);
+  const verdict = isOutcomeBrief(brief) ? demoVerdict(answer) : null;
+  const heading = verdict === null ? m.heading(brief.kind === "clarify", brief.title) : m.outcomeHeading(brief.title, verdict === "comment", outcomeStageName(brief));
   const body = readings(brief, answer, locale).map(({ question, reading }, i) => {
     const head = `${i + 1}. ${question.question} — `;
     if (reading === null) return `${head}${m.noAnswer}`;
@@ -226,18 +219,17 @@ export const answerMessageText = (brief: DecisionBrief, answer: DecisionAnswer, 
   return [heading, ...body, ...outcomeLines(brief, answer, locale), ...stagesLines(brief, answer, locale), ...budgetLine(brief, answer, locale), ...criteriaLine(brief, answer, m), ...nextStepLine(brief, answer, m), ...note].join("\n");
 };
 
-/** Ответ на бриф — согласие на всю работу: агент идёт до конца и останавливается только на утверждениях, обязательных по настройкам. */
+/** Шаг агента после ответа: после Демонстрации — следующий, у брифа без этапов — только остановки на утверждение. */
 const nextStepLine = (brief: DecisionBrief, answer: DecisionAnswer, m: Messages["answer"]): string[] => {
   if (brief.kind !== "brief") return [];
   if (isOutcomeBrief(brief)) return [outcomeNextStep(brief, answer, m)];
-  if (stageItems(brief).length > 0) return [stagesNextStep(brief, answer, m)];
+  if (stageItems(brief).length > 0) return [];
   const kept = entryFor(answer, SETUP_ROW.artifacts)?.optionIds ?? [];
   const approve = brief.required?.approve ?? [];
   const stops = (brief.setup?.artifacts ?? [])
     .filter((a) => (a.state === "missing" || a.state === "stale") && kept.includes(a.id) && approve.includes(a.id))
     .map((a) => a.name);
-  const approvals = stops.length === 0 ? m.noApprovals : m.approvals(stops.join(", "));
-  return [m.legacyNext(approvals)];
+  return stops.length === 0 ? [] : [m.approvals(stops.join(", "))];
 };
 
 /** Утверждённые артефакты со снятой галочкой — агенту словами, а не только расхождением. */

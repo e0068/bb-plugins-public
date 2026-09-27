@@ -30,25 +30,24 @@ describe("ответ по этапам без приёмки", () => {
     expect(openQuestions(brief, answer([{ ...planRun, executor: "agent:ghost" }]))).toContain("setup.stage.plan");
   });
 
-  it("реплика называет этапы: сделан со ссылкой — и ждавший приёмки тоже, в прогон с исполнителем; Review by User нет", () => {
-    const text = answerMessageText(brief, answer([{ ...planRun, executor: planner.id }, demoRun]));
-    expect(text).toContain("Задача — сделан");
-    expect(text).toContain("BBPL-1");
-    expect(text).toContain("Спецификация — сделан: spec.md");
-    expect(text).toMatch(/План — в прогон, исполняет planner/);
-    expect(text).not.toMatch(/Review by User|приёмк/);
+  it("реплика не перечисляет сделанные этапы: только строка прогона по порядку, исполнитель — у отданных не себе", () => {
+    const lines = answerMessageText(brief, answer([{ ...planRun, executor: planner.id }, demoRun])).split("\n");
+    expect(lines).toContain("Прогон: План (planner · opus) → Демонстрация.");
+    expect(lines.join("\n")).not.toMatch(/BBPL-1|spec\.md|Этапы работ|Дальше|Review by User|приёмк/);
   });
 
-  it("«Дальше» перечисляет прогон и остановки на Демонстрациях из прогона", () => {
-    const next = (stages: StageAnswer[]) => answerMessageText(brief, answer(stages)).split("\n").find((l) => l.startsWith("Дальше")) ?? "";
-    expect(next([planRun, demoRun])).toMatch(/План, Демонстрация/);
-    expect(next([planRun, demoRun])).toMatch(/на этапах Демонстрация остановись и пришли демонстрацию/);
-    expect(next([planRun, { ...demoRun, run: false, picked: ["run"] }])).toContain("демонстраций в прогоне нет");
+  it("прогон без этапов — «Прогон пуст.»", () => {
+    expect(answerMessageText(brief, answer([{ ...planRun, run: false, picked: ["run"] }, { ...demoRun, run: false, picked: ["run"] }])).split("\n")).toContain("Прогон пуст.");
   });
 
-  it("расхождение с рекомендацией названо; этапы входят в знаменатель расхождений", () => {
-    const text = answerMessageText(brief, answer([{ ...planRun, run: false, picked: ["run"] }, demoRun]));
-    expect(text).toMatch(/План — не в прогон \(рекомендовал в прогон, исполняет Сам/);
+  it("расхождения с рекомендацией — одной строкой: снятый этап и другой исполнитель; совпадение строки не даёт", () => {
+    const text = (stages: StageAnswer[]) => answerMessageText(brief, answer(stages)).split("\n");
+    expect(text([{ ...planRun, run: false, picked: ["run"] }, demoRun])).toContain("Не по рекомендации: План — снят.");
+    expect(text([{ ...planRun, executor: planner.id }, demoRun])).toContain("Не по рекомендации: План — planner · opus вместо Сам.");
+    expect(text([planRun, demoRun]).some((l) => l.startsWith("Не по рекомендации"))).toBe(false);
+  });
+
+  it("этапы входят в знаменатель расхождений", () => {
     expect(deviationTotal(brief)).toBe(4);
     expect(deviations(brief, answer([planRun, demoRun]))).toBe(0);
     expect(deviations(brief, answer([{ ...planRun, executor: planner.id }, demoRun]))).toBe(1);

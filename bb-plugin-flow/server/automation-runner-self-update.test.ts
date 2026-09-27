@@ -2,9 +2,9 @@
 import { createFakePluginHost } from "@get-bb/plugin-sdk/testing";
 import { describe, expect, it, vi } from "vitest";
 
-import { STEP_IDS } from "../packages/automation-steps/catalog";
-import { selfUpdatePendingKey } from "../packages/automation-steps/index";
-import type { PluginsPort, StepId, StepOutcome, Steps } from "../packages/automation-steps/index";
+import { STEP_IDS } from "@bb-plugins/automation-steps/catalog";
+import { selfUpdatePendingKey } from "@bb-plugins/automation-steps/index";
+import type { PluginsPort, StepId, StepOutcome, Steps } from "@bb-plugins/automation-steps/index";
 import { stage } from "../core/stages-fixtures";
 import type { StageSettings, WorkStage } from "../shared/contract";
 import { createAutomationRunner } from "./automation-runner";

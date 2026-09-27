@@ -1,6 +1,8 @@
 // Кнопки этапов работ в нижнем блоке брифа. Ячейка невыполненного этапа — две
 // кнопки: слева галочка с названием включает этап в прогон, справа шеврон
-// раскрывает исполнителей. Сделанный этап — подложка во всю ячейку под
+// раскрывает исполнителей; у этапа без исполнителей шеврона нет — выбирать не
+// из чего. Название тянется по ширине ячейки, не больше двух строк, дальше
+// многоточие. Сделанный этап — подложка во всю ячейку под
 // ссылкой результата, без чекбокса: снять пройденный этап нельзя. Кнопки
 // тянутся по ширине и переносятся, раскрытый список встаёт строкой сразу под
 // рядом своей кнопки. Ячейка несделанной автоматизации — галочка с названием и
@@ -9,14 +11,15 @@
 import { useRef, type ReactNode } from "react";
 
 import { SELF, executorLabel, stageAdd, stageItems, stageLabel, stagePhase, type StageItem } from "../core/stages";
+import type { FileRoots } from "../core/result-link";
 import { Icon } from "../components/ui/icon";
 import { cn } from "../lib/utils";
 import type { DecisionBrief, StageExecutor } from "../shared/contract";
-import { AddMeta, CardText, CheckSquare, DocumentName, RESULT_ROW, type OpenFile } from "./cells";
+import { AddMeta, CardText, CheckSquare, DocumentName, RESULT_ROW } from "./cells";
 import { pickStageExecutor, stageChoiceIn, toggleStageRun, type Draft } from "./draft";
 import { useLocale, useMessages } from "./locale-context";
 import { ROW_CELL, cellOrder, panelOrder, useRowEnds } from "./row-order";
-import { automationIcon, stageIcon } from "./stage-icons";
+import { automationIcon } from "./stage-icons";
 import { copyText, useFlash } from "./flash";
 import { ExecutorMark } from "./provider-logos";
 
@@ -47,7 +50,7 @@ type StageState = { item: StageItem; finished: boolean };
 
 const stateOf = (item: StageItem): StageState => ({ item, finished: stagePhase(item) !== "todo" });
 
-function StageCell({ state, view, openFile, order, width }: { state: StageState; view: StagesView; openFile: OpenFile; order: number; width: number }) {
+function StageCell({ state, view, roots, order, width }: { state: StageState; view: StagesView; roots: FileRoots | null; order: number; width: number }) {
   const { item, finished } = state;
   const t = useMessages();
   const locale = useLocale();
@@ -62,10 +65,16 @@ function StageCell({ state, view, openFile, order, width }: { state: StageState;
   // Автоматизацию исполняет сам Flow: выбирать в ней нечего, поэтому у несделанной нечего и раскрывать.
   // Сделанная ведёт себя как остальные: ссылка результата в ячейке, остальные — в раскрытом списке.
   const automation = checkable ? item.stage.automation : undefined;
-  const expandable = checkable ? automation === undefined && !view.answered : results.length > 0;
+  // Раскрывать есть что, только если есть из кого выбирать: одного «Сам» список не стоит.
+  const expandable = checkable ? automation === undefined && item.stage.executors.length > 0 && !view.answered : results.length > 0;
+  const name = stageLabel(item.stage, t.stages);
   const label = (
     <CardText
-      label={<span className="min-w-0 truncate">{stageLabel(item.stage, t.stages)}</span>}
+      label={
+        <span title={name} className="line-clamp-2">
+          {name}
+        </span>
+      }
       meta={checkable ? <AddMeta add={stageAdd(item, choice.executor)} /> : null}
       bright={checkable ? own.executor !== undefined : true}
     >
@@ -76,7 +85,7 @@ function StageCell({ state, view, openFile, order, width }: { state: StageState;
         </span>
       ) : (
         <span className="flex min-w-0 items-center gap-1">
-          {results[0] !== undefined && <DocumentName link={results[0]} openFile={openFile} className="pointer-events-auto" />}
+          {results[0] !== undefined && <DocumentName link={results[0]} roots={roots} className="pointer-events-auto" />}
           {results.length > 1 && <span className="shrink-0 font-normal text-muted-foreground">+{results.length - 1}</span>}
         </span>
       )}
@@ -90,7 +99,7 @@ function StageCell({ state, view, openFile, order, width }: { state: StageState;
         <button
           type="button"
           aria-pressed={choice.run}
-          aria-label={t.stages.toRun(stageLabel(item.stage, t.stages))}
+          aria-label={t.stages.toRun(name)}
           disabled={view.answered || view.sending}
           onClick={() => view.change((d) => toggleStageRun(view.brief, d, item))}
           className={cn("flex min-w-0 flex-1 items-center gap-3 pl-3 text-left enabled:hover:bg-state-hover disabled:cursor-default", !expandable && automation === undefined && "pr-3")}
@@ -105,19 +114,15 @@ function StageCell({ state, view, openFile, order, width }: { state: StageState;
           </span>
         )}
         {expandable && (
-          // На месте шеврона — значок самого этапа, как у автоматизации: список
-          // исполнителей за ним почти всегда из одного пункта «Сам», и обещать
-          // подсветкой, что там что-то есть, — значит обещать лишнее. Нажатие
-          // список по-прежнему раскрывает.
           <button
             type="button"
-            aria-label={stageLabel(item.stage, t.stages)}
+            aria-label={name}
             aria-expanded={open}
             disabled={view.sending}
             onClick={expand}
             className="flex shrink-0 items-center px-3 disabled:cursor-default"
           >
-            <Icon name={stageIcon(item.stage)} aria-hidden="true" className="size-3.5 text-muted-foreground" />
+            <Icon name="ChevronDown" aria-hidden="true" className={cn("size-3.5 text-muted-foreground", open && "rotate-180")} />
           </button>
         )}
       </div>
@@ -127,7 +132,7 @@ function StageCell({ state, view, openFile, order, width }: { state: StageState;
       {expandable ? (
         <button
           type="button"
-          aria-label={stageLabel(item.stage, t.stages)}
+          aria-label={name}
           aria-expanded={open}
           disabled={view.sending}
           onClick={expand}
@@ -203,7 +208,7 @@ function ExecutorPanel({ item, view, order, cell }: { item: StageItem; view: Sta
 const COPIED_MS = 1500;
 
 /** Результат одной строкой: имя открывает файл, путь за ним копируется в буфер и на миг сменяется подтверждением. */
-export function ResultRow({ result, openFile, className }: { result: { label: string; target: string }; openFile: OpenFile; className?: string }) {
+export function ResultRow({ result, roots, className }: { result: { label: string; target: string }; roots: FileRoots | null; className?: string }) {
   const t = useMessages();
   const [copied, flashCopied] = useFlash(COPIED_MS);
   const [failed, flashFailed] = useFlash(COPIED_MS);
@@ -211,7 +216,7 @@ export function ResultRow({ result, openFile, className }: { result: { label: st
   const onCopy = () => void copyText(result.target).then(flashCopied, flashFailed);
   return (
     <div data-result-row className={cn(RESULT_ROW, className)}>
-      <DocumentName link={result} openFile={openFile} className="max-w-[50%] shrink-0 self-center" />
+      <DocumentName link={result} roots={roots} className="max-w-[50%] shrink-0 self-center" />
       <button
         type="button"
         aria-label={t.stages.copyPath(result.target)}
@@ -228,12 +233,12 @@ export function ResultRow({ result, openFile, className }: { result: { label: st
   );
 }
 
-function ResultsPanel({ item, openFile, order }: { item: StageItem; openFile: OpenFile; order: number }) {
+function ResultsPanel({ item, roots, order }: { item: StageItem; roots: FileRoots | null; order: number }) {
   const t = useMessages();
   return (
     <div role="group" aria-label={t.stages.results(stageLabel(item.stage, t.stages))} style={{ order }} className="flex basis-full flex-col gap-px">
       {(item.report?.results ?? []).map((result) => (
-        <ResultRow key={result.target} result={result} openFile={openFile} />
+        <ResultRow key={result.target} result={result} roots={roots} />
       ))}
     </div>
   );
@@ -243,7 +248,7 @@ function ResultsPanel({ item, openFile, order }: { item: StageItem; openFile: Op
  * Кнопки этапов и бюджета одним переносимым рядом, списки — под рядом своей кнопки.
  * `budget` — кнопка бюджета и её раскрытая разбивка из карточки: они встают последней ячейкой ряда.
  */
-export function StagesBlock({ view, openFile, budget }: { view: StagesView; openFile: OpenFile; budget: { key: string; cell: ReactNode; panel: ReactNode } | null }) {
+export function StagesBlock({ view, roots, budget }: { view: StagesView; roots: FileRoots | null; budget: { key: string; cell: ReactNode; panel: ReactNode } | null }) {
   const container = useRef<HTMLDivElement>(null);
   const states = stageItems(view.brief).map(stateOf);
   const count = states.length + (budget === null ? 0 : 1);
@@ -254,13 +259,13 @@ export function StagesBlock({ view, openFile, budget }: { view: StagesView; open
     const key = stageKey(state.item.stage.id);
     if (view.expanded !== key) return [];
     const cell = () => [...(container.current?.querySelectorAll<HTMLElement>("[data-stage]") ?? [])].find((el) => el.dataset.stage === state.item.stage.id) ?? null;
-    return [state.finished ? <ResultsPanel key={key} item={state.item} openFile={openFile} order={order} /> : <ExecutorPanel key={key} item={state.item} view={view} order={order} cell={cell} />];
+    return [state.finished ? <ResultsPanel key={key} item={state.item} roots={roots} order={order} /> : <ExecutorPanel key={key} item={state.item} view={view} order={order} cell={cell} />];
   });
   const budgetIndex = states.length;
   return (
     <div ref={container} className="flex flex-wrap gap-px">
       {states.map((state, index) => (
-        <StageCell key={state.item.stage.id} state={state} view={view} openFile={openFile} order={cellOrder(index)} width={width} />
+        <StageCell key={state.item.stage.id} state={state} view={view} roots={roots} order={cellOrder(index)} width={width} />
       ))}
       {budget !== null && (
         <div {...rowCellAttr} style={{ order: cellOrder(budgetIndex), flex: `1 1 ${width}px`, minWidth: `min(${width}px, 100%)` }} className="flex min-w-0">

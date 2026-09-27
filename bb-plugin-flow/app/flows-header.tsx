@@ -1,18 +1,17 @@
-// Шапка панели Flow: вкладка истории прогонов, за ней лента flow во всю
-// свободную ширину титул-бара — не помещается, листается вбок — и создание
-// нового в её конце. Хост монтирует шапку отдельно от страницы, и стейт
-// страницы ей недоступен — общий у них только адрес панели: клик по flow пишет
-// его в `subPath`, а страница читает тот же адрес обратно. Подсветка идёт за
-// `flowById`, как и содержимое страницы: удалённый из адреса flow обе стороны
-// читают как flow по умолчанию, и лента не остаётся без текущего.
+// Лента в начале страницы Flow: вкладка истории прогонов, за ней flow — не
+// помещается, листается вбок — и создание нового в её конце. Раньше лента
+// стояла в титул-баре панели, но там хост не давал ей листаться, и flow за
+// краем экрана телефона были недоступны. Клик по flow пишет его в `subPath`
+// панели, а страница читает тот же адрес обратно. Подсветка идёт за `flowById`,
+// как и содержимое страницы: удалённый из адреса flow обе стороны читают как
+// flow по умолчанию, и лента не остаётся без текущего.
 import { useBbNavigate, type PluginNavPanelProps } from "@get-bb/plugin-sdk/app";
 
 import { addFlow, flowById, newFlow } from "../core/flows";
 import { Icon } from "../components/ui/icon";
 import { cn } from "../lib/utils";
-import { FLOWS_PANEL_PATH } from "./flows-page";
+import { FLOWS_PANEL_PATH } from "./panel-path";
 import { HISTORY_SUB_PATH } from "./run-history";
-import { LocaleProvider } from "./locale";
 import { useMessages } from "./locale-context";
 import { updateFlowSettings, useFlowSettings } from "./stage-settings-store";
 
@@ -21,15 +20,7 @@ const ACTIVE_TAB = "bg-state-active font-medium text-foreground";
 
 const newFlowId = (): string => `flow-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
 
-export function FlowsHeader(props: PluginNavPanelProps) {
-  return (
-    <LocaleProvider>
-      <Strip {...props} />
-    </LocaleProvider>
-  );
-}
-
-function Strip({ subPath }: PluginNavPanelProps) {
+export function FlowsHeader({ subPath }: Pick<PluginNavPanelProps, "subPath">) {
   const t = useMessages();
   const navigate = useBbNavigate();
   const { settings } = useFlowSettings();
@@ -43,7 +34,7 @@ function Strip({ subPath }: PluginNavPanelProps) {
     open(id);
   };
   return (
-    <nav aria-label={t.flows.list} className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto">
+    <nav aria-label={t.flows.list} className="flex items-center gap-1 overflow-x-auto">
       <button
         type="button"
         aria-current={history ? "page" : undefined}

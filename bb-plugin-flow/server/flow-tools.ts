@@ -5,7 +5,7 @@
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import { z } from "zod";
 
-import { STEP_IDS, STEP_LABELS } from "../packages/automation-steps/catalog";
+import { STEP_IDS, STEP_LABELS } from "@bb-plugins/automation-steps/catalog";
 import { resolveFlowDraft } from "../core/flow-draft";
 import { putFlow } from "../core/flows";
 import { flowDraftSchema, type StageCatalog } from "../shared/contract";

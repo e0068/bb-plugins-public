@@ -8,11 +8,12 @@ import { definePluginApp } from "@get-bb/plugin-sdk/app";
 
 import { CommandDirective } from "./app/command";
 import { FlowPicker } from "./app/flow-picker";
-import { FlowsHeader } from "./app/flows-header";
-import { FLOWS_PANEL_PATH, FlowsPage } from "./app/flows-page";
+import { FlowsPage } from "./app/flows-page";
+import { FLOWS_PANEL_PATH } from "./app/panel-path";
 import { JournalDirsSection } from "./app/journal-settings";
-import { AgentFlowChoiceSection, StageButtonsSection } from "./app/flow-settings-sections";
+import { AgentFlowChoiceSection, AutomationRetrySection, StageButtonsSection } from "./app/flow-settings-sections";
 import { NextFlowForm } from "./app/next-flow";
+import { AutomationToasts } from "./app/automation-toasts";
 import { ProgressBanner } from "./app/progress-banner";
 import { registerAwaitingStatus } from "./app/row-status";
 import { systemLanguages } from "./app/locale-context";
@@ -25,12 +26,13 @@ export default definePluginApp((app) => {
   app.slots.messageDirective({ id: "command", component: CommandDirective });
   // Заголовок секции регистрируется один раз, до настроек плагина, поэтому идёт за языком браузера.
   const t = messages(resolveLocale(undefined, systemLanguages())).settings;
-  app.slots.navPanel({ id: "flows", title: "Flow", icon: "Workflow", path: FLOWS_PANEL_PATH, component: FlowsPage, headerContent: FlowsHeader });
+  app.slots.navPanel({ id: "flows", title: "Flow", icon: "Workflow", path: FLOWS_PANEL_PATH, component: FlowsPage });
   app.composer.customize({ id: "flow", scopes: ["new-thread"], actions: [{ id: "flow-picker", component: FlowPicker }] });
   // Баннер и форма стоят на одном месте: пока прогон идёт — полоса, как только он закрыт — выбор следующего flow.
-  app.composer.customize({ id: "flow-progress", scopes: ["thread"], banners: [{ id: "progress", chrome: "bare", component: ProgressBanner }, { id: "next-flow", chrome: "bare", component: NextFlowForm }] });
+  app.composer.customize({ id: "flow-progress", scopes: ["thread"], banners: [{ id: "progress", chrome: "bare", component: ProgressBanner }, { id: "next-flow", chrome: "bare", component: NextFlowForm }, { id: "notices", chrome: "bare", component: AutomationToasts }] });
   registerAwaitingStatus(app);
   app.slots.settingsSection({ id: "journal-dirs", title: t.journalTitle, description: t.journalDescription, component: JournalDirsSection });
   app.slots.settingsSection({ id: "stage-buttons", title: t.buttonsTitle, description: t.buttonsDescription, component: StageButtonsSection });
+  app.slots.settingsSection({ id: "automation-retry", title: t.retryTitle, description: t.retryDescription, component: AutomationRetrySection });
   app.slots.settingsSection({ id: "agent-flow-choice", title: t.agentChoiceTitle, description: t.agentChoiceDescription, component: AgentFlowChoiceSection });
 });

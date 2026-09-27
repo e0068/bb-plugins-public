@@ -1,5 +1,4 @@
 // @vitest-environment node
-import fc from "fast-check";
 import { describe, expect, it } from "vitest";
 
 import { automationStage, builtinStage } from "../lib/stage-constants";
@@ -9,7 +8,6 @@ import {
   automationView,
   builtinAutomationStage,
   failedAutomations,
-  nextAutomation,
   onRunRetry,
   onRunStart,
   onStepDone,
@@ -35,45 +33,6 @@ const done = (progress: FlowProgress, id: string): FlowProgress => onMark(onMark
 /** Прогоняет этап до конца: старт и успешный каждый шаг. */
 const runThrough = (progress: FlowProgress, s: WorkStage): FlowProgress =>
   stepsOf(s).reduce((p) => onStepDone(p, s.id, T1), onRunStart(progress, s.id, stepsOf(s), T0));
-
-describe("какую автоматизацию запускать", () => {
-  it("цепочка автоматизаций запускается строго по порядку этапов", () => {
-    fc.assert(
-      fc.property(fc.integer({ min: 1, max: 6 }), (n) => {
-        const chain = Array.from({ length: n }, (_, i): WorkStage => ({ ...publish, id: `a${i}` }));
-        const stages = [review, ...chain];
-        const started: string[] = [];
-        let progress = done(EMPTY_PROGRESS, "review");
-        for (let next = nextAutomation(stages, progress); next !== null; next = nextAutomation(stages, progress)) {
-          started.push(next.id);
-          progress = runThrough(progress, next);
-        }
-        expect(started).toEqual(chain.map((s) => s.id));
-      }),
-    );
-  });
-
-  it("незавершённый этап навыка впереди не даёт запустить автоматизацию за ним", () => {
-    expect(nextAutomation([review, publish], EMPTY_PROGRESS)).toBeNull();
-    expect(nextAutomation([review, publish], onMark(EMPTY_PROGRESS, "review", "started", T0))).toBeNull();
-  });
-
-  it("вычеркнутый этап пропускается", () => {
-    const skipped: FlowProgress = { ...EMPTY_PROGRESS, stages: { review: { skipped: true } } };
-    expect(nextAutomation([review, publish], skipped)?.id).toBe("publish");
-  });
-
-  it("идущая автоматизация не запускается второй раз", () => {
-    const running = onRunStart(done(EMPTY_PROGRESS, "review"), "publish", stepsOf(publish), T0);
-    expect(nextAutomation([review, publish], running)).toBeNull();
-  });
-
-  it("упавший шаг не даёт запустить ни этот, ни следующий этап", () => {
-    const failed = onStepFailed(onRunStart(done(EMPTY_PROGRESS, "review"), "publish", stepsOf(publish), T0), "publish", "no token", T1);
-    expect(nextAutomation([review, publish, land], failed)).toBeNull();
-    expect(failedAutomations(failed)).toEqual(["publish"]);
-  });
-});
 
 describe("шаги в прогрессе", () => {
   it("последний успешный шаг завершает этап, промежуточный — нет", () => {

@@ -28,10 +28,15 @@ describe("секция пути журнала решений", () => {
     expect(app.settingsSections.map((s) => s.id)).toContain("journal-dirs");
   });
 
-  it("показывает подсказку у проекта без настроенного пути", async () => {
+  it("секция называется «Хранение истории Flows»", () => {
+    expect(app.settingsSections.find((s) => s.id === "journal-dirs")!.title).toBe("Хранение истории Flows");
+  });
+
+  it("у проекта без своего пути поле показывает docs/flows как значение по умолчанию", async () => {
     const slot = open([{ id: "proj_1", name: "bb-plugins", path: null }]);
-    expect(await slot.findByText("bb-plugins")).toBeTruthy();
-    expect(await slot.findByText("Не задано — журнал не ведётся")).toBeTruthy();
+    const input = (await slot.findByLabelText("bb-plugins")) as HTMLInputElement;
+    expect(input.placeholder).toBe("docs/flows");
+    expect(await slot.findByText("По умолчанию — docs/flows")).toBeTruthy();
   });
 
   it("показывает уже настроенный путь в поле", async () => {

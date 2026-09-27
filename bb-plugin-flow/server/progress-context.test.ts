@@ -13,7 +13,7 @@ import { createStore } from "./store";
 const THREAD = "thr_context";
 const settings: StageSettings = { stages: [builtinStage("questions", []), stage("task", { name: "Задача" })], minButtonWidth: 170 };
 
-type Fill = { share: number; usedTokens: number; windowTokens: number; warnPercent: number; alertPercent: number };
+type Fill = { share: number; usedTokens: number; windowTokens: number; warnTokens: number; alertTokens: number };
 
 const host = async (context?: () => Promise<Fill | null>) => {
   const now = () => "2026-09-23T10:00:00.000Z";
@@ -28,7 +28,7 @@ const host = async (context?: () => Promise<Fill | null>) => {
   return harness;
 };
 
-const fill: Fill = { share: 0.181, usedTokens: 163_000, windowTokens: 900_000, warnPercent: 25, alertPercent: 40 };
+const fill: Fill = { share: 0.181, usedTokens: 163_000, windowTokens: 900_000, warnTokens: 250_000, alertTokens: 400_000 };
 
 describe("заполненность окна в ответе баннера", () => {
   it("числа есть — они едут тем же ответом, что и прогресс", async () => {
@@ -37,9 +37,9 @@ describe("заполненность окна в ответе баннера", (
   });
 
   it("пороги приезжают из ответа, а не подбираются фронтом", async () => {
-    const harness = await host(async () => ({ ...fill, warnPercent: 12, alertPercent: 55 }));
+    const harness = await host(async () => ({ ...fill, warnTokens: 120_000, alertTokens: 550_000 }));
     const view = (await harness.callRpc("getFlowProgress", { threadId: THREAD })) as { context: Fill };
-    expect(view.context).toMatchObject({ warnPercent: 12, alertPercent: 55 });
+    expect(view.context).toMatchObject({ warnTokens: 120_000, alertTokens: 550_000 });
   });
 
   it("чисел за тредом ещё нет — поля нет, а прогресс на месте", async () => {

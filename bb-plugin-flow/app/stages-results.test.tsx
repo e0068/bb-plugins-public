@@ -5,6 +5,7 @@ import { loadPluginApp, renderSlot } from "@get-bb/plugin-sdk/testing/app";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { report, stagedBrief } from "../core/stages-fixtures";
+import { threadFiles, workspacePreview } from "./file-roots-fixture";
 import type { DecisionBrief, decisionsRpcContract } from "../shared/contract";
 
 const app = await loadPluginApp(() => import("../app"));
@@ -22,14 +23,14 @@ const brief = stagedBrief([
 ]);
 
 const open = (openWorkspaceFile: PluginMessageDirectiveProps["openWorkspaceFile"] = () => true, b: DecisionBrief = brief) =>
-  renderSlot<PluginMessageDirectiveProps, typeof decisionsRpcContract & { threadStorage: never }>(
+  renderSlot<PluginMessageDirectiveProps, typeof decisionsRpcContract & { threadFiles: never }>(
     app.messageDirectives[0]!,
     { attributes: { id: b.id }, source: `::decision{id="${b.id}"}`, message: { id: "msg_1", threadId: "thr_1", turnId: "turn_1", projectId: null }, openWorkspaceFile },
     {
       rpc: {
         getBrief: () => ({ kind: "found", brief: b, answer: null }),
         answerBrief: () => ({ kind: "not_found" }),
-        threadStorage: (() => ({ kind: "found", hostId: "local", storageRootPath: STORAGE })) as never,
+        threadFiles: threadFiles as never,
       },
     },
   );
@@ -43,25 +44,36 @@ const results = async (slot: Slot) => {
 };
 
 describe("результаты сделанного этапа", () => {
-  it("результат — одна строка: сперва имя файла, за ним путь", async () => {
+  it("результат — одна строка: сперва имя файла ссылкой bb, за ним путь кнопкой копирования", async () => {
     const slot = open();
     await results(slot);
     const rows = [...slot.container.querySelectorAll<HTMLElement>("[data-result-row]")];
     expect(rows).toHaveLength(2);
-    expect(within(rows[0]!).getAllByRole("button").map((b) => b.textContent)).toEqual(["prototype.html", PROTOTYPE]);
+    expect((await within(rows[0]!).findByRole("link")).textContent).toBe("prototype.html");
+    expect(within(rows[0]!).getAllByRole("button").map((b) => b.textContent)).toEqual([PROTOTYPE]);
   });
 
-  it("имя файла из хранилища треда открывает его превью bb файлом хранилища", async () => {
+  it("имя файла из хранилища треда — ссылка bb на файл хранилища: клик открывает его превью", async () => {
     const slot = open();
-    fireEvent.click((await results(slot)).getByRole("button", { name: /^prototype\.html/ }));
+    fireEvent.click(await (await results(slot)).findByRole("link", { name: /^prototype\.html/ }));
     await waitFor(() => expect(slot.navigateCalls).toContainEqual({ method: "experimental_openFilePreview", options: { target: { kind: "thread-storage", threadId: "thr_1", path: "CEL-131/prototype.html" }, location: null } }));
   });
 
-  it("имя файла с путём от корня дерева открывает его просмотрщиком дерева", async () => {
-    const opened = vi.fn(() => true);
-    const slot = open(opened);
-    fireEvent.click((await results(slot)).getByRole("button", { name: /^spec\.md/ }));
-    expect(opened).toHaveBeenCalledWith("docs/specs/spec.md");
+  it("имя файла с путём от корня дерева — ссылка bb на файл окружения треда: клик открывает его превью", async () => {
+    const slot = open();
+    fireEvent.click(await (await results(slot)).findByRole("link", { name: /^spec\.md/ }));
+    expect(slot.navigateCalls).toContainEqual(workspacePreview("docs/specs/spec.md"));
+  });
+
+  it("пока корни файлов треда не пришли, имя файла — подпись, а не ссылка", async () => {
+    const slot = renderSlot<PluginMessageDirectiveProps, typeof decisionsRpcContract>(
+      app.messageDirectives[0]!,
+      { attributes: { id: brief.id }, source: `::decision{id="${brief.id}"}`, message: { id: "msg_1", threadId: "thr_1", turnId: "turn_1", projectId: null }, openWorkspaceFile: () => true },
+      { rpc: { getBrief: () => ({ kind: "found", brief, answer: null }), answerBrief: () => ({ kind: "not_found" }) } },
+    );
+    const panel = await results(slot);
+    expect(panel.queryByRole("link")).toBeNull();
+    expect(panel.getByText("spec.md").closest("[aria-disabled]")).not.toBeNull();
   });
 
   it("клик по пути копирует его в буфер и на миг показывает «Путь скопирован»", async () => {

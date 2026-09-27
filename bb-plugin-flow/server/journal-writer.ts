@@ -5,12 +5,13 @@ import type { BbPluginApi } from "@get-bb/plugin-sdk";
 
 import { decisionDocument, decisionFileName, journalPaths, suffixedName } from "../core/journal-doc";
 import type { Locale } from "../lib/i18n";
+import { DEFAULT_JOURNAL_DIR } from "../lib/journal-dir";
 import type { DecisionAnswer, DecisionBrief } from "../shared/contract";
 import type { JournalDirStore } from "./dir-settings";
 
 export type WriteDecisionResult =
   | { kind: "written"; path: string }
-  | { kind: "skipped"; reason: "not_configured" | "no_environment" }
+  | { kind: "skipped"; reason: "no_environment" }
   | { kind: "failed"; error: string };
 
 /** Столько раз развести имя суффиксом, прежде чем сдаться — с большим запасом от разумного числа брифов на директорию. */
@@ -34,7 +35,7 @@ const write = async (
   try {
     const thread = await bb.sdk.threads.get({ threadId: args.brief.threadId });
     const configured = await dirs.get(thread.projectId);
-    if (configured.kind !== "configured") return { kind: "skipped", reason: "not_configured" };
+    const dir = configured.kind === "configured" ? configured.path : DEFAULT_JOURNAL_DIR;
     if (thread.environmentId === null) return { kind: "skipped", reason: "no_environment" };
     const environment = await bb.sdk.environments.get({ environmentId: thread.environmentId });
     if (environment.path === null) return { kind: "skipped", reason: "no_environment" };
@@ -43,7 +44,7 @@ const write = async (
     const content = decisionDocument({ brief: args.brief, answer: args.answer, decidedAt: args.decidedAt, locale: args.locale });
     for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt += 1) {
       // Хосту — абсолютный путь: `rootPath` для него граница песочницы, а не база склейки.
-      const path = journalPaths(environment.path, configured.path, `${suffixedName(base, attempt)}.md`);
+      const path = journalPaths(environment.path, dir, `${suffixedName(base, attempt)}.md`);
       const written = await bb.sdk.files.write({
         hostId: environment.hostId,
         rootPath: environment.path,

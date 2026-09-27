@@ -10,7 +10,7 @@ import { cn } from "../lib/utils";
 import type { DecisionBrief, StageOutcome, outcomeRpcContract } from "../shared/contract";
 import { CommandResultRow } from "./command";
 import { AddRow } from "./add-row";
-import type { OpenFile } from "./cells";
+import type { FileRoots } from "../core/result-link";
 import { setOutcomeNote, type Draft } from "./draft";
 import { useMessages } from "./locale-context";
 import { SectionTag } from "./section-tag";
@@ -72,7 +72,7 @@ function LaunchRow({ briefId, index, label, command }: { briefId: string; index:
 const RESULT_ROW_IN_CARD = "min-h-10 bg-card";
 
 /** Карточка Демонстрации; `view` — у неотвеченной: снизу прикреплено поле комментария. */
-export function DemoCard({ brief, openFile, view }: { brief: DecisionBrief; openFile: OpenFile; view?: OutcomeView }) {
+export function DemoCard({ brief, roots, view }: { brief: DecisionBrief; roots: FileRoots | null; view?: OutcomeView }) {
   const t = useMessages();
   const outcome = brief.outcome;
   if (outcome === undefined) return null;
@@ -112,7 +112,7 @@ export function DemoCard({ brief, openFile, view }: { brief: DecisionBrief; open
               "command" in result ? (
                 <LaunchRow key={`${index}:${result.command}`} briefId={brief.id} index={index} label={result.label} command={result.command} />
               ) : (
-                <ResultRow key={`${index}:${result.target}`} result={result} openFile={openFile} className={RESULT_ROW_IN_CARD} />
+                <ResultRow key={`${index}:${result.target}`} result={result} roots={roots} className={RESULT_ROW_IN_CARD} />
               ),
             )}
           </div>

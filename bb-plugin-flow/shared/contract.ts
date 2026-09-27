@@ -6,11 +6,11 @@
 import { defineRpcContract } from "@get-bb/plugin-sdk";
 import { z } from "zod";
 
-import { STEP_IDS } from "../packages/automation-steps/catalog";
+import { STEP_IDS } from "@bb-plugins/automation-steps/catalog";
 import { MAX_SCRIPT_CHARS } from "../lib/script-limit";
-import { SELF_EXECUTOR, STAGE_BUTTON_WIDTH, STAGE_KINDS } from "../lib/stage-constants";
+import { RETRY_LIMITS, SELF_EXECUTOR, STAGE_BUTTON_WIDTH, STAGE_KINDS } from "../lib/stage-constants";
 
-export { SELF_EXECUTOR, STAGE_BUTTON_WIDTH };
+export { RETRY_LIMITS, SELF_EXECUTOR, STAGE_BUTTON_WIDTH };
 
 // Непустая строка. Не `.trim()`: он переписывает значение, а текст брифа
 // хранится ровно таким, каким его прислал агент.
@@ -223,6 +223,9 @@ export const flowSettingsSchema = z
     flows: z.array(flowSchema).min(1),
     minButtonWidth: stageSettingsSchema.shape.minButtonWidth,
     agentChoosesFlow: z.boolean().optional(),
+    /** Автоповтор упавшего шага автоматизации: через сколько секунд (0 или нет поля — не повторять) и сколько раз подряд (0 — без ограничения). */
+    retryInSeconds: z.number().int().min(0).max(RETRY_LIMITS.seconds).optional(),
+    retryAttempts: z.number().int().min(0).max(RETRY_LIMITS.attempts).optional(),
     automationSets: z.array(automationSetSchema).optional(),
     version: z.literal(2).optional(),
   })
@@ -505,8 +508,8 @@ export const decisionBriefSchema = z
     planning: z.object({ minutes: z.number().int().nonnegative(), cost: z.number().nonnegative().optional() }).optional(),
     /** Ставит сервер: исполнитель, ревью и тестирование, которые владелец выбрал сам в прошлом отвеченном брифе треда. */
     carried: carriedSchema.optional(),
-    /** Ставит сервер: этапы работ из настроек на момент брифа — отвеченный бриф рисуется ими, даже если настройки потом поменялись. */
-    stages: z.object({ list: z.array(workStageSchema), minButtonWidth: z.number().int() }).optional(),
+    /** Ставит сервер: этапы работ и название flow на момент брифа — отвеченный бриф рисуется ими, даже если настройки потом поменялись. */
+    stages: z.object({ list: z.array(workStageSchema), minButtonWidth: z.number().int(), flowName: z.string().optional() }).optional(),
     ...briefFields,
   })
   .superRefine(checkBrief);
@@ -646,14 +649,14 @@ export const dispatchRpcContract = defineRpcContract({
   },
 });
 
-/** Хост и корень хранилища треда: по ним виджет открывает результат, лежащий вне дерева треда. */
+/** Корни файлов треда: окружение — для результата с путём от корня дерева, хост и корень хранилища — для абсолютного пути; неизвестный корень — `null`. */
 export const filesRpcContract = defineRpcContract({
-  threadStorage: {
+  threadFiles: {
     input: z.object({ threadId: text }),
-    output: z.discriminatedUnion("kind", [
-      z.object({ kind: z.literal("found"), hostId: z.string(), storageRootPath: z.string() }),
-      z.object({ kind: z.literal("unavailable") }),
-    ]),
+    output: z.object({
+      environmentId: z.string().nullable(),
+      storage: z.object({ hostId: z.string(), storageRootPath: z.string() }).nullable(),
+    }),
   },
 });
 
@@ -731,12 +734,14 @@ export const journalSettingsRpcContract = defineRpcContract({
 // ——— прогресс flow ———
 
 const resultSchema = z.object({ label: text, target: text });
+/** Результат этапа в записи прогона; `title` — название задачи, которое Flow прочёл из её файла, когда этап отметили. */
+const storedResultSchema = resultSchema.extend({ title: z.string().optional() });
 
 /** Отметки этапа в треде: начат и закончен (ISO), ссылки, стоимость и активные минуты окна, вне прогона и выбранный исполнитель. */
 export const stageTrackSchema = z.object({
   startedAt: z.string().optional(),
   finishedAt: z.string().optional(),
-  results: z.array(resultSchema).optional(),
+  results: z.array(storedResultSchema).optional(),
   cost: z.number().nonnegative().optional(),
   /** Минуты окна этапа, в которые лог сессии писался; поля нет — минуты этапа ещё не считались. */
   activeMinutes: z.number().int().nonnegative().optional(),
@@ -760,6 +765,10 @@ export const stageTrackSchema = z.object({
       error: z.string().nullable(),
       busy: z.boolean().optional(),
       failures: z.array(z.object({ step: text, at: text, error: text })).optional(),
+      /** Когда Flow повторит упавший шаг сам (ISO); поля нет — шаг ждёт владельца. */
+      retryAt: z.string().optional(),
+      /** Сколько раз Flow уже повторил текущий шаг сам; повтор владельца и переход к следующему шагу счёт обнуляют. */
+      autoRetries: z.number().int().nonnegative().optional(),
     })
     .optional(),
 });
@@ -812,7 +821,7 @@ export const progressStageSchema = z.object({
   live: z.boolean().optional(),
   /** Провайдер исполнителя этапа навыка — треда или субагента; по нему фронт берёт логотип. */
   provider: z.string().optional(),
-  results: z.array(resultSchema),
+  results: z.array(storedResultSchema),
   /** Место этапа среди этапов прогона, с 1; вычеркнутый номера не получает. */
   number: z.number().int().positive().nullable().optional(),
   /** Минуты работы на этапе: активные, а без них — от начала до конца этапа. */
@@ -833,6 +842,8 @@ export const progressStageSchema = z.object({
           error: z.string().nullable(),
           /** Что шаг сделал: адрес PR, тема коммита, ключи переведённых задач. Не сказал — `null`; поля нет у шагов, снятых до того, как строку успеха начали хранить. */
           detail: z.string().nullable().default(null),
+          /** Когда Flow повторит упавший шаг сам (ISO); `null` — повтор не назначен, шаг ждёт владельца. */
+          retryAt: z.string().nullable().default(null),
         }),
       ),
     })
@@ -849,10 +860,10 @@ export const contextFillSchema = z.object({
   share: z.number(),
   usedTokens: z.number(),
   windowTokens: z.number(),
-  // Пара разобрана на границе: оба на шкале, жёлтый строго меньше красного.
-  // Схема сторожит то, что подсказка полосы печатает дословно.
-  warnPercent: z.number().min(0).max(100),
-  alertPercent: z.number().min(0).max(100),
+  // Пороги в токенах, пара разобрана на границе: жёлтый строго меньше красного.
+  // По ним фронт режет полосу на отрезки и выбирает тон.
+  warnTokens: z.number().nonnegative(),
+  alertTokens: z.number().nonnegative(),
 });
 
 /** Вид прогресса для баннера: этапы flow треда по порядку, счёт сделанных, номер текущего этапа среди этапов прогона и их число, текущий этап и план. */
@@ -889,13 +900,19 @@ export const frozenRunSchema = z.object({
   total: z.number().int().nonnegative(),
   planned: plannedSchema.nullable(),
   flowName: z.string().optional(),
+  /** Id flow прогона: по нему название в истории ведёт на страницу flow. Итоги, замороженные раньше, его не несут. */
+  flowId: z.string().optional(),
   environmentId: z.string().nullable(),
 });
 
-/** Строка истории прогонов: замороженный итог с брифом, под которым он лежит, и названием треда; `exists: false` — треда больше нет. */
+/**
+ * Строка истории прогонов: замороженный итог с брифом, под которым он лежит, названием треда и его проекта;
+ * `exists: false` — треда больше нет, `project` пуст — проект треда не найден.
+ */
 export const runHistoryEntrySchema = frozenRunSchema.extend({
   briefId: text,
   title: z.string().nullable(),
+  project: z.string().nullable().optional(),
   exists: z.boolean(),
 });
 

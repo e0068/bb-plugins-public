@@ -39,10 +39,10 @@ describe("вычеркнутый из прогона этап приглушён
     for (const name of ["task", "code", "review"]) expect(dimmed(rowOf(slot.container, name))).toBe(false);
   });
 
-  it("строка этапа в блоке итога прогона — та же: вычеркнутая приглушена", async () => {
+  it("строка этапа в блоке итога прогона — та же: вычеркнутая приглушена, и корни файлов ей для этого не нужны", async () => {
     await loadPluginApp(() => import("../app"));
     const { Row } = await import("./progress-banner");
-    const { container } = render(<Row stage={row("plan", "skip", null) as unknown as ProgressStage} open={() => undefined} />);
+    const { container } = render(<Row stage={row("plan", "skip", null) as unknown as ProgressStage} roots={null} />);
     expect(dimmed(rowOf(container, "plan"))).toBe(true);
   });
 });

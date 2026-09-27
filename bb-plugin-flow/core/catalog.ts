@@ -2,20 +2,10 @@
 // Code — markdown с фронтматтером, сохранённый workflow — скрипт с
 // `export const meta`. Чистые функции над текстом файла; читает диск сервер.
 import type { StageExecutor } from "../shared/contract";
+import { frontmatter } from "./frontmatter";
 
 /** Поставщик агентов из `~/.claude/agents` — по нему виджет берёт иконку. */
 export const CLAUDE_CODE_PROVIDER = "claude-code";
-
-const frontmatter = (text: string): Record<string, string> | null => {
-  const match = /^---\r?\n([\s\S]*?)\r?\n---/.exec(text);
-  if (match === null) return null;
-  return Object.fromEntries(
-    (match[1] ?? "").split(/\r?\n/).flatMap((line) => {
-      const pair = /^([A-Za-z_][\w-]*):\s*(.*)$/.exec(line);
-      return pair === null ? [] : [[pair[1]!, (pair[2] ?? "").trim()]];
-    }),
-  );
-};
 
 const optional = (key: string, value: string | undefined): Record<string, string> => (value === undefined || value === "" ? {} : { [key]: value });
 

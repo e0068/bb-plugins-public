@@ -1,4 +1,4 @@
-// Секции страницы настроек плагина: общее на все flow — ширина кнопки этапа, выбор flow агентом и корневой навык,
+// Секции страницы настроек плагина: общее на все flow — ширина кнопки этапа, автоповтор автоматизаций, выбор flow агентом и корневой навык,
 // из которого агент этот выбор делает. Коллекцию flow они правят тем же хранилищем, что и страница Flow.
 import { useEffect, useState } from "react";
 import { useBbNavigate, useRpc } from "@get-bb/plugin-sdk/app";
@@ -9,13 +9,21 @@ import { cn } from "../lib/utils";
 import type { flowSettingsRpcContract, RootSkill } from "../shared/contract";
 import { LocaleProvider } from "./locale";
 import { useMessages } from "./locale-context";
-import { StageButtonWidth } from "./stage-settings";
+import { AutomationRetry, StageButtonWidth } from "./stage-settings";
 import { updateFlowSettings, useFlowSettings } from "./stage-settings-store";
 
 export function StageButtonsSection() {
   return (
     <LocaleProvider>
       <StageButtonWidth />
+    </LocaleProvider>
+  );
+}
+
+export function AutomationRetrySection() {
+  return (
+    <LocaleProvider>
+      <AutomationRetry />
     </LocaleProvider>
   );
 }

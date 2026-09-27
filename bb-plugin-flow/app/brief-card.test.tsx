@@ -2,10 +2,11 @@
 import { cleanup, fireEvent, within } from "@testing-library/react";
 import type { PluginMessageDirectiveProps } from "@get-bb/plugin-sdk/app";
 import { loadPluginApp, renderSlot } from "@get-bb/plugin-sdk/testing/app";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 
 import { SETUP_ROW } from "../core/rows";
 import type { AnswerRecord, DecisionBrief, decisionsRpcContract } from "../shared/contract";
+import { threadFiles, workspacePreview } from "./file-roots-fixture";
 
 const app = await loadPluginApp(() => import("../app"));
 
@@ -73,7 +74,7 @@ const render = (rpc: Rpc, openWorkspaceFile: PluginMessageDirectiveProps["openWo
       message: { id: "msg_1", threadId: "thr_1", turnId: "turn_1", projectId: null },
       openWorkspaceFile,
     },
-    { rpc },
+    { rpc: { ...({ threadFiles } as object), ...rpc } as Rpc },
   );
 
 const open = (openFile: PluginMessageDirectiveProps["openWorkspaceFile"] = null) =>
@@ -84,11 +85,11 @@ const pressedIn = (scope: ReturnType<typeof within>) =>
   scope.queryAllByRole("button").filter((b: HTMLElement) => b.getAttribute("aria-pressed") === "true").map((b: HTMLElement) => b.textContent);
 
 describe("первая часть брифа", () => {
-  it("ссылка артефакта открывает файл в просмотрщике bb", async () => {
-    const openFile = vi.fn(() => true);
-    const artifacts = await group(open(openFile), "Артефакты");
-    fireEvent.click(artifacts.getByRole("button", { name: "SL-312" }));
-    expect(openFile).toHaveBeenCalledWith("docs/tasks/todo/sl-312.md");
+  it("ссылка артефакта — ссылка bb на файл дерева треда: клик открывает его превью", async () => {
+    const slot = open();
+    const artifacts = await group(slot, "Артефакты");
+    fireEvent.click(await artifacts.findByRole("link", { name: "SL-312" }));
+    expect(slot.navigateCalls).toContainEqual(workspacePreview("docs/tasks/todo/sl-312.md"));
   });
 
   it("целевой и максимальный бюджет — две строки, у каждой своя цена", async () => {
@@ -173,12 +174,11 @@ describe("отвеченный бриф с первой частью", () => {
     expect(slot.getByText("Я ввёл свой ответ")).toBeTruthy();
   });
 
-  it("ссылки артефактов остаются кнопками", async () => {
-    const openFile = vi.fn(() => true);
-    const slot = openAnswered(openFile);
+  it("ссылки артефактов открывают файл и в отвеченном брифе", async () => {
+    const slot = openAnswered();
     await slot.findByText("Бриф отвечен");
-    fireEvent.click(slot.getByRole("button", { name: "prototype-312" }));
-    expect(openFile).toHaveBeenCalledWith("docs/assets/p.html");
+    fireEvent.click(await slot.findByRole("link", { name: "prototype-312" }));
+    expect(slot.navigateCalls).toContainEqual(workspacePreview("docs/assets/p.html"));
   });
 });
 

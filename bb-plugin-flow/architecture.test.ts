@@ -7,7 +7,7 @@ import {
   layerViolations,
   readSourceFiles,
   type Layers,
-} from "./packages/layer-guard/index.js";
+} from "@bb-plugins/layer-guard/index.js";
 
 /**
  * Слои плагина снизу вверх. Папка импортирует только папки строго нижних

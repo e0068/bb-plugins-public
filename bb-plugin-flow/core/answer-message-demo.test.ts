@@ -20,17 +20,25 @@ const reply = (outcome: DecisionAnswer["outcome"], b: DecisionBrief = brief) => 
 const next = (text: string) => text.split("\n").find((l) => l.startsWith("Дальше")) ?? "";
 
 describe("реплика агенту на Демонстрацию", () => {
-  it("«Продолжить» — этап и следующий этап", () => {
-    const text = reply({ accepted: true });
-    expect(text).toContain("Демонстрация — продолжить: prototype.html");
-    expect(next(text)).toContain("Спецификация");
+  it("«Продолжить» — заголовок и следующий этап, без ссылок результатов", () => {
+    expect(reply({ accepted: true }).split("\n")).toEqual(["Бриф «Демонстрация — прототип» — продолжить.", "Дальше — этап «Спецификация»."]);
   });
 
-  it("«Отправить» — комментарий: ответить на него, демонстрация остаётся открытой, дальше по flow не идти", () => {
-    const text = reply({ accepted: false, note: "Баннер ниже" });
-    expect(text).toContain("Демонстрация — комментарий: prototype.html — «Баннер ниже»");
-    expect(next(text)).toMatch(/ответь на комментарий.*остаётся открытой.*дальше по flow не иди/);
-    expect(next(text)).not.toContain("Спецификация");
+  it("«Продолжить» с комментарием — комментарий строкой под заголовком", () => {
+    expect(reply({ accepted: true, note: "Кнопку левее" }).split("\n")).toEqual(["Бриф «Демонстрация — прототип» — продолжить.", "«Кнопку левее»", "Дальше — этап «Спецификация»."]);
+  });
+
+  it("комментарий — три строки: заголовок с этапом, комментарий, ответить и прислать снова; ссылок и следующего этапа нет", () => {
+    expect(reply({ accepted: false, note: "Баннер ниже" }).split("\n")).toEqual([
+      "Бриф «Демонстрация — прототип» — комментарий к этапу «Демонстрация»:",
+      "«Баннер ниже»",
+      "Ответь и пришли демонстрацию снова.",
+    ]);
+  });
+
+  it("по-английски те же три строки", () => {
+    const text = answerMessageText(brief, { briefId: brief.id, answers: [], outcome: { accepted: false, note: "Lower banner" } }, "en");
+    expect(text.split("\n")).toEqual(['Brief "Демонстрация — прототип" — comment on the "Демонстрация" stage:', '"Lower banner"', "Answer it and send the demo again."]);
   });
 
   it("финальная Демонстрация с продолжением закрывает работу", () => {

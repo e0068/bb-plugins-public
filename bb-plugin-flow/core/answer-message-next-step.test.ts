@@ -32,16 +32,6 @@ const answer = (artifacts: string[], note?: string) => ({
 const lines = (text: string) => text.split("\n");
 
 describe("следующий шаг агента в ответе на бриф", () => {
-  it("без обязательных утверждений ответ велит довести задачу до конца без новых брифов", () => {
-    const text = answerMessageText(brief({ make: [], approve: [] }), answer(["task", "prototype", "spec", "plan"]));
-    expect(lines(text).at(-1)).toContain("Дальше — до конца задачи без новых брифов");
-    expect(lines(text).at(-1)).toContain("утверждать по ходу ничего не нужно");
-  });
-
-  it("бриф без правила из настроек тоже не требует утверждений по ходу", () => {
-    expect(answerMessageText(brief(), answer(["spec"]))).toContain("утверждать по ходу ничего не нужно");
-  });
-
   it("остановка на утверждение названа только у документа, который делается и обязателен к утверждению", () => {
     const text = answerMessageText(brief({ make: [], approve: ["plan", "spec", "prototype"] }), answer(["task", "prototype", "plan"]));
     const step = lines(text).at(-1)!;
@@ -50,10 +40,15 @@ describe("следующий шаг агента в ответе на бриф",
     expect(step).not.toContain("HTML-прототип");
   });
 
-  it("общий текст ко всему брифу остаётся последним, шаг идёт перед ним", () => {
-    const text = answerMessageText(brief({ make: [], approve: [] }), answer(["task"], "Без спешки"));
+  it("без обязательных утверждений строки шага нет", () => {
+    expect(answerMessageText(brief({ make: [], approve: [] }), answer(["task", "prototype", "spec", "plan"]))).not.toContain("Дальше");
+    expect(answerMessageText(brief(), answer(["spec"]))).not.toContain("Дальше");
+  });
+
+  it("общий текст ко всему брифу остаётся последним, шаг утверждения идёт перед ним", () => {
+    const text = answerMessageText(brief({ make: [], approve: ["plan"] }), answer(["plan"], "Без спешки"));
     expect(lines(text).at(-1)).toContain("Без спешки");
-    expect(lines(text).at(-2)).toContain("Дальше — до конца задачи без новых брифов");
+    expect(lines(text).at(-2)).toBe("Дальше — на утверждение остановись только с — План.");
   });
 
   it("ответ на уточнение не несёт шага", () => {

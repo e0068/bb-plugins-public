@@ -29,10 +29,10 @@ const boot = async (events: unknown[], settings: Record<string, number> = {}) =>
 };
 
 describe("заполненность окна доезжает от журнала bb до ответа баннера", () => {
-  it("событие журнала становится долей и порогами по умолчанию", async () => {
+  it("событие журнала становится долей и порогами в токенах по умолчанию", async () => {
     const harness = await boot([usageEvent(250_000, 1_000_000)]);
     expect(await harness.callRpc("getFlowProgress", { threadId: THREAD })).toMatchObject({
-      context: { share: 0.25, usedTokens: 250_000, windowTokens: 1_000_000, warnPercent: 25, alertPercent: 40 },
+      context: { share: 0.25, usedTokens: 250_000, windowTokens: 1_000_000, warnTokens: 250_000, alertTokens: 400_000 },
     });
   });
 
@@ -44,37 +44,37 @@ describe("заполненность окна доезжает от журнал
   });
 });
 
-describe("пара порогов сторожится на вводе: жёлтый строго меньше красного", () => {
+describe("пара порогов в токенах сторожится на вводе: жёлтый строго меньше красного", () => {
   const thresholdsOf = async (harness: Awaited<ReturnType<typeof boot>>) =>
-    ((await harness.callRpc("getFlowProgress", { threadId: THREAD })) as { context: { warnPercent: number; alertPercent: number } }).context;
+    ((await harness.callRpc("getFlowProgress", { threadId: THREAD })) as { context: { warnTokens: number; alertTokens: number } }).context;
 
   it("жёлтый не ниже красного — запись отклонена ошибкой с числом соседа, пара прежняя", async () => {
     const harness = await boot([usageEvent(1, 2)]);
-    await expect(harness.setSettings({ contextWarnPercent: 40 })).rejects.toThrow(/lower than the red threshold \(40%\)/);
-    expect(await thresholdsOf(harness)).toMatchObject({ warnPercent: 25, alertPercent: 40 });
+    await expect(harness.setSettings({ contextWarnTokens: 400_000 })).rejects.toThrow(/lower than the red threshold \(400000 tokens\)/);
+    expect(await thresholdsOf(harness)).toMatchObject({ warnTokens: 250_000, alertTokens: 400_000 });
   });
 
   it("красный не выше жёлтого — запись отклонена ошибкой с числом соседа", async () => {
     const harness = await boot([usageEvent(1, 2)]);
-    await expect(harness.setSettings({ contextAlertPercent: 20 })).rejects.toThrow(/higher than the yellow threshold \(25%\)/);
+    await expect(harness.setSettings({ contextAlertTokens: 200_000 })).rejects.toThrow(/higher than the yellow threshold \(250000 tokens\)/);
   });
 
   it("сосед сверяется с последней записью: поднял красный — жёлтый может подняться за ним", async () => {
     const harness = await boot([usageEvent(1, 2)]);
-    await harness.setSettings({ contextAlertPercent: 70 });
-    await harness.setSettings({ contextWarnPercent: 60 });
-    expect(await thresholdsOf(harness)).toMatchObject({ warnPercent: 60, alertPercent: 70 });
+    await harness.setSettings({ contextAlertTokens: 700_000 });
+    await harness.setSettings({ contextWarnTokens: 600_000 });
+    expect(await thresholdsOf(harness)).toMatchObject({ warnTokens: 600_000, alertTokens: 700_000 });
   });
 
   it("сосед берётся из хранилища с первой записи, а не из умолчаний", async () => {
-    const harness = await boot([usageEvent(1, 2)], { contextWarnPercent: 30, contextAlertPercent: 60 });
-    await harness.setSettings({ contextWarnPercent: 50 });
-    expect(await thresholdsOf(harness)).toMatchObject({ warnPercent: 50, alertPercent: 60 });
+    const harness = await boot([usageEvent(1, 2)], { contextWarnTokens: 300_000, contextAlertTokens: 600_000 });
+    await harness.setSettings({ contextWarnTokens: 500_000 });
+    expect(await thresholdsOf(harness)).toMatchObject({ warnTokens: 500_000, alertTokens: 600_000 });
   });
 
-  it("значение за шкалой отклонено на обеих ручках", async () => {
+  it("отрицательное и дробное число токенов отклонено на обеих ручках", async () => {
     const harness = await boot([usageEvent(1, 2)]);
-    await expect(harness.setSettings({ contextWarnPercent: -1 })).rejects.toThrow();
-    await expect(harness.setSettings({ contextAlertPercent: 101 })).rejects.toThrow();
+    await expect(harness.setSettings({ contextWarnTokens: -1 })).rejects.toThrow();
+    await expect(harness.setSettings({ contextAlertTokens: 450_000.5 })).rejects.toThrow();
   });
 });

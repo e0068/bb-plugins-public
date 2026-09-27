@@ -4,7 +4,7 @@
 // терминале треда, из которого агент её отдал.
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 
-import { applyToTerminal } from "../packages/thread-terminal/index";
+import { applyToTerminal } from "@bb-plugins/thread-terminal/index";
 import { COMMAND_ID_PREFIX, commandDirectiveLine } from "../core/directive";
 import { commandRecordSchema, commandsRpcContract, outcomeRpcContract, shareCommandParamsSchema, type CommandRecord, type DecisionBrief } from "../shared/contract";
 
