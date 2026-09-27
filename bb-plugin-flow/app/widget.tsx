@@ -42,7 +42,7 @@ import { RunSummaryBlock } from "./run-summary";
 import { LocaleProvider } from "./locale";
 import { ProviderLogosProvider } from "./provider-logos-source";
 import { useLocale, useMessages } from "./locale-context";
-import { useOpenFile } from "./open-file";
+import { useFileRoots } from "./file-roots";
 import { VoiceErrorLine, VoiceProvider, useVoiceField } from "./voice";
 
 /** Канал `ANSWERED_CHANNEL` бэкенда; строкой, потому что `app` не берёт значений из `server`. */
@@ -101,12 +101,12 @@ export function DecisionDirective(props: PluginMessageDirectiveProps) {
   );
 }
 
-function Directive({ attributes, source, message, openWorkspaceFile }: PluginMessageDirectiveProps) {
+function Directive({ attributes, source, message }: PluginMessageDirectiveProps) {
   const t = useMessages();
   const parsed = readDecisionId(attributes);
   return parsed.kind === "ok" ? (
     <>
-      <BriefLoader id={parsed.id} source={source} messageId={message.id} threadId={message.threadId} openWorkspaceFile={openWorkspaceFile} />
+      <BriefLoader id={parsed.id} source={source} messageId={message.id} threadId={message.threadId} />
       {/* Итог завершённого прогона растёт из карточки, которую назвал сервер: своего слота в ленте у плагина нет. */}
       <RunSummaryBlock briefId={parsed.id} />
     </>
@@ -137,11 +137,11 @@ function useDispatchPlace(threadId: string): { place: DispatchPlace; route: Disp
   return place;
 }
 
-function BriefLoader({ id, source, messageId, threadId, openWorkspaceFile }: { id: string; source: string; messageId: string; threadId: string; openWorkspaceFile: PluginMessageDirectiveProps["openWorkspaceFile"] }) {
+function BriefLoader({ id, source, messageId, threadId }: { id: string; source: string; messageId: string; threadId: string }) {
   const t = useMessages();
   const place = useDispatchPlace(threadId);
   const locale = useLocale();
-  const openFile = useOpenFile(threadId, openWorkspaceFile);
+  const roots = useFileRoots(threadId);
   const { state, retry, answered, rpcRef } = useBrief(id);
   const voiceRpc = useRpc<typeof voiceRpcContract>();
   const isAnswered = state.kind === "found" && state.answer !== null;
@@ -170,7 +170,7 @@ function BriefLoader({ id, source, messageId, threadId, openWorkspaceFile }: { i
         return legacy ? (
           <AnsweredBrief brief={state.brief} record={state.answer} />
         ) : (
-          <AnsweredBriefCard brief={state.brief} record={state.answer} openFile={openFile} />
+          <AnsweredBriefCard brief={state.brief} record={state.answer} roots={roots} />
         );
       const send = async (draft: Draft) =>
         rpcRef.current.call("answerBrief", { id, answer: toAnswer(state.brief, draft), messageId, locale, ...attachmentsPayload(id) });
@@ -186,7 +186,7 @@ function BriefLoader({ id, source, messageId, threadId, openWorkspaceFile }: { i
           ) : legacy ? (
             <BriefForm brief={state.brief} send={send} onResult={onAccepted} place={place.place} route={place.route} />
           ) : (
-            <BriefCard brief={state.brief} send={send} onResult={onAccepted} openFile={openFile} place={place.place} route={place.route} />
+            <BriefCard brief={state.brief} send={send} onResult={onAccepted} roots={roots} place={place.place} route={place.route} />
           )}
         </VoiceProvider>
       );

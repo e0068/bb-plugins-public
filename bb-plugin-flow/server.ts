@@ -3,14 +3,18 @@
 import { randomBytes } from "node:crypto";
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 
-import { createSteps } from "./packages/automation-steps/index";
+import { createSteps } from "@bb-plugins/automation-steps/index";
+import { retryPolicyOf } from "./core/automation-run";
 import { OWN_PLUGIN_ID } from "./core/plugin-id";
 import { registerApi } from "./server/api";
 import { flowTurnInstructions, registerAskTool } from "./server/ask-tool";
 import { registerChooseFlow } from "./server/choose-flow";
 import { scriptStep } from "./server/script-step";
+import { readTaskFile, writeTaskFile } from "./server/task-file";
 import { createAutomationRunner, externalStep, registerAutomationRunner } from "./server/automation-runner";
+import { createNoticePublisher } from "./server/automation-notices";
 import { automationsBridge } from "./server/automations";
+import { AUTOMATION_NOTICE_CHANNEL } from "./core/automation-notice";
 import { registerCommands } from "./server/command";
 import { createJournalDirStore } from "./server/dir-settings";
 import { registerJournalSettingsApi } from "./server/journal-settings-api";
@@ -26,7 +30,7 @@ import { writeRootSkill } from "./server/root-skill-writer";
 import { registerFlowTools } from "./server/flow-tools";
 import { registerFlowSettingsApi } from "./server/settings-api";
 import { hostCatalogSources, hostRootSkillSources, hostSkillFileSources, readRootSkill, readSkillFile, readStageCatalog } from "./server/stage-catalog";
-import { revealInFinderHere } from "./packages/reveal-in-finder/index";
+import { revealInFinderHere } from "@bb-plugins/reveal-in-finder/index";
 import { createStore } from "./server/store";
 import { createThreadFlows } from "./server/thread-flows";
 import { registerVoiceApi } from "./server/voice";
@@ -36,6 +40,7 @@ import { CHOOSE_FLOW_TOOL, ROOT_SKILL } from "./lib/stage-constants";
 import { LANGUAGE_OPTIONS, LANGUAGE_SETTING, LANGUAGE_SYSTEM, resolveLocale } from "./lib/i18n";
 import { messages } from "./lib/messages";
 import { isRunFinished } from "./core/run-summary";
+import { liveFlowId } from "./core/run-history";
 
 /** Время в base36 спереди — идентификаторы сортируются по созданию. */
 const newId = (): string => `${Date.now().toString(36)}${randomBytes(6).toString("hex")}`;
@@ -80,7 +85,7 @@ export default async function plugin(bb: BbPluginApi): Promise<void> {
   // Ход агента идёт, пока тред в статусе active: значок этапа навыка без хода не мерцает.
   const thread = async (threadId: string) => {
     const row = await bb.sdk.threads.get({ threadId });
-    return { environmentId: row.environmentId, active: row.status === "active", providerId: row.providerId, title: row.title ?? null };
+    return { environmentId: row.environmentId, active: row.status === "active", providerId: row.providerId, title: row.title ?? null, projectId: row.projectId };
   };
   const providers = () => bb.sdk.providers.list();
   // Тред, переданный до указателей прогонов, находит свой прогон по ответу на бриф, которым работу передали.
@@ -110,10 +115,28 @@ export default async function plugin(bb: BbPluginApi): Promise<void> {
     kv: bb.storage.kv,
     plugins: bb.sdk.plugins,
     now,
+    retry: () => retryPolicyOf(flows.current()),
+    // Итог этапа-автоматизации — тостом в любом открытом треде: название треда, flow и PR дописывает публикатор.
+    notify: createNoticePublisher({
+      progress,
+      thread: async (threadId) => {
+        const row = await bb.sdk.threads.get({ threadId });
+        return { title: row.title ?? null, environmentId: row.environmentId };
+      },
+      pullRequest: async (environmentId) => {
+        const answer = await bb.sdk.environments.pullRequest({ environmentId });
+        return answer.outcome === "available" ? { number: answer.pullRequest.number, url: answer.pullRequest.url } : null;
+      },
+      flow: flowOf,
+      publish: (notice) => bb.realtime.publish(AUTOMATION_NOTICE_CHANNEL, notice),
+      newId,
+    }),
     onError: (error) => bb.log.warn(`automations: a run failed to record its progress (${error instanceof Error ? error.message : String(error)})`),
   });
   advance = (threadId) => void runner.advance(threadId);
   registerAutomationRunner(bb, runner);
+  // Выключенный или перезагружаемый Flow не должен повторять шаги старым процессом: новый поставит повторы заново из записей.
+  bb.onDispose(() => runner.dispose());
   // Прогон, прерванный перезапуском сервера, продолжается сразу после загрузки плагина; завершённый до этой версии и не
   // замороженный баннером — замораживается, пока его запись цела.
   void progress.threads().then(
@@ -127,7 +150,7 @@ export default async function plugin(bb: BbPluginApi): Promise<void> {
   // Выбор агентом предлагается только треду, где «без flow» выбрал владелец; тред, где так решил агент, его больше не получает.
   const chooseFlow = (threadId: string) =>
     flows.current().agentChoosesFlow === true && threads.flowOf(threadId) === NO_FLOW ? CHOOSE_FLOW_RULE(ROOT_SKILL, CHOOSE_FLOW_TOOL, NO_FLOW) : null;
-  registerAskTool(bb, store, { newId, now, stages: stagesOf, hasFlow: (threadId) => flowOf(threadId) !== null, chooseFlow, emit, planning: (threadId) => readPlanning(bb.sdk, threadId, Date.now(), readClaudeTranscript()), progress });
+  registerAskTool(bb, store, { newId, now, stages: stagesOf, flowName: flowNameOf, hasFlow: (threadId) => flowOf(threadId) !== null, chooseFlow, emit, planning: (threadId) => readPlanning(bb.sdk, threadId, Date.now(), readClaudeTranscript()), progress });
   const journalDirs = createJournalDirStore(bb.storage.kv);
   registerApi(bb, store, { now, emit, writeDecision: (args) => writeDecision(bb, journalDirs, args), progress, ownSend: own.mark });
   // Удалённый тред не ждёт владельца и не показывает прогресс: записи и его указатель снимаются, иначе значок висел бы
@@ -145,8 +168,17 @@ export default async function plugin(bb: BbPluginApi): Promise<void> {
     windowCost: (threadId, from, to) => readWindowCost(runSessions, threadId, from, to, readClaudeTranscript()),
     windowMinutes: (threadId, windows) => readWindowMinutes(runSessions, threadId, windows, readClaudeTranscript()),
     thread,
+    // Личный проект bb без флага в список не попадает, и тред вне проекта остался бы без подписи.
+    projects: () => bb.sdk.projects.list({ includePersonal: true }),
     // Заполненность окна bb уже знает: она едет в ответе баннера вместе с прогрессом, без своего опроса.
     context: (threadId) => contextFillOf(bb.sdk, () => settings.get(), threadId),
+    readTaskFile: (threadId, target) => readTaskFile(bb.sdk, threadId, target),
+    writeTaskFile: (threadId, target, text) => writeTaskFile(bb.sdk, threadId, target, text),
+    flow: (threadId) => {
+      const flow = flowOf(threadId);
+      return flow === null ? undefined : { id: flow.id, name: flow.name };
+    },
+    liveFlowId: (id, name) => liveFlowId(flows.current().flows, id, name),
   }));
   registerCommands(bb, { newId, now, readBrief: (id) => store.getBrief(id) });
   const catalog = () => readStageCatalog(hostCatalogSources(bb));

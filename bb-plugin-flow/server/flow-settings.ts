@@ -3,7 +3,7 @@
 // через схему: чужое значение — это умолчания, а не падение.
 import type { PluginKvStorage } from "@get-bb/plugin-sdk";
 
-import { STEP_LABELS } from "../packages/automation-steps/catalog";
+import { STEP_LABELS } from "@bb-plugins/automation-steps/catalog";
 import { stepOrderMessage, stepOrderProblem } from "../core/automation-order";
 import { fromLegacy, migrateFlows } from "../core/flows";
 import { flowSettingsSchema, stageSettingsSchema, type FlowSettings } from "../shared/contract";

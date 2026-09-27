@@ -16,6 +16,7 @@ import { changeOf, spentLines, criteriaSum, criterionEditable, criterionTitle, f
 import { optionCriteria, optionRemoved, removedCriteria } from "../core/option-criteria";
 import { DEFAULT_ROUTE, offeredPlace, placeColumns, withBranch, withPlace, withProject, withTree } from "../core/places";
 import { stageItems } from "../core/stages";
+import type { FileRoots } from "../core/result-link";
 import { demoVerdict } from "../core/outcome";
 import { REVIEW_ROWS, SETUP_ROW, artifactVerb, checkerAllowed, rowsOf } from "../core/rows";
 import { Button } from "../components/ui/button";
@@ -48,7 +49,7 @@ import {
 } from "./draft";
 import { AddRow, addRowText } from "./add-row";
 import { AttachmentThumbs, AttachmentsProvider, usePasteImages } from "./attachments";
-import { AddMeta, CardText, CheckSquare, DocumentName, RiskText, buttonCard, type OpenFile } from "./cells";
+import { AddMeta, CardText, CheckSquare, DocumentName, RiskText, buttonCard } from "./cells";
 import { answeredAt, useStoredDraft, useSubmit, type FormProps } from "./parts";
 import type { Messages } from "../lib/messages";
 import { useLocale, useMessages } from "./locale-context";
@@ -175,7 +176,7 @@ const rowBright = (view: View, question: DecisionQuestion): boolean =>
     ? !sameIds(view.draft.entries[question.id]?.optionIds ?? [], question.options.filter((o) => o.recommended).map((o) => o.id))
     : isPicked(view.draft, question.id);
 
-function ArtifactCell(props: { artifact: Artifact; row: DecisionQuestion | undefined; view: View; openFile: OpenFile }) {
+function ArtifactCell(props: { artifact: Artifact; row: DecisionQuestion | undefined; view: View; roots: FileRoots | null }) {
   const { artifact, row, view } = props;
   const locale = useLocale();
   const t = useMessages();
@@ -200,7 +201,7 @@ function ArtifactCell(props: { artifact: Artifact; row: DecisionQuestion | undef
         />
       )}
       <CardText label={artifact.name} meta={artifact.state === "approved" ? null : <AddMeta add={artifact.add} />} bright={bright}>
-        {artifact.link === undefined ? verb : <DocumentName link={artifact.link} stale={artifact.state === "stale"} openFile={props.openFile} />}
+        {artifact.link === undefined ? verb : <DocumentName link={artifact.link} stale={artifact.state === "stale"} roots={props.roots} />}
       </CardText>
       <span className="pointer-events-none relative">
         <CheckSquare on={on} required={required} />
@@ -431,7 +432,7 @@ function LegacyScales({ brief, view }: { brief: DecisionBrief; view: View }) {
  * Один блок стык в стык: артефакты, кнопки первой части, раскрытый выбор и низ формы.
  * Что осталось незакрытым — одной строкой под блоком, чтобы подписи не рвали шов.
  */
-function AnswerBlock({ brief, view, openFile, footer }: { brief: DecisionBrief; view: View; openFile: OpenFile; footer?: ReactNode }) {
+function AnswerBlock({ brief, view, roots, footer }: { brief: DecisionBrief; view: View; roots: FileRoots | null; footer?: ReactNode }) {
   const locale = useLocale();
   const t = useMessages();
   const setup = brief.setup ?? {};
@@ -459,14 +460,14 @@ function AnswerBlock({ brief, view, openFile, footer }: { brief: DecisionBrief; 
         {setup.artifacts !== undefined && (
           <div role="group" aria-label={t.brief.artifacts} className={grid}>
             {setup.artifacts.map((artifact) => (
-              <ArtifactCell key={artifact.id} artifact={artifact} row={artifacts} view={view} openFile={openFile} />
+              <ArtifactCell key={artifact.id} artifact={artifact} row={artifacts} view={view} roots={roots} />
             ))}
           </div>
         )}
         {staged && (
           <StagesBlock
             view={stagesView}
-            openFile={openFile}
+            roots={roots}
             budget={withBudget ? { key: BUDGET_PANEL, cell: <BudgetButton view={view} />, panel: <BudgetPanel view={view} /> } : null}
           />
         )}
@@ -1210,7 +1211,7 @@ function Body({ brief, view }: { brief: DecisionBrief; view: View }) {
   );
 }
 
-export function BriefCard({ brief, send, onResult, openFile, place = "here", route = DEFAULT_ROUTE }: FormProps & { openFile: OpenFile; place?: DispatchPlace; route?: DispatchRoute }) {
+export function BriefCard({ brief, send, onResult, roots, place = "here", route = DEFAULT_ROUTE }: FormProps & { roots: FileRoots | null; place?: DispatchPlace; route?: DispatchRoute }) {
   const [draft, setDraft] = useStoredDraft(brief.id, () => initialDraft(brief));
   const [expanded, setExpanded] = useState<string | null>(null);
   const anchor = useScrollAnchor();
@@ -1263,18 +1264,18 @@ export function BriefCard({ brief, send, onResult, openFile, place = "here", rou
     >
       {brief.outcome !== undefined ? (
         <>
-          <DemoCard brief={brief} openFile={openFile} view={{ draft, sending, change: setDraft }} />
+          <DemoCard brief={brief} roots={roots} view={{ draft, sending, change: setDraft }} />
           <Body brief={brief} view={view} />
           <DemoActions brief={brief} draft={draft} setDraft={setDraft} sending={sending} failed={failed} complete={complete} place={place} route={route} onSubmit={(next) => void submit(settleDispatch(next, place, route))} />
         </>
       ) : (
         <>
           <Body brief={brief} view={view} />
-          {stageItems(brief).length > 0 && <SectionTag kind="select" className="-mb-3" />}
+          {stageItems(brief).length > 0 && <SectionTag kind="select" extra={brief.stages?.flowName} className="-mb-3" />}
           <AnswerBlock
             brief={brief}
             view={view}
-            openFile={openFile}
+            roots={roots}
             footer={<BriefFooter brief={brief} draft={draft} setDraft={setDraft} sending={sending} status={failed ? t.common.sendFailed : counter} complete={complete} place={place} route={route} onSubmit={trySubmit} />}
           />
         </>
@@ -1343,7 +1344,7 @@ export function ClarifyCard({ brief, send, onResult }: FormProps) {
   );
 }
 
-export function AnsweredBriefCard({ brief, record, openFile }: { brief: DecisionBrief; record: AnswerRecord; openFile: OpenFile }) {
+export function AnsweredBriefCard({ brief, record, roots }: { brief: DecisionBrief; record: AnswerRecord; roots: FileRoots | null }) {
   const t = useMessages();
   const [expanded, setExpanded] = useState<string | null>(null);
   const anchor = useScrollAnchor();
@@ -1356,7 +1357,7 @@ export function AnsweredBriefCard({ brief, record, openFile }: { brief: Decision
     <Plain label={brief.title}>
       {brief.outcome !== undefined ? (
         <>
-          <DemoCard brief={brief} openFile={openFile} />
+          <DemoCard brief={brief} roots={roots} />
           <Body brief={brief} view={view} />
           <div className="break-words text-xs text-muted-foreground">
             <b className="font-semibold text-foreground">{t.outcome.verdict(demoVerdict(record.answer) ?? "comment")}</b>
@@ -1367,7 +1368,7 @@ export function AnsweredBriefCard({ brief, record, openFile }: { brief: Decision
         <>
           <Heading brief={brief} subtitle={t.common.deviations(deviations(brief, record.answer), deviationTotal(brief))} />
           <Body brief={brief} view={view} />
-          <AnswerBlock brief={brief} view={view} openFile={openFile} />
+          <AnswerBlock brief={brief} view={view} roots={roots} />
         </>
       )}
       {!blank(record.answer.note ?? "") && (

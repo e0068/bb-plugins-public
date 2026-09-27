@@ -11,8 +11,8 @@
 // (packages/automations-contract); нет плагина — в списке так и сказано.
 import { useEffect, useRef, useState, type ChangeEvent, type DragEvent } from "react";
 
-import { isStepId, STEP_IDS, type StepId } from "../packages/automation-steps/catalog";
-import { automationsClient, type AutomationSummary, type CatalogResponse, type ClientResult } from "../packages/automations-contract/index";
+import { isStepId, STEP_IDS, type StepId } from "@bb-plugins/automation-steps/catalog";
+import { automationsClient, type AutomationSummary, type CatalogResponse, type ClientResult } from "@bb-plugins/automations-contract/index";
 import { FieldOverlay, overlayItem, useFieldOverlay } from "../components/ui/field-overlay";
 import { Icon } from "../components/ui/icon";
 import { builtinAutomationStage } from "../core/automation-run";

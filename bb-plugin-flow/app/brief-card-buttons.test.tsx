@@ -2,10 +2,11 @@
 import { cleanup, fireEvent, within } from "@testing-library/react";
 import type { PluginMessageDirectiveProps } from "@get-bb/plugin-sdk/app";
 import { loadPluginApp, renderSlot } from "@get-bb/plugin-sdk/testing/app";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { SETUP_ROW } from "../core/rows";
 import type { DecisionBrief, decisionsRpcContract } from "../shared/contract";
+import { threadFiles, workspacePreview } from "./file-roots-fixture";
 
 const app = await loadPluginApp(() => import("../app"));
 
@@ -41,7 +42,7 @@ const open = (openWorkspaceFile: PluginMessageDirectiveProps["openWorkspaceFile"
       message: { id: "msg_1", threadId: "thr_1", turnId: "turn_1", projectId: null },
       openWorkspaceFile,
     },
-    { rpc: { getBrief: () => ({ kind: "found", brief, answer: null }), answerBrief: () => ({ kind: "not_found" }) } },
+    { rpc: { getBrief: () => ({ kind: "found", brief, answer: null }), answerBrief: () => ({ kind: "not_found" }), ...({ threadFiles } as object) } },
   );
 
 type Slot = ReturnType<typeof open>;
@@ -79,19 +80,18 @@ describe("кнопки артефактов", () => {
     expect(task.getAttribute("aria-pressed")).toBe("false");
   });
 
-  it("клик по имени документа открывает его и не трогает галочку", async () => {
-    const openFile = vi.fn(() => true);
-    const slot = open(openFile);
+  it("клик по имени документа открывает его превью ссылкой bb и не трогает галочку", async () => {
+    const slot = open();
     const group = await artifacts(slot);
-    fireEvent.click(group.getByRole("button", { name: "p.html" }));
-    expect(openFile).toHaveBeenCalledWith("docs/assets/p.html");
+    fireEvent.click(await group.findByRole("link", { name: "p.html" }));
+    expect(slot.navigateCalls).toContainEqual(workspacePreview("docs/assets/p.html"));
     expect(group.getByRole("button", { name: "HTML-прототип: утвердить" }).getAttribute("aria-pressed")).toBe("true");
   });
 
-  it("у отсутствующего — «Сделать», неактуальный документ зачёркнут без пометки в подписи", async () => {
+  it("у отсутствующего — «Сделать», неактуальный документ — зачёркнутая ссылка без пометки в подписи", async () => {
     const group = await artifacts(open());
     expect(group.getByText("Сделать")).toBeTruthy();
-    expect(group.getByRole("button", { name: "spec.md" }).className).toContain("line-through");
+    expect((await group.findByRole("link", { name: "spec.md" })).className).toContain("line-through");
     expect(group.queryByText(/Не актуально/)).toBeNull();
   });
 });

@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-// Вкладка «История» на странице Flow: первой в ленте шапки, список завершённых прогонов по адресу панели `history`.
+// Вкладка «История» на странице Flow: список завершённых прогонов по адресу панели `history`.
 import type { ComponentType } from "react";
 import { cleanup, fireEvent, waitFor, within } from "@testing-library/react";
 import type { PluginNavPanelProps } from "@get-bb/plugin-sdk/app";
@@ -54,7 +54,6 @@ const mount = (component: ComponentType<PluginNavPanelProps>, subPath: string, h
     settings: { language: "Русский" },
   });
 
-const openHeader = (subPath = "") => mount(panel().headerContent!, subPath);
 const openHistory = (history: unknown[]) => mount(panel().component, "history", history);
 
 const rows = async (slot: ReturnType<typeof openHistory>) => {
@@ -62,58 +61,7 @@ const rows = async (slot: ReturnType<typeof openHistory>) => {
   return [...slot.container.querySelectorAll<HTMLElement>("[data-run-history-row]")];
 };
 
-describe("вкладка «История» в шапке", () => {
-  it("стоит первой в ленте, перед flow", async () => {
-    const nav = await openHeader().findByRole("navigation", { name: "Flow" });
-    const tabs = within(nav).getAllByRole("button");
-    expect(tabs[0]!.textContent).toContain("История");
-    expect(tabs[1]!.textContent).toContain("Default");
-  });
-
-  it("открывает историю адресом панели, как вкладки flow", async () => {
-    const slot = openHeader();
-    fireEvent.click(within(await slot.findByRole("navigation", { name: "Flow" })).getByRole("button", { name: "История" }));
-    expect(slot.navigateCalls).toContainEqual({ method: "toPluginPanel", path: "flows", options: { subPath: "history" } });
-  });
-
-  it("на истории текущая вкладка — она, а не flow по умолчанию", async () => {
-    const tabs = within(await openHeader("history").findByRole("navigation", { name: "Flow" }));
-    expect(tabs.getByRole("button", { name: "История" }).getAttribute("aria-current")).toBe("page");
-    expect(tabs.getByRole("button", { name: "Default" }).getAttribute("aria-current")).toBeNull();
-  });
-
-  it("лента заполняет шапку по ширине и листается вбок, вкладки не сжимаются", async () => {
-    const nav = await openHeader().findByRole("navigation", { name: "Flow" });
-    expect(nav.className).toContain("flex-1");
-    expect(nav.className).toContain("overflow-x-auto");
-    within(nav).getAllByRole("button").forEach((tab) => expect(tab.className).toContain("shrink-0"));
-  });
-});
-
 describe("страница истории", () => {
-  it("строка — тред, flow, дата, минуты, деньги и этапы «сделано/всего», в порядке сервера", async () => {
-    const slot = openHistory([entry({ briefId: "dec_b", title: "Тред Б" }), entry({})]);
-    const [first, second] = await rows(slot);
-    expect(first!.textContent).toContain("Тред Б");
-    expect(second!.textContent).toContain("Тред А");
-    expect(first!.textContent).toContain("Разработка");
-    expect(first!.textContent).toContain("20 сентября");
-    expect(first!.textContent).toContain("42 м");
-    expect(first!.textContent).toContain("$12.5");
-    expect(first!.textContent).toContain("2/2");
-  });
-
-  it("строка раскрывается в тот же итог, что в ленте, — этапы со ссылками", async () => {
-    const slot = openHistory([entry({})]);
-    const [row] = await rows(slot);
-    expect(row!.querySelector("[data-run-summary-body]")).toBeNull();
-    fireEvent.click(within(row!).getByRole("button", { name: /Раскрыть/ }));
-    const body = await waitFor(() => row!.querySelector<HTMLElement>("[data-run-summary-body]")!);
-    fireEvent.click(within(body).getByRole("button", { name: /Прогресс flow/ }));
-    await waitFor(() => expect(body.querySelectorAll("[data-progress-row]")).toHaveLength(2));
-    expect(body.textContent).toContain("task.md");
-  });
-
   it("название треда открывает тред", async () => {
     const slot = openHistory([entry({})]);
     const [row] = await rows(slot);

@@ -5,11 +5,14 @@ import { randomBytes } from "node:crypto";
 import type { BbPluginApi, PluginKvStorage } from "@get-bb/plugin-sdk";
 import { z } from "zod";
 
-import { idleNote, idleStages, isActionStage, nextAutomation, pendingAction } from "../core/automation-run";
+import { idleNote, idleStages, isActionStage } from "../core/automation-run";
+import { afterMark, markReply, startFact, type StartFact } from "../core/mark-report";
 import { carriedBy, carrierOf, EMPTY_PROGRESS, forHandoff, onAnswer, onBrief, onMark, pendingActive, progressView, recounted, recountWindows, touchesProgress, withActive } from "../core/progress";
 import { historyOrder } from "../core/run-history";
 import { isRunFinished, runSummary } from "../core/run-summary";
-import { flowProgressSchema, flowStageParamsSchema, frozenRunSchema, progressRpcContract, type ContextFillView, type DecisionAnswer, type DecisionBrief, type FlowProgress, type FrozenRun, type Planned, type RunHistoryEntry, type StageSettings } from "../shared/contract";
+import { isTaskFile, taskTitle } from "../core/run-tasks";
+import { stampFlow, type TaskFlow } from "../core/task-flow";
+import { flowProgressSchema, flowStageParamsSchema, frozenRunSchema, progressRpcContract, type ContextFillView, type DecisionAnswer, type DecisionBrief, type FlowProgress, type FrozenRun, type Planned, type RunHistoryEntry, type StageSettings, type WorkStage } from "../shared/contract";
 
 export const FLOW_STAGE_TOOL = "flow_stage";
 
@@ -250,7 +253,7 @@ export const createProgress = (kv: PluginKvStorage, options: ProgressOptions = {
 };
 
 /** Что сервер знает о треде: окружение для ссылок на файлы, идёт ли ход агента, провайдер. */
-export type ThreadState = { environmentId: string | null; active: boolean; providerId: string | null; title?: string | null };
+export type ThreadState = { environmentId: string | null; active: boolean; providerId: string | null; title?: string | null; projectId?: string };
 
 const NO_THREAD: ThreadState = { environmentId: null, active: false, providerId: null };
 
@@ -258,11 +261,30 @@ const INSTRUCTIONS = `Mark the stages of the thread's flow as you go, so the own
 - Call ${FLOW_STAGE_TOOL} with state "started" when you begin a skill stage of the run, before its first action.
 - Call it with state "done" and results — links to what the stage produced, [{ label, target }] with the file name or task key as label — when you finish the stage.
 - Built-in stages (questions, criteria, stage selection, demo) are marked by the briefs themselves: do not mark them.
-- Automation stages are run and marked by Flow itself: when the next stage is an automation, mark the current stage done and end your turn.
+- Automation stages are run and marked by Flow itself: when the next stage is an automation, mark the current stage done and end your turn. The answer says whether Flow started it, and if it did not, why and what to do. Never tell the owner an automation runs unless the answer says it started — relay what the answer says.
 - Action stages are run by the owner, step by step, with a button above the composer: when the next stage is an action, mark the current stage done and end your turn — Flow marks the action stage itself.
 - A stage sent back for rework is started again.
 - Flow measures the time a stage stood waiting for the owner: a failed automation step until the owner retries or skips it, an action stage between presses. When this tool's answer or a reply from Flow names that idle time, carry it into the flow report and the task report — which stages stood and for how long.
 The stage ids are in the Flow instructions for the turn.`;
+
+type Result = NonNullable<FlowProgress["stages"][string]["results"]>[number];
+
+/**
+ * Название задачи читается в момент отметки: дерево треда ещё живо, а к заморозке итога оно может быть уже
+ * архивировано. Файл не прочёлся или без названия — результат остаётся как есть.
+ */
+const withTaskTitles = (results: readonly Result[], read: (target: string) => Promise<string | undefined>): Promise<Result[]> =>
+  Promise.all(
+    results.map(async (result) => {
+      if (!isTaskFile(result.target)) return result;
+      const title = taskTitle((await read(result.target).catch(() => undefined)) ?? "");
+      return title === undefined ? result : { ...result, title };
+    }),
+  );
+
+/** Сколько ответ flow_stage ждёт записи старта: исполнитель пишет старт через миллисекунды после отметки, срок — с запасом. */
+const START_TIMEOUT_MS = 5000;
+const START_POLL_MS = 25;
 
 const toolError = (text: string) => ({ isError: true as const, content: [{ type: "text" as const, text }] });
 
@@ -283,8 +305,45 @@ export const registerProgress = (
     thread?: (threadId: string) => Promise<ThreadState>;
     /** Заполненность окна контекста треда с порогами полосы; `null` — чисел ещё нет, и второй полосы не будет. */
     context?: (threadId: string) => Promise<ContextFillView | null>;
+    /** Текст файла из дерева треда по пути результата — относительному от корня дерева или абсолютному. */
+    readTaskFile?: (threadId: string, target: string) => Promise<string>;
+    /** Запись файла в дерево треда по тому же пути, что и чтение. */
+    writeTaskFile?: (threadId: string, target: string, text: string) => Promise<void>;
+    /** Flow треда; `undefined` — тред без flow, и файлы задач его не получают. */
+    flow?: (threadId: string) => TaskFlow | undefined;
+    /** Проекты bb для колонки «Проект» истории: читаются один раз на запрос истории. */
+    projects?: () => Promise<ReadonlyArray<{ id: string; name: string }>>;
+    /** Id живого flow для строки истории по id и названию из итога; flow удалён — `undefined`. */
+    liveFlowId?: (id: string | undefined, name: string | undefined) => string | undefined;
+    /** Сколько мс ответ flow_stage ждёт записи старта этапа со шагами за отмеченным; нет — 5 000. */
+    startTimeoutMs?: number;
   },
 ): { freezeFinished: (threadId: string) => Promise<void> } => {
+  /**
+   * Файл задачи из результата — тем же чтением, что даёт название, получает в шапку flow треда: по нему Tasks+ ведёт
+   * из карточки на страницу flow. Штамп записывается, только когда меняет текст; сбой записи отметку не роняет.
+   */
+  const readStamped = async (threadId: string, target: string): Promise<string | undefined> => {
+    const text = await deps.readTaskFile?.(threadId, target);
+    const flow = deps.flow?.(threadId);
+    if (text === undefined || flow === undefined) return text;
+    const stamped = stampFlow(text, flow);
+    if (stamped !== text) await deps.writeTaskFile?.(threadId, target, stamped).catch(() => undefined);
+    return text;
+  };
+
+  /**
+   * Факт старта этапа со шагами — по записи прогресса, а не по расчёту: запись опрашивается, пока в ней не появится
+   * старт этапа или другой идущий этап треда, а до срока не появилось ни того, ни другого — старта не было.
+   */
+  const awaitStart = async (threadId: string, stages: readonly WorkStage[], stageId: string, deadline: number): Promise<StartFact> => {
+    const fact = startFact(stages, (await progress.get(threadId)) ?? EMPTY_PROGRESS, stageId);
+    if (fact !== null) return fact;
+    if (Date.now() >= deadline) return { kind: "not-started" };
+    await new Promise((resolve) => setTimeout(resolve, START_POLL_MS));
+    return awaitStart(threadId, stages, stageId, deadline);
+  };
+
   bb.agents.registerTool({
     name: FLOW_STAGE_TOOL,
     description: "Mark a stage of the thread's flow as started or done, with links to its results, for the progress banner above the composer.",
@@ -297,7 +356,8 @@ export const registerProgress = (
       if (!ids.includes(stage)) return toolError(`Stage ${stage} is not a stage of the thread's flow: ${ids.join(", ")}.`);
       // Работа ушла в другой тред: его прогон двигает только он, иначе два треда вели бы одну работу наперебой.
       const carrier = await progress.carrier(ctx.threadId);
-      if (carrier !== ctx.threadId) return toolError(`The work of this thread's flow run was handed off to thread ${carrier}: that thread carries the run now — do not mark its stages from here.`);
+      if (carrier !== ctx.threadId)
+        return toolError(`The work of this thread's flow run was handed off to thread ${carrier}: that thread carries the run now — do not mark its stages from here. Nothing was marked, and no automation was started from here.`);
       const marking = stages.find((s) => s.id === stage);
       if (marking !== undefined && isActionStage(marking)) return toolError(`Stage ${stage} is an action: the owner runs its steps with a button, and Flow marks it — do not mark it.`);
       if (marking?.automation !== undefined) return toolError(`Stage ${stage} is an automation: Flow runs and marks it itself — do not mark it.`);
@@ -306,17 +366,13 @@ export const registerProgress = (
       const window = state === "done" && startedAt !== undefined ? { from: Date.parse(startedAt), to: Date.parse(at) } : undefined;
       const cost = window === undefined ? undefined : await deps.windowCost(ctx.threadId, window.from, window.to).catch(() => undefined);
       const minutes = window === undefined ? undefined : (await deps.windowMinutes?.(ctx.threadId, [window]).catch(() => undefined))?.[0];
+      const titled = results === undefined ? undefined : await withTaskTitles(results, (target) => readStamped(ctx.threadId, target));
       let marked = EMPTY_PROGRESS;
-      await progress.update(ctx.threadId, (p) => (marked = onMark(p, stage, state, at, results, cost, minutes)));
-      // Следующий этап — по записи этой отметки: исполнитель может успеть начать автоматизацию раньше, чем агент получит ответ.
-      const next = state === "done" ? nextAutomation(stages, marked) : null;
-      const action = next === null && state === "done" ? pendingAction(stages, marked) : null;
-      const ahead =
-        next !== null
-          ? ` The next stage ${next.id} is an automation: Flow runs it now by itself — end your turn.`
-          : action !== null
-            ? ` The next stage ${action.stage.id} is an action: the owner runs its steps with a button above the composer — end your turn.`
-            : "";
+      await progress.update(ctx.threadId, (p) => (marked = onMark(p, stage, state, at, titled, cost, minutes)));
+      // Что за отмеченным этапом — по записи этой отметки; о старте ответ говорит только по записанному старту.
+      const verdict = state === "done" ? afterMark(stages, marked, stage) : ({ kind: "none" } as const);
+      const fact = verdict.kind === "due" ? await awaitStart(ctx.threadId, stages, verdict.stage.id, Date.now() + (deps.startTimeoutMs ?? START_TIMEOUT_MS)) : null;
+      const ahead = markReply(stage, verdict, fact);
       // Простой прогона — в ответе отметки: отчёт агент пишет до автоматизаций, и другого места узнать числа у него нет.
       const idle = state === "done" ? idleNote(idleStages(marked, stages)) : "";
       return `Stage ${stage} marked ${state}.${ahead}${idle === "" ? "" : ` ${idle}`}`;
@@ -366,6 +422,7 @@ export const registerProgress = (
     if (record.lastBriefId === undefined || summary === null) return;
     const view = progressView(record, stages, thread.active, thread.providerId);
     const flowName = deps.flowName?.(carrier);
+    const flowId = deps.flow?.(carrier)?.id;
     await progress
       .freezeRun(record.lastBriefId, {
         threadId: carrier,
@@ -375,6 +432,7 @@ export const registerProgress = (
         total: view.total,
         planned: view.planned,
         ...(flowName === undefined ? {} : { flowName }),
+        ...(flowId === undefined ? {} : { flowId }),
         environmentId: thread.environmentId,
       })
       .catch(() => undefined);
@@ -395,11 +453,19 @@ export const registerProgress = (
     await freeze(record, found.carrier, stages, thread);
   };
 
-  /** Название треда строки истории: одно чтение на тред; не прочитался — треда больше нет. */
-  const titled = async (threadId: string): Promise<Pick<RunHistoryEntry, "title" | "exists">> => {
-    if (deps.thread === undefined) return { title: null, exists: true };
+  /** Названия треда и его проекта для строки истории: одно чтение на тред; не прочитался — треда больше нет. */
+  const titled = async (threadId: string, projectNames: Promise<ReadonlyMap<string, string>>): Promise<Pick<RunHistoryEntry, "title" | "project" | "exists">> => {
+    if (deps.thread === undefined) return { title: null, project: null, exists: true };
     const thread = await deps.thread(threadId).catch(() => null);
-    return thread === null ? { title: null, exists: false } : { title: thread.title ?? null, exists: true };
+    if (thread === null) return { title: null, project: null, exists: false };
+    const project = thread.projectId === undefined ? undefined : (await projectNames).get(thread.projectId);
+    return { title: thread.title ?? null, project: project ?? null, exists: true };
+  };
+
+  /** Имена проектов по id; список не прочитался — у строк просто нет проекта. */
+  const readProjectNames = async (): Promise<ReadonlyMap<string, string>> => {
+    const projects = (await deps.projects?.().catch(() => undefined)) ?? [];
+    return new Map(projects.map(({ id, name }) => [id, name] as const));
   };
 
   bb.rpc.register(progressRpcContract, {
@@ -435,9 +501,14 @@ export const registerProgress = (
 
     async getRunHistory() {
       const runs = await progress.frozenRuns();
-      const threads = new Map<string, Promise<Pick<RunHistoryEntry, "title" | "exists">>>();
-      const threadOf = (threadId: string) => threads.get(threadId) ?? threads.set(threadId, titled(threadId)).get(threadId)!;
-      return historyOrder(await Promise.all(runs.map(async ({ briefId, run }) => ({ ...run, briefId, ...(await threadOf(run.threadId)) }))));
+      const projectNames = readProjectNames();
+      const threads = new Map<string, Promise<Pick<RunHistoryEntry, "title" | "project" | "exists">>>();
+      const threadOf = (threadId: string) => threads.get(threadId) ?? threads.set(threadId, titled(threadId, projectNames)).get(threadId)!;
+      const withLiveFlow = ({ flowId: stored, ...run }: FrozenRun) => {
+        const flowId = deps.liveFlowId?.(stored, run.flowName);
+        return flowId === undefined ? run : { ...run, flowId };
+      };
+      return historyOrder(await Promise.all(runs.map(async ({ briefId, run }) => ({ ...withLiveFlow(run), briefId, ...(await threadOf(run.threadId)) }))));
     },
   });
 

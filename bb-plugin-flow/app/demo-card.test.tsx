@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { builtinStage } from "../lib/stage-constants";
 import type { AnswerRecord, DecisionAnswer, DecisionBrief, decisionsRpcContract, dispatchRpcContract } from "../shared/contract";
+import { threadFiles } from "./file-roots-fixture";
 
 const app = await loadPluginApp(() => import("../app"));
 
@@ -42,7 +43,7 @@ const open = (options: { patch?: Partial<DecisionBrief>; answerBrief?: typeof ac
   renderSlot<PluginMessageDirectiveProps, typeof decisionsRpcContract & typeof dispatchRpcContract>(
     app.messageDirectives[0]!,
     { attributes: { id: brief.id }, source: `::decision{id="${brief.id}"}`, message: { id: "msg_1", threadId: "thr_1", turnId: "turn_1", projectId: null }, openWorkspaceFile: () => true },
-    { rpc: { getBrief: () => ({ kind: "found", brief: { ...brief, ...options.patch }, answer: options.record ?? null }), answerBrief: options.answerBrief ?? accepted, getDispatchPlace: () => ({ place: "here" }), listProjects: () => ({ kind: "found" as const, projects: [] }) } },
+    { rpc: { getBrief: () => ({ kind: "found", brief: { ...brief, ...options.patch }, answer: options.record ?? null }), answerBrief: options.answerBrief ?? accepted, getDispatchPlace: () => ({ place: "here" }), listProjects: () => ({ kind: "found" as const, projects: [] }), ...({ threadFiles } as object) } },
   );
 
 type Slot = ReturnType<typeof open>;
@@ -78,11 +79,11 @@ describe("карточка Демонстрации", () => {
     expect(c.getByText("Тесты плагина зелёные.").tagName).toBe("P");
   });
 
-  it("результаты — отдельными строками, задачи — ключами", async () => {
+  it("результаты — отдельными строками, файл — ссылкой bb, задачи — ключами", async () => {
     const slot = open();
     const c = await card(slot);
     expect(slot.container.querySelectorAll("[data-result-row]")).toHaveLength(2);
-    expect(c.getByRole("button", { name: /^screenshots/ })).toBeTruthy();
+    expect(await c.findByRole("link", { name: /^screenshots/ })).toBeTruthy();
     expect(c.getByText("BBPL-1")).toBeTruthy();
   });
 

@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { SETUP_ROW } from "../core/rows";
 import type { AnswerRecord, DecisionBrief, decisionsRpcContract } from "../shared/contract";
+import { threadFiles, workspacePreview } from "./file-roots-fixture";
 
 const app = await loadPluginApp(() => import("../app"));
 
@@ -38,7 +39,7 @@ const render = (target: DecisionBrief, answer: AnswerRecord | null) =>
   renderSlot<PluginMessageDirectiveProps, typeof decisionsRpcContract>(
     app.messageDirectives[0]!,
     { attributes: { id: target.id }, source: `::decision{id="${target.id}"}`, message: { id: "msg_1", threadId: "thr_1", turnId: "turn_1", projectId: null }, openWorkspaceFile: () => true },
-    { rpc: { getBrief: () => ({ kind: "found", brief: target, answer }), answerBrief: () => ({ kind: "not_found" }) } as never },
+    { rpc: { getBrief: () => ({ kind: "found", brief: target, answer }), answerBrief: () => ({ kind: "not_found" }), threadFiles } as never },
   );
 
 type Slot = ReturnType<typeof render>;
@@ -110,11 +111,11 @@ describe("новый бриф с переносом", () => {
     expect(panel.getByRole("button", { pressed: true }).textContent).toContain("Нет");
   });
 
-  it("имя документа — ссылка с многоточием и иконкой перехода справа", async () => {
+  it("имя документа — ссылка bb с многоточием и иконкой перехода справа", async () => {
     const slot = render(brief, null);
     await block(slot);
     const cell = slot.container.querySelector<HTMLElement>('[data-artifact="prototype"]')!;
-    const link = within(cell).getByRole("button", { name: /decisions-pamyat-vybora-vladelca-prototype\.html/ });
+    const link = await within(cell).findByRole("link", { name: /decisions-pamyat-vybora-vladelca-prototype\.html/ });
     const [name, icon] = Array.from(link.children);
     expect(name!.textContent).toBe("decisions-pamyat-vybora-vladelca-prototype.html");
     expect(name!.className).toContain("truncate");

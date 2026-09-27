@@ -1,15 +1,32 @@
 // Части ячеек нижнего блока брифа: подпись добавки, чекбокс, текст ячейки и
 // ссылка документа. Ими собраны и кнопки брифа прежнего вида, и кнопки этапов.
+import { UrlLink, experimental_FileLink as FileLink } from "@get-bb/plugin-sdk/app";
 import type { ReactNode } from "react";
 
 import { addParts, riskText } from "../core/budget";
+import { liveLink, type FileRoots } from "../core/result-link";
 import { Icon } from "../components/ui/icon";
 import { cn } from "../lib/utils";
 import { useLocale } from "./locale-context";
 import type { Add } from "../shared/contract";
 
-/** Открывает результат по его адресу; `null` — открыть нечем. */
-export type OpenFile = ((target: string) => void) | null;
+/**
+ * Ссылка результата по его адресу. Файл — ссылкой bb, как в чате: клик открывает превью,
+ * правый клик — меню «Open in / Open with / Copy file path». Адрес — ссылкой bb в браузер bb.
+ * Открыть нечем — корней ещё нет или нужного нет — остаётся подпись.
+ */
+export function ResultAnchor({ target, roots, label, className, children }: { target: string; roots: FileRoots | null; label?: string; className?: string; children: ReactNode }) {
+  const link = liveLink(target, roots);
+  const props = { className, ...(label === undefined ? {} : { "aria-label": label }) };
+  switch (link.kind) {
+    case "url":
+      return <UrlLink href={link.url} {...props}>{children}</UrlLink>;
+    case "file":
+      return <FileLink target={link.target} {...props}>{children}</FileLink>;
+    case "none":
+      return <span aria-disabled="true" {...props}>{children}</span>;
+  }
+}
 
 /** Строка результата этапа: файл, адрес или команда — одна высота, отступы и подложка. */
 export const RESULT_ROW = "flex min-h-8 w-full min-w-0 items-center gap-3 bg-state-active px-3 py-1 text-[13px]";
@@ -67,10 +84,10 @@ export function CardText({ label, meta, bright, children }: { label: ReactNode; 
 }
 
 /**
- * Имя документа — своя кнопка перехода поверх кнопки ячейки: клик по имени открывает документ и не трогает ячейку.
+ * Имя документа — своя ссылка поверх кнопки ячейки: клик по имени открывает документ и не трогает ячейку.
  * Длинное имя файла обрезается многоточием, иконка перехода справа не обрезается.
  */
-export function DocumentName({ link, stale = false, openFile, className }: { link: { label: string; target: string }; stale?: boolean; openFile: OpenFile; className?: string }) {
+export function DocumentName({ link, stale = false, roots, className }: { link: { label: string; target: string }; stale?: boolean; roots: FileRoots | null; className?: string }) {
   const classes = cn(
     "relative z-10 inline-flex min-w-0 max-w-full items-center gap-1 self-start text-left hover:text-primary",
     stale && "text-muted-foreground line-through",
@@ -87,8 +104,8 @@ export function DocumentName({ link, stale = false, openFile, className }: { lin
       {content}
     </a>
   ) : (
-    <button type="button" disabled={openFile === null} onClick={() => openFile?.(link.target)} className={classes}>
+    <ResultAnchor target={link.target} roots={roots} className={classes}>
       {content}
-    </button>
+    </ResultAnchor>
   );
 }

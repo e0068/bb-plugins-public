@@ -9,7 +9,7 @@
 // Автоматизация плагина Automations — чёрный ящик: её шаги здесь не видны, и
 // PR она открыть может. Встретив такую, правило замолкает до конца flow:
 // запрет, который не может отличить рабочий flow от сломанного, дороже пробела.
-import { isStepId, type StepId } from "../packages/automation-steps/catalog";
+import { isStepId, type StepId } from "@bb-plugins/automation-steps/catalog";
 import type { Flow, WorkStage } from "../shared/contract";
 
 /** Шаги, которым нужен уже открытый PR. */

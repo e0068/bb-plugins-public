@@ -45,7 +45,7 @@ The owner also chooses where the work runs; a new thread takes the answer over a
 
 Brief kind: brief — you wait for the answer; clarify — one yesno question with "Yes" and "No", no setup, and you continue on your own understanding.
 
-After the call, paste the directive line from the result into your reply as a standalone line, without quotes or backticks. For a brief, end the turn right after it. The answer arrives as "Brief … — answer:" in the owner's language.
+After the call, paste the directive line from the result into your reply as a standalone line, without quotes or backticks. For a brief, end the turn right after it. The answer arrives as "Brief … —" in the owner's language.
 
 One brief per run: go through the run stages in order; on a demo stage, stop with a brief carrying its outcome. Another brief only if it is unclear how to proceed, and only about that.`;
 
@@ -117,6 +117,8 @@ export const registerAskTool = (
     newId: () => string;
     now: () => string;
     stages?: (threadId: string) => StageSettings;
+    /** Название flow треда; `undefined` — тред без flow. Бриф с этапами запоминает его и рисует им бирку Выбора этапов. */
+    flowName?: (threadId: string) => string | undefined;
     /** Идёт ли тред по flow; `false` — владелец выбрал «без flow», и Flow не вкладывает в ход ничего, кроме `chooseFlow`. */
     hasFlow?: (threadId: string) => boolean;
     /** Указание треду без flow выбрать его самому; `null` — выбор агентом выключен. */
@@ -150,6 +152,7 @@ export const registerAskTool = (
           [`Brief not accepted: ${[...legacy, ...stageIssues].join("; ")}.`, ...(stageIssues.length > 0 ? [stageInstructions(settings.stages) ?? "The plugin settings have no stages."] : [])].join("\n\n"),
         );
       const planning = params.kind === "brief" ? await deps.planning?.(ctx.threadId) : undefined;
+      const flowName = deps.flowName?.(ctx.threadId);
       const carried = params.kind === "brief" ? carriedInto(params.setup, await store.getThreadCarry(ctx.threadId)) : {};
       const brief: DecisionBrief = {
         ...params,
@@ -162,7 +165,7 @@ export const registerAskTool = (
         ...(Object.keys(carried).length === 0 ? {} : { carried }),
         ...(params.setup?.stages === undefined && params.outcome === undefined
           ? {}
-          : { stages: { list: settings.stages, minButtonWidth: settings.minButtonWidth } }),
+          : { stages: { list: settings.stages, minButtonWidth: settings.minButtonWidth, ...(flowName === undefined ? {} : { flowName }) } }),
         createdAt: deps.now(),
       };
       const stored = await store.putBrief(brief);

@@ -28,7 +28,7 @@ const mount = async (progress: unknown) => {
   const app = await loadPluginApp(() => import("../app"));
   const customization = app.composerCustomizations.find((c) => c.id === "flow-progress")!;
   return renderSlot(customization.banners![0]!, {}, {
-    rpc: { getFlowProgress: () => progress, threadStorage: () => ({ kind: "found", hostId: "local", storageRootPath: "/storage/thr_new" }) } as never,
+    rpc: { getFlowProgress: () => progress, threadFiles: () => ({ environmentId: null, storage: { hostId: "local", storageRootPath: "/storage/thr_new" } }) } as never,
     composer: { scope: { kind: "thread", threadId: "thr_src" } },
     settings: { language: "Русский" },
   });
@@ -62,7 +62,8 @@ describe("баннер треда, который отдал работу", () =
     const note = { ...row("review", "done"), results: [{ label: "notes.md", target: "/storage/thr_new/notes.md" }] };
     const slot = await mount(carried("Пороги", { stages: [note, land] }));
     fireEvent.click(await screen.findByRole("button", { name: /Прогресс flow/ }));
-    fireEvent.click((await screen.findAllByRole("button", { name: /notes\.md/ }))[0]!);
-    await waitFor(() => expect(slot.rpcCalls.find((c) => c.method === "threadStorage")?.input).toEqual({ threadId: "thr_new" }));
+    fireEvent.click((await screen.findAllByRole("link", { name: /notes\.md/ }))[0]!);
+    expect(slot.rpcCalls.find((c) => c.method === "threadFiles")?.input).toEqual({ threadId: "thr_new" });
+    expect(slot.navigateCalls).toContainEqual({ method: "experimental_openFilePreview", options: { target: { kind: "thread-storage", threadId: "thr_new", path: "notes.md" }, location: null } });
   });
 });

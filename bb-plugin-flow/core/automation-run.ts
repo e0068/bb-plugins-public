@@ -2,10 +2,10 @@
 // следующим, как шаги ложатся в прогресс треда, как этап выглядит в полосе и
 // в левой панели и что сказать о нём агенту. Эффекты — исполнение шагов и
 // запись в kv — у server/automation-runner.ts.
-import { isStepId, STEP_LABELS } from "../packages/automation-steps/catalog";
+import { isStepId, STEP_LABELS } from "@bb-plugins/automation-steps/catalog";
 import { freeId, stageKindOf } from "../lib/stage-constants";
 import { scriptOf } from "./automation-scripts";
-import type { BuiltinAutomation, FlowProgress, ProgressView, RunningIcon, StageTrack, WorkStage } from "../shared/contract";
+import type { BuiltinAutomation, FlowProgress, FlowSettings, ProgressView, RunningIcon, StageTrack, WorkStage } from "../shared/contract";
 
 /** Шаг в снимке прогона: id, подпись и — у пройденного — строка успеха, которую он вернул. */
 export type RunStep = { id: string; label: string; detail?: string };
@@ -46,43 +46,119 @@ export const isAgentStage = (stage: WorkStage): boolean => stage.automation === 
 export const agentStagesAhead = (stages: readonly WorkStage[], progress: FlowProgress): boolean =>
   stages.some((stage) => isOpen(progress.stages[stage.id]) && isAgentStage(stage));
 
+/** Этап в прогоне: не вычеркнут, а вычеркнутый — если агент его всё же закрыл. */
+const inRun = (track: StageTrack | undefined): boolean => track?.skipped !== true || track.finishedAt !== undefined;
+
+/** Этапы flow после этапа `id`, в порядке flow. */
+const after = (stages: readonly WorkStage[], id: string): readonly WorkStage[] => stages.slice(stages.findIndex((stage) => stage.id === id) + 1);
+
+/** Ближайший этап прогона после этапа `id`; `null` — за ним этапов прогона нет. */
+export const nextInRun = (stages: readonly WorkStage[], progress: FlowProgress, id: string): WorkStage | null =>
+  after(stages, id).find((stage) => inRun(progress.stages[stage.id])) ?? null;
+
+/** Первый незакрытый и не вычеркнутый этап после этапа `id` — следующая работа за ним; `null` — работы нет. */
+export const openAfter = (stages: readonly WorkStage[], progress: FlowProgress, id: string): WorkStage | null =>
+  after(stages, id).find((stage) => isOpen(progress.stages[stage.id])) ?? null;
+
+/** Закрыт ли ближайший этап прогона перед этапом `id`; этапов прогона перед ним нет — закрыт. */
+const closedBefore = (stages: readonly WorkStage[], progress: FlowProgress, id: string): boolean => {
+  const before = stages.slice(0, stages.findIndex((stage) => stage.id === id)).filter((stage) => inRun(progress.stages[stage.id])).at(-1);
+  return before === undefined || progress.stages[before.id]?.finishedAt !== undefined;
+};
+
+/** Упавшая автоматизация, которая держит новые старты до повтора или пропуска владельца; упавший шаг Action держит только свой этап. */
+export const stoppedBy = (stages: readonly WorkStage[], progress: FlowProgress): WorkStage | null =>
+  stages.find((stage) => stage.automation !== undefined && !isActionStage(stage) && isFailed(progress.stages[stage.id] ?? {})) ?? null;
+
 /**
- * Автоматизация, которую пора исполнять: ненаступившая — с начала (`from: null`), прерванная без ошибки — со своего шага.
- * Прерванной бывает прогон, который шёл, когда сервер перезапустился; упавшая ждёт повтора владельца.
- * Этап Action цепочку останавливает: его шаги идут только по нажатию владельца.
+ * С какого шага пора исполнять этап со шагами. `from: null` — не начатый: ближайший этап прогона перед ним закрыт, и новые
+ * старты не держит упавшая автоматизация. Число — начатый: автоматизация, прерванная без ошибки, или Action, ждущий нажатия;
+ * начатый этап идёт по своему снимку шагов, и чужая упавшая автоматизация его не держит. `null` — не пора.
  */
-export const pendingAutomation = (stages: readonly WorkStage[], progress: FlowProgress): { stage: WorkStage; from: number | null } | null => {
-  const first = stages.find((stage) => isOpen(progress.stages[stage.id]));
-  if (first === undefined || first.automation === undefined || isActionStage(first)) return null;
-  const run = progress.stages[first.id]?.run;
-  return run === undefined ? { stage: first, from: null } : run.error === null ? { stage: first, from: run.at } : null;
+const dueFrom = (stages: readonly WorkStage[], progress: FlowProgress, stage: WorkStage): { from: number | null } | null => {
+  const track = progress.stages[stage.id];
+  if (stage.automation === undefined || !isOpen(track)) return null;
+  const run = track?.run;
+  if (run === undefined) return closedBefore(stages, progress, stage.id) && stoppedBy(stages, progress) === null ? { from: null } : null;
+  if (isActionStage(stage)) return run.at < run.steps.length ? { from: run.at } : null;
+  return run.error === null ? { from: run.at } : null;
+};
+
+/** Наступил ли этап со шагами: его пора исполнять или, у Action, ждать нажатия. */
+export const isDue = (stages: readonly WorkStage[], progress: FlowProgress, stage: WorkStage): boolean => dueFrom(stages, progress, stage) !== null;
+
+type Due = { stage: WorkStage; from: number | null };
+
+/** Первый в порядке flow наступивший этап со шагами, который проходит `keep`, и его шаг. */
+const firstDue = (stages: readonly WorkStage[], progress: FlowProgress, keep: (due: Due) => boolean): Due | null => {
+  for (const stage of stages) {
+    const due = dueFrom(stages, progress, stage);
+    if (due !== null && keep({ stage, from: due.from })) return { stage, from: due.from };
+  }
+  return null;
 };
 
 /**
- * Этап Action, который ждёт нажатия владельца: первый незакрытый этап прогона, если это Action,
- * и номер шага, до которого дошёл прогон. Шаги закончились — этап закрыт и ждать нечего.
+ * Автоматизация, которую пора исполнять: наступает, когда закрыт ближайший этап прогона перед ней, — нетронутые этапы раньше
+ * не держат. Ненаступившая — с начала (`from: null`), прерванная без ошибки — со своего шага: прерванным бывает прогон,
+ * который шёл, когда сервер перезапустился. Упавшая автоматизация держит новые старты до повтора владельца.
  */
-export const pendingAction = (stages: readonly WorkStage[], progress: FlowProgress): { stage: WorkStage; at: number } | null => {
-  const first = stages.find((stage) => isOpen(progress.stages[stage.id]));
-  if (first === undefined || !isActionStage(first)) return null;
-  // Начатый этап идёт по своему снимку: шаг, убранный из этапа по ходу прогона, прогон бы запер.
-  const run = progress.stages[first.id]?.run;
-  if (run === undefined) return { stage: first, at: 0 };
-  return run.at >= run.steps.length ? null : { stage: first, at: run.at };
+export const pendingAutomation = (stages: readonly WorkStage[], progress: FlowProgress): Due | null => firstDue(stages, progress, ({ stage }) => !isActionStage(stage));
+
+/** Первая прерванная без ошибки автоматизация и её шаг — то, что продолжает загрузка плагина; не начатые она не начинает. */
+export const interruptedAutomation = (stages: readonly WorkStage[], progress: FlowProgress): Due | null =>
+  firstDue(stages, progress, ({ stage, from }) => !isActionStage(stage) && from !== null);
+
+/**
+ * Этапы Action, которые ждут нажатия владельца, — по тому же правилу, что автоматизация, — в порядке flow, с номером шага,
+ * до которого дошёл прогон. Открытых Action может быть несколько: каждый наступает от своего этапа перед ним.
+ */
+export const dueActions = (stages: readonly WorkStage[], progress: FlowProgress): Array<{ stage: WorkStage; at: number }> =>
+  stages.flatMap((stage) => {
+    const due = isActionStage(stage) ? dueFrom(stages, progress, stage) : null;
+    return due === null ? [] : [{ stage, at: due.from ?? 0 }];
+  });
+
+/** Первый ждущий нажатия этап Action; шаги закончились — этап закрыт и ждать нечего. */
+export const pendingAction = (stages: readonly WorkStage[], progress: FlowProgress): { stage: WorkStage; at: number } | null => dueActions(stages, progress)[0] ?? null;
+
+/** Шаг этапа Action `id`, который ждёт нажатия; `null` — этап не Action или нажатия не ждёт. Открытых Action может быть несколько. */
+export const actionAt = (stages: readonly WorkStage[], progress: FlowProgress, id: string): number | null => {
+  const stage = stages.find((s) => s.id === id);
+  const due = stage === undefined || !isActionStage(stage) ? null : dueFrom(stages, progress, stage);
+  return due === null ? null : (due.from ?? 0);
 };
 
-/** Прогон без признака «шаг идёт»: признак живёт только пока шаг Action исполняется. */
-const idle = ({ busy: _busy, ...run }: NonNullable<StageTrack["run"]>): NonNullable<StageTrack["run"]> => run;
+/** Прогон без признака «шаг идёт» и без назначенного автоповтора: оба живут, только пока шаг идёт или ждёт повтора. */
+const idle = ({ busy: _busy, retryAt: _retryAt, ...run }: NonNullable<StageTrack["run"]>): NonNullable<StageTrack["run"]> => run;
+
+/** Автоповтор упавшего шага: через сколько секунд и сколько раз подряд; 0 секунд — не повторять, 0 попыток — без ограничения. */
+export type RetryPolicy = { seconds: number; attempts: number };
+
+export const DEFAULT_RETRY: RetryPolicy = { seconds: 0, attempts: 3 };
+
+/** Автоповтор из настроек Flow; поля нет — значение по умолчанию. */
+export const retryPolicyOf = (settings: Pick<FlowSettings, "retryInSeconds" | "retryAttempts">): RetryPolicy => ({
+  seconds: settings.retryInSeconds ?? DEFAULT_RETRY.seconds,
+  attempts: settings.retryAttempts ?? DEFAULT_RETRY.attempts,
+});
+
+/** Через сколько мс повторить упавший шаг сам; `null` — автоповтор выключен или попытки этого шага кончились, шаг ждёт владельца. */
+export const retryDelay = (policy: RetryPolicy, track: StageTrack | undefined): number | null => {
+  if (policy.seconds <= 0) return null;
+  const used = track?.run?.autoRetries ?? 0;
+  return policy.attempts === 0 || used < policy.attempts ? policy.seconds * 1000 : null;
+};
+
+/** Мс до назначенного автоповтора упавшего шага, не меньше нуля; `null` — повтор не назначен. */
+export const retryDueIn = (track: StageTrack | undefined, now: string): number | null => {
+  const at = track?.run?.retryAt;
+  return at === undefined || !isFailed(track ?? {}) ? null : Math.max(0, Date.parse(at) - Date.parse(now));
+};
 
 /** Шаг Action взят в работу: до ответа он идёт, и второе нажатие его не запустит. */
 export const onStepStarted = (progress: FlowProgress, stageId: string): FlowProgress =>
   patch(progress, stageId, (track) => (track.run === undefined ? track : { ...track, run: { ...track.run, error: null, busy: true } }));
-
-/** Первый незакрытый этап прогона, если это автоматизация, которую ещё не запускали; иначе `null`. */
-export const nextAutomation = (stages: readonly WorkStage[], progress: FlowProgress): WorkStage | null => {
-  const pending = pendingAutomation(stages, progress);
-  return pending?.from === null ? pending.stage : null;
-};
 
 /** Старт прогона этапа; этап без шагов закрывается сразу. Простой прежнего прогона в новый не переезжает. */
 export const onRunStart = (progress: FlowProgress, stageId: string, steps: readonly RunStep[], at: string): FlowProgress =>
@@ -103,25 +179,42 @@ export const onStepDone = (progress: FlowProgress, stageId: string, at: string, 
     if (track.run === undefined) return track;
     const next = track.run.at + 1;
     const steps = withDetail(track.run.steps, track.run.at, detail);
-    return { ...track, run: { ...idle(track.run), steps, at: next, error: null }, ...(next >= track.run.steps.length ? { finishedAt: at } : {}) };
+    // Попытки автоповтора считаются на шаг: следующий шаг начинает со своих.
+    const { autoRetries: _used, ...run } = idle(track.run);
+    return { ...track, run: { ...run, steps, at: next, error: null }, ...(next >= track.run.steps.length ? { finishedAt: at } : {}) };
   });
 
 /**
  * Шаг упал: прогон встаёт с ошибкой, и та же ошибка ложится в историю
  * падений. Историю не стирают ни повтор, ни пропуск — иначе первое же нажатие
  * «Повторить» уносит единственный след того, что шаг вообще падал, и через
- * неделю чинить нечего.
+ * неделю чинить нечего. `retryAt` — когда Flow повторит шаг сам; нет — шаг ждёт владельца.
  */
-export const onStepFailed = (progress: FlowProgress, stageId: string, error: string, at: string): FlowProgress =>
+export const onStepFailed = (progress: FlowProgress, stageId: string, error: string, at: string, retryAt?: string): FlowProgress =>
   patch(progress, stageId, (track) => {
     if (track.run === undefined) return track;
     const step = track.run.steps[track.run.at]?.id ?? String(track.run.at);
-    return { ...track, run: { ...idle(track.run), error, failures: [...(track.run.failures ?? []), { step, at, error }] } };
+    return { ...track, run: { ...idle(track.run), error, failures: [...(track.run.failures ?? []), { step, at, error }], ...(retryAt === undefined ? {} : { retryAt }) } };
   });
 
-/** Повтор: упавший шаг снова текущий и без ошибки. */
-export const onRunRetry = (progress: FlowProgress, stageId: string): FlowProgress =>
-  patch(progress, stageId, (track) => (track.run === undefined ? track : { ...track, run: { ...idle(track.run), error: null } }));
+/**
+ * Повтор: упавший шаг снова текущий и без ошибки. Автоповтор тратит попытку шага;
+ * повтор владельца счёт обнуляет — владелец вмешался, и шаг снова получает все попытки.
+ */
+export const onRunRetry = (progress: FlowProgress, stageId: string, auto = false): FlowProgress =>
+  patch(progress, stageId, (track) => {
+    if (track.run === undefined) return track;
+    const { autoRetries: used, ...run } = idle(track.run);
+    return { ...track, run: { ...run, error: null, ...(auto ? { autoRetries: (used ?? 0) + 1 } : {}) } };
+  });
+
+/** Назначенный автоповтор снят — настройку выключили, пока шаг ждал: шаг ждёт владельца. */
+export const onRetryDropped = (progress: FlowProgress, stageId: string): FlowProgress =>
+  patch(progress, stageId, (track) => {
+    if (track.run?.retryAt === undefined) return track;
+    const { retryAt: _at, ...run } = track.run;
+    return { ...track, run };
+  });
 
 /** Этап встал и ждёт владельца: упавший шаг — до повтора или пропуска, этап Action — до нажатия. Открытый интервал вторым открытием не сдвигается. */
 export const onIdleOpen = (progress: FlowProgress, stageId: string, at: string): FlowProgress =>
@@ -154,10 +247,11 @@ const CARRY_ON: Record<"automation" | "action", string> = {
 export const idleNote = (idle: ReadonlyArray<{ name: string; minutes: number }>): string =>
   idle.length === 0 ? "" : `Idle waiting for the owner:\n${idle.map((s) => `- ${s.name} — ${s.minutes} m`).join("\n")}\nName it in the flow report and in the task report.`;
 
-/** Реплика агенту после прогона Flow: продолжение работы и простой по этапам, который агент относит в отчёт. */
-export const wakeText = (kind: "automation" | "action", idle: ReadonlyArray<{ name: string; minutes: number }>): string => {
+/** Реплика агенту после прогона Flow: продолжение работы с этапа `next` и простой по этапам, который агент относит в отчёт. */
+export const wakeText = (kind: "automation" | "action", idle: ReadonlyArray<{ name: string; minutes: number }>, next?: WorkStage): string => {
+  const head = next === undefined ? CARRY_ON[kind] : `${CARRY_ON[kind]}\nNext stage: ${next.id} "${next.name}".`;
   const note = idleNote(idle);
-  return note === "" ? CARRY_ON[kind] : `${CARRY_ON[kind]}\n\n${note}`;
+  return note === "" ? head : `${head}\n\n${note}`;
 };
 
 /** Этап с упавшим шагом: не закрыт, а у прогона есть ошибка. */
@@ -183,7 +277,8 @@ const stepState = (track: StageTrack, index: number, waits: boolean): StepView["
 export const automationView = (stage: WorkStage, track: StageTrack): { steps: StepView[] } => ({
   steps: (track.run?.steps ?? stepsOf(stage)).map((step, index) => {
     const state = stepState(track, index, isActionStage(stage));
-    return { id: step.id, label: step.label, state, error: state === "fail" ? (track.run?.error ?? null) : null, detail: step.detail ?? null };
+    const failed = state === "fail";
+    return { id: step.id, label: step.label, state, error: failed ? (track.run?.error ?? null) : null, detail: step.detail ?? null, retryAt: failed ? (track.run?.retryAt ?? null) : null };
   }),
 });
 
@@ -218,9 +313,9 @@ export const stageLiveIcon = (progress: FlowProgress, stage: WorkStage, agentAct
 export const actionInstruction = (stage: WorkStage, index: number): string =>
   `${index + 1}. ${stage.id} "${stage.name}" — action: the owner runs this stage step by step with a button above the composer; do not run it and do not mark it — after marking the stage before it, end your turn; a done stage needs no results`;
 
-/** Строка этапа-автоматизации в инструкциях агенту: её ведёт Flow, агент заканчивает ход. */
+/** Строка этапа-автоматизации в инструкциях агенту: её ведёт Flow, агент заканчивает ход и о старте говорит только по ответу flow_stage. */
 export const automationInstruction = (stage: WorkStage, index: number): string =>
-  `${index + 1}. ${stage.id} "${stage.name}" — automation: Flow runs this stage by itself as soon as the stage before it is marked done; do not run it and do not mark it — after marking the stage before it, end your turn; a done stage needs no results`;
+  `${index + 1}. ${stage.id} "${stage.name}" — automation: Flow runs this stage by itself once the nearest stage of the run before it is marked done; the flow_stage answer says whether it started — tell the owner only what that answer says; do not run it and do not mark it — after marking the stage before it, end your turn; a done stage needs no results`;
 
 /** Свободный id встроенной автоматизации среди `taken`; префикс не пересекается с `automation-<id>` этапов Automations. */
 const freeAutomationId = (taken: readonly string[]): string => freeId("flow-automation", taken);

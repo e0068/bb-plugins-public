@@ -2,8 +2,8 @@
 import { createFakePluginHost } from "@get-bb/plugin-sdk/testing";
 import { describe, expect, it, vi } from "vitest";
 
-import type { StepId, StepOutcome, Steps } from "../packages/automation-steps/index";
-import { STEP_IDS } from "../packages/automation-steps/catalog";
+import type { StepId, StepOutcome, Steps } from "@bb-plugins/automation-steps/index";
+import { STEP_IDS } from "@bb-plugins/automation-steps/catalog";
 import { stage } from "../core/stages-fixtures";
 import { actionStage } from "../lib/stage-constants";
 import type { StageSettings, WorkStage } from "../shared/contract";

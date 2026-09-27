@@ -5,7 +5,7 @@
 // как раньше: событие молча пропадает, запуск отвечает причиной.
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 
-import { automationsClient, type ClientResult, type RunResponse } from "../packages/automations-contract/index";
+import { automationsClient, type ClientResult, type RunResponse } from "@bb-plugins/automations-contract/index";
 
 export type FlowTrigger = "flow.stage-done" | "flow.brief-answered" | "flow.criteria-approved";
 

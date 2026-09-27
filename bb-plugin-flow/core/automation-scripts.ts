@@ -2,7 +2,7 @@
 // файл, его имя и содержимое хранятся в самой автоматизации, а шаг ссылается
 // на скрипт как `script:<id>`. Здесь — добавить, убрать, найти скрипт и
 // превратить итог процесса в итог шага. Запуск процесса — server/script-step.ts.
-import type { StepOutcome } from "../packages/automation-steps/index";
+import type { StepOutcome } from "@bb-plugins/automation-steps/index";
 import type { AutomationScript, AutomationStep, BuiltinAutomation } from "../shared/contract";
 
 export { MAX_SCRIPT_CHARS } from "../lib/script-limit";

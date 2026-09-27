@@ -7,11 +7,12 @@ import { useEffect, useRef, useState } from "react";
 import { useRpc } from "@get-bb/plugin-sdk/app";
 
 import { mutedBlinkKeyframes } from "../core/muted-blink";
+import { runTasks, taskRoute, type RunTask } from "../core/run-tasks";
 import { stageLabel } from "../core/stages";
 import { Icon } from "../components/ui/icon";
 import { cn } from "../lib/utils";
 import type { FrozenRun, ProgressStage, RunSummaryView, progressRpcContract } from "../shared/contract";
-import { AutomationSteps, Row, money, useOpenResult } from "./progress-banner";
+import { AutomationSteps, Row, money, useRunRoots } from "./progress-banner";
 import { useMessages } from "./locale-context";
 
 const POLL_MS = 5000;
@@ -24,33 +25,70 @@ const clock = (iso: string, locale: string): string => new Date(iso).toLocaleTim
 
 const day = (iso: string, locale: string): string => new Date(iso).toLocaleDateString(locale, { day: "numeric", month: "long" });
 
-function Tile({ title, value, under, children }: { title: string; value: string; under?: string; children?: React.ReactNode }) {
+function Tile({ title, value, lines = [], children }: { title: string; value?: string; lines?: readonly string[]; children?: React.ReactNode }) {
   return (
-    <div className="flex flex-col gap-0.5 bg-surface-recessed-solid px-3 py-2.5">
+    <div className="flex min-w-0 flex-col gap-0.5 bg-surface-recessed-solid px-3 py-2.5">
       <span className="text-[11px] text-muted-foreground">{title}</span>
-      <b className="text-[17px] font-semibold tabular-nums">{value}</b>
-      {under !== undefined && <span className="text-[11px] tabular-nums text-muted-foreground">{under}</span>}
+      {value !== undefined && <b className="text-[17px] font-semibold tabular-nums">{value}</b>}
+      {lines.map((line) => (
+        <span key={line} className="text-[11px] tabular-nums text-muted-foreground">
+          {line}
+        </span>
+      ))}
       {children}
     </div>
   );
 }
 
-/** Плитки итога: кто вёл прогон, сколько он работал, во что обошёлся и сколько ждал владельца. */
-function Tiles({ summary, planned, open, toggle }: { summary: RunSummaryView; planned: FrozenRun["planned"]; open: boolean; toggle: () => void }) {
+/**
+ * Хост открывает страницу плагина в боковом сплите только по клику с Cmd/Ctrl, а обычный клик уводит на неё
+ * основную область. Задача из итога всегда встаёт сбоку: обычный клик гасится и переигрывается кликом с Cmd.
+ */
+const inSplit = (event: React.MouseEvent<HTMLAnchorElement>) => {
+  if (event.metaKey || event.ctrlKey || event.button !== 0) return;
+  event.preventDefault();
+  event.currentTarget.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, metaKey: true }));
+};
+
+/** Задачи прогона ссылками на их карточки в Tasks+: ключ и название, если этап его запомнил. */
+function TaskLinks({ tasks }: { tasks: readonly RunTask[] }) {
   const t = useMessages();
+  if (tasks.length === 0) return <span className="text-[11px] text-muted-foreground">{t.summary.noTasks}</span>;
+  return (
+    <div className="flex min-w-0 flex-col gap-0.5">
+      {tasks.map((task) => (
+        <a key={task.address} href={taskRoute(task.address)} onClick={inSplit} className="flex min-w-0 items-baseline gap-1.5 text-[12px] hover:underline">
+          <span className="shrink-0 font-mono text-muted-foreground">{task.address}</span>
+          {task.title !== undefined && <span className="truncate">{task.title}</span>}
+        </a>
+      ))}
+    </div>
+  );
+}
+
+/** Плитки итога: кто вёл прогон, сколько времени он занял, во что обошёлся и над какими задачами шёл. */
+function Tiles({ view, open, toggle }: { view: FrozenRun; open: boolean; toggle: () => void }) {
+  const t = useMessages();
+  const { summary, planned } = view;
   const agents = summary.executors.filter((e) => e.kind !== "workflow").length;
   const workflows = summary.executors.length - agents;
   return (
     <div className="grid grid-cols-2 gap-px overflow-hidden rounded-lg @[34rem]:grid-cols-4">
-      <Tile title={t.summary.executors} value={String(summary.executors.length)} under={t.summary.agents(agents, workflows)}>
+      <Tile title={t.summary.executors} value={String(summary.executors.length)} lines={[t.summary.agents(agents, workflows)]}>
         <button type="button" onClick={toggle} className="flex items-center gap-1 self-start text-[11px] text-muted-foreground hover:text-foreground">
           <Icon name="ChevronDown" aria-hidden="true" className={cn("size-3", open && "rotate-180")} />
           {open ? t.summary.hide : t.summary.who}
         </button>
       </Tile>
-      <Tile title={t.summary.work} value={spanOf(t, summary.minutes)} under={planned?.minutes == null ? t.summary.noPlan : t.summary.plan(spanOf(t, planned.minutes))} />
-      <Tile title={t.summary.spend} value={money(summary.cost)} under={planned == null ? t.summary.noPlan : t.summary.plan(`${money(planned.target)}–${money(planned.max).slice(1)}`)} />
-      <Tile title={t.summary.idle} value={spanOf(t, summary.idleMinutes)} under={t.summary.stages(summary.stages)} />
+      <Tile
+        title={t.summary.spent}
+        value={spanOf(t, summary.minutes)}
+        lines={[planned?.minutes == null ? t.summary.noPlan : t.summary.plan(spanOf(t, planned.minutes)), t.summary.idle(spanOf(t, summary.idleMinutes))]}
+      />
+      <Tile title={t.summary.spend} value={money(summary.cost)} lines={[planned == null ? t.summary.noPlan : t.summary.plan(`${money(planned.target)} – ${money(planned.max).slice(1)}`)]} />
+      <Tile title={t.summary.tasks}>
+        <TaskLinks tasks={runTasks(view.stages)} />
+      </Tile>
     </div>
   );
 }
@@ -73,20 +111,24 @@ function Executors({ summary }: { summary: RunSummaryView }) {
   );
 }
 
-/** Та же полоса, что над композером, но отцепленная: свёрнута по умолчанию и разворачивается в этапы прогона. */
-function RunBar({ view, threadId }: { view: FrozenRun; threadId: string }) {
+/**
+ * Та же полоса, что над композером, но отцепленная: свёрнута по умолчанию и разворачивается в этапы прогона.
+ * В ленте треда этапы листаются в рамке в полэкрана, чтобы не растягивать ленту; в истории (`stagesOpen`)
+ * страницу листает её корень, и этапы стоят целиком — вторая прокрутка внутри первой только мешала.
+ */
+function RunBar({ view, threadId, stagesOpen }: { view: FrozenRun; threadId: string; stagesOpen: boolean }) {
   const t = useMessages();
-  const [open, setOpen] = useState(false);
-  const openResult = useOpenResult(threadId, view.environmentId ?? null);
+  const [open, setOpen] = useState(stagesOpen);
+  const roots = useRunRoots(threadId, view.environmentId ?? null);
   const last = view.stages[view.stages.length - 1]!;
   return (
     <div className="overflow-hidden rounded-lg border border-border bg-surface-recessed-solid text-xs">
       <style>{mutedBlinkKeyframes}</style>
       {open && (
-        <div className="flex max-h-[50vh] flex-col gap-px overflow-y-auto pt-1">
+        <div className={cn("flex flex-col gap-px pt-1", !stagesOpen && "max-h-[50vh] overflow-y-auto")}>
           {view.stages.map((stage: ProgressStage) => (
             <div key={stage.id} className="flex flex-col">
-              <Row stage={stage} open={openResult} />
+              <Row stage={stage} roots={roots} />
               {stage.automation !== undefined && stage.state !== "todo" && stage.state !== "skip" && <AutomationSteps stage={stage} threadId={threadId} />}
             </div>
           ))}
@@ -173,14 +215,18 @@ export function RunSummaryBlock({ briefId }: { briefId: string }) {
 export const runWindow = (t: ReturnType<typeof useMessages>, summary: RunSummaryView): string =>
   `${day(summary.startedAt, t.common.dateLocale)}, ${t.summary.window(clock(summary.startedAt, t.common.dateLocale), clock(summary.finishedAt, t.common.dateLocale))}`;
 
-/** Тело итога — плитки, исполнители и полоса этапов: одно на ленту треда и на историю прогонов, чтобы два вида не разошлись. */
-export function RunSummaryBody({ view }: { view: FrozenRun }) {
+/**
+ * Тело итога — плитки, исполнители и полоса этапов: одно на ленту треда и на
+ * историю прогонов, чтобы два вида не разошлись. В ленте полоса свёрнута, в
+ * истории этапы видны сразу — `stagesOpen`.
+ */
+export function RunSummaryBody({ view, stagesOpen = false }: { view: FrozenRun; stagesOpen?: boolean }) {
   const [open, setOpen] = useState(false);
   return (
     <div data-run-summary-body className="@container flex flex-col gap-2 text-xs">
-      <Tiles summary={view.summary} planned={view.planned} open={open} toggle={() => setOpen((value) => !value)} />
+      <Tiles view={view} open={open} toggle={() => setOpen((value) => !value)} />
       {open && <Executors summary={view.summary} />}
-      <RunBar view={view} threadId={view.threadId} />
+      <RunBar view={view} threadId={view.threadId} stagesOpen={stagesOpen} />
     </div>
   );
 }

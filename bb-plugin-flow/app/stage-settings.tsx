@@ -7,13 +7,14 @@
 import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from "react";
 import { useBbNavigate, useRpc } from "@get-bb/plugin-sdk/app";
 
+import { retryPolicyOf } from "../core/automation-run";
 import { dropIndex, moveItem } from "../core/reorder";
 import { setFlowStages } from "../core/flows";
 import { stageLabel } from "../core/stages";
 import { FieldOverlay, overlayItem, useFieldOverlay } from "../components/ui/field-overlay";
 import { Icon } from "../components/ui/icon";
 import { Input } from "../components/ui/input";
-import { BUILTIN_KINDS, BUILTIN_SKILLS, builtinStage, stageKindOf, stageSkillOf, STAGE_BUTTON_WIDTH as WIDTH, type BuiltinKind } from "../lib/stage-constants";
+import { BUILTIN_KINDS, BUILTIN_SKILLS, builtinStage, RETRY_LIMITS, stageKindOf, stageSkillOf, STAGE_BUTTON_WIDTH as WIDTH, type BuiltinKind } from "../lib/stage-constants";
 import { cn } from "../lib/utils";
 import type { flowSettingsRpcContract, StageCatalog, StageExecutor, WorkStage } from "../shared/contract";
 import { AddAction, AddAutomation, AddBuiltinAutomation, type AutomationSets, AutomationKindCell, AutomationStepTags } from "./automation-stage";
@@ -596,37 +597,86 @@ function WorkStages({ flowId }: { flowId: string }) {
   );
 }
 
+/** Числовая настройка строкой: набранное сохраняется по уходу фокуса, зажатое в пределы; нечисло не сохраняется. */
+function NumberSetting(props: { label: string; ariaLabel: string; unit?: string; min: number; max: number; step: number; value: number | undefined; onSave: (value: number) => void }) {
+  const [typed, setTyped] = useState<string | null>(null);
+  const shown = typed ?? String(props.value ?? "");
+  const save = () => {
+    const value = Math.round(Number(shown));
+    setTyped(null);
+    if (props.value === undefined || shown.trim() === "" || !Number.isFinite(value)) return;
+    const clamped = Math.min(props.max, Math.max(props.min, value));
+    if (clamped !== props.value) props.onSave(clamped);
+  };
+  return (
+    <label className="flex min-h-11 items-center gap-3 rounded-lg bg-surface-recessed-solid px-3 py-2 text-[13px]">
+      <span className="flex-1">{props.label}</span>
+      <Input
+        type="number"
+        min={props.min}
+        max={props.max}
+        step={props.step}
+        aria-label={props.ariaLabel}
+        disabled={props.value === undefined}
+        value={shown}
+        onChange={(e) => setTyped(e.target.value)}
+        onBlur={save}
+        className={cn(field, "w-20 text-right font-mono text-xs")}
+      />
+      {props.unit !== undefined && <span className="text-muted-foreground">{props.unit}</span>}
+    </label>
+  );
+}
+
 /** Минимальная ширина кнопки этапа в брифе — общая на все flow. */
 export function StageButtonWidth() {
   const t = useMessages();
   const { settings, failed } = useFlowSettings();
-  const [width, setWidth] = useState<string | null>(null);
-  const shown = width ?? String(settings?.minButtonWidth ?? "");
-  const save = () => {
-    const value = Math.round(Number(shown));
-    setWidth(null);
-    if (settings === null || !Number.isFinite(value)) return;
-    const clamped = Math.min(WIDTH.max, Math.max(WIDTH.min, value));
-    if (clamped !== settings.minButtonWidth) updateFlowSettings((s) => ({ ...s, minButtonWidth: clamped }));
-  };
   return (
     <Loading failed={failed}>
-      <label className="flex min-h-11 items-center gap-3 rounded-lg bg-surface-recessed-solid px-3 py-2 text-[13px]">
-        <span className="flex-1">{t.settings.minWidth}</span>
-        <Input
-          type="number"
-          min={WIDTH.min}
-          max={WIDTH.max}
-          step={10}
-          aria-label={t.settings.minWidthPx}
-          disabled={settings === null}
-          value={shown}
-          onChange={(e) => setWidth(e.target.value)}
-          onBlur={save}
-          className={cn(field, "w-20 text-right font-mono text-xs")}
+      <NumberSetting
+        label={t.settings.minWidth}
+        ariaLabel={t.settings.minWidthPx}
+        unit="px"
+        min={WIDTH.min}
+        max={WIDTH.max}
+        step={10}
+        value={settings?.minButtonWidth}
+        onSave={(minButtonWidth) => updateFlowSettings((s) => ({ ...s, minButtonWidth }))}
+      />
+    </Loading>
+  );
+}
+
+/** Автоповтор упавшего шага автоматизации — общий на все flow: через сколько секунд и сколько раз. */
+export function AutomationRetry() {
+  const t = useMessages();
+  const { settings, failed } = useFlowSettings();
+  const policy = settings === null ? undefined : retryPolicyOf(settings);
+  return (
+    <Loading failed={failed}>
+      <div className="flex flex-col gap-2">
+        <NumberSetting
+          label={t.settings.retryIn}
+          ariaLabel={t.settings.retryInSeconds}
+          unit={t.settings.secondsUnit}
+          min={0}
+          max={RETRY_LIMITS.seconds}
+          step={5}
+          value={policy?.seconds}
+          onSave={(retryInSeconds) => updateFlowSettings((s) => ({ ...s, retryInSeconds }))}
         />
-        <span className="text-muted-foreground">px</span>
-      </label>
+        <NumberSetting
+          label={t.settings.retryAttempts}
+          ariaLabel={t.settings.retryAttempts}
+          min={0}
+          max={RETRY_LIMITS.attempts}
+          step={1}
+          value={policy?.attempts}
+          onSave={(retryAttempts) => updateFlowSettings((s) => ({ ...s, retryAttempts }))}
+        />
+        <p className="text-xs text-muted-foreground">{t.settings.retryHint}</p>
+      </div>
     </Loading>
   );
 }

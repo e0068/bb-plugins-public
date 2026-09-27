@@ -173,13 +173,19 @@ export const registerApi = (
   });
 
   bb.rpc.register(filesRpcContract, {
-    async threadStorage({ threadId }) {
-      try {
-        const { hostId, storageRootPath } = await bb.sdk.threads.storageLocation({ threadId });
-        return { kind: "found" as const, hostId, storageRootPath };
-      } catch {
-        return { kind: "unavailable" as const };
-      }
+    async threadFiles({ threadId }) {
+      // bb не знает треда или его хранилища — корня нет, а не ошибка: ссылка просто не откроется.
+      const [environmentId, storage] = await Promise.all([
+        bb.sdk.threads.get({ threadId }).then(
+          (thread) => thread.environmentId,
+          () => null,
+        ),
+        bb.sdk.threads.storageLocation({ threadId }).then(
+          ({ hostId, storageRootPath }) => ({ hostId, storageRootPath }),
+          () => null,
+        ),
+      ]);
+      return { environmentId, storage };
     },
   });
 };

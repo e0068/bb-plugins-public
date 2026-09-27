@@ -88,13 +88,59 @@ describe("итог завершённого прогона в ленте", () =>
     expect(slot.container.querySelector("[data-run-summary]")).toBeNull();
   });
 
-  it("плитки считают исполнителей, работу, расход и простой", async () => {
-    const slot = open(frozen());
-    const tiles = within(await block(slot));
+  it("первая плитка считает исполнителей", async () => {
+    const tiles = within(await block(open(frozen())));
     expect(tiles.getByText("3")).toBeTruthy();
-    expect(tiles.getByText("2 ч 6 м")).toBeTruthy();
+  });
+
+  it("вторая плитка — время: затрачено крупно, под ним план и ожидание", async () => {
+    const tiles = within(await block(open(frozen())));
+    expect(tiles.getByText("Затрачено")).toBeTruthy();
+    expect(tiles.getByText("2 ч 6 мин")).toBeTruthy();
+    expect(tiles.getByText("План 2 ч 5 мин")).toBeTruthy();
+    expect(tiles.getByText("Ожидание 54 мин")).toBeTruthy();
+    expect(tiles.queryByText("Ждал вас")).toBeNull();
+  });
+
+  it("третья плитка — деньги: расход и план через тире с пробелами", async () => {
+    const tiles = within(await block(open(frozen())));
+    expect(tiles.getByText("Расход")).toBeTruthy();
     expect(tiles.getAllByText("$30.4").length).toBeGreaterThan(0);
-    expect(tiles.getByText("54 м")).toBeTruthy();
+    expect(tiles.getByText("План $29.5 – 53")).toBeTruthy();
+  });
+
+  it("четвёртая плитка — задачи прогона ссылками на их карточки, с названиями", async () => {
+    const taskStage = { ...frozen().stages[0]!, results: [{ label: "BBPL-7", target: "docs/tasks/in_progress/flow-itog.md", title: "Flow — итог прогона" }, { label: "spec.md", target: "docs/specs/BBPL-7-x.md" }] };
+    const found = await block(open(frozen({ stages: [taskStage, frozen().stages[1]] })));
+    const link = within(found).getByRole("link", { name: /BBPL-7/ });
+    expect(link.getAttribute("href")).toBe("/plugins/tasks-plus/tasks/task/BBPL-7");
+    expect(link.textContent).toContain("Flow — итог прогона");
+    expect(within(found).queryByRole("link", { name: /spec/ })).toBeNull();
+  });
+
+  it("прогон без задач так и говорит в четвёртой плитке", async () => {
+    const tiles = within(await block(open(frozen())));
+    expect(tiles.getByText("Задачи")).toBeTruthy();
+    expect(tiles.getByText("Связанных задач нет")).toBeTruthy();
+  });
+
+  it("обычный клик по задаче хост открывает в боковом сплите, а сам клик до основной области не доходит", async () => {
+    const taskStage = { ...frozen().stages[0]!, results: [{ label: "BBPL-7", target: "docs/tasks/todo/a.md" }] };
+    const found = await block(open(frozen({ stages: [taskStage] })));
+    // Перехватчик ссылок хоста: погашенный клик пропускает, клик с Cmd/Ctrl открывает в сплите, прочий — в основной области.
+    const calls: string[] = [];
+    const host = (event: MouseEvent) => {
+      if (event.defaultPrevented) return void calls.push("ignored");
+      event.preventDefault();
+      calls.push(event.metaKey || event.ctrlKey ? "split" : "navigate");
+    };
+    document.addEventListener("click", host);
+    try {
+      fireEvent.click(within(found).getByRole("link", { name: /BBPL-7/ }));
+    } finally {
+      document.removeEventListener("click", host);
+    }
+    expect(calls).toEqual(["split", "ignored"]);
   });
 
   it("список исполнителей раскрывается кнопкой", async () => {

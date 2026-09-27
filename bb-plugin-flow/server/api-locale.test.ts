@@ -51,15 +51,14 @@ const sentText = (harness: Awaited<ReturnType<typeof setup>>["harness"]): string
   (harness.sdk.callsTo("threads.send")[0]![0] as { input: Array<{ text?: string }> }).input[0]!.text ?? "";
 
 describe("язык ответа в тред", () => {
-  it("ответ с языком en уходит агенту по-английски целиком: этапы, бюджет, дальше и строка картинок", async () => {
+  it("ответ с языком en уходит агенту по-английски целиком: прогон, бюджет и строка картинок", async () => {
     const { harness } = await setup(async () => ({ hostId: "local", storageRootPath: "" }));
     const images = [{ n: 1, mimeType: "image/png", dataBase64: Buffer.from("png").toString("base64") }];
     expect(await harness.callRpc("answerBrief", { id: brief.id, messageId: "msg_1", answer, locale: "en", images })).toMatchObject({ kind: "accepted" });
     const text = sentText(harness);
     expect(text).toContain(`Brief "${brief.title}" — answer:`);
-    expect(text).toContain("Work stages:");
+    expect(text).toContain("Run: spec.");
     expect(text).toContain("Budget — forecast");
-    expect(text).toContain("Next — ");
     expect(text).toContain("Images: [image 1] — ");
     expect(text).not.toMatch(/[А-Яа-яЁё]/);
   });
@@ -73,20 +72,20 @@ describe("язык ответа в тред", () => {
   it("ответ без языка — русский, как до выбора языка", async () => {
     const { harness } = await setup(async () => ({ hostId: "local", storageRootPath: "" }));
     await harness.callRpc("answerBrief", { id: brief.id, messageId: "msg_1", answer });
-    expect(sentText(harness)).toContain("Этапы работ:");
+    expect(sentText(harness)).toContain("Прогон: spec.");
   });
 });
 
-describe("хранилище треда для ссылок результатов", () => {
-  it("называет хост и корень хранилища треда", async () => {
+describe("корни файлов треда для ссылок результатов", () => {
+  it("называет окружение треда, хост и корень его хранилища", async () => {
     const { root, harness } = await setup(async () => ({ hostId: "host_7", storageRootPath: "" }));
-    expect(await harness.callRpc("threadStorage", { threadId: "thr_1" })).toEqual({ kind: "found", hostId: "host_7", storageRootPath: root });
+    expect(await harness.callRpc("threadFiles", { threadId: "thr_1" })).toEqual({ environmentId: "env_1", storage: { hostId: "host_7", storageRootPath: root } });
   });
 
-  it("bb не знает треда — хранилища нет, а не ошибка", async () => {
+  it("bb не знает хранилища треда — хранилища нет, окружение остаётся", async () => {
     const { harness } = await setup(async () => {
       throw new Error("thread not found");
     });
-    expect(await harness.callRpc("threadStorage", { threadId: "thr_gone" })).toEqual({ kind: "unavailable" });
+    expect(await harness.callRpc("threadFiles", { threadId: "thr_gone" })).toEqual({ environmentId: "env_1", storage: null });
   });
 });

@@ -28,3 +28,25 @@ export const stagedBrief = (reports: StageReport[], patch: Partial<DecisionBrief
   questions: [],
   ...patch,
 });
+
+type BuiltinSteps = Extract<NonNullable<WorkStage["automation"]>, { source: "flow" }>["steps"];
+
+const automationOf = (id: string, name: string, steps: BuiltinSteps): WorkStage => ({ id, kind: "skill", skill: "", name, executors: [], automation: { source: "flow", steps } });
+
+/** Этапы flow Code владельца, как в треде thr_897e6zxubm: 14 этапов, автоматизация двенадцатая. */
+export const CODE_FLOW: WorkStage[] = [
+  { id: "questions", kind: "questions", skill: "", name: "Questions", executors: [] },
+  { id: "criteria", kind: "criteria", skill: "", name: "Criteria", executors: [] },
+  { id: "select", kind: "select", skill: "", name: "Stage selection", executors: [] },
+  stage("task", { skill: "task-flow", name: "Task" }),
+  stage("prototype", { name: "HTML prototype" }),
+  { id: "demo", kind: "demo", skill: "", name: "Demonstration", executors: [] },
+  stage("spec", { name: "Spec" }),
+  stage("plan", { name: "Plan" }),
+  stage("implement", { skill: "code-standards-fp", name: "Implementation" }),
+  stage("review", { skill: "code-review", name: "Review" }),
+  stage("testing", { skill: "testing-tdd", name: "Testing" }),
+  automationOf("flow-automation", "Commit, FF Branch ← Main, Открыть PR", ["git.commit", "git.fast-forward", "git.create-pr", "bb.tasks-in-review"]),
+  { id: "demo-2", kind: "demo", skill: "", name: "Demonstration", executors: [] },
+  automationOf("flow-automation-2", "Смёрджить PR, Задача → done, Pull Main ← Origin, Архивировать тред", ["git.commit", "git.merge", "bb.tasks-done", "git.pull-main", "bb.archive"]),
+];

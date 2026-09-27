@@ -1,7 +1,7 @@
 // @vitest-environment node
 import { describe, expect, it } from "vitest";
 
-import { fileTarget, resultLink, stepDetail } from "./result-link";
+import { fileTarget, liveLink, resultLink, stepDetail } from "./result-link";
 
 describe("куда ведёт результат этапа", () => {
   it("адрес http и https — ссылка, путь от корня дерева — файл дерева, абсолютный путь — файл хоста", () => {
@@ -39,5 +39,28 @@ describe("строка успеха шага", () => {
   it("шаг, который ничего не сказал, не показывает пустоту", () => {
     expect(stepDetail(null)).toBeNull();
     expect(stepDetail("   ")).toBeNull();
+  });
+});
+
+describe("живая цель результата для ссылки bb", () => {
+  const roots = { threadId: "thr_1", environmentId: "env_1", storage: { hostId: "local", storageRootPath: "/s/thr_1" } };
+
+  it("путь от корня дерева — файл окружения треда", () => {
+    expect(liveLink("docs/specs/spec.md", roots)).toEqual({ kind: "file", target: { kind: "workspace", environmentId: "env_1", path: "docs/specs/spec.md" } });
+  });
+
+  it("абсолютный путь — файл хранилища треда или файл хоста", () => {
+    expect(liveLink("/s/thr_1/CEL-131/prototype.html", roots)).toEqual({ kind: "file", target: { kind: "thread-storage", threadId: "thr_1", path: "CEL-131/prototype.html" } });
+    expect(liveLink("/tmp/report.md", roots)).toEqual({ kind: "file", target: { kind: "host", hostId: "local", path: "/tmp/report.md" } });
+  });
+
+  it("адрес остаётся адресом, окружение и хранилище ему не нужны", () => {
+    expect(liveLink("https://github.com/o/r/pull/7", null)).toEqual({ kind: "url", url: "https://github.com/o/r/pull/7" });
+  });
+
+  it("без окружения путь дерева не открыть, без хранилища — абсолютный, пока корни не пришли — ничего", () => {
+    expect(liveLink("docs/a.md", { ...roots, environmentId: null })).toEqual({ kind: "none" });
+    expect(liveLink("/tmp/a.md", { ...roots, storage: null })).toEqual({ kind: "none" });
+    expect(liveLink("docs/a.md", null)).toEqual({ kind: "none" });
   });
 });

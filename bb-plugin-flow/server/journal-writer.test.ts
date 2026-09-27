@@ -60,11 +60,11 @@ const setup = (overrides: { threads?: object; environments?: object; files?: { w
 };
 
 describe("writeDecision", () => {
-  it("путь не настроен — skipped not_configured, файл не пишется", async () => {
+  it("у проекта нет своего пути — файл ложится в docs/flows рабочего дерева", async () => {
     const { bb, harness } = setup();
     const dirs = createJournalDirStore(bb.storage.kv);
-    expect(await writeDecision(bb, dirs, args)).toEqual({ kind: "skipped", reason: "not_configured" });
-    expect(harness.sdk.callsTo("files.write")).toHaveLength(0);
+    expect(await writeDecision(bb, dirs, args)).toEqual({ kind: "written", path: "docs/flows/kak-vesti-rabotu.md" });
+    expect(harness.sdk.callsTo("files.write")[0]![0]).toMatchObject({ path: "/work/tree/docs/flows/kak-vesti-rabotu.md" });
   });
 
   it("у треда нет environmentId — skipped no_environment", async () => {

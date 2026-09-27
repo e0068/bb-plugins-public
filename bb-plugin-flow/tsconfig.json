@@ -16,6 +16,9 @@
       ],
       "@get-bb/plugin-sdk": [
         "./node_modules/@get-bb/plugin-sdk"
+      ],
+      "@bb-plugins/*": [
+        "../packages/*"
       ]
     }
   },

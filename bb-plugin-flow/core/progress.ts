@@ -10,7 +10,7 @@ import { askedStageIds } from "./stages";
 export const EMPTY_PROGRESS: FlowProgress = { stages: {}, waiting: [] };
 
 type Track = FlowProgress["stages"][string];
-type Result = { label: string; target: string };
+type Result = NonNullable<Track["results"]>[number];
 
 const patch = (progress: FlowProgress, id: string, change: (track: Track) => Track): FlowProgress => ({
   ...progress,

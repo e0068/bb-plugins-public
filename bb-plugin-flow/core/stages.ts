@@ -150,12 +150,12 @@ const BUILTIN_ANSWERS: Record<BuiltinKind, string> = {
   questions: "ask the owner with ask_decision",
   criteria: "send setup.criteria through ask_decision",
   select: "send setup.stages through ask_decision",
-  demo: "stop and send a brief with outcome through ask_decision (outcome.stage — this id)",
+  demo: "stop and send a brief with outcome through ask_decision (outcome.stage — this id); on a comment answer it, make the change if asked and send this demo again, not going further",
 };
 
 /** Правило треда с flow: владелец видит работу этапами, а не прозой. */
 export const FLOW_RULE =
-  "This thread runs a flow: talk to the owner only through its stages — a brief for questions, criteria and stage selection (consecutive ones go into one brief), a brief with outcome for a demo. For anything the stages do not cover, ask a clarify brief.";
+  "This thread runs a flow: talk to the owner only through its stages — a brief for questions, criteria and stage selection (consecutive ones go into one brief), a brief with outcome for a demo. For anything the stages do not cover, ask a clarify brief. Around a brief's directive line write at most one sentence — do not retell the brief.";
 
 /**
  * Исполнитель «Сам» для агента: этап ведётся в его сессии, без помощников.

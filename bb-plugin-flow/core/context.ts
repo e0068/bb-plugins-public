@@ -1,27 +1,29 @@
-// Вторая полоса баннера: доля занятого окна контекста и её тон по двум порогам
-// владельца. Чисто, без эффектов.
+// Вторая полоса баннера: доля занятого окна контекста, её тон по двум порогам
+// владельца и отрезки полосы, на которые эти пороги её делят. Чисто, без эффектов.
 
 /** Обычный, предупреждающий и тревожный тон заливки занятого. */
 export type ContextTone = "normal" | "warn" | "alert";
 
-/** Пороги в процентах — в тех единицах, в каких их вводят в настройках и показывают в подсказке. */
+/**
+ * Пороги в токенах, а не в долях окна: окно у тредов разное — 200k у одной
+ * модели, 1M у другой, — и один процент означал бы очень разный объём.
+ */
 export interface ContextThresholds {
-  readonly warnPercent: number;
-  readonly alertPercent: number;
+  readonly warnTokens: number;
+  readonly alertTokens: number;
 }
 
 /**
  * Значения по умолчанию объявлены здесь и читаются сервером: записанное дважды,
- * в настройке и в запасном значении, число разошлось бы молча. Пороги низкие не
- * по ошибке — окно в миллион токенов кончается задолго до ста процентов, и
- * тревожить надо на первой трети.
+ * в настройке и в запасном значении, число разошлось бы молча. Это прежние 25%
+ * и 40% окна в миллион токенов — тревожить надо на первой трети, задолго до конца окна.
  */
-export const DEFAULT_WARN_PERCENT = 25;
-export const DEFAULT_ALERT_PERCENT = 40;
+export const DEFAULT_WARN_TOKENS = 250_000;
+export const DEFAULT_ALERT_TOKENS = 400_000;
 
 export const DEFAULT_CONTEXT_THRESHOLDS: ContextThresholds = {
-  warnPercent: DEFAULT_WARN_PERCENT,
-  alertPercent: DEFAULT_ALERT_PERCENT,
+  warnTokens: DEFAULT_WARN_TOKENS,
+  alertTokens: DEFAULT_ALERT_TOKENS,
 };
 
 const clamp = (value: number, max: number): number => Math.min(max, Math.max(0, value));
@@ -39,34 +41,51 @@ export function contextShare(usedTokens: number, windowTokens: number): number |
 /** Процент занятого — та единица, в которой читается подпись и меряются пороги. */
 export const contextPercent = (share: number): number => Math.round(clamp(Number.isFinite(share) ? share : 0, 1) * 100);
 
-const onScale = (value: unknown): value is number =>
-  typeof value === "number" && Number.isFinite(value) && value >= 0 && value <= 100;
+const isTokenCount = (value: unknown): value is number => typeof value === "number" && Number.isFinite(value) && value >= 0;
 
 /** Пара осмысленна, только когда жёлтый строго меньше красного, — по этому правилу сторожится и ввод. */
-export const isOrderedPair = (warnPercent: number, alertPercent: number): boolean => warnPercent < alertPercent;
+export const isOrderedPair = (warnTokens: number, alertTokens: number): boolean => warnTokens < alertTokens;
 
 /**
  * Пара порогов такая, как её ввёл владелец, — либо умолчание целиком.
  * Осмысленна только пара, где жёлтый строго меньше красного; невалидную не
  * чиним и не разворачиваем, иначе полоса красится не по той подписи, которую
  * показывает. Ввод сторожит схема настройки, а это — последний рубеж на случай,
- * когда в хранилище лежит значение из прошлой версии или обе ручки записаны
- * одним вызовом мимо страницы настроек.
+ * когда обе ручки записаны одним вызовом мимо страницы настроек.
  */
 export function thresholdsOrDefault(warn: unknown, alert: unknown): ContextThresholds {
-  if (!onScale(warn) || !onScale(alert) || !isOrderedPair(warn, alert)) return DEFAULT_CONTEXT_THRESHOLDS;
-  return { warnPercent: warn, alertPercent: alert };
+  if (!isTokenCount(warn) || !isTokenCount(alert) || !isOrderedPair(warn, alert)) return DEFAULT_CONTEXT_THRESHOLDS;
+  return { warnTokens: warn, alertTokens: alert };
+}
+
+/** Тон по занятым токенам. Порог включается в свою полосу: ровно 250 000 — уже предупреждение. */
+export function contextTone(usedTokens: number, thresholds: ContextThresholds): ContextTone {
+  if (usedTokens >= thresholds.alertTokens) return "alert";
+  if (usedTokens >= thresholds.warnTokens) return "warn";
+  return "normal";
+}
+
+/** Отрезок полосы: его доля длины полосы и доля самого отрезка, залитая занятым. */
+export interface ContextSegment {
+  readonly size: number;
+  readonly filled: number;
 }
 
 /**
- * Тон по проценту занятого. Порог включается в свою полосу: ровно двадцать пять
- * процентов — уже предупреждение. Сравнивается то же число, что стоит в
- * подписи, — иначе полоса и её подпись противоречат друг другу на округлении.
+ * Полоса, разрезанная порогами: граница стоит на доле «порог ÷ окно». Порог на
+ * нуле или не меньше окна границы не рисует — отрезок нулевой длины не
+ * отрезок. Занятое раскладывается по отрезкам слева направо, так что заливка
+ * в сумме равна доле занятого окна. Окно не положительное — полосы нет.
  */
-export function contextTone(percent: number, thresholds: ContextThresholds): ContextTone {
-  if (percent >= thresholds.alertPercent) return "alert";
-  if (percent >= thresholds.warnPercent) return "warn";
-  return "normal";
+export function contextSegments(usedTokens: number, windowTokens: number, thresholds: ContextThresholds): readonly ContextSegment[] {
+  const share = contextShare(usedTokens, windowTokens);
+  if (share === null) return [];
+  const cuts = [thresholds.warnTokens, thresholds.alertTokens].filter((tokens) => tokens > 0 && tokens < windowTokens).map((tokens) => tokens / windowTokens);
+  const edges = [0, ...cuts, 1];
+  return edges.slice(1).map((end, index) => {
+    const start = edges[index]!;
+    return { size: end - start, filled: clamp((share - start) / (end - start), 1) };
+  });
 }
 
 /** Токены коротко — так же, как их пишет bb в своём «Estimated context»: 163 000 → «163k». */

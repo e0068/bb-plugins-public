@@ -7,14 +7,16 @@
 import { useEffect, useRef, useState } from "react";
 import { useBbNavigate, useComposerView, useRpc } from "@get-bb/plugin-sdk/app";
 
-import { contextPercent, contextTone, shortTokens } from "../core/context";
+import { contextPercent, contextSegments, contextTone, shortTokens } from "../core/context";
 import { mutedBlinkAnimation, mutedBlinkKeyframes } from "../core/muted-blink";
 import { PULL_SETTLE_MS, pullOffset, settlesClosed } from "../core/pull-to-collapse";
-import { fileTarget, resultLink, stepDetail } from "../core/result-link";
+import { stepDetail, type FileRoots } from "../core/result-link";
 import { stageLabel } from "../core/stages";
 import { Icon } from "../components/ui/icon";
 import { cn } from "../lib/utils";
-import type { ContextFillView, ProgressStage, ProgressView, automationRpcContract, filesRpcContract, progressRpcContract } from "../shared/contract";
+import type { ContextFillView, ProgressStage, ProgressView, automationRpcContract, progressRpcContract } from "../shared/contract";
+import { ResultAnchor } from "./cells";
+import { useFileRoots } from "./file-roots";
 import { LocaleProvider } from "./locale";
 import { ProviderLogosProvider } from "./provider-logos-source";
 import { ProviderMark } from "./provider-logos";
@@ -24,23 +26,30 @@ import { BUILTIN_AUTOMATION_ICON, KIND_ICONS } from "./stage-icons";
 /** Тон заливки занятого окна: те же семантические токены, что у остальных состояний баннера. */
 const CONTEXT_TONES = { normal: "bg-primary", warn: "bg-warning", alert: "bg-destructive" } as const;
 
+/** Процент ширины без хвоста плавающей точки: 0,5000000000000001 → «50%». */
+const widthOf = (share: number): string => `${Number((share * 100).toFixed(2))}%`;
+
 /**
- * Вторая полоса шапки: доля занятого окна контекста под полосой этапов. Числа
- * и пороги приезжают готовыми в ответе баннера — здесь только заливка и тон.
+ * Вторая полоса шапки: доля занятого окна контекста под полосой этапов,
+ * разрезанная порогами владельца на отрезки. Числа и пороги приезжают готовыми
+ * в ответе баннера — здесь только раскладка и тон. Тон один на всю заливку:
+ * он говорит, в какой зоне тред сейчас, а отрезки — где начинается следующая.
  */
 function ContextBar({ fill }: { fill: ContextFillView }) {
   const t = useMessages();
-  // Один процент на ширину, подпись и тон: считай тон по точной доле — полоса,
-  // подписанная «25%», рядом с «жёлтая с 25%» оставалась бы обычного тона.
-  const percent = contextPercent(fill.share);
-  const { warnPercent, alertPercent } = fill;
+  // Ответ баннера сам несёт пару порогов — отдельного объекта не собираем.
+  const tone = CONTEXT_TONES[contextTone(fill.usedTokens, fill)];
   return (
     <span
       data-context-bar
-      title={t.progress.context(percent, shortTokens(fill.usedTokens), shortTokens(fill.windowTokens), warnPercent, alertPercent)}
-      className="flex h-1 overflow-hidden rounded-sm bg-state-active"
+      title={t.progress.context(contextPercent(fill.share), shortTokens(fill.usedTokens), shortTokens(fill.windowTokens), shortTokens(fill.warnTokens), shortTokens(fill.alertTokens))}
+      className="flex h-1 gap-0.5"
     >
-      <i data-context-used aria-hidden="true" style={{ width: `${percent}%` }} className={cn("rounded-sm", CONTEXT_TONES[contextTone(percent, { warnPercent, alertPercent })])} />
+      {contextSegments(fill.usedTokens, fill.windowTokens, fill).map((segment, index) => (
+        <span key={index} data-context-segment style={{ flexGrow: segment.size }} className="flex basis-0 overflow-hidden rounded-sm bg-state-active">
+          <i data-context-used aria-hidden="true" style={{ width: widthOf(segment.filled) }} className={cn("rounded-sm", tone)} />
+        </span>
+      ))}
     </span>
   );
 }
@@ -207,7 +216,8 @@ export function AutomationSteps({ stage, threadId }: { stage: ProgressStage; thr
               <span />
             )
           ) : step.state === "fail" ? (
-            <span className="flex gap-0.5">
+            <span className="flex items-baseline gap-0.5">
+              {step.retryAt !== null && <RetryCountdown at={step.retryAt} />}
               {(["retryAutomation", "skipAutomationStep"] as const).map((method) => (
                 <button
                   key={method}
@@ -232,6 +242,17 @@ export function AutomationSteps({ stage, threadId }: { stage: ProgressStage; thr
       ))}
     </div>
   );
+}
+
+/** Сколько осталось до автоповтора упавшего шага, посекундно; срок вышел — ноль, пока опрос не принесёт исход повтора. */
+function RetryCountdown({ at }: { at: string }) {
+  const t = useMessages();
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const timer = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, []);
+  return <span className="whitespace-nowrap pr-1 text-muted-foreground">{t.progress.retryIn(Math.max(0, Math.ceil((Date.parse(at) - now) / 1000)))}</span>;
 }
 
 /** Отметка справа: сделано, идёт, упало, впереди. */
@@ -306,19 +327,10 @@ function useProgress(threadId: string | null): ProgressView | null {
   return view;
 }
 
-export function useOpenResult(threadId: string, environmentId: string | null) {
-  const rpc = useRpc<typeof filesRpcContract>();
-  const navigate = useBbNavigate();
-  return (target: string) => {
-    const link = resultLink(target);
-    if (link.kind === "url") navigate.openUrl(link.url);
-    else if (link.kind === "workspace") environmentId !== null && navigate.experimental_openFilePreview({ target: { kind: "workspace", environmentId, path: link.path }, location: null });
-    else
-      void rpc.call("threadStorage", { threadId }).then(
-        (where) => where.kind === "found" && navigate.experimental_openFilePreview({ target: fileTarget(link.path, { threadId, ...where }), location: null }),
-        () => undefined,
-      );
-  };
+/** Корни файлов прогона: окружение — из вида прогона, он помнит его и у замороженного итога; хранилище — у bb. */
+export function useRunRoots(threadId: string, environmentId: string | null): FileRoots | null {
+  const roots = useFileRoots(threadId);
+  return roots === null ? null : { ...roots, environmentId };
 }
 
 /** Подсказка ячейки минут: простой этапа с шагами — словами его вида, у этапа без шагов — полное время, и только когда оно другое. */
@@ -339,7 +351,7 @@ function Spent({ minutes, wall, idle, kind, cost }: { minutes: number | null; wa
   );
 }
 
-export function Row({ stage, open }: { stage: ProgressStage; open: (target: string) => void }) {
+export function Row({ stage, roots }: { stage: ProgressStage; roots: FileRoots | null }) {
   const t = useMessages();
   const first = stage.results[0];
   const muted = stage.state === "todo" || stage.state === "skip";
@@ -359,9 +371,9 @@ export function Row({ stage, open }: { stage: ProgressStage; open: (target: stri
         <span data-progress-label className={cn(muted && "text-muted-foreground", stage.state === "skip" && "line-through")}>{stageLabel(stage, t.stages)}</span>
         {stage.state === "done" && first !== undefined ? (
           <>
-            <button type="button" onClick={() => open(first.target)} className="min-w-0 break-all text-left underline decoration-foreground/35 underline-offset-2 hover:text-primary">
+            <ResultAnchor target={first.target} roots={roots} className="min-w-0 break-all text-left underline decoration-foreground/35 underline-offset-2 hover:text-primary">
               {first.label}
-            </button>
+            </ResultAnchor>
             {stage.results.length > 1 && <span className="shrink-0 text-[11px] text-muted-foreground">+{stage.results.length - 1}</span>}
           </>
         ) : (
@@ -391,9 +403,9 @@ export function Row({ stage, open }: { stage: ProgressStage; open: (target: stri
       />
       <span className="flex size-5 items-center justify-center">
         {stage.state === "done" && first !== undefined ? (
-          <button type="button" aria-label={t.progress.open(first.label)} onClick={() => open(first.target)} className="flex size-5 items-center justify-center rounded hover:bg-state-hover hover:text-primary">
+          <ResultAnchor target={first.target} roots={roots} label={t.progress.open(first.label)} className="flex size-5 items-center justify-center rounded hover:bg-state-hover hover:text-primary">
             <Icon name="ExternalLink" aria-hidden="true" className="size-3.5" />
-          </button>
+          </ResultAnchor>
         ) : stage.state === "done" ? (
           <Icon name="Check" aria-hidden="true" className="size-3.5" />
         ) : stage.state === "now" ? (
@@ -449,7 +461,7 @@ function usePullDown(pull: { current: Pull | null }, open: boolean) {
 function Progress({ view, threadId, open, toggle }: { view: ProgressView; threadId: string; open: boolean; toggle: () => void }) {
   const t = useMessages();
   // Результаты лежат там, куда их положил тред, который ведёт прогон: в его дереве и в его хранилище.
-  const openResult = useOpenResult(view.carrier?.threadId ?? threadId, view.environmentId ?? null);
+  const roots = useRunRoots(view.carrier?.threadId ?? threadId, view.environmentId ?? null);
   const pull = useRef<Pull | null>(null);
   const listRef = usePullDown(pull, open);
   const current = view.stages.find((s) => s.id === view.current) ?? view.stages[view.stages.length - 1]!;
@@ -501,7 +513,7 @@ function Progress({ view, threadId, open, toggle }: { view: ProgressView; thread
           )}
           {view.stages.map((stage) => (
             <div key={stage.id} className="flex flex-col">
-              <Row stage={stage} open={openResult} />
+              <Row stage={stage} roots={roots} />
               {stage.automation !== undefined && stage.state !== "todo" && stage.state !== "skip" && <AutomationSteps stage={stage} threadId={driver} />}
             </div>
           ))}

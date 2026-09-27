@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { cleanup, screen } from "@testing-library/react";
+import { cleanup, screen, within } from "@testing-library/react";
 import { loadPluginApp, renderSlot } from "@get-bb/plugin-sdk/testing/app";
 import { afterEach, describe, expect, it } from "vitest";
 
@@ -121,7 +121,7 @@ describe("длинное содержимое строки переноситс�
     const slot = await expand(await mount(wrapping));
     const long = rowOf(slot, "не помещается");
     const label = long.querySelector("[data-progress-label]")!;
-    const link = long.querySelector("button")!;
+    const link = within(long as HTMLElement).getByText(wrapping.stages[0]!.results[0]!.label);
     expect(label.className).not.toMatch(/truncate|whitespace-nowrap/);
     expect(link.className).not.toMatch(/truncate|whitespace-nowrap/);
     expect(label.parentElement?.className).toMatch(/flex-wrap/);

@@ -14,11 +14,11 @@ Every question to the owner, every clarification, fork and point of confusion go
 3. The second part, `questions`, holds only real questions: `fork`, `pick`, `confirm`.
 4. Set `recommended: true` on what you would pick yourself. In `pick` and on stages several may be recommended, elsewhere at most one.
 5. Call the tool and paste the `::decision{id="…"}` line from the result into your reply as a standalone line — no quotes or backticks, with a blank line before and after.
-6. For `kind: "brief"`, end the turn right after the line. The answer arrives as a "Brief … — answer:" message, and any deviation from your recommendation is named in it plainly — do not argue with the choice, work by it.
+6. For `kind: "brief"`, end the turn right after the line. Around the line write at most one sentence — the owner already sees the brief, do not retell it. The answer arrives as a "Brief … — answer:" message, and any deviation from your recommendation is named in it plainly — do not argue with the choice, work by it.
 
 The widget draws the brief top to bottom: questions, "Done when", stage buttons and the budget button. Anything so unclear that it cannot be phrased even as a criteria item is a question.
 
-The answer comes in the owner's interface language, which the owner picks in the plugin settings (System follows the browser). With a Russian interface the same message reads "Бриф … — ответ:" with the sections «Этапы работ:», «Бюджет — …», «Готово, когда — …» and «Дальше — …»; the structure is the same.
+The answer comes in the owner's interface language, which the owner picks in the plugin settings (System follows the browser). The message holds only the owner's answer: the questions with the chosen options, a "Run:" line with the run stages in order (an executor is named only when it is not you), an "Off the recommendation:" line when the owner changed it, the budget and "Done when". The rules of the run — stop on a demo, "self" without subagents, one brief per run — are not repeated there; they stay in the tool instructions. A demo answer is "Brief … — continue." with the next stage, or "Brief … — comment on the … stage:" with the comment: answer it and send the same demo again. With a Russian interface the same message reads "Бриф … — ответ:" with «Прогон:», «Не по рекомендации:», «Бюджет — …» and «Готово, когда — …»; the structure is the same.
 
 ## Criteria before the task
 
@@ -35,7 +35,7 @@ A stage has a kind. A **skill** stage has a skill, a name and who besides you ma
 - **Stage selection** — send `setup.stages`: the owner picks which stages go into the run and who executes them, and sees the budget. Stages already passed are `done` and cannot be taken out.
 - **Demo** — stop and send a brief with `outcome` for this stage: briefly show everything done since the previous demo (the first demo — since the flow started).
 
-An **action** stage carries the same steps as an automation — Flow steps, scripts, Automations automations — but the owner runs them, one step per button press above the composer. Do not run it, do not mark it: when the next stage is an action stage, mark the stage before it done and end your turn. Flow marks the action stage itself and, when its last step passes, wakes you to carry on.
+An **action** stage carries the same steps as an automation — Flow steps, scripts, Automations automations — but the owner runs them, one step per button press above the composer. Do not run it, do not mark it: when the next stage is an action stage, mark the stage before it done and end your turn. Flow marks the action stage itself and, when its last step passes, wakes you to carry on. An **automation** stage Flow runs by itself once the nearest stage of the run before it is marked done. The answer of `flow_stage` says whether Flow started it — or put up the action's buttons — and, if not, why and what to do: tell the owner only what that answer says, never that an automation runs when the answer says it did not start.
 
 Questions, criteria and stage selection that stand next to each other go into **one** brief. A done built-in stage needs no `results`. The list of stages with ids and kinds comes in the Flow instructions for every turn; send all of them in `setup.stages`, in that order, otherwise the tool returns an error with the list. The tool no longer accepts the old `artifacts`, `executor`, `checker` and `testing`, nor the stage state `review`.
 

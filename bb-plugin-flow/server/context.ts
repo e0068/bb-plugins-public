@@ -6,7 +6,7 @@
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import { z } from "zod";
 
-import { DEFAULT_ALERT_PERCENT, DEFAULT_WARN_PERCENT, contextShare, isOrderedPair, thresholdsOrDefault } from "../core/context";
+import { DEFAULT_ALERT_TOKENS, DEFAULT_WARN_TOKENS, contextShare, isOrderedPair, thresholdsOrDefault } from "../core/context";
 import type { ContextFillView } from "../shared/contract";
 
 export type ContextSource = { threads: { events: Pick<BbPluginApi["sdk"]["threads"]["events"], "list"> } };
@@ -43,16 +43,19 @@ export const readContextFill = async (source: ContextSource, threadId: string): 
   }
 };
 
-/** Что отдают настройки плагина: обе ручки свободные и могут быть пусты. */
-export type ContextSettingValues = { contextWarnPercent?: unknown; contextAlertPercent?: unknown };
+/**
+ * Что отдают настройки плагина: обе ручки свободные и могут быть пусты.
+ * Пороги прошлой версии в процентах лежали под другими ключами и не читаются:
+ * без окна треда перевести их в токены нечем, поэтому действуют умолчания.
+ */
+export type ContextSettingValues = { contextWarnTokens?: unknown; contextAlertTokens?: unknown };
 export type ContextSettings = () => Promise<ContextSettingValues>;
 
-const percent = z.number().min(0).max(100);
+const tokens = z.number().int().nonnegative();
 
 /**
- * Пороги второй полосы — решение владельца: у Flow они означают не то же, что
- * доля до конца окна. Окно в миллион токенов кончается задолго до ста
- * процентов, и тревожить надо на первой трети, а не на девяностых.
+ * Пороги второй полосы — решение владельца, и задаются они в токенах: окно у
+ * тредов разное, а тревожить надо по объёму занятого, а не по доле окна.
  *
  * Ввод сторожит схема: страница настроек сохраняет поле по одному и печатает
  * первую ошибку схемы под полем, поэтому жёлтый не ниже красного отклоняется
@@ -65,25 +68,25 @@ export const contextSettings = (stored: () => ContextSettingValues) => {
     return typeof value === "number" ? value : fallback;
   };
   return {
-    contextWarnPercent: {
+    contextWarnTokens: {
       type: "number" as const,
-      label: "Context bar — yellow from, %",
-      description: "Share of the context window from which the second bar of the progress banner turns yellow. Must be lower than the red threshold.",
-      experimental_schema: percent.superRefine((value, ctx) => {
-        const alert = peer("contextAlertPercent", DEFAULT_ALERT_PERCENT);
-        if (!isOrderedPair(value, alert)) ctx.addIssue({ code: "custom", message: `Must be lower than the red threshold (${alert}%)` });
+      label: "Context bar — yellow from, tokens",
+      description: "Tokens of the context window from which the second bar of the progress banner turns yellow; the bar is split at this point. Must be lower than the red threshold.",
+      experimental_schema: tokens.superRefine((value, ctx) => {
+        const alert = peer("contextAlertTokens", DEFAULT_ALERT_TOKENS);
+        if (!isOrderedPair(value, alert)) ctx.addIssue({ code: "custom", message: `Must be lower than the red threshold (${alert} tokens)` });
       }),
-      default: DEFAULT_WARN_PERCENT,
+      default: DEFAULT_WARN_TOKENS,
     },
-    contextAlertPercent: {
+    contextAlertTokens: {
       type: "number" as const,
-      label: "Context bar — red from, %",
-      description: "Share of the context window from which the second bar of the progress banner turns red. Must be higher than the yellow threshold.",
-      experimental_schema: percent.superRefine((value, ctx) => {
-        const warn = peer("contextWarnPercent", DEFAULT_WARN_PERCENT);
-        if (!isOrderedPair(warn, value)) ctx.addIssue({ code: "custom", message: `Must be higher than the yellow threshold (${warn}%)` });
+      label: "Context bar — red from, tokens",
+      description: "Tokens of the context window from which the second bar of the progress banner turns red; the bar is split at this point. Must be higher than the yellow threshold.",
+      experimental_schema: tokens.superRefine((value, ctx) => {
+        const warn = peer("contextWarnTokens", DEFAULT_WARN_TOKENS);
+        if (!isOrderedPair(warn, value)) ctx.addIssue({ code: "custom", message: `Must be higher than the yellow threshold (${warn} tokens)` });
       }),
-      default: DEFAULT_ALERT_PERCENT,
+      default: DEFAULT_ALERT_TOKENS,
     },
   };
 };
@@ -98,5 +101,5 @@ export const contextFillOf = async (source: ContextSource, settings: ContextSett
   const fill = await readContextFill(source, threadId);
   if (fill === null) return null;
   const values: ContextSettingValues = await settings().catch(() => ({}));
-  return { ...fill, ...thresholdsOrDefault(values.contextWarnPercent, values.contextAlertPercent) };
+  return { ...fill, ...thresholdsOrDefault(values.contextWarnTokens, values.contextAlertTokens) };
 };

@@ -46,20 +46,31 @@ describe("заполненность окна из журнала треда", (
   });
 });
 
-describe("пороги полосы из настроек плагина", () => {
+describe("пороги полосы в токенах из настроек плагина", () => {
+  const withSettings = (values: Record<string, unknown>) =>
+    contextFillOf(sourceOf(async () => [usage(50, 100)]), async () => values, "thr_1");
+
   it("правка порога доезжает до ответа", async () => {
-    const fill = await contextFillOf(sourceOf(async () => [usage(50, 100)]), async () => ({ contextWarnPercent: 12, contextAlertPercent: 55 }), "thr_1");
-    expect(fill).toEqual({ share: 0.5, usedTokens: 50, windowTokens: 100, warnPercent: 12, alertPercent: 55 });
+    expect(await withSettings({ contextWarnTokens: 120_000, contextAlertTokens: 550_000 })).toEqual({
+      share: 0.5,
+      usedTokens: 50,
+      windowTokens: 100,
+      warnTokens: 120_000,
+      alertTokens: 550_000,
+    });
   });
 
   it("настройка пуста — пороги по умолчанию", async () => {
-    const fill = await contextFillOf(sourceOf(async () => [usage(50, 100)]), async () => ({}), "thr_1");
-    expect(fill).toMatchObject({ warnPercent: 25, alertPercent: 40 });
+    expect(await withSettings({})).toMatchObject({ warnTokens: 250_000, alertTokens: 400_000 });
+  });
+
+  it("проценты прошлой версии в хранилище не читаются — действуют умолчания", async () => {
+    expect(await withSettings({ contextWarnPercent: 10, contextAlertPercent: 20 })).toMatchObject({ warnTokens: 250_000, alertTokens: 400_000 });
   });
 
   it("настройки не прочитались — пороги по умолчанию, а не отсутствие полосы", async () => {
     const fill = await contextFillOf(sourceOf(async () => [usage(50, 100)]), async () => { throw new Error("нет доступа"); }, "thr_1");
-    expect(fill).toMatchObject({ share: 0.5, warnPercent: 25, alertPercent: 40 });
+    expect(fill).toMatchObject({ share: 0.5, warnTokens: 250_000, alertTokens: 400_000 });
   });
 
   it("чисел нет — порогов не спрашиваем и полосы не будет", async () => {
@@ -67,28 +78,12 @@ describe("пороги полосы из настроек плагина", () =>
     expect(await contextFillOf(sourceOf(async () => []), asked, "thr_1")).toBeNull();
     expect(asked).not.toHaveBeenCalled();
   });
-});
 
-describe("бессмысленная пара порогов не доезжает до полосы", () => {
-  const withSettings = (values: Record<string, unknown>) =>
-    contextFillOf(sourceOf(async () => [usage(50, 100)]), async () => values, "thr_1");
-
-  it("перевёрнутая пара сбрасывается на умолчание — подсказка и цвет говорят одно", async () => {
-    expect(await withSettings({ contextWarnPercent: 40, contextAlertPercent: 25 })).toMatchObject({ warnPercent: 25, alertPercent: 40 });
-  });
-
-  it("порог за пределами шкалы сбрасывает пару на умолчание", async () => {
-    expect(await withSettings({ contextWarnPercent: -10, contextAlertPercent: 300 })).toMatchObject({ warnPercent: 25, alertPercent: 40 });
+  it("перевёрнутая пара сбрасывается на умолчание, а не разворачивается", async () => {
+    expect(await withSettings({ contextWarnTokens: 500_000, contextAlertTokens: 300_000 })).toMatchObject({ warnTokens: 250_000, alertTokens: 400_000 });
   });
 
   it("не число в пороге сбрасывает пару на умолчание", async () => {
-    expect(await withSettings({ contextWarnPercent: "двадцать", contextAlertPercent: 40 })).toMatchObject({ warnPercent: 25, alertPercent: 40 });
-  });
-});
-
-describe("пара, записанная прошлой версией, не доезжает до полосы развёрнутой", () => {
-  it("50 и 30 в хранилище — полоса по умолчанию, а не по 30 и 50", async () => {
-    const fill = await contextFillOf(sourceOf(async () => [usage(50, 100)]), async () => ({ contextWarnPercent: 50, contextAlertPercent: 30 }), "thr_1");
-    expect(fill).toMatchObject({ warnPercent: 25, alertPercent: 40 });
+    expect(await withSettings({ contextWarnTokens: "двести", contextAlertTokens: 400_000 })).toMatchObject({ warnTokens: 250_000, alertTokens: 400_000 });
   });
 });

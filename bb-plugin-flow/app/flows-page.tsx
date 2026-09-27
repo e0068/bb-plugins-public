@@ -1,7 +1,9 @@
 // Страница Flow в левом меню bb: выбранный flow — имя и описание «когда
 // выбирать» правятся на месте, таблица его этапов и удаление flow внизу. Сам
-// выбор и создание — в шапке панели (./flows-header); общее на все flow — ширина
-// кнопки и выбор flow агентом — в настройках плагина (./flow-settings-sections).
+// выбор и создание — лентой в начале страницы (./flows-header); общее на все
+// flow — ширина кнопки и выбор flow агентом — в настройках плагина
+// (./flow-settings-sections). Страницу листает её корень целиком, вместе с
+// лентой: рамок со своей прокруткой внутри нет.
 // Выбранный flow живёт в адресе страницы, чтобы ссылка открывала его; адрес
 // `history` вместо flow открывает историю прогонов (./run-history). Своей
 // ширины содержимое не держит: таблица этапов сама перестраивается по ширине
@@ -21,8 +23,7 @@ import { useMessages } from "./locale-context";
 import { updateFlowSettings, useFlowSettings } from "./stage-settings-store";
 import { WorkStagesTable } from "./stage-settings";
 import { HISTORY_SUB_PATH, RunHistory } from "./run-history";
-
-export const FLOWS_PANEL_PATH = "flows";
+import { FlowsHeader } from "./flows-header";
 
 export function FlowsPage(props: PluginNavPanelProps) {
   return (
@@ -34,11 +35,7 @@ export function FlowsPage(props: PluginNavPanelProps) {
   );
 }
 
-/**
- * Имя выбранного flow правкой на месте. Рамка фокуса рисуется внутрь поля
- * (`ring-inset`): поле стоит вплотную к краю области с прокруткой, и снаружи
- * её срезало бы слева, справа и сверху.
- */
+/** Имя выбранного flow правкой на месте. */
 function FlowName({ flow }: { flow: Flow }) {
   const t = useMessages();
   const [name, setName] = useState<string | null>(null);
@@ -103,37 +100,39 @@ function DeleteFlow({ flow }: { flow: Flow }) {
 }
 
 function Flows({ subPath }: PluginNavPanelProps) {
-  if (subPath === HISTORY_SUB_PATH) return <RunHistory />;
-  return <FlowEditor subPath={subPath} />;
+  return (
+    <div className="h-full overflow-y-auto">
+      <div className="flex min-w-0 flex-col gap-4 p-6">
+        <FlowsHeader subPath={subPath} />
+        {subPath === HISTORY_SUB_PATH ? <RunHistory /> : <FlowEditor subPath={subPath} />}
+      </div>
+    </div>
+  );
 }
 
 function FlowEditor({ subPath }: { subPath: string }) {
   const t = useMessages();
   const { settings } = useFlowSettings();
-  if (settings === null) return <div aria-busy="true" className="p-6" />;
-  // Выбранный flow приходит адресом панели: его пишет лента в шапке, а кнопки
+  if (settings === null) return <div aria-busy="true" />;
+  // Выбранный flow приходит адресом панели: его пишет лента в начале страницы, а кнопки
   // «назад» и «вперёд» браузера ходят по той же истории.
   const flow = flowById(settings, subPath);
   return (
-    <div className="flex h-full min-h-0 flex-col p-6">
-      <section className="flex min-h-0 flex-1 flex-col overflow-auto">
-        <div className="flex min-w-0 flex-col gap-4">
-          <div key={flow.id} className="flex flex-col gap-1">
-            <FlowName flow={flow} />
-            <FlowDescription flow={flow} />
-          </div>
-          <div className="flex flex-col gap-2">
-            <h2 className="text-[13px] font-medium">{t.settings.stagesTitle}</h2>
-            <p className="text-xs text-muted-foreground">{t.settings.stagesDescription}</p>
-            <WorkStagesTable flowId={flow.id} />
-          </div>
-          {settings.flows.length > 1 && (
-            <div className="mt-2 border-t border-border pt-4">
-              <DeleteFlow key={flow.id} flow={flow} />
-            </div>
-          )}
+    <section className="flex min-w-0 flex-col gap-4">
+      <div key={flow.id} className="flex flex-col gap-1">
+        <FlowName flow={flow} />
+        <FlowDescription flow={flow} />
+      </div>
+      <div className="flex flex-col gap-2">
+        <h2 className="text-[13px] font-medium">{t.settings.stagesTitle}</h2>
+        <p className="text-xs text-muted-foreground">{t.settings.stagesDescription}</p>
+        <WorkStagesTable flowId={flow.id} />
+      </div>
+      {settings.flows.length > 1 && (
+        <div className="mt-2 border-t border-border pt-4">
+          <DeleteFlow key={flow.id} flow={flow} />
         </div>
-      </section>
-    </div>
+      )}
+    </section>
   );
 }

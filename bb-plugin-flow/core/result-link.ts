@@ -12,10 +12,27 @@ export type StorageWhere = { threadId: string; hostId: string; storageRootPath: 
 
 export type FileTarget = { kind: "thread-storage"; threadId: string; path: string } | { kind: "host"; hostId: string; path: string };
 
+/** Файл, который bb открывает сам: превью по клику, меню «Open in / Open with / Copy path» по правому клику. */
+export type LiveTarget = FileTarget | { kind: "workspace"; environmentId: string; path: string };
+
+/** Корни файлов треда: окружение — для путей от корня дерева, хранилище — для абсолютных; нет корня — `null`. */
+export type FileRoots = { threadId: string; environmentId: string | null; storage: { hostId: string; storageRootPath: string } | null };
+
+export type LiveLink = { kind: "url"; url: string } | { kind: "file"; target: LiveTarget } | { kind: "none" };
+
 /** Абсолютный путь внутри хранилища треда — файл хранилища от его корня, любой другой — файл хоста. */
 export const fileTarget = (path: string, where: StorageWhere): FileTarget => {
   const root = where.storageRootPath.endsWith("/") ? where.storageRootPath : `${where.storageRootPath}/`;
   return path.startsWith(root) ? { kind: "thread-storage", threadId: where.threadId, path: path.slice(root.length) } : { kind: "host", hostId: where.hostId, path };
+};
+
+/** Живая цель ссылки результата; корней ещё нет (`null`) или нужного корня нет — открыть нечем. */
+export const liveLink = (target: string, roots: FileRoots | null): LiveLink => {
+  const link = resultLink(target);
+  if (link.kind === "url") return link;
+  if (link.kind === "workspace")
+    return roots?.environmentId == null ? { kind: "none" } : { kind: "file", target: { kind: "workspace", environmentId: roots.environmentId, path: link.path } };
+  return roots?.storage == null ? { kind: "none" } : { kind: "file", target: fileTarget(link.path, { threadId: roots.threadId, ...roots.storage }) };
 };
 
 /**

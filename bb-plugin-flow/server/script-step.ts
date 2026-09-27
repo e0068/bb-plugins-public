@@ -9,7 +9,7 @@ import { join } from "node:path";
 
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 
-import type { StepOutcome } from "../packages/automation-steps/index";
+import type { StepOutcome } from "@bb-plugins/automation-steps/index";
 import { SCRIPT_TIMEOUT_MINUTES, scriptOutcome, type ScriptExit } from "../core/automation-scripts";
 import type { AutomationScript } from "../shared/contract";
 
