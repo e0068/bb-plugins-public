@@ -1,0 +1,7 @@
+{
+  "name": "@bb-plugins/thread-terminal",
+  "version": "0.1.1",
+  "type": "module",
+  "private": true,
+  "main": "./index.ts"
+}
