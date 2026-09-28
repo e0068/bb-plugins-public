@@ -1,0 +1,7 @@
+{
+  "extends": "../plugin-base/tsconfig.base.json",
+  "compilerOptions": {
+    "types": ["node"]
+  },
+  "include": ["index.ts", "index.test.ts", "catalog-steps.test.ts"]
+}
