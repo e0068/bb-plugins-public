@@ -7,7 +7,7 @@ separately from the repo anyway).
 
 The list of dependencies already used by other plugins (so you don't pull in
 a duplicate under a different name) lives in
-[memory/wiki/plugin-dependency-stack.md](../../memory/wiki/plugin-dependency-stack.md).
+[docs/wiki/plugin-dependency-stack.md](../../docs/wiki/plugin-dependency-stack.md).
 
 ## tsconfig.base.json
 
@@ -36,3 +36,26 @@ package's node_modules, not the plugin's — without dedupe, tests fail on a
 second copy of React). Imported directly, with no config factory — the rest
 of each plugin's `vitest.config.ts` is its own (jsdom/node, aliases, timeouts)
 and it wasn't worth forcing that into a shared template: real differences, not duplication.
+
+## Importing shared packages: `@bb-plugins/<pkg>`
+
+Plugin code imports a shared package as `@bb-plugins/<pkg>`, never as
+`../packages/<pkg>`. Since bb 0.44 the load-time server build rejects a
+relative import that resolves outside the plugin directory ("server source
+import escapes the plugin directory"), and the plugin stays in `error`. A bare
+specifier passes: bb resolves it through the plugin's tsconfig `paths` and
+bundles it. `bb plugin build` doesn't run this check, so a relative import
+builds fine locally and breaks only after install.
+
+Each plugin that uses shared packages declares the path in its `tsconfig.json`
+(its own `paths` replaces the base one, so it can't live in
+`tsconfig.base.json`):
+
+```json
+"paths": { "@/*": ["./*"], "@bb-plugins/*": ["../packages/*"] }
+```
+
+Vitest doesn't read tsconfig `paths`, so `vitest.config.ts` spreads
+`sharedPackagesAlias` from `vitest-shared-packages.ts` into `resolve.alias`.
+Packages keep importing each other by relative path — the check only applies
+to files inside the plugin.

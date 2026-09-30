@@ -18,6 +18,9 @@ const toastError = vi.hoisted(() => vi.fn());
 vi.mock("sonner", () => ({ toast: { error: toastError } }));
 
 const app = await loadPluginApp(() => import("./app"));
+// Модуль с SDK — только после загрузки приложения, иначе SDK поднимется раньше харнесса.
+const { forgetLastKnownDrafts } = await import("./ui/use-drafts");
+afterEach(forgetLastKnownDrafts);
 const customization = app.composerCustomizations[0]!;
 const saveAction = customization.actions![0]!;
 const banner = customization.banners![0]!;
@@ -535,5 +538,38 @@ describe("ряд карточек", () => {
     const row = card!.closest("[aria-busy]")!;
     expect(row.className).toContain("overflow-x-auto");
     expect(row.className).toContain("[scrollbar-width:none]");
+  });
+});
+
+// bb монтирует баннер заново на каждой смене проекта в композере Home. Пустой до
+// ответа сервера, ряд на кадр-два пропадал, и весь Home под композером прыгал.
+describe("перемонтирование баннера", () => {
+  const cards = (slot: ReturnType<typeof render>) => slot.queryAllByRole("button", { name: /^Send to Composer/ });
+
+  it("новый баннер сразу показывает последний известный список, не дожидаясь сервера", async () => {
+    const first = render(banner, {}, { composer: { scope: homeScope } });
+    await waitFor(() => expect(cards(first)).toHaveLength(2));
+    first.unmount();
+
+    const silent = { ...memoryRpc(DRAFTS), list: () => new Promise<never>(() => {}) };
+    const second = render(banner, {}, { rpc: silent, composer: { scope: { kind: "new-thread", projectId: "p_2" } } });
+    expect(cards(second)).toHaveLength(2);
+  });
+
+  it("провал перечитывания оставляет последний известный список без падения", async () => {
+    const first = render(banner, {}, { composer: { scope: homeScope } });
+    await waitFor(() => expect(cards(first)).toHaveLength(2));
+    first.unmount();
+
+    const failing = {
+      ...memoryRpc(DRAFTS),
+      list: () => {
+        throw new Error("storage is down");
+      },
+    };
+    const second = render(banner, {}, { rpc: failing, composer: { scope: homeScope } });
+    await waitFor(() => expect(second.inspection.rpcCalls.some((call) => call.method === "list")).toBe(true));
+    await act(async () => {});
+    expect(cards(second)).toHaveLength(2);
   });
 });
