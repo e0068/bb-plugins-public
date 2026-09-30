@@ -185,7 +185,13 @@ export const automationStepSchema = z.union([z.enum(STEP_IDS), z.templateLiteral
 export const automationSetSchema = z.object({ steps: z.array(automationStepSchema).min(1), scripts: z.array(automationScriptSchema).optional() });
 
 export const stageAutomationSchema = z.union([
-  z.object({ source: z.literal("flow"), steps: z.array(automationStepSchema), scripts: z.array(automationScriptSchema).optional() }),
+  z.object({
+    source: z.literal("flow"),
+    steps: z.array(automationStepSchema),
+    /** Шаги отката: Flow исполняет их, когда доработка снимает с этапа готовность. Скрипты — из того же `scripts`. */
+    undo: z.array(automationStepSchema).optional(),
+    scripts: z.array(automationScriptSchema).optional(),
+  }),
   z.object({ id: text, name: text, steps: z.array(text).optional() }),
 ]);
 

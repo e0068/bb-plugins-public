@@ -155,7 +155,8 @@ const cleared = (track: Track): Track => {
   };
 };
 
-const touched = (track: Track | undefined): boolean => track !== undefined && (track.startedAt !== undefined || track.finishedAt !== undefined || track.run !== undefined);
+/** Этап тронут прогоном — начат, закрыт или шёл шагами; доработка сбрасывает именно такие этапы после начатого заново. */
+export const touched = (track: Track | undefined): boolean => track !== undefined && (track.startedAt !== undefined || track.finishedAt !== undefined || track.run !== undefined);
 
 /**
  * Доработка: закрытый этап `id` начинают снова — он открывается со своими ссылками, а все тронутые этапы после него теряют

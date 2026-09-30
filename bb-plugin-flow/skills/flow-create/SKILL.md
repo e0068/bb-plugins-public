@@ -73,6 +73,19 @@ An automation is executed by Flow itself, without an agent: as soon as the agent
 - A script `id` is in Latin letters, unique among the stage's scripts; `name` is a file name, it labels the step on the page.
 - Before saving, run the script by hand in the working tree and make sure its exit code and output are as needed.
 
+**Undo steps.** A built-in automation may carry `undo` — steps of the same form as `steps`, its scripts taken from the same `scripts`. When the owner sends work back for rework and the agent starts a done stage again, every done automation after that stage loses its done state, and Flow runs the `undo` steps of each of them, the latest first, before its answer to the agent. Use it for an automation whose effect must not outlive a rework — for example a preview install that points a plugin at the thread's tree:
+
+```json
+{ "kind": "skill", "name": "PR and preview",
+  "automation": { "source": "flow",
+    "steps": ["git.commit", "git.create-pr", "script:preview"],
+    "undo": ["script:restore"],
+    "scripts": [{ "id": "preview", "name": "preview.sh", "content": "#!/bin/sh\nexec node scripts/flow/plugin-preview.mjs point\n" },
+                { "id": "restore", "name": "restore.sh", "content": "#!/bin/sh\nexec node scripts/flow/plugin-preview.mjs restore\n" }] } }
+```
+
+A failed undo step does not stop the others and does not block the rework: the agent reads the failure in the answer and tells the owner.
+
 **Action stage** — `{ "kind": "action", "name": "Publish", "automation": { "source": "flow", "steps": [...] } }`: the same steps, but executed not by Flow on its own but by the owner with a button in the progress banner, one step per press. The run stops at such a stage and waits for the owner; while a step runs the button shows a loader, a failed step shows the error and "Retry" — an Action has no "Skip". When the steps are over the stage is closed, automations standing in a row run by themselves, and before a skill stage Flow wakes the agent. Use an Action instead of an automation where the owner must decide: commit, PR, merge, deploy. This kind has no executors — with them `save_flow` rejects the stage.
 
 **An Automations plugin automation** — when what is needed is already assembled there as a rule: `{ "kind": "skill", "automation": { "id": "<row id>", "name": "<row name>" } }`. Take the id and name from `pr_automation_read`; Automations must be enabled, otherwise the stage fails with that reason.

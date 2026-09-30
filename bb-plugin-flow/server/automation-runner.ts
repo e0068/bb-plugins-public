@@ -33,6 +33,7 @@ import {
   retryDueIn,
   stageLiveIcon,
   stepsOf,
+  undoStepsOf,
   wakeText,
   type RetryPolicy,
   type RunStep,
@@ -94,6 +95,11 @@ export interface AutomationRunner {
   runActionStep(threadId: string, stageId: string): Promise<boolean>;
   /** Треды, где сейчас идёт работа — ход агента на этапе или прогон автоматизации, — и значок этапа; ждущие владельца не входят. */
   running(): Promise<RunningThread[]>;
+  /**
+   * Исполняет шаги отката этапов по порядку — доработка сняла с них готовность — и отвечает итогом строкой на шаг.
+   * Упавший шаг не останавливает остальные и в прогресс не пишется: у этапа нет готовности, которую он мог бы испортить.
+   */
+  undo(threadId: string, stages: readonly WorkStage[]): Promise<string[]>;
   /** Снимает таймеры автоповтора процесса — при выгрузке плагина; сроки в записях прогонов остаются, `resume` ставит их заново. */
   dispose(): void;
 }
@@ -428,6 +434,22 @@ export const createAutomationRunner = (deps: AutomationRunnerDeps): AutomationRu
       };
       void release(threadId, work());
       return true;
+    },
+    undo: async (threadId, stages) => {
+      // Откат идёт после того, что Flow уже доводит в треде, и держит тред: ни повтор, ни нажатие не начнут цепочку посреди него.
+      await settling.get(threadId);
+      if (!claim(threadId)) return ["Undo did not run: Flow is still running this thread's automations — tell the owner the plugin was not returned."];
+      const lines: string[] = [];
+      const work = async () => {
+        for (const stage of stages) {
+          for (const step of undoStepsOf(stage)) {
+            const outcome = await execute(stage, step, threadId).catch((error: unknown) => ({ ok: false as const, error: error instanceof Error ? error.message : String(error) }));
+            lines.push(`Undo of ${stage.name}: ${step.label} — ${outcome.ok ? (outcome.detail ?? "done") : `failed: ${outcome.error}`}`);
+          }
+        }
+      };
+      await release(threadId, work());
+      return lines;
     },
     // Пропуск тоже снимает этап с простоя: владелец ответил, ждать больше нечего.
     skip: (threadId, stageId) => unblock(threadId, stageId, (p) => onStepDone(onIdleClose(p, stageId, deps.now()), stageId, deps.now()), (at) => at + 1),

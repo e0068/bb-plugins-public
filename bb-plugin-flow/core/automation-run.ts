@@ -28,6 +28,13 @@ export const stepsOf = (stage: WorkStage): RunStep[] => {
   return "source" in automation ? automation.steps.map((id) => ({ id, label: builtinStepLabel(automation, id) })) : [{ id: automation.id, label: automation.name }];
 };
 
+/** Шаги отката встроенной автоматизации с подписями; у остальных этапов отката нет. */
+export const undoStepsOf = (stage: WorkStage): RunStep[] => {
+  const automation = stage.automation;
+  if (automation === undefined || !("source" in automation)) return [];
+  return (automation.undo ?? []).map((id) => ({ id, label: builtinStepLabel(automation, id) }));
+};
+
 const patch = (progress: FlowProgress, id: string, change: (track: StageTrack) => StageTrack): FlowProgress => ({
   ...progress,
   stages: { ...progress.stages, [id]: change(progress.stages[id] ?? {}) },

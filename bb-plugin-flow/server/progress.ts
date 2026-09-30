@@ -6,6 +6,7 @@ import type { BbPluginApi, PluginKvStorage } from "@get-bb/plugin-sdk";
 import { z } from "zod";
 
 import { idleNote, idleStages, isActionStage } from "../core/automation-run";
+import { undoDue } from "../core/automation-undo";
 import { afterMark, markReply, startFact, type StartFact } from "../core/mark-report";
 import { carriedBy, carrierOf, EMPTY_PROGRESS, forHandoff, onAnswer, onBrief, onMark, pendingActive, progressView, recounted, reopen, recountWindows, touchesProgress, withActive } from "../core/progress";
 import { historyOrder } from "../core/run-history";
@@ -263,7 +264,7 @@ const INSTRUCTIONS = `Mark the stages of the thread's flow as you go, so the own
 - Built-in stages (questions, criteria, stage selection, demo) are marked by the briefs themselves: do not mark them.
 - Automation stages are run and marked by Flow itself: when the next stage is an automation, mark the current stage done and end your turn. The answer says whether Flow started it, and if it did not, why and what to do. Never tell the owner an automation runs unless the answer says it started — relay what the answer says.
 - Action stages are run by the owner, step by step, with a button above the composer: when the next stage is an action, mark the current stage done and end your turn — Flow marks the action stage itself.
-- A stage sent back for rework is started again: marking a done stage started drops the done state of every stage after it, so the run goes through them again in order and the automations behind them run again.
+- A stage sent back for rework is started again: marking a done stage started drops the done state of every stage after it, so the run goes through them again in order and the automations behind them run again. The undo steps of the done automations it reopens run before the answer, which names their outcome — relay a failed one to the owner.
 - Flow measures the time a stage stood waiting for the owner: a failed automation step until the owner retries or skips it, an action stage between presses. When this tool's answer or a reply from Flow names that idle time, carry it into the flow report and the task report — which stages stood and for how long.
 The stage ids are in the Flow instructions for the turn.`;
 
@@ -319,6 +320,8 @@ export const registerProgress = (
     journal?: (threadId: string, window: { startedAt: string; finishedAt: string }) => Promise<readonly string[]>;
     /** Сколько мс ответ flow_stage ждёт записи старта этапа со шагами за отмеченным; нет — 5 000. */
     startTimeoutMs?: number;
+    /** Шаги отката автоматизаций, с которых доработка сняла готовность, — итог строкой на шаг; нет — отката нет. */
+    undo?: (threadId: string, stages: readonly WorkStage[]) => Promise<readonly string[]>;
   },
 ): { freezeFinished: (threadId: string) => Promise<void> } => {
   /**
@@ -370,15 +373,22 @@ export const registerProgress = (
       const minutes = window === undefined ? undefined : (await deps.windowMinutes?.(ctx.threadId, [window]).catch(() => undefined))?.[0];
       const titled = results === undefined ? undefined : await withTaskTitles(results, (target) => readStamped(ctx.threadId, target));
       let marked = EMPTY_PROGRESS;
+      let undone: WorkStage[] = [];
       // Снова начатый этап — доработка: этапы за ним теряют готовность, и автоматизации за ним пройдут заново.
-      await progress.update(ctx.threadId, (p) => (marked = onMark(state === "started" ? reopen(p, stages, stage) : p, stage, state, at, titled, cost, minutes)));
+      await progress.update(ctx.threadId, (p) => {
+        if (state === "started") undone = undoDue(p, stages, stage);
+        return (marked = onMark(state === "started" ? reopen(p, stages, stage) : p, stage, state, at, titled, cost, minutes));
+      });
+      // Откат закрытых автоматизаций идёт до ответа: агент берётся за правки, когда их эффект уже отменён.
+      const undoLines = undone.length === 0 || deps.undo === undefined ? [] : await deps.undo(ctx.threadId, undone).catch((error: unknown) => [`Undo failed: ${error instanceof Error ? error.message : String(error)}`]);
       // Что за отмеченным этапом — по записи этой отметки; о старте ответ говорит только по записанному старту.
       const verdict = state === "done" ? afterMark(stages, marked, stage) : ({ kind: "none" } as const);
       const fact = verdict.kind === "due" ? await awaitStart(ctx.threadId, stages, verdict.stage.id, Date.now() + (deps.startTimeoutMs ?? START_TIMEOUT_MS)) : null;
       const ahead = markReply(stage, verdict, fact);
       // Простой прогона — в ответе отметки: отчёт агент пишет до автоматизаций, и другого места узнать числа у него нет.
       const idle = state === "done" ? idleNote(idleStages(marked, stages)) : "";
-      return `Stage ${stage} marked ${state}.${ahead}${idle === "" ? "" : ` ${idle}`}`;
+      const undoNote = undoLines.length === 0 ? "" : ` ${undoLines.join(" ")}`;
+      return `Stage ${stage} marked ${state}.${ahead}${idle === "" ? "" : ` ${idle}`}${undoNote}`;
     },
   });
 
