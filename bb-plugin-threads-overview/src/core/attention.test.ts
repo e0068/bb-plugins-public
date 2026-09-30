@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   attentionQueue,
   edgeBleed,
+  revealScrollLeft,
   groupByProject,
   isWorking,
   nearestSlideIndex,
@@ -46,7 +47,6 @@ describe("isWorking", () => {
   it.each([
     ["workflows", { ...IDLE_ACTIVITY, workflows: 1 }],
     ["background agent", { ...IDLE_ACTIVITY, backgroundAgents: 2 }],
-    ["background command", { ...IDLE_ACTIVITY, backgroundCommands: 1 }],
     ["plan mode", { ...IDLE_ACTIVITY, planMode: 1 }],
     ["goals", { ...IDLE_ACTIVITY, goals: 3 }],
   ])("a positive %s count is working", (_label, activity) => {
@@ -154,44 +154,62 @@ describe("groupByProject", () => {
   const a = thread({ id: "a", projectId: "p-beta", latestAttentionAt: 300 });
   const b = thread({ id: "b", projectId: "p-alpha", latestAttentionAt: 100 });
   const c = thread({ id: "c", projectId: "p-alpha", latestAttentionAt: 200 });
-  const names: Record<string, string> = { "p-alpha": "Alpha", "p-beta": "Beta" };
-  const nameOf = (id: string) => names[id] ?? id;
+  // The left panel's order, which is neither alphabetical nor by id.
+  const panel = [
+    { id: "p-beta", name: "Beta" },
+    { id: "p-alpha", name: "Alpha" },
+  ];
 
   it("puts every thread in the group of its project", () => {
     expect(
-      groupByProject([a, b, c], nameOf).map((group) => [
+      groupByProject([a, b, c], panel).map((group) => [
         group.projectId,
         group.threads.map((t) => t.id),
       ]),
     ).toEqual([
-      ["p-alpha", ["b", "c"]],
       ["p-beta", ["a"]],
+      ["p-alpha", ["b", "c"]],
     ]);
   });
 
   it("names each group with its project name", () => {
-    expect(groupByProject([a, b], nameOf).map((group) => group.name)).toEqual([
-      "Alpha",
+    expect(groupByProject([a, b], panel).map((group) => group.name)).toEqual([
       "Beta",
+      "Alpha",
     ]);
   });
 
-  it("orders groups by project name, not by project id", () => {
+  it("orders groups as the left panel lists the projects, not by name or id", () => {
     const zed = thread({ id: "z", projectId: "p-aaa" });
-    const upper = (id: string) => (id === "p-aaa" ? "Zulu" : nameOf(id));
+    const listed = [
+      { id: "p-zzz", name: "Zulu" },
+      { id: "p-alpha", name: "Alpha" },
+      { id: "p-aaa", name: "Yankee" },
+    ];
+    const last = thread({ id: "l", projectId: "p-zzz" });
     expect(
-      groupByProject([zed, a], upper).map((group) => group.projectId),
-    ).toEqual(["p-beta", "p-aaa"]);
+      groupByProject([zed, b, last], listed).map((group) => group.projectId),
+    ).toEqual(["p-zzz", "p-alpha", "p-aaa"]);
+  });
+
+  it("puts a project the panel does not list after the listed ones, unnamed", () => {
+    const stray = thread({ id: "s", projectId: "p-gone" });
+    expect(
+      groupByProject([stray, a], panel).map((group) => [group.projectId, group.name]),
+    ).toEqual([
+      ["p-beta", "Beta"],
+      ["p-gone", "—"],
+    ]);
   });
 
   it("keeps the incoming thread order inside a group", () => {
     expect(
-      groupByProject([c, b], nameOf)[0]!.threads.map((t) => t.id),
+      groupByProject([c, b], panel)[0]!.threads.map((t) => t.id),
     ).toEqual(["c", "b"]);
   });
 
   it("has no groups for an empty queue", () => {
-    expect(groupByProject([], nameOf)).toEqual([]);
+    expect(groupByProject([], panel)).toEqual([]);
   });
 });
 
@@ -244,5 +262,30 @@ describe("edgeBleed", () => {
       left: 0,
       right: 0,
     });
+  });
+});
+
+describe("revealScrollLeft", () => {
+  const ROW = { left: 0, right: 300 };
+
+  it("leaves the row where it is when the pill is already in view", () => {
+    expect(revealScrollLeft(ROW, { left: 40, right: 120 }, 50)).toBe(50);
+  });
+
+  it("scrolls on just far enough to bring a pill cut off on the right edge into view", () => {
+    expect(revealScrollLeft(ROW, { left: 260, right: 340 }, 50)).toBe(90);
+  });
+
+  it("scrolls back just far enough to bring a pill cut off on the left edge into view", () => {
+    expect(revealScrollLeft(ROW, { left: -30, right: 50 }, 50)).toBe(20);
+  });
+
+  it("takes a pill touching either edge as in view", () => {
+    expect(revealScrollLeft(ROW, { left: 0, right: 80 }, 10)).toBe(10);
+    expect(revealScrollLeft(ROW, { left: 220, right: 300 }, 10)).toBe(10);
+  });
+
+  it("lines a pill wider than the row up with its left edge", () => {
+    expect(revealScrollLeft(ROW, { left: 100, right: 500 }, 0)).toBe(100);
   });
 });

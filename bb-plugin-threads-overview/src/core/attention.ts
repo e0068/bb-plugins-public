@@ -30,10 +30,16 @@ export interface ThreadFacts {
 
 function hasRunningWork(thread: ThreadFacts): boolean {
   const a = thread.activity;
-  const background =
-    a.workflows + a.backgroundAgents + a.backgroundCommands + a.planMode + a.goals;
+  // Background commands are left out: a dev server or a watcher keeps running
+  // after the agent has finished, and the thread then waits on the user.
+  const background = a.workflows + a.backgroundAgents + a.planMode + a.goals;
   // `runtime` is a foreground turn, which the activity counts never cover.
   return background > 0 || thread.indicator === "runtime";
+}
+
+/** True when a background command — a dev server, a watcher — is still running. */
+export function runsBackgroundCommand(thread: ThreadFacts): boolean {
+  return thread.activity.backgroundCommands > 0;
 }
 
 /** True when the agent is actively doing work right now. */
@@ -44,6 +50,11 @@ export function isWorking(thread: ThreadFacts): boolean {
   return hasRunningWork(thread);
 }
 
+/** A thread the queue may show at all: not archived and not postponed by the user. */
+function mayQueue(thread: ThreadFacts, postponed: ReadonlySet<string>): boolean {
+  return !thread.isArchived && !postponed.has(thread.id);
+}
+
 /**
  * A thread requires attention when work is not going on and the user has not
  * postponed it. Archived threads are never in the queue.
@@ -52,9 +63,7 @@ export function needsAttention(
   thread: ThreadFacts,
   postponed: ReadonlySet<string>,
 ): boolean {
-  if (thread.isArchived) return false;
-  if (postponed.has(thread.id)) return false;
-  return !isWorking(thread);
+  return mayQueue(thread, postponed) && !isWorking(thread);
 }
 
 export type SortKey = "waiting-longest" | "waiting-newest";
@@ -81,16 +90,21 @@ export function sortQueue(
   }
 }
 
-/** Filter to the attention queue and order it in one pass. */
+/**
+ * Filter to the attention queue and order it in one pass. Asked to show
+ * working threads, the queue takes them in too — still never an archived or a
+ * postponed one — and orders them with the rest.
+ */
 export function attentionQueue(
   threads: readonly ThreadFacts[],
   postponed: ReadonlySet<string>,
   sort: SortKey,
+  showWorking = false,
 ): readonly ThreadFacts[] {
-  return sortQueue(
-    threads.filter((thread) => needsAttention(thread, postponed)),
-    sort,
-  );
+  const inQueue = showWorking
+    ? (thread: ThreadFacts) => mayQueue(thread, postponed)
+    : (thread: ThreadFacts) => needsAttention(thread, postponed);
+  return sortQueue(threads.filter(inQueue), sort);
 }
 
 /** One project's slice of the queue: a slide of the grouped view. */
@@ -100,17 +114,29 @@ export interface ProjectGroup {
   readonly threads: readonly ThreadFacts[];
 }
 
+/** A project as the left panel lists it; the list's order is the panel's. */
+export interface ProjectEntry {
+  readonly id: string;
+  readonly name: string;
+}
+
+/** The name of a project the panel no longer lists. */
+export const UNLISTED_NAME = "—";
+
 /**
  * Split an already ordered queue into one group per project.
  *
  * Grouping never reorders threads — the caller's sort keeps holding inside each
- * group — and the groups themselves go by project name, so the row of buttons
- * above the slides reads alphabetically no matter what the project ids are.
+ * group — and the groups themselves go in the order of `projects`, the left
+ * panel's, so the row of buttons above the slides reads as the panel does. A
+ * project the panel does not list goes after the listed ones.
  */
 export function groupByProject(
   threads: readonly ThreadFacts[],
-  projectName: (projectId: string) => string,
+  projects: readonly ProjectEntry[],
 ): readonly ProjectGroup[] {
+  const listed = new Map(projects.map((project, rank) => [project.id, { rank, name: project.name }]));
+  const rankOf = (projectId: string) => listed.get(projectId)?.rank ?? projects.length;
   const groups = new Map<string, ThreadFacts[]>();
   for (const thread of threads) {
     const kept = groups.get(thread.projectId);
@@ -120,12 +146,12 @@ export function groupByProject(
   return [...groups]
     .map(([projectId, grouped]) => ({
       projectId,
-      name: projectName(projectId),
+      name: listed.get(projectId)?.name ?? UNLISTED_NAME,
       threads: grouped,
     }))
     .sort(
       (a, b) =>
-        a.name.localeCompare(b.name) ||
+        rankOf(a.projectId) - rankOf(b.projectId) ||
         (a.projectId < b.projectId ? -1 : a.projectId > b.projectId ? 1 : 0),
     );
 }
@@ -167,4 +193,17 @@ export function edgeBleed(section: Span, clip: Span): Span {
     left: Math.max(0, Math.floor(section.left - clip.left)),
     right: Math.max(0, Math.floor(clip.right - section.right)),
   };
+}
+
+/**
+ * Where to scroll a row sideways so `item` is in full view in `view`, moving it
+ * as little as possible from `scrollLeft`: an item already in view leaves the
+ * row where it is, one cut off on an edge brings that edge just far enough. An
+ * item wider than the row lines up with the row's left edge.
+ */
+export function revealScrollLeft(view: Span, item: Span, scrollLeft: number): number {
+  const fitsInView = item.right - item.left <= view.right - view.left;
+  if (item.left < view.left || !fitsInView) return scrollLeft + item.left - view.left;
+  if (item.right > view.right) return scrollLeft + item.right - view.right;
+  return scrollLeft;
 }

@@ -8,6 +8,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, cleanup, fireEvent, within } from "@testing-library/react";
 import { loadPluginApp, renderSlot } from "@get-bb/plugin-sdk/testing/app";
 import type { PluginProvidersState, PluginSidebarThread } from "@get-bb/plugin-sdk/app";
+import { formatWaitingSince } from "./src/core/format";
 
 function idleThread(over: Partial<PluginSidebarThread> = {}): PluginSidebarThread {
   return {
@@ -56,6 +57,15 @@ const TWO_PROJECTS = {
   ],
 };
 
+const THREE_PROJECTS = {
+  ...TWO_PROJECTS,
+  threads: [
+    ...TWO_PROJECTS.threads,
+    idleThread({ id: "th_g", title: "Тред Гаммы", projectId: "p_gamma" }),
+  ],
+  projects: [...TWO_PROJECTS.projects, { id: "p_gamma", name: "Гамма", isPersonal: false }],
+};
+
 const NO_MARKS = { listPostponed: () => ({ postponed: [] }) };
 
 async function renderSection(
@@ -92,6 +102,16 @@ function layOutTrack(slides: readonly HTMLElement[], slideWidth: number): void {
 
 function fix(element: HTMLElement, property: string, value: number): void {
   Object.defineProperty(element, property, { configurable: true, value });
+}
+
+/** The prototype that gives elements `onscrollend`, to take it away as a browser without scrollend would. */
+function scrollEndOwner(): object {
+  let owner: object | null = document.createElement("div");
+  while (owner !== null && !Object.prototype.hasOwnProperty.call(owner, "onscrollend")) {
+    owner = Object.getPrototypeOf(owner) as object | null;
+  }
+  if (owner === null) throw new Error("this DOM has no onscrollend to take away");
+  return owner;
 }
 
 /** Scroll the track as a browser would, then let the section react to it. */
@@ -178,9 +198,9 @@ describe("a row on a mouse", () => {
 });
 
 describe("section heading", () => {
-  it("names the section with its count in the row of the sort buttons", async () => {
+  it("names the section Threads with its count, in the row of the sort buttons", async () => {
     const slot = await renderSection();
-    const heading = await slot.findByRole("heading", { name: "Требуют внимания: 3" });
+    const heading = await slot.findByRole("heading", { name: "Threads: 3" });
     const sort = slot.getByRole("button", { name: "Сортировка: Дольше ждут" });
     expect(heading.parentElement!.contains(sort)).toBe(true);
   });
@@ -223,15 +243,7 @@ describe("attention section, grouped by project", () => {
     expect(within(alpha).queryByText("Альфа")).toBeNull();
   });
 
-  it("focuses the first group and dims the rest", async () => {
-    const slot = await renderSection();
-    fireEvent.click(await slot.findByRole("button", { name: /По проекту/ }));
-
-    expect(slot.getByLabelText("Альфа").className).toContain("opacity-100");
-    expect(slot.getByLabelText("Бета").className).toContain("opacity-40");
-  });
-
-  it("keeps the row actions working inside the focused group", async () => {
+  it("archives from inside the focused group, after putting its project in the composer", async () => {
     const slot = await renderSection();
     fireEvent.click(await slot.findByRole("button", { name: /По проекту/ }));
     const alpha = slot.getByRole("group", { name: "Альфа" });
@@ -239,20 +251,36 @@ describe("attention section, grouped by project", () => {
 
     fireEvent.click(within(row).getByLabelText("Архивировать"));
     expect(slot.sidebarActionCalls).toEqual([
+      { method: "openNewThread", options: { projectId: "p_alpha", focusPrompt: false } },
       { method: "archive", threadId: "th_a" },
     ]);
   });
 
-  it("puts the project buttons on a row of their own, under the heading and its controls", async () => {
+  it("puts the project pills on a row of their own, under the heading and its controls", async () => {
     const slot = await renderSection();
     fireEvent.click(await slot.findByRole("button", { name: /По проекту/ }));
-    const heading = slot.getByRole("heading", { name: "Требуют внимания: 3" });
+    const heading = slot.getByRole("heading", { name: "Threads: 3" });
     const pill = slot.getByRole("button", { name: /Альфа/ });
 
     expect(heading.parentElement!.contains(pill)).toBe(false);
     expect(
       heading.parentElement!.compareDocumentPosition(pill) & Node.DOCUMENT_POSITION_FOLLOWING,
     ).toBeTruthy();
+  });
+
+  it("lets the pills wrap onto more lines on a screen with a mouse", async () => {
+    const slot = await renderSection();
+    fireEvent.click(await slot.findByRole("button", { name: /По проекту/ }));
+    const pills = slot.getByRole("button", { name: /Альфа/ }).parentElement!;
+    expect(pills.className).toContain("flex-wrap");
+  });
+
+  it("focuses the first group and dims the rest", async () => {
+    const slot = await renderSection();
+    fireEvent.click(await slot.findByRole("button", { name: /По проекту/ }));
+
+    expect(slot.getByLabelText("Альфа").className).toContain("opacity-100");
+    expect(slot.getByLabelText("Бета").className).toContain("opacity-40");
   });
 
   it("keeps the rows of a dimmed group out of reach, and lights the group up on hover", async () => {
@@ -316,6 +344,264 @@ describe("attention section, grouped by project", () => {
   });
 });
 
+describe("the home composer follows the project slide", () => {
+  const scrollIntoView = vi.fn();
+
+  beforeEach(() => {
+    Object.defineProperty(Element.prototype, "scrollIntoView", {
+      configurable: true,
+      writable: true,
+      value: scrollIntoView,
+    });
+  });
+
+  afterEach(() => {
+    scrollIntoView.mockReset();
+    delete (Element.prototype as { scrollIntoView?: unknown }).scrollIntoView;
+  });
+
+  const composerProjects = (slot: ReturnType<typeof renderSlot>) =>
+    slot.sidebarActionCalls
+      .filter((call) => call.method === "openNewThread")
+      .map((call) => (call as { options?: { projectId?: string } }).options);
+
+  it("puts the focused slide's project in the composer once grouping is on", async () => {
+    const slot = await renderSection();
+    fireEvent.click(await slot.findByRole("button", { name: /По проекту/ }));
+    expect(composerProjects(slot)).toEqual([{ projectId: "p_alpha", focusPrompt: false }]);
+  });
+
+  it("moves the composer to the project whose pill is pressed", async () => {
+    const slot = await renderSection();
+    fireEvent.click(await slot.findByRole("button", { name: /По проекту/ }));
+    fireEvent.click(slot.getByRole("button", { name: /Бета/ }));
+    expect(composerProjects(slot).at(-1)).toEqual({ projectId: "p_beta", focusPrompt: false });
+  });
+
+  // Putting a project in the composer is a navigation in bb: Home redraws
+  // under it, so doing it mid-swipe jerked the page and threw the track off.
+  it("leaves the composer alone while a swipe is still crossing the slides", async () => {
+    const slot = await renderSection({ sidebarThreads: THREE_PROJECTS });
+    fireEvent.click(await slot.findByRole("button", { name: /По проекту/ }));
+    const slides = ["Альфа", "Бета", "Гамма"].map((name) => slot.getByRole("group", { name }));
+    layOutTrack(slides, 300);
+    const track = slides[0]!.parentElement!;
+
+    scrollTrackTo(track, 300);
+    scrollTrackTo(track, 600);
+    scrollTrackTo(track, 300);
+
+    expect(composerProjects(slot)).toEqual([{ projectId: "p_alpha", focusPrompt: false }]);
+    expect(slot.getByRole("button", { name: /Бета/ }).getAttribute("aria-pressed")).toBe("true");
+  });
+
+  it("puts the project the swipe comes to rest on in the composer, once", async () => {
+    const slot = await renderSection({ sidebarThreads: THREE_PROJECTS });
+    fireEvent.click(await slot.findByRole("button", { name: /По проекту/ }));
+    const slides = ["Альфа", "Бета", "Гамма"].map((name) => slot.getByRole("group", { name }));
+    layOutTrack(slides, 300);
+    const track = slides[0]!.parentElement!;
+
+    scrollTrackTo(track, 300);
+    scrollTrackTo(track, 600);
+    fireEvent(track, new Event("scrollend"));
+
+    expect(composerProjects(slot).map((options) => options?.projectId)).toEqual(["p_alpha", "p_gamma"]);
+  });
+
+  it("asks nothing of the composer when the focused group goes and the track settles on its neighbour", async () => {
+    const slot = await renderSection({ sidebarThreads: THREE_PROJECTS });
+    fireEvent.click(await slot.findByRole("button", { name: /По проекту/ }));
+    const slides = ["Альфа", "Бета", "Гамма"].map((name) => slot.getByRole("group", { name }));
+    layOutTrack(slides, 300);
+    const track = slides[0]!.parentElement!;
+    scrollTrackTo(track, 600);
+    fireEvent(track, new Event("scrollend"));
+
+    fireEvent.click(within(rowOf(slot, "Тред Гаммы")).getByRole("button", { name: "Отложить" }));
+    const left = ["Альфа", "Бета"].map((name) => slot.getByRole("group", { name }));
+    layOutTrack(left, 300);
+    scrollTrackTo(track, 300);
+    fireEvent(track, new Event("scrollend"));
+
+    expect(composerProjects(slot).map((options) => options?.projectId)).toEqual(["p_alpha", "p_gamma"]);
+  });
+
+  it("asks nothing more of the composer when a pill jump comes to rest", async () => {
+    const slot = await renderSection({ sidebarThreads: THREE_PROJECTS });
+    fireEvent.click(await slot.findByRole("button", { name: /По проекту/ }));
+    const slides = ["Альфа", "Бета", "Гамма"].map((name) => slot.getByRole("group", { name }));
+    layOutTrack(slides, 300);
+    const track = slides[0]!.parentElement!;
+
+    fireEvent.click(slot.getByRole("button", { name: /Гамма/ }));
+    scrollTrackTo(track, 300);
+    scrollTrackTo(track, 600);
+    fireEvent(track, new Event("scrollend"));
+
+    expect(composerProjects(slot).map((options) => options?.projectId)).toEqual(["p_alpha", "p_gamma"]);
+  });
+
+  it("takes a pause in the scrolling for the rest where the browser has no scrollend", async () => {
+    const owner = scrollEndOwner();
+    const descriptor = Object.getOwnPropertyDescriptor(owner, "onscrollend")!;
+    delete (owner as { onscrollend?: unknown }).onscrollend;
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      const slot = await renderSection({ sidebarThreads: THREE_PROJECTS });
+      fireEvent.click(await slot.findByRole("button", { name: /По проекту/ }));
+      const slides = ["Альфа", "Бета", "Гамма"].map((name) => slot.getByRole("group", { name }));
+      layOutTrack(slides, 300);
+      const track = slides[0]!.parentElement!;
+
+      scrollTrackTo(track, 300);
+      act(() => vi.advanceTimersByTime(50));
+      scrollTrackTo(track, 600);
+      act(() => vi.advanceTimersByTime(50));
+      expect(composerProjects(slot)).toHaveLength(1);
+
+      act(() => vi.advanceTimersByTime(500));
+      expect(composerProjects(slot).map((options) => options?.projectId)).toEqual(["p_alpha", "p_gamma"]);
+    } finally {
+      vi.useRealTimers();
+      Object.defineProperty(owner, "onscrollend", descriptor);
+    }
+  });
+
+  it("asks nothing of the composer on a re-render or a sort, but asks again on a press of the pill in view", async () => {
+    const slot = await renderSection();
+    fireEvent.click(await slot.findByRole("button", { name: /По проекту/ }));
+    fireEvent.click(slot.getByRole("button", { name: "Сортировка: Дольше ждут" }));
+    expect(composerProjects(slot)).toHaveLength(1);
+
+    fireEvent.click(slot.getByRole("button", { name: /Альфа/ }));
+    expect(composerProjects(slot)).toEqual([
+      { projectId: "p_alpha", focusPrompt: false },
+      { projectId: "p_alpha", focusPrompt: false },
+    ]);
+  });
+
+  it("leaves the composer alone in the flat list", async () => {
+    const slot = await renderSection();
+    await slot.findByText("Тред Альфы");
+    expect(composerProjects(slot)).toEqual([]);
+  });
+
+  it("opens again on the slide chosen before, and asks nothing of the composer on the way back", async () => {
+    const first = await renderSection();
+    fireEvent.click(await first.findByRole("button", { name: /По проекту/ }));
+    fireEvent.click(first.getByRole("button", { name: /Бета/ }));
+    cleanup();
+
+    const second = await renderSection();
+    const beta = await second.findByRole("button", { name: /Бета/ });
+    expect(beta.getAttribute("aria-pressed")).toBe("true");
+    expect(composerProjects(second)).toEqual([]);
+  });
+
+  it("asks nothing of the composer for the slides a pill jump scrolls past", async () => {
+    const slot = await renderSection({
+      sidebarThreads: {
+        ...TWO_PROJECTS,
+        threads: [
+          ...TWO_PROJECTS.threads,
+          idleThread({ id: "th_g", title: "Тред Гаммы", projectId: "p_gamma" }),
+        ],
+        projects: [...TWO_PROJECTS.projects, { id: "p_gamma", name: "Гамма", isPersonal: false }],
+      },
+    });
+    fireEvent.click(await slot.findByRole("button", { name: /По проекту/ }));
+    const slides = ["Альфа", "Бета", "Гамма"].map((name) => slot.getByRole("group", { name }));
+    layOutTrack(slides, 300);
+
+    fireEvent.click(slot.getByRole("button", { name: /Гамма/ }));
+    scrollTrackTo(slides[0]!.parentElement!, 300);
+    scrollTrackTo(slides[0]!.parentElement!, 600);
+
+    expect(composerProjects(slot).map((options) => options?.projectId)).toEqual(["p_alpha", "p_gamma"]);
+  });
+
+  it("orders the pills as the left panel lists the projects, not alphabetically", async () => {
+    const slot = await renderSection({
+      sidebarThreads: { ...TWO_PROJECTS, projects: [...TWO_PROJECTS.projects].reverse() },
+    });
+    fireEvent.click(await slot.findByRole("button", { name: /По проекту/ }));
+
+    const pills = slot
+      .getAllByRole("button")
+      .filter((button) => /^(Альфа|Бета)/.test(button.textContent ?? ""));
+    expect(pills.map((pill) => pill.textContent)).toEqual(["Бета1", "Альфа2"]);
+  });
+
+  it("keeps the pressed pill lit while the track scrolls past the slides before it", async () => {
+    const slot = await renderSection({ sidebarThreads: THREE_PROJECTS });
+    fireEvent.click(await slot.findByRole("button", { name: /По проекту/ }));
+    const slides = ["Альфа", "Бета", "Гамма"].map((name) => slot.getByRole("group", { name }));
+    layOutTrack(slides, 300);
+
+    fireEvent.click(slot.getByRole("button", { name: /Гамма/ }));
+    scrollTrackTo(slides[0]!.parentElement!, 300);
+
+    expect(slot.getByRole("button", { name: /Гамма/ }).getAttribute("aria-pressed")).toBe("true");
+    expect(slot.getByRole("button", { name: /Бета/ }).getAttribute("aria-pressed")).toBe("false");
+  });
+
+  it("hands the focus back to the scroll once a wheel takes over a pill jump", async () => {
+    const slot = await renderSection({ sidebarThreads: THREE_PROJECTS });
+    fireEvent.click(await slot.findByRole("button", { name: /По проекту/ }));
+    const slides = ["Альфа", "Бета", "Гамма"].map((name) => slot.getByRole("group", { name }));
+    layOutTrack(slides, 300);
+
+    fireEvent.click(slot.getByRole("button", { name: /Гамма/ }));
+    fireEvent.wheel(slides[0]!.parentElement!);
+    scrollTrackTo(slides[0]!.parentElement!, 300);
+
+    expect(slot.getByRole("button", { name: /Бета/ }).getAttribute("aria-pressed")).toBe("true");
+  });
+
+  it("lets the focus follow the scroll after the pill already in view is pressed", async () => {
+    const slot = await renderSection({ sidebarThreads: THREE_PROJECTS });
+    fireEvent.click(await slot.findByRole("button", { name: /По проекту/ }));
+    const slides = ["Альфа", "Бета", "Гамма"].map((name) => slot.getByRole("group", { name }));
+    layOutTrack(slides, 300);
+
+    fireEvent.click(slot.getByRole("button", { name: /Альфа/ }));
+    scrollTrackTo(slides[0]!.parentElement!, 300);
+
+    expect(slot.getByRole("button", { name: /Бета/ }).getAttribute("aria-pressed")).toBe("true");
+  });
+
+  it("keeps a pill jump going when the page, not the track, is wheeled", async () => {
+    const slot = await renderSection({ sidebarThreads: THREE_PROJECTS });
+    fireEvent.click(await slot.findByRole("button", { name: /По проекту/ }));
+    const slides = ["Альфа", "Бета", "Гамма"].map((name) => slot.getByRole("group", { name }));
+    layOutTrack(slides, 300);
+
+    fireEvent.click(slot.getByRole("button", { name: /Гамма/ }));
+    fireEvent.wheel(slides[0]!.parentElement!, { deltaY: 40 });
+    scrollTrackTo(slides[0]!.parentElement!, 300);
+
+    expect(slot.getByRole("button", { name: /Гамма/ }).getAttribute("aria-pressed")).toBe("true");
+  });
+
+  it("leaves the composer alone while threads open in the side panel", async () => {
+    const slot = await renderExperimental();
+    fireEvent.keyDown(await slot.findByRole("button", { name: "На весь экран" }), { key: "Enter" });
+    fireEvent.click(await slot.findByRole("menuitemradio", { name: "Открывать в боковой панели" }));
+    fireEvent.click(slot.getByRole("button", { name: /По проекту/ }));
+    fireEvent.click(slot.getByRole("button", { name: /Бета/ }));
+    expect(composerProjects(slot)).toEqual([]);
+  });
+
+  it("leaves the composer's project in place when grouping is switched off", async () => {
+    const slot = await renderSection();
+    const toggle = await slot.findByRole("button", { name: /По проекту/ });
+    fireEvent.click(toggle);
+    fireEvent.click(toggle);
+    expect(composerProjects(slot)).toEqual([{ projectId: "p_alpha", focusPrompt: false }]);
+  });
+});
+
 describe("sort and grouping survive a reload", () => {
   it("keeps the По проекту toggle pressed after the section remounts", async () => {
     const first = await renderSection();
@@ -327,59 +613,9 @@ describe("sort and grouping survive a reload", () => {
       second.getByRole("button", { name: /По проекту/ }).getAttribute("aria-pressed"),
     ).toBe("true");
   });
-
-  it("keeps the chosen sort after the section remounts", async () => {
-    const first = await renderSection();
-    await pickSort(first, "Свежие");
-    cleanup();
-
-    const second = await renderSection();
-    expect(second.getByRole("button", { name: "Сортировка: Свежие" })).toBeDefined();
-    expect(second.queryByRole("button", { name: "Сортировка: Дольше ждут" })).toBeNull();
-  });
 });
 
-/** Open the sort dropdown from its trigger and choose one of its items. */
-async function pickSort(slot: ReturnType<typeof renderSlot>, label: string): Promise<void> {
-  const trigger = await slot.findByRole("button", { name: /Дольше ждут|Свежие/ });
-  fireEvent.keyDown(trigger, { key: "Enter" });
-  fireEvent.click(await slot.findByRole("menuitemradio", { name: label }));
-}
-
-describe("sort dropdown", () => {
-  it("stands as an icon whose name says the current order, and marks it in the menu", async () => {
-    const slot = await renderSection();
-    const trigger = await slot.findByRole("button", { name: "Сортировка: Дольше ждут" });
-    expect(trigger.getAttribute("aria-haspopup")).toBe("menu");
-    expect(trigger.textContent).toBe("");
-
-    fireEvent.keyDown(trigger, { key: "Enter" });
-    const items = await slot.findAllByRole("menuitemradio");
-    expect(items.map((item) => item.textContent)).toEqual(["Дольше ждут", "Свежие"]);
-    expect(items.map((item) => item.getAttribute("aria-checked"))).toEqual(["true", "false"]);
-  });
-
-  it("reorders the queue by the sort chosen from the menu", async () => {
-    const slot = await renderSection({
-      sidebarThreads: {
-        ...TWO_PROJECTS,
-        threads: [
-          idleThread({ id: "th_old", title: "Старый", latestAttentionAt: 1000 }),
-          idleThread({ id: "th_new", title: "Новый", latestAttentionAt: 5000 }),
-        ],
-      },
-    });
-    await slot.findByText("Старый");
-    const titles = () =>
-      slot.getAllByRole("listitem").map((row) => within(row).getAllByRole("button")[0]!.textContent);
-    expect(titles()[0]).toContain("Старый");
-
-    await pickSort(slot, "Свежие");
-
-    expect(titles()[0]).toContain("Новый");
-    expect(slot.getByRole("button", { name: "Сортировка: Свежие" })).toBeDefined();
-  });
-
+describe("header controls", () => {
   it("keeps the other header controls worded, not iconised", async () => {
     const slot = await renderSection();
     expect(await slot.findByRole("button", { name: /По проекту/ })).toBeDefined();
@@ -482,6 +718,25 @@ const MIXED_PROVIDERS = {
 function rowOf(slot: ReturnType<typeof renderSlot>, title: string): HTMLElement {
   return slot.getByText(title).closest("li") as HTMLElement;
 }
+
+/** bb's own composer, as far as the section can see it: a marked shell around an editable box. */
+function mountComposer(text = ""): HTMLElement {
+  const shell = document.createElement("div");
+  shell.setAttribute("data-app-composer", "");
+  shell.setAttribute("data-app-composer-role", "primary");
+  const editor = document.createElement("div");
+  editor.setAttribute("contenteditable", "true");
+  editor.tabIndex = 0;
+  editor.textContent = text;
+  shell.append(editor);
+  document.body.append(shell);
+  editor.focus();
+  return editor;
+}
+
+afterEach(() => {
+  document.querySelectorAll("[data-app-composer]").forEach((node) => node.remove());
+});
 
 describe("provider logo in a queue row", () => {
   it("shows the Codex logo at the left of a Codex thread's row", async () => {
@@ -797,25 +1052,6 @@ describe("worktree mark placement", () => {
 });
 
 describe("keyboard from the composer into the queue", () => {
-  /** bb's own composer, as far as the section can see it: a marked shell around an editable box. */
-  function mountComposer(text = ""): HTMLElement {
-    const shell = document.createElement("div");
-    shell.setAttribute("data-app-composer", "");
-    shell.setAttribute("data-app-composer-role", "primary");
-    const editor = document.createElement("div");
-    editor.setAttribute("contenteditable", "true");
-    editor.tabIndex = 0;
-    editor.textContent = text;
-    shell.append(editor);
-    document.body.append(shell);
-    editor.focus();
-    return editor;
-  }
-
-  afterEach(() => {
-    document.querySelectorAll("[data-app-composer]").forEach((node) => node.remove());
-  });
-
   const rowTitles = (slot: ReturnType<typeof renderSlot>) =>
     slot.getAllByRole("listitem").map((row) => row.querySelector("button")!.textContent);
   const focusedRowText = () => document.activeElement?.closest("li")?.textContent ?? null;
@@ -1060,8 +1296,12 @@ describe("the side panel and keyboard stay off until switched on in the settings
 });
 
 describe("on a touch screen", () => {
-  /** A coarse pointer, the way a phone or tablet reports itself. */
+  /** How wide the phone's screen is, in px: the swipes below start at x 300, on its right-edge strip. */
+  const PHONE_WIDTH = 320;
+
+  /** A coarse pointer, the way a phone or tablet reports itself, on a phone-wide screen. */
   function stubTouchScreen(): void {
+    vi.stubGlobal("innerWidth", PHONE_WIDTH);
     vi.stubGlobal(
       "matchMedia",
       (query: string) =>
@@ -1222,6 +1462,158 @@ describe("on a touch screen", () => {
     expect(slot.navigateCalls).toContainEqual({ method: "toThread", threadId: "th_b" });
   });
 
+  /** A finger put down on something and lifted: a tap, the way a touch screen reports one. */
+  function tap(target: HTMLElement): void {
+    fireEvent.pointerDown(target, { ...TOUCH, clientX: 10, clientY: 10 });
+    fireEvent.pointerUp(target, { ...TOUCH, clientX: 10, clientY: 10 });
+    fireEvent.click(target);
+  }
+
+  it("puts an open row away when a finger lands outside it", async () => {
+    const slot = await renderSection();
+    await slot.findByText("Тред Альфы");
+    swipe(rowOf(slot, "Тред Альфы"), 300, 150);
+    tap(slot.getByText("Тред Беты"));
+
+    expect(within(rowOf(slot, "Тред Альфы")).queryByRole("button", { name: "Отложить" })).toBeNull();
+  });
+
+  it("spends that touch on closing, opening no thread with it", async () => {
+    const slot = await renderSection();
+    await slot.findByText("Тред Альфы");
+    swipe(rowOf(slot, "Тред Альфы"), 300, 150);
+    tap(slot.getByText("Тред Беты"));
+
+    expect(slot.navigateCalls).toEqual([]);
+  });
+
+  it("leaves a finger inside the open row to the row's own buttons", async () => {
+    const slot = await renderSection();
+    await slot.findByText("Тред Альфы");
+    swipe(rowOf(slot, "Тред Альфы"), 300, 150);
+    const postpone = within(rowOf(slot, "Тред Альфы")).getByRole("button", { name: "Отложить" });
+    tap(postpone);
+
+    expect(slot.rpcCalls).toContainEqual({
+      method: "setPostponed",
+      input: { threadId: "th_a", postponed: true },
+    });
+  });
+
+  it("puts an open row away when the list is scrolled", async () => {
+    const slot = await renderSection();
+    await slot.findByText("Тред Альфы");
+    swipe(rowOf(slot, "Тред Альфы"), 300, 150);
+    fireEvent.scroll(slot.getAllByRole("list")[0]!);
+
+    expect(within(rowOf(slot, "Тред Альфы")).queryByRole("button", { name: "Отложить" })).toBeNull();
+  });
+
+  it("puts an open row away when a thread opens from the keyboard", async () => {
+    const slot = await renderExperimental();
+    await slot.findByText("Тред Альфы");
+    swipe(rowOf(slot, "Тред Альфы"), 300, 150);
+    // The click a touch screen sends at the end of the drag, which the row swallows.
+    fireEvent.click(slot.getByText("Тред Альфы"));
+    const editor = mountComposer();
+    fireEvent.keyDown(editor, { key: "ArrowDown" });
+    fireEvent.keyDown(document.activeElement!, { key: "Enter" });
+
+    expect(within(rowOf(slot, "Тред Альфы")).queryByRole("button", { name: "Отложить" })).toBeNull();
+  });
+
+  describe("where a sideways swipe starts", () => {
+    // The right-edge strip of a 320 px screen starts at x 272.
+    const MIDDLE = 200;
+    const isOpen = (row: HTMLElement) =>
+      within(row).queryByRole("button", { name: "Отложить" }) !== null;
+
+    it("leaves a swipe from the middle of the screen to the project slides, over a row too", async () => {
+      const slot = await renderSection();
+      await slot.findByText("Тред Альфы");
+      const row = rowOf(slot, "Тред Альфы");
+      startSwipe(row, MIDDLE, MIDDLE - 120);
+
+      expect(touchMoves(row)).toBe(true);
+      fireEvent.pointerUp(panelOf(row), { ...TOUCH, clientX: MIDDLE - 120, clientY: 100 });
+      expect(isOpen(rowOf(slot, "Тред Альфы"))).toBe(false);
+    });
+
+    it("lets the row slide the page's way, not stirring it, while the slides turn", async () => {
+      const slot = await renderSection();
+      await slot.findByText("Тред Альфы");
+      const row = rowOf(slot, "Тред Альфы");
+      startSwipe(row, MIDDLE, MIDDLE - 120);
+
+      expect(panelOf(row).style.transform).toBe("translateX(0px)");
+      expect(panelOf(row).className).not.toContain("touch-pan-y");
+    });
+
+    it("opens the row's actions on a swipe to the left from the right-edge strip", async () => {
+      const slot = await renderSection();
+      await slot.findByText("Тред Альфы");
+      swipe(rowOf(slot, "Тред Альфы"), 290, 150);
+
+      expect(isOpen(rowOf(slot, "Тред Альфы"))).toBe(true);
+    });
+
+    it("holds a swipe to the left from the strip from its first pixel, so the slides stay put", async () => {
+      const slot = await renderSection();
+      await slot.findByText("Тред Альфы");
+      const row = rowOf(slot, "Тред Альфы");
+      startSwipe(row, 300, 299);
+
+      expect(touchMoves(row)).toBe(false);
+    });
+
+    it("gives a swipe to the right from the strip of a closed row to the slides", async () => {
+      const slot = await renderSection();
+      await slot.findByText("Тред Альфы");
+      const row = rowOf(slot, "Тред Альфы");
+      startSwipe(row, 290, 310);
+
+      expect(touchMoves(row)).toBe(true);
+    });
+
+    it("closes an open row on a swipe to the right started anywhere on it", async () => {
+      const slot = await renderSection();
+      await slot.findByText("Тред Альфы");
+      swipe(rowOf(slot, "Тред Альфы"), 300, 150);
+      const row = rowOf(slot, "Тред Альфы");
+      startSwipe(row, MIDDLE - 100, MIDDLE);
+
+      expect(touchMoves(row)).toBe(false);
+      fireEvent.pointerUp(panelOf(row), { ...TOUCH, clientX: MIDDLE, clientY: 100 });
+      expect(isOpen(rowOf(slot, "Тред Альфы"))).toBe(false);
+    });
+  });
+
+  describe("the row's actions", () => {
+    const actionsOf = async (slot: ReturnType<typeof renderSlot>) => {
+      await slot.findByText("Тред Альфы");
+      swipe(rowOf(slot, "Тред Альфы"), 300, 150);
+      const row = rowOf(slot, "Тред Альфы");
+      return {
+        postpone: within(row).getByRole("button", { name: "Отложить" }),
+        archive: within(row).getByRole("button", { name: "Архивировать" }),
+      };
+    };
+
+    it("are 40 px squares with rounded corners", async () => {
+      const { postpone, archive } = await actionsOf(await renderSection());
+      for (const button of [postpone, archive]) {
+        expect(button.className).toMatch(/\bsize-10\b/);
+        expect(button.className).toMatch(/\brounded-md\b/);
+      }
+    });
+
+    it("stand on a visible fill: Postpone grey, Archive red", async () => {
+      const { postpone, archive } = await actionsOf(await renderSection());
+      expect(postpone.className).toContain("bg-secondary");
+      expect(archive.className).toContain("bg-destructive");
+    });
+  });
+
   describe("hover preview", () => {
     beforeEach(() => {
       vi.useFakeTimers();
@@ -1239,5 +1631,356 @@ describe("on a touch screen", () => {
       });
       expect(slot.queryByTestId("bb-thread-chat")).toBeNull();
     });
+  });
+});
+
+describe("sort toggle", () => {
+  const OLD_AND_NEW = {
+    sidebarThreads: {
+      ...TWO_PROJECTS,
+      threads: [
+        idleThread({ id: "th_old", title: "Старый", latestAttentionAt: 1000 }),
+        idleThread({ id: "th_new", title: "Новый", latestAttentionAt: 5000 }),
+      ],
+    },
+  };
+
+  function firstTitle(slot: ReturnType<typeof renderSlot>): string {
+    const first = slot.getAllByRole("listitem")[0]!;
+    return within(first).getAllByRole("button")[0]!.textContent ?? "";
+  }
+
+  it("stands as an icon that names the current order and opens no menu", async () => {
+    const slot = await renderSection();
+    const toggle = await slot.findByRole("button", { name: "Сортировка: Дольше ждут" });
+    expect(toggle.textContent).toBe("");
+    expect(toggle.getAttribute("aria-haspopup")).toBeNull();
+  });
+
+  it("turns the order around on one press, without a menu", async () => {
+    const slot = await renderSection(OLD_AND_NEW);
+    await slot.findByText("Старый");
+    expect(firstTitle(slot)).toContain("Старый");
+
+    fireEvent.click(slot.getByRole("button", { name: "Сортировка: Дольше ждут" }));
+
+    expect(firstTitle(slot)).toContain("Новый");
+    expect(slot.getByRole("button", { name: "Сортировка: Свежие" })).toBeDefined();
+    expect(slot.queryByRole("menu")).toBeNull();
+    expect(slot.queryAllByRole("menuitemradio")).toEqual([]);
+  });
+
+  it("turns it back on the next press", async () => {
+    const slot = await renderSection(OLD_AND_NEW);
+    await slot.findByText("Старый");
+    fireEvent.click(slot.getByRole("button", { name: "Сортировка: Дольше ждут" }));
+    fireEvent.click(slot.getByRole("button", { name: "Сортировка: Свежие" }));
+
+    expect(firstTitle(slot)).toContain("Старый");
+    expect(slot.getByRole("button", { name: "Сортировка: Дольше ждут" })).toBeDefined();
+  });
+
+  it("shows the other arrow once the order is turned", async () => {
+    const slot = await renderSection();
+    const before = (await slot.findByRole("button", { name: "Сортировка: Дольше ждут" })).innerHTML;
+    fireEvent.click(slot.getByRole("button", { name: "Сортировка: Дольше ждут" }));
+    const after = slot.getByRole("button", { name: "Сортировка: Свежие" }).innerHTML;
+    expect(after).not.toBe(before);
+  });
+
+  it("keeps the turned order after the section remounts", async () => {
+    const first = await renderSection();
+    fireEvent.click(await first.findByRole("button", { name: "Сортировка: Дольше ждут" }));
+    cleanup();
+
+    const second = await renderSection();
+    expect(await second.findByRole("button", { name: "Сортировка: Свежие" })).toBeDefined();
+  });
+});
+
+describe("running threads toggle", () => {
+  const WITH_RUNNING = {
+    sidebarThreads: {
+      ...TWO_PROJECTS,
+      threads: [
+        idleThread({ id: "th_idle", title: "Ждёт", latestAttentionAt: 1000 }),
+        idleThread({ id: "th_run", title: "Работает сейчас", indicator: "runtime", latestAttentionAt: 2000 }),
+        idleThread({
+          id: "th_bg",
+          title: "Фоновый агент",
+          latestAttentionAt: 3000,
+          activity: { workflows: 0, backgroundAgents: 1, backgroundCommands: 0, planMode: 0, goals: 0 },
+        }),
+      ],
+    },
+  };
+
+  it("stands left of the project grouping", async () => {
+    const slot = await renderSection(WITH_RUNNING);
+    const toggle = await slot.findByRole("button", { name: "Работающие треды: скрыты" });
+    const grouping = slot.getByRole("button", { name: /По проекту/ });
+    expect(toggle.compareDocumentPosition(grouping) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it("offers no archive on a thread that is still working", async () => {
+    const slot = await renderSection(WITH_RUNNING);
+    fireEvent.click(await slot.findByRole("button", { name: "Работающие треды: скрыты" }));
+    const row = slot.getByText("Работает сейчас").closest("li")!;
+    expect(within(row).queryByLabelText("Архивировать")).toBeNull();
+  });
+
+  it("puts them away again on the next press", async () => {
+    const slot = await renderSection(WITH_RUNNING);
+    fireEvent.click(await slot.findByRole("button", { name: "Работающие треды: скрыты" }));
+    fireEvent.click(slot.getByRole("button", { name: "Работающие треды: показаны" }));
+    expect(slot.queryByText("Работает сейчас")).toBeNull();
+  });
+
+  it("keeps the choice after the section remounts", async () => {
+    const first = await renderSection(WITH_RUNNING);
+    fireEvent.click(await first.findByRole("button", { name: "Работающие треды: скрыты" }));
+    cleanup();
+
+    const second = await renderSection(WITH_RUNNING);
+    expect(await second.findByText("Работает сейчас")).toBeDefined();
+  });
+
+  it("hides running threads at first, counts only the waiting ones, and shows the icon crossed out", async () => {
+    const slot = await renderSection(WITH_RUNNING);
+    await slot.findByText("Ждёт");
+    expect(slot.queryByText("Работает сейчас")).toBeNull();
+    const toggle = slot.getByRole("button", { name: "Работающие треды: скрыты" });
+    expect(toggle.getAttribute("aria-pressed")).toBe("false");
+    expect(slot.getByRole("heading", { name: /Threads: 1/ })).toBeDefined();
+  });
+
+  it("brings running threads into the list and the count on a press, each marked as working", async () => {
+    const slot = await renderSection(WITH_RUNNING);
+    fireEvent.click(await slot.findByRole("button", { name: "Работающие треды: скрыты" }));
+
+    expect(slot.getByText("Работает сейчас")).toBeDefined();
+    expect(slot.getByText("Фоновый агент")).toBeDefined();
+    const toggle = slot.getByRole("button", { name: "Работающие треды: показаны" });
+    expect(toggle.getAttribute("aria-pressed")).toBe("true");
+    expect(slot.getAllByRole("img", { name: "Работает" })).toHaveLength(2);
+    expect(slot.getByRole("heading", { name: /Threads: 3/ })).toBeDefined();
+  });
+});
+
+describe("time on a working thread", () => {
+  const RUNNING_AND_WAITING = {
+    sidebarThreads: {
+      ...TWO_PROJECTS,
+      threads: [
+        idleThread({ id: "th_idle", title: "Ждёт", latestAttentionAt: 1000 }),
+        idleThread({ id: "th_run", title: "Работает сейчас", indicator: "runtime", latestAttentionAt: 1000 }),
+      ],
+    },
+  };
+
+  it("shows no time next to the spinner of a working thread, and keeps it on a waiting one", async () => {
+    const slot = await renderSection(RUNNING_AND_WAITING);
+    fireEvent.click(await slot.findByRole("button", { name: "Работающие треды: скрыты" }));
+    const time = formatWaitingSince(Date.now(), 1000);
+
+    expect(within(rowOf(slot, "Ждёт")).getByText(time)).toBeDefined();
+    expect(within(rowOf(slot, "Работает сейчас")).queryByText(time)).toBeNull();
+    expect(within(rowOf(slot, "Работает сейчас")).getByRole("img", { name: "Работает" })).toBeDefined();
+  });
+});
+
+describe("sort icon", () => {
+  // The icon's horizontal bars, top to bottom, as their lengths: a sort icon
+  // draws the queue's order as bars that shrink or grow down the list.
+  function barLengths(button: HTMLElement): number[] {
+    const bars = [...button.querySelectorAll("path")].flatMap((path) => {
+      const bar = /^M([\d.]+) ([\d.]+)(?:H([\d.]+)|L([\d.]+) ([\d.]+))$/.exec(
+        path.getAttribute("d") ?? "",
+      );
+      if (bar === null) return [];
+      const [, x1, y1, h, lx, ly] = bar;
+      if (h === undefined && Math.abs(Number(ly) - Number(y1)) > 0.01) return [];
+      return [{ y: Number(y1), length: Math.abs(Number(h ?? lx) - Number(x1)) }];
+    });
+    return bars.sort((a, b) => a.y - b.y).map((bar) => bar.length);
+  }
+
+  const shrinking = (lengths: number[]) => lengths.every((l, i) => i === 0 || l < lengths[i - 1]!);
+  const growing = (lengths: number[]) => lengths.every((l, i) => i === 0 || l > lengths[i - 1]!);
+
+  it("draws the longest waits first as bars that shrink down the list", async () => {
+    const slot = await renderSection();
+    const lengths = barLengths(await slot.findByRole("button", { name: "Сортировка: Дольше ждут" }));
+    expect(lengths.length).toBeGreaterThanOrEqual(3);
+    expect(shrinking(lengths)).toBe(true);
+  });
+
+  it("draws the newest first as bars that grow down the list", async () => {
+    const slot = await renderSection();
+    fireEvent.click(await slot.findByRole("button", { name: "Сортировка: Дольше ждут" }));
+    const lengths = barLengths(slot.getByRole("button", { name: "Сортировка: Свежие" }));
+    expect(lengths.length).toBeGreaterThanOrEqual(3);
+    expect(growing(lengths)).toBe(true);
+  });
+});
+
+describe("a thread with only a background command", () => {
+  const WITH_SERVER = {
+    sidebarThreads: {
+      ...TWO_PROJECTS,
+      threads: [
+        idleThread({
+          id: "th_server",
+          title: "Поднят сервер",
+          indicator: "background-command",
+          activity: { workflows: 0, backgroundAgents: 0, backgroundCommands: 1, planMode: 0, goals: 0 },
+        }),
+        idleThread({
+          id: "th_busy",
+          title: "Работает с сервером",
+          indicator: "runtime",
+          activity: { workflows: 0, backgroundAgents: 0, backgroundCommands: 1, planMode: 0, goals: 0 },
+        }),
+      ],
+    },
+  };
+
+  it("stands in the queue while running threads are hidden", async () => {
+    const slot = await renderSection(WITH_SERVER);
+    expect(await slot.findByText("Поднят сервер")).toBeDefined();
+    expect(slot.queryByText("Работает с сервером")).toBeNull();
+    expect(slot.getByRole("button", { name: "Работающие треды: скрыты" })).toBeDefined();
+  });
+
+  it("marks its row as a running process, not as working", async () => {
+    const slot = await renderSection(WITH_SERVER);
+    const row = (await slot.findByText("Поднят сервер")).closest("li")!;
+    const mark = within(row).getByRole("img", { name: "Запущен фоновый процесс" });
+    expect(mark.innerHTML).not.toContain("animate-spin");
+    expect(within(row).queryByRole("img", { name: "Работает" })).toBeNull();
+  });
+
+  it("offers no archive, which would cut the running process short", async () => {
+    const slot = await renderSection(WITH_SERVER);
+    const row = (await slot.findByText("Поднят сервер")).closest("li")!;
+    expect(within(row).queryByLabelText("Архивировать")).toBeNull();
+  });
+
+  it("keeps the working mark on a thread that also runs a turn", async () => {
+    const slot = await renderSection(WITH_SERVER);
+    fireEvent.click(await slot.findByRole("button", { name: "Работающие треды: скрыты" }));
+    const row = slot.getByText("Работает с сервером").closest("li")!;
+    expect(within(row).getByRole("img", { name: "Работает" })).toBeDefined();
+  });
+});
+
+describe("the project slide follows the home composer", () => {
+  // jsdom scrolls nothing: the scrolling is recorded instead.
+  const scrollIntoView = vi.fn();
+  const scrollTo = vi.fn();
+
+  // The whole test page stands for bb's new-thread screen, where the home composer lives.
+  beforeEach(() => {
+    Object.defineProperty(Element.prototype, "scrollIntoView", { configurable: true, writable: true, value: scrollIntoView });
+    Object.defineProperty(Element.prototype, "scrollTo", { configurable: true, writable: true, value: scrollTo });
+    document.body.setAttribute("data-panel-id", "root-compose-main-panel");
+  });
+
+  afterEach(() => {
+    scrollIntoView.mockReset();
+    scrollTo.mockReset();
+    delete (Element.prototype as { scrollIntoView?: unknown }).scrollIntoView;
+    delete (Element.prototype as { scrollTo?: unknown }).scrollTo;
+    document.body.removeAttribute("data-panel-id");
+  });
+
+  /** The plugin's surface inside bb's new-thread composer, set to `projectId`. */
+  async function renderInComposer(projectId: string | null): Promise<ReturnType<typeof renderSlot>> {
+    const app = await loadPluginApp(() => import("./app"));
+    const surfaces = app.composerCustomizations.flatMap((customization) => customization.banners ?? []);
+    return renderSlot(surfaces[0]!, {}, { composer: { scope: { kind: "new-thread", projectId } } });
+  }
+
+  const pressed = (slot: ReturnType<typeof renderSlot>, name: RegExp) =>
+    slot.getByRole("button", { name }).getAttribute("aria-pressed");
+
+  const composerRequests = (slot: ReturnType<typeof renderSlot>) =>
+    slot.sidebarActionCalls.filter((call) => call.method === "openNewThread");
+
+  it("shows the slide of the project the composer was set to from outside — New thread on a project", async () => {
+    const slot = await renderSection();
+    fireEvent.click(await slot.findByRole("button", { name: /По проекту/ }));
+
+    await renderInComposer("p_beta");
+
+    expect(pressed(slot, /Бета/)).toBe("true");
+    expect(pressed(slot, /Альфа/)).toBe("false");
+  });
+
+  it("does not hand the followed project back to the composer", async () => {
+    const slot = await renderSection();
+    fireEvent.click(await slot.findByRole("button", { name: /По проекту/ }));
+
+    await renderInComposer("p_beta");
+
+    expect(composerRequests(slot)).toHaveLength(1);
+  });
+
+  it("follows the composer when it changes project while Home stays open", async () => {
+    const slot = await renderSection();
+    fireEvent.click(await slot.findByRole("button", { name: /По проекту/ }));
+    const composer = await renderInComposer("p_alpha");
+
+    await composer.setComposerScope({ kind: "new-thread", projectId: "p_beta" });
+
+    expect(pressed(slot, /Бета/)).toBe("true");
+  });
+
+  it("keeps the slide in view for a project with no threads in the section", async () => {
+    const slot = await renderSection();
+    fireEvent.click(await slot.findByRole("button", { name: /По проекту/ }));
+
+    await renderInComposer("p_gamma");
+
+    expect(pressed(slot, /Альфа/)).toBe("true");
+  });
+
+  it("keeps the slide in view while the composer has no project", async () => {
+    const slot = await renderSection();
+    fireEvent.click(await slot.findByRole("button", { name: /По проекту/ }));
+
+    await renderInComposer(null);
+
+    expect(pressed(slot, /Альфа/)).toBe("true");
+  });
+
+  it("scrolls the slide in along the track alone, leaving bb's page where it is", async () => {
+    const slot = await renderSection();
+    fireEvent.click(await slot.findByRole("button", { name: /По проекту/ }));
+    const track = slot.getByRole("group", { name: "Бета" }).parentElement!;
+
+    await renderInComposer("p_beta");
+
+    expect(scrollTo.mock.instances).toEqual([track]);
+    expect(scrollIntoView).not.toHaveBeenCalled();
+  });
+
+  it("does not scroll for a project with no threads in the section", async () => {
+    const slot = await renderSection();
+    fireEvent.click(await slot.findByRole("button", { name: /По проекту/ }));
+
+    await renderInComposer("p_gamma");
+
+    expect(scrollTo).not.toHaveBeenCalled();
+  });
+
+  it("does not hear a new-thread composer that stands off Home, such as a chat another plugin embeds", async () => {
+    const slot = await renderSection();
+    fireEvent.click(await slot.findByRole("button", { name: /По проекту/ }));
+    document.body.removeAttribute("data-panel-id");
+
+    await renderInComposer("p_beta");
+
+    expect(pressed(slot, /Альфа/)).toBe("true");
   });
 });
