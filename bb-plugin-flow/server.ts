@@ -188,6 +188,8 @@ export default async function plugin(bb: BbPluginApi): Promise<void> {
     projects: () => bb.sdk.projects.list({ includePersonal: true }),
     // Заполненность окна bb уже знает: она едет в ответе баннера вместе с прогрессом, без своего опроса.
     context: (threadId) => contextFillOf(bb.sdk, () => settings.get(), threadId),
+    // Доработка откатывает закрытые автоматизации за начатым заново этапом тем же исполнителем шагов.
+    undo: (threadId, stages) => runner.undo(threadId, stages),
     readTaskFile: (threadId, target) => readTaskFile(bb.sdk, threadId, target),
     writeTaskFile: (threadId, target, text) => writeTaskFile(bb.sdk, threadId, target, text),
     flow: (threadId) => {

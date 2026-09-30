@@ -34,11 +34,15 @@ export const addScript = (automation: BuiltinAutomation, file: { name: string; c
   scripts: [...scriptsOf(automation), { id, ...file }],
 });
 
-/** Шаг убирается; шаг-скрипт уносит свой скрипт, чтобы в настройках не копилось содержимое без шага. */
+/**
+ * Шаг убирается и из шагов, и из отката; шаг-скрипт уносит свой скрипт, чтобы в настройках не копилось содержимое без
+ * шага, а откат не ссылался на скрипт, которого нет.
+ */
 export const removeStep = (automation: BuiltinAutomation, step: AutomationStep): BuiltinAutomation => {
   const steps = automation.steps.filter((s) => s !== step);
+  const undo = automation.undo === undefined ? {} : { undo: automation.undo.filter((s) => s !== step) };
   const id = scriptIdOf(step);
-  return id === null ? { ...automation, steps } : { ...automation, steps, scripts: scriptsOf(automation).filter((s) => s.id !== id) };
+  return id === null ? { ...automation, steps, ...undo } : { ...automation, steps, ...undo, scripts: scriptsOf(automation).filter((s) => s.id !== id) };
 };
 
 /** Как закончился процесс скрипта: код выхода, остановлен ли по времени, общий вывод, отказ запуска. */

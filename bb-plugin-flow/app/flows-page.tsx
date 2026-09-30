@@ -67,11 +67,10 @@ function FlowDescription({ flow }: { flow: Flow }) {
     <Textarea
       aria-label={t.flows.description}
       placeholder={t.flows.descriptionPlaceholder}
-      rows={2}
       value={description ?? flow.description ?? ""}
       onChange={(e) => setDescription(e.target.value)}
       onBlur={save}
-      className="min-h-0 resize-none rounded-md border-0 bg-card px-2.5 py-1.5 text-[13px] shadow-none focus-visible:ring-1 focus-visible:ring-inset"
+      className="min-h-0 resize-none [field-sizing:content] rounded-md border-0 bg-card px-2.5 py-1.5 text-[13px] shadow-none focus-visible:ring-1 focus-visible:ring-inset"
     />
   );
 }
