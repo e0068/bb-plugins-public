@@ -9,7 +9,7 @@ import { registerFlowSettingsApi, STAGE_SETTINGS_CHANNEL } from "./settings-api"
 const setup = async () => {
   const { bb, harness } = createFakePluginHost({ pluginId: "flow" });
   const settings = await createFlowSettings(bb.storage.kv);
-  registerFlowSettingsApi(bb, settings, { catalog: async () => ({ skills: [{ name: "spec" }], executors: [] }), rootSkill: async () => null, skillFile: async () => null, reveal: async () => ({ revealed: false, error: null }) });
+  registerFlowSettingsApi(bb, settings, { catalog: async () => ({ skills: [{ name: "spec" }], executors: [] }), skillFile: async () => null, reveal: async () => ({ revealed: false, error: null }) });
   return { harness, settings };
 };
 

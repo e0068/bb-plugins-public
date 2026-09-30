@@ -6,7 +6,7 @@
 import type { PluginKvStorage } from "@get-bb/plugin-sdk";
 
 import type { StepId } from "./catalog";
-import type { ParentDelivery } from "./core/parent-delivery";
+import { type ParentDelivery, parentNote } from "./core/parent-delivery";
 import type { BumpLevel } from "./core/plugin-version-bump";
 import { classifyFailure, RETRY_DELAYS_MS } from "./core/retry";
 import { bumpOutcome, reinstallOutcome, type StepOutcome } from "./core/step-outcomes";
@@ -20,6 +20,7 @@ import {
   attemptLocalMainPull,
   catchUpBranch,
   deliverIntoParent,
+  parentHeadOf,
   environmentIdOf,
   gatherAndCreate,
   markAwaiting,
@@ -32,6 +33,7 @@ import {
   reinstallAfterMerge,
   resolveToken,
   settleVersionsForMerge,
+  type ChildDelivery,
   type GithubTokenSettings,
   type Sdk,
 } from "./shell/pr-helpers";
@@ -51,6 +53,12 @@ export interface StepPorts {
   ownPluginId: string;
   /** Пауза между повторами шага; по умолчанию — настоящий таймер. В тестах подменяется, чтобы повтор не стоил секунд. */
   sleep?: (ms: number) => Promise<void>;
+  /**
+   * Реплика в другой тред — встаёт в очередь и не перебивает идущий ход. Ею
+   * «Смёрджить PR» дочернего треда говорит родителю, что ветка влита к нему.
+   * Без порта родитель не узнаёт — как было до него.
+   */
+  tell?: (threadId: string, text: string) => Promise<void>;
 }
 
 /**
@@ -164,12 +172,28 @@ export function createSteps(ports: StepPorts): Steps {
   // (core/parent-delivery.ts): PR и его мёрдж становятся слиянием туда, а
   // бамп, подтягивание main и обновление плагинов — делом PR родителя.
   const orIntoParent =
-    (child: (delivery: ParentDelivery) => Promise<StepOutcome>, usual: (threadId: string) => Promise<StepOutcome>) =>
+    (child: (delivery: ChildDelivery) => Promise<StepOutcome>, usual: (threadId: string) => Promise<StepOutcome>) =>
     async (threadId: string): Promise<StepOutcome> => {
       const delivery = await parentDeliveryOf(sdk, threadId);
       return delivery === null ? usual(threadId) : child(delivery);
     };
-  const deliver = async (delivery: ParentDelivery) => done(DELIVERY_DETAIL[await deliverIntoParent(delivery)](delivery.parentBranch));
+  const delivered = async (delivery: ParentDelivery) => DELIVERY_DETAIL[await deliverIntoParent(delivery)](delivery.parentBranch);
+  const deliver = async (delivery: ParentDelivery) => done(await delivered(delivery));
+  // Мёрдж волны — её последнее слово: родитель узнаёт о ней и тогда, когда
+  // ветку уже влил «Открыть PR». Несказанное родителю шаг не роняет — ветка
+  // влита, — а называет в деталях.
+  const deliverAndTell = async (delivery: ChildDelivery) => {
+    const detail = await delivered(delivery);
+    const tell = ports.tell;
+    if (tell === undefined) return done(detail);
+    const untold = await parentHeadOf(delivery)
+      .then((head) => tell(delivery.parentThreadId, parentNote({ title: delivery.title, branch: delivery.branch, parentBranch: delivery.parentBranch, head })))
+      .then(
+        () => null,
+        (error: unknown) => messageOf(error),
+      );
+    return done(untold === null ? detail : `${detail}; the parent thread was not told: ${untold}`);
+  };
   const notNeeded = async ({ parentBranch }: ParentDelivery) => done(`not needed — the branch goes into ${parentBranch}, the parent thread's branch`);
 
   const bumpStep = (level: BumpLevel) =>
@@ -215,7 +239,7 @@ export function createSteps(ports: StepPorts): Steps {
     // влитый PR — успех шага, закрытый — названный отказ, конфликт — названный
     // конфликт, а не «HTTP 409» (shell/pr-helpers.ts).
     "git.merge": guarded(
-      orIntoParent(deliver, async (threadId) => {
+      orIntoParent(deliverAndTell, async (threadId) => {
         const environmentId = await environmentOf(threadId);
         const gh = await githubPullOf(sdk, settings, environmentId);
         await markAwaiting(sdk, environmentId, "merge");

@@ -131,7 +131,50 @@ const workMinutes = (track: Track): number | null => {
   return ms === null ? null : asMinutes(ms - (track.idleMs ?? 0));
 };
 
+/** Минуты прохода закрытого этапа — те же, что в его строке баннера: у этапа с шагами работа шагов, у этапа навыка активные, а без них стенные. */
+const passMinutes = (track: Track): number | null => (track.run !== undefined ? workMinutes(track) : (track.activeMinutes ?? minutesBetween(track)));
+
+/** Прошлые проходы этапа вместе с нынешним, если он закрыт: незакрытый проход ещё ничего не стоит. */
+const spentSoFar = (track: Track): Track["earlier"] =>
+  track.finishedAt === undefined
+    ? track.earlier
+    : {
+        cost: (track.earlier?.cost ?? 0) + (track.cost ?? 0),
+        minutes: (track.earlier?.minutes ?? 0) + (passMinutes(track) ?? 0),
+        wall: (track.earlier?.wall ?? 0) + (minutesBetween(track) ?? 0),
+        from: track.earlier?.from ?? track.startedAt ?? track.finishedAt,
+      };
+
+/** След этапа, который проходится заново: остаются исполнитель, вычеркнутость и траты прошлых проходов. */
+const cleared = (track: Track): Track => {
+  const earlier = spentSoFar(track);
+  return {
+    ...(track.executor === undefined ? {} : { executor: track.executor }),
+    ...(track.skipped === undefined ? {} : { skipped: track.skipped }),
+    ...(earlier === undefined ? {} : { earlier }),
+  };
+};
+
+const touched = (track: Track | undefined): boolean => track !== undefined && (track.startedAt !== undefined || track.finishedAt !== undefined || track.run !== undefined);
+
+/**
+ * Доработка: закрытый этап `id` начинают снова — он открывается со своими ссылками, а все тронутые этапы после него теряют
+ * готовность и ждут своего прохода, иначе автоматизация за ними не наступила бы и правки доработки остались бы
+ * незакоммиченными. Траты сброшенных проходов копятся в `earlier`. Старт незакрытого этапа ничего не меняет: нетронутые
+ * этапы раньше закрытых — обычный прогон, а не доработка.
+ */
+export const reopen = (progress: FlowProgress, stages: readonly WorkStage[], id: string): FlowProgress => {
+  const index = stages.findIndex((stage) => stage.id === id);
+  if (index < 0 || progress.stages[id]?.finishedAt === undefined) return progress;
+  const later = stages.slice(index + 1).map((stage) => stage.id).filter((after) => touched(progress.stages[after]));
+  const own = patch(progress, id, (track) => ({ ...cleared(track), ...(track.results === undefined ? {} : { results: track.results }) }));
+  const reset = later.reduce((p, after) => patch(p, after, cleared), own);
+  return { ...reset, waiting: reset.waiting.filter((waiting) => !later.includes(waiting)) };
+};
+
 const optionalProvider = (provider: string | null) => (provider === null ? {} : { provider });
+
+const plus = (value: number | null, earlier: number | undefined): number | null => (earlier === undefined ? value : (value ?? 0) + earlier);
 
 /** Вид прогресса по этапам flow треда: этап без записи — впереди, этап записи вне flow — не показывается; счёт и номера — по этапам прогона; живой — на этапе идёт работа, ждущий владельца не живой; провайдер — у исполнителя этапа навыка. */
 export const progressView = (progress: FlowProgress, stages: readonly WorkStage[], agentActive = false, threadProvider: string | null = null): ProgressView => {
@@ -148,10 +191,11 @@ export const progressView = (progress: FlowProgress, stages: readonly WorkStage[
       ...optionalProvider(executorProvider(stage, track, threadProvider)),
       results: track.results ?? [],
       // Минуты этапа с шагами — работа его шагов; у этапа навыка — активные, а пока их не считали — прежние стенные часы, чтобы строка не осталась пустой.
-      minutes: state === "done" ? (track.run !== undefined ? workMinutes(track) : (track.activeMinutes ?? minutesBetween(track))) : null,
-      wallMinutes: state === "done" ? minutesBetween(track) : null,
+      // Прошлые проходы, сброшенные доработкой, — в тех же минутах и долларах.
+      minutes: state === "done" ? plus(passMinutes(track), track.earlier?.minutes) : null,
+      wallMinutes: state === "done" ? plus(minutesBetween(track), track.earlier?.wall) : null,
       idleMinutes: state === "done" && track.run !== undefined ? idleMinutes(track) : null,
-      cost: track.cost ?? null,
+      cost: plus(track.cost ?? null, track.earlier?.cost),
       ...(stage.automation === undefined ? {} : { automation: automationView(stage, track) }),
     } as const;
   });

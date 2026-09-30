@@ -5,7 +5,7 @@ import { loadPluginApp, renderSlot } from "@get-bb/plugin-sdk/testing/app";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { builtinStage } from "../lib/stage-constants";
-import type { FlowSettings, flowSettingsRpcContract, RootSkill, StageCatalog } from "../shared/contract";
+import type { FlowSettings, flowSettingsRpcContract, SkillFile, StageCatalog } from "../shared/contract";
 
 const app = await loadPluginApp(() => import("../app"));
 
@@ -19,9 +19,9 @@ const settings: FlowSettings = {
 
 const catalog: StageCatalog = { skills: [{ name: "flow-questions", description: "Этап Вопросы" }, { name: "flow-demo" }, { name: "my-questions" }, { name: "my-demo" }], executors: [] };
 
-const open = (rootSkill: () => RootSkill = () => null) =>
+const open = () =>
   renderSlot<PluginNavPanelProps, typeof flowSettingsRpcContract>(app.navPanels.find((p) => p.id === "flows")!, { subPath: "" }, {
-    rpc: { getFlowSettings: () => settings, saveFlowSettings: (input: unknown) => input, getStageCatalog: () => catalog, getRootSkill: rootSkill } as never,
+    rpc: { getFlowSettings: () => settings, saveFlowSettings: (input: unknown) => input, getStageCatalog: () => catalog } as never,
     settings: { language: "Русский" },
   });
 
@@ -68,7 +68,7 @@ describe("охват встроенных этапов", () => {
       minButtonWidth: 170,
     };
     const slot = renderSlot<PluginNavPanelProps, typeof flowSettingsRpcContract>(app.navPanels.find((p) => p.id === "flows")!, { subPath: "" }, {
-      rpc: { getFlowSettings: () => mixed, saveFlowSettings: (input: unknown) => input, getStageCatalog: () => catalog, getRootSkill: () => null } as never,
+      rpc: { getFlowSettings: () => mixed, saveFlowSettings: (input: unknown) => input, getStageCatalog: () => catalog } as never,
       settings: { language: "Русский" },
     });
     expect((await row(slot, 2)).getByText("выбирает этапы 3–5")).toBeTruthy();
@@ -77,13 +77,12 @@ describe("охват встроенных этапов", () => {
 });
 
 describe("иконки файла навыка в поле навыка", () => {
-  const openWith = (skillFile: (input: { name: string }) => RootSkill) =>
+  const openWith = (skillFile: (input: { name: string }) => SkillFile) =>
     renderSlot<PluginNavPanelProps, typeof flowSettingsRpcContract>(app.navPanels.find((p) => p.id === "flows")!, { subPath: "" }, {
       rpc: {
         getFlowSettings: () => settings,
         saveFlowSettings: (input: unknown) => input,
         getStageCatalog: () => catalog,
-        getRootSkill: () => null,
         getSkillFile: skillFile,
         revealSkill: ({ name }: { name: string }) => ({ revealed: name === "flow-questions", error: name === "flow-questions" ? null : "skill file not found" }),
       } as never,

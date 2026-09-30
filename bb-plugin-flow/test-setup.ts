@@ -39,7 +39,7 @@ afterEach(() => {
   globalThis.localStorage?.clear();
 });
 
-// Flow пишет корневой навык в ~/.claude/skills: у тестов свой дом во временной папке, настоящий навык владельца они не трогают.
+// Каталог Flow читает агентов и workflow из домашней папки: у тестов свой дом во временной папке, настоящий дом владельца они не видят.
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";

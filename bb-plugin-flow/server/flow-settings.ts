@@ -36,8 +36,7 @@ const readOrMigrate = async (kv: PluginKvStorage): Promise<FlowSettings> => {
   return migrated;
 };
 
-/** `onSave` — вслед за каждой записью, уже с сохранённой коллекцией; его сбой запись не отменяет. */
-export const createFlowSettings = async (kv: PluginKvStorage, options: { onSave?: (settings: FlowSettings) => Promise<void> } = {}): Promise<FlowSettingsStore> => {
+export const createFlowSettings = async (kv: PluginKvStorage): Promise<FlowSettingsStore> => {
   let current = await readOrMigrate(kv);
   return {
     current: () => current,
@@ -53,7 +52,6 @@ export const createFlowSettings = async (kv: PluginKvStorage, options: { onSave?
       }
       await kv.set(FLOW_SETTINGS_KEY, valid);
       current = valid;
-      await options.onSave?.(valid).catch(() => undefined);
       return valid;
     },
   };

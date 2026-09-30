@@ -3,7 +3,7 @@
 // копирование и ввод на контрастной подложке. Подложка одна, без полосы
 // между кодом и кнопками; группа кнопок с отступом 6px, так что от ввода до
 // правого, верхнего и нижнего края — поровну.
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { useRpc, type PluginMessageDirectiveProps } from "@get-bb/plugin-sdk/app";
 
 import { readCommandId } from "../core/directive";
@@ -107,15 +107,22 @@ function CommandBlock({ command, run }: { command: string; run: Run }) {
   );
 }
 
-/** Результат-команда Демонстрации — строкой среди результатов: без подписи (она — имя строки), команда моноширинным и три кнопки справа; ошибка — вместо команды, удача — галочкой на кнопке. */
+/**
+ * Результат-команда Демонстрации — строкой среди результатов: подпись текстом над командой и имя строки — одна команда не говорит, зачем её нажимать и какая норма;
+ * под подписью команда моноширинным, справа три кнопки; ошибка — вместо команды, удача — галочкой на кнопке.
+ */
 export function CommandResultRow({ label, command, run, className }: { label: string; command: string; run: Run; className?: string }) {
   const t = useMessages();
   const { wrap, buttons, status, error } = useCommandActions(command, run);
+  const labelId = useId();
   return (
-    <div role="group" aria-label={label} data-result-row className={cn(RESULT_ROW, "items-start", className)}>
-      <pre className={cn("min-w-0 flex-1 self-center py-1.5 font-mono text-[11px]", error !== null ? "text-destructive" : "text-muted-foreground", wrap ? "whitespace-pre-wrap break-words" : "truncate")}>
-        {error ?? command}
-      </pre>
+    <div role="group" aria-labelledby={labelId} data-result-row className={cn(RESULT_ROW, "items-start", className)}>
+      <div className="flex min-w-0 flex-1 flex-col self-center py-1.5">
+        <span id={labelId} className="break-words">
+          {label}
+        </span>
+        <pre className={cn("font-mono text-[11px]", error !== null ? "text-destructive" : "text-muted-foreground", wrap ? "whitespace-pre-wrap break-words" : "truncate")}>{error ?? command}</pre>
+      </div>
       <span className="-mr-1.5 flex shrink-0 items-center gap-1 self-center">{buttons}</span>
       <span role="status" aria-live="polite" className="sr-only">
         {status}

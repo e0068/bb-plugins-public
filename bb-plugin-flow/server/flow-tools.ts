@@ -44,11 +44,13 @@ export const registerFlowTools = (
   bb.agents.registerTool({
     name: SAVE_FLOW_TOOL_NAME,
     description:
-      "Create or replace one flow of the owner. Stages in order: built-in kinds (questions, criteria, select, demo), skill stages with a skill from the catalog and executor ids, automation stages (kind skill, no skill) and action stages (kind action, same steps, run by the owner with a button) — Flow's built-in automation { source: \"flow\", steps, scripts } where a script step is \"script:<id>\" with its script { id, name, content } in the same stage, or an Automations automation { id, name }. Ids and names left out are filled in. A flow without id is new; position puts it at that place, 0 makes it the default. Stages whose skill or executor is not in the catalog are rejected, and nothing is saved.",
+      "Create or replace one flow of the owner. Stages in order: built-in kinds (questions, criteria, select, demo), skill stages with a skill from the catalog and executor ids, automation stages (kind skill, no skill) and action stages (kind action, same steps, run by the owner with a button) — Flow's built-in automation { source: \"flow\", steps, scripts } where a script step is \"script:<id>\" with its script { id, name, content } in the same stage, or an Automations automation { id, name }. Ids and names left out are filled in. A flow without id is new; position puts it at that place, 0 makes it the default. Stages whose skill or executor is not in the catalog are rejected, and nothing is saved — except a stage the stored flow already has with the same id and skill.",
     presentation: { label: { pending: "Saving the flow", completed: "Flow saved" } },
     parameters: flowDraftSchema,
     async execute(params) {
-      const resolved = resolveFlowDraft(params, await deps.catalog(), deps.newId);
+      // Каталог — раньше коллекции: см. чистку этапов прежнего набора в server.ts.
+      const catalog = await deps.catalog();
+      const resolved = resolveFlowDraft(params, catalog, deps.newId, settings.current().flows.find((f) => f.id === params.id));
       if (!resolved.ok) return toolError(`Flow not saved: ${resolved.problems.join("; ")}.`);
       try {
         const saved = await settings.save(putFlow(settings.current(), resolved.flow, params.position));

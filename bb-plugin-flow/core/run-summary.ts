@@ -43,12 +43,22 @@ const inRun = (track: Track): boolean => track.skipped !== true;
 
 const minutesOf = (ms: number): number => Math.max(0, Math.round(ms / 60_000));
 
-/** Минуты работы этапа: посчитанные активные, а пока их нет — от начала до конца. */
-const workMinutes = (track: Track): number => {
+/** Минуты последнего прохода этапа: посчитанные активные, а пока их нет — от начала до конца. */
+const lastPassMinutes = (track: Track): number => {
   if (track.activeMinutes !== undefined) return track.activeMinutes;
   if (track.startedAt === undefined || track.finishedAt === undefined) return 0;
   return minutesOf(Date.parse(track.finishedAt) - Date.parse(track.startedAt));
 };
+
+/** Минуты работы этапа вместе с прошлыми проходами, сброшенными доработкой. */
+const stageMinutes = (track: Track): number => lastPassMinutes(track) + (track.earlier?.minutes ?? 0);
+
+/** Начало работы над этапом: первый проход, если доработка его сбросила, иначе нынешний. */
+const firstStart = (track: Track & { startedAt: string }): string =>
+  track.earlier !== undefined && Date.parse(track.earlier.from) < Date.parse(track.startedAt) ? track.earlier.from : track.startedAt;
+
+/** Доллары этапа вместе с прошлыми проходами. */
+const spentCost = (track: Track): number => (track.cost ?? 0) + (track.earlier?.cost ?? 0);
 
 /**
  * Прогон завершён, когда работа в нём была и вся закрыта: ни ждущих владельца
@@ -79,7 +89,7 @@ const sumExecutors = (rows: ReadonlyArray<{ stage: WorkStage; track: Track }>): 
   rows.reduce<RunExecutor[]>((acc, row) => {
     const who = executorOf(row.stage, row.track);
     const seen = acc.find((e) => e.id === who.id);
-    const cost = row.track.cost ?? 0;
+    const cost = spentCost(row.track);
     if (seen === undefined) return [...acc, { ...who, stages: 1, cost }];
     return acc.map((e) => (e.id === who.id ? { ...e, stages: e.stages + 1, cost: e.cost + cost } : e));
   }, []);
@@ -91,9 +101,10 @@ const sumExecutors = (rows: ReadonlyArray<{ stage: WorkStage; track: Track }>): 
 export const runSummary = (progress: FlowProgress, stages: readonly WorkStage[]): RunSummary | null => {
   const rows = tracked(progress, stages).filter((row) => inRun(row.track) && row.track.startedAt !== undefined && row.track.finishedAt !== undefined);
   if (rows.length === 0) return null;
-  const startedAt = rows.reduce((first, row) => (Date.parse(row.track.startedAt!) < Date.parse(first) ? row.track.startedAt! : first), rows[0]!.track.startedAt!);
+  const starts = rows.map((row) => firstStart({ ...row.track, startedAt: row.track.startedAt! }));
+  const startedAt = starts.reduce((first, start) => (Date.parse(start) < Date.parse(first) ? start : first), starts[0]!);
   const finishedAt = rows.reduce((last, row) => (Date.parse(row.track.finishedAt!) > Date.parse(last) ? row.track.finishedAt! : last), rows[0]!.track.finishedAt!);
-  const minutes = rows.reduce((sum, row) => sum + workMinutes(row.track), 0);
+  const minutes = rows.reduce((sum, row) => sum + stageMinutes(row.track), 0);
   const wallMinutes = minutesOf(Date.parse(finishedAt) - Date.parse(startedAt));
   return {
     startedAt,
@@ -101,7 +112,7 @@ export const runSummary = (progress: FlowProgress, stages: readonly WorkStage[])
     minutes,
     wallMinutes,
     idleMinutes: Math.max(0, wallMinutes - minutes),
-    cost: rows.reduce((sum, row) => sum + (row.track.cost ?? 0), 0),
+    cost: rows.reduce((sum, row) => sum + spentCost(row.track), 0),
     stages: rows.length,
     skipped: tracked(progress, stages).filter((row) => row.track.skipped === true).length,
     executors: sumExecutors(rows),

@@ -6,7 +6,7 @@ import type { Locale } from "../lib/i18n";
 import { messages } from "../lib/messages";
 import { isDefaultName, SELF_EXECUTOR, stageKindOf, stageSkillOf, type BuiltinKind } from "../lib/stage-constants";
 import { actionInstruction, automationInstruction } from "./automation-run";
-import type { Add, DecisionAnswer, DecisionBrief, StageAnswer, StageReport, WorkStage } from "../shared/contract";
+import type { Add, DecisionAnswer, DecisionBrief, Flow, StageAnswer, StageReport, WorkStage } from "../shared/contract";
 import { sumAdds } from "./adds";
 
 /** Id исполнителя «сам». */
@@ -150,7 +150,7 @@ const BUILTIN_ANSWERS: Record<BuiltinKind, string> = {
   questions: "ask the owner with ask_decision",
   criteria: "send setup.criteria through ask_decision",
   select: "send setup.stages through ask_decision",
-  demo: "stop and send a brief with outcome through ask_decision (outcome.stage — this id); on a comment answer it, make the change if asked and send this demo again, not going further",
+  demo: "stop and send a brief with outcome through ask_decision (outcome.stage — this id); on a comment answer it: if it asks for a change, mark the stage where the change is made started — Flow drops the done state of every stage after it — and go through those stages again in order, automations included, up to this demo; without a change, send this demo again, not going further",
 };
 
 /** Правило треда с flow: владелец видит работу этапами, а не прозой. */
@@ -165,9 +165,13 @@ export const FLOW_RULE =
 export const SELF_ONLY_RULE =
   "self means you do the stage's work in your own session: no subagents and no workflows; if you think a stage needs one, say so up front in the stage-selection brief: recommend that executor in setup.stages, or, when the stage has no such executor, name the need in the brief's intro.";
 
-/** Правило треда без flow, когда flow выбирает агент: сперва flow, потом работа. */
-export const CHOOSE_FLOW_RULE = (skill: string, tool: string, noFlow: string): string =>
-  `This thread has no flow yet, and the owner lets you choose one. Before any other work, load the skill \`${skill}\` — it lists the owner's flows and when to pick each — and call \`${tool}\` with the id of the flow that fits the request. Its answer lists the stages of that flow; follow them from the first one. If no flow fits, call \`${tool}\` with \`${noFlow}\` and work without a flow.`;
+/** Правило треда с выбором «Автоматически»: сперва flow по описаниям со страницы Flow, потом работа. */
+export const CHOOSE_FLOW_RULE = (flows: readonly Flow[], tool: string, noFlow: string): string =>
+  [
+    `This thread has no flow yet, and the owner lets you choose one. Before any other work, compare the request with the owner's flows below and call \`${tool}\` with the id of the flow that fits. Its answer lists the stages of that flow; follow them from the first one. If no flow fits, call \`${tool}\` with \`${noFlow}\` and work without a flow.`,
+    // Блок на flow: описание многострочное, со своими списками, и без заголовка слилось бы со следующим flow.
+    ...flows.map((flow) => `### ${flow.name}\n\nid: \`${flow.id}\`\n\n${flow.description ?? "No description."}`),
+  ].join("\n\n");
 
 /** Название этапа на экране: свой и переименованный владельцем встроенный — как назван, встроенный с именем по умолчанию — по виду и языку интерфейса. */
 export const stageLabel = (stage: Pick<WorkStage, "id" | "name" | "kind">, names: Readonly<Partial<Record<BuiltinKind | "action", string>>>): string => {

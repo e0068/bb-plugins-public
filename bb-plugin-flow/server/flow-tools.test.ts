@@ -14,7 +14,7 @@ const setup = async () => {
   const { bb, harness } = createFakePluginHost({ pluginId: "flow" });
   const settings = await createFlowSettings(bb.storage.kv);
   const catalog = async () => ({ skills: [{ name: "task-flow" }, { name: "practice" }], executors: [] });
-  registerFlowSettingsApi(bb, settings, { catalog, rootSkill: async () => null, skillFile: async () => null, reveal: async () => ({ revealed: false, error: null }) });
+  registerFlowSettingsApi(bb, settings, { catalog, skillFile: async () => null, reveal: async () => ({ revealed: false, error: null }) });
   registerFlowTools(bb, settings, { catalog, newId: () => "new1" });
   const flows = () => harness.callRpc("getFlowSettings", {}) as Promise<FlowSettings>;
   return { harness, flows };

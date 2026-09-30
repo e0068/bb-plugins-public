@@ -36,3 +36,26 @@ export function parentDelivery({ base, defaultBranch, branch, parent }: ParentDe
   if (parentBranch !== base || parentPath === null || branch === parentBranch) return null;
   return { branch, parentBranch, parentPath };
 }
+
+/** What the parent thread is told once a child thread's branch is in its own. */
+export interface DeliveredWave {
+  /** The child thread's title; `null` when it has none. */
+  readonly title: string | null;
+  readonly branch: string;
+  readonly parentBranch: string;
+  /** The parent branch's head after the merge. */
+  readonly head: string;
+}
+
+const SHORT_SHA = 7;
+
+/**
+ * The note for the parent thread's agent. Without it the agent looks for a PR
+ * into main, finds none and starts the next wave from main — without this one.
+ */
+export const parentNote = ({ title, branch, parentBranch, head }: DeliveredWave): string =>
+  [
+    `Child thread "${title ?? branch}" merged its branch ${branch} into your branch ${parentBranch}; ${parentBranch} is now at ${head.slice(0, SHORT_SHA)}.`,
+    `There is no PR for it on GitHub and none is needed: your own PR carries this work to main.`,
+    `Start the next child threads from ${parentBranch}, not from main.`,
+  ].join("\n");
