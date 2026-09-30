@@ -2,7 +2,8 @@
 import { createFakePluginHost, makeThreadResponse } from "@get-bb/plugin-sdk/testing";
 import { describe, expect, it } from "vitest";
 
-import { addFlow, DEFAULT_STAGES, newFlow, NO_FLOW, setFlowStages } from "./core/flows";
+import { addFlow, DEFAULT_STAGES, newFlow, NO_FLOW } from "./core/flows";
+import { QUICK_STAGES } from "./core/stages-fixtures";
 import plugin from "./server";
 
 const text = (result: unknown) => (typeof result === "string" ? result : JSON.stringify(result));
@@ -14,7 +15,7 @@ const withQuick = async () => {
   const { bb, harness } = createFakePluginHost({ pluginId: "flow" });
   await plugin(bb);
   const settings = await harness.callRpc<{ flows: { id: string }[]; minButtonWidth: number }>("getFlowSettings", {});
-  const quick = setFlowStages(addFlow(settings as never, newFlow("quick", "Quick")), "quick", (stages) => stages.filter((s) => s.id === "criteria" || s.id === "implement"));
+  const quick = addFlow(settings as never, { ...newFlow("quick", "Quick"), stages: QUICK_STAGES });
   await harness.callRpc("saveFlowSettings", quick);
   return { harness };
 };

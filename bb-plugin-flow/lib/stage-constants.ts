@@ -28,8 +28,11 @@ const LEGACY_KINDS: Readonly<Record<string, BuiltinKind>> = { clarify: "question
 /** Вид этапа; у записи без поля — по прежнему id Уточнения и Критериев, остальное — навык. */
 export const stageKindOf = (stage: { id: string; kind?: StageKind | undefined }): StageKind => stage.kind ?? LEGACY_KINDS[stage.id] ?? "skill";
 
-/** Навык, по которому агент проводит встроенный этап, пока владелец не поставил свой. Сами навыки лежат в `~/.claude/skills` или `.claude/skills` репозитория. */
+/** Навык, по которому агент проводит встроенный этап, пока владелец не поставил свой. Плагин везёт их в `skills/`; одноимённый навык владельца в `~/.claude/skills` или `.claude/skills` репозитория важнее. */
 export const BUILTIN_SKILLS: Record<BuiltinKind, string> = { questions: "flow-questions", criteria: "flow-criteria", select: "flow-stage-selection", demo: "flow-demo" };
+
+/** Навык, по которому агент собирает flow инструментами read_flows и save_flow; плагин везёт его в `skills/`. */
+export const FLOW_CREATE_SKILL = "flow-create";
 
 /** Корневой навык: через него агент выбирает flow, когда тред не идёт по flow. */
 export const ROOT_SKILL = "flow";

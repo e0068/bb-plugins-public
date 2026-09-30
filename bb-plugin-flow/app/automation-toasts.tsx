@@ -46,7 +46,12 @@ const wordsOf = (t: Messages, locale: string): NoticeWords => ({
 
 const TONE_ICON: Record<NoticeCard["tone"], IconName> = { success: "CircleCheck", error: "AlertCircle" };
 
+// Карточка заполняет слот тоста и обрезает остальное. sonner сжимает свёрнутую заднюю карточку до высоты
+// передней, но прячет лишнее только у своих тостов: торчащий из-под передней край ловил курсор, стопка
+// раскрывалась, край уезжал, стопка сворачивалась — и так по кругу. Тень карточки своим overflow не режется.
 const cardStyle: CSSProperties = {
+  height: "100%",
+  overflow: "hidden",
   position: "relative",
   boxSizing: "border-box",
   display: "flex",
@@ -98,13 +103,9 @@ const closeStyle: CSSProperties = {
   lineHeight: 0,
 };
 // Упоминание — ссылка в строке: цвет и начертание текста вокруг, подчёркивание говорит, что кликается.
+// Элемент — span, а не button: кнопка атомарна и длинное имя переносит отдельным центрированным блоком.
 const mentionStyle: CSSProperties = {
   display: "inline",
-  padding: 0,
-  background: "none",
-  border: 0,
-  color: "inherit",
-  font: "inherit",
   textDecoration: "underline",
   textUnderlineOffset: 2,
   cursor: "pointer",
@@ -169,20 +170,26 @@ type Follow = (segment: Segment) => (() => void) | null;
 function Segments({ segments, follow: followSegment, close }: { segments: readonly Segment[]; follow: Follow; close: () => void }): ReactNode {
   return segments.map((segment, index) => {
     const follow = followSegment(segment);
-    return follow === null ? (
-      <span key={index}>{segment.text}</span>
-    ) : (
-      <button
+    if (follow === null) return <span key={index}>{segment.text}</span>;
+    const open = (): void => {
+      follow();
+      close();
+    };
+    return (
+      <span
         key={index}
-        type="button"
+        role="button"
+        tabIndex={0}
         style={mentionStyle}
-        onClick={() => {
-          follow();
-          close();
+        onClick={open}
+        onKeyDown={(event) => {
+          if (event.key !== "Enter" && event.key !== " ") return;
+          event.preventDefault();
+          open();
         }}
       >
         {segment.text}
-      </button>
+      </span>
     );
   });
 }
@@ -236,9 +243,15 @@ function Card({ tone, title, lines, buttons, follow, t, close }: CardProps): Rea
   );
 }
 
-/** `key` — место тоста: новый тост с тем же ключом заменяет прежний, а не встаёт рядом. Нет — место своё. */
-const showCard = (render: (close: () => void) => ReactElement, key?: string): void => {
-  toast.custom((id) => render(() => toast.dismiss(id)), { duration: Infinity, ...(key === undefined ? {} : { id: key }) });
+/** Место тоста: новый тост с тем же `key` заменяет прежний, а не встаёт рядом. */
+type Slot = { key: string; revision: string };
+
+/**
+ * Без `slot` место у тоста своё. Замену тостер хоста перемеряет только по смене описания — у карточки его нет,
+ * поэтому описанием идёт `revision`: не сменится — выросшая карточка останется в слоте прежней высоты и обрежется.
+ */
+const showCard = (render: (close: () => void) => ReactElement, slot?: Slot): void => {
+  toast.custom((id) => render(() => toast.dismiss(id)), { duration: Infinity, ...(slot === undefined ? {} : { id: slot.key, description: slot.revision }) });
 };
 
 /** Тост из одной строки — ответ на нажатие в тосте, у которого больше нет своей карточки. */
@@ -251,7 +264,7 @@ const showNotice = (notice: AutomationNotice, deps: Deps): void => {
   const buttons = card.actions.map((action) => ({ label: actionLabel(action, deps.t), icon: ACTION_ICON[action.kind], run: actionOf(action, notice, deps) }));
   // Тост на этап треда один: повторное падение при автоповторе и итог после него заменяют карточку, а не копятся с мёртвыми кнопками.
   // Тот же ключ сводит в один тост и событие, пришедшее всем открытым тредам.
-  showCard((close) => <Card tone={card.tone} title={card.title} lines={card.lines} buttons={buttons} follow={(segment) => followOf(segment, deps)} t={deps.t} close={close} />, `${notice.threadId}:${notice.stageId}`);
+  showCard((close) => <Card tone={card.tone} title={card.title} lines={card.lines} buttons={buttons} follow={(segment) => followOf(segment, deps)} t={deps.t} close={close} />, { key: `${notice.threadId}:${notice.stageId}`, revision: notice.id });
 };
 
 const isNotice = (payload: unknown): payload is AutomationNotice =>

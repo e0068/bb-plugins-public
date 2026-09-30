@@ -1,9 +1,7 @@
 // @vitest-environment node
 import { describe, expect, it } from "vitest";
 
-import { routeAllowed, routeEnvironment, treesFor, withPlace, withProject, withTree } from "./places";
-
-const source = { environmentId: "env_1", hostId: "host_1", branchName: "bb/thr_src", path: "/w/thr_src" };
+import { routeAllowed, treesFor, withPlace, withProject, withTree } from "./places";
 
 describe("работа в другом проекте", () => {
   it("в чужом проекте дерева этого треда нет: оно принадлежит этому проекту", () => {
@@ -44,17 +42,4 @@ describe("работа в другом проекте", () => {
     expect(withProject({ tree: "new", branch: "none" }, "proj_2")).toEqual({ tree: "new", branch: "none", projectId: "proj_2" });
   });
 
-  it("новое дерево чужого проекта заводит сам проект: хост этого треда тут ни при чём", () => {
-    expect(routeEnvironment("other", { tree: "new", branch: "none", projectId: "proj_1" }, source)).toEqual({
-      type: "host",
-      workspace: { type: "managed-worktree", baseBranch: { kind: "default" } },
-    });
-  });
-
-  it("чекаут чужого проекта — его рабочая копия, без смены ветки", () => {
-    expect(routeEnvironment("other", { tree: "local", branch: "none", projectId: "proj_1" }, source)).toEqual({
-      type: "host",
-      workspace: { type: "unmanaged", path: null },
-    });
-  });
 });

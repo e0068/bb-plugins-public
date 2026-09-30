@@ -8,6 +8,7 @@ import { z } from "zod";
 import { STEP_IDS, STEP_LABELS } from "@bb-plugins/automation-steps/catalog";
 import { resolveFlowDraft } from "../core/flow-draft";
 import { putFlow } from "../core/flows";
+import { FLOW_CREATE_SKILL } from "../lib/stage-constants";
 import { flowDraftSchema, type StageCatalog } from "../shared/contract";
 import type { FlowSettingsStore } from "./flow-settings";
 import { STAGE_SETTINGS_CHANNEL } from "./settings-api";
@@ -26,7 +27,7 @@ export const registerFlowTools = (
   bb.agents.registerTool({
     name: READ_FLOWS_TOOL_NAME,
     description:
-      "Read the owner's flows in order (the first one is the default for threads without a chosen flow) with their stages, plus what a flow can be built from: skill names, executor ids (agent:… and workflow:…) and the step ids of Flow's built-in automations. Use it before save_flow, following the flow-create skill.",
+      `Read the owner's flows in order (the first one is the default for threads without a chosen flow) with their stages, plus what a flow can be built from: skill names, executor ids (agent:… and workflow:…) and the step ids of Flow's built-in automations. Use it before save_flow, following the ${FLOW_CREATE_SKILL} skill.`,
     presentation: { label: { pending: "Reading flows", completed: "Flows read" } },
     parameters: z.object({}),
     async execute() {

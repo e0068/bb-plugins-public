@@ -8,7 +8,8 @@ import { join } from "node:path";
 import { createFakePluginHost, makeThreadResponse } from "@get-bb/plugin-sdk/testing";
 import { describe, expect, it } from "vitest";
 
-import { addFlow, newFlow, NO_FLOW, setFlowStages } from "./core/flows";
+import { addFlow, newFlow, NO_FLOW } from "./core/flows";
+import { QUICK_STAGES } from "./core/stages-fixtures";
 import { CHOOSE_FLOW_TOOL } from "./lib/stage-constants";
 import type { FlowSettings } from "./shared/contract";
 import plugin from "./server";
@@ -21,7 +22,7 @@ const setup = async (agentChoosesFlow: boolean) => {
   const { bb, harness } = createFakePluginHost({ pluginId: "flow" });
   await plugin(bb);
   const current = await harness.callRpc<FlowSettings>("getFlowSettings", {});
-  const quick = setFlowStages(addFlow(current, { ...newFlow("quick", "Quick"), description: "Мелкие правки" }), "quick", (stages) => stages.filter((s) => s.id === "criteria" || s.id === "implement"));
+  const quick = addFlow(current, { ...newFlow("quick", "Quick"), description: "Мелкие правки", stages: QUICK_STAGES });
   await harness.callRpc("saveFlowSettings", { ...quick, agentChoosesFlow });
   await harness.callRpc("setFlowChoice", { projectId: "proj_a", flowId: NO_FLOW });
   await harness.emitThreadEvent("thread.created", { thread: makeThreadResponse({ id: "thr_none", projectId: "proj_a", parentThreadId: null }) });

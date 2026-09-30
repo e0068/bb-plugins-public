@@ -4,29 +4,17 @@
 import { builtinStage, STAGE_BUTTON_WIDTH, stageKindOf, type BuiltinKind } from "../lib/stage-constants";
 import type { Flow, FlowSettings, StageSettings, WorkStage } from "../shared/contract";
 
-const skill = (id: string, skillName: string, name: string): WorkStage => ({ id, kind: "skill", skill: skillName, name, executors: [] });
-
 /** Встроенный этап вида в ряду уже собранных — с id, свободным среди них. */
 const builtin = (kind: BuiltinKind, before: readonly WorkStage[]): WorkStage => builtinStage(kind, before.map((s) => s.id));
 
 const withBuiltins = (plan: ReadonlyArray<WorkStage | BuiltinKind>): WorkStage[] =>
   plan.reduce<WorkStage[]>((stages, item) => [...stages, typeof item === "string" ? builtin(item, stages) : item], []);
 
-/** Этапы нового flow: Вопросы, Критерии и Выбор этапов, работа с Демонстрацией после прототипа и в конце. Названия — данные владельца; начальные — английские, языка сервер не знает. */
-export const DEFAULT_STAGES: readonly WorkStage[] = withBuiltins([
-  "questions",
-  "criteria",
-  "select",
-  skill("task", "task-flow", "Task"),
-  skill("prototype", "prototype", "HTML prototype"),
-  "demo",
-  skill("spec", "spec", "Spec"),
-  skill("plan", "plan", "Plan"),
-  skill("implement", "code-standards-fp", "Implementation"),
-  skill("review", "code-review", "Review"),
-  skill("testing", "testing-tdd", "Testing"),
-  "demo",
-]);
+/**
+ * Этапы нового flow: Вопросы, Критерии, Выбор этапов и Демонстрация — только встроенные виды, чьи навыки плагин везёт в `skills/`.
+ * Этап-навык сослался бы на навык, которого у поставившего плагин нет. Названия — данные владельца; начальные — английские, языка сервер не знает.
+ */
+export const DEFAULT_STAGES: readonly WorkStage[] = withBuiltins(["questions", "criteria", "select", "demo"]);
 
 const DEFAULT_FLOW_ID = "default";
 const DEFAULT_FLOW_NAME = "Default";
