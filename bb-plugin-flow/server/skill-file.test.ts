@@ -25,6 +25,11 @@ describe("файл навыка по имени", () => {
     expect(await readSkillFile(sources(), "flow")).toEqual({ hostId: "host_local", path: "/home/owner/.claude/skills/flow/SKILL.md" });
   });
 
+  it("у пользователя без личных навыков навык встроенного этапа открывается из плагина", async () => {
+    const pluginOnly = sources({ projectIds: async () => ["prj_1"], skills: async () => [{ name: "flow-questions", filePath: "/plugins/flow/skills/flow-questions/SKILL.md", pluginId: "flow" }] });
+    expect(await readSkillFile(pluginOnly, "flow-questions")).toEqual({ hostId: "host_local", path: "/plugins/flow/skills/flow-questions/SKILL.md" });
+  });
+
   it("нет навыка, хоста или источник упал — null", async () => {
     expect(await readSkillFile(sources(), "nope")).toBeNull();
     expect(await readSkillFile(sources({ primaryHostId: async () => null }), "spec")).toBeNull();

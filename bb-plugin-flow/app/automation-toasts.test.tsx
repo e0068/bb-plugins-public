@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { loadPluginApp, renderSlot } from "@get-bb/plugin-sdk/testing/app";
-import { Toaster, toast } from "sonner";
+import { Toaster, toast, type ToastT } from "sonner";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { AUTOMATION_NOTICE_CHANNEL, type AutomationNotice } from "../core/automation-notice";
@@ -146,11 +146,61 @@ describe("тосты об автоматизациях Flow", () => {
     expect(screen.queryByText(/упал/)).toBeNull();
   });
 
+  it("упоминание — часть строки текста: переносится вместе с ней, а не встаёт блоком кнопки", async () => {
+    render(<Toaster />);
+    const slot = await mount();
+    await slot.emitRealtime(AUTOMATION_NOTICE_CHANNEL, doneNotice());
+    for (const name of ["Уведомления Flow", "BBPL-12"]) {
+      const mention = await screen.findByRole("button", { name });
+      expect(mention.tagName).not.toBe("BUTTON");
+      expect(getComputedStyle(mention).display).toBe("inline");
+    }
+  });
+
+  it("упоминание открывается с клавиатуры — Enter и пробелом", async () => {
+    render(<Toaster />);
+    const slot = await mount();
+    for (const key of ["Enter", " "]) {
+      await slot.emitRealtime(AUTOMATION_NOTICE_CHANNEL, doneNotice());
+      fireEvent.keyDown(await screen.findByRole("button", { name: "Уведомления Flow" }), { key });
+      await waitFor(() => expect(screen.queryByText(/— готово/)).toBeNull());
+    }
+    expect(slot.navigateCalls).toEqual([
+      { method: "toThread", threadId: "thr_1" },
+      { method: "toThread", threadId: "thr_1" },
+    ]);
+  });
+
   it("разные этапы — разные тосты", async () => {
     render(<Toaster />);
     const slot = await mount();
     await slot.emitRealtime(AUTOMATION_NOTICE_CHANNEL, doneNotice());
     await slot.emitRealtime(AUTOMATION_NOTICE_CHANNEL, { ...doneNotice(), stageId: "land", stageName: "Merge" });
     await waitFor(() => expect(screen.getAllByText(/— готово/)).toHaveLength(2));
+  });
+
+  it("карточка в стопке не выходит за своё место: заполняет слот тоста и обрезает остальное", async () => {
+    // sonner сжимает свёрнутую заднюю карточку до высоты передней, но прячет лишнее только у своих тостов.
+    // Торчащий из-под передней край ловит курсор, стопка раскрывается, край уезжает, стопка сворачивается — и так по кругу.
+    render(<Toaster />);
+    const slot = await mount();
+    await slot.emitRealtime(AUTOMATION_NOTICE_CHANNEL, doneNotice());
+    const card = (await screen.findByText(/— готово/)).closest<HTMLElement>('[role="status"]')!;
+    expect(card.style.height).toBe("100%");
+    expect(card.style.overflow).toBe("hidden");
+  });
+
+  it("замена тоста того же этапа меняет его ревизию: тостер хоста перемеряет высоту только по смене описания", async () => {
+    render(<Toaster />);
+    const slot = await mount();
+    const revision = () => toast.getToasts().find((t): t is ToastT => t.id === "thr_1:land" && !("dismiss" in t))?.description;
+    await slot.emitRealtime(AUTOMATION_NOTICE_CHANNEL, failedNotice());
+    await screen.findByText(/упал/);
+    const before = revision();
+    await slot.emitRealtime(AUTOMATION_NOTICE_CHANNEL, { ...doneNotice(), stageId: "land", stageName: "Merge" });
+    await screen.findByText(/— готово/);
+    expect(before).toBeTruthy();
+    expect(revision()).toBeTruthy();
+    expect(revision()).not.toBe(before);
   });
 });

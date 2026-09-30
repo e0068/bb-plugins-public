@@ -15,8 +15,8 @@ const old = (stages: WorkStage[]): FlowSettings => ({ flows: [{ id: "default", n
 const two: FlowSettings = { flows: [newFlow("default", "Default"), newFlow("quick", "Quick")], minButtonWidth: 200, version: 2 };
 
 describe("этапы по умолчанию", () => {
-  it("Вопросы, Критерии, Выбор этапов, работа с Демонстрацией после прототипа и в конце", () => {
-    expect(kinds(DEFAULT_STAGES)).toEqual(["questions", "criteria", "select", "skill", "skill", "demo", "skill", "skill", "skill", "skill", "skill", "demo"]);
+  it("только встроенные виды — Вопросы, Критерии, Выбор этапов и Демонстрация, без этапов-навыков", () => {
+    expect(kinds(DEFAULT_STAGES)).toEqual(["questions", "criteria", "select", "demo"]);
     expect(new Set(ids(DEFAULT_STAGES)).size).toBe(DEFAULT_STAGES.length);
     expect(DEFAULT_STAGES.every((s) => s.review === undefined)).toBe(true);
   });
