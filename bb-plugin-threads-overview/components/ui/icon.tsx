@@ -121,6 +121,7 @@ import {
   SlidersHorizontalIcon,
   SmartPhone01Icon,
   Sorting01Icon,
+  Sorting02Icon,
   SourceCodeIcon,
   SquareIcon,
   StarIcon,
@@ -402,6 +403,9 @@ const ICON_MAP = {
   SlidersHorizontal: SlidersHorizontalIcon,
   Smartphone: SmartPhone01Icon,
   Sort: Sorting01Icon,
+  // Bars that shrink down the list — descending; grow down the list — ascending.
+  SortDown: Sorting01Icon,
+  SortUp: Sorting02Icon,
   Spinner: DashedLineCircleIcon,
   Idea: Idea01Icon,
   LightbulbOff: LightbulbOffIcon,

@@ -1,11 +1,15 @@
 import { describe, expect, it } from "vitest";
 import {
+  HOME_SWIPE_DEAD_ZONE,
   HOME_SWIPE_EDGE,
   HOME_SWIPE_SCROLL_SLACK,
   HOME_SWIPE_REACH,
+  claimsMove,
+  composerBox,
   hasRoomBelow,
   reachesHome,
   startsHomeSwipe,
+  swipeCard,
 } from "./home-swipe";
 
 const SCREEN = 800;
@@ -98,5 +102,63 @@ describe("the edge of the slack under a list", () => {
         scrollHeight: 401 + HOME_SWIPE_SCROLL_SLACK,
       }),
     ).toBe(true);
+  });
+});
+
+describe("claimsMove", () => {
+  it("claims a finger that starts to climb, even inside the dead zone", () => {
+    expect(claimsMove({ x: 200, y: 780 }, { x: 200, y: 779 })).toBe(true);
+  });
+
+  it("leaves a finger going down to the page", () => {
+    expect(claimsMove({ x: 200, y: 780 }, { x: 200, y: 781 })).toBe(false);
+  });
+
+  it("leaves a finger going sideways more than up to the page", () => {
+    expect(claimsMove({ x: 200, y: 780 }, { x: 205, y: 778 })).toBe(false);
+  });
+
+  it("claims every move the card itself follows", () => {
+    for (const up of [HOME_SWIPE_DEAD_ZONE, HOME_SWIPE_REACH, 400]) {
+      const start = { x: 200, y: 780 };
+      const now = { x: 205, y: 780 - up };
+      expect(swipeCard(start, now).holds).toBe(true);
+      expect(claimsMove(start, now)).toBe(true);
+    }
+  });
+});
+
+describe("composerBox", () => {
+  const VIEWPORT = 800;
+  const rects = [
+    { left: 0, width: 390, bottom: 800 },
+    { left: 12, width: 366, bottom: 776 },
+    { left: 40, width: 700, bottom: 500 },
+    { left: 0, width: 390, bottom: 812 },
+  ];
+
+  it("keeps the composer's left edge and width as they stood on Home", () => {
+    for (const rect of rects) {
+      const box = composerBox(rect, VIEWPORT);
+      expect([box.left, box.width]).toEqual([rect.left, rect.width]);
+    }
+  });
+
+  it("measures the gap from the bottom of the screen, never below zero", () => {
+    for (const rect of rects) {
+      expect(composerBox(rect, VIEWPORT).bottom).toBeGreaterThanOrEqual(0);
+    }
+  });
+
+  it("gives the gap that stood between the composer and the bottom edge", () => {
+    expect(composerBox({ left: 12, width: 366, bottom: 776 }, VIEWPORT).bottom).toBe(24);
+  });
+
+  it("sets a composer resting on the very bottom edge at zero", () => {
+    expect(composerBox({ left: 0, width: 390, bottom: 800 }, VIEWPORT).bottom).toBe(0);
+  });
+
+  it("sets a composer overflowing the bottom edge at zero, not below", () => {
+    expect(composerBox({ left: 0, width: 390, bottom: 812 }, VIEWPORT).bottom).toBe(0);
   });
 });
