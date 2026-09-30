@@ -1,0 +1,397 @@
+/* Layout of the opener tab. The Kasimov skin "matching the native file
+   viewer" isn't set here, but via the --kasi-* preset defaults (see
+   NATIVE_VIEWER_TOKEN_DEFAULTS in packages/md-doc-view/kasimov-settings.ts —
+   --foreground/--muted/--timeline-accent), which the user can re-pick in
+   Settings → Kasimov. What's left here is only what's outside the --kasi-*
+   contract: the tab layout, inline code (kasimov.css has no variable for it),
+   and the deliberate choice of the blockquote border. This file is rendered
+   by BOTH consumers (md-opener and claude-config) — both go through
+   MdDocView with className="mdo-mde". */
+
+.mdo-root {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+
+.mdo-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+}
+
+.mdo-back {
+  flex: none;
+  border-radius: var(--radius);
+  padding: 2px 8px;
+  font-size: 14px;
+  color: var(--muted-foreground);
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+}
+.mdo-back:hover {
+  background: var(--muted);
+}
+
+.mdo-heading {
+  min-width: 0;
+  flex: 1;
+}
+.mdo-path {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
+  color: var(--muted-foreground);
+  opacity: 0.7;
+}
+.mdo-path-clickable {
+  display: block;
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+}
+.mdo-path-clickable:hover {
+  text-decoration: underline;
+}
+.mdo-note {
+  font-size: 12px;
+  color: var(--destructive);
+}
+
+.mdo-btn {
+  border-radius: var(--radius);
+  padding: 2px 10px;
+  font-size: 14px;
+  color: var(--muted-foreground);
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+}
+.mdo-btn:hover {
+  background: var(--muted);
+}
+.mdo-btn-primary {
+  color: var(--primary);
+}
+/* Icon button (see editButton in MdDocViewProps) — square padding instead of
+   text padding, so it doesn't stretch to the width of a letter. */
+.mdo-btn-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 4px;
+}
+
+/* While the draft differs from the file, this group takes the left of the
+   header — back, path, forward and reload give way to it — and fills the same
+   width, so the switcher and the file's actions to the right never move.
+   Save and Cancel on the header's own scale: .mdo-btn is 14px, drawn for a
+   header that held nothing but the Edit button; next to a 10.5px switcher and
+   an 11px counter it read as the loudest thing on screen. */
+.mdo-draft {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  align-items: center;
+  gap: 8px;
+}
+.mdo-draft .mdo-btn {
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 11px;
+}
+.mdo-diff {
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+.mdo-diff-add {
+  color: var(--success);
+}
+.mdo-diff-del {
+  color: var(--destructive);
+}
+/* Back, forward and reload: quiet icons on either side of the path. Back is
+   disabled rather than hidden at the start of the history, so the path does
+   not shift when the first jump gives it somewhere to go. */
+.mdo-nav,
+.mdo-reload {
+  flex: none;
+  color: var(--muted-foreground);
+}
+.mdo-nav:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+.mdo-nav:disabled:hover {
+  background: transparent;
+}
+
+/* The file's "⋯" (FileActions.tsx): a kit button, square like the icons
+   beside it. Disabled while a draft is unsaved. */
+.mdo-more {
+  display: contents;
+}
+.mdo-more > span > .uicell {
+  flex: none;
+}
+.mdo-more [aria-disabled="true"] {
+  opacity: 0.4;
+  cursor: default;
+}
+
+/* The draft guard (DraftGuard.tsx). The shade sits over the host's own chrome
+   and under the dialog; the dialog's overlay dims the document as well, so
+   the question is the one thing on screen. */
+.mdo-shade {
+  position: fixed;
+  z-index: 40;
+  background: rgb(0 0 0 / 0.5);
+  cursor: pointer;
+}
+.mdo-dialog-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  background: rgb(0 0 0 / 0.4);
+}
+.mdo-dialog {
+  position: fixed;
+  left: 50%;
+  top: 50%;
+  z-index: 51;
+  transform: translate(-50%, -50%);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  width: min(880px, calc(100vw - 48px));
+  max-height: calc(100vh - 96px);
+  padding: 20px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--background);
+  color: var(--foreground);
+  box-shadow: 0 8px 32px rgb(0 0 0 / 0.3);
+}
+.mdo-file-dialog {
+  width: min(420px, calc(100vw - 48px));
+}
+.mdo-dialog-problem {
+  margin: 0;
+  font-size: 13px;
+  color: var(--destructive);
+}
+.mdo-dialog:focus {
+  outline: none;
+}
+.mdo-dialog-title {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+}
+.mdo-dialog-description {
+  margin: 0;
+  font-size: 13px;
+  color: var(--muted-foreground);
+}
+.mdo-dialog-diff {
+  min-height: 0;
+  flex: 1;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+.mdo-dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+.mdo-dialog-actions .mdo-btn {
+  padding: 4px 12px;
+  font-size: 13px;
+}
+.mdo-btn-destructive {
+  color: var(--destructive);
+}
+.mdo-btn-solid {
+  color: var(--primary-foreground);
+  background: var(--primary);
+}
+.mdo-btn-solid:hover {
+  background: var(--primary);
+  opacity: 0.9;
+}
+
+.mdo-body {
+  min-height: 0;
+  flex: 1;
+  overflow-y: auto;
+}
+.mdo-msg {
+  padding: 16px 44px;
+  font-size: 14px;
+  color: var(--muted-foreground);
+}
+.mdo-err {
+  color: var(--destructive);
+}
+
+/* Top and bottom only (tab layout, outside the --kasi-* contract). The side
+   margins are the engine's — see the note on the format margins below. */
+.mdo-doc {
+  padding: 12px 0 48px;
+}
+.mdo-mde {
+  height: 100%;
+}
+
+/* Raw — the source in a code editor. The one thing that has to match the other
+   two modes is where the text starts: switching modes must not move the left
+   edge of the first line. The side margin is therefore the engine's own
+   --kasi-pad-x (hung on .mdo-raw by MdDocView, since Raw has no .mde-root to
+   read it from), and the line numbers live INSIDE that margin rather than
+   beside it — the same margin Kasimov keeps its table controls in. A gutter
+   that took its own width would push the text right by exactly its own size,
+   which is the sideways step this task exists to remove.
+
+   The gutter's divider is dropped with it: a vertical rule down the left of a
+   document reads as a quote bar, not as a ruler. */
+.mdo-raw {
+  height: 100%;
+}
+.mdo-raw .cm-gutters {
+  border-right: 0;
+  min-width: var(--kasi-pad-x, 40px);
+}
+.mdo-raw .cm-lineNumbers .cm-gutterElement {
+  padding-right: 10px;
+}
+.mdo-raw .cm-content {
+  padding-left: 0;
+  padding-right: var(--kasi-pad-x, 40px);
+}
+/* CodeMirror gives every line six pixels of its own on the left. Measured in a
+   browser, that was the whole difference between the modes: the rendering
+   started at 44px and the source at 50px. The gutter carries the margin, the
+   line carries nothing. */
+.mdo-raw .cm-line {
+  padding-left: 0;
+}
+
+/* --- editor layout for the opener tab (color/background/font — via --kasi-* presets) --- */
+
+/* The side margins belong to the engine alone, and it draws them in both modes
+   itself: `.mde-root { padding: 4px var(--kasi-pad-x) }` (read-only included —
+   upstream treats the format margins as a property of the document's layout,
+   not of editability), with table controls living out in that margin.
+
+   There used to be a second one here: .mdo-doc added its own side padding, and
+   the engine's was zeroed for `.mde-editable` only. The read therefore stacked
+   the two — 88px against the edit's 44px — and the text stepped sideways on
+   every switch between the modes. Zeroing the engine's padding in both modes
+   would have evened them out and killed the "Kasimov: side padding" setting at
+   the same time: `--kasi-pad-x` is declared on .mde-root, BELOW .mdo-doc, so
+   the container can never read it and would have been stuck on its literal
+   44px. Dropping .mdo-doc's side padding instead leaves one source, and it is
+   the one the setting reaches.
+
+   No unit test: this is layout, and jsdom computes none — reading padding-left
+   there returns an empty string whichever selector wins. It is checked by
+   looking at the document in both modes. */
+
+/* Headings: size/weight/spacing "like the native one" — layout, not in the
+   --kasi-* contract (heading color comes from the inherited --kasi-fg). */
+.mdo-mde .mde-root .mde-h {
+  font-size: 1.7em;
+  font-weight: 600;
+  line-height: 1.25;
+  margin: 1.4em 0 0.5em;
+}
+.mdo-mde .mde-root .mde-h2 {
+  font-size: 1.35em;
+  font-weight: 600;
+  margin: 1.3em 0 0.45em;
+}
+.mdo-mde .mde-root .mde-h3 {
+  font-size: 1.1em;
+  font-weight: 600;
+  margin: 1em 0 0.35em;
+}
+
+/* Inline code — a bg-muted chip, slightly smaller, mono. kasimov.css has no
+   variable of its own for inline code (only for block .mde-code), so it's
+   hardcoded here — it's not part of the --kasi-* contract, nothing to fix.
+   Block code (pre.mde-code) is styled via --kasi-cell-bg/--kasi-radius (the
+   cellBgToken preset). */
+.mdo-mde .mde-root code:not(.mde-code) {
+  background: var(--muted);
+  border-radius: 0.25rem;
+  padding: 0.1em 0.35em;
+  font-size: 0.85em;
+  font-family: var(--font-mono, ui-monospace, monospace);
+}
+
+/* Blockquote: text color — inherited --kasi-fg-dim; border — a deliberate
+   choice of a plain --border instead of the computed color-mix from
+   kasimov.css (outside the --kasi-* contract, so it stays hardcoded). */
+.mdo-mde .mde-root .mde-quote {
+  border-left-color: var(--border);
+}
+
+/* The picture unfolded over bb. The sheet covers the window and closes on any
+   click inside it, so "beside the picture" needs no geometry; the backdrop
+   below it only dims. Above the draft's shade and its dialog (z-index 40/50/51)
+   — the shade never covers the document itself, and a picture unfolds from the
+   document. */
+.mdo-zoom-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  background: rgb(0 0 0 / 0.75);
+}
+.mdo-zoom {
+  position: fixed;
+  inset: 0;
+  z-index: 61;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 24px;
+  cursor: zoom-out;
+}
+.mdo-zoom:focus {
+  outline: none;
+}
+.mdo-zoom-pic {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+  border-radius: var(--radius);
+}
+.mdo-zoom-cap {
+  margin: 0;
+  max-width: min(880px, 100%);
+  font-size: 13px;
+  font-weight: 400;
+  text-align: center;
+  color: rgb(255 255 255 / 0.7);
+}
+/* The dialog's name when the picture has no caption: read aloud, not drawn —
+   the document shows no caption there either. */
+.mdo-zoom-name {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}

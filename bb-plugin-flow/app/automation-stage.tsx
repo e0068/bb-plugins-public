@@ -1,18 +1,14 @@
 // Автоматизации в таблице этапов flow. Кнопка «Автоматизация» ставит встроенную
-// автоматизацию Flow и сразу открывает меню шагов; «Из плагина Automations» —
-// список включённых автоматизаций Automations. В меню шагов, кроме шагов Flow,
+// автоматизацию Flow и сразу открывает меню шагов. В меню шагов, кроме шагов Flow,
 // есть «Добавить скрипт…»: выбранный файл хранится в автоматизации и становится
 // шагом с именем файла. Шаги встроенной — теги, как
 // исполнители у этапа навыка: плюс с меню, крест, перетаскивание. Шаги
 // автоматизации Automations — теги только для чтения: они правятся там.
 // Шаги встроенной сохраняются набором без имени кнопкой у строки; наборы —
 // в меню кнопки «Автоматизация» строкой своих шагов, выбор ставит их в этап.
-// Каталог Automations берётся с фронта относительным адресом входа
-// (packages/automations-contract); нет плагина — в списке так и сказано.
 import { useEffect, useRef, useState, type ChangeEvent, type DragEvent } from "react";
 
 import { isStepId, STEP_IDS, type StepId } from "@bb-plugins/automation-steps/catalog";
-import { automationsClient, type AutomationSummary, type CatalogResponse, type ClientResult } from "@bb-plugins/automations-contract/index";
 import { FieldOverlay, overlayItem, useFieldOverlay } from "../components/ui/field-overlay";
 import { Icon } from "../components/ui/icon";
 import { builtinAutomationStage } from "../core/automation-run";
@@ -20,8 +16,8 @@ import { NEEDS_OPEN_PR, opensPrBefore } from "../core/automation-order";
 import { addScript, MAX_SCRIPT_CHARS, removeStep, scriptOf } from "../core/automation-scripts";
 import { applySet, isSaved, removeSet, saveSet } from "../core/automation-sets";
 import { moveItem } from "../core/reorder";
-import { actionStage, automationStage, automationStageId, stageKindOf } from "../lib/stage-constants";
-import { BUILTIN_AUTOMATION_ICON, EXTERNAL_AUTOMATION_ICON, KIND_ICONS } from "./stage-icons";
+import { actionStage, stageKindOf } from "../lib/stage-constants";
+import { BUILTIN_AUTOMATION_ICON, KIND_ICONS } from "./stage-icons";
 import { cn } from "../lib/utils";
 import type { AutomationSet, AutomationStep, BuiltinAutomation, WorkStage } from "../shared/contract";
 import { useMessages } from "./locale-context";
@@ -30,16 +26,6 @@ import { useMessages } from "./locale-context";
 const menuItem = cn(overlayItem, "disabled:cursor-default disabled:opacity-40 disabled:hover:bg-transparent");
 const addButton = "flex h-7 shrink-0 items-center gap-1.5 rounded-md px-2 text-[13px] text-muted-foreground hover:bg-state-hover hover:text-foreground";
 const tag = "inline-flex h-7 max-w-full items-center gap-1.5 rounded-md bg-card text-xs";
-
-
-type Loaded = { kind: "loading" } | { kind: "ready"; automations: AutomationSummary[] } | { kind: "missing" } | { kind: "failed" };
-
-const loadedOf = (result: ClientResult<CatalogResponse>): Loaded =>
-  result.ok
-    ? { kind: "ready", automations: result.value.automations.filter((a) => a.enabled) }
-    : result.reason === "not-installed"
-      ? { kind: "missing" }
-      : { kind: "failed" };
 
 /** Закрывает всплывающее по нажатию вне корня. */
 type ScriptFile = { name: string; content: string };
@@ -225,84 +211,6 @@ export function AddAction({ stages, onAdd, onChange }: { stages: readonly WorkSt
         onScript={(file) => change(withScript(file, crypto.randomUUID()))}
         prOpened={added === null || opensPrBefore(stages, added)}
       />
-    </div>
-  );
-}
-
-/** «Из плагина Automations»: список включённых автоматизаций с поиском; этап получает снимок шагов. */
-export function AddAutomation({ stages, onAdd }: { stages: readonly WorkStage[]; onAdd: (stage: WorkStage) => void }) {
-  const t = useMessages();
-  const [open, setOpen] = useState(false);
-  const close = () => setOpen(false);
-  const { root } = useFieldOverlay(open, close);
-  const [query, setQuery] = useState("");
-  const [loaded, setLoaded] = useState<Loaded>({ kind: "loading" });
-
-  useEffect(() => {
-    if (!open) return;
-    let live = true;
-    setLoaded({ kind: "loading" });
-    void automationsClient("", fetch)
-      .catalog()
-      .then((result) => live && setLoaded(loadedOf(result)));
-    return () => {
-      live = false;
-    };
-  }, [open]);
-
-  const q = query.trim().toLowerCase();
-  const shown = loaded.kind === "ready" ? loaded.automations.filter((a) => q === "" || a.name.toLowerCase().includes(q)) : [];
-  const taken = (automation: AutomationSummary) => stages.some((s) => s.id === automationStageId(automation.id));
-  const note = (text: string) => <div className="px-2 py-1.5 text-xs text-muted-foreground">{text}</div>;
-
-  return (
-    <div ref={root} className="relative">
-      <button
-        type="button"
-        aria-expanded={open}
-        onClick={() => {
-          setQuery("");
-          setOpen(!open);
-        }}
-        className={addButton}
-      >
-        <Icon name={EXTERNAL_AUTOMATION_ICON} aria-hidden="true" className="size-3.5" />
-        {t.settings.addFromAutomations}
-      </button>
-      <FieldOverlay open={open} onClose={close} role="listbox" label={t.settings.automations} className="min-w-[18rem] max-w-[24rem]">
-          <input
-            autoFocus
-            value={query}
-            aria-label={t.settings.findAutomation}
-            placeholder={t.settings.findAutomation}
-            onChange={(e) => setQuery(e.target.value)}
-            className="mb-1 h-7 w-full rounded-md border-0 bg-surface-recessed-solid px-2 text-[13px] outline-none placeholder:text-muted-foreground"
-          />
-          {loaded.kind === "loading" && note(t.settings.automationsLoading)}
-          {loaded.kind === "missing" && note(t.settings.automationsMissing)}
-          {loaded.kind === "failed" && note(t.settings.automationsFailed)}
-          {loaded.kind === "ready" && shown.length === 0 && note(t.settings.noAutomations)}
-          {shown.map((automation) => (
-            <button
-              key={automation.id}
-              type="button"
-              role="option"
-              aria-selected={false}
-              aria-disabled={taken(automation)}
-              disabled={taken(automation)}
-              title={automation.name}
-              onClick={() => {
-                const stage = automationStage(automation);
-                onAdd(automation.steps === undefined ? stage : { ...stage, automation: { ...stage.automation, steps: [...automation.steps] } });
-                setOpen(false);
-              }}
-              className={menuItem}
-            >
-              <span className="min-w-0 truncate">{automation.name}</span>
-              {automation.steps !== undefined && <span className="ml-auto shrink-0 pl-3 text-[11px] text-muted-foreground">{t.settings.stepCount(automation.steps.length)}</span>}
-            </button>
-          ))}
-      </FieldOverlay>
     </div>
   );
 }

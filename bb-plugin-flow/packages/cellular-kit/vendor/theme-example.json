@@ -1,0 +1,228 @@
+{
+  "format": "cellular.baked",
+  "version": 2,
+  "structures": [
+    {
+      "id": "stCard",
+      "name": "Card",
+      "parent": null,
+      "req": true,
+      "vars": {
+        "bg": "#2a2a33",
+        "radius": "18px",
+        "gap": "10px",
+        "pad-x": "20px",
+        "pad-y": "18px",
+        "font-weight": "400",
+        "font-size": "13px",
+        "line-height": "16px",
+        "track": "0px",
+        "shadow": "0px 6px 20px 0px rgba(0,0,0,0.5)",
+        "case": "none",
+        "text-color": "rgba(238,246,246,1)"
+      },
+      "states": {
+        "hover": {
+          "bg": "#3b3b43"
+        }
+      },
+      "param": [
+        {
+          "kind": "cur-x",
+          "curve": 1,
+          "freq": 0.3,
+          "radius": 340,
+          "chans": {
+            "fill.bright": {
+              "op": "add",
+              "val": 0.26
+            }
+          }
+        }
+      ],
+      "raw": {
+        "fill": {
+          "present": true,
+          "hex": "#2a2a33",
+          "bright": 0,
+          "hue": 0,
+          "alpha": 1
+        },
+        "size": {
+          "present": true,
+          "radius": 18,
+          "gap": 10,
+          "padX": 20,
+          "padY": 18
+        },
+        "typo": {
+          "present": true,
+          "weight": 400,
+          "size": 13,
+          "lh": 16,
+          "tracking": 0,
+          "caps": false,
+          "colorId": "cText",
+          "font": ""
+        },
+        "eff": {
+          "present": true,
+          "kind": "outer",
+          "colorHex": "#000000",
+          "x": 0,
+          "y": 6,
+          "blur": 20,
+          "spread": 0,
+          "alpha": 0.5
+        },
+        "gloss": {
+          "present": false,
+          "css": null
+        }
+      }
+    },
+    {
+      "id": "stTitle",
+      "name": "Title",
+      "parent": "stCard",
+      "req": false,
+      "vars": {
+        "bg": "#2a2a33",
+        "radius": "18px",
+        "gap": "10px",
+        "pad-x": "20px",
+        "pad-y": "18px",
+        "font-weight": "700",
+        "font-size": "20px",
+        "line-height": "24px",
+        "track": "0px",
+        "shadow": "0px 6px 20px 0px rgba(0,0,0,0.5)",
+        "case": "none",
+        "text-color": "rgba(238,246,246,1)"
+      },
+      "states": {},
+      "param": [],
+      "raw": {
+        "fill": {
+          "present": true,
+          "hex": "#2a2a33",
+          "bright": 0,
+          "hue": 0,
+          "alpha": 1
+        },
+        "size": {
+          "present": true,
+          "radius": 18,
+          "gap": 10,
+          "padX": 20,
+          "padY": 18
+        },
+        "typo": {
+          "present": true,
+          "weight": 700,
+          "size": 20,
+          "lh": 24,
+          "tracking": 0,
+          "caps": false,
+          "colorId": "cText",
+          "font": ""
+        },
+        "eff": {
+          "present": true,
+          "kind": "outer",
+          "colorHex": "#000000",
+          "x": 0,
+          "y": 6,
+          "blur": 20,
+          "spread": 0,
+          "alpha": 0.5
+        },
+        "gloss": {
+          "present": false,
+          "css": null
+        }
+      }
+    },
+    {
+      "id": "stAccent",
+      "name": "Accent",
+      "parent": "stCard",
+      "req": false,
+      "vars": {
+        "bg": "#d97757",
+        "radius": "18px",
+        "gap": "10px",
+        "pad-x": "20px",
+        "pad-y": "18px",
+        "font-weight": "400",
+        "font-size": "13px",
+        "line-height": "16px",
+        "track": "0px",
+        "shadow": "0px 6px 20px 0px rgba(0,0,0,0.5)",
+        "case": "none",
+        "text-color": "rgba(238,246,246,1)"
+      },
+      "states": {
+        "hover": {
+          "bg": "#dd8568"
+        }
+      },
+      "param": [
+        {
+          "kind": "cur-x",
+          "curve": 1,
+          "freq": 0.3,
+          "radius": 340,
+          "chans": {
+            "fill.hue": {
+              "op": "add",
+              "val": 60
+            }
+          }
+        }
+      ],
+      "raw": {
+        "fill": {
+          "present": true,
+          "hex": "#d97757",
+          "bright": 0,
+          "hue": 0,
+          "alpha": 1
+        },
+        "size": {
+          "present": true,
+          "radius": 18,
+          "gap": 10,
+          "padX": 20,
+          "padY": 18
+        },
+        "typo": {
+          "present": true,
+          "weight": 400,
+          "size": 13,
+          "lh": 16,
+          "tracking": 0,
+          "caps": false,
+          "colorId": "cText",
+          "font": ""
+        },
+        "eff": {
+          "present": true,
+          "kind": "outer",
+          "colorHex": "#000000",
+          "x": 0,
+          "y": 6,
+          "blur": 20,
+          "spread": 0,
+          "alpha": 0.5
+        },
+        "gloss": {
+          "present": false,
+          "css": null
+        }
+      }
+    }
+  ],
+  "savedAt": "2026-08-13T00:00:00.000Z",
+  "name": "example"
+}

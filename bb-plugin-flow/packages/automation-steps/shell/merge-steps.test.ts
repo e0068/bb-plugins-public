@@ -148,6 +148,27 @@ describe("reinstallAfterMerge", () => {
     expect(report.reinstalled).toEqual(["tasks-plus"]);
   });
 
+  it("a PR that changed only a shared package updates the plugins that build it (PR #572)", async () => {
+    const { gh } = pull({ changedPaths: ["packages/automation-steps/core/parent-delivery.ts", "packages/automation-steps/README.md"] });
+    const { port, updated } = fakePlugins([
+      { id: "flow", source: "git:https://github.com/e0068/bb-plugins.git@main" },
+      { id: "automations-builder", source: "git:https://github.com/e0068/bb-plugins.git@main" },
+      { id: "mail", source: "git:https://github.com/e0068/bb-plugins.git@main" },
+    ]);
+    const report = await reinstallAfterMerge(gh, port, "flow", async () => ({
+      ok: true,
+      edges: [
+        { from: { kind: "plugin", name: "flow" }, to: "automation-steps" },
+        { from: { kind: "plugin", name: "automations-builder" }, to: "automation-steps" },
+        { from: { kind: "plugin", name: "mail" }, to: "md-doc-view" },
+      ],
+    }));
+    expect(report.unavailable).toBeNull();
+    expect(updated).toEqual(["automations-builder"]);
+    expect(report.reinstalled).toEqual(["automations-builder"]);
+    expect(report.pendingSelfUpdate).toBe("flow");
+  });
+
   it("the plugin running the chain comes back pending, not updated here", async () => {
     const { gh } = pull({ changedPaths: ["bb-plugin-flow/server.ts"] });
     const { port, updated } = fakePlugins([

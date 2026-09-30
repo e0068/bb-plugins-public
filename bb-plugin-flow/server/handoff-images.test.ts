@@ -27,7 +27,10 @@ const spawned = async (route: DispatchRoute, place: Exclude<DispatchPlace, "here
       },
     },
     environments: { get: async () => ({ hostId: "host_1", branchName: "bb/thr_src", path: "/w/thr_src" }) },
-    projects: { attachments: { copy: async (args: Record<string, unknown>) => void copies.push(args) } },
+    projects: {
+      get: async () => ({ sources: [{ hostId: "host_2", isDefault: true }] }),
+      attachments: { copy: async (args: Record<string, unknown>) => void copies.push(args) },
+    },
   };
   const result = await handoff({ sdk } as never, { brief, place, route, text: "Ответ владельца", images });
   return { input: spawns[0]?.input as Array<{ type: string; path?: string }> | undefined, copies, result };

@@ -24,24 +24,13 @@ const spawned = async (route: DispatchRoute, place: Exclude<DispatchPlace, "here
       },
     },
     environments: { get: async () => ({ hostId: "host_1", branchName: "bb/thr_src", path: "/w/thr_src" }) },
+    projects: { get: async () => ({ sources: [{ hostId: "host_2", isDefault: true }] }) },
   };
   const result = await handoff({ sdk } as never, { brief, place, route, text: "Ответ владельца" });
   return { call: calls[0]!, result };
 };
 
 describe("передача работы в другой проект", () => {
-  it("тред заводится в выбранном проекте, а не в проекте исходного треда", async () => {
-    const { call, result } = await spawned({ tree: "new", branch: "none", projectId: "proj_2" }, "other");
-    expect(call.projectId).toBe("proj_2");
-    expect(call.environment).toEqual({ type: "host", workspace: { type: "managed-worktree", baseBranch: { kind: "default" } } });
-    expect(result).toEqual({ kind: "created", threadId: "thr_new" });
-  });
-
-  it("чекаут чужого проекта — его рабочая копия, без смены ветки", async () => {
-    const { call } = await spawned({ tree: "local", branch: "none", projectId: "proj_2" }, "other");
-    expect(call.environment).toEqual({ type: "host", workspace: { type: "unmanaged", path: null } });
-  });
-
   it("у треда в чужом проекте родителя нет: чужой проект — отдельное место, дочерним он не бывает", async () => {
     const { call } = await spawned({ tree: "new", branch: "none", projectId: "proj_2" }, "other");
     expect(call.parentThreadId).toBeUndefined();

@@ -1,0 +1,14 @@
+{
+  "extends": "../plugin-base/tsconfig.base.json",
+  "compilerOptions": {
+    "jsx": "react-jsx",
+    "types": ["@testing-library/jest-dom"]
+  },
+  "include": [
+    "index.ts",
+    "SegmentedControl.tsx",
+    "SegmentedControl.test.tsx",
+    "test-support/tabs-kit.tsx",
+    "vitest.setup.ts"
+  ]
+}

@@ -47,22 +47,38 @@ describe("форма выбора flow появляется только над 
     expect(slot.container.textContent).toContain("Без flow");
   });
 
-  it("выбор уходит с flow и галкой компактации, без текста — сообщение уже отправлено", async () => {
+  it("выбор уходит с flow и без компактации — галка по умолчанию снята", async () => {
     const { slot, calls } = await mount({ held: true });
     await ready(slot);
+    expect(slot.container.querySelector("[data-next-flow-compact]")!.getAttribute("aria-pressed")).toBe("false");
     fireEvent.click(slot.container.querySelector('[data-next-flow-option="flow_fix"]')!);
     fireEvent.click(slot.container.querySelector("[data-next-flow-send]")!);
     await waitFor(() => expect(calls).toHaveLength(1));
-    expect(calls[0]).toEqual({ threadId: "thr_1", flowId: "flow_fix", compact: true });
+    expect(calls[0]).toEqual({ threadId: "thr_1", flowId: "flow_fix", compact: false });
   });
 
-  it("галка компактации снимается и уезжает выключенной", async () => {
+  it("галка компактации ставится и уезжает включённой", async () => {
     const { slot, calls } = await mount({ held: true });
     await ready(slot);
     fireEvent.click(slot.container.querySelector("[data-next-flow-compact]")!);
     fireEvent.click(slot.container.querySelector("[data-next-flow-send]")!);
     await waitFor(() => expect(calls).toHaveLength(1));
-    expect(calls[0]).toMatchObject({ compact: false });
+    expect(calls[0]).toMatchObject({ compact: true });
+  });
+
+  it("форма уходит на нажатии, пока сервер ещё отпускает сообщение", async () => {
+    const { slot } = await mount({ held: true, start: () => new Promise(() => undefined) });
+    await ready(slot);
+    fireEvent.click(slot.container.querySelector("[data-next-flow-send]")!);
+    expect(slot.container.querySelector("[data-next-flow]")).toBeNull();
+  });
+
+  it("опрос, ещё видящий сообщение в очереди, форму не возвращает", async () => {
+    const { slot } = await mount({ held: true });
+    await ready(slot);
+    fireEvent.click(slot.container.querySelector("[data-next-flow-send]")!);
+    await new Promise((resolve) => setTimeout(resolve, 1700));
+    expect(slot.container.querySelector("[data-next-flow]")).toBeNull();
   });
 
   it("после отпущенного сообщения форма уходит сразу, не дожидаясь опроса", async () => {

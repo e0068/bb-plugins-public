@@ -8,6 +8,8 @@
 // report is turned into a sentence here, where it is checkable, rather than
 // inside the effect where it is not.
 
+import { isLocalSource, type LocalInstall } from "./reinstall-plan";
+
 /** The answer of a step: the same shape steps.ts hands the runner. */
 export type StepOutcome = { ok: true; detail: string | null } | { ok: false; error: string };
 
@@ -38,6 +40,7 @@ export interface ReinstallSummary {
   readonly reinstalled: readonly string[];
   readonly installed: readonly string[];
   readonly repoints: readonly { readonly pluginId: string; readonly from: string }[];
+  readonly keptLocal: readonly LocalInstall[];
   readonly problems: readonly string[];
   readonly pendingSelfUpdate: string | null;
   readonly unavailable: string | null;
@@ -64,21 +67,33 @@ export function bumpOutcome(summary: BumpSummary): StepOutcome {
  * settings, secrets and schedules with it, so it is the owner's call and not
  * an automation's. The plugin running the chain is neither done nor a
  * problem — it is deferred, and said so.
+ *
+ * A plugin installed from a local folder is neither: the owner put it there
+ * on purpose — a live preview, a working copy — and no retry would ever move
+ * it, so failing on it stopped every chain whose PR touched it. It stays
+ * where it is and the detail says so.
  */
 export function reinstallOutcome(summary: ReinstallSummary): StepOutcome {
   if (summary.unavailable !== null) return { ok: false, error: `Plugins not updated: ${summary.unavailable}` };
+  // Any plugin from a local folder is kept, not only the one running the
+  // chain: the repoint the planner offers for the rest waits for a human's
+  // word (Automations asks it), and a chain has no one to ask.
+  const keptLocal = [...summary.keptLocal, ...summary.repoints.filter(({ from }) => isLocalSource(from))];
   const refusals = [
     ...summary.problems,
-    ...summary.repoints.map(
-      ({ pluginId, from }) =>
-        `"${pluginId}" is installed from ${from} — update it by hand with bb plugin remove and bb plugin install`,
-    ),
+    ...summary.repoints
+      .filter(({ from }) => !isLocalSource(from))
+      .map(
+        ({ pluginId, from }) =>
+          `"${pluginId}" is installed from ${from} — update it by hand with bb plugin remove and bb plugin install`,
+      ),
   ];
   if (refusals.length > 0) return { ok: false, error: `Plugins not updated: ${refusals.join("; ")}` };
 
   const said = [
     ...(summary.reinstalled.length === 0 ? [] : [`updated ${summary.reinstalled.join(", ")}`]),
     ...(summary.installed.length === 0 ? [] : [`installed ${summary.installed.join(", ")}`]),
+    ...keptLocal.map(({ pluginId, from }) => `${pluginId} left on its local install ${from}`),
     ...(summary.pendingSelfUpdate === null ? [] : [`${summary.pendingSelfUpdate} updates itself after the run`]),
   ];
   return { ok: true, detail: said.length === 0 ? "no plugin of this repository was touched" : said.join(", ") };

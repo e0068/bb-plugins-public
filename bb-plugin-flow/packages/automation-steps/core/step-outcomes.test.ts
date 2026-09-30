@@ -13,6 +13,7 @@ const reinstall = (over: Partial<Parameters<typeof reinstallOutcome>[0]> = {}) =
   reinstalled: [],
   installed: [],
   repoints: [],
+  keptLocal: [],
   problems: [],
   pendingSelfUpdate: null,
   unavailable: null,
@@ -65,15 +66,42 @@ describe("reinstallOutcome", () => {
     });
   });
 
-  it("a plugin held from another source fails the step and names the source", () => {
+  it("a plugin held from npm or another repository fails the step and names the source", () => {
+    expect(reinstallOutcome(reinstall({ repoints: [{ pluginId: "flow", from: "npm:@acme/flow@1.2.0" }] }))).toEqual({
+      ok: false,
+      error:
+        'Plugins not updated: "flow" is installed from npm:@acme/flow@1.2.0 — update it by hand with bb plugin remove and bb plugin install',
+    });
+  });
+
+  it("a plugin installed from a local folder is left where it is and named, not failed", () => {
     expect(
-      reinstallOutcome(
-        reinstall({ repoints: [{ pluginId: "flow", from: "path:/Users/e0068/bb-plugin-flow" }] }),
-      ),
+      reinstallOutcome(reinstall({ repoints: [{ pluginId: "mail", from: "path:/Users/e0068/bb-plugins/bb-plugin-mail" }] })),
+    ).toEqual({
+      ok: true,
+      detail: "mail left on its local install path:/Users/e0068/bb-plugins/bb-plugin-mail",
+    });
+  });
+
+  it("a local install beside an updated plugin is named after it, and a real refusal still fails the step", () => {
+    const local = { pluginId: "mail", from: "path:/work/bb-plugin-mail" };
+    expect(reinstallOutcome(reinstall({ reinstalled: ["tasks-plus"], repoints: [local] }))).toEqual({
+      ok: true,
+      detail: "updated tasks-plus, mail left on its local install path:/work/bb-plugin-mail",
+    });
+    expect(
+      reinstallOutcome(reinstall({ repoints: [local, { pluginId: "flow", from: "git:https://github.com/acme/other.git@main" }] })),
     ).toEqual({
       ok: false,
       error:
-        'Plugins not updated: "flow" is installed from path:/Users/e0068/bb-plugin-flow — update it by hand with bb plugin remove and bb plugin install',
+        'Plugins not updated: "flow" is installed from git:https://github.com/acme/other.git@main — update it by hand with bb plugin remove and bb plugin install',
+    });
+  });
+
+  it("the plugin running the chain, kept on its local install, is named and does not fail the step", () => {
+    expect(reinstallOutcome(reinstall({ keptLocal: [{ pluginId: "flow", from: "path:/work/bb-plugin-flow" }] }))).toEqual({
+      ok: true,
+      detail: "flow left on its local install path:/work/bb-plugin-flow",
     });
   });
 

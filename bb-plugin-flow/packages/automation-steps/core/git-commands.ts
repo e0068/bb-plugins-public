@@ -101,3 +101,17 @@ export function headShaArgs(): readonly string[] {
 export function baseTreeArgs(ref: string): readonly string[] {
   return ["rev-parse", `${ref}^{tree}`];
 }
+
+/** Source files a bundle is built from — the only ones whose imports count. */
+const CODE_FILES = ["*.ts", "*.tsx", "*.js", "*.jsx", "*.mjs", "*.cjs", "*.css"] as const;
+
+/**
+ * `git grep` over the tracked code files for a quoted import of a shared
+ * package — `"@bb-plugins/<name>` or `"../packages/<name>` at any depth.
+ * `-o -z` prints `<path>NUL<match>` per hit, the path never quoted, which
+ * core/package-consumers.ts parses and narrows to the plugins and packages;
+ * exit code 1 means no match, not a failure.
+ */
+export function pluginImportsArgs(): readonly string[] {
+  return ["grep", "-I", "-o", "-z", "--no-color", "-E", `["'](@bb-plugins/|(\\.\\./)+packages/)[a-z0-9-]+`, "--", ...CODE_FILES];
+}
