@@ -1,8 +1,8 @@
 // Слой 4 — оболочка UI: живой список черновиков и обмен с композером.
 //
-// Кнопка, секция Home и баннер треда — разные монтирования без общего
-// состояния. Каждое читает список по RPC и перечитывает его по сигналу
-// сервера и после переподключения: сигналы не переигрываются.
+// Кнопка, секция Home и баннер треда — разные монтирования. Общий у них только
+// последний прочитанный список; читает список по RPC каждое само и перечитывает
+// его по сигналу сервера и после переподключения: сигналы не переигрываются.
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   experimental_useSidebarThreads,
@@ -32,14 +32,28 @@ export function reportFailure(error: unknown): void {
   toast.error(`Draft was not saved: ${errorText(error)}`);
 }
 
-/** Черновики новыми вперёд; null, пока первый ответ не пришёл. */
+/**
+ * bb монтирует баннер заново на каждой смене проекта в композере Home; пустой
+ * до ответа, ряд на кадр-два пропадал, и весь Home под композером прыгал.
+ */
+let lastKnown: DraftList | null = null;
+
+/** Только для тестов: каждый начинает с модуля, не видевшего ни одного ответа. */
+export function forgetLastKnownDrafts(): void {
+  lastKnown = null;
+}
+
+/** Черновики новыми вперёд; до первого ответа — последний известный список, а без него null. */
 export function useDrafts(): DraftList | null {
   const rpc = useRpcRef();
-  const [drafts, setDrafts] = useState<DraftList | null>(null);
+  const [drafts, setDrafts] = useState<DraftList | null>(lastKnown);
 
   const load = useCallback(() => {
     rpc.current.call("list", null).then(
-      ({ drafts: next }) => setDrafts(next),
+      ({ drafts: next }) => {
+        lastKnown = next;
+        setDrafts(next);
+      },
       () => {},
     );
   }, [rpc]);
