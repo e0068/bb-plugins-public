@@ -104,6 +104,12 @@ describe("выбор flow отпускает придержанное сообщ
     expect(threads.flowOf(THREAD)).toBe("none");
   });
 
+  it("«автоматически» принимается: flow треду выберет агент", async () => {
+    const { harness, threads } = await host();
+    expect(await harness.callRpc("startNextRun", { threadId: THREAD, flowId: "auto", compact: false })).toEqual({ kind: "sent" });
+    expect(threads.flowOf(THREAD)).toBe("auto");
+  });
+
   it("неизвестный flow отбивается, сообщение остаётся придержанным", async () => {
     const { harness } = await host();
     expect(await harness.callRpc("startNextRun", { threadId: THREAD, flowId: "flow_ghost", compact: false })).toMatchObject({ kind: "failed", reason: "unknown-flow" });

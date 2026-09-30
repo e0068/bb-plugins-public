@@ -31,7 +31,7 @@ const mount = async (options: { held: boolean; start?: (input: unknown) => unkno
   return { slot, calls };
 };
 
-const ready = async (slot: Awaited<ReturnType<typeof mount>>["slot"]) => waitFor(() => expect(slot.container.querySelectorAll("[data-next-flow-option]").length).toBe(3));
+const ready = async (slot: Awaited<ReturnType<typeof mount>>["slot"]) => waitFor(() => expect(slot.container.querySelectorAll("[data-next-flow-option]").length).toBe(4));
 
 describe("форма выбора flow появляется только над придержанным сообщением", () => {
   it("пока владелец ничего не отправил, формы нет — даже на завершённом прогоне", async () => {
@@ -45,6 +45,17 @@ describe("форма выбора flow появляется только над 
     await ready(slot);
     expect(slot.container.textContent).toContain("Разработка");
     expect(slot.container.textContent).toContain("Без flow");
+  });
+
+  it("первым стоит «Автоматически», и он выбран по умолчанию", async () => {
+    const { slot, calls } = await mount({ held: true });
+    await ready(slot);
+    const options = [...slot.container.querySelectorAll("[data-next-flow-option]")];
+    expect(options.map((option) => option.textContent)).toEqual(["Автоматически", "Разработка", "Правка", "Без flow"]);
+    expect(options[0]!.getAttribute("aria-pressed")).toBe("true");
+    fireEvent.click(slot.container.querySelector("[data-next-flow-send]")!);
+    await waitFor(() => expect(calls).toHaveLength(1));
+    expect(calls[0]).toEqual({ threadId: "thr_1", flowId: "auto", compact: false });
   });
 
   it("выбор уходит с flow и без компактации — галка по умолчанию снята", async () => {
