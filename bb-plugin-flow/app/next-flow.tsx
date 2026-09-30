@@ -1,11 +1,13 @@
 // Форма следующего прогона над композером. Завершённый прогон агента не
 // будит, поэтому первое слово за владельцем: его сообщение Flow придерживает в
 // очереди треда, и только тогда здесь спрашивается flow и компактация. Ответ
-// отпускает придержанное сообщение — сам текст форма не несёт.
+// отпускает придержанное сообщение — сам текст форма не несёт. Первым и по
+// умолчанию стоит «Автоматически»: flow следующему прогону выберет агент, как
+// новому треду с тем же выбором в композере.
 import { useEffect, useRef, useState } from "react";
 import { useComposerView, useRpc } from "@get-bb/plugin-sdk/app";
 
-import { NO_FLOW } from "../core/flows";
+import { AUTO_FLOW, NO_FLOW } from "../core/flows";
 import { Icon } from "../components/ui/icon";
 import { cn } from "../lib/utils";
 import type { nextRunRpcContract } from "../shared/contract";
@@ -16,6 +18,9 @@ import { useMessages } from "./locale-context";
 const POLL_MS = 1500;
 
 type Flow = { id: string; name: string };
+
+/** Знаки особых пунктов: «Автоматически» — flow выберет агент, «Без flow» — перечёркнутый круг; у flow владельца — знак flow. */
+const ICONS: Partial<Record<string, "Bot" | "CircleSlash">> = { [AUTO_FLOW]: "Bot", [NO_FLOW]: "CircleSlash" };
 
 /**
  * Сообщение треда придержано до выбора flow — над композером место для формы.
@@ -83,7 +88,7 @@ function Form() {
   const [compact, setCompact] = useState(false);
   const [error, setError] = useState<string | null>(null);
   if (threadId === null || !held) return null;
-  const flowId = chosen ?? flows[0]?.id ?? NO_FLOW;
+  const flowId = chosen ?? AUTO_FLOW;
   // Отказ возвращает форму с причиной: сообщение не отпущено и ждёт повтора.
   const fail = (reason: string) => {
     restore();
@@ -105,7 +110,7 @@ function Form() {
         <span className="ml-auto text-muted-foreground">{t.nextFlow.done}</span>
       </div>
       <div className="grid grid-cols-1 gap-px @[34rem]:grid-cols-2">
-        {[...flows, { id: NO_FLOW, name: t.nextFlow.none }].map((flow) => (
+        {[{ id: AUTO_FLOW, name: t.flows.pickerAuto }, ...flows, { id: NO_FLOW, name: t.nextFlow.none }].map((flow) => (
           <button
             key={flow.id}
             type="button"
@@ -114,7 +119,7 @@ function Form() {
             onClick={() => setChosen(flow.id)}
             className={cn("flex min-h-[34px] items-center gap-2 px-3 py-1.5 text-left hover:bg-state-hover", flow.id === flowId && "bg-state-active font-medium")}
           >
-            <Icon name={flow.id === NO_FLOW ? "CircleSlash" : "Workflow"} aria-hidden="true" className="size-3.5 text-muted-foreground" />
+            <Icon name={ICONS[flow.id] ?? "Workflow"} aria-hidden="true" className="size-3.5 text-muted-foreground" />
             <span className="truncate">{flow.name}</span>
           </button>
         ))}

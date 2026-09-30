@@ -6,7 +6,7 @@
 // вопрос хуку, на который тот, уже без завершённого прогона, ответит «иди».
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 
-import { NO_FLOW } from "../core/flows";
+import { AUTO_FLOW, NO_FLOW } from "../core/flows";
 import { holdsForNextFlow } from "../core/next-run-hold";
 import { nextRunRpcContract } from "../shared/contract";
 import type { FlowSettingsStore } from "./flow-settings";
@@ -55,7 +55,7 @@ export const registerNextRun = (
     nextRunHeld: async ({ threadId }) => ({ held: await heldIn(threadId) }),
 
     async startNextRun({ threadId, flowId, compact }) {
-      if (flowId !== NO_FLOW && !deps.flows.current().flows.some((flow) => flow.id === flowId)) return { kind: "failed" as const, reason: "unknown-flow" };
+      if (flowId !== NO_FLOW && flowId !== AUTO_FLOW && !deps.flows.current().flows.some((flow) => flow.id === flowId)) return { kind: "failed" as const, reason: "unknown-flow" };
       try {
         // Отпускать нечего — второе нажатие или устаревшая форма: иначе снялся бы уже начатый прогон.
         if (!(await heldIn(threadId))) return { kind: "failed" as const, reason: "not-held" };
