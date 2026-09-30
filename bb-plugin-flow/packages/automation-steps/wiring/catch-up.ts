@@ -4,7 +4,8 @@
 // its files, so the tree is never left half-merged. The decision is
 // core/catch-up.ts; the process is git-client.ts behind GitPorts.
 import type { ResolvedBase } from "../core/base-branch";
-import { conflictedFilesArgs, currentBranchArgs, decideCatchUp, IN_PROGRESS_REFS, inProgressArgs, mergeAbortArgs, mergeBaseArgs, resetToBaseArgs, trackedChangesArgs } from "../core/catch-up";
+import type { ParentDelivery } from "../core/parent-delivery";
+import { conflictedFilesArgs, currentBranchArgs, decideCatchUp, IN_PROGRESS_REFS, inProgressArgs, isAncestorArgs, mergeAbortArgs, mergeBaseArgs, resetToBaseArgs, trackedChangesArgs } from "../core/catch-up";
 import { aheadCountArgs, behindCountArgs, fastForwardArgs, fetchBaseArgs, replayAbortArgs, replayOntoArgs } from "../core/git-commands";
 import { findMergedCutoff } from "./merged-cutoff";
 import { checkMergedContent } from "./merged-content";
@@ -79,20 +80,20 @@ const failedReplay = (ports: GitPorts, ref: string, replayed: GitRun): Promise<E
  * ловит rebase, остановленный на `break` или упавшем `exec`: он не оставляет
  * ни одной псевдоссылки, а ветки под шагом всё равно нет.
  */
-const refuseReason = async (ports: GitPorts): Promise<string | null> => {
+const refuseReason = async (ports: GitPorts, before: string): Promise<string | null> => {
   for (const { ref, what } of IN_PROGRESS_REFS) {
     if ((await ports.run(inProgressArgs(ref))).code === 0) {
-      return `The tree has an unfinished ${what}: conclude or abort it before catching up with the base.`;
+      return `The tree has an unfinished ${what}: conclude or abort it before ${before}.`;
     }
   }
   if ((await ports.run(currentBranchArgs())).code === 0) return null;
-  return "The working copy is not on a branch — a detached HEAD, or a rebase paused mid-way: put it back on its branch before catching up with the base.";
+  return `The working copy is not on a branch — a detached HEAD, or a rebase paused mid-way: put it back on its branch before ${before}.`;
 };
 
 export async function runCatchUp(ports: GitPorts, base: ResolvedBase): Promise<CatchUpOutcome> {
   const ref = base.statusBase;
   if (base.mode === "origin") await must(ports, fetchBaseArgs(base.githubBase), `git fetch origin ${base.githubBase}`);
-  const refused = await refuseReason(ports);
+  const refused = await refuseReason(ports, "catching up with the base");
   if (refused !== null) throw new Error(refused);
   const dirty = (await must(ports, trackedChangesArgs(), "git status")).trim() !== "";
   const [behind, ahead] = dirty ? [0, 0] : [await count(ports, behindCountArgs(ref)), await count(ports, aheadCountArgs(ref))];
@@ -124,4 +125,32 @@ export async function runCatchUp(ports: GitPorts, base: ResolvedBase): Promise<C
   const merged = await ports.run(mergeBaseArgs(ref));
   if (merged.code === 0) return "merged";
   throw await failedMerge(ports, ref, merged);
+}
+
+/** What delivering a child thread's branch into its parent's working copy did. */
+export type ParentDeliveryOutcome = "already-in" | "delivered";
+
+/**
+ * Merge a child thread's branch into the parent thread's working copy at
+ * `ports` (core/parent-delivery.ts). A branch already contained is the goal
+ * reached, so a repeated step answers success instead of a second merge. The
+ * parent's tree is someone else's work in progress: an unfinished operation
+ * there is refused, not aborted; a tree switched to another branch than the
+ * one bb knows is refused too, since the merge would land there; a conflicted
+ * merge is undone whole, the same way catching up undoes it.
+ */
+export async function runParentDelivery(
+  ports: GitPorts,
+  { branch, parentBranch }: Pick<ParentDelivery, "branch" | "parentBranch">,
+): Promise<ParentDeliveryOutcome> {
+  const refused = await refuseReason(ports, `merging ${branch} into it`);
+  if (refused !== null) throw new Error(refused);
+  const current = (await ports.run(currentBranchArgs())).stdout.trim();
+  if (current !== parentBranch) {
+    throw new Error(`The parent thread's working copy is on ${current}, not on its branch ${parentBranch}: switch it back before merging ${branch} into it.`);
+  }
+  if ((await ports.run(isAncestorArgs(branch))).code === 0) return "already-in";
+  const merged = await ports.run(mergeBaseArgs(branch));
+  if (merged.code === 0) return "delivered";
+  throw await failedMerge(ports, branch, merged);
 }

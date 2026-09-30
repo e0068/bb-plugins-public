@@ -6,18 +6,20 @@
 import type { PluginKvStorage } from "@get-bb/plugin-sdk";
 
 import type { StepId } from "./catalog";
+import type { ParentDelivery } from "./core/parent-delivery";
 import type { BumpLevel } from "./core/plugin-version-bump";
 import { classifyFailure, RETRY_DELAYS_MS } from "./core/retry";
 import { bumpOutcome, reinstallOutcome, type StepOutcome } from "./core/step-outcomes";
 import { bbCliClient } from "./wiring/bb-cli-client";
 import type { CliPorts } from "./wiring/bb-cli-run";
-import type { CatchUpOutcome } from "./wiring/catch-up";
+import type { CatchUpOutcome, ParentDeliveryOutcome } from "./wiring/catch-up";
 import { markLinkedTasksStatus, splitTaskStatusResults } from "./wiring/mark-task-status";
 import type { PluginsPort } from "./wiring/plugin-reinstall";
 import {
   attemptArchive,
   attemptLocalMainPull,
   catchUpBranch,
+  deliverIntoParent,
   environmentIdOf,
   gatherAndCreate,
   markAwaiting,
@@ -25,6 +27,8 @@ import {
   githubPullOf,
   MERGE_METHOD,
   mergeWithVerdict,
+  parentDeliveryOf,
+  pluginImportsOf,
   reinstallAfterMerge,
   resolveToken,
   settleVersionsForMerge,
@@ -109,6 +113,16 @@ const CATCH_UP_DETAIL: Record<CatchUpOutcome, string> = {
 };
 
 /**
+ * Строка шага, сдавшего ветку дочернего треда в ветку родителя: владелец
+ * должен прочесть, что PR на GitHub не открыт не по ошибке, а потому что
+ * работу увезёт PR родителя.
+ */
+const DELIVERY_DETAIL: Record<ParentDeliveryOutcome, (parentBranch: string) => string> = {
+  "already-in": (parentBranch) => `already in ${parentBranch}`,
+  delivered: (parentBranch) => `merged into ${parentBranch} — the parent thread's branch, no PR on GitHub`,
+};
+
+/**
  * Окружение без git — чаще всего проект смотрит на папку выше репозитория. Владелец
  * должен увидеть, какая это папка и что поправить, а не код статуса bb.
  */
@@ -146,11 +160,25 @@ export function createSteps(ports: StepPorts): Steps {
     return done(successKeys.length === 0 ? "no linked tasks" : successKeys.join(", "));
   };
 
+  // Дочерний тред, чья база — ветка родителя, сдаёт работу в дерево родителя
+  // (core/parent-delivery.ts): PR и его мёрдж становятся слиянием туда, а
+  // бамп, подтягивание main и обновление плагинов — делом PR родителя.
+  const orIntoParent =
+    (child: (delivery: ParentDelivery) => Promise<StepOutcome>, usual: (threadId: string) => Promise<StepOutcome>) =>
+    async (threadId: string): Promise<StepOutcome> => {
+      const delivery = await parentDeliveryOf(sdk, threadId);
+      return delivery === null ? usual(threadId) : child(delivery);
+    };
+  const deliver = async (delivery: ParentDelivery) => done(DELIVERY_DETAIL[await deliverIntoParent(delivery)](delivery.parentBranch));
+  const notNeeded = async ({ parentBranch }: ParentDelivery) => done(`not needed — the branch goes into ${parentBranch}, the parent thread's branch`);
+
   const bumpStep = (level: BumpLevel) =>
-    guarded(async (threadId: string) => {
-      const environmentId = await environmentOf(threadId);
-      return bumpOutcome(await settleVersionsForMerge(await githubPullOf(sdk, settings, environmentId), level));
-    });
+    guarded(
+      orIntoParent(notNeeded, async (threadId: string) => {
+        const environmentId = await environmentOf(threadId);
+        return bumpOutcome(await settleVersionsForMerge(await githubPullOf(sdk, settings, environmentId), level));
+      }),
+    );
 
   const steps: Steps = {
     // Чистое дерево — не провал: коммитить нечего, цепочка идёт дальше.
@@ -171,10 +199,12 @@ export function createSteps(ports: StepPorts): Steps {
     }),
     // Открытый PR ветки — итог этого шага, а не отказ: повтор после потерянного
     // ответа GitHub не открывает второй PR и говорит, что нашёл первый.
-    "git.create-pr": guarded(async (threadId) => {
-      const created = await gatherAndCreate(sdk, kv, await resolveToken(settings), threadId);
-      return done(created.existed ? `already open: ${created.url}` : created.url);
-    }),
+    "git.create-pr": guarded(
+      orIntoParent(deliver, async (threadId) => {
+        const created = await gatherAndCreate(sdk, kv, await resolveToken(settings), threadId);
+        return done(created.existed ? `already open: ${created.url}` : created.url);
+      }),
+    ),
     "bb.tasks-in-review": guarded(moveTasks("in_review")),
     // Версия ставится коммитом в ветку открытого PR и считается от базовой
     // ветки: соседний PR, севший на main минуту назад, уже учтён.
@@ -184,31 +214,39 @@ export function createSteps(ports: StepPorts): Steps {
     // Состояние PR спрашивается у GitHub до мёрджа и после упавшего: уже
     // влитый PR — успех шага, закрытый — названный отказ, конфликт — названный
     // конфликт, а не «HTTP 409» (shell/pr-helpers.ts).
-    "git.merge": guarded(async (threadId) => {
-      const environmentId = await environmentOf(threadId);
-      const gh = await githubPullOf(sdk, settings, environmentId);
-      await markAwaiting(sdk, environmentId, "merge");
-      return mergeWithVerdict(gh, async () => void (await sdk.environments.mergePullRequest({ environmentId, method: MERGE_METHOD })));
-    }),
-    "git.pull-main": guarded(async (threadId) => {
-      const pull = await attemptLocalMainPull(sdk, kv, await environmentOf(threadId));
-      if (pull === null) return failed("The environment has no working copy or base branch to pull main into.");
-      return pull.ok ? done() : failed(pull.reason);
-    }),
+    "git.merge": guarded(
+      orIntoParent(deliver, async (threadId) => {
+        const environmentId = await environmentOf(threadId);
+        const gh = await githubPullOf(sdk, settings, environmentId);
+        await markAwaiting(sdk, environmentId, "merge");
+        return mergeWithVerdict(gh, async () => void (await sdk.environments.mergePullRequest({ environmentId, method: MERGE_METHOD })));
+      }),
+    ),
+    "git.pull-main": guarded(
+      orIntoParent(notNeeded, async (threadId) => {
+        const pull = await attemptLocalMainPull(sdk, kv, await environmentOf(threadId));
+        if (pull === null) return failed("The environment has no working copy or base branch to pull main into.");
+        return pull.ok ? done() : failed(pull.reason);
+      }),
+    ),
     // Плагины переводятся на смёрдженный код по файлам самого PR. Собственный
     // плагин сюда не входит: его id уходит в kv и обновляется после цепочки.
-    "bb.reinstall": guarded(async (threadId) => {
-      const environmentId = await environmentOf(threadId);
-      const report = await reinstallAfterMerge(await githubBranchesOf(sdk, settings, environmentId), ports.plugins, ports.ownPluginId);
-      const outcome = reinstallOutcome(report);
-      // Ключ ставится только на успехе: шаг, ответивший «не обновлено»,
-      // останавливает цепочку, и обновлять себя после него — значит сделать
-      // ровно то, о чём владельцу только что сказали, что оно не сделано.
-      if (outcome.ok && report.pendingSelfUpdate !== null) {
-        await kv.set(selfUpdatePendingKey(threadId), report.pendingSelfUpdate);
-      }
-      return outcome;
-    }),
+    "bb.reinstall": guarded(
+      orIntoParent(notNeeded, async (threadId) => {
+        const environmentId = await environmentOf(threadId);
+        const report = await reinstallAfterMerge(await githubBranchesOf(sdk, settings, environmentId), ports.plugins, ports.ownPluginId, () =>
+          pluginImportsOf(sdk, environmentId),
+        );
+        const outcome = reinstallOutcome(report);
+        // Ключ ставится только на успехе: шаг, ответивший «не обновлено»,
+        // останавливает цепочку, и обновлять себя после него — значит сделать
+        // ровно то, о чём владельцу только что сказали, что оно не сделано.
+        if (outcome.ok && report.pendingSelfUpdate !== null) {
+          await kv.set(selfUpdatePendingKey(threadId), report.pendingSelfUpdate);
+        }
+        return outcome;
+      }),
+    ),
     "bb.tasks-done": guarded(moveTasks("done")),
     "bb.archive": guarded(async (threadId) => {
       const failure = await attemptArchive(() => sdk.threads.archive({ threadId }));

@@ -98,8 +98,15 @@ export const placeColumns = (place: DispatchPlace, route: DispatchRoute, otherPr
 
 export const legacyRoute = (place: DispatchPlace): DispatchRoute => (place === "worktree" ? { tree: "new", branch: "from-current" } : DEFAULT_ROUTE);
 
-/** `path` — путь дерева треда (`environment.path`); без него отвод ветки в этом дереве не делается. */
+/**
+ * `path` — путь дерева треда (`environment.path`); без него отвод ветки в этом дереве не делается.
+ * `hostId` — хост треда, а для чужого проекта — хост самого проекта (`projectHost`).
+ */
 export type RouteSource = { environmentId: string; hostId: string; branchName: string | null; path?: string | null };
+
+/** Хост проекта — хост его источника по умолчанию, без такого — первого; у проекта без источников хоста нет. */
+export const projectHost = (sources: ReadonlyArray<{ hostId: string; isDefault: boolean }>): string | undefined =>
+  (sources.find((source) => source.isDefault) ?? sources[0])?.hostId;
 
 type ForkBranch = Exclude<RouteBranch, "current" | "none">;
 
@@ -108,11 +115,11 @@ const FIXED_BASE: Record<Exclude<ForkBranch, "from-current">, string> = { "from-
 /** Окружение нового треда в форме `threads.spawn`: только это дерево читает одно окружение, остальные — хост. */
 export const routeEnvironment = (place: DispatchPlace, route: DispatchRoute, source: RouteSource) => {
   if (place === "other") {
-    // Дерево заводится в чужом проекте, поэтому хост берёт сам проект: хост этого треда тут ни при чём.
+    // Дерево заводится в чужом проекте на его хосте: bb без хоста окружение не заводит.
     // Чекаут проекта остаётся на своей ветке, новое дерево отводит её от ветки проекта по умолчанию.
     return route.tree === "local"
-      ? { type: "host" as const, workspace: { type: "unmanaged" as const, path: null } }
-      : { type: "host" as const, workspace: { type: "managed-worktree" as const, baseBranch: { kind: "default" as const } } };
+      ? { type: "host" as const, hostId: source.hostId, workspace: { type: "unmanaged" as const, path: null } }
+      : { type: "host" as const, hostId: source.hostId, workspace: { type: "managed-worktree" as const, baseBranch: { kind: "default" as const } } };
   }
   const fork = route.branch === "current" || route.branch === "none" ? null : route.branch;
   if (route.tree === "same") {

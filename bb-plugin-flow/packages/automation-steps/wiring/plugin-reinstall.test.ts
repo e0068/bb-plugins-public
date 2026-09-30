@@ -63,6 +63,7 @@ describe("reinstallTouchedPlugins", () => {
       reinstalled: ["tasks-plus"],
       installed: [],
       repoints: [],
+      keptLocal: [],
       problems: [],
       pendingSelfUpdate: null,
     });
@@ -78,6 +79,7 @@ describe("reinstallTouchedPlugins", () => {
       repoints: [
         { pluginId: "tasks-plus", from: pathSource, source: gitSource, subdirectory: "bb-plugin-tasks-plus" },
       ],
+      keptLocal: [],
       problems: [],
       pendingSelfUpdate: null,
     });
@@ -91,18 +93,19 @@ describe("reinstallTouchedPlugins", () => {
       reinstalled: [],
       installed: ["tasks-plus"],
       repoints: [],
+      keptLocal: [],
       problems: [],
       pendingSelfUpdate: null,
     });
     expect(calls).toEqual([`install ${gitSource} bb-plugin-tasks-plus`]);
   });
 
-  it("the plugin running this code, on a path source → a problem naming it, no remove", async () => {
+  it("the plugin running this code, on a path source → kept where it is and named, no problem, no call", async () => {
     const { port, calls } = fakePlugins([{ id: "zz-pull-request", source: "path:/x/bb-plugin-zz-pull-request" }]);
     const report = await reinstallTouchedPlugins(port, ["bb-plugin-zz-pull-request/server.ts"], target);
+    expect(report.keptLocal).toEqual([{ pluginId: "zz-pull-request", from: "path:/x/bb-plugin-zz-pull-request" }]);
     expect(report.repoints).toEqual([]);
-    expect(report.problems).toHaveLength(1);
-    expect(report.problems[0]).toContain("zz-pull-request");
+    expect(report.problems).toEqual([]);
     expect(calls).toEqual([]);
   });
 
@@ -167,10 +170,80 @@ describe("reinstallTouchedPlugins", () => {
       reinstalled: [],
       installed: [],
       repoints: [],
+      keptLocal: [],
       problems: [],
       pendingSelfUpdate: null,
     });
     expect(calls).toEqual([]);
+  });
+});
+
+describe("reinstallTouchedPlugins — общий пакет", () => {
+  const imports = async () => ({
+    ok: true as const,
+    edges: [
+      { from: { kind: "plugin" as const, name: "tasks-plus" }, to: "automation-steps" },
+      { from: { kind: "plugin" as const, name: "zz-pull-request" }, to: "automation-steps" },
+      { from: { kind: "plugin" as const, name: "projects" }, to: "automation-steps" },
+    ],
+  });
+
+  it("правка пакета обновляет установленный из git плагин, который его собирает", async () => {
+    const { port, calls } = fakePlugins([{ id: "tasks-plus", source: gitSource }]);
+    const report = await reinstallTouchedPlugins(port, ["packages/automation-steps/steps.ts"], target, imports);
+    expect(report.reinstalled).toEqual(["tasks-plus"]);
+    expect(report.problems).toEqual([]);
+    expect(calls).toEqual(["applyUpdate tasks-plus"]);
+  });
+
+  it("плагин, который собирает пакет, но не установлен, не ставится", async () => {
+    const { port, calls } = fakePlugins([]);
+    const report = await reinstallTouchedPlugins(port, ["packages/automation-steps/steps.ts"], target, imports);
+    expect(report.installed).toEqual([]);
+    expect(calls).toEqual([]);
+  });
+
+  it("плагин, ведущий цепочку, через пакет уходит в отложенное самообновление", async () => {
+    const { port, calls } = fakePlugins([{ id: "zz-pull-request", source: gitSource }]);
+    const report = await reinstallTouchedPlugins(port, ["packages/automation-steps/steps.ts"], target, imports);
+    expect(report.pendingSelfUpdate).toBe("zz-pull-request");
+    expect(calls).toEqual([]);
+  });
+
+  it("плагины из path: и npm через пакет разбираются так же, как прямые: перенаправление, без вызовов", async () => {
+    const { port, calls } = fakePlugins([
+      { id: "tasks-plus", source: pathSource },
+      { id: "projects", source: "npm:@e0068/bb-plugin-projects@1.0.0" },
+    ]);
+    const report = await reinstallTouchedPlugins(port, ["packages/automation-steps/steps.ts"], target, imports);
+    expect(report.repoints.map((r) => r.pluginId)).toEqual(["tasks-plus", "projects"]);
+    expect(report.reinstalled).toEqual([]);
+    expect(calls).toEqual([]);
+  });
+
+  it("без правок в packages/ граф импортов не читается", async () => {
+    const { port } = fakePlugins([{ id: "tasks-plus", source: gitSource }]);
+    let read = 0;
+    await reinstallTouchedPlugins(port, ["bb-plugin-tasks-plus/app.tsx", "docs/INDEX.md"], target, async () => {
+      read += 1;
+      return imports();
+    });
+    expect(read).toBe(0);
+  });
+
+  it("граф не прочитан — проблема называет пакет, прямые плагины всё равно обновлены", async () => {
+    const { port, calls } = fakePlugins([{ id: "tasks-plus", source: gitSource }]);
+    const report = await reinstallTouchedPlugins(
+      port,
+      ["bb-plugin-tasks-plus/app.tsx", "packages/automation-steps/steps.ts"],
+      target,
+      async () => ({ ok: false as const, reason: "not a git repository" }),
+    );
+    expect(report.reinstalled).toEqual(["tasks-plus"]);
+    expect(report.problems).toEqual([
+      "plugins that build packages/automation-steps not found: not a git repository",
+    ]);
+    expect(calls).toEqual(["applyUpdate tasks-plus"]);
   });
 });
 
@@ -179,6 +252,7 @@ describe("applyPendingSelfUpdate", () => {
     reinstalled: ["tasks-plus"],
     installed: [],
     repoints: [],
+    keptLocal: [],
     problems: [],
     pendingSelfUpdate,
   });
@@ -195,6 +269,7 @@ describe("applyPendingSelfUpdate", () => {
       reinstalled: ["tasks-plus", "zz-pull-request"],
       installed: [],
       repoints: [],
+      keptLocal: [],
       problems: [],
       pendingSelfUpdate: null,
     });

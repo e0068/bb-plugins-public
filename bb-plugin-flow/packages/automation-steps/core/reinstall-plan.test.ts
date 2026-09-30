@@ -100,10 +100,20 @@ describe("planReinstall", () => {
     expect(plan("tasks-plus", "weird").kind).toBe("repoint");
   });
 
-  it("the plugin running this code, on a non-git source → refuse by name, never a repoint", () => {
-    const step = plan(ownPluginId, "path:/Users/x/bb-plugins/bb-plugin-zz-pull-request");
+  it("the plugin running this code, on npm → refuse by name, never a repoint", () => {
+    const step = plan(ownPluginId, "npm:@acme/bb-plugin-zz-pull-request@1.0.0");
     expect(step.kind).toBe("refuse");
     if (step.kind === "refuse") expect(step.reason).toContain(ownPluginId);
+  });
+
+  it("the plugin running this code, installed from a local folder → kept where it is, neither a refuse nor a repoint", () => {
+    const from = "path:/Users/x/bb-plugins/bb-plugin-zz-pull-request";
+    expect(plan(ownPluginId, from)).toEqual({ kind: "keep-local", from });
+  });
+
+  it("any other plugin from a local folder is still a repoint: the one who merges by hand is asked", () => {
+    const from = "path:/Users/x/bb-plugins/bb-plugin-tasks-plus";
+    expect(plan("tasks-plus", from)).toEqual({ kind: "repoint", from, target });
   });
 
   it("the plugin running this code, on git of the same repository → update-self, never a plain update", () => {
@@ -115,11 +125,11 @@ describe("planReinstall", () => {
     });
   });
 
-  it("is total: any source string yields one of the five steps", () => {
+  it("is total: any source string yields one of the six steps", () => {
     fc.assert(
-      fc.property(fc.option(fc.string(), { nil: null }), fc.string(), (installedSource, pluginId) => {
+      fc.property(fc.option(fc.string(), { nil: null }), fc.constantFrom(ownPluginId, "tasks-plus"), (installedSource, pluginId) => {
         const step = planReinstall({ pluginId, installedSource, repo, baseBranch: "main", ownPluginId });
-        expect(["update", "update-self", "install", "repoint", "refuse"]).toContain(step.kind);
+        expect(["update", "update-self", "install", "repoint", "refuse", "keep-local"]).toContain(step.kind);
       }),
     );
   });

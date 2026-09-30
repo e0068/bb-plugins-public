@@ -17,16 +17,27 @@ const POLL_MS = 1500;
 
 type Flow = { id: string; name: string };
 
-/** Сообщение треда придержано до выбора flow — над композером место для формы; `release` снимает форму сразу после ответа, не дожидаясь опроса. */
-function useHeld(threadId: string | null): { held: boolean; release: () => void } {
+/**
+ * Сообщение треда придержано до выбора flow — над композером место для формы.
+ * `release` снимает форму на нажатии: пока сервер компактирует тред и отпускает
+ * сообщение, опрос ещё видит его в очереди, и форма вернулась бы под «Working…».
+ * Снятие держится до первого «не придержано» — следующий прогон снова её покажет.
+ */
+function useHeld(threadId: string | null): { held: boolean; release: () => void; restore: () => void } {
   const rpc = useRpc<typeof nextRunRpcContract>();
   const rpcRef = useRef(rpc);
   rpcRef.current = rpc;
   const [held, setHeld] = useState(false);
+  const [released, setReleased] = useState(false);
   useEffect(() => {
     if (threadId === null) return;
     let alive = true;
-    const pull = () => rpcRef.current.call("nextRunHeld", { threadId }).then((answer) => alive && setHeld(answer.held), () => undefined);
+    const pull = () =>
+      rpcRef.current.call("nextRunHeld", { threadId }).then((answer) => {
+        if (!alive) return;
+        setHeld(answer.held);
+        if (!answer.held) setReleased(false);
+      }, () => undefined);
     void pull();
     const timer = setInterval(() => void pull(), POLL_MS);
     return () => {
@@ -34,7 +45,7 @@ function useHeld(threadId: string | null): { held: boolean; release: () => void 
       clearInterval(timer);
     };
   }, [threadId]);
-  return { held, release: () => setHeld(false) };
+  return { held: held && !released, release: () => setReleased(true), restore: () => setReleased(false) };
 }
 
 function useFlows(threadId: string | null): Flow[] {
@@ -66,22 +77,25 @@ function Form() {
   const { scope } = useComposerView();
   const threadId = scope.kind === "thread" ? scope.threadId : null;
   const rpc = useRpc<typeof nextRunRpcContract>();
-  const { held, release } = useHeld(threadId);
+  const { held, release, restore } = useHeld(threadId);
   const flows = useFlows(threadId);
   const [chosen, setChosen] = useState<string | null>(null);
-  const [compact, setCompact] = useState(true);
-  const [sending, setSending] = useState(false);
+  const [compact, setCompact] = useState(false);
   const [error, setError] = useState<string | null>(null);
   if (threadId === null || !held) return null;
   const flowId = chosen ?? flows[0]?.id ?? NO_FLOW;
+  // Отказ возвращает форму с причиной: сообщение не отпущено и ждёт повтора.
+  const fail = (reason: string) => {
+    restore();
+    setError(reason);
+  };
   const send = () => {
-    setSending(true);
+    release();
     setError(null);
     void rpc
       .call("startNextRun", { threadId, flowId, compact })
-      .then((answer) => (answer.kind === "sent" ? release() : setError(answer.reason)))
-      .catch((cause: unknown) => setError(cause instanceof Error ? cause.message : String(cause)))
-      .finally(() => setSending(false));
+      .then((answer) => answer.kind === "failed" && fail(answer.reason))
+      .catch((cause: unknown) => fail(cause instanceof Error ? cause.message : String(cause)));
   };
   return (
     <div data-next-flow className="mx-2.5 -mb-px overflow-hidden rounded-t-[10px] border border-b-0 border-border bg-surface-recessed-solid text-xs last:-mb-[calc(0.5rem+1px)]">
@@ -111,7 +125,7 @@ function Form() {
           <span className={cn("flex size-[15px] items-center justify-center rounded border border-border", compact && "border-foreground bg-foreground text-background")}>{compact && <Icon name="Check" aria-hidden="true" className="size-2.5" />}</span>
           {t.nextFlow.compact}
         </button>
-        <button type="button" data-next-flow-send disabled={sending} onClick={send} className="flex min-h-[38px] items-center justify-center gap-1.5 bg-foreground px-4 font-semibold text-background disabled:opacity-50">
+        <button type="button" data-next-flow-send onClick={send} className="flex min-h-[38px] items-center justify-center gap-1.5 bg-foreground px-4 font-semibold text-background disabled:opacity-50">
           {t.nextFlow.send}
         </button>
       </div>

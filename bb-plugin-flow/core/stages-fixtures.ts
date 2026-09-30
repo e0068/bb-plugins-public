@@ -9,6 +9,9 @@ export const dev2 = { id: "workflow:DEV2", kind: "workflow", name: "DEV2" } as c
 
 export const stage = (id: string, patch: Partial<WorkStage> = {}): WorkStage => ({ id, kind: "skill", skill: id, name: id, executors: [], ...patch });
 
+/** Flow Quick из двух этапов: встроенные Критерии и этап-навык implement. */
+export const QUICK_STAGES: WorkStage[] = [{ id: "criteria", kind: "criteria", skill: "", name: "Criteria", executors: [] }, stage("implement", { skill: "code-standards-fp", name: "Implementation" })];
+
 export const report = (id: string, patch: Partial<StageReport> = {}): StageReport => ({ id, state: "todo", recommended: false, executor: "self", ...patch });
 
 export const STAGES: WorkStage[] = [
@@ -50,3 +53,6 @@ export const CODE_FLOW: WorkStage[] = [
   { id: "demo-2", kind: "demo", skill: "", name: "Demonstration", executors: [] },
   automationOf("flow-automation-2", "Смёрджить PR, Задача → done, Pull Main ← Origin, Архивировать тред", ["git.commit", "git.merge", "bb.tasks-done", "git.pull-main", "bb.archive"]),
 ];
+
+/** Полный flow, по которому написан пример брифа в навыке flow: этапы flow Code без автоматизаций. */
+export const FULL_FLOW: WorkStage[] = CODE_FLOW.filter((s) => s.automation === undefined);

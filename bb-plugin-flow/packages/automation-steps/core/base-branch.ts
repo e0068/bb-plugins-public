@@ -51,6 +51,6 @@ export function resolveBase(env: EnvBranches, mode: BaseMode): ResolvedBase | nu
 }
 
 /** `origin/main` → `main`; other names are left alone (a branch name may itself contain "/"). */
-function stripOriginPrefix(branch: string): string {
+export function stripOriginPrefix(branch: string): string {
   return branch.startsWith("origin/") ? branch.slice("origin/".length) : branch;
 }

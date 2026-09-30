@@ -49,42 +49,7 @@ const lastSaved = (slot: Slot) => ([...slot.rpcCalls].reverse().find((c) => c.me
 
 const builtin = (steps: NonNullable<Extract<WorkStage["automation"], { source: "flow" }>>["steps"]): WorkStage => ({ id: "flow-automation", kind: "skill", skill: "", name: "Опубликовать", executors: [], automation: { source: "flow", steps } });
 
-describe("«Из плагина Automations» в таблице этапов", () => {
-  it("показывает только включённые автоматизации из Automations и ищет по имени", async () => {
-    const urls = stubAutomations(() => new Response(JSON.stringify(AUTOMATIONS), { status: 200 }));
-    const slot = open();
-    fireEvent.click(await slot.findByRole("button", { name: "Из плагина Automations" }));
-    const list = within(await slot.findByRole("listbox", { name: "Автоматизации" }));
-    expect(urls).toEqual(["/api/v1/plugins/automations-builder/http/catalog"]);
-    expect(list.getAllByRole("option").map((o) => o.getAttribute("title"))).toEqual(["Pull Request", "Merge"]);
-    fireEvent.change(list.getByRole("textbox", { name: "Найти автоматизацию" }), { target: { value: "mer" } });
-    expect(list.getAllByRole("option").map((o) => o.getAttribute("title"))).toEqual(["Merge"]);
-  });
-
-  it("выбор добавляет этап-автоматизацию со снимком её шагов в конец таблицы", async () => {
-    stubAutomations(() => new Response(JSON.stringify(AUTOMATIONS), { status: 200 }));
-    const slot = open();
-    fireEvent.click(await slot.findByRole("button", { name: "Из плагина Automations" }));
-    fireEvent.click(await slot.findByRole("option", { name: /Pull Request/ }));
-    await vi.waitFor(() =>
-      expect(lastSaved(slot)?.at(-1)).toEqual({ ...automationStage({ id: "click-pr", name: "Pull Request" }), automation: { id: "click-pr", name: "Pull Request", steps: ["Открыть PR", "Задача → in_review"] } }),
-    );
-  });
-
-  it("автоматизация, уже стоящая этапом, в списке недоступна", async () => {
-    stubAutomations(() => new Response(JSON.stringify(AUTOMATIONS), { status: 200 }));
-    const slot = open(settings([automationStage({ id: "click-pr", name: "Pull Request" })]));
-    fireEvent.click(await slot.findByRole("button", { name: "Из плагина Automations" }));
-    expect((await slot.findByRole("option", { name: /Pull Request/ })).getAttribute("aria-disabled")).toBe("true");
-  });
-
-  it("нет плагина — строка «Плагин Automations не установлен»", async () => {
-    stubAutomations(() => new Response("{}", { status: 404 }));
-    const slot = open();
-    fireEvent.click(await slot.findByRole("button", { name: "Из плагина Automations" }));
-    expect(await slot.findByText("Плагин Automations не установлен")).toBeTruthy();
-  });
-
+describe("Автоматизация Automations в таблице этапов", () => {
   it("у автоматизации из Automations теги шагов без креста, название целиком по наведению", async () => {
     stubAutomations(() => new Response(JSON.stringify(AUTOMATIONS), { status: 200 }));
     const long = "Pull Request, Merge then Archive — очень длинное название автоматизации";

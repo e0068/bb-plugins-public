@@ -38,6 +38,7 @@ import { attachmentsPayload, clearAttachments } from "./attachments";
 import { AnsweredBriefCard, BriefCard, ClarifyCard, useDispatchPicker } from "./brief-card";
 import { clearStoredDraft } from "./draft-storage";
 import { Frame, NoteField, RecommendedStar, Titles, answeredAt, useStoredDraft, useSubmit, type FormProps } from "./parts";
+import { briefHeightKey, useHeldHeight } from "./held-height";
 import { RunSummaryBlock } from "./run-summary";
 import { LocaleProvider } from "./locale";
 import { ProviderLogosProvider } from "./provider-logos-source";
@@ -149,49 +150,58 @@ function BriefLoader({ id, source, messageId, threadId }: { id: string; source: 
     // Отвеченному брифу черновик не нужен — отсюда ли ушёл ответ или из другой вкладки.
     if (isAnswered) clearStoredDraft(id);
   }, [id, isAnswered]);
-  switch (state.kind) {
-    case "loading":
-      return <BriefSkeleton />;
-    case "error":
-      return (
-        <div className="my-3 flex items-center gap-2 rounded-lg border border-border bg-card px-3 py-2 text-sm text-muted-foreground">
-          <Icon name="AlertCircle" className="size-4" />
-          <span>{t.legacy.loadFailed}</span>
-          <Button variant="ghost" size="sm" className="ml-auto" onClick={retry}>
-            {t.legacy.retry}
-          </Button>
-        </div>
-      );
-    case "not_found":
-      return <Dashed source={source}>{t.legacy.notFound}</Dashed>;
-    case "found": {
-      const legacy = isLegacyBrief(state.brief);
-      if (state.answer !== null)
-        return legacy ? (
-          <AnsweredBrief brief={state.brief} record={state.answer} />
-        ) : (
-          <AnsweredBriefCard brief={state.brief} record={state.answer} roots={roots} />
+  // Бриф на экране — карточка встала: её высоту запоминает рамка. Ошибка встала не карточкой и держит прежнюю высоту.
+  const { held, frame } = useHeldHeight(briefHeightKey(id), state.kind === "found" || state.kind === "not_found");
+  const content = (): ReactNode => {
+    switch (state.kind) {
+      case "loading":
+        return <BriefSkeleton minHeight={held} />;
+      case "error":
+        return (
+          <div className="my-3 flex items-center gap-2 rounded-lg border border-border bg-card px-3 py-2 text-sm text-muted-foreground" style={held === null ? undefined : { minHeight: held }}>
+            <Icon name="AlertCircle" className="size-4" />
+            <span>{t.legacy.loadFailed}</span>
+            <Button variant="ghost" size="sm" className="ml-auto" onClick={retry}>
+              {t.legacy.retry}
+            </Button>
+          </div>
         );
-      const send = async (draft: Draft) =>
-        rpcRef.current.call("answerBrief", { id, answer: toAnswer(state.brief, draft), messageId, locale, ...attachmentsPayload(id) });
-      const onAccepted = (result: Awaited<ReturnType<typeof send>>) => {
-        if (result.kind === "accepted" || result.kind === "already_answered") clearAttachments(id);
-        if (result.kind === "accepted" || result.kind === "already_answered") answered(result.record);
-        if (result.kind === "not_found") retry();
-      };
-      return (
-        <VoiceProvider transcribe={(input) => voiceRpc.call("transcribeVoice", input)}>
-          {state.brief.kind === "clarify" ? (
-            <ClarifyCard brief={state.brief} send={send} onResult={onAccepted} />
-          ) : legacy ? (
-            <BriefForm brief={state.brief} send={send} onResult={onAccepted} place={place.place} route={place.route} />
+      case "not_found":
+        return <Dashed source={source}>{t.legacy.notFound}</Dashed>;
+      case "found": {
+        const legacy = isLegacyBrief(state.brief);
+        if (state.answer !== null)
+          return legacy ? (
+            <AnsweredBrief brief={state.brief} record={state.answer} />
           ) : (
-            <BriefCard brief={state.brief} send={send} onResult={onAccepted} roots={roots} place={place.place} route={place.route} />
-          )}
-        </VoiceProvider>
-      );
+            <AnsweredBriefCard brief={state.brief} record={state.answer} roots={roots} />
+          );
+        const send = async (draft: Draft) =>
+          rpcRef.current.call("answerBrief", { id, answer: toAnswer(state.brief, draft), messageId, locale, ...attachmentsPayload(id) });
+        const onAccepted = (result: Awaited<ReturnType<typeof send>>) => {
+          if (result.kind === "accepted" || result.kind === "already_answered") clearAttachments(id);
+          if (result.kind === "accepted" || result.kind === "already_answered") answered(result.record);
+          if (result.kind === "not_found") retry();
+        };
+        return (
+          <VoiceProvider transcribe={(input) => voiceRpc.call("transcribeVoice", input)}>
+            {state.brief.kind === "clarify" ? (
+              <ClarifyCard brief={state.brief} send={send} onResult={onAccepted} />
+            ) : legacy ? (
+              <BriefForm brief={state.brief} send={send} onResult={onAccepted} place={place.place} route={place.route} />
+            ) : (
+              <BriefCard brief={state.brief} send={send} onResult={onAccepted} roots={roots} place={place.place} route={place.route} />
+            )}
+          </VoiceProvider>
+        );
+      }
     }
-  }
+  };
+  return (
+    <div ref={frame} data-decision-frame="" style={{ display: "contents" }}>
+      {content()}
+    </div>
+  );
 }
 
 // ——— рамки и состояния ———
@@ -217,10 +227,11 @@ const SKELETON_ROWS: ReadonlyArray<{ cells: number; height: string; className?: 
 /** Номер первой ячейки каждой строки скелетона — от него сдвиг фазы. */
 const SKELETON_OFFSETS = SKELETON_ROWS.map((_, r) => SKELETON_ROWS.slice(0, r).reduce((sum, row) => sum + row.cells, 0));
 
-function BriefSkeleton() {
+/** Скелетон брифа; `minHeight` — высота прошлого показа карточки, см. `held-height.tsx`. */
+function BriefSkeleton({ minHeight }: { minHeight: number | null }) {
   const t = useMessages();
   return (
-    <div role="group" aria-label={t.legacy.loading} aria-busy="true" className="@container my-3 flex flex-col gap-px overflow-hidden rounded-lg">
+    <div role="group" aria-label={t.legacy.loading} aria-busy="true" className="@container my-3 flex flex-col gap-px overflow-hidden rounded-lg" style={minHeight === null ? undefined : { minHeight }}>
       {SKELETON_ROWS.map((row, r) => (
         <div key={r} className={cn("grid gap-px", row.className)}>
           {Array.from({ length: row.cells }, (_, c) => {

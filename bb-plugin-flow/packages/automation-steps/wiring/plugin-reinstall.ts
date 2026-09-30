@@ -7,6 +7,10 @@
 // comparison the merge-time version bump reads, see merge-time-bump.ts) —
 // NOT the range the local `main` happened to advance by in the plugin's own
 // post-merge pull. See docs/decisions/reinstall-from-merged-pr-files.md.
+// Plus the installed plugins that build a shared package the PR changed
+// (core/package-consumers.ts): a package lands in each plugin's bundle, so its
+// fix reaches no one until they are updated too. See
+// docs/decisions/reinstall-reaches-package-consumers.md.
 //
 // Which command: decided in src/core/reinstall-plan.ts from the source bb
 // holds under the id. An update and a fresh install run here and now; a
@@ -22,14 +26,16 @@
 // step must not surface as a failed merge — but it must surface. Each
 // outcome is reported by id; a `problems` entry is what the user sees when a
 // plugin they just changed keeps running the old build.
-import { touchedPluginIds } from "../core/plugin-paths";
+import { changedPackages, touchedPlugins } from "../core/package-consumers";
 import {
   planReinstall,
   reinstallFailureLine,
   type GitTarget,
+  type LocalInstall,
   type PendingRepoint,
 } from "../core/reinstall-plan";
 import type { RepoRef } from "../core/remote";
+import type { PluginImports } from "./plugin-imports";
 
 /**
  * The slice of bb.sdk.plugins this needs; the SDK object fits as is. `version`
@@ -59,6 +65,8 @@ export interface ReinstallReport {
   readonly reinstalled: readonly string[];
   readonly installed: readonly string[];
   readonly repoints: readonly PendingRepoint[];
+  /** Plugins left on the local folder they were installed from (reinstall-plan.ts, "keep-local"). */
+  readonly keptLocal: readonly LocalInstall[];
   readonly problems: readonly string[];
   /** The plugin running this merge, for `applyPendingSelfUpdate` to run last. */
   readonly pendingSelfUpdate: string | null;
@@ -69,23 +77,44 @@ const message = (error: unknown): string => (error instanceof Error ? error.mess
 const installArgs = ({ source, subdirectory }: GitTarget) => ({ source, subdirectory });
 
 /**
+ * No reader of the import graph: a change inside `packages/` reaches no plugin.
+ * Both callers (Flow's steps.ts, Automations' server.ts) pass `pluginImportsOf`;
+ * a new caller that leaves it out silently loses package changes.
+ */
+const noImports = async (): Promise<PluginImports> => ({ ok: true, edges: [] });
+
+/**
  * Runs the planned step for every distinct plugin id the changed paths name,
- * in path order; reports each outcome. Updates and installs happen here;
- * repoints come back pending.
+ * in path order, then for every installed plugin that builds a changed shared
+ * package (core/package-consumers.ts); reports each outcome. Updates and
+ * installs happen here; repoints come back pending. A plugin reached only
+ * through a package is never installed afresh: the PR did not touch it, so
+ * only a plugin bb already holds is brought onto the merged code.
+ *
+ * `readImports` is asked only when a package changed; a failed read is a
+ * problem naming the packages, and the plugins the PR touched directly are
+ * still handled.
  */
 export async function reinstallTouchedPlugins(
   port: PluginsPort,
   changedPaths: readonly string[],
   target: ReinstallTarget,
+  readImports: () => Promise<PluginImports> = noImports,
 ): Promise<ReinstallReport> {
-  const ids = touchedPluginIds(changedPaths);
   const reinstalled: string[] = [];
   const installed: string[] = [];
   const repoints: PendingRepoint[] = [];
+  const keptLocal: LocalInstall[] = [];
   const problems: string[] = [];
   let pendingSelfUpdate: string | null = null;
-  if (ids.length === 0) {
-    return { reinstalled, installed, repoints, problems, pendingSelfUpdate };
+  const packages = changedPackages(changedPaths);
+  const imports = packages.length === 0 ? await noImports() : await readImports();
+  if (!imports.ok) {
+    problems.push(`plugins that build ${packages.map((name) => `packages/${name}`).join(", ")} not found: ${imports.reason}`);
+  }
+  const { direct, viaPackage } = touchedPlugins(changedPaths, imports.ok ? imports.edges : []);
+  if (direct.length === 0 && viaPackage.length === 0) {
+    return { reinstalled, installed, repoints, keptLocal, problems, pendingSelfUpdate };
   }
 
   const held = new Map<string, HeldPlugin>(
@@ -94,7 +123,7 @@ export async function reinstallTouchedPlugins(
       { source: plugin.source, version: plugin.version ?? null },
     ]),
   );
-  for (const pluginId of ids) {
+  for (const pluginId of [...direct, ...viaPackage.filter((id) => held.has(id))]) {
     const holds = held.get(pluginId) ?? null;
     const step = planReinstall({
       pluginId,
@@ -119,6 +148,9 @@ export async function reinstallTouchedPlugins(
         case "repoint":
           repoints.push({ pluginId, from: step.from, ...step.target });
           break;
+        case "keep-local":
+          keptLocal.push({ pluginId, from: step.from });
+          break;
         case "refuse":
           problems.push(step.reason);
           break;
@@ -136,7 +168,7 @@ export async function reinstallTouchedPlugins(
       );
     }
   }
-  return { reinstalled, installed, repoints, problems, pendingSelfUpdate };
+  return { reinstalled, installed, repoints, keptLocal, problems, pendingSelfUpdate };
 }
 
 /**

@@ -84,5 +84,8 @@ export const mergeBaseArgs = (ref: string): readonly string[] => ["merge", "--no
 /** `git diff --name-only --diff-filter=U` — files left unmerged by a conflicted merge. */
 export const conflictedFilesArgs = (): readonly string[] => ["diff", "--name-only", "--diff-filter=U"];
 
+/** `git merge-base --is-ancestor <ref> HEAD` — exits 0 when HEAD already contains `ref`. */
+export const isAncestorArgs = (ref: string): readonly string[] => ["merge-base", "--is-ancestor", ref, "HEAD"];
+
 /** `git merge --abort` — put the branch and the tree back as they were before the merge. */
 export const mergeAbortArgs = (): readonly string[] => ["merge", "--abort"];

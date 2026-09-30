@@ -17,7 +17,7 @@ import { Input } from "../components/ui/input";
 import { BUILTIN_KINDS, BUILTIN_SKILLS, builtinStage, RETRY_LIMITS, stageKindOf, stageSkillOf, STAGE_BUTTON_WIDTH as WIDTH, type BuiltinKind } from "../lib/stage-constants";
 import { cn } from "../lib/utils";
 import type { flowSettingsRpcContract, StageCatalog, StageExecutor, WorkStage } from "../shared/contract";
-import { AddAction, AddAutomation, AddBuiltinAutomation, type AutomationSets, AutomationKindCell, AutomationStepTags } from "./automation-stage";
+import { AddAction, AddBuiltinAutomation, type AutomationSets, AutomationKindCell, AutomationStepTags } from "./automation-stage";
 import { useMessages } from "./locale-context";
 import { ExecutorMark } from "./provider-logos";
 import { KIND_ICONS, SKILL_ICON, stageIcon } from "./stage-icons";
@@ -497,7 +497,6 @@ function AddStage({ catalog, stages }: { catalog: StageCatalog; stages: readonly
         onAdd={(stage) => update((current) => [...current, stage])}
         onChange={(id, change) => update((current) => current.map((stage) => (stage.id === id ? change(stage) : stage)))}
       />
-      <AddAutomation stages={stages} onAdd={(stage) => update((current) => [...current, stage])} />
       <AddAction
         stages={stages}
         onAdd={(stage) => update((current) => [...current, stage])}

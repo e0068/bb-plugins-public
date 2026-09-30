@@ -17,6 +17,12 @@ export interface GitTarget {
   readonly subdirectory: string;
 }
 
+/** A plugin installed from a local folder, named where it was left. */
+export interface LocalInstall {
+  readonly pluginId: string;
+  readonly from: string;
+}
+
 /** A remove-and-install waiting for the user's word; everything the repoint needs. */
 export interface PendingRepoint {
   readonly pluginId: string;
@@ -68,6 +74,12 @@ export type ReinstallStep =
   | { readonly kind: "update-self" }
   /** Nothing under this id — a plain install, nothing to lose. */
   | { readonly kind: "install"; readonly target: GitTarget }
+  /**
+   * The plugin running this merge, installed from a local folder: it can be
+   * neither removed (it runs the merge) nor moved by an update, and the owner
+   * put it there on purpose — so it stays, and the report says so.
+   */
+  | { readonly kind: "keep-local"; readonly from: string }
   /** Another source — remove and install, only with the user's word. */
   | { readonly kind: "repoint"; readonly from: string; readonly target: GitTarget }
   /** Cannot be done from here; the reason is what the user sees. */
@@ -107,6 +119,11 @@ export function repositoryOfSource(source: string): RepoRef | null {
   return parseGithubRemote(url.includes("://") || url.includes("@") ? url : `https://${url}`);
 }
 
+/** A `path:` install — a local folder the owner chose, which git never moves. */
+export function isLocalSource(source: string): boolean {
+  return source.startsWith("path:");
+}
+
 function withoutRef(url: string): string {
   const afterScheme = url.includes("://") ? url.slice(url.indexOf("://") + 3) : url;
   const pathStart = afterScheme.search(/[/:]/);
@@ -120,6 +137,15 @@ function sameRepository(a: RepoRef, b: RepoRef): boolean {
   return a.owner.toLowerCase() === b.owner.toLowerCase() && a.repo.toLowerCase() === b.repo.toLowerCase();
 }
 
+/**
+ * Why the plugin running the merge is not moved off a foreign source: removing
+ * it would leave it uninstalled. Automations, which asks a human about every
+ * other move, says the same about its own local install.
+ */
+export function ownPluginRefusal(pluginId: string, installedSource: string): string {
+  return `${pluginId} is installed from ${installedSource}; removing the plugin that runs this merge would leave it uninstalled — repoint it by hand with bb plugin remove and bb plugin install`;
+}
+
 /** Total: every input names exactly one step. */
 export function planReinstall(input: PlanInput): ReinstallStep {
   const { pluginId, installedSource, repo, baseBranch, ownPluginId } = input;
@@ -129,11 +155,7 @@ export function planReinstall(input: PlanInput): ReinstallStep {
   if (installedRepo !== null && sameRepository(installedRepo, repo)) {
     return pluginId === ownPluginId ? { kind: "update-self" } : { kind: "update" };
   }
-  if (pluginId === ownPluginId) {
-    return {
-      kind: "refuse",
-      reason: `${pluginId} is installed from ${installedSource}; removing the plugin that runs this merge would leave it uninstalled — repoint it by hand with bb plugin remove and bb plugin install`,
-    };
-  }
+  if (pluginId === ownPluginId && isLocalSource(installedSource)) return { kind: "keep-local", from: installedSource };
+  if (pluginId === ownPluginId) return { kind: "refuse", reason: ownPluginRefusal(pluginId, installedSource) };
   return { kind: "repoint", from: installedSource, target };
 }

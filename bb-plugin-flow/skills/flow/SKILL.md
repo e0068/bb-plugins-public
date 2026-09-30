@@ -181,7 +181,7 @@ The owner can answer any question in their own words. A question id does not sta
 }
 ```
 
-The stages in the example are the default flow: questions, criteria, stage selection, task, HTML prototype, demo, spec, plan, implementation, review, testing and a second demo — the brief comes before the run, so questions, criteria and stage selection go together; the owner added the `agent:planner` executor to the plan and `agent:reviewer` to the review. The owner's stages may differ — take them from the instructions for the turn.
+The stages in the example are a full flow: questions, criteria, stage selection, task, HTML prototype, demo, spec, plan, implementation, review, testing and a second demo — the brief comes before the run, so questions, criteria and stage selection go together; the owner added the `agent:planner` executor to the plan and `agent:reviewer` to the review. The owner's stages may differ — take them from the instructions for the turn.
 
 ## Example clarification
 

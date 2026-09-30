@@ -4,9 +4,10 @@
 // мир приходит аргументами: SDK, kv плагина и настройка токена.
 import type { BbPluginApi, PluginKvStorage } from "@get-bb/plugin-sdk";
 
-import { type BaseMode, DEFAULT_BASE_MODE, type ResolvedBase, isBaseMode, resolveBase } from "../core/base-branch";
+import { type BaseMode, DEFAULT_BASE_MODE, type EnvBranches, type ResolvedBase, isBaseMode, resolveBase, stripOriginPrefix } from "../core/base-branch";
 import type { BumpLevel } from "../core/plugin-version-bump";
 import { decodeBase64 } from "../core/base64";
+import { type ParentDelivery, parentDelivery } from "../core/parent-delivery";
 import { type BranchFile, hasRenames, isDeletion, withDeletedPaths } from "../core/changed-files";
 import { configPathFromGitdir, originUrlFromGitConfig, parseGitdirPointer } from "../core/git-config";
 import {
@@ -31,7 +32,7 @@ import { chooseToken } from "../core/token";
 import type { PrPresence } from "../core/visibility";
 import { bbCliClient } from "../wiring/bb-cli-client";
 import { type CreatePrPorts, runCreatePr } from "../wiring/create-pr";
-import { type CatchUpOutcome, runCatchUp } from "../wiring/catch-up";
+import { type CatchUpOutcome, type ParentDeliveryOutcome, runCatchUp, runParentDelivery } from "../wiring/catch-up";
 import { deletedPathsSince } from "../wiring/deleted-paths";
 import { liveAheadCount } from "../wiring/fast-forward";
 import { readExecutablePaths } from "../wiring/file-modes";
@@ -46,6 +47,7 @@ import { waitForMergeability } from "../wiring/mergeability-wait";
 import { askLiveOpenPr, findLiveOpenPr, type OpenPrAnswer } from "../wiring/open-pr-lookup";
 import { readMark, writeMark } from "../wiring/pr-await-store";
 import { bumpVersionsBeforeMerge, type MergeTimeBumpReport } from "../wiring/merge-time-bump";
+import { readPluginImports, type PluginImports } from "../wiring/plugin-imports";
 import { reinstallTouchedPlugins, type PluginsPort, type ReinstallReport } from "../wiring/plugin-reinstall";
 import { type VisibilityPorts, type VisibilityWorkspace, resolveVisibility } from "../wiring/visibility-decision";
 
@@ -193,11 +195,15 @@ export async function gatherAndCreate(
 // fast-forward or, when the branch has commits of its own, by a regular merge
 // (wiring/catch-up.ts). Counts are measured live after the fetch, not taken
 // from `sdk.environments.status`, whose cache can lag behind fresh commits.
+// A child thread based on its parent's branch catches up with that branch as
+// it stands locally: it has no copy on origin to fetch (core/parent-delivery.ts).
 export async function catchUpBranch(sdk: Sdk, kv: PluginKvStorage, threadId: string): Promise<CatchUpOutcome> {
-  const environmentId = await environmentIdOf(sdk, threadId);
+  const thread = await sdk.threads.get({ threadId });
+  const environmentId = thread.environmentId;
   if (!environmentId) throw new Error("The thread has no environment with git.");
   const env = await sdk.environments.get({ environmentId });
-  const base = resolveBase(env, await resolveBaseMode(kv, environmentId));
+  const mode = (await parentDeliveryFor(sdk, thread, env)) === null ? await resolveBaseMode(kv, environmentId) : "local";
+  const base = resolveBase(env, mode);
   if (!base) throw new Error("Could not determine the environment's base branch.");
   if (!env.path) throw new Error("The environment has no working copy on disk.");
   return runCatchUp(gitClient(env.path), base);
@@ -460,6 +466,42 @@ export async function wasHeadAlreadyMerged(
   if (!headSha) return false;
   const mergedSha = await kv.get<string>(mergedHeadKey(environmentId));
   return mergedSha === headSha;
+}
+
+/**
+ * Where a child thread's work goes when its base is its parent's branch;
+ * `null` for every other thread. A parent thread bb no longer knows (deleted)
+ * reads as no parent: the thread then goes the usual way, and that way names
+ * its own failure.
+ */
+export async function parentDeliveryOf(sdk: Sdk, threadId: string): Promise<ParentDelivery | null> {
+  const thread = await sdk.threads.get({ threadId });
+  if (!thread.parentThreadId || !thread.environmentId) return null;
+  return parentDeliveryFor(sdk, thread, await sdk.environments.get({ environmentId: thread.environmentId }));
+}
+
+/** The same answer for a caller that has already read the thread and its environment. */
+async function parentDeliveryFor(
+  sdk: Sdk,
+  thread: { parentThreadId: string | null; environmentId: string | null },
+  env: EnvBranches & { branchName: string | null },
+): Promise<ParentDelivery | null> {
+  if (!thread.parentThreadId) return null;
+  const parentThread = await sdk.threads.get({ threadId: thread.parentThreadId }).catch(() => null);
+  if (!parentThread?.environmentId || parentThread.environmentId === thread.environmentId) return null;
+  const parentEnv = await sdk.environments.get({ environmentId: parentThread.environmentId });
+  const defaultBranch = env.defaultBranch ?? env.baseBranch;
+  return parentDelivery({
+    base: resolveBase(env, "local")?.githubBase ?? null,
+    defaultBranch: defaultBranch === null ? null : stripOriginPrefix(defaultBranch),
+    branch: env.branchName,
+    parent: { branchName: parentEnv.branchName, path: parentEnv.path },
+  });
+}
+
+/** Merge the child thread's branch into the parent's working copy (wiring/catch-up.ts). */
+export function deliverIntoParent(delivery: ParentDelivery): Promise<ParentDeliveryOutcome> {
+  return runParentDelivery(gitClient(delivery.parentPath), delivery);
 }
 
 export async function environmentIdOf(sdk: Sdk, threadId: string): Promise<string | null> {
@@ -792,6 +834,9 @@ export async function settleVersionsForMerge(
  * not a comparison of the base with the head, because a repository that
  * deletes head branches on merge leaves no head to compare with.
  *
+ * A PR that changed a shared package reaches the plugins that build it too:
+ * `readImports` gives the import graph (see `pluginImportsOf`).
+ *
  * The plugin running the chain is never updated here: bb drops its API handle
  * as it updates, which would cut the chain mid-run. It comes back as
  * `pendingSelfUpdate` for the caller to apply once everything else is done.
@@ -800,11 +845,13 @@ export async function reinstallAfterMerge(
   gh: GithubBranches,
   plugins: PluginsPort,
   ownPluginId: string,
+  readImports?: () => Promise<PluginImports>,
 ): Promise<ReinstallReport & { unavailable: string | null }> {
   const nothing = (unavailable: string | null): ReinstallReport & { unavailable: string | null } => ({
     reinstalled: [],
     installed: [],
     repoints: [],
+    keptLocal: [],
     problems: [],
     pendingSelfUpdate: null,
     unavailable,
@@ -827,13 +874,30 @@ export async function reinstallAfterMerge(
 
     const merged = await mergedPullRequestFiles(gh.ports, gh.repo, gh.headBranch, gh.baseBranch);
     if (!merged.ok) return nothing(merged.reason);
-    const report = await reinstallTouchedPlugins(plugins, merged.paths, {
-      repo: gh.repo,
-      baseBranch: gh.baseBranch,
-      ownPluginId,
-    });
+    const report = await reinstallTouchedPlugins(
+      plugins,
+      merged.paths,
+      { repo: gh.repo, baseBranch: gh.baseBranch, ownPluginId },
+      readImports,
+    );
     return { ...report, unavailable: null };
   } catch (error) {
     return nothing(messageOf(error));
+  }
+}
+
+/**
+ * Which shared packages the plugins import, read in the thread's own working
+ * copy (wiring/plugin-imports.ts): the step that updates plugins after a merge
+ * needs it to reach the plugins that build a changed package. The working
+ * copy holds the merged branch, so its imports are the ones that shipped.
+ */
+export async function pluginImportsOf(sdk: Sdk, environmentId: string | null): Promise<PluginImports> {
+  if (!environmentId) return { ok: false, reason: "the thread has no environment" };
+  try {
+    const env = await sdk.environments.get({ environmentId });
+    return env.path ? await readPluginImports(gitClient(env.path)) : { ok: false, reason: "the environment has no working copy" };
+  } catch (error) {
+    return { ok: false, reason: messageOf(error) };
   }
 }

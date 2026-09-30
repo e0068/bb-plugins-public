@@ -13,6 +13,7 @@ import { Icon } from "../components/ui/icon";
 import { cn } from "../lib/utils";
 import type { FrozenRun, ProgressStage, RunSummaryView, progressRpcContract } from "../shared/contract";
 import { AutomationSteps, Row, money, useRunRoots } from "./progress-banner";
+import { summaryHeightKey, useHeldHeight } from "./held-height";
 import { useMessages } from "./locale-context";
 
 const POLL_MS = 5000;
@@ -163,20 +164,30 @@ function RunBar({ view, threadId, stagesOpen }: { view: FrozenRun; threadId: str
 }
 
 /**
- * Итог этого брифа: замороженная запись, а не текущий прогресс. Она не
- * меняется, поэтому опрашивать нечего — один запрос, и дальше блок живёт сам.
- * Пока прогон не завершился, ответ пустой, и блока нет.
+ * Итог этого брифа: замороженная запись, а не текущий прогресс. Пока прогон не
+ * завершился, ответ пустой, и блока нет; найденный итог больше не меняется, и
+ * опрос на нём останавливается. `known` — первый ответ сервера пришёл: итог
+ * есть, его нет или запрос не удался.
  */
-function useFrozenRun(briefId: string): FrozenRun | null {
+function useFrozenRun(briefId: string): { run: FrozenRun | null; known: boolean } {
   const rpc = useRpc<typeof progressRpcContract>();
   const rpcRef = useRef(rpc);
   rpcRef.current = rpc;
   const [run, setRun] = useState<FrozenRun | null>(null);
+  const [known, setKnown] = useState(false);
   useEffect(() => {
     // Найденный итог больше не меняется: опрос идёт, только пока прогон не закрылся.
     if (run !== null) return;
     let alive = true;
-    const pull = () => rpcRef.current.call("getRunSummary", { briefId }).then((next) => alive && next !== null && setRun(next), () => undefined);
+    const pull = () =>
+      rpcRef.current.call("getRunSummary", { briefId }).then(
+        (next) => {
+          if (!alive) return;
+          setKnown(true);
+          if (next !== null) setRun(next);
+        },
+        () => alive && setKnown(true),
+      );
     void pull();
     const timer = setInterval(() => void pull(), POLL_MS);
     return () => {
@@ -184,7 +195,7 @@ function useFrozenRun(briefId: string): FrozenRun | null {
       clearInterval(timer);
     };
   }, [briefId, run]);
-  return run;
+  return { run, known };
 }
 
 /**
@@ -192,9 +203,19 @@ function useFrozenRun(briefId: string): FrozenRun | null {
  * назвал сервер: брифов у треда много, а итог у прогона один.
  */
 export function RunSummaryBlock({ briefId }: { briefId: string }) {
+  const { run, known } = useFrozenRun(briefId);
+  const { held, frame } = useHeldHeight(summaryHeightKey(briefId), run !== null);
+  // Пока сервер не ответил, итог прошлого показа держит место заглушкой с теми же полями — см. `held-height.tsx`.
+  const placeholder = !known && held !== null ? <div data-run-summary-placeholder="" aria-hidden="true" className="my-3" style={{ minHeight: held }} /> : null;
+  return (
+    <div ref={frame} style={{ display: "contents" }}>
+      {run === null ? placeholder : <RunSummary view={run} />}
+    </div>
+  );
+}
+
+function RunSummary({ view }: { view: FrozenRun }) {
   const t = useMessages();
-  const view = useFrozenRun(briefId);
-  if (view === null) return null;
   const summary = view.summary;
   return (
     <div data-run-summary role="group" aria-label={t.summary.label} className="@container my-3 flex flex-col gap-2 text-xs">
