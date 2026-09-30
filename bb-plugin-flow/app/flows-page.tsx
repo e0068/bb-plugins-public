@@ -55,7 +55,7 @@ function FlowName({ flow }: { flow: Flow }) {
   );
 }
 
-/** Описание «когда выбирать» под названием: сохраняется по уходу фокуса и уходит в корневой навык, по которому агент выбирает flow. */
+/** Описание «когда выбирать» под названием: сохраняется по уходу фокуса и уходит в правило выбора flow, по которому агент выбирает flow треду с «Автоматически». */
 function FlowDescription({ flow }: { flow: Flow }) {
   const t = useMessages();
   const [description, setDescription] = useState<string | null>(null);

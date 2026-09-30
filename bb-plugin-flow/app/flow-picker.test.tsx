@@ -7,8 +7,11 @@ import { NO_FLOW } from "../core/flows";
 import type { flowPickerRpcContract } from "../shared/contract";
 
 const app = await loadPluginApp(() => import("../app"));
+// Модуль с SDK — только после загрузки приложения, иначе SDK поднимется раньше харнесса.
+const { forgetShownFlowChoices } = await import("./flow-picker");
 
 afterEach(cleanup);
+afterEach(forgetShownFlowChoices);
 
 const customization = () => app.composerCustomizations.find((c) => c.id === "flow")!;
 const choice = { flows: [{ id: "default", name: "Default" }, { id: "quick", name: "Quick" }], selected: "default" };
@@ -69,5 +72,38 @@ describe("кнопка flow в композере", () => {
     const trigger = await slot.findByRole("button", { name: "Без flow" });
     expect(trigger.textContent).toBe("");
     expect(trigger.querySelector("svg")).toBeTruthy();
+  });
+});
+
+// bb монтирует кнопку заново на каждой смене проекта в композере Home. Пустая до
+// ответа сервера, она на кадр-два пропадала, и панель композера прыгала вбок.
+describe("перемонтирование кнопки flow", () => {
+  const mount = (projectId: string, getFlowChoice: () => unknown) =>
+    renderSlot<object, typeof flowPickerRpcContract>(customization().actions![0]!, {}, {
+      rpc: { getFlowChoice, setFlowChoice: (input: { flowId: string }) => ({ selected: input.flowId }) } as never,
+      composer: { scope: { kind: "new-thread", projectId } },
+      settings: { language: "Русский" },
+    });
+  const silent = () => new Promise<never>(() => {});
+
+  it("в знакомом проекте кнопка сразу стоит с его выбором, не дожидаясь сервера", async () => {
+    const first = mount("proj_seen", () => ({ ...choice, selected: "quick" }));
+    await first.findByRole("button", { name: "Flow: Quick" });
+    first.unmount();
+
+    const second = mount("proj_seen", silent);
+    expect(second.getByRole("button", { name: "Flow: Quick" })).toBeTruthy();
+  });
+
+  it("в незнакомом проекте кнопка стоит с последним показанным выбором, пока сервер не ответил", async () => {
+    const first = mount("proj_before", () => ({ ...choice, selected: "quick" }));
+    await first.findByRole("button", { name: "Flow: Quick" });
+    first.unmount();
+
+    let answer: (value: typeof choice) => void = () => {};
+    const second = mount("proj_new", () => new Promise((resolve) => (answer = resolve)));
+    expect(second.getByRole("button", { name: "Flow: Quick" })).toBeTruthy();
+    answer({ ...choice, selected: "default" });
+    expect(await second.findByRole("button", { name: "Flow: Default" })).toBeTruthy();
   });
 });

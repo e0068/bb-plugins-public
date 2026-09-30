@@ -18,6 +18,7 @@ import { AUTOMATION_NOTICE_CHANNEL } from "./core/automation-notice";
 import { registerCommands } from "./server/command";
 import { createJournalDirStore } from "./server/dir-settings";
 import { registerJournalSettingsApi } from "./server/journal-settings-api";
+import { createJournalIndex } from "./server/journal-index";
 import { writeDecision } from "./server/journal-writer";
 import { acrossThreads, readClaudeTranscript, readPlanning, readWindowCost, readWindowMinutes, withDescendants } from "./server/planning";
 import { type ContextSettingValues, contextFillOf, contextSettings } from "./server/context";
@@ -26,21 +27,23 @@ import { registerFlowPickerApi } from "./server/flow-picker-api";
 import { registerNextRun } from "./server/next-run";
 import { createOwnSends } from "./server/own-sends";
 import { createFlowSettings } from "./server/flow-settings";
-import { writeRootSkill } from "./server/root-skill-writer";
 import { registerFlowTools } from "./server/flow-tools";
+import { createLegacyHeal } from "./server/legacy-heal";
 import { registerFlowSettingsApi } from "./server/settings-api";
-import { hostCatalogSources, hostRootSkillSources, hostSkillFileSources, readRootSkill, readSkillFile, readStageCatalog } from "./server/stage-catalog";
+import { hostCatalogSources, hostSkillFileSources, readSkillFile, readStageCatalog } from "./server/stage-catalog";
 import { revealInFinderHere } from "@bb-plugins/reveal-in-finder/index";
 import { createStore } from "./server/store";
 import { createThreadFlows } from "./server/thread-flows";
 import { registerVoiceApi } from "./server/voice";
-import { flowOrNone, NO_FLOW, stageSettingsOf } from "./core/flows";
+import { AUTO_FLOW, flowOrNone, NO_FLOW, stageSettingsOf } from "./core/flows";
 import { CHOOSE_FLOW_RULE } from "./core/stages";
-import { CHOOSE_FLOW_TOOL, ROOT_SKILL } from "./lib/stage-constants";
+import { CHOOSE_FLOW_TOOL } from "./lib/stage-constants";
 import { LANGUAGE_OPTIONS, LANGUAGE_SETTING, LANGUAGE_SYSTEM, resolveLocale } from "./lib/i18n";
 import { messages } from "./lib/messages";
 import { isRunFinished } from "./core/run-summary";
 import { liveFlowId } from "./core/run-history";
+import { runJournal } from "./core/run-journal";
+import { DEFAULT_JOURNAL_DIR } from "./lib/journal-dir";
 
 /** Время в base36 спереди — идентификаторы сортируются по созданию. */
 const newId = (): string => `${Date.now().toString(36)}${randomBytes(6).toString("hex")}`;
@@ -61,9 +64,7 @@ export default async function plugin(bb: BbPluginApi): Promise<void> {
   storedContext = await settings.get();
   settings.onChange((next) => { storedContext = next; });
   const store = createStore(bb.storage.kv);
-  // Корневой навык пишется из flow при каждом сохранении и при запуске: описания правятся на странице Flow, а навык читает агент.
-  const flows = await createFlowSettings(bb.storage.kv, { onSave: (saved) => writeRootSkill(saved.flows) });
-  await writeRootSkill(flows.current().flows).catch(() => undefined);
+  const flows = await createFlowSettings(bb.storage.kv);
   const threads = await createThreadFlows(bb.storage.kv);
   bb.events.on("thread.created", threads.onThreadCreated);
   bb.events.on("thread.deleted", threads.onThreadDeleted);
@@ -97,21 +98,23 @@ export default async function plugin(bb: BbPluginApi): Promise<void> {
       void freezeFinished(threadId).catch(() => undefined);
     },
     handedTo: async (briefId) => (await store.getAnswer(briefId))?.handoffThreadId });
+  // Реплика Flow в тред встаёт в очередь и не перебивает идущий ход; хук следующего прогона её не придерживает.
+  const send = async (threadId: string, text: string) => {
+    own.mark(threadId, text);
+    await bb.sdk.threads.send({ threadId, mode: "queue-if-active", input: [{ type: "text", text, mentions: [] }] });
+  };
   const runner = createAutomationRunner({
     progress,
     store,
     stages: stagesOf,
     // Своей настройки токена у Flow нет: шаги берут токен у `gh auth token` на машине bb.
-    steps: createSteps({ sdk: bb.sdk, kv: bb.storage.kv, settings: { get: async () => ({ githubToken: undefined }) }, plugins: bb.sdk.plugins, ownPluginId: OWN_PLUGIN_ID }),
+    steps: createSteps({ sdk: bb.sdk, kv: bb.storage.kv, settings: { get: async () => ({ githubToken: undefined }) }, plugins: bb.sdk.plugins, ownPluginId: OWN_PLUGIN_ID, tell: send }),
     external: externalStep(automations.run),
     script: scriptStep(bb.sdk),
     thread,
     providers,
-    // Доигранный прогон Flow пускает работу дальше: реплика встаёт в очередь и не перебивает идущий ход. Текст собирает исполнитель — в нём простой по этапам.
-    wake: async (threadId, text) => {
-      own.mark(threadId, text);
-      await bb.sdk.threads.send({ threadId, mode: "queue-if-active", input: [{ type: "text", text, mentions: [] }] });
-    },
+    // Доигранный прогон Flow пускает работу дальше. Текст собирает исполнитель — в нём простой по этапам.
+    wake: send,
     kv: bb.storage.kv,
     plugins: bb.sdk.plugins,
     now,
@@ -147,12 +150,25 @@ export default async function plugin(bb: BbPluginApi): Promise<void> {
       }),
     () => undefined,
   );
-  // Выбор агентом предлагается только треду, где «без flow» выбрал владелец; тред, где так решил агент, его больше не получает.
-  const chooseFlow = (threadId: string) =>
-    flows.current().agentChoosesFlow === true && threads.flowOf(threadId) === NO_FLOW ? CHOOSE_FLOW_RULE(ROOT_SKILL, CHOOSE_FLOW_TOOL, NO_FLOW) : null;
+  // Выбор агентом предлагается только треду, где владелец выбрал «Автоматически»: выбрав flow или отказ от него, агент его больше не получает.
+  const chooseFlow = (threadId: string) => (threads.flowOf(threadId) === AUTO_FLOW ? CHOOSE_FLOW_RULE(flows.current().flows, CHOOSE_FLOW_TOOL, NO_FLOW) : null);
   registerAskTool(bb, store, { newId, now, stages: stagesOf, flowName: flowNameOf, hasFlow: (threadId) => flowOf(threadId) !== null, chooseFlow, emit, planning: (threadId) => readPlanning(bb.sdk, threadId, Date.now(), readClaudeTranscript()), progress });
   const journalDirs = createJournalDirStore(bb.storage.kv);
-  registerApi(bb, store, { now, emit, writeDecision: (args) => writeDecision(bb, journalDirs, args), progress, ownSend: own.mark });
+  // Каждый ответ на бриф запоминается за тредом вместе с путём файла журнала: по нему итог прогона ссылается на журнал.
+  const journalIndex = createJournalIndex(bb.storage.kv, store);
+  const writeAndIndex = async (args: Parameters<typeof writeDecision>[2]) => {
+    const written = await writeDecision(bb, journalDirs, args);
+    const { id: briefId, title, threadId } = args.brief;
+    await journalIndex.record(threadId, { briefId, title, answeredAt: args.decidedAt, path: written.kind === "written" ? written.path : null });
+    return written;
+  };
+  /** Каталог журнала проекта треда — для имён файлов, записанных до того, как путь стали запоминать. */
+  const journalDirOf = async (threadId: string): Promise<string> => {
+    const { projectId } = await bb.sdk.threads.get({ threadId });
+    const configured = await journalDirs.get(projectId);
+    return configured.kind === "configured" ? configured.path : DEFAULT_JOURNAL_DIR;
+  };
+  registerApi(bb, store, { now, emit, writeDecision: writeAndIndex, progress, ownSend: own.mark });
   // Удалённый тред не ждёт владельца и не показывает прогресс: записи и его указатель снимаются, иначе значок висел бы
   // в левой панели. Архивированный тред и тред, отдавший работу, ключей не теряют — их ещё откроют.
   bb.events.on("thread.deleted", ({ thread }) => {
@@ -179,12 +195,28 @@ export default async function plugin(bb: BbPluginApi): Promise<void> {
       return flow === null ? undefined : { id: flow.id, name: flow.name };
     },
     liveFlowId: (id, name) => liveFlowId(flows.current().flows, id, name),
+    // Каталог проекта нужен только ответам без запомненного пути: у остальных путь уже есть.
+    journal: async (threadId, window) => {
+      const entries = await journalIndex.entries(threadId);
+      const dir = entries.some(({ path }) => path === undefined) ? await journalDirOf(threadId) : DEFAULT_JOURNAL_DIR;
+      return runJournal(entries, window, dir);
+    },
   }));
   registerCommands(bb, { newId, now, readBrief: (id) => store.getBrief(id) });
-  const catalog = () => readStageCatalog(hostCatalogSources(bb));
+  // Каждое чтение каталога, пока разовая чистка не прошла, сверяет с ним этапы прежнего flow по умолчанию; первое — сразу при запуске.
+  // Поэтому read_flows, save_flow и страница читают каталог раньше коллекции: так они видят её уже вылеченной.
+  const heal = createLegacyHeal(bb.storage.kv, flows);
+  const catalog = async () => {
+    const read = await readStageCatalog(hostCatalogSources(bb));
+    await heal.run(read).catch((error) => bb.log.warn(`flows: legacy stages were not cleaned (${error instanceof Error ? error.message : String(error)})`));
+    return read;
+  };
+  void catalog();
   registerFlowTools(bb, flows, { catalog, newId });
   registerChooseFlow(bb, { flows, threads, instructions: (threadId) => flowTurnInstructions(stagesOf(threadId).stages) });
-  registerFlowSettingsApi(bb, flows, { catalog, rootSkill: () => readRootSkill(hostRootSkillSources(bb)),
+  registerFlowSettingsApi(bb, flows, { catalog, ready: async () => {
+    if (!heal.done()) await catalog();
+  },
     skillFile: (name) => readSkillFile(hostSkillFileSources(bb), name),
     reveal: revealInFinderHere,
   });

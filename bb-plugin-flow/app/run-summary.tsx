@@ -11,7 +11,9 @@ import { runTasks, taskRoute, type RunTask } from "../core/run-tasks";
 import { stageLabel } from "../core/stages";
 import { Icon } from "../components/ui/icon";
 import { cn } from "../lib/utils";
+import type { FileRoots } from "../core/result-link";
 import type { FrozenRun, ProgressStage, RunSummaryView, progressRpcContract } from "../shared/contract";
+import { ResultAnchor } from "./cells";
 import { AutomationSteps, Row, money, useRunRoots } from "./progress-banner";
 import { summaryHeightKey, useHeldHeight } from "./held-height";
 import { useMessages } from "./locale-context";
@@ -67,8 +69,23 @@ function TaskLinks({ tasks }: { tasks: readonly RunTask[] }) {
   );
 }
 
-/** Плитки итога: кто вёл прогон, сколько времени он занял, во что обошёлся и над какими задачами шёл. */
-function Tiles({ view, open, toggle }: { view: FrozenRun; open: boolean; toggle: () => void }) {
+/** Файлы журнала прогона ссылками bb на дерево треда, подписанные именем файла. */
+function JournalLinks({ journal, roots }: { journal: readonly string[]; roots: FileRoots | null }) {
+  const t = useMessages();
+  if (journal.length === 0) return <span className="text-[11px] text-muted-foreground">{t.summary.noJournal}</span>;
+  return (
+    <div className="flex min-w-0 flex-col gap-0.5">
+      {journal.map((path) => (
+        <ResultAnchor key={path} target={path} roots={roots} className="min-w-0 truncate text-left text-[12px] hover:underline">
+          {path.slice(path.lastIndexOf("/") + 1)}
+        </ResultAnchor>
+      ))}
+    </div>
+  );
+}
+
+/** Плитки итога: кто вёл прогон, сколько времени он занял, во что обошёлся, над какими задачами шёл и какой журнал оставил. */
+function Tiles({ view, roots, open, toggle }: { view: FrozenRun; roots: FileRoots | null; open: boolean; toggle: () => void }) {
   const t = useMessages();
   const { summary, planned } = view;
   const agents = summary.executors.filter((e) => e.kind !== "workflow").length;
@@ -90,6 +107,14 @@ function Tiles({ view, open, toggle }: { view: FrozenRun; open: boolean; toggle:
       <Tile title={t.summary.tasks}>
         <TaskLinks tasks={runTasks(view.stages)} />
       </Tile>
+      {view.journal !== undefined && (
+        // Имена файлов журнала длинные: плитка идёт во всю ширину под остальными.
+        <div className="col-span-full">
+          <Tile title={t.summary.journal}>
+            <JournalLinks journal={view.journal} roots={roots} />
+          </Tile>
+        </div>
+      )}
     </div>
   );
 }
@@ -117,10 +142,9 @@ function Executors({ summary }: { summary: RunSummaryView }) {
  * В ленте треда этапы листаются в рамке в полэкрана, чтобы не растягивать ленту; в истории (`stagesOpen`)
  * страницу листает её корень, и этапы стоят целиком — вторая прокрутка внутри первой только мешала.
  */
-function RunBar({ view, threadId, stagesOpen }: { view: FrozenRun; threadId: string; stagesOpen: boolean }) {
+function RunBar({ view, threadId, roots, stagesOpen }: { view: FrozenRun; threadId: string; roots: FileRoots | null; stagesOpen: boolean }) {
   const t = useMessages();
   const [open, setOpen] = useState(stagesOpen);
-  const roots = useRunRoots(threadId, view.environmentId ?? null);
   const last = view.stages[view.stages.length - 1]!;
   return (
     <div className="overflow-hidden rounded-lg border border-border bg-surface-recessed-solid text-xs">
@@ -243,11 +267,12 @@ export const runWindow = (t: ReturnType<typeof useMessages>, summary: RunSummary
  */
 export function RunSummaryBody({ view, stagesOpen = false }: { view: FrozenRun; stagesOpen?: boolean }) {
   const [open, setOpen] = useState(false);
+  const roots = useRunRoots(view.threadId, view.environmentId ?? null);
   return (
     <div data-run-summary-body className="@container flex flex-col gap-2 text-xs">
-      <Tiles view={view} open={open} toggle={() => setOpen((value) => !value)} />
+      <Tiles view={view} roots={roots} open={open} toggle={() => setOpen((value) => !value)} />
       {open && <Executors summary={view.summary} />}
-      <RunBar view={view} threadId={view.threadId} stagesOpen={stagesOpen} />
+      <RunBar view={view} threadId={view.threadId} roots={roots} stagesOpen={stagesOpen} />
     </div>
   );
 }

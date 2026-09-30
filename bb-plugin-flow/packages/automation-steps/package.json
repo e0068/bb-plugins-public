@@ -1,6 +1,6 @@
 {
   "name": "@bb-plugins/automation-steps",
-  "version": "0.1.13",
+  "version": "0.1.15",
   "type": "module",
   "private": true,
   "main": "./index.ts",

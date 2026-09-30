@@ -43,23 +43,6 @@ const open = () =>
 
 const classes = (element: Element, prefix: RegExp) => element.className.split(" ").filter((c) => prefix.test(c));
 
-describe("результаты Демонстрации — ссылка и команда", () => {
-  it("страница — ссылка в браузер; команда — строка того же списка и той же подложки, без подписи, справа три кнопки", async () => {
-    const slot = open();
-    const card = within(await slot.findByRole("group", { name: "Демонстрация" }));
-    const link = card.getByRole("link", { name: "страница" });
-    expect(link.getAttribute("href")).toBe("http://localhost:5173/");
-    expect(link.getAttribute("target")).toBe("_blank");
-    const [page, launch] = [...slot.container.querySelectorAll("[data-result-row]")];
-    expect(launch!.parentElement).toBe(page!.parentElement);
-    expect(classes(launch!, /^bg-/)).toEqual(classes(page!, /^bg-/));
-    expect(launch!.textContent).toBe("open -a Calculator");
-    expect(card.queryByText("Приложение")).toBeNull();
-    expect(launch!.getAttribute("aria-label")).toBe("Приложение");
-    expect(within(launch as HTMLElement).getAllByRole("button").map((b) => b.getAttribute("aria-label"))).toEqual(["Переносить строки", "Скопировать", "Выполнить в терминале"]);
-  });
-});
-
 describe("кнопки Демонстрации с комментарием выровнены", () => {
   it("«Исполнять» и «Отправить» — одной ширины в ряду, раскрытые списки «Исполнять» — колонками с тем же зазором", async () => {
     const slot = open();

@@ -150,9 +150,16 @@ export const checkerSchema = z
 
 // ——— этапы работ ———
 
+/** Откуда агент: свой, из `.claude/agents` проекта bb или из плагина Claude Code. У записей до групп меню поля нет — агент свой. */
+export const executorOriginSchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("own") }),
+  z.object({ kind: z.literal("project"), project: text }),
+  z.object({ kind: z.literal("plugin"), plugin: text }),
+]);
+
 /** Исполнитель этапа из настроек: агент или workflow. Подписи хранятся вместе с id, чтобы снимок в брифе не зависел от файлов агентов. */
 export const stageExecutorSchema = z.object({
-  /** `agent:<name>` или `workflow:<name>`. */
+  /** `agent:<name>` или `workflow:<name>`; у агента Codex — `agent:codex/<name>`. */
   id: text,
   kind: z.enum(["agent", "workflow"]),
   name: text,
@@ -160,6 +167,7 @@ export const stageExecutorSchema = z.object({
   /** Поставщик агента — по нему виджет берёт иконку. */
   provider: z.string().optional(),
   description: z.string().optional(),
+  origin: executorOriginSchema.optional(),
 });
 
 /**
@@ -208,21 +216,19 @@ export const stageSettingsSchema = z
 
 /** Flow — именованная таблица этапов. Тред идёт по одному flow: из него инструкции агенту и проверка брифа. */
 export const flowSchema = z
-  // `description` — когда выбирать этот flow: из описаний Flow пишет корневой навык, по которому агент выбирает flow сам.
+  // `description` — когда выбирать этот flow: по описаниям агент выбирает flow треду, где в композере выбрано «Автоматически».
   .object({ id: text, name: text, description: z.string().optional(), stages: z.array(workStageSchema) })
   .superRefine((f, ctx) => {
     if (!uniqueIds(f.stages)) ctx.addIssue({ code: "custom", message: "stage ids must be unique within a flow", path: ["stages"] });
   });
 
 /**
- * Все flow владельца; первый — flow по умолчанию. Ширина кнопки этапа общая на все flow. `agentChoosesFlow` — тред, где
- * выбрано «без flow», получает flow от агента по корневому навыку. `version: 2` — flow перенесены на виды этапов.
+ * Все flow владельца; первый — flow по умолчанию. Ширина кнопки этапа общая на все flow. `version: 2` — flow перенесены на виды этапов.
  */
 export const flowSettingsSchema = z
   .object({
     flows: z.array(flowSchema).min(1),
     minButtonWidth: stageSettingsSchema.shape.minButtonWidth,
-    agentChoosesFlow: z.boolean().optional(),
     /** Автоповтор упавшего шага автоматизации: через сколько секунд (0 или нет поля — не повторять) и сколько раз подряд (0 — без ограничения). */
     retryInSeconds: z.number().int().min(0).max(RETRY_LIMITS.seconds).optional(),
     retryAttempts: z.number().int().min(0).max(RETRY_LIMITS.attempts).optional(),
@@ -693,23 +699,29 @@ export const outcomeRpcContract = defineRpcContract({
   },
 });
 
+/** Откуда навык: свой, проекта или плагина — плагина bb без провайдера, плагина Claude Code или Codex с ним. Нет поля — навык свой. */
+export const skillOriginSchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("own") }),
+  z.object({ kind: z.literal("project") }),
+  z.object({ kind: z.literal("plugin"), plugin: text, provider: z.string().optional() }),
+]);
+
 /** Навыки и исполнители, из которых владелец собирает этапы в настройках. */
 export const stageCatalogSchema = z.object({
-  skills: z.array(z.object({ name: text, description: z.string().optional() })),
+  skills: z.array(z.object({ name: text, description: z.string().optional(), origin: skillOriginSchema.optional() })),
   executors: z.array(stageExecutorSchema),
 });
 
-/** Где лежит корневой навык flow: хост и абсолютный путь файла; нет навыка или хоста — `null`. */
-export const rootSkillSchema = z.object({ hostId: z.string(), path: z.string() }).nullable();
+/** Где лежит файл навыка: хост и абсолютный путь; нет навыка или хоста — `null`. */
+export const skillFileSchema = z.object({ hostId: z.string(), path: z.string() }).nullable();
 
 /** Страница Flow — своим контрактом: брифу он не нужен. */
 export const flowSettingsRpcContract = defineRpcContract({
   getFlowSettings: { input: z.object({}), output: flowSettingsSchema },
   saveFlowSettings: { input: flowSettingsSchema, output: flowSettingsSchema },
   getStageCatalog: { input: z.object({}), output: stageCatalogSchema },
-  getRootSkill: { input: z.object({}), output: rootSkillSchema },
   /** Файл навыка по имени — для кнопки «Открыть навык»; `null` — не найден. */
-  getSkillFile: { input: z.object({ name: z.string() }), output: rootSkillSchema },
+  getSkillFile: { input: z.object({ name: z.string() }), output: skillFileSchema },
   /** Показать файл навыка в файловой системе машины сервера bb; путь сервер находит сам по имени. */
   revealSkill: { input: z.object({ name: z.string() }), output: z.object({ revealed: z.boolean(), error: z.string().nullable() }) },
 });
@@ -751,6 +763,11 @@ export const stageTrackSchema = z.object({
   idleSince: z.string().optional(),
   skipped: z.boolean().optional(),
   executor: z.string().optional(),
+  /**
+   * Прошлые проходы этапа, сброшенные доработкой: доллары, минуты работы — те же, что в строке баннера, — стенные минуты
+   * и начало первого прохода (ISO). Повторный проход складывается с ними, а не затирает.
+   */
+  earlier: z.object({ cost: z.number().nonnegative(), minutes: z.number().int().nonnegative(), wall: z.number().int().nonnegative(), from: z.string() }).optional(),
   /**
    * Прогон этапа: шаги снимком, номер текущего шага, ошибка упавшего (`null` —
    * не падал), `busy` — шаг Action сейчас исполняется, и `failures` — история
@@ -903,6 +920,8 @@ export const frozenRunSchema = z.object({
   /** Id flow прогона: по нему название в истории ведёт на страницу flow. Итоги, замороженные раньше, его не несут. */
   flowId: z.string().optional(),
   environmentId: z.string().nullable(),
+  /** Файлы журнала, которые прогон оставил в дереве треда, — пути от его корня, по порядку ответов; поля нет — журнал не прочитался. */
+  journal: z.array(z.string()).optional(),
 });
 
 /**
@@ -1040,9 +1059,11 @@ export type FlowSettings = z.output<typeof flowSettingsSchema>;
 export type StageReport = z.output<typeof stageReportSchema>;
 export type StageAnswer = z.output<typeof stageAnswerSchema>;
 export type StageCatalog = z.output<typeof stageCatalogSchema>;
+export type SkillOrigin = z.output<typeof skillOriginSchema>;
+export type ExecutorOrigin = z.output<typeof executorOriginSchema>;
 export type StageDraft = z.output<typeof stageDraftSchema>;
 export type FlowDraft = z.output<typeof flowDraftSchema>;
-export type RootSkill = z.output<typeof rootSkillSchema>;
+export type SkillFile = z.output<typeof skillFileSchema>;
 export type DispatchPlace = z.output<typeof dispatchPlaceSchema>;
 export type DispatchRoute = z.output<typeof dispatchRouteSchema>;
 export type RouteTree = z.output<typeof routeTreeSchema>;

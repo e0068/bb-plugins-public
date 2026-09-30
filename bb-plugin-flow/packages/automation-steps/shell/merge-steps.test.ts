@@ -221,3 +221,51 @@ describe("reinstallAfterMerge", () => {
     expect(updated).toEqual([]);
   });
 });
+
+describe("settleVersionsForMerge — ченж-лог", () => {
+  it("the day given reaches the plugin's changelog entry together with the version", async () => {
+    const { gh, calls } = pull({
+      changedPaths: ["bb-plugin-x/app.tsx", "bb-plugin-x/changelog/new-button.md"],
+      files: {
+        "bb/thr_x:bb-plugin-x/package.json": pkg("0.2.11"),
+        "main:bb-plugin-x/package.json": pkg("0.2.11"),
+        "bb/thr_x:bb-plugin-x/changelog/new-button.md": "---\nversion: coming-soon\n---\n\n- ru: Кнопка\n  en: Button\n",
+      },
+    });
+    const report = await settleVersionsForMerge(gh, "patch", "2026-09-30");
+    expect(report.problems).toEqual([]);
+    const blobs = calls.filter((c) => c.path.endsWith("/git/blobs")).map((c) => String((c.body as { content: string }).content));
+    expect(blobs).toContain("---\nversion: 0.2.12\ndate: 2026-09-30\npr: 42\n---\n\n- ru: Кнопка\n  en: Button\n");
+  });
+});
+
+describe("settleVersionsForMerge — день по умолчанию", () => {
+  it("without a day given the entry is stamped with today's local date — every caller gets the changelog", async () => {
+    const { gh, calls } = pull({
+      changedPaths: ["bb-plugin-x/app.tsx", "bb-plugin-x/changelog/new-button.md"],
+      files: {
+        "bb/thr_x:bb-plugin-x/package.json": pkg("0.2.11"),
+        "main:bb-plugin-x/package.json": pkg("0.2.11"),
+        "bb/thr_x:bb-plugin-x/changelog/new-button.md": "---\nversion: coming-soon\n---\n\n- ru: Кнопка\n  en: Button\n",
+      },
+    });
+    const now = new Date();
+    const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+    await settleVersionsForMerge(gh, "patch");
+    const blobs = calls.filter((c) => c.path.endsWith("/git/blobs")).map((c) => String((c.body as { content: string }).content));
+    expect(blobs.some((blob) => blob.includes(`version: 0.2.12\ndate: ${today}\npr: 42\n`))).toBe(true);
+  });
+
+  it("a PR title GitHub will not give is a named problem, the version is still raised", async () => {
+    const { gh } = pull({
+      changedPaths: ["bb-plugin-x/app.tsx"],
+      files: {
+        "bb/thr_x:bb-plugin-x/package.json": pkg("0.2.11"),
+        "main:bb-plugin-x/package.json": pkg("0.2.11"),
+      },
+    });
+    const report = await settleVersionsForMerge(gh, "patch", "2026-09-30");
+    expect(report.bumped).toEqual([{ root: "bb-plugin-x", to: "0.2.12" }]);
+    expect(report.problems.join(" ")).toContain("could not be read");
+  });
+});

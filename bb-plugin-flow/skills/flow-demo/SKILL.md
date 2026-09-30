@@ -37,4 +37,4 @@ No AskUserQuestion — the same report ending with "continue or write a comment"
 ## After the answer
 
 - Continue — go to the next stage.
-- A comment — the demo is not accepted and stays open: do not move on along the flow. Answer the comment, and if it asks for a change — make it and send the demo of this stage again.
+- A comment — the demo is not accepted and stays open: do not move on along the flow. Answer the comment. If it asks for a change, return the work to the stage where the change is made — in bb mark that stage started with flow_stage: Flow drops the done state of every stage after it — and go through those stages again in order, reviews and automations included, up to this demo: otherwise the change skips the review and the commit after it. A comment without a change — send the demo of this stage again.

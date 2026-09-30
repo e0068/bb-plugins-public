@@ -119,9 +119,9 @@ export const registerAskTool = (
     stages?: (threadId: string) => StageSettings;
     /** Название flow треда; `undefined` — тред без flow. Бриф с этапами запоминает его и рисует им бирку Выбора этапов. */
     flowName?: (threadId: string) => string | undefined;
-    /** Идёт ли тред по flow; `false` — владелец выбрал «без flow», и Flow не вкладывает в ход ничего, кроме `chooseFlow`. */
+    /** Идёт ли тред по flow; `false` — «без flow» или «Автоматически» до выбора агентом, и Flow не вкладывает в ход ничего, кроме `chooseFlow`. */
     hasFlow?: (threadId: string) => boolean;
-    /** Указание треду без flow выбрать его самому; `null` — выбор агентом выключен. */
+    /** Указание треду с «Автоматически» выбрать flow самому; `null` — тред не ждёт выбора агентом. */
     chooseFlow?: (threadId: string) => string | null;
     /** Длительность и стоимость планирования в треде; `undefined` — неизвестно. */
     planning?: (threadId: string) => Promise<Planning | undefined>;

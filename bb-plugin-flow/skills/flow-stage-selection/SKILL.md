@@ -11,9 +11,9 @@ The owner decides which stages go into the run, who executes them and what it co
 
 ## Where the stages come from
 
-**In bb.** The stages and their executors are listed in the turn instructions, in flow order. Send all of them, skipping none and reordering none. A thread without a flow first gets one chosen by the root skill — by the flow descriptions.
+**In bb.** The stages and their executors are listed in the turn instructions, in flow order. Send all of them, skipping none and reordering none. A thread created with "Automatic" first gets a flow: the agent picks it by the flow descriptions in the turn instructions.
 
-**In Claude Code.** Read the root skill as a list: name to the owner the flow that fits their request and take the stages from that flow's description, in its order. There is no flow-choosing tool here. No flow fits — stages by the owner's work steps: task, prototype, spec, plan, implementation, review, testing, demo.
+**In Claude Code.** There is no list of flows and no flow-choosing tool here — stages by the owner's work steps: task, prototype, spec, plan, implementation, review, testing, demo.
 
 A step this task does not need is shown as not recommended rather than dropped. A task is always needed, except for a three-line edit without risk; a prototype — when it is not obvious how the thing will look; a spec — when logical nodes change: a part, a dependency or a seam appears or disappears; a plan — when someone other than you executes the work.
 

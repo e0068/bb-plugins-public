@@ -7,7 +7,7 @@ import { z } from "zod";
 
 import { idleNote, idleStages, isActionStage } from "../core/automation-run";
 import { afterMark, markReply, startFact, type StartFact } from "../core/mark-report";
-import { carriedBy, carrierOf, EMPTY_PROGRESS, forHandoff, onAnswer, onBrief, onMark, pendingActive, progressView, recounted, recountWindows, touchesProgress, withActive } from "../core/progress";
+import { carriedBy, carrierOf, EMPTY_PROGRESS, forHandoff, onAnswer, onBrief, onMark, pendingActive, progressView, recounted, reopen, recountWindows, touchesProgress, withActive } from "../core/progress";
 import { historyOrder } from "../core/run-history";
 import { isRunFinished, runSummary } from "../core/run-summary";
 import { isTaskFile, taskTitle } from "../core/run-tasks";
@@ -263,7 +263,7 @@ const INSTRUCTIONS = `Mark the stages of the thread's flow as you go, so the own
 - Built-in stages (questions, criteria, stage selection, demo) are marked by the briefs themselves: do not mark them.
 - Automation stages are run and marked by Flow itself: when the next stage is an automation, mark the current stage done and end your turn. The answer says whether Flow started it, and if it did not, why and what to do. Never tell the owner an automation runs unless the answer says it started — relay what the answer says.
 - Action stages are run by the owner, step by step, with a button above the composer: when the next stage is an action, mark the current stage done and end your turn — Flow marks the action stage itself.
-- A stage sent back for rework is started again.
+- A stage sent back for rework is started again: marking a done stage started drops the done state of every stage after it, so the run goes through them again in order and the automations behind them run again.
 - Flow measures the time a stage stood waiting for the owner: a failed automation step until the owner retries or skips it, an action stage between presses. When this tool's answer or a reply from Flow names that idle time, carry it into the flow report and the task report — which stages stood and for how long.
 The stage ids are in the Flow instructions for the turn.`;
 
@@ -315,6 +315,8 @@ export const registerProgress = (
     projects?: () => Promise<ReadonlyArray<{ id: string; name: string }>>;
     /** Id живого flow для строки истории по id и названию из итога; flow удалён — `undefined`. */
     liveFlowId?: (id: string | undefined, name: string | undefined) => string | undefined;
+    /** Файлы журнала треда за окно прогона (core/run-journal.ts); нет — итог без журнала. */
+    journal?: (threadId: string, window: { startedAt: string; finishedAt: string }) => Promise<readonly string[]>;
     /** Сколько мс ответ flow_stage ждёт записи старта этапа со шагами за отмеченным; нет — 5 000. */
     startTimeoutMs?: number;
   },
@@ -368,7 +370,8 @@ export const registerProgress = (
       const minutes = window === undefined ? undefined : (await deps.windowMinutes?.(ctx.threadId, [window]).catch(() => undefined))?.[0];
       const titled = results === undefined ? undefined : await withTaskTitles(results, (target) => readStamped(ctx.threadId, target));
       let marked = EMPTY_PROGRESS;
-      await progress.update(ctx.threadId, (p) => (marked = onMark(p, stage, state, at, titled, cost, minutes)));
+      // Снова начатый этап — доработка: этапы за ним теряют готовность, и автоматизации за ним пройдут заново.
+      await progress.update(ctx.threadId, (p) => (marked = onMark(state === "started" ? reopen(p, stages, stage) : p, stage, state, at, titled, cost, minutes)));
       // Что за отмеченным этапом — по записи этой отметки; о старте ответ говорит только по записанному старту.
       const verdict = state === "done" ? afterMark(stages, marked, stage) : ({ kind: "none" } as const);
       const fact = verdict.kind === "due" ? await awaitStart(ctx.threadId, stages, verdict.stage.id, Date.now() + (deps.startTimeoutMs ?? START_TIMEOUT_MS)) : null;
@@ -468,6 +471,13 @@ export const registerProgress = (
     return new Map(projects.map(({ id, name }) => [id, name] as const));
   };
 
+  /** Журнал читается при показе, а не замораживается: итоги, замороженные раньше, получают его тоже. Не прочитался — итог без него. */
+  const withJournal = async <T extends FrozenRun>(run: T): Promise<T> => {
+    const { startedAt, finishedAt } = run.summary;
+    const journal = await deps.journal?.(run.threadId, { startedAt, finishedAt }).catch(() => undefined);
+    return journal === undefined ? run : { ...run, journal: [...journal] };
+  };
+
   bb.rpc.register(progressRpcContract, {
     async getFlowProgress({ threadId }) {
       const stored = await progress.get(threadId);
@@ -497,7 +507,10 @@ export const registerProgress = (
       };
     },
 
-    getRunSummary: ({ briefId }) => progress.frozenRun(briefId),
+    async getRunSummary({ briefId }) {
+      const run = await progress.frozenRun(briefId);
+      return run === null ? null : withJournal(run);
+    },
 
     async getRunHistory() {
       const runs = await progress.frozenRuns();
@@ -508,7 +521,7 @@ export const registerProgress = (
         const flowId = deps.liveFlowId?.(stored, run.flowName);
         return flowId === undefined ? run : { ...run, flowId };
       };
-      return historyOrder(await Promise.all(runs.map(async ({ briefId, run }) => ({ ...withLiveFlow(run), briefId, ...(await threadOf(run.threadId)) }))));
+      return historyOrder(await Promise.all(runs.map(async ({ briefId, run }) => ({ ...(await withJournal(withLiveFlow(run))), briefId, ...(await threadOf(run.threadId)) }))));
     },
   });
 

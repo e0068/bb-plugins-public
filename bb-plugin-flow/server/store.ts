@@ -17,7 +17,8 @@ import {
 
 export const KV_VALUE_LIMIT_BYTES = 256 * 1024;
 
-const briefKey = (id: string) => `decision:${id}`;
+const BRIEF_PREFIX = "decision:";
+const briefKey = (id: string) => `${BRIEF_PREFIX}${id}`;
 const answerKey = (id: string) => `decision-answer:${id}`;
 const threadCarryKey = (threadId: string) => `decision-thread-carry:${threadId}`;
 const launchedKey = (threadId: string) => `decision-launched:${threadId}`;
@@ -36,6 +37,8 @@ export type AwaitingEntry = z.output<typeof awaitingEntrySchema>;
 export type DecisionStore = {
   putBrief(brief: DecisionBrief): Promise<{ kind: "stored" } | { kind: "too_large"; bytes: number }>;
   getBrief(id: string): Promise<DecisionBrief | null>;
+  /** Id всех брифов хранилища. */
+  briefIds(): Promise<string[]>;
   getAnswer(id: string): Promise<AnswerRecord | null>;
   putAnswer(
     id: string,
@@ -98,6 +101,9 @@ export const createStore = (kv: PluginKvStorage): DecisionStore => {
     async getBrief(id) {
       const parsed = decisionBriefSchema.safeParse(await kv.get(briefKey(id)));
       return parsed.success ? parsed.data : null;
+    },
+    async briefIds() {
+      return (await kv.list(BRIEF_PREFIX)).filter((key) => key.startsWith(BRIEF_PREFIX)).map((key) => key.slice(BRIEF_PREFIX.length));
     },
     getAnswer,
     putAnswer: (id, record) =>

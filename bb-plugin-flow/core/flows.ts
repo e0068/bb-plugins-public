@@ -66,7 +66,7 @@ export const renameFlow = (settings: FlowSettings, id: string, name: string): Fl
   return trimmed === "" ? settings : mapFlow(settings, id, (flow) => ({ ...flow, name: trimmed }));
 };
 
-/** Описание flow без краевых пробелов; пустое снимает поле — flow без описания корневой навык так и помечает. */
+/** Описание flow без краевых пробелов; пустое снимает поле — flow без описания правило выбора flow так и помечает. */
 export const withDescription = (flow: Flow, description: string): Flow => {
   const { description: _, ...rest } = flow;
   const trimmed = description.trim();
@@ -107,15 +107,18 @@ export const flowById = (settings: FlowSettings, id: string | undefined): Flow =
  */
 export const NO_FLOW = "none";
 
-/** Тред без flow по выбору агента: выбор агентом ему больше не предлагается. */
+/** Выбор «Автоматически»: flow треду выбирает агент по описаниям flow, а пока не выбрал — у треда flow нет. */
+export const AUTO_FLOW = "auto";
+
+/** Прежняя запись треда, оставленного агентом без flow; новые не пишутся, старые читаются как «без flow». */
 export const AGENT_NO_FLOW = "none-by-agent";
 
 /**
- * Flow треда или его отсутствие. `NO_FLOW` — отсутствие, остальное — как
- * `flowById`: отличает отказ от flow от неизвестного id, который читается как
- * flow по умолчанию.
+ * Flow треда или его отсутствие. `NO_FLOW` и `AUTO_FLOW` — отсутствие,
+ * остальное — как `flowById`: отличает отказ от flow от неизвестного id,
+ * который читается как flow по умолчанию.
  */
-export const flowOrNone = (settings: FlowSettings, id: string | undefined): Flow | null => (id === NO_FLOW || id === AGENT_NO_FLOW ? null : flowById(settings, id));
+export const flowOrNone = (settings: FlowSettings, id: string | undefined): Flow | null => (id === NO_FLOW || id === AUTO_FLOW || id === AGENT_NO_FLOW ? null : flowById(settings, id));
 
 /** Этапы flow с общей шириной кнопки — форма, которую проверяет бриф и видят инструкции. */
 export const stageSettingsOf = (settings: FlowSettings, flow: Flow): StageSettings => ({ stages: flow.stages, minButtonWidth: settings.minButtonWidth });

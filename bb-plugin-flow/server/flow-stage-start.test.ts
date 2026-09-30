@@ -5,7 +5,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { StepId, StepOutcome, Steps } from "@bb-plugins/automation-steps/index";
 import { STEP_IDS } from "@bb-plugins/automation-steps/catalog";
 import { CODE_FLOW, stage } from "../core/stages-fixtures";
-import { actionStage } from "../lib/stage-constants";
+import { actionStage, builtinStage } from "../lib/stage-constants";
 import type { FlowProgress, StageSettings, WorkStage } from "../shared/contract";
 import { createAutomationRunner } from "./automation-runner";
 import { FLOW_STAGE_TOOL, createProgress, registerProgress } from "./progress";
@@ -97,12 +97,28 @@ describe("flow_stage и старт автоматизации за отмече�
     expect((await track("publish"))?.run).toBeUndefined();
   });
 
-  it("автоматизация уже прошла — второй раз не запускается, ответ так и говорит", async () => {
+  it("доработка после коммита: снова начатая реализация снимает готовность с ревью и коммита, и коммит после повторного ревью проходит заново", async () => {
     const { steps, calls } = fakeSteps();
-    const { markDone, track } = await setup([review, flowStage("publish", ["git.create-pr"])], steps);
+    const { mark, markDone, track } = await setup([stage("implement"), review, flowStage("publish", ["git.create-pr"]), builtinStage("demo", [])], steps);
+    await markDone("implement");
     await markDone("review");
     await vi.waitFor(async () => expect((await track("publish"))?.finishedAt).toBeDefined());
-    expect(await markDone("review")).toMatch(/already ran/);
+
+    await mark("implement", "started");
+    expect([(await track("review"))?.finishedAt, (await track("publish"))?.finishedAt]).toEqual([undefined, undefined]);
+
+    await mark("implement", "done");
+    await markDone("review");
+    await vi.waitFor(async () => expect((await track("publish"))?.finishedAt).toBeDefined());
+    expect(calls).toEqual(["git.create-pr", "git.create-pr"]);
+  });
+
+  it("автоматизация уже прошла — повторная отметка конца без нового начала её не запускает, ответ так и говорит", async () => {
+    const { steps, calls } = fakeSteps();
+    const { mark, markDone, track } = await setup([review, flowStage("publish", ["git.create-pr"])], steps);
+    await markDone("review");
+    await vi.waitFor(async () => expect((await track("publish"))?.finishedAt).toBeDefined());
+    expect(await mark("review", "done")).toMatch(/already ran/);
     expect(calls).toEqual(["git.create-pr"]);
   });
 

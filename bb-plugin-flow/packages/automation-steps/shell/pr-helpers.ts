@@ -9,6 +9,7 @@ import type { BumpLevel } from "../core/plugin-version-bump";
 import { decodeBase64 } from "../core/base64";
 import { type ParentDelivery, parentDelivery } from "../core/parent-delivery";
 import { type BranchFile, hasRenames, isDeletion, withDeletedPaths } from "../core/changed-files";
+import { headShaArgs } from "../core/git-commands";
 import { configPathFromGitdir, originUrlFromGitConfig, parseGitdirPointer } from "../core/git-config";
 import {
   getPullRequestRequest,
@@ -39,6 +40,7 @@ import { readExecutablePaths } from "../wiring/file-modes";
 import { mergedPullRequestFiles } from "../wiring/merged-pr-files";
 import { ghAuthToken } from "../wiring/gh-token";
 import { gitClient } from "../wiring/git-client";
+import { gitRunMessage } from "../wiring/git-run";
 import { githubClient } from "../wiring/github-client";
 import { readLinkedTask } from "../wiring/linked-task";
 import { type LocalMainPullResult, runLocalMainPull } from "../wiring/local-main-pull";
@@ -293,6 +295,10 @@ export async function attemptArchive(run: () => Promise<unknown>): Promise<Archi
   }
 }
 
+/** YYYY-MM-DD of a moment in local time. */
+const localDay = (at: Date): string =>
+  `${at.getFullYear()}-${String(at.getMonth() + 1).padStart(2, "0")}-${String(at.getDate()).padStart(2, "0")}`;
+
 // Resolves everything bumpVersionsBeforeMerge needs from the environment
 // and hands off. Every way of not getting there is a `problems` entry, not
 // a throw: the merge itself must not be blocked by its own bookkeeping, but
@@ -474,11 +480,15 @@ export async function wasHeadAlreadyMerged(
  * reads as no parent: the thread then goes the usual way, and that way names
  * its own failure.
  */
-export async function parentDeliveryOf(sdk: Sdk, threadId: string): Promise<ParentDelivery | null> {
+export async function parentDeliveryOf(sdk: Sdk, threadId: string): Promise<ChildDelivery | null> {
   const thread = await sdk.threads.get({ threadId });
   if (!thread.parentThreadId || !thread.environmentId) return null;
-  return parentDeliveryFor(sdk, thread, await sdk.environments.get({ environmentId: thread.environmentId }));
+  const delivery = await parentDeliveryFor(sdk, thread, await sdk.environments.get({ environmentId: thread.environmentId }));
+  return delivery === null ? null : { ...delivery, parentThreadId: thread.parentThreadId, title: thread.title ?? null };
 }
+
+/** A delivery with the child thread it comes from: whom to tell and how to name the wave. */
+export type ChildDelivery = ParentDelivery & { readonly parentThreadId: string; readonly title: string | null };
 
 /** The same answer for a caller that has already read the thread and its environment. */
 async function parentDeliveryFor(
@@ -502,6 +512,13 @@ async function parentDeliveryFor(
 /** Merge the child thread's branch into the parent's working copy (wiring/catch-up.ts). */
 export function deliverIntoParent(delivery: ParentDelivery): Promise<ParentDeliveryOutcome> {
   return runParentDelivery(gitClient(delivery.parentPath), delivery);
+}
+
+/** The parent branch's head, read in the parent's working copy right after a delivery. */
+export async function parentHeadOf({ parentPath }: ParentDelivery): Promise<string> {
+  const run = await gitClient(parentPath).run(headShaArgs());
+  if (run.code !== 0) throw new Error(gitRunMessage(run));
+  return run.stdout.trim();
 }
 
 export async function environmentIdOf(sdk: Sdk, threadId: string): Promise<string | null> {
@@ -792,10 +809,14 @@ export function decode(file: FileRead): string {
  * `problems` line, so a caller that only reads `problems` (Automations, where
  * the bump is best-effort) and one that fails its step on `unavailable`
  * (Flow, where the chain must stop) both see the same fact.
+ *
+ * The same commit stamps the plugins' changelog entries with `changelogDate`
+ * — by default today, in local time: the day the owner sees the merge.
  */
 export async function settleVersionsForMerge(
   gh: GithubPull,
   level: BumpLevel,
+  changelogDate: string = localDay(new Date()),
 ): Promise<MergeTimeBumpReport & { unavailable: string | null }> {
   const skipped = (reason: string, gap: BumpGap | null = null): MergeTimeBumpReport & { unavailable: string | null } => ({
     changedPaths: [],
@@ -813,6 +834,7 @@ export async function settleVersionsForMerge(
       headBranch: gh.headBranch,
       pullNumber: gh.number,
       level,
+      changelogDate,
     });
     return { ...report, unavailable: null };
   } catch (error) {

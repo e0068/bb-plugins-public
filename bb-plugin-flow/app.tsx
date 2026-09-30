@@ -11,7 +11,7 @@ import { FlowPicker } from "./app/flow-picker";
 import { FlowsPage } from "./app/flows-page";
 import { FLOWS_PANEL_PATH } from "./app/panel-path";
 import { JournalDirsSection } from "./app/journal-settings";
-import { AgentFlowChoiceSection, AutomationRetrySection, StageButtonsSection } from "./app/flow-settings-sections";
+import { AutomationRetrySection, StageButtonsSection } from "./app/flow-settings-sections";
 import { NextFlowForm } from "./app/next-flow";
 import { AutomationToasts } from "./app/automation-toasts";
 import { ProgressBanner } from "./app/progress-banner";
@@ -34,5 +34,4 @@ export default definePluginApp((app) => {
   app.slots.settingsSection({ id: "journal-dirs", title: t.journalTitle, description: t.journalDescription, component: JournalDirsSection });
   app.slots.settingsSection({ id: "stage-buttons", title: t.buttonsTitle, description: t.buttonsDescription, component: StageButtonsSection });
   app.slots.settingsSection({ id: "automation-retry", title: t.retryTitle, description: t.retryDescription, component: AutomationRetrySection });
-  app.slots.settingsSection({ id: "agent-flow-choice", title: t.agentChoiceTitle, description: t.agentChoiceDescription, component: AgentFlowChoiceSection });
 });

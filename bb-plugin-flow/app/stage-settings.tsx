@@ -8,6 +8,7 @@ import { createContext, useContext, useEffect, useRef, useState, type ReactNode 
 import { useBbNavigate, useRpc } from "@get-bb/plugin-sdk/app";
 
 import { retryPolicyOf } from "../core/automation-run";
+import { executorGroups, skillGroups, skillShortName, type ExecutorGroup } from "../core/catalog";
 import { dropIndex, moveItem } from "../core/reorder";
 import { setFlowStages } from "../core/flows";
 import { stageLabel } from "../core/stages";
@@ -16,7 +17,7 @@ import { Icon } from "../components/ui/icon";
 import { Input } from "../components/ui/input";
 import { BUILTIN_KINDS, BUILTIN_SKILLS, builtinStage, RETRY_LIMITS, stageKindOf, stageSkillOf, STAGE_BUTTON_WIDTH as WIDTH, type BuiltinKind } from "../lib/stage-constants";
 import { cn } from "../lib/utils";
-import type { flowSettingsRpcContract, StageCatalog, StageExecutor, WorkStage } from "../shared/contract";
+import type { flowSettingsRpcContract, SkillOrigin, StageCatalog, StageExecutor, WorkStage } from "../shared/contract";
 import { AddAction, AddBuiltinAutomation, type AutomationSets, AutomationKindCell, AutomationStepTags } from "./automation-stage";
 import { useMessages } from "./locale-context";
 import { ExecutorMark } from "./provider-logos";
@@ -60,6 +61,40 @@ function ExecutorIcon({ executor }: { executor: StageExecutor }) {
   return <ExecutorMark executor={executor} className="size-3.5 shrink-0 text-muted-foreground" />;
 }
 
+/** Имена провайдеров в заголовках групп навыков; неизвестный провайдер — его id. */
+const PROVIDER_NAMES: Record<string, string> = { "claude-code": "Claude Code", codex: "Codex" };
+
+type Messages = ReturnType<typeof useMessages>;
+
+const skillGroupTitle = (t: Messages, origin: SkillOrigin): string => {
+  switch (origin.kind) {
+    case "own":
+      return t.settings.ownSkills;
+    case "project":
+      return t.settings.projectSkills;
+    case "plugin":
+      return origin.provider === undefined ? t.settings.bbPluginSkills(origin.plugin) : t.settings.providerPluginSkills(PROVIDER_NAMES[origin.provider] ?? origin.provider, origin.plugin);
+  }
+};
+
+const executorGroupTitle = (t: Messages, group: ExecutorGroup): string => {
+  switch (group.kind) {
+    case "own":
+      return t.settings.ownAgents;
+    case "project":
+      return t.settings.projectAgents(group.project);
+    case "plugin":
+      return t.settings.pluginAgents(group.plugin);
+    case "codex":
+      return t.settings.codexAgents;
+    case "workflow":
+      return t.settings.workflows;
+  }
+};
+
+const groupTitle = "px-2 pb-0.5 pt-1.5 text-[11px] text-muted-foreground";
+
+/** Навыки списка выбора группами по источнику с заголовком; в строке навыка плагина провайдера — имя без префикса плагина. */
 function SkillOptions({ catalog, query, current, onPick }: { catalog: StageCatalog; query: string; current: string | null; onPick: (name: string) => void }) {
   const t = useMessages();
   const q = query.trim().toLowerCase();
@@ -68,21 +103,29 @@ function SkillOptions({ catalog, query, current, onPick }: { catalog: StageCatal
     <div className="px-2 py-1.5 text-xs text-muted-foreground">{t.settings.skillNotFound}</div>
   ) : (
     <>
-      {found.map((skill) => (
-        <button
-          key={skill.name}
-          type="button"
-          role="option"
-          aria-selected={skill.name === current}
-          onClick={() => onPick(skill.name)}
-          className={cn(overlayItem, skill.name === current && "bg-state-active")}
-        >
-          <span className="flex min-w-0 flex-col leading-tight">
-            <span className="font-mono text-xs">{skill.name}</span>
-            {skill.description !== undefined && <span className="line-clamp-1 text-[11px] text-muted-foreground">{skill.description}</span>}
-          </span>
-        </button>
-      ))}
+      {skillGroups(found).map(({ origin, skills }) => {
+        const title = skillGroupTitle(t, origin);
+        return (
+          <div key={title} role="group" aria-label={title}>
+            <div className={groupTitle}>{title}</div>
+            {skills.map((skill) => (
+              <button
+                key={skill.name}
+                type="button"
+                role="option"
+                aria-selected={skill.name === current}
+                onClick={() => onPick(skill.name)}
+                className={cn(overlayItem, skill.name === current && "bg-state-active")}
+              >
+                <span className="flex min-w-0 flex-col leading-tight">
+                  <span className="font-mono text-xs">{skillShortName(skill)}</span>
+                  {skill.description !== undefined && <span className="line-clamp-1 text-[11px] text-muted-foreground">{skill.description}</span>}
+                </span>
+              </button>
+            ))}
+          </div>
+        );
+      })}
     </>
   );
 }
@@ -130,7 +173,10 @@ function SkillField({ stage, index, catalog }: { stage: WorkStage; index: number
   const close = () => setQuery(null);
   const { root, compact } = useFieldOverlay(open, close);
   const kind = stageKindOf(stage);
-  const current = stageSkillOf(stage);
+  const named = stageSkillOf(stage);
+  // Навыка нет среди прочитанных — файла у него нет, и поле пустое, без имени и без кнопок файла. Каталог не прочитан — судить не по чему,
+  // имя остаётся. Сбой списка навыков одного проекта сервер глотает, и навык того проекта тогда тоже выглядит пустым.
+  const current = catalog.skills.length === 0 || catalog.skills.some((s) => s.name === named) ? named : "";
   // Встроенный этап хранит навык вида пустым полем и не берёт имя навыка в название.
   const pick = (skill: string) => {
     setStage(stage.id, (s) =>
@@ -204,12 +250,12 @@ function ExecutorTags({ stage, catalog }: { stage: WorkStage; catalog: StageCata
   const { root } = useFieldOverlay(open, close);
   const toggle = (executor: StageExecutor) =>
     setStage(stage.id, (s) => ({ ...s, executors: s.executors.some((e) => e.id === executor.id) ? s.executors.filter((e) => e.id !== executor.id) : [...s.executors, executor] }));
-  const group = (title: string, kind: StageExecutor["kind"]) => {
-    const items = catalog.executors.filter((e) => e.kind === kind);
-    return items.length === 0 ? null : (
-      <div role="group" aria-label={title}>
-        <div className="px-2 pb-0.5 pt-1.5 text-[11px] text-muted-foreground">{title}</div>
-        {items.map((executor) => {
+  const groups = executorGroups(catalog.executors).map(({ group, executors }) => {
+    const title = executorGroupTitle(t, group);
+    return (
+      <div key={title} role="group" aria-label={title}>
+        <div className={groupTitle}>{title}</div>
+        {executors.map((executor) => {
           const on = stage.executors.some((e) => e.id === executor.id);
           return (
             <button key={executor.id} type="button" role="menuitemcheckbox" aria-checked={on} onClick={() => toggle(executor)} className={overlayItem}>
@@ -226,7 +272,7 @@ function ExecutorTags({ stage, catalog }: { stage: WorkStage; catalog: StageCata
         })}
       </div>
     );
-  };
+  });
   return (
     <div ref={root} className="relative flex min-w-0 flex-wrap gap-1">
       <button type="button" aria-label={t.settings.addExecutor} title={t.settings.addExecutorTitle} aria-expanded={open} onClick={() => setOpen(!open)} className={cn(square, "bg-card text-muted-foreground hover:bg-state-hover hover:text-foreground")}>
@@ -243,14 +289,7 @@ function ExecutorTags({ stage, catalog }: { stage: WorkStage; catalog: StageCata
         </span>
       ))}
       <FieldOverlay open={open} onClose={close} role="menu" label={t.settings.executorsMenu}>
-        {catalog.executors.length === 0 ? (
-          <div className="px-2 py-1.5 text-xs text-muted-foreground">{t.settings.noExecutors}</div>
-        ) : (
-          <>
-            {group(t.settings.agents, "agent")}
-            {group(t.settings.workflows, "workflow")}
-          </>
-        )}
+        {catalog.executors.length === 0 ? <div className="px-2 py-1.5 text-xs text-muted-foreground">{t.settings.noExecutors}</div> : groups}
       </FieldOverlay>
     </div>
   );
