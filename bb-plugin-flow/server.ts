@@ -15,6 +15,9 @@ import { readTaskFile, writeTaskFile } from "./server/task-file";
 import { createAutomationRunner, externalStep, registerAutomationRunner } from "./server/automation-runner";
 import { createNoticePublisher } from "./server/automation-notices";
 import { automationsBridge } from "./server/automations";
+import { centerBridge } from "./server/center";
+import { automationEntry, turnEndEntry } from "./core/center-notice";
+import { waitsForAnswer } from "./core/awaiting";
 import { AUTOMATION_NOTICE_CHANNEL } from "./core/automation-notice";
 import { registerCommands } from "./server/command";
 import { createJournalDirStore } from "./server/dir-settings";
@@ -84,6 +87,14 @@ export default async function plugin(bb: BbPluginApi): Promise<void> {
   // Automations — отдельный плагин: события Flow и этапы-автоматизации идут к нему по HTTP, без него Flow работает как раньше.
   const automations = automationsBridge(bb);
   const emit = (trigger: Parameters<typeof automations.emit>[0], threadId: string, context?: { stageId?: string }) => void automations.emit(trigger, threadId, context);
+  // Центр уведомлений — тоже отдельный плагин: конец хода в треде с flow и итог автоматизации идут к нему по HTTP, без него ничего не меняется.
+  const center = centerBridge(bb);
+  bb.events.on("thread.idle", async ({ thread }) => {
+    if (flowOf(thread.id) === null) return;
+    const waiting = (await store.listAwaiting()).find((entry) => entry.threadId === thread.id && waitsForAnswer(entry.kind));
+    const brief = waiting === undefined ? null : await store.getBrief(waiting.briefId);
+    await center.push(turnEndEntry({ threadId: thread.id, threadTitle: thread.title ?? null, brief: brief === null ? null : { id: brief.id, title: brief.title } }));
+  });
   // Прогресс и исполнитель ссылаются друг на друга: правка прогресса продвигает автоматизации, исполнитель пишет прогресс.
   let advance: (threadId: string) => void = () => undefined;
   // Итог завершённого прогона замораживается на той же правке, что его завершила, — история не ждёт, пока тред откроют.
@@ -136,7 +147,10 @@ export default async function plugin(bb: BbPluginApi): Promise<void> {
         return answer.outcome === "available" ? { number: answer.pullRequest.number, url: answer.pullRequest.url } : null;
       },
       flow: flowOf,
-      publish: (notice) => bb.realtime.publish(AUTOMATION_NOTICE_CHANNEL, notice),
+      publish: (notice) => {
+        bb.realtime.publish(AUTOMATION_NOTICE_CHANNEL, notice);
+        void center.push(automationEntry(notice));
+      },
       newId,
     }),
     onError: (error) => bb.log.warn(`automations: a run failed to record its progress (${error instanceof Error ? error.message : String(error)})`),
