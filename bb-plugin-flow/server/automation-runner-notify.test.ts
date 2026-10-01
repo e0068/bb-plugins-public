@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import type { StepId, StepOutcome, Steps } from "@bb-plugins/automation-steps/index";
 import { STEP_IDS } from "@bb-plugins/automation-steps/catalog";
+import type { RetryPolicy } from "../core/automation-run";
 import { stage } from "../core/stages-fixtures";
 import type { StageSettings, WorkStage } from "../shared/contract";
 import { createAutomationRunner, type RunnerNotice } from "./automation-runner";
@@ -23,7 +24,29 @@ const rethrow = (error: unknown) => {
   throw error;
 };
 
-const setup = (stages: WorkStage[], steps: Steps, notify: (event: RunnerNotice) => void, onError: (error: unknown) => void = rethrow) => {
+/** Автоповтор с таймерами вручную: `fire` запускает все назначенные повторы, `set` меняет настройку посреди ожидания. */
+const manualRetry = (initial: RetryPolicy) => {
+  let policy = initial;
+  let pending: Array<() => void> = [];
+  const schedule = (run: () => void) => {
+    pending.push(run);
+    return () => void (pending = pending.filter((r) => r !== run));
+  };
+  const fire = () => {
+    const due = pending;
+    pending = [];
+    due.forEach((run) => run());
+  };
+  return { deps: { retry: () => policy, schedule }, armed: () => pending.length, fire, set: (next: RetryPolicy) => void (policy = next) };
+};
+
+const setup = (
+  stages: WorkStage[],
+  steps: Steps,
+  notify: (event: RunnerNotice) => void,
+  onError: (error: unknown) => void = rethrow,
+  retry: ReturnType<typeof manualRetry>["deps"] | Record<string, never> = {},
+) => {
   const settings: StageSettings = { stages, minButtonWidth: 170 };
   const { bb, harness } = createFakePluginHost({ pluginId: "flow" });
   const store = createStore(bb.storage.kv);
@@ -44,6 +67,7 @@ const setup = (stages: WorkStage[], steps: Steps, notify: (event: RunnerNotice) 
     now: () => T0,
     notify,
     onError,
+    ...retry,
   });
   advance = (threadId) => void runner.advance(threadId);
   registerProgress(bb, progress, { now: () => T0, stages: () => settings, windowCost: async () => undefined, thread });
@@ -119,5 +143,48 @@ describe("исполнитель сообщает об итоге этапа-а�
     await vi.waitFor(async () => expect(await runner.runActionStep(THREAD, "press")).toBe(true));
     await new Promise((resolve) => setTimeout(resolve, 50));
     expect(events).toEqual([]);
+  });
+
+  it("падение, за которым Flow повторит шаг сам, молчит; тост — один, когда повторы кончились", async () => {
+    const events: RunnerNotice[] = [];
+    const timers = manualRetry({ seconds: 30, attempts: 2 });
+    const { closeReview } = setup([review, flowStage("land", ["git.merge"])], stepsAnswering(() => ({ ok: false, error: "busy" })), (e) => events.push(e), rethrow, timers.deps);
+    await closeReview();
+    await vi.waitFor(() => expect(timers.armed()).toBe(1));
+    timers.fire();
+    await vi.waitFor(() => expect(timers.armed()).toBe(1));
+    expect(events).toEqual([]);
+    timers.fire();
+    await vi.waitFor(() => expect(events).toHaveLength(1));
+    expect(events[0]).toMatchObject({ kind: "failed", stepId: "git.merge", error: "busy" });
+    expect(timers.armed()).toBe(0);
+  });
+
+  it("автоповтор, дошедший до конца, сообщает только done", async () => {
+    const events: RunnerNotice[] = [];
+    let refuse = true;
+    const timers = manualRetry({ seconds: 30, attempts: 3 });
+    const answer = (id: StepId): StepOutcome => (id === "git.merge" && refuse ? { ok: false, error: "busy" } : { ok: true, detail: null });
+    const { closeReview } = setup([review, flowStage("land", ["git.merge"])], stepsAnswering(answer), (e) => events.push(e), rethrow, timers.deps);
+    await closeReview();
+    await vi.waitFor(() => expect(timers.armed()).toBe(1));
+    refuse = false;
+    timers.fire();
+    await vi.waitFor(() => expect(events.map((e) => e.kind)).toEqual(["done"]));
+  });
+
+  it("автоповтор выключили, пока шаг ждал, — шаг ждёт владельца, и тост о падении приходит один раз", async () => {
+    const events: RunnerNotice[] = [];
+    const timers = manualRetry({ seconds: 30, attempts: 5 });
+    const { closeReview } = setup([review, flowStage("land", ["git.merge"])], stepsAnswering(() => ({ ok: false, error: "busy" })), (e) => events.push(e), rethrow, timers.deps);
+    await closeReview();
+    await vi.waitFor(() => expect(timers.armed()).toBe(1));
+    expect(events).toEqual([]);
+    timers.set({ seconds: 0, attempts: 5 });
+    timers.fire();
+    await vi.waitFor(() => expect(events).toHaveLength(1));
+    expect(events[0]).toMatchObject({ kind: "failed", stepId: "git.merge", error: "busy" });
+    expect(events[0]?.stage.id).toBe("land");
+    expect(timers.armed()).toBe(0);
   });
 });

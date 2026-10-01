@@ -46,5 +46,5 @@ export const createNoticePublisher =
       pr,
       steps,
     };
-    ports.publish(event.kind === "done" ? { ...base, kind: "done" } : { ...base, kind: "failed", stepId: event.stepId, error: event.error, retryAt: event.retryAt });
+    ports.publish(event.kind === "done" ? { ...base, kind: "done" } : { ...base, kind: "failed", stepId: event.stepId, error: event.error });
   };

@@ -13,7 +13,7 @@ import { Icon, type IconName } from "../components/ui/icon";
 import type { Messages } from "../lib/messages";
 import type { StepAnswer, automationRpcContract } from "../shared/contract";
 import { LocaleProvider } from "./locale";
-import { useLocale, useMessages } from "./locale-context";
+import { useMessages } from "./locale-context";
 import { FLOWS_PANEL_PATH } from "./panel-path";
 
 /**
@@ -37,10 +37,9 @@ const followRoute = (route: string): void => {
 type Rpc = ReturnType<typeof useRpc<typeof automationRpcContract>>;
 type Deps = { navigate: BbNavigate; rpc: Rpc; t: Messages; words: NoticeWords };
 
-const wordsOf = (t: Messages, locale: string): NoticeWords => ({
+const wordsOf = (t: Messages): NoticeWords => ({
   done: t.notice.done,
   failed: t.notice.failed,
-  retryAt: (iso) => t.notice.retryAt(new Date(iso).toLocaleTimeString(locale, { hour: "2-digit", minute: "2-digit" })),
   stepLabel: (step) => (step.id in t.steps ? t.steps[step.id as keyof Messages["steps"]] : step.label),
 });
 
@@ -278,7 +277,6 @@ const isNotice = (payload: unknown): payload is AutomationNotice =>
 
 function Listener(): ReactNode {
   const t = useMessages();
-  const locale = useLocale();
   const navigate = useBbNavigate();
   const rpc = useRpc<typeof automationRpcContract>();
   const host = useRef<HTMLSpanElement>(null);
@@ -290,7 +288,7 @@ function Listener(): ReactNode {
   }, []);
   useRealtime(AUTOMATION_NOTICE_CHANNEL, (payload) => {
     if (!isNotice(payload)) return;
-    showNotice(payload, { navigate, rpc, t, words: wordsOf(t, locale) });
+    showNotice(payload, { navigate, rpc, t, words: wordsOf(t) });
   });
   return <span ref={host} hidden data-flow-notice-anchors />;
 }
