@@ -5,11 +5,10 @@ import { describe, expect, it } from "vitest";
 import {
   BB_SIDEBAR_SWIPE_FLOOR,
   SIDEBAR_SWIPE_EDGE_SHARE,
-  SIDEBAR_SWIPE_REACH,
   bbTakesSidebarSwipe,
   claimsSidebarSwipe,
   edgeStrip,
-  opensSidebar,
+  intoBbSidebarSwipe,
   rowAt,
 } from "./edge-swipe";
 import type { Point } from "./home-swipe";
@@ -54,14 +53,25 @@ describe("claimsSidebarSwipe", () => {
   });
 });
 
-describe("opensSidebar", () => {
-  it("opens the panel once the finger has gone the reach to the right", () => {
-    expect(opensSidebar(START, by(SIDEBAR_SWIPE_REACH, 10))).toBe(true);
-    expect(opensSidebar(START, by(SIDEBAR_SWIPE_REACH - 1, 0))).toBe(false);
+describe("intoBbSidebarSwipe", () => {
+  it("puts a finger landed nearer the edge than bb listens right on bb's floor", () => {
+    for (const x of [0, 4, BB_SIDEBAR_SWIPE_FLOOR - 1]) {
+      const start = { x, y: 300 };
+      expect(intoBbSidebarSwipe(start, start)).toEqual({ x: BB_SIDEBAR_SWIPE_FLOOR, y: 300 });
+    }
   });
 
-  it("does not open it for a drag that went more up or down than to the right", () => {
-    expect(opensSidebar(START, by(SIDEBAR_SWIPE_REACH, SIDEBAR_SWIPE_REACH + 1))).toBe(false);
+  it("carries every later point by the same shift, so the panel moves exactly as far as the finger", () => {
+    for (const [dx, dy] of [[1, 0], [40, -30], [-10, 5], [200, 0]] as const) {
+      const shifted = intoBbSidebarSwipe(START, by(dx, dy));
+      const origin = intoBbSidebarSwipe(START, START);
+      expect({ dx: shifted.x - origin.x, dy: shifted.y - origin.y }).toEqual({ dx, dy });
+    }
+  });
+
+  it("leaves a finger bb already takes where it is", () => {
+    const start = { x: BB_SIDEBAR_SWIPE_FLOOR, y: 300 };
+    expect(intoBbSidebarSwipe(start, { x: 90, y: 280 })).toEqual({ x: 90, y: 280 });
   });
 });
 
