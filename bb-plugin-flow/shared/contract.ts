@@ -799,6 +799,8 @@ export const stageTrackSchema = z.object({
       retryAt: z.string().optional(),
       /** Сколько раз Flow уже повторил текущий шаг сам; повтор владельца и переход к следующему шагу счёт обнуляют. */
       autoRetries: z.number().int().nonnegative().optional(),
+      /** Владелец нажал «Пропустить», пока шла попытка автоповтора: упадёт попытка — шаг закроется пропуском, без нового повтора. */
+      skipQueued: z.literal(true).optional(),
     })
     .optional(),
 });
@@ -874,6 +876,8 @@ export const progressStageSchema = z.object({
           detail: z.string().nullable().default(null),
           /** Когда Flow повторит упавший шаг сам (ISO); `null` — повтор не назначен, шаг ждёт владельца. */
           retryAt: z.string().nullable().default(null),
+          /** Пропуск, нажатый во время попытки автоповтора, ждёт её итога. */
+          skipQueued: z.boolean().default(false),
         }),
       ),
     })
@@ -973,10 +977,16 @@ export const awaitingRpcContract = defineRpcContract({
 /** Значок идущего этапа в левой панели: автоматизация или исполнитель этапа навыка. */
 export const runningIconSchema = z.enum(["automation", "action", "self", "agent", "workflow"]);
 
+/** Ответ на «Повторить» и «Пропустить» упавшего шага. */
+const stepAnswerSchema = z.object({ started: z.boolean(), busy: z.literal(true).optional() });
+
+export type StepAnswer = z.output<typeof stepAnswerSchema>;
+
 /** Прогон автоматизаций Flow: повтор и пропуск упавшего шага, треды с идущим этапом. */
 export const automationRpcContract = defineRpcContract({
-  retryAutomation: { input: z.object({ threadId: text, stage: text }), output: z.object({ started: z.boolean() }) },
-  skipAutomationStep: { input: z.object({ threadId: text, stage: text }), output: z.object({ started: z.boolean() }) },
+  /** `busy` — повтор отказан потому, что Flow сейчас ведёт тред, например попыткой автоповтора; нет — этап не ждёт. Пропуск упавшего шага в занятом треде не отказывает, а ждёт итога попытки. */
+  retryAutomation: { input: z.object({ threadId: text, stage: text }), output: stepAnswerSchema },
+  skipAutomationStep: { input: z.object({ threadId: text, stage: text }), output: stepAnswerSchema },
   /** Нажатие владельца на кнопку шага этапа Action: `started` — шаг взят в работу, `false` — этап не ждёт нажатия или шаг уже идёт. */
   runActionStep: { input: z.object({ threadId: text, stage: text }), output: z.object({ started: z.boolean() }) },
   /** `provider` — имя и логотип провайдера исполнителя, когда у него есть логотип. */

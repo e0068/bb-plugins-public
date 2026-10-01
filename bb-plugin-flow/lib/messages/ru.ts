@@ -188,6 +188,7 @@ export const ru = {
     retryStep: (name: string) => `Повторить шаг ${name}`,
     skip: "Пропустить",
     skipStep: (name: string) => `Пропустить шаг ${name}`,
+    skipQueued: "Пропущу после попытки",
     retryIn: (seconds: number) => `повтор через ${seconds} с`,
     steps: (name: string) => `${name}: шаги`,
     actionWaiting: (name: string, step: number, total: number) => `Этап ${quote(name)} ждёт вас · шаг ${step} из ${total}`,
@@ -468,6 +469,7 @@ export const ru = {
     skip: "Пропустить",
     dismiss: "Закрыть",
     notWaiting: (stage: string) => `Этап ${quote(stage)} уже не ждёт: шаг повторили или пропустили раньше`,
+    busy: (stage: string) => `Flow сейчас ведёт этап ${quote(stage)} — например, повторяет шаг. Нажми, когда попытка закончится`,
   },
 };
 
