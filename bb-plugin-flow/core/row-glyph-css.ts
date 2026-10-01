@@ -2,18 +2,16 @@
 // берёт у статуса имя иконки из своего реестра, а нужных рисунков там нет.
 // Приём хоста — маска поверх currentColor, поэтому цвет значка — цвет строки.
 // Селектор держится на `aria-label`: чужое имя иконки хост меняет на Zap,
-// а подпись ставит как есть.
+// а подпись ставит как есть. Тем же приёмом колёсико хода хоста в строке треда
+// с flow становится логотипом провайдера.
 
 import { mutedBlinkAnimation, mutedBlinkKeyframes } from "./muted-blink";
 
-/**
- * Рисунок значка по подписи; `blink` — значок мигает, пока этап идёт. `logo` — логотип провайдера вместо рисунка:
- * у субагента `framed` — в контурном квадрате, вдвое меньше.
- */
-export type GlyphOverride = { label: string; svg: string; blink?: boolean; logo?: { url: string; framed: boolean } };
+/** Рисунок значка по подписи; `blink` — значок мигает, пока этап идёт. */
+export type GlyphOverride = { label: string; svg: string; blink?: boolean };
 
-/** Контурный квадрат во весь значок, штрихом как у Hugeicons. */
-const FRAME_SVG = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none"><rect x="2.75" y="2.75" width="18.5" height="18.5" rx="5" stroke="black" stroke-width="1.5"/></svg>';
+/** Логотип провайдера треда: им рисуется колёсико хода bb в строке этого треда. */
+export type SpinnerLogo = { threadId: string; logoUrl: string };
 
 const escapeAttr = (value: string): string => value.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
 
@@ -22,33 +20,33 @@ export const cssUrl = (url: string): string => `url("${url.replace(/["\\\n\r]/g,
 
 const svgUrl = (svg: string): string => `url("data:image/svg+xml,${encodeURIComponent(svg)}")`;
 
-/** Слои маски с размером каждого: рисунок, логотип или квадрат с логотипом внутри. */
-const layersOf = ({ svg, logo }: GlyphOverride): Array<readonly [string, string]> => {
-  if (logo === undefined) return [[svgUrl(svg), "contain"]];
-  const url = cssUrl(logo.url);
-  return logo.framed ? [[svgUrl(FRAME_SVG), "contain"], [url, "50%"]] : [[url, "contain"]];
-};
-
-const ruleFor = (glyph: GlyphOverride): string => {
-  const target = `[data-sidebar-thread-trailing-indicator] [aria-label="${escapeAttr(glyph.label)}"]`;
-  const layers = layersOf(glyph);
-  const images = layers.map(([image]) => image).join(",");
-  const sizes = layers.map(([, size]) => size).join(",");
+/** Рисунок маской цветом строки; собственный рисунок элемента прячется. */
+const maskRule = (target: string, image: string, extra: readonly string[] = []): string => {
   const mask = [
     "background-color:currentColor",
-    `-webkit-mask-image:${images}`,
-    `mask-image:${images}`,
+    `-webkit-mask-image:${image}`,
+    `mask-image:${image}`,
     "-webkit-mask-position:center",
     "mask-position:center",
     "-webkit-mask-repeat:no-repeat",
     "mask-repeat:no-repeat",
-    `-webkit-mask-size:${sizes}`,
-    `mask-size:${sizes}`,
-    ...(glyph.blink === true ? [`animation:${mutedBlinkAnimation}`] : []),
+    "-webkit-mask-size:contain",
+    "mask-size:contain",
+    ...extra,
   ].join(";");
   return `${target}{${mask}}\n${target}>*{display:none}`;
 };
 
-/** Весь стиль; пустой список — пустая строка. */
-export const glyphCss = (overrides: readonly GlyphOverride[]): string =>
-  [...overrides.map(ruleFor), ...(overrides.some((o) => o.blink === true) ? [mutedBlinkKeyframes] : [])].join("\n");
+const ruleFor = (glyph: GlyphOverride): string =>
+  maskRule(`[data-sidebar-thread-trailing-indicator] [aria-label="${escapeAttr(glyph.label)}"]`, svgUrl(glyph.svg), glyph.blink === true ? [`animation:${mutedBlinkAnimation}`] : []);
+
+/**
+ * Колёсико хода — иконка `Loading` хоста — в строке треда получает логотип его провайдера; вращение остаётся хостовым.
+ * Хост переименует иконку или атрибуты строки — селектор промахнётся, и вернётся обычное колёсико.
+ */
+const spinnerRuleFor = ({ threadId, logoUrl }: SpinnerLogo): string =>
+  maskRule(`[data-sidebar-rename-row]:has(a[data-sidebar-thread-id="${escapeAttr(threadId)}"]) [data-sidebar-thread-trailing-indicator] > [data-icon="Loading"]`, cssUrl(logoUrl));
+
+/** Весь стиль; пустые списки — пустая строка. */
+export const glyphCss = (overrides: readonly GlyphOverride[], spinners: readonly SpinnerLogo[] = []): string =>
+  [...overrides.map(ruleFor), ...spinners.map(spinnerRuleFor), ...(overrides.some((o) => o.blink === true) ? [mutedBlinkKeyframes] : [])].join("\n");
