@@ -460,7 +460,6 @@ export const en: Messages = {
   notice: {
     done: "done",
     failed: (step: string) => `step ${quote(step)} failed`,
-    retryAt: (time: string) => `Retrying at ${time}`,
     github: "View on GitHub",
     toThread: "Go to thread",
     retry: "Retry",

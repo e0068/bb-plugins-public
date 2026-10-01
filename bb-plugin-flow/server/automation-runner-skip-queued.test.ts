@@ -112,14 +112,14 @@ describe("«Пропустить» во время попытки автопов
     expect(calls).toEqual(["git.merge", "git.merge", "bb.archive"]);
   });
 
-  it("упавшая попытка с запомненным пропуском не ставит тред ждать владельца и не шлёт «шаг упал»", async () => {
+  it("упавшая попытка с запомненным пропуском не ставит тред ждать владельца, и «шаг упал» не приходит ни разу", async () => {
     const { steps, held, release } = heldMerge();
     const ctx = setup(steps);
     await attemptRunning(held, ctx);
     await ctx.harness.callRpc("skipAutomationStep", { threadId: THREAD, stage: "land" });
     release({ ok: false, error: "not mergeable" });
     await vi.waitFor(async () => expect((await ctx.landOf())?.state).toBe("done"));
-    expect(ctx.notices.filter((n) => n.kind === "failed")).toHaveLength(1);
+    expect(ctx.notices.filter((n) => n.kind === "failed")).toEqual([]);
     expect(await ctx.awaiting()).toEqual([]);
   });
 

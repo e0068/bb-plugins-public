@@ -468,7 +468,6 @@ export const ru = {
   notice: {
     done: "готово",
     failed: (step: string) => `шаг ${quote(step)} упал`,
-    retryAt: (time: string) => `Автоповтор в ${time}`,
     github: "View on GitHub",
     toThread: "К треду",
     retry: "Повторить",
