@@ -224,7 +224,7 @@ export const createAutomationRunner = (deps: AutomationRunnerDeps): AutomationRu
         notify({ kind: "failed", threadId, stage, stepId: step.id, error: outcome.error, retryAt: retryAt ?? null });
         return false;
       }
-      await deps.progress.update(threadId, (p) => onStepDone(p, stage.id, deps.now(), outcome.detail));
+      await deps.progress.update(threadId, (p) => onStepDone(p, stage.id, deps.now(), outcome.detail, outcome.links));
     }
     notify({ kind: "done", threadId, stage });
     return true;
@@ -480,7 +480,7 @@ export const createAutomationRunner = (deps: AutomationRunnerDeps): AutomationRu
         await deps.progress.update(threadId, (p) => onStepStarted(onIdleClose(p, stageId, deps.now()), stageId));
         const outcome = await execute(stage, step, threadId);
         if (!outcome.ok) return void (await deps.progress.update(threadId, (p) => onIdleOpen(onStepFailed(p, stageId, outcome.error, deps.now()), stageId, deps.now())));
-        await deps.progress.update(threadId, (p) => onStepDone(p, stageId, deps.now(), outcome.detail));
+        await deps.progress.update(threadId, (p) => onStepDone(p, stageId, deps.now(), outcome.detail, outcome.links));
         const closed = (await deps.progress.get(threadId))?.stages[stageId]?.finishedAt !== undefined;
         // Этап не закрылся — он снова ждёт нажатия, и это снова простой.
         if (!closed) return void (await deps.progress.annotate(threadId, (p) => onIdleOpen(p, stageId, deps.now())));

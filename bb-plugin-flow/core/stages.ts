@@ -6,7 +6,7 @@ import type { Locale } from "../lib/i18n";
 import { messages } from "../lib/messages";
 import { isDefaultName, SELF_EXECUTOR, stageKindOf, stageSkillOf, type BuiltinKind } from "../lib/stage-constants";
 import { actionInstruction, automationInstruction } from "./automation-run";
-import type { Add, DecisionAnswer, DecisionBrief, Flow, StageAnswer, StageReport, WorkStage } from "../shared/contract";
+import type { Add, DecisionAnswer, DecisionBrief, Flow, FlowProgress, StageAnswer, StageReport, WorkStage } from "../shared/contract";
 import { sumAdds } from "./adds";
 
 /** Id исполнителя «сам». */
@@ -118,6 +118,17 @@ export const isStageCarryKey = (key: string, stageIds: readonly string[]): boole
 
 const idList = (ids: readonly string[]): string => (ids.length === 0 ? "—" : ids.join(", "));
 
+/**
+ * Отчёты брифа с итогами шагов: сделанная автоматизация и этап Action показывают ссылки, которые оставили их шаги, —
+ * агент их не присылает. Шаги ничего не оставили — остаются ссылки агента, если он их прислал.
+ */
+export const withStepResults = (stages: readonly WorkStage[], reports: readonly StageReport[] | undefined, progress: FlowProgress | null): StageReport[] | undefined =>
+  reports?.map((r) => {
+    const stage = stages.find((s) => s.id === r.id);
+    const results = progress?.stages[r.id]?.results?.map(({ label, target }) => ({ label, target })) ?? [];
+    return r.state === "done" && stage !== undefined && isAutomationStage(stage) && results.length > 0 ? { ...r, results } : r;
+  });
+
 /** Отчёты агента против настроек: все этапы по разу и в порядке настроек, исполнители и добавки — из этапа. */
 export const reportIssues = (stages: readonly WorkStage[], reports: readonly StageReport[] | undefined): string[] => {
   if (reports === undefined) return [];
@@ -132,8 +143,9 @@ export const reportIssues = (stages: readonly WorkStage[], reports: readonly Sta
     const stage = stages.find((s) => s.id === r.id);
     if (stage === undefined) return [];
     const allowed = idList([SELF, ...stage.executors.map((e) => e.id)]);
-    // Встроенные этапы сдаются в самом брифе — ссылаться у них не на что; этап навыка сдаётся ссылками.
-    const unlinked = r.state !== "todo" && r.results === undefined && stageKindOf(stage) === "skill";
+    // Встроенные этапы сдаются в самом брифе — ссылаться у них не на что; этап навыка сдаётся ссылками,
+    // а ссылки автоматизации дают её шаги — их подставляет сам Flow (withStepResults).
+    const unlinked = r.state !== "todo" && r.results === undefined && stageKindOf(stage) === "skill" && !isAutomationStage(stage);
     return [
       ...(unlinked ? [`stage ${r.id}: a ${r.state} skill stage needs results with links`] : []),
       ...(knownExecutor(stage, r.executor) ? [] : [`stage ${r.id}: executor ${r.executor} is not one of the stage's — ${allowed}`]),

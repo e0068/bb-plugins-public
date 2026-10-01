@@ -3,6 +3,7 @@
 // в левой панели и что сказать о нём агенту. Эффекты — исполнение шагов и
 // запись в kv — у server/automation-runner.ts.
 import { isStepId, STEP_LABELS } from "@bb-plugins/automation-steps/catalog";
+import type { StepLink } from "@bb-plugins/automation-steps/index";
 import { freeId, stageKindOf } from "../lib/stage-constants";
 import { scriptOf } from "./automation-scripts";
 import type { BuiltinAutomation, FlowProgress, FlowSettings, ProgressView, RunningIcon, StageTrack, WorkStage } from "../shared/contract";
@@ -167,9 +168,9 @@ export const retryDueIn = (track: StageTrack | undefined, now: string): number |
 export const onStepStarted = (progress: FlowProgress, stageId: string): FlowProgress =>
   patch(progress, stageId, (track) => (track.run === undefined ? track : { ...track, run: { ...track.run, error: null, busy: true } }));
 
-/** Старт прогона этапа; этап без шагов закрывается сразу. Простой прежнего прогона в новый не переезжает. */
+/** Старт прогона этапа; этап без шагов закрывается сразу. Простой и ссылки прежнего прогона в новый не переезжают. */
 export const onRunStart = (progress: FlowProgress, stageId: string, steps: readonly RunStep[], at: string): FlowProgress =>
-  patch(progress, stageId, ({ idleMs: _ms, idleSince: _since, ...track }) => ({
+  patch(progress, stageId, ({ idleMs: _ms, idleSince: _since, results: _results, ...track }) => ({
     ...track,
     startedAt: at,
     finishedAt: steps.length === 0 ? at : undefined,
@@ -180,15 +181,21 @@ export const onRunStart = (progress: FlowProgress, stageId: string, steps: reado
 const withDetail = (steps: NonNullable<StageTrack["run"]>["steps"], index: number, detail: string | null): NonNullable<StageTrack["run"]>["steps"] =>
   detail === null ? steps : steps.map((step, i) => (i === index ? { ...step, detail } : step));
 
-/** Шаг выполнен: прогон идёт к следующему, последний закрывает этап; строка успеха остаётся у самого шага. */
-export const onStepDone = (progress: FlowProgress, stageId: string, at: string, detail: string | null = null): FlowProgress =>
+/**
+ * Шаг выполнен: прогон идёт к следующему, последний закрывает этап; строка успеха остаётся у самого шага,
+ * а его ссылки — PR, задача — ложатся в итоги этапа: их владелец видит у этапа, а не агент присылает в брифе.
+ */
+export const onStepDone = (progress: FlowProgress, stageId: string, at: string, detail: string | null = null, links: readonly StepLink[] = []): FlowProgress =>
   patch(progress, stageId, (track) => {
     if (track.run === undefined) return track;
     const next = track.run.at + 1;
     const steps = withDetail(track.run.steps, track.run.at, detail);
     // Попытки автоповтора считаются на шаг: следующий шаг начинает со своих.
     const { autoRetries: _used, skipQueued: _skip, ...run } = idle(track.run);
-    return { ...track, run: { ...run, steps, at: next, error: null }, ...(next >= track.run.steps.length ? { finishedAt: at } : {}) };
+    // Один PR дают и «Открыть PR», и «Смёрджить PR» одного этапа: ссылка встаёт в итоги один раз — по адресу, не по подписи.
+    const fresh = links.filter((link) => !(track.results ?? []).some((r) => r.target === link.target));
+    const results = fresh.length === 0 ? {} : { results: [...(track.results ?? []), ...fresh] };
+    return { ...track, ...results, run: { ...run, steps, at: next, error: null }, ...(next >= track.run.steps.length ? { finishedAt: at } : {}) };
   });
 
 /**
