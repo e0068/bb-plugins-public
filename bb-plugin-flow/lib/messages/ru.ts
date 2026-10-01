@@ -213,9 +213,6 @@ export const ru = {
     running: (name: string) => `${name} · идёт`,
     automationFailed: "Автоматизация остановилась",
     automation: "Автоматизация",
-    self: "Сам",
-    agent: "Агент",
-    workflow: "Workflow",
   },
   steps: {
     "git.commit": "Commit",
