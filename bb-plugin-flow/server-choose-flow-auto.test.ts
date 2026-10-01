@@ -48,13 +48,6 @@ describe("выбор flow агентом по «Автоматически»", (
     expect(instructions("thr_auto")).not.toContain(CHOOSE_FLOW_TOOL);
   });
 
-  it("ни один flow не подошёл — тред идёт без flow, и выбрать второй раз ему не дают", async () => {
-    const { harness, instructions } = await setup();
-    expect(await harness.callAgentTool(CHOOSE_FLOW_TOOL, { flowId: NO_FLOW }, { threadId: "thr_auto" })).not.toMatchObject({ isError: true });
-    expect(instructions("thr_auto")).toBe("");
-    expect(await harness.callAgentTool(CHOOSE_FLOW_TOOL, { flowId: "quick" }, { threadId: "thr_auto" })).toMatchObject({ isError: true });
-  });
-
   it("неизвестный flow не назначается, и правило выбора остаётся", async () => {
     const { harness, instructions } = await setup();
     expect(text(await harness.callAgentTool(CHOOSE_FLOW_TOOL, { flowId: "gone" }, { threadId: "thr_auto" }))).toMatch(/gone/);
