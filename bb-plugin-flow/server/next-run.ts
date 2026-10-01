@@ -7,7 +7,7 @@
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 
 import { AUTO_FLOW, NO_FLOW } from "../core/flows";
-import { holdsForNextFlow } from "../core/next-run-hold";
+import { appliesPickedFlow, holdsForNextFlow } from "../core/next-run-hold";
 import { nextRunRpcContract } from "../shared/contract";
 import type { FlowSettingsStore } from "./flow-settings";
 import type { ProgressStore } from "./progress";
@@ -34,6 +34,8 @@ export const registerNextRun = (
     heldReason: () => string;
     /** Своя отправка Flow — её хук пропускает (./own-sends.ts). */
     ownSend: (threadId: string, text: string) => boolean;
+    /** Владелец начинает ход: flow, выбранный над композером, достаётся треду до того, как ход получит инструкции (./flow-choice.ts). */
+    ownerTurn?: (threadId: string) => Promise<void>;
   },
 ): void => {
   const heldIn = async (threadId: string): Promise<boolean> => {
@@ -43,10 +45,11 @@ export const registerNextRun = (
 
   bb.experimental_hooks.on("message.dispatch", async (context) => {
     if (deps.ownSend(context.thread.id, context.input.text)) return { action: "proceed" };
-    // Хук, который бросает, запирает тред: сбой чтения прогона пропускает сообщение.
+    const turn = { attempt: context.attempt, initiator: initiatorOf(context), retry: context.queuedMessage?.payload.kind === "retry" };
+    // Хук, который бросает, запирает тред: сбой применения выбора и чтения прогона пропускает сообщение.
+    if (deps.ownerTurn !== undefined && appliesPickedFlow(turn)) await deps.ownerTurn(context.thread.id).catch(() => undefined);
     const finished = await deps.finished(context.thread.id).catch(() => false);
-    const retry = context.queuedMessage?.payload.kind === "retry";
-    return holdsForNextFlow({ finished, attempt: context.attempt, initiator: initiatorOf(context), retry }) ? { action: "wait", reason: deps.heldReason() } : { action: "proceed" };
+    return holdsForNextFlow({ finished, ...turn }) ? { action: "wait", reason: deps.heldReason() } : { action: "proceed" };
   });
 
   bb.rpc.register(nextRunRpcContract, {

@@ -106,6 +106,8 @@ export interface AutomationRunner {
    * Упавший шаг не останавливает остальные и в прогресс не пишется: у этапа нет готовности, которую он мог бы испортить.
    */
   undo(threadId: string, stages: readonly WorkStage[]): Promise<string[]>;
+  /** Владелец отменил flow треда: назначенные автоповторы гаснут, а идущий шаг, закончившись, ничего не пишет и цепочку не продолжает. */
+  cancel(threadId: string): void;
   /** Снимает таймеры автоповтора процесса — при выгрузке плагина; сроки в записях прогонов остаются, `resume` ставит их заново. */
   dispose(): void;
 }
@@ -166,6 +168,9 @@ export const createAutomationRunner = (deps: AutomationRunnerDeps): AutomationRu
     timers.get(timerKey(threadId, stageId))?.();
     timers.delete(timerKey(threadId, stageId));
   };
+  // Отмены flow по треду: шаги, начатые до отмены, видят другой счёт и молча выходят — иначе их запись завела бы прогон заново.
+  const cancels = new Map<string, number>();
+  const epochOf = (threadId: string) => cancels.get(threadId) ?? 0;
   // Выгруженный исполнитель новых таймеров не ставит: шаг, упавший уже после выгрузки, повторит следующая загрузка по сроку в записи.
   let disposed = false;
   const arm = (threadId: string, stageId: string, ms: number) => {
@@ -205,10 +210,14 @@ export const createAutomationRunner = (deps: AutomationRunnerDeps): AutomationRu
 
   /** Шаги этапа с места `from`; `false` — шаг упал, цепочка стоит. */
   const runSteps = async (threadId: string, stage: WorkStage, steps: readonly RunStep[], from: number): Promise<boolean> => {
+    const epoch = epochOf(threadId);
+    const stale = () => epochOf(threadId) !== epoch;
     for (const step of steps.slice(from)) {
       const outcome = await execute(stage, step, threadId);
+      if (stale()) return false;
       if (!outcome.ok) {
         const track = (await deps.progress.get(threadId))?.stages[stage.id];
+        if (stale()) return false;
         // Пропуск, запомненный во время этой попытки, закроет шаг сразу за ней: ни ожидания владельца, ни тоста «шаг упал».
         if (track?.run?.skipQueued === true) {
           await deps.progress.update(threadId, (p) => onStepFailed(p, stage.id, outcome.error, deps.now()));
@@ -219,13 +228,16 @@ export const createAutomationRunner = (deps: AutomationRunnerDeps): AutomationRu
         const retryAt = delay === null ? undefined : new Date(Date.parse(deps.now()) + delay).toISOString();
         // Упавший шаг ждёт владельца: с этой минуты этап простаивает, а не работает. Автоповтор кнопки не отнимает.
         await deps.progress.update(threadId, (p) => onIdleOpen(onStepFailed(p, stage.id, outcome.error, deps.now(), retryAt), stage.id, deps.now()));
+        // Отмена, пришедшая во время записи, снимет и её: ожидания и автоповтора после неё не ставим.
+        if (stale()) return false;
         await deps.store.putAwaiting(threadId, { briefId: awaitingId(stage.id), kind: "automation" });
         // Пока впереди автоповтор, падение видно только в баннере: тост — когда шаг ждёт владельца.
         if (delay === null) notify({ kind: "failed", threadId, stage, stepId: step.id, error: outcome.error });
-        else arm(threadId, stage.id, delay);
+        else if (!stale()) arm(threadId, stage.id, delay);
         return false;
       }
       await deps.progress.update(threadId, (p) => onStepDone(p, stage.id, deps.now(), outcome.detail, outcome.links));
+      if (stale()) return false;
     }
     notify({ kind: "done", threadId, stage });
     return true;
@@ -547,6 +559,13 @@ export const createAutomationRunner = (deps: AutomationRunnerDeps): AutomationRu
         }),
       );
       return entries.filter((entry): entry is RunningThread => entry !== null);
+    },
+    cancel: (threadId) => {
+      cancels.set(threadId, epochOf(threadId) + 1);
+      for (const key of [...timers.keys()].filter((key) => key.startsWith(timerKey(threadId, "")))) {
+        timers.get(key)?.();
+        timers.delete(key);
+      }
     },
     dispose: () => {
       disposed = true;

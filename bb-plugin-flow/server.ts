@@ -26,6 +26,7 @@ import { type ContextSettingValues, contextFillOf, contextSettings } from "./ser
 import { createProgress, registerProgress } from "./server/progress";
 import { registerFlowPickerApi } from "./server/flow-picker-api";
 import { registerNextRun } from "./server/next-run";
+import { registerFlowChoice } from "./server/flow-choice";
 import { createOwnSends } from "./server/own-sends";
 import { createFlowSettings } from "./server/flow-settings";
 import { registerFlowTools } from "./server/flow-tools";
@@ -231,7 +232,9 @@ export default async function plugin(bb: BbPluginApi): Promise<void> {
     reveal: revealInFinderHere,
   });
   registerFlowPickerApi(bb, flows, threads);
-  // Следующий прогон в том же треде: сообщение владельца ждёт выбора flow, пока прогон треда завершён.
+  // Flow треда над композером: выбор до отправки и «Отменить flow».
+  const choice = registerFlowChoice(bb, { flows, threads, progress, store, cancelRun: (threadId) => runner.cancel(threadId) });
+  // Следующий прогон в том же треде: сообщение владельца ждёт выбора flow, пока прогон треда завершён, и применяет выбор над композером.
   registerNextRun(bb, {
     flows,
     threads,
@@ -242,6 +245,7 @@ export default async function plugin(bb: BbPluginApi): Promise<void> {
     },
     heldReason: () => messages(resolveLocale(storedContext[LANGUAGE_SETTING], [Intl.DateTimeFormat().resolvedOptions().locale])).nextFlow.held,
     ownSend: own.has,
+    ownerTurn: choice.ownerTurn,
   });
   // Ушедшая своя отправка забывается — тем же текстом, что хук видит в `input.text`: текстовые блоки через перевод строки.
   bb.events.on("message.dispatched", ({ entry }) =>

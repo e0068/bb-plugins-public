@@ -149,6 +149,16 @@ export const ru = {
     send: "Отправить агенту",
     held: "Каким flow идти дальше? — выберите над композером",
   },
+  flowChoice: {
+    none: "Flow не выбран",
+    stages: (n: number) => plural(n, "этап", "этапа", "этапов"),
+    menu: "Меню flow",
+    cancel: "Отменить flow",
+    cancelTitle: "Отменить flow?",
+    cancelText: "Тред пойдёт без flow: этапы и отложенные повторы шагов снимутся. Сделанные шаги — коммит, PR — останутся.",
+    keep: "Оставить",
+    inRun: (name: string) => `Этап в прогоне: ${name}`,
+  },
   summary: {
     finished: "Прогон завершён",
     window: (from: string, to: string) => `${from} → ${to}`,
