@@ -3,6 +3,7 @@ import { createFakePluginHost, makePluginAgentConfigurationContext } from "@get-
 import { describe, expect, it } from "vitest";
 
 import plugin from "./server";
+import { priced } from "./server/priced-fixture";
 
 const loaded = async () => {
   const { bb, harness } = createFakePluginHost({ pluginId: "decisions" });
@@ -34,7 +35,7 @@ describe("плагин Decisions", () => {
       setup: { stages: [{ id: "questions", state: "todo" }, { id: "criteria", state: "todo" }, { id: "select", state: "todo" }, { id: "demo", state: "todo" }], criteria: ["Тесты зелёные"] },
     };
     const ids = await Promise.all([1, 2].map(async () => {
-      const result = await harness.callAgentTool("ask_decision", params);
+      const result = await harness.callAgentTool("ask_decision", priced(params));
       return /id="(dec_[^"]+)"/.exec(typeof result === "string" ? result : "")?.[1];
     }));
     expect(ids[0]).toMatch(/^dec_/);

@@ -10,6 +10,7 @@ import { stage } from "./core/stages-fixtures";
 import { FLOW_STAGE_TOOL } from "./server/progress";
 import type { FlowSettings } from "./shared/contract";
 import plugin from "./server";
+import { priced } from "./server/priced-fixture";
 
 afterEach(() => vi.unstubAllGlobals());
 
@@ -47,7 +48,7 @@ describe("Flow → Центр уведомлений", () => {
   it("конец хода с брифом, ждущим владельца, — «Ждёт ответа» с названием брифа", async () => {
     const pushed = stubCenter();
     const { harness, idle } = await boot();
-    await harness.callAgentTool("ask_decision", { title: "Плагин", setup: { stages: STAGES }, questions: [{ id: "q", question: "Да?", kind: "confirm", options: [{ id: "yes", action: "Yes" }] }] }, { threadId: "thr_1" });
+    await harness.callAgentTool("ask_decision", priced({ title: "Плагин", setup: { stages: STAGES }, questions: [{ id: "q", question: "Да?", kind: "confirm", options: [{ id: "yes", action: "Yes" }] }] }), { threadId: "thr_1" });
     await idle("thr_1");
     await vi.waitFor(() => expect(pushed.some((p) => (p as { kind: string }).kind === "awaiting")).toBe(true));
     expect(pushed.find((p) => (p as { kind: string }).kind === "awaiting")).toMatchObject({ title: "Ждёт ответа — бриф «Плагин»", threadId: "thr_1" });

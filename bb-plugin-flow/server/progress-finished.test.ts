@@ -9,6 +9,7 @@ import { registerApi } from "./api";
 import { ASK_TOOL_NAME, registerAskTool } from "./ask-tool";
 import { FLOW_STAGE_TOOL, createProgress, registerProgress } from "./progress";
 import { createStore } from "./store";
+import { priced } from "./priced-fixture";
 
 const THREAD = "thr_finished";
 const settings: StageSettings = { stages: [builtinStage("questions", []), stage("task", { name: "Задача" })], minButtonWidth: 170 };
@@ -36,14 +37,14 @@ const answer = { briefId: "dec_run", answers: [], stages: [{ id: "task", run: tr
 describe("завершённый прогон в ответе баннера", () => {
   it("пока этап открыт — прогон не завершён и итога нет", async () => {
     const { harness } = await host();
-    await harness.callAgentTool(ASK_TOOL_NAME, brief, { threadId: THREAD });
+    await harness.callAgentTool(ASK_TOOL_NAME, priced(brief), { threadId: THREAD });
     await harness.callRpc("answerBrief", { id: "dec_run", messageId: "m", answer });
     expect(await harness.callRpc("getFlowProgress", { threadId: THREAD })).toMatchObject({ finished: false, summary: null });
   });
 
   it("последний этап закрыт — прогон завершён, итог посчитан и назван бриф под ним", async () => {
     const { harness, tick } = await host();
-    await harness.callAgentTool(ASK_TOOL_NAME, brief, { threadId: THREAD });
+    await harness.callAgentTool(ASK_TOOL_NAME, priced(brief), { threadId: THREAD });
     await harness.callRpc("answerBrief", { id: "dec_run", messageId: "m", answer });
     await harness.callAgentTool(FLOW_STAGE_TOOL, { stage: "task", state: "started" }, { threadId: THREAD });
     tick(20);
@@ -59,7 +60,7 @@ describe("завершённый прогон в ответе баннера", (
 describe("итог, замороженный под брифом", () => {
   it("итог доступен по брифу и переживает следующий прогон", async () => {
     const { harness, tick } = await host();
-    await harness.callAgentTool(ASK_TOOL_NAME, brief, { threadId: THREAD });
+    await harness.callAgentTool(ASK_TOOL_NAME, priced(brief), { threadId: THREAD });
     await harness.callRpc("answerBrief", { id: "dec_run", messageId: "m", answer });
     await harness.callAgentTool(FLOW_STAGE_TOOL, { stage: "task", state: "started" }, { threadId: THREAD });
     tick(20);

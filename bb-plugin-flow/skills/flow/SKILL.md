@@ -82,15 +82,21 @@ Under the brief, left of "Send" — and left of "Continue" on a demo — the own
 
 Another new brief only if something in the answer is really unclear: an item contains a question, the edits contradict each other or the rest of the brief, or it is unclear how to proceed. Such a brief is only about what is unclear; do not re-ask what was accepted.
 
+## What you understood — `scope`
+
+Every brief before the work is launched starts with `scope`: the minimal set of work you understood, as a nested list (`"- item\n  - detail"`). The widget shows it first, above the questions, with the base price next to it. Its items are the first items of `criteria`.
+
 ## First part — `setup`
 
 | Field | What it is | What is required |
 | ---- | ----- | --------- |
-| `stages` | Work stages of the thread's flow — all of them, in their order | A stage has the `id` from the flow and `state`: `todo` — not done, `done` — done. A done skill stage has `results: [{ label, target }]`; built-in stages and `todo` ones have none. `label` is the file name from `target` (with or without the extension, e.g. `spec.md`) or a task key like `BP-28`, not a document title; `target` is a path from the worktree root, an absolute path (for example in the thread storage) or a URL. `recommended: true` — you recommend taking a `todo` stage into the next run. `executor` — `self` or the id of a stage executor from the settings. `add` — the stage's add when you execute it yourself; `adds` — the difference of each executor by its id |
-| `criteria` | "Done when" — one checkable statement per item | At least one item: a string or `{ "text", "add" }`; an item that changes something existing is `{ "text", "before", "after", "add" }` — the widget draws "before" and "after", and the owner edits only "after" |
-| `artifacts`, `executor`, `checker`, `testing`, `budgetTarget`, `budgetMax` | Fields of old briefs | Do not send: stages replaced documents, executor, review and testing, and the "Budget" button sums the forecast from the `add` values |
+| `stages` | Work stages of the thread's flow — all of them, in their order | A stage has the `id` from the flow and `state`: `todo` — not done, `done` — done. A done skill stage has `results: [{ label, target }]`; built-in stages and `todo` ones have none. `label` is the file name from `target` (with or without the extension, e.g. `spec.md`) or a task key like `BP-28`, not a document title; `target` is a path from the worktree root, an absolute path (for example in the thread storage) or a URL. `recommended: true` — you recommend taking a `todo` stage into the next run. `executor` — `self` or the id of a stage executor from the settings. `share: { percent, risk }` — every `todo` skill stage: its part of the scope; `factors: { <executor id>: { factor, risk } }` — the multiplier of each executor by its id. No `add` or `adds` on a stage |
+| `criteria` | "Done when" — one checkable statement per item | At least one item, each with its price: `{ "text", "add" }`; an item that changes something existing is `{ "text", "before", "after", "add" }` — the widget draws "before" and "after", and the owner edits only "after" |
+| `artifacts`, `executor`, `checker`, `testing`, `budgetTarget`, `budgetMax` | Fields of old briefs | Do not send: stages replaced documents, executor, review and testing, and the "Budget" button sums the forecast itself |
 
-**The `add`** is `{ "target", "max", "risk", "minutes" }`: how much a stage, item or option adds to the budget in dollars, as target and ceiling, to risk as an integer and to time in whole minutes. One work has one price: the price of the work is on the stages. An item's `add` is its share inside the stages, not on top of them — it does not raise the budget, and an item the owner removes subtracts its share from the stages in the run. An option's `add` is its difference from the recommended option: the recommended one is usually zero. Every part goes both ways: a third-party reviewer lowers risk, a workflow may save time. Saving money is negative numbers. For a stage executor, the add in `adds` is **the difference from executing the stage yourself**.
+**The price is counted from the scope.** An item's `add` is `{ "target", "max", "risk", "minutes" }`: what one agent on the current model and effort spends on that item, in dollars as target and ceiling and in whole minutes — both above zero. The kept items are the base; an item the owner strikes leaves it. An option's `add` is what it adds to the scope on top of the base, from zero: doing nothing adds 0, a minus is never sent; its risk may go either way. Scope = base + chosen options.
+
+**A stage is a part of the scope.** `share.percent` is how much of the scope the stage costs: the stage that does the work itself is 100, a spec around 15, a review around 20, a task or a demo around 5. An executor in `factors` multiplies the stage's part: a subagent on a cheaper model below 1, a workflow with extra checks above 1 — always above zero; you yourself are 1. The plugin counts dollars and minutes: a stage in the run costs scope × percent × factor. A flow without a stage of the work itself (no 100 — a thread without a flow, or a flow of built-in stages only) counts the scope once and adds its stages on top. The total never drops to zero while the base is there, and the tool refuses a brief before launch without `scope`, with an unpriced item, with a `todo` skill stage without `share`, or with a $0 / 0 min forecast.
 
 **The risk of a stage** is how the stage changes the risk of the whole work, not how much can break inside the stage itself. 1r ≈ 10% chance that a blocking defect reaches the owner. Only implementation raises it; spec, plan, prototype, review and testing lower it; questions, criteria, stage selection, demos, automations and action stages are 0. A check with a plus makes skipping checks look safer — never send one. The scale:
 
@@ -105,7 +111,7 @@ Another new brief only if something in the answer is really unclear: an item con
 
 For a change that is smaller or larger than its estimate, move along the scale and say why in the intro. Recount the measured lines from `docs/tasks/done/` when the history grows: tasks with `SATISFIED` in their comments, the share with `NOT SATISFIED` by `estimate`.
 
-The widget writes an add small as "+$2–4 –2r +20 min" (a part with no change is omitted; plus risk is red, minus green) on the stage button — for the chosen executor — and next to the executors in the expanded list, and sums the run stages minus the shares of removed items and the chosen options into the "Budget · target · up to ceiling" button — never below zero; what is already spent on the thread is not in the total — with a breakdown by columns time, risk, target, ceiling. The button's second line is the planned work time. The answer carries a line "Budget — forecast $18 · up to $31, risk +2, time +40 min" or "Budget — own price $25 · up to $40 (forecast …)". The plugin adds the time already spent on planning itself as the first breakdown line marked "already spent", for reference only; do not send it.
+The widget writes a price small as "+$2–4 –2r +20 min" (a part with no change is omitted; plus risk is red, minus green) next to the base of "Done when", on the stage button — for the chosen executor — and next to the executors in the expanded list as the difference from you, and sums the run stages into the "Budget · target · up to ceiling" button — never below zero; what is already spent on the thread is not in the total — with a breakdown by columns time, risk, target, ceiling. The button's second line is the planned work time. The answer carries a line "Budget — forecast $18 · up to $31, risk +2, time +40 min" or "Budget — own price $25 · up to $40 (forecast …)". The plugin adds the time already spent on planning itself as the first breakdown line marked "already spent", for reference only; do not send it.
 
 The widget draws the labels. Your recommendation is preselected on the stage button — in the run or not, and the executor — and the owner changes only what they disagree with; they see the ✦ of a recommendation in the expanded list. If in the previous answered brief of the thread the owner picked a stage's executor themselves, the plugin puts that carried choice in place of your recommendation. Recommend as usual.
 
@@ -131,6 +137,7 @@ The owner can answer any question in their own words. A question id does not sta
   "title": "CEL-115 — tree in DevShell",
   "intro": "The CEL-114 spec is approved, the CEL-114 code is not merged yet.",
   "kind": "brief",
+  "scope": "- Build the DevShell tree from inheritanceStates\n  - rows show depth and object\n- Cover the layout with tests",
   "setup": {
     "stages": [
       { "id": "questions", "state": "todo" },
@@ -139,17 +146,17 @@ The owner can answer any question in their own words. A question id does not sta
       { "id": "task", "state": "done", "results": [{ "label": "CEL-115", "target": "docs/tasks/in_progress/cel-115.md" }] },
       { "id": "prototype", "state": "done", "results": [{ "label": "prototype.html", "target": "docs/assets/cel-115/prototype.html" }] },
       { "id": "demo", "state": "done" },
-      { "id": "spec", "state": "todo", "recommended": true, "add": { "target": 4, "max": 7, "risk": -1, "minutes": 20 } },
-      { "id": "plan", "state": "todo", "recommended": true, "executor": "agent:planner", "add": { "target": 3, "max": 5, "risk": -1, "minutes": 15 }, "adds": { "agent:planner": { "target": 2, "max": 4, "risk": -1, "minutes": -5 } } },
-      { "id": "implement", "state": "todo", "recommended": true, "add": { "target": 10, "max": 18, "risk": 5, "minutes": 60 } },
-      { "id": "review", "state": "todo", "recommended": true, "executor": "agent:reviewer", "adds": { "agent:reviewer": { "target": 3, "max": 5, "risk": -5, "minutes": 15 } } },
-      { "id": "testing", "state": "todo", "recommended": true, "add": { "target": 1, "max": 3, "risk": -2, "minutes": 20 } },
-      { "id": "demo-2", "state": "todo", "recommended": true, "add": { "target": 1, "max": 2, "risk": 0, "minutes": 5 } }
+      { "id": "spec", "state": "todo", "recommended": true, "share": { "percent": 15, "risk": -1 } },
+      { "id": "plan", "state": "todo", "recommended": true, "executor": "agent:planner", "share": { "percent": 10, "risk": -1 }, "factors": { "agent:planner": { "factor": 0.8, "risk": 0 } } },
+      { "id": "implement", "state": "todo", "recommended": true, "share": { "percent": 100, "risk": 5 } },
+      { "id": "review", "state": "todo", "recommended": true, "executor": "agent:reviewer", "share": { "percent": 20, "risk": -2 }, "factors": { "agent:reviewer": { "factor": 1.2, "risk": -3 } } },
+      { "id": "testing", "state": "todo", "recommended": true, "share": { "percent": 15, "risk": -2 } },
+      { "id": "demo-2", "state": "todo", "recommended": true }
     ],
     "criteria": [
-      { "text": "The DevShell tree is built from the inheritanceStates of the CEL-114 spec", "add": { "target": 4, "max": 7, "risk": 2 } },
-      { "text": "A tree row shows depth and object", "before": "A row is only the object name", "after": "Indent by depth and the object name", "add": { "target": 2, "max": 3, "risk": 1 } },
-      "Tree layout tests are green"
+      { "text": "The DevShell tree is built from the inheritanceStates of the CEL-114 spec", "add": { "target": 4, "max": 7, "risk": 0, "minutes": 30 } },
+      { "text": "A tree row shows depth and object", "before": "A row is only the object name", "after": "Indent by depth and the object name", "add": { "target": 2, "max": 3, "risk": 0, "minutes": 15 } },
+      { "text": "Tree layout tests are green", "add": { "target": 1, "max": 2, "risk": 0, "minutes": 10 } }
     ]
   },
   "questions": [
@@ -159,7 +166,7 @@ The owner can answer any question in their own words. A question id does not sta
       "options": [
         { "id": "now", "action": "Spec now, code after CEL-114", "recommended": true,
           "description": "I write the spec on the CEL-111 branch and start the code once CEL-114 is merged. Risk: the spec needs fixing if CEL-114 changes in review.",
-          "add": { "target": 2, "max": 4, "risk": 1 } },
+          "add": { "target": 2, "max": 4, "risk": 1, "minutes": 10 } },
         { "id": "wait", "action": "Wait for all of CEL-114",
           "description": "I start nothing until CEL-114 is approved and implemented.",
           "add": { "target": 0, "max": 0, "risk": 3 } }
@@ -174,7 +181,7 @@ The owner can answer any question in their own words. A question id does not sta
     },
     {
       "id": "reading", "kind": "confirm", "question": "Did I get this right?",
-      "context": "The plus that creates something new sits only in the first row — as in the prototype.",
+      "context": "- The plus that creates something new\n  - sits only in the first row\n  - as in the prototype",
       "options": [{ "id": "yes", "action": "Yes", "recommended": true }]
     }
   ]

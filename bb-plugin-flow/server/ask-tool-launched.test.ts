@@ -6,6 +6,7 @@ import { STAGES } from "../core/stages-fixtures";
 import type { StageSettings } from "../shared/contract";
 import { ASK_TOOL_NAME, registerAskTool } from "./ask-tool";
 import { createStore } from "./store";
+import { priced } from "./priced-fixture";
 
 const settings: StageSettings = { stages: STAGES, minButtonWidth: 190 };
 
@@ -65,13 +66,13 @@ describe("бриф в запущенном треде", () => {
 
   it("бриф до запуска метки не несёт", async () => {
     const { ask, store, idOf } = await host();
-    const result = await ask({ title: "Бриф", setup: { stages } });
+    const result = await ask(priced({ title: "Бриф", setup: { stages } }));
     expect((await store.getBrief(idOf(result)))?.launched).toBeUndefined();
   });
 
   it("до запуска этапы принимаются", async () => {
     const { ask, store, idOf } = await host();
-    const result = await ask({ title: "Бриф", setup: { stages } });
+    const result = await ask(priced({ title: "Бриф", setup: { stages } }));
     expect((await store.getBrief(idOf(result)))?.setup?.stages).toHaveLength(STAGES.length);
   });
 });

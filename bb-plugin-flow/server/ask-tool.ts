@@ -7,9 +7,10 @@ import type { Carried } from "../core/carry";
 import { awaitingKind } from "../core/awaiting";
 import { liveIssues } from "../core/outcome";
 import { DECISION_ID_PREFIX, directiveLine } from "../core/directive";
-import { FLOW_RULE, SELF_ONLY_RULE, isStageCarryKey, reportIssues, stageInstructions, withStepResults } from "../core/stages";
+import { money, plannedMinutes, recommendedForecast } from "../core/budget";
+import { FLOW_RULE, SELF_ONLY_RULE, isAutomationStage, isStageCarryKey, reportIssues, stageInstructions, withStepResults } from "../core/stages";
 import { stageKindOf, type BuiltinKind } from "../lib/stage-constants";
-import { askDecisionParamsSchema, type AskDecisionParams, type DecisionBrief, type Planning, type StageSettings } from "../shared/contract";
+import { askDecisionParamsSchema, type AskDecisionParams, type Criterion, type DecisionBrief, type Planning, type StageSettings } from "../shared/contract";
 import type { ProgressStore } from "./progress";
 import { KV_VALUE_LIMIT_BYTES, type DecisionStore } from "./store";
 import type { FlowTrigger } from "./automations";
@@ -22,22 +23,24 @@ export const ASK_INSTRUCTIONS = `${RULE}
 
 A brief has two parts.
 
-setup — the first part: no questions, you show what there is and mark what you recommend.
-- stages (setup.stages) — all stages of the thread's flow, in their order; ids and executors are in the Flow instructions for the turn. A stage is { id, state, results, recommended, executor, add, adds }. state: todo or done. A done skill stage needs results — [{ label, target }], label being the file name from target (spec.md) or a task key; built-in stages and todo ones have none; automations and actions get theirs from Flow. recommended: true — take this todo stage into the run. executor — self or one of the stage's executors (agent:…, workflow:…). add — the stage's own add; adds — the difference per executor id.
-- criteria — "Done when", one checkable statement per item: a string, { text, add }, or a change item { text, before, after, add }; send them before you create the task.
-- do not send artifacts, executor, checker, testing, budgetTarget or budgetMax: the widget sums the budget forecast from add.
+scope — what you understood: the minimal work as a nested list; every brief before launch starts with it.
 
-add { target, max, risk, minutes } — dollars (target, ceiling), risk as an integer, minutes; a minus lowers it; stage risk is its change to the work's risk, 1r ≈ 10% chance a blocking defect reaches the owner: implementation raises it, spec, plan, prototype, review and testing lower it (scale: flow skill); the price of the work is on the stages; an item's add is its share inside the stages, not on top of them; an option's add is its difference from the recommended option.
+setup — the first part: no questions, you show what there is and mark what you recommend.
+- criteria — "Done when", one checkable statement per item: { text, add } or { text, before, after, add }, scope items first. add { target, max, risk, minutes } — what one agent on the current model and effort spends, target and minutes > 0; kept items are the base.
+- stages (setup.stages) — all stages of the flow, in order (Flow instructions): { id, state (todo, done), results, recommended, executor, share, factors }. A done skill stage needs results [{ label, target }], label = file name or task key. recommended: true — into the run. executor — self or the stage's agent:…/workflow:…. share { percent, risk } on every todo skill stage — its part of the scope (the work itself 100, a spec ~15); factors { <executor id>: { factor, risk } } — multiplier > 0, you are 1. No add or adds on stages.
+- do not send artifacts, executor, checker, testing, budgetTarget or budgetMax.
+
+The budget forecast: scope = base + chosen options; a run stage costs scope × percent × factor; without a 100 stage the scope counts once, stages on top. Risk: integer, 1r ≈ 10% chance a blocking defect reaches the owner; implementation raises it, spec, plan, prototype, review and testing lower it (scale: flow skill). Refused before launch: no scope, unpriced item, skill stage without share, $0 forecast.
 
 questions — the second part; an id does not start with "setup.".
-- fork — one answer, the choice changes the outcome. Every option requires description and add (or the old cost plus risk XS…XXL). At most one recommended.
-- pick — several answers. Every option requires description; add if it changes the budget.
+- fork — one answer, the choice changes the outcome. Every option requires description and add — what it adds to the scope, from zero (or the old cost plus risk XS…XXL). At most one recommended.
+- pick — several answers. Every option requires description; add if it adds work.
 - confirm — "did I get this right": exactly one option "Yes", and context says what you understood.
-hides on an option — ids of questions below it that lose their meaning when it is chosen: the owner does not see them and you do not get their answers.
+hides on an option — ids of questions below it that lose meaning when it is chosen: the owner does not see them.
 criteria on an option — items it adds while chosen; an item of an option the owner drops themselves stays in the list struck through, so an item that depends on one answer goes on the option, not into setup.criteria; removes — setup.criteria indexes it strikes then.
 The owner can answer any question in their own words.
 
-outcome — a demo of running work instead of setup: { stage (a demo stage id), final, next (only when not final), done ([text] — closed since the previous demo), pending ([{ text, why }]), notes, tasks ([{ key, done, note }]), results (at least one: { label, target } — a file, path or page URL; { label, command } — a command the owner runs with one click), documentsOnly (only when nothing but documents changed since the previous demo) }. Unless documentsOnly, results hold a live one: an http(s) URL or a command.
+outcome — a demo of running work instead of setup: { stage (a demo stage id), final, next (only when not final), done ([text] — closed since the previous demo), pending ([{ text, why }]), notes, tasks ([{ key, done, note }]), results (at least one: { label, target } — a file, path or URL; { label, command } — a command the owner runs with one click), documentsOnly (only when nothing but documents changed since the previous demo) }. Unless documentsOnly, results hold a live one: an http(s) URL or a command.
 
 After the owner launches work (an answered brief with a stage in the run), setup.stages is accepted only while a stage selection or criteria stage in it is todo, setup.criteria only while a criteria stage is todo.
 
@@ -105,6 +108,38 @@ const missingStagesIssues = (params: AskDecisionParams, launched: boolean, stage
     : ["setup.stages is missing: the thread's flow has a stage selection and the work is not launched yet, so this brief carries every stage of the flow — the budget is summed from them"];
 };
 
+/** Цена пункта «Готово, когда» — деньги и минуты одного агента; без неё база брифа нулевая. */
+const pricedItem = (item: Criterion): boolean => typeof item !== "string" && item.add !== undefined && item.add.target > 0 && (item.add.minutes ?? 0) > 0;
+
+/** Бюджет считается у незапущенного брифа, в котором решается работа; уточнение, итог Демонстрации и вопрос посреди работы его не считают. */
+const decidesBudget = (params: Pick<AskDecisionParams, "kind" | "outcome">, launched: boolean): boolean => params.kind === "brief" && !launched && params.outcome === undefined;
+
+/** База бюджета: «Что я понял», цена у каждого пункта «Готово, когда», доля у несделанного этапа-навыка. Ошибки идут в общий отказ брифа. */
+const baseIssues = (params: AskDecisionParams, launched: boolean, stages: StageSettings["stages"]): string[] => {
+  if (!decidesBudget(params, launched)) return [];
+  const criteria = params.setup?.criteria ?? [];
+  const unpriced = criteria.flatMap((item, i) => (pricedItem(item) ? [] : [i + 1]));
+  const unshared = (params.setup?.stages ?? [])
+    .filter((r) => r.state === "todo" && r.share === undefined && stages.some((s) => s.id === r.id && stageKindOf(s) === "skill" && !isAutomationStage(s)))
+    .map((r) => r.id);
+  return [
+    ...(params.scope === undefined ? ["scope is missing: start the brief with what you understood — the minimal set of work as a nested list; its items are setup.criteria"] : []),
+    ...(criteria.length === 0
+      ? ["setup.criteria is missing: the done-when items are the base of the budget, each with add { target, max, risk, minutes } — what one agent on the current model and effort spends on it"]
+      : []),
+    ...(unpriced.length === 0 ? [] : [`setup.criteria items ${unpriced.join(", ")} have no price: each item needs add with target and minutes above zero — what one agent on the current model and effort spends on it`]),
+    ...(unshared.length === 0 ? [] : [`stages ${unshared.join(", ")} have no share: a todo skill stage sends share { percent, risk } — implementation by you is 100`]),
+  ];
+};
+
+/** Прогноз по рекомендациям у брифа с базой: работа всегда стоит денег и времени, ноль значит, что в прогон не взято ничего. */
+const zeroForecastIssues = (brief: DecisionBrief, launched: boolean): string[] => {
+  if (!decidesBudget(brief, launched)) return [];
+  const f = recommendedForecast(brief);
+  const minutes = plannedMinutes(f) ?? 0;
+  return f.target > 0 && minutes > 0 ? [] : [`the forecast with your recommendations is ${money(f.target)} / ${minutes} min: work always costs money and time — take at least one stage into the run`];
+};
+
 /** Поля первой части, которые заменили этапы работ. */
 const LEGACY_SETUP = ["artifacts", "executor", "checker", "testing"] as const;
 
@@ -146,7 +181,7 @@ export const registerAskTool = (
   bb.agents.registerTool({
     name: ASK_TOOL_NAME,
     description:
-      "Ask the owner: a brief rendered as a widget in the thread. First part (setup) shows the work stages of the thread's flow — done ones with links and ones to run with executor and add — plus done-when criteria and a budget button summed from add with time, recommendations preselected; second part holds questions: forks with description and add, multi-answer picks and confirmations. " +
+      "Ask the owner: a brief rendered as a widget in the thread. It opens with scope — what you understood; first part (setup) shows the work stages of the thread's flow — done ones with links and ones to run with executor, share and factors — plus done-when criteria priced by one agent and a budget button counted from them with time, recommendations preselected; second part holds questions: forks with description and add, multi-answer picks and confirmations. " +
       'Every text field takes markdown links [text](target) — a path from the tree root (path:12 for a line), an absolute path or a URL: anything that lives in a file is named as a link to it, a fragment as one link "fragment (what it is) — file".',
     instructions: ASK_INSTRUCTIONS,
     presentation: { label: { pending: "Preparing a brief", completed: "Brief in the thread" } },
@@ -158,15 +193,19 @@ export const registerAskTool = (
       const launchedSetup = params.kind === "brief" && launched ? launchedIssues(params.setup, settings.stages) : [];
       const outcomeProblems = outcomeIssues(params.outcome, launched, settings.stages);
       const stageIssues = [...missingStagesIssues(params, launched, settings.stages), ...reportIssues(settings.stages, params.setup?.stages)];
+      const base = baseIssues(params, launched, settings.stages);
       if (launchedSetup.length > 0 || outcomeProblems.length > 0)
         return toolError(`Brief not accepted: ${[...launchedSetup, ...outcomeProblems].join("; ")}.`);
-      if (legacy.length > 0 || stageIssues.length > 0)
+      if (legacy.length > 0 || stageIssues.length > 0 || base.length > 0)
         return toolError(
-          [`Brief not accepted: ${[...legacy, ...stageIssues].join("; ")}.`, ...(stageIssues.length > 0 ? [stageInstructions(settings.stages) ?? "The plugin settings have no stages."] : [])].join("\n\n"),
+          [`Brief not accepted: ${[...legacy, ...stageIssues, ...base].join("; ")}.`, ...(stageIssues.length > 0 ? [stageInstructions(settings.stages) ?? "The plugin settings have no stages."] : [])].join("\n\n"),
         );
       const planning = params.kind === "brief" ? await deps.planning?.(ctx.threadId) : undefined;
       const flowName = deps.flowName?.(ctx.threadId);
       const carried = params.kind === "brief" ? carriedInto(params.setup, await store.getThreadCarry(ctx.threadId)) : {};
+      const midWork = launched && params.kind === "brief" && params.outcome === undefined;
+      const approved = midWork ? await store.getThreadCriteria(ctx.threadId) : [];
+      const approvedScope = midWork ? await store.getThreadScope(ctx.threadId) : null;
       // Ссылки сделанной автоматизации — из её шагов: агент их не присылает.
       const stepped = withStepResults(settings.stages, params.setup?.stages, params.setup?.stages === undefined ? null : ((await deps.progress?.get(ctx.threadId)) ?? null));
       const brief: DecisionBrief = {
@@ -179,11 +218,15 @@ export const registerAskTool = (
         ...(launched && params.setup?.stages === undefined ? { launched: true as const } : {}),
         ...(planning === undefined ? {} : { planning }),
         ...(Object.keys(carried).length === 0 ? {} : { carried }),
+        ...(approved.length === 0 ? {} : { approved }),
+        ...(approvedScope === null ? {} : { approvedScope }),
         ...(params.setup?.stages === undefined && params.outcome === undefined
           ? {}
           : { stages: { list: settings.stages, minButtonWidth: settings.minButtonWidth, ...(flowName === undefined ? {} : { flowName }) } }),
         createdAt: deps.now(),
       };
+      const zero = zeroForecastIssues(brief, launched);
+      if (zero.length > 0) return toolError(`Brief not accepted: ${zero.join("; ")}.`);
       const stored = await store.putBrief(brief);
       if (stored.kind === "stored") {
         await deps.progress?.recordBrief(brief, brief.createdAt).catch(() => undefined);

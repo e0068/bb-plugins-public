@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 import { addFlow, DEFAULT_STAGES, newFlow, NO_FLOW } from "./core/flows";
 import { QUICK_STAGES } from "./core/stages-fixtures";
 import plugin from "./server";
+import { priced } from "./server/priced-fixture";
 
 const text = (result: unknown) => (typeof result === "string" ? result : JSON.stringify(result));
 const todo = (ids: readonly string[]) => ids.map((id) => ({ id, state: "todo" }));
@@ -34,7 +35,7 @@ describe("плагин Flow: flow и треды", () => {
   it("бриф с этапами flow по умолчанию проходит инструмент в треде без выбора", async () => {
     const { bb, harness } = createFakePluginHost({ pluginId: "flow" });
     await plugin(bb);
-    expect(text(await harness.callAgentTool("ask_decision", { title: "Бриф", setup: { stages: todo(DEFAULT_IDS) } }, { threadId: "thr_old" }))).toMatch(/::decision\{id="dec_/);
+    expect(text(await harness.callAgentTool("ask_decision", priced({ title: "Бриф", setup: { stages: todo(DEFAULT_IDS) } }), { threadId: "thr_old" }))).toMatch(/::decision\{id="dec_/);
   });
 
   it("тред, созданный после выбора flow в композере, получает его этапы в инструкциях и в проверке брифа", async () => {
@@ -45,8 +46,8 @@ describe("плагин Flow: flow и треды", () => {
     expect(instructions).toMatch(/1\. criteria/);
     expect(instructions).toMatch(/2\. implement/);
     expect(instructions).not.toMatch(/prototype/);
-    expect(text(await harness.callAgentTool("ask_decision", { title: "Бриф", setup: { stages: todo(["criteria", "implement"]) } }, { threadId: "thr_new" }))).toMatch(/::decision\{id="dec_/);
-    expect(text(await harness.callAgentTool("ask_decision", { title: "Бриф", setup: { stages: todo(DEFAULT_IDS) } }, { threadId: "thr_new" }))).toMatch(/criteria, implement/);
+    expect(text(await harness.callAgentTool("ask_decision", priced({ title: "Бриф", setup: { stages: todo(["criteria", "implement"]) } }), { threadId: "thr_new" }))).toMatch(/::decision\{id="dec_/);
+    expect(text(await harness.callAgentTool("ask_decision", priced({ title: "Бриф", setup: { stages: todo(DEFAULT_IDS) } }), { threadId: "thr_new" }))).toMatch(/criteria, implement/);
   });
 
   it("выбор проекта читается кнопкой: список flow и выбранный; без выбора — flow по умолчанию", async () => {

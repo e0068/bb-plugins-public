@@ -10,14 +10,15 @@
 // исполнителя, ни цены у неё нет; сделанная ведёт себя как остальные этапы.
 import { useRef, type ReactNode } from "react";
 
-import { SELF, executorLabel, stageAdd, stageItems, stageLabel, stagePhase, type StageItem } from "../core/stages";
+import { SELF, executorAdd, executorLabel, stageAdd, stageItems, stageLabel, stagePhase, type StageItem } from "../core/stages";
+import { scopeOf } from "../core/budget";
 import type { FileRoots } from "../core/result-link";
 import { Icon } from "../components/ui/icon";
 import { STAGE_BUTTON_WIDTH } from "../lib/stage-constants";
 import { cn } from "../lib/utils";
 import type { DecisionBrief, StageExecutor } from "../shared/contract";
 import { AddMeta, CardText, CheckSquare, DocumentName, RESULT_ROW, rowCellStyle } from "./cells";
-import { pickStageExecutor, stageChoiceIn, toggleStageRun, type Draft } from "./draft";
+import { pickStageExecutor, stageChoiceIn, toAnswer, toggleStageRun, type Draft } from "./draft";
 import { useLocale, useMessages } from "./locale-context";
 import { ROW_CELL, cellOrder, panelOrder, useRowEnds } from "./row-order";
 import { AUTOMATION_ICON } from "./stage-icons";
@@ -76,7 +77,7 @@ function StageCell({ state, view, roots, order, width }: { state: StageState; vi
           {name}
         </span>
       }
-      meta={checkable ? <AddMeta add={stageAdd(item, choice.executor)} /> : null}
+      meta={checkable ? <AddMeta add={stageAdd(item, choice.executor, scopeOf(view.brief, toAnswer(view.brief, view.draft)))} /> : null}
       bright={checkable ? own.executor !== undefined : true}
     >
       {automation !== undefined ? null : checkable ? (
@@ -195,7 +196,7 @@ function ExecutorPanel({ item, view, order, cell }: { item: StageItem; view: Sta
               {executor?.description !== undefined && <span className="line-clamp-1 text-[11px] text-muted-foreground">{executor.description}</span>}
             </span>
             <span className="flex shrink-0 items-center gap-3">
-              <AddMeta add={executor === undefined ? undefined : item.report?.adds?.[id]} />
+              <AddMeta add={executorAdd(item, id, scopeOf(view.brief, toAnswer(view.brief, view.draft)))} />
               {on && <Icon name="Check" aria-hidden="true" className="size-3.5" />}
             </span>
           </button>

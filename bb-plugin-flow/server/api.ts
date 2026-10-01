@@ -4,8 +4,9 @@ import type { BbPluginApi } from "@get-bb/plugin-sdk";
 
 import { needsAgentReply } from "../core/agent-reply";
 import { answerMessageText, openQuestions } from "../core/answer-message";
-import { forecast, hasForecast } from "../core/budget";
+import { forecast, hasForecast, scopeOf } from "../core/budget";
 import { carryOf } from "../core/carry";
+import { finalCriteria } from "../core/option-criteria";
 import { demoVerdict } from "../core/outcome";
 import { routeAllowed } from "../core/places";
 import { onAnswer } from "../core/progress";
@@ -113,6 +114,17 @@ export const registerApi = (
       if (brief.kind === "brief" && launchesWork(brief, answer)) await quietly(store.markLaunched(brief.threadId));
       // Выбор владельца уходит в следующий бриф треда; уточнение первой части не несёт и перенос не трогает.
       if (brief.kind === "brief") await store.putThreadCarry(brief.threadId, carryOf(brief, answer));
+      // Утверждённое «Готово, когда» и объём ждут брифа посреди работы — в этом треде и в новом, куда ушла работа.
+      // Бриф без своих пунктов дописывает пункты выбранного варианта к уже утверждённым.
+      if (brief.kind === "brief" && brief.outcome === undefined) {
+        const answered = finalCriteria(brief, answer);
+        const approved = brief.setup?.criteria === undefined ? [...new Set([...(brief.approved ?? []), ...answered])] : answered;
+        const scope = scopeOf(brief, answer);
+        for (const threadId of [brief.threadId, ...(handoffThreadId === undefined ? [] : [handoffThreadId])]) {
+          if (approved.length > 0) await quietly(store.putThreadCriteria(threadId, approved));
+          if (scope !== undefined) await quietly(store.putThreadScope(threadId, scope));
+        }
+      }
       if (brief.kind === "brief") {
         const planned = predicted === null ? undefined : { minutes: predicted.minutes, target: predicted.target, max: predicted.max };
         await quietly(deps.progress?.recordAnswer(brief, answer, written.record.answeredAt, planned) ?? Promise.resolve());

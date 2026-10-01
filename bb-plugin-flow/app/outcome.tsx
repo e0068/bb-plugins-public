@@ -11,6 +11,7 @@ import type { DecisionBrief, StageOutcome, outcomeRpcContract } from "../shared/
 import { CommandResultRow } from "./command";
 import { AddRow } from "./add-row";
 import { LinkedText } from "./linked-text";
+import { TaskLink } from "./cells";
 import type { FileRoots } from "../core/result-link";
 import { setOutcomeNote, type Draft } from "./draft";
 import { useMessages } from "./locale-context";
@@ -105,7 +106,9 @@ export function DemoCard({ brief, roots, view }: { brief: DecisionBrief; roots: 
               {tasks.map((task) => (
                 <span key={task.key} className={cn("flex items-center gap-1.5 rounded-full bg-card px-2.5 py-1 text-xs", !task.done && "text-muted-foreground")}>
                   <Icon name={task.done ? "Check" : "X"} className="size-3" />
-                  <span>{task.key}</span>
+                  <TaskLink address={task.key} className="underline underline-offset-2 hover:text-primary">
+                    {task.key}
+                  </TaskLink>
                   {task.note !== undefined && (
                     <span>
                       {"— "}

@@ -10,6 +10,7 @@ import { registerApi } from "./api";
 import { ASK_TOOL_NAME, registerAskTool } from "./ask-tool";
 import { FLOW_STAGE_TOOL, createProgress, registerProgress, type ThreadState } from "./progress";
 import { createStore } from "./store";
+import { priced } from "./priced-fixture";
 
 const settings: StageSettings = { stages: [builtinStage("questions", []), stage("task", { name: "Задача" })], minButtonWidth: 170 };
 
@@ -27,7 +28,7 @@ const host = async (journal?: Journal) => {
   registerApi(bb, store, { now, progress });
   const thread = async (): Promise<ThreadState> => ({ environmentId: "env_a", active: false, providerId: null, title: "Тред А", projectId: "prj" });
   freeze = registerProgress(bb, progress, { now, stages: () => settings, flowName: () => "Code", windowCost: async () => 1, thread, ...(journal === undefined ? {} : { journal }) }).freezeFinished;
-  await harness.callAgentTool(ASK_TOOL_NAME, { title: "Бриф", setup: { stages: [{ id: "questions", state: "todo" }, { id: "task", state: "todo", recommended: true }] } }, { threadId: "thr_a" });
+  await harness.callAgentTool(ASK_TOOL_NAME, priced({ title: "Бриф", setup: { stages: [{ id: "questions", state: "todo" }, { id: "task", state: "todo", recommended: true }] } }), { threadId: "thr_a" });
   await harness.callRpc("answerBrief", { id: "dec_run1", messageId: "m", answer: { briefId: "dec_run1", answers: [], stages: [{ id: "task", run: true, executor: "self" }] } });
   await harness.callAgentTool(FLOW_STAGE_TOOL, { stage: "task", state: "started" }, { threadId: "thr_a" });
   clock += 20 * 60_000;

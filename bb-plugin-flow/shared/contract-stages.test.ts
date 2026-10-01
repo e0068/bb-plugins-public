@@ -13,10 +13,10 @@ describe("этапы работ в схемах", () => {
     expect(askDecisionParamsSchema.safeParse(params([{ id: "a", state: "todo" }, { id: "a", state: "todo" }])).success).toBe(false);
   });
 
-  it("исполнитель по умолчанию — сам, добавки исполнителей — по их id", () => {
-    const parsed = askDecisionParamsSchema.parse(params([{ id: "plan", state: "todo", recommended: true, add: { target: 1, max: 2, risk: 0 }, adds: { "agent:planner": { target: 2, max: 3, risk: -1, minutes: 5 } } }]));
+  it("исполнитель по умолчанию — сам, множители исполнителей — по их id", () => {
+    const parsed = askDecisionParamsSchema.parse(params([{ id: "plan", state: "todo", recommended: true, share: { percent: 15, risk: -1 }, factors: { "agent:planner": { factor: 0.8, risk: 0 } } }]));
     expect(parsed.setup?.stages?.[0]?.executor).toBe("self");
-    expect(parsed.setup?.stages?.[0]?.adds?.["agent:planner"]?.minutes).toBe(5);
+    expect(parsed.setup?.stages?.[0]?.factors?.["agent:planner"]?.factor).toBe(0.8);
   });
 
   it("бриф только с этапами — есть что решать", () => {

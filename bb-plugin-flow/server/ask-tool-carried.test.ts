@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 import { SETUP_ROW } from "../core/rows";
 import { ASK_TOOL_NAME, registerAskTool } from "./ask-tool";
 import { createStore } from "./store";
+import { priced } from "./priced-fixture";
 
 const host = () => {
   const { bb, harness } = createFakePluginHost({ pluginId: "decisions" });
@@ -18,13 +19,13 @@ const host = () => {
 describe("перенос в новом брифе", () => {
   it("уточнение переноса не получает", async () => {
     const { harness, store, idOf } = host();
-    const first = await store.getBrief(idOf(await harness.callAgentTool(ASK_TOOL_NAME, { title: "Первый", setup: { criteria: ["Тесты зелёные"] } })));
+    const first = await store.getBrief(idOf(await harness.callAgentTool(ASK_TOOL_NAME, priced({ title: "Первый", setup: { criteria: ["Тесты зелёные"] } }))));
     await store.putThreadCarry(first!.threadId, { [SETUP_ROW.executor]: ["subagents"] });
-    const result = await harness.callAgentTool(ASK_TOOL_NAME, {
+    const result = await harness.callAgentTool(ASK_TOOL_NAME, priced({
       title: "Влить?",
       kind: "clarify",
       questions: [{ id: "m", question: "Влить?", kind: "yesno", options: [{ id: "yes", action: "Да" }, { id: "no", action: "Нет" }] }],
-    });
+    }));
     expect((await store.getBrief(idOf(result)))?.carried).toBeUndefined();
   });
 });

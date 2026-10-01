@@ -6,6 +6,7 @@ import { stage } from "../core/stages-fixtures";
 import type { StageSettings } from "../shared/contract";
 import { ASK_TOOL_NAME, registerAskTool } from "./ask-tool";
 import { createStore } from "./store";
+import { priced } from "./priced-fixture";
 
 const THREAD = "thr_flow_name";
 
@@ -15,7 +16,7 @@ const host = (flowName: { current: string | undefined }) => {
   const { bb, harness } = createFakePluginHost({ pluginId: "flow" });
   const store = createStore(bb.storage.kv);
   registerAskTool(bb, store, { newId: () => "N1", now: () => "2026-09-24T10:00:00.000Z", stages: () => settings, flowName: () => flowName.current });
-  const ask = () => harness.callAgentTool(ASK_TOOL_NAME, { title: "Бриф", setup: { stages: [{ id: "task", state: "todo", recommended: true }] } }, { threadId: THREAD });
+  const ask = () => harness.callAgentTool(ASK_TOOL_NAME, priced({ title: "Бриф", setup: { stages: [{ id: "task", state: "todo", recommended: true }] } }), { threadId: THREAD });
   return { ask, store };
 };
 

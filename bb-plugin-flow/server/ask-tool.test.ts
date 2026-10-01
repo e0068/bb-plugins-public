@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 import { DECISION_ID_PREFIX, directiveLine } from "../core/directive";
 import { ASK_INSTRUCTIONS, ASK_TOOL_NAME, registerAskTool } from "./ask-tool";
 import { createStore } from "./store";
+import { priced } from "./priced-fixture";
 
 const forkOption = (id: string, recommended = false) => ({
   id,
@@ -46,7 +47,7 @@ const textOf = (result: unknown): string =>
 describe("инструмент ask_decision", () => {
   it("валидный бриф кладётся в хранилище и возвращает строку директивы с его идентификатором", async () => {
     const { harness, store } = setup();
-    const result = await harness.callAgentTool(ASK_TOOL_NAME, params());
+    const result = await harness.callAgentTool(ASK_TOOL_NAME, priced(params()));
     const id = `${DECISION_ID_PREFIX}T1`;
     expect(textOf(result)).toContain(directiveLine(id));
     const stored = await store.getBrief(id);
@@ -56,19 +57,19 @@ describe("инструмент ask_decision", () => {
 
   it("идентификатор брифа начинается с dec_", async () => {
     const { harness } = setup();
-    const text = textOf(await harness.callAgentTool(ASK_TOOL_NAME, params()));
+    const text = textOf(await harness.callAgentTool(ASK_TOOL_NAME, priced(params())));
     expect(text).toMatch(/::decision\{id="dec_[^"\s]+"\}/);
   });
 
   it("threadId брифа берётся из контекста вызова, а не из параметров", async () => {
     const { harness, store } = setup();
-    await harness.callAgentTool(ASK_TOOL_NAME, params({ threadId: "thr_forged" }), { threadId: "thr_real" });
+    await harness.callAgentTool(ASK_TOOL_NAME, priced(params({ threadId: "thr_forged" })), { threadId: "thr_real" });
     expect((await store.getBrief(`${DECISION_ID_PREFIX}T1`))?.threadId).toBe("thr_real");
   });
 
   it("бриф сверх предела хранилища возвращает ошибку инструмента с размером", async () => {
     const { harness } = setup();
-    const result = await harness.callAgentTool(ASK_TOOL_NAME, params({ intro: "я".repeat(200_000) }));
+    const result = await harness.callAgentTool(ASK_TOOL_NAME, priced(params({ intro: "я".repeat(200_000) })));
     expect(typeof result === "object" && result.isError).toBe(true);
     expect(textOf(result)).toMatch(/\d{6,}/);
   });

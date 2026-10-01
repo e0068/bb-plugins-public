@@ -9,6 +9,7 @@ import { registerApi } from "./api";
 import { ASK_TOOL_NAME, registerAskTool } from "./ask-tool";
 import { createProgress, registerProgress } from "./progress";
 import { createStore } from "./store";
+import { priced } from "./priced-fixture";
 
 const settings: StageSettings = { stages: [builtinStage("select", []), stage("task")], minButtonWidth: 170 };
 
@@ -31,7 +32,7 @@ describe("передача работы в новый тред", () => {
     registerAskTool(bb, store, { newId: () => "H1", now, stages: () => settings, progress });
     registerApi(bb, store, { now, progress });
     registerProgress(bb, progress, { now, stages: () => settings, windowCost: async () => undefined });
-    await harness.callAgentTool(ASK_TOOL_NAME, { title: "Бриф", setup: { stages: [{ id: "select", state: "todo" }, { id: "task", state: "todo", recommended: true }] } }, { threadId: "thr_src" });
+    await harness.callAgentTool(ASK_TOOL_NAME, priced({ title: "Бриф", setup: { stages: [{ id: "select", state: "todo" }, { id: "task", state: "todo", recommended: true }] } }), { threadId: "thr_src" });
     await harness.callRpc("answerBrief", { id: "dec_H1", messageId: "m", answer: { briefId: "dec_H1", answers: [], place: "thread", stages: [{ id: "task", run: true, executor: "self" }] } });
     expect(await harness.callRpc("getFlowProgress", { threadId: "thr_new" })).toMatchObject({ done: 1, current: "task" });
   });

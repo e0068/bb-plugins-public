@@ -3,7 +3,7 @@
 // `removes`, а вариант, снятый рукой владельца, оставляет свои пункты в списке
 // зачёркнутыми — отказ виден там же, где сделан, и уходит агенту словами.
 // Считается по брифу и ответу, поэтому одинаково в виджете и в реплике агенту.
-import type { DecisionAnswer, DecisionBrief, DecisionOption, DecisionQuestion } from "../shared/contract";
+import type { Criterion, DecisionAnswer, DecisionBrief, DecisionOption, DecisionQuestion } from "../shared/contract";
 import { hiddenQuestions } from "./visibility";
 
 /** Пункт варианта: текст, вариант, который его принёс, и судьба пункта в списке. */
@@ -49,3 +49,19 @@ export const optionRemoved = (brief: DecisionBrief, answer: Pick<DecisionAnswer,
 /** Снятые пункты брифа: снятые владельцем и снятые выбранными вариантами. */
 export const removedCriteria = (brief: DecisionBrief, answer: Pick<DecisionAnswer, "answers" | "criteria">): number[] =>
   [...new Set([...(answer.criteria?.removed ?? []), ...optionRemoved(brief, answer)])].sort((a, b) => a - b);
+
+/** Название пункта брифа в итоге: правка владельца заменяет текст, у пункта-изменения — его «стало». */
+const finalText = (item: Criterion, edited: string | undefined): string => {
+  const title = typeof item === "string" ? item : item.text;
+  if (edited === undefined) return title;
+  return typeof item !== "string" && "before" in item ? `${title} — ${edited}` : edited;
+};
+
+/** Утверждённое ответом «Готово, когда»: оставленные пункты брифа с правками, дописанные владельцем, живые пункты выбранных вариантов. */
+export const finalCriteria = (brief: DecisionBrief, answer: Pick<DecisionAnswer, "answers" | "criteria">): string[] => {
+  const removed = removedCriteria(brief, answer);
+  const edits = new Map((answer.criteria?.edited ?? []).map((e) => [e.index, e.text]));
+  const items = (brief.setup?.criteria ?? []).flatMap((item, i) => (removed.includes(i) ? [] : [finalText(item, edits.get(i))]));
+  const options = optionCriteria(brief, answer).filter((c) => c.state === "live").map((c) => c.text);
+  return [...items, ...(answer.criteria?.added ?? []), ...options];
+};

@@ -10,10 +10,13 @@ const fork = (a: unknown) => ({
 const forkAdd = (a: unknown) => askDecisionParamsSchema.parse(fork(a)).questions[0]?.options[0]?.add;
 
 describe("добавка — диапазон, а не пара в строгом порядке", () => {
-  it("target и max в любом порядке приводятся к меньшей и большей границе", () => {
-    expect(forkAdd({ target: -2, max: -4, risk: 1 })).toEqual({ target: -4, max: -2, risk: 1 });
-    expect(forkAdd({ target: -4, max: -2, risk: 1 })).toEqual({ target: -4, max: -2, risk: 1 });
+  it("target и max варианта в любом порядке приводятся к меньшей и большей границе", () => {
     expect(forkAdd({ target: 5, max: 3, risk: 0, minutes: 10 })).toEqual({ target: 3, max: 5, risk: 0, minutes: 10 });
+    expect(forkAdd({ target: 3, max: 5, risk: 1 })).toEqual({ target: 3, max: 5, risk: 1 });
+  });
+
+  it("экономия у этапа старого брифа приводится так же: меньшая граница — target", () => {
+    expect(stageReportSchema.parse({ id: "plan", state: "todo", add: { target: -2, max: -4, risk: 1 } }).add).toEqual({ target: -4, max: -2, risk: 1 });
   });
 
   it("риск — целое число в обе стороны", () => {

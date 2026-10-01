@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 import { registerAskTool } from "./ask-tool";
 import { readPlanning, type PlanningSource } from "./planning";
 import { createStore } from "./store";
+import { priced } from "./priced-fixture";
 
 const line = JSON.stringify({ type: "assistant", requestId: "r1", message: { id: "m1", model: "claude-opus-5", usage: { input_tokens: 1_000_000, output_tokens: 0 } } });
 
@@ -36,7 +37,7 @@ describe("чтение планирования из треда", () => {
     const host = createFakePluginHost();
     const store = createStore(host.bb.storage.kv);
     registerAskTool(host.bb, store, { newId: () => "p1", now: () => "2026-09-13T00:00:00.000Z", planning: async () => ({ minutes: 42, cost: 4.2 }) });
-    await host.harness.callAgentTool("ask_decision", { title: "Бриф", setup: { criteria: ["Тесты зелёные"] } }, { threadId: "thr_1" });
+    await host.harness.callAgentTool("ask_decision", priced({ title: "Бриф", setup: { criteria: ["Тесты зелёные"] } }), { threadId: "thr_1" });
     expect((await store.getBrief("dec_p1"))?.planning).toEqual({ minutes: 42, cost: 4.2 });
   });
 });

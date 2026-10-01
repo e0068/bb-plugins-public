@@ -6,6 +6,7 @@ import { STAGES, planner } from "../core/stages-fixtures";
 import type { StageSettings } from "../shared/contract";
 import { ASK_INSTRUCTIONS, ASK_TOOL_NAME, registerAskTool } from "./ask-tool";
 import { createStore } from "./store";
+import { priced } from "./priced-fixture";
 
 const settings: StageSettings = { stages: STAGES, minButtonWidth: 190 };
 
@@ -30,20 +31,20 @@ const reports = [
 describe("ask_decision и этапы работ", () => {
   it("бриф с этапами хранит снимок настроек", async () => {
     const { harness, store, idOf } = host();
-    const brief = await store.getBrief(idOf(await harness.callAgentTool(ASK_TOOL_NAME, { title: "Бриф", setup: { stages: reports } })));
+    const brief = await store.getBrief(idOf(await harness.callAgentTool(ASK_TOOL_NAME, priced({ title: "Бриф", setup: { stages: reports } }))));
     expect(brief?.stages).toEqual({ list: STAGES, minButtonWidth: 190 });
     expect(brief?.setup?.stages?.map((s) => s.id)).toEqual(["task", "spec", "plan"]);
   });
 
   it("бриф без этапов снимка не получает", async () => {
     const { harness, store, idOf } = host();
-    const result = await harness.callAgentTool(ASK_TOOL_NAME, { title: "Бриф", setup: { criteria: ["Тесты зелёные"] } });
+    const result = await harness.callAgentTool(ASK_TOOL_NAME, priced({ title: "Бриф", setup: { criteria: ["Тесты зелёные"] } }));
     expect((await store.getBrief(idOf(result)))?.stages).toBeUndefined();
   });
 
   it("отчёт не по настройкам — ошибка инструмента со списком этапов настроек", async () => {
     const { harness } = host();
-    const result = await harness.callAgentTool(ASK_TOOL_NAME, { title: "Бриф", setup: { stages: reports.slice(1) } });
+    const result = await harness.callAgentTool(ASK_TOOL_NAME, priced({ title: "Бриф", setup: { stages: reports.slice(1) } }));
     expect(typeof result === "object" && result.isError).toBe(true);
     expect(textOf(result)).toContain("task, spec, plan");
   });
@@ -51,7 +52,7 @@ describe("ask_decision и этапы работ", () => {
   it("артефакты, исполнитель, ревью и тестирование прежнего вида отбиваются с отсылкой к setup.stages", async () => {
     const { harness } = host();
     for (const setup of [{ executor: { recommended: "self" } }, { checker: { recommended: "none" } }, { testing: { recommended: "self" } }]) {
-      const result = await harness.callAgentTool(ASK_TOOL_NAME, { title: "Бриф", setup });
+      const result = await harness.callAgentTool(ASK_TOOL_NAME, priced({ title: "Бриф", setup }));
       expect(typeof result === "object" && result.isError).toBe(true);
       expect(textOf(result)).toContain("setup.stages");
     }
@@ -59,9 +60,9 @@ describe("ask_decision и этапы работ", () => {
 
   it("перенос этапов из прошлого брифа треда встаёт в новый бриф с этапами", async () => {
     const { harness, store, idOf } = host();
-    const first = await store.getBrief(idOf(await harness.callAgentTool(ASK_TOOL_NAME, { title: "Первый", setup: { stages: reports } })));
+    const first = await store.getBrief(idOf(await harness.callAgentTool(ASK_TOOL_NAME, priced({ title: "Первый", setup: { stages: reports } }))));
     await store.putThreadCarry(first!.threadId, { "stage:plan:executor": [planner.id], "stage:ghost:review": ["on"] });
-    const second = await store.getBrief(idOf(await harness.callAgentTool(ASK_TOOL_NAME, { title: "Второй", setup: { stages: reports } })));
+    const second = await store.getBrief(idOf(await harness.callAgentTool(ASK_TOOL_NAME, priced({ title: "Второй", setup: { stages: reports } }))));
     expect(second?.carried).toEqual({ "stage:plan:executor": [planner.id] });
   });
 

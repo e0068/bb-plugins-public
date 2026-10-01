@@ -11,14 +11,6 @@ describe("у цены работы одно место", () => {
     expect(ASK_INSTRUCTIONS).not.toContain("Put add on stages, criteria items and options");
   });
 
-  it("инструкции и навык называют цену работы на этапах, долю пункта и разницу варианта", () => {
-    for (const text of [ASK_INSTRUCTIONS, skill]) {
-      expect(text).toContain("the price of the work is on the stages");
-      expect(text).toContain("share inside the stages, not on top of them");
-      expect(text).toContain("difference from the recommended option");
-    }
-  });
-
   it("инструкции и навык учат класть пункты варианта в его criteria", () => {
     for (const text of [ASK_INSTRUCTIONS, skill]) expect(text).toContain("criteria on an option");
   });
