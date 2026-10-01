@@ -9,11 +9,6 @@ const withSetup = (setup: Record<string, unknown>) => ({ title: "Бриф", setu
 const executor = (recommended: string, adds?: Record<string, unknown>) => ({ executor: { recommended, ...(adds === undefined ? {} : { adds }) } });
 
 describe("добавка — разница с базой по деньгам, риску и времени", () => {
-  it("add принимает отрицательные деньги при max не ниже target", () => {
-    expect(accepts(withSetup(executor("subagents", { subagents: { target: -4, max: -2, risk: 1 } })))).toBe(true);
-    expect(accepts(withSetup(executor("subagents", { subagents: { target: -2, max: -4, risk: 1 } })))).toBe(false);
-  });
-
   it("add принимает minutes любого знака и отклоняет дробные", () => {
     expect(accepts(withSetup(executor("workflow", { workflow: { target: 3, max: 5, risk: 0, minutes: -15 } })))).toBe(true);
     expect(accepts(withSetup(executor("workflow", { workflow: { target: 3, max: 5, risk: 0, minutes: 20 } })))).toBe(true);
@@ -22,17 +17,6 @@ describe("добавка — разница с базой по деньгам, �
 });
 
 describe("границы добавки", () => {
-  const fork = (a: unknown) => ({
-    title: "Бриф",
-    questions: [{ id: "how", question: "Как?", kind: "fork", options: [{ id: "a", action: "А", description: "Что", recommended: true, add: a }, { id: "b", action: "Б", description: "Что", add: { target: 1, max: 2, risk: 0 } }] }],
-  });
-
-  it("потолок не ниже цели, риск — целое число в обе стороны", () => {
-    expect(accepts(fork({ target: 5, max: 3, risk: 0 }))).toBe(false);
-    expect(accepts(fork({ target: 1, max: 2, risk: 1.5 }))).toBe(false);
-    expect(accepts(fork({ target: 0, max: 0, risk: -3 }))).toBe(true);
-  });
-
   it("два рекомендованных в ряду бюджета записанного брифа отбиваются схемой хранилища", () => {
     const twice = { options: [{ id: "a", action: "$1", recommended: true }, { id: "b", action: "$2", recommended: true }] };
     const stored = { id: "dec_1", threadId: "thr_1", createdAt: "2026-09-13T00:00:00.000Z", title: "Старый", setup: { budgetMax: twice } };

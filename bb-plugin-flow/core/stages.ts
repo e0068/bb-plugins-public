@@ -138,7 +138,7 @@ export const reportIssues = (stages: readonly WorkStage[], reports: readonly Sta
       ...(unlinked ? [`stage ${r.id}: a ${r.state} skill stage needs results with links`] : []),
       ...(knownExecutor(stage, r.executor) ? [] : [`stage ${r.id}: executor ${r.executor} is not one of the stage's — ${allowed}`]),
       ...Object.keys(r.adds ?? {})
-        .filter((key) => key === SELF || !stage.executors.some((e) => e.id === key))
+        .filter((key) => !stage.executors.some((e) => e.id === key))
         .map((key) => `stage ${r.id}: adds for ${key} — the stage has no such executor, adds only for ${idList(stage.executors.map((e) => e.id))}`),
     ];
   });

@@ -27,7 +27,7 @@ setup — the first part: no questions, you show what there is and mark what you
 - criteria — "Done when", one checkable statement per item: a string, { text, add }, or a change item { text, before, after, add }; send them before you create the task.
 - do not send artifacts, executor, checker, testing, budgetTarget or budgetMax: the widget sums the budget forecast from add.
 
-add { target, max, risk, minutes } — dollars (target, ceiling), risk as an integer, minutes; a minus lowers it, max is not below target; stage risk is its change to the work's risk, 1r ≈ 10% chance a blocking defect reaches the owner: implementation raises it, spec, plan, prototype, review and testing lower it (scale: flow skill); the price of the work is on the stages; an item's add is its share inside the stages, not on top of them; an option's add is its difference from the recommended option.
+add { target, max, risk, minutes } — dollars (target, ceiling), risk as an integer, minutes; a minus lowers it; stage risk is its change to the work's risk, 1r ≈ 10% chance a blocking defect reaches the owner: implementation raises it, spec, plan, prototype, review and testing lower it (scale: flow skill); the price of the work is on the stages; an item's add is its share inside the stages, not on top of them; an option's add is its difference from the recommended option.
 
 questions — the second part; an id does not start with "setup.".
 - fork — one answer, the choice changes the outcome. Every option requires description and add (or the old cost plus risk XS…XXL). At most one recommended.
