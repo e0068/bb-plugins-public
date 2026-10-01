@@ -12,7 +12,7 @@ import { onAnswer } from "../core/progress";
 import type { Locale } from "../lib/i18n";
 import { stageItems } from "../core/stages";
 import { awaitingRpcContract, decisionsRpcContract, dispatchRpcContract, filesRpcContract, type DecisionAnswer, type DecisionBrief, type DispatchRoute } from "../shared/contract";
-import { attachmentsLine, uploadAttachments } from "./attachments";
+import { attachmentsLine, lostImages, uploadAttachments } from "./attachments";
 import { handoff } from "./handoff";
 import type { ProgressStore } from "./progress";
 import type { DecisionStore } from "./store";
@@ -60,13 +60,14 @@ export const registerApi = (
       if (open.length > 0) return { kind: "incomplete" as const, questionIds: open };
 
       // Снимок прогноза — то, что владелец видел при отправке: отвеченный бриф рисует его, даже если формула потом изменится.
-      // Картинки грузятся до записи ответа: не загрузились — ответ не принят, и повтор из виджета дойдёт.
-      const attached = await uploadAttachments(bb.sdk, { threadId: brief.threadId, briefId: id, images });
+      // Картинки грузятся до записи ответа. Не принятая bb картинка ответ не роняет: реплика назовёт её несохранённой.
+      const { uploaded: attached, failed } = await uploadAttachments(bb.sdk, { threadId: brief.threadId, briefId: id, images });
       const predicted = hasForecast(brief) ? forecast(brief, answer, locale) : null;
       const snapshot = predicted === null ? {} : { forecast: { ...predicted, lines: [...predicted.lines] } };
       const written = await store.putAnswer(id, { answer, messageId, answeredAt: deps.now(), ...snapshot });
       if (written.kind === "already_answered") return written;
-      const text = `${answerMessageText(brief, answer, locale)}${attachmentsLine(attached, locale)}`;
+      const lost = lostImages(answer, { uploaded: attached, failed }, locale);
+      const text = `${answerMessageText(brief, answer, locale)}${attachmentsLine(attached, lost, locale)}`;
       const place = answer.place ?? "here";
       let handoffThreadId: string | undefined;
       try {
@@ -80,7 +81,7 @@ export const registerApi = (
           // всегда: там вся работа впереди.
           const record = (await deps.progress?.get(brief.threadId).catch(() => null)) ?? null;
           const ahead = record === null ? null : onAnswer(record, brief, answer, written.record.answeredAt);
-          if (needsAgentReply(brief, answer, ahead, attached.length)) {
+          if (needsAgentReply(brief, answer, ahead, attached.length + lost.length)) {
             deps.ownSend?.(brief.threadId, text);
             await bb.sdk.threads.send({
               threadId: brief.threadId,

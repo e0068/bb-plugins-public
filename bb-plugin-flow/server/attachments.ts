@@ -7,35 +7,73 @@ import type { BbPluginApi } from "@get-bb/plugin-sdk";
 
 import type { Locale } from "../lib/i18n";
 import { messages } from "../lib/messages";
-import type { AnswerImage } from "../shared/contract";
+import type { AnswerImage, DecisionAnswer } from "../shared/contract";
 
 const EXTENSIONS: Readonly<Record<AnswerImage["mimeType"], string>> = { "image/png": "png", "image/jpeg": "jpg", "image/gif": "gif", "image/webp": "webp" };
 
 /** `path` — путь вложения в проекте треда, как его вернула загрузка. */
 export type UploadedImage = { n: number; path: string };
+/** Итог загрузки: что легло вложениями и номера картинок, которые bb не принял. */
+export type UploadResult = { uploaded: UploadedImage[]; failed: number[] };
 
-/** Картинки в порядке прихода, под именем `decision-<бриф>-<номер метки>.<расширение>`; bb добавляет к имени свой хвост. */
+/**
+ * Картинки в порядке прихода, под именем `decision-<бриф>-<номер метки>.<расширение>`; bb добавляет к имени свой хвост.
+ * Отказ одной картинки не роняет остальные: она уходит в `failed`, и ответ называет её несохранённой.
+ */
 export const uploadAttachments = async (
   sdk: Pick<BbPluginApi["sdk"], "threads" | "projects">,
   args: { threadId: string; briefId: string; images: readonly AnswerImage[] },
-): Promise<UploadedImage[]> => {
-  if (args.images.length === 0) return [];
+): Promise<UploadResult> => {
+  if (args.images.length === 0) return { uploaded: [], failed: [] };
   const { projectId } = await sdk.threads.get({ threadId: args.threadId });
-  return Promise.all(
-    args.images.map(async ({ n, mimeType, dataBase64 }) => {
-      const uploaded = await sdk.projects.attachments.upload({
+  const settled = await Promise.allSettled(
+    args.images.map(({ mimeType, dataBase64, n }) =>
+      sdk.projects.attachments.upload({
         projectId,
         clientFile: new Uint8Array(Buffer.from(dataBase64, "base64")),
         filename: `decision-${args.briefId}-${n}.${EXTENSIONS[mimeType]}`,
         mimeType,
-      });
-      return { n, path: uploaded.path };
-    }),
+      }),
+    ),
   );
+  return {
+    uploaded: settled.flatMap((result, i) => (result.status === "fulfilled" ? [{ n: args.images[i]!.n, path: result.value.path }] : [])),
+    failed: settled.flatMap((result, i) => (result.status === "rejected" ? [args.images[i]!.n] : [])),
+  };
 };
 
-/** Строка реплики, связывающая метки в тексте ответа с приложенными картинками; без картинок строки нет. */
-export const attachmentsLine = (uploaded: readonly UploadedImage[], locale?: Locale): string => {
+const escapeRegExp = (text: string): string => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+/** Номера меток «[картинка N]» в тексте, без повторов и по возрастанию; метка — в форме языка ответа. */
+const markerNumbers = (text: string, locale?: Locale): number[] => {
+  const [before = "", after = ""] = messages(locale).attachments.marker(0).split("0");
+  const found = [...text.matchAll(new RegExp(`${escapeRegExp(before)}(\\d+)${escapeRegExp(after)}`, "g"))].map((match) => Number(match[1]));
+  return [...new Set(found)].sort((a, b) => a - b);
+};
+
+/** Всё, что владелец написал в ответе своими словами: метки картинок встают только туда, а не в текст брифа от агента. */
+const ownerWords = (answer: DecisionAnswer): string =>
+  [
+    ...answer.answers.map((a) => a.own),
+    ...(answer.stages ?? []).map((s) => s.note),
+    ...(answer.criteria?.edited ?? []).map((e) => e.text),
+    ...(answer.criteria?.added ?? []),
+    answer.note,
+    answer.outcome?.note,
+  ].join("\n");
+
+/**
+ * Картинки, о которых агент должен узнать, что их нет: метка стоит в словах владельца, а картинка не легла
+ * вложением — потерялась в виджете или bb её не принял. Без такой строки агент видит метку и угадывает, что на картинке.
+ */
+export const lostImages = (answer: DecisionAnswer, result: UploadResult, locale?: Locale): number[] => {
+  const saved = new Set(result.uploaded.map(({ n }) => n));
+  return [...new Set([...markerNumbers(ownerWords(answer), locale).filter((n) => !saved.has(n)), ...result.failed])].sort((a, b) => a - b);
+};
+
+/** Строки реплики о картинках: какая метка у какого пути и какие метки остались без картинки; без картинок и меток строк нет. */
+export const attachmentsLine = (uploaded: readonly UploadedImage[], lost: readonly number[], locale?: Locale): string => {
   const m = messages(locale).attachments;
-  return uploaded.length === 0 ? "" : `\n${m.line(uploaded.map(({ n, path }) => `${m.marker(n)} — ${path}`).join("; "))}`;
+  const saved = uploaded.length === 0 ? "" : `\n${m.line(uploaded.map(({ n, path }) => `${m.marker(n)} — ${path}`).join("; "))}`;
+  return lost.length === 0 ? saved : `${saved}\n${m.lost(lost.map(m.marker).join(", "))}`;
 };

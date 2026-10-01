@@ -147,8 +147,10 @@ function BriefLoader({ id, source, messageId, threadId }: { id: string; source: 
   const voiceRpc = useRpc<typeof voiceRpcContract>();
   const isAnswered = state.kind === "found" && state.answer !== null;
   useEffect(() => {
-    // Отвеченному брифу черновик не нужен — отсюда ли ушёл ответ или из другой вкладки.
-    if (isAnswered) clearStoredDraft(id);
+    // Отвеченному брифу черновик и картинки не нужны — отсюда ли ушёл ответ или из другой вкладки.
+    if (!isAnswered) return;
+    clearStoredDraft(id);
+    clearAttachments(id);
   }, [id, isAnswered]);
   // Бриф на экране — карточка встала: её высоту запоминает рамка. Ошибка встала не карточкой и держит прежнюю высоту.
   const { held, frame } = useHeldHeight(briefHeightKey(id), state.kind === "found" || state.kind === "not_found");
@@ -177,9 +179,8 @@ function BriefLoader({ id, source, messageId, threadId }: { id: string; source: 
             <AnsweredBriefCard brief={state.brief} record={state.answer} roots={roots} />
           );
         const send = async (draft: Draft) =>
-          rpcRef.current.call("answerBrief", { id, answer: toAnswer(state.brief, draft), messageId, locale, ...attachmentsPayload(id) });
+          rpcRef.current.call("answerBrief", { id, answer: toAnswer(state.brief, draft), messageId, locale, ...(await attachmentsPayload(id)) });
         const onAccepted = (result: Awaited<ReturnType<typeof send>>) => {
-          if (result.kind === "accepted" || result.kind === "already_answered") clearAttachments(id);
           if (result.kind === "accepted" || result.kind === "already_answered") answered(result.record);
           if (result.kind === "not_found") retry();
         };

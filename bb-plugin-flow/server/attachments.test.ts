@@ -2,7 +2,7 @@
 import { createFakePluginHost } from "@get-bb/plugin-sdk/testing";
 import { describe, expect, it } from "vitest";
 
-import type { DecisionBrief } from "../shared/contract";
+import type { DecisionAnswer, DecisionBrief } from "../shared/contract";
 import { registerApi } from "./api";
 import { createStore } from "./store";
 
@@ -23,7 +23,10 @@ type Upload = { projectId: string; clientFile: Uint8Array; filename: string; mim
 /** Хранилище вложений bb: имя сохраняется с хвостом, как у настоящей загрузки. */
 const stored = (filename: string): string => filename.replace(/(\.\w+)$/, "-1790000000000-abc123$1");
 
-const setup = async (upload: (args: Upload) => Promise<unknown> = async (args) => ({ type: "localImage", path: stored(args.filename), name: args.filename, sizeBytes: args.clientFile.length })) => {
+const setup = async (
+  upload: (args: Upload) => Promise<unknown> = async (args) => ({ type: "localImage", path: stored(args.filename), name: args.filename, sizeBytes: args.clientFile.length }),
+  answered: DecisionBrief = brief,
+) => {
   const { bb, harness } = createFakePluginHost({
     pluginId: "flow",
     sdk: {
@@ -33,9 +36,10 @@ const setup = async (upload: (args: Upload) => Promise<unknown> = async (args) =
     },
   });
   const store = createStore(bb.storage.kv);
-  await store.putBrief(brief);
+  await store.putBrief(answered);
   registerApi(bb, store, { now: () => "2026-09-15T00:05:00.000Z" });
-  return { harness, store };
+  const reply = () => harness.sdk.callsTo("threads.send")[0]![0] as { input: Array<{ type: string; path?: string; text?: string }> };
+  return { harness, store, reply };
 };
 
 const images = [
@@ -69,23 +73,72 @@ describe("картинки ответа — вложения проекта тр
     expect(input[0]!.text).toContain(`[картинка 3] — ${third}`);
   });
 
-  it("загрузка не удалась — ответ не принят и не записан, повтор из виджета доходит", async () => {
-    let fail = true;
-    const { harness, store } = await setup(async (args) => {
-      if (fail) throw new Error("upload failed");
-      return { type: "localImage", path: stored(args.filename), name: args.filename, sizeBytes: args.clientFile.length };
-    });
-    await expect(harness.callRpc("answerBrief", { id: brief.id, messageId: "msg_1", answer, images })).rejects.toThrow("upload failed");
-    expect(await store.getAnswer(brief.id)).toBeNull();
-    expect(harness.sdk.callsTo("threads.send")).toEqual([]);
-    fail = false;
-    expect(await harness.callRpc("answerBrief", { id: brief.id, messageId: "msg_1", answer, images })).toMatchObject({ kind: "accepted" });
-  });
-
   it("ответ без картинок проект треда не спрашивает и ничего не загружает", async () => {
     const { harness } = await setup();
     await harness.callRpc("answerBrief", { id: brief.id, messageId: "msg_1", answer });
     expect(harness.sdk.callsTo("projects.attachments.upload")).toEqual([]);
     expect(harness.sdk.callsTo("threads.get")).toEqual([]);
+  });
+});
+
+const demo: DecisionBrief = {
+  id: "dec_demo",
+  threadId: "thr_1",
+  title: "Демонстрация",
+  createdAt: "2026-10-01T00:00:00.000Z",
+  kind: "brief",
+  outcome: { stage: "demo", final: true, done: ["Сделано"], pending: [], results: [{ label: "a.md", target: "a.md" }] },
+  questions: [],
+};
+const pngs = [
+  { n: 1, mimeType: "image/png", dataBase64: Buffer.from("first").toString("base64") },
+  { n: 2, mimeType: "image/png", dataBase64: Buffer.from("second").toString("base64") },
+];
+const longNote = `[картинка 1] Не совсем понимаю, зачем эти настройки. ${"Подробности замечания. ".repeat(60)}\n\n[картинка 2] Подсказка обрезается.`;
+const comment: DecisionAnswer = { briefId: demo.id, answers: [], outcome: { accepted: false, note: longNote } };
+const uploaded = async (args: Upload) => ({ type: "localImage", path: stored(args.filename), name: args.filename });
+
+describe("картинки комментария к демонстрации", () => {
+  it("две картинки при длинном тексте загружаются обе, и реплика перечисляет имена обеих", async () => {
+    const { harness, reply } = await setup(uploaded, demo);
+    expect(await harness.callRpc("answerBrief", { id: demo.id, messageId: "m", answer: comment, images: pngs })).toMatchObject({ kind: "accepted" });
+    const first = stored("decision-dec_demo-1.png");
+    const second = stored("decision-dec_demo-2.png");
+    const { input } = reply();
+    expect(input.slice(1).map((part) => part.path)).toEqual([first, second]);
+    expect(input[0]!.text).toContain(`[картинка 1] — ${first}; [картинка 2] — ${second}`);
+    expect(input[0]!.text).not.toContain("Картинки не сохранены");
+  });
+
+  it("сбой загрузки одной картинки не отклоняет ответ: вторая сохранена, сбойная названа отдельной строкой", async () => {
+    const { harness, store, reply } = await setup(async (args) => {
+      if (args.filename.includes("-1.")) throw new Error("upload failed");
+      return uploaded(args);
+    }, demo);
+    expect(await harness.callRpc("answerBrief", { id: demo.id, messageId: "m", answer: comment, images: pngs })).toMatchObject({ kind: "accepted" });
+    expect(await store.getAnswer(demo.id)).not.toBeNull();
+    const { input } = reply();
+    expect(input.slice(1).map((part) => part.path)).toEqual([stored("decision-dec_demo-2.png")]);
+    expect(input[0]!.text).toContain(`\nКартинки не сохранены: [картинка 1]`);
+  });
+
+  it("метки в тексте без пришедших картинок называются несохранёнными, и реплика агенту уходит", async () => {
+    const { harness, reply } = await setup(uploaded, demo);
+    await harness.callRpc("answerBrief", { id: demo.id, messageId: "m", answer: { ...comment, outcome: { accepted: true, note: "[картинка 1] и [картинка 2]" } } });
+    expect(harness.sdk.callsTo("projects.attachments.upload")).toEqual([]);
+    expect(reply().input[0]!.text).toContain(`\nКартинки не сохранены: [картинка 1], [картинка 2]`);
+  });
+
+  it("английская метка без картинки называется по-английски", async () => {
+    const { harness, reply } = await setup(uploaded, demo);
+    await harness.callRpc("answerBrief", { id: demo.id, messageId: "m", locale: "en", answer: { ...comment, outcome: { accepted: false, note: "see [image 3]" } } });
+    expect(reply().input[0]!.text).toContain(`\nImages not saved: [image 3]`);
+  });
+
+  it("метка в тексте брифа от агента не считается картинкой владельца", async () => {
+    const quoting = { ...demo, title: "Демонстрация — что делать с [картинка 1]" };
+    const { harness, reply } = await setup(uploaded, quoting);
+    await harness.callRpc("answerBrief", { id: demo.id, messageId: "m", answer: { ...comment, outcome: { accepted: false, note: "поправь заголовок" } } });
+    expect(reply().input[0]!.text).not.toContain("Картинки не сохранены");
   });
 });
