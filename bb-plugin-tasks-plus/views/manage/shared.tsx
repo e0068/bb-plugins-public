@@ -134,3 +134,6 @@ export function Field({
     </div>
   );
 }
+
+/** "1 task", "3 tasks". */
+export const taskCountText = (count: number): string => `${count} task${count === 1 ? "" : "s"}`;

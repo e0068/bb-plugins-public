@@ -19,7 +19,7 @@ import {
   type InspectDatabaseResult,
   type SyncedFolder,
 } from "./contract.js";
-import { databaseHost, parseDatabaseAddress } from "./database-address.js";
+import { databaseHost, databaseInvite, parseDatabaseAddress } from "./database-address.js";
 import { planConnect, sourceOf, tokenSource, usableToken, type ConnectPlan } from "./database-connect.js";
 import { createDatabaseSecrets } from "./database-secrets.js";
 import { deriveUniquePrefix } from "./prefix.js";
@@ -240,6 +240,19 @@ export function registerFolders(bb: BbPluginApi, store: TasksApiStore): void {
     const repo = openRepo(board.id, board.database.url, savedTokenClient(board.database.url));
     attachRepo(board.id, repo);
     void syncQuietly(repo);
+  }
+
+  /** A folder board stops reading its folder; the files and the board stay. */
+  function disconnectFolder(board: BoardConfig): void {
+    store.tasks.updateProject(board.id, { tasksFolder: null });
+    store.tasks.setBoardRoots(board.id, []);
+  }
+
+  /** A database board leaves this machine with its token; the database and its tasks stay for the others. */
+  async function disconnectDatabase(board: DatabaseBoard): Promise<void> {
+    await secrets.forgetDatabaseToken(board.database.url);
+    detachRepo(board.id);
+    store.tasks.deleteProject(board.id);
   }
 
   /** A sync whose failure is the link's business, not an error. */
@@ -544,10 +557,18 @@ export function registerFolders(bb: BbPluginApi, store: TasksApiStore): void {
     async removeSyncedFolder(input) {
       const project = store.tasks.getProject(input.projectId);
       if (!project) throw new Error(`Project not found: ${input.projectId}`);
-      store.tasks.updateProject(project.id, { tasksFolder: null });
-      store.tasks.setBoardRoots(project.id, []);
+      if (isDatabaseBoard(project)) await disconnectDatabase(project);
+      else disconnectFolder(project);
       publishProjectsChanged(bb, project.id);
       return { ok: true };
+    },
+
+    async databaseInvite(input) {
+      const board = store.tasks.getProject(input.boardId);
+      if (board === undefined || !isDatabaseBoard(board)) return domainError({ code: "folder_connect_failed", message: "This board is not kept in a database." });
+      const token = await secrets.databaseToken(board.database.url);
+      if (token === null) return domainError({ code: "folder_connect_failed", message: "No token is saved for this database." });
+      return { ok: true, invite: databaseInvite(board.database.url, token) };
     },
 
     async createDatabase(input) {

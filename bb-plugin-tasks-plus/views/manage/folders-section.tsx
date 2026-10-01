@@ -7,6 +7,8 @@ import { databaseHost } from "../../folders/database-address.js";
 import { AddFolderDialog } from "./add-folder-dialog.js";
 import { ConnectDatabaseDialog } from "./connect-database-dialog.js";
 import { RemoveFolderDialog } from "./remove-folder-dialog.js";
+import { taskCountText } from "./shared.js";
+import { DetailToasts, useDetailToasts } from "../detail/toast.js";
 
 function describeError(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
@@ -40,15 +42,41 @@ function linkText(source: DatabaseSource): string {
   }
 }
 
-const taskCountText = (count: number): string => `${count} task${count === 1 ? "" : "s"}`;
+const INVITE_COPIED = "Invite copied — paste it into Connect database on the other machine.";
 
-function DatabaseRow({ folder, source }: { folder: SyncedFolder; source: DatabaseSource }) {
+/** A quiet icon button at the end of a source row. */
+function RowAction({ label, icon, danger, onClick }: { label: string; icon: "Share" | "Trash2"; danger?: boolean; onClick: () => void }) {
+  return (
+    <Button
+      size="icon"
+      variant="ghost"
+      className={`size-7 shrink-0 text-muted-foreground ${danger ? "hover:text-destructive" : "hover:text-foreground"}`}
+      aria-label={label}
+      onClick={onClick}
+    >
+      <Icon name={icon} className="size-3.5" />
+    </Button>
+  );
+}
+
+function DatabaseRow({
+  folder,
+  source,
+  onShare,
+  onRemove,
+}: {
+  folder: SyncedFolder;
+  source: DatabaseSource;
+  onShare: () => void;
+  onRemove: () => void;
+}) {
+  const host = databaseHost(source.url);
   return (
     <div className="flex items-center gap-3 px-3 py-2.5">
       <Icon name="Container" className="size-4 shrink-0 text-muted-foreground" />
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-1.5 text-sm">
-          <span className="truncate font-medium">{databaseHost(source.url)}</span>
+          <span className="truncate font-medium">{host}</span>
         </div>
         <div className="flex flex-wrap items-center gap-x-1.5 gap-y-0.5 text-xs text-muted-foreground">
           <span>
@@ -61,6 +89,8 @@ function DatabaseRow({ folder, source }: { folder: SyncedFolder; source: Databas
           </span>
         </div>
       </div>
+      <RowAction label={`Share an invite to ${host}`} icon="Share" onClick={onShare} />
+      <RowAction label={`Remove ${host}`} icon="Trash2" danger onClick={onRemove} />
     </div>
   );
 }
@@ -90,15 +120,7 @@ function FolderRow({
           </span>
         </div>
       </div>
-      <Button
-        size="icon"
-        variant="ghost"
-        className="size-7 shrink-0 text-muted-foreground hover:text-destructive"
-        aria-label={`Remove ${folder.tasksFolder}`}
-        onClick={onRemove}
-      >
-        <Icon name="Trash2" className="size-3.5" />
-      </Button>
+      <RowAction label={`Remove ${folder.tasksFolder}`} icon="Trash2" danger onClick={onRemove} />
     </div>
   );
 }
@@ -116,6 +138,7 @@ export function FoldersSection() {
   const [addOpen, setAddOpen] = useState(false);
   const [connectOpen, setConnectOpen] = useState(false);
   const [removeTarget, setRemoveTarget] = useState<SyncedFolder | null>(null);
+  const { toasts, push, dismiss } = useDetailToasts();
 
   const refresh = useCallback(() => {
     rpc.call("listSyncedFolders", null).then(
@@ -128,6 +151,18 @@ export function FoldersSection() {
     refresh();
   }, [refresh]);
   useRealtime("projects:changed", refresh);
+
+  /** Puts the invite of a database board on the clipboard, or says why it cannot. */
+  const share = async (folder: SyncedFolder) => {
+    try {
+      const result = await rpc.call("databaseInvite", { boardId: folder.projectId });
+      if (!result.ok) return push("error", result.error.message);
+      await navigator.clipboard.writeText(result.invite);
+      push("info", INVITE_COPIED);
+    } catch (shareError) {
+      push("error", describeError(shareError));
+    }
+  };
 
   return (
     <div className="space-y-3">
@@ -149,7 +184,13 @@ export function FoldersSection() {
       <div className="divide-y divide-border-hairline rounded-md border border-border">
         {(folders ?? []).map((folder) =>
           folder.source.kind === "database" ? (
-            <DatabaseRow key={folder.projectId} folder={folder} source={folder.source} />
+            <DatabaseRow
+              key={folder.projectId}
+              folder={folder}
+              source={folder.source}
+              onShare={() => void share(folder)}
+              onRemove={() => setRemoveTarget(folder)}
+            />
           ) : (
             <FolderRow
               key={folder.projectId}
@@ -189,6 +230,7 @@ export function FoldersSection() {
           onRemoved={refresh}
         />
       ) : null}
+      <DetailToasts toasts={toasts} onDismiss={dismiss} />
     </div>
   );
 }

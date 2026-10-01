@@ -41,3 +41,10 @@ export function parseDatabaseAddress(raw: string): ParsedDatabaseAddress {
 export function databaseHost(url: string): string {
   return parseUrl(url)?.host || url;
 }
+
+/** The line another machine pastes into "Connect database": the address with its token as `?authToken=`. */
+export function databaseInvite(url: string, token: string): string {
+  const invite = new URL(url);
+  invite.searchParams.set(TOKEN_PARAM, token);
+  return invite.toString();
+}
