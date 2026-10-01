@@ -10,6 +10,7 @@ import { registerApi } from "./api";
 import { ASK_TOOL_NAME, registerAskTool } from "./ask-tool";
 import { FLOW_STAGE_TOOL, createProgress, registerProgress, type ThreadState } from "./progress";
 import { createStore } from "./store";
+import { priced } from "./priced-fixture";
 
 const settings: StageSettings = { stages: [builtinStage("questions", []), stage("task", { name: "Задача" })], minButtonWidth: 170 };
 
@@ -40,7 +41,7 @@ const host = async (titles: Record<string, string> = {}) => {
 
 /** Прогон треда от брифа до закрытой Задачи. */
 const runThrough = async ({ harness, tick }: Awaited<ReturnType<typeof host>>, threadId: string, briefId: string) => {
-  await harness.callAgentTool(ASK_TOOL_NAME, { title: "Бриф", setup: { stages: [{ id: "questions", state: "todo" }, { id: "task", state: "todo", recommended: true }] } }, { threadId });
+  await harness.callAgentTool(ASK_TOOL_NAME, priced({ title: "Бриф", setup: { stages: [{ id: "questions", state: "todo" }, { id: "task", state: "todo", recommended: true }] } }), { threadId });
   await harness.callRpc("answerBrief", { id: briefId, messageId: "m", answer: { briefId, answers: [], stages: [{ id: "task", run: true, executor: "self" }] } });
   await harness.callAgentTool(FLOW_STAGE_TOOL, { stage: "task", state: "started" }, { threadId });
   tick(20);
@@ -59,7 +60,7 @@ describe("заморозка итога без баннера", () => {
 
   it("незавершённый прогон не замораживается", async () => {
     const h = await host({ thr_a: "Тред А" });
-    await h.harness.callAgentTool(ASK_TOOL_NAME, { title: "Бриф", setup: { stages: [{ id: "questions", state: "todo" }, { id: "task", state: "todo", recommended: true }] } }, { threadId: "thr_a" });
+    await h.harness.callAgentTool(ASK_TOOL_NAME, priced({ title: "Бриф", setup: { stages: [{ id: "questions", state: "todo" }, { id: "task", state: "todo", recommended: true }] } }), { threadId: "thr_a" });
     await h.harness.callRpc("answerBrief", { id: "dec_run1", messageId: "m", answer: { briefId: "dec_run1", answers: [], stages: [{ id: "task", run: true, executor: "self" }] } });
     await settle();
     expect(await h.harness.callRpc("getRunSummary", { briefId: "dec_run1" })).toBeNull();

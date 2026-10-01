@@ -7,13 +7,13 @@ import { useEffect, useRef, useState } from "react";
 import { useRpc } from "@get-bb/plugin-sdk/app";
 
 import { mutedBlinkKeyframes } from "../core/muted-blink";
-import { runTasks, taskRoute, type RunTask } from "../core/run-tasks";
+import { runTasks, type RunTask } from "../core/run-tasks";
 import { stageLabel } from "../core/stages";
 import { Icon } from "../components/ui/icon";
 import { cn } from "../lib/utils";
 import type { FileRoots } from "../core/result-link";
 import type { FrozenRun, ProgressStage, RunSummaryView, progressRpcContract } from "../shared/contract";
-import { ResultAnchor } from "./cells";
+import { ResultAnchor, TaskLink } from "./cells";
 import { AutomationSteps, Row, money, useRunRoots } from "./progress-banner";
 import { summaryHeightKey, useHeldHeight } from "./held-height";
 import { useMessages } from "./locale-context";
@@ -43,16 +43,6 @@ function Tile({ title, value, lines = [], children }: { title: string; value?: s
   );
 }
 
-/**
- * Хост открывает страницу плагина в боковом сплите только по клику с Cmd/Ctrl, а обычный клик уводит на неё
- * основную область. Задача из итога всегда встаёт сбоку: обычный клик гасится и переигрывается кликом с Cmd.
- */
-const inSplit = (event: React.MouseEvent<HTMLAnchorElement>) => {
-  if (event.metaKey || event.ctrlKey || event.button !== 0) return;
-  event.preventDefault();
-  event.currentTarget.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, metaKey: true }));
-};
-
 /** Задачи прогона ссылками на их карточки в Tasks+: ключ и название, если этап его запомнил. */
 function TaskLinks({ tasks }: { tasks: readonly RunTask[] }) {
   const t = useMessages();
@@ -60,10 +50,10 @@ function TaskLinks({ tasks }: { tasks: readonly RunTask[] }) {
   return (
     <div className="flex min-w-0 flex-col gap-0.5">
       {tasks.map((task) => (
-        <a key={task.address} href={taskRoute(task.address)} onClick={inSplit} className="flex min-w-0 items-baseline gap-1.5 text-[12px] hover:underline">
+        <TaskLink key={task.address} address={task.address} className="flex min-w-0 items-baseline gap-1.5 text-[12px] hover:underline">
           <span className="shrink-0 font-mono text-muted-foreground">{task.address}</span>
           {task.title !== undefined && <span className="truncate">{task.title}</span>}
-        </a>
+        </TaskLink>
       ))}
     </div>
   );

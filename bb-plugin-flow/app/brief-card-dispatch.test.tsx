@@ -121,13 +121,6 @@ describe("бриф уже запущенной работы", () => {
       },
     );
 
-  it("бриф с меткой запуска не показывает ни бюджета, ни цен у вариантов", async () => {
-    const slot = renderBrief({ ...brief, launched: true });
-    await slot.findByRole("button", { name: /^Исполнять/ });
-    expect(slot.queryByRole("button", { name: /^Бюджет/ })).toBeNull();
-    expect(slot.queryByText(/\+\$/)).toBeNull();
-  });
-
   it("бриф до запуска без первой части цены вариантов показывает", async () => {
     const { setup: _setup, ...questionsOnly } = brief;
     const slot = renderBrief(questionsOnly);

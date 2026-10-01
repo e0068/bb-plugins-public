@@ -9,6 +9,7 @@ import { registerApi } from "./api";
 import { ASK_TOOL_NAME, registerAskTool } from "./ask-tool";
 import { FLOW_STAGE_TOOL, createProgress, registerProgress } from "./progress";
 import { createStore } from "./store";
+import { priced } from "./priced-fixture";
 
 const THREAD = "thr_titled";
 const settings: StageSettings = { stages: [builtinStage("questions", []), stage("task", { name: "Задача" })], minButtonWidth: 170 };
@@ -25,7 +26,7 @@ const finishedRun = async (results: unknown[], files: Record<string, string>): P
   registerApi(bb, store, { now, progress });
   const readTaskFile = async (threadId: string, target: string) => (threadId === THREAD && target in files ? files[target] : Promise.reject(new Error("ENOENT")));
   registerProgress(bb, progress, { now, stages: () => settings, windowCost: async () => 1, readTaskFile });
-  await harness.callAgentTool(ASK_TOOL_NAME, brief, { threadId: THREAD });
+  await harness.callAgentTool(ASK_TOOL_NAME, priced(brief), { threadId: THREAD });
   await harness.callRpc("answerBrief", { id: "dec_run", messageId: "m", answer });
   await harness.callAgentTool(FLOW_STAGE_TOOL, { stage: "task", state: "started" }, { threadId: THREAD });
   await harness.callAgentTool(FLOW_STAGE_TOOL, { stage: "task", state: "done", results }, { threadId: THREAD });

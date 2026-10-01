@@ -30,6 +30,15 @@ export const addSchema = z
   .object({ target: z.number(), max: z.number(), risk: z.number().int(), minutes: z.number().int().optional() })
   .overwrite((a) => (a.max >= a.target ? a : { ...a, target: a.max, max: a.target }));
 
+/**
+ * Доля этапа в объёме работы: процент от объёма (реализация самим агентом — 100) и риск этапа целым числом.
+ * Деньги и минуты этапа считает плагин: объём × процент × множитель исполнителя.
+ */
+export const stageShareSchema = z.object({ percent: z.number().nonnegative(), risk: z.number().int() });
+
+/** Исполнитель этапа — множитель к его доле, всегда больше нуля, и свой риск сверху. */
+export const executorFactorSchema = z.object({ factor: z.number().positive(), risk: z.number().int() });
+
 export const decisionOptionSchema = z.object({
   id: text,
   /** «Что делаем» — заголовок варианта. */
@@ -280,8 +289,11 @@ export const stageReportSchema = z
     /** Рекомендую взять в ближайший прогон; только у несделанного. */
     recommended: z.boolean().default(false),
     executor: text.default(SELF_EXECUTOR),
+    /** Доллары этапа и разница исполнителей — у брифов, записанных до доли от объёма. */
     add: addSchema.optional(),
     adds: z.record(z.string(), addSchema).optional(),
+    share: stageShareSchema.optional(),
+    factors: z.record(z.string(), executorFactorSchema).optional(),
   })
   .superRefine((s, ctx) => {
     // Ссылки сделанного этапа навыка проверяет `reportIssues`: вид этапа знают настройки, а не отчёт.
@@ -293,6 +305,12 @@ export const stageReportSchema = z
     if (adds?.[SELF_EXECUTOR] === undefined) return adds === undefined ? s : { ...s, adds };
     const { [SELF_EXECUTOR]: self, ...others } = adds;
     return { ...s, add: s.add ?? self, ...(Object.keys(others).length === 0 ? {} : { adds: others }) };
+  })
+  // Множитель самого агента — единица по определению: присланный `factors.self` бриф отбрасывает, а не отбивает.
+  .overwrite(({ factors, ...s }) => {
+    if (factors?.[SELF_EXECUTOR] === undefined) return factors === undefined ? s : { ...s, factors };
+    const { [SELF_EXECUTOR]: _self, ...others } = factors;
+    return Object.keys(others).length === 0 ? s : { ...s, factors: others };
   });
 
 /**
@@ -395,6 +413,8 @@ const briefFields = {
   intro: z.string().optional(),
   /** `brief` — агент ждёт ответа; `clarify` — можно не отвечать. */
   kind: briefKindSchema.default("brief"),
+  /** «Что я понял» — минимальный набор работы многоуровневым списком; его пункты — `setup.criteria`, их цены — база бюджета. */
+  scope: z.string().min(1).optional(),
   setup: briefSetupSchema.optional(),
   /** Итог этапа вместо первой части: работа уже идёт, спрашивать про этапы и бюджет нечего. */
   outcome: stageOutcomeSchema.optional(),
@@ -414,13 +434,13 @@ type BriefShape = {
         budgetTarget?: unknown;
         budgetMax?: unknown;
         criteria?: unknown;
-        stages?: readonly unknown[] | undefined;
+        stages?: ReadonlyArray<{ add?: unknown; adds?: unknown }> | undefined;
       }
     | undefined;
   questions: ReadonlyArray<{
     id: string;
     kind: string;
-    options: ReadonlyArray<{ risk?: string | undefined; cost?: string | undefined; add?: unknown; hides?: readonly string[] | undefined; removes?: readonly number[] | undefined }>;
+    options: ReadonlyArray<{ risk?: string | undefined; cost?: string | undefined; add?: { target: number; max: number; minutes?: number | undefined } | undefined; hides?: readonly string[] | undefined; removes?: readonly number[] | undefined }>;
   }>;
 };
 
@@ -496,6 +516,14 @@ const checkNewBrief = (brief: BriefShape, ctx: z.RefinementCtx) => {
   // Развилка без добавки у одного из вариантов занизила бы прогноз; в pick вариант без добавки честно значит «+0».
   if (brief.questions.some((q) => q.kind === "fork" && q.options.some((o) => o.add !== undefined) && q.options.some((o) => o.add === undefined)))
     issue("within one fork either every option has add or none does");
+  const stages = brief.setup?.stages ?? [];
+  if (stages.some((st) => st.add !== undefined))
+    ctx.addIssue({ code: "custom", message: "a stage has no dollars: send share { percent, risk } — its part of the scope, implementation by you is 100", path: ["setup", "stages"] });
+  if (stages.some((st) => st.adds !== undefined))
+    ctx.addIssue({ code: "custom", message: "an executor has no dollar difference: send factors { <executor id>: { factor, risk } } — a multiplier above zero on the stage share", path: ["setup", "stages"] });
+  const negative = (a: { target: number; max: number; minutes?: number | undefined } | undefined) => a !== undefined && (a.target < 0 || a.max < 0 || (a.minutes ?? 0) < 0);
+  if (brief.questions.some((q) => q.options.some((o) => negative(o.add))))
+    issue("an option adds its own price on top of the scope, from zero: target, max and minutes are never negative; doing nothing adds 0");
   if (brief.kind === "brief" && brief.questions.some((q) => q.kind !== "fork" && q.kind !== "pick" && q.kind !== "confirm"))
     issue("brief questions are fork, pick or confirm; artifacts, executor, checker and testing go into setup");
   if (brief.questions.some((q) => q.kind === "fork" && q.options.some((o) => o.risk === undefined && o.add === undefined)))
@@ -519,8 +547,12 @@ export const decisionBriefSchema = z
     createdAt: text,
     /** Ставит сервер новым брифам: утверждённые артефакты в них можно отозвать. У записанных раньше метки нет — они читаются как были. */
     revocable: z.boolean().optional(),
-    /** Ставит сервер брифу запущенной работы: в нём не рисуются ни бюджет, ни цены вариантов. */
+    /** Ставит сервер брифу запущенной работы: в нём не считается итог бюджета, цена у варианта — своя. */
     launched: z.literal(true).optional(),
+    /** Ставит сервер брифу запущенной работы: утверждённое «Готово, когда» треда — итог последнего ответа с пунктами. */
+    approved: z.array(text).min(1).optional(),
+    /** Ставит сервер брифу запущенной работы: утверждённый объём треда — база и варианты последнего ответа; без своих пунктов бриф считает от него. */
+    approvedScope: addSchema.optional(),
     /** Ставит сервер из настроек: какие документы сделать и какие утвердить обязательно. */
     required: z.object({ make: z.array(text), approve: z.array(text) }).optional(),
     /** Ставит сервер: сколько минут шло и сколько долларов стоило планирование в треде до брифа; без известной цены модели — только минуты. */

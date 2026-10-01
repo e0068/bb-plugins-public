@@ -12,7 +12,7 @@ import { useRpc } from "@get-bb/plugin-sdk/app";
 
 import { deviationTotal, deviations } from "../core/answer-message";
 import { requiredOf } from "../core/required";
-import { changeOf, spentLines, criteriaSum, criterionEditable, criterionTitle, forecast, hasForecast, minutesText, money, ownBudgetText, plannedMinutes } from "../core/budget";
+import { changeOf, spentLines, criteriaSum, legacyPricing, criterionEditable, criterionTitle, forecast, hasForecast, minutesText, money, ownBudgetText, plannedMinutes } from "../core/budget";
 import { optionCriteria, optionRemoved, removedCriteria } from "../core/option-criteria";
 import { DEFAULT_ROUTE, offeredPlace, placeColumns, withBranch, withPlace, withProject, withTree } from "../core/places";
 import { stageItems } from "../core/stages";
@@ -51,7 +51,7 @@ import {
 } from "./draft";
 import { AddRow, addRowText } from "./add-row";
 import { AttachmentThumbs, AttachmentsProvider, usePasteImages } from "./attachments";
-import { LinkedText, onLink } from "./linked-text";
+import { LinkedText, RichText, onLink } from "./linked-text";
 import { AddMeta, CardText, CheckSquare, DocumentName, RiskText, buttonCard, rowCellStyle } from "./cells";
 import { answeredAt, useStoredDraft, useSubmit, type FormProps } from "./parts";
 import type { Messages } from "../lib/messages";
@@ -700,19 +700,44 @@ function AddedRow({ view, index, text, removable }: { view: View; index: number;
   );
 }
 
+/** Утверждённое «Готово, когда» брифа посреди работы — свёрнуто строкой со счётом: владелец разворачивает, чтобы видеть весь список, к которому добавляется пункт варианта. */
+function ApprovedRows({ items }: { items: readonly string[] }) {
+  const t = useMessages();
+  const [open, setOpen] = useState(false);
+  const toggle = (
+    <button type="button" aria-expanded={open} onClick={() => setOpen(!open)} className={cn("flex min-h-9 w-full items-center gap-3 bg-surface-recessed-solid pl-3 pr-[11px] text-left", itemText, "text-muted-foreground hover:text-foreground")}>
+      <Icon name="ChevronDown" aria-hidden="true" className={cn("size-3.5 shrink-0", open && "rotate-180")} />
+      <span>{open ? t.brief.approvedHide : t.brief.approved(items.length)}</span>
+    </button>
+  );
+  return (
+    <>
+      {open &&
+        items.map((text, i) => (
+          <ItemRow key={`approved-${i}`} mark="✓">
+            <span className={itemText}>
+              <LinkedText text={text} />
+            </span>
+          </ItemRow>
+        ))}
+      {toggle}
+    </>
+  );
+}
+
 function CriteriaSection({ brief, view }: { brief: DecisionBrief; view: View }) {
   const t = useMessages();
   const answer = toAnswer(brief, view.draft);
   // Зачёркнутый пункт — обратная связь на отказ, пока бриф открыт; в отвеченной карточке остаются только живые.
   const fromOptions = optionCriteria(brief, answer).filter((c) => !view.answered || c.state === "live");
-  const items = brief.setup?.criteria ?? (fromOptions.length === 0 ? undefined : []);
+  const items = brief.setup?.criteria ?? (fromOptions.length === 0 && brief.approved === undefined ? undefined : []);
   if (items === undefined) return null;
   const { added } = view.draft.criteria;
   const byOption = optionRemoved(brief, answer);
   const removed = removedCriteria(brief, answer);
   const kept = items.length - removed.filter((i) => i < items.length).length;
-  // В брифе с этапами добавка пункта — доля внутри этапов: сумма долей у заголовка читалась бы добавкой к бюджету.
-  const summary = brief.setup?.stages === undefined ? criteriaSum(brief, removed) : null;
+  // Сумма пунктов — база объёма. Только в брифе со старыми долларами на этапах пункт — доля внутри этапов, и сумма у заголовка читалась бы добавкой.
+  const summary = legacyPricing(brief) ? null : criteriaSum(brief, removed);
   // Поле «Дополнить» — хвост списка добавленных: ключ совпадает с тем, под которым пункт появится, и фокус не теряется.
   // Без пунктов брифа ответ не несёт правок критерия, поэтому и дописать пункт негде.
   const ownItems = brief.setup?.criteria !== undefined;
@@ -728,6 +753,7 @@ function CriteriaSection({ brief, view }: { brief: DecisionBrief; view: View }) 
         {items.map((item, i) => (
           <CriterionRow key={`item-${i}`} item={item} index={i} view={view} byOption={byOption.includes(i)} />
         ))}
+        {brief.approved !== undefined && <ApprovedRows items={brief.approved} />}
         {/* Строка пункта — только метка и текст: что выбор между вариантами значит, говорит секция вопросов. */}
         {fromOptions.map((c, i) => (
           <ItemRow key={`option-${c.questionId}-${c.optionId}-${i}`} mark="↳">
@@ -751,10 +777,9 @@ function CriteriaSection({ brief, view }: { brief: DecisionBrief; view: View }) 
 
 // ——— вторая часть ———
 
-/** Цена варианта — только в брифе, где решается работа; после запуска её не показывают, даже если агент прислал добавку. */
-function OptionMeta({ option, priced }: { option: DecisionOption; priced: boolean }) {
+/** Цена варианта — что он добавит к объёму; и посреди работы, где итог бюджета уже не считается. */
+function OptionMeta({ option }: { option: DecisionOption }) {
   const t = useMessages();
-  if (!priced) return null;
   if (option.add !== undefined) return <AddMeta add={option.add} />;
   if (option.cost === undefined && option.risk === undefined) return null;
   return (
@@ -804,11 +829,11 @@ function OptionCards({ question, view }: { question: DecisionQuestion; view: Vie
                     <LinkedText text={option.action} />
                   </Starred>
                 </span>
-                <OptionMeta option={option} priced={view.brief.launched !== true} />
+                <OptionMeta option={option} />
               </span>
               {option.description !== undefined && (
                 <span className="mt-1 block break-words text-xs leading-relaxed text-muted-foreground">
-                  <LinkedText text={option.description} />
+                  <RichText text={option.description} />
                 </span>
               )}
               {option.risks !== undefined && (
@@ -880,13 +905,31 @@ function ConfirmRow({ question, view, ownLabel, onEnter }: { question: DecisionQ
   );
 }
 
+/** «Что я понял» — минимальный набор работы над вопросами; справа — база: сумма цен оставленных пунктов «Готово, когда». */
+function ScopeBlock({ brief, view, scope }: { brief: DecisionBrief; view: View; scope: string }) {
+  const t = useMessages();
+  const base = criteriaSum(brief, removedCriteria(brief, toAnswer(brief, view.draft)));
+  return (
+    <div role="group" aria-label={t.brief.scope}>
+      <div className="flex flex-wrap items-baseline gap-x-3 text-[13px] font-medium leading-snug">
+        <span>{t.brief.scope}</span>
+        <AddMeta add={base} className="ml-auto font-normal" />
+      </div>
+      <div className="mt-0.5 break-words text-xs leading-relaxed text-muted-foreground">
+        <RichText text={scope} />
+      </div>
+    </div>
+  );
+}
+
 function QuestionsSection({ brief, view }: { brief: DecisionBrief; view: View }) {
   const hidden = hiddenIn(brief, view.draft);
   const visible = brief.questions.filter((q) => !hidden.has(q.id));
-  if (visible.length === 0) return null;
+  if (visible.length === 0 && brief.scope === undefined) return null;
   return (
     <div className="flex flex-col gap-4">
       <SectionTag kind="questions" className="-mb-2" />
+      {brief.scope !== undefined && <ScopeBlock brief={brief} view={view} scope={brief.scope} />}
       {visible.map((question, i) => (
         <div key={question.id} role="group" aria-label={plainText(question.question)}>
           <div className="break-words text-[13px] font-medium leading-snug">
@@ -895,7 +938,7 @@ function QuestionsSection({ brief, view }: { brief: DecisionBrief; view: View })
           </div>
           {question.context !== undefined && (
             <div className="mt-0.5 break-words text-xs text-muted-foreground">
-              <LinkedText text={question.context} />
+              <RichText text={question.context} />
             </div>
           )}
           <Missing view={view} id={question.id} />
@@ -1404,7 +1447,7 @@ export function ClarifyCard({ brief, send, onResult }: FormProps) {
           </div>
           {question.context !== undefined && (
             <div className="mt-0.5 break-words text-xs text-muted-foreground">
-              <LinkedText text={question.context} />
+              <RichText text={question.context} />
             </div>
           )}
           <ConfirmRow question={question} view={view} ownLabel={t.brief.orOwnWords} onEnter={() => void submit(draft)} />

@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 import { CODE_FLOW } from "../core/stages-fixtures";
 import { ASK_TOOL_NAME, registerAskTool } from "./ask-tool";
 import { createStore } from "./store";
+import { priced } from "./priced-fixture";
 
 const THREAD = "thr_required";
 
@@ -43,7 +44,7 @@ describe("первый бриф треда, чей flow выбирает эта�
 
   it("flow без Выбора этапов бриф без этапов принимает", async () => {
     const ask = await host(false, CODE_FLOW.filter((s) => s.kind !== "select"));
-    expect(textOf(await ask({ title: "Бриф", questions: [fork] }))).toContain("::decision");
+    expect(textOf(await ask(priced({ title: "Бриф", questions: [fork] })))).toContain("::decision");
   });
 
   it("итог Демонстрации до запуска отбивается своей причиной, а не нехваткой этапов", async () => {

@@ -8,6 +8,7 @@ import { registerApi } from "./api";
 import { ASK_TOOL_NAME, registerAskTool } from "./ask-tool";
 import { createProgress, registerProgress } from "./progress";
 import { createStore } from "./store";
+import { priced } from "./priced-fixture";
 
 const THREAD = "thr_flow_name";
 const settings: StageSettings = { stages: [builtinStage("questions", []), builtinStage("demo", [])], minButtonWidth: 170 };
@@ -20,7 +21,7 @@ const host = async (flowName: (threadId: string) => string) => {
   registerAskTool(bb, store, { newId: () => "N1", now, stages: () => settings, progress });
   registerApi(bb, store, { now, progress });
   registerProgress(bb, progress, { now, stages: () => settings, flowName, windowCost: async () => undefined });
-  await harness.callAgentTool(ASK_TOOL_NAME, { title: "Бриф", setup: { stages: [{ id: "questions", state: "todo" }, { id: "demo", state: "todo", recommended: true }] } }, { threadId: THREAD });
+  await harness.callAgentTool(ASK_TOOL_NAME, priced({ title: "Бриф", setup: { stages: [{ id: "questions", state: "todo" }, { id: "demo", state: "todo", recommended: true }] } }), { threadId: THREAD });
   return harness;
 };
 

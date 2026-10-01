@@ -22,7 +22,7 @@ Criteria rest on the answers of the Questions stage. A fork option that adds or 
 
 ## How to agree
 
-**In bb.** Items go into `setup.criteria` of the same `ask_decision` brief as Questions and Stage selection. A string is a plain item; `{ text, before, after }` is a change; `add` is the item's share of the stage cost. Items that depend on a fork option go into that option's `criteria`, and the ones it strikes into `removes`. The format is in the Flow plugin instructions and the tool description.
+**In bb.** Items go into `setup.criteria` of the same `ask_decision` brief as Questions and Stage selection. A string is a plain item; `{ text, before, after }` is a change; `add` is the item's price — dollars and minutes one agent on the current model and effort spends on it, both above zero; the kept items are the base of the budget. The items of the brief's `scope` come first. Items that depend on a fork option go into that option's `criteria`, and the ones it strikes into `removes`. The format is in the Flow plugin instructions and the tool description.
 
 **In Claude Code.** Items as a numbered list in the reply, changes as "before → after". Then AskUserQuestion: "Approve the criteria" (Recommended) and "Correct them" — the owner writes the correction in "Other" or in the next message. After a correction show the list again and ask again.
 

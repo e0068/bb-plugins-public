@@ -8,6 +8,7 @@ import type { StageSettings, WorkStage } from "../shared/contract";
 import { ASK_TOOL_NAME, registerAskTool } from "./ask-tool";
 import { createProgress } from "./progress";
 import { createStore } from "./store";
+import { priced } from "./priced-fixture";
 
 const THREAD = "thr_1";
 const T0 = "2026-10-01T10:00:00.000Z";
@@ -36,7 +37,7 @@ const reports = [
 describe("ссылки сделанной автоматизации в брифе", () => {
   it("бриф без ссылок у сделанной автоматизации принимается, и ссылки ставит Flow из её шагов", async () => {
     const { harness, store, idOf } = await host();
-    const id = idOf(await harness.callAgentTool(ASK_TOOL_NAME, { title: "Бриф", setup: { stages: reports } }, { threadId: THREAD }));
+    const id = idOf(await harness.callAgentTool(ASK_TOOL_NAME, priced({ title: "Бриф", setup: { stages: reports } }), { threadId: THREAD }));
     const brief = await store.getBrief(id);
     expect(brief?.setup?.stages?.find((s) => s.id === "publish")?.results).toEqual([PR]);
   });

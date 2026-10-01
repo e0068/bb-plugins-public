@@ -5,6 +5,7 @@ import type { ReactNode } from "react";
 
 import { addParts, riskText } from "../core/budget";
 import { liveLink, type FileRoots } from "../core/result-link";
+import { taskRoute } from "../core/run-tasks";
 import { Icon } from "../components/ui/icon";
 import { cn } from "../lib/utils";
 import { useLocale } from "./locale-context";
@@ -113,5 +114,24 @@ export function DocumentName({ link, stale = false, roots, className }: { link: 
     <ResultAnchor target={link.target} roots={roots} className={classes}>
       {content}
     </ResultAnchor>
+  );
+}
+
+/**
+ * Хост открывает страницу плагина в боковом сплите только по клику с Cmd/Ctrl, а обычный клик уводит на неё
+ * основную область. Задача из итога всегда встаёт сбоку: обычный клик гасится и переигрывается кликом с Cmd.
+ */
+const inSplit = (event: React.MouseEvent<HTMLAnchorElement>) => {
+  if (event.metaKey || event.ctrlKey || event.button !== 0) return;
+  event.preventDefault();
+  event.currentTarget.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, metaKey: true }));
+};
+
+/** Ссылка на карточку задачи в Tasks+ по ключу или слагу: открывается сбоку и не протухает, когда задача меняет статус. */
+export function TaskLink({ address, className, children }: { address: string; className?: string; children: ReactNode }) {
+  return (
+    <a href={taskRoute(address)} onClick={inSplit} className={className}>
+      {children}
+    </a>
   );
 }

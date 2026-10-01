@@ -7,6 +7,7 @@ import { describe, expect, it } from "vitest";
 
 import { DEFAULT_STAGES } from "../core/flows";
 import plugin from "../server";
+import { priced } from "./priced-fixture";
 
 const THREAD = "thr_wiring";
 
@@ -24,7 +25,7 @@ const boot = async (events: unknown[], settings: Record<string, number> = {}) =>
   await plugin(bb);
   // Баннер отвечает только треду с записью прогресса: без брифа отвечать нечем.
   const stages = DEFAULT_STAGES.map((stage, index) => ({ id: stage.id, state: "todo", ...(index === 1 ? { recommended: true } : {}) }));
-  await harness.callAgentTool("ask_decision", { title: "Бриф", setup: { stages } }, { threadId: THREAD });
+  await harness.callAgentTool("ask_decision", priced({ title: "Бриф", setup: { stages } }), { threadId: THREAD });
   return harness;
 };
 

@@ -24,7 +24,8 @@ The owner sees what was done and decides what next. A demo is a stop: after it t
 **In bb.** An `ask_decision` brief with `outcome` instead of setup:
 
 - `stage` — this stage's id from the turn instructions; `final` — whether it is the last demo; `next` — the next stage, only when it is not the last.
-- `done` — what closed since the previous demo; `pending` — what did not, with `why`; `sections` — report sections `{ title, text }`; `notes` — the important in one line: bug check steps, caveats; `tasks` — tasks with a mark.
+- `done` — what closed since the previous demo; `pending` — what did not, with `why`; `sections` — report sections `{ title, text }`; `notes` — the important in one line: bug check steps, caveats; `tasks` — tasks with a mark; the widget makes every key a link to the task card in Tasks+.
+- The plugin changed — a section "Changelog" in `sections` with the text of the changelog entry as it is in the file `bb-plugin-<name>/changelog/<slug>.md`, Russian and English: the owner sees what users will read before the merge.
 - `results` — at least one: `{ label, target }` — a file, path or address; `{ label, command }` — a command the owner runs with a button. Unless `documentsOnly: true`, the results hold a live one: an `http(s)` page or a command.
 - A local server page is shared via `bb connect expose <port>`; without Connect — `http://localhost:<port>`.
 

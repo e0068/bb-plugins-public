@@ -9,6 +9,7 @@ import { registerApi } from "./api";
 import { ASK_TOOL_NAME, registerAskTool } from "./ask-tool";
 import { FLOW_STAGE_TOOL, createProgress, registerProgress } from "./progress";
 import { createStore } from "./store";
+import { priced } from "./priced-fixture";
 
 const THREAD = "thr_progress";
 const settings: StageSettings = { stages: [builtinStage("questions", []), builtinStage("select", []), stage("task", { name: "Задача" }), builtinStage("demo", [])], minButtonWidth: 170 };
@@ -41,7 +42,7 @@ describe("прогресс flow на сервере", () => {
 
   it("бриф, ответ и отметки агента ведут этапы; конец этапа пишет минуты и стоимость окна", async () => {
     const { harness, tick } = await host(1.8);
-    await harness.callAgentTool(ASK_TOOL_NAME, stagesBrief, { threadId: THREAD });
+    await harness.callAgentTool(ASK_TOOL_NAME, priced(stagesBrief), { threadId: THREAD });
     expect(await harness.callRpc("getFlowProgress", { threadId: THREAD })).toMatchObject({ current: "questions", done: 0, total: 4 });
     tick(3);
     await harness.callRpc("answerBrief", { id: "dec_P1", messageId: "m", answer: { briefId: "dec_P1", answers: [], stages: [{ id: "task", run: true, executor: "self" }, { id: "demo", run: true, executor: "self" }] } });

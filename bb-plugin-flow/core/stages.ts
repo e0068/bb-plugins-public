@@ -92,9 +92,40 @@ export const answeredStageChoice = (brief: DecisionBrief, answer: DecisionAnswer
 /** Этап-автоматизацию исполняет сам Flow, без модели и без агента: выбирать в ней нечего и стоить она не может. */
 export const isAutomationStage = (stage: Pick<WorkStage, "automation">): boolean => stage.automation !== undefined;
 
-/** Добавка этапа с исполнителем: своя добавка этапа плюс разница исполнителя; у автоматизации добавки нет, что бы ни прислал агент. */
-export const stageAdd = (item: StageItem, executor: string): Add | undefined =>
-  isAutomationStage(item.stage) ? undefined : sumAdds([item.report?.add, executor === SELF ? undefined : item.report?.adds?.[executor]]);
+const cents = (n: number): number => Math.round(n * 100) / 100;
+
+/** Доля объёма: деньги и минуты — объём × процент × множитель, риск — этапа плюс исполнителя; без объёма — только риск. */
+const sharePrice = (share: NonNullable<StageReport["share"]>, factor: { factor: number; risk: number }, scope: Add | undefined): Add => {
+  const k = (share.percent / 100) * factor.factor;
+  const risk = share.risk + factor.risk;
+  if (scope === undefined) return { target: 0, max: 0, risk };
+  return { target: cents(scope.target * k), max: cents(scope.max * k), risk, ...(scope.minutes === undefined ? {} : { minutes: Math.round(scope.minutes * k) }) };
+};
+
+const SELF_FACTOR = { factor: 1, risk: 0 } as const;
+
+/**
+ * Цена этапа с исполнителем. Этап с долей — доля объёма работы с множителем исполнителя (сам агент — ×1);
+ * этап брифа, записанного раньше, — своя добавка в долларах плюс разница исполнителя. У автоматизации цены нет, что бы ни прислал агент.
+ */
+export const stageAdd = (item: StageItem, executor: string, scope?: Add): Add | undefined => {
+  if (isAutomationStage(item.stage)) return undefined;
+  const share = item.report?.share;
+  if (share !== undefined) return sharePrice(share, executor === SELF ? SELF_FACTOR : (item.report?.factors?.[executor] ?? SELF_FACTOR), scope);
+  return sumAdds([item.report?.add, executor === SELF ? undefined : item.report?.adds?.[executor]]);
+};
+
+/** Разница исполнителя с самим агентом — подпись в раскрытом списке; у самого агента разницы нет. */
+export const executorAdd = (item: StageItem, executor: string, scope?: Add): Add | undefined => {
+  if (executor === SELF) return undefined;
+  if (item.report?.share === undefined) return item.report?.adds?.[executor];
+  const own = stageAdd(item, SELF, scope);
+  const other = stageAdd(item, executor, scope);
+  if (own === undefined || other === undefined) return undefined;
+  const minutes = other.minutes === undefined || own.minutes === undefined ? {} : { minutes: other.minutes - own.minutes };
+  const [low, high] = [cents(other.target - own.target), cents(other.max - own.max)].sort((a, b) => a - b) as [number, number];
+  return { target: low, max: high, risk: other.risk - own.risk, ...minutes };
+};
 
 /**
  * Что из выбора по этапу уходит в следующий бриф треда: исполнитель, которого владелец менял сам,
@@ -152,6 +183,9 @@ export const reportIssues = (stages: readonly WorkStage[], reports: readonly Sta
       ...Object.keys(r.adds ?? {})
         .filter((key) => !stage.executors.some((e) => e.id === key))
         .map((key) => `stage ${r.id}: adds for ${key} — the stage has no such executor, adds only for ${idList(stage.executors.map((e) => e.id))}`),
+      ...Object.keys(r.factors ?? {})
+        .filter((key) => !stage.executors.some((e) => e.id === key))
+        .map((key) => `stage ${r.id}: factors for ${key} — the stage has no such executor, factors only for ${idList(stage.executors.map((e) => e.id))}`),
     ];
   });
   return [...order, ...executors];

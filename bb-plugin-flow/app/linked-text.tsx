@@ -4,6 +4,7 @@
 import { createContext, useContext, type MouseEvent } from "react";
 
 import { textParts } from "../core/inline-links";
+import { textBlocks, type Block } from "../core/text-blocks";
 import type { FileRoots } from "../core/result-link";
 import { ResultAnchor } from "./cells";
 
@@ -26,4 +27,32 @@ export function LinkedText({ text }: { text: string }) {
       </ResultAnchor>
     ),
   );
+}
+
+const LIST_CLASS = { ordered: "list-decimal", bullet: "list-disc" } as const;
+
+function Blocks({ blocks }: { blocks: readonly Block[] }) {
+  return blocks.map((block, i) =>
+    block.kind === "paragraph" ? (
+      <span key={i} className="block">
+        <LinkedText text={block.text} />
+      </span>
+    ) : (
+      // Спаны с ролями, а не ul/li: текст стоит и внутри кнопки варианта, где блочные теги недопустимы.
+      <span key={i} role="list" className={`block pl-4 ${block.ordered ? LIST_CLASS.ordered : LIST_CLASS.bullet}`}>
+        {block.items.map((item, j) => (
+          <span key={j} role="listitem" className="list-item">
+            <LinkedText text={item.text} />
+            <Blocks blocks={item.children} />
+          </span>
+        ))}
+      </span>
+    ),
+  );
+}
+
+/** Текст агента с абзацами и многоуровневыми списками; строка без них рисуется ровно как `LinkedText`. */
+export function RichText({ text }: { text: string }) {
+  const blocks = textBlocks(text);
+  return blocks.length === 1 && blocks[0]!.kind === "paragraph" && !text.includes("\n") ? <LinkedText text={text} /> : <Blocks blocks={blocks} />;
 }

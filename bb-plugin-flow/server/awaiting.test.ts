@@ -8,6 +8,7 @@ import type { StageSettings } from "../shared/contract";
 import { registerApi } from "./api";
 import { ASK_TOOL_NAME, registerAskTool } from "./ask-tool";
 import { createStore } from "./store";
+import { priced } from "./priced-fixture";
 
 const settings: StageSettings = { stages: [builtinStage("select", []), stage("task"), builtinStage("demo", [])], minButtonWidth: 170 };
 
@@ -17,7 +18,7 @@ const host = async () => {
   let n = 0;
   registerAskTool(bb, store, { newId: () => `A${++n}`, now: () => "2026-09-16T10:00:00.000Z", stages: () => settings });
   registerApi(bb, store, { now: () => "2026-09-16T10:01:00.000Z" });
-  const ask = (threadId: string, input: unknown) => harness.callAgentTool(ASK_TOOL_NAME, input, { threadId });
+  const ask = (threadId: string, input: Record<string, unknown>) => harness.callAgentTool(ASK_TOOL_NAME, priced(input), { threadId });
   return { harness, store, ask };
 };
 
@@ -25,11 +26,11 @@ const selectBrief = { title: "Выбор", setup: { stages: [{ id: "select", sta
 const clarify = { title: "Тема", kind: "clarify", questions: [{ id: "q", kind: "yesno", question: "Светлую?", options: [{ id: "yes", action: "Да" }, { id: "no", action: "Нет" }] }] };
 
 describe("ждущие владельца треды", () => {
-  it("бриф ставит тред ждать с видом, уточнение — нет, ответ снимает", async () => {
+  it("бриф до запуска с пунктами и этапами ставит тред ждать «Критериев», уточнение — нет, ответ снимает", async () => {
     const { harness, ask } = await host();
     await ask("thr_a", selectBrief);
     await ask("thr_b", clarify);
-    expect(await harness.callRpc("awaitingThreads", {})).toEqual([{ threadId: "thr_a", kind: "select" }]);
+    expect(await harness.callRpc("awaitingThreads", {})).toEqual([{ threadId: "thr_a", kind: "criteria" }]);
     await harness.callRpc("answerBrief", { id: "dec_A1", messageId: "m", answer: { briefId: "dec_A1", answers: [], stages: [{ id: "task", run: true, executor: "self" }] } });
     expect(await harness.callRpc("awaitingThreads", {})).toEqual([]);
   });

@@ -9,6 +9,7 @@ import { registerApi } from "./api";
 import { ASK_TOOL_NAME, registerAskTool } from "./ask-tool";
 import { createProgress, registerProgress } from "./progress";
 import { createStore } from "./store";
+import { priced } from "./priced-fixture";
 
 const THREAD = "thr_context";
 const settings: StageSettings = { stages: [builtinStage("questions", []), stage("task", { name: "Задача" })], minButtonWidth: 170 };
@@ -24,7 +25,7 @@ const host = async (context?: () => Promise<Fill | null>) => {
   registerApi(bb, store, { now, progress });
   registerProgress(bb, progress, { now, stages: () => settings, windowCost: async () => undefined, ...(context === undefined ? {} : { context }) });
   // Баннер появляется только у треда с записью прогресса: без брифа отвечать нечем.
-  await harness.callAgentTool(ASK_TOOL_NAME, { title: "Бриф", setup: { stages: [{ id: "questions", state: "todo" }, { id: "task", state: "todo", recommended: true }] } }, { threadId: THREAD });
+  await harness.callAgentTool(ASK_TOOL_NAME, priced({ title: "Бриф", setup: { stages: [{ id: "questions", state: "todo" }, { id: "task", state: "todo", recommended: true }] } }), { threadId: THREAD });
   return harness;
 };
 

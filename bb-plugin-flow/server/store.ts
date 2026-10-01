@@ -5,11 +5,13 @@ import { z } from "zod";
 
 import type { Carried } from "../core/carry";
 import {
+  addSchema,
   answerRecordSchema,
   awaitingEntrySchema,
   carriedSchema,
   decisionBriefSchema,
   dispatchRouteSchema,
+  type Add,
   type AnswerRecord,
   type DecisionBrief,
   type DispatchRoute,
@@ -21,6 +23,11 @@ const BRIEF_PREFIX = "decision:";
 const briefKey = (id: string) => `${BRIEF_PREFIX}${id}`;
 const answerKey = (id: string) => `decision-answer:${id}`;
 const threadCarryKey = (threadId: string) => `decision-thread-carry:${threadId}`;
+const threadCriteriaKey = (threadId: string): string => `thread-criteria:${threadId}`;
+
+const criteriaListSchema = z.array(z.string());
+
+const threadScopeKey = (threadId: string): string => `thread-scope:${threadId}`;
 const launchedKey = (threadId: string) => `decision-launched:${threadId}`;
 /** Маршрут нового треда по проектам. Места рядом нет: бриф всегда открывается «в этом треде». */
 const ROUTES_KEY = "dispatch-route";
@@ -52,6 +59,12 @@ export type DecisionStore = {
   putThreadCarry(threadId: string, carried: Carried): Promise<void>;
   /** Перенос треда; нет записи или она чужая — пустой перенос. */
   getThreadCarry(threadId: string): Promise<Carried>;
+  /** Утверждённое «Готово, когда» треда — итог последнего ответа с пунктами; пустой список запись снимает. */
+  putThreadCriteria(threadId: string, items: readonly string[]): Promise<void>;
+  getThreadCriteria(threadId: string): Promise<string[]>;
+  /** Утверждённый объём треда — цена, от которой считает бриф без своих пунктов. */
+  putThreadScope(threadId: string, scope: Add): Promise<void>;
+  getThreadScope(threadId: string): Promise<Add | null>;
   /** Работа треда уже отправлена на исполнение: этапы и бюджет в нём больше не спрашиваются. */
   isLaunched(threadId: string): Promise<boolean>;
   markLaunched(threadId: string): Promise<void>;
@@ -125,6 +138,20 @@ export const createStore = (kv: PluginKvStorage): DecisionStore => {
     async getThreadCarry(threadId) {
       const parsed = carriedSchema.safeParse(await kv.get(threadCarryKey(threadId)));
       return parsed.success ? parsed.data : {};
+    },
+    async putThreadCriteria(threadId, items) {
+      await (items.length === 0 ? kv.delete(threadCriteriaKey(threadId)) : kv.set(threadCriteriaKey(threadId), [...items]));
+    },
+    async getThreadCriteria(threadId) {
+      const parsed = criteriaListSchema.safeParse(await kv.get(threadCriteriaKey(threadId)));
+      return parsed.success ? parsed.data : [];
+    },
+    async putThreadScope(threadId, scope) {
+      await kv.set(threadScopeKey(threadId), scope);
+    },
+    async getThreadScope(threadId) {
+      const parsed = addSchema.safeParse(await kv.get(threadScopeKey(threadId)));
+      return parsed.success ? parsed.data : null;
     },
     async isLaunched(threadId) {
       return (await kv.get(launchedKey(threadId))) === true;
