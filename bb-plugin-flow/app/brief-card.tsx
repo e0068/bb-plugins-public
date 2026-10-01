@@ -18,6 +18,7 @@ import { DEFAULT_ROUTE, offeredPlace, placeColumns, withBranch, withPlace, withP
 import { stageItems } from "../core/stages";
 import type { FileRoots } from "../core/result-link";
 import { demoVerdict } from "../core/outcome";
+import { hasLinks, plainText } from "../core/inline-links";
 import { REVIEW_ROWS, SETUP_ROW, artifactVerb, checkerAllowed, rowsOf } from "../core/rows";
 import { Button } from "../components/ui/button";
 import { Icon } from "../components/ui/icon";
@@ -50,6 +51,7 @@ import {
 } from "./draft";
 import { AddRow, addRowText } from "./add-row";
 import { AttachmentThumbs, AttachmentsProvider, usePasteImages } from "./attachments";
+import { LinkedText, onLink } from "./linked-text";
 import { AddMeta, CardText, CheckSquare, DocumentName, RiskText, buttonCard, rowCellStyle } from "./cells";
 import { answeredAt, useStoredDraft, useSubmit, type FormProps } from "./parts";
 import type { Messages } from "../lib/messages";
@@ -117,7 +119,7 @@ function Pressable(props: { view: View; on: boolean; onPress: () => void; classN
       type="button"
       aria-pressed={props.on}
       disabled={props.view.sending}
-      onClick={props.onPress}
+      onClick={(event) => !onLink(event) && props.onPress()}
       className={cn(props.className, !props.on && "hover:bg-state-hover", "disabled:cursor-default")}
     >
       {props.children}
@@ -526,22 +528,46 @@ function ItemActions({ children }: { children: ReactNode }) {
 
 type FieldVoice = Pick<ReturnType<typeof useVoiceField>, "ref" | "onChange">;
 
-/** Текст пункта; правка идёт через голосовой ввод строки, чтобы ошибка записи снималась при наборе. */
+/**
+ * Текст пункта; правка идёт через голосовой ввод строки, чтобы ошибка записи снималась при наборе.
+ * Пункт со ссылками вне правки виден текстом со ссылками: клик мимо ссылки или фокус с клавиатуры открывает правку.
+ */
 function ItemField(props: { view: View; label: string; value: string; className?: string; voice: FieldVoice; onText: (text: string) => void; onBlur?: () => void }) {
   const paste = usePasteImages({ value: props.value, onText: props.onText });
+  const field = useRef<HTMLTextAreaElement | null>(null);
+  const [editing, setEditing] = useState(false);
+  const linked = !editing && hasLinks(props.value);
+  const edit = () => {
+    field.current?.focus();
+    field.current?.setSelectionRange(props.value.length, props.value.length);
+  };
   return (
-    <textarea
-      ref={props.voice.ref}
-      aria-label={props.label}
-      placeholder={props.label}
-      rows={1}
-      value={props.value}
-      disabled={props.view.sending}
-      onChange={props.voice.onChange}
-      onPaste={paste}
-      onBlur={props.onBlur}
-      className={cn(itemText, "resize-none bg-transparent outline-none [field-sizing:content] placeholder:text-muted-foreground", props.className)}
-    />
+    <>
+      {linked && (
+        <span data-linked-item className={cn(itemText, "cursor-text", props.className)} onClick={(event) => !onLink(event) && edit()}>
+          <LinkedText text={props.value} />
+        </span>
+      )}
+      <textarea
+        ref={(el) => {
+          field.current = el;
+          props.voice.ref(el);
+        }}
+        aria-label={props.label}
+        placeholder={props.label}
+        rows={1}
+        value={props.value}
+        disabled={props.view.sending}
+        onChange={props.voice.onChange}
+        onPaste={paste}
+        onFocus={() => setEditing(true)}
+        onBlur={() => {
+          setEditing(false);
+          props.onBlur?.();
+        }}
+        className={cn(itemText, "resize-none bg-transparent outline-none [field-sizing:content] placeholder:text-muted-foreground", props.className, linked && "sr-only")}
+      />
+    </>
   );
 }
 
@@ -553,7 +579,9 @@ function Delta({ before, after }: { before: string; after: ReactNode }) {
   return (
     <span className="@container block w-full pb-2">
       <span className="grid grid-cols-1 items-start gap-x-2 gap-y-1 @[31.5rem]:grid-cols-[minmax(240px,1fr)_auto_minmax(240px,1fr)]">
-        <span className="min-w-0 whitespace-pre-wrap break-words text-[13px] leading-snug text-muted-foreground">{before}</span>
+        <span className="min-w-0 whitespace-pre-wrap break-words text-[13px] leading-snug text-muted-foreground">
+          <LinkedText text={before} />
+        </span>
         <span data-testid="delta-arrow" aria-hidden="true" className="flex h-[18px] items-center text-muted-foreground">
           <Icon name="ArrowRight" className="size-3.5 rotate-90 @[31.5rem]:rotate-0" />
         </span>
@@ -589,10 +617,21 @@ function CriterionRow({ item, index, view, byOption }: { item: Criterion; index:
       <ItemRow mark={String(n)}>
         <span className="flex min-w-0 flex-1 flex-col">
           <span className="flex flex-wrap items-baseline gap-x-3">
-            <span className={cn(itemText, removed && "text-muted-foreground line-through")}>{removed || change !== undefined ? title : text}</span>
+            <span className={cn(itemText, removed && "text-muted-foreground line-through")}>
+              <LinkedText text={removed || change !== undefined ? title : text} />
+            </span>
             {!removed && <AddMeta add={add} />}
           </span>
-          {change !== undefined && !removed && <Delta before={change.before} after={<span className="whitespace-pre-wrap break-words text-[13px] leading-snug">{text}</span>} />}
+          {change !== undefined && !removed && (
+            <Delta
+              before={change.before}
+              after={
+                <span className="whitespace-pre-wrap break-words text-[13px] leading-snug">
+                  <LinkedText text={text} />
+                </span>
+              }
+            />
+          )}
         </span>
         {view.answered && edited && !removed && <span className="shrink-0 text-xs text-muted-foreground">{t.brief.rewritten}</span>}
         {!view.answered && !byOption && (
@@ -622,7 +661,13 @@ function CriterionRow({ item, index, view, byOption }: { item: Criterion; index:
         <>
         <span className="flex min-w-0 flex-1 flex-col">
           <span className="flex flex-wrap items-baseline gap-x-3">
-            {change === undefined ? field(t.brief.item(n)) : <span className={itemText}>{title}</span>}
+            {change === undefined ? (
+              field(t.brief.item(n))
+            ) : (
+              <span className={itemText}>
+                <LinkedText text={title} />
+              </span>
+            )}
             <AddMeta add={add} />
           </span>
           {change !== undefined && <Delta before={change.before} after={field(t.brief.itemAfter(n), "w-full py-0")} />}
@@ -755,15 +800,21 @@ function OptionCards({ question, view }: { question: DecisionQuestion; view: Vie
             <span className="min-w-0 flex-1">
               <span className="flex flex-wrap items-start gap-x-3 gap-y-0.5">
                 <span className="min-w-[min(12rem,100%)] flex-1 text-[13px] font-medium leading-snug">
-                  <Starred on={option.recommended}>{option.action}</Starred>
+                  <Starred on={option.recommended}>
+                    <LinkedText text={option.action} />
+                  </Starred>
                 </span>
                 <OptionMeta option={option} priced={view.brief.launched !== true} />
               </span>
               {option.description !== undefined && (
-                <span className="mt-1 block break-words text-xs leading-relaxed text-muted-foreground">{option.description}</span>
+                <span className="mt-1 block break-words text-xs leading-relaxed text-muted-foreground">
+                  <LinkedText text={option.description} />
+                </span>
               )}
               {option.risks !== undefined && (
-                <span className="mt-1 block break-words text-xs leading-relaxed text-muted-foreground">{t.brief.risks} {option.risks}</span>
+                <span className="mt-1 block break-words text-xs leading-relaxed text-muted-foreground">
+                  {t.brief.risks} <LinkedText text={option.risks} />
+                </span>
               )}
             </span>
           </Pressable>
@@ -804,7 +855,7 @@ function ConfirmRow({ question, view, ownLabel, onEnter }: { question: DecisionQ
             )}
           >
             <Starred on={option.recommended} hintAfter>
-              {option.action}
+              <LinkedText text={option.action} />
             </Starred>
           </Pressable>
         );
@@ -837,10 +888,15 @@ function QuestionsSection({ brief, view }: { brief: DecisionBrief; view: View })
     <div className="flex flex-col gap-4">
       <SectionTag kind="questions" className="-mb-2" />
       {visible.map((question, i) => (
-        <div key={question.id} role="group" aria-label={question.question}>
-          <div className="break-words text-[13px] font-medium leading-snug">{`${i + 1}. ${question.question}`}</div>
+        <div key={question.id} role="group" aria-label={plainText(question.question)}>
+          <div className="break-words text-[13px] font-medium leading-snug">
+            {`${i + 1}. `}
+            <LinkedText text={question.question} />
+          </div>
           {question.context !== undefined && (
-            <div className="mt-0.5 break-words text-xs text-muted-foreground">{question.context}</div>
+            <div className="mt-0.5 break-words text-xs text-muted-foreground">
+              <LinkedText text={question.context} />
+            </div>
           )}
           <Missing view={view} id={question.id} />
           {question.kind === "confirm" ? <ConfirmRow question={question} view={view} /> : <OptionCards question={question} view={view} />}
@@ -1201,8 +1257,14 @@ function Heading({ brief, subtitle }: { brief: DecisionBrief; subtitle?: string 
   const second = subtitle ?? brief.intro;
   return (
     <div className="flex flex-col gap-0.5">
-      <div className="break-words text-sm font-medium leading-snug">{brief.title}</div>
-      {second !== undefined && <div className="break-words text-xs text-muted-foreground">{second}</div>}
+      <div className="break-words text-sm font-medium leading-snug">
+        <LinkedText text={brief.title} />
+      </div>
+      {second !== undefined && (
+        <div className="break-words text-xs text-muted-foreground">
+          <LinkedText text={second} />
+        </div>
+      )}
     </div>
   );
 }
@@ -1336,9 +1398,15 @@ export function ClarifyCard({ brief, send, onResult }: FormProps) {
     <Plain label={brief.title} busy={sending}>
       <SectionTag kind="clarify" className="-mb-3" />
       {brief.questions.map((question) => (
-        <div key={question.id} role="group" aria-label={question.question}>
-          <div className="break-words text-[13px] font-medium leading-snug">{question.question}</div>
-          {question.context !== undefined && <div className="mt-0.5 break-words text-xs text-muted-foreground">{question.context}</div>}
+        <div key={question.id} role="group" aria-label={plainText(question.question)}>
+          <div className="break-words text-[13px] font-medium leading-snug">
+            <LinkedText text={question.question} />
+          </div>
+          {question.context !== undefined && (
+            <div className="mt-0.5 break-words text-xs text-muted-foreground">
+              <LinkedText text={question.context} />
+            </div>
+          )}
           <ConfirmRow question={question} view={view} ownLabel={t.brief.orOwnWords} onEnter={() => void submit(draft)} />
           <VoiceErrorLine scope={`own:${question.id}`} className="mt-1" />
         </div>

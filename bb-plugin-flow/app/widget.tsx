@@ -44,6 +44,7 @@ import { LocaleProvider } from "./locale";
 import { ProviderLogosProvider } from "./provider-logos-source";
 import { useLocale, useMessages } from "./locale-context";
 import { useFileRoots } from "./file-roots";
+import { FileRootsContext } from "./linked-text";
 import { VoiceErrorLine, VoiceProvider, useVoiceField } from "./voice";
 
 /** Канал `ANSWERED_CHANNEL` бэкенда; строкой, потому что `app` не берёт значений из `server`. */
@@ -200,7 +201,7 @@ function BriefLoader({ id, source, messageId, threadId }: { id: string; source: 
   };
   return (
     <div ref={frame} data-decision-frame="" style={{ display: "contents" }}>
-      {content()}
+      <FileRootsContext.Provider value={roots}>{content()}</FileRootsContext.Provider>
     </div>
   );
 }

@@ -5,9 +5,9 @@
     "publishedAt": "2026-09-16T12:11:36.283Z"
   },
   "bb-plugin-flow": {
-    "version": "0.6.78",
-    "commit": "7493da5ba7e06ac4c9bb812f089fe7c91b3d1337",
-    "publishedAt": "2026-10-01T11:52:01.132Z"
+    "version": "0.6.79",
+    "commit": "819603917e4523809cd0c98b7126aef2ef36cafb",
+    "publishedAt": "2026-10-01T12:00:17.025Z"
   },
   "bb-plugin-md-opener": {
     "version": "0.1.11",

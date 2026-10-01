@@ -13,16 +13,16 @@ import type { Add } from "../shared/contract";
 /**
  * Ссылка результата по его адресу. Файл — ссылкой bb, как в чате: клик открывает превью,
  * правый клик — меню «Open in / Open with / Copy file path». Адрес — ссылкой bb в браузер bb.
- * Открыть нечем — корней ещё нет или нужного нет — остаётся подпись.
+ * Открыть нечем — корней ещё нет или нужного нет — остаётся подпись. `line` — строка, на которой файл откроется.
  */
-export function ResultAnchor({ target, roots, label, className, children }: { target: string; roots: FileRoots | null; label?: string; className?: string; children: ReactNode }) {
+export function ResultAnchor({ target, line = null, roots, label, className, children }: { target: string; line?: number | null; roots: FileRoots | null; label?: string; className?: string; children: ReactNode }) {
   const link = liveLink(target, roots);
   const props = { className, ...(label === undefined ? {} : { "aria-label": label }) };
   switch (link.kind) {
     case "url":
       return <UrlLink href={link.url} {...props}>{children}</UrlLink>;
     case "file":
-      return <FileLink target={link.target} {...props}>{children}</FileLink>;
+      return <FileLink target={link.target} location={line === null ? null : { kind: "line", line, column: null }} {...props}>{children}</FileLink>;
     case "none":
       return <span aria-disabled="true" {...props}>{children}</span>;
   }
