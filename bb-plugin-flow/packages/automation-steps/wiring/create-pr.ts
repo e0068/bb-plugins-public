@@ -57,30 +57,15 @@ export async function runCreatePr(
   ports: CreatePrPorts,
   input: CreatePrInput,
 ): Promise<CreatePrResult> {
-  const { repo, baseBranch, headBranch, mergeBaseSha } = input;
+  const { repo, baseBranch, headBranch } = input;
 
   // Only 404 means the base is missing; a refusal (rate limit, access) is named with GitHub's own message.
   const base = await ports.send(getBranchRequest(repo, baseBranch));
   if (base.status === 404) throw new Error(`base "${baseBranch}" not found on GitHub (HTTP 404)`);
   requireStatus(base, 200, `reading base "${baseBranch}"`);
 
-  const mergeBase = await ports.send(getCommitRequest(repo, mergeBaseSha));
-  requireStatus(mergeBase, 200, `reading merge-base ${mergeBaseSha.slice(0, 7)}`);
-  const baseTreeSha = pickString(mergeBase.data, ["tree", "sha"]);
-
-  const blobShaByPath = await createBlobs(ports, repo, input.files);
-  const entries = buildTreeEntries(input.files, blobShaByPath);
-
-  const tree = await ports.send(treeRequest(repo, baseTreeSha, entries));
-  requireStatus(tree, 201, "creating tree");
-  const treeSha = pickString(tree.data, ["sha"]);
-
-  const commit = await ports.send(
-    commitRequest(repo, { message: input.title, treeSha, parentSha: mergeBaseSha }),
-  );
-  requireStatus(commit, 201, "creating commit");
-  const commitSha = pickString(commit.data, ["sha"]);
-
+  const treeSha = await prTree(ports, input);
+  const commitSha = await prCommit(ports, input, treeSha);
   await putHeadRef(ports, repo, headBranch, commitSha);
 
   const pr = await ports.send(
@@ -93,6 +78,90 @@ export async function runCreatePr(
   );
   requireStatus(pr, 201, "opening pull request");
   return { url: pickString(pr.data, ["html_url"]), number: pickNumber(pr.data, ["number"]) };
+}
+
+/** What the PR's commit is made of — shared by opening the PR and refreshing its branch. */
+export type PrCommitInput = Pick<CreatePrInput, "repo" | "mergeBaseSha" | "headBranch" | "files" | "title">;
+
+/** What refreshing did to the open PR's branch on GitHub. */
+export type RefreshOutcome = "updated" | "unchanged";
+
+/**
+ * Brings the branch of an already open PR up to the thread's branch. The PR's
+ * commit is rebuilt exactly as runCreatePr builds it — parented on the
+ * merge-base, the branch's files over its tree — and the head is moved onto
+ * it. Whatever the head carried on top (a version bump, GitHub's "Update
+ * branch") is dropped: the bump step behind this one in the chain lays it
+ * again over the fresh head. A branch whose own PR commit already has that
+ * tree is left alone, bump and all, so a retry creates no commit and no
+ * force-move.
+ */
+export async function runRefreshPr(ports: CreatePrPorts, input: PrCommitInput): Promise<RefreshOutcome> {
+  const { repo, headBranch } = input;
+  const head = await ports.send(getBranchRequest(repo, headBranch));
+  if (head.status === 404) throw new Error(`the open PR's branch "${headBranch}" is not on GitHub (HTTP 404)`);
+  requireStatus(head, 200, `reading branch ${headBranch}`);
+  const headCommit = { tree: pickString(head.data, ["commit", "commit", "tree", "sha"]), firstParent: firstParentOf(pluck(head.data, ["commit", "parents"])) };
+
+  const treeSha = await prTree(ports, input);
+  if (await carriesTree(ports, input, headCommit, treeSha, OWN_COMMIT_DEPTH)) return "unchanged";
+  const commitSha = await prCommit(ports, input, treeSha);
+  const moved = await ports.send(updateRefRequest(repo, headBranch, commitSha));
+  requireStatus(moved, 200, `updating branch ${headBranch}`);
+  return "updated";
+}
+
+/**
+ * How deep under the head the PR's own commit is looked for: the bump step
+ * lays a version commit over GitHub's "Update branch" merge, which sits over
+ * the PR's commit — both keep it as their first parent.
+ */
+const OWN_COMMIT_DEPTH = 3;
+
+interface CommitNode {
+  tree: string;
+  firstParent: string | null;
+}
+
+const firstParentOf = (parents: unknown): string | null => {
+  const sha = Array.isArray(parents) ? pluck(parents[0], ["sha"]) : undefined;
+  return typeof sha === "string" ? sha : null;
+};
+
+/**
+ * Whether the head or one of its first parents above the merge-base already
+ * has `treeSha` — that is, the branch already carries this content.
+ */
+async function carriesTree(ports: CreatePrPorts, input: PrCommitInput, node: CommitNode, treeSha: string, depth: number): Promise<boolean> {
+  if (node.tree === treeSha) return true;
+  const parent = node.firstParent;
+  if (depth <= 1 || parent === null || parent === input.mergeBaseSha) return false;
+  const res = await ports.send(getCommitRequest(input.repo, parent));
+  requireStatus(res, 200, `reading commit ${parent.slice(0, 7)}`);
+  return carriesTree(ports, input, { tree: pickString(res.data, ["tree", "sha"]), firstParent: firstParentOf(pluck(res.data, ["parents"])) }, treeSha, depth - 1);
+}
+
+/** The branch's files laid over the merge-base's tree. */
+async function prTree(ports: CreatePrPorts, input: PrCommitInput): Promise<string> {
+  const { repo, mergeBaseSha } = input;
+  const mergeBase = await ports.send(getCommitRequest(repo, mergeBaseSha));
+  requireStatus(mergeBase, 200, `reading merge-base ${mergeBaseSha.slice(0, 7)}`);
+  const baseTreeSha = pickString(mergeBase.data, ["tree", "sha"]);
+
+  const blobShaByPath = await createBlobs(ports, repo, input.files);
+  const entries = buildTreeEntries(input.files, blobShaByPath);
+
+  const tree = await ports.send(treeRequest(repo, baseTreeSha, entries));
+  requireStatus(tree, 201, "creating tree");
+  return pickString(tree.data, ["sha"]);
+}
+
+async function prCommit(ports: CreatePrPorts, input: PrCommitInput, treeSha: string): Promise<string> {
+  const commit = await ports.send(
+    commitRequest(input.repo, { message: input.title, treeSha, parentSha: input.mergeBaseSha }),
+  );
+  requireStatus(commit, 201, "creating commit");
+  return pickString(commit.data, ["sha"]);
 }
 
 export async function createBlobs(

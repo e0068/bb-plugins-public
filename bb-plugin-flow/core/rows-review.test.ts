@@ -97,7 +97,7 @@ describe("порядок и реплика первой части", () => {
     expect(openQuestions(full, { briefId: full.id, answers: [] })).toEqual([SETUP_ROW.artifacts, SETUP_ROW.executor, SETUP_ROW.checker, SETUP_ROW.testing, SETUP_ROW.budgetTarget, SETUP_ROW.budgetMax]);
   });
 
-  it("реплика называет ревью и тестирование, расхождение с рекомендацией — прямо", () => {
+  it("реплика называет ревью и тестирование, рекомендованное — в скобках, своё — цитатой", () => {
     const answer = {
       briefId: full.id,
       answers: [
@@ -110,9 +110,9 @@ describe("порядок и реплика первой части", () => {
       ],
     };
     const text = answerMessageText(full, answer);
-    expect(text).toContain("3. Ревью — Нет (рекомендовал Сторонний агент на Fable 5.1, выбрано Нет)");
-    expect(text).toContain("4. Тестирование — Сторонний агент на Opus 5 (рекомендовал Нет, выбрано Сторонний агент на Opus 5)");
-    expect(text).toContain("5. Целевой бюджет — своё — $25");
+    expect(text).toContain("3. Ревью — Нет (рекомендовал: Сторонний агент на Fable 5.1)");
+    expect(text).toContain("4. Тестирование — Сторонний агент на Opus 5 (рекомендовал: Нет)");
+    expect(text).toContain("5. Целевой бюджет — своё (рекомендовал: $30)\n   > $25");
     expect(deviations(full, answer)).toBe(3);
   });
 

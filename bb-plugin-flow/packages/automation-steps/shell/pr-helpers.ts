@@ -30,9 +30,9 @@ import { afterAnswer, decideLiveAsk, type AwaitMark } from "../core/pr-await";
 import { choosePrTitle } from "../core/pr-title";
 import { parseGithubRemote } from "../core/remote";
 import { chooseToken } from "../core/token";
-import type { PrPresence } from "../core/visibility";
+import { decideVisibility, type PrPresence } from "../core/visibility";
 import { bbCliClient } from "../wiring/bb-cli-client";
-import { type CreatePrPorts, runCreatePr } from "../wiring/create-pr";
+import { type CreatePrPorts, type PrCommitInput, type RefreshOutcome, runCreatePr, runRefreshPr } from "../wiring/create-pr";
 import { type CatchUpOutcome, type ParentDeliveryOutcome, runCatchUp, runParentDelivery } from "../wiring/catch-up";
 import { deletedPathsSince } from "../wiring/deleted-paths";
 import { liveAheadCount } from "../wiring/fast-forward";
@@ -102,12 +102,18 @@ export async function liveAheadOf(path: string | null, base: ResolvedBase): Prom
   return path ? liveAheadCount(gitClient(path), base) : null;
 }
 
+/**
+ * What the step did to the PR: opened it, or found it open and moved its
+ * branch onto the thread's branch — or found the branch already there.
+ */
+export type PrBranchOutcome = "opened" | RefreshOutcome;
+
 export async function gatherAndCreate(
   sdk: Sdk,
   kv: PluginKvStorage,
   token: string,
   threadId: string,
-): Promise<{ url: string; number: number; existed: boolean }> {
+): Promise<{ url: string; number: number; branch: PrBranchOutcome }> {
   // The whole thread, not just its environment id: its name is one of the
   // sources the PR is named from (see choosePrTitle below).
   const thread = await sdk.threads.get({ threadId });
@@ -130,26 +136,58 @@ export async function gatherAndCreate(
   // wrapped instead of re-resolving via settings, so refining a `settled`
   // signal here never spawns a second `gh auth token` for the same call.
   const pr = await resolvePrSignal(sdk, () => Promise.resolve(token), environmentId, env, base);
+  const github = githubClient(token);
+  const content = () =>
+    prContentOf(sdk, { threadId, threadName: thread.title ?? thread.titleFallback, env, mergeBase: status.workspace.mergeBase, statusBase: base.statusBase });
   // Повтор шага не открывает второй PR и не объявляет отказ по уже сделанной
   // работе: открытый PR ветки — это его собственный итог. Вопрос идёт к самому
   // GitHub, а не к кэшу bb: кэш и отстаёт сразу после создания, и держит
   // открытым PR, которого уже нет, — по такому шаг отчитался бы чужим адресом.
+  // Ветку открытого PR шаг догоняет до ветки треда: PR собран через API, без
+  // пуша, и закоммиченное после открытия иначе на GitHub не попадает.
   const open = alreadyOpenPr(pr, await askLiveOpenPrForEnv(sdk, () => Promise.resolve(token), env, base));
   if (open !== null) {
     // bb ещё держит прошлый PR — значку нужно время, чтобы увидеть этот.
     if (pr.presence !== "open") await markAwaiting(sdk, environmentId, "publish");
-    return { ...open, existed: true };
+    // Содержимое берётся с диска: незакоммиченное ушло бы в PR кодом, которого
+    // нет ни в одном коммите. Ветка без коммитов впереди базы PR не обновляет —
+    // переставленный на неё PR стал бы пустым.
+    const gate = decideVisibility({ ...visibilityWorkspace(status.workspace, await liveAheadOf(env.path, base)), pr: "absent" });
+    if (gate.reason === "dirty") throw new Error("Can't update the open PR right now (dirty) — commit the changes first.");
+    return { ...open, branch: gate.visible ? await runRefreshPr(github, await content()) : "unchanged" };
   }
-  const { mergeBase } = status.workspace;
   const liveAhead = await liveAheadOf(env.path, base);
   const decision = await resolveVisibility(
     visibilityPorts(kv, environmentId, env.path, base),
     { workspace: visibilityWorkspace(status.workspace, liveAhead), pr: pr.presence },
   );
-  if (!decision.visible || !mergeBase) {
+  if (!decision.visible) {
     throw new Error(`Can't open a PR right now (${decision.reason}).`);
   }
+  const payload = await content();
 
+  await markAwaiting(sdk, environmentId, "publish");
+  const created = await runCreatePr(github, { ...payload, baseBranch: base.githubBase });
+  return { ...created, branch: "opened" };
+}
+
+/**
+ * The PR's content — its commit's files over the merge-base, title and body —
+ * read off the working copy. One reading for opening the PR and for
+ * refreshing its branch, so the two can't build different commits.
+ */
+async function prContentOf(
+  sdk: Sdk,
+  { threadId, threadName, env, mergeBase, statusBase }: {
+    threadId: string;
+    threadName: string | null;
+    env: { hostId: string; path: string | null; branchName: string | null };
+    mergeBase: { baseRef: string | null; files: readonly BranchFile[]; commits: readonly { subject: string }[] } | null;
+    /** The base the status compared the branch with — named in the refusal. */
+    statusBase: string;
+  },
+): Promise<PrCommitInput & { body: string }> {
+  if (!mergeBase) throw new Error(`bb did not compare the branch with ${statusBase} — there is no merge-base to build the PR's commit on.`);
   const path = env.path;
   if (!path) throw new Error("The environment has no working copy on disk.");
   const headBranch = env.branchName;
@@ -159,9 +197,7 @@ export async function gatherAndCreate(
   // commit they were diffed against — that commit becomes the PR commit's
   // parent, so the two can't drift apart.
   const mergeBaseSha = parseMergeBaseRef(mergeBase.baseRef);
-  if (!mergeBaseSha) {
-    throw new Error(`bb did not resolve the merge-base of ${headBranch} with ${base.statusBase}.`);
-  }
+  if (!mergeBaseSha) throw new Error(`bb did not resolve the merge-base of ${headBranch} with ${statusBase}.`);
 
   const repo = await readOrigin(sdk, env.hostId, path);
   // Версию здесь не поднимают: это делает шаг бампа, стоящий сразу за созданием
@@ -172,25 +208,13 @@ export async function gatherAndCreate(
   // only, and without it every executable file would land as 100644.
   const executable = await readExecutablePaths(gitClient(path));
   const files = await buildChangedFiles(sdk, env.hostId, path, withDeletedPaths(mergeBase.files, deleted), executable);
-  const github = githubClient(token);
   const title = choosePrTitle({
     task: await readLinkedTask(bbCliClient(), threadId),
-    threadName: thread.title ?? thread.titleFallback,
+    threadName,
     commitSubjects: mergeBase.commits.map((commit) => commit.subject),
     branch: headBranch,
   });
-
-  await markAwaiting(sdk, environmentId, "publish");
-  const created = await runCreatePr(github, {
-    repo,
-    baseBranch: base.githubBase,
-    mergeBaseSha,
-    headBranch,
-    files,
-    title,
-    body: prBody(mergeBase.commits),
-  });
-  return { ...created, existed: false };
+  return { repo, mergeBaseSha, headBranch, files, title, body: prBody(mergeBase.commits) };
 }
 
 // The step "catch the branch up with main": the tip of the base comes in by

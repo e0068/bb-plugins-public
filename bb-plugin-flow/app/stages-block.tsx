@@ -13,9 +13,10 @@ import { useRef, type ReactNode } from "react";
 import { SELF, executorLabel, stageAdd, stageItems, stageLabel, stagePhase, type StageItem } from "../core/stages";
 import type { FileRoots } from "../core/result-link";
 import { Icon } from "../components/ui/icon";
+import { STAGE_BUTTON_WIDTH } from "../lib/stage-constants";
 import { cn } from "../lib/utils";
 import type { DecisionBrief, StageExecutor } from "../shared/contract";
-import { AddMeta, CardText, CheckSquare, DocumentName, RESULT_ROW } from "./cells";
+import { AddMeta, CardText, CheckSquare, DocumentName, RESULT_ROW, rowCellStyle } from "./cells";
 import { pickStageExecutor, stageChoiceIn, toggleStageRun, type Draft } from "./draft";
 import { useLocale, useMessages } from "./locale-context";
 import { ROW_CELL, cellOrder, panelOrder, useRowEnds } from "./row-order";
@@ -92,7 +93,7 @@ function StageCell({ state, view, roots, order, width }: { state: StageState; vi
     </CardText>
   );
   const expand = () => view.expand(open ? null : key, cell.current);
-  const style = { order, flex: `1 1 ${width}px`, minWidth: `min(${width}px, 100%)` };
+  const style = { order, ...rowCellStyle(width) };
   if (checkable)
     return (
       <div ref={cell} data-stage={item.stage.id} {...rowCellAttr} style={style} className={cn("flex min-h-11 bg-surface-recessed-solid", open && "bg-state-active")}>
@@ -253,7 +254,7 @@ export function StagesBlock({ view, roots, budget }: { view: StagesView; roots: 
   const states = stageItems(view.brief).map(stateOf);
   const count = states.length + (budget === null ? 0 : 1);
   const ends = useRowEnds(container, count);
-  const width = view.brief.stages?.minButtonWidth ?? 170;
+  const width = view.brief.stages?.minButtonWidth ?? STAGE_BUTTON_WIDTH.initial;
   const panels = states.flatMap((state, index) => {
     const order = panelOrder(ends, index);
     const key = stageKey(state.item.stage.id);
@@ -268,7 +269,7 @@ export function StagesBlock({ view, roots, budget }: { view: StagesView; roots: 
         <StageCell key={state.item.stage.id} state={state} view={view} roots={roots} order={cellOrder(index)} width={width} />
       ))}
       {budget !== null && (
-        <div {...rowCellAttr} style={{ order: cellOrder(budgetIndex), flex: `1 1 ${width}px`, minWidth: `min(${width}px, 100%)` }} className="flex min-w-0">
+        <div {...rowCellAttr} style={{ order: cellOrder(budgetIndex), ...rowCellStyle(width) }} className="flex min-w-0">
           {budget.cell}
         </div>
       )}

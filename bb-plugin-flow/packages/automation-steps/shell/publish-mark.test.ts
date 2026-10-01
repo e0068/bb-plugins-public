@@ -70,11 +70,4 @@ describe("gatherAndCreate оставляет отметку публикации
     await expect(gatherAndCreate(sdk(path), kv, "token", "t1")).rejects.toThrow();
     expect(await readMark(gitClient(path), BRANCH)).toMatchObject({ kind: "publish", found: null });
   });
-
-  it("повтор нашёл открытый PR, а bb помнит прошлый влитый → отметка publish на ветке", async () => {
-    const path = repo();
-    github([{ number: 41, html_url: "https://github.com/e0068/bb-plugins/pull/41" }]);
-    expect(await gatherAndCreate(sdk(path), kv, "token", "t1")).toMatchObject({ number: 41, existed: true });
-    expect(await readMark(gitClient(path), BRANCH)).toMatchObject({ kind: "publish" });
-  });
 });

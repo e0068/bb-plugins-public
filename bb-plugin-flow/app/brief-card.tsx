@@ -21,6 +21,7 @@ import { demoVerdict } from "../core/outcome";
 import { REVIEW_ROWS, SETUP_ROW, artifactVerb, checkerAllowed, rowsOf } from "../core/rows";
 import { Button } from "../components/ui/button";
 import { Icon } from "../components/ui/icon";
+import { STAGE_BUTTON_WIDTH } from "../lib/stage-constants";
 import { cn } from "../lib/utils";
 import type { Locale } from "../lib/i18n";
 import type { AnswerRecord, Artifact, Criterion, DecisionBrief, DecisionOption, DecisionQuestion, DispatchPlace, DispatchRoute, RouteBranch, RouteTree, dispatchRpcContract } from "../shared/contract";
@@ -49,7 +50,7 @@ import {
 } from "./draft";
 import { AddRow, addRowText } from "./add-row";
 import { AttachmentThumbs, AttachmentsProvider, usePasteImages } from "./attachments";
-import { AddMeta, CardText, CheckSquare, DocumentName, RiskText, buttonCard } from "./cells";
+import { AddMeta, CardText, CheckSquare, DocumentName, RiskText, buttonCard, rowCellStyle } from "./cells";
 import { answeredAt, useStoredDraft, useSubmit, type FormProps } from "./parts";
 import type { Messages } from "../lib/messages";
 import { useLocale, useMessages } from "./locale-context";
@@ -452,8 +453,12 @@ function AnswerBlock({ brief, view, roots, footer }: { brief: DecisionBrief; vie
   ].flatMap((hint) => (hint === null ? [] : [hint]));
   const staged = stageItems(brief).length > 0;
   const grid = "grid grid-cols-2 gap-px @[34rem]:grid-cols-4";
-  // Кнопок с бюджетом может быть пять — тогда ряд делится на пять, чтобы не рвать шов.
-  const buttonGrid = buttons.length + (withBudget ? 1 : 0) > 4 ? "grid grid-cols-2 gap-px @[34rem]:grid-cols-5" : grid;
+  const cellWidth = brief.stages?.minButtonWidth ?? STAGE_BUTTON_WIDTH.initial;
+  // Кнопки без этапов переносятся, как ряд этапов: одна в своём ряду растянута на всю ширину.
+  const rowButtons = [
+    ...buttons.map((question) => ({ key: question.id, node: <ChoiceButton question={question} view={view} /> })),
+    ...(withBudget && !staged ? [{ key: BUDGET_PANEL, node: <BudgetButton view={view} /> }] : []),
+  ];
   return (
     <div className="flex flex-col gap-1">
       <div role="group" aria-label={t.brief.answerGroup} className="flex flex-col gap-px overflow-hidden rounded-lg">
@@ -471,12 +476,13 @@ function AnswerBlock({ brief, view, roots, footer }: { brief: DecisionBrief; vie
             budget={withBudget ? { key: BUDGET_PANEL, cell: <BudgetButton view={view} />, panel: <BudgetPanel view={view} /> } : null}
           />
         )}
-        {(buttons.length > 0 || (withBudget && !staged)) && (
-          <div className={buttonGrid}>
-            {buttons.map((question) => (
-              <ChoiceButton key={question.id} question={question} view={view} />
+        {rowButtons.length > 0 && (
+          <div className="flex flex-wrap gap-px">
+            {rowButtons.map(({ key, node }) => (
+              <div key={key} style={rowCellStyle(cellWidth)} className="flex min-w-0">
+                {node}
+              </div>
             ))}
-            {withBudget && !staged && <BudgetButton view={view} />}
           </div>
         )}
         {expanded !== undefined && !view.answered && <ChoicePanel question={expanded} view={view} />}
