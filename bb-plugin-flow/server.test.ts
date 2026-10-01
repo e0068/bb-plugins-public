@@ -27,11 +27,11 @@ describe("плагин Decisions", () => {
     expect(tools.map((t) => t.name)).toContain("ask_decision");
   });
 
-  it("два брифа с первой частью подряд получают разные идентификаторы с префиксом dec_", async () => {
+  it("два брифа с этапами flow по умолчанию подряд получают разные идентификаторы с префиксом dec_", async () => {
     const harness = await loaded();
     const params = {
       title: "Бриф",
-      setup: { criteria: ["Тесты зелёные"] },
+      setup: { stages: [{ id: "questions", state: "todo" }, { id: "criteria", state: "todo" }, { id: "select", state: "todo" }, { id: "demo", state: "todo" }], criteria: ["Тесты зелёные"] },
     };
     const ids = await Promise.all([1, 2].map(async () => {
       const result = await harness.callAgentTool("ask_decision", params);

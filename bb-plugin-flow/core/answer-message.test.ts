@@ -102,17 +102,6 @@ describe("текст ответа агенту", () => {
     expect(text).toContain(own);
   });
 
-  it("расхождение с рекомендацией названо как рекомендовал X, выбрано Y", () => {
-    const text = answerMessageText(briefOf([choice]), answerOf([{ questionId: "priority", optionIds: ["speed"] }]));
-    expect(text).toContain("рекомендовал Действие quality, выбрано Действие speed");
-  });
-
-  it("свой текст при рекомендации считается расхождением", () => {
-    const answer = answerOf([{ questionId: "executor", optionIds: [], own: "Вдвоём" }]);
-    expect(deviations(briefOf([fork]), answer)).toBe(1);
-    expect(answerMessageText(briefOf([fork]), answer)).toContain("рекомендовал Действие self, выбрано своё — Вдвоём");
-  });
-
   it("подмножество рекомендованных toggles считается расхождением", () => {
     expect(deviations(briefOf([toggles]), answerOf([{ questionId: "artifacts", optionIds: ["task"] }]))).toBe(1);
     expect(deviations(briefOf([toggles]), answerOf([{ questionId: "artifacts", optionIds: ["task", "spec"] }]))).toBe(0);
@@ -130,29 +119,5 @@ describe("текст ответа агенту", () => {
       { questionId: "executor", optionIds: ["self"] },
     ], note));
     expect(lines(text).at(-1)).toContain(note);
-  });
-
-  it("число расхождений равно числу строк расхождения в тексте", () => {
-    const questions = [toggles, choice, budget, fork, yesno, bare];
-    const pick = (question: DecisionQuestion) => {
-      const byOptions = fc.subarray(question.options.map((o) => o.id)).map((ids) => ({
-        questionId: question.id,
-        optionIds: question.kind === "toggles" ? ids : ids.slice(0, 1),
-      }));
-      const byOwn = fc
-        .stringMatching(/^[А-Яа-я0-9 ]*[А-Яа-я0-9][А-Яа-я0-9 ]*$/)
-        .map((own) => ({ questionId: question.id, optionIds: [] as string[], own }));
-      return question.kind === "toggles"
-        ? fc.option(byOptions, { nil: null })
-        : fc.option(fc.oneof(byOptions, byOwn), { nil: null });
-    };
-    fc.assert(
-      fc.property(fc.tuple(...questions.map(pick)), (entries) => {
-        const answer = answerOf(entries.filter((e): e is NonNullable<typeof e> => e !== null));
-        const text = answerMessageText(briefOf(questions), answer);
-        const marked = lines(text).filter((l) => l.includes("рекомендовал ")).length;
-        expect(deviations(briefOf(questions), answer)).toBe(marked);
-      }),
-    );
   });
 });

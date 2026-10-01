@@ -2,7 +2,7 @@
 // появляется при первом касании вопроса: у переключателей «ничего не включать»
 // отличимо от «не дошёл» только так. Правки критерия лежат отдельно: пункты —
 // не вопрос, нетронутый критерий значит «все пункты оставлены».
-import { isQuestionAnswered, openQuestions } from "../core/answer-message";
+import { isMulti, isQuestionAnswered, openQuestions } from "../core/answer-message";
 import { requiredOf } from "../core/required";
 import { REVIEW_NONE, REVIEW_ROWS, SETUP_ROW, checkerAllowed, rowsOf } from "../core/rows";
 import { criterionEditable } from "../core/budget";
@@ -105,8 +105,6 @@ const withEntry = (draft: Draft, questionId: string, entry: Entry): Draft => ({
   ...draft,
   entries: { ...draft.entries, [questionId]: entry },
 });
-
-const isMulti = (question: DecisionQuestion): boolean => question.kind === "toggles" || question.kind === "pick";
 
 /** Свой текст, который переживает правку вариантов: в `pick` он складывается с ними. */
 const keptOwn = (draft: Draft, question: DecisionQuestion): string =>

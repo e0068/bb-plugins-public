@@ -31,11 +31,9 @@ describe("строка артефактов не обязательна", () => 
     expect(openQuestions(brief, toAnswer(brief, confirmed))).toEqual([]);
   });
 
-  it("нетронутые артефакты уходят агенту как «ничего» с расхождением от рекомендации", () => {
+  it("нетронутые артефакты уходят агенту как «ничего» с не взятым из рекомендованного", () => {
     expect(toAnswer(brief, confirmed).answers[0]).toEqual({ questionId: SETUP_ROW.artifacts, optionIds: [] });
-    expect(answerMessageText(brief, toAnswer(brief, confirmed))).toContain(
-      "Артефакты — ничего (рекомендовал Задача — сделать, HTML-прототип — утвердить, выбрано ничего)",
-    );
+    expect(answerMessageText(brief, toAnswer(brief, confirmed))).toContain("Артефакты — ничего (не взято: Задача — сделать, HTML-прототип — утвердить)");
   });
 
   it("выбранные артефакты уходят как выбраны вместе с меткой тронутых", () => {

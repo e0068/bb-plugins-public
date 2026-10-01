@@ -93,6 +93,18 @@ const outcomeIssues = (outcome: AskDecisionParams["outcome"], launched: boolean,
   ];
 };
 
+/**
+ * Бюджет брифа складывается из этапов: первый бриф треда, чей flow выбирает этапы, без них вышел бы «$0 · до $0».
+ * Уточнение и итог Демонстрации этапов не несут, а после запуска этапы уже выбраны.
+ */
+const missingStagesIssues = (params: AskDecisionParams, launched: boolean, stages: StageSettings["stages"]): string[] => {
+  const exempt = params.kind !== "brief" || launched || params.outcome !== undefined || params.setup?.stages !== undefined;
+  const selects = stages.some((s) => stageKindOf(s) === "select");
+  return exempt || !selects
+    ? []
+    : ["setup.stages is missing: the thread's flow has a stage selection and the work is not launched yet, so this brief carries every stage of the flow — the budget is summed from them"];
+};
+
 /** Поля первой части, которые заменили этапы работ. */
 const LEGACY_SETUP = ["artifacts", "executor", "checker", "testing"] as const;
 
@@ -144,7 +156,7 @@ export const registerAskTool = (
       const legacy = params.kind === "brief" ? legacyIssues(params.setup) : [];
       const launchedSetup = params.kind === "brief" && launched ? launchedIssues(params.setup, settings.stages) : [];
       const outcomeProblems = outcomeIssues(params.outcome, launched, settings.stages);
-      const stageIssues = reportIssues(settings.stages, params.setup?.stages);
+      const stageIssues = [...missingStagesIssues(params, launched, settings.stages), ...reportIssues(settings.stages, params.setup?.stages)];
       if (launchedSetup.length > 0 || outcomeProblems.length > 0)
         return toolError(`Brief not accepted: ${[...launchedSetup, ...outcomeProblems].join("; ")}.`);
       if (legacy.length > 0 || stageIssues.length > 0)

@@ -81,12 +81,13 @@ describe("перенос в реплике агенту", () => {
     expect(text).toContain("3. Ревью — Сам (перенесено из прошлого брифа)");
   });
 
-  it("тронутое владельцем значение реплика переносом не называет", () => {
+  it("тронутое владельцем значение реплика переносом не называет, а рекомендованное называет один раз", () => {
     const text = answerMessageText(brief, answer([
       { questionId: SETUP_ROW.executor, optionIds: ["self"] },
       { questionId: SETUP_ROW.checker, optionIds: ["self"], picked: ["self"] },
       { questionId: SETUP_ROW.testing, optionIds: ["none"] },
     ]));
-    expect(text).toContain("3. Ревью — Сам (рекомендовал Сторонний агент на Fable 5.1, выбрано Сам)");
+    expect(text).toContain("3. Ревью — Сам (рекомендовал: Сторонний агент на Fable 5.1)");
   });
+
 });

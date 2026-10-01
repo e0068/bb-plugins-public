@@ -157,33 +157,70 @@ const outcomeNextStep = (brief: DecisionBrief, answer: DecisionAnswer, m: Messag
   return next === undefined ? m.outcomeFinal : m.outcomeNext(next);
 };
 
-/** Выбранное словами и рекомендованное словами; `null` у рекомендации — агент её не ставил. `carried` — владелец оставил перенесённое. */
-type Reading = { chosen: string; recommended: string | null; differs: boolean; carried: boolean };
+/**
+ * Выбранное словами, расхождение с рекомендацией скобкой (пустая — расхождения нет) и свой текст владельца отдельно:
+ * он встаёт цитатой под пунктом, а не в строку. `carried` — владелец оставил перенесённое.
+ */
+type Reading = { chosen: string; deviation: string; own: string | null; carried: boolean };
 
-const actions = (question: DecisionQuestion, ids: readonly string[]): string =>
+/** Вопрос с несколькими ответами: свой текст складывается с выбранными, а расхождение — разница наборов. */
+export const isMulti = (question: DecisionQuestion): boolean => question.kind === "toggles" || question.kind === "pick";
+
+/** «Yes» и «No» подтверждения агент пишет по-английски; владельцу и журналу — словом языка ответа. */
+const optionWord = (question: DecisionQuestion, action: string, m: Messages["answer"]): string => {
+  if (question.kind !== "confirm" && question.kind !== "yesno") return action;
+  if (/^yes$/i.test(action)) return m.yes;
+  return /^no$/i.test(action) ? m.no : action;
+};
+
+const actions = (question: DecisionQuestion, ids: readonly string[], m: Messages["answer"]): string =>
   question.options
     .filter((o) => ids.includes(o.id))
-    .map((o) => o.action)
+    .map((o) => optionWord(question, o.action, m))
     .join(", ");
+
+/** Разница наборов словами: не взятое из рекомендованного и взятое сверх него; наборы совпали — пусто. */
+const setDeviation = (question: DecisionQuestion, chosen: readonly string[], recommended: readonly string[], m: Messages["answer"]): string => {
+  const missing = recommended.filter((id) => !chosen.includes(id));
+  const extra = chosen.filter((id) => !recommended.includes(id));
+  const parts = [...(missing.length === 0 ? [] : [m.notTaken(actions(question, missing, m))]), ...(extra.length === 0 ? [] : [m.beyond(actions(question, extra, m))])];
+  return parts.length === 0 ? "" : m.setDiff(parts.join("; "));
+};
+
+/** Одиночный выбор расходится, когда взят не рекомендованный вариант или вместо варианта написано своё. */
+const singleDeviation = (question: DecisionQuestion, entry: QuestionAnswer, own: string | null, recommended: readonly string[], m: Messages["answer"]): string => {
+  const same = own === null && entry.optionIds.length === recommended.length && entry.optionIds.every((id) => recommended.includes(id));
+  return same ? "" : m.recommended(actions(question, recommended, m));
+};
 
 const read = (question: DecisionQuestion, entry: QuestionAnswer, carried: readonly string[] | undefined, m: Messages["answer"]): Reading => {
   const recommendedIds = question.options.filter((o) => o.recommended).map((o) => o.id);
   const own = blank(entry.own) ? null : (entry.own ?? "");
-  const parts = [...(entry.optionIds.length === 0 ? [] : [actions(question, entry.optionIds)]), ...(own === null ? [] : [m.own(own)])];
-  const sameSet =
-    own === null &&
-    entry.optionIds.length === recommendedIds.length &&
-    entry.optionIds.every((id) => recommendedIds.includes(id));
+  const deviation =
+    recommendedIds.length === 0
+      ? ""
+      : isMulti(question)
+        ? setDeviation(question, entry.optionIds, recommendedIds, m)
+        : singleDeviation(question, entry, own, recommendedIds, m);
   return {
-    chosen: parts.length === 0 ? m.nothing : parts.join(", "),
-    recommended: recommendedIds.length === 0 ? null : actions(question, recommendedIds),
-    differs: recommendedIds.length > 0 && !sameSet,
+    chosen: entry.optionIds.length > 0 ? actions(question, entry.optionIds, m) : own === null ? m.nothing : m.own,
+    deviation,
+    own,
     carried:
       carried !== undefined &&
       (entry.picked ?? []).length === 0 &&
       carried.length === entry.optionIds.length &&
       carried.every((id) => entry.optionIds.includes(id)),
   };
+};
+
+/**
+ * Свой текст цитатой с отступом под текст пункта «N. », чтобы многоабзацный остался внутри пункта списка;
+ * пустая строка после цитаты не даёт следующему пункту приклеиться к ней ленивым продолжением.
+ */
+const ownQuote = (number: number, own: string): string => {
+  const indent = " ".repeat(`${number}. `.length);
+  return `${own.split("\n").map((line) => (line.trim() === "" ? `${indent}>` : `${indent}> ${line}`)).join("\n")}\n`;
 };
 
 const readings = (brief: DecisionBrief, answer: DecisionAnswer, locale?: Locale) => {
@@ -200,7 +237,7 @@ const readings = (brief: DecisionBrief, answer: DecisionAnswer, locale?: Locale)
 export const deviationTotal = (brief: DecisionBrief): number => rowsOf(brief).length + stageItems(brief).length + (hasForecast(brief) ? 1 : 0);
 
 export const deviations = (brief: DecisionBrief, answer: DecisionAnswer): number =>
-  readings(brief, answer).filter(({ reading }) => reading?.differs === true).length +
+  readings(brief, answer).filter(({ reading }) => reading !== null && reading.deviation !== "").length +
   stageItems(brief).filter((item) => stageDiffers(brief, answer, item)).length +
   (hasOwnBudget(answer) ? 1 : 0);
 
@@ -212,8 +249,8 @@ export const answerMessageText = (brief: DecisionBrief, answer: DecisionAnswer, 
   const body = readings(brief, answer, locale).map(({ question, reading }, i) => {
     const head = `${i + 1}. ${question.question} — `;
     if (reading === null) return `${head}${m.noAnswer}`;
-    const deviation = reading.carried ? m.carried : reading.differs ? m.differs(reading.recommended ?? "", reading.chosen) : "";
-    return `${head}${reading.chosen}${deviation}${question.id === SETUP_ROW.artifacts ? revokedLine(brief, answer, m) : ""}`;
+    const line = `${head}${reading.chosen}${reading.carried ? m.carried : reading.deviation}${question.id === SETUP_ROW.artifacts ? revokedLine(brief, answer, m) : ""}`;
+    return reading.own === null ? line : `${line}\n${ownQuote(i + 1, reading.own)}`;
   });
   const note = blank(answer.note) ? [] : [m.note(answer.note ?? "")];
   return [heading, ...body, ...outcomeLines(brief, answer, locale), ...stagesLines(brief, answer, locale), ...budgetLine(brief, answer, locale), ...criteriaLine(brief, answer, m), ...nextStepLine(brief, answer, m), ...note].join("\n");

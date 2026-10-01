@@ -67,6 +67,12 @@ export function CheckSquare({ on, required = false }: { on: boolean; required?: 
   );
 }
 
+/**
+ * Ячейка переносимого ряда кнопок: не уже `width` и растёт на свободное место, поэтому кнопка,
+ * одна в своём ряду, растянута на всю ширину, а не стоит клеткой сетки.
+ */
+export const rowCellStyle = (width: number) => ({ flex: `1 1 ${width}px`, minWidth: `min(${width}px, 100%)` });
+
 /** Ячейка блока: скругляет её внешний контур блока, по высоте она тянется до самой высокой в ряду. */
 export const buttonCard = "flex h-full min-h-11 w-full min-w-0 items-center justify-between gap-2 bg-surface-recessed-solid px-3 text-left";
 

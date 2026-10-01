@@ -35,6 +35,7 @@ import {
   settleVersionsForMerge,
   type ChildDelivery,
   type GithubTokenSettings,
+  type PrBranchOutcome,
   type Sdk,
 } from "./shell/pr-helpers";
 
@@ -118,6 +119,13 @@ const CATCH_UP_DETAIL: Record<CatchUpOutcome, string> = {
   merged: "merged",
   "reset-to-base": "brought onto the base — the branch's content is already there",
   "replay-onto-base": "the branch's own work moved onto the base — the rest was already merged",
+};
+
+/** Строка шага «Открыть PR»: адрес PR и что стало с его веткой на GitHub. */
+const PR_DETAIL: Record<PrBranchOutcome, (url: string) => string> = {
+  opened: (url) => url,
+  updated: (url) => `already open: ${url}; branch updated`,
+  unchanged: (url) => `already open: ${url}`,
 };
 
 /**
@@ -222,11 +230,12 @@ export function createSteps(ports: StepPorts): Steps {
       return done(CATCH_UP_DETAIL[await catchUpBranch(sdk, kv, threadId)]);
     }),
     // Открытый PR ветки — итог этого шага, а не отказ: повтор после потерянного
-    // ответа GitHub не открывает второй PR и говорит, что нашёл первый.
+    // ответа GitHub не открывает второй PR и говорит, что нашёл первый. Ветку
+    // найденного PR шаг догоняет до ветки треда и говорит, сдвинул ли её.
     "git.create-pr": guarded(
       orIntoParent(deliver, async (threadId) => {
         const created = await gatherAndCreate(sdk, kv, await resolveToken(settings), threadId);
-        return done(created.existed ? `already open: ${created.url}` : created.url);
+        return done(PR_DETAIL[created.branch](created.url));
       }),
     ),
     "bb.tasks-in-review": guarded(moveTasks("in_review")),
