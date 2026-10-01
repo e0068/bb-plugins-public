@@ -1,6 +1,7 @@
 // Бэкенд Flow: инструменты агента `ask_decision`, `share_command` и `flow_stage`, исполнитель автоматизаций, коллекция
 // flow и flow тредов, настройка языка и RPC виджетов поверх kv плагина.
 import { randomBytes } from "node:crypto";
+import { homedir } from "node:os";
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 
 import { createSteps } from "@bb-plugins/automation-steps/index";
@@ -34,9 +35,10 @@ import { hostCatalogSources, hostSkillFileSources, readSkillFile, readStageCatal
 import { revealInFinderHere } from "@bb-plugins/reveal-in-finder/index";
 import { createStore } from "./server/store";
 import { createThreadFlows } from "./server/thread-flows";
+import { removeStaleRootSkill } from "./server/stale-root-skill";
 import { registerVoiceApi } from "./server/voice";
-import { AUTO_FLOW, flowOrNone, NO_FLOW, stageSettingsOf } from "./core/flows";
-import { CHOOSE_FLOW_RULE } from "./core/stages";
+import { AGENT_NO_FLOW, AUTO_FLOW, flowOrNone, NO_FLOW, stageSettingsOf } from "./core/flows";
+import { CHOOSE_FLOW_AGAIN_RULE, CHOOSE_FLOW_RULE } from "./core/stages";
 import { CHOOSE_FLOW_TOOL } from "./lib/stage-constants";
 import { LANGUAGE_OPTIONS, LANGUAGE_SETTING, LANGUAGE_SYSTEM, resolveLocale } from "./lib/i18n";
 import { messages } from "./lib/messages";
@@ -65,6 +67,8 @@ export default async function plugin(bb: BbPluginApi): Promise<void> {
   settings.onChange((next) => { storedContext = next; });
   const store = createStore(bb.storage.kv);
   const flows = await createFlowSettings(bb.storage.kv);
+  // Уборка за прежней версией: без неё старый корневой навык перекрывает навык flow плагина. Сбой не мешает запуску — файл уберёт следующий.
+  await removeStaleRootSkill(homedir()).catch(() => undefined);
   const threads = await createThreadFlows(bb.storage.kv);
   bb.events.on("thread.created", threads.onThreadCreated);
   bb.events.on("thread.deleted", threads.onThreadDeleted);
@@ -150,8 +154,12 @@ export default async function plugin(bb: BbPluginApi): Promise<void> {
       }),
     () => undefined,
   );
-  // Выбор агентом предлагается только треду, где владелец выбрал «Автоматически»: выбрав flow или отказ от него, агент его больше не получает.
-  const chooseFlow = (threadId: string) => (threads.flowOf(threadId) === AUTO_FLOW ? CHOOSE_FLOW_RULE(flows.current().flows, CHOOSE_FLOW_TOOL, NO_FLOW) : null);
+  // Выбор агентом — треду с «Автоматически»: полный список с описаниями до выбора, одна строка после собственного отказа агента.
+  const chooseFlow = (threadId: string) => {
+    const flowId = threads.flowOf(threadId);
+    if (flowId === AUTO_FLOW) return CHOOSE_FLOW_RULE(flows.current().flows, CHOOSE_FLOW_TOOL, NO_FLOW);
+    return flowId === AGENT_NO_FLOW ? CHOOSE_FLOW_AGAIN_RULE(flows.current().flows, CHOOSE_FLOW_TOOL) : null;
+  };
   registerAskTool(bb, store, { newId, now, stages: stagesOf, flowName: flowNameOf, hasFlow: (threadId) => flowOf(threadId) !== null, chooseFlow, emit, planning: (threadId) => readPlanning(bb.sdk, threadId, Date.now(), readClaudeTranscript()), progress });
   const journalDirs = createJournalDirStore(bb.storage.kv);
   // Каждый ответ на бриф запоминается за тредом вместе с путём файла журнала: по нему итог прогона ссылается на журнал.
