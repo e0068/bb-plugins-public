@@ -4,7 +4,7 @@ import type { BbPluginApi, PluginRpcHandlers } from "@get-bb/plugin-sdk";
 import type { TasksApiStore } from "../api/index.js";
 import { publishProjectsChanged, publishProjectTasksChanged } from "../api/index.js";
 import type { BoardConfig } from "../filesync/board-config.js";
-import { createDbRepo, type DbRepo } from "../filesync/db-repo.js";
+import { createDbRepo, failureOf, peekBoard, type DbRepo } from "../filesync/db-repo.js";
 import { resolveMainRoot } from "../filesync/resolve-roots.js";
 import { defaultSourcePath } from "../filesync/resolve-roots.js";
 import { DatabaseAuthFailed, DatabaseUnreachable, diskRepo } from "../filesync/task-repo.js";
@@ -16,6 +16,7 @@ import {
   foldersRpcContract,
   type ConnectDatabaseInput,
   type FolderDomainError,
+  type InspectDatabaseResult,
   type SyncedFolder,
 } from "./contract.js";
 import { databaseHost, parseDatabaseAddress } from "./database-address.js";
@@ -24,6 +25,8 @@ import { createDatabaseSecrets } from "./database-secrets.js";
 import { deriveUniquePrefix } from "./prefix.js";
 
 const DEFAULT_FOLDER_PROJECT_COLOR = "steelblue";
+/** What a database created before its board has a prefix is named after. */
+const UNNAMED_DATABASE = "board";
 type SyncEligibleProject = BoardConfig & {
   tasksFolder: string;
   linkedBbProjectId: string;
@@ -282,9 +285,9 @@ export function registerFolders(bb: BbPluginApi, store: TasksApiStore): void {
     return source.kind === "given" ? proceed(source.token) : mintDatabaseToken(address.url, input.tursoApiToken);
   }
 
-  async function createDatabaseFor(prefix: string, typed: string | undefined): Promise<Step<string>> {
-    const name = prefix.trim();
-    if (name === "") return refusal("Give the board a prefix before creating its database.");
+  /** A new database, named after the board's prefix when it is known yet. */
+  async function createDatabaseFor(prefix: string | undefined, typed: string | undefined): Promise<Step<string>> {
+    const name = prefix?.trim() || UNNAMED_DATABASE;
     const account = await openAccount(typed);
     if (!account.ok) return account;
     const { api, org, origin } = account.value;
@@ -298,11 +301,11 @@ export function registerFolders(bb: BbPluginApi, store: TasksApiStore): void {
     return proceed(created.value.url);
   }
 
-  /** The folder board asked to move, or the refusal of moving a board that is not one. */
-  function folderBoardToMove(boardId: string | undefined): Step<SyncEligibleProject | null> {
+  /** The folder board asked to copy, or the refusal of copying a board that is not one. */
+  function folderBoardToCopy(boardId: string | undefined): Step<SyncEligibleProject | null> {
     if (boardId === undefined) return proceed(null);
     const board = store.tasks.getProject(boardId);
-    return board !== undefined && isSyncEligible(board) ? proceed(board) : refusal("The board to move is not a connected folder.");
+    return board !== undefined && isSyncEligible(board) ? proceed(board) : refusal("The board to copy is not a connected folder.");
   }
 
   /**
@@ -316,7 +319,7 @@ export function registerFolders(bb: BbPluginApi, store: TasksApiStore): void {
     const source = diskRepo(root.absPath);
     const files = await source.list();
     const doubled = duplicateKeys(files.map((file) => file.task.key ?? null));
-    if (doubled.length > 0) return refusal(`Two tasks of this folder share a key (${doubled.join(", ")}) — give one of each a new key, then move the board.`);
+    if (doubled.length > 0) return refusal(`Two tasks of this folder share a key (${doubled.join(", ")}) — give one of each a new key, then copy the board.`);
     const written = await Promise.allSettled(
       files.map(async (file) =>
         (
@@ -339,15 +342,14 @@ export function registerFolders(bb: BbPluginApi, store: TasksApiStore): void {
   /** Puts the board of the plan in place, in the database and in the store. */
   async function applyPlan(plan: Exclude<ConnectPlan, { kind: "refuse" }>, boardId: string, url: string, repo: DbRepo): Promise<Step<null>> {
     switch (plan.kind) {
-      case "move": {
-        const board = store.tasks.getProject(plan.boardId);
-        if (board === undefined || !isSyncEligible(board)) return refusal("The board to move is not a connected folder.");
-        const copied = await copyFolderTasks(board, repo);
+      case "copy": {
+        const source = store.tasks.getProject(plan.sourceId);
+        if (source === undefined || !isSyncEligible(source)) return refusal("The board to copy is not a connected folder.");
+        const copied = await copyFolderTasks(source, repo);
         if (!copied.ok) return copied;
         await repo.writeBoard({ name: plan.name, prefix: plan.prefix });
         attachRepo(boardId, repo);
-        store.tasks.updateProject(boardId, { database: { url }, tasksFolder: null });
-        store.tasks.setBoardRoots(boardId, []);
+        store.tasks.createProject({ id: boardId, name: plan.name, prefix: plan.prefix, color: DEFAULT_FOLDER_PROJECT_COLOR, database: { url } });
         return proceed(null);
       }
       case "adopt":
@@ -360,11 +362,33 @@ export function registerFolders(bb: BbPluginApi, store: TasksApiStore): void {
     }
   }
 
-  /** What in the store stands in the way of a new board at this address and prefix. */
+  /**
+   * What in the store stands in the way of a new board at this address and
+   * prefix. A copy shares its prefix with the folder board it came from: the
+   * keys of the copied tasks carry it.
+   */
   function collision(plan: ConnectPlan, url: string): string | null {
-    if (plan.kind === "refuse" || plan.kind === "move") return null;
+    if (plan.kind === "refuse") return null;
     if (store.tasks.listProjects().some((board) => board.database?.url === url)) return "A board is already connected to this database.";
-    return store.projectPrefixExists(plan.prefix, "") ? `The prefix ${plan.prefix} is already used by another board.` : null;
+    const source = plan.kind === "copy" ? plan.sourceId : "";
+    return store.projectPrefixExists(plan.prefix, source) ? `The key prefix ${plan.prefix} is already used by another board.` : null;
+  }
+
+  /**
+   * The board a database holds, read before connecting it. A token Turso
+   * mints for the reading is kept, as connecting would keep it, so the next
+   * reading mints none; a token the person typed is kept only by connecting.
+   */
+  async function inspect(input: { url: string; token?: string; tursoApiToken?: string }): Promise<InspectDatabaseResult> {
+    const address = parseDatabaseAddress(input.url);
+    if (!address.ok) return { ok: false, error: { code: "folder_connect_failed", message: address.message } };
+    const source = tokenSource(input, address, await secrets.databaseToken(address.url));
+    const token = source.kind === "given" ? proceed(source.token) : await mintDatabaseToken(address.url, input.tursoApiToken);
+    if (!token.ok) return token;
+    const peeked = await peekBoard(createHranaClient({ url: address.url, token: token.value }));
+    if (!peeked.ok) return { ok: false, error: databaseFailure(failureOf(peeked.error)) };
+    if (source.kind === "mint") await secrets.saveDatabaseToken(address.url, token.value);
+    return { ok: true, board: peeked.value };
   }
 
   async function connect(input: ConnectDatabaseInput): Promise<Step<null>> {
@@ -372,10 +396,10 @@ export function registerFolders(bb: BbPluginApi, store: TasksApiStore): void {
     if (!address.ok) return refusal(address.message);
     const token = await tokenFor(input, address);
     if (!token.ok) return token;
-    const moveFrom = folderBoardToMove(input.moveFromBoardId);
-    if (!moveFrom.ok) return moveFrom;
+    const copyFrom = folderBoardToCopy(input.copyFromBoardId);
+    if (!copyFrom.ok) return copyFrom;
 
-    const boardId = moveFrom.value?.id ?? createUlid();
+    const boardId = createUlid();
     const repo = openRepo(boardId, address.url, createHranaClient({ url: address.url, token: token.value }));
     try {
       await repo.sync();
@@ -384,7 +408,7 @@ export function registerFolders(bb: BbPluginApi, store: TasksApiStore): void {
     }
     const plan = planConnect(
       {
-        moveFrom: moveFrom.value === null ? null : { id: moveFrom.value.id, name: moveFrom.value.name, prefix: moveFrom.value.prefix },
+        copyFrom: copyFrom.value === null ? null : { id: copyFrom.value.id, name: copyFrom.value.name, prefix: copyFrom.value.prefix },
         name: input.name,
         prefix: input.prefix,
       },
@@ -538,6 +562,8 @@ export function registerFolders(bb: BbPluginApi, store: TasksApiStore): void {
       const listed = fromTurso(await api.listDatabases(org), origin);
       return listed.ok ? { ok: true, databases: listed.value } : listed;
     },
+
+    inspectDatabase: inspect,
 
     async connectDatabase(input) {
       const connected = await connect(input);

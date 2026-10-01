@@ -54,11 +54,24 @@ describe("the methods that connect a board to a database", () => {
     expect(output.safeParse({ ok: true, databases: [{ name: "bb-tasks-tsk", url: "libsql://bb-tasks-tsk-me.turso.io" }] }).success).toBe(true);
   });
 
-  it("connectDatabase takes an address, and optionally a token, a folder board to move, a name and a prefix", () => {
+  it("connectDatabase takes an address, and optionally a token, a folder board to copy, a name and a prefix", () => {
     const { input, output } = method("connectDatabase");
     expect(input.safeParse({ url: "libsql://board-me.turso.io" }).success).toBe(true);
-    expect(input.safeParse({ url: "libsql://board-me.turso.io", token: "t", moveFromBoardId: "01HZZZZZZZZZZZZZZZZZZZZZP1", name: "Tasks", prefix: "TSK" }).success).toBe(true);
+    expect(input.safeParse({ url: "libsql://board-me.turso.io", token: "t", copyFromBoardId: "01HZZZZZZZZZZZZZZZZZZZZZP1", name: "Tasks", prefix: "TSK" }).success).toBe(true);
+    expect(input.safeParse({ url: "libsql://board-me.turso.io", moveFromBoardId: "01HZZZZZZZZZZZZZZZZZZZZZP1" }).success).toBe(false);
     expect(output.safeParse({ ok: true }).success).toBe(true);
+  });
+
+  it("inspectDatabase answers the board a database holds, or none, and never a token", () => {
+    const { input, output } = method("inspectDatabase");
+    expect(input.safeParse({ url: "libsql://board-me.turso.io", token: "t" }).success).toBe(true);
+    expect(output.safeParse({ ok: true, board: { name: "Tasks", prefix: "TSK" } }).success).toBe(true);
+    expect(output.safeParse({ ok: true, board: null }).success).toBe(true);
+    expect(output.safeParse({ ok: true, board: null, token: "t" }).success).toBe(false);
+  });
+
+  it("createDatabase takes no prefix when the board has none yet", () => {
+    expect(method("createDatabase").input.safeParse({}).success).toBe(true);
   });
 
   it("hasTursoApiToken says only whether one is saved, and retryDatabase takes a board", () => {
