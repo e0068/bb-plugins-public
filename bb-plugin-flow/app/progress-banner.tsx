@@ -125,7 +125,7 @@ function ActionButton({ stage, step, threadId, wide = false }: { stage: Progress
         void rpc.call("runActionStep", { threadId, stage: stage.id }).finally(() => setSending(false));
       }}
       className={cn(
-        "inline-flex items-center justify-center gap-1.5 whitespace-nowrap rounded-md px-2.5 text-[11.5px] font-semibold",
+        "inline-flex max-w-full items-center justify-center gap-1.5 whitespace-nowrap rounded-md px-2.5 text-[11.5px] font-semibold",
         wide ? "h-7" : "h-6",
         step.state === "fail" ? "border border-border text-foreground hover:bg-state-hover" : "bg-foreground text-background hover:bg-foreground/90",
         busy && "cursor-default opacity-70",
@@ -136,7 +136,7 @@ function ActionButton({ stage, step, threadId, wide = false }: { stage: Progress
       ) : (
         <Icon name={step.state === "fail" ? "Repeat" : KIND_ICONS.action} aria-hidden="true" className="size-3" />
       )}
-      {step.state === "fail" ? t.progress.retry : busy ? t.progress.actionBusy : label(step)}
+      <span className="truncate">{step.state === "fail" ? t.progress.retry : busy ? t.progress.actionBusy : label(step)}</span>
     </button>
   );
 }
@@ -199,49 +199,49 @@ export function AutomationSteps({ stage, threadId }: { stage: ProgressStage; thr
         <div key={`${i}-${step.id}`} role="listitem" data-progress-step className={cn(COLUMNS, "min-h-6 px-3 py-0.5 text-[11px]")}>
           <span />
           <span />
-          <span className="flex min-w-0 items-baseline gap-2 pl-3">
-            <span className={cn("shrink-0 whitespace-nowrap", step.state === "todo" && "text-muted-foreground", step.state === "fail" && "text-destructive")}>{label(step)}</span>
-            {step.error !== null && (
-              <span title={step.error} className="min-w-0 truncate text-muted-foreground">
-                {step.error}
+          {/* Название и кнопки — одной переносимой ячейкой: где кнопкам не хватает места рядом с названием, они уходят строкой ниже, а не выводят строку за край списка. */}
+          <span className="flex min-w-0 flex-wrap items-baseline justify-end gap-x-2">
+            <span className="flex min-w-0 flex-[1_1_8rem] items-baseline gap-2 pl-3">
+              <span title={label(step)} className={cn("max-w-full shrink-0 truncate", step.state === "todo" && "text-muted-foreground", step.state === "fail" && "text-destructive")}>
+                {label(step)}
               </span>
-            )}
-            {step.error === null && <StepDetail detail={step.detail} />}
+              {step.error !== null && (
+                <span title={step.error} className="min-w-0 truncate text-muted-foreground">
+                  {step.error}
+                </span>
+              )}
+              {step.error === null && <StepDetail detail={step.detail} />}
+            </span>
+            {threadId === null ? null : stage.kind === "action" ? (
+              step.state === "wait" || step.state === "now" || step.state === "fail" ? (
+                <ActionButton stage={stage} step={step} threadId={threadId} />
+              ) : null
+            ) : step.skipQueued ? (
+              <span data-skip-queued className="whitespace-nowrap px-1.5 text-[11px] text-muted-foreground">
+                {t.progress.skipQueued}
+              </span>
+            ) : step.state === "fail" ? (
+              <span className="flex flex-wrap items-baseline justify-end gap-x-0.5">
+                {step.retryAt !== null && <RetryCountdown at={step.retryAt} />}
+                {(["retryAutomation", "skipAutomationStep"] as const).map((method) => (
+                  <button
+                    key={method}
+                    type="button"
+                    aria-label={method === "retryAutomation" ? t.progress.retryStep(label(step)) : t.progress.skipStep(label(step))}
+                    disabled={busy}
+                    onClick={() => {
+                      setBusy(true);
+                      void reportStepAnswer(rpc.call(method, { threadId, stage: stage.id }), stage.name, t).finally(() => setBusy(false));
+                    }}
+                    className={cn("rounded px-1.5 text-[11px] hover:bg-state-hover disabled:opacity-50", method === "retryAutomation" ? "text-foreground" : "text-muted-foreground")}
+                  >
+                    {method === "retryAutomation" ? t.progress.retry : t.progress.skip}
+                  </button>
+                ))}
+              </span>
+            ) : null}
           </span>
-          {threadId === null ? (
-            <span />
-          ) : stage.kind === "action" ? (
-            step.state === "wait" || step.state === "now" || step.state === "fail" ? (
-              <ActionButton stage={stage} step={step} threadId={threadId} />
-            ) : (
-              <span />
-            )
-          ) : step.skipQueued ? (
-            <span data-skip-queued className="whitespace-nowrap px-1.5 text-[11px] text-muted-foreground">
-              {t.progress.skipQueued}
-            </span>
-          ) : step.state === "fail" ? (
-            <span className="flex items-baseline gap-0.5">
-              {step.retryAt !== null && <RetryCountdown at={step.retryAt} />}
-              {(["retryAutomation", "skipAutomationStep"] as const).map((method) => (
-                <button
-                  key={method}
-                  type="button"
-                  aria-label={method === "retryAutomation" ? t.progress.retryStep(label(step)) : t.progress.skipStep(label(step))}
-                  disabled={busy}
-                  onClick={() => {
-                    setBusy(true);
-                    void reportStepAnswer(rpc.call(method, { threadId, stage: stage.id }), stage.name, t).finally(() => setBusy(false));
-                  }}
-                  className={cn("rounded px-1.5 text-[11px] hover:bg-state-hover disabled:opacity-50", method === "retryAutomation" ? "text-foreground" : "text-muted-foreground")}
-                >
-                  {method === "retryAutomation" ? t.progress.retry : t.progress.skip}
-                </button>
-              ))}
-            </span>
-          ) : (
-            <span />
-          )}
+          <span />
           <Mark state={step.state} live={stage.live} />
         </div>
       ))}
