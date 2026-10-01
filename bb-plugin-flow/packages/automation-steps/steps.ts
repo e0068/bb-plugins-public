@@ -10,7 +10,7 @@ import { type ParentDelivery, parentNote } from "./core/parent-delivery";
 import type { BumpLevel } from "./core/plugin-version-bump";
 import { classifyFailure, RETRY_DELAYS_MS } from "./core/retry";
 import { mergedPullLinks, openedPullOutcome, taskLink, withLinks } from "./core/step-links";
-import { bumpOutcome, reinstallOutcome, type StepOutcome } from "./core/step-outcomes";
+import { bumpOutcome, reinstallOutcome, stepFailure, type StepOutcome } from "./core/step-outcomes";
 import { bbCliClient } from "./wiring/bb-cli-client";
 import type { CliPorts } from "./wiring/bb-cli-run";
 import type { CatchUpOutcome, ParentDeliveryOutcome } from "./wiring/catch-up";
@@ -153,7 +153,7 @@ const guarded =
     try {
       return await run(threadId);
     } catch (error) {
-      return failed(messageOf(error));
+      return stepFailure(error);
     }
   };
 

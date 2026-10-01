@@ -15,7 +15,7 @@ import { useMessages } from "./locale-context";
 /** Тот же такт, что у бара: строка узнаёт о выборе агента и о прогоне, начатом сообщением. */
 const POLL_MS = 5000;
 
-type Choice = { flows: Array<{ id: string; name: string; stages: number }>; selected: string };
+type Choice = { flows: Array<{ id: string; name: string; stages: number }>; selected: string; held: boolean };
 
 function useChoice(threadId: string) {
   const rpc = useRpc<typeof flowChoiceRpcContract>();
@@ -47,7 +47,8 @@ export function FlowChoice({ threadId }: { threadId: string }) {
   const t = useMessages();
   const { choice, pick } = useChoice(threadId);
   const [open, setOpen] = useState(false);
-  if (choice === null) return null;
+  // Над придержанным сообщением уже стоит форма следующего flow: вторая форма выбора не нужна.
+  if (choice === null || choice.held) return null;
   const options = [{ id: AUTO_FLOW, name: t.flows.pickerAuto, stages: null }, ...choice.flows, { id: NO_FLOW, name: t.flowChoice.none, stages: null }];
   const none = choice.selected === NO_FLOW;
   const selectedName = options.find((option) => option.id === choice.selected)?.name;

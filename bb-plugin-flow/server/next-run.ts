@@ -21,6 +21,14 @@ const initiatorOf = (context: DispatchContext): string => {
   return typeof initiator === "string" ? initiator : "user";
 };
 
+/** Придержано ли сообщение треда до выбора flow: строка очереди ждёт этот плагин. */
+export const heldFor =
+  (bb: Pick<BbPluginApi, "sdk" | "pluginId">) =>
+  async (threadId: string): Promise<boolean> => {
+    const rows = await bb.sdk.threads.queuedMessages.list({ threadId });
+    return rows.some((row) => row.waitingOn?.kind === "plugin" && row.waitingOn.pluginId === bb.pluginId);
+  };
+
 export const registerNextRun = (
   bb: Pick<BbPluginApi, "rpc" | "sdk" | "experimental_hooks" | "pluginId">,
   deps: {
@@ -38,10 +46,7 @@ export const registerNextRun = (
     ownerTurn?: (threadId: string) => Promise<void>;
   },
 ): void => {
-  const heldIn = async (threadId: string): Promise<boolean> => {
-    const rows = await bb.sdk.threads.queuedMessages.list({ threadId });
-    return rows.some((row) => row.waitingOn?.kind === "plugin" && row.waitingOn.pluginId === bb.pluginId);
-  };
+  const heldIn = heldFor(bb);
 
   bb.experimental_hooks.on("message.dispatch", async (context) => {
     if (deps.ownSend(context.thread.id, context.input.text)) return { action: "proceed" };

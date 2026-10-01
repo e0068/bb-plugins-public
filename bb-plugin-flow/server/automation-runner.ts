@@ -40,6 +40,8 @@ import {
   wakeText,
   type RetryPolicy,
   type RunStep,
+  conflictWakeText,
+  onAgentWoken,
 } from "../core/automation-run";
 import { automationRpcContract, type AutomationScript, type FlowProgress, type RunningIcon, type RunningThread, type StageSettings, type StepAnswer, type WorkStage } from "../shared/contract";
 import type { AutomationsBridge } from "./automations";
@@ -154,6 +156,10 @@ const processTimer = (run: () => void, ms: number): (() => void) => {
 
 /** Повтор, пришедший в занятый тред, ждёт столько и пробует снова. */
 const BUSY_RETRY_MS = 1000;
+/** Как часто Flow смотрит, кончился ли ход агента, которого он разбудил разрешать конфликт. */
+const AGENT_POLL_MS = 5_000;
+/** Сколько ждать, что разбуженный агент возьмётся за ход: не взялся — шаг повторяется всё равно. */
+const AGENT_START_MS = 5 * 60_000;
 
 export const createAutomationRunner = (deps: AutomationRunnerDeps): AutomationRunner => {
   // Один прогон на тред: отметка, ответ и запись самого исполнителя зовут advance, пока шаги ещё идут.
@@ -173,7 +179,8 @@ export const createAutomationRunner = (deps: AutomationRunnerDeps): AutomationRu
   const epochOf = (threadId: string) => cancels.get(threadId) ?? 0;
   // Выгруженный исполнитель новых таймеров не ставит: шаг, упавший уже после выгрузки, повторит следующая загрузка по сроку в записи.
   let disposed = false;
-  const arm = (threadId: string, stageId: string, ms: number) => {
+  /** Таймер этапа: по сроку — автоповтор, а у шага, ждущего хода агента, — проверка этого хода. */
+  const arm = (threadId: string, stageId: string, ms: number, then: (threadId: string, stageId: string) => Promise<void> = (t, s) => autoRetry(t, s)) => {
     if (disposed) return;
     disarm(threadId, stageId);
     const key = timerKey(threadId, stageId);
@@ -181,9 +188,35 @@ export const createAutomationRunner = (deps: AutomationRunnerDeps): AutomationRu
       key,
       schedule(() => {
         timers.delete(key);
-        void autoRetry(threadId, stageId).catch(deps.onError);
+        void then(threadId, stageId).catch(deps.onError);
       }, ms),
     );
+  };
+
+  // Разбуженный на конфликт агент: с какого момента ждём и видели ли тред занятым после побудки.
+  const agentWaits = new Map<string, { since: number; seen: boolean }>();
+  const awaitAgent = (threadId: string, stageId: string) => {
+    agentWaits.set(timerKey(threadId, stageId), { since: Date.parse(deps.now()), seen: false });
+    arm(threadId, stageId, AGENT_POLL_MS, checkAgent);
+  };
+  /**
+   * Ход разбуженного агента: идёт — ждём дальше; кончился — шаг повторяется, и слияние, закоммиченное агентом, его пропустит.
+   * Тред так и не стал занятым за `AGENT_START_MS` — повтор всё равно: побудка могла не дойти, а ждать вечно нельзя.
+   */
+  const checkAgent = async (threadId: string, stageId: string): Promise<void> => {
+    const key = timerKey(threadId, stageId);
+    const wait = agentWaits.get(key);
+    if (wait === undefined) return;
+    const { active: busy } = await deps.thread(threadId).catch(() => ({ active: false }));
+    if (busy) agentWaits.set(key, { ...wait, seen: true });
+    if (busy || (!wait.seen && Date.parse(deps.now()) - wait.since < AGENT_START_MS)) return arm(threadId, stageId, AGENT_POLL_MS, checkAgent);
+    agentWaits.delete(key);
+    const answer = await unblock(threadId, stageId, { change: (p) => onRunRetry(p, stageId, true), from: (at) => at });
+    // Тред занят работой самого Flow — ход агента уже позади: повтор через секунду, а не новое ожидание.
+    if (answer.busy === true) {
+      agentWaits.set(key, { ...wait, seen: true });
+      arm(threadId, stageId, BUSY_RETRY_MS, checkAgent);
+    }
   };
 
   /** Уведомление не держит цепочку: его сбой — в `onError`, шаги идут дальше. */
@@ -223,8 +256,16 @@ export const createAutomationRunner = (deps: AutomationRunnerDeps): AutomationRu
           await deps.progress.update(threadId, (p) => onStepFailed(p, stage.id, outcome.error, deps.now()));
           return false;
         }
-        // Шаг Action повторяет только владелец: его шаги идут по нажатию.
-        const delay = isActionStage(stage) ? null : retryDelay(policy(), track);
+        // Конфликт слияния таймером не снимается: его разрешает агент треда, а шаг повторяется после его хода. Второй конфликт — владельцу.
+        if (outcome.conflicts !== undefined && !isActionStage(stage) && track?.run?.agentWoken !== true) {
+          await deps.progress.update(threadId, (p) => onAgentWoken(p, stage.id, outcome.error, deps.now()));
+          if (stale()) return false;
+          await deps.wake?.(threadId, conflictWakeText(stage, outcome.conflicts, outcome.base)).catch(deps.onError);
+          if (!stale()) awaitAgent(threadId, stage.id);
+          return false;
+        }
+        // Шаг Action повторяет только владелец: его шаги идут по нажатию; конфликт, оставшийся после хода агента, — тоже.
+        const delay = isActionStage(stage) || outcome.conflicts !== undefined ? null : retryDelay(policy(), track);
         const retryAt = delay === null ? undefined : new Date(Date.parse(deps.now()) + delay).toISOString();
         // Упавший шаг ждёт владельца: с этой минуты этап простаивает, а не работает. Автоповтор кнопки не отнимает.
         await deps.progress.update(threadId, (p) => onIdleOpen(onStepFailed(p, stage.id, outcome.error, deps.now(), retryAt), stage.id, deps.now()));
@@ -435,6 +476,9 @@ export const createAutomationRunner = (deps: AutomationRunnerDeps): AutomationRu
     for (const [stageId, track] of Object.entries(record?.stages ?? {})) {
       const due = retryDueIn(track, deps.now());
       if (due !== null) arm(threadId, stageId, due);
+      // Ожидание хода агента живёт в памяти процесса: после перезапуска оно начинается заново.
+      // Открытый простой — шаг уже ждёт владельца, конфликт пережил ход агента, и повторять его некому.
+      else if (track.run?.agentWoken === true && track.run.error !== null && track.finishedAt === undefined && track.idleSince === undefined) awaitAgent(threadId, stageId);
     }
   };
 
@@ -562,6 +606,7 @@ export const createAutomationRunner = (deps: AutomationRunnerDeps): AutomationRu
     },
     cancel: (threadId) => {
       cancels.set(threadId, epochOf(threadId) + 1);
+      for (const key of [...agentWaits.keys()].filter((key) => key.startsWith(timerKey(threadId, "")))) agentWaits.delete(key);
       for (const key of [...timers.keys()].filter((key) => key.startsWith(timerKey(threadId, "")))) {
         timers.get(key)?.();
         timers.delete(key);

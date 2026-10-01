@@ -89,3 +89,27 @@ export const isAncestorArgs = (ref: string): readonly string[] => ["merge-base",
 
 /** `git merge --abort` — put the branch and the tree back as they were before the merge. */
 export const mergeAbortArgs = (): readonly string[] => ["merge", "--abort"];
+
+/** `git status --porcelain --untracked-files=no` за слиянием — коды конфликтов по файлам (core/conflict-merge.ts `parseUnmerged`). */
+export const unmergedStatusArgs = (): readonly string[] => ["status", "--porcelain", "--untracked-files=no"];
+
+/** `git show :<стадия>:<путь>` — копия файла в конфликте: 1 — общий предок, 2 — ветка, 3 — база. */
+export const showStageArgs = (stage: 1 | 2 | 3, path: string): readonly string[] => ["show", `:${stage}:${path}`];
+
+/** `git show <ref>:<путь>` — файл в коммите. */
+export const showAtArgs = (ref: string, path: string): readonly string[] => ["show", `${ref}:${path}`];
+
+/** `git ls-files -- docs/tasks/*\/<слаг>.md` — копии задачи по всем папкам в индексе. */
+export const taskCopiesArgs = (slug: string): readonly string[] => ["ls-files", "--", `docs/tasks/*/${slug}.md`];
+
+/** `git ls-files -- <путь>` — есть ли путь в индексе: пусто — нет. */
+export const trackedPathArgs = (path: string): readonly string[] => ["ls-files", "--", path];
+
+/** `git add -- <пути>` — сведённые файлы в индекс. */
+export const addPathsArgs = (paths: readonly string[]): readonly string[] => ["add", "--", ...paths];
+
+/** `git rm -q --cached --ignore-unmatch -- <пути>` — снять путь из индекса; файл дерева снимает тот, кто его пишет. */
+export const unstagePathsArgs = (paths: readonly string[]): readonly string[] => ["rm", "-q", "--cached", "--ignore-unmatch", "--", ...paths];
+
+/** `git commit --no-edit` — закоммитить сведённое слияние с сообщением git. */
+export const commitMergeArgs = (): readonly string[] => ["commit", "--no-edit"];

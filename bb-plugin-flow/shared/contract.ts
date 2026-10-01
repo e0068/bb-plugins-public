@@ -776,6 +776,8 @@ export const stageTrackSchema = z.object({
   idleSince: z.string().optional(),
   skipped: z.boolean().optional(),
   executor: z.string().optional(),
+  /** Выбор ответа владельца для уже пройденного этапа: ляжет в этап, когда доработка начнёт его проход заново. */
+  nextPass: z.object({ skipped: z.boolean(), executor: z.string().optional() }).optional(),
   /**
    * Прошлые проходы этапа, сброшенные доработкой: доллары, минуты работы — те же, что в строке баннера, — стенные минуты
    * и начало первого прохода (ISO). Повторный проход складывается с ними, а не затирает.
@@ -801,6 +803,8 @@ export const stageTrackSchema = z.object({
       autoRetries: z.number().int().nonnegative().optional(),
       /** Владелец нажал «Пропустить», пока шла попытка автоповтора: упадёт попытка — шаг закроется пропуском, без нового повтора. */
       skipQueued: z.literal(true).optional(),
+      /** Шаг упал на конфликте слияния, и Flow разбудил агента треда его разрешать: следующий конфликт ждёт владельца, а не новой побудки. */
+      agentWoken: z.literal(true).optional(),
     })
     .optional(),
 });
@@ -1025,10 +1029,13 @@ export const nextRunRpcContract = defineRpcContract({
  * Выбор ждёт сообщения владельца — его применяет хук `message.dispatch` следующего прогона.
  */
 export const flowChoiceRpcContract = defineRpcContract({
-  /** `selected` — выбор, ждущий отправки, а без него — flow треда; тред, оставленный агентом без flow, — `NO_FLOW`. */
+  /**
+   * `selected` — выбор, ждущий отправки, а без него — flow треда; тред, оставленный агентом без flow, и тред с завершённым прогоном — `NO_FLOW`.
+   * `held` — сообщение треда придержано до выбора flow: над ним стоит форма следующего flow, и строка выбора не нужна.
+   */
   threadFlowChoice: {
     input: z.object({ threadId: text }),
-    output: z.object({ flows: z.array(z.object({ id: text, name: text, stages: z.number().int().nonnegative() })), selected: text }),
+    output: z.object({ flows: z.array(z.object({ id: text, name: text, stages: z.number().int().nonnegative() })), selected: text, held: z.boolean() }),
   },
   pickThreadFlow: {
     input: z.object({ threadId: text, flowId: text }),
