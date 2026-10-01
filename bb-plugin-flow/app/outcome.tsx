@@ -10,6 +10,7 @@ import { cn } from "../lib/utils";
 import type { DecisionBrief, StageOutcome, outcomeRpcContract } from "../shared/contract";
 import { CommandResultRow } from "./command";
 import { AddRow } from "./add-row";
+import { LinkedText } from "./linked-text";
 import type { FileRoots } from "../core/result-link";
 import { setOutcomeNote, type Draft } from "./draft";
 import { useMessages } from "./locale-context";
@@ -36,7 +37,7 @@ function Paragraphs({ text }: { text: string }) {
     <div className="flex flex-col gap-2">
       {paragraphs(text).map((part, i) => (
         <p key={i} className="m-0 whitespace-pre-wrap break-words text-[13px] leading-relaxed">
-          {part}
+          <LinkedText text={part} />
         </p>
       ))}
     </div>
@@ -53,8 +54,13 @@ function Items({ outcome, done }: { outcome: StageOutcome; done: boolean }) {
         <div key={item.text} data-demo-item className="flex items-start gap-2 text-[13px] leading-relaxed">
           <Icon name={done ? "Check" : "X"} className={cn("mt-1 size-3.5 shrink-0", done ? "text-success" : "text-muted-foreground")} />
           <span className="break-words">
-            {item.text}
-            {item.why !== undefined && <span className="text-muted-foreground">{` — ${item.why}`}</span>}
+            <LinkedText text={item.text} />
+            {item.why !== undefined && (
+              <span className="text-muted-foreground">
+                {" — "}
+                <LinkedText text={item.why} />
+              </span>
+            )}
           </span>
         </div>
       ))}
@@ -100,7 +106,12 @@ export function DemoCard({ brief, roots, view }: { brief: DecisionBrief; roots: 
                 <span key={task.key} className={cn("flex items-center gap-1.5 rounded-full bg-card px-2.5 py-1 text-xs", !task.done && "text-muted-foreground")}>
                   <Icon name={task.done ? "Check" : "X"} className="size-3" />
                   <span>{task.key}</span>
-                  {task.note !== undefined && <span>{`— ${task.note}`}</span>}
+                  {task.note !== undefined && (
+                    <span>
+                      {"— "}
+                      <LinkedText text={task.note} />
+                    </span>
+                  )}
                 </span>
               ))}
             </div>

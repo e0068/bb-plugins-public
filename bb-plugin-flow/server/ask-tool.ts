@@ -146,7 +146,8 @@ export const registerAskTool = (
   bb.agents.registerTool({
     name: ASK_TOOL_NAME,
     description:
-      "Ask the owner: a brief rendered as a widget in the thread. First part (setup) shows the work stages of the thread's flow — done ones with links and ones to run with executor and add — plus done-when criteria and a budget button summed from add with time, recommendations preselected; second part holds questions: forks with description and add, multi-answer picks and confirmations.",
+      "Ask the owner: a brief rendered as a widget in the thread. First part (setup) shows the work stages of the thread's flow — done ones with links and ones to run with executor and add — plus done-when criteria and a budget button summed from add with time, recommendations preselected; second part holds questions: forks with description and add, multi-answer picks and confirmations. " +
+      'Every text field takes markdown links [text](target) — a path from the tree root (path:12 for a line), an absolute path or a URL: anything that lives in a file is named as a link to it, a fragment as one link "fragment (what it is) — file".',
     instructions: ASK_INSTRUCTIONS,
     presentation: { label: { pending: "Preparing a brief", completed: "Brief in the thread" } },
     parameters: askDecisionParamsSchema,

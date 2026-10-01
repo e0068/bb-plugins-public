@@ -9,6 +9,7 @@ import type { AnswerRecord, DecisionBrief } from "../shared/contract";
 import { emptyDraft, type Draft } from "./draft";
 import { readStoredDraft, storeDraft } from "./draft-storage";
 import { AttachButton, usePasteImages } from "./attachments";
+import { LinkedText } from "./linked-text";
 import { useMessages } from "./locale-context";
 import { useVoiceField } from "./voice";
 
@@ -44,9 +45,9 @@ export function Titles({ brief, subtitle }: { brief: DecisionBrief; subtitle?: R
   return (
     <>
       <div className={cn("break-words px-3 pt-2.5 text-sm font-medium leading-snug", second === undefined && "pb-2")}>
-        {brief.title}
+        <LinkedText text={brief.title} />
       </div>
-      {second !== undefined && <div className="break-words px-3 pb-2 pt-0.5 text-xs text-muted-foreground">{second}</div>}
+      {second !== undefined && <div className="break-words px-3 pb-2 pt-0.5 text-xs text-muted-foreground">{typeof second === "string" ? <LinkedText text={second} /> : second}</div>}
     </>
   );
 }
