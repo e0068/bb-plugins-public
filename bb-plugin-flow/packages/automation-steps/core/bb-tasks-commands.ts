@@ -30,7 +30,15 @@ export interface LinkedTask {
   key: string;
   /** Empty when the CLI reports no title — a key alone still names the task. */
   title: string;
+  /** The task file's name, from the id `<project>:<slug>`; absent when the CLI gives no such id. */
+  slug?: string;
 }
+
+const slugOf = (id: unknown): string | undefined => {
+  if (typeof id !== "string") return undefined;
+  const at = id.indexOf(":");
+  return at < 0 || at === id.length - 1 ? undefined : id.slice(at + 1);
+};
 
 /**
  * The tasks linked to a thread, read from `bb tasks current --json`'s stdout
@@ -52,13 +60,9 @@ export function parseLinkedTasks(stdout: string): LinkedTask[] {
   if (!Array.isArray(tasks)) return [];
   return tasks.flatMap((task) => {
     if (typeof task !== "object" || task === null) return [];
-    const { key, title } = task as { key?: unknown; title?: unknown };
+    const { key, title, id } = task as { key?: unknown; title?: unknown; id?: unknown };
     if (typeof key !== "string") return [];
-    return [{ key, title: typeof title === "string" ? title : "" }];
+    const slug = slugOf(id);
+    return [{ key, title: typeof title === "string" ? title : "", ...(slug === undefined ? {} : { slug }) }];
   });
-}
-
-/** Just the keys — what marking a status needs. */
-export function parseLinkedTaskKeys(stdout: string): string[] {
-  return parseLinkedTasks(stdout).map((task) => task.key);
 }

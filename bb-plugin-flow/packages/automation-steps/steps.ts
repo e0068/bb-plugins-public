@@ -9,6 +9,7 @@ import type { StepId } from "./catalog";
 import { type ParentDelivery, parentNote } from "./core/parent-delivery";
 import type { BumpLevel } from "./core/plugin-version-bump";
 import { classifyFailure, RETRY_DELAYS_MS } from "./core/retry";
+import { mergedPullLinks, openedPullOutcome, taskLink, withLinks } from "./core/step-links";
 import { bumpOutcome, reinstallOutcome, type StepOutcome } from "./core/step-outcomes";
 import { bbCliClient } from "./wiring/bb-cli-client";
 import type { CliPorts } from "./wiring/bb-cli-run";
@@ -97,7 +98,7 @@ export const retrying =
   async (threadId: string): Promise<StepOutcome> => {
     for (let attempt = 1; ; attempt += 1) {
       const outcome = await run(threadId);
-      if (outcome.ok) return attempt === 1 ? outcome : { ok: true, detail: withAttempt(outcome.detail, attempt) };
+      if (outcome.ok) return attempt === 1 ? outcome : { ...outcome, detail: withAttempt(outcome.detail, attempt) };
       const delay = RETRY_DELAYS_MS[attempt - 1];
       if (delay === undefined || classifyFailure(outcome.error) === "permanent") {
         return attempt === 1 ? outcome : { ok: false, error: `${outcome.error} (${attempt} attempts)` };
@@ -173,7 +174,11 @@ export function createSteps(ports: StepPorts): Steps {
     if (failedTasks.length > 0) return failed(`Tasks not moved to ${status}: ${failedTasks.map(({ key, reason }) => `${key} (${reason})`).join(", ")}`);
     // Пустой список законен — тред без задачи доезжает до архива, — но
     // молчаливая галочка под ним прятала поломку разрешения дерева.
-    return done(successKeys.length === 0 ? "no linked tasks" : successKeys.join(", "));
+    const outcome = done(successKeys.length === 0 ? "no linked tasks" : successKeys.join(", "));
+    // Ссылку на файл даёт только закрытая задача: её этап — последний, и задача
+    // в его итогах — то, что владелец откроет. Без слага файла не найти — ссылки нет.
+    const moved = report.results.flatMap((r) => (r.ok && r.slug !== undefined ? [taskLink({ key: r.key, slug: r.slug })] : []));
+    return status === "done" ? withLinks(outcome, moved) : outcome;
   };
 
   // Дочерний тред, чья база — ветка родителя, сдаёт работу в дерево родителя
@@ -235,7 +240,7 @@ export function createSteps(ports: StepPorts): Steps {
     "git.create-pr": guarded(
       orIntoParent(deliver, async (threadId) => {
         const created = await gatherAndCreate(sdk, kv, await resolveToken(settings), threadId);
-        return done(PR_DETAIL[created.branch](created.url));
+        return openedPullOutcome(created, PR_DETAIL[created.branch](created.url));
       }),
     ),
     "bb.tasks-in-review": guarded(moveTasks("in_review")),
@@ -252,7 +257,9 @@ export function createSteps(ports: StepPorts): Steps {
         const environmentId = await environmentOf(threadId);
         const gh = await githubPullOf(sdk, settings, environmentId);
         await markAwaiting(sdk, environmentId, "merge");
-        return mergeWithVerdict(gh, async () => void (await sdk.environments.mergePullRequest({ environmentId, method: MERGE_METHOD })));
+        const outcome = await mergeWithVerdict(gh, async () => void (await sdk.environments.mergePullRequest({ environmentId, method: MERGE_METHOD })));
+        // Ссылка мёрджа — на сам PR: номер знает только GitHub, без него ссылки нет.
+        return withLinks(outcome, mergedPullLinks(gh.ok ? gh : null));
       }),
     ),
     "git.pull-main": guarded(

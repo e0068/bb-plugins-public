@@ -7,7 +7,7 @@ import type { Carried } from "../core/carry";
 import { awaitingKind } from "../core/awaiting";
 import { liveIssues } from "../core/outcome";
 import { DECISION_ID_PREFIX, directiveLine } from "../core/directive";
-import { FLOW_RULE, SELF_ONLY_RULE, isStageCarryKey, reportIssues, stageInstructions } from "../core/stages";
+import { FLOW_RULE, SELF_ONLY_RULE, isStageCarryKey, reportIssues, stageInstructions, withStepResults } from "../core/stages";
 import { stageKindOf, type BuiltinKind } from "../lib/stage-constants";
 import { askDecisionParamsSchema, type AskDecisionParams, type DecisionBrief, type Planning, type StageSettings } from "../shared/contract";
 import type { ProgressStore } from "./progress";
@@ -23,7 +23,7 @@ export const ASK_INSTRUCTIONS = `${RULE}
 A brief has two parts.
 
 setup — the first part: no questions, you show what there is and mark what you recommend.
-- stages (setup.stages) — all stages of the thread's flow, in their order; ids and executors are in the Flow instructions for the turn. A stage is { id, state, results, recommended, executor, add, adds }. state: todo or done. A done skill stage needs results — [{ label, target }], label being the file name from target (spec.md) or a task key; built-in stages and todo ones have none. recommended: true — take this todo stage into the run. executor — self or one of the stage's executors (agent:…, workflow:…). add — the stage's own add; adds — the difference per executor id.
+- stages (setup.stages) — all stages of the thread's flow, in their order; ids and executors are in the Flow instructions for the turn. A stage is { id, state, results, recommended, executor, add, adds }. state: todo or done. A done skill stage needs results — [{ label, target }], label being the file name from target (spec.md) or a task key; built-in stages and todo ones have none; automations and actions get theirs from Flow. recommended: true — take this todo stage into the run. executor — self or one of the stage's executors (agent:…, workflow:…). add — the stage's own add; adds — the difference per executor id.
 - criteria — "Done when", one checkable statement per item: a string, { text, add }, or a change item { text, before, after, add }; send them before you create the task.
 - do not send artifacts, executor, checker, testing, budgetTarget or budgetMax: the widget sums the budget forecast from add.
 
@@ -138,7 +138,7 @@ export const registerAskTool = (
     /** Длительность и стоимость планирования в треде; `undefined` — неизвестно. */
     planning?: (threadId: string) => Promise<Planning | undefined>;
     /** Прогресс flow треда: бриф отмечает ждущие и сделанные этапы. */
-    progress?: Pick<ProgressStore, "recordBrief">;
+    progress?: Pick<ProgressStore, "recordBrief" | "get">;
     /** Сообщает Automations о событии Flow; не ждётся и не бросает (./automations.ts). */
     emit?: (trigger: FlowTrigger, threadId: string, context?: { stageId?: string }) => void;
   },
@@ -166,8 +166,11 @@ export const registerAskTool = (
       const planning = params.kind === "brief" ? await deps.planning?.(ctx.threadId) : undefined;
       const flowName = deps.flowName?.(ctx.threadId);
       const carried = params.kind === "brief" ? carriedInto(params.setup, await store.getThreadCarry(ctx.threadId)) : {};
+      // Ссылки сделанной автоматизации — из её шагов: агент их не присылает.
+      const stepped = withStepResults(settings.stages, params.setup?.stages, params.setup?.stages === undefined ? null : ((await deps.progress?.get(ctx.threadId)) ?? null));
       const brief: DecisionBrief = {
         ...params,
+        ...(params.setup === undefined || stepped === undefined ? {} : { setup: { ...params.setup, stages: stepped } }),
         id: `${DECISION_ID_PREFIX}${deps.newId()}`,
         threadId: ctx.threadId,
         revocable: true,

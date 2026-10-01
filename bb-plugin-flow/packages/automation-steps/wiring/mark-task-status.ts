@@ -15,10 +15,11 @@
 // update is likewise kept — the caller now knows there was a promise to
 // keep; see archiveThread/createPr in server.ts, which surface both instead
 // of reporting a plain success.
-import { currentTasksArgs, linkedTaskEnv, markTaskStatusArgs, parseLinkedTaskKeys, type LinkedTaskStatus } from "../core/bb-tasks-commands";
+import { currentTasksArgs, linkedTaskEnv, markTaskStatusArgs, parseLinkedTasks, type LinkedTaskStatus } from "../core/bb-tasks-commands";
 import { cliRunMessage, type CliPorts } from "./bb-cli-run";
 
-export type TaskStatusResult = { key: string; ok: true } | { key: string; ok: false; reason: string };
+/** `slug` — the moved task's file name, when the CLI named it. */
+export type TaskStatusResult = { key: string; ok: true; slug?: string } | { key: string; ok: false; reason: string };
 
 export interface TaskStatusReport {
   /** Why no task could even be looked up, or null when the lookup ran. */
@@ -36,13 +37,13 @@ export async function markLinkedTasksStatus(
   if (listed.kind === "unavailable") return { unavailable: listed.reason, results: [] };
   if (listed.code !== 0) return { unavailable: null, results: [] };
 
-  const keys = parseLinkedTaskKeys(listed.stdout);
+  const tasks = parseLinkedTasks(listed.stdout);
   const results: TaskStatusResult[] = [];
-  for (const key of keys) {
+  for (const { key, slug } of tasks) {
     const updated = await ports.run(markTaskStatusArgs(key, status), env);
     results.push(
       updated.kind === "ran" && updated.code === 0
-        ? { key, ok: true }
+        ? { key, ok: true, ...(slug === undefined ? {} : { slug }) }
         : { key, ok: false, reason: cliRunMessage(updated) },
     );
   }

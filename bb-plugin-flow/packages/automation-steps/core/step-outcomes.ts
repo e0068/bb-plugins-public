@@ -10,8 +10,11 @@
 
 import { isLocalSource, type LocalInstall } from "./reinstall-plan";
 
-/** The answer of a step: the same shape steps.ts hands the runner. */
-export type StepOutcome = { ok: true; detail: string | null } | { ok: false; error: string };
+/** A link a step leaves behind — a pull request, a task file; Flow shows it among the results of the stage. */
+export type StepLink = { label: string; target: string };
+
+/** The answer of a step: the same shape steps.ts hands the runner. `links` — only when the step left any. */
+export type StepOutcome = { ok: true; detail: string | null; links?: readonly StepLink[] } | { ok: false; error: string };
 
 /**
  * Почему поднимать версию было нечему и не на чем. Это не поломка: цепочка
