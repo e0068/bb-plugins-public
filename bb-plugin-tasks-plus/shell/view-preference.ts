@@ -1,34 +1,37 @@
-import type { TaskViewMode } from "../client/routes.js";
+import type { TaskLayout } from "../shared/enums.js";
 
 /**
- * Client-local List/Board choice per project. Stored in the browser profile so
- * one client does not rewrite another client connected to the same bb server —
- * the same boundary as the sidebar and list preferences.
+ * Client-local table/board choice, one per screen. Stored in the browser
+ * profile so one client does not rewrite another client connected to the
+ * same bb server — the same boundary as the sidebar and list preferences.
  *
- * A project route without an explicit `?view=` resolves through here, so
- * reopening a project restores the view the user last picked for it. Projects
- * never opened before fall back to the last view chosen anywhere, then to the
- * list.
+ * A screen's key is `all`, `active`, `waiting`, `project:<id>` or
+ * `view:<id>`; each key remembers its own layout independently — there is
+ * no cross-screen fallback. A route without an explicit `?view=` resolves
+ * through here, so reopening a screen restores the layout last picked for
+ * it; a screen never opened before opens as a table.
  */
 export const VIEW_PREFERENCE_STORAGE_KEY = "bb-tasks:view-preferences";
 export const VIEW_PREFERENCE_VERSION = 1 as const;
 
-export const DEFAULT_VIEW_MODE: TaskViewMode = "list";
+const PROJECT_KEY_PREFIX = "project:";
+const DEFAULT_LAYOUT: TaskLayout = "table";
 
 interface StoredDocumentV1 {
   version: typeof VIEW_PREFERENCE_VERSION;
-  /** View chosen most recently on any project; default for unseen projects. */
-  lastUsed: TaskViewMode;
-  projects: Record<string, TaskViewMode>;
+  layouts: Record<string, TaskLayout>;
 }
 
-function asViewMode(value: unknown): TaskViewMode | null {
-  return value === "list" || value === "board" ? value : null;
+/** Reads a layout value, reading a document written before boards had views' "list" as "table". */
+function asLayout(value: unknown): TaskLayout | null {
+  if (value === "table" || value === "board") return value;
+  return value === "list" ? "table" : null;
 }
 
 interface ParsedStorage {
-  lastUsed: TaskViewMode | null;
-  projects: Record<string, unknown>;
+  layouts: Record<string, unknown>;
+  /** The per-project map from before each screen had its own key. */
+  legacyProjects: Record<string, unknown>;
   /** True when the document was written by a newer client. */
   isFutureVersion: boolean;
 }
@@ -52,15 +55,21 @@ function readStorage(): ParsedStorage | null {
         : null;
     // No older versions shipped; refuse rather than invent fields.
     if (version !== null && version < VIEW_PREFERENCE_VERSION) return null;
-    const projects =
+    const layouts =
+      record.layouts !== null &&
+      typeof record.layouts === "object" &&
+      !Array.isArray(record.layouts)
+        ? (record.layouts as Record<string, unknown>)
+        : {};
+    const legacyProjects =
       record.projects !== null &&
       typeof record.projects === "object" &&
       !Array.isArray(record.projects)
         ? (record.projects as Record<string, unknown>)
         : {};
     return {
-      lastUsed: asViewMode(record.lastUsed),
-      projects,
+      layouts,
+      legacyProjects,
       isFutureVersion: version !== null && version > VIEW_PREFERENCE_VERSION,
     };
   } catch {
@@ -68,35 +77,51 @@ function readStorage(): ParsedStorage | null {
   }
 }
 
-export function loadViewMode(projectId: string): TaskViewMode {
+/** A screen's or a view's layout, or null when this client never recorded one. */
+export function loadStoredLayout(key: string): TaskLayout | null {
   const document = readStorage();
-  if (document === null) return DEFAULT_VIEW_MODE;
-  return (
-    asViewMode(document.projects[projectId]) ??
-    document.lastUsed ??
-    DEFAULT_VIEW_MODE
-  );
+  if (document === null) return null;
+  const stored = asLayout(document.layouts[key]);
+  if (stored !== null || !key.startsWith(PROJECT_KEY_PREFIX)) return stored;
+  return asLayout(document.legacyProjects[key.slice(PROJECT_KEY_PREFIX.length)]);
+}
+
+/** A screen's or a view's layout; a table where nothing was chosen. */
+export function loadLayout(key: string): TaskLayout {
+  return loadStoredLayout(key) ?? DEFAULT_LAYOUT;
 }
 
 /**
- * Persist the view for one project and make it the fallback for projects the
- * user has not opened yet. Refuses to overwrite storage written by a newer
+ * Persist a screen's layout. Refuses to overwrite storage written by a newer
  * client so older builds cannot down-convert a future document.
  */
-export function storeViewMode(projectId: string, view: TaskViewMode): void {
+export function storeLayout(key: string, layout: TaskLayout): void {
   try {
     const existing = readStorage();
     if (existing?.isFutureVersion) return;
-    const projects: Record<string, TaskViewMode> = {};
-    for (const [id, value] of Object.entries(existing?.projects ?? {})) {
-      const mode = asViewMode(value);
-      if (mode !== null) projects[id] = mode;
-    }
-    projects[projectId] = view;
+    // Order matters: a legacy per-project choice carries over only where the
+    // new format hasn't already recorded that screen, and the key being
+    // written now always wins over both.
+    const legacyEntries = Object.entries(existing?.legacyProjects ?? {}).flatMap(
+      ([id, value]) => {
+        const mode = asLayout(value);
+        return mode === null ? [] : [[`${PROJECT_KEY_PREFIX}${id}`, mode] as const];
+      },
+    );
+    const currentEntries = Object.entries(existing?.layouts ?? {}).flatMap(
+      ([id, value]) => {
+        const mode = asLayout(value);
+        return mode === null ? [] : [[id, mode] as const];
+      },
+    );
+    const layouts: Record<string, TaskLayout> = {
+      ...Object.fromEntries(legacyEntries),
+      ...Object.fromEntries(currentEntries),
+      [key]: layout,
+    };
     const document: StoredDocumentV1 = {
       version: VIEW_PREFERENCE_VERSION,
-      lastUsed: view,
-      projects,
+      layouts,
     };
     window.localStorage.setItem(
       VIEW_PREFERENCE_STORAGE_KEY,

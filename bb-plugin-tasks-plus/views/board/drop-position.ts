@@ -1,4 +1,4 @@
-import { TASK_STATUSES, type TaskStatus } from "../../shared/enums.js";
+import type { TaskStatus } from "../../shared/enums.js";
 
 /** Always-visible columns in board order; Canceled is appended on demand. */
 export const BOARD_STATUSES = [
@@ -8,20 +8,6 @@ export const BOARD_STATUSES = [
   "in_review",
   "done",
 ] as const satisfies readonly TaskStatus[];
-
-/**
- * The board's column set: the five canonical columns, plus Canceled appended
- * at the end whenever it holds cards (canceled top-level tasks would
- * otherwise be unreachable from the board).
- */
-export function visibleBoardStatuses(
-  columns: Readonly<Record<TaskStatus, readonly unknown[]>>,
-): TaskStatus[] {
-  return [
-    ...BOARD_STATUSES,
-    ...(columns.canceled.length > 0 ? (["canceled"] as const) : []),
-  ];
-}
 
 /**
  * Reorder neighbors for a board drop, matching the `boardMove` RPC contract:
@@ -70,37 +56,36 @@ export function dropIndexForPointer(
   return index;
 }
 
+/** Where a card sits on screen — the part of a DOMRect a drop looks at. */
+export interface CardRect {
+  left: number;
+  top: number;
+  width: number;
+  height: number;
+}
+
+/** How far a point is from a card: 0 inside it, else to its nearest edge. */
+function distanceTo(card: CardRect, x: number, y: number): number {
+  const dx = Math.max(card.left - x, 0, x - (card.left + card.width));
+  const dy = Math.max(card.top - y, 0, y - (card.top + card.height));
+  return Math.hypot(dx, dy);
+}
+
 /**
- * Optimistic local application of a board move: removes the task from its
- * current column and inserts it at `dropIndex` in `toStatus` (index among the
- * destination cards after the dragged card is removed, as elsewhere in this
- * module). Returns the input unchanged when the task is unknown.
+ * Insertion slot for a pointer over the ungrouped grid, given its cards in
+ * reading order (dragged card excluded): the card nearest the pointer, and
+ * the slot before it when the pointer is on its left half, after it on the
+ * right — the grid flows left to right, so that is where the card would land.
  */
-export function applyBoardMove<T extends { id: string; status: TaskStatus }>(
-  columns: Readonly<Record<TaskStatus, readonly T[]>>,
-  taskId: string,
-  toStatus: TaskStatus,
-  dropIndex: number,
-): Record<TaskStatus, T[]> {
-  let moved: T | undefined;
-  const next: Record<TaskStatus, T[]> = {
-    backlog: [],
-    todo: [],
-    in_progress: [],
-    in_review: [],
-    done: [],
-    canceled: [],
-  };
-  for (const status of TASK_STATUSES) {
-    next[status] = columns[status].filter((task) => {
-      if (task.id !== taskId) return true;
-      moved = task;
-      return false;
-    });
-  }
-  if (!moved) return next;
-  const destination = next[toStatus];
-  const index = Math.max(0, Math.min(dropIndex, destination.length));
-  destination.splice(index, 0, { ...moved, status: toStatus });
-  return next;
+export function gridDropIndex(cards: readonly CardRect[], x: number, y: number): number {
+  if (cards.length === 0) return 0;
+  const nearest = cards.reduce(
+    (best, card, index) => {
+      const distance = distanceTo(card, x, y);
+      return distance < best.distance ? { index, distance } : best;
+    },
+    { index: 0, distance: Number.POSITIVE_INFINITY },
+  );
+  const card = cards[nearest.index]!;
+  return x < card.left + card.width / 2 ? nearest.index : nearest.index + 1;
 }

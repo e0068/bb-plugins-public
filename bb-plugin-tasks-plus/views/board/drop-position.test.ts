@@ -1,43 +1,6 @@
 import { describe, expect, it } from "vitest";
-import type { TaskStatus } from "../../shared/contract.js";
-import {
-  applyBoardMove,
-  dropIndexForPointer,
-  dropNeighborsForIndex,
-  visibleBoardStatuses,
-} from "./drop-position.js";
-
-describe("visibleBoardStatuses", () => {
-  const columns = (canceled: number): Record<TaskStatus, unknown[]> => ({
-    backlog: [],
-    todo: ["t1"],
-    in_progress: [],
-    in_review: [],
-    done: [],
-    canceled: Array.from({ length: canceled }, (_, index) => `c${index}`),
-  });
-
-  it("hides the Canceled column while it is empty", () => {
-    expect(visibleBoardStatuses(columns(0))).toEqual([
-      "backlog",
-      "todo",
-      "in_progress",
-      "in_review",
-      "done",
-    ]);
-  });
-
-  it("appends Canceled at the end once it holds cards", () => {
-    expect(visibleBoardStatuses(columns(2))).toEqual([
-      "backlog",
-      "todo",
-      "in_progress",
-      "in_review",
-      "done",
-      "canceled",
-    ]);
-  });
-});
+import fc from "fast-check";
+import { dropIndexForPointer, dropNeighborsForIndex, gridDropIndex } from "./drop-position.js";
 
 describe("dropNeighborsForIndex", () => {
   const column = ["a", "b", "c"];
@@ -111,32 +74,38 @@ describe("dropIndexForPointer", () => {
   });
 });
 
-describe("applyBoardMove", () => {
-  const task = (id: string, status: TaskStatus) => ({ id, status });
-  const columns = () => ({
-    backlog: [task("a", "backlog"), task("b", "backlog")],
-    todo: [task("c", "todo")],
-    in_progress: [],
-    in_review: [],
-    done: [],
-    canceled: [],
+describe("gridDropIndex", () => {
+  // Two rows of two cards, 100×50 each, 10px gaps: row-major order.
+  const cards = [
+    { left: 0, top: 0, width: 100, height: 50 },
+    { left: 110, top: 0, width: 100, height: 50 },
+    { left: 0, top: 60, width: 100, height: 50 },
+    { left: 110, top: 60, width: 100, height: 50 },
+  ];
+
+  it("drops before the card under the pointer when the pointer is on its left half", () => {
+    expect(gridDropIndex(cards, 130, 80)).toBe(3);
   });
 
-  it("moves a card across columns and updates its status", () => {
-    const next = applyBoardMove(columns(), "a", "todo", 1);
-    expect(next.backlog.map((t) => t.id)).toEqual(["b"]);
-    expect(next.todo.map((t) => t.id)).toEqual(["c", "a"]);
-    expect(next.todo[1]).toEqual({ id: "a", status: "todo" });
+  it("drops after the card under the pointer when the pointer is on its right half", () => {
+    expect(gridDropIndex(cards, 80, 20)).toBe(1);
   });
 
-  it("reorders within a column using the dragged-excluded index", () => {
-    const next = applyBoardMove(columns(), "a", "backlog", 1);
-    expect(next.backlog.map((t) => t.id)).toEqual(["b", "a"]);
+  it("drops after the last card when the pointer is past the end of the grid", () => {
+    expect(gridDropIndex(cards, 400, 300)).toBe(4);
   });
 
-  it("leaves the board unchanged for an unknown task", () => {
-    const next = applyBoardMove(columns(), "nope", "todo", 0);
-    expect(next.backlog.map((t) => t.id)).toEqual(["a", "b"]);
-    expect(next.todo.map((t) => t.id)).toEqual(["c"]);
+  it("drops first into an empty grid", () => {
+    expect(gridDropIndex([], 10, 10)).toBe(0);
+  });
+
+  it("always gives a slot within the grid", () => {
+    fc.assert(
+      fc.property(fc.integer({ min: -500, max: 500 }), fc.integer({ min: -500, max: 500 }), (x, y) => {
+        const index = gridDropIndex(cards, x, y);
+        expect(index).toBeGreaterThanOrEqual(0);
+        expect(index).toBeLessThanOrEqual(cards.length);
+      }),
+    );
   });
 });

@@ -1,16 +1,16 @@
 import {
-  TASK_CHECKS,
   TASK_ESTIMATES,
   TASK_PRIORITIES,
   TASK_STATUSES,
   TASK_TYPES,
-  type TaskCheck,
   type TaskEstimate,
   type TaskPriority,
   type TaskStatus,
   type TaskType,
 } from "../db/types.js";
 import { readDollars, readMinutes } from "../shared/amounts.js";
+import type { Task } from "../shared/contract.js";
+import type { TakenBy } from "../shared/task-claim.js";
 
 /** A task assembled from one markdown file's frontmatter + its folder. */
 export interface MappedTaskFile {
@@ -28,11 +28,19 @@ export interface MappedTaskFile {
   budgetLimit: number | null;
   cost: number | null;
   dueDate: string | null;
+  startDate: string | null;
   labels: string[];
   /** Parent task's slug or key, when the file declares one. */
   parentRef: string | null;
-  checks: TaskCheck[];
+  /** The flow the Flow plugin stamped into the file, null when none. */
+  flow: TaskFlow | null;
+  /** Who took the task, from the file's `taken_by:` block; absent when nobody
+   *  did — assemble.ts reads that as null. */
+  takenBy?: TakenBy;
 }
+
+/** A flow as the file's `flow:` block names it — see mapFlow. */
+export type TaskFlow = NonNullable<Task["flow"]>;
 
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -73,7 +81,7 @@ function enumOr<T extends string>(
 
 // Legacy type aliases: the value is no longer part of TASK_TYPES, but old
 // task files still contain it and shouldn't lose their type. See
-// memory/decisions/tasks-drop-chore-shallow-migration.md
+// docs/decisions/tasks-drop-chore-shallow-migration.md
 const LEGACY_TYPE_ALIASES: Record<string, TaskType> = { chore: "refactor" };
 
 function mapType(value: unknown): TaskType | null {
@@ -98,17 +106,30 @@ function stringArray(value: unknown): string[] {
   return result;
 }
 
-function mapChecks(value: unknown): TaskCheck[] {
-  const result: TaskCheck[] = [];
-  const seen = new Set<string>();
-  for (const name of stringArray(value)) {
-    const lower = name.toLowerCase();
-    if ((TASK_CHECKS as readonly string[]).includes(lower) && !seen.has(lower)) {
-      seen.add(lower);
-      result.push(lower as TaskCheck);
-    }
-  }
-  return result;
+/**
+ * The `flow:` block the Flow plugin writes when a run's stage hands the file
+ * back as a result: `{ id, name }`, both non-blank strings. Anything else
+ * reads as no flow. The board never writes the block — it rides along in the
+ * file's untouched frontmatter (task-file.ts renderTaskFile).
+ */
+export function mapFlow(value: unknown): TaskFlow | null {
+  if (typeof value !== "object" || value === null) return null;
+  const { id, name } = value as Record<string, unknown>;
+  return typeof id === "string" && id.trim() !== "" && typeof name === "string" && name.trim() !== "" ? { id, name } : null;
+}
+
+/**
+ * The `taken_by:` block a write of the store leaves on a task that was taken:
+ * `{ machine, thread, at }` — a non-blank machine and time, and a thread that
+ * is a string or absent. A missing or broken block reads as nobody: the board
+ * must not fail on a file a person edited by hand.
+ */
+export function mapTakenBy(value: unknown): TakenBy | null {
+  if (typeof value !== "object" || value === null) return null;
+  const { machine, thread, at } = value as Record<string, unknown>;
+  if (typeof machine !== "string" || machine.trim() === "") return null;
+  if (typeof at !== "string" || at.trim() === "") return null;
+  return { machine, threadId: typeof thread === "string" && thread !== "" ? thread : null, at };
 }
 
 /**
@@ -135,7 +156,7 @@ function firstString(...values: unknown[]): string | null {
  * (e.g. the filename) is used when the frontmatter omits `slug`. Unknown enum
  * values fall back (type/estimate → null, priority → "none"); invalid dates,
  * minutes and dollar amounts drop to null. Legacy `tokens`/`tokens_actual`
- * lines are not read. The mapping never throws.
+ * and `checks` lines are not read. The mapping never throws.
  */
 export function mapFrontmatter(
   data: Record<string, unknown>,
@@ -145,6 +166,8 @@ export function mapFrontmatter(
 ): MappedTaskFile {
   const slug = firstString(data.slug) ?? slugFallback;
   const due = firstString(data.due);
+  const start = firstString(data.start);
+  const takenBy = mapTakenBy(data.taken_by);
   return {
     slug,
     title: firstString(data.title) ?? slug,
@@ -159,8 +182,10 @@ export function mapFrontmatter(
     budgetLimit: parseDollars(data.limit),
     cost: parseDollars(data.cost),
     dueDate: due !== null && ISO_DATE.test(due) ? due : null,
+    startDate: start !== null && ISO_DATE.test(start) ? start : null,
     labels: stringArray(data.labels),
     parentRef: firstString(data.parent),
-    checks: mapChecks(data.checks),
+    flow: mapFlow(data.flow),
+    ...(takenBy === null ? {} : { takenBy }),
   };
 }

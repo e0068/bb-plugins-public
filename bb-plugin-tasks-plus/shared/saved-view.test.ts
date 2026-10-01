@@ -91,23 +91,72 @@ describe("fieldDisplayConfigSchema", () => {
   });
 });
 
+const emptyFilters = {
+  statuses: [],
+  priorities: [],
+  types: [],
+  estimates: [],
+  labelNames: [],
+  assignees: [],
+  parents: [],
+};
+
+const validView = {
+  id: VALID_ULID,
+  version: 2,
+  name: "My view",
+  projectId: null,
+  listScope: null,
+  filters: emptyFilters,
+  sort: "manual",
+  fields: fullConfig,
+  createdAt: "2026-07-01T00:00:00.000Z",
+};
+
 describe("savedViewSchema", () => {
-  const validView = {
-    id: VALID_ULID,
-    scope: "all",
-    name: "My view",
-    config: fullConfig,
-    createdAt: "2026-07-01T00:00:00.000Z",
-  };
+  it("accepts a view that carries project, filters, sort and fields", () => {
+    expect(savedViewSchema.safeParse(validView).success).toBe(true);
+  });
+
+  it("accepts a view bound to a project", () => {
+    expect(
+      savedViewSchema.safeParse({ ...validView, projectId: VALID_ULID })
+        .success,
+    ).toBe(true);
+  });
+
+  it("accepts a view bound to the active surface", () => {
+    expect(
+      savedViewSchema.safeParse({ ...validView, listScope: "active" }).success,
+    ).toBe(true);
+  });
+
+  it("rejects a view that names both a project and a surface", () => {
+    expect(
+      savedViewSchema.safeParse({
+        ...validView,
+        projectId: VALID_ULID,
+        listScope: "waiting",
+      }).success,
+    ).toBe(false);
+  });
+
+  it("rejects a record of the first-pass shape, so migration has to handle it", () => {
+    expect(
+      savedViewSchema.safeParse({
+        id: VALID_ULID,
+        scope: "all",
+        name: "My view",
+        config: fullConfig,
+        createdAt: "2026-07-01T00:00:00.000Z",
+      }).success,
+    ).toBe(false);
+  });
 
   it("rejects a non-ULID id", () => {
     expect(
       savedViewSchema.safeParse({ ...validView, id: "not-a-ulid" }).success,
     ).toBe(false);
-  });
-
-  it("accepts a valid ULID id", () => {
-    expect(savedViewSchema.safeParse(validView).success).toBe(true);
   });
 
   it("rejects an unknown top-level key (strict)", () => {
@@ -116,20 +165,37 @@ describe("savedViewSchema", () => {
     ).toBe(false);
   });
 
-  it("rejects a view whose config has an unknown field", () => {
-    const config = {
+  it("rejects a sort outside the list sorts", () => {
+    expect(
+      savedViewSchema.safeParse({ ...validView, sort: "sideways" }).success,
+    ).toBe(false);
+  });
+
+  it("rejects a view whose fields config has an unknown field", () => {
+    const fields = {
       ...fullConfig,
       fields: [{ field: "bogus", visible: true }],
     };
-    expect(
-      savedViewSchema.safeParse({ ...validView, config }).success,
-    ).toBe(false);
+    expect(savedViewSchema.safeParse({ ...validView, fields }).success).toBe(
+      false,
+    );
   });
 });
 
 describe("createSavedView input", () => {
   const schema = tasksRpcContract.createSavedView.input;
-  const base = { scope: "all", name: "My view", config: fullConfig };
+  const base = {
+    name: "My view",
+    projectId: null,
+    listScope: null,
+    filters: emptyFilters,
+    sort: "manual",
+    fields: fullConfig,
+  };
+
+  it("accepts a view of the new shape", () => {
+    expect(schema.safeParse(base).success).toBe(true);
+  });
 
   it("rejects an empty name", () => {
     expect(schema.safeParse({ ...base, name: "" }).success).toBe(false);
@@ -144,38 +210,41 @@ describe("createSavedView input", () => {
     expect(parsed.name).toBe("My view");
   });
 
-  it("rejects an empty scope", () => {
-    expect(schema.safeParse({ ...base, scope: "" }).success).toBe(false);
-  });
-
-  it("rejects a scope longer than 120 characters", () => {
-    expect(
-      schema.safeParse({ ...base, scope: "a".repeat(121) }).success,
-    ).toBe(false);
-  });
-
   it("rejects a name longer than 60 characters", () => {
-    expect(
-      schema.safeParse({ ...base, name: "a".repeat(61) }).success,
-    ).toBe(false);
-  });
-
-  it("accepts a scope of exactly 120 characters", () => {
-    expect(
-      schema.safeParse({ ...base, scope: "a".repeat(120) }).success,
-    ).toBe(true);
+    expect(schema.safeParse({ ...base, name: "a".repeat(61) }).success).toBe(
+      false,
+    );
   });
 
   it("accepts a name of exactly 60 characters", () => {
-    expect(
-      schema.safeParse({ ...base, name: "a".repeat(60) }).success,
-    ).toBe(true);
+    expect(schema.safeParse({ ...base, name: "a".repeat(60) }).success).toBe(
+      true,
+    );
   });
 
   it("rejects an unknown top-level key (strict)", () => {
+    expect(schema.safeParse({ ...base, extra: true }).success).toBe(false);
+  });
+});
+
+describe("updateSavedView input", () => {
+  const schema = tasksRpcContract.updateSavedView.input;
+
+  it("renames a view", () => {
+    const parsed = schema.parse({ savedViewId: VALID_ULID, name: "  Mine  " });
+    expect(parsed.name).toBe("Mine");
+  });
+
+  it("rejects an empty name", () => {
     expect(
-      schema.safeParse({ ...base, extra: true }).success,
+      schema.safeParse({ savedViewId: VALID_ULID, name: "  " }).success,
     ).toBe(false);
+  });
+
+  it("rejects a savedViewId that is not a ULID", () => {
+    expect(schema.safeParse({ savedViewId: "nope", name: "Mine" }).success).toBe(
+      false,
+    );
   });
 });
 
@@ -199,12 +268,15 @@ describe("deleteSavedView input", () => {
 });
 
 describe("listSavedViews input", () => {
-  it("rejects an unknown top-level key (strict)", () => {
+  it("takes no arguments: views are no longer partitioned by surface", () => {
+    expect(tasksRpcContract.listSavedViews.input.safeParse({}).success).toBe(
+      true,
+    );
+  });
+
+  it("rejects a leftover scope argument (strict)", () => {
     expect(
-      tasksRpcContract.listSavedViews.input.safeParse({
-        scope: "all",
-        extra: true,
-      }).success,
+      tasksRpcContract.listSavedViews.input.safeParse({ scope: "all" }).success,
     ).toBe(false);
   });
 });

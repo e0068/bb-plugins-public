@@ -1,75 +1,56 @@
-// The analytics dashboard screen (BBPL-259): the customisable grid shell (1c)
-// laid out with the chart primitives (1b), fed by the analytics RPC (2b).
-// Filters by rolling window; the layout the user drags/resizes is remembered in
-// panel state. This file is the imperative shell — every pure piece (default
-// layout, window resolution) lives in ./default-dashboard, and the aggregation
-// on the server.
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+// The analytics screen: header with the project filter and the D/W/M/All cut,
+// the figure strip, then rows of sections that stay where they are — only
+// the splitters between and under them resize (row-board.tsx), and the sizes
+// are remembered. Laid out after Usage Analytics. This file is the shell:
+// it asks the server, keeps the filter and the sizes, and hands numbers to
+// the sections; every pure piece lives in the modules it imports.
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 
-import type { TimeBin } from "../../packages/analytics-viz/core/binning";
-import { WINDOWS } from "../../packages/analytics-viz/core/time-window";
-import { LaneTimeline } from "../../packages/analytics-viz/react/lane-timeline";
-import { DashboardGrid } from "./dashboard-grid";
-import { type DashboardConfig, type DashboardSection, parseDashboard, serializeDashboard } from "./dashboard-layout";
-import { TimeBarChart } from "./time-bar-chart";
-import { TASK_STATUSES, type TaskStatus } from "../../db/types.js";
-import type { StatusSeries, TasksSnapshot } from "../../shared/contract.js";
-import { formatDollars, formatMinutes } from "../../shared/amounts.js";
+import { weekBreaks } from "@bb-plugins/analytics-viz/core/weeks";
+import { Button } from "../../components/ui/button";
+import type { ClosedTasks, ClosedWindows, FlowAnswer, GanttAnswer, TasksSnapshot } from "../../shared/contract.js";
+import { GANTT_MODES, type GanttMode } from "../../shared/enums.js";
 import { useTasksQuery } from "../../client/data";
+import { useTasksNavigation } from "../../client/routes.js";
+import { ChartCard, Swatch, WeekBreaksScope, type ColumnWeekBreak } from "./bars";
+import { ChartColorsScope, useChartColors } from "./chart-colors";
+import { dayEdges, hourEdges } from "./closed-model";
+import { ClosedSection, formatDay, formatHour } from "./closed-section";
 import {
+  ANALYTICS_WINDOWS,
   type AnalyticsFilter,
+  type AnalyticsWindow,
+  columnDays,
   DEFAULT_FILTER,
-  defaultAnalyticsDashboard,
-  seriesWindowFor,
+  defaultAnalyticsRows,
+  type SectionKind,
+  weekBreaksOf,
+  weekEdges,
+  windowEdges,
 } from "./default-dashboard";
+import {
+  Aging,
+  Burndown,
+  ClosedByType,
+  CostByProject,
+  CreatedClosed,
+  CycleTime,
+  EstimateAccuracy,
+  KpiStrip,
+  StatusChanges,
+  WorkInProgress,
+} from "./flow-sections";
+import { GanttChart } from "./gantt-chart";
+import { RowBoard } from "./row-board";
+import { useSavedLayout } from "./saved-layout";
 
-const LAYOUT_KEY = "bb-plugins:tasks-plus:analytics:dashboard";
+const LAYOUT_KEY = "bb-plugins:tasks-plus:analytics:rows";
 
-// Layout persistence is a convenience, not the feature: a private-mode / storage-off
-// browser (or a stored value the schema no longer accepts) just falls back to the
-// default rather than throwing. Reading is parsing through the zod schema, not casting.
-function readSavedLayout(): DashboardConfig | null {
-  try {
-    const raw = window.localStorage.getItem(LAYOUT_KEY);
-    if (raw === null) return null;
-    const parsed = parseDashboard(raw);
-    return parsed.ok ? parsed.config : null;
-  } catch {
-    return null;
-  }
-}
+const DEFAULT_ROWS = defaultAnalyticsRows();
 
-function writeSavedLayout(config: DashboardConfig): void {
-  const serialized = serializeDashboard(config);
-  if (!serialized.ok) return; // fail closed: never persist a malformed layout
-  try {
-    window.localStorage.setItem(LAYOUT_KEY, serialized.json);
-  } catch {
-    // best-effort — remembering the layout is not essential
-  }
-}
+/** Below this width the rows stack into one column. */
+const STACK_BELOW_PX = 768;
 
-// bb design-system tokens are full colours (e.g. `--primary: #2e6f95`), used
-// exactly as the rest of the plugin does — `var(--x)`, never wrapped in hsl().
-const STATUS_COLOR: Record<TaskStatus, string> = {
-  backlog: "var(--muted-foreground)",
-  todo: "var(--chart-1)",
-  in_progress: "var(--primary)",
-  in_review: "var(--ring)",
-  done: "var(--success)",
-  canceled: "var(--destructive)",
-};
-
-const STATUS_LABEL: Record<TaskStatus, string> = {
-  backlog: "Backlog",
-  todo: "To do",
-  in_progress: "In progress",
-  in_review: "In review",
-  done: "Done",
-  canceled: "Canceled",
-};
-
-/** Width of an element, tracked live — react-grid-layout and LaneTimeline need px, not a percentage. */
 function useMeasuredWidth(): [React.RefObject<HTMLDivElement | null>, number] {
   const ref = useRef<HTMLDivElement | null>(null);
   const [width, setWidth] = useState(0);
@@ -85,168 +66,268 @@ function useMeasuredWidth(): [React.RefObject<HTMLDivElement | null>, number] {
   return [ref, width];
 }
 
-function loadSavedDashboard(): DashboardConfig {
-  return readSavedLayout() ?? defaultAnalyticsDashboard();
+const HOUR_CHECK_MS = 60_000;
+
+/** Start of the viewer's current local hour — the last column of the hourly charts. */
+const currentHourStart = () => hourEdges(Date.now())[23]!;
+
+/** The current local hour, re-read every minute — the charts refetch when it rolls over. */
+function useCurrentHour(): number {
+  const [hour, setHour] = useState(currentHourStart);
+  useEffect(() => {
+    const timer = window.setInterval(() => setHour(currentHourStart()), HOUR_CHECK_MS);
+    return () => window.clearInterval(timer);
+  }, []);
+  return hour;
 }
 
-type AnalyticsData = { snapshot: TasksSnapshot; series: StatusSeries };
+/** Closed tasks of one chart, with the column edges they were fetched for. */
+type ClosedWindow = { edges: number[]; data: ClosedTasks };
+
+interface AnalyticsData {
+  nowMs: number;
+  edges: number[];
+  weeks: number[];
+  snapshot: TasksSnapshot;
+  flow: FlowAnswer;
+  hourly: ClosedWindow;
+  daily: ClosedWindow;
+  gantt: GanttAnswer;
+}
+
+const WINDOW_TITLE: Record<AnalyticsWindow, string> = { day: "Day", week: "Week", month: "Month", all: "All time" };
+
+/** A project chip's swatch — the project's colour on the charts, Reduced Colors applied. */
+function ProjectSwatch({ index }: { index: number }) {
+  return <Swatch color={useChartColors().project(index)} />;
+}
 
 export function AnalyticsDashboard() {
   const [filter, setFilter] = useState<AnalyticsFilter>(DEFAULT_FILTER);
-  const [dashboard, setDashboard] = useState<DashboardConfig>(loadSavedDashboard);
-  const [gridRef, gridWidth] = useMeasuredWidth();
+  const [layout, setLayout] = useSavedLayout(LAYOUT_KEY, DEFAULT_ROWS);
+  const [pageRef, pageWidth] = useMeasuredWidth();
+  const navigation = useTasksNavigation();
+  const hour = useCurrentHour();
 
   const query = useTasksQuery<AnalyticsData>(
     async (rpc) => {
-      const window = seriesWindowFor(filter, Date.now());
-      const [snapshot, series] = await Promise.all([
-        rpc.call("analyticsSnapshot", { projectId: filter.projectId }),
-        rpc.call("analyticsSeries", { fromMs: window.fromMs, toMs: window.toMs, binMs: window.binMs, projectId: filter.projectId }),
+      const nowMs = Date.now();
+      const projectIds = [...filter.projectIds];
+      // All time opens at the first task, which only the server knows.
+      const firstMs = filter.window === "all" ? ((await rpc.call("analyticsSpan", { projectIds })).firstCreatedMs ?? nowMs) : nowMs;
+      const edges = windowEdges(filter.window, nowMs, firstMs);
+      const weeks = weekEdges(nowMs);
+      const closedEdges = [hourEdges(nowMs), dayEdges(nowMs)];
+      const [snapshot, flow, closed, gantt] = await Promise.all([
+        rpc.call("analyticsSnapshot", { projectIds }),
+        rpc.call("analyticsFlow", { edges, weekEdges: weeks, projectIds }),
+        rpc.call("analyticsClosed", { windows: closedEdges, projectIds }),
+        rpc.call("ganttRows", { fromMs: edges[0]!, projectIds }),
       ]);
-      return { snapshot, series } as AnalyticsData;
+      const answer = closed as ClosedWindows;
+      const chart = (index: number): ClosedWindow => ({
+        edges: closedEdges[index]!,
+        data: { closings: answer.windows[index]?.closings ?? [], projects: answer.projects, logStartMs: answer.logStartMs },
+      });
+      return { nowMs, edges, weeks, snapshot, flow, hourly: chart(0), daily: chart(1), gantt } as AnalyticsData;
     },
     ["tasks:changed"],
-    [filter.window, filter.projectId],
+    [filter.window, filter.projectIds, hour],
   );
 
-  const onLayoutChange = useCallback((next: DashboardConfig) => {
-    setDashboard(next);
-    writeSavedLayout(next);
-  }, []);
+  const openTask = useCallback((taskKey: string) => navigation.go({ kind: "task", taskKey }), [navigation]);
 
-  const renderSection = useCallback(
-    (section: DashboardSection) => <SectionBody kind={section.kind} data={query.data} />,
-    [query.data],
-  );
+  const toggleProject = (projectId: string) =>
+    setFilter((current) => ({
+      ...current,
+      projectIds: current.projectIds.includes(projectId)
+        ? current.projectIds.filter((id) => id !== projectId)
+        : [...current.projectIds, projectId],
+    }));
+
+  const data = query.data;
+  const projects = data?.flow.projects ?? [];
 
   return (
-    <div className="flex h-full flex-col gap-3 p-3">
-      <div className="flex items-center justify-between gap-3">
-        <h1 className="text-sm font-medium text-foreground">Analytics</h1>
-        <WindowSwitch value={filter.window} onChange={(window) => setFilter((prev) => ({ ...prev, window }))} />
-      </div>
+    <ChartColorsScope boardProjects={projects.length}>
+      <div ref={pageRef} className="h-full overflow-y-auto">
+        <div className="flex min-h-full flex-col gap-6 px-6 py-8">
+          <header className="space-y-1">
+            <h1 className="text-lg font-semibold text-foreground">Analytics</h1>
+            <p className="text-sm text-muted-foreground">Tasks across your boards — how statuses move, what is left and what got closed</p>
+          </header>
 
-      {query.error ? <p className="text-xs text-destructive">{query.error}</p> : null}
+          <section className="flex flex-wrap items-center gap-x-4 gap-y-2 border-b border-border pb-4">
+            <div className="flex flex-wrap items-center gap-2" role="group" aria-label="Projects">
+              <Button
+                type="button"
+                size="sm"
+                variant={filter.projectIds.length === 0 ? "default" : "outline"}
+                aria-pressed={filter.projectIds.length === 0}
+                onClick={() => setFilter((current) => ({ ...current, projectIds: [] }))}
+              >
+                All projects
+              </Button>
+              {projects.map((project, index) => (
+                <Button
+                  key={project.id}
+                  type="button"
+                  size="sm"
+                  variant={filter.projectIds.includes(project.id) ? "default" : "outline"}
+                  aria-pressed={filter.projectIds.includes(project.id)}
+                  onClick={() => toggleProject(project.id)}
+                >
+                  <ProjectSwatch index={index} />
+                  {project.name}
+                </Button>
+              ))}
+            </div>
+            <div className="ml-auto flex gap-1" role="group" aria-label="Period">
+              {ANALYTICS_WINDOWS.map((window) => (
+                <Button
+                  key={window}
+                  type="button"
+                  size="sm"
+                  variant={filter.window === window ? "default" : "outline"}
+                  aria-pressed={filter.window === window}
+                  onClick={() => setFilter((current) => ({ ...current, window }))}
+                >
+                  {WINDOW_TITLE[window]}
+                </Button>
+              ))}
+            </div>
+          </section>
 
-      <div ref={gridRef} className="min-h-0 flex-1 overflow-auto">
-        {gridWidth > 0 ? (
-          <DashboardGrid
-            config={dashboard}
-            width={gridWidth}
-            rowHeight={40}
-            onChange={onLayoutChange}
-            renderSection={renderSection}
-          />
-        ) : null}
+          {query.error ? <p className="text-xs text-destructive">{query.error}</p> : null}
+
+          {data === undefined ? <div className="h-14 animate-pulse rounded-md bg-muted/40" /> : <KpiStrip snapshot={data.snapshot} flow={data.flow} />}
+
+          {pageWidth > 0 ? (
+            <RowBoard
+              layout={layout}
+              stacked={pageWidth < STACK_BELOW_PX}
+              onChange={setLayout}
+              renderCell={(id) => (data === undefined ? <Pulse /> : <Section kind={id as SectionKind} data={data} window={filter.window} onOpenTask={openTask} />)}
+            />
+          ) : null}
+        </div>
       </div>
-    </div>
+    </ChartColorsScope>
   );
 }
 
-function WindowSwitch({ value, onChange }: { value: AnalyticsFilter["window"]; onChange: (window: AnalyticsFilter["window"]) => void }) {
-  return (
-    <div className="flex items-center gap-1 rounded-md border border-border p-0.5">
-      {WINDOWS.map((window) => (
-        <button
-          key={window}
-          type="button"
-          onClick={() => onChange(window)}
-          className={`rounded px-2 py-0.5 text-xs capitalize ${
-            window === value ? "bg-primary/10 text-foreground" : "text-muted-foreground hover:text-foreground"
-          }`}
-        >
-          {window}
-        </button>
-      ))}
-    </div>
-  );
+function Pulse() {
+  return <div className="h-full w-full animate-pulse rounded-md bg-muted/40" />;
 }
 
-function SectionBody({ kind, data }: { kind: string; data: AnalyticsData | undefined }) {
-  if (data === undefined) return <div className="h-full w-full animate-pulse rounded-md bg-muted/40" />;
+interface SectionProps {
+  kind: SectionKind;
+  data: AnalyticsData;
+  window: AnalyticsWindow;
+  onOpenTask: (taskKey: string) => void;
+}
+
+/** Week breaks of a chart's columns, labelled by their Monday. */
+const labelled = (breaks: readonly { column: number; mondayMs: number }[]): ColumnWeekBreak[] =>
+  breaks.map(({ column, mondayMs }) => ({ column, label: formatDay(mondayMs) }));
+
+function Section({ kind, data, window, onOpenTask }: SectionProps): ReactNode {
+  const columnLabel = (column: number) => {
+    const start = data.edges[column]!;
+    switch (window) {
+      case "day":
+        return formatHour(start);
+      case "week":
+      case "month":
+        return formatDay(start);
+      case "all":
+        return `Week of ${formatDay(start)}`;
+    }
+  };
+  const weekLabel = (week: number) => `Week of ${formatDay(data.weeks[week]!)}`;
+  const windowBreaks = labelled(weekBreaksOf(window, data.edges));
+  const inWeeks = (chart: ReactNode) => <WeekBreaksScope breaks={windowBreaks}>{chart}</WeekBreaksScope>;
   switch (kind) {
-    case "status-snapshot":
-      return <StatusSnapshot data={data} />;
-    case "throughput":
-      return <ThroughputChart data={data} />;
-    case "status-distribution":
-      return <StatusDistribution data={data} />;
-    default:
-      return <div className="p-2 text-xs text-muted-foreground">Unknown section: {kind}</div>;
+    case "changes":
+      return inWeeks(<StatusChanges flow={data.flow} columnLabel={columnLabel} />);
+    case "burndown":
+      return inWeeks(<Burndown flow={data.flow} columnLabel={columnLabel} columnsPerDay={1 / columnDays(window)} />);
+    case "closed-hourly":
+    case "closed-daily": {
+      const hourly = kind === "closed-hourly";
+      const chart = hourly ? data.hourly : data.daily;
+      return (
+        // Keyed by the first column: when the window rolls over, a picked
+        // segment would point at a different hour or day, so the pick resets.
+        // Days mark their weeks; hours are too fine for it.
+        <WeekBreaksScope breaks={hourly ? [] : labelled(weekBreaks(chart.edges.slice(0, -1)))}>
+          <ClosedSection
+            key={chart.edges[0]}
+            title={hourly ? "Closed — last 24 hours" : "Closed — last 30 days"}
+            edges={chart.edges}
+            data={chart.data}
+            formatBin={hourly ? formatHour : formatDay}
+            onOpenTask={onOpenTask}
+          />
+        </WeekBreaksScope>
+      );
+    }
+    case "created-closed":
+      return inWeeks(<CreatedClosed flow={data.flow} columnLabel={columnLabel} />);
+    case "wip":
+      return inWeeks(<WorkInProgress flow={data.flow} columnLabel={columnLabel} />);
+    case "cycle":
+      return <CycleTime rows={data.flow.cycle} />;
+    case "accuracy":
+      return <EstimateAccuracy rows={data.flow.accuracy} />;
+    case "cost":
+      return <CostByProject costs={data.flow.costByProject} projects={data.flow.projects} />;
+    case "aging":
+      return <Aging entries={data.flow.aging} projects={data.flow.projects} nowMs={data.nowMs} onOpenTask={onOpenTask} />;
+    case "types":
+      return <ClosedByType weeks={data.flow.typesByWeek} weekLabel={weekLabel} />;
+    case "gantt":
+      return <GanttSection rows={data.gantt.rows} fromMs={data.edges[0]!} toMs={data.nowMs} onOpenTask={onOpenTask} />;
   }
 }
 
-function StatusSnapshot({ data }: { data: AnalyticsData }) {
-  return (
-    <div className="flex h-full flex-wrap items-center gap-2 overflow-auto rounded-md border border-border p-2">
-      <Tile label="Total" value={data.snapshot.total} />
-      {TASK_STATUSES.map((status) => (
-        <Tile key={status} label={STATUS_LABEL[status]} value={data.snapshot.byStatus[status] ?? 0} />
-      ))}
-      <Tile label="Planned Time" value={formatMinutes(data.snapshot.plannedMinutes)} />
-      <Tile label="Actual Time" value={formatMinutes(data.snapshot.actualMinutes)} />
-      <Tile label="Budget" value={formatDollars(data.snapshot.budget)} />
-      <Tile label="Limit" value={formatDollars(data.snapshot.budgetLimit)} />
-      <Tile label="Cost" value={formatDollars(data.snapshot.cost)} />
-    </div>
-  );
-}
+const GANTT_MODE_TITLE: Record<GanttMode, string> = { plan: "Plan", fact: "Fact", both: "Both" };
 
-function Tile({ label, value }: { label: string; value: number | string }) {
+/** The tasks of the period on a Gantt, the plan, the facts or both at the owner's pick. */
+function GanttSection({
+  rows,
+  fromMs,
+  toMs,
+  onOpenTask,
+}: {
+  rows: GanttAnswer["rows"];
+  fromMs: number;
+  toMs: number;
+  onOpenTask: (taskKey: string) => void;
+}) {
+  const [mode, setMode] = useState<GanttMode>("fact");
   return (
-    <div className="min-w-[72px] rounded-md bg-muted/40 px-2.5 py-1.5">
-      <div className="text-[10px] uppercase tracking-wide text-muted-foreground">{label}</div>
-      <div className="tabular-nums text-sm font-medium text-foreground">{value}</div>
-    </div>
+    <ChartCard
+      title="Gantt"
+      aside={
+        <span className="inline-flex gap-1" role="group" aria-label="Gantt shows">
+          {GANTT_MODES.map((option) => (
+            <Button
+              key={option}
+              type="button"
+              size="sm"
+              className="h-6 px-2"
+              variant={mode === option ? "default" : "outline"}
+              aria-pressed={mode === option}
+              onClick={() => setMode(option)}
+            >
+              {GANTT_MODE_TITLE[option]}
+            </Button>
+          ))}
+        </span>
+      }
+    >
+      <GanttChart rows={rows} fromMs={fromMs} toMs={toMs} mode={mode} onOpenTask={onOpenTask} />
+    </ChartCard>
   );
-}
-
-function ThroughputChart({ data }: { data: AnalyticsData }) {
-  const bins: TimeBin[] = data.series.bins.map((startMs, index) => ({ startMs, value: data.series.total[index] ?? 0 }));
-  const hasChanges = bins.some((bin) => bin.value > 0);
-  return (
-    <div className="h-full w-full rounded-md border border-border p-2 text-primary">
-      <div className="mb-1 text-xs text-muted-foreground">Status changes over time</div>
-      {hasChanges ? (
-        <TimeBarChart bins={bins} height={140} formatTime={formatBinTime} formatValue={(value) => String(value)} />
-      ) : (
-        // The transition log starts at install and is not backfilled, so a fresh
-        // install legitimately has nothing to draw — say so instead of showing
-        // an empty axis that reads as broken.
-        <p className="py-6 text-center text-xs text-muted-foreground">
-          No status changes recorded in this window yet. The log starts at install — bars appear as tasks change status.
-        </p>
-      )}
-    </div>
-  );
-}
-
-function StatusDistribution({ data }: { data: AnalyticsData }) {
-  const [ref, width] = useMeasuredWidth();
-  const items = TASK_STATUSES.map((status) => ({
-    key: status,
-    weight: data.snapshot.byStatus[status] ?? 0,
-    color: STATUS_COLOR[status],
-    label: `${STATUS_LABEL[status]}: ${data.snapshot.byStatus[status] ?? 0}`,
-  }));
-  return (
-    <div className="flex h-full flex-col gap-2 rounded-md border border-border p-2">
-      <div className="text-xs text-muted-foreground">Status distribution</div>
-      <div ref={ref} className="w-full">
-        {width > 0 ? <LaneTimeline items={items} width={width} height={16} ariaLabel="Status distribution" /> : null}
-      </div>
-      <ul className="flex flex-wrap gap-x-3 gap-y-1 text-[11px] text-muted-foreground">
-        {TASK_STATUSES.map((status) => (
-          <li key={status} className="flex items-center gap-1">
-            <span className="inline-block size-2 rounded-sm" style={{ backgroundColor: STATUS_COLOR[status] }} />
-            {STATUS_LABEL[status]}
-          </li>
-        ))}
-      </ul>
-    </div>
-  );
-}
-
-function formatBinTime(startMs: number): string {
-  return new Date(startMs).toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric" });
 }

@@ -12,7 +12,11 @@ import {
 import { useTasksNavigation } from "../../client/routes.js";
 import { TasksEditor } from "../../editor/tasks-editor.js";
 import { TaskActivity } from "../activity/index.js";
-import { AttachmentsGrid, useUploadAttachment } from "./attachments.js";
+import {
+  AttachmentsGrid,
+  useDisplayImageSrc,
+  useUploadAttachment,
+} from "./attachments.js";
 import {
   createDescriptionSaver,
   type DescriptionSaver,
@@ -28,11 +32,43 @@ import { DetailToasts, useDetailToasts } from "./toast.js";
 import { DelayedLoading } from "../../components/delayed-loading.js";
 import { Icon } from "@/components/ui/icon";
 import { Skeleton } from "@/components/ui/skeleton";
+import { cn } from "@/lib/utils";
+
+/** Where the task is shown: a page of the Tasks panel, or a thread's side
+ *  panel, which already frames it with its own header and padding. */
+export type DetailLayout = "page" | "panel";
 
 export interface DetailViewProps {
   /** Task key like TSK-4 (not the ULID). */
   taskKey: string;
+  layout?: DetailLayout;
+  /** Where a sub-task or the parent opens; the Tasks page by default. A side
+   *  panel passes its own, so the task opens in the panel beside. */
+  onOpenTask?: (taskKey: string) => void;
 }
+
+// The page sets the task on a card over the recessed surface; the side panel
+// drops the surface, the card and its side padding, so the text lines up with
+// the panel header instead of sitting three insets away from it.
+const DETAIL_FRAME: Record<
+  DetailLayout,
+  { surface: string; card: string; body: string; rail: string; skeleton: string }
+> = {
+  page: {
+    surface: "bg-surface-recessed-solid p-3",
+    card: "rounded-lg border border-border bg-card shadow-2xs",
+    body: "mx-auto px-7 pb-16 pt-8 @3xl:px-13 @3xl:pt-11",
+    rail: "",
+    skeleton: "mx-auto px-8 py-12",
+  },
+  panel: {
+    surface: "",
+    card: "",
+    body: "pb-16 pt-4",
+    rail: "py-4 pr-0",
+    skeleton: "pt-4",
+  },
+};
 
 const DESCRIPTION_SAVE_DELAY_MS = 800;
 /** Poll cadence for PR state while any attached PR is still open or draft. */
@@ -108,14 +144,15 @@ function SubTasksSection({
   ref,
   task,
   subtasks,
+  onOpen,
   onCreate,
 }: {
   ref: React.Ref<HTMLElement>;
   task: Task;
   subtasks: Task[];
+  onOpen: (taskKey: string) => void;
   onCreate: (title: string) => Promise<boolean>;
 }) {
-  const navigation = useTasksNavigation();
   const [adding, setAdding] = useState(false);
   const [title, setTitle] = useState("");
   const [busy, setBusy] = useState(false);
@@ -137,7 +174,7 @@ function SubTasksSection({
           type="button"
           className="flex h-8 w-full items-center gap-2 border-b border-border-hairline px-0.5 text-left text-sm hover:bg-state-hover"
           title={STATUS_LABELS[subtask.status]}
-          onClick={() => navigation.go({ kind: "task", taskKey: subtask.key })}
+          onClick={() => onOpen(subtask.key)}
         >
           <StatusIcon status={subtask.status} />
           <span className="shrink-0 text-xs text-muted-foreground">
@@ -180,10 +217,10 @@ function SubTasksSection({
   );
 }
 
-function DetailSkeleton() {
+function DetailSkeleton({ layout }: { layout: DetailLayout }) {
   return (
     <DelayedLoading>
-      <div className="mx-auto w-full max-w-3xl px-8 py-12">
+      <div className={cn("w-full max-w-3xl", DETAIL_FRAME[layout].skeleton)}>
         <Skeleton className="mb-4 h-7 w-2/3" />
         <Skeleton className="mb-2 h-4 w-full" />
         <Skeleton className="mb-2 h-4 w-5/6" />
@@ -193,9 +230,19 @@ function DetailSkeleton() {
   );
 }
 
-function TaskDetail({ task }: { task: Task }) {
+function TaskDetail({
+  task,
+  layout,
+  onOpenTask,
+}: {
+  task: Task;
+  layout: DetailLayout;
+  onOpenTask?: (taskKey: string) => void;
+}) {
   const rpc = useTasksRpc();
   const navigation = useTasksNavigation();
+  const openTask =
+    onOpenTask ?? ((taskKey: string) => navigation.go({ kind: "task", taskKey }));
   const { toasts, push, dismiss } = useDetailToasts();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const subtasksRef = useRef<HTMLElement>(null);
@@ -318,6 +365,7 @@ function TaskDetail({ task }: { task: Task }) {
   }, [task.id]);
 
   const uploadAttachment = useUploadAttachment();
+  const displayImageSrc = useDisplayImageSrc();
   const uploadForTask = async (file: File) => {
     const result = await uploadAttachment(file, { taskId: task.id });
     attachments.refresh();
@@ -361,20 +409,19 @@ function TaskDetail({ task }: { task: Task }) {
   const descriptionValue =
     draft && draft.taskId === task.id ? draft.markdown : task.description;
   const parentTask = parent.data ?? null;
+  const frame = DETAIL_FRAME[layout];
 
   return (
-    <div className="@container flex min-h-full flex-col bg-surface-recessed-solid p-3">
-      <div className="flex flex-1 items-stretch rounded-lg border border-border bg-card shadow-2xs">
-        <div className="mx-auto w-full min-w-0 max-w-[55rem] flex-1 px-7 pb-16 pt-8 @3xl:px-13 @3xl:pt-11">
+    <div className={cn("@container flex min-h-full flex-col", frame.surface)}>
+      <div className={cn("flex flex-1 items-stretch", frame.card)}>
+        <div className={cn("w-full min-w-0 max-w-[55rem] flex-1", frame.body)}>
           {parentTask || subtasks.data?.length ? (
             <div className="mb-4 flex flex-wrap items-center gap-2">
               {parentTask ? (
                 <button
                   type="button"
                   className="inline-flex max-w-full items-center gap-1.5 rounded-full border border-border bg-secondary px-2.5 py-0.5 text-xs text-muted-foreground shadow-2xs hover:border-input"
-                  onClick={() =>
-                    navigation.go({ kind: "task", taskKey: parentTask.key })
-                  }
+                  onClick={() => openTask(parentTask.key)}
                 >
                   Sub-task of
                   <StatusIcon status={parentTask.status} className="size-3" />
@@ -403,6 +450,7 @@ function TaskDetail({ task }: { task: Task }) {
 
           <InlineProperties
             task={task}
+            parent={parentTask}
             project={project}
             labels={labels.data}
             presets={presets.data}
@@ -418,6 +466,7 @@ function TaskDetail({ task }: { task: Task }) {
             className="min-h-24"
             placeholder="Add a description… rich text: headings, lists, code, checkboxes, @mentions"
             onUploadImage={uploadForTask}
+            displayImageSrc={displayImageSrc}
             mentionItems={mentionItems}
             onOpenThread={(threadId) => navigate.toThread(threadId)}
           />
@@ -470,6 +519,7 @@ function TaskDetail({ task }: { task: Task }) {
             ref={subtasksRef}
             task={task}
             subtasks={subtasks.data ?? []}
+            onOpen={openTask}
             onCreate={createSubtask}
           />
 
@@ -496,13 +546,14 @@ function TaskDetail({ task }: { task: Task }) {
 
         <PropertiesRail
           task={task}
+          parent={parentTask}
           project={project}
           labels={labels.data}
           threads={threads.data ?? []}
           presets={presets.data}
           onUpdate={(update) => void updateTask(update)}
           onError={(message) => push("error", message)}
-          className="hidden @[45rem]:block"
+          className={cn("hidden @[45rem]:block", frame.rail)}
         />
       </div>
       <DetailToasts toasts={toasts} onDismiss={dismiss} />
@@ -510,7 +561,7 @@ function TaskDetail({ task }: { task: Task }) {
   );
 }
 
-export function DetailView({ taskKey }: DetailViewProps) {
+export function DetailView({ taskKey, layout = "page", onOpenTask }: DetailViewProps) {
   const query = useTasksQuery(
     async (rpc) => (await rpc.call("getTaskByKey", { taskKey })).task,
     ["tasks:changed"],
@@ -523,7 +574,7 @@ export function DetailView({ taskKey }: DetailViewProps) {
         {query.error}
       </div>
     ) : (
-      <DetailSkeleton />
+      <DetailSkeleton layout={layout} />
     );
   }
   if (query.data === null) {
@@ -534,5 +585,5 @@ export function DetailView({ taskKey }: DetailViewProps) {
       </div>
     );
   }
-  return <TaskDetail task={query.data} />;
+  return <TaskDetail task={query.data} layout={layout} onOpenTask={onOpenTask} />;
 }

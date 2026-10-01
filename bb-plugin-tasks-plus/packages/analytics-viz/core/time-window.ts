@@ -15,7 +15,7 @@ export type Window = (typeof WINDOWS)[number];
 /**
  * Length of each window. Rolling, not calendar: "day" is the last 24 hours,
  * not today since midnight — the same call token-usage made in
- * memory/decisions/usage-pie-rolling-windows.md, now shared.
+ * docs/decisions/usage-pie-rolling-windows.md, now shared.
  */
 export const WINDOW_MS: Readonly<Record<Window, number>> = Object.freeze({
   day: DAY_MS,

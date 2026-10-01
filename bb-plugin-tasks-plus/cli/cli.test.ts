@@ -153,7 +153,7 @@ const BOARD: BoardConfig = {
   folderId: null,
   linkedBbProjectId: null,
   tasksFolder: "tasks",
-  createdAt: "2026-01-01T00:00:00.000Z",
+  database: null, createdAt: "2026-01-01T00:00:00.000Z",
 };
 
 function fakeKv(): KvStore {
@@ -184,7 +184,7 @@ function fileHost() {
     tasks,
     // The CLI never touches the transition log; a no-op double keeps this store
     // total without a database (real behaviour is covered in db/transition-log.test.ts).
-    transitions: { record() {}, range: () => [] },
+    transitions: { record() {}, range: () => [], firstAtMs: () => null },
     transaction: (operation) => tasks.transaction(operation),
     projectTaskCount: async (projectId) => (await tasks.listTasks({ projectId })).length,
     projectPrefixExists: () => false,
@@ -211,6 +211,69 @@ describe("bb tasks CLI on a board folder", () => {
       const shown = JSON.parse(stdout(await harness.runCli(["show", address, "--json"])));
       expect(shown.task.id, address).toBe(created.id);
     }
+    await harness.dispose();
+  });
+
+  it("create --start ставит дату начала, update --no-start её снимает", async () => {
+    const harness = fileHost();
+    const created = JSON.parse(
+      stdout(
+        await harness.runCli([
+          "create",
+          "--project",
+          BOARD.prefix,
+          "--title",
+          "Planned",
+          "--start",
+          "2026-09-20",
+          "--due",
+          "2026-09-30",
+          "--json",
+        ]),
+      ),
+    );
+    expect(created.task.startDate).toBe("2026-09-20");
+    expect(created.task.dueDate).toBe("2026-09-30");
+
+    const cleared = JSON.parse(
+      stdout(await harness.runCli(["update", created.task.id, "--no-start", "--json"])),
+    );
+    expect(cleared.task.startDate).toBe(null);
+    expect(cleared.task.dueDate).toBe("2026-09-30");
+    await harness.dispose();
+  });
+
+  it("update --no-due снимает дату окончания", async () => {
+    const harness = fileHost();
+    const created = await tasks.createTask({
+      projectId: BOARD.id,
+      title: "Planned",
+      dueDate: "2026-09-30",
+    });
+    const cleared = JSON.parse(
+      stdout(await harness.runCli(["update", created.id, "--no-due", "--json"])),
+    );
+    expect(cleared.task.dueDate).toBe(null);
+    await harness.dispose();
+  });
+
+  it("--start вместе с --no-start отвергается", async () => {
+    const harness = fileHost();
+    const created = await tasks.createTask({ projectId: BOARD.id, title: "Planned" });
+    await expect(
+      harness.runCli(["update", created.id, "--start", "2026-09-20", "--no-start"]),
+    ).resolves.toMatchObject({ exitCode: 1 });
+    await harness.dispose();
+  });
+
+  it("show печатает строку Start", async () => {
+    const harness = fileHost();
+    const created = await tasks.createTask({
+      projectId: BOARD.id,
+      title: "Planned",
+      startDate: "2026-09-20",
+    });
+    expect(stdout(await harness.runCli(["show", created.id]))).toContain("2026-09-20");
     await harness.dispose();
   });
 
@@ -280,7 +343,7 @@ describe("bb tasks CLI on a board folder", () => {
 
     stdout(await harness.runCli([
       "create", "--project", "TSK", "--title", "Priced",
-      "--type", "feature", "--estimate", "m", "--check", "test",
+      "--type", "feature", "--estimate", "m",
       "--minutes", "90", "--budget", "34.1", "--limit", "60",
     ]));
     let shown = JSON.parse(stdout(await harness.runCli(["show", "TSK-1", "--json"])));
@@ -297,10 +360,21 @@ describe("bb tasks CLI on a board folder", () => {
     const harness = fileHost();
     const result = await harness.runCli([
       "create", "--project", "TSK", "--title", "Unpriced",
-      "--type", "feature", "--estimate", "m", "--check", "test",
+      "--type", "feature", "--estimate", "m",
     ]);
     expect(result.exitCode).toBe(0);
     expect(result.stdout).toContain("Warning: missing process fields: minutes, budget");
+    await harness.dispose();
+  });
+
+  it("Checks в CLI нет: --check и --no-check отвергаются, в show строки Checks нет", async () => {
+    const harness = fileHost();
+    await tasks.createTask({ projectId: BOARD.id, title: "T" });
+    await expect(harness.runCli(["create", "--project", "TSK", "--title", "C", "--check", "test"])).resolves.toMatchObject({ exitCode: 1 });
+    await expect(harness.runCli(["update", "TSK-1", "--check", "review"])).resolves.toMatchObject({ exitCode: 1 });
+    await expect(harness.runCli(["update", "TSK-1", "--no-check"])).resolves.toMatchObject({ exitCode: 1 });
+    expect(stdout(await harness.runCli(["show", "TSK-1"]))).not.toMatch(/Checks/);
+    expect(stdout(await harness.runCli(["create", "--help"]))).not.toMatch(/check/);
     await harness.dispose();
   });
 
@@ -344,31 +418,15 @@ describe("bb tasks CLI on a board folder", () => {
 });
 
 describe("bb tasks CLI: исполнитель и эпик", () => {
-  it("create кладёт задачу в папку исполнителя и эпика, show их показывает", async () => {
+  it("create кладёт задачу в папку исполнителя, --no-assignee возвращает в корень, show показывает исполнителя", async () => {
     const harness = fileHost();
 
-    stdout(await harness.runCli(["create", "--project", "TSK", "--title", "Deep", "--assignee", "Claude", "--epic", "Tasks+"]));
-
-    expect(existsSync(join(root, "Claude", "Tasks+", "backlog", "deep.md"))).toBe(true);
-    const text = stdout(await harness.runCli(["show", "TSK-1"]));
-    expect(text).toMatch(/Assignee\s+Claude/);
-    expect(text).toMatch(/Epic\s+Tasks\+/);
-    await harness.dispose();
-  });
-
-  it("update --assignee/--epic переносит файл, --no-assignee возвращает в корень без эпика", async () => {
-    const harness = fileHost();
-    await tasks.createTask({ projectId: BOARD.id, title: "Move" });
-
-    stdout(await harness.runCli(["update", "TSK-1", "--assignee", "Claude", "--epic", "Flow"]));
-    expect(JSON.parse(stdout(await harness.runCli(["show", "TSK-1", "--json"]))).task).toMatchObject({ assignee: "Claude", epic: "Flow" });
-
-    stdout(await harness.runCli(["update", "TSK-1", "--no-epic"]));
-    expect(existsSync(join(root, "Claude", "backlog", "move.md"))).toBe(true);
+    stdout(await harness.runCli(["create", "--project", "TSK", "--title", "Deep", "--assignee", "Claude"]));
+    expect(existsSync(join(root, "Claude", "backlog", "deep.md"))).toBe(true);
+    expect(stdout(await harness.runCli(["show", "TSK-1"]))).toMatch(/Assignee\s+Claude/);
 
     stdout(await harness.runCli(["update", "TSK-1", "--no-assignee"]));
-    expect(JSON.parse(stdout(await harness.runCli(["show", "TSK-1", "--json"]))).task).toMatchObject({ assignee: null, epic: null });
-    expect(existsSync(join(root, "backlog", "move.md"))).toBe(true);
+    expect(existsSync(join(root, "backlog", "deep.md"))).toBe(true);
     await harness.dispose();
   });
 

@@ -58,6 +58,24 @@ function makeStore(): TasksApiStore {
   return { tasks, transaction: (fn: () => unknown) => Promise.resolve(fn()) } as unknown as TasksApiStore;
 }
 
+/** Считает обращения к доске: одно чтение на доску против чтения на задачу
+ *  видно только по числу вызовов, а не по результату. */
+function countingStore(store: TasksApiStore) {
+  const calls = { threadsByTaskId: 0, listTaskThreads: 0 };
+  const tasks = {
+    ...store.tasks,
+    threadsByTaskId(projectId: string) {
+      calls.threadsByTaskId += 1;
+      return store.tasks.threadsByTaskId(projectId);
+    },
+    listTaskThreads(taskId: string) {
+      calls.listTaskThreads += 1;
+      return store.tasks.listTaskThreads(taskId);
+    },
+  };
+  return { store: { ...store, tasks } as TasksApiStore, calls };
+}
+
 /** Событийные обработчики плагина не возвращают промис — тест ждёт их
  *  завершения по наблюдаемому следствию, а не по числу тиков. */
 async function waitFor(condition: () => Promise<boolean>): Promise<void> {
@@ -86,7 +104,7 @@ beforeEach(() => {
   sdkThreads = new Map();
   board = {
     id: "b1", name: "Board", prefix: "TSK", color: "blue", folderId: null,
-    linkedBbProjectId: null, tasksFolder: "tasks", createdAt: "2026-01-01T00:00:00.000Z",
+    linkedBbProjectId: null, tasksFolder: "tasks", database: null, createdAt: "2026-01-01T00:00:00.000Z",
   };
 });
 afterEach(() => rmSync(root, { recursive: true, force: true }));
@@ -129,24 +147,58 @@ describe("thread lifecycle", () => {
     expect(readFileSync(filePath, "utf8")).toBe(before);
   });
 
-  it("отчёт о завершении треда пишется один раз и переживает перезапуск плагина", async () => {
-    const first = makeStore();
-    const task = await taskWithThread(first);
+  it("завершение треда не правит файл задачи", async () => {
+    const store = makeStore();
+    const task = await taskWithThread(store);
     sdkThreads.set("thr_x", { id: "thr_x", status: "idle", archivedAt: null, deletedAt: null });
-    await registerLifecycle(fakeBb(), first);
+    await registerLifecycle(fakeBb(), store);
+    const filePath = (await store.tasks.getTask(task.id))!.source!.filePath;
+    const before = readFileSync(filePath, "utf8");
 
     events.get("thread.deleted")!({ thread: { id: "thr_x" } });
-    await waitFor(async () =>
-      (await first.tasks.listComments(task.id)).some((c) => c.body.includes("completed")),
+    await waitFor(
+      async () => (await store.tasks.listTaskThreads(task.id))[0]?.liveStatus === "completed",
     );
-    const afterFirst = await first.tasks.listComments(task.id);
-    expect(afterFirst.filter((c) => c.body.includes("completed"))).toHaveLength(1);
+    // Запись пошла бы следом за состоянием, а не вместе с ним: тику после
+    // наблюдения дано пройти, иначе тест зелёный оттого, что поспешил.
+    await new Promise((resolve) => setTimeout(resolve, 50));
 
-    // Перезапуск: память состояния пуста, реконсиляция видит удалённый тред.
-    sdkThreads.delete("thr_x");
-    const second = makeStore();
-    await registerLifecycle(fakeBb(), second);
-    const afterRestart = await second.tasks.listComments(task.id);
-    expect(afterRestart.filter((c) => c.body.includes("completed"))).toHaveLength(1);
+    expect(readFileSync(filePath, "utf8")).toBe(before);
+    expect(await store.tasks.listComments(task.id)).toEqual([]);
+  });
+
+  it("число чтений доски за сверку не зависит от числа задач", async () => {
+    const firstRoot = root;
+    const one = countingStore(makeStore());
+    await taskWithThread(one.store);
+    root = mkdtempSync(join(tmpdir(), "lifecycle-"));
+    const many = countingStore(makeStore());
+    await taskWithThread(many.store);
+    for (const title of ["B", "C", "D", "E"]) {
+      await many.store.tasks.createTask({ projectId: "b1", title });
+    }
+    sdkThreads.set("thr_x", { id: "thr_x", status: "idle", archivedAt: null, deletedAt: null });
+
+    await registerLifecycle(fakeBb(), one.store);
+    await registerLifecycle(fakeBb(), many.store);
+    rmSync(firstRoot, { recursive: true, force: true });
+
+    expect(many.calls.threadsByTaskId).toBe(one.calls.threadsByTaskId);
+    expect(many.calls.listTaskThreads).toBe(0);
+  });
+
+  it("после перезапуска состояние привязанного треда восстанавливает сверка", async () => {
+    const before = makeStore();
+    const task = await taskWithThread(before);
+    // «active» — единственный статус, который виден как «working»: у треда
+    // без наблюдения умолчание «idle», поэтому без сверки разница заметна.
+    sdkThreads.set("thr_x", { id: "thr_x", status: "active", archivedAt: null, deletedAt: null });
+
+    // Перезапуск плагина: память состояния пуста, и единственный, кто знает
+    // о живых тредах, — сверка на загрузке.
+    const restarted = makeStore();
+    await registerLifecycle(fakeBb(), restarted);
+
+    expect((await restarted.tasks.listTaskThreads(task.id))[0]?.liveStatus).toBe("working");
   });
 });

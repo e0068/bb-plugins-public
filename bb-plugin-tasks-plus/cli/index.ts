@@ -13,11 +13,11 @@ import {
   type TasksApiStore,
 } from "../api";
 import {
-  buildAttachmentUrl,
   publishAttachmentChanged,
   readAttachmentContent,
   saveAttachmentFromBytes,
 } from "../attachments";
+import { attachmentDownloadUrl } from "../shared/attachment-url.js";
 import { delegationRpcContract } from "../delegate/contract";
 import { handlers as delegationHandlers } from "../delegate";
 import {
@@ -71,6 +71,7 @@ Commands:
   delete                         Remove a task's file for good (requires --yes)
   comment                        Add a task comment
   label create|list|delete
+  epics migrate                  Turn the board's epic folders into epic tasks
   attachment add|get|list|remove
   preset list|show|create|update|delete
   dispatch                       Dispatch a task to a new agent thread
@@ -92,13 +93,13 @@ const FOLDER_HELP = `Usage:
   bb tasks folder list [--json]
   bb tasks folder update <id-or-name> [--name <name>] [--parent <id-or-name> | --no-parent] [--json]`;
 
-const CREATE_HELP = `Usage: bb tasks create [--project <prefix-or-id>] --title <title> [--description <markdown> | --description-file <path>] [--priority <priority>] [--type <type>] [--estimate xs|s|m|l|xl] [--check test|review|design|browser]... [--minutes <int>] [--minutes-actual <int>] [--budget <dollars>] [--limit <dollars>] [--cost <dollars>] [--label <name>]... [--due YYYY-MM-DD] [--parent <key-or-id>] [--assignee <name>] [--epic <name>] [--attach <path>]... [--machine <id-or-name>] [--strict] [--json]
-Process fields (type, estimate, at least one check, minutes, budget) are recommended; missing ones print a warning by default, or block creation entirely with --strict.`;
+const CREATE_HELP = `Usage: bb tasks create [--project <prefix-or-id>] --title <title> [--description <markdown> | --description-file <path>] [--priority <priority>] [--type <type>] [--estimate xs|s|m|l|xl] [--minutes <int>] [--minutes-actual <int>] [--budget <dollars>] [--limit <dollars>] [--cost <dollars>] [--label <name>]... [--due YYYY-MM-DD] [--start YYYY-MM-DD] [--parent <key-or-id>] [--assignee <name>] [--epic <epic-key>] [--attach <path>]... [--machine <id-or-name>] [--strict] [--json]
+Process fields (type, estimate, minutes, budget) are recommended; missing ones print a warning by default, or block creation entirely with --strict.`;
 const LIST_HELP = `Usage: bb tasks list [--project <prefix-or-id>] [--status <status>]... [--priority <priority>]... [--label <name>]... [--active] [--waiting] [--search <query>] [--sort manual|priority|due] [--limit <1-${TASKS_PAGE_MAX_LIMIT}>] [--cursor <opaque>] [--json]`;
 const SHOW_HELP = "Usage: bb tasks show <key-slug-or-id> [--json]";
 const DELETE_HELP = "Usage: bb tasks delete <key-slug-or-id> --yes [--json]";
 const UPDATE_HELP =
-  "Usage: bb tasks update <key-slug-or-id> [--slug <file-name>] [--key <PREFIX-N> | --no-key] [--status <status>] [--priority <priority>] [--type <type> | --no-type] [--estimate xs|s|m|l|xl | --no-estimate] [--check test|review|design|browser]... | --no-check] [--minutes <int> | --no-minutes] [--minutes-actual <int> | --no-minutes-actual] [--budget <dollars> | --no-budget] [--limit <dollars> | --no-limit] [--cost <dollars> | --no-cost] [--title <title>] [--description <markdown> | --description-file <path>] [--due YYYY-MM-DD | --no-due] [--parent <key-or-id> | --no-parent] [--assignee <name> | --no-assignee] [--epic <name> | --no-epic] [--add-label <name>]... [--remove-label <name>]... [--machine <id-or-name>] [--json]";
+  "Usage: bb tasks update <key-slug-or-id> [--slug <file-name>] [--key <PREFIX-N> | --no-key] [--status <status>] [--priority <priority>] [--type <type> | --no-type] [--estimate xs|s|m|l|xl | --no-estimate] [--minutes <int> | --no-minutes] [--minutes-actual <int> | --no-minutes-actual] [--budget <dollars> | --no-budget] [--limit <dollars> | --no-limit] [--cost <dollars> | --no-cost] [--title <title>] [--description <markdown> | --description-file <path>] [--due YYYY-MM-DD | --no-due] [--start YYYY-MM-DD | --no-start] [--parent <key-or-id> | --no-parent] [--assignee <name> | --no-assignee] [--epic <epic-key> | --no-epic] [--add-label <name>]... [--remove-label <name>]... [--machine <id-or-name>] [--json]";
 const COMMENT_HELP =
   "Usage: bb tasks comment <key-or-id> (--body <markdown> | --body-file <path>) [--author <name>] [--machine <id-or-name>] [--notify] [--json]";
 const LABEL_HELP = `Usage:
@@ -409,6 +410,24 @@ async function resolveTask(
       );
   if (!result.task) throw new CliError(`task not found: ${address}`);
   return result.task;
+}
+
+/** The task `--epic` names: it must be typed epic, since it becomes the parent. */
+async function resolveEpic(domain: TasksDomain, address: string): Promise<Task> {
+  const epic = await resolveTask(domain, address);
+  if (epic.type !== "epic") throw new CliError(`${epic.key} is not an epic`);
+  return epic;
+}
+
+/** `--parent` and `--epic` both name the parent — one of them, at most. */
+async function parentOption(domain: TasksDomain, args: ParsedArgs): Promise<Task | undefined> {
+  const parentAddress = option(args, "parent");
+  const epicAddress = option(args, "epic");
+  if (parentAddress !== undefined && epicAddress !== undefined) {
+    throw new CliError("--epic and --parent cannot be combined");
+  }
+  if (epicAddress !== undefined) return resolveEpic(domain, epicAddress);
+  return parentAddress === undefined ? undefined : resolveTask(domain, parentAddress);
 }
 
 async function listAllTasks(
@@ -918,7 +937,6 @@ async function runCreate(
       "priority",
       "type",
       "estimate",
-      "check",
       "minutes",
       "minutes-actual",
       "budget",
@@ -926,6 +944,7 @@ async function runCreate(
       "cost",
       "label",
       "due",
+      "start",
       "parent",
       "assignee",
       "epic",
@@ -942,7 +961,6 @@ async function runCreate(
   const missingProcessFields = [
     option(args, "type") === undefined ? "type" : null,
     option(args, "estimate") === undefined ? "estimate" : null,
-    options(args, "check").length === 0 ? "check" : null,
     option(args, "minutes") === undefined ? "minutes" : null,
     option(args, "budget") === undefined ? "budget" : null,
   ].filter((field): field is string => field !== null);
@@ -984,10 +1002,7 @@ async function runCreate(
   const labelIds = options(args, "label").map(
     (name) => resolveLabel(labels, name).id,
   );
-  const parentAddress = option(args, "parent");
-  const parent = parentAddress
-    ? await resolveTask(domain, parentAddress)
-    : undefined;
+  const parent = await parentOption(domain, args);
   const input = tasksRpcContract.createTask.input.parse({
     projectId: project.id,
     title: requireOption(args, "title"),
@@ -1008,11 +1023,10 @@ async function runCreate(
     budget: dollarsOption(args, "budget") ?? null,
     budgetLimit: dollarsOption(args, "limit") ?? null,
     cost: dollarsOption(args, "cost") ?? null,
-    checks: options(args, "check"),
     dueDate: option(args, "due") ?? null,
+    startDate: option(args, "start") ?? null,
     parentTaskId: parent?.id ?? null,
     assignee: option(args, "assignee") ?? null,
-    epic: option(args, "epic") ?? null,
     labelIds,
   });
   const task = unwrapTask(
@@ -1246,6 +1260,7 @@ async function runShow(domain: TasksDomain, argv: string[]): Promise<string> {
         tasksRpcContract.listTaskPullRequests.input.parse({ taskId: task.id }),
       ),
     );
+  const epic = task.epicId ? await resolveTask(domain, task.epicId) : null;
   const payload = {
     task,
     project,
@@ -1268,16 +1283,16 @@ async function runShow(domain: TasksDomain, argv: string[]): Promise<string> {
       ["Priority", task.priority],
       ["Type", task.type ?? "-"],
       ["Estimate", task.estimate ?? "-"],
-      ["Checks", task.checks.join(", ") || "-"],
       ["Planned time", task.plannedMinutes === null ? "-" : formatMinutes(task.plannedMinutes)],
       ["Actual time", task.actualMinutes === null ? "-" : formatMinutes(task.actualMinutes)],
       ["Budget", task.budget === null ? "-" : formatDollars(task.budget)],
       ["Limit", task.budgetLimit === null ? "-" : formatDollars(task.budgetLimit)],
       ["Cost", task.cost === null ? "-" : formatDollars(task.cost)],
       ["Due", task.dueDate ?? "-"],
+      ["Start", task.startDate ?? "-"],
       ["Parent", task.parentTaskId ?? "-"],
       ["Assignee", task.assignee ?? "-"],
-      ["Epic", task.epic ?? "-"],
+      ["Epic", epic ? `${epic.key} ${epic.title}` : "-"],
       ["Labels", labels.map((label) => label.name).join(", ") || "-"],
       ["Created", task.createdAt],
       ["Updated", task.updatedAt],
@@ -1368,7 +1383,6 @@ async function runUpdate(
       "priority",
       "type",
       "estimate",
-      "check",
       "minutes",
       "minutes-actual",
       "budget",
@@ -1378,6 +1392,7 @@ async function runUpdate(
       "description",
       "description-file",
       "due",
+      "start",
       "parent",
       "assignee",
       "epic",
@@ -1389,11 +1404,11 @@ async function runUpdate(
       "no-assignee",
       "no-epic",
       "no-due",
+      "no-start",
       "no-key",
       "no-parent",
       "no-type",
       "no-estimate",
-      "no-check",
       "no-minutes",
       "no-minutes-actual",
       "no-budget",
@@ -1420,10 +1435,6 @@ async function runUpdate(
     "estimate",
     "no-estimate",
   );
-  const checkOpts = options(args, "check");
-  if (checkOpts.length > 0 && args.flags.has("no-check")) {
-    throw new CliError("--check and --no-check cannot be combined");
-  }
   const plannedMinutes = clearableOption(args, "minutes", minutesOption);
   const actualMinutes = clearableOption(args, "minutes-actual", minutesOption);
   const budget = clearableOption(args, "budget", dollarsOption);
@@ -1431,19 +1442,19 @@ async function runUpdate(
   const cost = clearableOption(args, "cost", dollarsOption);
   const dueDate = option(args, "due");
   validateSingleFlagChoice(dueDate, args.flags.has("no-due"), "due", "no-due");
-  const parentAddress = option(args, "parent");
-  validateSingleFlagChoice(
-    parentAddress,
-    args.flags.has("no-parent"),
-    "parent",
-    "no-parent",
+  const startDate = option(args, "start");
+  validateSingleFlagChoice(startDate, args.flags.has("no-start"), "start", "no-start");
+  // `--parent` and `--epic` both set the parent, `--no-parent` and `--no-epic` both clear it.
+  const PARENT_FLAG_CLASHES = [["parent", "no-parent"], ["parent", "no-epic"], ["epic", "no-parent"], ["epic", "no-epic"]] as const;
+  PARENT_FLAG_CLASHES.forEach(([setter, clearer]) =>
+    validateSingleFlagChoice(option(args, setter), args.flags.has(clearer), setter, clearer),
   );
-  const parent =
-    parentAddress === undefined
-      ? undefined
-      : await resolveTask(domain, parentAddress);
+  const parent = await parentOption(domain, args);
+  if (args.flags.has("no-epic") && (task.epicId == null || task.epicId !== task.parentTaskId)) {
+    throw new CliError(`the parent of ${task.key} is not an epic`);
+  }
+  const parentCleared = args.flags.has("no-parent") || args.flags.has("no-epic");
   const assignee = clearableName(args, "assignee");
-  const epic = clearableName(args, "epic");
   if (
     option(args, "machine") !== undefined &&
     option(args, "description-file") === undefined
@@ -1473,7 +1484,6 @@ async function runUpdate(
   const labelsChanged =
     options(args, "add-label").length > 0 ||
     options(args, "remove-label").length > 0;
-  const checksChanged = checkOpts.length > 0 || args.flags.has("no-check");
   if (
     slugOpt === undefined &&
     keyOpt === undefined &&
@@ -1489,15 +1499,15 @@ async function runUpdate(
     budget === undefined &&
     budgetLimit === undefined &&
     cost === undefined &&
-    !checksChanged &&
     option(args, "title") === undefined &&
     description === undefined &&
     dueDate === undefined &&
     !args.flags.has("no-due") &&
-    parentAddress === undefined &&
-    !args.flags.has("no-parent") &&
+    startDate === undefined &&
+    !args.flags.has("no-start") &&
+    parent === undefined &&
+    !parentCleared &&
     assignee === undefined &&
-    epic === undefined &&
     !labelsChanged
   ) {
     throw new CliError("no task changes were provided");
@@ -1517,20 +1527,12 @@ async function runUpdate(
         budget,
         budgetLimit,
         cost,
-        checks: args.flags.has("no-check")
-          ? []
-          : checkOpts.length > 0
-            ? checkOpts
-            : undefined,
         title: option(args, "title"),
         description,
         dueDate: args.flags.has("no-due") ? null : dueDate,
+        startDate: args.flags.has("no-start") ? null : startDate,
         assignee,
-        epic,
-        parentTaskId:
-          parentAddress === undefined && !args.flags.has("no-parent")
-            ? undefined
-            : (parent?.id ?? null),
+        parentTaskId: parent?.id ?? (parentCleared ? null : undefined),
         labelIds: labelsChanged ? [...nextLabels] : undefined,
         authorName: taskAuthor(ctx),
       }),
@@ -1607,6 +1609,32 @@ async function runComment(
   return args.flags.has("json")
     ? json({ comment })
     : `Commented on ${task.key}  ${comment.id}`;
+}
+
+const EPICS_HELP = `Usage: bb tasks epics migrate [--project <prefix-or-id>] [--dry-run] [--json]
+Every epic folder <assignee>/<epic>/ becomes a task typed epic at the assignee's level;
+the folder's tasks move up beside it, and the ones with no parent go under it.`;
+
+async function runEpics(domain: TasksDomain, ctx: PluginCliContext, argv: string[]): Promise<string> {
+  const [action, ...rest] = argv;
+  if (!action || action === "--help") return EPICS_HELP;
+  if (action !== "migrate") throw new CliError(`unknown epics subcommand: ${action}`);
+  const args = parseArgs(rest);
+  if (args.flags.has("help")) return EPICS_HELP;
+  assertAllowed(args, ["project"], ["dry-run", "json"]);
+  const project = await selectedProject(domain, ctx, option(args, "project"), true);
+  if (!project) throw new CliError("project is required");
+  const dryRun = args.flags.has("dry-run");
+  const { epics } = tasksRpcContract.migrateEpics.output.parse(
+    await domain.migrateEpics(tasksRpcContract.migrateEpics.input.parse({ projectId: project.id, dryRun })),
+  );
+  if (args.flags.has("json")) return json({ epics });
+  if (epics.length === 0) return "no epic folders on this board\n";
+  return epics
+    .map(({ key, name, assignee, tasks }) =>
+      `${key === null ? "would create" : dryRun ? `would reuse ${key}` : key} ${name} (${assignee}) ← ${tasks} tasks\n`,
+    )
+    .join("");
 }
 
 async function runLabel(domain: TasksDomain, argv: string[]): Promise<string> {
@@ -1725,7 +1753,7 @@ async function runAttachment(
     publishAttachmentChanged(bb, store.tasks, attachment);
     const payload = {
       attachment,
-      url: buildAttachmentUrl(attachment.id),
+      url: attachmentDownloadUrl(attachment.id),
     };
     return args.flags.has("json")
       ? json(payload)
@@ -2334,6 +2362,9 @@ export function registerTasksCli(
           break;
         case "label":
           stdout = await runLabel(domain, rest);
+          break;
+        case "epics":
+          stdout = await runEpics(domain, ctx, rest);
           break;
         case "attachment":
           stdout = await runAttachment(bb, store, domain, ctx, rest);

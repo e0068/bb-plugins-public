@@ -1,4 +1,4 @@
-import type { Comment, TaskCheck } from "../db/types.js";
+import type { Comment } from "../db/types.js";
 import { describe, it, expect } from "vitest";
 import { parseTaskFile, renderTaskFile } from "./task-file.js";
 import { parseComments, renderComments } from "./comments.js";
@@ -172,25 +172,22 @@ Second.`;
   });
 });
 
-describe("labels, checks, parent survive round-trip", () => {
-  it("рендерит и разбирает метки, чек-лист и родителя обратно", () => {
+describe("labels, parent survive round-trip", () => {
+  it("рендерит и разбирает метки и родителя обратно", () => {
     const task = {
       title: "With extras",
       description: "Body.",
       labels: ["frontend", "urgent-fix"],
-      checks: ["test", "review"] as TaskCheck[],
       parentRef: "TSK-1",
     };
 
     const rendered = renderTaskFile(task, "with-extras", []);
     expect(rendered).toContain("labels:");
     expect(rendered).toContain("frontend");
-    expect(rendered).toContain("checks:");
     expect(rendered).toContain("parent: TSK-1");
 
     const parsed = parseTaskFile(rendered, "backlog", "with-extras");
     expect(parsed.task.labels).toEqual(["frontend", "urgent-fix"]);
-    expect(parsed.task.checks).toEqual(["test", "review"]);
     expect(parsed.task.parentRef).toBe("TSK-1");
   });
 

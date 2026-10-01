@@ -44,19 +44,28 @@ export function requireNonEmpty(value: string, field: string): string {
   return trimmed;
 }
 
-export function validateDueDate(dueDate: string | null): string | null {
-  if (dueDate === null) return null;
-  if (!ISO_DATE_PATTERN.test(dueDate)) {
-    throw new Error("dueDate must be an ISO date in YYYY-MM-DD format");
+/** Shared by both plan dates; the field name is what the message reports. */
+function validatePlanDate(value: string | null, field: string): string | null {
+  if (value === null) return null;
+  if (!ISO_DATE_PATTERN.test(value)) {
+    throw new Error(`${field} must be an ISO date in YYYY-MM-DD format`);
   }
-  const parsed = new Date(`${dueDate}T00:00:00.000Z`);
+  const parsed = new Date(`${value}T00:00:00.000Z`);
   if (
     Number.isNaN(parsed.valueOf()) ||
-    parsed.toISOString().slice(0, 10) !== dueDate
+    parsed.toISOString().slice(0, 10) !== value
   ) {
-    throw new Error("dueDate must be a valid calendar date");
+    throw new Error(`${field} must be a valid calendar date`);
   }
-  return dueDate;
+  return value;
+}
+
+export function validateDueDate(dueDate: string | null): string | null {
+  return validatePlanDate(dueDate, "dueDate");
+}
+
+export function validateStartDate(startDate: string | null): string | null {
+  return validatePlanDate(startDate, "startDate");
 }
 
 export function validateMinutes(

@@ -18,6 +18,9 @@ if (!window.matchMedia) {
 }
 
 const app = await loadPluginApp(() => import("../../app"));
+// After the app: a module that reaches the SDK must not load before loadPluginApp.
+const { TaskSidePanelTab } = await import("./index.js");
+const { useOpenTask } = await import("../../client/task-opening.js");
 
 afterEach(cleanup);
 
@@ -34,6 +37,7 @@ const task = {
   status: "in_progress",
   priority: "high",
   dueDate: null,
+  startDate: null,
   parentTaskId: null,
   position: 100,
   createdAt: "2026-07-15T00:00:00.000Z",
@@ -46,7 +50,6 @@ const task = {
   budget: null,
   budgetLimit: null,
   cost: null,
-  checks: [],
   source: null,
 };
 
@@ -400,6 +403,63 @@ describe("тред в вызовах поверхностей треда", () =>
     expect(seen[0]).toMatchObject({ callerThreadId: "thr_worktree" });
   });
 
+  it("картинки задачи в панели треда грузятся из дерева треда", async () => {
+    const download =
+      "/api/v1/plugins/tasks/http/attachments/download?attachmentId=01HZZZZZZZZZZZZZZZZZZZZZA1";
+    const slot = renderSlot(
+      app.threadPanelActions[0]!,
+      { threadId: "thr_worktree", params: { taskKey: "TSK-4" } },
+      {
+        rpc: {
+          ...taskDetailRpc(() => ({
+            task: { ...task, description: `![inline.png](${download})` },
+          })),
+          listAttachments: () => ({
+            attachments: [
+              {
+                id: "01HZZZZZZZZZZZZZZZZZZZZZA1",
+                taskId: TASK_ID,
+                commentId: null,
+                fileName: "inline.png",
+                mime: "image/png",
+                sizeBytes: 3,
+                isImage: true,
+                createdAt: "2026-07-15T00:00:00.000Z",
+              },
+            ],
+          }),
+        },
+      },
+    );
+    await waitFor(() =>
+      expect(slot.container.querySelectorAll('img[alt="inline.png"]').length).toBe(2),
+    );
+    for (const image of Array.from(slot.container.querySelectorAll('img[alt="inline.png"]'))) {
+      expect(image.getAttribute("src")).toBe(`${download}&callerThreadId=thr_worktree`);
+    }
+  });
+
+  it("Cmd-V картинки в поле комментария кладёт её вложением под полем", async () => {
+    const slot = renderSlot(
+      app.threadPanelActions[0]!,
+      { threadId: "thr_worktree", params: { taskKey: "TSK-4" } },
+      { rpc: taskDetailRpc(() => ({ task })) },
+    );
+    const placeholder = await waitFor(() => {
+      const found = slot.container.querySelector('[data-placeholder^="Leave a comment"]');
+      expect(found).not.toBeNull();
+      return found!;
+    });
+    fireEvent.paste(placeholder.closest(".tiptap")!, {
+      clipboardData: {
+        files: [new File(["png"], "shot.png", { type: "image/png" })],
+        types: [],
+        getData: () => "",
+      },
+    });
+    await slot.findByText("shot.png");
+  });
+
   it("карточка ::task называет тред своего сообщения", async () => {
     const seen: unknown[] = [];
     const slot = renderSlot(
@@ -419,3 +479,87 @@ describe("тред в вызовах поверхностей треда", () =>
   });
 });
 
+/**
+ * Панель задачи ведёт свою историю: подзадача и родитель открываются в ней же,
+ * а «Назад» слева от ключа возвращает к предыдущей задаче панели.
+ */
+describe("переходы внутри панели задачи", () => {
+  type TaskFixture = Omit<typeof task, "parentTaskId"> & { parentTaskId: string | null };
+  const parent: TaskFixture = task;
+  const child: TaskFixture = {
+    ...task,
+    id: "01HZZZZZZZZZZZZZZZZZZZZZT2",
+    number: 5,
+    key: "TSK-5",
+    title: "Embed sub-task",
+    parentTaskId: TASK_ID,
+  };
+  const byKey: Record<string, TaskFixture> = { "TSK-4": parent, "TSK-5": child };
+  const byId: Record<string, TaskFixture> = { [parent.id]: parent, [child.id]: child };
+  const field = (input: unknown, name: string): unknown =>
+    typeof input === "object" && input !== null ? (input as Record<string, unknown>)[name] : undefined;
+  const treeRpc = {
+    ...taskDetailRpc(() => ({ task })),
+    getTaskByKey: (input: unknown) => ({ task: byKey[String(field(input, "taskKey"))] ?? null }),
+    getTask: (input: unknown) => ({ task: byId[String(field(input, "taskId"))] ?? null }),
+    listTasks: (input: unknown) => ({
+      tasks: field(input, "parentTaskId") === parent.id ? [child] : [],
+      nextCursor: null,
+    }),
+  };
+
+  it("открывает подзадачу в той же панели и возвращается к родителю", async () => {
+    const slot = renderSlot(
+      app.threadPanelActions[0]!,
+      { threadId: "thr_1", params: { taskKey: "TSK-4" } },
+      { rpc: treeRpc },
+    );
+    expect(slot.queryByRole("button", { name: /^Back to / })).toBeNull();
+
+    fireEvent.click(await slot.findByRole("button", { name: /TSK-5\s*Embed sub-task/ }));
+    await slot.findByRole("button", { name: "Open TSK-5 in Tasks" });
+    expect(slot.navigateCalls).toEqual([]);
+
+    fireEvent.click(slot.getByRole("button", { name: "Back to TSK-4" }));
+    await slot.findByRole("button", { name: "Open TSK-4 in Tasks" });
+    expect(slot.queryByRole("button", { name: /^Back to / })).toBeNull();
+  });
+
+  it("открывает родителя из плашки Sub-task of в той же панели", async () => {
+    const slot = renderSlot(
+      app.threadPanelActions[0]!,
+      { threadId: "thr_1", params: { taskKey: "TSK-5" } },
+      { rpc: treeRpc },
+    );
+    fireEvent.click(await slot.findByRole("button", { name: /Sub-task of/ }));
+    await slot.findByRole("button", { name: "Open TSK-4 in Tasks" });
+    expect(slot.navigateCalls).toEqual([]);
+    slot.getByRole("button", { name: "Back to TSK-5" });
+  });
+  it("вкладка Task снова показывает карточку, открытую повторно после ухода в подзадачу", async () => {
+    function BoardAndTab() {
+      const open = useOpenTask("side-panel");
+      return (
+        <>
+          <button type="button" onClick={() => open("TSK-4")}>
+            card TSK-4
+          </button>
+          <TaskSidePanelTab />
+        </>
+      );
+    }
+    const slot = renderSlot(
+      { component: BoardAndTab } as never,
+      {},
+      { rpc: treeRpc, experimental_openFixedTab: () => true },
+    );
+    fireEvent.click(slot.getByRole("button", { name: "card TSK-4" }));
+    fireEvent.click(await slot.findByRole("button", { name: /TSK-5\s*Embed sub-task/ }));
+    await slot.findByRole("button", { name: "Open TSK-5 in Tasks" });
+
+    fireEvent.click(slot.getByRole("button", { name: "card TSK-4" }));
+    await slot.findByRole("button", { name: "Open TSK-4 in Tasks" });
+    expect(slot.queryByRole("button", { name: /^Back to / })).toBeNull();
+    expect(slot.navigateCalls).toEqual([]);
+  });
+});

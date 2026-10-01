@@ -1,13 +1,15 @@
-import { mkdir, readdir, readFile, rename, stat, writeFile } from "node:fs/promises";
+import { mkdir, readdir, rename, stat, writeFile } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 import type { TaskStatus } from "../db/types.js";
 import { statusFromFolder } from "./map.js";
 import { parseTaskFile, type ParsedTaskFile } from "./task-file.js";
 import { taskTimestamps } from "./timestamps.js";
+import { createParseCache, type ParseCache } from "./parse-cache.js";
 import { NO_PLACEMENT, placementSegments, type TaskPlacement } from "./placement.js";
 
-/** Plain node:fs/promises reads and writes — no watcher, no cache, no
- * background sync. A board's files are read fresh on every request; using
+/** Plain node:fs/promises reads and writes — no watcher, no background
+ * sync. A board's files are looked at fresh on every request; a file whose
+ * stat did not change is not parsed again (filesync/parse-cache.ts). Using
  * the async fs API rather than the *Sync one keeps that request from
  * blocking the plugin's single event loop while it waits on disk (see
  * decisions/tasks-plus-board-roots-blocks-rpc.md). */
@@ -28,20 +30,25 @@ export interface RepoTaskFile extends ParsedTaskFile, TaskPlacement {
  *  the disk will not hand it over — content it cannot make sense of still
  *  comes back as a task with empty fields (see
  *  decisions/tasks-every-file-in-a-status-folder-is-a-task.md). */
-export async function readTaskFiles(absRoot: string): Promise<RepoTaskFile[]> {
-  return (await readLevel(absRoot, NO_PLACEMENT)).flat();
+export async function readTaskFiles(
+  absRoot: string,
+  cache: ParseCache = createParseCache(),
+): Promise<RepoTaskFile[]> {
+  const files = (await readLevel(absRoot, NO_PLACEMENT, cache)).flat();
+  cache.keepOnly(absRoot, new Set(files.map((file) => file.filePath)));
+  return files;
 }
 
-async function readLevel(dir: string, placement: TaskPlacement): Promise<RepoTaskFile[][]> {
+async function readLevel(dir: string, placement: TaskPlacement, cache: ParseCache): Promise<RepoTaskFile[][]> {
   const entries = await safeReaddir(dir);
   const perEntry = await Promise.all(
     entries.map(async (entry): Promise<RepoTaskFile[][]> => {
       const status = statusFromFolder(entry);
-      if (status !== null) return [await readStatusDir(join(dir, entry), status, placement)];
+      if (status !== null) return [await readStatusDir(join(dir, entry), status, placement, cache)];
       if (entry.startsWith(".") || placement.epic !== null) return [];
       const child: TaskPlacement =
         placement.assignee === null ? { assignee: entry, epic: null } : { ...placement, epic: entry };
-      return readLevel(join(dir, entry), child);
+      return readLevel(join(dir, entry), child, cache);
     }),
   );
   return perEntry.flat();
@@ -51,31 +58,24 @@ async function readStatusDir(
   statusDir: string,
   status: TaskStatus,
   placement: TaskPlacement,
+  cache: ParseCache,
 ): Promise<RepoTaskFile[]> {
   const names = (await safeReaddir(statusDir)).filter((name) => name.endsWith(".md"));
-  const results = await Promise.all(names.map((name) => readOneTaskFile(statusDir, status, name, placement)));
+  const results = await Promise.all(
+    names.map((name) => {
+      const slug = name.slice(0, -".md".length);
+      const filePath = join(statusDir, name);
+      return cache.read(filePath, (content, times): RepoTaskFile => ({
+        ...parseTaskFile(content, status, slug),
+        ...taskTimestamps(times),
+        ...placement,
+        filePath,
+        status,
+        slug,
+      }));
+    }),
+  );
   return results.filter((file): file is RepoTaskFile => file !== null);
-}
-
-async function readOneTaskFile(
-  statusDir: string,
-  status: TaskStatus,
-  name: string,
-  placement: TaskPlacement,
-): Promise<RepoTaskFile | null> {
-  const slug = name.slice(0, -".md".length);
-  const filePath = join(statusDir, name);
-  let content: string;
-  let times: { birthtimeMs: number; mtimeMs: number };
-  try {
-    const [read, stats] = await Promise.all([readFile(filePath, "utf8"), stat(filePath)]);
-    content = read;
-    times = { birthtimeMs: stats.birthtimeMs, mtimeMs: stats.mtimeMs };
-  } catch {
-    return null;
-  }
-  const parsed = parseTaskFile(content, status, slug);
-  return { ...parsed, ...taskTimestamps(times), ...placement, filePath, status, slug };
 }
 
 async function safeReaddir(dir: string): Promise<string[]> {

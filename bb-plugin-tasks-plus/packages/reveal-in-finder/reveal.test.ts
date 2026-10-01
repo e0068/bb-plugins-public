@@ -10,9 +10,9 @@ describe("resolveSourceAbsPath", () => {
     expect(
       resolveSourceAbsPath(
         "/Users/me/code/repo",
-        "memory/tasks/backlog/foo.md",
+        "docs/tasks/backlog/foo.md",
       ),
-    ).toBe("/Users/me/code/repo/memory/tasks/backlog/foo.md");
+    ).toBe("/Users/me/code/repo/docs/tasks/backlog/foo.md");
   });
 
   it("normalizes a root with a trailing slash", () => {
@@ -51,19 +51,19 @@ function fakeExecFile(error: Error | null): {
 describe("revealInFinder", () => {
   it("calls execFile with open -R <absPath> as argv, no shell", async () => {
     const { execFile, calls } = fakeExecFile(null);
-    const result = await revealInFinder("/repo/memory/tasks/foo.md", {
+    const result = await revealInFinder("/repo/docs/tasks/foo.md", {
       platform: "darwin",
       execFile,
     });
     expect(result).toEqual({ revealed: true, error: null });
     expect(calls).toEqual([
-      { file: "open", args: ["-R", "/repo/memory/tasks/foo.md"] },
+      { file: "open", args: ["-R", "/repo/docs/tasks/foo.md"] },
     ]);
   });
 
   it("refuses to run on a non-macOS platform without calling execFile", async () => {
     const { execFile, calls } = fakeExecFile(null);
-    const result = await revealInFinder("/repo/memory/tasks/foo.md", {
+    const result = await revealInFinder("/repo/docs/tasks/foo.md", {
       platform: "linux",
       execFile,
     });

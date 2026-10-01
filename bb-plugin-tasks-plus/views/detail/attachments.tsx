@@ -1,4 +1,8 @@
 import { CALLER_THREAD_FIELD } from "../../shared/enums.js";
+import {
+  attachmentDownloadUrl,
+  attachmentUrlInThread,
+} from "../../shared/attachment-url.js";
 import { useCallerThreadId } from "../../client/caller-thread.js";
 import { useCallback, useEffect, useState } from "react";
 import type { Attachment, AttachmentOwnerRef } from "../../shared/contract.js";
@@ -6,9 +10,26 @@ import { formatFileSize } from "../../shared/format.js";
 import { ConfirmDialog } from "../../components/confirm-dialog.js";
 import { Icon } from "@/components/ui/icon";
 
-/** Frontend twin of attachments/index.ts `buildAttachmentUrl`. */
-export function attachmentDownloadUrl(attachmentId: string): string {
-  return `/api/v1/plugins/tasks/http/attachments/download?attachmentId=${encodeURIComponent(attachmentId)}`;
+/**
+ * Адрес картинки в текущей поверхности. Картинка грузится своим запросом, а не
+ * RPC, поэтому тред в неё не подмешивается сам: внутри поверхности треда он
+ * едет параметром адреса, и сервер находит вложение задачи его ветки.
+ */
+export function useDisplayImageSrc(): (src: string) => string {
+  const callerThreadId = useCallerThreadId();
+  return useCallback(
+    (src: string) => attachmentUrlInThread(src, callerThreadId),
+    [callerThreadId],
+  );
+}
+
+/** То же для вложения, известного по id: сетка, лайтбокс, лента комментариев. */
+export function useAttachmentUrl(): (attachmentId: string) => string {
+  const displayImageSrc = useDisplayImageSrc();
+  return useCallback(
+    (attachmentId: string) => displayImageSrc(attachmentDownloadUrl(attachmentId)),
+    [displayImageSrc],
+  );
 }
 
 let tokenPromise: Promise<string> | null = null;
@@ -83,6 +104,7 @@ export function Lightbox({
   attachment: Attachment;
   onClose: () => void;
 }) {
+  const attachmentUrl = useAttachmentUrl();
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key !== "Escape") return;
@@ -105,7 +127,7 @@ export function Lightbox({
       onClick={onClose}
     >
       <img
-        src={attachmentDownloadUrl(attachment.id)}
+        src={attachmentUrl(attachment.id)}
         alt={attachment.fileName}
         className="max-h-full max-w-full rounded-md shadow-md"
         onClick={(event) => event.stopPropagation()}
@@ -149,6 +171,7 @@ export function AttachmentsGrid({
   onRemove?: (attachment: Attachment) => Promise<void>;
   onError?: (message: string) => void;
 }) {
+  const attachmentUrl = useAttachmentUrl();
   const [lightbox, setLightbox] = useState<Attachment | null>(null);
   // Snapshot of the attachment awaiting confirmation, kept independent of the
   // live `attachments` prop so a concurrent realtime refresh can't drop it.
@@ -214,7 +237,7 @@ export function AttachmentsGrid({
       className="flex items-center gap-2 rounded-md border border-border bg-card px-2.5 py-1.5 text-sm shadow-2xs"
     >
       <a
-        href={attachmentDownloadUrl(attachment.id)}
+        href={attachmentUrl(attachment.id)}
         download={attachment.fileName}
         className="flex min-w-0 items-center gap-2 rounded-sm hover:bg-state-hover"
       >
@@ -244,7 +267,7 @@ export function AttachmentsGrid({
         onClick={() => setLightbox(attachment)}
       >
         <img
-          src={attachmentDownloadUrl(attachment.id)}
+          src={attachmentUrl(attachment.id)}
           alt={attachment.fileName}
           className="block h-24 w-36 object-cover transition-opacity group-hover:opacity-90"
         />

@@ -22,7 +22,7 @@ const BOARD: BoardConfig = {
   folderId: null,
   linkedBbProjectId: null,
   tasksFolder: "tasks",
-  createdAt: "2026-01-01T00:00:00.000Z",
+  database: null, createdAt: "2026-01-01T00:00:00.000Z",
 };
 
 function fakeKv(): KvStore {
@@ -53,7 +53,7 @@ function apiStore(): TasksApiStore {
     tasks,
     // These list-filter tests never read the transition log; a no-op double
     // keeps the store total (real behaviour: db/transition-log.test.ts).
-    transitions: { record() {}, range: () => [] },
+    transitions: { record() {}, range: () => [], firstAtMs: () => null },
     transaction: (operation) => tasks.transaction(operation),
     projectTaskCount: async (projectId) =>
       (await tasks.listTasks({ projectId })).length,

@@ -1,6 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { PluginNavPanelProps } from "@get-bb/plugin-sdk/app";
-import { useProjects } from "../client/data.js";
+import { useBbNavigate, type PluginNavPanelProps } from "@get-bb/plugin-sdk/app";
+import type { TaskLayout } from "../shared/enums.js";
+import type { ViewTarget } from "../views/common/view-state.js";
+import { useProjects, useSavedViews } from "../client/data.js";
+import { applyListState } from "../views/common/view-state.js";
+import type { NewTaskSeed } from "../views/common/new-task-seed.js";
+import { NewTaskSeedContext } from "../views/common/new-task-seed-context.js";
 import {
   PANEL_PATH,
   parseTasksRoute,
@@ -9,18 +14,23 @@ import {
   type TasksNavigation,
   type TasksRoute,
 } from "../client/routes.js";
-import { loadViewMode, storeViewMode } from "./view-preference.js";
+import { loadLayout, loadStoredLayout, storeLayout } from "./view-preference.js";
 import { TasksTopbar } from "./topbar.js";
+import { isScreenRoute, layoutKeyOf, viewTargetOf } from "./view-target.js";
+import { DisplayPanel } from "../views/common/display-panel.js";
 import { TasksNavigationPanelContent } from "./navigation-panel.js";
 import {
   ResizeHandle,
   useResizableWidth,
-} from "../packages/resizable-pane/react";
-import { useRememberedRoute } from "../packages/panel-state/react";
-import { ListView } from "../views/list/index.js";
+} from "@bb-plugins/resizable-pane/react";
+import { useRememberedRoute } from "@bb-plugins/panel-state/react";
+import { TableView } from "../views/table/index.js";
 import { BoardView } from "../views/board/index.js";
+import { applyBoardState, hasBoardDraft, scopeBoardKey } from "../views/board/board-preference.js";
 import { DetailView } from "../views/detail/index.js";
 import { AnalyticsDashboard } from "../views/analytics/AnalyticsDashboard.js";
+import { ReducedColorsProvider } from "@bb-plugins/reduced-colors";
+import { useTasksRpc } from "./data.js";
 import {
   ManagePanel,
   NewProjectDialog,
@@ -28,13 +38,10 @@ import {
 } from "../views/manage/index.js";
 import { Button } from "@/components/ui/button";
 import { Icon } from "@/components/ui/icon";
+import { useIsCompactViewport } from "@/components/ui/hooks/use-compact-viewport";
+import { visibleColumns } from "./columns.js";
 import { TasksRefreshProvider } from "../client/refresh.js";
-
-/** Below this container width the board is unusable (columns get crushed), so
-    project routes render the list and the topbar hides the List/Board toggle.
-    Matches the rows' two-line breakpoint (@md, 448px) so the whole surface
-    flips to its phone layout at one width. */
-const BOARD_MIN_WIDTH = 448;
+import { TakenRefusalProvider } from "../components/task-taken-dialog.js";
 
 function isEditableTarget(target: EventTarget | null): boolean {
   if (!(target instanceof HTMLElement)) return false;
@@ -79,45 +86,107 @@ function NoProjectsEmptyState({ onNewProject }: { onNewProject: () => void }) {
   );
 }
 
-function RouteOutlet({
-  route,
-  boardUsable,
-}: {
-  route: ResolvedTasksRoute;
-  /** False in phone-width containers: board routes fall back to the list
-      (deep links/rotation would otherwise strand a crushed board with the
-      toggle hidden). The URL keeps the board view for when width returns. */
-  boardUsable: boolean;
-}) {
+/**
+ * A saved view's table or board. A view carries the whole state of the
+ * scope it opens, so opening it writes that state into the scope it names
+ * and then renders the scope — a view is a navigation entry, not a second
+ * kind of table. A board view keeps a draft of its own, keyed by the view.
+ */
+function SavedViewOutlet({ savedViewId, target }: { savedViewId: string; target: ViewTarget | null }) {
+  const navigation = useTasksNavigation();
+  const { data } = useSavedViews();
+  const view = target?.view ?? null;
+  // The view's state is written BEFORE the table or board exists, so neither
+  // draws a frame of the state it replaces — hence "applied" gating the
+  // render rather than an effect running alongside it.
+  const [appliedFor, setAppliedFor] = useState<string | null>(null);
+  // Keyed by view *and* the layout it's applied onto: switching a view's own
+  // Table/Board choice is a second, later apply of the same view, not a
+  // no-op — each layout keeps its own filters, and only the one on screen is
+  // read back. `useSavedViews` handing back a fresh array on every
+  // views:changed (a rename here, a save in another window) must not
+  // re-trigger this — hence keying on the pair, not on the `view` object.
+  const applied = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (!view || target === null) return;
+    const key = `${savedViewId}:${target.layout}`;
+    if (applied.current === key) return;
+    applied.current = key;
+    if (target.layout === "board") {
+      // A board view keeps its own draft: opened again, it shows what the
+      // owner left there until Reset — and never touches the scope's board.
+      const boardKey = scopeBoardKey(target.scope, view.id);
+      if (!hasBoardDraft(boardKey)) applyBoardState(boardKey, view);
+    } else {
+      applyListState(view);
+    }
+    setAppliedFor(key);
+  }, [savedViewId, view, target]);
+
+  if (data === undefined) return null;
+  if (!view || target === null) {
+    return (
+      <div className="flex h-full flex-col items-center justify-center gap-3 p-6 text-center">
+        <p className="text-sm font-medium">This view is gone</p>
+        <p className="text-sm text-muted-foreground">
+          It was deleted, here or in another window.
+        </p>
+        <Button size="sm" onClick={() => navigation.go({ kind: "all", view: null })}>
+          All tasks
+        </Button>
+      </div>
+    );
+  }
+  if (appliedFor !== `${savedViewId}:${target.layout}`) return null;
+  return target.layout === "board" ? (
+    <BoardView key={savedViewId} scope={target.scope} viewId={view.id} />
+  ) : (
+    <TableView key={savedViewId} scope={target.scope} />
+  );
+}
+
+function RouteOutlet({ route, target }: { route: ResolvedTasksRoute; target: ViewTarget | null }) {
   switch (route.kind) {
-    case "all":
-      return <ListView projectId={null} />;
-    case "active":
-      return <ListView projectId={null} listScope="active" />;
-    case "waiting":
-      return <ListView projectId={null} listScope="waiting" />;
     case "manage":
       return <ManagePanel />;
     case "analytics":
-      return <AnalyticsDashboard />;
+      return <AnalyticsScreen />;
     case "task":
       return <DetailView taskKey={route.taskKey} />;
+    case "view":
+      return <SavedViewOutlet savedViewId={route.savedViewId} target={target} />;
+    case "all":
+    case "active":
+    case "waiting":
     case "project":
-      return route.view === "board" && boardUsable ? (
-        <BoardView projectId={route.projectId} />
+      // viewTargetOf hands back a target for exactly these kinds.
+      return target === null ? null : target.layout === "board" ? (
+        <BoardView scope={target.scope} />
       ) : (
-        <ListView projectId={route.projectId} />
+        <TableView scope={target.scope} />
       );
   }
 }
 
 /**
- * A project URL without a `?view=` marker (sidebar click, breadcrumb, deep
- * link) restores the view this client last used for that project.
+ * A screen URL without a `?view=` marker (sidebar click, breadcrumb, deep
+ * link) restores the layout this client last used for that screen.
  */
 function resolveRoute(route: TasksRoute): ResolvedTasksRoute {
-  if (route.kind !== "project") return route;
-  return { ...route, view: route.view ?? loadViewMode(route.projectId) };
+  switch (route.kind) {
+    case "all":
+    case "active":
+    case "waiting":
+    case "project":
+      // layoutKeyOf always answers a key for these four kinds — see its doc.
+      return { ...route, view: route.view ?? loadLayout(layoutKeyOf(route)!) };
+    case "manage":
+    case "analytics":
+    case "view":
+    case "task":
+      return route;
+  }
 }
 
 function TasksAppShellContent({ subPath }: PluginNavPanelProps) {
@@ -138,26 +207,48 @@ function TasksAppShellContent({ subPath }: PluginNavPanelProps) {
       [tasksNavigation],
     ),
   );
-  // Every explicit project view in a navigation is a user choice worth
-  // remembering — the topbar's List/Board toggle is the only source of one.
+  // Every explicit layout in a navigation is a user choice worth remembering
+  // — the Display panel's Table/Board switch is the only source of one.
   const navigation = useMemo<TasksNavigation>(
     () => ({
-      go: (target, options) => {
-        if (target.kind === "project" && target.view !== null) {
-          storeViewMode(target.projectId, target.view);
+      go: (nextRoute, options) => {
+        switch (nextRoute.kind) {
+          case "all":
+          case "active":
+          case "waiting":
+          case "project":
+            // layoutKeyOf always answers a key for these four kinds.
+            if (nextRoute.view !== null) storeLayout(layoutKeyOf(nextRoute)!, nextRoute.view);
+            break;
+          case "manage":
+          case "analytics":
+          case "view":
+          case "task":
+            break;
         }
-        tasksNavigation.go(target, options);
+        tasksNavigation.go(nextRoute, options);
       },
     }),
     [tasksNavigation],
   );
+  // A saved view's own Table/Board choice: written under its "view:<id>" key
+  // and redrawn in place — a view never navigates to change its layout.
+  const [, forceViewLayoutRerender] = useState(0);
+  const setViewLayout = useCallback((savedViewId: string, next: TaskLayout) => {
+    storeLayout(`view:${savedViewId}`, next);
+    forceViewLayoutRerender((tick) => tick + 1);
+  }, []);
   const [newTaskOpen, setNewTaskOpen] = useState(false);
+  // The open list's filters as a draft, so New task and "c" start from them.
+  const [listSeed, setListSeed] = useState<NewTaskSeed | null>(null);
   const [newProjectOpen, setNewProjectOpen] = useState(false);
-  // Navigation moved out of the fixed host tab (experimental_fixedTabs,
-  // which bb 0.40.0 doesn't mount — see BP-53) into the panel's own left
-  // column. The thread's right panel is still reserved for embedding a
-  // specific task (threadPanelAction).
-  const [navOpen, setNavOpen] = useState(true);
+  // Navigation is the panel's own left column. The page's right panel holds
+  // the Task tab a click opens into (client/task-opening.ts).
+  // Ширина решает, с чего панель открывается, и только это: дальше открыть или
+  // закрыть навигацию — выбор владельца, и поворот экрана его не переигрывает.
+  const compact = useIsCompactViewport();
+  const [navOpen, setNavOpen] = useState(() => !compact);
+  const columns = visibleColumns({ compact, navOpen });
   const { width: navWidth, startResize } = useResizableWidth({
     side: "left",
     initial: 280,
@@ -167,22 +258,16 @@ function TasksAppShellContent({ subPath }: PluginNavPanelProps) {
   });
 
   const mainRef = useRef<HTMLElement>(null);
-  const [boardUsable, setBoardUsable] = useState(true);
-  useEffect(() => {
-    const main = mainRef.current;
-    if (!main || typeof ResizeObserver === "undefined") return;
-    const update = () => {
-      // Board usability tracks the same box the topbar's @md container rule
-      // measures, after BB lays out its native right panel.
-      const mainWidth = main.clientWidth;
-      setBoardUsable(!(mainWidth > 0 && mainWidth < BOARD_MIN_WIDTH));
-    };
-    update();
-    const observer = new ResizeObserver(update);
-    observer.observe(main);
-    return () => observer.disconnect();
-  }, []);
   const projects = useProjects();
+  const savedViews = useSavedViews();
+  // The table or board on screen: the header's controls and the Display panel
+  // both act on it. Where there is none, the panel has nothing to set and closes.
+  const target = viewTargetOf(route, savedViews.data, loadStoredLayout);
+  const [displayOpen, setDisplayOpen] = useState(false);
+  const hasTarget = target !== null;
+  useEffect(() => {
+    if (!hasTarget) setDisplayOpen(false);
+  }, [hasTarget]);
 
   // Esc from a task returns to the list/board the user came from. null until
   // the user browses one this session (e.g. a deep-linked refresh).
@@ -191,8 +276,19 @@ function TasksAppShellContent({ subPath }: PluginNavPanelProps) {
     if (route.kind !== "task") lastBrowseRouteRef.current = route;
     // Routes are plain data; keying on subPath tracks every route change.
   }, [subPath]);
+
+  // A move made in navigation is a move *into* the area: on one column the
+  // area has to come forward, or the tap looks as if nothing happened. It is
+  // the move that closes navigation, not the width — turning the phone
+  // sideways and back leaves open what the owner opened.
+  const navRouteRef = useRef(subPath);
+  useEffect(() => {
+    if (navRouteRef.current === subPath) return;
+    navRouteRef.current = subPath;
+    if (compact) setNavOpen(false);
+  }, [subPath, compact]);
   const backFromTask = () =>
-    navigation.go(lastBrowseRouteRef.current ?? { kind: "all" });
+    navigation.go(lastBrowseRouteRef.current ?? { kind: "all", view: null });
   const onTaskRoute = route.kind === "task";
   const backRef = useRef(backFromTask);
   backRef.current = backFromTask;
@@ -230,7 +326,7 @@ function TasksAppShellContent({ subPath }: PluginNavPanelProps) {
 
   return (
     <div className="relative flex h-full min-h-0 bg-background text-foreground">
-      {navOpen ? (
+      {columns === "all" ? (
         <>
           <div
             style={{ width: navWidth }}
@@ -260,21 +356,49 @@ function TasksAppShellContent({ subPath }: PluginNavPanelProps) {
           onBack={backFromTask}
           navOpen={navOpen}
           onToggleNav={() => setNavOpen((v) => !v)}
+          target={target}
+          displayOpen={displayOpen && hasTarget}
+          onToggleDisplay={() => setDisplayOpen((open) => !open)}
         />
-        <div className="min-h-0 flex-1 overflow-auto">
-          {noProjects && route.kind !== "task" && route.kind !== "manage" ? (
+        <div className="relative flex min-h-0 flex-1">
+        <div className="min-h-0 min-w-0 flex-1 overflow-auto">
+          {/* Узкий экран: навигация занимает то же место, что область, — топбар
+              с кнопкой остаётся над ней, и он же уводит навигацию обратно. */}
+          {columns === "navigation" ? (
+            <TasksNavigationPanelContent subPath={subPath} />
+          ) : noProjects && route.kind !== "task" && route.kind !== "manage" ? (
             <NoProjectsEmptyState
               onNewProject={() => setNewProjectOpen(true)}
             />
           ) : (
-            <RouteOutlet route={route} boardUsable={boardUsable} />
+            <NewTaskSeedContext.Provider value={setListSeed}>
+              <RouteOutlet route={route} target={target} />
+            </NewTaskSeedContext.Provider>
           )}
+        </div>
+        {displayOpen && target !== null ? (
+          // Beside the tasks on a wide panel; over them, full width, on a narrow one.
+          <div className="w-[300px] shrink-0 border-l border-border-hairline max-md:absolute max-md:inset-0 max-md:z-30 max-md:w-full max-md:border-l-0">
+            <DisplayPanel
+              target={target}
+              layout={
+                isScreenRoute(route)
+                  ? { value: route.view, onChange: (view) => navigation.go({ ...route, view }) }
+                  : route.kind === "view"
+                    ? { value: target.layout, onChange: (view) => setViewLayout(route.savedViewId, view) }
+                    : undefined
+              }
+              onClose={() => setDisplayOpen(false)}
+            />
+          </div>
+        ) : null}
         </div>
       </main>
       <NewTaskDialog
         open={newTaskOpen}
         onOpenChange={setNewTaskOpen}
         projectId={newTaskProjectId}
+        seed={listSeed ?? undefined}
       />
       <NewProjectDialog
         open={newProjectOpen}
@@ -285,9 +409,24 @@ function TasksAppShellContent({ subPath }: PluginNavPanelProps) {
 }
 
 export function TasksAppShell(props: PluginNavPanelProps) {
+  const navigate = useBbNavigate();
+  // The refusal dialog sits above every screen of the panel; its way into a
+  // thread is bb's navigation, handed down because components/ knows no router.
   return (
     <TasksRefreshProvider>
-      <TasksAppShellContent {...props} />
+      <TakenRefusalProvider onOpenThread={(threadId) => navigate.toThread(threadId)}>
+        <TasksAppShellContent {...props} />
+      </TakenRefusalProvider>
     </TasksRefreshProvider>
+  );
+}
+
+/** The analytics screen under its Reduced Colors, loaded once per visit (packages/reduced-colors). */
+function AnalyticsScreen() {
+  const rpc = useTasksRpc();
+  return (
+    <ReducedColorsProvider load={() => rpc.call("loadReducedColors", {})}>
+      <AnalyticsDashboard />
+    </ReducedColorsProvider>
   );
 }

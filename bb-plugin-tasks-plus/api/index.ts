@@ -1,8 +1,17 @@
 import type { BbPluginApi, PluginRpcHandlers } from "@get-bb/plugin-sdk";
+import { parseReducedColors, REDUCED_COLORS_KV_KEY } from "@bb-plugins/reduced-colors/core/settings";
+import { burndownEnds, forecastDays, openSeriesOf } from "../analytics/burndown.js";
+import { ganttRowsOf } from "../analytics/gantt.js";
+import { descendantsOf } from "../shared/subtree.js";
+import { hostname } from "node:os";
 import {
   loadFileTasksStore,
+  TaskAlreadyTaken,
   type FileTasksStore,
 } from "../filesync/store.js";
+import { describeTakenBy } from "../shared/task-claim.js";
+import { DatabaseAuthFailed, DatabaseUnreachable } from "../filesync/task-repo.js";
+import { TaskWriteConflict } from "../filesync/write-retry.js";
 import { currentCallerEnvironment } from "../filesync/caller-scope.js";
 import type { CallerEnvironmentCache } from "../filesync/caller-cache.js";
 import { withCallerScope } from "./caller-scope.js";
@@ -12,7 +21,9 @@ import type {
   Comment as StoredComment,
 } from "../db/types.js";
 import { createTransitionLog, type TransitionLog } from "../db/transition-log.js";
-import { seriesFromTransitions, snapshotOf } from "../analytics/aggregate.js";
+import { snapshotOf } from "../analytics/aggregate.js";
+import { createdMs, flowOf, inProjects, movesByTask } from "../analytics/flow.js";
+import { closedInBins } from "../analytics/closed.js";
 import {
   AttachmentReferencedError,
   deleteAttachmentById,
@@ -23,8 +34,9 @@ import { isSideChatShapedThread } from "../shared/side-chat";
 import {
   resolveSourceAbsPath,
   revealInFinderHere,
-} from "../packages/reveal-in-finder";
+} from "@bb-plugins/reveal-in-finder";
 import {
+  ALL_TIME,
   tasksRpcContract,
   type Attachment as AttachmentMetadata,
   type Project,
@@ -70,12 +82,35 @@ export interface TasksApiStore {
  * counts, sidebar summary) is already on the `Task`/`Project` records the
  * store returns, so no separate query layer is needed.
  */
+/** Project order the sidebar shows: by name, ties broken by id. */
+function byNameThenId(a: { name: string; id: string }, b: { name: string; id: string }): number {
+  return a.name.localeCompare(b.name) || a.id.localeCompare(b.id);
+}
+
+/** The name this machine stamps on the tasks it takes: the name of the only
+ *  host bb knows, and `fallback` (the computer's own name) when there are
+ *  several or none. */
+export function machineNameOf(hosts: readonly { name: string }[], fallback: string): string {
+  const [only] = hosts;
+  return hosts.length === 1 && only !== undefined ? only.name : fallback;
+}
+
+/** The machine's name from bb's host list; a failed request reads as the computer's own name. */
+async function readMachineName(bb: BbPluginApi): Promise<string> {
+  try {
+    return machineNameOf(await bb.sdk.hosts.list(), hostname());
+  } catch {
+    return hostname();
+  }
+}
+
 export async function createStore(bb: BbPluginApi): Promise<TasksApiStore> {
   const tasks = await loadFileTasksStore(
     bb.storage.kv,
     (error) =>
       bb.log.warn(`tasks-plus: failed to persist store state: ${String(error)}`),
     currentCallerEnvironment,
+    await readMachineName(bb),
   );
 
   const transitions = createTransitionLog(bb.storage.database());
@@ -106,7 +141,7 @@ export async function createStore(bb: BbPluginApi): Promise<TasksApiStore> {
     async sidebarSummary(): Promise<SidebarProjectSummary[]> {
       return Promise.all(
         [...tasks.listProjects()]
-          .sort((a, b) => a.name.localeCompare(b.name) || a.id.localeCompare(b.id))
+          .sort(byNameThenId)
           .map(async (project) => {
             // One board read for all of the project's tasks and threads —
             // listTaskThreads per task would re-read the whole board once per
@@ -147,6 +182,31 @@ function fail(code: TasksDomainError["code"], message: string): never {
 
 function taskFailure(error: TasksDomainFailure) {
   return { ok: false as const, error: error.detail };
+}
+
+/** A database board's write that did not happen, as a result the board and the CLI show; null for any other error. */
+function databaseFailure(error: unknown) {
+  const detail =
+    error instanceof DatabaseUnreachable
+      ? { code: "database_unreachable" as const, message: "The board's database cannot be reached — the task was not changed." }
+      : error instanceof DatabaseAuthFailed
+        ? { code: "database_auth_failed" as const, message: "The board's database refused its token — the task was not changed." }
+        : error instanceof TaskWriteConflict
+          ? { code: "task_write_conflict" as const, message: "Another machine kept changing the task — the edit was not saved, try again." }
+          : null;
+  return detail === null ? null : { ok: false as const, error: detail };
+}
+
+/** A refused take as a result the board and the CLI show: the machine that holds the task, named. */
+function alreadyTakenFailure(error: TaskAlreadyTaken) {
+  return {
+    ok: false as const,
+    error: {
+      code: "task_already_taken" as const,
+      message: describeTakenBy(error.key, error.takenBy, new Date()),
+      takenBy: error.takenBy,
+    },
+  };
 }
 
 function projectFailure(error: TasksDomainFailure) {
@@ -227,7 +287,7 @@ function resolveTaskSourcePath(task: StoredTask): string | null {
 }
 
 /** `store.tasks.getTask`/`listTasks` already return the full API shape
- *  (labelIds, checks, source) — see filesync/assemble.ts — so these are
+ *  (labelIds, flow, source) — see filesync/assemble.ts — so these are
  *  identity functions kept only so call sites don't need to change. */
 function apiTask(_store: TasksApiStore, task: StoredTask): Task {
   return task;
@@ -267,18 +327,22 @@ async function validateTaskParent(
       "A sub-task must belong to the same project as its parent",
     );
   }
-  if (parent.parentTaskId !== null) {
-    fail(
-      "subtask_depth_exceeded",
-      "Tasks support at most one level of sub-tasks",
-    );
+  // Any depth is allowed, but not a loop: the parent must not lie under the task.
+  if (ownTaskId && (await isUnder(store, projectId, parentTaskId, ownTaskId))) {
+    fail("task_parent_invalid", "A task cannot be its own ancestor");
   }
-  if (ownTaskId && (await store.tasks.listSubtasks(ownTaskId)).length > 0) {
-    fail(
-      "subtask_depth_exceeded",
-      "A task with sub-tasks cannot itself become a sub-task",
-    );
-  }
+}
+
+/** Whether `ancestorId` is `taskId` or lies on the parent chain above it —
+ *  walking up from `taskId` through the board's tasks; a loop already in the
+ *  data ends the walk. */
+async function isUnder(store: TasksApiStore, projectId: string, taskId: string, ancestorId: string): Promise<boolean> {
+  const parentOf = new Map(
+    (await store.tasks.listTasks({ projectId })).map((task) => [task.id, task.parentTaskId]),
+  );
+  const climb = (at: string | null, seen: ReadonlySet<string>): boolean =>
+    at !== null && (at === ancestorId || (!seen.has(at) && climb(parentOf.get(at) ?? null, new Set(seen).add(at))));
+  return climb(taskId, new Set());
 }
 
 async function replaceTaskLabels(
@@ -656,6 +720,9 @@ export function registerHandlers(
   bb: BbPluginApi,
   store: TasksApiStore,
 ): PluginRpcHandlers<typeof tasksRpcContract> {
+  // The sidebar's order: a project's place here picks its chart colour.
+  const boardProjects = () =>
+    [...store.tasks.listProjects()].sort(byNameThenId).map((project) => ({ id: project.id, name: project.name }));
   return {
     createFolder(input) {
       const folder = store.tasks.createFolder(input);
@@ -761,11 +828,10 @@ export function registerHandlers(
             budget: input.budget,
             budgetLimit: input.budgetLimit,
             cost: input.cost,
-            checks: input.checks,
             dueDate: input.dueDate,
+            startDate: input.startDate,
             parentTaskId: input.parentTaskId,
             assignee: input.assignee,
-            epic: input.epic,
           });
           await replaceTaskLabels(store, created.id, input.labelIds);
           return apiTask(store, (await store.tasks.getTask(created.id))!);
@@ -812,11 +878,10 @@ export function registerHandlers(
             budget: input.budget,
             budgetLimit: input.budgetLimit,
             cost: input.cost,
-            checks: input.checks,
             dueDate: input.dueDate,
+            startDate: input.startDate,
             parentTaskId: input.parentTaskId,
             assignee: input.assignee,
-            epic: input.epic,
           });
           // From here on the task answers to `updated.id` — a slug change
           // renamed the file and the id with it.
@@ -850,6 +915,13 @@ export function registerHandlers(
                 : `Due date changed to ${updated.dueDate} by ${input.authorName}`,
             );
           }
+          if (updated.startDate !== current.startDate) {
+            bodies.push(
+              updated.startDate === null
+                ? `Start date removed by ${input.authorName}`
+                : `Start date changed to ${updated.startDate} by ${input.authorName}`,
+            );
+          }
           if (input.labelIds && labelsChanged(beforeLabelIds, input.labelIds)) {
             bodies.push(await labelChangeBody(store, updated.id, input.authorName));
           }
@@ -867,6 +939,9 @@ export function registerHandlers(
         return { ok: true, task: result.task };
       } catch (error) {
         if (error instanceof TasksDomainFailure) return taskFailure(error);
+        if (error instanceof TaskAlreadyTaken) return alreadyTakenFailure(error);
+        const failure = databaseFailure(error);
+        if (failure !== null) return failure;
         throw error;
       }
     },
@@ -950,34 +1025,53 @@ export function registerHandlers(
     async boardMove(input) {
       const current = await store.tasks.getTask(input.taskId);
       if (!current) throw new Error(`Task not found: ${input.taskId}`);
-      const result = await store.transaction(async () => {
-        // Board columns are statuses; there is no manual order within a
-        // column to preserve (see decisions/tasks-files-are-the-store.md) —
-        // beforeTaskId/afterTaskId are accepted for wire compatibility but
-        // unused.
-        const moved = await store.tasks.updateTask(current.id, { status: input.status });
-        const statusChanged = moved.status !== current.status;
-        if (statusChanged) {
-          // Record before the system comment (a separate md write that could
-          // fail): the transition log is the source of truth for "every
-          // transition writes a row", and mirrors updateTask's own order.
-          store.transitions.record({
-            taskId: moved.id,
-            projectId: moved.projectId,
-            fromStatus: current.status,
-            toStatus: moved.status,
-            atMs: Date.now(),
-            actor: input.authorName,
-          });
-          await writeSystemComments(store, current.id, input.authorName, [
-            `Status changed to ${statusName(moved.status)} by ${input.authorName}`,
-          ]);
-        }
-        return { task: apiTask(store, (await store.tasks.getTask(moved.id))!), statusChanged };
-      });
-      publishTasksChanged(bb, result.task.id, result.task.projectId);
-      if (result.statusChanged) publishCommentsChanged(bb, result.task.id);
-      return { ok: true, task: result.task };
+      try {
+        const result = await store.transaction(async () => {
+          // A drop inside its own column or in the grid keeps the status and
+          // only moves the card, so the file is not rewritten for it. A drop
+          // the sending board saw as a move to another column, onto a status
+          // the task already has here, came from a stale board: another
+          // machine may have taken the task meanwhile, so the store is asked
+          // and refuses it then.
+          const statusChanged = input.status !== current.status;
+          const staleMove = !statusChanged && input.fromStatus !== undefined && input.fromStatus !== input.status;
+          const moved = statusChanged || staleMove
+            ? await store.tasks.updateTask(current.id, { status: input.status })
+            : current;
+          // The neighbours are where the card landed in the manual order, kept
+          // per project in the plugin's KV (see
+          // docs/decisions/tasks-plus-manual-order-in-plugin-kv.md).
+          const neighbors = { beforeTaskId: input.beforeTaskId ?? null, afterTaskId: input.afterTaskId ?? null };
+          if (neighbors.beforeTaskId !== null || neighbors.afterTaskId !== null) {
+            await store.tasks.placeTask(current.id, neighbors);
+          }
+          if (statusChanged) {
+            // Record before the system comment (a separate md write that could
+            // fail): the transition log is the source of truth for "every
+            // transition writes a row", and mirrors updateTask's own order.
+            store.transitions.record({
+              taskId: moved.id,
+              projectId: moved.projectId,
+              fromStatus: current.status,
+              toStatus: moved.status,
+              atMs: Date.now(),
+              actor: input.authorName,
+            });
+            await writeSystemComments(store, current.id, input.authorName, [
+              `Status changed to ${statusName(moved.status)} by ${input.authorName}`,
+            ]);
+          }
+          return { task: apiTask(store, (await store.tasks.getTask(moved.id))!), statusChanged };
+        });
+        publishTasksChanged(bb, result.task.id, result.task.projectId);
+        if (result.statusChanged) publishCommentsChanged(bb, result.task.id);
+        return { ok: true, task: result.task };
+      } catch (error) {
+        if (error instanceof TaskAlreadyTaken) return alreadyTakenFailure(error);
+        const failure = databaseFailure(error);
+        if (failure !== null) return failure;
+        throw error;
+      }
     },
     createLabel(input) {
       const label = store.tasks.createLabel(input);
@@ -997,6 +1091,11 @@ export function registerHandlers(
       const deleted = await store.tasks.deleteLabel(input.labelId);
       if (deleted && label) publishProjectsChanged(bb, label.projectId);
       return { deleted };
+    },
+    async migrateEpics(input) {
+      const epics = await store.transaction(() => store.tasks.migrateEpics(input.projectId, input.dryRun));
+      if (!input.dryRun && epics.length > 0) publishProjectTasksChanged(bb, input.projectId);
+      return { epics };
     },
     async listPlacements(input) {
       return store.tasks.listPlacements(input.projectId);
@@ -1083,6 +1182,24 @@ export function registerHandlers(
     async listTaskThreads(input) {
       return { taskThreads: await store.tasks.listTaskThreads(input.taskId) };
     },
+    async taskCardMeta(input) {
+      return { cards: await store.tasks.taskCardMeta(input.taskIds) };
+    },
+    async taskBurndowns(input) {
+      const nowMs = Date.now();
+      const tasks = await store.tasks.listTasks({ projectId: input.projectId });
+      const moves = movesByTask(store.transitions.range(Number.MIN_SAFE_INTEGER, nowMs + 1, { projectId: input.projectId }));
+      const columnDays = input.period === ALL_TIME ? 7 : 1;
+      const burndowns = [...descendantsOf(tasks)].flatMap(([taskId, descendants]) => {
+        if (descendants.length === 0) return [];
+        const under = descendants.map(({ task }) => task);
+        // All time starts at the card's own oldest task.
+        const ends = burndownEnds(input.period, nowMs, Math.min(...under.map(createdMs)));
+        const open = openSeriesOf(under, moves, ends);
+        return [{ taskId, open, ends, forecastDays: forecastDays(open, columnDays) }];
+      });
+      return { burndowns };
+    },
     async tasksForThread(input) {
       return {
         tasks: apiTasks(store, await store.tasks.listTasksForThread(input.threadId)),
@@ -1115,11 +1232,20 @@ export function registerHandlers(
     listPresets() {
       return { presets: store.tasks.listPresets() };
     },
-    listSavedViews(input) {
-      return { savedViews: store.tasks.listSavedViews(input.scope) };
+    listSavedViews() {
+      return { savedViews: store.tasks.listSavedViews() };
     },
     createSavedView(input) {
       const savedView = store.tasks.createSavedView(input);
+      publishViewsChanged(bb);
+      return { savedView };
+    },
+    /** Renaming is the only edit from the sidebar; everything else a view
+     *  carries is captured by saving the current list over it. */
+    updateSavedView(input) {
+      const savedView = store.tasks.updateSavedView(input.savedViewId, {
+        name: input.name,
+      });
       publishViewsChanged(bb);
       return { savedView };
     },
@@ -1231,19 +1357,97 @@ export function registerHandlers(
       const tasks = await store.tasks.listTasks(
         input.projectId != null ? { projectId: input.projectId } : {},
       );
-      return snapshotOf(tasks);
+      return snapshotOf(tasks.filter((task) => inProjects(input.projectIds, task.projectId)));
     },
-    analyticsSeries(input) {
-      const rows = store.transitions.range(
-        input.fromMs,
-        input.toMs,
-        input.projectId != null ? { projectId: input.projectId } : undefined,
+    async analyticsClosed(input) {
+      const perWindow = input.windows.map((edges) =>
+        closedInBins(
+          store.transitions
+            .range(edges[0]!, edges[edges.length - 1]!)
+            .filter((move) => inProjects(input.projectIds, move.projectId)),
+          edges,
+        ),
       );
-      return seriesFromTransitions(rows, {
-        fromMs: input.fromMs,
-        toMs: input.toMs,
-        binMs: input.binMs,
+      // One board read for every window, and none when nothing closed at all.
+      const tasksById = perWindow.some((closings) => closings.length > 0)
+        ? new Map((await store.tasks.listTasks({})).map((task) => [task.id, task]))
+        : new Map<string, Task>();
+      return {
+        windows: perWindow.map((closings) => ({
+          closings: closings.map((closing) => {
+            const task = tasksById.get(closing.taskId);
+            return { ...closing, key: task?.key ?? null, title: task?.title ?? "Deleted task" };
+          }),
+        })),
+        projects: boardProjects(),
+        logStartMs: store.transitions.firstAtMs(),
+      };
+    },
+    async analyticsFlow(input) {
+      // One board read and one log read answer every flow chart.
+      const tasks = await store.tasks.listTasks({});
+      const nowMs = Date.now();
+      const flow = flowOf({
+        tasks,
+        transitions: store.transitions.range(Number.MIN_SAFE_INTEGER, nowMs + 1),
+        edges: input.edges,
+        weekEdges: input.weekEdges,
+        projectIds: input.projectIds ?? [],
+        nowMs,
       });
+      const tasksById = new Map(tasks.map((task) => [task.id, task]));
+      return {
+        ...flow,
+        aging: flow.aging.flatMap((entry) => {
+          const task = tasksById.get(entry.taskId);
+          return task === undefined ? [] : [{ ...entry, key: task.key, title: task.title }];
+        }),
+        projects: boardProjects(),
+        logStartMs: store.transitions.firstAtMs(),
+      };
+    },
+    async analyticsSpan(input) {
+      const born = (await store.tasks.listTasks({}))
+        .filter((task) => inProjects(input.projectIds, task.projectId))
+        .map(createdMs)
+        .filter(Number.isFinite);
+      return { firstCreatedMs: born.length === 0 ? null : Math.min(...born) };
+    },
+    async ganttRows(input) {
+      // One board read and one log read answer the whole chart.
+      const nowMs = Date.now();
+      const rows = ganttRowsOf({
+        tasks: await store.tasks.listTasks({}),
+        moves: movesByTask(store.transitions.range(Number.MIN_SAFE_INTEGER, nowMs + 1)),
+        projectIds: input.projectIds ?? [],
+        fromMs: input.fromMs,
+        nowMs,
+      });
+      return {
+        rows: rows.map(({ task, segments }) => {
+          const born = createdMs(task);
+          return {
+            taskId: task.id,
+            key: task.key,
+            title: task.title,
+            projectId: task.projectId,
+            parentTaskId: task.parentTaskId,
+            status: task.status,
+            createdMs: Number.isFinite(born) ? born : null,
+            startDate: task.startDate,
+            dueDate: task.dueDate,
+            segments,
+          };
+        }),
+        projects: boardProjects(),
+      };
+    },
+    async loadReducedColors() {
+      return parseReducedColors(await bb.storage.kv.get<unknown>(REDUCED_COLORS_KV_KEY));
+    },
+    async saveReducedColors(value) {
+      await bb.storage.kv.set(REDUCED_COLORS_KV_KEY, parseReducedColors(value));
+      return { ok: true as const };
     },
   };
 }

@@ -23,7 +23,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Field } from "./shared.js";
 
-const DEFAULT_TASKS_FOLDER = "memory/tasks";
+const DEFAULT_TASKS_FOLDER = "docs/tasks";
 
 function describeError(error: unknown): string {
   return error instanceof Error ? error.message : String(error);

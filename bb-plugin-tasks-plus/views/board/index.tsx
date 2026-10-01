@@ -1,47 +1,102 @@
 import {
   useEffect,
+  useMemo,
   useRef,
   useState,
   type PointerEvent as ReactPointerEvent,
   type ReactNode,
 } from "react";
-import { TASK_STATUSES, type TaskStatus } from "../../shared/enums.js";
-import type { Label, Task, TaskThread } from "../../shared/contract.js";
+import { ALL_TIME, type CardChartPeriod, type GanttMode, type TaskStatus } from "../../shared/enums.js";
 import {
-  listAllTasks,
+  ALL_KEY,
+  boardColumns,
+  canReorder,
+  columnWidth,
+  dropPatch,
+  dropsUnderItself,
+  gridColumnsOf,
+  placedBefore,
+  withColumnWidth,
+  withDrop,
+  type BoardColumn,
+  type DropChange,
+} from "./grouping.js";
+import { scopeBoardKey, setBoardLayout, useBoardLayout } from "./board-preference.js";
+import {
+  DAY_MS,
+  fetchScopeBoard,
+  fetchScopeBurndowns,
+  fetchScopeGantt,
+  ganttFetchStart,
+  scopeProjectId,
+  type BoardData,
+  type BoardGantt,
+  type TaskBurndown,
+} from "./scope-data.js";
+import type { ListPreferenceScope } from "../common/list-preference.js";
+import { EMPTY_FILTERS, hasActiveFilters } from "../common/filter-state.js";
+import type { Label, Project, Task, TaskCardMeta, TaskThread } from "../../shared/contract.js";
+import {
+  listTaskCardMeta,
+  useProjects,
   useTasksQuery,
   useTasksRpc,
   type TasksRpc,
 } from "../../client/data.js";
-import { useTasksNavigation } from "../../client/routes.js";
+import { useOpenTask } from "../../client/task-opening.js";
 import { NewTaskDialog } from "../manage/index.js";
 import {
-  applyBoardMove,
   BOARD_STATUSES,
   dropIndexForPointer,
   dropNeighborsForIndex,
-  visibleBoardStatuses,
+  gridDropIndex,
+  type BoardDropNeighbors,
+  type CardRect,
 } from "./drop-position.js";
 import { PriorityIcon, STATUS_LABELS, StatusIcon } from "./icons.js";
+import { GroupIcon } from "./group-icon.js";
+import { visibleBoardColumns } from "./narrow-layout.js";
+import { useIsCompactViewport } from "@/components/ui/hooks/use-compact-viewport";
+import { boardCardMeta, type BoardCardMeta } from "./card-meta.js";
+import { SubtaskList, type AddSubtaskOutcome } from "./subtask-list.js";
+import { BurndownChart, SubtaskStats } from "./subtask-stats.js";
+import { DEFAULT_CHART_PREFERENCE, useChartPreference } from "./chart-preference.js";
+import {
+  DEFAULT_CARD_TEXT,
+  DESCRIPTION_SIZE_CLASS,
+  TITLE_SIZE_CLASS,
+  useCardText,
+  type CardTextPreference,
+} from "./card-text-preference.js";
+import { GanttChart, ganttLines, type GanttRowData } from "../analytics/gantt-chart.js";
+import { progressOf, subtasksInScope, type Descendant } from "../../shared/subtree.js";
+import { slugOf } from "../../shared/format.js";
+import { firstParagraph } from "../../shared/first-paragraph.js";
+import { formatTakenAgo, type TakenBy } from "../../shared/task-claim.js";
+import { factsOf } from "../../shared/task-fields.js";
 import { Button } from "@/components/ui/button";
 import { DelayedLoading } from "../../components/delayed-loading.js";
+import { useTakenRefusal } from "../../components/task-taken-dialog.js";
+import { SourceBanner } from "./source-banner.js";
 import { Icon } from "@/components/ui/icon";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
 import {
-  boardFieldScope,
   ROW_FIELD_LABELS,
+  subtaskScopeOf,
+  taskOpeningOf,
   useFieldDisplay,
   type FieldDisplayConfig,
   type RowField,
-} from "../list/row-field-preference.js";
-import { AmountChip } from "../list/amount-chip.js";
-import { planRowFields } from "../list/field-plan.js";
+} from "../common/row-field-preference.js";
+import { AmountChip } from "../common/amount-chip.js";
+import { planRowFields, type FieldPlanCell } from "../common/field-plan.js";
+import { cardSections, type CardBlockField } from "./card-sections.js";
 import {
   formatDueDate,
   formatTimestamp,
   PRIORITY_LABELS,
-} from "../list/lib.js";
+} from "../common/lib.js";
 import {
   describeWorktreeOrigin,
   EstimateIcon,
@@ -51,127 +106,87 @@ import {
 
 const DRAG_THRESHOLD_PX = 5;
 
-interface BoardCardMeta {
-  workingThreads: TaskThread[];
-  attachmentCount: number;
-  subDone: number;
-  subTotal: number;
-}
-
-interface BoardData {
-  /** Top-level tasks in server order (status, then ascending position). */
-  tasks: Task[];
-  labelsById: Map<string, Label>;
-  metaByTaskId: Map<string, BoardCardMeta>;
-}
+export type { BoardData };
 
 const EMPTY_META: BoardCardMeta = {
   workingThreads: [],
   attachmentCount: 0,
-  subDone: 0,
-  subTotal: 0,
+  parent: null,
+  family: { epic: null, descendants: [] },
+  progress: progressOf([]),
 };
 
-async function fetchBoard(
-  rpc: TasksRpc,
-  projectId: string,
-): Promise<BoardData> {
-  const tasks = await listAllTasks(rpc, { projectId });
-  const topLevel = tasks.filter((task) => task.parentTaskId === null);
-
-  // Everything below decorates cards; a failure hides chips, never the board.
-  const labels = await rpc.call("listLabels", { projectId }).then(
-    (result) => result.labels,
-    () => [],
-  );
-  const subProgress = new Map<string, { done: number; total: number }>();
-  for (const task of tasks) {
-    if (task.parentTaskId === null) continue;
-    const entry = subProgress.get(task.parentTaskId) ?? { done: 0, total: 0 };
-    entry.total += 1;
-    if (task.status === "done") entry.done += 1;
-    subProgress.set(task.parentTaskId, entry);
-  }
-  const activeTaskIds = await listAllTasks(rpc, {
-    projectId,
-    activeOnly: true,
-  }).then(
-    (result) => new Set(result.map((task) => task.id)),
-    () => new Set<string>(),
-  );
-  const workingByTaskId = new Map<string, TaskThread[]>();
-  await Promise.all(
-    topLevel
-      .filter((task) => activeTaskIds.has(task.id))
-      .map(async (task) => {
-        const threads = await rpc
-          .call("listTaskThreads", { taskId: task.id })
-          .then(
-            (result) => result.taskThreads,
-            () => [],
-          );
-        workingByTaskId.set(
-          task.id,
-          threads.filter(
-            (thread) =>
-              thread.liveStatus === "working" ||
-              thread.liveStatus === "starting",
-          ),
-        );
-      }),
-  );
-  const attachmentCounts = new Map<string, number>();
-  await Promise.all(
-    topLevel.map(async (task) => {
-      const count = await rpc.call("listAttachments", { taskId: task.id }).then(
-        (result) => result.attachments.length,
-        () => 0,
-      );
-      attachmentCounts.set(task.id, count);
-    }),
-  );
-
-  return {
-    tasks: topLevel,
-    labelsById: new Map(labels.map((label) => [label.id, label])),
-    metaByTaskId: new Map(
-      topLevel.map((task) => [
-        task.id,
-        {
-          workingThreads: workingByTaskId.get(task.id) ?? [],
-          attachmentCount: attachmentCounts.get(task.id) ?? 0,
-          subDone: subProgress.get(task.id)?.done ?? 0,
-          subTotal: subProgress.get(task.id)?.total ?? 0,
-        },
-      ]),
-    ),
-  };
+/**
+ * A single project's board data. The toolbar's column picker and the display
+ * panel's field preview call this directly for one project, outside any
+ * screen's scope; `BoardView` itself reads through `fetchScopeBoard`.
+ */
+export function fetchBoard(rpc: TasksRpc, projectId: string): Promise<BoardData> {
+  return fetchScopeBoard(rpc, `project:${projectId}`);
 }
 
-type ColumnMap = Record<TaskStatus, Task[]>;
+/** A card's Gantt: its sub-tasks' rows and the window they are drawn in. */
+interface CardGantt {
+  rows: readonly GanttRowData[];
+  fromMs: number;
+  toMs: number;
+  mode: GanttMode;
+}
 
-function groupColumns(tasks: readonly Task[]): ColumnMap {
-  const columns: ColumnMap = {
-    backlog: [],
-    todo: [],
-    in_progress: [],
-    in_review: [],
-    done: [],
-    canceled: [],
-  };
-  for (const task of tasks) columns[task.status].push(task);
-  return columns;
+/** A card's Gantt over the board's period — all time opening at the card's oldest sub-task. */
+function cardGanttOf(
+  gantt: BoardGantt,
+  descendants: readonly Descendant<Task>[],
+  period: CardChartPeriod,
+  mode: GanttMode,
+): CardGantt {
+  const rows = descendants.flatMap(({ task }) => {
+    const row = gantt.rows.get(task.id);
+    return row === undefined ? [] : [row];
+  });
+  const oldest = Math.min(gantt.nowMs - DAY_MS, ...rows.map((row) => row.createdMs ?? gantt.nowMs));
+  const fromMs = period === ALL_TIME ? oldest : ganttFetchStart(period, gantt.nowMs);
+  return { rows, fromMs, toMs: gantt.nowMs, mode };
+}
+
+/** The Gantt of every card that has something to draw in it — a card left out draws no block. */
+function cardGanttsOf(
+  gantt: BoardGantt,
+  metaByTaskId: ReadonlyMap<string, BoardCardMeta>,
+  period: CardChartPeriod,
+  mode: GanttMode,
+): Map<string, CardGantt> {
+  return new Map(
+    [...metaByTaskId].flatMap(([taskId, meta]) => {
+      const card = cardGanttOf(gantt, meta.family.descendants, period, mode);
+      return ganttLines(card.rows, card.fromMs, card.toMs, mode).length > 0 ? [[taskId, card] as const] : [];
+    }),
+  );
+}
+
+/** Attachment counts and threads for the cards on screen, one request for
+ *  all of them; a failure leaves the cards without chips. */
+function fetchCards(rpc: TasksRpc, taskIds: readonly string[]): Promise<TaskCardMeta[]> {
+  return listTaskCardMeta(rpc, taskIds).catch(() => []);
 }
 
 interface DragState {
   taskId: string;
+  /** The column the card was picked up from — a card with two labels sits in two. */
+  fromKey: string;
   x: number;
   y: number;
   offsetX: number;
   offsetY: number;
   width: number;
-  overStatus: TaskStatus | null;
+  overKey: string | null;
   dropIndex: number;
+}
+
+/** A column edge being dragged: which column and how wide it is right now. */
+interface ResizeState {
+  key: string;
+  width: number;
 }
 
 /** Small marker for a task whose latest content came from an active
@@ -183,7 +198,8 @@ function WorktreeSourceMark({ task }: { task: Task }) {
   const { identity, detail } = describeWorktreeOrigin(task.source.origin);
   return (
     <span
-      className="ml-auto flex shrink-0 items-center text-muted-foreground"
+      data-worktree-mark
+      className="flex shrink-0 items-center text-muted-foreground"
       title={`Not merged into main — synced from ${identity}${
         detail ? ` (${detail})` : ""
       }`}
@@ -196,7 +212,7 @@ function WorktreeSourceMark({ task }: { task: Task }) {
 function WorkingAgentsChip({ threads }: { threads: TaskThread[] }) {
   if (threads.length === 0) return null;
   return (
-    <span className="flex min-w-0 items-center gap-1 font-medium text-success">
+    <span className="flex min-w-0 items-center gap-1 text-2xs font-medium text-success">
       <span
         aria-hidden
         className="size-1.5 shrink-0 animate-pulse rounded-full bg-success"
@@ -215,45 +231,124 @@ const CARD_CHIP_CLASS =
   "flex items-center gap-1 rounded-md border border-border px-1.5 text-2xs text-muted-foreground";
 const CARD_GLYPH_CLASS = "flex items-center text-muted-foreground";
 
+/** The tooltip of the Taken by chip: the machine, the thread when the mark has one, and how long ago. */
+function takenByTitle(takenBy: TakenBy): string {
+  const thread = takenBy.threadId === null ? "" : ` · thread ${takenBy.threadId}`;
+  return `Taken on ${takenBy.machine}${thread} · ${formatTakenAgo(takenBy.at, new Date())}`;
+}
+
 /** One planned task field on a card; empties are handled by the caller. */
 function CardFieldValue({
   field,
   task,
+  meta,
   labels,
-  activeCount,
+  project,
 }: {
   field: RowField;
   task: Task;
+  meta: BoardCardMeta;
   labels: readonly Label[];
-  activeCount: number;
+  project: Project | undefined;
 }) {
   switch (field) {
+    case "key":
+      return (
+        <span title={`Key: ${task.key}`} className="text-2xs text-muted-foreground tabular-nums">
+          {task.key}
+        </span>
+      );
     case "priority":
       return (
         <span title={PRIORITY_LABELS[task.priority]} className={CARD_GLYPH_CLASS}>
           <PriorityIcon priority={task.priority} />
         </span>
       );
-    case "active":
+    case "status":
       return (
-        <span className="flex items-center gap-1 font-medium text-success">
-          <span
-            aria-hidden
-            className="size-1.5 shrink-0 animate-pulse rounded-full bg-success"
-          />
-          {activeCount === 1 ? "Active" : `${activeCount} agents`}
+        <span title={`Status: ${STATUS_LABELS[task.status]}`} className={CARD_GLYPH_CLASS}>
+          <StatusIcon status={task.status} className="size-3" />
         </span>
       );
+    case "subtasks":
+      return (
+        <span
+          title={`${meta.progress.done} of ${meta.progress.total} sub-tasks done`}
+          className="flex items-center gap-0.5 text-2xs text-muted-foreground tabular-nums"
+        >
+          <Icon name="GitBranch" className="size-3" />
+          {meta.progress.done}/{meta.progress.total}
+        </span>
+      );
+    case "slug": {
+      const slug = slugOf(task.id);
+      return (
+        // Takes the rest of the row, 80 to 160 px, so it wraps only when less than 80 px is left.
+        <span title={`Slug: ${slug}`} className="min-w-20 max-w-40 flex-1 truncate text-2xs text-subtle-foreground">
+          {slug}
+        </span>
+      );
+    }
+    case "parent":
+      return meta.parent ? (
+        <span
+          title={`Parent: ${meta.parent.key} ${meta.parent.title}`}
+          className="flex shrink-0 items-center gap-0.5 text-2xs text-subtle-foreground tabular-nums"
+        >
+          <Icon name="ArrowUp" className="size-3" />
+          {meta.parent.key}
+        </span>
+      ) : null;
+    case "attachments":
+      return (
+        <Icon
+          name="Paperclip"
+          className="size-3 text-muted-foreground"
+          aria-label={`${meta.attachmentCount} attachments`}
+        />
+      );
+    case "worktree":
+      return <WorktreeSourceMark task={task} />;
+    case "title":
+    case "description":
+    case "subtaskList":
+    case "subtaskStats":
+    case "burndown":
+    case "gantt":
+      // Blocks, drawn full width on their own, not chips.
+      return null;
+    case "active":
+      return <WorkingAgentsChip threads={meta.workingThreads} />;
     case "assignee":
+      return task.assignee ? (
+        <span title={`Assignee: ${task.assignee}`} className={`${CARD_CHIP_CLASS} max-w-32`}>
+          <Icon name="UserRound" className="size-3 shrink-0" />
+          <span className="truncate">{task.assignee}</span>
+        </span>
+      ) : null;
     case "epic": {
-      const value = task[field];
-      return value ? (
-        <span title={`${field === "assignee" ? "Assignee" : "Epic"}: ${value}`} className={`${CARD_CHIP_CLASS} max-w-32`}>
-          <Icon name={field === "assignee" ? "UserRound" : "Layers"} className="size-3 shrink-0" />
-          <span className="truncate">{value}</span>
+      const epic = meta.family.epic;
+      return epic ? (
+        <span title={`Epic: ${epic.key} ${epic.title}`} className={`${CARD_CHIP_CLASS} max-w-32`}>
+          <Icon name="Mountain" className="size-3 shrink-0" />
+          <span className="truncate">{epic.key} {epic.title}</span>
         </span>
       ) : null;
     }
+    case "flow":
+      return task.flow ? (
+        <span title={`Flow: ${task.flow.name}`} className={`${CARD_CHIP_CLASS} max-w-32`}>
+          <Icon name="Workflow" className="size-3 shrink-0" />
+          <span className="truncate">{task.flow.name}</span>
+        </span>
+      ) : null;
+    case "takenBy":
+      return task.takenBy ? (
+        <span title={takenByTitle(task.takenBy)} className={`${CARD_CHIP_CLASS} max-w-32`}>
+          <Icon name="Laptop" className="size-3 shrink-0" />
+          <span className="truncate">{task.takenBy.machine}</span>
+        </span>
+      ) : null;
     case "type":
       return task.type !== null ? (
         <span title={TYPE_LABELS[task.type]} className={CARD_GLYPH_CLASS}>
@@ -293,9 +388,16 @@ function CardFieldValue({
     }
     case "dueDate":
       return task.dueDate !== null ? (
-        <span className={`${CARD_CHIP_CLASS} tabular-nums`}>
+        <span className={`${CARD_CHIP_CLASS} tabular-nums`} title={`Due ${formatDueDate(task.dueDate)}`}>
           <Icon name="Clock" className="size-3 shrink-0" />
           {formatDueDate(task.dueDate)}
+        </span>
+      ) : null;
+    case "startDate":
+      return task.startDate !== null ? (
+        <span className={`${CARD_CHIP_CLASS} tabular-nums`} title={`Start ${formatDueDate(task.startDate)}`}>
+          <Icon name="Calendar" className="size-3 shrink-0" />
+          {formatDueDate(task.startDate)}
         </span>
       ) : null;
     case "createdAt":
@@ -313,9 +415,127 @@ function CardFieldValue({
         </span>
       );
     case "project":
-      // A board is single-project, so the project field never has a swatch to
-      // show; it stays empty (placeholder only when show-empty is on).
-      return null;
+      return project ? (
+        <span
+          aria-hidden
+          title={project.name}
+          className="size-2.5 shrink-0 rounded-sm"
+          style={{ backgroundColor: project.color }}
+        />
+      ) : null;
+  }
+}
+
+/** A row of chips on a card; its place among the blocks follows the Display menu. */
+function CardChipRow({ children }: { children: ReactNode }) {
+  return (
+    <div data-card-section="chips" className="mt-1.5 flex flex-wrap items-center gap-1.5 first-of-type:mt-0">
+      {children}
+    </div>
+  );
+}
+
+/** One chip of a row: the field's value, or a dash when show-empty keeps an empty field. */
+function CardChip({
+  cell,
+  task,
+  meta,
+  labels,
+  project,
+}: {
+  cell: FieldPlanCell;
+  task: Task;
+  meta: BoardCardMeta;
+  labels: readonly Label[];
+  project: Project | undefined;
+}) {
+  return cell.mode === "placeholder" ? (
+    <span title={`${ROW_FIELD_LABELS[cell.field]}: —`} className="text-2xs text-subtle-foreground/60">
+      —
+    </span>
+  ) : (
+    <CardFieldValue field={cell.field} task={task} meta={meta} labels={labels} project={project} />
+  );
+}
+
+/** The room above each block of a card; the first section of a card has none. */
+const BLOCK_GAP: Record<CardBlockField, string> = {
+  title: "mt-1",
+  description: "mt-1",
+  subtaskList: "mt-2",
+  subtaskStats: "mt-2",
+  burndown: "mt-1.5",
+  gantt: "mt-1.5",
+};
+
+/**
+ * One full-width block of a card. The card places only blocks that have
+ * something to draw; the checks for a burndown and an opener below are there
+ * for the types, not a second rule.
+ */
+function CardBlock({
+  field,
+  task,
+  meta,
+  burndown,
+  period,
+  gantt,
+  listedSubtasks,
+  onOpenTask,
+  onAddSubtask,
+  text,
+}: {
+  field: CardBlockField;
+  task: Task;
+  meta: BoardCardMeta;
+  text: CardTextPreference;
+  burndown: TaskBurndown | undefined;
+  period: CardChartPeriod;
+  gantt: CardGantt | undefined;
+  listedSubtasks: readonly Descendant<Task>[];
+  onOpenTask: ((taskKey: string) => void) | undefined;
+  onAddSubtask: ((title: string) => Promise<AddSubtaskOutcome>) | undefined;
+}) {
+  switch (field) {
+    case "title":
+      return <div className={cn("line-clamp-2 font-medium", TITLE_SIZE_CLASS[text.title], "leading-snug")}>{task.title}</div>;
+    case "description": {
+      const description = firstParagraph(task.description);
+      return (
+        <div title={description} className={cn("line-clamp-4 text-subtle-foreground", DESCRIPTION_SIZE_CLASS[text.description], "leading-snug")}>
+          {description}
+        </div>
+      );
+    }
+    case "subtaskStats":
+      return (
+        <div className="border-t border-border pt-1.5">
+          <SubtaskStats progress={meta.progress} />
+        </div>
+      );
+    case "burndown":
+      return burndown ? (
+        <div>
+          <BurndownChart open={burndown.open} ends={burndown.ends} period={period} forecastDays={burndown.forecastDays} />
+        </div>
+      ) : null;
+    case "gantt":
+      return gantt ? (
+        <div>
+          <GanttChart
+            rows={gantt.rows}
+            fromMs={gantt.fromMs}
+            toMs={gantt.toMs}
+            mode={gantt.mode}
+            compact
+            onOpenTask={onOpenTask}
+          />
+        </div>
+      ) : null;
+    case "subtaskList":
+      return onOpenTask && onAddSubtask ? (
+        <SubtaskList descendants={listedSubtasks} onOpen={(child) => onOpenTask(child.key)} onAdd={onAddSubtask} />
+      ) : null;
   }
 }
 
@@ -323,101 +543,126 @@ interface TaskCardProps {
   task: Task;
   labelsById: Map<string, Label>;
   meta: BoardCardMeta;
+  /** The task's project, resolved once by the caller; undefined while
+   *  projects are still loading. */
+  project?: Project;
+  /** The board draws a project swatch — a cross-project screen's board only;
+   *  a project's own board never shows it. */
+  showProject?: boolean;
   config: FieldDisplayConfig;
   ghost?: boolean;
   dragging?: boolean;
   cardRef?: (element: HTMLDivElement | null) => void;
   onPointerDown?: (event: ReactPointerEvent<HTMLDivElement>) => void;
   onClick?: () => void;
+  /** Opens a task, by its key, from the card's sub-task list or its Gantt. */
+  onOpenTask?: (taskKey: string) => void;
+  /** Adds a sub-task, by its title, under the card from its sub-task list. */
+  onAddSubtask?: (title: string) => Promise<AddSubtaskOutcome>;
+  /** The card's burndown, once loaded. */
+  burndown?: TaskBurndown;
+  /** The board's period the card charts cover. */
+  period?: CardChartPeriod;
+  /** The card's Gantt, once loaded and when it has something to draw. */
+  gantt?: CardGantt;
+  /** Where a card being dragged over the ungrouped grid would land: a line
+   *  on this card's left or right edge. */
+  dropMark?: "before" | "after";
+  /** The board's type sizes for the title and the description. */
+  text?: CardTextPreference;
 }
 
 function TaskCard({
   task,
   labelsById,
   meta,
+  project,
+  showProject = false,
   config,
   ghost = false,
   dragging = false,
   cardRef,
   onPointerDown,
   onClick,
+  onOpenTask,
+  onAddSubtask,
+  burndown,
+  period = DEFAULT_CHART_PREFERENCE.period,
+  gantt,
+  dropMark,
+  text = DEFAULT_CARD_TEXT,
 }: TaskCardProps) {
   const labels = task.labelIds
     .map((labelId) => labelsById.get(labelId))
     .filter((label): label is Label => label !== undefined);
-  // The card is single-project, so `showProject` is false — the project field
-  // resolves to empty and never draws a swatch here.
   const cells = planRowFields(config, task, {
     activeCount: meta.workingThreads.length,
-    showProject: false,
-    hasProject: false,
+    showProject,
+    hasProject: project !== undefined,
+    descendantCount: meta.progress.total,
+    attachmentCount: meta.attachmentCount,
   });
-  const description = task.description.trim();
-  const hasFooter =
-    cells.length > 0 || meta.subTotal > 0 || meta.attachmentCount > 0;
+  const listedSubtasks = subtasksInScope(meta.family.descendants, subtaskScopeOf(config));
+  // A block with nothing to draw yet — a burndown still loading, a list on a
+  // ghost card that can neither open nor add — is left out before the layout,
+  // so it splits no row. A list with no sub-task in scope still draws: its
+  // Add sub-task gives the card its first.
+  const drawable = (cell: FieldPlanCell) =>
+    (cell.field !== "burndown" || burndown !== undefined) &&
+    (cell.field !== "gantt" || gantt !== undefined) &&
+    (cell.field !== "subtaskList" || (onOpenTask !== undefined && onAddSubtask !== undefined));
+  const sections = cardSections(cells.filter(drawable));
   return (
     <div
       ref={cardRef}
       data-task-key={task.key}
       onPointerDown={onPointerDown}
       onClick={onClick}
+      // Filled like an option in a Flow brief, no border; hover lays part of
+      // the host's hover tint over the fill (an overlay behind the text), so
+      // the fill stays and the card only lightens a little.
       className={cn(
-        "shrink-0 rounded-lg border border-border bg-card px-2.5 py-2 shadow-2xs select-none",
+        "relative isolate shrink-0 rounded-lg bg-surface-recessed-solid px-2.5 py-2 select-none",
         ghost
           ? "rotate-2 shadow-md"
-          : "cursor-pointer touch-none hover:border-input",
+          : "cursor-pointer touch-none before:pointer-events-none before:absolute before:inset-0 before:-z-10 before:rounded-[inherit] before:bg-state-hover before:opacity-0 hover:before:opacity-40",
         dragging && "opacity-40",
       )}
     >
-      <div className="flex items-center gap-1.5 text-2xs text-muted-foreground">
-        <span className="tabular-nums">{task.key}</span>
-        <WorkingAgentsChip threads={meta.workingThreads} />
-        <WorktreeSourceMark task={task} />
-      </div>
-      <div className="mt-1 line-clamp-2 text-sm leading-snug font-medium">
-        {task.title}
-      </div>
-      {config.showDescription && description.length > 0 ? (
-        <div className="mt-1 line-clamp-2 text-2xs leading-snug text-muted-foreground">
-          {description}
-        </div>
-      ) : null}
-      {hasFooter ? (
-        <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
-          {cells.map((cell) =>
-            cell.mode === "placeholder" ? (
-              <span
-                key={cell.field}
-                title={`${ROW_FIELD_LABELS[cell.field]}: —`}
-                className="text-2xs text-subtle-foreground/60"
-              >
-                —
-              </span>
-            ) : (
-              <CardFieldValue
-                key={cell.field}
-                field={cell.field}
-                task={task}
-                labels={labels}
-                activeCount={meta.workingThreads.length}
-              />
-            ),
+      {dropMark ? (
+        <span
+          aria-hidden
+          data-drop-mark={dropMark}
+          className={cn(
+            "absolute inset-y-0 w-0.5 rounded-full bg-primary",
+            dropMark === "before" ? "-left-[5px]" : "-right-[5px]",
           )}
-          {meta.subTotal > 0 ? (
-            <span className="flex items-center gap-0.5 text-2xs text-muted-foreground">
-              <Icon name="GitBranch" className="size-3" />
-              {meta.subDone}/{meta.subTotal}
-            </span>
-          ) : null}
-          {meta.attachmentCount > 0 ? (
-            <Icon
-              name="Paperclip"
-              className="size-3 text-muted-foreground"
-              aria-label={`${meta.attachmentCount} attachments`}
-            />
-          ) : null}
-        </div>
+        />
       ) : null}
+      {sections.map((section, index) =>
+        section.kind === "chips" ? (
+          <CardChipRow key={`chips-${index}`}>
+            {section.cells.map((cell) => (
+              <CardChip key={cell.field} cell={cell} task={task} meta={meta} labels={labels} project={project} />
+            ))}
+          </CardChipRow>
+        ) : (
+          <div key={section.field} data-card-section={section.field} className={cn(BLOCK_GAP[section.field], "first-of-type:mt-0")}>
+            <CardBlock
+              field={section.field}
+              task={task}
+              meta={meta}
+              burndown={burndown}
+              period={period}
+              gantt={gantt}
+              listedSubtasks={listedSubtasks}
+              onOpenTask={onOpenTask}
+              onAddSubtask={onAddSubtask}
+              text={text}
+            />
+          </div>
+        ),
+      )}
     </div>
   );
 }
@@ -443,45 +688,151 @@ function BoardSkeleton() {
 }
 
 export interface BoardViewProps {
-  projectId: string;
+  /** Which screen's board this is: a project's own, or a cross-project surface. */
+  scope: ListPreferenceScope;
+  /** A saved view opened on this board: it keeps a layout of its own. */
+  viewId?: string;
 }
 
-export function BoardView({ projectId }: BoardViewProps) {
+const NO_NEIGHBORS: BoardDropNeighbors = { beforeTaskId: null, afterTaskId: null };
+
+/** A card not on screen: never the nearest to a pointer. */
+const OFF_SCREEN: CardRect = {
+  left: Number.POSITIVE_INFINITY,
+  top: Number.POSITIVE_INFINITY,
+  width: 0,
+  height: 0,
+};
+
+export function BoardView({ scope, viewId }: BoardViewProps) {
+  const singleProjectId = scopeProjectId(scope);
+  // A cross-project screen shows which project a card belongs to; a
+  // project's own board never needs to, as every card is already its project.
+  const showProject = singleProjectId === null;
   const rpc = useTasksRpc();
-  const navigation = useTasksNavigation();
-  const fieldConfig = useFieldDisplay(boardFieldScope(projectId));
+  const refusal = useTakenRefusal();
+  const key = scopeBoardKey(scope, viewId ?? null);
+  const fieldConfig = useFieldDisplay(key);
+  const projects = useProjects();
+  const projectsById = useMemo(
+    () => new Map((projects.data ?? []).map((project) => [project.id, project])),
+    [projects.data],
+  );
+  const openTaskByKey = useOpenTask(taskOpeningOf(fieldConfig));
+  const layout = useBoardLayout(key);
+  const layoutRef = useRef(layout);
+  layoutRef.current = layout;
   const board = useTasksQuery(
-    (queryRpc) => fetchBoard(queryRpc, projectId),
-    ["tasks:changed", "projects:changed", "threads:changed"],
-    [projectId],
+    (queryRpc) => fetchScopeBoard(queryRpc, scope),
+    ["tasks:changed", "projects:changed"],
+    [scope],
+  );
+  // Sorted: a drag reorders the cards, not the set of them, and must not
+  // ask for the chips again.
+  const cardTaskIds = useMemo(
+    () => (board.data?.tasks ?? []).map((task) => task.id).sort(),
+    [board.data],
+  );
+  const cards = useTasksQuery(
+    (queryRpc) => fetchCards(queryRpc, cardTaskIds),
+    ["tasks:changed", "threads:changed"],
+    [cardTaskIds.join()],
+  );
+  const metaByTaskId = useMemo(
+    () => boardCardMeta(board.data?.tasks ?? [], cards.data),
+    [board.data, cards.data],
+  );
+  // Asked for only while a card shows it, after the columns are drawn.
+  const charts = useChartPreference(key);
+  const cardText = useCardText(key);
+  // The board's own project, or every project its tasks came from — a screen
+  // with no tasks yet asks no project for charts either.
+  const boardProjectIds = useMemo(
+    () =>
+      singleProjectId !== null
+        ? [singleProjectId]
+        : [...new Set((board.data?.tasks ?? []).map((task) => task.projectId))],
+    [singleProjectId, board.data],
+  );
+  const showsBurndown = fieldConfig.fields.some((entry) => entry.field === "burndown" && entry.visible);
+  const burndowns = useTasksQuery(
+    async (queryRpc) =>
+      showsBurndown ? fetchScopeBurndowns(queryRpc, boardProjectIds, charts.period) : new Map<string, TaskBurndown>(),
+    ["tasks:changed"],
+    [boardProjectIds.join(), showsBurndown, charts.period],
+  );
+  const showsGantt = fieldConfig.fields.some((entry) => entry.field === "gantt" && entry.visible);
+  const gantt = useTasksQuery(
+    async (queryRpc) => (showsGantt ? fetchScopeGantt(queryRpc, boardProjectIds, charts.period) : undefined),
+    ["tasks:changed"],
+    [boardProjectIds.join(), showsGantt, charts.period],
+  );
+  // Once per answer, not per render: a drag re-renders the board on every move.
+  const cardGantts = useMemo(
+    () => (gantt.data === undefined ? new Map<string, CardGantt>() : cardGanttsOf(gantt.data, metaByTaskId, charts.period, charts.ganttMode)),
+    [gantt.data, metaByTaskId, charts.period, charts.ganttMode],
   );
 
-  // Local column state renders instantly on drop; realtime refetches replace
-  // it with the server's authoritative fractional-position order.
-  const [columns, setColumns] = useState<ColumnMap | undefined>(undefined);
+  // Local tasks render a drop instantly; realtime refetches replace them with
+  // the server's authoritative state.
+  const [tasks, setTasks] = useState<Task[] | undefined>(undefined);
   useEffect(() => {
-    setColumns(undefined);
-  }, [projectId]);
+    setTasks(undefined);
+  }, [scope]);
   useEffect(() => {
-    if (board.data) setColumns(groupColumns(board.data.tasks));
+    if (board.data) setTasks(board.data.tasks);
   }, [board.data]);
+  const labels = useMemo(() => board.data?.labels ?? [], [board.data]);
+  // What a filter or a sort reads that the task does not carry: names of
+  // projects, labels and other tasks, and the cards' counts.
+  const facts = useMemo(
+    () =>
+      factsOf({
+        projectNames: new Map([...projectsById].map(([id, project]) => [id, project.name])),
+        taskKeys: new Map((board.data?.tasks ?? []).map((task) => [task.id, task.key])),
+        labelNames: new Map(labels.map((label) => [label.id, label.name])),
+        activeCounts: new Map([...metaByTaskId].map(([id, meta]) => [id, meta.workingThreads.length])),
+        attachmentCounts: new Map([...metaByTaskId].map(([id, meta]) => [id, meta.attachmentCount])),
+        descendantCounts: new Map([...metaByTaskId].map(([id, meta]) => [id, meta.progress.total])),
+      }),
+    [projectsById, board.data, labels, metaByTaskId],
+  );
+  const columns = useMemo(
+    () => (tasks === undefined ? undefined : boardColumns(tasks, layout, labels, facts)),
+    [tasks, layout, labels, facts],
+  );
+  const tasksRef = useRef(tasks);
+  tasksRef.current = tasks;
   const columnsRef = useRef(columns);
   columnsRef.current = columns;
 
+  const groupBy = layout.grouping.groupBy;
+  const gridColumns = gridColumnsOf(layout.grouping);
+  // Manual order is a project's own hand-set order; a cross-project screen's
+  // columns mix several projects' orders, so a drop there never reorders.
+  const reorder = singleProjectId !== null && canReorder(groupBy, layout.sort);
   const [drag, setDrag] = useState<DragState | null>(null);
+  const [resize, setResize] = useState<ResizeState | null>(null);
   const [quickAddStatus, setQuickAddStatus] = useState<TaskStatus | null>(null);
   const boardRef = useRef<HTMLDivElement | null>(null);
-  const columnRefs = useRef(new Map<TaskStatus, HTMLDivElement>());
+  const isNarrow = useIsCompactViewport();
+  // Which column the narrow board shows. Null until the owner picks one —
+  // `visibleBoardColumns` then falls back to the first column.
+  const [narrowKey, setNarrowKey] = useState<string | null>(null);
+  const columnRefs = useRef(new Map<string, HTMLDivElement>());
+  // Keyed by column and task: a card with two labels sits in two columns.
   const cardRefs = useRef(new Map<string, HTMLDivElement>());
   const suppressClickRef = useRef(false);
   const dragCleanupRef = useRef<(() => void) | null>(null);
   useEffect(() => () => dragCleanupRef.current?.(), []);
 
+  const cardRefKey = (columnKey: string, taskId: string) => `${columnKey}\u0000${taskId}`;
+
   const findDropTarget = (
     x: number,
     y: number,
     draggedTaskId: string,
-  ): { status: TaskStatus; index: number } | null => {
+  ): { key: string; index: number } | null => {
     const current = columnsRef.current;
     if (!current) return null;
     // Each column's drop zone is its full-height strip of the board, so a
@@ -496,56 +847,90 @@ export function BoardView({ projectId }: BoardViewProps) {
     ) {
       return null;
     }
-    for (const status of visibleBoardStatuses(current)) {
-      const columnElement = columnRefs.current.get(status);
+    if (groupBy === "none") {
+      const cards = current
+        .find((column) => column.key === ALL_KEY)
+        ?.tasks.filter((task) => task.id !== draggedTaskId)
+        .map((task): CardRect => cardRefs.current.get(cardRefKey(ALL_KEY, task.id))?.getBoundingClientRect() ?? OFF_SCREEN);
+      return cards ? { key: ALL_KEY, index: gridDropIndex(cards, x, y) } : null;
+    }
+    for (const column of current) {
+      const columnElement = columnRefs.current.get(column.key);
       if (!columnElement) continue;
       const rect = columnElement.getBoundingClientRect();
       if (x < rect.left - 6 || x > rect.right + 6) continue;
-      const centers = current[status]
+      const centers = column.tasks
         .filter((task) => task.id !== draggedTaskId)
         .map((task) => {
-          const cardElement = cardRefs.current.get(task.id);
+          const cardElement = cardRefs.current.get(cardRefKey(column.key, task.id));
           if (!cardElement) return Number.NEGATIVE_INFINITY;
           const cardRect = cardElement.getBoundingClientRect();
           return cardRect.top + cardRect.height / 2;
         });
-      return { status, index: dropIndexForPointer(centers, y) };
+      return { key: column.key, index: dropIndexForPointer(centers, y) };
     }
     return null;
   };
 
-  const commitDrop = (
-    taskId: string,
-    toStatus: TaskStatus,
-    dropIndex: number,
-  ) => {
-    const current = columnsRef.current;
-    if (!current) return;
-    const neighbors = dropNeighborsForIndex(
-      current[toStatus].map((task) => task.id),
-      taskId,
-      dropIndex,
+  const send = (task: Task, change: DropChange, neighbors: BoardDropNeighbors) => {
+    if (change.kind === "none") return;
+    // boardMove keeps a project's manual order (before/after neighbors); a
+    // cross-project screen has none to keep, so its status drops are a plain
+    // update, same as any other property.
+    const request =
+      change.kind === "status" && singleProjectId !== null
+        ? rpc.call("boardMove", {
+            taskId: task.id,
+            status: change.status,
+            ...(change.status === task.status ? {} : { fromStatus: task.status }),
+            beforeTaskId: neighbors.beforeTaskId,
+            afterTaskId: neighbors.afterTaskId,
+            authorName: "You",
+          })
+        : change.kind === "status"
+          ? rpc.call("updateTask", { taskId: task.id, status: change.status })
+          : rpc.call("updateTask", { taskId: task.id, ...change.patch });
+    void request.then(
+      (result) => {
+        if (result.ok) return;
+        // A refused take tells the owner why; the board is read again either way.
+        refusal.handle(result, task.key);
+        board.refresh();
+      },
+      () => board.refresh(),
     );
-    setColumns(applyBoardMove(current, taskId, toStatus, dropIndex));
-    void rpc
-      .call("boardMove", {
-        taskId,
-        status: toStatus,
-        beforeTaskId: neighbors.beforeTaskId,
-        afterTaskId: neighbors.afterTaskId,
-        authorName: "You",
-      })
-      .then(
-        (result) => {
-          if (!result.ok) board.refresh();
-        },
-        () => board.refresh(),
-      );
+  };
+
+  /**
+   * A drop into another column sets the grouped property to that column's
+   * value; a drop inside its own column reorders it, where order is the
+   * owner's to set (status columns, manual sort) — elsewhere it does nothing.
+   */
+  const commitDrop = (task: Task, fromKey: string, toKey: string, dropIndex: number) => {
+    const current = columnsRef.current;
+    const all = tasksRef.current;
+    if (!current || !all) return;
+    const sameColumn = fromKey === toKey;
+    if (sameColumn && !reorder) return;
+    if (groupBy === "epic" && dropsUnderItself(task, toKey, all)) return;
+    const change: DropChange = sameColumn
+      ? { kind: "status", status: task.status }
+      : dropPatch(task, groupBy, fromKey, toKey, labels);
+    if (change.kind === "none") return;
+    const target = current.find((column) => column.key === toKey);
+    const neighbors =
+      reorder && target
+        ? dropNeighborsForIndex(target.tasks.map((entry) => entry.id), task.id, dropIndex)
+        : NO_NEIGHBORS;
+    const changed = withDrop(all, task.id, change);
+    setTasks(reorder ? placedBefore(changed, task.id, neighbors.afterTaskId) : changed);
+    send(task, change, neighbors);
   };
 
   const handleCardPointerDown = (
     event: ReactPointerEvent<HTMLDivElement>,
     task: Task,
+    fromKey: string,
   ) => {
     if (event.button !== 0 || dragCleanupRef.current) return;
     const rect = event.currentTarget.getBoundingClientRect();
@@ -559,29 +944,23 @@ export function BoardView({ projectId }: BoardViewProps) {
     let active = false;
 
     const updateDrag = (moveEvent: PointerEvent) => {
-      const target = findDropTarget(
-        moveEvent.clientX,
-        moveEvent.clientY,
-        task.id,
-      );
+      const target = findDropTarget(moveEvent.clientX, moveEvent.clientY, task.id);
       setDrag({
         taskId: task.id,
+        fromKey,
         x: moveEvent.clientX,
         y: moveEvent.clientY,
         offsetX: start.offsetX,
         offsetY: start.offsetY,
         width: start.width,
-        overStatus: target?.status ?? null,
+        overKey: target?.key ?? null,
         dropIndex: target?.index ?? 0,
       });
     };
 
     const onMove = (moveEvent: PointerEvent) => {
       if (!active) {
-        const distance = Math.hypot(
-          moveEvent.clientX - start.x,
-          moveEvent.clientY - start.y,
-        );
+        const distance = Math.hypot(moveEvent.clientX - start.x, moveEvent.clientY - start.y);
         if (distance < DRAG_THRESHOLD_PX) return;
         active = true;
       }
@@ -593,12 +972,8 @@ export function BoardView({ projectId }: BoardViewProps) {
       dragCleanupRef.current = null;
       if (!active) return;
       if (upEvent) {
-        const target = findDropTarget(
-          upEvent.clientX,
-          upEvent.clientY,
-          task.id,
-        );
-        if (target) commitDrop(task.id, target.status, target.index);
+        const target = findDropTarget(upEvent.clientX, upEvent.clientY, task.id);
+        if (target) commitDrop(task, fromKey, target.key, target.index);
       }
       setDrag(null);
       // The click event fires right after pointerup; swallow that one only.
@@ -620,10 +995,53 @@ export function BoardView({ projectId }: BoardViewProps) {
     };
   };
 
+  /** Dragging a column's right edge; the width is stored once, on release. */
+  const handleResizePointerDown = (event: ReactPointerEvent<HTMLDivElement>, columnKey: string) => {
+    if (event.button !== 0 || dragCleanupRef.current) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const startX = event.clientX;
+    const startWidth = columnWidth(layoutRef.current.grouping, columnKey);
+    const widthAt = (clientX: number) =>
+      columnWidth(withColumnWidth(layoutRef.current.grouping, columnKey, startWidth + clientX - startX), columnKey);
+    const onMove = (moveEvent: PointerEvent) =>
+      setResize({ key: columnKey, width: widthAt(moveEvent.clientX) });
+    const onUp = (upEvent: PointerEvent) => {
+      dragCleanupRef.current?.();
+      dragCleanupRef.current = null;
+      const current = layoutRef.current;
+      setBoardLayout(key, {
+        ...current,
+        grouping: withColumnWidth(current.grouping, columnKey, widthAt(upEvent.clientX)),
+      });
+      setResize(null);
+    };
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+    dragCleanupRef.current = () => {
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+    };
+  };
+
   const openTask = (task: Task) => {
     if (suppressClickRef.current) return;
-    navigation.go({ kind: "task", taskKey: task.key });
+    openTaskByKey(task.key);
   };
+
+  // The board refetches at once rather than waiting on the realtime event, so
+  // the new sub-task lands in the card's list as soon as it is made.
+  const addSubtask =
+    (parent: Task) =>
+    (title: string): Promise<AddSubtaskOutcome> =>
+      rpc.call("createTask", { projectId: parent.projectId, title, parentTaskId: parent.id, status: "todo" }).then(
+        (result) => {
+          if (!result.ok) return { ok: false, message: result.error.message };
+          board.refresh();
+          return { ok: true };
+        },
+        (error: unknown) => ({ ok: false, message: error instanceof Error ? error.message : String(error) }),
+      );
 
   if (columns === undefined) {
     if (board.error) {
@@ -640,124 +1058,232 @@ export function BoardView({ projectId }: BoardViewProps) {
   }
 
   const labelsById = board.data?.labelsById ?? new Map<string, Label>();
-  const metaByTaskId =
-    board.data?.metaByTaskId ?? new Map<string, BoardCardMeta>();
-  const ghostTask = drag
-    ? Object.values(columns)
-        .flat()
-        .find((task) => task.id === drag.taskId)
-    : undefined;
+  const newTaskDialog = (
+    <NewTaskDialog
+      open={quickAddStatus !== null}
+      onOpenChange={(open) => {
+        if (!open) setQuickAddStatus(null);
+      }}
+      projectId={singleProjectId}
+      defaultStatus={quickAddStatus ?? undefined}
+    />
+  );
+  // Above the columns (or the grid): a database board that lost its connection says so.
+  const withBanner = (content: ReactNode) => (
+    <div className="flex h-full min-h-0 flex-col">
+      <SourceBanner projectIds={boardProjectIds} />
+      <div className="min-h-0 flex-1">{content}</div>
+    </div>
+  );
+  const card = (task: Task, columnKey: string, draggable: boolean, dropMark?: "before" | "after") => (
+    <TaskCard
+      key={task.id}
+      dropMark={dropMark}
+      task={task}
+      labelsById={labelsById}
+      meta={metaByTaskId.get(task.id) ?? EMPTY_META}
+      project={projectsById.get(task.projectId)}
+      showProject={showProject}
+      config={fieldConfig}
+      dragging={drag?.taskId === task.id}
+      cardRef={(element) => {
+        const refKey = cardRefKey(columnKey, task.id);
+        if (element) cardRefs.current.set(refKey, element);
+        else cardRefs.current.delete(refKey);
+      }}
+      onPointerDown={draggable ? (event) => handleCardPointerDown(event, task, columnKey) : undefined}
+      onClick={() => openTask(task)}
+      onOpenTask={openTaskByKey}
+      onAddSubtask={addSubtask(task)}
+      burndown={burndowns.data?.get(task.id)}
+      period={charts.period}
+      gantt={cardGantts.get(task.id)}
+      text={cardText}
+    />
+  );
 
-  const renderColumn = (status: TaskStatus) => {
-    const cards = columns[status];
-    const isDragOver = drag !== null && drag.overStatus === status;
-    // The dragged card stays in place (dimmed), so the insertion indicator is
-    // positioned among the remaining cards.
-    const remaining = drag
-      ? cards.filter((task) => task.id !== drag.taskId)
-      : cards;
-    const indicatorBeforeTaskId = isDragOver
-      ? (remaining[drag.dropIndex]?.id ?? null)
-      : undefined;
-    const indicator = (
-      <div
-        key="drop-indicator"
-        className="h-0.5 shrink-0 rounded-full bg-primary"
-      />
+  if (hasActiveFilters(layout.filters) && columns.every((column) => column.tasks.length === 0)) {
+    return (
+      <div className="flex h-full flex-col items-center justify-center gap-3 p-6 text-sm text-muted-foreground">
+        <p>No tasks match these filters</p>
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={() => setBoardLayout(key, { ...layoutRef.current, filters: EMPTY_FILTERS })}
+        >
+          Clear filters
+        </Button>
+      </div>
     );
-    const children: ReactNode[] = [];
-    for (const task of cards) {
-      if (task.id === indicatorBeforeTaskId) children.push(indicator);
-      children.push(
+  }
+
+  const ghostTask = drag
+    ? columns.flatMap((column) => column.tasks).find((task) => task.id === drag.taskId)
+    : undefined;
+  const ghost =
+    drag && ghostTask ? (
+      <div
+        className="pointer-events-none fixed z-50"
+        style={{
+          left: drag.x - drag.offsetX,
+          top: drag.y - drag.offsetY,
+          width: drag.width,
+        }}
+      >
         <TaskCard
-          key={task.id}
-          task={task}
+          task={ghostTask}
           labelsById={labelsById}
-          meta={metaByTaskId.get(task.id) ?? EMPTY_META}
+          meta={metaByTaskId.get(ghostTask.id) ?? EMPTY_META}
+          project={projectsById.get(ghostTask.projectId)}
+          showProject={showProject}
           config={fieldConfig}
-          dragging={drag?.taskId === task.id}
-          cardRef={(element) => {
-            if (element) cardRefs.current.set(task.id, element);
-            else cardRefs.current.delete(task.id);
-          }}
-          onPointerDown={(event) => handleCardPointerDown(event, task)}
-          onClick={() => openTask(task)}
-        />,
-      );
+          text={cardText}
+          ghost
+        />
+      </div>
+    ) : null;
+
+  // Nothing groups the board: its cards lie in one grid, reordered by hand
+  // under the manual sort, with no column to drop into.
+  if (groupBy === "none") {
+    const gridTasks = columns.find((column) => column.key === ALL_KEY)?.tasks ?? [];
+    const remaining = drag ? gridTasks.filter((task) => task.id !== drag.taskId) : gridTasks;
+    const landing = drag !== null && drag.overKey === ALL_KEY && reorder ? drag.dropIndex : null;
+    // The line stands before the card the dropped one would push aside, or
+    // after the last card when it would land at the end.
+    const markOf = (task: Task): "before" | "after" | undefined => {
+      if (landing === null) return undefined;
+      if (remaining[landing]?.id === task.id) return "before";
+      return landing >= remaining.length && remaining.at(-1)?.id === task.id ? "after" : undefined;
+    };
+    return withBanner(
+      <>
+        <div
+          ref={boardRef}
+          data-board-grid
+          className={cn(
+            "grid h-full grid-cols-[repeat(auto-fill,minmax(15rem,1fr))] content-start gap-2 overflow-y-auto p-4",
+            drag !== null && "cursor-grabbing select-none",
+          )}
+          style={gridColumns === "auto" ? undefined : { gridTemplateColumns: `repeat(${gridColumns}, minmax(0, 1fr))` }}
+        >
+          {gridTasks.map((task) => card(task, ALL_KEY, reorder, markOf(task)))}
+          {newTaskDialog}
+        </div>
+        {ghost}
+      </>,
+    );
+  }
+
+  const renderColumn = (column: BoardColumn) => {
+    const isDragOver = drag !== null && drag.overKey === column.key;
+    // The insertion line shows only where the drop keeps the owner's order;
+    // elsewhere the whole column lights up and the sort places the card.
+    const showsIndicator = isDragOver && reorder;
+    const remaining = drag ? column.tasks.filter((task) => task.id !== drag.taskId) : column.tasks;
+    const indicatorBeforeTaskId = showsIndicator ? (remaining[drag.dropIndex]?.id ?? null) : undefined;
+    const indicator = <div key="drop-indicator" className="h-0.5 shrink-0 rounded-full bg-primary" />;
+    const children: ReactNode[] = [];
+    for (const task of column.tasks) {
+      if (task.id === indicatorBeforeTaskId) children.push(indicator);
+      children.push(card(task, column.key, true));
     }
     if (indicatorBeforeTaskId === null) children.push(indicator);
+    const width = resize?.key === column.key ? resize.width : columnWidth(layout.grouping, column.key);
 
     return (
-      <div key={status} className="flex max-h-full w-[230px] shrink-0 flex-col">
+      <div
+        key={column.key}
+        className={cn("relative flex max-h-full flex-col", isNarrow ? "w-full" : "shrink-0")}
+        style={isNarrow ? undefined : { width }}
+      >
         <div className="flex items-center gap-1.5 px-1 pb-2 text-sm font-semibold">
-          <StatusIcon status={status} />
-          <span>{STATUS_LABELS[status]}</span>
-          <span className="font-normal text-muted-foreground">
-            {cards.length}
-          </span>
-          <Button
-            variant="ghost"
-            size="icon"
-            className="ml-auto size-6 text-muted-foreground"
-            aria-label={`New ${STATUS_LABELS[status]} task`}
-            onClick={() => setQuickAddStatus(status)}
-          >
-            <Icon name="Plus" className="size-3.5" />
-          </Button>
+          <GroupIcon groupBy={groupBy} groupKey={column.key} labels={labels} />
+          <span className="truncate">{column.label}</span>
+          <span className="font-normal text-muted-foreground">{column.tasks.length}</span>
+          {groupBy === "status" ? (
+            <Button
+              variant="ghost"
+              size="icon"
+              className="ml-auto size-6 text-muted-foreground"
+              aria-label={`New ${column.label} task`}
+              onClick={() => setQuickAddStatus(column.key as TaskStatus)}
+            >
+              <Icon name="Plus" className="size-3.5" />
+            </Button>
+          ) : null}
         </div>
         <div
           ref={(element) => {
-            if (element) columnRefs.current.set(status, element);
-            else columnRefs.current.delete(status);
+            if (element) columnRefs.current.set(column.key, element);
+            else columnRefs.current.delete(column.key);
           }}
-          data-board-column={status}
+          data-board-column={column.key}
           className={cn(
             "flex min-h-16 flex-col gap-2 overflow-y-auto rounded-lg p-1",
-            isDragOver &&
-              "bg-surface-selected outline-2 outline-dashed outline-input",
+            isDragOver && "bg-surface-selected outline-2 outline-dashed outline-input",
           )}
         >
           {children}
         </div>
+        {isNarrow ? null : (
+          <div
+            role="separator"
+            aria-orientation="vertical"
+            aria-label={`Resize ${column.label} column`}
+            onPointerDown={(event) => handleResizePointerDown(event, column.key)}
+            className={cn(
+              "absolute inset-y-0 -right-2 w-1.5 cursor-col-resize rounded-full hover:bg-primary/40",
+              resize?.key === column.key && "bg-primary/60",
+            )}
+          />
+        )}
       </div>
     );
   };
 
-  return (
+  // Nothing picked yet: open on the first column that has cards, so a narrow
+  // board does not greet the owner with an empty first column.
+  const columnKeys = columns.map((column) => column.key);
+  const firstFilled = columns.find((column) => column.tasks.length > 0)?.key ?? null;
+  const shownKeys = visibleBoardColumns(isNarrow, columnKeys, narrowKey ?? firstFilled);
+
+  return withBanner(
     <div
       ref={boardRef}
       className={cn(
-        "flex h-full items-start gap-3 overflow-x-auto p-4",
-        drag !== null && "cursor-grabbing",
+        "flex h-full p-4",
+        isNarrow ? "flex-col gap-2" : "items-start gap-3 overflow-x-auto",
+        (drag !== null || resize !== null) && "cursor-grabbing select-none",
       )}
     >
-      {visibleBoardStatuses(columns).map(renderColumn)}
-      {drag && ghostTask ? (
+      {isNarrow && columns.length > 1 ? (
         <div
-          className="pointer-events-none fixed z-50"
-          style={{
-            left: drag.x - drag.offsetX,
-            top: drag.y - drag.offsetY,
-            width: drag.width,
-          }}
+          role="group"
+          aria-label="Board column"
+          className="flex shrink-0 items-center gap-0.5 overflow-x-auto rounded-md bg-muted p-0.5"
         >
-          <TaskCard
-            task={ghostTask}
-            labelsById={labelsById}
-            meta={metaByTaskId.get(ghostTask.id) ?? EMPTY_META}
-            config={fieldConfig}
-            ghost
-          />
+          {columns.map((column) => (
+            <button
+              key={column.key}
+              type="button"
+              onClick={() => setNarrowKey(column.key)}
+              aria-pressed={shownKeys.includes(column.key)}
+              className={cn(
+                "shrink-0 rounded-sm px-2.5 py-1 text-xs",
+                shownKeys.includes(column.key)
+                  ? "bg-background text-foreground shadow-2xs"
+                  : "text-muted-foreground hover:text-foreground",
+              )}
+            >
+              {column.label}
+            </button>
+          ))}
         </div>
       ) : null}
-      <NewTaskDialog
-        open={quickAddStatus !== null}
-        onOpenChange={(open) => {
-          if (!open) setQuickAddStatus(null);
-        }}
-        projectId={projectId}
-        defaultStatus={quickAddStatus ?? undefined}
-      />
-    </div>
+      {columns.filter((column) => shownKeys.includes(column.key)).map(renderColumn)}
+      {ghost}
+      {newTaskDialog}
+    </div>,
   );
 }

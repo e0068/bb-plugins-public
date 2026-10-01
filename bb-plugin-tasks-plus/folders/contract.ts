@@ -7,10 +7,27 @@ const idSchema = z.string().regex(ULID_PATTERN, "must be a ULID");
 const bbProjectIdSchema = z.string().startsWith("proj_");
 
 /**
- * A board connected to a repository folder of markdown task files. There is
- * no sync status: files are read fresh on every request (see decisions/
- * tasks-files-are-the-store.md), so there is nothing to report progress on
- * or retry.
+ * Where a connected board keeps its tasks. A folder is read fresh on every
+ * request (see decisions/tasks-files-are-the-store.md), so it has no link to
+ * report. A database has one: `live`, `reconnecting` or `offline`. Never a
+ * token — the address is all a row says of how to reach the database.
+ */
+export const syncedSourceSchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("folder") }).strict(),
+  z
+    .object({
+      kind: z.literal("database"),
+      url: z.string(),
+      state: z.enum(["live", "reconnecting", "offline"]),
+      lastSyncAt: z.string().nullable(),
+    })
+    .strict(),
+]);
+
+/**
+ * A board connected to a source: a repository folder of markdown task files,
+ * or an online database. A database board has no folder, no linked bb project
+ * and no repository path.
  */
 export const syncedFolderSchema = z
   .object({
@@ -18,12 +35,13 @@ export const syncedFolderSchema = z
     projectName: z.string(),
     projectPrefix: z.string(),
     taskCount: z.number().int().nonnegative(),
-    tasksFolder: z.string(),
-    linkedBbProjectId: bbProjectIdSchema,
+    tasksFolder: z.string().nullable(),
+    linkedBbProjectId: bbProjectIdSchema.nullable(),
     /** null when the linked bb project could not be resolved (best-effort). */
     linkedBbProjectName: z.string().nullable(),
     /** Local repository path of the linked bb project's default source. */
     repoPath: z.string().nullable(),
+    source: syncedSourceSchema,
   })
   .strict();
 
@@ -54,6 +72,11 @@ export const folderDomainErrorSchema = z
       "folder_already_connected",
       "bb_project_not_found",
       "folder_connect_failed",
+      "database_unreachable",
+      "database_auth_failed",
+      "database_not_empty",
+      "turso_token_required",
+      "turso_api_failed",
     ]),
     message: z.string(),
   })
@@ -61,6 +84,40 @@ export const folderDomainErrorSchema = z
 
 const addSyncedFolderResultSchema = z.discriminatedUnion("ok", [
   z.object({ ok: z.literal(true), folder: syncedFolderSchema }).strict(),
+  z.object({ ok: z.literal(false), error: folderDomainErrorSchema }).strict(),
+]);
+
+const tursoDatabaseSchema = z.object({ name: z.string(), url: z.string() }).strict();
+
+const createDatabaseResultSchema = z.discriminatedUnion("ok", [
+  z.object({ ok: z.literal(true), url: z.string() }).strict(),
+  z.object({ ok: z.literal(false), error: folderDomainErrorSchema }).strict(),
+]);
+
+const listTursoDatabasesResultSchema = z.discriminatedUnion("ok", [
+  z.object({ ok: z.literal(true), databases: z.array(tursoDatabaseSchema) }).strict(),
+  z.object({ ok: z.literal(false), error: folderDomainErrorSchema }).strict(),
+]);
+
+const generateTursoApiTokenResultSchema = z.discriminatedUnion("ok", [
+  z.object({ ok: z.literal(true), token: z.string() }).strict(),
+  z
+    .object({ ok: z.literal(false), reason: z.enum(["cli_missing", "not_logged_in", "failed"]), message: z.string() })
+    .strict(),
+]);
+
+const connectDatabaseInputSchema = z
+  .object({
+    url: z.string(),
+    token: z.string().optional(),
+    moveFromBoardId: idSchema.optional(),
+    name: z.string().optional(),
+    prefix: z.string().optional(),
+  })
+  .strict();
+
+const connectDatabaseResultSchema = z.discriminatedUnion("ok", [
+  z.object({ ok: z.literal(true) }).strict(),
   z.object({ ok: z.literal(false), error: folderDomainErrorSchema }).strict(),
 ]);
 
@@ -89,10 +146,44 @@ export const foldersRpcContract = defineRpcContract({
     input: z.object({ projectId: idSchema }).strict(),
     output: z.object({ ok: z.literal(true) }).strict(),
   },
+  /** Makes a database for a board with this prefix; the account token, when given, is saved. Answers the address, never a token. */
+  createDatabase: {
+    input: z
+      .object({ prefix: z.string(), tursoApiToken: z.string().optional() })
+      .strict(),
+    output: createDatabaseResultSchema,
+  },
+  /** The databases of the saved Turso account. */
+  listTursoDatabases: {
+    input: z.null(),
+    output: listTursoDatabasesResultSchema,
+  },
+  connectDatabase: {
+    input: connectDatabaseInputSchema,
+    output: connectDatabaseResultSchema,
+  },
+  /** A Turso API token minted by the turso CLI of the host, for the dialog's field; it is saved only once Create is accepted. */
+  generateTursoApiToken: {
+    input: z.null(),
+    output: generateTursoApiTokenResultSchema,
+  },
+  /** Whether a Turso account token is saved — never the token. */
+  hasTursoApiToken: {
+    input: z.null(),
+    output: z.object({ saved: z.boolean() }).strict(),
+  },
+  retryDatabase: {
+    input: z.object({ boardId: idSchema }).strict(),
+    output: z.object({ ok: z.literal(true) }).strict(),
+  },
 });
 
 export type FoldersRpcContract = typeof foldersRpcContract;
 export type SyncedFolder = z.infer<typeof syncedFolderSchema>;
+export type ConnectDatabaseInput = z.infer<typeof connectDatabaseInputSchema>;
+export type SyncedSource = z.infer<typeof syncedSourceSchema>;
+export type TursoDatabaseEntry = z.infer<typeof tursoDatabaseSchema>;
+export type GenerateTursoApiTokenResult = z.infer<typeof generateTursoApiTokenResultSchema>;
 export type SyncableBbProject = z.infer<typeof syncableBbProjectSchema>;
 export type FolderDomainError = z.infer<typeof folderDomainErrorSchema>;
 

@@ -26,11 +26,30 @@ function fakeKv(): KvStore {
 beforeEach(() => {
   root = mkdtempSync(join(tmpdir(), "store-"));
   kv = fakeKv();
-  board = { id: "b1", name: "Board", prefix: "TSK", color: "blue", folderId: null, linkedBbProjectId: null, tasksFolder: "tasks", createdAt: "2026-01-01T00:00:00.000Z" };
+  board = { id: "b1", name: "Board", prefix: "TSK", color: "blue", folderId: null, linkedBbProjectId: null, tasksFolder: "tasks", database: null, createdAt: "2026-01-01T00:00:00.000Z" };
   store = createFileTasksStore(kv, [board], [], [], [], () => {});
   store.setBoardRoots("b1", [{ absPath: root, origin: { kind: "main" } }]);
 });
 afterEach(() => rmSync(root, { recursive: true, force: true }));
+
+function savedViewInput(name: string) {
+  return {
+    name,
+    projectId: null,
+    listScope: null,
+    filters: {
+      statuses: [],
+      priorities: [],
+      types: [],
+      estimates: [],
+      labelNames: [],
+      assignees: [],
+      parents: [],
+    },
+    sort: "manual" as const,
+    fields: { fields: [], showEmpty: false, showDescription: false },
+  };
+}
 
 describe("task lifecycle", () => {
   it("создаёт, читает и обновляет", async () => {
@@ -357,7 +376,7 @@ describe("boards/folders/presets/saved views", () => {
 
   it("updateProject с явными undefined в полях не затирает их (так шлёт CLI --rename-prefix)", () => {
     const project = store.createProject({
-      name: "Keep", prefix: "OLD", color: "red", linkedBbProjectId: "proj_x", tasksFolder: "memory/tasks",
+      name: "Keep", prefix: "OLD", color: "red", linkedBbProjectId: "proj_x", tasksFolder: "docs/tasks",
     });
     const updated = store.updateProject(project.id, {
       prefix: "NEW", name: undefined, color: undefined, folderId: undefined,
@@ -365,10 +384,10 @@ describe("boards/folders/presets/saved views", () => {
     });
     expect(updated).toMatchObject({
       prefix: "NEW", name: "Keep", color: "red", folderId: null,
-      linkedBbProjectId: "proj_x", tasksFolder: "memory/tasks",
+      linkedBbProjectId: "proj_x", tasksFolder: "docs/tasks",
     });
     expect(Object.values(updated)).not.toContain(undefined);
-    expect(JSON.parse(JSON.stringify(store.getProject(project.id)))).toMatchObject({ name: "Keep", tasksFolder: "memory/tasks" });
+    expect(JSON.parse(JSON.stringify(store.getProject(project.id)))).toMatchObject({ name: "Keep", tasksFolder: "docs/tasks" });
   });
 
   it("preset и saved-view CRUD", () => {
@@ -380,27 +399,19 @@ describe("boards/folders/presets/saved views", () => {
     store.deletePreset(preset.id);
     expect(store.listPresets()).toHaveLength(0);
 
-    const view = store.createSavedView({ scope: "board", name: "V", config: {} as never });
-    expect(store.listSavedViews("board")).toHaveLength(1);
+    const view = store.createSavedView(savedViewInput("V"));
+    expect(store.listSavedViews()).toHaveLength(1);
     store.deleteSavedView(view.id);
-    expect(store.listSavedViews("board")).toHaveLength(0);
+    expect(store.listSavedViews()).toHaveLength(0);
   });
 
-  it("вид, сохранённый до замены токенов, отдаётся без поля tokens", () => {
-    store.createSavedView({
-      scope: "all",
-      name: "Old",
-      config: {
-        fields: [
-          { field: "tokens", visible: true },
-          { field: "labels", visible: true },
-        ],
-        showEmpty: false,
-        showDescription: false,
-      } as never,
-    });
-    const [view] = store.listSavedViews("all");
-    expect(view!.config.fields).toEqual([{ field: "labels", visible: true }]);
+  it("вид переименовывается, остальные его поля не трогаются", () => {
+    const view = store.createSavedView(savedViewInput("Before"));
+    store.updateSavedView(view.id, { name: "After" });
+    const [renamed] = store.listSavedViews();
+    expect(renamed!.name).toBe("After");
+    expect(renamed!.createdAt).toBe(view.createdAt);
+    expect(renamed!.fields).toEqual(view.fields);
   });
 
   it("задача хранит время и деньги, пустое значение стирает поле", async () => {
@@ -779,18 +790,11 @@ describe("исполнитель и эпик", () => {
     expect(existsSync(placedPath("backlog", "edit.md"))).toBe(false);
   });
 
-  it("доступные значения — папки, где лежат задачи доски, эпики по исполнителю", async () => {
-    await store.createTask({ projectId: "b1", title: "A", assignee: "Claude", epic: "Tasks+" });
-    await store.createTask({ projectId: "b1", title: "B", assignee: "Claude", epic: "Flow" });
+  it("доступные исполнители — папки, где лежат задачи доски", async () => {
+    await store.createTask({ projectId: "b1", title: "A", assignee: "Claude" });
     await store.createTask({ projectId: "b1", title: "C", assignee: "Sergey" });
     await store.createTask({ projectId: "b1", title: "D" });
 
-    expect(await store.listPlacements("b1")).toEqual({
-      assignees: ["Claude", "Sergey"],
-      epics: [
-        { assignee: "Claude", name: "Flow" },
-        { assignee: "Claude", name: "Tasks+" },
-      ],
-    });
+    expect(await store.listPlacements("b1")).toEqual({ assignees: ["Claude", "Sergey"] });
   });
 });

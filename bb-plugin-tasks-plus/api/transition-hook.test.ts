@@ -22,7 +22,7 @@ const BOARD: BoardConfig = {
   folderId: null,
   linkedBbProjectId: null,
   tasksFolder: "tasks",
-  createdAt: "2026-01-01T00:00:00.000Z",
+  database: null, createdAt: "2026-01-01T00:00:00.000Z",
 };
 
 function fakeKv(): KvStore {

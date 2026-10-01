@@ -1,11 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
-  TASK_CHECKS,
   TASK_ESTIMATES,
   TASK_PRIORITIES,
   TASK_STATUSES,
   TASK_TYPES,
-  type TaskCheck,
   type TaskEstimate,
   type TaskPriority,
   type TaskStatus,
@@ -13,7 +11,12 @@ import {
 } from "../../shared/enums.js";
 import type { Task } from "../../shared/contract.js";
 import { useUploadAttachment } from "../detail/attachments.js";
-import { PlacementPicker } from "../detail/placement-picker.js";
+import { AssigneePicker } from "../detail/assignee-picker.js";
+import {
+  EMPTY_SEED,
+  labelIdsByName,
+  type NewTaskSeed,
+} from "../common/new-task-seed.js";
 import {
   AttachmentChip,
   stageFiles,
@@ -74,6 +77,7 @@ export const PRIORITY_LABELS: Record<TaskPriority, string> = {
 };
 
 export const TYPE_LABELS: Record<TaskType, string> = {
+  epic: "Epic",
   feature: "Feature",
   bugfix: "Bugfix",
   spike: "Spike",
@@ -110,6 +114,12 @@ export interface NewTaskDialogProps {
    * and the project locked to the parent's (sub-tasks must share it).
    */
   defaultParentTaskId?: string;
+  /**
+   * The draft a filtered list opens with — its filters as field values, so
+   * the created task lands in that list. Its project applies when `projectId`
+   * is null (All tasks, a saved view); `defaultStatus` wins over its status.
+   */
+  seed?: NewTaskSeed;
 }
 
 export function NewTaskDialog({
@@ -118,13 +128,16 @@ export function NewTaskDialog({
   projectId,
   defaultStatus,
   defaultParentTaskId,
+  seed = EMPTY_SEED,
 }: NewTaskDialogProps) {
   const rpc = useTasksRpc();
   const navigation = useTasksNavigation();
   const projects = useProjects();
   const subtaskMode = defaultParentTaskId !== undefined;
 
-  const [selectedProjectId, setSelectedProjectId] = useState(projectId);
+  const [selectedProjectId, setSelectedProjectId] = useState(
+    projectId ?? seed.projectId,
+  );
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
   const [status, setStatus] = useState<TaskStatus>(defaultStatus ?? "todo");
@@ -132,12 +145,14 @@ export function NewTaskDialog({
   const [type, setType] = useState<TaskType | null>(null);
   const [estimate, setEstimate] = useState<TaskEstimate | null>(null);
   const [assignee, setAssignee] = useState<string | null>(null);
-  const [epic, setEpic] = useState<string | null>(null);
-  const [checks, setChecks] = useState<TaskCheck[]>([]);
   const [plannedMinutes, setPlannedMinutes] = useState("");
   const [budget, setBudget] = useState("");
   const [labelIds, setLabelIds] = useState<string[]>([]);
+  // Label names waiting for the project's labels to load: a seed names them,
+  // and a project switch carries the picked ones over by name.
+  const [pendingLabelNames, setPendingLabelNames] = useState<string[]>([]);
   const [dueDate, setDueDate] = useState("");
+  const [startDate, setStartDate] = useState("");
   const [parentTaskId, setParentTaskId] = useState<string | null>(
     defaultParentTaskId ?? null,
   );
@@ -157,21 +172,20 @@ export function NewTaskDialog({
   // Each open starts a fresh draft seeded from the invoking context.
   useEffect(() => {
     if (!open) return;
-    setSelectedProjectId(projectId);
+    setSelectedProjectId(projectId ?? seed.projectId);
     setTitle("");
     setDescription("");
-    setStatus(defaultStatus ?? "todo");
-    setPriority("none");
-    setType(null);
-    setEstimate(null);
-    setAssignee(null);
-    setEpic(null);
-    setChecks([]);
+    setStatus(defaultStatus ?? seed.status);
+    setPriority(seed.priority);
+    setType(seed.type);
+    setEstimate(seed.estimate);
+    setAssignee(seed.assignee);
     setPlannedMinutes("");
     setBudget("");
     setLabelIds([]);
+    setPendingLabelNames(seed.labelNames);
     setDueDate("");
-    setParentTaskId(defaultParentTaskId ?? null);
+    setParentTaskId(defaultParentTaskId ?? seed.parentTaskId);
     setLabelQuery("");
     setPendingFiles([]);
     setCreatedTask(null);
@@ -185,25 +199,45 @@ export function NewTaskDialog({
   const project =
     projectList.find((entry) => entry.id === effectiveProjectId) ?? null;
 
+  // Tagged with its project: the query keeps the previous project's labels
+  // while the next ones load, and those must neither show nor be matched.
   const labels = useTasksQuery(
-    async (rpc) =>
-      effectiveProjectId
+    async (rpc) => ({
+      projectId: effectiveProjectId,
+      labels: effectiveProjectId
         ? (await rpc.call("listLabels", { projectId: effectiveProjectId }))
             .labels
         : [],
+    }),
     ["projects:changed"],
     [effectiveProjectId],
   );
+  const projectLabels =
+    labels.data?.projectId === effectiveProjectId
+      ? labels.data.labels
+      : undefined;
+
+  useEffect(() => {
+    if (pendingLabelNames.length === 0) return;
+    if (projectLabels === undefined || effectiveProjectId === null) return;
+    const matched = labelIdsByName(
+      projectLabels,
+      effectiveProjectId,
+      pendingLabelNames,
+    );
+    setLabelIds((current) => [...new Set([...current, ...matched])]);
+    setPendingLabelNames([]);
+  }, [projectLabels, effectiveProjectId, pendingLabelNames]);
+  // A draft made in an epic's list starts under the epic, so the parent is
+  // shown — and can be taken off — just as in a sub-task draft.
+  const showsParent = subtaskMode || parentTaskId !== null;
   const parentCandidates = useTasksQuery(
     async (rpc) =>
-      effectiveProjectId && subtaskMode
-        ? listAllTasks(rpc, {
-            projectId: effectiveProjectId,
-            parentTaskId: null,
-          })
+      effectiveProjectId && showsParent
+        ? listAllTasks(rpc, { projectId: effectiveProjectId })
         : [],
     ["tasks:changed"],
-    [effectiveProjectId, subtaskMode],
+    [effectiveProjectId, showsParent],
   );
   const parentTask =
     (parentCandidates.data ?? []).find((task) => task.id === parentTaskId) ??
@@ -212,7 +246,13 @@ export function NewTaskDialog({
   const changeProject = (id: string) => {
     setSelectedProjectId(id);
     // Labels and parents are project-scoped; keeping them would trip the
-    // server's project-mismatch checks.
+    // server's project-mismatch checks — so labels move over by name.
+    setPendingLabelNames((pending) => [
+      ...pending,
+      ...(projectLabels ?? [])
+        .filter((label) => labelIds.includes(label.id))
+        .map((label) => label.name),
+    ]);
     setLabelIds([]);
     if (!subtaskMode) setParentTaskId(null);
   };
@@ -222,13 +262,6 @@ export function NewTaskDialog({
       current.includes(labelId)
         ? current.filter((id) => id !== labelId)
         : [...current, labelId],
-    );
-
-  const toggleCheck = (value: TaskCheck) =>
-    setChecks((current) =>
-      current.includes(value)
-        ? current.filter((entry) => entry !== value)
-        : [...current, value],
     );
 
   // Inline label creation from the picker when the query matches nothing.
@@ -343,16 +376,15 @@ export function NewTaskDialog({
         priority,
         type,
         estimate,
-        // Both optional: a task without them lands at the tasks root.
+        // Optional: a task without one lands at the tasks root.
         assignee,
-        epic,
         // Blank or junk is simply left unset — the dialog captures fast.
         plannedMinutes: readMinutes(plannedMinutes),
         budget: readDollars(budget),
         dueDate: dueDate === "" ? null : dueDate,
+        startDate: startDate === "" ? null : startDate,
         parentTaskId,
         labelIds,
-        checks,
       });
       if (!result.ok) {
         setError(result.error.message);
@@ -395,6 +427,7 @@ export function NewTaskDialog({
         setTitle("");
         setDescription("");
         setLabelIds([]);
+        setPendingLabelNames(seed.labelNames);
         setDueDate("");
         setPendingFiles([]);
         titleRef.current?.focus();
@@ -413,8 +446,8 @@ export function NewTaskDialog({
   };
 
   const selectedLabels = useMemo(
-    () => (labels.data ?? []).filter((label) => labelIds.includes(label.id)),
-    [labels.data, labelIds],
+    () => (projectLabels ?? []).filter((label) => labelIds.includes(label.id)),
+    [projectLabels, labelIds],
   );
   const failedCount = pendingFiles.filter(
     (entry) => entry.status === "failed",
@@ -619,40 +652,12 @@ export function NewTaskDialog({
               ))}
             </SelectContent>
           </Select>
-          <PlacementPicker
+          <AssigneePicker
             projectId={effectiveProjectId}
-            field="assignee"
             value={assignee}
-            assignee={assignee}
-            onSelect={(next) => {
-              setAssignee(next);
-              // The epic folder lives inside the assignee's.
-              if (next === null) setEpic(null);
-            }}
+            onSelect={setAssignee}
             triggerClassName={PLACEMENT_TRIGGER}
           />
-          <PlacementPicker
-            projectId={effectiveProjectId}
-            field="epic"
-            value={epic}
-            assignee={assignee}
-            onSelect={setEpic}
-            triggerClassName={PLACEMENT_TRIGGER}
-          />
-          <div
-            role="group"
-            aria-label="Checks"
-            className="flex items-center gap-2 rounded-md border border-input px-2 py-1"
-          >
-            {TASK_CHECKS.map((value) => (
-              <CheckboxField
-                key={value}
-                checked={checks.includes(value)}
-                onCheckedChange={() => toggleCheck(value)}
-                label={value[0]!.toUpperCase() + value.slice(1)}
-              />
-            ))}
-          </div>
           <input
             type="number"
             min={0}
@@ -732,7 +737,7 @@ export function NewTaskDialog({
                     )}
                   </CommandEmpty>
                   <CommandGroup>
-                    {(labels.data ?? []).map((label) => (
+                    {(projectLabels ?? []).map((label) => (
                       <CommandItem
                         key={label.id}
                         value={label.name}
@@ -756,12 +761,19 @@ export function NewTaskDialog({
           </Popover>
           <input
             type="date"
+            value={startDate}
+            onChange={(event) => setStartDate(event.target.value)}
+            aria-label="Start date"
+            className="h-7 rounded-md border border-input bg-transparent px-2 text-xs text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring"
+          />
+          <input
+            type="date"
             value={dueDate}
             onChange={(event) => setDueDate(event.target.value)}
             aria-label="Due date"
             className="h-7 rounded-md border border-input bg-transparent px-2 text-xs text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring"
           />
-          {subtaskMode ? (
+          {showsParent ? (
             <Popover open={parentPickerOpen} onOpenChange={setParentPickerOpen}>
               <PopoverTrigger asChild>
                 <Button
@@ -779,6 +791,17 @@ export function NewTaskDialog({
                   <CommandList>
                     <CommandEmpty>No tasks in this project.</CommandEmpty>
                     <CommandGroup>
+                      {subtaskMode ? null : (
+                        <CommandItem
+                          value="No parent"
+                          onSelect={() => {
+                            setParentTaskId(null);
+                            setParentPickerOpen(false);
+                          }}
+                        >
+                          No parent
+                        </CommandItem>
+                      )}
                       {(parentCandidates.data ?? []).map((task) => (
                         <CommandItem
                           key={task.id}

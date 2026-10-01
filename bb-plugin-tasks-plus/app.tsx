@@ -1,8 +1,19 @@
 import { definePluginApp } from "@get-bb/plugin-sdk/app";
+import { ReducedColorsSection } from "@bb-plugins/reduced-colors";
+import { useTasksRpc } from "./shell/data.js";
 import { TasksAppShell } from "./shell/app-shell.js";
 import { TasksSidebarAccessory } from "./shell/sidebar-accessory.js";
-import { TaskDirectiveCard, TaskEmbedPanel } from "./views/embed/index.js";
+import { TaskDirectiveCard, TaskEmbedPanel, TaskSidePanelTab } from "./views/embed/index.js";
+import { TASK_TAB } from "./client/task-opening.js";
 import { CurrentTaskHeaderAction } from "./views/header/current-task.js";
+
+/** The settings page's Reduced Colors block for the analytics charts — bb's declared settings have no colour field. */
+function ReducedColorsSettings() {
+  const rpc = useTasksRpc();
+  return (
+    <ReducedColorsSection load={() => rpc.call("loadReducedColors", {})} save={(value) => rpc.call("saveReducedColors", value)} />
+  );
+}
 
 export default definePluginApp((app) => {
   app.slots.navPanel({
@@ -12,6 +23,7 @@ export default definePluginApp((app) => {
     path: "tasks",
     component: TasksAppShell,
     experimental_sidebarAccessory: TasksSidebarAccessory,
+    fixedTabs: [{ ...TASK_TAB, title: "Task", icon: "ListTodo", component: TaskSidePanelTab, layout: "padded" }],
   });
   app.slots.threadPanelAction({
     id: "task",
@@ -25,4 +37,10 @@ export default definePluginApp((app) => {
     component: CurrentTaskHeaderAction,
   });
   app.slots.messageDirective({ id: "task", component: TaskDirectiveCard });
+  app.slots.settingsSection({
+    id: "reduced-colors",
+    title: "Reduced Colors",
+    description: "Analytics charts use a gradient of two colours instead of the palette.",
+    component: ReducedColorsSettings,
+  });
 });

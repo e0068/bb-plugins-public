@@ -32,6 +32,7 @@ const task = {
   status: "in_progress",
   priority: "none",
   dueDate: null,
+  startDate: null,
   parentTaskId: null,
   position: 100,
   createdAt: "2026-09-12T00:00:00.000Z",
@@ -44,7 +45,6 @@ const task = {
   budget: null,
   budgetLimit: null,
   cost: null,
-  checks: [],
   source: null,
 };
 

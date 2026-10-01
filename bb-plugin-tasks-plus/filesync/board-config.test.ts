@@ -30,7 +30,8 @@ function board(overrides: Partial<BoardConfig>): BoardConfig {
     color: "blue",
     folderId: null,
     linkedBbProjectId: "proj1",
-    tasksFolder: "memory/tasks",
+    tasksFolder: "docs/tasks",
+    database: null,
     createdAt: "2026-01-01T00:00:00.000Z",
     ...overrides,
   };
@@ -72,7 +73,7 @@ describe("removeBoardConfig", () => {
 describe("findBoardBySource", () => {
   it("находит доску по bb-проекту и пути папки", () => {
     const boards = [
-      board({ id: "a", linkedBbProjectId: "p1", tasksFolder: "memory/tasks" }),
+      board({ id: "a", linkedBbProjectId: "p1", tasksFolder: "docs/tasks" }),
       board({ id: "b", linkedBbProjectId: "p2", tasksFolder: "tasks" }),
     ];
     expect(findBoardBySource(boards, "p2", "tasks")?.id).toBe("b");

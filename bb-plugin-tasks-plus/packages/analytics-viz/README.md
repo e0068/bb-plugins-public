@@ -16,6 +16,10 @@
   метрику каждой записи в бин абсолютной сетки, содержащий её метку времени.
   Сетка сплошная и восходящая; пустой бин присутствует нулём. Держит **закон
   сохранения**: сумма по бинам равна сумме метрик записей внутри окна.
+- [`weeks.ts`](core/weeks.ts) — календарные недели зрителя: `mondayOf` —
+  местная полночь понедельника, `weekBreaks(times)` — какие столбцы графика
+  открывают новую неделю (для календарных начал и для катящихся концов),
+  `weekEdgesSince(start, now)` — недельные столбцы по всей истории.
 
 Обе функции тотальны: вырожденный вход (нефинитная граница, непозитивный размер
 бина, инвертированное окно) даёт пустой результат, а не исключение.
@@ -26,8 +30,8 @@
 
 Пакет **не тянет сторонних зависимостей** (peer — только `react`, который bb
 шимит рантаймом): сборщик bb резолвит `packages/*` по realpath и не видит
-`node_modules` плагина, поэтому zod/recharts/react-grid-layout здесь жить не
-могут — см. [decisions/packages-shared-code-must-be-pure-or-shimmed.md](../../memory/decisions/packages-shared-code-must-be-pure-or-shimmed.md).
+`node_modules` плагина, поэтому zod и прочие сторонние пакеты здесь жить не
+могут — см. [decisions/packages-shared-code-must-be-pure-or-shimmed.md](../../docs/decisions/packages-shared-code-must-be-pure-or-shimmed.md).
 
 - [`bar-geometry.ts`](react/bar-geometry.ts) — `roundedTopBarPath`: чистый SVG-путь
   бара со скруглённым верхом, радиус зажат под размер, тотальна.
@@ -38,11 +42,11 @@
 - [`lane-timeline.tsx`](react/lane-timeline.tsx) — `LaneTimeline`: кастомный SVG
   сегментного лейна.
 
-Recharts-обёртка `TimeBarChart`, оболочка дашборда `DashboardGrid`
-(react-grid-layout) и zod-модель раскладки `dashboard-layout` — в потребителе:
-[bb-plugin-tasks-plus/views/analytics](../../bb-plugin-tasks-plus/views/analytics).
-Развилку Recharts-гибрида см.
-[decisions/analytics-viz-recharts-hybrid.md](../../memory/decisions/analytics-viz-recharts-hybrid.md).
+Tasks+ этими примитивами больше не пользуется: его экран аналитики рисует свои
+div-столбцы и ряды с разделителями —
+[decisions/tasks-analytics-own-bars-and-row-splitters.md](../../docs/decisions/tasks-analytics-own-bars-and-row-splitters.md),
+прежняя развилка Recharts-гибрида —
+[decisions/analytics-viz-recharts-hybrid.md](../../docs/decisions/analytics-viz-recharts-hybrid.md).
 
 Геометрия покрыта property-тестами (fast-check), компоненты — jsdom/testing-library.
 

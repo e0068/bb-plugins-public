@@ -17,7 +17,7 @@ export interface AttachedThread {
 /**
  * The volatile half: where the bb thread is right now. Never written to the
  * file — a `working → idle` flip is not a repository edit (see
- * memory/decisions/tasks-plus-thread-state-is-not-a-file-field.md).
+ * docs/decisions/tasks-plus-thread-state-is-not-a-file-field.md).
  */
 export interface ThreadLiveState {
   liveStatus: TaskThreadLiveStatus;
@@ -27,7 +27,7 @@ export interface ThreadLiveState {
 /** What a bb thread looks like from here: the three fields the state is read
  *  from, so this module needs neither the SDK nor a live host to be tested. */
 export interface ObservedThread {
-  status: "starting" | "active" | "stopping" | "idle" | "error";
+  status: "pending" | "starting" | "active" | "stopping" | "idle" | "error";
   archivedAt: number | null;
   deletedAt: number | null;
 }
@@ -43,6 +43,7 @@ export const UNKNOWN_THREAD_LIVE_STATE: ThreadLiveState = {
 function observedLiveStatus(thread: ObservedThread): TaskThreadLiveStatus {
   if (thread.deletedAt !== null) return "completed";
   switch (thread.status) {
+    case "pending":
     case "starting":
       return "starting";
     case "active":
@@ -59,7 +60,7 @@ function observedLiveStatus(thread: ObservedThread): TaskThreadLiveStatus {
  * The one reading of a bb thread's state. `archivedAt` stays beside
  * `liveStatus` rather than collapsing into it: a thread can be
  * idle-and-archived (Waiting excludes it) or working-and-archived — see
- * memory/decisions/tasks-plus-thread-archived-separate-column.md.
+ * docs/decisions/tasks-plus-thread-archived-separate-column.md.
  */
 export function threadLiveState(thread: ObservedThread): ThreadLiveState {
   return {

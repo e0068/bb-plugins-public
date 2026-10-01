@@ -27,3 +27,19 @@ export function formatFileSize(sizeBytes: number): string {
   if (kb < 1024) return `${Math.round(kb)} KB`;
   return `${(kb / 1024).toFixed(1)} MB`;
 }
+
+/** A board task's file name without `.md`: its id is `<board id>:<slug>`. */
+export function slugOf(taskId: string): string {
+  return taskId.slice(taskId.indexOf(":") + 1);
+}
+
+/** Whether a value is shaped like a board task's id: a board id, a colon, a slug. */
+export function isTaskId(value: string): boolean {
+  const colon = value.indexOf(":");
+  return colon > 0 && colon < value.length - 1;
+}
+
+/** The board — the project — a board task's id names: the part before the colon. */
+export function boardIdOf(taskId: string): string {
+  return taskId.slice(0, Math.max(0, taskId.indexOf(":")));
+}

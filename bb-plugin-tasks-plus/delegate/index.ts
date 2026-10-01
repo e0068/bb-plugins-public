@@ -15,9 +15,22 @@ import {
 import { delegationRpcContract } from "./contract";
 import { withCallerScope } from "../api/caller-scope.js";
 import type { CallerEnvironmentCache } from "../filesync/caller-cache.js";
+import type { CallerEnvironment } from "../filesync/caller-root.js";
+import { currentCallerEnvironment, runInCallerScope } from "../filesync/caller-scope.js";
+import {
+  awaitThreadWorktree,
+  threadEnvironment,
+  type WorktreeWait,
+} from "../filesync/thread-environment.js";
 import { threadLiveState } from "../threads/live-state.js";
 
 const MAX_DELEGATED_THREAD_TITLE_LENGTH = 120;
+const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+/** Заведённый тред отвечает раньше, чем у него появляется дерево: секунда
+ *  ожидания дешевле, чем запись в главный чекаут. */
+const DISPATCH_WORKTREE_WAIT: WorktreeWait = { attempts: 5, delayMs: 200, sleep };
+/** Привязываемый тред живёт давно — его дерево либо есть, либо его нет. */
+const LINKED_THREAD_WAIT: WorktreeWait = { attempts: 1, delayMs: 0, sleep };
 const SYSTEM_AUTHOR_NAME = "Tasks";
 const MANUAL_PRESET_NAME = "Attached";
 
@@ -277,6 +290,35 @@ export async function promoteToInProgressOnThreadLink(
   });
 }
 
+/**
+ * Дерево, в которое идут записи о привязке треда — перевод в работу и
+ * системный комментарий. Своё дерево треда берётся, только когда файл задачи
+ * в нём есть: иначе появилась бы вторая копия слага, а это конфликт при
+ * слиянии ветки. Нет дерева или нет в нём задачи — пишем туда же, куда писал
+ * вызывающий (доска — в main).
+ */
+interface ThreadWrite {
+  scope: CallerEnvironment | null;
+  /** Копия задачи из выбранного дерева: решение о переводе в работу
+   *  принимается по той же копии, которую и перепишут. Копии в ветке и в
+   *  main расходятся статусами — это норма, поэтому сторож, глядящий не в
+   *  тот файл, то откатывает завершённую задачу ветки назад в работу, то
+   *  молчит, когда переводить как раз надо. */
+  task: Task;
+}
+
+async function threadWriteTarget(
+  bb: BbPluginApi,
+  store: TasksApiStore,
+  { task, threadId, wait }: { task: Task; threadId: string; wait: WorktreeWait },
+): Promise<ThreadWrite> {
+  const caller = currentCallerEnvironment();
+  const own = await awaitThreadWorktree(() => threadEnvironment(bb, threadId), wait);
+  if (own === null) return { scope: caller, task };
+  const inWorktree = await runInCallerScope(own, () => store.tasks.getTask(task.id));
+  return inWorktree ? { scope: own, task: inWorktree } : { scope: caller, task };
+}
+
 export async function createSystemComment(
   store: FileTasksStore,
   input: {
@@ -359,7 +401,14 @@ export function handlers(
         })
         .catch((error: unknown) => mapSpawnTargetError(error, preset));
 
-      const taskThread = await store.transaction(async () => {
+      // Промпт треда собран выше по копии, которую видел отправляющий, —
+      // здесь выбирается только то, что и куда пишется.
+      const write = await threadWriteTarget(bb, store, {
+        task,
+        threadId: thread.id,
+        wait: DISPATCH_WORKTREE_WAIT,
+      });
+      const taskThread = await runInCallerScope(write.scope, () => store.transaction(async () => {
         store.tasks.setThreadLiveState(thread.id, {
           liveStatus: "starting",
           archivedAt: null,
@@ -373,7 +422,7 @@ export function handlers(
 
         await promoteToInProgressOnThreadLink(
           store,
-          task,
+          write.task,
           preset.name,
           thread.id,
           `Status changed to In Progress · dispatched to ${preset.name}`,
@@ -386,7 +435,7 @@ export function handlers(
           body: `Dispatched to ${preset.name}`,
         });
         return attached;
-      });
+      }));
 
       try {
         store.tasks.setThreadLiveState(
@@ -416,7 +465,12 @@ export function handlers(
         delegatedThreadTitle(task)
       ).slice(0, MAX_DELEGATED_THREAD_TITLE_LENGTH);
 
-      await store.transaction(async () => {
+      const write = await threadWriteTarget(bb, store, {
+        task,
+        threadId: thread.id,
+        wait: LINKED_THREAD_WAIT,
+      });
+      await runInCallerScope(write.scope, () => store.transaction(async () => {
         store.tasks.setThreadLiveState(thread.id, threadLiveState(thread));
         await store.tasks.upsertTaskThread({
           taskId: task.id,
@@ -427,12 +481,12 @@ export function handlers(
 
         await promoteToInProgressOnThreadLink(
           store,
-          task,
+          write.task,
           MANUAL_PRESET_NAME,
           thread.id,
           "Status changed to In Progress · thread attached",
         );
-      });
+      }));
 
       publishThreadsChanged(bb, task.id);
       publishTasksChanged(bb, task.id, task.projectId);

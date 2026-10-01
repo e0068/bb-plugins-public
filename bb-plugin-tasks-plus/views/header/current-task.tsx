@@ -14,10 +14,10 @@ import { useInvalidation, useTasksRpc } from "../../client/data.js";
 import { CallerThreadProvider } from "../../client/caller-thread.js";
 import { PANEL_PATH, tasksRouteToSubPath } from "../../client/routes.js";
 import { STATUS_LABELS } from "../../components/task-meta.js";
-import { StatusIcon } from "../list/icons.js";
+import { StatusIcon } from "../common/icons.js";
 
 // Matches the native thread-header buttons rather than the plugin default
-// (see memory/bb-header-button-style-tokens): outline/sm gives h-8/border-input,
+// (see docs/decisions/bb-header-button-style-tokens): outline/sm gives h-8/border-input,
 // so the height and border are overridden here. A slug key can be long, so the
 // chip is capped at 160px and its label truncates instead of spilling over
 // the neighbouring header buttons.

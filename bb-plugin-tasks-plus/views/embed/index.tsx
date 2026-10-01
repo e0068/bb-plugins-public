@@ -3,18 +3,25 @@ import type {
   PluginMessageDirectiveProps,
   PluginThreadPanelProps,
 } from "@get-bb/plugin-sdk";
-import { useBbNavigate, useRealtime } from "@get-bb/plugin-sdk/app";
+import { experimental_useFixedTabTarget, useBbNavigate, useRealtime } from "@get-bb/plugin-sdk/app";
 import { Button } from "@/components/ui/button";
 import { Icon } from "@/components/ui/icon";
 import { Skeleton } from "@/components/ui/skeleton";
 import type { Task } from "../../shared/contract.js";
+import {
+  backInTrail,
+  openInTrail,
+  previousInTrail,
+  startTrail,
+} from "../../shared/task-trail.js";
 import { useTasksRpc } from "../../client/data.js";
 import { TasksRefreshProvider } from "../../client/refresh.js";
 import { CallerThreadProvider } from "../../client/caller-thread.js";
+import { TASK_TAB } from "../../client/task-opening.js";
 import { PANEL_PATH, tasksRouteToSubPath } from "../../client/routes.js";
 import { DetailView } from "../detail/index.js";
 import { PRIORITY_LABELS, STATUS_LABELS } from "../../components/task-meta.js";
-import { PriorityIcon, StatusIcon } from "../list/icons.js";
+import { PriorityIcon, StatusIcon } from "../common/icons.js";
 
 /**
  * `::task{key="TSK-4"}` chat embeds: a single quiet row (status glyph, key,
@@ -312,27 +319,76 @@ function TaskEmbedPanelContent({ params }: PluginThreadPanelProps) {
       ? params.taskKey
       : null;
   if (taskKey === null || !isTaskAddress(taskKey)) {
-    return (
-      <div className="p-3 text-sm text-muted-foreground">
-        Open a task card from a message to view it here.
-      </div>
-    );
+    return <PanelHint text="Open a task card from a message to view it here." />;
   }
+  return <TaskPanelBody key={taskKey.trim()} taskKey={taskKey.trim()} />;
+}
+
+function PanelHint({ text }: { text: string }) {
+  return <div className="p-3 text-sm text-muted-foreground">{text}</div>;
+}
+
+/**
+ * The task-detail composition sized for a side panel, with the way out to the
+ * full app. A sub-task or parent opened inside stays in the panel, and «Back»
+ * left of the key returns to the task before it. The trail lives while the
+ * panel is mounted and starts over on every open from outside — the caller
+ * keys this component by that open.
+ */
+function TaskPanelBody({ taskKey }: { taskKey: string }) {
+  const [trail, setTrail] = useState(() => startTrail(taskKey));
+  const shown = trail.current;
+  const previous = previousInTrail(trail);
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <div className="flex h-10 shrink-0 items-center gap-2 border-b border-border pb-2">
+      <div className="flex h-10 shrink-0 items-center gap-1 border-b border-border pb-2">
+        {previous === null ? null : (
+          <Button
+            className="-ml-1.5 size-7 shrink-0"
+            size="icon"
+            variant="ghost"
+            aria-label={`Back to ${previous}`}
+            onClick={() => setTrail(backInTrail)}
+          >
+            <Icon name="ChevronLeft" className="size-4" />
+          </Button>
+        )}
         <div className="min-w-0 flex-1 truncate font-mono text-xs text-muted-foreground">
-          {taskKey.trim()}
+          {shown}
         </div>
         <OpenInTasksButton
-          label={`Open ${taskKey.trim()} in Tasks`}
-          subPath={taskDetailSubPath(taskKey.trim())}
+          label={`Open ${shown} in Tasks`}
+          subPath={taskDetailSubPath(shown)}
         />
       </div>
-      <div className="min-h-0 flex-1 overflow-y-auto">
-        <DetailView taskKey={taskKey.trim()} />
+      {/* Keyed by the task shown, so the next one opens scrolled to its top. */}
+      <div key={shown} className="min-h-0 flex-1 overflow-y-auto">
+        <DetailView
+          taskKey={shown}
+          layout="panel"
+          onOpenTask={(next) => setTrail((current) => openInTrail(current, next))}
+        />
       </div>
     </div>
+  );
+}
+
+/**
+ * The Task tab of the Tasks+ page's right panel: the task a board card or list
+ * row opened while Open in side panel is on (client/task-opening.ts). The page
+ * belongs to no thread, so the calls read the main checkout like the page does.
+ */
+export function TaskSidePanelTab() {
+  const opened = experimental_useFixedTabTarget(TASK_TAB);
+  if (opened === null) {
+    return <PanelHint text="Click a task with Open in side panel on to view it here." />;
+  }
+  // Keyed by the open, not the task: clicking the same card again after
+  // wandering into its sub-tasks brings that card back.
+  return (
+    <TasksRefreshProvider>
+      <TaskPanelBody key={opened.sequence} taskKey={opened.target.taskKey} />
+    </TasksRefreshProvider>
   );
 }
 

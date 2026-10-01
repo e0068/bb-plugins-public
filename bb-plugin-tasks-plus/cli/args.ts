@@ -29,6 +29,7 @@ const VALUELESS_FLAGS = new Set([
   "no-minutes",
   "no-minutes-actual",
   "no-parent",
+  "no-start",
   "no-type",
   "notify",
   "remove-references",

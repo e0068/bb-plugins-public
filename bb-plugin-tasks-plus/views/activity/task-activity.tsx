@@ -23,8 +23,9 @@ import {
   useTasksRpc,
 } from "../../client/data.js";
 import {
-  attachmentDownloadUrl,
   Lightbox,
+  useAttachmentUrl,
+  useDisplayImageSrc,
   useUploadAttachment,
 } from "../detail/attachments.js";
 import {
@@ -107,9 +108,10 @@ function UserAvatar({ name }: { name: string }) {
 }
 
 function FileAttachmentCard({ attachment }: { attachment: Attachment }) {
+  const attachmentUrl = useAttachmentUrl();
   return (
     <a
-      href={attachmentDownloadUrl(attachment.id)}
+      href={attachmentUrl(attachment.id)}
       download={attachment.fileName}
       title={`${attachment.fileName} · ${formatFileSize(attachment.sizeBytes)}`}
       className="inline-flex min-w-0 max-w-60 items-center gap-2 rounded-md border border-border bg-card px-2.5 py-1.5 text-xs shadow-2xs hover:border-input hover:bg-state-hover focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
@@ -142,6 +144,7 @@ function ImageAttachmentFigure({
   attachment: Attachment;
   onOpenImage: (attachment: Attachment) => void;
 }) {
+  const attachmentUrl = useAttachmentUrl();
   return (
     <figure className="relative m-0 flex min-w-0 max-w-full flex-col">
       <button
@@ -152,7 +155,7 @@ function ImageAttachmentFigure({
         onClick={() => onOpenImage(attachment)}
       >
         <img
-          src={attachmentDownloadUrl(attachment.id)}
+          src={attachmentUrl(attachment.id)}
           alt={attachment.fileName}
           className="h-24 w-auto min-w-15 max-w-full cursor-zoom-in rounded-md border border-border bg-muted object-cover hover:border-input @2xl:h-32 @2xl:min-w-20"
         />
@@ -245,6 +248,7 @@ function CommentCard({ entry, nowMs }: { entry: FeedEntry; nowMs: number }) {
   const { comment, attachments } = entry;
   const agent = comment.kind === "agent";
   const navigate = useBbNavigate();
+  const displayImageSrc = useDisplayImageSrc();
   const [lightbox, setLightbox] = useState<Attachment | null>(null);
   return (
     <div className="relative mb-3.5 flex gap-2.5">
@@ -270,6 +274,7 @@ function CommentCard({ entry, nowMs }: { entry: FeedEntry; nowMs: number }) {
           onChange={() => {}}
           readOnly
           variant="comment"
+          displayImageSrc={displayImageSrc}
           onOpenThread={(threadId) => navigate.toThread(threadId)}
         />
         {attachments.length > 0 ? (
@@ -314,6 +319,9 @@ export function CommentComposer({ taskId, notificationTarget }: ComposerProps) {
 
   const removeFile = (id: number) =>
     setPendingFiles((files) => files.filter((entry) => entry.id !== id));
+  // The paperclip and the editor (paste, drop) stage files into the same chips.
+  const stageMore = (files: File[]) =>
+    setPendingFiles((current) => [...current, ...stageFiles(files)]);
 
   // Synchronous single-flight guard: double-activating Retry before React
   // re-renders must not upload (and attach) the same file twice.
@@ -412,6 +420,7 @@ export function CommentComposer({ taskId, notificationTarget }: ComposerProps) {
         mentionItems={mentionItems}
         onOpenThread={(threadId) => navigate.toThread(threadId)}
         onSubmit={() => void send()}
+        onAttachFiles={stageMore}
       />
       {pendingFiles.length > 0 ? (
         <div className="mt-2 flex flex-wrap gap-1.5">
@@ -445,8 +454,7 @@ export function CommentComposer({ taskId, notificationTarget }: ComposerProps) {
           className="hidden"
           onChange={(event) => {
             const files = [...(event.target.files ?? [])];
-            if (files.length > 0)
-              setPendingFiles((current) => [...current, ...stageFiles(files)]);
+            if (files.length > 0) stageMore(files);
             event.target.value = "";
           }}
         />

@@ -2,8 +2,8 @@ import { describe, expect, it } from "vitest";
 import { callerWorktreeRoot, requestRoots, type CallerEnvironment } from "./caller-root.js";
 import type { BoardRoot } from "./fs-boards.js";
 
-const board = { linkedBbProjectId: "proj_x", tasksFolder: "memory/tasks" };
-const main: BoardRoot = { absPath: "/repo/main/memory/tasks", origin: { kind: "main" } };
+const board = { linkedBbProjectId: "proj_x", tasksFolder: "docs/tasks" };
+const main: BoardRoot = { absPath: "/repo/main/docs/tasks", origin: { kind: "main" } };
 
 function caller(overrides: Partial<CallerEnvironment> = {}): CallerEnvironment {
   return {
@@ -21,7 +21,7 @@ function caller(overrides: Partial<CallerEnvironment> = {}): CallerEnvironment {
 describe("callerWorktreeRoot", () => {
   it("отдаёт дерево вызвавшего треда как корень доски того же проекта", () => {
     expect(callerWorktreeRoot(board, caller())).toEqual({
-      absPath: "/worktrees/env_1/memory/tasks",
+      absPath: "/worktrees/env_1/docs/tasks",
       origin: {
         kind: "worktree",
         environmentId: "env_1",
@@ -55,7 +55,7 @@ describe("callerWorktreeRoot", () => {
 
 describe("requestRoots", () => {
   const worktree: BoardRoot = {
-    absPath: "/worktrees/env_1/memory/tasks",
+    absPath: "/worktrees/env_1/docs/tasks",
     origin: { kind: "worktree", environmentId: "env_1", name: "agent-x", branchName: "bb/thr_1" },
   };
 

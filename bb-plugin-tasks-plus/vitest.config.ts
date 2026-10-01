@@ -1,6 +1,7 @@
 import { fileURLToPath } from "node:url";
 import { defineConfig } from "vitest/config";
 import { reactDedupe } from "./packages/plugin-base/vitest-react-dedupe";
+import { sharedPackagesAlias } from "./packages/plugin-base/vitest-shared-packages";
 
 const rootDir = fileURLToPath(new URL(".", import.meta.url));
 
@@ -12,6 +13,7 @@ export default defineConfig({
       // tippy.js (via @tiptap/extension-bubble-menu) only ships a CJS main;
       // point vitest at the ESM build so `import tippy` gets the function.
       "tippy.js": "tippy.js/dist/tippy.esm.js",
+      ...sharedPackagesAlias,
     },
     dedupe: reactDedupe,
   },

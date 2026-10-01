@@ -117,6 +117,7 @@ async function buildTaskContext(store: TasksApiStore, taskId: string): Promise<s
 - Priority: ${displayName(task.priority)}
 - Labels: ${labels.length > 0 ? labels.map((label) => label.name).join(", ") : "None"}
 - Due: ${task.dueDate ?? "None"}
+- Start: ${task.startDate ?? "None"}
 - Project: ${project.name}
 
 ## Description

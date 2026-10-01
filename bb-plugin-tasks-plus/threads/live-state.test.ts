@@ -39,6 +39,10 @@ describe("threadLiveState", () => {
     expect(threadLiveState(observed({ status })).liveStatus).toBe(liveStatus);
   });
 
+  it("reads a pending thread — queued by bb, not started yet — as starting", () => {
+    expect(threadLiveState(observed({ status: "pending" })).liveStatus).toBe("starting");
+  });
+
   it("reads a deleted thread as completed whatever its status says", () => {
     expect(
       threadLiveState(observed({ status: "error", deletedAt: 1_756_000_000_000 })).liveStatus,

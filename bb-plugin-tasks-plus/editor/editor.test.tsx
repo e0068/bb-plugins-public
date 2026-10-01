@@ -644,3 +644,33 @@ describe("TasksEditor submit-on-Enter", () => {
     expect(onSubmit).not.toHaveBeenCalled();
   });
 });
+
+describe("адрес картинки при показе", () => {
+  const stored = "![shot](/api/v1/plugins/tasks/http/attachments/download?attachmentId=01JIMAGE0000000000000000AA)";
+
+  it("картинка показывается по адресу поверхности, а в тексте остаётся исходный", async () => {
+    let editor: Editor | null = null;
+    const screen = render(
+      <TasksEditor
+        value={stored}
+        onChange={() => undefined}
+        displayImageSrc={(src) => `${src}&callerThreadId=thr_x`}
+        onEditorReady={(ready) => (editor = ready)}
+      />,
+    );
+    await waitFor(() =>
+      expect(screen.container.querySelector("img")?.getAttribute("src")).toBe(
+        "/api/v1/plugins/tasks/http/attachments/download?attachmentId=01JIMAGE0000000000000000AA&callerThreadId=thr_x",
+      ),
+    );
+    expect(editor!.storage.markdown.getMarkdown()).toBe(stored);
+  });
+
+  it("адрес вложения с тредом сохраняется без треда", () => {
+    expect(
+      roundTrip(
+        "![shot](/api/v1/plugins/tasks/http/attachments/download?attachmentId=01JIMAGE0000000000000000AA&callerThreadId=thr_x)",
+      ),
+    ).toBe(stored);
+  });
+});

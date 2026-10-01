@@ -20,12 +20,12 @@ function task(overrides: Partial<Task>): Task {
     budgetLimit: null,
     cost: null,
     dueDate: null,
+    startDate: null,
     parentTaskId: null,
     position: 0,
     createdAt: "2026-01-01T00:00:00Z",
     updatedAt: "2026-01-01T00:00:00Z",
     labelIds: [],
-    checks: [],
     source: null,
     ...overrides,
   };

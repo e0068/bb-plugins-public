@@ -7,7 +7,7 @@ import {
   layerViolations,
   readSourceFiles,
   type Layers,
-} from "./packages/layer-guard/index.js";
+} from "@bb-plugins/layer-guard/index.js";
 
 /**
  * Слои плагина снизу вверх. Папка импортирует только папки из слоёв ниже
@@ -16,7 +16,7 @@ import {
  */
 const LAYERS: Layers = [
   ["shared", "lib", "hooks"],
-  ["db"],
+  ["db", "remote"],
   ["threads", "analytics", "components"],
   ["filesync", "editor"],
   ["attachments", "steer", "client"],
