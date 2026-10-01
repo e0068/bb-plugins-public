@@ -25,21 +25,6 @@ const mount = async (answers: { awaiting: unknown[]; running: unknown[] }) => {
 const css = () => document.head.querySelector("style[data-flow-row-glyphs]")?.textContent ?? "";
 
 describe("значок идущего этапа в строке треда", () => {
-  it("идущий тред получает мигающий значок вида этапа", async () => {
-    const setStatus = await mount({ awaiting: [], running: [{ threadId: "thr_a", icon: "automation" }, { threadId: "thr_b", icon: "agent" }] });
-    await vi.waitFor(() => expect(setStatus).toHaveBeenCalledTimes(2));
-    expect(setStatus).toHaveBeenCalledWith("thr_a", expect.objectContaining({ label: "Flow — Автоматизация · идёт" }));
-    expect(setStatus).toHaveBeenCalledWith("thr_b", expect.objectContaining({ label: "Flow — Агент · идёт" }));
-    const rule = css().split("\n").find((line) => line.includes('[aria-label="Flow — Автоматизация · идёт"]{'));
-    expect(rule).toMatch(/animation:/);
-  });
-
-  it("ждущий тред важнее идущего", async () => {
-    const setStatus = await mount({ awaiting: [{ threadId: "thr_a", kind: "demo" }], running: [{ threadId: "thr_a", icon: "self" }] });
-    await vi.waitFor(() => expect(setStatus).toHaveBeenCalledTimes(1));
-    expect(setStatus).toHaveBeenCalledWith("thr_a", expect.objectContaining({ label: "Flow — Демонстрация" }));
-  });
-
   it("упавшая автоматизация — ровный значок в тоне ошибки", async () => {
     const setStatus = await mount({ awaiting: [{ threadId: "thr_a", kind: "automation" }], running: [] });
     await vi.waitFor(() => expect(setStatus).toHaveBeenCalledTimes(1));

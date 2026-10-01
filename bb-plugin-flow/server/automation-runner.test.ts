@@ -44,7 +44,7 @@ const setup = (
   steps: Steps,
   external: (automationId: string, threadId: string) => Promise<StepOutcome> = async () => ({ ok: true, detail: null }),
   agentActive: (threadId: string) => Promise<boolean> = async () => true,
-  hosted: { providerId?: string | null; providers?: Provider[] } = {},
+  hosted: { providerId?: string | null; providers?: Provider[]; flowThreads?: string[] } = {},
 ) => {
   const settings: StageSettings = { stages, minButtonWidth: 170 };
   const { bb, harness } = createFakePluginHost({ pluginId: "flow" });
@@ -59,7 +59,7 @@ const setup = (
     install: async () => undefined,
     remove: async () => undefined,
   };
-  const runner = createAutomationRunner({ progress, store, stages: () => settings, steps, external, thread, providers, kv: bb.storage.kv, plugins, now: () => T0, onError: (error) => { throw error; } });
+  const runner = createAutomationRunner({ progress, store, stages: () => settings, steps, external, thread, flowThreads: () => hosted.flowThreads ?? [], providers, kv: bb.storage.kv, plugins, now: () => T0, onError: (error) => { throw error; } });
   advance = (threadId) => void runner.advance(threadId);
   registerProgress(bb, progress, { now: () => T0, stages: () => settings, windowCost: async () => undefined, thread });
   registerAutomationRunner(bb, runner);
@@ -147,15 +147,6 @@ describe("прогон автоматизаций без агента", () => {
     expect(external).toHaveBeenCalledWith("click-pr", THREAD);
   });
 
-  it("идущий этап виден в списке идущих тредов, ждущий автоматизацией — нет", async () => {
-    const { steps } = fakeSteps((id) => (id === "git.merge" ? { ok: false, error: "x" } : { ok: true, detail: null }));
-    const { harness, stateOf } = setup([review, flowStage("land", ["git.merge"])], steps);
-    await harness.callAgentTool(FLOW_STAGE_TOOL, { stage: "review", state: "started" }, { threadId: THREAD });
-    expect(await harness.callRpc("runningThreads", {})).toEqual([{ threadId: THREAD, icon: "self" }]);
-    await harness.callAgentTool(FLOW_STAGE_TOOL, { stage: "review", state: "done" }, { threadId: THREAD });
-    await vi.waitFor(async () => expect(await stateOf("land")).toBe("fail"));
-    expect(await harness.callRpc("runningThreads", {})).toEqual([]);
-  });
 });
 
 describe("шаг автоматизации Automations", () => {
@@ -304,47 +295,10 @@ describe("значок идущего этапа — только при жив�
     expect(agentActive).not.toHaveBeenCalled();
     release();
   });
-
-  it("при работающем агенте значок — первого по порядку живого этапа", async () => {
-    const { steps, release } = gated();
-    const stages = [review, flowStage("publish", ["git.create-pr"])];
-    const { harness, progress, stateOf } = setup(stages, steps);
-    await harness.callAgentTool(FLOW_STAGE_TOOL, { stage: "review", state: "done" }, { threadId: THREAD });
-    await vi.waitFor(async () => expect(await stateOf("publish")).toBe("now"));
-    await progress.update(THREAD, (p) => ({ ...p, stages: { ...p.stages, review: { startedAt: T0 } } }));
-    expect(await harness.callRpc("runningThreads", {})).toEqual([{ threadId: THREAD, icon: "self" }]);
-    release();
-  });
 });
 
 describe("провайдер идущего этапа", () => {
   const coder = { id: "agent:coder", kind: "agent", name: "coder", provider: "codex" } as const;
-
-  it("этап самого агента — провайдер треда с именем и логотипом", async () => {
-    const { steps } = fakeSteps();
-    const { harness, view } = setup([review], steps, undefined, undefined, { providerId: "codex", providers: [CLAUDE, CODEX] });
-    await harness.callAgentTool(FLOW_STAGE_TOOL, { stage: "review", state: "started" }, { threadId: THREAD });
-    expect(await harness.callRpc("runningThreads", {})).toEqual([{ threadId: THREAD, icon: "self", provider: { name: "Codex", logoUrl: CODEX.logoUrl } }]);
-    expect((await view())?.stages.find((s) => s.id === "review")).toMatchObject({ provider: "codex" });
-  });
-
-  it("этап субагента — провайдер субагента, а не треда", async () => {
-    const { steps } = fakeSteps();
-    const { harness, progress, view } = setup([stage("code", { executors: [coder] })], steps, undefined, undefined, { providerId: "claude-code", providers: [CLAUDE, CODEX] });
-    await progress.update(THREAD, (p) => ({ ...p, stages: { code: { startedAt: T0, executor: coder.id } } }));
-    expect(await harness.callRpc("runningThreads", {})).toEqual([{ threadId: THREAD, icon: "agent", provider: { name: "Codex", logoUrl: CODEX.logoUrl } }]);
-    expect((await view())?.stages[0]).toMatchObject({ provider: "codex" });
-  });
-
-  it("у провайдера нет логотипа или его нет в списке хоста — значок без провайдера", async () => {
-    const { steps } = fakeSteps();
-    const { harness } = setup([review], steps, undefined, undefined, { providerId: "codex", providers: [{ ...CODEX, logoUrl: null }] });
-    await harness.callAgentTool(FLOW_STAGE_TOOL, { stage: "review", state: "started" }, { threadId: THREAD });
-    expect(await harness.callRpc("runningThreads", {})).toEqual([{ threadId: THREAD, icon: "self" }]);
-    const other = setup([review], steps, undefined, undefined, { providerId: "codex", providers: [CLAUDE] });
-    await other.harness.callAgentTool(FLOW_STAGE_TOOL, { stage: "review", state: "started" }, { threadId: THREAD });
-    expect(await other.harness.callRpc("runningThreads", {})).toEqual([{ threadId: THREAD, icon: "self" }]);
-  });
 
   it("идущая автоматизация — без провайдера", async () => {
     const { steps, release } = (() => {
@@ -358,5 +312,45 @@ describe("провайдер идущего этапа", () => {
     expect(await harness.callRpc("runningThreads", {})).toEqual([{ threadId: THREAD, icon: "automation" }]);
     release();
   });
+
+  it("этап навыка в списке идущих не значится: пока идёт ход, в строке крутится логотип агента, а после хода значок запаздывал бы", async () => {
+    const { steps } = fakeSteps();
+    const { harness, progress } = setup([review, stage("code", { executors: [coder] })], steps, undefined, undefined, { providerId: "codex", providers: [CLAUDE, CODEX] });
+    await harness.callAgentTool(FLOW_STAGE_TOOL, { stage: "review", state: "started" }, { threadId: THREAD });
+    expect(await harness.callRpc("runningThreads", {})).toEqual([]);
+    await progress.update(THREAD, (p) => ({ ...p, stages: { code: { startedAt: T0, executor: coder.id } } }));
+    expect(await harness.callRpc("runningThreads", {})).toEqual([]);
+  });
+
+  it("карточка прогресса по-прежнему называет провайдера исполнителя: сам агент — провайдер треда, субагент — свой", async () => {
+    const { steps } = fakeSteps();
+    const { harness, progress, view } = setup([review, stage("code", { executors: [coder] })], steps, undefined, undefined, { providerId: "claude-code", providers: [CLAUDE, CODEX] });
+    await harness.callAgentTool(FLOW_STAGE_TOOL, { stage: "review", state: "started" }, { threadId: THREAD });
+    expect((await view())?.stages.find((s) => s.id === "review")).toMatchObject({ provider: "claude-code" });
+    await progress.update(THREAD, (p) => ({ ...p, stages: { code: { startedAt: T0, executor: coder.id } } }));
+    expect((await view())?.stages.find((s) => s.id === "code")).toMatchObject({ provider: "codex" });
+  });
 });
 
+describe("логотип агента вместо колёсика хода", () => {
+  it("тред, которому назначен flow, отдаёт логотип провайдера треда ещё до первой отметки этапа", async () => {
+    const { steps } = fakeSteps();
+    const { harness } = setup([review], steps, undefined, async () => false, { providerId: "codex", providers: [CLAUDE, CODEX], flowThreads: [THREAD] });
+    expect(await harness.callRpc("agentLogos", {})).toEqual([{ threadId: THREAD, logoUrl: CODEX.logoUrl }]);
+  });
+
+  it("у провайдера нет логотипа, его нет в списке хоста или провайдер треда неизвестен — логотипа нет, остаётся колёсико", async () => {
+    const { steps } = fakeSteps();
+    for (const hosted of [{ providerId: "codex", providers: [{ ...CODEX, logoUrl: null }] }, { providerId: "codex", providers: [CLAUDE] }, { providerId: null, providers: [CLAUDE] }]) {
+      const { harness } = setup([review], steps, undefined, undefined, { ...hosted, flowThreads: [THREAD] });
+      expect(await harness.callRpc("agentLogos", {})).toEqual([]);
+    }
+  });
+
+  it("тред без назначенного flow логотипа не получает, даже с прогоном", async () => {
+    const { steps } = fakeSteps();
+    const { harness } = setup([review], steps, undefined, undefined, { providers: [CLAUDE] });
+    await harness.callAgentTool(FLOW_STAGE_TOOL, { stage: "review", state: "started" }, { threadId: THREAD });
+    expect(await harness.callRpc("agentLogos", {})).toEqual([]);
+  });
+});
