@@ -7,8 +7,8 @@ import { z } from "zod";
 
 import { idleNote, idleStages, isActionStage } from "../core/automation-run";
 import { undoDue } from "../core/automation-undo";
-import { afterMark, markReply, startFact, type StartFact } from "../core/mark-report";
-import { carriedBy, carrierOf, EMPTY_PROGRESS, forHandoff, onAnswer, onBrief, onMark, pendingActive, progressView, recounted, reopen, recountWindows, touchesProgress, withActive } from "../core/progress";
+import { afterMark, markReply, returnedNote, startFact, type StartFact } from "../core/mark-report";
+import { carriedBy, carrierOf, EMPTY_PROGRESS, forHandoff, onAnswer, onBrief, onMark, pendingActive, progressView, recounted, reopen, isAhead, recountWindows, toggleStageInRun, touchesProgress, withActive } from "../core/progress";
 import { historyOrder } from "../core/run-history";
 import { isRunFinished, runSummary } from "../core/run-summary";
 import { isTaskFile, taskTitle } from "../core/run-tasks";
@@ -366,8 +366,12 @@ export const registerProgress = (
       const marking = stages.find((s) => s.id === stage);
       if (marking !== undefined && isActionStage(marking)) return toolError(`Stage ${stage} is an action: the owner runs its steps with a button, and Flow marks it — do not mark it.`);
       if (marking?.automation !== undefined) return toolError(`Stage ${stage} is an automation: Flow runs and marks it itself — do not mark it.`);
+      const track = (await progress.get(ctx.threadId))?.stages[stage];
+      // Владелец снял этап чекбоксом баннера уже после выбора этапов: агент узнаёт об этом здесь.
+      if (state === "started" && track?.skipped === true && track.finishedAt === undefined)
+        return toolError(`The owner took stage ${stage} out of the run: skip it and go on with the next stage of the run. Nothing was marked.`);
       const at = deps.now();
-      const startedAt = (await progress.get(ctx.threadId))?.stages[stage]?.startedAt;
+      const startedAt = track?.startedAt;
       const window = state === "done" && startedAt !== undefined ? { from: Date.parse(startedAt), to: Date.parse(at) } : undefined;
       const cost = window === undefined ? undefined : await deps.windowCost(ctx.threadId, window.from, window.to).catch(() => undefined);
       const minutes = window === undefined ? undefined : (await deps.windowMinutes?.(ctx.threadId, [window]).catch(() => undefined))?.[0];
@@ -384,7 +388,7 @@ export const registerProgress = (
       // Что за отмеченным этапом — по записи этой отметки; о старте ответ говорит только по записанному старту.
       const verdict = state === "done" ? afterMark(stages, marked, stage) : ({ kind: "none" } as const);
       const fact = verdict.kind === "due" ? await awaitStart(ctx.threadId, stages, verdict.stage.id, Date.now() + (deps.startTimeoutMs ?? START_TIMEOUT_MS)) : null;
-      const ahead = markReply(stage, verdict, fact);
+      const ahead = `${markReply(stage, verdict, fact)}${state === "done" ? returnedNote(stages, marked, stage) : ""}`;
       // Простой прогона — в ответе отметки: отчёт агент пишет до автоматизаций, и другого места узнать числа у него нет.
       const idle = state === "done" ? idleNote(idleStages(marked, stages)) : "";
       const undoNote = undoLines.length === 0 ? "" : ` ${undoLines.join(" ")}`;
@@ -515,6 +519,17 @@ export const registerProgress = (
         ...(context === null ? {} : { context }),
         ...(carrier === threadId ? {} : { carrier: { threadId: carrier, title: thread.title ?? null } }),
       };
+    },
+
+    async setStageInRun({ threadId, stageId, run }) {
+      const found = await progress.run(threadId);
+      if (found === null) return { kind: "failed" as const, reason: "no-run" as const };
+      // Состав чужого прогона меняет тред, который его ведёт, — как и отметки этапов.
+      if (found.carrier !== threadId) return { kind: "failed" as const, reason: "carried" as const };
+      const stages = deps.stages(threadId).stages;
+      if (!isAhead(found.progress, stages, stageId)) return { kind: "failed" as const, reason: "reached" as const };
+      await progress.update(threadId, (record) => toggleStageInRun(record, stages, stageId, run));
+      return { kind: "set" as const };
     },
 
     async getRunSummary({ briefId }) {
