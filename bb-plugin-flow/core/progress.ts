@@ -159,6 +159,29 @@ const cleared = (track: Track): Track => {
 export const touched = (track: Track | undefined): boolean => track !== undefined && (track.startedAt !== undefined || track.finishedAt !== undefined || track.run !== undefined);
 
 /**
+ * Этап впереди прогона: стоит во flow после последнего этапа, до которого прогон дошёл, — начатого, закрытого, ждущего владельца,
+ * со шагами. Убранный брифом этап позади идущего не впереди: агент его уже миновал, и возвращать его некуда.
+ */
+export const isAhead = (progress: FlowProgress, stages: readonly WorkStage[], id: string): boolean => {
+  const index = stages.findIndex((stage) => stage.id === id);
+  const reached = stages.map((stage, at) => (touched(progress.stages[stage.id]) || progress.waiting.includes(stage.id) ? at : -1));
+  return index >= 0 && index > Math.max(-1, ...reached);
+};
+
+/** Чекбокс владельца: этап впереди убирается или возвращается, а возвращённый запоминается — агенту о нём скажет ответ flow_stage. */
+export const toggleStageInRun = (progress: FlowProgress, stages: readonly WorkStage[], id: string, run: boolean): FlowProgress => {
+  if (!isAhead(progress, stages, id)) return progress;
+  const others = (progress.returned ?? []).filter((returned) => returned !== id);
+  return { ...setStageInRun(progress, id, run), returned: run ? [...others, id] : others };
+};
+
+/** Владелец убирает этап из прогона или возвращает его; этап, до которого прогон дошёл — начатый, закрытый, ждущий владельца, со шагами, — не меняется. */
+export const setStageInRun = (progress: FlowProgress, id: string, run: boolean): FlowProgress => {
+  const reached = touched(progress.stages[id]) || progress.waiting.includes(id);
+  return reached ? progress : patch(progress, id, (current) => ({ ...current, skipped: !run }));
+};
+
+/**
  * Доработка: закрытый этап `id` начинают снова — он открывается со своими ссылками, а все тронутые этапы после него теряют
  * готовность и ждут своего прохода, иначе автоматизация за ними не наступила бы и правки доработки остались бы
  * незакоммиченными. Траты сброшенных проходов копятся в `earlier`. Старт незакрытого этапа ничего не меняет: нетронутые

@@ -142,6 +142,16 @@ export const en: Messages = {
     send: "Send to the agent",
     held: "Which flow next? — choose above the composer",
   },
+  flowChoice: {
+    none: "No flow selected",
+    stages: (n) => count(n, "stage"),
+    menu: "Flow menu",
+    cancel: "Cancel flow",
+    cancelTitle: "Cancel flow?",
+    cancelText: "The thread goes on without a flow: stages and pending step retries are dropped. Steps already done — commit, PR — stay.",
+    keep: "Keep",
+    inRun: (name) => `Stage in the run: ${name}`,
+  },
   summary: {
     finished: "Run finished",
     window: (from: string, to: string) => `${from} → ${to}`,

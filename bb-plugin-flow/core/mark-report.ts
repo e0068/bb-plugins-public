@@ -62,6 +62,14 @@ export const startFact = (stages: readonly WorkStage[], progress: FlowProgress, 
 
 const label = (stage: WorkStage): string => `${stage.id} "${stage.name}"`;
 
+/** Следующий этап прогона за отмеченным владелец вернул чекбоксом после выбора этапов — агент знает прогон по брифу и иначе прошёл бы мимо. */
+export const returnedNote = (stages: readonly WorkStage[], progress: FlowProgress, markedId: string): string => {
+  const next = nextInRun(stages, progress, markedId);
+  return next !== null && !hasSteps(next) && (progress.returned ?? []).includes(next.id)
+    ? ` The owner put stage ${label(next)} back into the run with a checkbox after the stage selection: it is the next stage of the run — do it.`
+    : "";
+};
+
 const kindOf = (stage: WorkStage): string => (isActionStage(stage) ? "action" : "automation");
 
 /** Строка о наступившем этапе со шагами по факту старта; факта нет — старта не было. */
