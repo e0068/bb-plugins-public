@@ -1588,6 +1588,190 @@ describe("on a touch screen", () => {
     });
   });
 
+  describe("from the edges of the screen", () => {
+    // The left strip of a 320 px screen ends at x 48, the right one starts at x 272.
+    const isOpen = (row: HTMLElement) =>
+      within(row).queryByRole("button", { name: "Отложить" }) !== null;
+
+    /** bb's page around the section: the margin a finger slid in from beyond the screen lands in. */
+    const marginOf = (slot: ReturnType<typeof renderSlot>) =>
+      slot.container.querySelector<HTMLElement>("[data-threads-overview-section]")!.parentElement!;
+
+    /** A finger moving to a point over `on`; jsdom ships no TouchEvent, so the touch list is hung on a plain event. */
+    function touchAt(type: string, on: Element, x: number, y: number): Event {
+      const event = new Event(type, { bubbles: true, cancelable: true });
+      Object.defineProperty(event, "touches", {
+        value: type === "touchend" ? [] : [{ clientX: x, clientY: y }],
+      });
+      on.dispatchEvent(event);
+      return event;
+    }
+
+    /** The finger moving on to a point, as a touch screen reports it: the pointer first, then the touch the page could still be told to hold. */
+    function moveTo(on: Element, x: number, y: number): Event {
+      fireEvent.pointerMove(on, { ...TOUCH, clientX: x, clientY: y });
+      return touchAt("touchmove", on, x, y);
+    }
+
+    /** The finger lifted at a point. */
+    function liftAt(on: Element, x: number, y: number): void {
+      fireEvent.pointerUp(on, { ...TOUCH, clientX: x, clientY: y });
+      touchAt("touchend", on, x, y);
+    }
+
+    /** bb's button for its left panel, counting its presses. */
+    function sidebarTrigger(): { presses: () => number } {
+      const trigger = document.createElement("button");
+      trigger.setAttribute("data-sidebar", "trigger");
+      let presses = 0;
+      trigger.addEventListener("click", () => (presses += 1));
+      document.body.append(trigger);
+      return { presses: () => presses };
+    }
+
+    /** Lay `row` out across y 80 to 124, the way the screen shows it. */
+    function layOut(row: HTMLElement): void {
+      panelOf(row).getBoundingClientRect = () => ({ top: 80, bottom: 124, left: 16, right: 304 }) as DOMRect;
+    }
+
+    afterEach(() => document.querySelector('[data-sidebar="trigger"]')?.remove());
+
+    it("hands a swipe to the left that starts beside a row, past its right end, to that row", async () => {
+      const slot = await renderSection();
+      await slot.findByText("Тред Альфы");
+      layOut(rowOf(slot, "Тред Альфы"));
+      const margin = marginOf(slot);
+      fireEvent.pointerDown(margin, { ...TOUCH, clientX: 318, clientY: 100 });
+      // The row holds the pointer now; the touch stays with the margin it landed on.
+      const panel = panelOf(rowOf(slot, "Тред Альфы"));
+      fireEvent.pointerMove(panel, { ...TOUCH, clientX: 300, clientY: 100 });
+      const held = touchAt("touchmove", margin, 300, 100);
+      fireEvent.pointerMove(panel, { ...TOUCH, clientX: 160, clientY: 100 });
+      fireEvent.pointerUp(panel, { ...TOUCH, clientX: 160, clientY: 100 });
+      touchAt("touchend", margin, 160, 100);
+
+      expect(held.defaultPrevented).toBe(true);
+      expect(isOpen(rowOf(slot, "Тред Альфы"))).toBe(true);
+      expect(isOpen(rowOf(slot, "Тред Беты"))).toBe(false);
+    });
+
+    it("hands nothing over when no row is on the finger's line", async () => {
+      const slot = await renderSection();
+      await slot.findByText("Тред Альфы");
+      layOut(rowOf(slot, "Тред Альфы"));
+      const margin = marginOf(slot);
+      fireEvent.pointerDown(margin, { ...TOUCH, clientX: 318, clientY: 300 });
+
+      expect(moveTo(margin, 290, 300).defaultPrevented).toBe(false);
+    });
+
+    it("opens bb's left panel on a swipe to the right from the very edge, where bb's own swipe does not reach", async () => {
+      const slot = await renderSection();
+      await slot.findByText("Тред Альфы");
+      const trigger = sidebarTrigger();
+      const margin = marginOf(slot);
+      fireEvent.pointerDown(margin, { ...TOUCH, clientX: 2, clientY: 100 });
+      const held = moveTo(margin, 90, 110);
+      liftAt(margin, 90, 110);
+
+      expect(held.defaultPrevented).toBe(true);
+      expect(trigger.presses()).toBe(1);
+    });
+
+    it("leaves a swipe from further in on the strip to bb, stopping the slides under it from scrolling", async () => {
+      const slot = await renderSection();
+      const row = rowOf(slot, await slot.findByText("Тред Альфы").then((el) => el.textContent!));
+      const trigger = sidebarTrigger();
+      // Something that scrolls sideways under the finger, the way the project slides do.
+      const slides = marginOf(slot);
+      slides.style.overflowX = "auto";
+      Object.defineProperty(slides, "scrollWidth", { value: 960, configurable: true });
+      Object.defineProperty(slides, "clientWidth", { value: 320, configurable: true });
+      // bb looks at the slides on the document, on the same move it first sees going sideways.
+      let seenByBb: string | null = null;
+      const bb = () => (seenByBb ??= slides.style.overflowX);
+      document.addEventListener("pointermove", bb, true);
+      fireEvent.pointerDown(panelOf(row), { ...TOUCH, clientX: 36, clientY: 100 });
+      const held = moveTo(panelOf(row), 60, 100);
+      liftAt(panelOf(row), 120, 100);
+      document.removeEventListener("pointermove", bb, true);
+
+      expect(held.defaultPrevented).toBe(true);
+      expect(seenByBb).toBe("hidden");
+      expect(slides.style.overflowX).toBe("auto");
+      expect(trigger.presses()).toBe(0);
+    });
+
+    it("leaves a swipe to the left from the left strip to the slides", async () => {
+      const slot = await renderSection();
+      await slot.findByText("Тред Альфы");
+      const margin = marginOf(slot);
+      fireEvent.pointerDown(margin, { ...TOUCH, clientX: 40, clientY: 100 });
+
+      expect(moveTo(margin, 20, 100).defaultPrevented).toBe(false);
+    });
+
+    it("leaves an upright drag from the left strip to the page", async () => {
+      const slot = await renderSection();
+      await slot.findByText("Тред Альфы");
+      const trigger = sidebarTrigger();
+      const margin = marginOf(slot);
+      fireEvent.pointerDown(margin, { ...TOUCH, clientX: 2, clientY: 100 });
+      const scrolled = moveTo(margin, 30, 200);
+      liftAt(margin, 30, 200);
+
+      expect(scrolled.defaultPrevented).toBe(false);
+      expect(trigger.presses()).toBe(0);
+    });
+
+    it("leaves a swipe from the middle of the screen to the slides", async () => {
+      const slot = await renderSection();
+      await slot.findByText("Тред Альфы");
+      const margin = marginOf(slot);
+      fireEvent.pointerDown(margin, { ...TOUCH, clientX: 160, clientY: 100 });
+
+      expect(moveTo(margin, 260, 100).defaultPrevented).toBe(false);
+    });
+
+    it("leaves the panel shut when a second finger comes down mid-swipe", async () => {
+      const slot = await renderSection();
+      await slot.findByText("Тред Альфы");
+      const trigger = sidebarTrigger();
+      const margin = marginOf(slot);
+      fireEvent.pointerDown(margin, { ...TOUCH, clientX: 2, clientY: 100 });
+      moveTo(margin, 90, 100);
+      fireEvent.pointerDown(margin, { ...TOUCH, pointerId: 2, isPrimary: false, clientX: 200, clientY: 300 });
+
+      expect(trigger.presses()).toBe(0);
+    });
+
+    it("leaves the panel shut when the lift of a swipe went unheard, at the next touch", async () => {
+      const slot = await renderSection();
+      await slot.findByText("Тред Альфы");
+      const trigger = sidebarTrigger();
+      const margin = marginOf(slot);
+      fireEvent.pointerDown(margin, { ...TOUCH, clientX: 2, clientY: 100 });
+      moveTo(margin, 90, 100);
+      fireEvent.pointerDown(margin, { ...TOUCH, clientX: 160, clientY: 100 });
+
+      expect(trigger.presses()).toBe(0);
+    });
+
+    it("spends a touch that puts an open row away on that alone, opening no panel", async () => {
+      const slot = await renderSection();
+      await slot.findByText("Тред Альфы");
+      swipe(rowOf(slot, "Тред Альфы"), 300, 150);
+      const trigger = sidebarTrigger();
+      const margin = marginOf(slot);
+      fireEvent.pointerDown(margin, { ...TOUCH, clientX: 2, clientY: 100 });
+      moveTo(margin, 90, 100);
+      liftAt(margin, 90, 100);
+
+      expect(trigger.presses()).toBe(0);
+      expect(isOpen(rowOf(slot, "Тред Альфы"))).toBe(false);
+    });
+  });
+
   describe("the row's actions", () => {
     const actionsOf = async (slot: ReturnType<typeof renderSlot>) => {
       await slot.findByText("Тред Альфы");

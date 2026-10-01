@@ -145,6 +145,53 @@ describe("a composer under a finger pulling it down", () => {
   });
 });
 
+describe("a composer with text selected in it", () => {
+  /** Select the text of the draft, the way a long press does, keyboard out. */
+  function selectDraft(composer: Composer): void {
+    composer.editor.textContent = "первая строка\nвторая строка\nтретья строка";
+    composer.editor.focus();
+    const range = document.createRange();
+    range.selectNodeContents(composer.editor);
+    document.getSelection()!.removeAllRanges();
+    document.getSelection()!.addRange(range);
+  }
+
+  it("stays as it stands under a finger dragging the selection down", async () => {
+    const composer = drawComposer(180);
+    await renderOverlay();
+    selectDraft(composer);
+    const move = pull(composer, 670);
+    finger("touchend", 670, composer.editor);
+
+    expect(move.defaultPrevented).toBe(false);
+    expect(composer.form.style.maxHeight).toBe("");
+    expect(folded(composer)).toBe(false);
+    expect(document.activeElement).toBe(composer.editor);
+  });
+
+  it("stays as it stands when the selection begins mid-touch, at a long press", async () => {
+    const composer = drawComposer(180);
+    await renderOverlay();
+    finger("touchstart", 600, composer.editor);
+    selectDraft(composer);
+    finger("touchmove", 670, composer.editor);
+    finger("touchend", 670, composer.editor);
+
+    expect(folded(composer)).toBe(false);
+  });
+
+  it("folds again once the selection is gone", async () => {
+    const composer = drawComposer(180);
+    await renderOverlay();
+    selectDraft(composer);
+    document.getSelection()!.collapseToEnd();
+    pull(composer, 670);
+    finger("touchend", 670, composer.editor);
+
+    expect(folded(composer)).toBe(true);
+  });
+});
+
 describe("a composer let go short of the reach", () => {
   beforeEach(() => {
     vi.useFakeTimers();
