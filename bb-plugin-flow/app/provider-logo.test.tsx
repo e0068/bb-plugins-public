@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { cleanup, fireEvent, screen, waitFor } from "@testing-library/react";
-import type { PluginContentScriptContext, PluginMessageDirectiveProps, PluginNavPanelProps } from "@get-bb/plugin-sdk/app";
+import type { PluginMessageDirectiveProps, PluginNavPanelProps } from "@get-bb/plugin-sdk/app";
 import { loadPluginApp, renderSlot } from "@get-bb/plugin-sdk/testing/app";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -103,31 +103,5 @@ describe("логотип провайдера у исполнителя-аген
     expect(logoOf(row)!.getAttribute("data-provider-logo")).toBe(CLAUDE_LOGO);
     expect(logoOf(row)!.hasAttribute("data-framed")).toBe(true);
     expect(row.querySelector('[data-icon="Claude"]')).toBeNull();
-  });
-});
-
-describe("логотип провайдера в строке треда", () => {
-  const mount = async (running: unknown[]) => {
-    vi.stubGlobal("fetch", vi.fn(async (url: string) => ({ ok: true, json: async () => ({ ok: true, result: String(url).endsWith("runningThreads") ? running : [] }) })));
-    const setStatus = vi.fn();
-    await app.contentScripts.find((s) => s.id === "flow-awaiting")!.mount({ pluginId: "flow", generation: 1, signal: new AbortController().signal, experimental_setThreadRowStatus: setStatus } as PluginContentScriptContext);
-    return setStatus;
-  };
-  const css = () => document.head.querySelector("style[data-flow-row-glyphs]")?.textContent ?? "";
-  const rule = (label: string) => css().split("\n").find((line) => line.includes(`[aria-label="${label}"]{`)) ?? "";
-
-  it("сам агент — логотип провайдера треда, субагент — логотип в квадрате; подпись называет провайдера, значок мерцает", async () => {
-    const setStatus = await mount([
-      { threadId: "thr_a", icon: "self", provider: { name: "Codex", logoUrl: CODEX_LOGO } },
-      { threadId: "thr_b", icon: "agent", provider: { name: "Claude Code", logoUrl: CLAUDE_LOGO } },
-    ]);
-    await vi.waitFor(() => expect(setStatus).toHaveBeenCalledTimes(2));
-    const labelOf = (threadId: string) => (setStatus.mock.calls.find(([id]) => id === threadId)![1] as { label: string }).label;
-    expect(labelOf("thr_a")).toContain("Codex");
-    expect(labelOf("thr_b")).toContain("Claude Code");
-    await vi.waitFor(() => expect(rule(labelOf("thr_a"))).toContain(`url("${CODEX_LOGO}")`));
-    expect(rule(labelOf("thr_a"))).toMatch(/animation:/);
-    expect(rule(labelOf("thr_b"))).toContain(`url("${CLAUDE_LOGO}")`);
-    expect(rule(labelOf("thr_b"))).toContain("data:image/svg+xml");
   });
 });

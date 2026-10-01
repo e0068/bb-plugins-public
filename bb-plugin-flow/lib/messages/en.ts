@@ -206,9 +206,6 @@ export const en: Messages = {
     running: (name) => `${name} · running`,
     automationFailed: "Automation stopped",
     automation: "Automation",
-    self: "Self",
-    agent: "Agent",
-    workflow: "Workflow",
   },
   steps: {
     "git.commit": "Commit",

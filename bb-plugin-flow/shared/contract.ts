@@ -1020,6 +1020,9 @@ export const awaitingRpcContract = defineRpcContract({
 /** Значок идущего этапа в левой панели: автоматизация или исполнитель этапа навыка. */
 export const runningIconSchema = z.enum(["automation", "action", "self", "agent", "workflow"]);
 
+/** Значок идущего этапа в строке треда: только то, что идёт само, без хода агента, — автоматизация и нажатый шаг Action. */
+const rowRunningIconSchema = runningIconSchema.extract(["automation", "action"]);
+
 /** Ответ на «Повторить» и «Пропустить» упавшего шага. */
 const stepAnswerSchema = z.object({ started: z.boolean(), busy: z.literal(true).optional() });
 
@@ -1032,8 +1035,9 @@ export const automationRpcContract = defineRpcContract({
   skipAutomationStep: { input: z.object({ threadId: text, stage: text }), output: stepAnswerSchema },
   /** Нажатие владельца на кнопку шага этапа Action: `started` — шаг взят в работу, `false` — этап не ждёт нажатия или шаг уже идёт. */
   runActionStep: { input: z.object({ threadId: text, stage: text }), output: z.object({ started: z.boolean() }) },
-  /** `provider` — имя и логотип провайдера исполнителя, когда у него есть логотип. */
-  runningThreads: { input: z.object({}), output: z.array(z.object({ threadId: text, icon: runningIconSchema, provider: z.object({ name: text, logoUrl: text }).optional() })) },
+  runningThreads: { input: z.object({}), output: z.array(z.object({ threadId: text, icon: rowRunningIconSchema })) },
+  /** Логотип провайдера тредов с flow: пока идёт ход, он крутится в строке треда вместо колёсика bb. */
+  agentLogos: { input: z.object({}), output: z.array(z.object({ threadId: text, logoUrl: text })) },
 });
 
 /** Кнопка flow в композере нового треда: выбор запоминается по проекту и достаётся новому треду. */
@@ -1140,8 +1144,9 @@ export type AutomationStep = z.output<typeof automationStepSchema>;
 export type AutomationScript = z.output<typeof automationScriptSchema>;
 export type StageTrack = z.output<typeof stageTrackSchema>;
 export type RunningIcon = z.output<typeof runningIconSchema>;
-/** Идущий тред в левой панели: значок этапа и провайдер исполнителя, когда у него есть логотип. */
+/** Идущий тред в левой панели: значок этапа. */
 export type RunningThread = z.output<typeof automationRpcContract.runningThreads.output>[number];
+export type AgentLogo = z.output<typeof automationRpcContract.agentLogos.output>[number];
 export type StageSettings = z.output<typeof stageSettingsSchema>;
 export type Flow = z.output<typeof flowSchema>;
 export type AutomationSet = z.output<typeof automationSetSchema>;

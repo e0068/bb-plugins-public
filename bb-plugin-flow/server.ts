@@ -128,6 +128,7 @@ export default async function plugin(bb: BbPluginApi): Promise<void> {
     external: externalStep(automations.run),
     script: scriptStep(bb.sdk),
     thread,
+    flowThreads: () => threads.withFlow(),
     providers,
     // Доигранный прогон Flow пускает работу дальше. Текст собирает исполнитель — в нём простой по этапам.
     wake: send,

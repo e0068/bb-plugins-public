@@ -12,7 +12,6 @@ import { scriptIdOf, scriptOf } from "../core/automation-scripts";
 import { waitsForAnswer } from "../core/awaiting";
 import {
   DEFAULT_RETRY,
-  executorProvider,
   idleStages,
   isActionStage,
   isAgentStage,
@@ -43,7 +42,7 @@ import {
   conflictWakeText,
   onAgentWoken,
 } from "../core/automation-run";
-import { automationRpcContract, type AutomationScript, type FlowProgress, type RunningIcon, type RunningThread, type StageSettings, type StepAnswer, type WorkStage } from "../shared/contract";
+import { automationRpcContract, type AutomationScript, type FlowProgress, type AgentLogo, type RunningIcon, type RunningThread, type StageSettings, type StepAnswer, type WorkStage } from "../shared/contract";
 import type { AutomationsBridge } from "./automations";
 import type { ProgressStore, ThreadState } from "./progress";
 import type { DecisionStore } from "./store";
@@ -66,8 +65,10 @@ export interface AutomationRunnerDeps {
   external: ExternalStep;
   /** Запуск скрипта этапа в треде; нет — шаги-скрипты падают с причиной. */
   script?: (threadId: string, script: AutomationScript) => Promise<StepOutcome>;
-  /** Ход агента и провайдер треда; не прочиталось — хода нет. */
-  thread: (threadId: string) => Promise<Pick<ThreadState, "active" | "providerId">>;
+  /** Провайдер треда — для логотипа в строке треда; не прочитался — логотипа нет. */
+  thread: (threadId: string) => Promise<Pick<ThreadState, "providerId">>;
+  /** Треды, которым назначен flow: логотип агента получают они, в том числе до первой отметки этапа. Нет — логотипов нет. */
+  flowThreads?: () => readonly string[];
   /** Провайдеры хоста с логотипами. */
   providers: () => Promise<readonly HostProvider[]>;
   /** Реплика агенту готовым текстом: доигранный прогон Flow пускает работу дальше. Нет — тред просто стоит на следующем этапе. */
@@ -101,8 +102,10 @@ export interface AutomationRunner {
   skip(threadId: string, stageId: string): Promise<StepAnswer>;
   /** Нажатие владельца на шаг этапа Action: `false` — этап не ждёт нажатия или шаг уже идёт. */
   runActionStep(threadId: string, stageId: string): Promise<boolean>;
-  /** Треды, где сейчас идёт работа — ход агента на этапе или прогон автоматизации, — и значок этапа; ждущие владельца не входят. */
+  /** Треды, где сейчас идёт прогон автоматизации или нажатый шаг Action, и значок этапа; ждущие владельца не входят. */
   running(): Promise<RunningThread[]>;
+  /** Логотип провайдера каждого треда, которому назначен flow, если у провайдера есть логотип. */
+  logos(): Promise<AgentLogo[]>;
   /**
    * Исполняет шаги отката этапов по порядку — доработка сняла с них готовность — и отвечает итогом строкой на шаг.
    * Упавший шаг не останавливает остальные и в прогресс не пишется: у этапа нет готовности, которую он мог бы испортить.
@@ -161,6 +164,9 @@ const AGENT_POLL_MS = 5_000;
 /** Сколько ждать, что разбуженный агент возьмётся за ход: не взялся — шаг повторяется всё равно. */
 const AGENT_START_MS = 5 * 60_000;
 
+/** Значок строки треда — только у этапа, идущего без хода агента. */
+const isSelfRunning = (icon: RunningIcon | null): icon is RunningThread["icon"] => icon === "automation" || icon === "action";
+
 export const createAutomationRunner = (deps: AutomationRunnerDeps): AutomationRunner => {
   // Один прогон на тред: отметка, ответ и запись самого исполнителя зовут advance, пока шаги ещё идут.
   const active = new Set<string>();
@@ -177,6 +183,16 @@ export const createAutomationRunner = (deps: AutomationRunnerDeps): AutomationRu
   // Отмены flow по треду: шаги, начатые до отмены, видят другой счёт и молча выходят — иначе их запись завела бы прогон заново.
   const cancels = new Map<string, number>();
   const epochOf = (threadId: string) => cancels.get(threadId) ?? 0;
+  // Провайдер треда не меняется: читается один раз, а опрос логотипов идёт каждые десять секунд. Сбой чтения не запоминается.
+  const providers = new Map<string, string | null>();
+  const providerOf = async (threadId: string): Promise<string | null> => {
+    const known = providers.get(threadId);
+    if (known !== undefined) return known;
+    const read = await deps.thread(threadId).then((t) => t.providerId, () => undefined);
+    if (read === undefined) return null;
+    providers.set(threadId, read);
+    return read;
+  };
   // Выгруженный исполнитель новых таймеров не ставит: шаг, упавший уже после выгрузки, повторит следующая загрузка по сроку в записи.
   let disposed = false;
   /** Таймер этапа: по сроку — автоповтор, а у шага, ждущего хода агента, — проверка этого хода. */
@@ -574,35 +590,30 @@ export const createAutomationRunner = (deps: AutomationRunnerDeps): AutomationRu
     },
     // Пропуск тоже снимает этап с простоя: владелец ответил, ждать больше нечего.
     skip: (threadId, stageId) => (active.has(threadId) ? queueSkip(threadId, stageId) : unblock(threadId, stageId, skipExit(stageId))),
+    // Этап навыка значка не получает: пока идёт ход, в строке крутится логотип агента, а после хода значок только запаздывал бы.
     running: async () => {
-      // Список провайдеров один на опрос и только когда он нужен.
-      let brands: Promise<readonly HostProvider[]> | undefined;
-      const brandOf = async (providerId: string | null): Promise<RunningThread["provider"]> => {
-        if (providerId === null) return undefined;
-        brands ??= deps.providers().catch(() => []);
-        const found = (await brands).find((p) => p.id === providerId);
-        return found?.logoUrl == null ? undefined : { name: found.displayName, logoUrl: found.logoUrl };
-      };
       const threads = await deps.progress.threads();
       const entries = await Promise.all(
         threads.map(async (threadId): Promise<RunningThread | null> => {
           const record = await deps.progress.get(threadId);
           if (record === null) return null;
-          const stages = deps.stages(threadId).stages;
-          const firstLive = (agentActive: boolean) =>
-            stages.map((stage) => ({ stage, icon: stageLiveIcon(record, stage, agentActive) })).find((live): live is { stage: WorkStage; icon: RunningIcon } => live.icon !== null);
-          // Опрос идёт по всем тредам с прогрессом: тред читается, только когда первый живой при ходе агента этап — этап навыка.
-          const withAgent = firstLive(true);
-          if (withAgent === undefined || withAgent.icon === "automation") return withAgent === undefined ? null : { threadId, icon: withAgent.icon };
-          const thread = await deps.thread(threadId).catch(() => ({ active: false, providerId: null }));
-          const live = thread.active ? withAgent : firstLive(false);
-          if (live === undefined) return null;
-          const { stage, icon } = live;
-          const provider = await brandOf(executorProvider(stage, record.stages[stage.id] ?? {}, thread.providerId));
-          return { threadId, icon, ...(provider === undefined ? {} : { provider }) };
+          const icon = deps.stages(threadId).stages.map((stage) => stageLiveIcon(record, stage, false)).find(isSelfRunning);
+          return icon === undefined ? null : { threadId, icon };
         }),
       );
       return entries.filter((entry): entry is RunningThread => entry !== null);
+    },
+    logos: async () => {
+      const threads = deps.flowThreads?.() ?? [];
+      const brands = new Map((await deps.providers().catch(() => [])).flatMap((p) => (p.logoUrl === null ? [] : [[p.id, p.logoUrl] as const])));
+      const entries = await Promise.all(
+        threads.map(async (threadId): Promise<AgentLogo | null> => {
+          const providerId = await providerOf(threadId);
+          const logoUrl = providerId === null ? undefined : brands.get(providerId);
+          return logoUrl === undefined ? null : { threadId, logoUrl };
+        }),
+      );
+      return entries.filter((entry): entry is AgentLogo => entry !== null);
     },
     cancel: (threadId) => {
       cancels.set(threadId, epochOf(threadId) + 1);
@@ -628,5 +639,6 @@ export const registerAutomationRunner = (bb: Pick<BbPluginApi, "rpc">, runner: A
     // Шаг Action идёт в фоне: ответ приходит сразу, а кнопка держит лоадер до записи прогресса.
     runActionStep: async ({ threadId, stage }) => ({ started: await runner.runActionStep(threadId, stage) }),
     runningThreads: () => runner.running(),
+    agentLogos: () => runner.logos(),
   });
 };
