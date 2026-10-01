@@ -1,5 +1,6 @@
 import type { Attachment } from "../db/types.js";
 import type { Comment, Task } from "../shared/contract.js";
+import { nearestEpicId } from "../shared/epic.js";
 import { parseAttachedThreads, type AttachedThread } from "../threads/live-state.js";
 import type { BoardTaskFile } from "./fs-boards.js";
 
@@ -92,6 +93,7 @@ export function assembleBoardTasks(
         budgetLimit: file.task.budgetLimit ?? null,
         cost: file.task.cost ?? null,
         dueDate: file.task.dueDate ?? null,
+        startDate: file.task.startDate ?? null,
         parentTaskId: null, // resolved below, once every task has an id
         position: 0,
         // From the filesystem, not from `created:`/`updated:` — almost no
@@ -99,7 +101,8 @@ export function assembleBoardTasks(
         createdAt: file.createdAt,
         updatedAt: file.updatedAt,
         labelIds: [...(file.task.labels ?? [])],
-        checks: [...(file.task.checks ?? [])],
+        flow: file.task.flow ?? null,
+        takenBy: file.task.takenBy ?? null,
         // From the folders above the status folder, not the frontmatter.
         assignee: file.assignee,
         epic: file.epic,
@@ -122,12 +125,18 @@ export function assembleBoardTasks(
     byRef.set(p.slug.toLowerCase(), p.task.id);
     byRef.set(p.task.key.toLowerCase(), p.task.id);
   }
-  const tasks: AssembledTask[] = partial.map(({ parentRef, slug: _slug, ...rest }) => ({
+  const linked: AssembledTask[] = partial.map(({ parentRef, slug: _slug, ...rest }) => ({
     ...rest,
     task: {
       ...rest.task,
       parentTaskId: parentRef ? (byRef.get(parentRef.toLowerCase()) ?? null) : null,
     },
+  }));
+  // The epic comes from the resolved tree, so it is worked out last.
+  const byId = new Map(linked.map(({ task }) => [task.id, task]));
+  const tasks = linked.map((entry) => ({
+    ...entry,
+    task: { ...entry.task, epicId: nearestEpicId(entry.task.id, byId) },
   }));
 
   return { tasks };

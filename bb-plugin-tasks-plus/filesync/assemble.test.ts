@@ -5,7 +5,7 @@ import { assembleBoardTasks } from "./assemble.js";
 function file(overrides: Partial<BoardTaskFile["task"]> & { slug: string; filePath?: string }): BoardTaskFile {
   const { slug, filePath, ...taskOverrides } = overrides;
   return {
-    task: { title: "T", description: "", labels: [], checks: [], parentRef: null, ...taskOverrides },
+    task: { title: "T", description: "", labels: [], parentRef: null, ...taskOverrides },
     comments: [],
     frontmatter: {},
     filePath: filePath ?? `todo/${slug}.md`,

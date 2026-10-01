@@ -1,7 +1,11 @@
 import type { TaskSort } from "../shared/pagination.js";
+import type { DateField, NumberField, TaskLayout, TextField, ValueFilterField } from "../shared/enums.js";
+import type { Range, ViewSort } from "../shared/task-fields.js";
 import type {
+  BoardGrouping,
   FieldDisplayConfig,
   PresetPermissionMode,
+  TableSettings,
 } from "../shared/contract.js";
 
 export const TASK_STATUSES = [
@@ -26,6 +30,7 @@ export const TASK_PRIORITIES = [
 export type TaskPriority = (typeof TASK_PRIORITIES)[number];
 
 export const TASK_TYPES = [
+  "epic",
   "feature",
   "bugfix",
   "spike",
@@ -39,10 +44,6 @@ export type TaskType = (typeof TASK_TYPES)[number];
 export const TASK_ESTIMATES = ["xs", "s", "m", "l", "xl"] as const;
 
 export type TaskEstimate = (typeof TASK_ESTIMATES)[number];
-
-export const TASK_CHECKS = ["test", "review", "design", "browser"] as const;
-
-export type TaskCheck = (typeof TASK_CHECKS)[number];
 
 export const COMMENT_KINDS = ["user", "agent", "system"] as const;
 export type CommentKind = (typeof COMMENT_KINDS)[number];
@@ -75,7 +76,7 @@ export interface Folder {
  * Where a task's backing markdown file was last read from: the linked bb
  * project's main checkout, or дерево вызвавшего треда (окружение из
  * filesync/caller-root.ts), чья копия файла расходится с main (см.
- * filesync/fs-boards.ts).
+ * filesync/fs-boards.ts) — or an online database, named by its address.
  */
 export type FileTaskOrigin =
   | { kind: "main" }
@@ -84,7 +85,8 @@ export type FileTaskOrigin =
       environmentId: string;
       name: string | null;
       branchName: string | null;
-    };
+    }
+  | { kind: "database"; url: string };
 
 export interface Comment {
   id: string;
@@ -114,7 +116,7 @@ export interface Attachment {
  * A thread attached to a task, as the plugin serves it: the attachment fact
  * from the task file plus the thread's current state, read from bb at
  * request time and never stored (see threads/live-state.ts and
- * memory/decisions/tasks-plus-thread-state-is-not-a-file-field.md).
+ * docs/decisions/tasks-plus-thread-state-is-not-a-file-field.md).
  */
 export interface TaskThread {
   id: string;
@@ -123,7 +125,7 @@ export interface TaskThread {
   presetName: string;
   title: string;
   liveStatus: TaskThreadLiveStatus;
-  /** Set when the underlying bb thread is archived; independent of liveStatus — see memory/decisions/tasks-plus-thread-archived-separate-column.md. */
+  /** Set when the underlying bb thread is archived; independent of liveStatus — see docs/decisions/tasks-plus-thread-archived-separate-column.md. */
   archivedAt: string | null;
   attachedAt: string;
 }
@@ -168,8 +170,8 @@ export interface CreateTaskInput {
   budget?: number | null;
   budgetLimit?: number | null;
   cost?: number | null;
-  checks?: readonly TaskCheck[];
   dueDate?: string | null;
+  startDate?: string | null;
   parentTaskId?: string | null;
   /** Folder above the status folder; null keeps the task at the root. */
   assignee?: string | null;
@@ -193,8 +195,8 @@ export interface UpdateTaskInput {
   budget?: number | null;
   budgetLimit?: number | null;
   cost?: number | null;
-  checks?: readonly TaskCheck[];
   dueDate?: string | null;
+  startDate?: string | null;
   parentTaskId?: string | null;
   /** Folder above the status folder; null keeps the task at the root. */
   assignee?: string | null;
@@ -303,17 +305,49 @@ export interface UpdatePresetInput {
   builtin?: boolean;
 }
 
-export interface SavedView {
-  id: string;
-  scope: string;
+/** The filter bar's state as a view carries it — by name, not by id. */
+export interface SavedViewFilters {
+  statuses: TaskStatus[];
+  priorities: TaskPriority[];
+  types: TaskType[];
+  estimates: TaskEstimate[];
+  labelNames: string[];
+  assignees: string[];
+  /** Ids of tasks: a task passes when it lies under one of them. */
+  parents: string[];
+  /** Filters on every other field, present only while they filter something (shared/task-fields.ts). */
+  values?: Partial<Record<ValueFilterField, string[]>>;
+  texts?: Partial<Record<TextField, string>>;
+  dates?: Partial<Record<DateField, Range<string>>>;
+  numbers?: Partial<Record<NumberField, Range<number>>>;
+}
+
+export interface SavedViewBody {
   name: string;
-  config: FieldDisplayConfig;
+  /** The project the view opens, or null for a cross-project surface. */
+  projectId: string | null;
+  /** Mutually exclusive with `projectId`. */
+  listScope: "active" | "waiting" | null;
+  /** What the view opens: a table or a board. */
+  surface: TaskLayout;
+  filters: SavedViewFilters;
+  sort: ViewSort;
+  fields: FieldDisplayConfig;
+  /** The board's grouping — present exactly when the view opens a board. */
+  board: BoardGrouping | null;
+  /** The table's own settings, or null for a view saved before tables had them. */
+  table: TableSettings | null;
+}
+
+export interface SavedView extends SavedViewBody {
+  id: string;
+  version: 2;
   createdAt: string;
 }
 
-export interface CreateSavedViewInput {
+/** A view written before boards had views names no surface: it is a table. */
+export interface CreateSavedViewInput
+  extends Omit<SavedViewBody, "surface" | "board" | "table">,
+    Partial<Pick<SavedViewBody, "surface" | "board" | "table">> {
   id?: string;
-  scope: string;
-  name: string;
-  config: FieldDisplayConfig;
 }

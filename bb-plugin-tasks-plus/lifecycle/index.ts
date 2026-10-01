@@ -1,23 +1,13 @@
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import type { TasksApiStore } from "../api";
 import type { TaskThread } from "../db";
-import {
-  createSystemComment,
-  publishCommentsChanged,
-  publishThreadsChanged,
-} from "../delegate";
+import { publishThreadsChanged } from "../delegate";
 import {
   patchLiveState,
   sameLiveState,
   threadLiveState,
   type ThreadLiveState,
 } from "../threads/live-state.js";
-import {
-  needsTerminalComment,
-  terminalCommentBody,
-  type TerminalLiveStatus,
-} from "../threads/terminal-comment.js";
-
 // Only "completed" is a true dead-end. "failed" stays reconcilable: a thread
 // that ended in error and is later archived must still reach "completed"
 // (otherwise a finished, merged task keeps reading as "Failed" forever).
@@ -31,22 +21,17 @@ function isTerminal(liveStatus: TaskThread["liveStatus"]): boolean {
   return TERMINAL_LIVE_STATUSES.has(liveStatus);
 }
 
-function terminalOf(state: ThreadLiveState): TerminalLiveStatus | null {
-  return state.liveStatus === "completed" || state.liveStatus === "failed"
-    ? state.liveStatus
-    : null;
-}
-
+/** Привязанные треды всех досок — по одному чтению каталога на доску.
+ *  Поштучный `listTaskThreads` перечитывал бы каталог по разу на задачу, а
+ *  этот обход идёт на каждое наблюдение за тредом и раз в тик сверки. */
 async function trackedThreads(store: TasksApiStore, threadId?: string): Promise<TaskThread[]> {
-  const tracked: TaskThread[] = [];
-  for (const task of await store.tasks.listTasks()) {
-    for (const thread of await store.tasks.listTaskThreads(task.id)) {
-      if (threadId === undefined || thread.threadId === threadId) {
-        tracked.push(thread);
-      }
-    }
-  }
-  return tracked;
+  const boards = store.tasks.listProjects();
+  const perBoard = await Promise.all(
+    boards.map((board) => store.tasks.threadsByTaskId(board.id)),
+  );
+  return perBoard
+    .flatMap((byTask) => [...byTask.values()].flat())
+    .filter((thread) => threadId === undefined || thread.threadId === threadId);
 }
 
 function sdkErrorCode(error: unknown): string | undefined {
@@ -56,33 +41,12 @@ function sdkErrorCode(error: unknown): string | undefined {
   return typeof error.code === "string" ? error.code : undefined;
 }
 
-/** Reports on the task that the thread it delegated to has ended. Written
- *  once: the task's own comments are the record, because the live status
- *  that used to guard this is process memory now. */
-async function reportTerminalState(
-  bb: BbPluginApi,
-  store: TasksApiStore,
-  thread: TaskThread,
-  liveStatus: TerminalLiveStatus,
-): Promise<void> {
-  const body = terminalCommentBody(thread, liveStatus);
-  if (!needsTerminalComment(await store.tasks.listComments(thread.taskId), body)) {
-    return;
-  }
-  await createSystemComment(store.tasks, {
-    taskId: thread.taskId,
-    presetName: thread.presetName,
-    threadId: thread.threadId,
-    body,
-  });
-  publishCommentsChanged(bb, thread.taskId);
-}
-
 /**
- * Records where a bb thread got to. Nothing is written to the task file:
- * the file holds the fact that the thread is attached, this holds what the
- * thread is doing (see
- * memory/decisions/tasks-plus-thread-state-is-not-a-file-field.md).
+ * Records where a bb thread got to. Ничего не пишется на диск вовсе: файл
+ * держит факт привязки, а это — наблюдение за миром (см.
+ * docs/decisions/tasks-plus-thread-state-is-not-a-file-field.md и
+ * docs/decisions/tasks-plus-no-terminal-report-in-file.md). Запись отсюда
+ * шла бы без вызывающего треда, то есть в главный чекаут.
  */
 async function observeThread(
   bb: BbPluginApi,
@@ -97,9 +61,7 @@ async function observeThread(
   if (sameLiveState(previous, next)) return;
   store.tasks.setThreadLiveState(threadId, next);
 
-  const terminal = terminalOf(next);
   for (const thread of await trackedThreads(store, threadId)) {
-    if (terminal) await reportTerminalState(bb, store, thread, terminal);
     publishThreadsChanged(bb, thread.taskId);
   }
 }

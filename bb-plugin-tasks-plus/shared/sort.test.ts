@@ -44,12 +44,13 @@ function task(
     budgetLimit: null,
     cost: null,
     dueDate: null,
+    startDate: null,
     parentTaskId: null,
     position: 0,
     createdAt: "2026-07-01T00:00:00.000Z",
     updatedAt: "2026-07-01T00:00:00.000Z",
     labelIds: [],
-    checks: [],
+    source: null,
     ...overrides,
   };
 }

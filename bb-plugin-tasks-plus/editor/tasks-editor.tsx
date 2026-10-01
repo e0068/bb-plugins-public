@@ -207,6 +207,11 @@ export interface TasksEditorProps {
    * attachment owner does not exist yet (e.g. the new-task dialog).
    */
   onAttachFiles?: (files: File[]) => void;
+  /**
+   * Address an image is shown by; the markdown keeps the stored one. A
+   * thread surface appends its thread here.
+   */
+  displayImageSrc?: (src: string) => string;
   mentionItems?: (query: string) => Promise<MentionItem[]>;
   /** Invoked when a thread-mention pill is clicked (edit and read-only). */
   onOpenThread?: (threadId: string) => void;
@@ -230,6 +235,7 @@ export function TasksEditor({
   variant = "doc",
   onUploadImage,
   onAttachFiles,
+  displayImageSrc,
   mentionItems,
   onOpenThread,
   onSubmit,
@@ -249,6 +255,8 @@ export function TasksEditor({
   uploadRef.current = onUploadImage;
   const attachFilesRef = useRef(onAttachFiles);
   attachFilesRef.current = onAttachFiles;
+  const displayImageSrcRef = useRef(displayImageSrc);
+  displayImageSrcRef.current = displayImageSrc;
   const mentionItemsRef = useRef(mentionItems);
   mentionItemsRef.current = mentionItems;
   const openThreadRef = useRef(onOpenThread);
@@ -351,6 +359,7 @@ export function TasksEditor({
       extensions: createEditorExtensions({
         placeholder: () => placeholderRef.current ?? "",
         mentionHandle,
+        displayImageSrc: (src) => displayImageSrcRef.current?.(src) ?? src,
       }),
       content: initialValueRef.current,
       autofocus: autofocusRef.current && !readOnly ? "end" : false,

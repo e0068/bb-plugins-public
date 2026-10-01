@@ -1,58 +1,119 @@
-// Pure model of the analytics screen (BBPL-259): the default section layout,
-// the filter state, and the time window each D/W/M cut resolves to. No React —
-// the view (AnalyticsDashboard.tsx) renders this, and it stays testable on its
-// own. Imports the shared engine by subpath so this pulls no chart/react code.
-import { addSection, type DashboardConfig, emptyDashboard } from "./dashboard-layout";
-import { type Window, windowStartMs } from "../../packages/analytics-viz/core/time-window";
+// Pure model of the analytics screen: the sections and the rows they stand in
+// before the owner resizes anything, the filter, and the columns each D/W/M
+// cut is drawn in. No React — AnalyticsDashboard.tsx renders this. Columns
+// are local-calendar (see closed-model.ts), so the client computes them.
+import { WINDOWS, type Window } from "@bb-plugins/analytics-viz/core/time-window";
+import { weekBreaks, weekEdgesSince, type WeekBreak } from "@bb-plugins/analytics-viz/core/weeks";
+import { dayEdges, hourEdges } from "./closed-model";
+import type { RowLayout } from "./row-layout";
 
-const HOUR_MS = 3_600_000;
-const DAY_MS = 24 * HOUR_MS;
-
-/** The widget kinds this dashboard maps its sections to. */
-export const SECTION_KINDS = ["status-snapshot", "throughput", "status-distribution"] as const;
+/** Every section of the screen; the id doubles as its kind — one section per kind. */
+export const SECTION_KINDS = [
+  "changes",
+  "burndown",
+  "closed-hourly",
+  "closed-daily",
+  "created-closed",
+  "wip",
+  "cycle",
+  "accuracy",
+  "cost",
+  "aging",
+  "types",
+  "gantt",
+] as const;
 export type SectionKind = (typeof SECTION_KINDS)[number];
 
-/** What the screen is filtered to: a rolling window and, optionally, one project. */
+/** The cuts of the screen: the rolling D/W/M every analytics surface offers, then the whole history. */
+export const ANALYTICS_WINDOWS = [...WINDOWS, "all"] as const;
+export type AnalyticsWindow = (typeof ANALYTICS_WINDOWS)[number];
+
+/** What the screen is narrowed to: a cut and the projects picked in the header (none picked — all). */
 export interface AnalyticsFilter {
-  window: Window;
-  /** null = every project the board knows. */
-  projectId: string | null;
+  window: AnalyticsWindow;
+  projectIds: readonly string[];
 }
 
-export const DEFAULT_FILTER: AnalyticsFilter = { window: "week", projectId: null };
+export const DEFAULT_FILTER: AnalyticsFilter = { window: "week", projectIds: [] };
 
-/** The bucketed window the series RPC is asked for, given a filter and "now". */
-export interface SeriesWindow {
-  fromMs: number;
-  toMs: number;
-  binMs: number;
-}
+const WEEK_DAYS = 7;
+const WEEKS = 8;
 
 /**
- * The concrete `[fromMs, toMs)` and bin size a filter resolves to at `nowMs`.
- * Rolling, from the shared windowStartMs; the bin is an hour for the day cut
- * (24 columns) and a day for the wider cuts (7 / 30 columns) — enough
- * resolution to read a trend without a column per minute.
+ * Columns of the series charts for a cut: hours for the day, local days for
+ * the week and the month, weeks for all time — from the week of `firstMs`,
+ * the first task; without one, the current week alone.
  */
-export function seriesWindowFor(filter: AnalyticsFilter, nowMs: number): SeriesWindow {
+export function windowEdges(window: AnalyticsWindow, nowMs: number, firstMs: number = nowMs): number[] {
+  switch (window) {
+    case "day":
+      return hourEdges(nowMs);
+    case "week":
+      return dayEdges(nowMs).slice(-(WEEK_DAYS + 1));
+    case "month":
+      return dayEdges(nowMs);
+    case "all":
+      return weekEdgesSince(firstMs, nowMs);
+  }
+}
+
+/** Where a cut's charts mark a new week: on day columns only — an hour is too fine, a week column is a week already. */
+export function weekBreaksOf(window: AnalyticsWindow, edges: readonly number[]): WeekBreak[] {
+  switch (window) {
+    case "day":
+    case "all":
+      return [];
+    case "week":
+    case "month":
+      return weekBreaks(edges.slice(0, -1));
+  }
+}
+
+/** Days one column of a cut spans — what turns a per-column pace into a per-day one. */
+export function columnDays(window: AnalyticsWindow): number {
+  switch (window) {
+    case "day":
+      return 1 / 24;
+    case "week":
+    case "month":
+      return 1;
+    case "all":
+      return WEEK_DAYS;
+  }
+}
+
+/** The 8 local weeks ending with the current one: 9 Monday midnights, the last one next Monday's. */
+export function weekEdges(nowMs: number): number[] {
+  const now = new Date(nowMs);
+  const sinceMonday = (now.getDay() + 6) % WEEK_DAYS;
+  const firstDay = now.getDate() - sinceMonday - (WEEKS - 1) * WEEK_DAYS;
+  return Array.from({ length: WEEKS + 1 }, (_, week) =>
+    new Date(now.getFullYear(), now.getMonth(), firstDay + week * WEEK_DAYS).getTime(),
+  );
+}
+
+const row = (id: string, height: number, minHeight: number, cells: readonly [SectionKind, number][]) => ({
+  id,
+  height,
+  minHeight,
+  cells: cells.map(([cellId, weight]) => ({ id: cellId, weight })),
+});
+
+/**
+ * The rows before any resize: status flow and burndown, the closed charts,
+ * inflow against work in progress, the estimate rows, what is stuck and what
+ * kind of work got done, then the Gantt of the tasks. The last row grows to
+ * the bottom of the screen.
+ */
+export function defaultAnalyticsRows(): RowLayout {
   return {
-    fromMs: windowStartMs(filter.window, nowMs),
-    toMs: nowMs,
-    binMs: filter.window === "day" ? HOUR_MS : DAY_MS,
+    rows: [
+      row("activity", 260, 180, [["changes", 0.6], ["burndown", 0.4]]),
+      row("closed", 320, 200, [["closed-hourly", 0.5], ["closed-daily", 0.5]]),
+      row("flow", 240, 180, [["created-closed", 0.5], ["wip", 0.5]]),
+      row("estimates", 240, 180, [["cycle", 0.34], ["accuracy", 0.34], ["cost", 0.32]]),
+      row("attention", 280, 180, [["aging", 0.55], ["types", 0.45]]),
+      row("timeline", 360, 200, [["gantt", 1]]),
+    ],
   };
-}
-
-/**
- * The dashboard a user sees before touching anything: a snapshot tile row
- * across the top, a throughput chart, and a status-distribution lane. Ids are
- * the section kinds — this dashboard has one section per kind, so kind doubles
- * as a stable id. Every rect fits the 12-column grid.
- */
-export function defaultAnalyticsDashboard(): DashboardConfig {
-  const sections = [
-    { id: "status-snapshot", kind: "status-snapshot" satisfies SectionKind, x: 0, y: 0, w: 12, h: 2, settings: {} },
-    { id: "throughput", kind: "throughput" satisfies SectionKind, x: 0, y: 2, w: 8, h: 4, settings: {} },
-    { id: "status-distribution", kind: "status-distribution" satisfies SectionKind, x: 8, y: 2, w: 4, h: 4, settings: {} },
-  ];
-  return sections.reduce((config, section) => addSection(config, section), emptyDashboard());
 }

@@ -14,6 +14,8 @@ export interface BoardConfig {
   folderId: string | null;
   linkedBbProjectId: string | null;
   tasksFolder: string | null;
+  /** The online database the board lives in; null for a board that lives in folders. */
+  database: { url: string } | null;
   createdAt: string;
 }
 
@@ -25,7 +27,9 @@ export interface KvStore {
 const BOARDS_KEY = "boards";
 
 export async function readBoardConfigs(kv: KvStore): Promise<BoardConfig[]> {
-  return (await kv.get<BoardConfig[]>(BOARDS_KEY)) ?? [];
+  // Records written before boards could live in a database carry no `database` key.
+  const stored = (await kv.get<Array<Omit<BoardConfig, "database"> & { database?: BoardConfig["database"] }>>(BOARDS_KEY)) ?? [];
+  return stored.map((board) => ({ ...board, database: board.database ?? null }));
 }
 
 export async function writeBoardConfigs(

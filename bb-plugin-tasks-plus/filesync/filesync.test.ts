@@ -109,7 +109,7 @@ describe("statusFromFolder", () => {
 });
 
 describe("mapFrontmatter", () => {
-  it("maps known fields, reads time and money, ignores legacy tokens, and drops invalid values", () => {
+  it("maps every known field, reads time and money, ignores legacy tokens and checks, and drops invalid values", () => {
     const { data, body } = parseFrontmatter(
       [
         "---",
@@ -126,6 +126,7 @@ describe("mapFrontmatter", () => {
         "limit: 60",
         "cost: 41.5",
         "due: 2026-09-01",
+        "start: 2026-08-20",
         "labels: [frontend, editor]",
         "parent: toolbar-redesign",
         "slug: hook-url-field",
@@ -148,9 +149,10 @@ describe("mapFrontmatter", () => {
       budgetLimit: 60,
       cost: 41.5,
       dueDate: "2026-09-01",
+      startDate: "2026-08-20",
       labels: ["frontend", "editor"],
       parentRef: "toolbar-redesign",
-      checks: ["design", "test"],
+      flow: null,
     });
   });
 
@@ -166,7 +168,7 @@ describe("mapFrontmatter", () => {
     expect(mapped.type).toBeNull();
     expect(mapped.estimate).toBeNull();
     expect(mapped.dueDate).toBeNull();
-    expect(mapped.checks).toEqual([]);
+    expect(mapped.flow).toBeNull();
     expect(mapped.parentRef).toBeNull();
     expect(mapped.description).toBe("");
   });

@@ -168,16 +168,17 @@ export function usePresets() {
 }
 
 /**
- * Saved views for one field-display scope. Views live in the plugin's own
+ * Every saved view. A view names the list it opens, so it is not partitioned
+ * by surface any more. Views live in the plugin's own
  * database, not localStorage — one bb instance's saved views are shared
  * across its tabs, so a sibling tab must see a new/renamed/deleted view
  * without a reload, hence the `views:changed` realtime channel.
  */
-export function useSavedViews(scope: string) {
+export function useSavedViews() {
   return useTasksQuery(
-    async (rpc) => (await rpc.call("listSavedViews", { scope })).savedViews,
+    async (rpc) => (await rpc.call("listSavedViews", {})).savedViews,
     ["views:changed"],
-    [scope],
+    [],
   );
 }
 

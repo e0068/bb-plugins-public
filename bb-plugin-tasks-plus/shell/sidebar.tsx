@@ -3,10 +3,12 @@ import type {
   Folder,
   Preset,
   Project,
+  SavedView,
   SidebarProjectSummary,
   Task,
 } from "../shared/contract.js";
-import { useTasksRpc } from "../client/data.js";
+import { useSavedViews, useTasksRpc } from "../client/data.js";
+import { Input } from "@/components/ui/input";
 import type { TasksRoute } from "../client/routes.js";
 import {
   PresetDialog,
@@ -28,6 +30,104 @@ interface SidebarRowProps {
   onClick?: () => void;
   children: ReactNode;
   title?: string;
+}
+
+function ViewRow({
+  view,
+  active,
+  onOpen,
+  onRename,
+  onDelete,
+}: {
+  view: SavedView;
+  active: boolean;
+  onOpen: () => void;
+  onRename: (name: string) => void;
+  onDelete: () => void;
+}) {
+  const [mode, setMode] = useState<"row" | "rename" | "confirm">("row");
+  const [draft, setDraft] = useState(view.name);
+
+  if (mode === "rename") {
+    return (
+      <div className="px-2 py-1">
+        <Input
+          autoFocus
+          aria-label="View name"
+          className="h-7 text-sm"
+          value={draft}
+          onChange={(event) => setDraft(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key === "Enter" && draft.trim() !== "") {
+              onRename(draft.trim());
+              setMode("row");
+            }
+            if (event.key === "Escape") {
+              setDraft(view.name);
+              setMode("row");
+            }
+          }}
+        />
+      </div>
+    );
+  }
+
+  if (mode === "confirm") {
+    return (
+      <div className="flex items-center gap-2 px-2 py-1 text-sm">
+        <span className="flex-1 truncate text-muted-foreground">Delete?</span>
+        <button
+          type="button"
+          aria-label={`Keep "${view.name}"`}
+          className="rounded-sm px-1.5 py-0.5 text-xs text-muted-foreground hover:bg-state-hover"
+          onClick={() => setMode("row")}
+        >
+          Cancel
+        </button>
+        <button
+          type="button"
+          aria-label={`Confirm deleting "${view.name}"`}
+          className="rounded-sm bg-secondary px-1.5 py-0.5 text-xs text-foreground hover:bg-state-hover"
+          onClick={() => {
+            onDelete();
+            setMode("row");
+          }}
+        >
+          Delete
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <div className="group/view relative">
+      <SidebarRow active={active} onClick={onOpen}>
+        <Icon name="ListView" className="size-3.5 shrink-0" />
+        <span className="flex-1 truncate">{view.name}</span>
+      </SidebarRow>
+      <span className="absolute right-1 top-0 hidden h-7 items-center gap-0.5 group-hover/view:flex">
+        <button
+          type="button"
+          aria-label={`Rename "${view.name}"`}
+          className="rounded-sm p-1 text-muted-foreground hover:bg-state-hover hover:text-foreground"
+          onClick={() => {
+            setDraft(view.name);
+            setMode("rename");
+          }}
+        >
+          <Icon name="Edit" className="size-3" />
+        </button>
+        <button
+          type="button"
+          aria-label={`Delete "${view.name}"`}
+          className="rounded-sm p-1 text-muted-foreground hover:bg-state-hover hover:text-foreground"
+          onClick={() => setMode("confirm")}
+        >
+          <Icon name="Trash2" className="size-3" />
+        </button>
+      </span>
+    </div>
+  );
 }
 
 function SidebarRow({ active, onClick, children, title }: SidebarRowProps) {
@@ -211,6 +311,10 @@ export function TasksSidebar({
     new Set(),
   );
   const rpc = useTasksRpc();
+  // Views are a navigation section, so the left column owns their query; the
+  // Display menu only saves into it.
+  const { data: savedViewData, refresh: refreshViews } = useSavedViews();
+  const savedViews: readonly SavedView[] = savedViewData ?? [];
   // Keyed remount resets the dialog draft per open/target. Saving publishes
   // projects:changed, which refreshes the shell's presets query.
   const [presetDialog, setPresetDialog] = useState<{
@@ -281,7 +385,7 @@ export function TasksSidebar({
         <div className="space-y-px">
           <SidebarRow
             active={route.kind === "all"}
-            onClick={() => onNavigate({ kind: "all" })}
+            onClick={() => onNavigate({ kind: "all", view: null })}
           >
             <Icon name="ListView" className="size-3.5 shrink-0" />
             <span className="flex-1">All tasks</span>
@@ -289,7 +393,7 @@ export function TasksSidebar({
           </SidebarRow>
           <SidebarRow
             active={route.kind === "active"}
-            onClick={() => onNavigate({ kind: "active" })}
+            onClick={() => onNavigate({ kind: "active", view: null })}
           >
             <Icon name="Zap" className="size-3.5 shrink-0" />
             <span className="flex-1">Active</span>
@@ -298,7 +402,7 @@ export function TasksSidebar({
           </SidebarRow>
           <SidebarRow
             active={route.kind === "waiting"}
-            onClick={() => onNavigate({ kind: "waiting" })}
+            onClick={() => onNavigate({ kind: "waiting", view: null })}
           >
             <Icon name="Clock" className="size-3.5 shrink-0" />
             <span className="flex-1">Waiting</span>
@@ -312,6 +416,35 @@ export function TasksSidebar({
             <span className="flex-1">Analytics</span>
           </SidebarRow>
         </div>
+        {savedViews.length > 0 ? (
+          <>
+            <SectionHeader label="Views" />
+            <div className="space-y-px">
+              {savedViews.map((view) => (
+                <ViewRow
+                  key={view.id}
+                  view={view}
+                  active={
+                    route.kind === "view" && route.savedViewId === view.id
+                  }
+                  onOpen={() =>
+                    onNavigate({ kind: "view", savedViewId: view.id })
+                  }
+                  onRename={(name) => {
+                    void rpc
+                      .call("updateSavedView", { savedViewId: view.id, name })
+                      .then(() => refreshViews());
+                  }}
+                  onDelete={() => {
+                    void rpc
+                      .call("deleteSavedView", { savedViewId: view.id })
+                      .then(() => refreshViews());
+                  }}
+                />
+              ))}
+            </div>
+          </>
+        ) : null}
         {pendingSidebarData.length > 0 ? (
           <SidebarSkeleton pending={pendingSidebarData} />
         ) : (

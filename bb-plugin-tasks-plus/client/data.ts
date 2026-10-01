@@ -1,8 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRealtime, useRpc } from "@get-bb/plugin-sdk/app";
 import type { TasksRpcContract } from "../shared/contract.js";
-import type { Task, TaskPriority, TaskStatus } from "../shared/contract.js";
-import { TASKS_PAGE_MAX_LIMIT, type TaskSort } from "../shared/pagination.js";
+import type { Task, TaskCardMeta, TaskPriority, TaskStatus } from "../shared/contract.js";
+import {
+  TASK_CARD_META_MAX_IDS,
+  TASKS_PAGE_MAX_LIMIT,
+  type TaskSort,
+} from "../shared/pagination.js";
 import type { MentionItem } from "../editor/extensions.js";
 import { useTasksRefresh } from "./refresh.js";
 import { useCallerThreadId, withCallerThreadInput } from "./caller-thread.js";
@@ -60,6 +64,23 @@ export async function listAllTasks(
     cursor = page.nextCursor ?? undefined;
   } while (cursor !== undefined);
   return tasks;
+}
+
+/** Card chips for any number of tasks, asked in contract-sized chunks and
+ *  returned in the order asked. */
+export async function listTaskCardMeta(
+  rpc: TasksRpc,
+  taskIds: readonly string[],
+): Promise<TaskCardMeta[]> {
+  const chunks = Array.from(
+    { length: Math.ceil(taskIds.length / TASK_CARD_META_MAX_IDS) },
+    (_, index) =>
+      taskIds.slice(index * TASK_CARD_META_MAX_IDS, (index + 1) * TASK_CARD_META_MAX_IDS),
+  );
+  const answers = await Promise.all(
+    chunks.map((chunk) => rpc.call("taskCardMeta", { taskIds: chunk })),
+  );
+  return answers.flatMap((answer) => answer.cards);
 }
 
 export const INVALIDATION_CHANNELS = [
@@ -186,16 +207,17 @@ export function usePresets() {
 }
 
 /**
- * Saved views for one field-display scope. Views live in the plugin's own
+ * Every saved view. A view names the list it opens, so it is not partitioned
+ * by surface any more. Views live in the plugin's own
  * database, not localStorage — one bb instance's saved views are shared
  * across its tabs, so a sibling tab must see a new/renamed/deleted view
  * without a reload, hence the `views:changed` realtime channel.
  */
-export function useSavedViews(scope: string) {
+export function useSavedViews() {
   return useTasksQuery(
-    async (rpc) => (await rpc.call("listSavedViews", { scope })).savedViews,
+    async (rpc) => (await rpc.call("listSavedViews", {})).savedViews,
     ["views:changed"],
-    [scope],
+    [],
   );
 }
 

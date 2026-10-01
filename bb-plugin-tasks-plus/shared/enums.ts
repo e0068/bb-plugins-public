@@ -25,6 +25,7 @@ export const TASK_PRIORITIES = [
 
 // Mirror of db/types.ts — kept in sync by hand, like TASK_STATUSES above.
 export const TASK_TYPES = [
+  "epic",
   "feature",
   "bugfix",
   "spike",
@@ -34,8 +35,6 @@ export const TASK_TYPES = [
 ] as const;
 
 export const TASK_ESTIMATES = ["xs", "s", "m", "l", "xl"] as const;
-
-export const TASK_CHECKS = ["test", "review", "design", "browser"] as const;
 
 export const PRESET_ENVIRONMENT_KINDS = [
   "project-default",
@@ -52,33 +51,277 @@ export const PRESET_PERMISSION_MODES = [
 // list/on the board). The order is canonical — it's the order fields are
 // shown in by default and the order the user can rearrange them in. The
 // dictionary is pushed down to layer 1: the client settings module
-// (views/list/row-field-preference.ts) must import ROW_FIELDS/RowField from
+// (views/common/row-field-preference.ts) must import ROW_FIELDS/RowField from
 // here rather than keep its own copy — otherwise the client's field list
 // and the server's saved-view validation would drift apart.
-export const ROW_FIELDS = [
+/**
+ * Client-side list sorts. A superset of the server's keyset sorts
+ * (`TASK_SORTS` in pagination.ts): estimate, time and money sorts are applied
+ * in-memory over the fully-loaded list. Lives here rather than in sort.ts
+ * because `contract.ts` validates a saved view's sort against it, and
+ * sort.ts type-depends on contract.ts — importing it there would close a
+ * type cycle that makes TypeScript infer `unknown` across the RPC contract.
+ */
+export const LIST_SORTS = [
+  "manual",
   "priority",
+  "due",
+  "start",
+  "estimate",
+  "planned_minutes",
+  "actual_minutes",
+  "budget",
+  "budget_limit",
+  "cost",
+  "created",
+  "updated",
+] as const;
+
+export type ListSort = (typeof LIST_SORTS)[number];
+
+/**
+ * What a board can lay its columns out by: a property of the task, or
+ * nothing — then the cards lie in one grid. Lives here, beside LIST_SORTS,
+ * for the same reason: the client needs the values and must not pull them
+ * out of contract.ts.
+ */
+export const BOARD_GROUP_PROPERTIES = [
+  "status",
+  "priority",
+  "type",
+  "estimate",
+  "assignee",
+  "epic",
+  "label",
+] as const;
+
+export const BOARD_GROUP_BYS = [...BOARD_GROUP_PROPERTIES, "none"] as const;
+
+/** Bounds of a dragged column width, px; the board draws 230 by default. */
+export const BOARD_COLUMN_WIDTH = { min: 200, max: 480, initial: 230 } as const;
+
+/**
+ * How many columns an ungrouped board lays its cards out in: a fixed count,
+ * or "auto" — as many 15rem columns as fit.
+ */
+export const BOARD_GRID_COLUMN_COUNTS = [1, 2, 3, 4, 5, 6] as const;
+export type BoardGridColumns = "auto" | (typeof BOARD_GRID_COLUMN_COUNTS)[number];
+
+/**
+ * Which sub-tasks a card's sub-task list shows: all of them, the open ones
+ * at any depth, or the open children one level down. Open is neither done
+ * nor canceled.
+ */
+export const SUBTASK_SCOPES = ["all", "open", "open-children"] as const;
+export type SubtaskScope = (typeof SUBTASK_SCOPES)[number];
+
+/** Where a click on a task opens it: the plugin's main container, or the page's right panel. */
+export const TASK_OPENINGS = ["main", "side-panel"] as const;
+export type TaskOpening = (typeof TASK_OPENINGS)[number];
+
+export type BoardGroupProperty = (typeof BOARD_GROUP_PROPERTIES)[number];
+export type BoardGroupBy = (typeof BOARD_GROUP_BYS)[number];
+
+/** The two screens a task list opens as: a sortable table, or a grouped board. */
+export const TASK_LAYOUTS = ["table", "board"] as const;
+export type TaskLayout = (typeof TASK_LAYOUTS)[number];
+
+/** A table column's sort direction. */
+export const TABLE_SORT_DIRECTIONS = ["asc", "desc"] as const;
+export type TableSortDirection = (typeof TABLE_SORT_DIRECTIONS)[number];
+
+/** Bounds of a dragged table column width, px. */
+export const TABLE_COLUMN_WIDTH = { min: 64, max: 640 } as const;
+
+export const ROW_FIELDS = [
+  "parent",
+  "title",
+  "description",
+  "key",
+  "priority",
+  "status",
+  "slug",
   "active",
   "assignee",
   "epic",
+  "flow",
   "type",
   "estimate",
   "labels",
+  "subtasks",
+  "attachments",
+  "worktree",
+  "takenBy",
+  "subtaskList",
+  "subtaskStats",
+  "burndown",
+  "gantt",
   "plannedMinutes",
   "actualMinutes",
   "budget",
   "budgetLimit",
   "cost",
   "dueDate",
+  "startDate",
   "project",
   "createdAt",
   "updatedAt",
 ] as const;
 
+/** A card's sub-task widgets: drawn from the task's tree, not values of the task — nothing to filter or sort by. */
+export const WIDGET_FIELDS = ["subtaskList", "subtaskStats", "burndown", "gantt"] as const satisfies readonly (typeof ROW_FIELDS)[number][];
+
+/** A field the filter and the sort offer: every row field but the widgets. */
+export type QueryField = Exclude<(typeof ROW_FIELDS)[number], (typeof WIDGET_FIELDS)[number]>;
+
+const WIDGETS: ReadonlySet<string> = new Set(WIDGET_FIELDS);
+
+/** Whether a field is one the filter and the sort offer — any but a widget. */
+export const isQueryField = (field: (typeof ROW_FIELDS)[number]): field is QueryField => !WIDGETS.has(field);
+
+/** The fields the filter and the sort offer, in the canonical field order. */
+export const QUERY_FIELDS: readonly QueryField[] = ROW_FIELDS.filter(isQueryField);
+
+/**
+ * The first filters, each under a key of its own in a view's filters: the
+ * field each narrows, and its key. The one place that pairing is written.
+ */
+export const LISTED_FILTER_KEYS = {
+  status: "statuses",
+  priority: "priorities",
+  type: "types",
+  estimate: "estimates",
+  labels: "labelNames",
+  assignee: "assignees",
+  parent: "parents",
+} as const satisfies Partial<Record<QueryField, string>>;
+export type ListedFilterField = keyof typeof LISTED_FILTER_KEYS;
+
+/** How a field is filtered: one of the first filters, picked values, contained text, or a range of days or numbers. */
+export type FilterKind = "listed" | "values" | "text" | "date" | "number";
+
+/**
+ * Every field's filter kind. A field added to ROW_FIELDS does not compile
+ * until it is given one here — and a kind's field list below must match.
+ */
+export const FIELD_FILTER_KINDS = {
+  parent: "listed",
+  title: "text",
+  description: "text",
+  key: "text",
+  priority: "listed",
+  status: "listed",
+  slug: "text",
+  active: "values",
+  assignee: "listed",
+  epic: "values",
+  flow: "values",
+  type: "listed",
+  estimate: "listed",
+  labels: "listed",
+  subtasks: "number",
+  attachments: "number",
+  worktree: "values",
+  takenBy: "values",
+  plannedMinutes: "number",
+  actualMinutes: "number",
+  budget: "number",
+  budgetLimit: "number",
+  cost: "number",
+  dueDate: "date",
+  startDate: "date",
+  project: "values",
+  createdAt: "date",
+  updatedAt: "date",
+} as const satisfies Record<QueryField, FilterKind>;
+
+/**
+ * Picked-from-a-list filters added after the first seven (statuses …
+ * parents, which keep their own keys): the task's epic, project, flow,
+ * worktree, the machine that took it and whether an agent works on it.
+ */
+export const VALUE_FILTER_FIELDS = ["epic", "project", "flow", "worktree", "takenBy", "active"] as const satisfies readonly QueryField[];
+export type ValueFilterField = (typeof VALUE_FILTER_FIELDS)[number];
+
+/** Fields filtered by "contains". */
+export const TEXT_FIELDS = ["title", "description", "key", "slug"] as const satisfies readonly QueryField[];
+export type TextField = (typeof TEXT_FIELDS)[number];
+
+/** Fields filtered by a from–to range of days. */
+export const DATE_FIELDS = ["dueDate", "startDate", "createdAt", "updatedAt"] as const satisfies readonly QueryField[];
+export type DateField = (typeof DATE_FIELDS)[number];
+
+/** Fields filtered by a from–to range of numbers; sub-tasks and attachments are counts. */
+export const NUMBER_FIELDS = [
+  "plannedMinutes",
+  "actualMinutes",
+  "budget",
+  "budgetLimit",
+  "cost",
+  "subtasks",
+  "attachments",
+] as const satisfies readonly QueryField[];
+export type NumberField = (typeof NUMBER_FIELDS)[number];
+
+type FieldsOfKind<K extends FilterKind> = {
+  [F in QueryField]: (typeof FIELD_FILTER_KINDS)[F] extends K ? F : never;
+}[QueryField];
+type Same<A, B> = [A] extends [B] ? ([B] extends [A] ? true : false) : false;
+
+// Compile-time only: each kind's field list is exactly the fields FIELD_FILTER_KINDS gives that kind.
+const KIND_LISTS_MATCH: Same<FieldsOfKind<"listed">, ListedFilterField> &
+  Same<FieldsOfKind<"values">, ValueFilterField> &
+  Same<FieldsOfKind<"text">, TextField> &
+  Same<FieldsOfKind<"date">, DateField> &
+  Same<FieldsOfKind<"number">, NumberField> = true;
+void KIND_LISTS_MATCH;
+
+/** A counted field: never empty, zero is a value. */
+export const COUNT_FIELDS = ["subtasks", "attachments"] as const satisfies readonly NumberField[];
+
+/** The value an "active" filter picks: an agent works on the task, or none does. */
+export const ACTIVITY_VALUES = ["active", "idle"] as const;
+
+/** The value a "worktree" filter picks for a task read from the main checkout. */
+export const MAIN_CHECKOUT = "main";
+
+/** Fields a board card draws full width, each on its own: the title, the description and the sub-task blocks. */
+export const CARD_BLOCK_FIELDS = ["title", "description", "subtaskList", "subtaskStats", "burndown", "gantt"] as const satisfies readonly (typeof ROW_FIELDS)[number][];
+
+/**
+ * Fields only a board card offers: its blocks but the description, which the
+ * table draws as a column of its first paragraph, and the marks the card drew
+ * in its top line before they were fields. The table keeps its title first
+ * and each row one line.
+ */
+export const BOARD_ONLY_FIELDS: readonly (typeof ROW_FIELDS)[number][] = [
+  ...CARD_BLOCK_FIELDS.filter((field) => field !== "description"),
+  "parent",
+  "attachments",
+  "worktree",
+];
+
+/**
+ * How far back a board's card charts look, in whole days: that many days by
+ * the day, or — at ALL_TIME — the whole history by the week, opening at the
+ * oldest task.
+ */
+export type CardChartPeriod = number;
+
+/** The period with no fixed length. */
+export const ALL_TIME = 0;
+
+/** The longest period a board takes, ten years of day columns. */
+export const MAX_CARD_CHART_DAYS = 3650;
+
+/** What a Gantt draws: the planned dates, the statuses the task actually went through, or both laid over each other. */
+export const GANTT_MODES = ["plan", "fact", "both"] as const;
+export type GanttMode = (typeof GANTT_MODES)[number];
+
 export type TaskStatus = (typeof TASK_STATUSES)[number];
 export type TaskPriority = (typeof TASK_PRIORITIES)[number];
 export type TaskType = (typeof TASK_TYPES)[number];
 export type TaskEstimate = (typeof TASK_ESTIMATES)[number];
-export type TaskCheck = (typeof TASK_CHECKS)[number];
 export type RowField = (typeof ROW_FIELDS)[number];
 
 /**
@@ -110,6 +353,7 @@ export const CALLER_SCOPED_METHODS = [
   "listAttachments",
   "deleteAttachment",
   "listTaskThreads",
+  "taskCardMeta",
   "tasksForThread",
   "listTaskPullRequests",
   "deleteLabel",

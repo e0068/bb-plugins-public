@@ -51,6 +51,7 @@ const task = {
   type: null,
   estimate: null,
   dueDate: null,
+  startDate: null,
   parentTaskId: null,
   position: 1,
   plannedMinutes: null,
@@ -58,7 +59,6 @@ const task = {
   budget: null,
   budgetLimit: null,
   cost: null,
-  checks: [],
   source: null,
   createdAt: "2026-07-15T00:00:00.000Z",
   updatedAt: "2026-07-15T00:00:00.000Z",
@@ -227,13 +227,7 @@ describe("assignee and epic", () => {
       getTaskByKey: () => ({ task: shown }),
       listTasks: (input: { parentTaskId?: string } | null) =>
         input?.parentTaskId ? { tasks: [] } : { tasks: [shown] },
-      listPlacements: () => ({
-        assignees: ["Claude", "Sergey"],
-        epics: [
-          { assignee: "Claude", name: "Tasks+" },
-          { assignee: "Sergey", name: "Flow" },
-        ],
-      }),
+      listPlacements: () => ({ assignees: ["Claude", "Sergey"] }),
       updateTask: (input: Record<string, unknown>) => {
         updateCalls.push(input);
         return { ok: true, task: { ...shown, ...input } };
@@ -252,6 +246,31 @@ describe("assignee and epic", () => {
     expect(updateCalls[0]).toMatchObject({ assignee: "Sergey" });
   });
 
+  it("puts the task into an epic from the Parent menu, epics listed first", async () => {
+    const updateCalls: Array<Record<string, unknown>> = [];
+    const epic = { ...task, id: "01HZZZZZZZZZZZZZZZZZZZZZE1", number: 9, key: "TSK-9", title: "Flow", type: "epic" };
+    const other = { ...task, id: "01HZZZZZZZZZZZZZZZZZZZZZO1", number: 7, key: "TSK-7", title: "Other" };
+    const rpc = detailRpc(null, {
+      getTaskByKey: () => ({ task }),
+      listTasks: (input: { parentTaskId?: string } | null) =>
+        input?.parentTaskId ? { tasks: [] } : { tasks: [other, task, epic] },
+      updateTask: (input: Record<string, unknown>) => {
+        updateCalls.push(input);
+        return { ok: true, task: { ...task, ...input } };
+      },
+    });
+    const slot = renderSlot(app.navPanels[0]!, { subPath: "task/TSK-5" }, { rpc });
+
+    fireEvent.click((await slot.findAllByRole("button", { name: "Edit parent" }))[0]!);
+    await waitFor(() => expect(slot.getAllByRole("option")).toHaveLength(3));
+    const options = slot.getAllByRole("option");
+    expect(options.map((option) => option.textContent)).toEqual(["No parent", "TSK-9Flow", "TSK-7Other"]);
+    fireEvent.click(options[1]!);
+
+    await waitFor(() => expect(updateCalls).toHaveLength(1));
+    expect(updateCalls[0]).toMatchObject({ parentTaskId: epic.id });
+  });
+
   it("creates a new assignee from the typed name", async () => {
     const updateCalls: Array<Record<string, unknown>> = [];
     const slot = renderSlot(app.navPanels[0]!, { subPath: "task/TSK-5" }, { rpc: placementRpc({}, updateCalls) });
@@ -264,27 +283,4 @@ describe("assignee and epic", () => {
     expect(updateCalls[0]).toMatchObject({ assignee: "Codex" });
   });
 
-  it("offers only the current assignee's epics and clears the epic", async () => {
-    const updateCalls: Array<Record<string, unknown>> = [];
-    const slot = renderSlot(
-      app.navPanels[0]!,
-      { subPath: "task/TSK-5" },
-      { rpc: placementRpc({ assignee: "Claude", epic: "Tasks+" }, updateCalls) },
-    );
-
-    fireEvent.click((await slot.findAllByRole("button", { name: "Edit epic" }))[0]!);
-    expect(await slot.findByRole("option", { name: "Tasks+" })).toBeDefined();
-    expect(slot.queryByRole("option", { name: "Flow" })).toBeNull();
-    fireEvent.click(slot.getByRole("option", { name: "No epic" }));
-
-    await waitFor(() => expect(updateCalls).toHaveLength(1));
-    expect(updateCalls[0]).toMatchObject({ epic: null });
-  });
-
-  it("keeps the epic picker disabled until the task has an assignee", async () => {
-    const slot = renderSlot(app.navPanels[0]!, { subPath: "task/TSK-5" }, { rpc: placementRpc({}, []) });
-
-    const [epic] = await slot.findAllByRole("button", { name: "Edit epic" });
-    expect((epic as HTMLButtonElement).disabled).toBe(true);
-  });
 });

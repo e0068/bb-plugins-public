@@ -1,5 +1,4 @@
 import type {
-  TaskCheck,
   TaskEstimate,
   TaskPriority,
   TaskPullRequest,
@@ -28,6 +27,7 @@ export const PRIORITY_LABELS: Record<TaskPriority, string> = {
 };
 
 export const TYPE_LABELS: Record<TaskType, string> = {
+  epic: "Epic",
   feature: "Feature",
   bugfix: "Bugfix",
   spike: "Spike",
@@ -54,14 +54,8 @@ export const ESTIMATE_OPTION_LABELS: Record<TaskEstimate, string> = {
   xl: "XL — Extra Large",
 };
 
-export const CHECK_LABELS: Record<TaskCheck, string> = {
-  test: "Test",
-  review: "Review",
-  design: "Design",
-  browser: "Browser",
-};
-
 export const TYPE_ICONS: Record<TaskType, IconName> = {
+  epic: "Mountain",
   feature: "Star",
   bugfix: "Bug",
   spike: "Zap",

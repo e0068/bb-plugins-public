@@ -18,8 +18,8 @@ describe("resolveMainRoot", () => {
       },
     });
 
-    const root = await resolveMainRoot(bb, "proj_x", "memory/tasks");
-    expect(root).toEqual({ absPath: "/repo/main/memory/tasks", origin: { kind: "main" } });
+    const root = await resolveMainRoot(bb, "proj_x", "docs/tasks");
+    expect(root).toEqual({ absPath: "/repo/main/docs/tasks", origin: { kind: "main" } });
   });
 
   it("null, если проект недоступен", async () => {

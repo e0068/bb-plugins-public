@@ -1,7 +1,7 @@
 import { Extension, InputRule, Node, type Extensions } from "@tiptap/core";
 import StarterKit from "@tiptap/starter-kit";
 import Link from "@tiptap/extension-link";
-import Image from "@tiptap/extension-image";
+import Image, { type ImageOptions } from "@tiptap/extension-image";
 import TaskList from "@tiptap/extension-task-list";
 import TaskItem from "@tiptap/extension-task-item";
 import Placeholder from "@tiptap/extension-placeholder";
@@ -11,6 +11,7 @@ import type { DOMOutputSpec } from "@tiptap/pm/model";
 import { Suggestion, type SuggestionProps } from "@tiptap/suggestion";
 import type { IconSvgElement } from "@hugeicons/react";
 import { BubbleChatIcon } from "@hugeicons/core-free-icons";
+import { attachmentUrlWithoutThread } from "../shared/attachment-url.js";
 
 /** One entry in the @-mention popover: a task or a bb thread. */
 export type MentionItem =
@@ -315,14 +316,52 @@ const MentionSuggestion = Extension.create<{
   },
 });
 
+// Image whose DOM address may differ from the stored one: a thread surface
+// shows task attachments with its thread appended (shared/attachment-url.ts).
+// Markdown serializes from the node attribute, so the stored src stays clean,
+// and an address read back from DOM (paste, drop) loses the thread again.
+const SurfaceImage = Image.extend<
+  ImageOptions & { displaySrc: (src: string) => string }
+>({
+  addOptions() {
+    return {
+      ...(this.parent?.() as ImageOptions),
+      displaySrc: (src: string) => src,
+    };
+  },
+  addAttributes() {
+    return {
+      ...this.parent?.(),
+      src: {
+        default: null,
+        parseHTML: (element) => {
+          const src = element.getAttribute("src");
+          return src === null ? null : attachmentUrlWithoutThread(src);
+        },
+        renderHTML: (attributes) => ({
+          src:
+            typeof attributes.src === "string"
+              ? this.options.displaySrc(attributes.src)
+              : null,
+        }),
+      },
+    };
+  },
+});
+
 export function createEditorExtensions(options?: {
   placeholder?: () => string;
   mentionHandle?: MentionSuggestionHandle;
+  /** Address an image is shown by; defaults to the stored one. */
+  displayImageSrc?: (src: string) => string;
 }): Extensions {
   return [
     StarterKit,
     Link.configure({ openOnClick: false, autolink: true }),
-    Image.configure({ allowBase64: false }),
+    SurfaceImage.configure({
+      allowBase64: false,
+      ...(options?.displayImageSrc ? { displaySrc: options.displayImageSrc } : {}),
+    }),
     TightTaskList,
     TaskItem.configure({ nested: true }),
     MarkdownTaskInput,

@@ -6,6 +6,7 @@ import type { FileTasksStore } from "../filesync/store.js";
 import type { CallerEnvironmentCache } from "../filesync/caller-cache.js";
 import { runInCallerScope } from "../filesync/caller-scope.js";
 import { CALLER_THREAD_FIELD } from "../shared/enums.js";
+import { attachmentDownloadUrl } from "../shared/attachment-url.js";
 
 export const MAX_ATTACHMENT_SIZE_BYTES = 25 * 1024 * 1024;
 
@@ -87,7 +88,7 @@ export function removeAttachmentDescriptionReferences(
   markdown: string,
   attachmentId: string,
 ): string {
-  const url = escapeRegExp(buildAttachmentUrl(attachmentId));
+  const url = escapeRegExp(attachmentDownloadUrl(attachmentId));
   return markdown.replace(new RegExp(`!\\[[^\\]]*\\]\\(${url}\\)`, "g"), "");
 }
 
@@ -402,10 +403,6 @@ async function persistAttachment(
   }
 }
 
-export function buildAttachmentUrl(attachmentId: string): string {
-  return `/api/v1/plugins/tasks/http${DOWNLOAD_PATH}?attachmentId=${encodeURIComponent(attachmentId)}`;
-}
-
 export async function saveAttachmentFromBytes(
   store: FileTasksStore,
   bytes: Uint8Array,
@@ -471,7 +468,7 @@ export async function deleteAttachmentById(
       : undefined);
   const ownerTask = taskId ? await store.getTask(taskId) : undefined;
   let nextDescription: string | undefined;
-  if (ownerTask?.description.includes(buildAttachmentUrl(attachment.id))) {
+  if (ownerTask?.description.includes(attachmentDownloadUrl(attachment.id))) {
     if (!options.removeDescriptionReferences) {
       throw new AttachmentReferencedError(attachment);
     }
@@ -537,6 +534,11 @@ export function registerAttachments(
 ): void {
   const root = pluginDataDirectory(bb);
   storeRoots.set(store, root);
+  /** Окружение треда, из которого пришёл запрос; null — доска, область main. */
+  const callerEnvironment = async (callerThreadId: string | null) =>
+    callerThreadId === null || !options.callerEnvironments
+      ? null
+      : await options.callerEnvironments.get(callerThreadId);
 
   bb.http.route(
     "POST",
@@ -545,10 +547,7 @@ export function registerAttachments(
       try {
         const parameters = attachmentParameters(context);
         const body = await readRequestBody(context.req.raw);
-        const environment =
-          parameters.callerThreadId === null || !options.callerEnvironments
-            ? null
-            : await options.callerEnvironments.get(parameters.callerThreadId);
+        const environment = await callerEnvironment(parameters.callerThreadId);
         const attachment = await runInCallerScope(environment, () =>
           persistAttachment(
             store,
@@ -563,7 +562,7 @@ export function registerAttachments(
         return context.json(
           {
             attachmentId: attachment.id,
-            url: buildAttachmentUrl(attachment.id),
+            url: attachmentDownloadUrl(attachment.id),
           },
           201,
         );
@@ -576,8 +575,13 @@ export function registerAttachments(
 
   bb.http.route("GET", DOWNLOAD_PATH, async (context) => {
     const attachmentId = context.req.query("attachmentId")?.trim();
+    // Картинка задачи, которая пока живёт в ветке треда, есть только в его
+    // дереве: клиент поверхности треда называет тред в адресе картинки.
+    const environment = await callerEnvironment(
+      context.req.query(CALLER_THREAD_FIELD) ?? null,
+    );
     const attachment = attachmentId
-      ? await store.getAttachment(attachmentId)
+      ? await runInCallerScope(environment, () => store.getAttachment(attachmentId))
       : undefined;
     if (!attachment)
       return context.json({ error: "attachment not found" }, 404);

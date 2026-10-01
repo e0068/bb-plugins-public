@@ -12,7 +12,7 @@ import type { Task } from "../shared/contract";
 // работает в worktree, и файл задачи обязан лечь в это дерево, а не в
 // главный чекаут — иначе слияние ветки конфликтует само с собой.
 const BB_PROJECT_ID = "proj_x";
-const TASKS_FOLDER = "memory/tasks";
+const TASKS_FOLDER = "docs/tasks";
 
 let mainCheckout: string;
 let worktree: string;

@@ -20,7 +20,7 @@ const BOARD: BoardConfig = {
   folderId: null,
   linkedBbProjectId: null,
   tasksFolder: "tasks",
-  createdAt: "2026-01-01T00:00:00.000Z",
+  database: null, createdAt: "2026-01-01T00:00:00.000Z",
 };
 
 function fakeKv(): KvStore {
@@ -76,29 +76,5 @@ describe("analyticsSnapshot RPC", () => {
     expect(snap.total).toBe(2);
     expect(snap.byStatus.in_progress).toBe(1);
     expect(snap.byStatus.backlog).toBe(1);
-  });
-});
-
-describe("analyticsSeries RPC", () => {
-  it("returns bucketed transition counts for the window, split by destination status", async () => {
-    const { harness } = setup();
-    const task = await tasks.createTask({ projectId: BOARD.id, title: "Mover" });
-
-    const from = Date.now();
-    await harness.callRpc("boardMove", { taskId: task.id, status: "in_progress", authorName: "Me" });
-    await harness.callRpc("boardMove", { taskId: task.id, status: "in_review", authorName: "Me" });
-    const to = Date.now() + 1;
-
-    const series = (await harness.callRpc("analyticsSeries", {
-      fromMs: from - 1,
-      toMs: to,
-      binMs: to - from + 2, // one bin spanning the whole window
-      projectId: BOARD.id,
-    })) as { bins: number[]; total: number[]; byToStatus: Record<string, number[]> };
-
-    expect(series.total.reduce((a, b) => a + b, 0)).toBe(2);
-    const sumInto = (status: string) => series.byToStatus[status].reduce((a, b) => a + b, 0);
-    expect(sumInto("in_progress")).toBe(1);
-    expect(sumInto("in_review")).toBe(1);
   });
 });

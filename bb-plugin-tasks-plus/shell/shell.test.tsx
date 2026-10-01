@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { cleanup, fireEvent, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { loadPluginApp, renderSlot } from "@get-bb/plugin-sdk/testing/app";
 
@@ -22,13 +22,11 @@ if (!window.matchMedia) {
 const app = await loadPluginApp(() => import("../app"));
 const { parseTasksRoute, tasksRouteToSubPath } = await import("../client/routes.js");
 const { pagerPosition } = await import("./topbar.js");
-const { loadViewMode } = await import("./view-preference.js");
 const { TasksNavigationPanel } = await import("./navigation-panel.js");
 
 const tasksRegistration = app.navPanels[0]!;
-// Navigation is now a column inside the panel (its fixed-tab was dropped because
-// bb 0.40.0 won't mount a navPanel that declares experimental_fixedTabs — BP-53).
-// The standalone component still renders on its own, so tests drive it directly.
+// Navigation is a column inside the panel; the standalone component still
+// renders on its own, so tests drive it directly.
 const navigationRegistration = {
   ...tasksRegistration,
   component: TasksNavigationPanel,
@@ -82,112 +80,6 @@ const emptyRpc = seededRpc({
   sidebarSummary: () => ({ projects: [] }),
 });
 
-describe("tasks route grammar", () => {
-  it("round-trips every route kind and decodes host-encoded subPaths", () => {
-    const routes = [
-      { kind: "all" },
-      { kind: "active" },
-      { kind: "waiting" },
-      { kind: "manage" },
-      { kind: "task", taskKey: "TSK-4" },
-      { kind: "project", projectId: PROJECT_ID, view: "list" },
-      { kind: "project", projectId: PROJECT_ID, view: "board" },
-      // No view marker: the shell fills it from the stored preference.
-      { kind: "project", projectId: PROJECT_ID, view: null },
-    ] as const;
-    for (const route of routes) {
-      expect(parseTasksRoute(tasksRouteToSubPath(route))).toEqual(route);
-    }
-    // The host hands the splat through URL-encoded per segment.
-    expect(parseTasksRoute(`${PROJECT_ID}%3Fview%3Dboard`)).toEqual({
-      kind: "project",
-      projectId: PROJECT_ID,
-      view: "board",
-    });
-    expect(parseTasksRoute("")).toEqual({ kind: "all" });
-    // An unknown marker is as good as none — never a silent "list".
-    expect(parseTasksRoute(`${PROJECT_ID}?view=kanban`)).toEqual({
-      kind: "project",
-      projectId: PROJECT_ID,
-      view: null,
-    });
-  });
-});
-
-describe("project view preference", () => {
-  const openProject = (subPath: string) =>
-    renderSlot(
-      app.navPanels[0]!,
-      { subPath },
-      { rpc: seededRpc({ listLabels: () => ({ labels: [] }) }) },
-    );
-
-  it("restores the remembered view when the URL names none", async () => {
-    const listed = openProject(`${PROJECT_ID}?view=list`);
-    // The toggle is the only way a user picks a view; it must persist.
-    fireEvent.click(await listed.findByRole("button", { name: "Board" }));
-    expect(listed.navigateCalls).toContainEqual({
-      method: "toPluginPanel",
-      path: "tasks",
-      options: { subPath: `${PROJECT_ID}?view=board` },
-    });
-    listed.lifecycle.unmount();
-
-    // Reopening the project without a marker (sidebar click, deep link).
-    const reopened = openProject(PROJECT_ID);
-    const boardSegment = await reopened.findByRole("button", { name: "Board" });
-    expect(boardSegment.getAttribute("aria-pressed")).toBe("true");
-    await reopened.findByText("In Review");
-  });
-
-  it("keeps per-project choices apart and defaults unseen projects to the last one used", async () => {
-    const slot = openProject(`${PROJECT_ID}?view=list`);
-    fireEvent.click(await slot.findByRole("button", { name: "Board" }));
-    slot.lifecycle.unmount();
-
-    expect(loadViewMode(PROJECT_ID)).toBe("board");
-    // A project opened for the first time follows the most recent choice
-    // rather than snapping back to the list.
-    expect(loadViewMode(OTHER_PROJECT_ID)).toBe("board");
-
-    const other = renderSlot(
-      app.navPanels[0]!,
-      { subPath: `${OTHER_PROJECT_ID}?view=list` },
-      { rpc: seededRpc() },
-    );
-    fireEvent.click(await other.findByRole("button", { name: "List" }));
-    expect(loadViewMode(OTHER_PROJECT_ID)).toBe("list");
-    expect(loadViewMode(PROJECT_ID)).toBe("board");
-  });
-
-  it("navigates from the sidebar without pinning a view", async () => {
-    const slot = renderSlot(
-      navigationRegistration,
-      { subPath: "all" },
-      { rpc: seededRpc({ listLabels: () => ({ labels: [] }) }) },
-    );
-    fireEvent.click(await slot.findByText("Tasks Plugin"));
-    expect(slot.navigateCalls).toContainEqual({
-      method: "toPluginPanel",
-      path: "tasks",
-      options: { subPath: PROJECT_ID },
-    });
-  });
-
-  it("still toggles when client storage rejects writes", async () => {
-    vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
-      throw new DOMException("Storage is disabled", "SecurityError");
-    });
-    const slot = openProject(`${PROJECT_ID}?view=list`);
-    fireEvent.click(await slot.findByRole("button", { name: "Board" }));
-    expect(slot.navigateCalls).toContainEqual({
-      method: "toPluginPanel",
-      path: "tasks",
-      options: { subPath: `${PROJECT_ID}?view=board` },
-    });
-  });
-});
-
 function pagerTask(key: string, status: string, position: number) {
   return {
     id: `01HZZZZZZZZZZZZZZZZZZZZ${key.replace("-", "")}`,
@@ -198,6 +90,7 @@ function pagerTask(key: string, status: string, position: number) {
     status,
     priority: "none",
     dueDate: null,
+    startDate: null,
     parentTaskId: null,
     position,
     createdAt: "2026-07-15T00:00:00.000Z",
@@ -210,7 +103,6 @@ function pagerTask(key: string, status: string, position: number) {
     budget: null,
     budgetLimit: null,
     cost: null,
-    checks: [],
     source: null,
     // Only key/status/position matter to the pager; the rest satisfies Task.
   } as never;
@@ -273,13 +165,6 @@ describe("task pager", () => {
 });
 
 describe("tasks app shell", () => {
-  it("declares no host fixed tab (navigation moved into the panel column)", () => {
-    // bb 0.40.0 won't mount a navPanel that declares experimental_fixedTabs, so
-    // the sidebar entry vanishes (BP-53). Navigation now renders as a column
-    // inside the panel instead of a host-owned fixed tab.
-    expect(tasksRegistration.experimental_fixedTabs).toBeUndefined();
-  });
-
   it("does not treat the first connection as a reconnect", async () => {
     let requests = 0;
     let title = "Initial connection title";
@@ -294,7 +179,6 @@ describe("tasks app shell", () => {
     budget: null,
     budgetLimit: null,
     cost: null,
-    checks: [],
     source: null,
     };
     const slot = renderSlot(
@@ -342,7 +226,6 @@ describe("tasks app shell", () => {
     budget: null,
     budgetLimit: null,
     cost: null,
-    checks: [],
     source: null,
     };
     const slot = renderSlot(
@@ -388,7 +271,6 @@ describe("tasks app shell", () => {
     budget: null,
     budgetLimit: null,
     cost: null,
-    checks: [],
     source: null,
     };
     const slot = renderSlot(
@@ -498,7 +380,6 @@ describe("tasks app shell", () => {
     budget: null,
     budgetLimit: null,
     cost: null,
-    checks: [],
     source: null,
               },
             ],
@@ -560,7 +441,6 @@ describe("tasks app shell", () => {
     budget: null,
     budgetLimit: null,
     cost: null,
-    checks: [],
     source: null,
     };
     const slot = renderSlot(
@@ -678,7 +558,6 @@ describe("tasks app shell", () => {
     budget: null,
     budgetLimit: null,
     cost: null,
-    checks: [],
     source: null,
     };
     const slot = renderSlot(
@@ -735,7 +614,6 @@ describe("tasks app shell", () => {
     budget: null,
     budgetLimit: null,
     cost: null,
-    checks: [],
     source: null,
     };
     const slot = renderSlot(

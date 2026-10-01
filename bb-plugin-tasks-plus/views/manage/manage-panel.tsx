@@ -4,6 +4,7 @@ import {
   listAllTasks,
   usePresets,
   useProjects,
+  useSidebarSummary,
   useTasksQuery,
   useTasksRpc,
 } from "../../client/data.js";
@@ -39,6 +40,8 @@ function describeError(error: unknown): string {
 // Project
 // ---------------------------------------------------------------------------
 
+const NOT_EMPTY_HINT = "Move or delete this project's tasks to delete it.";
+
 function ProjectSection() {
   const rpc = useTasksRpc();
   const projects = useProjects();
@@ -53,6 +56,11 @@ function ProjectSection() {
   const [color, setColor] = useState<string>(DEFAULT_COLOR);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  // Unknown until the summary loads — deletion stays off rather than guessing.
+  const taskCount = useSidebarSummary().data?.find(
+    (entry) => entry.projectId === projectId,
+  )?.taskCount;
 
   // The editor mirrors the selected project; resync whenever that project — or
   // its stored name/color — changes underneath us.
@@ -74,7 +82,10 @@ function ProjectSection() {
   const dirty =
     project !== null &&
     (name.trim() !== project.name || color !== project.color);
-  const canSave = project !== null && name.trim() !== "" && dirty && !saving;
+  const canSave =
+    project !== null && name.trim() !== "" && dirty && !saving && !deleting;
+  const canDelete =
+    project !== null && taskCount === 0 && !saving && !deleting;
 
   const save = async () => {
     if (!project || !canSave) return;
@@ -93,11 +104,34 @@ function ProjectSection() {
     }
   };
 
+  // Only empty projects are deletable here, so one click is enough: nothing
+  // but the project record itself can be lost.
+  const deleteProject = async () => {
+    if (!project || !canDelete) return;
+    setDeleting(true);
+    setError(null);
+    try {
+      const result = await rpc.call("deleteProject", { projectId: project.id });
+      if (result.ok) setSelectedProjectId(null);
+      // The summary can lag behind a task created elsewhere; the server's own
+      // message speaks API ("pass force: true"), so say it in UI terms.
+      else if (result.error.code === "project_not_empty") setError(NOT_EMPTY_HINT);
+      else setError(result.error.message);
+    } catch (deleteError) {
+      setError(describeError(deleteError));
+    } finally {
+      setDeleting(false);
+    }
+  };
+
   return (
     <div className="space-y-3">
       <Select
         value={projectId ?? undefined}
-        onValueChange={(value) => setSelectedProjectId(value)}
+        onValueChange={(value) => {
+          setSelectedProjectId(value);
+          setError(null);
+        }}
       >
         <SelectTrigger aria-label="Project" className="h-8 w-56">
           <SelectValue placeholder="Project" />
@@ -134,14 +168,28 @@ function ProjectSection() {
       <Field label="Color">
         <ColorSwatchPicker value={color} onChange={setColor} />
       </Field>
-      <Button
-        size="sm"
-        className="h-7"
-        disabled={!canSave}
-        onClick={() => void save()}
-      >
-        Save
-      </Button>
+      <div className="flex items-center gap-2">
+        <Button
+          size="sm"
+          className="h-7"
+          disabled={!canSave}
+          onClick={() => void save()}
+        >
+          Save
+        </Button>
+        <Button
+          size="sm"
+          variant="destructive"
+          className="h-7"
+          disabled={!canDelete}
+          onClick={() => void deleteProject()}
+        >
+          Delete project
+        </Button>
+      </div>
+      {taskCount !== undefined && taskCount > 0 ? (
+        <p className="text-xs text-muted-foreground">{NOT_EMPTY_HINT}</p>
+      ) : null}
       {error ? (
         <p role="alert" className="text-xs text-destructive">
           {error}

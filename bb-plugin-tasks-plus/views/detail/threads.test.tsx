@@ -38,6 +38,7 @@ const task = {
   status: "todo",
   priority: "none",
   dueDate: null,
+  startDate: null,
   parentTaskId: null,
   position: 1,
   createdAt: "2026-07-15T00:00:00.000Z",
@@ -50,7 +51,6 @@ const task = {
   budget: null,
   budgetLimit: null,
   cost: null,
-  checks: [],
   source: null,
 };
 

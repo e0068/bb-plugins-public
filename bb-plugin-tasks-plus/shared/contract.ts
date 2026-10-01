@@ -1,26 +1,44 @@
 import { defineRpcContract } from "@get-bb/plugin-sdk";
 import { z } from "zod";
+import type { ReducedColors } from "@bb-plugins/reduced-colors/core/settings";
 import {
   TASK_SORTS,
   TASKS_PAGE_DEFAULT_LIMIT,
   TASKS_PAGE_MAX_LIMIT,
+  TASK_CARD_META_MAX_IDS,
 } from "./pagination.js";
 import {
   TASK_STATUSES,
   TASK_PRIORITIES,
   TASK_TYPES,
   TASK_ESTIMATES,
-  TASK_CHECKS,
   PRESET_ENVIRONMENT_KINDS,
   PRESET_PERMISSION_MODES,
   ROW_FIELDS,
+  LIST_SORTS,
+  BOARD_GROUP_BYS,
+  BOARD_GROUP_PROPERTIES,
+  BOARD_COLUMN_WIDTH,
+  BOARD_GRID_COLUMN_COUNTS,
+  SUBTASK_SCOPES,
+  TASK_OPENINGS,
   CALLER_THREAD_FIELD,
+  MAX_CARD_CHART_DAYS,
+  TABLE_SORT_DIRECTIONS,
+  TABLE_COLUMN_WIDTH,
+  TASK_LAYOUTS,
+  VALUE_FILTER_FIELDS,
+  TEXT_FIELDS,
+  DATE_FIELDS,
+  NUMBER_FIELDS,
 } from "./enums.js";
+import type { TaskLayout } from "./enums.js";
 
 // Enums and derived types live in enums.js (no @get-bb/plugin-sdk import),
 // so the frontend bundle doesn't pull in the server SDK. The re-export keeps
 // the old path working for server code: import { TASK_STATUSES, ... } from "../shared/contract".
 export * from "./enums.js";
+
 
 export const TASK_THREAD_LIVE_STATUSES = [
   "starting",
@@ -41,6 +59,14 @@ const taskIdSchema = z.string().min(1, "must not be blank");
 /** Label.id IS the label's name (see filesync/store.ts's boardLabels) —
  *  there is no separate label entity to generate a ULID for. */
 const labelIdSchema = z.string().min(1, "must not be blank");
+/** Comment.id is whatever the task file's marker carries: the board writes
+ *  ULIDs, but agents add comments by hand with ids like `c1`, and one such
+ *  comment must not fail the whole Activity list. */
+const commentIdSchema = z.string().min(1, "must not be blank");
+/** A thread record's id comes from the task file's `threads:` block, which
+ *  agents also write by hand; one made-up id must not fail the card chips
+ *  of the whole board. */
+const threadRecordIdSchema = z.string().min(1, "must not be blank");
 const nonBlankStringSchema = z.string().trim().min(1, "must not be blank");
 /** An assignee or epic as a caller names it; the store checks it can be a
  *  folder. Output carries the folder name verbatim — trimming it would offer
@@ -78,7 +104,6 @@ const taskStatusSchema = z.enum(TASK_STATUSES);
 const taskPrioritySchema = z.enum(TASK_PRIORITIES);
 const taskTypeSchema = z.enum(TASK_TYPES);
 const taskEstimateSchema = z.enum(TASK_ESTIMATES);
-const taskCheckSchema = z.enum(TASK_CHECKS);
 const rowFieldSchema = z.enum(ROW_FIELDS);
 const minutesSchema = z.number().int().min(0);
 const dollarsSchema = z.number().finite().min(0);
@@ -103,14 +128,98 @@ const tasksSnapshotSchema = z
     cost: dollarsSchema,
   })
   .strict();
-const statusSeriesSchema = z
+// Tasks closed per column (hour or day) of a chart. The client sends each
+// chart's column edges in its own zone; each closing names the column it falls
+// in. One call answers every chart, so the boards are read once.
+const closedTaskSchema = z
   .object({
-    bins: z.array(z.number()),
-    total: z.array(nonNegIntSchema),
-    byToStatus: z.record(taskStatusSchema, z.array(nonNegIntSchema)),
+    taskId: z.string(),
+    /** The board key to open the task by; null once the task is gone. */
+    key: z.string().nullable(),
+    title: z.string(),
+    projectId: z.string(),
+    atMs: z.number(),
+    bin: nonNegIntSchema,
+  })
+  .strict();
+const closedWindowsSchema = z
+  .object({
+    /** One entry per requested window, in request order. */
+    windows: z.array(z.object({ closings: z.array(closedTaskSchema) }).strict()),
+    projects: z.array(z.object({ id: z.string(), name: z.string() }).strict()),
+    /** When the transition log starts; null while nothing was ever recorded. */
+    logStartMs: z.number().nullable(),
+  })
+  .strict();
+const columnEdgesSchema = z.array(z.number().finite()).min(2).max(1000);
+// The flow charts (analytics/flow.ts): status per column for burndown and
+// work in progress, created against closed, moves per status, cycle time,
+// estimate accuracy, spend, closings by type and the tasks standing longest.
+// Partial records like the snapshot's: the handler fills every key.
+const statusCountsSchema = z.record(taskStatusSchema, nonNegIntSchema);
+const planFactSchema = z
+  .object({ count: nonNegIntSchema, planned: z.number().min(0), actual: z.number().min(0), ratio: z.number().min(0) })
+  .strict();
+const flowAnswerSchema = z
+  .object({
+    statusByBin: z.record(z.string(), z.array(statusCountsSchema)),
+    created: z.array(nonNegIntSchema),
+    closed: z.array(nonNegIntSchema),
+    changes: z.array(statusCountsSchema),
+    cycle: z.array(
+      z.object({ estimate: taskEstimateSchema, count: nonNegIntSchema, medianMs: z.number().min(0), p90Ms: z.number().min(0) }).strict(),
+    ),
+    medianCycleMs: z.number().min(0).nullable(),
+    accuracy: z.array(
+      z.object({ estimate: taskEstimateSchema, minutes: planFactSchema.optional(), money: planFactSchema.optional() }).strict(),
+    ),
+    costByProject: z.array(z.object({ projectId: z.string(), cost: dollarsSchema }).strict()),
+    typesByWeek: z.array(z.record(analyticsTypeKeySchema, nonNegIntSchema)),
+    aging: z.array(
+      z
+        .object({
+          taskId: z.string(),
+          key: z.string(),
+          title: z.string(),
+          projectId: z.string(),
+          status: taskStatusSchema,
+          sinceMs: z.number(),
+        })
+        .strict(),
+    ),
+    projects: z.array(z.object({ id: z.string(), name: z.string() }).strict()),
+    logStartMs: z.number().nullable(),
+  })
+  .strict();
+/** Projects to narrow an analytics call to; absent or empty — every project. */
+const projectIdsSchema = z.array(idSchema).max(200).optional();
+// The Gantt charts (analytics/gantt.ts): per task, the stretches it stood in
+// each status since the chart opens, and its planned dates as calendar days —
+// the client places those on the viewer's own calendar.
+const ganttAnswerSchema = z
+  .object({
+    rows: z.array(
+      z
+        .object({
+          taskId: z.string(),
+          key: z.string(),
+          title: z.string(),
+          projectId: z.string(),
+          parentTaskId: z.string().nullable(),
+          status: taskStatusSchema,
+          /** When the task was made; null when its date does not read. */
+          createdMs: z.number().nullable(),
+          startDate: dueDateSchema.nullable(),
+          dueDate: dueDateSchema.nullable(),
+          segments: z.array(z.object({ status: taskStatusSchema, fromMs: z.number(), toMs: z.number() }).strict()),
+        })
+        .strict(),
+    ),
+    projects: z.array(z.object({ id: z.string(), name: z.string() }).strict()),
   })
   .strict();
 const threadSearchStatusSchema = z.enum([
+  "pending",
   "idle",
   "starting",
   "active",
@@ -137,6 +246,9 @@ export const projectSchema = z
     folderId: idSchema.nullable(),
     linkedBbProjectId: z.string().startsWith("proj_").nullable(),
     tasksFolder: z.string().nullable(),
+    /** The online database the board lives in, null or absent for a board
+     *  that lives in files. */
+    database: z.object({ url: z.string() }).strict().nullable().optional(),
     createdAt: z.string(),
   })
   .strict();
@@ -157,7 +269,18 @@ export const fileTaskOriginSchema = z.discriminatedUnion("kind", [
       branchName: z.string().nullable(),
     })
     .strict(),
+  z.object({ kind: z.literal("database"), url: z.string() }).strict(),
 ]);
+
+/** Who took a task: the machine's name, the thread it took it in (null when
+ *  taken without one) and when — see shared/task-claim.ts. */
+export const takenBySchema = z
+  .object({ machine: z.string().min(1), threadId: z.string().nullable(), at: z.string() })
+  .strict();
+
+/** A flow of the Flow plugin as the task file names it: its id for the
+ *  link to its page, and the name it had when the run stamped it. */
+const taskFlowSchema = z.object({ id: z.string().min(1), name: z.string().min(1) }).strict();
 
 export const taskSchema = z
   .object({
@@ -181,20 +304,40 @@ export const taskSchema = z
     budgetLimit: dollarsSchema.nullable(),
     cost: dollarsSchema.nullable(),
     dueDate: dueDateSchema.nullable(),
+    /** Planned start of the work, the mirror of `dueDate` — and nullable like
+     *  it, not optional: two fields that mean the same kind of thing must not
+     *  need two different emptiness checks at every reader. */
+    startDate: dueDateSchema.nullable(),
     parentTaskId: taskIdSchema.nullable(),
+    /** The nearest ancestor typed epic (shared/epic.ts), worked out when the
+     *  board is read and never written. Optional so a task built without it
+     *  reads as outside any epic. */
+    epicId: taskIdSchema.nullable().optional(),
     position: z.number(),
     createdAt: z.string(),
     updatedAt: z.string(),
     labelIds: z.array(labelIdSchema),
-    checks: z.array(taskCheckSchema),
+    /** The flow the task's run went through, stamped into the file by the
+     *  Flow plugin; null or absent — no run has named one. Optional like
+     *  `assignee`, so a task built without it reads as flow-less. */
+    flow: taskFlowSchema.nullable().optional(),
+    /** Who took the task, null or absent when nobody did. */
+    takenBy: takenBySchema.nullable().optional(),
     /** The folder above the task's status folder, null at the root. Optional
      *  so a task built without it reads as unassigned. */
     assignee: placementFolderSchema.nullable().optional(),
-    /** The folder inside the assignee's, null when there is none. */
+    /** The legacy epic folder inside the assignee's, null when there is none.
+     *  Read-only: it tells the store where the file lies until
+     *  `bb tasks epics migrate` moves it out; the epic itself is `epicId`. */
     epic: placementFolderSchema.nullable().optional(),
     /** The markdown file backing this task, when it is file-synced. */
     source: z
-      .object({ filePath: z.string(), origin: fileTaskOriginSchema })
+      .object({
+        filePath: z.string(),
+        origin: fileTaskOriginSchema,
+        /** The row version of a database board's task at the moment it was read. */
+        revision: z.number().int().nullable().optional(),
+      })
       .nullable(),
   })
   .strict();
@@ -210,7 +353,7 @@ export const labelSchema = z
 
 export const commentSchema = z
   .object({
-    id: idSchema,
+    id: commentIdSchema,
     taskId: taskIdSchema,
     kind: z.enum(["user", "agent", "system"]),
     authorName: z.string(),
@@ -260,7 +403,7 @@ export const displayCommentSchema = commentSchema
 /** Who an attachment hangs off: a task or one of its comments. */
 export const attachmentOwnerSchema = z.union([
   z.object({ taskId: taskIdSchema }).strict(),
-  z.object({ commentId: idSchema }).strict(),
+  z.object({ commentId: commentIdSchema }).strict(),
 ]);
 export type AttachmentOwnerRef = z.infer<typeof attachmentOwnerSchema>;
 
@@ -268,7 +411,7 @@ export const attachmentSchema = z
   .object({
     id: idSchema,
     taskId: taskIdSchema.nullable(),
-    commentId: idSchema.nullable(),
+    commentId: commentIdSchema.nullable(),
     fileName: z.string(),
     mime: z.string(),
     sizeBytes: z.number().int().nonnegative(),
@@ -279,7 +422,7 @@ export const attachmentSchema = z
 
 export const taskThreadSchema = z
   .object({
-    id: idSchema,
+    id: threadRecordIdSchema,
     taskId: taskIdSchema,
     threadId: z.string().startsWith("thr_"),
     presetName: z.string(),
@@ -287,6 +430,15 @@ export const taskThreadSchema = z
     liveStatus: z.enum(TASK_THREAD_LIVE_STATUSES),
     archivedAt: z.string().nullable(),
     attachedAt: z.string(),
+  })
+  .strict();
+
+/** A task's card chips — attachment count and threads (taskCardMeta). */
+export const taskCardMetaSchema = z
+  .object({
+    taskId: taskIdSchema,
+    attachmentCount: z.number().int().nonnegative(),
+    taskThreads: z.array(taskThreadSchema),
   })
   .strict();
 
@@ -340,8 +492,17 @@ export const fieldDisplayConfigSchema = z
     ),
     /** Enabled but empty fields render a placeholder instead of collapsing. */
     showEmpty: z.boolean(),
-    /** Board only: show the task's leading description lines on its card. */
+    /**
+     * Whether the description shows — the board card's first paragraph or
+     * the table's column. Mirrors the `description` field's visibility, so a
+     * board view saved before Description was a field still opens with it on
+     * or off as it was.
+     */
     showDescription: z.boolean(),
+    /** Board only: which sub-tasks a card lists; absent is "all", as saved before the choice. */
+    subtaskScope: z.enum(SUBTASK_SCOPES).optional(),
+    /** Where a click on a task opens it; absent is "main", as saved before the choice. */
+    taskOpening: z.enum(TASK_OPENINGS).optional(),
   })
   .strict()
   .refine(
@@ -351,22 +512,164 @@ export const fieldDisplayConfigSchema = z
     { message: "fields must not repeat" },
   );
 
-// The view's scope is a partition key that is opaque to the server
-// ("all", "active", "project:<id>", "board:<id>", etc.). Its grammar is
-// defined and interpreted only by the client; the server doesn't parse it,
-// so the layers stay decoupled — otherwise the next client-side view change
-// would require a server-side validation change too.
-const savedViewScopeSchema = nonBlankStringSchema.max(120);
+/**
+ * The filters a view carries — the list filter bar's state, by name rather
+ * than by id: a label or an assignee renamed elsewhere should not silently
+ * empty a saved view.
+ */
+const rangeOf = <T extends z.ZodType>(bound: T) =>
+  z.object({ from: bound.nullable(), to: bound.nullable(), empty: z.boolean() }).strict();
+const dayRangeSchema = rangeOf(z.string().regex(ISO_DATE_PATTERN));
+const numberRangeSchema = rangeOf(z.number().finite());
 
-export const savedViewSchema = z
+export const savedViewFiltersSchema = z
   .object({
-    id: idSchema,
-    scope: savedViewScopeSchema,
-    name: z.string(),
-    config: fieldDisplayConfigSchema,
-    createdAt: z.string(),
+    statuses: z.array(taskStatusSchema),
+    priorities: z.array(taskPrioritySchema),
+    types: z.array(taskTypeSchema),
+    estimates: z.array(taskEstimateSchema),
+    labelNames: z.array(z.string()),
+    assignees: z.array(z.string()),
+    /** Ids of tasks: a task passes when it lies under one of them. */
+    parents: z.array(z.string()),
+    /**
+     * The filters on every other field (shared/task-fields.ts). Each is a
+     * partial record — only the fields filtered on — and optional: absent
+     * from a view saved before they existed, or filtering nothing, a view
+     * reads back exactly as it was written.
+     */
+    values: z.partialRecord(z.enum(VALUE_FILTER_FIELDS), z.array(z.string())).optional(),
+    texts: z.partialRecord(z.enum(TEXT_FIELDS), z.string()).optional(),
+    dates: z.partialRecord(z.enum(DATE_FIELDS), dayRangeSchema).optional(),
+    numbers: z.partialRecord(z.enum(NUMBER_FIELDS), numberRangeSchema).optional(),
   })
   .strict();
+
+/** Days a board's card charts look back; 0 is all time (enums.ts). */
+const cardChartPeriodSchema = z.number().int().min(0).max(MAX_CARD_CHART_DAYS);
+
+/** The cross-project surface a view opens, when it is not bound to a project. */
+const savedViewListScopeSchema = z.enum(["active", "waiting"]).nullable();
+
+/** A sort by one field in one direction — a table's, and a view's since sorts have a direction. */
+const columnSortSchema = z
+  .object({ column: rowFieldSchema, direction: z.enum(TABLE_SORT_DIRECTIONS) })
+  .strict();
+
+/** A view's sort: a field and a direction, or one of the list sorts as views stored it before (shared/task-fields.ts). */
+const savedViewSortSchema = z.union([z.enum(LIST_SORTS), columnSortSchema]);
+
+/**
+ * How one property lays out its columns on a board: which go first, which
+ * are hidden, and how wide each one was dragged. Keys are column keys — the
+ * property's value, a label or folder name, or "none" for the empty value.
+ */
+const boardColumnSettingsSchema = z
+  .object({
+    order: z.array(z.string()),
+    hidden: z.array(z.string()),
+    widths: z.record(
+      z.string(),
+      z.number().int().min(BOARD_COLUMN_WIDTH.min).max(BOARD_COLUMN_WIDTH.max),
+    ),
+  })
+  .strict();
+
+/**
+ * A board's grouping. Column settings are kept per property, so switching
+ * from Priority to Status and back finds the Priority columns as they were;
+ * a partial record, because zod 4's z.record over an enum demands every key.
+ */
+export const boardGroupingSchema = z
+  .object({
+    groupBy: z.enum(BOARD_GROUP_BYS),
+    columns: z.partialRecord(z.enum(BOARD_GROUP_PROPERTIES), boardColumnSettingsSchema),
+    hideEmpty: z.boolean(),
+    /** Columns of the ungrouped grid; absent is "auto", as saved before the choice. */
+    gridColumns: z.union([z.literal("auto"), z.literal(BOARD_GRID_COLUMN_COUNTS)]).optional(),
+  })
+  .strict();
+
+/**
+ * A table's own settings: its sort, its board-style grouping, its column
+ * widths and pinned columns, and which of its groups are collapsed. Kept
+ * alongside a saved view rather than folded into `fields` — a display menu
+ * concern — because a table's sort and layout are its own, not the field
+ * list's.
+ */
+export const tableSettingsSchema = z
+  .object({
+    /** The column the table is sorted by, or unsorted (manual order). */
+    sort: columnSortSchema.nullable(),
+    groupBy: z.enum(BOARD_GROUP_BYS),
+    /** Dragged column widths, px; absent columns draw their default. */
+    widths: z.partialRecord(
+      rowFieldSchema,
+      z.number().int().min(TABLE_COLUMN_WIDTH.min).max(TABLE_COLUMN_WIDTH.max),
+    ),
+    /** Columns pinned to the left, in order. */
+    pinned: z.array(rowFieldSchema),
+    /** Names of collapsed groups, when the table is grouped. */
+    collapsedGroups: z.array(z.string()),
+  })
+  .strict();
+export type TableSettings = z.infer<typeof tableSettingsSchema>;
+
+const savedViewBodySchema = z.object({
+  name: nonBlankStringSchema.max(60),
+  /** The project the view opens, or null for a cross-project surface. */
+  projectId: idSchema.nullable(),
+  /** Mutually exclusive with `projectId`: a view opens one list, not two. */
+  listScope: savedViewListScopeSchema,
+  /** Records written before boards had views name no surface: a table. */
+  surface: z
+    .enum([...TASK_LAYOUTS, "list"])
+    .default("table")
+    .transform((value) => (value === "list" ? "table" : value)),
+  filters: savedViewFiltersSchema,
+  sort: savedViewSortSchema,
+  fields: fieldDisplayConfigSchema,
+  /** The board's grouping — present exactly when the view opens a board. */
+  board: boardGroupingSchema.nullable().default(null),
+  /** The table's own settings, or null for a view saved before tables had them. */
+  table: tableSettingsSchema.nullable().default(null),
+});
+
+interface SurfaceShape {
+  projectId: string | null;
+  listScope: string | null;
+  surface: TaskLayout;
+  board: unknown;
+  table: unknown;
+}
+
+/**
+ * A view opens exactly one surface: a project and a cross-project surface
+ * are never both named; a table carries no board grouping, a board always
+ * does.
+ */
+const oneSurface = (view: SurfaceShape) =>
+  !(view.projectId !== null && view.listScope !== null) &&
+  (view.surface === "board" ? view.board !== null : view.board === null);
+
+const ONE_SURFACE_MESSAGE = {
+  message:
+    "a view never names a project and a cross-project surface at once; a table view carries no board grouping, a board view always does",
+};
+
+export const savedViewSchema = savedViewBodySchema
+  .extend({
+    id: idSchema,
+    /** Bumped when the stored shape changes; see filesync/saved-view-migrate.ts. */
+    version: z.literal(2),
+    createdAt: z.string(),
+  })
+  .strict()
+  .refine(oneSurface, ONE_SURFACE_MESSAGE);
+
+const createSavedViewInputSchema = savedViewBodySchema
+  .strict()
+  .refine(oneSurface, ONE_SURFACE_MESSAGE);
 
 export const tasksDomainErrorSchema = z
   .object({
@@ -378,8 +681,14 @@ export const tasksDomainErrorSchema = z
       "project_not_empty",
       "project_prefix_conflict",
       "attachment_referenced",
+      "task_already_taken",
+      "database_unreachable",
+      "database_auth_failed",
+      "task_write_conflict",
     ]),
     message: z.string(),
+    /** Set with `task_already_taken`: the mark of whoever took the task first. */
+    takenBy: takenBySchema.optional(),
   })
   .strict();
 
@@ -424,13 +733,6 @@ const taskLabelsSchema = z
     "must not contain duplicates",
   );
 
-const taskChecksSchema = z
-  .array(taskCheckSchema)
-  .refine(
-    (checks) => new Set(checks).size === checks.length,
-    "must not contain duplicates",
-  );
-
 const updateTaskInputSchema = z
   .object({
     taskId: taskIdSchema,
@@ -450,11 +752,10 @@ const updateTaskInputSchema = z
     budgetLimit: dollarsSchema.nullable().optional(),
     cost: dollarsSchema.nullable().optional(),
     dueDate: dueDateSchema.nullable().optional(),
+    startDate: dueDateSchema.nullable().optional(),
     parentTaskId: taskIdSchema.nullable().optional(),
     labelIds: taskLabelsSchema.optional(),
-    checks: taskChecksSchema.optional(),
     assignee: placementNameSchema.nullable().optional(),
-    epic: placementNameSchema.nullable().optional(),
     authorName: nonBlankStringSchema.default("You"),
   })
   .strict()
@@ -474,11 +775,10 @@ const updateTaskInputSchema = z
       input.budgetLimit !== undefined ||
       input.cost !== undefined ||
       input.dueDate !== undefined ||
+      input.startDate !== undefined ||
       input.parentTaskId !== undefined ||
       input.labelIds !== undefined ||
-      input.checks !== undefined ||
-      input.assignee !== undefined ||
-      input.epic !== undefined,
+      input.assignee !== undefined,
     { message: "at least one task field must be updated" },
   );
 
@@ -582,7 +882,7 @@ export function withCallerThread<Schema extends z.ZodObject>(schema: Schema) {
  */
 const attachmentOwnerWithCallerSchema = z.union([
   withCallerThread(z.object({ taskId: taskIdSchema }).strict()),
-  withCallerThread(z.object({ commentId: idSchema }).strict()),
+  withCallerThread(z.object({ commentId: commentIdSchema }).strict()),
 ]);
 
 export const tasksRpcContract = defineRpcContract({
@@ -667,11 +967,10 @@ export const tasksRpcContract = defineRpcContract({
         budgetLimit: dollarsSchema.nullable().default(null),
         cost: dollarsSchema.nullable().default(null),
         dueDate: dueDateSchema.nullable().default(null),
+        startDate: dueDateSchema.nullable().default(null),
         parentTaskId: taskIdSchema.nullable().default(null),
         labelIds: taskLabelsSchema.default([]),
-        checks: taskChecksSchema.default([]),
         assignee: placementNameSchema.nullable().default(null),
-        epic: placementNameSchema.nullable().default(null),
       })
       .strict()),
     output: taskMutationResultSchema,
@@ -748,6 +1047,8 @@ export const tasksRpcContract = defineRpcContract({
       .object({
         taskId: taskIdSchema,
         status: taskStatusSchema,
+        /** The status the card left on the board that sent the drop; absent — a drop inside its own column. */
+        fromStatus: taskStatusSchema.optional(),
         beforeTaskId: taskIdSchema.nullable().optional(),
         afterTaskId: taskIdSchema.nullable().optional(),
         authorName: nonBlankStringSchema.default("You"),
@@ -773,16 +1074,32 @@ export const tasksRpcContract = defineRpcContract({
     input: withCallerThread(z.object({ labelId: labelIdSchema }).strict()),
     output: z.object({ deleted: z.boolean() }).strict(),
   },
-  /** Assignees and epics already in use on the board — the folders its
-   *  tasks sit in. A new value needs no call: it is created by assigning it. */
+  /** `bb tasks epics migrate`: every epic folder of the board becomes an epic
+   *  task (filesync/epic-migrate.ts); a dry run tells the plan and writes nothing. */
+  migrateEpics: {
+    input: withCallerThread(z.object({ projectId: idSchema, dryRun: z.boolean().default(false) }).strict()),
+    output: z
+      .object({
+        epics: z.array(
+          z
+            .object({
+              key: z.string().nullable(),
+              name: placementFolderSchema,
+              assignee: placementFolderSchema,
+              tasks: z.number().int().nonnegative(),
+            })
+            .strict(),
+        ),
+      })
+      .strict(),
+  },
+  /** Assignees already in use on the board — the folders its tasks sit in.
+   *  A new value needs no call: it is created by assigning it. */
   listPlacements: {
     input: withCallerThread(z.object({ projectId: idSchema }).strict()),
     output: z
       .object({
         assignees: z.array(placementFolderSchema),
-        epics: z.array(
-          z.object({ assignee: placementFolderSchema, name: placementFolderSchema }).strict(),
-        ),
       })
       .strict(),
   },
@@ -827,6 +1144,38 @@ export const tasksRpcContract = defineRpcContract({
   listTaskThreads: {
     input: withCallerThread(z.object({ taskId: taskIdSchema }).strict()),
     output: z.object({ taskThreads: z.array(taskThreadSchema) }).strict(),
+  },
+  // The board's sub-task burndowns, one call per board: per task with tasks
+  // under it, how many of them still owed work at each column end (the last
+  // one now), those ends, and the days the trend needs to reach zero. The
+  // columns are the period's (analytics/burndown.ts).
+  taskBurndowns: {
+    input: withCallerThread(z.object({ projectId: idSchema, period: cardChartPeriodSchema }).strict()),
+    output: z
+      .object({
+        burndowns: z.array(
+          z
+            .object({
+              taskId: taskIdSchema,
+              open: z.array(z.number().int().nonnegative()),
+              ends: z.array(z.number()),
+              forecastDays: z.number().int().nonnegative().nullable(),
+            })
+            .strict(),
+        ),
+      })
+      .strict(),
+  },
+  // Bulk card chips for the board and the list: attachment count and threads
+  // per task, one board read per board instead of one per task. Unknown ids
+  // are left out.
+  taskCardMeta: {
+    input: withCallerThread(
+      z
+        .object({ taskIds: z.array(taskIdSchema).max(TASK_CARD_META_MAX_IDS) })
+        .strict(),
+    ),
+    output: z.object({ cards: z.array(taskCardMetaSchema) }).strict(),
   },
   // Reverse of listTaskThreads: the tasks a single thread is attached to,
   // in attach order. Backs the thread-header chip and `bb tasks current`.
@@ -899,23 +1248,31 @@ export const tasksRpcContract = defineRpcContract({
     input: z.null(),
     output: z.object({ presets: z.array(presetSchema) }).strict(),
   },
+  /** Every view, of every surface: a view is a navigation entry, not a
+   *  setting of the list it was saved from. */
   listSavedViews: {
-    input: z.object({ scope: savedViewScopeSchema }).strict(),
+    input: z.object({}).strict(),
     output: z.object({ savedViews: z.array(savedViewSchema) }).strict(),
   },
   /**
+<<<<<<< HEAD
    * Name is unique within scope case-insensitively; saving under a name
    * already taken in that scope overwrites the existing view's config while
    * keeping its id and createdAt. See
-   * memory/decisions/saved-view-name-overwrite.md.
+   * docs/decisions/saved-view-name-overwrite.md.
+=======
+   * Name is unique case-insensitively; saving under a name already taken
+   * overwrites that view while keeping its id and createdAt. See
+   * docs/decisions/saved-view-name-overwrite.md.
+>>>>>>> origin/main
    */
   createSavedView: {
+    input: createSavedViewInputSchema,
+    output: z.object({ savedView: savedViewSchema }).strict(),
+  },
+  updateSavedView: {
     input: z
-      .object({
-        scope: savedViewScopeSchema,
-        name: nonBlankStringSchema.max(60),
-        config: fieldDisplayConfigSchema,
-      })
+      .object({ savedViewId: idSchema, name: nonBlankStringSchema.max(60) })
       .strict(),
     output: z.object({ savedView: savedViewSchema }).strict(),
   },
@@ -1024,25 +1381,47 @@ export const tasksRpcContract = defineRpcContract({
       .strict(),
   },
   analyticsSnapshot: {
-    input: z.object({ projectId: idSchema.nullable().optional() }).strict(),
+    input: z.object({ projectId: idSchema.nullable().optional(), projectIds: projectIdsSchema }).strict(),
     output: tasksSnapshotSchema,
   },
-  analyticsSeries: {
-    input: z
-      .object({
-        fromMs: z.number(),
-        toMs: z.number(),
-        binMs: z.number().int().positive(),
-        projectId: idSchema.nullable().optional(),
-      })
-      .strict(),
-    output: statusSeriesSchema,
+  analyticsClosed: {
+    input: z.object({ windows: z.array(columnEdgesSchema).min(1).max(4), projectIds: projectIdsSchema }).strict(),
+    output: closedWindowsSchema,
+  },
+  analyticsFlow: {
+    input: z.object({ edges: columnEdgesSchema, weekEdges: columnEdgesSchema, projectIds: projectIdsSchema }).strict(),
+    output: flowAnswerSchema,
+  },
+  // When the history of the asked projects starts — where "all time" opens.
+  analyticsSpan: {
+    input: z.object({ projectIds: projectIdsSchema }).strict(),
+    output: z.object({ firstCreatedMs: z.number().nullable() }).strict(),
+  },
+  ganttRows: {
+    input: z.object({ fromMs: z.number().finite(), projectIds: projectIdsSchema }).strict(),
+    output: ganttAnswerSchema,
+  },
+  // Reduced Colors of the analytics screen (packages/reduced-colors). The
+  // shape is owned by the package's total parse, which both ends run the
+  // value through — the schema only lets it pass.
+  loadReducedColors: {
+    input: z.object({}).strict(),
+    output: z.custom<ReducedColors>(),
+  },
+  saveReducedColors: {
+    input: z.custom<ReducedColors>(),
+    output: z.object({ ok: z.literal(true) }),
   },
 });
 
 export type TasksRpcContract = typeof tasksRpcContract;
 export type TasksSnapshot = z.infer<typeof tasksSnapshotSchema>;
-export type StatusSeries = z.infer<typeof statusSeriesSchema>;
+export type FlowAnswer = z.infer<typeof flowAnswerSchema>;
+export type ClosedWindows = z.infer<typeof closedWindowsSchema>;
+export type GanttAnswer = z.infer<typeof ganttAnswerSchema>;
+export type ClosedTask = z.infer<typeof closedTaskSchema>;
+/** What one closed-tasks chart draws: its window's closings and the board context. */
+export type ClosedTasks = { closings: ClosedTask[] } & Omit<ClosedWindows, "windows">;
 export type Folder = z.infer<typeof folderSchema>;
 export type Project = z.infer<typeof projectSchema>;
 export type Task = z.infer<typeof taskSchema>;
@@ -1052,10 +1431,14 @@ export type CommentProvider = z.infer<typeof commentProviderSchema>;
 export type DisplayComment = z.infer<typeof displayCommentSchema>;
 export type Attachment = z.infer<typeof attachmentSchema>;
 export type TaskThread = z.infer<typeof taskThreadSchema>;
+export type TaskCardMeta = z.infer<typeof taskCardMetaSchema>;
 export type TaskPullRequest = z.infer<typeof taskPullRequestSchema>;
 export type Preset = z.infer<typeof presetSchema>;
 export type FieldDisplayConfig = z.infer<typeof fieldDisplayConfigSchema>;
 export type SavedView = z.infer<typeof savedViewSchema>;
+export type SavedViewFilters = z.infer<typeof savedViewFiltersSchema>;
+export type BoardGrouping = z.infer<typeof boardGroupingSchema>;
+export type CreateSavedViewInput = z.infer<typeof createSavedViewInputSchema>;
 export type TasksDomainError = z.infer<typeof tasksDomainErrorSchema>;
 export type TaskMutationResult = z.infer<typeof taskMutationResultSchema>;
 export type ProjectMutationResult = z.infer<typeof projectMutationResultSchema>;

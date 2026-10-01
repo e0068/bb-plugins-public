@@ -13,7 +13,7 @@ import type { CallerEnvironment } from "../filesync/caller-root.js";
 import { withCallerScope } from "./caller-scope.js";
 
 const BB_PROJECT_ID = "proj_x";
-const TASKS_FOLDER = "memory/tasks";
+const TASKS_FOLDER = "docs/tasks";
 
 let mainCheckout: string;
 let worktree: string;
@@ -297,6 +297,28 @@ describe("поверхности треда мимо клиента RPC", () => 
     expect(
       readFileSync(join(worktree, TASKS_FOLDER, "backlog", "branch-local.md"), "utf8"),
     ).toContain("note.txt");
+  });
+
+  it("картинка задачи ветки отдаётся треду, из которого её смотрят", async () => {
+    const { bb, harness } = setup();
+    await plugin(bb);
+    const folder = await connect(harness);
+    const created = await taskInWorktree(harness, folder.projectId);
+    const uploaded = await harness.fetchHttp(
+      "POST",
+      `/attachments/upload?taskId=${created.task.id}&fileName=shot.png&mime=image/png&callerThreadId=thr_worktree`,
+      { body: new TextEncoder().encode("png") },
+    );
+    const { attachmentId } = (await uploaded.json()) as { attachmentId: string };
+
+    const response = await harness.fetchHttp(
+      "GET",
+      `/attachments/download?attachmentId=${attachmentId}&callerThreadId=thr_worktree`,
+    );
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-type")).toBe("image/png");
+    expect(await response.text()).toBe("png");
   });
 
   it("вложение без треда отвечает отказом, а не падением", async () => {

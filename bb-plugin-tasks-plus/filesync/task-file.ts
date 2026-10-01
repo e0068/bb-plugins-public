@@ -1,4 +1,3 @@
-import type { TaskCheck } from "../db/types.js";
 import type { Comment, Task } from "../shared/contract.js";
 import { parseFrontmatter } from "./frontmatter.js";
 import { mapFrontmatter } from "./map.js";
@@ -7,12 +6,12 @@ import { stringify as stringifyYaml } from "yaml";
 import { AMOUNT_FIELDS, type AmountField } from "../shared/amounts.js";
 
 /** The file's own fields, minus what assemble.ts computes from them
- *  (labelIds/checks/source) — labels/checks/parentRef are this module's
- *  own names for the file's raw values before that computation. */
-type TaskFields = Partial<Omit<Task, "labelIds" | "checks" | "source">>;
+ *  (labelIds/source) — labels/parentRef are this module's own names for the
+ *  file's raw values before that computation. */
+type TaskFields = Partial<Omit<Task, "labelIds" | "source">>;
 
 export interface ParsedTaskFile {
-  task: TaskFields & { labels: string[]; checks: TaskCheck[]; parentRef: string | null };
+  task: TaskFields & { labels: string[]; parentRef: string | null };
   comments: Comment[];
   /** Raw frontmatter, for fields this module doesn't model itself (threads,
    *  attachments, and anything a future caller needs) — see filesync/store.ts. */
@@ -66,7 +65,6 @@ export const AMOUNT_KEYS: Record<AmountField, string> = {
 export function renderTaskFile(
   task: Partial<Task> & {
     labels?: readonly string[];
-    checks?: readonly TaskCheck[];
     parentRef?: string | null;
   },
   slug: string,
@@ -90,18 +88,25 @@ export function renderTaskFile(
   // Only a value is written. A null here may be a line the reader could not
   // parse ("1h 30m"), so it stays as the file had it; clearing a field takes
   // its key out of `existingData` before this call (store.ts updateTask).
-  // Legacy `tokens` lines ride along untouched the same way.
+  // Legacy `tokens` and `checks` lines ride along untouched the same way, and
+  // so does the `flow` block the Flow plugin stamps: the board never writes it.
   for (const field of AMOUNT_FIELDS) {
     const value = task[field];
     if (value != null) frontmatter[AMOUNT_KEYS[field]] = value;
   }
   if (task.dueDate) frontmatter.due = task.dueDate;
+  if (task.startDate) frontmatter.start = task.startDate;
   if (task.labels && task.labels.length > 0) frontmatter.labels = [...task.labels];
   else delete frontmatter.labels;
-  if (task.checks && task.checks.length > 0) frontmatter.checks = [...task.checks];
-  else delete frontmatter.checks;
   if (task.parentRef) frontmatter.parent = task.parentRef;
   else delete frontmatter.parent;
+  // The mark of who took the task: a value is written, null takes the block
+  // off, and a task that does not name the field leaves the file's block as it is.
+  if (task.takenBy) {
+    frontmatter.taken_by = { machine: task.takenBy.machine, thread: task.takenBy.threadId, at: task.takenBy.at };
+  } else if (task.takenBy === null) {
+    delete frontmatter.taken_by;
+  }
 
   Object.assign(frontmatter, extraFields);
 

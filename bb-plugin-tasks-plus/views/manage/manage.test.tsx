@@ -119,6 +119,7 @@ describe("NewTaskDialog", () => {
       status: "todo",
       priority: "none",
       dueDate: null,
+      startDate: null,
       parentTaskId: null,
       labelIds: [],
     });
@@ -196,7 +197,7 @@ describe("NewTaskDialog", () => {
     expect(slot.getByLabelText("Task title")).toBeDefined();
   });
 
-  it("shows type, estimate, checks, planned time and budget right away without expanding anything", async () => {
+  it("shows type, estimate, planned time and budget right away without expanding anything", async () => {
     const slot = renderSlot(
       app.navPanels[0]!,
       { subPath: PROJECT_ID },
@@ -217,13 +218,13 @@ describe("NewTaskDialog", () => {
     // in the flat chip row immediately after the dialog renders.
     expect(slot.getByLabelText("Type")).toBeDefined();
     expect(slot.getByLabelText("Estimate")).toBeDefined();
-    expect(slot.getByRole("group", { name: "Checks" })).toBeDefined();
+    expect(slot.queryByRole("group", { name: "Checks" })).toBeNull();
     expect(slot.getByLabelText("Planned Time")).toBeDefined();
     expect(slot.getByLabelText("Budget")).toBeDefined();
     expect(slot.queryByLabelText("Plan tokens")).toBeNull();
   });
 
-  it("submits type, estimate, checks, planned time and budget with createTask", async () => {
+  it("submits type, estimate, planned time and budget with createTask", async () => {
     const createCalls: Array<Record<string, unknown>> = [];
     const slot = renderSlot(
       app.navPanels[0]!,
@@ -252,8 +253,6 @@ describe("NewTaskDialog", () => {
     fireEvent.click(await slot.findByRole("option", { name: "Bugfix" }));
     fireEvent.click(slot.getByLabelText("Estimate"));
     fireEvent.click(await slot.findByRole("option", { name: "M" }));
-    fireEvent.click(slot.getByRole("checkbox", { name: "Test" }));
-    fireEvent.click(slot.getByRole("checkbox", { name: "Review" }));
     fireEvent.change(slot.getByLabelText("Planned Time"), {
       target: { value: "90" },
     });
@@ -266,10 +265,10 @@ describe("NewTaskDialog", () => {
     expect(createCalls[0]).toMatchObject({
       type: "bugfix",
       estimate: "m",
-      checks: ["test", "review"],
       plannedMinutes: 90,
       budget: 34.1,
     });
+    expect(createCalls[0]).not.toHaveProperty("checks");
   });
 
   it("offers a compact create-label action when the query matches no label", async () => {
@@ -921,7 +920,7 @@ describe("NewProjectDialog", () => {
   });
 });
 
-describe("new task dialog: assignee and epic", () => {
+describe("new task dialog: assignee", () => {
   function placementRpc(createCalls: Array<Record<string, unknown>>) {
     return {
       listProjects: () => ({ projects: [project] }),
@@ -930,10 +929,7 @@ describe("new task dialog: assignee and epic", () => {
       sidebarSummary: () => ({ projects: [] }),
       listTasks: () => ({ tasks: [] }),
       listLabels: () => ({ labels: [] }),
-      listPlacements: () => ({
-        assignees: ["Claude"],
-        epics: [{ assignee: "Claude", name: "Tasks+" }],
-      }),
+      listPlacements: () => ({ assignees: ["Claude"] }),
       createTask: (input: Record<string, unknown>) => {
         createCalls.push(input);
         return { ok: true, task: createdTask(input) };
@@ -946,35 +942,127 @@ describe("new task dialog: assignee and epic", () => {
     fireEvent.change(await slot.findByLabelText("Task title"), { target: { value: "Placed" } });
   }
 
-  it("creates the task with every optional field left empty, assignee and epic included", async () => {
+  it("creates the task with every optional field left empty, the assignee included", async () => {
     const createCalls: Array<Record<string, unknown>> = [];
     const slot = renderSlot(app.navPanels[0]!, { subPath: PROJECT_ID }, { rpc: placementRpc(createCalls) });
     await openWithTitle(slot);
 
-    expect((slot.getByRole("button", { name: "Edit epic" }) as HTMLButtonElement).disabled).toBe(true);
+    expect(slot.queryByRole("button", { name: "Edit epic" })).toBeNull();
     fireEvent.click(slot.getByRole("button", { name: "Create task" }));
 
     await waitFor(() => expect(createCalls).toHaveLength(1));
-    expect(createCalls[0]).toMatchObject({ title: "Placed", assignee: null, epic: null, type: null, estimate: null });
+    expect(createCalls[0]).toMatchObject({ title: "Placed", assignee: null, type: null, estimate: null });
+    expect(createCalls[0]).not.toHaveProperty("epic");
   });
 
-  it("submits the picked assignee and epic, and a new epic typed into the picker", async () => {
+  it("submits the picked assignee, or a new one typed into the picker", async () => {
     const createCalls: Array<Record<string, unknown>> = [];
-    const slot = renderSlot(app.navPanels[0]!, { subPath: PROJECT_ID }, { rpc: placementRpc(createCalls) });
+    const rpc = { ...placementRpc(createCalls), listPlacements: () => ({ assignees: [] }) };
+    const slot = renderSlot(app.navPanels[0]!, { subPath: PROJECT_ID }, { rpc });
     await openWithTitle(slot);
 
     fireEvent.click(slot.getByRole("button", { name: "Edit assignee" }));
-    fireEvent.click(await slot.findByRole("option", { name: "Claude" }));
-    // Let the assignee popover finish closing: its focus return to the
-    // trigger would otherwise dismiss the epic popover the moment it opens.
-    await waitFor(() => expect(slot.queryByPlaceholderText("Assignee…")).toBeNull());
-    await new Promise((resolve) => setTimeout(resolve, 0));
-    fireEvent.click(slot.getByRole("button", { name: "Edit epic" }));
-    fireEvent.change(await slot.findByPlaceholderText("Epic…"), { target: { value: "Flow" } });
-    fireEvent.click(await slot.findByRole("option", { name: "Create “Flow”" }));
+    expect(await slot.findByText("Type a name to create a new assignee")).toBeDefined();
+    fireEvent.change(slot.getByPlaceholderText("Assignee…"), { target: { value: "Claude" } });
+    fireEvent.click(await slot.findByRole("option", { name: "Create “Claude”" }));
     fireEvent.click(slot.getByRole("button", { name: "Create task" }));
 
     await waitFor(() => expect(createCalls).toHaveLength(1));
-    expect(createCalls[0]).toMatchObject({ assignee: "Claude", epic: "Flow" });
+    expect(createCalls[0]).toMatchObject({ assignee: "Claude" });
+  });
+
+});
+
+describe("ManagePanel project deletion", () => {
+  function renderProjectTab(
+    taskCount: number,
+    overrides: Record<string, unknown> = {},
+  ) {
+    return renderSlot(
+      app.navPanels[0]!,
+      { subPath: "manage" },
+      {
+        rpc: {
+          listProjects: () => ({ projects: [project] }),
+          listFolders: () => ({ folders: [] }),
+          listPresets: () => ({ presets: [] }),
+          listLabels: () => ({ labels: [] }),
+          sidebarSummary: () => ({
+            projects: [{ projectId: PROJECT_ID, taskCount, activeAgentCount: 0 }],
+          }),
+          listTasks: () => ({ tasks: [] }),
+          ...overrides,
+        },
+      },
+    );
+  }
+
+  const deleteButton = (slot: ReturnType<typeof renderProjectTab>) =>
+    slot.findByRole("button", { name: "Delete project" }) as Promise<HTMLButtonElement>;
+
+  it("deletes an empty project in one click, without a confirmation", async () => {
+    const deleteCalls: Array<Record<string, unknown>> = [];
+    const slot = renderProjectTab(0, {
+      deleteProject: (input: Record<string, unknown>) => {
+        deleteCalls.push(input);
+        return { ok: true, deleted: true };
+      },
+    });
+    const button = await deleteButton(slot);
+    await waitFor(() => expect(button.disabled).toBe(false));
+    fireEvent.click(button);
+    await waitFor(() => expect(deleteCalls).toHaveLength(1));
+    expect(deleteCalls[0]).toMatchObject({ projectId: PROJECT_ID });
+    expect(deleteCalls[0]?.force).not.toBe(true);
+    expect(slot.queryByRole("dialog")).toBeNull();
+  });
+
+  it("disables deletion of a project that still has tasks and says why", async () => {
+    let deleteCalls = 0;
+    const slot = renderProjectTab(3, {
+      deleteProject: () => {
+        deleteCalls += 1;
+        return { ok: true, deleted: true };
+      },
+    });
+    await slot.findByText("Move or delete this project's tasks to delete it.");
+    const button = await deleteButton(slot);
+    expect(button.disabled).toBe(true);
+    fireEvent.click(button);
+    expect(deleteCalls).toBe(0);
+  });
+
+  it("explains a server refusal of a project that gained tasks in UI terms", async () => {
+    const slot = renderProjectTab(0, {
+      deleteProject: () => ({
+        ok: false,
+        error: {
+          code: "project_not_empty",
+          message:
+            "A project must be empty before it can be deleted; pass force: true to delete its tasks",
+        },
+      }),
+    });
+    const button = await deleteButton(slot);
+    await waitFor(() => expect(button.disabled).toBe(false));
+    fireEvent.click(button);
+    expect((await slot.findByRole("alert")).textContent).toBe(
+      "Move or delete this project's tasks to delete it.",
+    );
+    expect(slot.getByRole("button", { name: "Delete project" })).toBeDefined();
+  });
+
+  it("shows a failed delete call as it comes", async () => {
+    const slot = renderProjectTab(0, {
+      deleteProject: () => {
+        throw new Error("Project not found");
+      },
+    });
+    const button = await deleteButton(slot);
+    await waitFor(() => expect(button.disabled).toBe(false));
+    fireEvent.click(button);
+    expect((await slot.findByRole("alert")).textContent).toBe(
+      "Project not found",
+    );
   });
 });

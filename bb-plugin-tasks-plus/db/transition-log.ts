@@ -39,6 +39,8 @@ export interface TransitionLog {
   record(transition: StatusTransition): void;
   /** Transitions whose `atMs` lies in `[fromMs, toMs)`, oldest first, optionally one project only. */
   range(fromMs: number, toMs: number, filter?: TransitionFilter): StatusTransition[];
+  /** Epoch ms of the earliest recorded change; null while the log is empty. */
+  firstAtMs(): number | null;
 }
 
 const SCHEMA = `
@@ -89,6 +91,7 @@ export function createTransitionLog(db: TransitionDb): TransitionLog {
   const selectByProject = db.prepare(
     "select task_id, project_id, from_status, to_status, at_ms, actor from status_transitions where at_ms >= ? and at_ms < ? and project_id = ? order by at_ms, id",
   );
+  const selectFirst = db.prepare("select min(at_ms) as first from status_transitions");
 
   return {
     record(transition) {
@@ -107,6 +110,10 @@ export function createTransitionLog(db: TransitionDb): TransitionLog {
           ? (selectAll.all(fromMs, toMs) as Row[])
           : (selectByProject.all(fromMs, toMs, filter.projectId) as Row[]);
       return rows.map(toTransition);
+    },
+    firstAtMs() {
+      const row = selectFirst.get() as { first: number | null } | undefined;
+      return row?.first ?? null;
     },
   };
 }

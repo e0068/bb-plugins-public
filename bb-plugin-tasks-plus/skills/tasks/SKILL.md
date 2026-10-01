@@ -117,13 +117,17 @@ not already exist. Dispatch requires an existing preset.
    with `bb tasks update ABC-12 --no-parent`; the two parent flags cannot be
    combined.
 
-   Who does the task and which epic it belongs to are folders, not
-   frontmatter: `<tasks>/<status>/` has neither, `<tasks>/<Assignee>/<status>/`
-   has an assignee, `<tasks>/<Assignee>/<Epic>/<status>/` has both. Set them
-   with `--assignee <name>` and `--epic <name>` on `create` or `update` — the
-   file moves, the key, id and comments stay. `--no-assignee` returns the file
-   to the root and drops the epic with it; `--no-epic` keeps the assignee. An
-   epic without an assignee is refused. A new name is created by using it.
+   Who does the task is a folder, not frontmatter: `<tasks>/<status>/` has
+   no assignee, `<tasks>/<Assignee>/<status>/` has one. Set it with
+   `--assignee <name>` on `create` or `update` — the file moves, the key, id
+   and comments stay; `--no-assignee` returns the file to the root. A new
+   name is created by using it.
+
+   An epic is a task typed `epic`, and a task belongs to the nearest epic
+   above it in the tree. `--epic <epic-key>` on `create` or `update` makes
+   that epic the task's parent — it is refused when the task it names is not
+   typed `epic`; `--no-epic` clears a parent that is an epic. `--epic` sets
+   the parent, so it does not combine with `--parent` or `--no-parent`.
 
    The file itself is yours to change through the same command. `--slug
    <name>` renames the file (the id follows; subtasks keep pointing at it).
@@ -154,6 +158,38 @@ not already exist. Dispatch requires an existing preset.
    ```sh
    bb tasks attach ABC-12
    ```
+
+## Epics
+
+Offer an epic before a large feature grows into loose tasks — ask the
+owner, do not open one on your own:
+
+- the feature takes several tasks of estimate `xl`, or would before it is
+  split into tasks no larger than `l`;
+- or work on one bounded part of the project keeps going across tasks —
+  one plugin, one screen, one subsystem — and you can name where it ends.
+
+The owner agreed — open the epic and put the work under it:
+
+```sh
+bb tasks create --type epic --title "Tasks+ — epic title" --description-file ./epic.md
+bb tasks update ABC-31 --epic ABC-30
+bb tasks create --title "Tasks+ — next step" --epic ABC-30
+```
+
+Link every task of the feature — the open ones found with
+`bb tasks list --search <word>` and each one created later. Then propose a
+plan: an order of the tasks and a Start and Due date for each, following
+what depends on what and each task's `minutes`. Show the plan to the owner
+first; once agreed, set the dates:
+
+```sh
+bb tasks update ABC-31 --start 2026-10-01 --due 2026-10-03
+```
+
+The epic's own Start is its first task's, its Due the last task's. When the
+plan slips, move the dates of the tasks that follow and say so in a comment
+on the epic.
 
 ## Link tasks in responses
 

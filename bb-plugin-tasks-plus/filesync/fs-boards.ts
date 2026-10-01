@@ -1,5 +1,6 @@
 import type { FileTaskOrigin } from "../db/types.js";
 import { readTaskFiles, type RepoTaskFile } from "./fs-repo.js";
+import type { ParseCache } from "./parse-cache.js";
 import { sha256 } from "./validators.js";
 
 export interface BoardRoot {
@@ -27,8 +28,14 @@ function contentSha(file: RepoTaskFile): string {
  */
 export async function readBoardTaskFiles(
   roots: readonly BoardRoot[],
+  cache?: ParseCache,
 ): Promise<BoardTaskFile[]> {
-  const perRoot = await Promise.all(roots.map((root) => readTaskFiles(root.absPath)));
+  // Only main checkouts keep their parses: a worktree is read by its own
+  // thread's calls, and every one of dozens of worktrees would otherwise
+  // hold a parsed copy of the whole folder until the plugin restarts.
+  const perRoot = await Promise.all(
+    roots.map((root) => readTaskFiles(root.absPath, root.origin.kind === "main" ? cache : undefined)),
+  );
 
   const files: BoardTaskFile[] = [];
   const seenBySlug = new Map<string, RepoTaskFile>();

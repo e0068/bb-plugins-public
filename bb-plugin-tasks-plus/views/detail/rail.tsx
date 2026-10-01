@@ -1,23 +1,21 @@
 import { useState, type ReactNode } from "react";
 import type { Label, Project, Task, TaskThread } from "../../shared/contract.js";
 import type {
-  TaskCheck,
   TaskEstimate,
   TaskPriority,
   TaskStatus,
   TaskType,
 } from "../../shared/enums.js";
 import {
-  TASK_CHECKS,
   TASK_ESTIMATES,
   TASK_PRIORITIES,
   TASK_STATUSES,
   TASK_TYPES,
 } from "../../shared/enums.js";
 import type { Preset } from "../../shared/contract.js";
+import { flowRoute } from "../../shared/flow-route.js";
 import { useTasksQuery, useTasksRpc } from "../../client/data.js";
 import {
-  CHECK_LABELS,
   ESTIMATE_LABELS,
   ESTIMATE_OPTION_LABELS,
   PRIORITY_LABELS,
@@ -33,7 +31,8 @@ import {
   isActiveThread,
 } from "../../components/task-meta.js";
 import { DispatchControl } from "./threads.js";
-import { PlacementPicker } from "./placement-picker.js";
+import { AssigneePicker } from "./assignee-picker.js";
+import { ParentPicker } from "./parent-picker.js";
 import { DEFAULT_COLOR } from "../manage/shared.js";
 import {
   BbProjectLinkPicker,
@@ -78,15 +77,17 @@ export interface TaskPropertyUpdate {
   budget?: number | null;
   budgetLimit?: number | null;
   cost?: number | null;
-  checks?: TaskCheck[];
   dueDate?: string | null;
+  startDate?: string | null;
   labelIds?: string[];
   assignee?: string | null;
-  epic?: string | null;
+  parentTaskId?: string | null;
 }
 
 export interface TaskPropertiesProps {
   task: Task;
+  /** The task's parent, loaded by the page; null at the top of the tree. */
+  parent: Task | null;
   project: Project | undefined;
   labels: Label[] | undefined;
   threads: TaskThread[];
@@ -103,7 +104,7 @@ function localIsoDate(daysFromNow: number): string {
 
 /**
  * Shared shape for the small "value + optional remove button" pills used
- * throughout the rail (labels, checks, …). Callers own their own color/size
+ * throughout the rail (labels, …). Callers own their own color/size
  * treatment via `className`; this only owns the remove-button behavior so it
  * stays identical everywhere it appears.
  */
@@ -279,60 +280,23 @@ function EnumMenu<T extends string>({
   );
 }
 
-function CheckChip({
-  check,
-  onRemove,
+/**
+ * The flow the task's run went through, linking to its page in the Flow
+ * plugin. A plain anchor on purpose: the SDK navigates only to this plugin's
+ * own panels, and the host routes any other in-app `<a href>` clicked inside
+ * the plugin's root. Read-only — the Flow plugin stamps it into the file.
+ */
+function FlowLink({
+  flow,
+  className,
 }: {
-  check: TaskCheck;
-  onRemove?: () => void;
+  flow: NonNullable<Task["flow"]>;
+  className: string;
 }) {
   return (
-    <RemovableChip
-      className="inline-flex items-center gap-1 rounded-md bg-muted px-1.5 py-0.5 text-xs text-foreground"
-      onRemove={onRemove}
-      removeLabel={`Remove ${CHECK_LABELS[check]}`}
-    >
-      {CHECK_LABELS[check]}
-    </RemovableChip>
-  );
-}
-
-function ChecksMenu({
-  task,
-  onUpdate,
-  children,
-}: {
-  task: Task;
-  onUpdate: (update: TaskPropertyUpdate) => void;
-  children: ReactNode;
-}) {
-  const toggle = (check: TaskCheck) => {
-    const next = task.checks.includes(check)
-      ? task.checks.filter((item) => item !== check)
-      : [...task.checks, check];
-    onUpdate({ checks: next });
-  };
-  return (
-    <DropdownMenu>
-      <DropdownMenuTrigger asChild>{children}</DropdownMenuTrigger>
-      <DropdownMenuContent align="start">
-        {TASK_CHECKS.map((check) => (
-          <DropdownMenuItem
-            key={check}
-            onSelect={(event) => {
-              // Keep the menu open so several checks can be toggled at once.
-              event.preventDefault();
-              toggle(check);
-            }}
-          >
-            {CHECK_LABELS[check]}
-            {task.checks.includes(check) ? (
-              <Icon name="Check" className="ml-auto size-3.5" />
-            ) : null}
-          </DropdownMenuItem>
-        ))}
-      </DropdownMenuContent>
-    </DropdownMenu>
+    <a href={flowRoute(flow.id)} className={cn(className, "hover:underline")}>
+      {flow.name}
+    </a>
   );
 }
 
@@ -391,26 +355,53 @@ function AmountInput({
   );
 }
 
-function DueDateMenu({
+/**
+ * The two plan dates differ only in field, icon and wording — so the
+ * difference lives in this table, and the menu below has no branch on `kind`.
+ */
+const PLAN_DATES = {
+  due: {
+    icon: "Clock",
+    label: "Due date",
+    placeholder: "Set due date",
+    remove: "Remove due date",
+    read: (task: Task) => task.dueDate,
+    write: (dueDate: string | null): TaskPropertyUpdate => ({ dueDate }),
+  },
+  start: {
+    icon: "Calendar",
+    label: "Start date",
+    placeholder: "Set start date",
+    remove: "Remove start date",
+    read: (task: Task) => task.startDate,
+    write: (startDate: string | null): TaskPropertyUpdate => ({ startDate }),
+  },
+} as const;
+
+function PlanDateMenu({
+  kind,
   task,
   onUpdate,
   triggerClassName,
 }: {
+  kind: keyof typeof PLAN_DATES;
   task: Task;
   onUpdate: (update: TaskPropertyUpdate) => void;
   triggerClassName: string;
 }) {
   const [open, setOpen] = useState(false);
-  const pick = (dueDate: string | null) => {
-    onUpdate({ dueDate });
+  const copy = PLAN_DATES[kind];
+  const value = copy.read(task);
+  const pick = (date: string | null) => {
+    onUpdate(copy.write(date));
     setOpen(false);
   };
   return (
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger asChild>
         <button type="button" className={triggerClassName}>
-          <Icon name="Clock" className="size-3.5 shrink-0" />
-          {task.dueDate ? formatDueDate(task.dueDate) : "Set due date"}
+          <Icon name={copy.icon} className="size-3.5 shrink-0" />
+          {value ? formatDueDate(value) : copy.placeholder}
         </button>
       </PopoverTrigger>
       <PopoverContent align="start" className="w-52 p-2">
@@ -436,21 +427,21 @@ function DueDateMenu({
           ))}
           <input
             type="date"
-            aria-label="Due date"
+            aria-label={copy.label}
             className="mt-1 h-7 rounded-md border border-input bg-transparent px-2 text-sm text-foreground"
-            value={task.dueDate ?? ""}
+            value={value ?? ""}
             onChange={(event) => {
               if (event.target.value) pick(event.target.value);
             }}
           />
-          {task.dueDate ? (
+          {value ? (
             <button
               type="button"
               className="mt-1 flex items-center gap-2 rounded-sm px-2 py-1.5 text-left text-sm text-muted-foreground hover:bg-accent hover:text-accent-foreground"
               onClick={() => pick(null)}
             >
               <Icon name="X" className="size-3.5" />
-              Remove due date
+              {copy.remove}
             </button>
           ) : null}
         </div>
@@ -755,6 +746,7 @@ function WorktreeSourceBanner({ task }: { task: Task }) {
 
 export function PropertiesRail({
   task,
+  parent,
   project,
   labels,
   threads,
@@ -789,7 +781,8 @@ export function PropertiesRail({
         onUpdate={onUpdate}
         triggerClassName={RAIL_ROW_CLASS}
       />
-      <DueDateMenu task={task} onUpdate={onUpdate} triggerClassName={RAIL_ROW_CLASS} />
+      <PlanDateMenu kind="start" task={task} onUpdate={onUpdate} triggerClassName={RAIL_ROW_CLASS} />
+      <PlanDateMenu kind="due" task={task} onUpdate={onUpdate} triggerClassName={RAIL_ROW_CLASS} />
       <EnumMenu
         value={task.type}
         values={TASK_TYPES}
@@ -813,48 +806,32 @@ export function PropertiesRail({
         onSelect={(estimate) => onUpdate({ estimate })}
         triggerClassName={RAIL_ROW_CLASS}
       />
-      <PlacementPicker
+      <AssigneePicker
         projectId={task.projectId}
-        field="assignee"
         value={task.assignee ?? null}
-        assignee={task.assignee ?? null}
         onSelect={(assignee) => onUpdate({ assignee })}
         triggerClassName={RAIL_ROW_CLASS}
       />
-      <PlacementPicker
-        projectId={task.projectId}
-        field="epic"
-        value={task.epic ?? null}
-        assignee={task.assignee ?? null}
-        onSelect={(epic) => onUpdate({ epic })}
+      <ParentPicker
+        task={task}
+        parent={parent}
+        onSelect={(parentTaskId) => onUpdate({ parentTaskId })}
         triggerClassName={RAIL_ROW_CLASS}
       />
 
-      <div className="mb-1 mt-3 text-2xs font-semibold text-muted-foreground">
-        Checks
-      </div>
-      <div className="flex flex-wrap items-center gap-1 py-0.5">
-        {task.checks.map((check) => (
-          <CheckChip
-            key={check}
-            check={check}
-            onRemove={() =>
-              onUpdate({
-                checks: task.checks.filter((item) => item !== check),
-              })
-            }
-          />
-        ))}
-        <ChecksMenu task={task} onUpdate={onUpdate}>
-          <button
-            type="button"
-            aria-label="Edit checks"
-            className="inline-flex items-center rounded-md border border-dashed border-border px-1.5 py-0.5 text-muted-foreground hover:border-input hover:text-foreground"
-          >
-            <Icon name="Plus" className="size-3" />
-          </button>
-        </ChecksMenu>
-      </div>
+      {task.flow ? (
+        <>
+          <div className="mb-1 mt-3 text-2xs font-semibold text-muted-foreground">
+            Flow
+          </div>
+          <div className="flex flex-wrap items-center gap-1 py-0.5">
+            <FlowLink
+              flow={task.flow}
+              className="inline-flex items-center rounded-md bg-muted px-1.5 py-0.5 text-xs text-foreground"
+            />
+          </div>
+        </>
+      ) : null}
 
       <div className="mb-1 mt-3 text-2xs font-semibold text-muted-foreground">
         Labels
@@ -1012,11 +989,12 @@ const CHIP_STATIC_CLASS =
 
 /** Compact property chips shown under the title when the rail is hidden.
  *  Mirrors the rail's fields as pills — every set property (status, priority,
- *  type, estimate, project, labels, checks) plus the due date, which stays
+ *  type, estimate, project, labels, flow) plus the due date, which stays
  *  visible even when empty as a ghost pill. Carries the task's single
  *  DispatchControl full-width beneath the pills. */
 export function InlineProperties({
   task,
+  parent,
   project,
   labels,
   presets,
@@ -1031,7 +1009,6 @@ export function InlineProperties({
   const taskLabels = (labels ?? []).filter((label) =>
     task.labelIds.includes(label.id),
   );
-  const checks = task.checks ?? [];
   return (
     <div className={cn("flex flex-col gap-2", className)}>
       <div className="flex flex-wrap items-center gap-1.5">
@@ -1041,7 +1018,14 @@ export function InlineProperties({
           onUpdate={onUpdate}
           triggerClassName={CHIP_CLASS}
         />
-        <DueDateMenu
+        <PlanDateMenu
+          kind="start"
+          task={task}
+          onUpdate={onUpdate}
+          triggerClassName={task.startDate ? CHIP_CLASS : CHIP_GHOST_CLASS}
+        />
+        <PlanDateMenu
+          kind="due"
           task={task}
           onUpdate={onUpdate}
           triggerClassName={task.dueDate ? CHIP_CLASS : CHIP_GHOST_CLASS}
@@ -1073,24 +1057,18 @@ export function InlineProperties({
             triggerClassName={CHIP_CLASS}
           />
         ) : null}
-        <PlacementPicker
+        <AssigneePicker
           projectId={task.projectId}
-          field="assignee"
           value={task.assignee ?? null}
-          assignee={task.assignee ?? null}
           onSelect={(assignee) => onUpdate({ assignee })}
           triggerClassName={task.assignee ? CHIP_CLASS : CHIP_GHOST_CLASS}
         />
-        {task.assignee ? (
-          <PlacementPicker
-            projectId={task.projectId}
-            field="epic"
-            value={task.epic ?? null}
-            assignee={task.assignee}
-            onSelect={(epic) => onUpdate({ epic })}
-            triggerClassName={task.epic ? CHIP_CLASS : CHIP_GHOST_CLASS}
-          />
-        ) : null}
+        <ParentPicker
+          task={task}
+          parent={parent}
+          onSelect={(parentTaskId) => onUpdate({ parentTaskId })}
+          triggerClassName={parent ? CHIP_CLASS : CHIP_GHOST_CLASS}
+        />
         {project ? (
           <span className={CHIP_STATIC_CLASS}>
             <span
@@ -1121,24 +1099,9 @@ export function InlineProperties({
             <Icon name="Plus" className="size-3" />
           </button>
         </LabelsMenu>
-        {checks.map((check) => (
-          <CheckChip
-            key={check}
-            check={check}
-            onRemove={() =>
-              onUpdate({ checks: checks.filter((item) => item !== check) })
-            }
-          />
-        ))}
-        <ChecksMenu task={task} onUpdate={onUpdate}>
-          <button
-            type="button"
-            aria-label="Edit checks"
-            className="inline-flex items-center rounded-md border border-dashed border-border px-2 py-1 text-muted-foreground hover:border-input hover:text-foreground"
-          >
-            <Icon name="Plus" className="size-3" />
-          </button>
-        </ChecksMenu>
+        {task.flow ? (
+          <FlowLink flow={task.flow} className={CHIP_STATIC_CLASS} />
+        ) : null}
       </div>
       <DispatchControl
         taskId={task.id}

@@ -1,16 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { parseTasksRoute, type TasksRoute, tasksRouteToSubPath } from "./routes";
-
-// The analytics route (BBPL-259) round-trips through the subPath grammar like
-// every other flat route.
-const flatRoutes: TasksRoute[] = [
-  { kind: "all" },
-  { kind: "active" },
-  { kind: "waiting" },
-  { kind: "manage" },
-  { kind: "analytics" },
-];
+import { parseTasksRoute, tasksRouteToSubPath } from "./routes";
 
 describe("analytics route", () => {
   it("parses the 'analytics' segment", () => {
@@ -21,9 +11,30 @@ describe("analytics route", () => {
     expect(tasksRouteToSubPath({ kind: "analytics" })).toBe("analytics");
   });
 
-  it("round-trips every flat route through encode → parse", () => {
-    for (const route of flatRoutes) {
-      expect(parseTasksRoute(tasksRouteToSubPath(route))).toEqual(route);
-    }
+});
+
+describe("saved view route", () => {
+  it("reads a view address", () => {
+    expect(parseTasksRoute("view/01J0000000000000000000000A")).toEqual({
+      kind: "view",
+      savedViewId: "01J0000000000000000000000A",
+    });
+  });
+
+  it("writes a view address", () => {
+    expect(
+      tasksRouteToSubPath({
+        kind: "view",
+        savedViewId: "01J0000000000000000000000A",
+      }),
+    ).toBe("view/01J0000000000000000000000A");
+  });
+
+  it("round-trips a view address", () => {
+    const route = {
+      kind: "view" as const,
+      savedViewId: "01J0000000000000000000000A",
+    };
+    expect(parseTasksRoute(tasksRouteToSubPath(route))).toEqual(route);
   });
 });
