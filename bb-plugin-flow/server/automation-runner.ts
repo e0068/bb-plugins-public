@@ -21,6 +21,7 @@ import {
   onRetryDropped,
   onRunRetry,
   onRunStart,
+  onSkipQueued,
   onStepDone,
   onStepFailed,
   onStepStarted,
@@ -29,6 +30,8 @@ import {
   dueActions,
   interruptedAutomation,
   pendingAutomation,
+  queuedSkips,
+  skipQueueable,
   retryDelay,
   retryDueIn,
   stageLiveIcon,
@@ -38,7 +41,7 @@ import {
   type RetryPolicy,
   type RunStep,
 } from "../core/automation-run";
-import { automationRpcContract, type AutomationScript, type FlowProgress, type RunningIcon, type RunningThread, type StageSettings, type WorkStage } from "../shared/contract";
+import { automationRpcContract, type AutomationScript, type FlowProgress, type RunningIcon, type RunningThread, type StageSettings, type StepAnswer, type WorkStage } from "../shared/contract";
 import type { AutomationsBridge } from "./automations";
 import type { ProgressStore, ThreadState } from "./progress";
 import type { DecisionStore } from "./store";
@@ -87,10 +90,13 @@ export interface AutomationRunner {
   advance(threadId: string): Promise<void>;
   /** Продолжает только прерванный прогон треда — при загрузке плагина; новых автоматизаций не начинает. */
   resume(threadId: string): Promise<void>;
-  /** Снимает ошибку упавшего шага и в фоне продолжает с него цепочку; `false` — этап не падал или прогон уже идёт. Назначенный автоповтор снимается. */
-  retry(threadId: string, stageId: string): Promise<boolean>;
-  /** Закрывает упавший шаг без исполнения — эффект уже есть или не нужен — и в фоне продолжает цепочку. */
-  skip(threadId: string, stageId: string): Promise<boolean>;
+  /** Снимает ошибку упавшего шага и в фоне продолжает с него цепочку; отказ — этап не падал, `busy` — прогон треда уже идёт. Назначенный автоповтор снимается. */
+  retry(threadId: string, stageId: string): Promise<StepAnswer>;
+  /**
+   * Закрывает упавший шаг без исполнения — эффект уже есть или не нужен — и в фоне продолжает цепочку.
+   * Тред занят, а шаг упал или идёт попытка его автоповтора, — пропуск запоминается и применяется, когда попытка упадёт.
+   */
+  skip(threadId: string, stageId: string): Promise<StepAnswer>;
   /** Нажатие владельца на шаг этапа Action: `false` — этап не ждёт нажатия или шаг уже идёт. */
   runActionStep(threadId: string, stageId: string): Promise<boolean>;
   /** Треды, где сейчас идёт работа — ход агента на этапе или прогон автоматизации, — и значок этапа; ждущие владельца не входят. */
@@ -202,8 +208,14 @@ export const createAutomationRunner = (deps: AutomationRunnerDeps): AutomationRu
     for (const step of steps.slice(from)) {
       const outcome = await execute(stage, step, threadId);
       if (!outcome.ok) {
+        const track = (await deps.progress.get(threadId))?.stages[stage.id];
+        // Пропуск, запомненный во время этой попытки, закроет шаг сразу за ней: ни ожидания владельца, ни тоста «шаг упал».
+        if (track?.run?.skipQueued === true) {
+          await deps.progress.update(threadId, (p) => onStepFailed(p, stage.id, outcome.error, deps.now()));
+          return false;
+        }
         // Шаг Action повторяет только владелец: его шаги идут по нажатию.
-        const delay = isActionStage(stage) ? null : retryDelay(policy(), (await deps.progress.get(threadId))?.stages[stage.id]);
+        const delay = isActionStage(stage) ? null : retryDelay(policy(), track);
         const retryAt = delay === null ? undefined : new Date(Date.parse(deps.now()) + delay).toISOString();
         // Упавший шаг ждёт владельца: с этой минуты этап простаивает, а не работает. Автоповтор кнопки не отнимает.
         await deps.progress.update(threadId, (p) => onIdleOpen(onStepFailed(p, stage.id, outcome.error, deps.now(), retryAt), stage.id, deps.now()));
@@ -300,7 +312,13 @@ export const createAutomationRunner = (deps: AutomationRunnerDeps): AutomationRu
   const release = (threadId: string, work: Promise<void>): Promise<void> => {
     const done = (async () => {
       await work.catch(deps.onError);
-      while (woken.delete(threadId)) await drive(threadId).catch(deps.onError);
+      // Пропуски, запомненные во время упавшей попытки, применяются, пока тред ещё за этой работой: свободный тред перехватило бы чужое пробуждение.
+      // Тред отпускается только синхронно с последней проверкой `woken`: пробуждение, пришедшее во время чтения, ещё раз проходит цепочку.
+      for (;;) {
+        while (woken.delete(threadId)) await drive(threadId).catch(deps.onError);
+        if (await applyQueuedSkip(threadId).catch((error: unknown) => (deps.onError(error), false))) continue;
+        if (!woken.has(threadId)) break;
+      }
       active.delete(threadId);
       await settleSelfUpdate().catch(deps.onError);
     })();
@@ -323,23 +341,61 @@ export const createAutomationRunner = (deps: AutomationRunnerDeps): AutomationRu
   };
 
   /** Выход из упавшего шага: правка записи, снятие ожидания и цепочка с шага `from` в фоне. */
-  const unblock = async (threadId: string, stageId: string, change: (p: FlowProgress) => FlowProgress, from: (at: number) => number): Promise<boolean> => {
-    if (!claim(threadId)) return false;
+  type Exit = { change: (p: FlowProgress) => FlowProgress; from: (at: number) => number };
+
+  /** Выход из упавшего шага в занятом этой работой треде: правка записи, снятие ожидания и цепочка с шага `from`; `null` — шаг не падал. */
+  const exitWork = async (threadId: string, stageId: string, { change, from }: Exit): Promise<(() => Promise<void>) | null> => {
     disarm(threadId, stageId);
     const failed = await failedRun(threadId, stageId);
-    if (failed === null) {
-      active.delete(threadId);
-      return false;
-    }
-    const work = async () => {
+    if (failed === null) return null;
+    return async () => {
       await deps.progress.update(threadId, change);
       await deps.store.clearAwaiting(threadId, awaitingId(stageId));
       if (!(await runSteps(threadId, failed.stage, failed.run.steps, from(failed.run.at)))) return;
       const last = (await chain(threadId)) ?? failed.stage;
       await wakeIfAgentNext(threadId, isActionStage(failed.stage) ? "action" : "automation", last);
     };
+  };
+
+  /** Выход из упавшего шага по нажатию или таймеру: тред берётся, работа идёт в фоне. */
+  const unblock = async (threadId: string, stageId: string, exit: Exit): Promise<StepAnswer> => {
+    if (!claim(threadId)) return { started: false, busy: true };
+    const work = await exitWork(threadId, stageId, exit);
+    if (work === null) {
+      active.delete(threadId);
+      return { started: false };
+    }
     void release(threadId, work());
+    return { started: true };
+  };
+
+  const skipExit = (stageId: string): Exit => ({ change: (p) => onStepDone(onIdleClose(p, stageId, deps.now()), stageId, deps.now()), from: (at) => at + 1 });
+
+  // Запомненный пропуск применяется один раз на нажатие: пропуск, который не смог записаться, не крутится по кругу через `release`.
+  const skipsTried = new Set<string>();
+
+  /** Один запомненный пропуск упавшей попытки — внутри работы, которая держит тред; `false` — применять нечего. */
+  const applyQueuedSkip = async (threadId: string): Promise<boolean> => {
+    const record = await deps.progress.get(threadId);
+    const stageId = (record === null ? [] : queuedSkips(record)).find((id) => !skipsTried.has(timerKey(threadId, id)));
+    if (stageId === undefined) return false;
+    skipsTried.add(timerKey(threadId, stageId));
+    const work = await exitWork(threadId, stageId, skipExit(stageId));
+    await work?.().catch(deps.onError);
     return true;
+  };
+
+  /** Пропуск в занятом треде: упавший шаг или попытка его автоповтора — пропуск запоминается до итога попытки, и назначенный повтор снимается. */
+  const queueSkip = async (threadId: string, stageId: string): Promise<StepAnswer> => {
+    const track = (await deps.progress.get(threadId))?.stages[stageId];
+    if (track === undefined || !skipQueueable(track)) return { started: false };
+    disarm(threadId, stageId);
+    skipsTried.delete(timerKey(threadId, stageId));
+    await deps.progress.annotate(threadId, (p) => onSkipQueued(p, stageId));
+    // Тред занят — его работа ещё раз пройдёт цикл и прочтёт отметку; освободился, пока она писалась, — пропуск применяется сам.
+    if (active.has(threadId)) woken.add(threadId);
+    else await unblock(threadId, stageId, skipExit(stageId));
+    return { started: true };
   };
 
   /**
@@ -349,7 +405,7 @@ export const createAutomationRunner = (deps: AutomationRunnerDeps): AutomationRu
   const autoRetry = async (threadId: string, stageId: string): Promise<void> => {
     if (policy().seconds <= 0) return void (await deps.progress.annotate(threadId, (p) => onRetryDropped(p, stageId)));
     if (active.has(threadId)) return arm(threadId, stageId, BUSY_RETRY_MS);
-    await unblock(threadId, stageId, (p) => onRunRetry(onIdleClose(p, stageId, deps.now()), stageId, true), (at) => at);
+    await unblock(threadId, stageId, { change: (p) => onRunRetry(onIdleClose(p, stageId, deps.now()), stageId, true), from: (at) => at });
   };
 
   /** Назначенные автоповторы треда заново — после загрузки плагина таймеров прежнего процесса нет; срок вышел — повтор сразу. */
@@ -398,7 +454,7 @@ export const createAutomationRunner = (deps: AutomationRunnerDeps): AutomationRu
       if (claim(threadId)) await release(threadId, drive(threadId, true));
     },
     // Повтор снимает ошибку и закрывает простой: этап снова пошёл.
-    retry: (threadId, stageId) => unblock(threadId, stageId, (p) => onRunRetry(onIdleClose(p, stageId, deps.now()), stageId), (at) => at),
+    retry: (threadId, stageId) => unblock(threadId, stageId, { change: (p) => onRunRetry(onIdleClose(p, stageId, deps.now()), stageId), from: (at) => at }),
     runActionStep: async (threadId, stageId) => {
       // Идущий шаг не перезапускается: второе нажатие отказывает сразу, не дожидаясь первого.
       if ((await deps.progress.get(threadId).catch(() => null))?.stages[stageId]?.run?.busy === true) return false;
@@ -452,7 +508,7 @@ export const createAutomationRunner = (deps: AutomationRunnerDeps): AutomationRu
       return lines;
     },
     // Пропуск тоже снимает этап с простоя: владелец ответил, ждать больше нечего.
-    skip: (threadId, stageId) => unblock(threadId, stageId, (p) => onStepDone(onIdleClose(p, stageId, deps.now()), stageId, deps.now()), (at) => at + 1),
+    skip: (threadId, stageId) => (active.has(threadId) ? queueSkip(threadId, stageId) : unblock(threadId, stageId, skipExit(stageId))),
     running: async () => {
       // Список провайдеров один на опрос и только когда он нужен.
       let brands: Promise<readonly HostProvider[]> | undefined;
@@ -494,8 +550,8 @@ export const createAutomationRunner = (deps: AutomationRunnerDeps): AutomationRu
 export const registerAutomationRunner = (bb: Pick<BbPluginApi, "rpc">, runner: AutomationRunner): void => {
   bb.rpc.register(automationRpcContract, {
     // Повтор отвечает сразу, шаги идут в фоне: мёрдж ждёт GitHub минутами.
-    retryAutomation: async ({ threadId, stage }) => ({ started: await runner.retry(threadId, stage) }),
-    skipAutomationStep: async ({ threadId, stage }) => ({ started: await runner.skip(threadId, stage) }),
+    retryAutomation: ({ threadId, stage }) => runner.retry(threadId, stage),
+    skipAutomationStep: ({ threadId, stage }) => runner.skip(threadId, stage),
     // Шаг Action идёт в фоне: ответ приходит сразу, а кнопка держит лоадер до записи прогресса.
     runActionStep: async ({ threadId, stage }) => ({ started: await runner.runActionStep(threadId, stage) }),
     runningThreads: () => runner.running(),

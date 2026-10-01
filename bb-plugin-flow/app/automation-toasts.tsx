@@ -11,7 +11,7 @@ import { toast } from "sonner";
 import { AUTOMATION_NOTICE_CHANNEL, noticeCard, type AutomationNotice, type NoticeAction, type NoticeCard, type NoticeWords, type Segment } from "../core/automation-notice";
 import { Icon, type IconName } from "../components/ui/icon";
 import type { Messages } from "../lib/messages";
-import type { automationRpcContract } from "../shared/contract";
+import type { StepAnswer, automationRpcContract } from "../shared/contract";
 import { LocaleProvider } from "./locale";
 import { useLocale, useMessages } from "./locale-context";
 import { FLOWS_PANEL_PATH } from "./panel-path";
@@ -142,15 +142,21 @@ const actionLabel = (action: NoticeAction, t: Messages): string => {
   }
 };
 
-/** Повтор и пропуск — те же RPC, что у кнопок баннера; «не начат» значит, что шаг уже не ждёт. */
-const answerStep = (method: "retryAutomation" | "skipAutomationStep", notice: AutomationNotice, deps: Deps): void => {
-  void deps.rpc.call(method, { threadId: notice.threadId, stage: notice.stageId }).then(
-    ({ started }) => {
-      if (!started) showPlain("error", deps.t.notice.notWaiting(notice.stageName), deps.t);
+/**
+ * Ответ на «Повторить» и «Пропустить» — у тоста и у полосы прогона: отказ и упавший вызов владелец видит тостом,
+ * а не гаснущей кнопкой. «Не начат» значит, что шаг уже не ждёт; `busy` — что Flow сейчас ведёт тред.
+ */
+export const reportStepAnswer = (answer: Promise<StepAnswer>, stageName: string, t: Messages): Promise<void> =>
+  answer.then(
+    ({ started, busy }) => {
+      if (!started) showPlain("error", busy === true ? t.notice.busy(stageName) : t.notice.notWaiting(stageName), t);
     },
-    (error: unknown) => showPlain("error", error instanceof Error ? error.message : String(error), deps.t),
+    (error: unknown) => showPlain("error", error instanceof Error ? error.message : String(error), t),
   );
-};
+
+/** Повтор и пропуск — те же RPC, что у кнопок баннера. */
+const answerStep = (method: "retryAutomation" | "skipAutomationStep", notice: AutomationNotice, deps: Deps): void =>
+  void reportStepAnswer(deps.rpc.call(method, { threadId: notice.threadId, stage: notice.stageId }), notice.stageName, deps.t);
 
 const actionOf = (action: NoticeAction, notice: AutomationNotice, deps: Deps): (() => void) => {
   switch (action.kind) {

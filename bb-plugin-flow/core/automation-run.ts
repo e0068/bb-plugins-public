@@ -152,7 +152,7 @@ export const retryPolicyOf = (settings: Pick<FlowSettings, "retryInSeconds" | "r
 
 /** Через сколько мс повторить упавший шаг сам; `null` — автоповтор выключен или попытки этого шага кончились, шаг ждёт владельца. */
 export const retryDelay = (policy: RetryPolicy, track: StageTrack | undefined): number | null => {
-  if (policy.seconds <= 0) return null;
+  if (policy.seconds <= 0 || track?.run?.skipQueued === true) return null;
   const used = track?.run?.autoRetries ?? 0;
   return policy.attempts === 0 || used < policy.attempts ? policy.seconds * 1000 : null;
 };
@@ -187,7 +187,7 @@ export const onStepDone = (progress: FlowProgress, stageId: string, at: string, 
     const next = track.run.at + 1;
     const steps = withDetail(track.run.steps, track.run.at, detail);
     // Попытки автоповтора считаются на шаг: следующий шаг начинает со своих.
-    const { autoRetries: _used, ...run } = idle(track.run);
+    const { autoRetries: _used, skipQueued: _skip, ...run } = idle(track.run);
     return { ...track, run: { ...run, steps, at: next, error: null }, ...(next >= track.run.steps.length ? { finishedAt: at } : {}) };
   });
 
@@ -214,6 +214,29 @@ export const onRunRetry = (progress: FlowProgress, stageId: string, auto = false
     const { autoRetries: used, ...run } = idle(track.run);
     return { ...track, run: { ...run, error: null, ...(auto ? { autoRetries: (used ?? 0) + 1 } : {}) } };
   });
+
+/**
+ * «Пропустить», нажатый, пока Flow ведёт тред попыткой автоповтора: пропуск запоминается, а назначенный повтор снимается.
+ * Попытка упадёт — шаг закроется пропуском, пройдёт — пропускать будет нечего. Этап без прогона или закрытый не меняется.
+ */
+export const onSkipQueued = (progress: FlowProgress, stageId: string): FlowProgress => {
+  const track = progress.stages[stageId];
+  if (track?.run === undefined || track.finishedAt !== undefined) return progress;
+  const { retryAt: _at, ...run } = track.run;
+  return patch(progress, stageId, () => ({ ...track, run: { ...run, skipQueued: true } }));
+};
+
+/**
+ * Можно ли запомнить пропуск у этапа: шаг упал или идёт попытка автоповтора упавшего шага — `autoRetries` ставит только
+ * автоповтор, а `onStepDone` снимает. Шаг, который ещё не падал, пропуском с устаревшего тоста не закрывается.
+ */
+export const skipQueueable = (track: StageTrack): boolean => isFailed(track) || (track.finishedAt === undefined && (track.run?.autoRetries ?? 0) > 0);
+
+/** Этапы, где запомненный пропуск пора применить: попытка, во время которой его нажали, упала. */
+export const queuedSkips = (progress: FlowProgress): string[] =>
+  Object.entries(progress.stages)
+    .filter(([, track]) => isFailed(track) && track.run?.skipQueued === true)
+    .map(([id]) => id);
 
 /** Назначенный автоповтор снят — настройку выключили, пока шаг ждал: шаг ждёт владельца. */
 export const onRetryDropped = (progress: FlowProgress, stageId: string): FlowProgress =>
@@ -285,7 +308,9 @@ export const automationView = (stage: WorkStage, track: StageTrack): { steps: St
   steps: (track.run?.steps ?? stepsOf(stage)).map((step, index) => {
     const state = stepState(track, index, isActionStage(stage));
     const failed = state === "fail";
-    return { id: step.id, label: step.label, state, error: failed ? (track.run?.error ?? null) : null, detail: step.detail ?? null, retryAt: failed ? (track.run?.retryAt ?? null) : null };
+    // У упавшего шага кнопки остаются и с отметкой: пропуск, который не применился, владелец нажмёт снова.
+    const skipQueued = state === "now" && track.run?.skipQueued === true;
+    return { id: step.id, label: step.label, state, error: failed ? (track.run?.error ?? null) : null, detail: step.detail ?? null, retryAt: failed ? (track.run?.retryAt ?? null) : null, skipQueued };
   }),
 });
 

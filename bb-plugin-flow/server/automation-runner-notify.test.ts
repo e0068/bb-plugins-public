@@ -83,7 +83,7 @@ describe("исполнитель сообщает об итоге этапа-а�
     await closeReview();
     await vi.waitFor(() => expect(events).toHaveLength(1));
     refuse = false;
-    expect(await runner.retry(THREAD, "land")).toBe(true);
+    expect(await runner.retry(THREAD, "land")).toEqual({ started: true });
     await vi.waitFor(() => expect(events.map((e) => e.kind)).toEqual(["failed", "done"]));
   });
 

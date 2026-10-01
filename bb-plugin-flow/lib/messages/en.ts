@@ -181,6 +181,7 @@ export const en: Messages = {
     retryStep: (name) => `Retry step ${name}`,
     skip: "Skip",
     skipStep: (name) => `Skip step ${name}`,
+    skipQueued: "Skipping after this attempt",
     retryIn: (seconds) => `retry in ${seconds} s`,
     steps: (name) => `${name}: steps`,
     actionWaiting: (name, step, total) => `Stage ${quote(name)} waits for you · step ${step} of ${total}`,
@@ -460,5 +461,6 @@ export const en: Messages = {
     skip: "Skip",
     dismiss: "Dismiss",
     notWaiting: (stage: string) => `Stage ${quote(stage)} is no longer waiting: the step was retried or skipped already`,
+    busy: (stage: string) => `Flow is running stage ${quote(stage)} right now — for example, retrying the step. Press again once the attempt ends`,
   },
 };

@@ -15,6 +15,7 @@ import { stageLabel } from "../core/stages";
 import { Icon } from "../components/ui/icon";
 import { cn } from "../lib/utils";
 import type { ContextFillView, ProgressStage, ProgressView, automationRpcContract, progressRpcContract } from "../shared/contract";
+import { reportStepAnswer } from "./automation-toasts";
 import { ResultAnchor } from "./cells";
 import { useFileRoots } from "./file-roots";
 import { LocaleProvider } from "./locale";
@@ -215,6 +216,10 @@ export function AutomationSteps({ stage, threadId }: { stage: ProgressStage; thr
             ) : (
               <span />
             )
+          ) : step.skipQueued ? (
+            <span data-skip-queued className="whitespace-nowrap px-1.5 text-[11px] text-muted-foreground">
+              {t.progress.skipQueued}
+            </span>
           ) : step.state === "fail" ? (
             <span className="flex items-baseline gap-0.5">
               {step.retryAt !== null && <RetryCountdown at={step.retryAt} />}
@@ -226,7 +231,7 @@ export function AutomationSteps({ stage, threadId }: { stage: ProgressStage; thr
                   disabled={busy}
                   onClick={() => {
                     setBusy(true);
-                    void rpc.call(method, { threadId, stage: stage.id }).finally(() => setBusy(false));
+                    void reportStepAnswer(rpc.call(method, { threadId, stage: stage.id }), stage.name, t).finally(() => setBusy(false));
                   }}
                   className={cn("rounded px-1.5 text-[11px] hover:bg-state-hover disabled:opacity-50", method === "retryAutomation" ? "text-foreground" : "text-muted-foreground")}
                 >
