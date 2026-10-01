@@ -281,7 +281,7 @@ const tombstoneStep = (slug: string, expected: number | undefined, updatedAt: st
 /** Only a network that does not answer moves the link: a refused token or a refused statement is the database answering. */
 const linkFailed = (error: HranaError): boolean => error.kind === "unreachable";
 
-function failureOf(error: HranaError): Error {
+export function failureOf(error: HranaError): Error {
   switch (error.kind) {
     case "unreachable":
       return new DatabaseUnreachable();
@@ -313,6 +313,19 @@ function mirrorChanged(before: Mirror, after: Mirror): boolean {
     const known = before.get(slug);
     return known === undefined || known.revision !== file.revision || known.updatedAt !== file.updatedAt || known.filePath !== file.filePath;
   });
+}
+
+/**
+ * The board a database holds, read without opening a repository: one query,
+ * no mirror of its tasks. A database never connected has no board table yet,
+ * and a refused statement reads as "no board"; a lost link or a refused token
+ * is the failure itself.
+ */
+export async function peekBoard(client: HranaClient): Promise<HranaResult<BoardRow | null>> {
+  const result = await client.execute("SELECT name, prefix FROM board WHERE id = 1");
+  if (!result.ok) return result.error.kind === "sql" ? { ok: true, value: null } : result;
+  const head = decodeBoardHead(result.value.rows);
+  return { ok: true, value: head.name === "" && head.prefix === "" ? null : { name: head.name, prefix: head.prefix } };
 }
 
 export function createDbRepo(client: HranaClient, options: DbRepoOptions): DbRepo {

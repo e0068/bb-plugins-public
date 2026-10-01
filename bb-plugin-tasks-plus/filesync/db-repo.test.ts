@@ -7,7 +7,7 @@ import { renderTaskFile } from "./task-file.js";
 const dbRepoPath = "./db-repo.js";
 const repoPath = "./task-repo.js";
 const hranaPath = "../remote/hrana.js";
-const { createDbRepo } = await planned<typeof import("./db-repo.js")>(() => import(/* @vite-ignore */ dbRepoPath));
+const { createDbRepo, peekBoard } = await planned<typeof import("./db-repo.js")>(() => import(/* @vite-ignore */ dbRepoPath));
 const { WriteConflict, DatabaseUnreachable, DatabaseAuthFailed } = await planned<typeof import("./task-repo.js")>(
   () => import(/* @vite-ignore */ repoPath),
 );
@@ -216,5 +216,31 @@ describe("when the database cannot be reached", () => {
     const repo = createDbRepo(createHranaClient({ url, token: "wrong", fetch: fake.fetch }), { url });
     opened.push(repo);
     expect(await rejection(repo.sync())).toBeInstanceOf(DatabaseAuthFailed);
+  });
+});
+
+describe("the board a database holds, read before connecting", () => {
+  it("names the board a connected database holds", async () => {
+    const { fake, url, a } = machines();
+    await a.writeBoard({ name: "Remote", prefix: "REM" });
+    const client = createHranaClient({ url, token: "t1", fetch: fake.fetch });
+    expect(await peekBoard(client)).toEqual({ ok: true, value: { name: "Remote", prefix: "REM" } });
+  });
+
+  it("finds no board in a database never connected, or one whose board has no name yet", async () => {
+    const fake = createHranaFake();
+    const { url } = fake.addDatabase(HOST, "t1");
+    const client = createHranaClient({ url, token: "t1", fetch: fake.fetch });
+    expect(await peekBoard(client)).toEqual({ ok: true, value: null });
+    const { fake: other, url: otherUrl, a } = machines();
+    await a.sync();
+    expect(await peekBoard(createHranaClient({ url: otherUrl, token: "t1", fetch: other.fetch }))).toEqual({ ok: true, value: null });
+  });
+
+  it("answers a refused token and a lost link as failures, not as an empty database", async () => {
+    const { fake, url } = machines();
+    expect(await peekBoard(createHranaClient({ url, token: "wrong", fetch: fake.fetch }))).toEqual({ ok: false, error: { kind: "auth" } });
+    fake.setOffline(true);
+    expect(await peekBoard(createHranaClient({ url, token: "t1", fetch: fake.fetch }))).toMatchObject({ ok: false, error: { kind: "unreachable" } });
   });
 });

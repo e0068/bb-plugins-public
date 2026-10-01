@@ -22,13 +22,13 @@ export function tokenSource(input: { token?: string | null }, address: { token: 
 }
 
 export type ConnectPlan =
-  | { kind: "move"; boardId: string; name: string; prefix: string }
+  | { kind: "copy"; sourceId: string; name: string; prefix: string }
   | { kind: "adopt"; name: string; prefix: string }
   | { kind: "fresh"; name: string; prefix: string }
   | { kind: "refuse"; code: "database_not_empty" | "folder_connect_failed"; message: string };
 
 export interface ConnectInput {
-  moveFrom: { id: string; name: string; prefix: string } | null;
+  copyFrom: { id: string; name: string; prefix: string } | null;
   name?: string | null;
   prefix?: string | null;
 }
@@ -44,22 +44,23 @@ const PREFIX_PATTERN = /^[A-Z][A-Z0-9]{0,9}$/;
 const refuse = (code: "database_not_empty" | "folder_connect_failed", message: string): ConnectPlan => ({ kind: "refuse", code, message });
 
 /**
- * A folder board moves only into an empty database, under its own name and
- * prefix. A database that already holds a board gives the new board its name
- * and prefix. An empty database starts a board with the name and prefix given.
+ * A folder board is copied only into an empty database, under its own name
+ * and prefix; the folder board stays as it is. A database that already holds
+ * a board gives the new board its name and prefix. An empty database starts
+ * a board with the name and prefix given.
  */
 export function planConnect(input: ConnectInput, facts: DatabaseFacts): ConnectPlan {
   const empty = facts.board === null && facts.taskCount === 0;
-  if (input.moveFrom !== null) {
+  if (input.copyFrom !== null) {
     return empty
-      ? { kind: "move", boardId: input.moveFrom.id, name: input.moveFrom.name, prefix: input.moveFrom.prefix }
-      : refuse("database_not_empty", "This database already holds a board. Tasks can only be moved into an empty database.");
+      ? { kind: "copy", sourceId: input.copyFrom.id, name: input.copyFrom.name, prefix: input.copyFrom.prefix }
+      : refuse("database_not_empty", "This database already holds a board. Tasks can only be copied into an empty database.");
   }
   if (facts.board !== null) return { kind: "adopt", name: facts.board.name, prefix: facts.board.prefix };
   const name = (input.name ?? "").trim();
   const prefix = (input.prefix ?? "").trim().toUpperCase();
-  if (name === "" || prefix === "") return refuse("folder_connect_failed", "This database is empty: give its board a name and a prefix.");
-  if (!PREFIX_PATTERN.test(prefix)) return refuse("folder_connect_failed", "The prefix must be 1 to 10 letters or digits, starting with a letter.");
+  if (name === "" || prefix === "") return refuse("folder_connect_failed", "This database is empty: give its board a name and a key prefix.");
+  if (!PREFIX_PATTERN.test(prefix)) return refuse("folder_connect_failed", "The key prefix must be 1 to 10 letters or digits, starting with a letter.");
   return { kind: "fresh", name, prefix };
 }
 

@@ -113,11 +113,19 @@ const connectDatabaseInputSchema = z
     token: z.string().optional(),
     /** The Turso account token typed in place of a missing or refused one; saved once Turso accepts it. */
     tursoApiToken: z.string().optional(),
-    moveFromBoardId: idSchema.optional(),
+    /** A folder board whose tasks are copied into the database; the folder board stays as it is. */
+    copyFromBoardId: idSchema.optional(),
     name: z.string().optional(),
     prefix: z.string().optional(),
   })
   .strict();
+
+const boardRowSchema = z.object({ name: z.string(), prefix: z.string() }).strict();
+
+const inspectDatabaseResultSchema = z.discriminatedUnion("ok", [
+  z.object({ ok: z.literal(true), board: boardRowSchema.nullable() }).strict(),
+  z.object({ ok: z.literal(false), error: folderDomainErrorSchema }).strict(),
+]);
 
 const connectDatabaseResultSchema = z.discriminatedUnion("ok", [
   z.object({ ok: z.literal(true) }).strict(),
@@ -149,10 +157,10 @@ export const foldersRpcContract = defineRpcContract({
     input: z.object({ projectId: idSchema }).strict(),
     output: z.object({ ok: z.literal(true) }).strict(),
   },
-  /** Makes a database for a board with this prefix; the account token, when given, is saved. Answers the address, never a token. */
+  /** Makes a database, named after the prefix when one is given; the account token, when given, is saved. Answers the address, never a token. */
   createDatabase: {
     input: z
-      .object({ prefix: z.string(), tursoApiToken: z.string().optional() })
+      .object({ prefix: z.string().optional(), tursoApiToken: z.string().optional() })
       .strict(),
     output: createDatabaseResultSchema,
   },
@@ -160,6 +168,13 @@ export const foldersRpcContract = defineRpcContract({
   listTursoDatabases: {
     input: z.null(),
     output: listTursoDatabasesResultSchema,
+  },
+  /** The board a database already holds, before connecting it — null for an empty one. */
+  inspectDatabase: {
+    input: z
+      .object({ url: z.string(), token: z.string().optional(), tursoApiToken: z.string().optional() })
+      .strict(),
+    output: inspectDatabaseResultSchema,
   },
   connectDatabase: {
     input: connectDatabaseInputSchema,
@@ -184,6 +199,8 @@ export const foldersRpcContract = defineRpcContract({
 export type FoldersRpcContract = typeof foldersRpcContract;
 export type SyncedFolder = z.infer<typeof syncedFolderSchema>;
 export type ConnectDatabaseInput = z.infer<typeof connectDatabaseInputSchema>;
+export type InspectDatabaseResult = z.infer<typeof inspectDatabaseResultSchema>;
+export type BoardRow = z.infer<typeof boardRowSchema>;
 export type SyncedSource = z.infer<typeof syncedSourceSchema>;
 export type TursoDatabaseEntry = z.infer<typeof tursoDatabaseSchema>;
 export type GenerateTursoApiTokenResult = z.infer<typeof generateTursoApiTokenResultSchema>;

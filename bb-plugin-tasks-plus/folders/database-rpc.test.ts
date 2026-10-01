@@ -155,9 +155,42 @@ describe("Connect: a board kept in a database", () => {
   });
 });
 
-describe("Move tasks from a folder", () => {
+describe("Create: a database before its board has a prefix", () => {
+  it("names the database after no prefix when none is given yet", async () => {
+    const a = await machine("Mac mini", { tursoApiToken: turso.accountToken });
+    expect(await a.call("createDatabase", {})).toEqual({ ok: true, url: "libsql://bb-tasks-board-me.turso.io" });
+  });
+});
+
+describe("Inspect: what a database holds, before connecting it", () => {
+  it("names the board a database already holds", async () => {
+    const a = await machine("Mac mini");
+    const url = await createAndConnect(a);
+    const b = await machine("MacBook", { tursoApiToken: turso.accountToken });
+    const inspected = await b.call("inspectDatabase", { url });
+    expect(inspected).toEqual({ ok: true, board: { name: "Remote", prefix: "REM" } });
+    noSecretsIn(inspected);
+  });
+
+  it("finds no board in a database just created", async () => {
+    const a = await machine("Mac mini", { tursoApiToken: turso.accountToken });
+    const created = await a.call<{ url: string }>("createDatabase", { prefix: "REM" });
+    expect(await a.call("inspectDatabase", { url: created.url })).toEqual({ ok: true, board: null });
+  });
+
+  it("says the token was refused rather than calling the database empty", async () => {
+    const a = await machine("Mac mini");
+    hrana.addDatabase("locked-me.turso.io", "right");
+    expect(await a.call("inspectDatabase", { url: "libsql://locked-me.turso.io", token: "wrong" })).toMatchObject({
+      ok: false,
+      error: { code: "database_auth_failed" },
+    });
+  });
+});
+
+describe("Copy tasks from a folder", () => {
   async function folderBoard() {
-    const checkout = mkdtempSync(join(tmpdir(), "move-folder-"));
+    const checkout = mkdtempSync(join(tmpdir(), "copy-folder-"));
     dirs.push(checkout);
     const a = await machine("Mac mini", { tursoApiToken: turso.accountToken }, { id: "proj_x", name: "Repo", path: checkout });
     const added = await a.call<{ ok: boolean; folder: { projectId: string; projectPrefix: string } }>("addSyncedFolder", { bbProjectId: "proj_x", tasksFolder: "docs/tasks" });
@@ -175,65 +208,88 @@ describe("Move tasks from a folder", () => {
   const tasksOf = async (host: TasksHost, boardId: string) =>
     (await host.call<{ tasks: { key: string; status: string; title: string }[] }>("listTasks", { projectId: boardId })).tasks.map((task) => [task.key, task.status, task.title]).sort();
 
-  it("turns the folder board into a database board in place: same id, keys, statuses and comments", async () => {
-    const { a, boardId, prefix, first, snapshot } = await folderBoard();
+  type Board = { id: string; name: string; prefix: string; tasksFolder: string | null; database?: { url: string } | null };
+  const boards = async (host: TasksHost) => (await host.call<{ projects: Board[] }>("listProjects", {})).projects;
+
+  it("leaves the folder board as it was and adds a database board beside it with the same keys, statuses and comments", async () => {
+    const { a, boardId, prefix, snapshot } = await folderBoard();
     const before = await tasksOf(a, boardId);
     const files = snapshot();
     const created = await a.call<{ url: string }>("createDatabase", { prefix });
-    expect(await a.call("connectDatabase", { url: created.url, moveFromBoardId: boardId })).toEqual({ ok: true });
-    const board = (await a.call<{ projects: { id: string; database?: { url: string } | null }[] }>("listProjects", {})).projects.find((p) => p.id === boardId);
-    expect(board?.database).toEqual({ url: created.url });
+    expect(await a.call("connectDatabase", { url: created.url, copyFromBoardId: boardId })).toEqual({ ok: true });
+    const all = await boards(a);
+    const folder = all.find((board) => board.id === boardId);
+    expect(folder).toMatchObject({ tasksFolder: "docs/tasks" });
+    expect(folder?.database ?? null).toBeNull();
     expect(await tasksOf(a, boardId)).toEqual(before);
-    const { comments } = await a.call<{ comments: { body: string }[] }>("listComments", { taskId: first.id });
-    expect(comments.map((comment) => comment.body)).toContain("Looks right.");
     expect(snapshot()).toEqual(files);
-    const next = await a.call<{ task: { key: string } }>("createTask", { projectId: boardId, title: "After the move" });
-    expect(next.task.key).toBe(`${prefix}-3`);
+    const copy = all.find((board) => board.database?.url === created.url);
+    expect(copy).toMatchObject({ name: folder?.name, prefix });
+    expect(copy?.id).not.toBe(boardId);
+    expect(await tasksOf(a, copy!.id)).toEqual(before);
+    const glow = (await a.call<{ tasks: { id: string; title: string }[] }>("listTasks", { projectId: copy!.id })).tasks.find((task) => task.title === "Glow");
+    const { comments } = await a.call<{ comments: { body: string }[] }>("listComments", { taskId: glow!.id });
+    expect(comments.map((comment) => comment.body)).toContain("Looks right.");
   });
 
-  it("refuses to move a folder where two tasks share a key, naming the key, and leaves the board a folder", async () => {
+  it("lists both boards in Folders: the folder row and the database row", async () => {
+    const { a, boardId, prefix } = await folderBoard();
+    const created = await a.call<{ url: string }>("createDatabase", { prefix });
+    expect(await a.call("connectDatabase", { url: created.url, copyFromBoardId: boardId })).toEqual({ ok: true });
+    const { folders } = await a.call<{ folders: { projectId: string; source: { kind: string } }[] }>("listSyncedFolders");
+    expect(folders.find((row) => row.projectId === boardId)?.source.kind).toBe("folder");
+    expect(folders.filter((row) => row.source.kind === "database")).toHaveLength(1);
+  });
+
+  it("keeps on the copy when each task was created and last changed", async () => {
+    const { a, boardId, prefix } = await folderBoard();
+    const times = async (id: string) =>
+      (await a.call<{ tasks: { key: string; createdAt: string; updatedAt: string }[] }>("listTasks", { projectId: id })).tasks
+        .map((task) => [task.key, task.createdAt, task.updatedAt])
+        .sort();
+    const before = await times(boardId);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    const created = await a.call<{ url: string }>("createDatabase", { prefix });
+    expect(await a.call("connectDatabase", { url: created.url, copyFromBoardId: boardId })).toEqual({ ok: true });
+    const copy = (await boards(a)).find((board) => board.database?.url === created.url)!;
+    expect(await times(copy.id)).toEqual(before);
+  });
+
+  it("refuses to copy a folder where two tasks share a key, naming the key, and adds no board", async () => {
     const { a, boardId, prefix, first, checkout } = await folderBoard();
     const inReview = join(checkout, "docs/tasks/in_review");
     const [file] = readdirSync(inReview);
     writeFileSync(join(inReview, "twin.md"), readFileSync(join(inReview, String(file)), "utf8"));
     const created = await a.call<{ url: string }>("createDatabase", { prefix });
-    const result = await a.call<{ ok: boolean; error?: { message: string } }>("connectDatabase", { url: created.url, moveFromBoardId: boardId });
+    const result = await a.call<{ ok: boolean; error?: { message: string } }>("connectDatabase", { url: created.url, copyFromBoardId: boardId });
     expect(result.ok).toBe(false);
     expect(result.error?.message).toContain(first.key);
-    const board = (await a.call<{ projects: { id: string; database: { url: string } | null }[] }>("listProjects", {})).projects.find((p) => p.id === boardId);
-    expect(board?.database ?? null).toBeNull();
+    expect((await boards(a)).some((board) => board.database?.url === created.url)).toBe(false);
   });
 
-  it("keeps when each task was created and last changed", async () => {
-    const { a, boardId, prefix } = await folderBoard();
-    const times = async () =>
-      (await a.call<{ tasks: { key: string; createdAt: string; updatedAt: string }[] }>("listTasks", { projectId: boardId })).tasks
-        .map((task) => [task.key, task.createdAt, task.updatedAt])
-        .sort();
-    const before = await times();
-    await new Promise((resolve) => setTimeout(resolve, 20));
-    const created = await a.call<{ url: string }>("createDatabase", { prefix });
-    expect(await a.call("connectDatabase", { url: created.url, moveFromBoardId: boardId })).toEqual({ ok: true });
-    expect(await times()).toEqual(before);
-  });
-
-  it("keeps the board linked to its bb project: bb tasks create without --project lands on the moved board", async () => {
-    const { a, boardId, prefix } = await folderBoard();
-    const created = await a.call<{ url: string }>("createDatabase", { prefix });
-    expect(await a.call("connectDatabase", { url: created.url, moveFromBoardId: boardId })).toEqual({ ok: true });
-    const output = await a.harness.runCli(["create", "--title", "From the CLI", "--json"], { projectId: "proj_x" });
-    expect(JSON.parse(String((output as { stdout?: string }).stdout ?? output)).task.key).toBe(`${prefix}-3`);
-    expect(await a.call("addSyncedFolder", { bbProjectId: "proj_x", tasksFolder: "docs/tasks" })).toMatchObject({
-      ok: false,
-      error: { code: "folder_already_connected" },
-    });
-  });
-
-  it("refuses to move into a database that already holds a board, and leaves the folder board as it was", async () => {
+  it("refuses to copy into a database that already holds a board, and adds no board", async () => {
     const { a, boardId } = await folderBoard();
     const url = await createAndConnect(a, "OTH", "Other");
-    expect(await a.call("connectDatabase", { url, moveFromBoardId: boardId })).toMatchObject({ ok: false, error: { code: "database_not_empty" } });
-    const board = (await a.call<{ projects: { id: string; database?: unknown }[] }>("listProjects", {})).projects.find((p) => p.id === boardId);
-    expect(board?.database ?? null).toBeNull();
+    const count = (await boards(a)).length;
+    expect(await a.call("connectDatabase", { url, copyFromBoardId: boardId })).toMatchObject({ ok: false, error: { code: "database_not_empty" } });
+    expect(await boards(a)).toHaveLength(count);
+  });
+});
+
+describe("Inspect: which tokens it keeps", () => {
+  it("keeps a token Turso minted for the reading, so connecting needs no new one", async () => {
+    const a = await machine("Mac mini");
+    const url = await createAndConnect(a);
+    const b = await machine("MacBook", { tursoApiToken: turso.accountToken });
+    expect(await b.call("inspectDatabase", { url })).toMatchObject({ ok: true });
+    vi.stubGlobal("fetch", hrana.fetch); // Turso no longer answers: only a kept token opens the database
+    expect(await b.call("inspectDatabase", { url })).toEqual({ ok: true, board: { name: "Remote", prefix: "REM" } });
+  });
+
+  it("keeps no token the person typed: an abandoned address leaves nothing behind", async () => {
+    const a = await machine("Mac mini");
+    hrana.addDatabase("own-me.turso.io", "own-token");
+    expect(await a.call("inspectDatabase", { url: "libsql://own-me.turso.io", token: "own-token" })).toEqual({ ok: true, board: null });
+    expect(await a.call("inspectDatabase", { url: "libsql://own-me.turso.io" })).toMatchObject({ ok: false });
   });
 });
