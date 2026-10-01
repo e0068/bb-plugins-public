@@ -5,7 +5,8 @@
 // rides down to one line — the line of text and the send button. Let go short
 // of that, it stands back up and the keyboard stays. Pulled down by its panel —
 // the row of buttons and the project row under it — only the keyboard goes,
-// let go past the same reach, and the composer stays as it stands. A web page
+// let go past the same reach, and the composer stays as it stands. While text
+// in it is selected, a finger drags the selection and folds nothing. A web page
 // cannot carry the keyboard with a finger, so it goes on the letting go, not in
 // the middle of the pull. A push up over an open composer is held, so the page
 // under it does not shake. A tap on the folded composer opens it again. The
@@ -104,6 +105,25 @@ export function standsOpen(form: HTMLFormElement): boolean {
   });
 }
 
+/**
+ * Whether text is selected inside `container`: in the draft bb edits in place,
+ * or in a field of its own. A finger then drags the selection, and the
+ * composer under it stays as it stands — see `foldByDrag`.
+ */
+export function selectsTextIn(container: Element): boolean {
+  const field = document.activeElement;
+  if (
+    (field instanceof HTMLTextAreaElement || field instanceof HTMLInputElement) &&
+    container.contains(field) &&
+    field.selectionStart !== field.selectionEnd
+  ) {
+    return true;
+  }
+  const selection = document.getSelection();
+  if (selection === null || selection.isCollapsed) return false;
+  return container.contains(selection.anchorNode) || container.contains(selection.focusNode);
+}
+
 /** A finger on the composer, from the touch that put it down. */
 interface Pull {
   readonly start: Point;
@@ -176,7 +196,8 @@ export function foldByDrag(form: HTMLFormElement): () => void {
     pull = null;
     const point = soleFinger(event);
     const target = event.target instanceof Element ? event.target : null;
-    if (point === null || target === null) return;
+    // A finger over selected text is dragging the selection or its handles.
+    if (point === null || target === null || selectsTextIn(shell)) return;
     const zone = foldZone({
       inActionRow: target.closest(ACTION_ROW_SELECTOR) !== null,
       inForm: form.contains(target),
@@ -193,8 +214,10 @@ export function foldByDrag(form: HTMLFormElement): () => void {
   const onMove = (event: TouchEvent) => {
     const now = soleFinger(event);
     if (pull === null || now === null) return;
-    // A move the browser no longer lets anyone stop is a scroll under way, not ours.
-    if (!event.cancelable) {
+    // A move the browser no longer lets anyone stop is a scroll under way, not
+    // ours; and a selection begun mid-touch — a long press, then the finger
+    // moving on — is the finger's from then on.
+    if (!event.cancelable || selectsTextIn(shell)) {
       pull = null;
       standBack();
       return;

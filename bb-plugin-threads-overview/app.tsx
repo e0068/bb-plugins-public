@@ -85,6 +85,7 @@ import {
 import { openRowIntoThread } from "./thread-open";
 import { findComposer, foldByDrag, mountFoldStyle, soleFinger, standsOpen } from "./composer-fold";
 import { holdSticky, type Hold } from "./sticky-hold";
+import { ADOPT_ROW_SWIPE, watchEdgeSwipes, type RowAdoption } from "./edge-swipe";
 import {
   ComposerProjectWatch,
   useChooseComposerProject,
@@ -939,20 +940,43 @@ function SwipeRow({
   // stop anything. It rests on the pointer event coming first: the
   // compatibility rules of Pointer Events put `pointermove` before the
   // `touchmove` of the same finger, so the drag here is already up to date.
+  //
+  // A swipe from the right edge that landed beside the row, not on it, is
+  // handed over by `watchEdgeSwipes`: the row takes the pointer as if the
+  // finger had landed on it, and answers whether a move is its own, since the
+  // page's moves then go to wherever the finger landed, not to the row.
   useEffect(() => {
     const panel = panelRef.current;
     if (panel === null) return;
-    const hold = (event: TouchEvent) => {
+    const keepsMove = () => {
       const current = drag.current;
-      if (current === null || !event.cancelable) return;
-      const keeps =
-        current.axis === "undecided"
-          ? claimsRowSwipe(current.start, current.now, openRef.current)
-          : holdsGesture(current.axis, true);
-      if (keeps) event.preventDefault();
+      if (current === null) return false;
+      return current.axis === "undecided"
+        ? claimsRowSwipe(current.start, current.now, openRef.current)
+        : holdsGesture(current.axis, true);
+    };
+    const hold = (event: TouchEvent) => {
+      if (event.cancelable && keepsMove()) event.preventDefault();
+    };
+    const adopt = (event: Event) => {
+      const adoption = (event as CustomEvent<RowAdoption>).detail;
+      swallowClick.current = false;
+      drag.current = { start: adoption.start, now: adoption.start, axis: "undecided", dx: 0 };
+      try {
+        panel.setPointerCapture?.(adoption.pointerId);
+      } catch {
+        // The finger is already gone: there is nothing left to swipe.
+        drag.current = null;
+        return;
+      }
+      adoption.holds = keepsMove;
     };
     panel.addEventListener("touchmove", hold, { passive: false });
-    return () => panel.removeEventListener("touchmove", hold);
+    panel.addEventListener(ADOPT_ROW_SWIPE, adopt);
+    return () => {
+      panel.removeEventListener("touchmove", hold);
+      panel.removeEventListener(ADOPT_ROW_SWIPE, adopt);
+    };
   }, []);
 
   const onPointerDown = (event: React.PointerEvent<HTMLDivElement>) => {
@@ -1760,6 +1784,17 @@ function AttentionSection() {
   const rootRef = useRef<HTMLDivElement>(null);
   const onQueueKeyDown = useQueueKeys(rootRef, sidePane.current, experimental);
   useHomePaneForSidebar(rootRef, experimental && openMode === "split");
+  // The edges of Home are edge gestures' on a touch screen — see `watchEdgeSwipes`.
+  // Heard from the section itself, which is on the page only once the threads are in.
+  const [rootNode, setRootNode] = useState<HTMLDivElement | null>(null);
+  const attachRoot = useCallback((node: HTMLDivElement | null) => {
+    rootRef.current = node;
+    setRootNode(node);
+  }, []);
+  useEffect(
+    () => (touch && rootNode !== null ? watchEdgeSwipes(rootNode) : undefined),
+    [touch, rootNode],
+  );
   const [showPostponed, setShowPostponed] = useState(false);
 
   const projectName = useMemo(() => {
@@ -1867,7 +1902,7 @@ function AttentionSection() {
       {/* The host titles every homepage section with an h2 of its own and allows no
           blank title; the heading lives in the filter row instead, so the host's is hidden. */}
       <div
-        ref={rootRef}
+        ref={attachRoot}
         data-threads-overview-section=""
         onKeyDown={onQueueKeyDown}
         className={cn(
