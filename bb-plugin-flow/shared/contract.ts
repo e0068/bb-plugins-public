@@ -24,10 +24,11 @@ export const riskLevelSchema = z.enum(["XS", "S", "M", "L", "XL", "XXL"]);
 /**
  * Добавка к бюджету — цель и потолок в долларах, — к риску целым числом и ко времени в минутах.
  * Все части в обе стороны: у исполнителя, ревью и тестирования добавка — разница с базой, и минус значит экономию.
+ * Цель и потолок — границы диапазона в любом порядке: у экономии агенты путают знак, и бриф их не отбивает, а упорядочивает.
  */
 export const addSchema = z
   .object({ target: z.number(), max: z.number(), risk: z.number().int(), minutes: z.number().int().optional() })
-  .refine((a) => a.max >= a.target, { message: "an add max is not below its target", path: ["max"] });
+  .overwrite((a) => (a.max >= a.target ? a : { ...a, target: a.max, max: a.target }));
 
 export const decisionOptionSchema = z.object({
   id: text,
@@ -286,6 +287,12 @@ export const stageReportSchema = z
     // Ссылки сделанного этапа навыка проверяет `reportIssues`: вид этапа знают настройки, а не отчёт.
     if (s.state === "todo" && s.results !== undefined) ctx.addIssue({ code: "custom", message: "a todo stage has no results yet", path: ["results"] });
     if (s.state !== "todo" && s.recommended) ctx.addIssue({ code: "custom", message: "only a todo stage is recommended for the next run", path: ["recommended"] });
+  })
+  // `adds.self` — цена этапа своими силами, то есть его `add`: агенты кладут её в `adds`, и бриф её туда переносит, а не отбивает.
+  .overwrite(({ adds, ...s }) => {
+    if (adds?.[SELF_EXECUTOR] === undefined) return adds === undefined ? s : { ...s, adds };
+    const { [SELF_EXECUTOR]: self, ...others } = adds;
+    return { ...s, add: s.add ?? self, ...(Object.keys(others).length === 0 ? {} : { adds: others }) };
   });
 
 /**
