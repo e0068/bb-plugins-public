@@ -17,7 +17,7 @@ import { addScript, MAX_SCRIPT_CHARS, removeStep, scriptOf } from "../core/autom
 import { applySet, isSaved, removeSet, saveSet } from "../core/automation-sets";
 import { moveItem } from "../core/reorder";
 import { actionStage, stageKindOf } from "../lib/stage-constants";
-import { BUILTIN_AUTOMATION_ICON, KIND_ICONS } from "./stage-icons";
+import { AUTOMATION_ICON, KIND_ICONS } from "./stage-icons";
 import { cn } from "../lib/utils";
 import type { AutomationSet, AutomationStep, BuiltinAutomation, WorkStage } from "../shared/contract";
 import { useMessages } from "./locale-context";
@@ -163,7 +163,7 @@ export function AddBuiltinAutomation({ stages, sets, onAdd, onChange }: { stages
         }}
         className={addButton}
       >
-        <Icon name={BUILTIN_AUTOMATION_ICON} aria-hidden="true" className="size-3.5" />
+        <Icon name={AUTOMATION_ICON} aria-hidden="true" className="size-3.5" />
         {t.settings.addBuiltinAutomation}
       </button>
       <StepsMenu
