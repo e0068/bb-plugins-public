@@ -369,6 +369,7 @@ export const en: Messages = {
     alt: (n) => `image ${n}`,
     remove: (n) => `Remove image ${n}`,
     line: (list) => `Images: ${list}`,
+    lost: (list) => `Images not saved: ${list} — ask the owner to send them again instead of guessing what they show`,
   },
   command: {
     copyFailed: "Couldn't copy — select the command and copy it manually",

@@ -3,13 +3,16 @@
 // компонента: переживает размонтирование сообщения, как черновик. В поле,
 // куда вставлено, встаёт метка «[картинка N]» — по ней агент понимает, к чему
 // картинка. Сами картинки уходят с ответом с номером метки, сервер кладёт их
-// файлами треда и называет агенту, какой путь у какой метки.
-import { createContext, useContext, useRef, useSyncExternalStore, type ClipboardEvent, type ReactNode } from "react";
+// файлами треда и называет агенту, какой путь у какой метки. Прочитанные
+// картинки копируются в IndexedDB: метки в черновике переживают перезагрузку
+// плагина, и картинки должны пережить её вместе с ними.
+import { createContext, useContext, useEffect, useRef, useSyncExternalStore, type ClipboardEvent, type ReactNode } from "react";
 
 import { Icon } from "../components/ui/icon";
 import type { Messages } from "../lib/messages";
 import { cn } from "../lib/utils";
 import type { AnswerImage } from "../shared/contract";
+import { dropPool, loadPool, savePool } from "./attachment-store";
 import { useMessages } from "./locale-context";
 
 /** Пределы и форматы контракта `answerImagesSchema`; значения — из `shared`, куда фронт ходит только за типами. */
@@ -26,20 +29,55 @@ type Pool = { images: readonly Attachment[]; next: number; error: PoolError | nu
 const EMPTY: Pool = { images: [], next: 1, error: null };
 const pools = new Map<string, Pool>();
 const listeners = new Set<() => void>();
+/** Чтения файлов в работе по брифам: отправка ждёт их, чтобы недочитанная картинка не выпала из ответа. */
+const reading = new Map<string, Set<Promise<unknown>>>();
+/** Подъём пула из IndexedDB — один раз на бриф за жизнь модуля. */
+const restored = new Map<string, Promise<void>>();
 
 const poolOf = (briefId: string): Pool => pools.get(briefId) ?? EMPTY;
 const notify = () => listeners.forEach((listener) => listener());
+const persist = (briefId: string, { images, next }: Pool): void =>
+  void savePool(briefId, { next, images: images.flatMap(({ dataBase64, ...rest }) => (dataBase64 === null ? [] : [{ ...rest, dataBase64 }])) });
+/** Пул на диск — только когда сменились картинки или номер: смена одной ошибки 16 МБ не переписывает. */
 const update = (briefId: string, change: (pool: Pool) => Pool): void => {
-  pools.set(briefId, change(poolOf(briefId)));
+  const before = poolOf(briefId);
+  const pool = change(before);
+  pools.set(briefId, pool);
+  if (pool.images !== before.images || pool.next !== before.next) persist(briefId, pool);
   notify();
+};
+
+/** Пул, сохранённый до перезагрузки, поднимается до первой вставки: номера новых меток продолжают сохранённые. */
+const restore = (briefId: string): Promise<void> => {
+  const known = restored.get(briefId);
+  if (known !== undefined) return known;
+  const loading = loadPool(briefId).then((stored) => {
+    if (stored === null || stored.images.length === 0) return;
+    // Вставка ждёт подъёма, поэтому до него пул пуст и номера не пересекаются. Мимо `update`: прочитанное с диска туда не пишется.
+    pools.set(briefId, { ...poolOf(briefId), images: stored.images, next: stored.next });
+    notify();
+  });
+  restored.set(briefId, loading);
+  return loading;
+};
+
+const track = (briefId: string, read: Promise<unknown>): void => {
+  const set = reading.get(briefId) ?? new Set();
+  reading.set(briefId, set.add(read));
+  void read.finally(() => set.delete(read));
 };
 const subscribe = (listener: () => void) => {
   listeners.add(listener);
   return () => void listeners.delete(listener);
 };
 
-/** Прочитанные картинки для входа `answerBrief`; без них поля нет. */
-export const attachmentsPayload = (briefId: string): { images?: AnswerImage[] } => {
+/**
+ * Картинки для входа `answerBrief`; без них поля нет. Ждёт подъёма пула из IndexedDB и чтения
+ * вставленных файлов: отправка сразу после вставки иначе ушла бы с меткой без картинки.
+ */
+export const attachmentsPayload = async (briefId: string): Promise<{ images?: AnswerImage[] }> => {
+  await restore(briefId);
+  await Promise.allSettled([...(reading.get(briefId) ?? [])]);
   const images = poolOf(briefId).images.flatMap(({ n, mimeType, dataBase64 }) => (dataBase64 === null ? [] : [{ n, mimeType, dataBase64 }]));
   return images.length === 0 ? {} : { images };
 };
@@ -47,6 +85,7 @@ export const attachmentsPayload = (briefId: string): { images?: AnswerImage[] } 
 /** Ответ принят или уже был — картинки больше не нужны. */
 export const clearAttachments = (briefId: string): void => {
   pools.delete(briefId);
+  void dropPool(briefId);
   notify();
 };
 
@@ -84,12 +123,19 @@ const addFiles = (briefId: string, files: readonly File[]): number[] => {
     return { images, next, error };
   });
   for (const { n, file } of accepted)
-    readBase64(file).then(
+    track(briefId, readBase64(file).then(
       (dataBase64) => update(briefId, (p) => ({ ...p, images: p.images.map((i) => (i.n === n ? { ...i, dataBase64 } : i)) })),
       () => update(briefId, (p) => ({ ...p, images: p.images.filter((i) => i.n !== n), error: { kind: "read", n } })),
-    );
+    ));
   return accepted.map(({ n }) => n);
 };
+
+/**
+ * Номера выдаются после подъёма пула из IndexedDB: вставка сразу после перезагрузки иначе взяла бы номер
+ * сохранённой картинки. Пул обычно уже поднят провайдером, и ожидание — одна микрозадача.
+ */
+const attachFiles = (briefId: string, files: readonly File[], place: (numbers: number[]) => void): void =>
+  void restore(briefId).then(() => place(addFiles(briefId, files)));
 
 /** Поле, в которое встаёт метка картинки: текущий текст и как его заменить. */
 export type AttachTarget = { value: string; onText: (text: string) => void };
@@ -112,6 +158,7 @@ export function AttachmentsProvider({ briefId, children }: { briefId: string; ch
   const t = useMessages();
   const input = useRef<HTMLInputElement>(null);
   const pending = useRef<AttachTarget | null>(null);
+  useEffect(() => void restore(briefId), [briefId]);
   const pick = (target: AttachTarget) => {
     pending.current = target;
     input.current?.click();
@@ -129,8 +176,9 @@ export function AttachmentsProvider({ briefId, children }: { briefId: string; ch
           const files = [...(event.currentTarget.files ?? [])];
           const target = pending.current;
           event.currentTarget.value = "";
-          const numbers = addFiles(briefId, files);
-          if (target !== null) withMarkers(target, numbers, null, t.attachments);
+          attachFiles(briefId, files, (numbers) => {
+            if (target !== null) withMarkers(target, numbers, null, t.attachments);
+          });
         }}
       />
     </AttachContext.Provider>
@@ -146,7 +194,8 @@ export function usePasteImages(target: AttachTarget): ((event: ClipboardEvent<HT
     const files = [...(event.clipboardData?.items ?? [])].filter((item) => item.type.startsWith("image/")).flatMap((item) => item.getAsFile() ?? []);
     if (files.length === 0) return;
     event.preventDefault();
-    withMarkers(target, addFiles(attach.briefId, files), event.currentTarget.selectionStart, t.attachments);
+    const at = event.currentTarget.selectionStart;
+    attachFiles(attach.briefId, files, (numbers) => withMarkers(target, numbers, at, t.attachments));
   };
 }
 
