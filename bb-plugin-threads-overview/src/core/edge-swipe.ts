@@ -12,13 +12,10 @@ export const SIDEBAR_SWIPE_EDGE_SHARE = 0.15;
 
 /**
  * How far from the left edge bb's own swipe for its left panel may start, in
- * px: bb leaves the strip nearer the edge alone. A finger put down there gets
- * the panel from this plugin instead — see `opensSidebar`.
+ * px: bb leaves the strip nearer the edge alone. A finger put down there is
+ * handed to bb's swipe shifted onto this floor — see `intoBbSidebarSwipe`.
  */
 export const BB_SIDEBAR_SWIPE_FLOOR = 24;
-
-/** How far to the right a finger slid in from the very edge goes before letting go opens the panel, in px. */
-export const SIDEBAR_SWIPE_REACH = 56;
 
 /** Which edge strip a finger landed on: the left panel's, the rows' or neither. */
 export type EdgeStrip = "sidebar" | "row" | null;
@@ -45,9 +42,14 @@ export function claimsSidebarSwipe(start: Point, now: Point): boolean {
   return dx > 0 && dx > Math.abs(now.y - start.y);
 }
 
-/** Whether a finger let go here, from the left strip, has gone far enough to the right to open the panel. */
-export function opensSidebar(start: Point, end: Point): boolean {
-  return end.x - start.x >= SIDEBAR_SWIPE_REACH && claimsSidebarSwipe(start, end);
+/**
+ * Where bb's own swipe hears a point of a finger put down at `start`: a finger
+ * nearer the edge than bb listens is moved onto bb's floor, and every later
+ * point by the same shift, so the panel follows it pixel for pixel from the
+ * first move. A finger bb takes by itself stays where it is.
+ */
+export function intoBbSidebarSwipe(start: Point, point: Point): Point {
+  return { x: point.x + Math.max(0, BB_SIDEBAR_SWIPE_FLOOR - start.x), y: point.y };
 }
 
 /** A row's span down the screen, in px. */
