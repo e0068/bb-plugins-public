@@ -25,7 +25,7 @@ import { LocaleProvider } from "./locale";
 import { ProviderLogosProvider } from "./provider-logos-source";
 import { ProviderMark } from "./provider-logos";
 import { useMessages } from "./locale-context";
-import { BUILTIN_AUTOMATION_ICON, KIND_ICONS } from "./stage-icons";
+import { AUTOMATION_ICON, KIND_ICONS } from "./stage-icons";
 
 /** Тон заливки занятого окна: те же семантические токены, что у остальных состояний баннера. */
 const CONTEXT_TONES = { normal: "bg-primary", warn: "bg-warning", alert: "bg-destructive" } as const;
@@ -67,7 +67,7 @@ const SETTLE_EASING = "cubic-bezier(0.32, 0.72, 0, 1)";
 const EXECUTOR_ICONS = { self: "Diamond", agent: "Bot", workflow: "Workflow" } as const;
 
 const iconOf = (stage: ProgressStage): string =>
-  stage.kind === "action" ? KIND_ICONS.action : stage.automation !== undefined ? BUILTIN_AUTOMATION_ICON : stage.kind === "skill" ? EXECUTOR_ICONS[stage.executor] : KIND_ICONS[stage.kind];
+  stage.kind === "action" ? KIND_ICONS.action : stage.automation !== undefined ? AUTOMATION_ICON : stage.kind === "skill" ? EXECUTOR_ICONS[stage.executor] : KIND_ICONS[stage.kind];
 
 /** У этапа навыка, который ведёт сам агент или субагент, — логотип провайдера исполнителя. */
 const byProvider = (stage: ProgressStage): boolean => stage.automation === undefined && stage.kind === "skill" && stage.executor !== "workflow";

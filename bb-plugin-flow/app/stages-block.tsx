@@ -20,7 +20,7 @@ import { AddMeta, CardText, CheckSquare, DocumentName, RESULT_ROW, rowCellStyle 
 import { pickStageExecutor, stageChoiceIn, toggleStageRun, type Draft } from "./draft";
 import { useLocale, useMessages } from "./locale-context";
 import { ROW_CELL, cellOrder, panelOrder, useRowEnds } from "./row-order";
-import { automationIcon } from "./stage-icons";
+import { AUTOMATION_ICON } from "./stage-icons";
 import { copyText, useFlash } from "./flash";
 import { ExecutorMark } from "./provider-logos";
 
@@ -111,7 +111,7 @@ function StageCell({ state, view, roots, order, width }: { state: StageState; vi
         {automation !== undefined && (
           // На месте шеврона — значок автоматизации: она идёт сама, нажимать не на что.
           <span role="img" aria-label={t.stages.automation} className="flex shrink-0 items-center px-3">
-            <Icon name={automationIcon(automation)} aria-hidden="true" className="size-3.5 text-muted-foreground" />
+            <Icon name={AUTOMATION_ICON} aria-hidden="true" className="size-3.5 text-muted-foreground" />
           </span>
         )}
         {expandable && (

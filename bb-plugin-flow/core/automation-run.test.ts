@@ -79,7 +79,7 @@ describe("вид автоматизации в полосе", () => {
 });
 
 describe("значок идущего этапа", () => {
-  it("идущая автоматизация — молния, упавшая и законченная — без значка", () => {
+  it("идущая автоматизация — значок автоматизации, упавшая и законченная — без значка", () => {
     const running = onRunStart(EMPTY_PROGRESS, "publish", stepsOf(publish), T0);
     expect(runningIcon(publish, running.stages.publish!)).toBe("automation");
     expect(runningIcon(publish, onStepFailed(running, "publish", "x", T1).stages.publish!)).toBeNull();

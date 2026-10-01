@@ -7,7 +7,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { builtinAutomationStage } from "../core/automation-run";
 import { automationStage, builtinStage } from "../lib/stage-constants";
 import type { FlowSettings, flowSettingsRpcContract, StageCatalog } from "../shared/contract";
-import { BUILTIN_AUTOMATION_ICON, EXTERNAL_AUTOMATION_ICON, KIND_ICONS, SKILL_ICON } from "./stage-icons";
+import { AUTOMATION_ICON, KIND_ICONS, SKILL_ICON } from "./stage-icons";
 
 const app = await loadPluginApp(() => import("../app"));
 
@@ -40,8 +40,8 @@ describe("иконка этапа на странице Flow", () => {
   it.each([
     [1, KIND_ICONS.questions],
     [2, SKILL_ICON],
-    [3, BUILTIN_AUTOMATION_ICON],
-    [4, EXTERNAL_AUTOMATION_ICON],
+    [3, AUTOMATION_ICON],
+    [4, AUTOMATION_ICON],
   ])("в строке %i стоит сразу после номера, перед полями, и больше нигде в строке", async (n, icon) => {
     const slot = open();
     const row = await slot.findByRole("row", { name: `Этап ${n}` });

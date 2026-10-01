@@ -263,7 +263,7 @@ describe("значок идущего этапа — только при жив�
     expect((await view())?.stages.find((s) => s.id === "review")).toMatchObject({ state: "now", live: true });
   });
 
-  it("идущая автоматизация видна молнией и живая, даже когда агент не работает", async () => {
+  it("идущая автоматизация видна значком автоматизации и живая, даже когда агент не работает", async () => {
     const { steps, release } = gated();
     const { harness, view, stateOf } = setup([review, flowStage("publish", ["git.create-pr"])], steps, undefined, idle);
     await harness.callAgentTool(FLOW_STAGE_TOOL, { stage: "review", state: "done" }, { threadId: THREAD });
