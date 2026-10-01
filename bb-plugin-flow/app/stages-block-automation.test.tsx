@@ -51,8 +51,8 @@ describe("этап-автоматизация в брифе", () => {
     const ff = await cell(slot, "ff");
     const merge = await cell(slot, "merge");
     expect(ff.querySelector('[data-icon="ChevronDown"]')).toBeNull();
-    expect(ff.querySelector('[data-icon="Zap"]')).toBeTruthy();
-    expect(merge.querySelector('[data-icon="Workflow"]')).toBeTruthy();
+    expect(ff.querySelector('[data-icon="Arrange"]')).toBeTruthy();
+    expect(merge.querySelector('[data-icon="Arrange"]')).toBeTruthy();
     expect(within(ff).queryByRole("button", { expanded: false })).toBeNull();
     expect(ff.querySelectorAll("button").length).toBe(1);
   });

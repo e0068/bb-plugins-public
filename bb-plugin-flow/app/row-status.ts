@@ -1,11 +1,11 @@
 // Значок этапа в строке треда левой панели: ждущий владельца — ровный значок
 // вида, идущий — мерцающий значок этапа (у самого агента — логотип провайдера,
-// у субагента — логотип в квадрате), упавшая автоматизация — ровная молния
+// у субагента — логотип в квадрате), упавшая автоматизация — ровный значок автоматизации
 // в тоне ошибки. Контент-скрипт живёт без контекста треда, поэтому RPC зовётся
 // обычным POST, язык берётся у браузера, а рисунок и мигание подменяются
 // стилем-маской по подписи: в реестре хоста иконок видов нет.
 import type { PluginAppBuilder, PluginContentScriptContext } from "@get-bb/plugin-sdk/app";
-import { BotIcon, CheckListIcon, DiamondIcon, MessageQuestionIcon, PlayIcon, PresentationBarChart01Icon, WorkflowCircle03Icon, ZapIcon } from "@hugeicons/core-free-icons";
+import { ArrangeIcon, BotIcon, CheckListIcon, DiamondIcon, MessageQuestionIcon, PlayIcon, PresentationBarChart01Icon, WorkflowCircle03Icon } from "@hugeicons/core-free-icons";
 
 import { awaitingChanges } from "../core/awaiting";
 import { glyphCss } from "../core/row-glyph-css";
@@ -34,14 +34,14 @@ const ICON_DATA: Record<BuiltinKind | RunningIcon, IconData> = {
   criteria: CheckListIcon as unknown as IconData,
   select: WorkflowCircle03Icon as unknown as IconData,
   demo: PresentationBarChart01Icon as unknown as IconData,
-  automation: ZapIcon as unknown as IconData,
+  automation: ArrangeIcon as unknown as IconData,
   self: DiamondIcon as unknown as IconData,
   agent: BotIcon as unknown as IconData,
   workflow: WorkflowCircle03Icon as unknown as IconData,
 };
 
 /** Имя иконки хоста — запасной рисунок, если стиль перестанет совпадать с разметкой. */
-const FALLBACK_ICON: Record<BuiltinKind | RunningIcon, string> = { action: "Play", questions: "MessageQuestion", criteria: "ListTodo", select: "Workflow", demo: "Presentation", automation: "Zap", self: "Diamond", agent: "Bot", workflow: "Workflow" };
+const FALLBACK_ICON: Record<BuiltinKind | RunningIcon, string> = { action: "Play", questions: "MessageQuestion", criteria: "ListTodo", select: "Workflow", demo: "Presentation", automation: "Workflow", self: "Diamond", agent: "Bot", workflow: "Workflow" };
 
 const kebab = (name: string): string => name.replace(/[A-Z]/g, (c) => `-${c.toLowerCase()}`);
 
