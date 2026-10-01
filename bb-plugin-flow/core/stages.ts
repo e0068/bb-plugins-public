@@ -173,6 +173,10 @@ export const CHOOSE_FLOW_RULE = (flows: readonly Flow[], tool: string, noFlow: s
     ...flows.map((flow) => `### ${flow.name}\n\nid: \`${flow.id}\`\n\n${flow.description ?? "No description."}`),
   ].join("\n\n");
 
+/** Правило треда, который агент оставил без flow (и его детей): одна строка в ходе, чтобы просьба владельца работать через flow не упиралась в отказ. */
+export const CHOOSE_FLOW_AGAIN_RULE = (flows: readonly Flow[], tool: string): string =>
+  `This thread runs without a flow by an agent's choice. If the owner asks to work through a flow, call \`${tool}\` with its id: ${flows.map((flow) => `${flow.name} \`${flow.id}\``).join(", ")}.`;
+
 /** Название этапа на экране: свой и переименованный владельцем встроенный — как назван, встроенный с именем по умолчанию — по виду и языку интерфейса. */
 export const stageLabel = (stage: Pick<WorkStage, "id" | "name" | "kind">, names: Readonly<Partial<Record<BuiltinKind | "action", string>>>): string => {
   const kind = stageKindOf(stage);
