@@ -28,7 +28,7 @@ import { acrossThreads, readClaudeTranscript, readPlanning, readWindowCost, read
 import { type ContextSettingValues, contextFillOf, contextSettings } from "./server/context";
 import { createProgress, registerProgress } from "./server/progress";
 import { registerFlowPickerApi } from "./server/flow-picker-api";
-import { registerNextRun } from "./server/next-run";
+import { heldFor, registerNextRun } from "./server/next-run";
 import { registerFlowChoice } from "./server/flow-choice";
 import { createOwnSends } from "./server/own-sends";
 import { createFlowSettings } from "./server/flow-settings";
@@ -247,16 +247,18 @@ export default async function plugin(bb: BbPluginApi): Promise<void> {
   });
   registerFlowPickerApi(bb, flows, threads);
   // Flow треда над композером: выбор до отправки и «Отменить flow».
-  const choice = registerFlowChoice(bb, { flows, threads, progress, store, cancelRun: (threadId) => runner.cancel(threadId) });
+  /** Прогон треда завершён — по этапам треда, который его ведёт. */
+  const runFinished = async (threadId: string) => {
+    const found = await progress.run(threadId);
+    return found !== null && isRunFinished(found.progress, stagesOf(found.carrier).stages);
+  };
+  const choice = registerFlowChoice(bb, { flows, threads, progress, store, cancelRun: (threadId) => runner.cancel(threadId), finished: runFinished, held: heldFor(bb) });
   // Следующий прогон в том же треде: сообщение владельца ждёт выбора flow, пока прогон треда завершён, и применяет выбор над композером.
   registerNextRun(bb, {
     flows,
     threads,
     progress,
-    finished: async (threadId) => {
-      const found = await progress.run(threadId);
-      return found !== null && isRunFinished(found.progress, stagesOf(found.carrier).stages);
-    },
+    finished: runFinished,
     heldReason: () => messages(resolveLocale(storedContext[LANGUAGE_SETTING], [Intl.DateTimeFormat().resolvedOptions().locale])).nextFlow.held,
     ownSend: own.has,
     ownerTurn: choice.ownerTurn,

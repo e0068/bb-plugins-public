@@ -45,14 +45,18 @@ export const onBrief = (progress: FlowProgress, brief: DecisionBrief, at: string
 
 /**
  * Ответ владельца: закрываются ждущие этапы отвечаемого брифа (Демонстрация с комментарием — нет) — не чужого, пришедшего позже;
- * этапы вне прогона снимаются, исполнитель и план запоминаются.
+ * этапы вне прогона снимаются, исполнитель и план запоминаются. Пройденный этап остаётся пройденным, а выбор для него
+ * ждёт нового прохода: иначе доработка вернула бы этапу выбор прошлого прохода.
  */
 export const onAnswer = (progress: FlowProgress, brief: DecisionBrief, answer: DecisionAnswer, at: string, planned?: Planned): FlowProgress => {
   if (!touchesProgress(brief)) return progress;
   const own = waitingOf(brief).filter((id) => progress.waiting.includes(id));
   const commented = brief.outcome !== undefined && demoVerdict(answer) === "comment";
   const closed = commented ? progress : own.reduce((p, id) => patch(p, id, finish(at)), progress);
-  const chosen = (answer.stages ?? []).reduce((p, s) => patch(p, s.id, (t) => (t.finishedAt !== undefined ? t : { ...t, skipped: !s.run, executor: s.executor })), closed);
+  const chosen = (answer.stages ?? []).reduce((p, s) => {
+    const choice = { skipped: !s.run, executor: s.executor };
+    return patch(p, s.id, (t) => (t.finishedAt === undefined ? { ...t, ...choice } : own.includes(s.id) ? t : { ...t, nextPass: choice }));
+  }, closed);
   return { ...chosen, waiting: progress.waiting.filter((id) => !own.includes(id)), ...(planned === undefined ? {} : { planned: { ...planned } }) };
 };
 
@@ -145,12 +149,13 @@ const spentSoFar = (track: Track): Track["earlier"] =>
         from: track.earlier?.from ?? track.startedAt ?? track.finishedAt,
       };
 
-/** След этапа, который проходится заново: остаются исполнитель, вычеркнутость и траты прошлых проходов. */
+/** След этапа, который проходится заново: остаются исполнитель, вычеркнутость — выбранные ответом для нового прохода, если он был, — и траты прошлых проходов. */
 const cleared = (track: Track): Track => {
   const earlier = spentSoFar(track);
+  const { executor, skipped } = track.nextPass ?? track;
   return {
-    ...(track.executor === undefined ? {} : { executor: track.executor }),
-    ...(track.skipped === undefined ? {} : { skipped: track.skipped }),
+    ...(executor === undefined ? {} : { executor }),
+    ...(skipped === undefined ? {} : { skipped }),
     ...(earlier === undefined ? {} : { earlier }),
   };
 };

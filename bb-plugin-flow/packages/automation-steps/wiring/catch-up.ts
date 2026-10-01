@@ -5,13 +5,32 @@
 // core/catch-up.ts; the process is git-client.ts behind GitPorts.
 import type { ResolvedBase } from "../core/base-branch";
 import type { ParentDelivery } from "../core/parent-delivery";
-import { conflictedFilesArgs, currentBranchArgs, decideCatchUp, IN_PROGRESS_REFS, inProgressArgs, isAncestorArgs, mergeAbortArgs, mergeBaseArgs, resetToBaseArgs, trackedChangesArgs } from "../core/catch-up";
+import { commitMergeArgs, conflictedFilesArgs, currentBranchArgs, decideCatchUp, IN_PROGRESS_REFS, inProgressArgs, isAncestorArgs, mergeAbortArgs, mergeBaseArgs, resetToBaseArgs, trackedChangesArgs, unmergedStatusArgs } from "../core/catch-up";
+import { conflictClass, parseUnmerged } from "../core/conflict-merge";
 import { aheadCountArgs, behindCountArgs, fastForwardArgs, fetchBaseArgs, replayAbortArgs, replayOntoArgs } from "../core/git-commands";
 import { findMergedCutoff } from "./merged-cutoff";
 import { checkMergedContent } from "./merged-content";
+import { resolveConflict } from "./conflict-resolve";
 import { gitRunMessage, type GitPorts, type GitRun } from "./git-run";
+import type { TreeFiles } from "./tree-files";
 
 export type CatchUpOutcome = "up-to-date" | "fast-forwarded" | "merged" | "reset-to-base" | "replay-onto-base";
+
+/**
+ * Конфликт слияния базы в ветку, который шаг сам не свёл, — работа агента треда:
+ * `files` — все файлы в конфликте, `base` — ветка, с которой они конфликтуют;
+ * текст — тот же, что у отменённого слияния. Слияние к этому моменту отменено.
+ */
+export class CatchUpConflict extends Error {
+  constructor(
+    message: string,
+    readonly files: readonly string[],
+    readonly base: string,
+  ) {
+    super(message);
+    this.name = "CatchUpConflict";
+  }
+}
 
 const must = async (ports: GitPorts, args: readonly string[], what: string): Promise<string> => {
   const result = await ports.run(args);
@@ -45,7 +64,7 @@ const failedCatchUp = async (
   ports: GitPorts,
   ref: string,
   failed: GitRun,
-  texts: { abort: readonly string[]; refused: string; undone: string; undoFailed: string },
+  texts: { abort: readonly string[]; refused: string; undone: string; undoFailed: string; agentWork: boolean },
 ): Promise<Error> => {
   const conflicts = (await ports.run(conflictedFilesArgs())).stdout.split("\n").map((f) => f.trim()).filter((f) => f !== "");
   // Git отказался начать — начатого нет, и отменять нечего: отмена здесь унесла
@@ -54,20 +73,27 @@ const failedCatchUp = async (
   const aborted = await ports.run(texts.abort);
   const named = conflicts.join(", ");
   return aborted.code === 0
-    ? new Error(`${named} — conflicts with ${ref}. ${texts.undone}`)
+    ? conflictError(`${named} — conflicts with ${ref}. ${texts.undone}`, conflicts, ref, texts.agentWork)
     : new Error(`${named} — conflicts with ${ref}, and ${texts.undoFailed}: ${gitRunMessage(aborted)}`);
 };
 
-const failedMerge = (ports: GitPorts, ref: string, merged: GitRun): Promise<Error> =>
+/** Конфликт догоняния — агенту; доставка в родителя и перенос ветки на базу — обычная ошибка: сводить их агенту ветки нечего. */
+const conflictError = (message: string, files: readonly string[], ref: string, agentWork: boolean): Error => (agentWork ? new CatchUpConflict(message, files, ref) : new Error(message));
+
+const MERGE_UNDONE = "The merge was aborted, the branch is untouched: resolve them in the working copy, commit the merge, and run the step again.";
+
+const failedMerge = (ports: GitPorts, ref: string, merged: GitRun, agentWork: boolean): Promise<Error> =>
   failedCatchUp(ports, ref, merged, {
+    agentWork,
     abort: mergeAbortArgs(),
     refused: `could not merge ${ref}`,
-    undone: "The merge was aborted, the branch is untouched: resolve them in the working copy, commit the merge, and run the step again.",
+    undone: MERGE_UNDONE,
     undoFailed: "git merge --abort failed too, so the tree is left mid-merge",
   });
 
 const failedReplay = (ports: GitPorts, ref: string, replayed: GitRun): Promise<Error> =>
   failedCatchUp(ports, ref, replayed, {
+    agentWork: false,
     abort: replayAbortArgs(),
     refused: `could not bring the branch's own work onto ${ref}`,
     undone: "The branch's own work was not moved onto the base, the branch is untouched: resolve them in the working copy and run the step again.",
@@ -90,7 +116,34 @@ const refuseReason = async (ports: GitPorts, before: string): Promise<string | n
   return `The working copy is not on a branch — a detached HEAD, or a rebase paused mid-way: put it back on its branch before ${before}.`;
 };
 
-export async function runCatchUp(ports: GitPorts, base: ResolvedBase): Promise<CatchUpOutcome> {
+/**
+ * Конфликты слияния, которые шаг сводит сам: только файлы задач и пункты
+ * ченж-лога. Хоть один другой — `false`, ничего не тронуто, и слияние отменяет
+ * вызывающий; всё свелось — слияние закоммичено, `true`. Сведение сорвалось
+ * на полпути — файл не свёлся, запись упала, хук отклонил коммит — слияние
+ * отменяется здесь же, а конфликт уходит агенту с исходным списком файлов:
+ * сведённые к этому моменту из списка git уже выпали бы.
+ */
+const resolveKnown = async (ports: GitPorts, files: TreeFiles, ref: string): Promise<boolean> => {
+  const conflicts = parseUnmerged((await ports.run(unmergedStatusArgs())).stdout);
+  const known = conflicts.map((conflict) => ({ conflict, kind: conflictClass(conflict.path) }));
+  if (known.length === 0 || known.some(({ kind }) => kind === "other")) return false;
+  const settle = async (): Promise<string | null> => {
+    for (const { conflict, kind } of known) if (kind !== "other" && !(await resolveConflict(ports, files, conflict, kind))) return `${conflict.path} did not settle`;
+    const committed = await ports.run(commitMergeArgs());
+    return committed.code === 0 ? null : `the merge commit was refused: ${gitRunMessage(committed)}`;
+  };
+  const problem = await settle().catch((error: unknown) => (error instanceof Error ? error.message : String(error)));
+  if (problem === null) return true;
+  const named = known.map(({ conflict }) => conflict.path);
+  const aborted = await ports.run(mergeAbortArgs());
+  // Отмена не прошла — дерево посреди слияния: будить агента над ним нельзя, это ждёт владельца.
+  if (aborted.code !== 0) throw new Error(`${named.join(", ")} — conflicts with ${ref}, settling them failed (${problem}), and git merge --abort failed too, so the tree is left mid-merge: ${gitRunMessage(aborted)}`);
+  throw new CatchUpConflict(`${named.join(", ")} — conflicts with ${ref}, and settling them failed (${problem}). ${MERGE_UNDONE}`, named, ref);
+};
+
+/** `files` — дерево ветки для сведения файлов задач и пунктов ченж-лога; без него любой конфликт отменяет слияние, как раньше. */
+export async function runCatchUp(ports: GitPorts, base: ResolvedBase, files?: TreeFiles): Promise<CatchUpOutcome> {
   const ref = base.statusBase;
   if (base.mode === "origin") await must(ports, fetchBaseArgs(base.githubBase), `git fetch origin ${base.githubBase}`);
   const refused = await refuseReason(ports, "catching up with the base");
@@ -124,7 +177,8 @@ export async function runCatchUp(ports: GitPorts, base: ResolvedBase): Promise<C
   }
   const merged = await ports.run(mergeBaseArgs(ref));
   if (merged.code === 0) return "merged";
-  throw await failedMerge(ports, ref, merged);
+  if (files !== undefined && (await resolveKnown(ports, files, ref))) return "merged";
+  throw await failedMerge(ports, ref, merged, true);
 }
 
 /** What delivering a child thread's branch into its parent's working copy did. */
@@ -152,5 +206,5 @@ export async function runParentDelivery(
   if ((await ports.run(isAncestorArgs(branch))).code === 0) return "already-in";
   const merged = await ports.run(mergeBaseArgs(branch));
   if (merged.code === 0) return "delivered";
-  throw await failedMerge(ports, branch, merged);
+  throw await failedMerge(ports, branch, merged, false);
 }

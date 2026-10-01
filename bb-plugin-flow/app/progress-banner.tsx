@@ -305,11 +305,10 @@ function Banner() {
   const { view, drop } = useProgress(threadId);
   const [open, setOpen] = useState(false);
   if (threadId === null || view === undefined) return null;
-  // Тред без прогона — на месте бара строка выбора flow: прогон начнётся с сообщением владельца.
-  if (view === null) return <FlowChoice threadId={threadId} />;
-  // Завершённый прогон уходит с композера: полоса над ним означает идущую работу, а итог рисуется в ленте.
+  // Тред без идущего прогона — до первого и после завершённого — на месте бара строка выбора flow: прогон начнётся с сообщением владельца.
   // Кроме треда, который работу отдал: итог лёг в ленту носителя, и здесь, чем кончилась работа, видно только по баннеру.
-  if (view.total === 0 || (view.finished === true && view.carrier === undefined)) return null;
+  if (view === null || (view.finished === true && view.carrier === undefined)) return <FlowChoice threadId={threadId} />;
+  if (view.total === 0) return null;
   // Свой экземпляр на тред: переключения этапов, ещё не подтверждённые опросом, не переходят в другой тред.
   return <Progress key={threadId} view={view} threadId={threadId} open={open} toggle={() => setOpen((value) => !value)} onCancelled={() => {
     setOpen(false);

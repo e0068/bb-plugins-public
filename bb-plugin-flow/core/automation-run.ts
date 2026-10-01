@@ -191,7 +191,7 @@ export const onStepDone = (progress: FlowProgress, stageId: string, at: string, 
     const next = track.run.at + 1;
     const steps = withDetail(track.run.steps, track.run.at, detail);
     // Попытки автоповтора считаются на шаг: следующий шаг начинает со своих.
-    const { autoRetries: _used, skipQueued: _skip, ...run } = idle(track.run);
+    const { autoRetries: _used, skipQueued: _skip, agentWoken: _woken, ...run } = idle(track.run);
     // Один PR дают и «Открыть PR», и «Смёрджить PR» одного этапа: ссылка встаёт в итоги один раз — по адресу, не по подписи.
     const fresh = links.filter((link) => !(track.results ?? []).some((r) => r.target === link.target));
     const results = fresh.length === 0 ? {} : { results: [...(track.results ?? []), ...fresh] };
@@ -218,9 +218,14 @@ export const onStepFailed = (progress: FlowProgress, stageId: string, error: str
 export const onRunRetry = (progress: FlowProgress, stageId: string, auto = false): FlowProgress =>
   patch(progress, stageId, (track) => {
     if (track.run === undefined) return track;
-    const { autoRetries: used, ...run } = idle(track.run);
-    return { ...track, run: { ...run, error: null, ...(auto ? { autoRetries: (used ?? 0) + 1 } : {}) } };
+    // Повтор владельца — новый заход: конфликт снова будит агента.
+    const { autoRetries: used, agentWoken, ...run } = idle(track.run);
+    return { ...track, run: { ...run, error: null, ...(auto ? { autoRetries: (used ?? 0) + 1, ...(agentWoken === undefined ? {} : { agentWoken }) } : {}) } };
   });
+
+/** Шаг упал на конфликте слияния, и агента треда разбудили его разрешать: провал без срока автоповтора, повтор — после хода агента. */
+export const onAgentWoken = (progress: FlowProgress, stageId: string, error: string, at: string): FlowProgress =>
+  patch(onStepFailed(progress, stageId, error, at), stageId, (track) => (track.run === undefined ? track : { ...track, run: { ...track.run, agentWoken: true } }));
 
 /**
  * «Пропустить», нажатый, пока Flow ведёт тред попыткой автоповтора: пропуск запоминается, а назначенный повтор снимается.
@@ -290,6 +295,10 @@ export const wakeText = (kind: "automation" | "action", idle: ReadonlyArray<{ na
   const note = idleNote(idle);
   return note === "" ? head : `${head}\n\n${note}`;
 };
+
+/** Реплика агенту: шаг этапа упал на конфликте слияния — какие файлы, что сделать и что Flow сделает сам. */
+export const conflictWakeText = (stage: WorkStage, files: readonly string[], base = "the base branch"): string =>
+  `Flow: a step of stage ${stage.id} "${stage.name}" hit merge conflicts with ${base} in:\n${files.map((file) => `- ${file}`).join("\n")}\n\nMerge ${base} into the branch, resolve every conflict keeping the work of both sides, run the tests of what you touched, commit the merge, and end your turn: Flow retries the step by itself when your turn ends. Do not reset or rebase the branch.`;
 
 /** Этап с упавшим шагом: не закрыт, а у прогона есть ошибка. */
 export const isFailed = (track: StageTrack): boolean => track.finishedAt === undefined && typeof track.run?.error === "string";

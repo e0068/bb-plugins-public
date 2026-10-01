@@ -40,6 +40,7 @@ import { readExecutablePaths } from "../wiring/file-modes";
 import { mergedPullRequestFiles } from "../wiring/merged-pr-files";
 import { ghAuthToken } from "../wiring/gh-token";
 import { gitClient } from "../wiring/git-client";
+import { treeFiles } from "../wiring/tree-files";
 import { gitRunMessage } from "../wiring/git-run";
 import { githubClient } from "../wiring/github-client";
 import { readLinkedTask } from "../wiring/linked-task";
@@ -232,7 +233,7 @@ export async function catchUpBranch(sdk: Sdk, kv: PluginKvStorage, threadId: str
   const base = resolveBase(env, mode);
   if (!base) throw new Error("Could not determine the environment's base branch.");
   if (!env.path) throw new Error("The environment has no working copy on disk.");
-  return runCatchUp(gitClient(env.path), base);
+  return runCatchUp(gitClient(env.path), base, treeFiles(env.path));
 }
 
 // A merge commit, not a squash. A squash put a single-parent commit on main,

@@ -13,8 +13,21 @@ import { isLocalSource, type LocalInstall } from "./reinstall-plan";
 /** A link a step leaves behind — a pull request, a task file; Flow shows it among the results of the stage. */
 export type StepLink = { label: string; target: string };
 
-/** The answer of a step: the same shape steps.ts hands the runner. `links` — only when the step left any. */
-export type StepOutcome = { ok: true; detail: string | null; links?: readonly StepLink[] } | { ok: false; error: string };
+/**
+ * The answer of a step: the same shape steps.ts hands the runner. `links` — only when the step left any.
+ * `conflicts` — a merge left these files in conflict and the step could not settle them: the work of an agent, not of a timer.
+ */
+export type StepOutcome = { ok: true; detail: string | null; links?: readonly StepLink[] } | { ok: false; error: string; conflicts?: readonly string[]; base?: string };
+
+/** Провал шага из его исключения: текст, а у конфликта слияния (wiring/catch-up.ts `CatchUpConflict`) — и список файлов. */
+export const stepFailure = (error: unknown): StepOutcome => {
+  const message = error instanceof Error ? error.message : String(error);
+  const files = typeof error === "object" && error !== null ? (error as { files?: unknown }).files : undefined;
+  const conflicts = Array.isArray(files) && files.length > 0 && files.every((file) => typeof file === "string") ? (files as string[]) : undefined;
+  const base = (error as { base?: unknown } | null)?.base;
+  if (conflicts === undefined) return { ok: false, error: message };
+  return typeof base === "string" ? { ok: false, error: message, conflicts, base } : { ok: false, error: message, conflicts };
+};
 
 /**
  * Почему поднимать версию было нечему и не на чем. Это не поломка: цепочка
