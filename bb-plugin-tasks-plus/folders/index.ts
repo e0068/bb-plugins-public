@@ -14,6 +14,7 @@ import { createTursoApi, databaseBaseName, type TursoApi, type TursoError, type 
 import { mintCliApiToken, tursoCliCandidates } from "../remote/turso-cli.js";
 import {
   foldersRpcContract,
+  type ConnectDatabaseInput,
   type FolderDomainError,
   type SyncedFolder,
 } from "./contract.js";
@@ -47,10 +48,18 @@ type Step<T> = { ok: true; value: T } | { ok: false; error: FolderDomainError };
 
 const proceed = <T>(value: T): Step<T> => ({ ok: true, value });
 
-function tursoFailure(error: TursoError): FolderDomainError {
+/** Where the account token came from: typed in the dialog, or saved from before. */
+type TokenOrigin = "typed" | "saved";
+
+const REFUSED_TOKEN: Record<TokenOrigin, string> = {
+  typed: "Turso refused this API token.",
+  saved: "Turso refused the saved API token.",
+};
+
+function tursoFailure(error: TursoError, origin: TokenOrigin): FolderDomainError {
   switch (error.kind) {
     case "auth":
-      return { code: "turso_api_failed", message: "Turso refused the API token." };
+      return { code: "turso_token_refused", message: REFUSED_TOKEN[origin] };
     case "unreachable":
       return { code: "turso_api_failed", message: "Turso cannot be reached." };
     case "name_taken":
@@ -60,8 +69,8 @@ function tursoFailure(error: TursoError): FolderDomainError {
   }
 }
 
-function fromTurso<T>(result: TursoResult<T>): Step<T> {
-  return result.ok ? proceed(result.value) : { ok: false, error: tursoFailure(result.error) };
+function fromTurso<T>(result: TursoResult<T>, origin: TokenOrigin): Step<T> {
+  return result.ok ? proceed(result.value) : { ok: false, error: tursoFailure(result.error, origin) };
 }
 
 /** What a failed open, sync or write of a database means to the dialog. */
@@ -240,47 +249,50 @@ export function registerFolders(bb: BbPluginApi, store: TasksApiStore): void {
     }
   }
 
-  async function tursoApi(typed?: string | null): Promise<Step<{ api: TursoApi; token: string }>> {
-    const token = usableToken(typed) ?? (await secrets.tursoApiToken());
-    return token === null
-      ? refusal("Enter a Turso API token first.", "turso_token_required")
-      : proceed({ api: createTursoApi({ token }), token });
+  /**
+   * The Turso account the typed token opens, else the saved one. A typed
+   * token the account accepts takes the saved one's place.
+   */
+  async function openAccount(typed?: string): Promise<Step<{ api: TursoApi; org: string; origin: TokenOrigin }>> {
+    const given = usableToken(typed);
+    const token = given ?? (await secrets.tursoApiToken());
+    if (token === null) return refusal("Enter a Turso API token first.", "turso_token_required");
+    const origin: TokenOrigin = given === null ? "saved" : "typed";
+    const api = createTursoApi({ token });
+    const org = fromTurso(await api.organization(), origin);
+    if (!org.ok) return org;
+    if (given !== null && given !== (await secrets.tursoApiToken())) await secrets.saveTursoApiToken(given);
+    return proceed({ api, org: org.value, origin });
   }
 
   /** A token for a database of the account, made by Turso. */
-  async function mintDatabaseToken(url: string): Promise<Step<string>> {
-    const account = await tursoApi();
+  async function mintDatabaseToken(url: string, typed: string | undefined): Promise<Step<string>> {
+    const account = await openAccount(typed);
     if (!account.ok) return account;
-    const { api } = account.value;
-    const org = fromTurso(await api.organization());
-    if (!org.ok) return org;
-    const listed = fromTurso(await api.listDatabases(org.value));
+    const { api, org, origin } = account.value;
+    const listed = fromTurso(await api.listDatabases(org), origin);
     if (!listed.ok) return listed;
     const found = listed.value.find((database) => databaseHost(database.url) === databaseHost(url));
     if (found === undefined) return refusal("The Turso account has no database at this address.", "turso_api_failed");
-    return fromTurso(await api.mintToken(org.value, found.name));
+    return fromTurso(await api.mintToken(org, found.name), origin);
   }
 
-  async function tokenFor(input: { token?: string }, address: { url: string; token: string | null }): Promise<Step<string>> {
+  async function tokenFor(input: { token?: string; tursoApiToken?: string }, address: { url: string; token: string | null }): Promise<Step<string>> {
     const source = tokenSource(input, address, await secrets.databaseToken(address.url));
-    return source.kind === "given" ? proceed(source.token) : mintDatabaseToken(address.url);
+    return source.kind === "given" ? proceed(source.token) : mintDatabaseToken(address.url, input.tursoApiToken);
   }
 
   async function createDatabaseFor(prefix: string, typed: string | undefined): Promise<Step<string>> {
     const name = prefix.trim();
     if (name === "") return refusal("Give the board a prefix before creating its database.");
-    const account = await tursoApi(typed);
+    const account = await openAccount(typed);
     if (!account.ok) return account;
-    const { api, token: accountToken } = account.value;
-    const org = fromTurso(await api.organization());
-    if (!org.ok) return org;
-    // The account accepted the token: it is kept for the next time.
-    if (usableToken(typed) !== null && accountToken !== (await secrets.tursoApiToken())) await secrets.saveTursoApiToken(accountToken);
-    const group = fromTurso(await api.ensureGroup(org.value));
+    const { api, org, origin } = account.value;
+    const group = fromTurso(await api.ensureGroup(org), origin);
     if (!group.ok) return group;
-    const created = fromTurso(await api.createDatabase(org.value, databaseBaseName(name), group.value));
+    const created = fromTurso(await api.createDatabase(org, databaseBaseName(name), group.value), origin);
     if (!created.ok) return created;
-    const minted = fromTurso(await api.mintToken(org.value, created.value.name));
+    const minted = fromTurso(await api.mintToken(org, created.value.name), origin);
     if (!minted.ok) return minted;
     await secrets.saveDatabaseToken(created.value.url, minted.value);
     return proceed(created.value.url);
@@ -355,7 +367,7 @@ export function registerFolders(bb: BbPluginApi, store: TasksApiStore): void {
     return store.projectPrefixExists(plan.prefix, "") ? `The prefix ${plan.prefix} is already used by another board.` : null;
   }
 
-  async function connect(input: { url: string; token?: string; moveFromBoardId?: string; name?: string; prefix?: string }): Promise<Step<null>> {
+  async function connect(input: ConnectDatabaseInput): Promise<Step<null>> {
     const address = parseDatabaseAddress(input.url);
     if (!address.ok) return refusal(address.message);
     const token = await tokenFor(input, address);
@@ -520,11 +532,10 @@ export function registerFolders(bb: BbPluginApi, store: TasksApiStore): void {
     },
 
     async listTursoDatabases() {
-      const account = await tursoApi();
+      const account = await openAccount();
       if (!account.ok) return account;
-      const org = fromTurso(await account.value.api.organization());
-      if (!org.ok) return org;
-      const listed = fromTurso(await account.value.api.listDatabases(org.value));
+      const { api, org, origin } = account.value;
+      const listed = fromTurso(await api.listDatabases(org), origin);
       return listed.ok ? { ok: true, databases: listed.value } : listed;
     },
 

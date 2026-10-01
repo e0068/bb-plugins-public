@@ -30,12 +30,20 @@ interface Rpc {
   saved?: boolean;
   connect?: () => unknown;
   generate?: () => unknown;
+  create?: () => unknown;
+  list?: () => unknown;
 }
 
-function renderDialog({ saved = false, connect = () => ({ ok: true }), generate = () => ({ ok: true, token: "cli-token" }) }: Rpc = {}) {
+function renderDialog({
+  saved = false,
+  connect = () => ({ ok: true }),
+  generate = () => ({ ok: true, token: "cli-token" }),
+  create = () => ({ ok: true, url: CREATED }),
+  list = () => ({ ok: true, databases: [ACCOUNT_DB] }),
+}: Rpc = {}) {
   const calls = {
     generateTursoApiToken: vi.fn((_input: unknown) => generate()),
-    createDatabase: vi.fn((_input: unknown) => ({ ok: true, url: CREATED })),
+    createDatabase: vi.fn((_input: unknown) => create()),
     connectDatabase: vi.fn((_input: unknown) => connect()),
     onConnected: vi.fn(),
     onOpenChange: vi.fn(),
@@ -47,7 +55,7 @@ function renderDialog({ saved = false, connect = () => ({ ok: true }), generate 
       rpc: {
         listSyncedFolders: () => ({ folders: [folderRow] }),
         hasTursoApiToken: () => ({ saved }),
-        listTursoDatabases: () => ({ ok: true, databases: [ACCOUNT_DB] }),
+        listTursoDatabases: list,
         createDatabase: calls.createDatabase,
         connectDatabase: calls.connectDatabase,
         generateTursoApiToken: calls.generateTursoApiToken,
@@ -248,5 +256,120 @@ describe("Connect database — Generate mints one token at a time", () => {
     await waitFor(() => expect(field("Turso API token")).not.toBeNull());
     press("Generate");
     await waitFor(() => expect(screen.queryByText("brew install tursodatabase/tap/turso")).not.toBeNull());
+  });
+});
+
+describe("Connect database — a saved Turso token the account refuses", () => {
+  const REFUSED = { ok: false, error: { code: "turso_token_refused", message: "Turso refused the saved API token." } };
+
+  it("Create refused opens the Turso API token field, and the next Create sends the new token", async () => {
+    const answers = [REFUSED, { ok: true, url: CREATED }];
+    const calls = renderDialog({ saved: true, create: () => answers.shift() });
+    await ready();
+    type("Board", "Remote");
+    type("Prefix", "REM");
+    press("Create");
+    await waitFor(() => expect(field("Turso API token")).not.toBeNull());
+    expect(screen.getByRole("button", { name: "Generate" })).toBeDefined();
+    expect(screen.getByText("Turso refused the saved API token.")).toBeDefined();
+    type("Turso API token", "new-account-token");
+    press("Create");
+    await waitFor(() => expect(calls.createDatabase).toHaveBeenLastCalledWith(expect.objectContaining({ prefix: "REM", tursoApiToken: "new-account-token" })));
+    await waitFor(() => expect(field("Address")?.value).toBe(CREATED));
+  });
+
+  it("opening the dialog with a refused token asks for a new one before any Create", async () => {
+    renderDialog({ saved: true, list: () => REFUSED });
+    await ready();
+    await waitFor(() => expect(field("Turso API token")).not.toBeNull());
+  });
+});
+
+describe("Connect database — Replace token", () => {
+  it("opens the Turso API token field while the saved token still works, and Create sends the new one", async () => {
+    const calls = renderDialog({ saved: true });
+    await ready();
+    expect(field("Turso API token")).toBeNull();
+    press("Replace token");
+    await waitFor(() => expect(field("Turso API token")).not.toBeNull());
+    type("Prefix", "REM");
+    type("Turso API token", "other-account-token");
+    press("Create");
+    await waitFor(() => expect(calls.createDatabase).toHaveBeenCalledWith(expect.objectContaining({ prefix: "REM", tursoApiToken: "other-account-token" })));
+  });
+
+  it("is not offered when no token is saved: Create asks for one anyway", async () => {
+    renderDialog({ saved: false });
+    await ready();
+    expect(screen.queryByRole("button", { name: "Replace token" })).toBeNull();
+  });
+});
+
+describe("Connect database — after a refused or replaced token", () => {
+  const REFUSED = { ok: false, error: { code: "turso_token_refused", message: "Turso refused the saved API token." } };
+
+  it("says why the token field opened when the dialog finds the saved token refused", async () => {
+    renderDialog({ saved: true, list: () => REFUSED });
+    await ready();
+    expect(await screen.findByText("Turso refused the saved API token.")).toBeDefined();
+  });
+
+  it("Connect sends the account token typed into the field", async () => {
+    const calls = renderDialog({ saved: true, list: () => REFUSED });
+    await ready();
+    await waitFor(() => expect(field("Turso API token")).not.toBeNull());
+    type("Address", ACCOUNT_DB.url);
+    type("Turso API token", "new-account-token");
+    press("Connect");
+    await waitFor(() => expect(calls.connectDatabase).toHaveBeenCalledWith(expect.objectContaining({ url: ACCOUNT_DB.url, tursoApiToken: "new-account-token" })));
+  });
+
+  it("lists the account's databases again once Create took the new token", async () => {
+    const lists = [REFUSED, { ok: true, databases: [ACCOUNT_DB] }];
+    renderDialog({ saved: true, list: () => lists.shift() ?? { ok: true, databases: [ACCOUNT_DB] } });
+    await ready();
+    await waitFor(() => expect(field("Turso API token")).not.toBeNull());
+    type("Prefix", "REM");
+    type("Turso API token", "new-account-token");
+    press("Create");
+    await waitFor(() => expect(field("Address")?.value).toBe(CREATED));
+    type("Address", "");
+    fireEvent.focus(field("Address")!);
+    expect(await screen.findByRole("option", { name: /bb-tasks-web/ })).toBeDefined();
+  });
+
+  it("Keep saved token takes Replace token back", async () => {
+    const calls = renderDialog({ saved: true });
+    await ready();
+    press("Replace token");
+    await waitFor(() => expect(field("Turso API token")).not.toBeNull());
+    press("Keep saved token");
+    await waitFor(() => expect(field("Turso API token")).toBeNull());
+    type("Prefix", "REM");
+    press("Create");
+    await waitFor(() => expect(calls.createDatabase).toHaveBeenCalledTimes(1));
+    expect((calls.createDatabase.mock.calls[0]![0] as Record<string, unknown>).tursoApiToken).toBeUndefined();
+  });
+
+  it("offers no way back to a saved token Turso refused", async () => {
+    renderDialog({ saved: true, list: () => REFUSED });
+    await ready();
+    await waitFor(() => expect(field("Turso API token")).not.toBeNull());
+    expect(screen.queryByRole("button", { name: "Keep saved token" })).toBeNull();
+  });
+});
+
+describe("Connect database — a mistyped replacement token", () => {
+  it("is refused without giving up the saved token: Keep saved token stays", async () => {
+    const answers = [{ ok: false, error: { code: "turso_token_refused", message: "Turso refused this API token." } }];
+    renderDialog({ saved: true, create: () => answers.shift() ?? { ok: true, url: CREATED } });
+    await ready();
+    press("Replace token");
+    await waitFor(() => expect(field("Turso API token")).not.toBeNull());
+    type("Prefix", "REM");
+    type("Turso API token", "mistyped-token");
+    press("Create");
+    expect(await screen.findByText("Turso refused this API token.")).toBeDefined();
+    expect(screen.queryByRole("button", { name: "Keep saved token" })).not.toBeNull();
   });
 });
