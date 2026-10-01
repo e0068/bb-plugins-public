@@ -43,7 +43,6 @@ const failedNotice = (): AutomationNotice => ({
   steps: [{ id: "git.merge", label: "Merge the PR" }].map((s) => ({ ...s, detail: null })),
   stepId: "git.merge",
   error: "not mergeable",
-  retryAt: null,
 });
 
 const mount = async (rpc: Record<string, () => unknown> = {}) => {
