@@ -10,7 +10,8 @@ const bbProjectIdSchema = z.string().startsWith("proj_");
  * Where a connected board keeps its tasks. A folder is read fresh on every
  * request (see decisions/tasks-files-are-the-store.md), so it has no link to
  * report. A database has one: `live`, `reconnecting` or `offline`. Never a
- * token — the address is all a row says of how to reach the database.
+ * token — the address is all a row says of how to reach the database; the
+ * token leaves the service only in an invite, asked for by `databaseInvite`.
  */
 export const syncedSourceSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("folder") }).strict(),
@@ -127,6 +128,11 @@ const inspectDatabaseResultSchema = z.discriminatedUnion("ok", [
   z.object({ ok: z.literal(false), error: folderDomainErrorSchema }).strict(),
 ]);
 
+const databaseInviteResultSchema = z.discriminatedUnion("ok", [
+  z.object({ ok: z.literal(true), invite: z.string() }).strict(),
+  z.object({ ok: z.literal(false), error: folderDomainErrorSchema }).strict(),
+]);
+
 const connectDatabaseResultSchema = z.discriminatedUnion("ok", [
   z.object({ ok: z.literal(true) }).strict(),
   z.object({ ok: z.literal(false), error: folderDomainErrorSchema }).strict(),
@@ -153,6 +159,7 @@ export const foldersRpcContract = defineRpcContract({
       .strict(),
     output: addSyncedFolderResultSchema,
   },
+  /** Takes a board off its source on this machine; a database board leaves the machine, its database stays. */
   removeSyncedFolder: {
     input: z.object({ projectId: idSchema }).strict(),
     output: z.object({ ok: z.literal(true) }).strict(),
@@ -189,6 +196,11 @@ export const foldersRpcContract = defineRpcContract({
   hasTursoApiToken: {
     input: z.null(),
     output: z.object({ saved: z.boolean() }).strict(),
+  },
+  /** The address of a database board with its saved token, for another machine to connect. */
+  databaseInvite: {
+    input: z.object({ boardId: idSchema }).strict(),
+    output: databaseInviteResultSchema,
   },
   retryDatabase: {
     input: z.object({ boardId: idSchema }).strict(),

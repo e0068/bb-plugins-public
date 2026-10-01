@@ -1,6 +1,8 @@
 import { useState } from "react";
 import { useRpc } from "@get-bb/plugin-sdk/app";
 import type { FoldersRpcContract, SyncedFolder } from "../../folders/contract.js";
+import { databaseHost } from "../../folders/database-address.js";
+import { taskCountText } from "./shared.js";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -22,10 +24,27 @@ export interface RemoveFolderDialogProps {
   onRemoved: () => void;
 }
 
+/** What disconnecting takes away, said for the kind of source. */
+function disconnectCopy(folder: SyncedFolder): { title: string; description: string } {
+  switch (folder.source.kind) {
+    case "folder":
+      return {
+        title: `Disconnect "${folder.tasksFolder}"?`,
+        description: `Stops ${folder.projectName} from reading this folder. Files on disk are never touched — the ${taskCountText(folder.taskCount)} it holds simply stop showing up on this board.`,
+      };
+    case "database":
+      return {
+        title: `Disconnect ${databaseHost(folder.source.url)}?`,
+        description: `${folder.projectName} leaves this machine and its saved token is forgotten. The database and its ${taskCountText(folder.taskCount)} stay where they are: other machines keep working, and an invite connects it again.`,
+      };
+  }
+}
+
 /**
- * Disconnects a folder from its board. Files on disk are never touched —
- * they're the tasks themselves, not a synced copy — so disconnecting just
- * stops this board from reading that folder.
+ * Disconnects a board from its source. Files on disk are never touched —
+ * they're the tasks themselves, not a synced copy — so disconnecting a
+ * folder just stops this board from reading it; a database board leaves
+ * this machine while the database keeps serving the others.
  */
 export function RemoveFolderDialog({
   folder,
@@ -37,6 +56,7 @@ export function RemoveFolderDialog({
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  const copy = disconnectCopy(folder);
   const confirm = async () => {
     setSubmitting(true);
     setError(null);
@@ -55,13 +75,8 @@ export function RemoveFolderDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-sm">
         <DialogHeader>
-          <DialogTitle>Disconnect "{folder.tasksFolder}"?</DialogTitle>
-          <DialogDescription>
-            Stops {folder.projectName} from reading this folder. Files on disk
-            are never touched — the {folder.taskCount} task
-            {folder.taskCount === 1 ? "" : "s"} it holds simply stop showing
-            up on this board.
-          </DialogDescription>
+          <DialogTitle>{copy.title}</DialogTitle>
+          <DialogDescription>{copy.description}</DialogDescription>
         </DialogHeader>
         {error ? (
           <p role="alert" className="text-xs text-destructive">

@@ -10,6 +10,7 @@ export interface DatabaseSecrets {
   saveTursoApiToken(token: string): Promise<void>;
   databaseToken(url: string): Promise<string | null>;
   saveDatabaseToken(url: string, token: string): Promise<void>;
+  forgetDatabaseToken(url: string): Promise<void>;
 }
 
 const SETTINGS = {
@@ -46,6 +47,10 @@ export function createDatabaseSecrets(bb: BbPluginApi): DatabaseSecrets {
     databaseToken: async (url) => orNull((await tokens())[url]),
     saveDatabaseToken: async (url, token) => {
       await settings.experimental_set({ databaseTokens: JSON.stringify({ ...(await tokens()), [url]: token }) });
+    },
+    forgetDatabaseToken: async (url) => {
+      const { [url]: _forgotten, ...kept } = await tokens();
+      await settings.experimental_set({ databaseTokens: JSON.stringify(kept) });
     },
   };
 }
