@@ -1,15 +1,23 @@
-// Какой flow у треда и какой выбран в композере проекта. Инструкции агенту
-// собираются синхронно, поэтому привязки живут в памяти и дописываются в kv
-// следом. Новый тред берёт flow родителя, а без родителя — выбор своего проекта.
+// Какой flow у треда, какой выбран над его композером до отправки и какой —
+// в композере проекта. Инструкции агенту собираются синхронно, поэтому привязки
+// живут в памяти и дописываются в kv следом. Новый тред берёт flow родителя,
+// а без родителя — выбор своего проекта.
 import type { PluginKvStorage } from "@get-bb/plugin-sdk";
 
 const THREAD_PREFIX = "thread-flow:";
 const PROJECT_PREFIX = "project-flow:";
+const PICK_PREFIX = "thread-flow-pick:";
 
 export type ThreadFlows = {
   flowOf(threadId: string): string | undefined;
   /** Ставит треду flow: следующий прогон в нём пойдёт по нему, а не по выбору проекта. */
   assign(threadId: string, flowId: string): Promise<void>;
+  /** Flow, выбранный над композером треда и ждущий сообщения владельца; не выбран — `undefined`. */
+  pickedOf(threadId: string): string | undefined;
+  /** Запоминает выбор до отправки; `null` снимает запомненный. Flow треду не назначает. */
+  pick(threadId: string, flowId: string | null): Promise<void>;
+  /** Отдаёт выбор и снимает его: применяет его сообщение, которым владелец начал ход. */
+  takePicked(threadId: string): Promise<string | undefined>;
   choiceOf(projectId: string): string | undefined;
   choose(projectId: string, flowId: string): Promise<void>;
   onThreadCreated(payload: { thread: { id: string; projectId: string; parentThreadId: string | null } }): void;
@@ -27,12 +35,27 @@ const readAll = async (kv: PluginKvStorage, prefix: string): Promise<Map<string,
 export const createThreadFlows = async (kv: PluginKvStorage): Promise<ThreadFlows> => {
   const threads = await readAll(kv, THREAD_PREFIX);
   const projects = await readAll(kv, PROJECT_PREFIX);
+  const picks = await readAll(kv, PICK_PREFIX);
   let writes: Promise<unknown> = Promise.resolve();
+  const unpick = async (threadId: string) => {
+    if (picks.delete(threadId)) await kv.delete(`${PICK_PREFIX}${threadId}`);
+  };
   return {
     flowOf: (threadId) => threads.get(threadId),
     async assign(threadId, flowId) {
       threads.set(threadId, flowId);
       await kv.set(`${THREAD_PREFIX}${threadId}`, flowId);
+    },
+    pickedOf: (threadId) => picks.get(threadId),
+    async pick(threadId, flowId) {
+      if (flowId === null) return unpick(threadId);
+      picks.set(threadId, flowId);
+      await kv.set(`${PICK_PREFIX}${threadId}`, flowId);
+    },
+    async takePicked(threadId) {
+      const picked = picks.get(threadId);
+      await unpick(threadId);
+      return picked;
     },
     choiceOf: (projectId) => projects.get(projectId),
     async choose(projectId, flowId) {
@@ -47,8 +70,8 @@ export const createThreadFlows = async (kv: PluginKvStorage): Promise<ThreadFlow
       writes = writes.then(() => kv.set(`${THREAD_PREFIX}${thread.id}`, flowId));
     },
     onThreadDeleted({ thread }) {
-      if (!threads.delete(thread.id)) return;
-      writes = writes.then(() => kv.delete(`${THREAD_PREFIX}${thread.id}`));
+      if (threads.delete(thread.id)) writes = writes.then(() => kv.delete(`${THREAD_PREFIX}${thread.id}`));
+      if (picks.delete(thread.id)) writes = writes.then(() => kv.delete(`${PICK_PREFIX}${thread.id}`));
     },
     settled: async () => {
       await writes;

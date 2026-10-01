@@ -818,6 +818,8 @@ export const flowProgressSchema = z.object({
   thread: z.string().optional(),
   /** Минуты и доллары этапов считаны по логам всех тредов прогона и их потомков; у записи без пометки их однажды пересчитывают. */
   countedAcrossRun: z.literal(true).optional(),
+  /** Этапы, которые владелец вернул в прогон чекбоксом баннера после выбора этапов: о них агенту говорит ответ flow_stage. */
+  returned: z.array(z.string()).optional(),
 });
 
 /** Исполнитель этапов прогона в итоге: кем он был и сколько на нём сделано. */
@@ -958,6 +960,11 @@ export const progressRpcContract = defineRpcContract({
   getRunSummary: { input: z.object({ briefId: text }), output: frozenRunSchema.nullable() },
   /** Все завершённые прогоны всех тредов, свежие сверху. */
   getRunHistory: { input: z.object({}), output: z.array(runHistoryEntrySchema) },
+  /** Чекбокс этапа в баннере: владелец убирает этап, до которого прогон не дошёл, или возвращает его. `carried` — прогон ведёт другой тред, `reached` — прогон до этапа уже дошёл или миновал его. */
+  setStageInRun: {
+    input: z.object({ threadId: text, stageId: text, run: z.boolean() }),
+    output: z.discriminatedUnion("kind", [z.object({ kind: z.literal("set") }), z.object({ kind: z.literal("failed"), reason: z.enum(["no-run", "carried", "reached"]) })]),
+  },
 });
 
 export const flowStageParamsSchema = z.object({
@@ -1010,6 +1017,27 @@ export const nextRunRpcContract = defineRpcContract({
       z.object({ kind: z.literal("sent") }),
       z.object({ kind: z.literal("failed"), reason: z.string() }),
     ]),
+  },
+});
+
+/**
+ * Flow треда над его композером: строка выбора у треда без прогона и «Отменить flow» у идущего.
+ * Выбор ждёт сообщения владельца — его применяет хук `message.dispatch` следующего прогона.
+ */
+export const flowChoiceRpcContract = defineRpcContract({
+  /** `selected` — выбор, ждущий отправки, а без него — flow треда; тред, оставленный агентом без flow, — `NO_FLOW`. */
+  threadFlowChoice: {
+    input: z.object({ threadId: text }),
+    output: z.object({ flows: z.array(z.object({ id: text, name: text, stages: z.number().int().nonnegative() })), selected: text }),
+  },
+  pickThreadFlow: {
+    input: z.object({ threadId: text, flowId: text }),
+    output: z.discriminatedUnion("kind", [z.object({ kind: z.literal("picked"), selected: text }), z.object({ kind: z.literal("failed"), reason: z.literal("unknown-flow") })]),
+  },
+  /** Тред идёт без flow: прогон снят, отложенные шаги автоматизаций погашены, ожидание владельца снято. `carried` — прогон ведёт другой тред, отменять его отсюда нельзя. */
+  cancelFlow: {
+    input: z.object({ threadId: text }),
+    output: z.discriminatedUnion("kind", [z.object({ kind: z.literal("cancelled") }), z.object({ kind: z.literal("failed"), reason: z.literal("carried") })]),
   },
 });
 

@@ -10,5 +10,7 @@ export type DispatchAttempt = {
   retry: boolean;
 };
 
-export const holdsForNextFlow = ({ finished, attempt, initiator, retry }: DispatchAttempt): boolean =>
-  finished && attempt === "start-turn" && initiator === "user" && !retry;
+export const holdsForNextFlow = ({ finished, ...turn }: DispatchAttempt): boolean => finished && appliesPickedFlow(turn);
+
+/** Применяет ли сообщение flow, выбранный над композером: ход начинает владелец, и это не повтор — вклинившееся в идущий ход сообщение инструкций хода не получает. */
+export const appliesPickedFlow = ({ attempt, initiator, retry }: Omit<DispatchAttempt, "finished">): boolean => attempt === "start-turn" && initiator === "user" && !retry;

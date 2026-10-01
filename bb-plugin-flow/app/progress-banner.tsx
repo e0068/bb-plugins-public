@@ -12,12 +12,15 @@ import { mutedBlinkAnimation, mutedBlinkKeyframes } from "../core/muted-blink";
 import { PULL_SETTLE_MS, pullOffset, settlesClosed } from "../core/pull-to-collapse";
 import { stepDetail, type FileRoots } from "../core/result-link";
 import { stageLabel } from "../core/stages";
+import { ConfirmDialog } from "../components/ui/dialog";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "../components/ui/dropdown-menu";
 import { Icon } from "../components/ui/icon";
 import { cn } from "../lib/utils";
-import type { ContextFillView, ProgressStage, ProgressView, automationRpcContract, progressRpcContract } from "../shared/contract";
+import type { ContextFillView, ProgressStage, ProgressView, automationRpcContract, flowChoiceRpcContract, progressRpcContract } from "../shared/contract";
 import { reportStepAnswer } from "./automation-toasts";
 import { ResultAnchor } from "./cells";
 import { useFileRoots } from "./file-roots";
+import { FlowChoice } from "./flow-choice";
 import { LocaleProvider } from "./locale";
 import { ProviderLogosProvider } from "./provider-logos-source";
 import { ProviderMark } from "./provider-logos";
@@ -299,20 +302,28 @@ export function ProgressBanner() {
 function Banner() {
   const { scope } = useComposerView();
   const threadId = scope.kind === "thread" ? scope.threadId : null;
-  const view = useProgress(threadId);
+  const { view, drop } = useProgress(threadId);
   const [open, setOpen] = useState(false);
+  if (threadId === null || view === undefined) return null;
+  // Тред без прогона — на месте бара строка выбора flow: прогон начнётся с сообщением владельца.
+  if (view === null) return <FlowChoice threadId={threadId} />;
   // Завершённый прогон уходит с композера: полоса над ним означает идущую работу, а итог рисуется в ленте.
   // Кроме треда, который работу отдал: итог лёг в ленту носителя, и здесь, чем кончилась работа, видно только по баннеру.
-  if (threadId === null || view === null || view.total === 0 || (view.finished === true && view.carrier === undefined)) return null;
-  return <Progress view={view} threadId={threadId} open={open} toggle={() => setOpen((value) => !value)} />;
+  if (view.total === 0 || (view.finished === true && view.carrier === undefined)) return null;
+  // Свой экземпляр на тред: переключения этапов, ещё не подтверждённые опросом, не переходят в другой тред.
+  return <Progress key={threadId} view={view} threadId={threadId} open={open} toggle={() => setOpen((value) => !value)} onCancelled={() => {
+    setOpen(false);
+    drop();
+  }} />;
 }
 
-function useProgress(threadId: string | null): ProgressView | null {
+/** Прогон треда: `undefined` — сервер ещё не ответил, `null` — прогона нет; `drop` снимает его сразу, не дожидаясь опроса. */
+function useProgress(threadId: string | null): { view: ProgressView | null | undefined; drop: () => void } {
   const rpc = useRpc<typeof progressRpcContract>();
   // Клиент RPC приходит новым объектом на каждый рендер: без ссылки опрос перезапускался бы каждую перерисовку.
   const rpcRef = useRef(rpc);
   rpcRef.current = rpc;
-  const [view, setView] = useState<ProgressView | null>(null);
+  const [view, setView] = useState<ProgressView | null | undefined>(undefined);
   useEffect(() => {
     if (threadId === null) return;
     let alive = true;
@@ -329,7 +340,7 @@ function useProgress(threadId: string | null): ProgressView | null {
       clearInterval(timer);
     };
   }, [threadId]);
-  return view;
+  return { view, drop: () => setView(null) };
 }
 
 /** Корни файлов прогона: окружение — из вида прогона, он помнит его и у замороженного итога; хранилище — у bb. */
@@ -356,7 +367,8 @@ function Spent({ minutes, wall, idle, kind, cost }: { minutes: number | null; wa
   );
 }
 
-export function Row({ stage, roots }: { stage: ProgressStage; roots: FileRoots | null }) {
+/** `onToggle` — у живого бара треда, который ведёт прогон: этап, до которого прогон не дошёл, получает чекбокс «в прогоне». */
+export function Row({ stage, roots, onToggle }: { stage: ProgressStage; roots: FileRoots | null; onToggle?: (run: boolean) => void }) {
   const t = useMessages();
   const first = stage.results[0];
   const muted = stage.state === "todo" || stage.state === "skip";
@@ -417,6 +429,8 @@ export function Row({ stage, roots }: { stage: ProgressStage; roots: FileRoots |
           <span aria-hidden="true" {...pulse(stage.live)} className="size-1.5 rounded-full bg-foreground" />
         ) : stage.state === "fail" ? (
           <Icon name="X" aria-hidden="true" className="size-3.5 text-destructive" />
+        ) : onToggle !== undefined ? (
+          <StageCheckbox inRun={stage.state === "todo"} label={t.flowChoice.inRun(stageLabel(stage, t.stages))} onToggle={onToggle} />
         ) : stage.state === "skip" ? (
           <span aria-hidden="true" className="h-px w-2.5 bg-muted-foreground" />
         ) : (
@@ -424,6 +438,73 @@ export function Row({ stage, roots }: { stage: ProgressStage; roots: FileRoots |
         )}
       </span>
     </div>
+  );
+}
+
+/** Чекбокс этапа впереди: в прогоне — контрастный квадрат с галочкой, убранный — серый пустой. */
+function StageCheckbox({ inRun, label, onToggle }: { inRun: boolean; label: string; onToggle: (run: boolean) => void }) {
+  return (
+    <button type="button" role="checkbox" aria-checked={inRun} aria-label={label} onClick={() => onToggle(!inRun)} className="flex size-5 items-center justify-center rounded hover:bg-state-hover">
+      <span aria-hidden="true" className={cn("flex size-3.5 items-center justify-center rounded-[3px]", inRun ? "bg-foreground text-background" : "border border-border bg-state-active")}>
+        {inRun && <Icon name="Check" className="size-2.5" />}
+      </span>
+    </button>
+  );
+}
+
+/**
+ * Этапы бара с переключениями владельца поверх ответа сервера: чекбокс меняется сразу, а не со следующим опросом.
+ * Переключение держится, пока опрос не покажет то же состояние; отказ сервера его снимает.
+ */
+function useStageToggles(stages: readonly ProgressStage[], threadId: string) {
+  const rpc = useRpc<typeof progressRpcContract>();
+  const [toggled, setToggled] = useState<Readonly<Record<string, "todo" | "skip">>>({});
+  const settled = (id: string) => setToggled(({ [id]: _, ...rest }) => rest);
+  useEffect(() => {
+    const confirmed = stages.filter((stage) => toggled[stage.id] === stage.state).map((stage) => stage.id);
+    if (confirmed.length > 0) setToggled((current) => Object.fromEntries(Object.entries(current).filter(([id]) => !confirmed.includes(id))));
+  }, [stages, toggled]);
+  const toggleStage = (stageId: string, run: boolean) => {
+    setToggled((current) => ({ ...current, [stageId]: run ? "todo" : "skip" }));
+    rpc.call("setStageInRun", { threadId, stageId, run }).then(
+      (answer) => answer.kind === "failed" && settled(stageId),
+      () => settled(stageId),
+    );
+  };
+  const shown = stages.map((stage) => {
+    const state = toggled[stage.id];
+    return state !== undefined && (stage.state === "todo" || stage.state === "skip") ? { ...stage, state } : stage;
+  });
+  return { stages: shown, toggleStage };
+}
+
+/** «⋯» в строке имени flow: «Отменить flow» через подтверждение. */
+function FlowMenu({ threadId, onCancelled }: { threadId: string; onCancelled: () => void }) {
+  const t = useMessages();
+  const rpc = useRpc<typeof flowChoiceRpcContract>();
+  const [confirming, setConfirming] = useState(false);
+  const cancel = () => {
+    onCancelled();
+    // Сбой не возвращает бар силой: следующий опрос покажет прогон, если он остался.
+    rpc.call("cancelFlow", { threadId }).catch(() => undefined);
+  };
+  return (
+    <>
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <button type="button" aria-label={t.flowChoice.menu} className="flex size-5 shrink-0 items-center justify-center rounded text-muted-foreground hover:bg-state-hover hover:text-foreground">
+            <Icon name="MoreHorizontal" aria-hidden="true" className="size-3.5" />
+          </button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end" collisionPadding={8}>
+          <DropdownMenuItem className="text-destructive" onSelect={() => setConfirming(true)}>
+            <Icon name="X" aria-hidden="true" className="size-3.5" />
+            {t.flowChoice.cancel}
+          </DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
+      <ConfirmDialog open={confirming} onOpenChange={setConfirming} title={t.flowChoice.cancelTitle} description={t.flowChoice.cancelText} cancelLabel={t.flowChoice.keep} confirmLabel={t.flowChoice.cancel} onConfirm={cancel} />
+    </>
   );
 }
 
@@ -463,7 +544,7 @@ function usePullDown(pull: { current: Pull | null }, open: boolean) {
   return listRef;
 }
 
-function Progress({ view, threadId, open, toggle }: { view: ProgressView; threadId: string; open: boolean; toggle: () => void }) {
+function Progress({ view, threadId, open, toggle, onCancelled }: { view: ProgressView; threadId: string; open: boolean; toggle: () => void; onCancelled: () => void }) {
   const t = useMessages();
   // Результаты лежат там, куда их положил тред, который ведёт прогон: в его дереве и в его хранилище.
   const roots = useRunRoots(view.carrier?.threadId ?? threadId, view.environmentId ?? null);
@@ -473,6 +554,9 @@ function Progress({ view, threadId, open, toggle }: { view: ProgressView; thread
   // Прогон, который ведёт другой тред, отсюда только виден: шаги автоматизаций и Action нажимаются в треде-носителе.
   const driver = view.carrier === undefined ? threadId : null;
   const waiting = driver === null ? undefined : view.stages.find((stage) => pendingStep(stage) !== null);
+  const { stages, toggleStage } = useStageToggles(view.stages, threadId);
+  // Переключать можно только этапы впереди прогона — после последнего, до которого он дошёл; убранный позади агент уже миновал.
+  const reached = Math.max(-1, ...view.stages.map((stage, at) => (stage.state === "done" || stage.state === "now" || stage.state === "fail" ? at : -1)));
   return (
     // bb кладёт баннеры в сетку с отступом mb-2 до композера: последний баннер съедает его и ещё пиксель рамки, чтобы стать шапкой композера.
     <div className="mx-2.5 -mb-px overflow-hidden last:-mb-[calc(0.5rem+1px)] rounded-t-[10px] border border-b-0 border-border bg-surface-recessed-solid text-xs">
@@ -512,13 +596,15 @@ function Progress({ view, threadId, open, toggle }: { view: ProgressView; thread
           }}
         >
           {view.flowName !== undefined && (
-            <div data-progress-flow title={view.flowName} className="truncate px-3 pb-0.5 pt-1 text-[11px] text-muted-foreground">
-              {view.flowName}
+            <div data-progress-flow className="flex items-center gap-1.5 px-3 pb-0.5 pt-1 text-[11px] text-muted-foreground">
+              <span title={view.flowName} className="min-w-0 flex-1 truncate">{view.flowName}</span>
+              {/* Отменить прогон может только тред, который его ведёт: тред, отдавший работу, его только видит. */}
+              {driver !== null && <FlowMenu threadId={driver} onCancelled={onCancelled} />}
             </div>
           )}
-          {view.stages.map((stage) => (
+          {stages.map((stage, at) => (
             <div key={stage.id} className="flex flex-col">
-              <Row stage={stage} roots={roots} />
+              <Row stage={stage} roots={roots} onToggle={driver === null || at <= reached ? undefined : (run) => toggleStage(stage.id, run)} />
               {stage.automation !== undefined && stage.state !== "todo" && stage.state !== "skip" && <AutomationSteps stage={stage} threadId={driver} />}
             </div>
           ))}
