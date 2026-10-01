@@ -54,7 +54,7 @@ export type ExternalStep = (automationId: string, threadId: string) => Promise<S
 /** Итог этапа-автоматизации для уведомления владельца: этап доигран или его шаг упал. */
 export type RunnerNotice =
   | { kind: "done"; threadId: string; stage: WorkStage }
-  | { kind: "failed"; threadId: string; stage: WorkStage; stepId: string; error: string; retryAt: string | null };
+  | { kind: "failed"; threadId: string; stage: WorkStage; stepId: string; error: string };
 
 export interface AutomationRunnerDeps {
   progress: ProgressStore;
@@ -220,8 +220,9 @@ export const createAutomationRunner = (deps: AutomationRunnerDeps): AutomationRu
         // Упавший шаг ждёт владельца: с этой минуты этап простаивает, а не работает. Автоповтор кнопки не отнимает.
         await deps.progress.update(threadId, (p) => onIdleOpen(onStepFailed(p, stage.id, outcome.error, deps.now(), retryAt), stage.id, deps.now()));
         await deps.store.putAwaiting(threadId, { briefId: awaitingId(stage.id), kind: "automation" });
-        if (delay !== null) arm(threadId, stage.id, delay);
-        notify({ kind: "failed", threadId, stage, stepId: step.id, error: outcome.error, retryAt: retryAt ?? null });
+        // Пока впереди автоповтор, падение видно только в баннере: тост — когда шаг ждёт владельца.
+        if (delay === null) notify({ kind: "failed", threadId, stage, stepId: step.id, error: outcome.error });
+        else arm(threadId, stage.id, delay);
         return false;
       }
       await deps.progress.update(threadId, (p) => onStepDone(p, stage.id, deps.now(), outcome.detail, outcome.links));
@@ -398,12 +399,20 @@ export const createAutomationRunner = (deps: AutomationRunnerDeps): AutomationRu
     return { started: true };
   };
 
+  /** Автоповтор сняли, пока шаг ждал: шаг теперь ждёт владельца, и тост о падении, которого при падении не было, уходит сейчас. */
+  const dropRetry = async (threadId: string, stageId: string): Promise<void> => {
+    await deps.progress.annotate(threadId, (p) => onRetryDropped(p, stageId));
+    const failed = await failedRun(threadId, stageId);
+    const step = failed?.run.steps[failed.run.at];
+    if (failed !== null && step !== undefined) notify({ kind: "failed", threadId, stage: failed.stage, stepId: step.id, error: failed.run.error ?? "" });
+  };
+
   /**
    * Автоповтор по таймеру. Настройку выключили, пока шаг ждал, — повтор снимается, шаг ждёт владельца.
    * Тред занят — повтор ждёт секунду и пробует снова: упавший шаг никуда не делся.
    */
   const autoRetry = async (threadId: string, stageId: string): Promise<void> => {
-    if (policy().seconds <= 0) return void (await deps.progress.annotate(threadId, (p) => onRetryDropped(p, stageId)));
+    if (policy().seconds <= 0) return dropRetry(threadId, stageId);
     if (active.has(threadId)) return arm(threadId, stageId, BUSY_RETRY_MS);
     await unblock(threadId, stageId, { change: (p) => onRunRetry(onIdleClose(p, stageId, deps.now()), stageId, true), from: (at) => at });
   };

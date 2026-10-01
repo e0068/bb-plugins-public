@@ -7,7 +7,6 @@ import { mentionsIn, noticeCard, pullRequestIn, type AutomationNotice, type Noti
 const WORDS: NoticeWords = {
   done: "done",
   failed: (step) => `step «${step}» failed`,
-  retryAt: (iso) => `retry at ${iso}`,
   stepLabel: (step) => step.label,
 };
 
@@ -25,7 +24,7 @@ const base = {
 } as const;
 
 const done = (over: Partial<Extract<AutomationNotice, { kind: "done" }>> = {}): AutomationNotice => ({ ...base, kind: "done", ...over });
-const failed = (over: Partial<Extract<AutomationNotice, { kind: "failed" }>> = {}): AutomationNotice => ({ ...base, kind: "failed", stepId: "git.merge", error: "not mergeable", retryAt: null, ...over });
+const failed = (over: Partial<Extract<AutomationNotice, { kind: "failed" }>> = {}): AutomationNotice => ({ ...base, kind: "failed", stepId: "git.merge", error: "not mergeable", ...over });
 
 const textOf = (segments: readonly Segment[]): string => segments.map((s) => s.text).join("");
 
@@ -133,10 +132,9 @@ describe("карточка упавшего шага", () => {
     expect(card.actions).toEqual([{ kind: "retry" }, { kind: "skip" }, { kind: "thread", threadId: "thr_1" }]);
   });
 
-  it("шаг, которого нет в строках, называется своим id; назначенный автоповтор — отдельной строкой", () => {
-    const card = noticeCard(failed({ stepId: "script:x", retryAt: "2026-09-27T10:00:00.000Z" }), WORDS);
+  it("шаг, которого нет в строках, называется своим id", () => {
+    const card = noticeCard(failed({ stepId: "script:x" }), WORDS);
     expect(textOf(card.title)).toBe("Commit, FF to Main, PR — step «script:x» failed");
-    expect(card.lines.at(-1)).toEqual([{ kind: "text", text: "retry at 2026-09-27T10:00:00.000Z" }]);
   });
 
   it("ключи задач в ошибке задачного шага кликаются, PR в ошибке — тоже", () => {

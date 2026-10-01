@@ -23,8 +23,8 @@ type NoticeBase = {
   steps: readonly NoticeStep[];
 };
 
-/** `done` — этап доигран; `failed` — шаг `stepId` упал, этап ждёт владельца или автоповтора в `retryAt`. */
-export type AutomationNotice = (NoticeBase & { kind: "done" }) | (NoticeBase & { kind: "failed"; stepId: string; error: string; retryAt: string | null });
+/** `done` — этап доигран; `failed` — шаг `stepId` упал, автоповторов впереди нет, этап ждёт владельца. */
+export type AutomationNotice = (NoticeBase & { kind: "done" }) | (NoticeBase & { kind: "failed"; stepId: string; error: string });
 
 export type Segment =
   | { kind: "text"; text: string }
@@ -41,7 +41,6 @@ export type NoticeCard = { tone: "success" | "error"; title: Segment[]; lines: S
 export type NoticeWords = {
   done: string;
   failed: (step: string) => string;
-  retryAt: (iso: string) => string;
   stepLabel: (step: NoticeStep) => string;
 };
 
@@ -126,7 +125,7 @@ export const noticeCard = (notice: AutomationNotice, words: NoticeWords): Notice
       return {
         tone: "error",
         title: [stageSegment(notice), text(` — ${words.failed(failedStepLabel(notice, words))}`)],
-        lines: [threadLine(notice), mentionsIn(notice.error, isTaskStep(notice.stepId)), ...(notice.retryAt === null ? [] : [[text(words.retryAt(notice.retryAt))]])],
+        lines: [threadLine(notice), mentionsIn(notice.error, isTaskStep(notice.stepId))],
         actions: [...prAction(notice), { kind: "retry" }, { kind: "skip" }, thread],
       };
   }

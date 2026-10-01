@@ -90,15 +90,15 @@ describe("публикация уведомления об автоматиза�
     expect(published[0]?.pr).toBeNull();
   });
 
-  it("упавший шаг публикуется с шагом, ошибкой и сроком автоповтора; тред без названия и flow — null", async () => {
+  it("упавший шаг публикуется с шагом и ошибкой; тред без названия и flow — null", async () => {
     const land = flowStage("land", "Merge", ["git.merge"]);
     const { published, publish: send } = ports({
       progressRecord: record({ land: { run: { ...run([{ id: "git.merge", label: "Merge the PR" }]), at: 0, error: "busy" } } }),
       thread: async () => ({ title: null, environmentId: null }),
       flow: () => null,
     });
-    await send({ kind: "failed", threadId: THREAD, stage: land, stepId: "git.merge", error: "busy", retryAt: "2026-09-27T10:05:00.000Z" });
-    expect(published[0]).toMatchObject({ kind: "failed", threadTitle: null, flowId: null, stepId: "git.merge", error: "busy", retryAt: "2026-09-27T10:05:00.000Z", pr: null });
+    await send({ kind: "failed", threadId: THREAD, stage: land, stepId: "git.merge", error: "busy" });
+    expect(published[0]).toMatchObject({ kind: "failed", threadTitle: null, flowId: null, stepId: "git.merge", error: "busy", pr: null });
   });
 
   it("тред не прочитался — уведомление всё равно уходит, с id треда вместо названия", async () => {
