@@ -69,6 +69,9 @@ function GenerateRefusalHint({ refusal }: { refusal: GenerateRefusal }) {
   );
 }
 
+/** Turso no longer takes the account's token: the dialog asks for a new one. */
+const TOKEN_REFUSED = "turso_token_refused";
+
 function describeError(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
@@ -98,11 +101,24 @@ function LabelledField({ label, htmlFor, children }: { label: string; htmlFor: s
   );
 }
 
+/** The Turso account token typed into the field, when one is. */
+function typedAccountToken(form: Form): { tursoApiToken?: string } {
+  return form.tursoToken.trim() === "" ? {} : { tursoApiToken: form.tursoToken.trim() };
+}
+
+/**
+ * Why the Turso API token field is shown: hidden while the saved token serves;
+ * asked when none is saved; replacing at the person's wish, who may keep the
+ * saved one after all; refused when Turso no longer takes the saved one.
+ */
+type TokenField = "hidden" | "asked" | "replacing" | "refused";
+
 /** The optional entries of the connect input: only the ones the person filled. */
 function connectInput(form: Form): ConnectDatabaseInput {
   return {
     url: form.address.trim(),
     ...(form.token.trim() === "" ? {} : { token: form.token.trim() }),
+    ...typedAccountToken(form),
     ...(form.move
       ? { moveFromBoardId: form.folderBoardId }
       : {
@@ -132,7 +148,9 @@ export function ConnectDatabaseDialog({ open, onOpenChange, onConnected }: Conne
   const [tursoTokenSaved, setTursoTokenSaved] = useState<boolean | null>(null);
   const [accountDatabases, setAccountDatabases] = useState<TursoDatabaseEntry[]>([]);
   const [listOpen, setListOpen] = useState(false);
-  const [asksTursoToken, setAsksTursoToken] = useState(false);
+  const [tokenField, setTokenField] = useState<TokenField>("hidden");
+  /** Bumped when a new account token is taken, so the account's databases are listed again. */
+  const [listVersion, setListVersion] = useState(0);
   const [busy, setBusy] = useState<"generating" | "creating" | "connecting" | null>(null);
   const [generateRefusal, setGenerateRefusal] = useState<GenerateRefusal | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -143,7 +161,7 @@ export function ConnectDatabaseDialog({ open, onOpenChange, onConnected }: Conne
     if (!open) return;
     setForm(EMPTY_FORM);
     setError(null);
-    setAsksTursoToken(false);
+    setTokenField("hidden");
     setListOpen(false);
     setBusy(null);
     setGenerateRefusal(null);
@@ -159,45 +177,63 @@ export function ConnectDatabaseDialog({ open, onOpenChange, onConnected }: Conne
     );
   }, [open, rpc]);
 
-  // With the account's token saved, the account's databases are the address list.
+  // With the account's token saved, the account's databases are the address list;
+  // a token Turso refuses is asked for anew before any Create.
   useEffect(() => {
     if (!open || tursoTokenSaved !== true) return;
+    let current = true;
     rpc.call("listTursoDatabases", null).then(
-      (result) => setAccountDatabases(result.ok ? result.databases : []),
-      () => setAccountDatabases([]),
+      (result) => {
+        if (!current) return;
+        setAccountDatabases(result.ok ? result.databases : []);
+        if (!result.ok && result.error.code === TOKEN_REFUSED) showRefusal(result.error.message, {});
+      },
+      () => current && setAccountDatabases([]),
     );
-  }, [open, rpc, tursoTokenSaved]);
+    return () => {
+      current = false;
+    };
+  }, [open, rpc, tursoTokenSaved, listVersion]);
 
   const chosenFolder = folderBoards.find((row) => row.projectId === form.folderBoardId);
   const prefixToCreate = form.move ? (chosenFolder?.projectPrefix ?? "") : form.prefix.trim();
   const canConnect = form.address.trim() !== "" && (!form.move || chosenFolder !== undefined) && busy === null;
-  const canCreate = prefixToCreate !== "" && busy === null && (!asksTursoToken || form.tursoToken.trim() !== "");
+  const canCreate = prefixToCreate !== "" && busy === null && (tokenField === "hidden" || form.tursoToken.trim() !== "");
 
   const listed = accountDatabases.filter((database) => {
     const wanted = form.address.trim().toLowerCase();
     return wanted === "" || database.name.toLowerCase().includes(wanted) || database.url.toLowerCase().includes(wanted);
   });
 
+  /**
+   * Turso refused a token. The saved one, when none was typed: ask for a new
+   * one with no way back to it. A typed one only says so.
+   */
+  function showRefusal(message: string, typed: { tursoApiToken?: string }) {
+    setError(message);
+    if (typed.tursoApiToken === undefined) setTokenField("refused");
+  }
+
   const create = async () => {
     if (!canCreate) return;
-    if (tursoTokenSaved !== true && !asksTursoToken) {
-      setAsksTursoToken(true);
+    if (tursoTokenSaved !== true && tokenField === "hidden") {
+      setTokenField("asked");
       return;
     }
     setBusy("creating");
     setError(null);
     try {
-      const result = await rpc.call("createDatabase", {
-        prefix: prefixToCreate,
-        ...(tursoTokenSaved === true ? {} : { tursoApiToken: form.tursoToken.trim() }),
-      });
+      const typed = typedAccountToken(form);
+      const result = await rpc.call("createDatabase", { prefix: prefixToCreate, ...typed });
       if (!result.ok) {
-        setError(result.error.message);
+        if (result.error.code === TOKEN_REFUSED) showRefusal(result.error.message, typed);
+        else setError(result.error.message);
         return;
       }
       change({ address: result.url, token: "", tursoToken: "" });
-      setAsksTursoToken(false);
+      setTokenField("hidden");
       setTursoTokenSaved(true);
+      if (typed.tursoApiToken !== undefined) setListVersion((version) => version + 1);
     } catch (createError) {
       setError(describeError(createError));
     } finally {
@@ -227,7 +263,8 @@ export function ConnectDatabaseDialog({ open, onOpenChange, onConnected }: Conne
     try {
       const result = await rpc.call("connectDatabase", connectInput(form));
       if (!result.ok) {
-        setError(result.error.message);
+        if (result.error.code === TOKEN_REFUSED) showRefusal(result.error.message, typedAccountToken(form));
+        else setError(result.error.message);
         return;
       }
       onConnected();
@@ -320,8 +357,19 @@ export function ConnectDatabaseDialog({ open, onOpenChange, onConnected }: Conne
                 {error}
               </p>
             ) : null}
+            {tursoTokenSaved === true && tokenField === "hidden" ? (
+              <Button
+                size="sm"
+                variant="link"
+                className="h-auto px-0 text-muted-foreground"
+                disabled={busy !== null}
+                onClick={() => setTokenField("replacing")}
+              >
+                Replace token
+              </Button>
+            ) : null}
           </LabelledField>
-          {asksTursoToken ? (
+          {tokenField !== "hidden" ? (
             <LabelledField label="Turso API token" htmlFor={ids.tursoToken}>
               <div className="flex gap-2">
                 <Input
@@ -342,10 +390,25 @@ export function ConnectDatabaseDialog({ open, onOpenChange, onConnected }: Conne
                 </Button>
               </div>
               <p className="text-xs text-muted-foreground">
-                Creating a database needs the token of your Turso account; it is saved once. Generate mints one named{" "}
+                The token of your Turso account creates and lists its databases; it is saved once and replaced by the next
+                one Turso accepts. Generate mints one named{" "}
                 {GENERATED_TOKEN_NAME} with the Turso CLI of this machine; clear the field to mint another.
               </p>
               {generateRefusal ? <GenerateRefusalHint refusal={generateRefusal} /> : null}
+              {tokenField === "replacing" ? (
+                <Button
+                  size="sm"
+                  variant="link"
+                  className="h-auto px-0 text-muted-foreground"
+                  disabled={busy !== null}
+                  onClick={() => {
+                    setTokenField("hidden");
+                    change({ tursoToken: "" });
+                  }}
+                >
+                  Keep saved token
+                </Button>
+              ) : null}
             </LabelledField>
           ) : null}
           <LabelledField label="Token" htmlFor={ids.token}>

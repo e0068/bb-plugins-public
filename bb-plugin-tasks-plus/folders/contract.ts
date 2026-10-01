@@ -76,6 +76,7 @@ export const folderDomainErrorSchema = z
       "database_auth_failed",
       "database_not_empty",
       "turso_token_required",
+      "turso_token_refused",
       "turso_api_failed",
     ]),
     message: z.string(),
@@ -110,6 +111,8 @@ const connectDatabaseInputSchema = z
   .object({
     url: z.string(),
     token: z.string().optional(),
+    /** The Turso account token typed in place of a missing or refused one; saved once Turso accepts it. */
+    tursoApiToken: z.string().optional(),
     moveFromBoardId: idSchema.optional(),
     name: z.string().optional(),
     prefix: z.string().optional(),

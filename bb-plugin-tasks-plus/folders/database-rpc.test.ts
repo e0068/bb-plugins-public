@@ -63,6 +63,46 @@ describe("Create: a new database without leaving the dialog", () => {
   });
 });
 
+describe("Create: a saved Turso token the account no longer accepts", () => {
+  it("is refused with its own code, so the dialog can ask for a new token", async () => {
+    const a = await machine("Mac mini", { tursoApiToken: "revoked-token" });
+    expect(await a.call("createDatabase", { prefix: "REM" })).toMatchObject({ ok: false, error: { code: "turso_token_refused" } });
+  });
+
+  it("gives way to a new token Turso accepts: the next Create needs no token typed", async () => {
+    const a = await machine("Mac mini", { tursoApiToken: "revoked-token" });
+    expect(await a.call("createDatabase", { prefix: "REM", tursoApiToken: turso.accountToken })).toMatchObject({ ok: true });
+    expect(await a.call("createDatabase", { prefix: "WEB" })).toMatchObject({ ok: true, url: "libsql://bb-tasks-web-me.turso.io" });
+  });
+});
+
+describe("A refused Turso token: which one, and Connect taking a new one", () => {
+  it("names the saved token when the saved one is refused", async () => {
+    const a = await machine("Mac mini", { tursoApiToken: "revoked-token" });
+    const refused = await a.call<{ error: { message: string } }>("createDatabase", { prefix: "REM" });
+    expect(refused.error.message).toMatch(/saved/);
+  });
+
+  it("does not blame the saved token when the typed one is refused", async () => {
+    const a = await machine("Mac mini");
+    const refused = await a.call<{ error: { code: string; message: string } }>("createDatabase", { prefix: "REM", tursoApiToken: "wrong-token" });
+    expect(refused.error.code).toBe("turso_token_refused");
+    expect(refused.error.message).not.toMatch(/saved/);
+  });
+
+  it("Connect takes a typed account token in place of the refused saved one, and keeps it", async () => {
+    const a = await machine("Mac mini");
+    const created = await a.call<{ url: string }>("createDatabase", { prefix: "REM", tursoApiToken: turso.accountToken });
+    const b = await machine("MacBook", { tursoApiToken: "revoked-token" });
+    expect(await b.call("connectDatabase", { url: created.url, name: "Remote", prefix: "REM" })).toMatchObject({
+      ok: false,
+      error: { code: "turso_token_refused" },
+    });
+    expect(await b.call("connectDatabase", { url: created.url, name: "Remote", prefix: "REM", tursoApiToken: turso.accountToken })).toEqual({ ok: true });
+    expect(await b.call("listTursoDatabases")).toMatchObject({ ok: true });
+  });
+});
+
 describe("Connect: a board kept in a database", () => {
   it("connects the created database as a new board named as asked, with no token typed", async () => {
     const a = await machine("Mac mini");
