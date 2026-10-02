@@ -24,6 +24,8 @@ export type ThreadFlows = {
   takePicked(threadId: string): Promise<string | undefined>;
   choiceOf(projectId: string): string | undefined;
   choose(projectId: string, flowId: string): Promise<void>;
+  /** Привязывает новый тред к flow родителя, а без родителя — к выбору проекта; уже привязанный не трогает. Зовут и событие создания, и первое сообщение: bb не обещает их порядка. */
+  bind(thread: { id: string; projectId: string; parentThreadId: string | null }): void;
   onThreadCreated(payload: { thread: { id: string; projectId: string; parentThreadId: string | null } }): void;
   onThreadDeleted(payload: { thread: { id: string } }): void;
   /** Ждёт записи в kv, начатые привязками новых тредов. */
@@ -43,6 +45,15 @@ export const createThreadFlows = async (kv: PluginKvStorage): Promise<ThreadFlow
   let writes: Promise<unknown> = Promise.resolve();
   const unpick = async (threadId: string) => {
     if (picks.delete(threadId)) await kv.delete(`${PICK_PREFIX}${threadId}`);
+  };
+  const bind: ThreadFlows["bind"] = (thread) => {
+    // Уже привязанный тред — привязан первым сообщением раньше события создания, например flow исходного треда передачи.
+    if (threads.has(thread.id)) return;
+    const flowId = thread.parentThreadId === null ? projects.get(thread.projectId) : threads.get(thread.parentThreadId);
+    if (flowId === undefined) return;
+    // Память — сразу: сборка инструкций первого хода может прийти раньше записи в kv.
+    threads.set(thread.id, flowId);
+    writes = writes.then(() => kv.set(`${THREAD_PREFIX}${thread.id}`, flowId));
   };
   return {
     flowOf: (threadId) => threads.get(threadId),
@@ -67,13 +78,8 @@ export const createThreadFlows = async (kv: PluginKvStorage): Promise<ThreadFlow
       projects.set(projectId, flowId);
       await kv.set(`${PROJECT_PREFIX}${projectId}`, flowId);
     },
-    onThreadCreated({ thread }) {
-      const flowId = thread.parentThreadId === null ? projects.get(thread.projectId) : threads.get(thread.parentThreadId);
-      if (flowId === undefined) return;
-      // Память — сразу: сборка инструкций первого хода может прийти раньше записи в kv.
-      threads.set(thread.id, flowId);
-      writes = writes.then(() => kv.set(`${THREAD_PREFIX}${thread.id}`, flowId));
-    },
+    bind,
+    onThreadCreated: ({ thread }) => bind(thread),
     onThreadDeleted({ thread }) {
       if (threads.delete(thread.id)) writes = writes.then(() => kv.delete(`${THREAD_PREFIX}${thread.id}`));
       if (picks.delete(thread.id)) writes = writes.then(() => kv.delete(`${PICK_PREFIX}${thread.id}`));

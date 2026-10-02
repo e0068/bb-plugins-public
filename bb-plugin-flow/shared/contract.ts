@@ -843,11 +843,17 @@ export const stageTrackSchema = z.object({
 
 export const plannedSchema = z.object({ minutes: z.number().nullable(), target: z.number(), max: z.number() });
 
+/** План одного этапа из прогноза ответа: минуты и доллары его добавки; `null` — величины в добавке нет. */
+export const stagePlanSchema = z.object({ minutes: z.number().nullable(), target: z.number().nullable() });
+export type StagePlan = z.output<typeof stagePlanSchema>;
+
 /** Прогресс flow треда в kv: этапы по id, этапы, ждущие владельца, и план из прогноза ответа. */
 export const flowProgressSchema = z.object({
   stages: z.record(z.string(), stageTrackSchema),
   waiting: z.array(z.string()),
   planned: plannedSchema.optional(),
+  /** План этапов по id — из прогноза ответов, взявших их в прогон; новый ответ дописывает свои этапы поверх. */
+  plans: z.record(z.string(), stagePlanSchema).optional(),
   /** Последний бриф треда, коснувшийся прогресса: под его карточкой встаёт итог завершённого прогона. */
   lastBriefId: z.string().optional(),
   /** Тред, который ведёт прогон сейчас; у записи до переноса прогресса на прогон поля нет — её ведёт тред, под чьим id она лежит. */
@@ -901,6 +907,8 @@ export const progressStageSchema = z.object({
   /** Минуты простоя этапа с шагами: ожидание владельца у упавшего шага или нажатия. У этапа без шагов — `null`. */
   idleMinutes: z.number().int().nonnegative().nullable().optional(),
   cost: z.number().nonnegative().nullable(),
+  /** План этапа, который ещё не пройден, — из прогноза ответа; поля нет — плана нет или этап уже пройден. */
+  plan: stagePlanSchema.optional(),
   /** Шаги этапа-автоматизации или этапа Action с состояниями; `wait` — шаг Action ждёт нажатия владельца. У остальных этапов поля нет. */
   automation: z
     .object({
@@ -1042,36 +1050,14 @@ export const automationRpcContract = defineRpcContract({
 
 /** Кнопка flow в композере нового треда: выбор запоминается по проекту и достаётся новому треду. */
 /**
- * Следующий прогон в том же треде: сообщение владельца в тред с завершённым
- * прогоном Flow придерживает хуком `message.dispatch`, а форма над композером
- * спрашивает flow и компактацию; ответ отпускает придержанное сообщение.
- */
-export const nextRunRpcContract = defineRpcContract({
-  /** Flow владельца для формы следующего прогона: у области композера треда своего проекта нет, а список от него и не зависит. */
-  nextRunFlows: { input: z.object({ threadId: text }), output: z.object({ flows: z.array(z.object({ id: text, name: text })) }) },
-  /** Есть ли в очереди треда сообщение, придержанное Flow до выбора flow: форма стоит только над ним. */
-  nextRunHeld: { input: z.object({ threadId: text }), output: z.object({ held: z.boolean() }) },
-  startNextRun: {
-    input: z.object({ threadId: text, flowId: text, compact: z.boolean() }),
-    output: z.discriminatedUnion("kind", [
-      z.object({ kind: z.literal("sent") }),
-      z.object({ kind: z.literal("failed"), reason: z.string() }),
-    ]),
-  },
-});
-
-/**
- * Flow треда над его композером: строка выбора у треда без прогона и «Отменить flow» у идущего.
- * Выбор ждёт сообщения владельца — его применяет хук `message.dispatch` следующего прогона.
+ * Flow треда в контейнере состояния Flow над композером: строка выбора у треда без прогона и после завершённого, «Отменить flow» у идущего.
+ * Выбор ждёт сообщения владельца — его применяет ход владельца в хуке `message.dispatch`.
  */
 export const flowChoiceRpcContract = defineRpcContract({
-  /**
-   * `selected` — выбор, ждущий отправки, а без него — flow треда; тред, оставленный агентом без flow, и тред с завершённым прогоном — `NO_FLOW`.
-   * `held` — сообщение треда придержано до выбора flow: над ним стоит форма следующего flow, и строка выбора не нужна.
-   */
+  /** `selected` — выбор, ждущий отправки, а без него — flow треда; тред, оставленный агентом без flow, — `NO_FLOW`, тред с завершённым прогоном — `AUTO_FLOW`. */
   threadFlowChoice: {
     input: z.object({ threadId: text }),
-    output: z.object({ flows: z.array(z.object({ id: text, name: text, stages: z.number().int().nonnegative() })), selected: text, held: z.boolean() }),
+    output: z.object({ flows: z.array(z.object({ id: text, name: text, stages: z.number().int().nonnegative() })), selected: text }),
   },
   pickThreadFlow: {
     input: z.object({ threadId: text, flowId: text }),

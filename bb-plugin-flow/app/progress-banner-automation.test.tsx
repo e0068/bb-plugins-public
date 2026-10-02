@@ -114,9 +114,10 @@ describe("что сделал шаг автоматизации", () => {
     ],
   };
 
-  it("адрес PR показан ссылкой, остальное — текстом", async () => {
+  it("развёрнутая сделанная автоматизация показывает адрес PR ссылкой, остальное — текстом", async () => {
     const slot = await mount(withDetails);
     fireEvent.click(await screen.findByRole("button", { name: /Прогресс flow/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Влить и закрыть: подробности" }));
     const steps = [...slot.container.querySelectorAll<HTMLElement>("[data-progress-step]")];
     expect(steps[0]!.textContent).toContain("fix(flow): номер этапа в полосе");
     expect(steps[0]!.querySelector("[data-step-detail-link]")).toBeNull();

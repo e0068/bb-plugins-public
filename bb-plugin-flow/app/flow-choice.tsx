@@ -1,5 +1,5 @@
-// Строка выбора flow над композером треда без прогона — на месте бара и его
-// видом. Свёрнутая говорит, какой flow выбран; раскрывается на месте, как бар,
+// Строка выбора flow в контейнере состояния Flow над композером треда без
+// прогона и после завершённого — на месте бара и его видом. Свёрнутая говорит, какой flow выбран; раскрывается на месте, как бар,
 // списком «Автоматически», flow владельца и «Flow не выбран» с галочкой у
 // выбранного. Выбор только запоминается: flow достаётся треду с сообщением
 // владельца, и тогда строку сменяет бар. Пока сервер не ответил, строки нет.
@@ -15,7 +15,7 @@ import { useMessages } from "./locale-context";
 /** Тот же такт, что у бара: строка узнаёт о выборе агента и о прогоне, начатом сообщением. */
 const POLL_MS = 5000;
 
-type Choice = { flows: Array<{ id: string; name: string; stages: number }>; selected: string; held: boolean };
+type Choice = { flows: Array<{ id: string; name: string; stages: number }>; selected: string };
 
 function useChoice(threadId: string) {
   const rpc = useRpc<typeof flowChoiceRpcContract>();
@@ -47,8 +47,7 @@ export function FlowChoice({ threadId }: { threadId: string }) {
   const t = useMessages();
   const { choice, pick } = useChoice(threadId);
   const [open, setOpen] = useState(false);
-  // Над придержанным сообщением уже стоит форма следующего flow: вторая форма выбора не нужна.
-  if (choice === null || choice.held) return null;
+  if (choice === null) return null;
   const options = [{ id: AUTO_FLOW, name: t.flows.pickerAuto, stages: null }, ...choice.flows, { id: NO_FLOW, name: t.flowChoice.none, stages: null }];
   const none = choice.selected === NO_FLOW;
   const selectedName = options.find((option) => option.id === choice.selected)?.name;

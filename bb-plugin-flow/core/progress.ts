@@ -4,6 +4,7 @@
 import { stageKindOf } from "../lib/stage-constants";
 import type { DecisionAnswer, DecisionBrief, FlowProgress, Planned, ProgressView, WorkStage } from "../shared/contract";
 import { automationView, executorKind, executorProvider, idleMinutes, isFailed, stageLiveIcon } from "./automation-run";
+import { stagePlans } from "./budget";
 import { demoVerdict } from "./outcome";
 import { askedStageIds } from "./stages";
 
@@ -57,7 +58,13 @@ export const onAnswer = (progress: FlowProgress, brief: DecisionBrief, answer: D
     const choice = { skipped: !s.run, executor: s.executor };
     return patch(p, s.id, (t) => (t.finishedAt === undefined ? { ...t, ...choice } : own.includes(s.id) ? t : { ...t, nextPass: choice }));
   }, closed);
-  return { ...chosen, waiting: progress.waiting.filter((id) => !own.includes(id)), ...(planned === undefined ? {} : { planned: { ...planned } }) };
+  const plans = { ...progress.plans, ...stagePlans(brief, answer) };
+  return {
+    ...chosen,
+    waiting: progress.waiting.filter((id) => !own.includes(id)),
+    ...(planned === undefined ? {} : { planned: { ...planned } }),
+    ...(Object.keys(plans).length === 0 ? {} : { plans }),
+  };
 };
 
 /**
@@ -209,6 +216,7 @@ const plus = (value: number | null, earlier: number | undefined): number | null 
 export const progressView = (progress: FlowProgress, stages: readonly WorkStage[], agentActive = false, threadProvider: string | null = null): ProgressView => {
   const rows = stages.map((stage) => {
     const track = progress.stages[stage.id] ?? {};
+    const plan = progress.plans?.[stage.id];
     const state = track.finishedAt !== undefined ? "done" : isFailed(track) ? "fail" : progress.waiting.includes(stage.id) || track.startedAt !== undefined ? "now" : track.skipped === true ? "skip" : "todo";
     return {
       id: stage.id,
@@ -225,6 +233,8 @@ export const progressView = (progress: FlowProgress, stages: readonly WorkStage[
       wallMinutes: state === "done" ? plus(minutesBetween(track), track.earlier?.wall) : null,
       idleMinutes: state === "done" && track.run !== undefined ? idleMinutes(track) : null,
       cost: plus(track.cost ?? null, track.earlier?.cost),
+      // План — этапу, который ещё впереди или идёт: у пройденного уже есть факт, у вычеркнутого тратить нечего.
+      ...(plan === undefined || (state !== "todo" && state !== "now") ? {} : { plan }),
       ...(stage.automation === undefined ? {} : { automation: automationView(stage, track) }),
     } as const;
   });

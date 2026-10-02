@@ -1,7 +1,7 @@
 import fc from "fast-check";
 import { describe, expect, it } from "vitest";
 
-import { appliesPickedFlow } from "./next-run-hold";
+import { appliesPickedFlow } from "./picked-flow";
 
 describe("какое сообщение применяет flow, выбранный над композером", () => {
   it("сообщение владельца, начинающее ход, применяет выбор", () => {

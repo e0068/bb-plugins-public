@@ -22,6 +22,8 @@ export const registerChooseFlow = (
     threads: Pick<ThreadFlows, "flowOf" | "assign">;
     /** Вклад Flow в ход треда — после назначения уже с этапами выбранного flow. */
     instructions: (threadId: string) => string;
+    /** Заводит треду пустой прогон назначенного flow. */
+    started: (threadId: string) => Promise<void>;
   },
 ): void => {
   bb.agents.registerTool({
@@ -40,6 +42,7 @@ export const registerChooseFlow = (
       }
       if (!settings.flows.some((flow) => flow.id === flowId)) return toolError(`Unknown flow "${flowId}". Flows: ${settings.flows.map((flow) => flow.id).join(", ")}.`);
       await deps.threads.assign(ctx.threadId, flowId);
+      await deps.started(ctx.threadId);
       return toolText(deps.instructions(ctx.threadId));
     },
   });

@@ -28,7 +28,8 @@ import { acrossThreads, readClaudeTranscript, readPlanning, readWindowCost, read
 import { type ContextSettingValues, contextFillOf, contextSettings } from "./server/context";
 import { createProgress, registerProgress } from "./server/progress";
 import { registerFlowPickerApi } from "./server/flow-picker-api";
-import { heldFor, registerNextRun } from "./server/next-run";
+import { registerOwnerTurn } from "./server/owner-turn";
+import { startThread } from "./server/thread-start";
 import { registerFlowChoice } from "./server/flow-choice";
 import { createOwnSends } from "./server/own-sends";
 import { createFlowSettings } from "./server/flow-settings";
@@ -44,8 +45,7 @@ import { registerVoiceApi } from "./server/voice";
 import { AGENT_NO_FLOW, AUTO_FLOW, flowOrNone, NO_FLOW, stageSettingsOf } from "./core/flows";
 import { CHOOSE_FLOW_AGAIN_RULE, CHOOSE_FLOW_RULE } from "./core/stages";
 import { CHOOSE_FLOW_TOOL } from "./lib/stage-constants";
-import { LANGUAGE_OPTIONS, LANGUAGE_SETTING, LANGUAGE_SYSTEM, resolveLocale } from "./lib/i18n";
-import { messages } from "./lib/messages";
+import { LANGUAGE_OPTIONS, LANGUAGE_SETTING, LANGUAGE_SYSTEM } from "./lib/i18n";
 import { isRunFinished } from "./core/run-summary";
 import { liveFlowId } from "./core/run-history";
 import { runJournal } from "./core/run-journal";
@@ -57,7 +57,6 @@ const now = (): string => new Date().toISOString();
 
 export default async function plugin(bb: BbPluginApi): Promise<void> {
   // Язык читает фронт: System идёт за языком браузера, который знает только он.
-  // Сервер берёт его только для подписи придержанного сообщения в очереди, System — по языку машины.
   // Пороги второй полосы читает сервер и кладёт в ответ баннера — фронт не
   // ходит в настройки вторым путём. Схема каждого порога сверяет ввод с
   // соседом, а сосед — последняя запись хранилища: до первого чтения её нет,
@@ -106,7 +105,7 @@ export default async function plugin(bb: BbPluginApi): Promise<void> {
   };
   const providers = () => bb.sdk.providers.list();
   // Тред, переданный до указателей прогонов, находит свой прогон по ответу на бриф, которым работу передали.
-  // Свои отправки Flow — ответ на бриф и побудка: хук следующего прогона их не придерживает.
+  // Свои отправки Flow — ответ на бриф и побудка: ход владельца по ним выбор flow не применяет.
   const own = createOwnSends();
   const progress = createProgress(bb.storage.kv, {
     onChange: (threadId) => {
@@ -114,7 +113,7 @@ export default async function plugin(bb: BbPluginApi): Promise<void> {
       void freezeFinished(threadId).catch(() => undefined);
     },
     handedTo: async (briefId) => (await store.getAnswer(briefId))?.handoffThreadId });
-  // Реплика Flow в тред встаёт в очередь и не перебивает идущий ход; хук следующего прогона её не придерживает.
+  // Реплика Flow в тред встаёт в очередь и не перебивает идущий ход; выбор flow по ней не применяется.
   const send = async (threadId: string, text: string) => {
     own.mark(threadId, text);
     await bb.sdk.threads.send({ threadId, mode: "queue-if-active", input: [{ type: "text", text, mentions: [] }] });
@@ -192,7 +191,11 @@ export default async function plugin(bb: BbPluginApi): Promise<void> {
     const configured = await journalDirs.get(projectId);
     return configured.kind === "configured" ? configured.path : DEFAULT_JOURNAL_DIR;
   };
-  registerApi(bb, store, { now, emit, writeDecision: writeAndIndex, progress, ownSend: own.mark });
+  const carryFlow = async (fromThreadId: string, toThreadId: string) => {
+    const flowId = threads.flowOf(fromThreadId);
+    if (flowId !== undefined) await threads.assign(toThreadId, flowId);
+  };
+  registerApi(bb, store, { now, emit, writeDecision: writeAndIndex, progress, ownSend: own.mark, carryFlow });
   // Удалённый тред не ждёт владельца и не показывает прогресс: записи и его указатель снимаются, иначе значок висел бы
   // в левой панели. Архивированный тред и тред, отдавший работу, ключей не теряют — их ещё откроют.
   bb.events.on("thread.deleted", ({ thread }) => {
@@ -239,7 +242,8 @@ export default async function plugin(bb: BbPluginApi): Promise<void> {
   };
   void catalog();
   registerFlowTools(bb, flows, { catalog, newId });
-  registerChooseFlow(bb, { flows, threads, instructions: (threadId) => flowTurnInstructions(stagesOf(threadId).stages) });
+  // Пустой прогон выбранного flow — сразу: контейнер состояния Flow показывает этапы, не дожидаясь первого брифа.
+  registerChooseFlow(bb, { flows, threads, instructions: (threadId) => flowTurnInstructions(stagesOf(threadId).stages), started: (threadId) => progress.annotate(threadId, (p) => p) });
   registerFlowSettingsApi(bb, flows, { catalog, ready: async () => {
     if (!heal.done()) await catalog();
   },
@@ -253,17 +257,10 @@ export default async function plugin(bb: BbPluginApi): Promise<void> {
     const found = await progress.run(threadId);
     return found !== null && isRunFinished(found.progress, stagesOf(found.carrier).stages);
   };
-  const choice = registerFlowChoice(bb, { flows, threads, progress, store, cancelRun: (threadId) => runner.cancel(threadId), finished: runFinished, held: heldFor(bb) });
-  // Следующий прогон в том же треде: сообщение владельца ждёт выбора flow, пока прогон треда завершён, и применяет выбор над композером.
-  registerNextRun(bb, {
-    flows,
-    threads,
-    progress,
-    finished: runFinished,
-    heldReason: () => messages(resolveLocale(storedContext[LANGUAGE_SETTING], [Intl.DateTimeFormat().resolvedOptions().locale])).nextFlow.held,
-    ownSend: own.has,
-    ownerTurn: choice.ownerTurn,
-  });
+  const choice = registerFlowChoice(bb, { flows, threads, progress, store, cancelRun: (threadId) => runner.cancel(threadId), finished: runFinished });
+  // Ход владельца применяет flow, выбранный в контейнере состояния Flow; после завершённого прогона — начинает следующий.
+  // Первое сообщение нового треда даёт ему flow и прогон: тред передачи — flow исходного, остальные с flow — пустой прогон.
+  registerOwnerTurn(bb, { ownSend: own.has, ownerTurn: choice.ownerTurn, firstMessage: startThread({ threads, progress, hasFlow: (threadId) => flowOf(threadId) !== null }) });
   // Ушедшая своя отправка забывается — тем же текстом, что хук видит в `input.text`: текстовые блоки через перевод строки.
   bb.events.on("message.dispatched", ({ entry }) =>
     own.forget(entry.threadId, entry.content.flatMap((part) => (part.type === "text" ? [part.text] : [])).join("\n")),
