@@ -4,7 +4,8 @@
  * `Authorization: Bearer <token>`. Nothing from the rest of the plugin is
  * imported here — this is the shell of the `remote` layer.
  *
- * Every failure is a value: `unreachable` (network, 5xx, timeout), `auth`
+ * Every failure is a value: `unreachable` with why (no answer in time, a
+ * dropped network, an HTTP status, a reply that does not read), `auth`
  * (401, 403) or `sql` (a statement the database rejected, with its code). The
  * token goes into one header and into no report.
  */
@@ -35,8 +36,15 @@ export type HranaStepResult =
   | { kind: "error"; code: string; message: string }
   | { kind: "skipped" };
 
+/** Why a database could not be talked to. */
+export type UnreachableCause =
+  | { cause: "timeout"; ms: number }
+  | { cause: "network"; detail: string }
+  | { cause: "http"; status: number; detail: string }
+  | { cause: "unreadable"; detail: string };
+
 export type HranaError =
-  | { kind: "unreachable" }
+  | { kind: "unreachable"; why: UnreachableCause }
   | { kind: "auth" }
   | { kind: "sql"; code: string; message: string };
 
@@ -58,8 +66,36 @@ export interface HranaClientOptions {
 
 const DEFAULT_TIMEOUT_MS = 10_000;
 
-const UNREACHABLE: HranaError = { kind: "unreachable" };
+/** How much of what a server or the network said goes into a report. */
+const DETAIL_MAX = 200;
+
 const AUTH: HranaError = { kind: "auth" };
+const unreachable = (why: UnreachableCause): HranaError => ({ kind: "unreachable", why });
+const unreadable = (detail: string): HranaError => unreachable({ cause: "unreadable", detail });
+const NOT_A_RESULT = unreadable("the reply is not a Hrana pipeline result");
+
+/** The reason in words, the second half of `unreachableSentence`. */
+export function describeUnreachable(why: UnreachableCause): string {
+  switch (why.cause) {
+    case "timeout":
+      return `it did not answer in ${Math.round(why.ms / 1000)} s`;
+    case "network":
+      return `the network failed: ${why.detail}`;
+    case "http":
+      return why.detail === "" ? `it answered HTTP ${why.status}` : `it answered HTTP ${why.status}: ${why.detail}`;
+    case "unreadable":
+      return `its reply could not be read: ${why.detail}`;
+  }
+}
+
+const SENTENCE_END = /[.…!?]$/;
+
+/** The one sentence the dialog, the error and the log say about a database that cannot be reached; null — no attempt said why. */
+export function unreachableSentence(why: UnreachableCause | null): string {
+  if (why === null) return "The database cannot be reached.";
+  const sentence = `The database cannot be reached — ${describeUnreachable(why)}`;
+  return SENTENCE_END.test(sentence) ? sentence : `${sentence}.`;
+}
 
 const succeed = <T>(value: T): HranaResult<T> => ({ ok: true, value });
 const fail = <T>(error: HranaError): HranaResult<T> => ({ ok: false, error });
@@ -179,42 +215,73 @@ function firstResponse(body: unknown): { type: "ok"; response: Record<string, un
 
 function readExecute(body: unknown): HranaResult<HranaRows> {
   const first = firstResponse(body);
-  if (first === null) return fail(UNREACHABLE);
+  if (first === null) return fail(NOT_A_RESULT);
   if (first.type === "error") return fail({ kind: "sql", ...decodeError(first.error) });
   const rows = decodeStatement(first.response.result);
-  return rows === null ? fail(UNREACHABLE) : succeed(rows);
+  return rows === null ? fail(NOT_A_RESULT) : succeed(rows);
 }
 
 function readBatch(body: unknown): HranaResult<HranaStepResult[]> {
   const first = firstResponse(body);
-  if (first === null) return fail(UNREACHABLE);
+  if (first === null) return fail(NOT_A_RESULT);
   if (first.type === "error") return fail({ kind: "sql", ...decodeError(first.error) });
   const result = first.response.result;
-  if (!isRecord(result) || !Array.isArray(result.step_results)) return fail(UNREACHABLE);
+  if (!isRecord(result) || !Array.isArray(result.step_results)) return fail(NOT_A_RESULT);
   const results: unknown[] = result.step_results;
   const errors: unknown[] = Array.isArray(result.step_errors) ? result.step_errors : [];
   const decoded = results.map((raw, index) => decodeStepResult(raw, errors[index]));
-  return decoded.every((step): step is HranaStepResult => step !== null) ? succeed(decoded) : fail(UNREACHABLE);
+  return decoded.every((step): step is HranaStepResult => step !== null) ? succeed(decoded) : fail(NOT_A_RESULT);
 }
 
 // --- the round trip --------------------------------------------------------
 
+/** What a server or the network said, on one short line and without the token. */
+function detailOf(text: string, token: string): string {
+  const line = text.replace(/\s+/g, " ").trim();
+  const safe = token === "" ? line : line.split(token).join("<token>");
+  return safe.length > DETAIL_MAX ? `${safe.slice(0, DETAIL_MAX - 1)}…` : safe;
+}
+
+/** What one network error says: its words, else its code; for several addresses tried, each one's words. */
+function networkWords(error: unknown): string {
+  if (error instanceof AggregateError && error.errors.length > 0) return error.errors.map(networkWords).join("; ");
+  if (!(error instanceof Error)) return String(error);
+  const code: unknown = (error as { code?: unknown }).code;
+  return error.message !== "" ? error.message : typeof code === "string" ? code : error.name;
+}
+
+/** A fetch or a body read that failed: the wait ran out, or the network gave way — in its own words and those of the cause under it. */
+function transportFailure(error: unknown, signal: AbortSignal, ms: number, token: string): HranaError {
+  if (signal.aborted) return unreachable({ cause: "timeout", ms });
+  const under = error instanceof Error && error.cause !== undefined ? `: ${networkWords(error.cause)}` : "";
+  return unreachable({ cause: "network", detail: detailOf(`${networkWords(error)}${under}`, token) });
+}
+
+function parseJson(text: string): HranaResult<unknown> {
+  try {
+    return succeed(JSON.parse(text));
+  } catch {
+    return fail(unreadable("the reply is not JSON"));
+  }
+}
+
 async function send(options: HranaClientOptions, request: unknown): Promise<HranaResult<unknown>> {
   const doFetch = options.fetch ?? globalThis.fetch;
+  const ms = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+  const signal = AbortSignal.timeout(ms);
   try {
     const response = await doFetch(pipelineUrl(options.url), {
       method: "POST",
       headers: { authorization: `Bearer ${options.token}`, "content-type": "application/json" },
       body: JSON.stringify({ requests: [request, { type: "close" }] }),
-      signal: AbortSignal.timeout(options.timeoutMs ?? DEFAULT_TIMEOUT_MS),
+      signal,
     });
     if (response.status === 401 || response.status === 403) return fail(AUTH);
-    if (!response.ok) return fail(UNREACHABLE);
-    return succeed(await response.json());
-  } catch {
-    // A dropped network, a timeout and a reply that is not JSON look alike
-    // from here: the database cannot be talked to right now.
-    return fail(UNREACHABLE);
+    const text = await response.text();
+    if (!response.ok) return fail(unreachable({ cause: "http", status: response.status, detail: detailOf(text, options.token) }));
+    return parseJson(text);
+  } catch (error) {
+    return fail(transportFailure(error, signal, ms, options.token));
   }
 }
 

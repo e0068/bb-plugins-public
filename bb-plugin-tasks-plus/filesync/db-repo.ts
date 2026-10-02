@@ -1,4 +1,4 @@
-import type { HranaClient, HranaError, HranaResult, HranaRow, HranaStep, HranaStepResult, HranaValue } from "../remote/hrana.js";
+import type { HranaClient, HranaError, HranaResult, HranaRow, HranaStep, HranaStepResult, HranaValue, UnreachableCause } from "../remote/hrana.js";
 import type { TaskStatus } from "../db/types.js";
 import { applyRows, INITIAL_LINK, nextLink, taskFilePath, type LinkState, type Mirror, type TaskRow } from "./db-mirror.js";
 import { parseTaskFile } from "./task-file.js";
@@ -26,6 +26,8 @@ export interface DbRepoOptions {
   url: string;
   onChange?: () => void;
   onStateChange?: (state: RepoState) => void;
+  /** A lost attempt with its cause: the first after a live link, and each whose cause differs from the one told before it. */
+  onLinkLost?: (why: UnreachableCause) => void;
   pollMs?: number;
   now?: () => Date;
 }
@@ -280,13 +282,10 @@ const tombstoneStep = (slug: string, expected: number | undefined, updatedAt: st
   };
 };
 
-/** Only a network that does not answer moves the link: a refused token or a refused statement is the database answering. */
-const linkFailed = (error: HranaError): boolean => error.kind === "unreachable";
-
 export function failureOf(error: HranaError): Error {
   switch (error.kind) {
     case "unreachable":
-      return new DatabaseUnreachable();
+      return new DatabaseUnreachable(error.why);
     case "auth":
       return new DatabaseAuthFailed();
     case "sql":
@@ -342,6 +341,8 @@ export function createDbRepo(client: HranaClient, options: DbRepoOptions): DbRep
   let loaded = false;
   let schemaReady = false;
   let link: LinkState = INITIAL_LINK;
+  /** The cause last given to `onLinkLost`, so a down link does not tell the same one on every poll. */
+  let toldCause: UnreachableCause["cause"] | null = null;
   let timer: ReturnType<typeof setInterval> | null = null;
   let polling = false;
   let queue: Promise<unknown> = Promise.resolve();
@@ -366,11 +367,20 @@ export function createDbRepo(client: HranaClient, options: DbRepoOptions): DbRep
     if (moved) options.onStateChange?.(next.state);
   }
 
-  /** The value, or the failure as the error the port promises; a lost link is counted. */
+  /** The value, or the failure as the error the port promises; a lost link is counted.
+   *  Only a network that does not answer moves the link: a refused token or a
+   *  refused statement is the database answering. */
   function unwrap<T>(result: HranaResult<T>): T {
     if (result.ok) return result.value;
-    if (linkFailed(result.error)) touch(false);
-    throw failureOf(result.error);
+    const { error } = result;
+    if (error.kind === "unreachable") {
+      if (link.state.kind === "live" || error.why.cause !== toldCause) {
+        toldCause = error.why.cause;
+        options.onLinkLost?.(error.why);
+      }
+      touch(false);
+    }
+    throw failureOf(error);
   }
 
   async function ensureSchema(): Promise<void> {

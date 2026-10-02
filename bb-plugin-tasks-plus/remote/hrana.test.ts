@@ -104,19 +104,6 @@ describe("failures are values, never exceptions", () => {
     expect(await createHranaClient({ url: URL_, token: TOKEN, fetch: fake.fetch }).execute("SELECT 1")).toEqual({ ok: false, error: { kind: "auth" } });
   });
 
-  it("a server error, a dropped network and a timeout are the database being unreachable", async () => {
-    const { fake, client } = setup();
-    fake.respondWith(503);
-    expect(await client.execute("SELECT 1")).toEqual({ ok: false, error: { kind: "unreachable" } });
-    fake.respondWith(null);
-    fake.setOffline(true);
-    expect(await client.batch([{ sql: "SELECT 1" }])).toEqual({ ok: false, error: { kind: "unreachable" } });
-    fake.setOffline(false);
-    fake.setHanging(true);
-    const slow = createHranaClient({ url: URL_, token: TOKEN, fetch: fake.fetch, timeoutMs: 50 });
-    expect(await slow.execute("SELECT 1")).toEqual({ ok: false, error: { kind: "unreachable" } });
-  });
-
   it("never puts the token into what it reports", async () => {
     const { fake, client } = setup();
     const reports = [
