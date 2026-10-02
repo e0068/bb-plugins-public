@@ -8,7 +8,7 @@ import { z } from "zod";
 
 import { STEP_IDS } from "@bb-plugins/automation-steps/catalog";
 import { MAX_SCRIPT_CHARS } from "../lib/script-limit";
-import { RETRY_LIMITS, SELF_EXECUTOR, STAGE_BUTTON_WIDTH, STAGE_KINDS } from "../lib/stage-constants";
+import { linkedSubStages, RETRY_LIMITS, SELF_EXECUTOR, STAGE_BUTTON_WIDTH, STAGE_KINDS, SUB_STAGE_ISSUE } from "../lib/stage-constants";
 
 export { RETRY_LIMITS, SELF_EXECUTOR, STAGE_BUTTON_WIDTH };
 
@@ -219,6 +219,8 @@ export const workStageSchema = z
     executors: z.array(stageExecutorSchema),
     /** Этап-автоматизация: её исполняет Flow, а не агент. */
     automation: stageAutomationSchema.optional(),
+    /** Под-этап: id этапа-владельца того же flow. Стоит выше владельца — идёт до него, ниже — после; включается и отключается вместе с ним. */
+    parent: text.optional(),
   })
   .superRefine((s, ctx) => {
     if (!uniqueIds(s.executors)) ctx.addIssue({ code: "custom", message: "executor ids must be unique within a stage", path: ["executors"] });
@@ -228,6 +230,7 @@ export const stageSettingsSchema = z
   .object({ stages: z.array(workStageSchema), minButtonWidth: z.number().int().min(STAGE_BUTTON_WIDTH.min).max(STAGE_BUTTON_WIDTH.max) })
   .superRefine((s, ctx) => {
     if (!uniqueIds(s.stages)) ctx.addIssue({ code: "custom", message: "stage ids must be unique", path: ["stages"] });
+    if (!linkedSubStages(s.stages)) ctx.addIssue({ code: "custom", message: SUB_STAGE_ISSUE, path: ["stages"] });
   });
 
 /** Flow — именованная таблица этапов. Тред идёт по одному flow: из него инструкции агенту и проверка брифа. */
@@ -236,6 +239,7 @@ export const flowSchema = z
   .object({ id: text, name: text, description: z.string().optional(), stages: z.array(workStageSchema) })
   .superRefine((f, ctx) => {
     if (!uniqueIds(f.stages)) ctx.addIssue({ code: "custom", message: "stage ids must be unique within a flow", path: ["stages"] });
+    if (!linkedSubStages(f.stages)) ctx.addIssue({ code: "custom", message: SUB_STAGE_ISSUE, path: ["stages"] });
   });
 
 /**
@@ -266,6 +270,8 @@ export const stageDraftSchema = z.object({
   name: text.optional(),
   executors: z.array(text).optional(),
   automation: stageAutomationSchema.optional(),
+  /** Под-этап: id этапа-владельца в том же черновике. */
+  parent: text.optional(),
 });
 
 /** Параметры `save_flow`: flow без `id` — новый; `position` — место в списке с нуля, первый flow — flow по умолчанию. */
@@ -917,8 +923,10 @@ export const progressStageSchema = z.object({
   /** Провайдер исполнителя этапа навыка — треда или субагента; по нему фронт берёт логотип. */
   provider: z.string().optional(),
   results: z.array(storedResultSchema),
-  /** Место этапа среди этапов прогона, с 1; вычеркнутый номера не получает. */
+  /** Место этапа среди этапов прогона, с 1; вычеркнутый и под-этап номера не получают. */
   number: z.number().int().positive().nullable().optional(),
+  /** Под-этап: id этапа-владельца, под строкой которого он свёрнут. */
+  parent: text.optional(),
   /** Минуты работы на этапе: активные, а без них — от начала до конца этапа. */
   minutes: z.number().int().nonnegative().nullable(),
   /** Всё время этапа от начала до конца, вместе с ожиданием владельца. */

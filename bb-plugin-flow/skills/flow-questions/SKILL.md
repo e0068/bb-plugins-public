@@ -17,7 +17,7 @@ Only what the owner decides and what changes the result. A fact you can check in
 | --- | --- | --- |
 | Fork | Two or three paths, the choice changes the outcome | Every option says what happens, its cost and risk; your pick is marked recommended |
 | Pick several | Several items can be taken | Several may be recommended |
-| "Did I get this right" | The task reads ambiguously or is made of important nuances | One option "Yes"; the context says how you understood the task; the owner writes their own version. Done-when criteria do not go here — they are the Criteria stage |
+| "Did I get this right" | The task reads ambiguously or is made of important nuances | One option "Yes"; the context says how you read the ambiguous point — the brief's scope already says what you understood, the question does not retell it; the owner writes their own version. Done-when criteria do not go here — they are the Criteria stage |
 
 Gather everything that has piled up in one go. Do not ask one question per turn.
 

@@ -7,7 +7,7 @@
 // автоматизации — её шаги с тем, что каждый сделал, и повтором упавшего.
 // Минуты и доллары — своими колонками: у пройденного этапа факт, у этапа
 // впереди — едва заметный план, последней строкой — сколько потрачено всего.
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { useBbNavigate, useComposerView, useRpc } from "@get-bb/plugin-sdk/app";
 
 import { contextPercent, contextSegments, contextTone, shortTokens } from "../core/context";
@@ -15,6 +15,7 @@ import { mutedBlinkAnimation, mutedBlinkKeyframes } from "../core/muted-blink";
 import { PULL_SETTLE_MS, pullOffset, settlesClosed } from "../core/pull-to-collapse";
 import { stepDetail, type FileRoots } from "../core/result-link";
 import { stageLabel } from "../core/stages";
+import { runCascade } from "../core/sub-stages";
 import { ConfirmDialog } from "../components/ui/dialog";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "../components/ui/dropdown-menu";
 import { Icon } from "../components/ui/icon";
@@ -393,7 +394,7 @@ function Spent({ stage }: { stage: ProgressStage }) {
  * `onToggle` — у живого бара треда, который ведёт прогон: этап, до которого прогон не дошёл, получает чекбокс «в прогоне».
  * `onExpand` — у строки, которой есть что развернуть: название становится кнопкой аккордеона.
  */
-export function Row({ stage, roots, onToggle, expanded = false, onExpand }: { stage: ProgressStage; roots: FileRoots | null; onToggle?: (run: boolean) => void; expanded?: boolean; onExpand?: () => void }) {
+export function Row({ stage, roots, onToggle, expanded = false, onExpand, subOf }: { stage: ProgressStage; roots: FileRoots | null; onToggle?: (run: boolean) => void; expanded?: boolean; onExpand?: () => void; subOf?: ProgressStage | undefined }) {
   const t = useMessages();
   const first = stage.results[0];
   const muted = stage.state === "todo" || stage.state === "skip";
@@ -461,7 +462,11 @@ export function Row({ stage, roots, onToggle, expanded = false, onExpand }: { st
         ) : stage.state === "fail" ? (
           <Icon name="X" aria-hidden="true" className="size-3.5 text-destructive" />
         ) : onToggle !== undefined ? (
-          <StageCheckbox inRun={stage.state === "todo"} label={t.flowChoice.inRun(stageLabel(stage, t.stages))} onToggle={onToggle} />
+          <StageCheckbox
+            inRun={stage.state === "todo"}
+            label={subOf === undefined ? t.flowChoice.inRun(stageLabel(stage, t.stages)) : t.subStages.inRun(stageLabel(stage, t.stages), stageLabel(subOf, t.stages))}
+            onToggle={onToggle}
+          />
         ) : stage.state === "skip" ? (
           <span aria-hidden="true" className="h-px w-2.5 bg-muted-foreground" />
         ) : (
@@ -522,25 +527,32 @@ function TotalRow({ stages }: { stages: readonly ProgressStage[] }) {
  */
 export function StageList({ stages, roots, threadId, toggleOf }: { stages: readonly ProgressStage[]; roots: FileRoots | null; threadId: string | null; toggleOf?: (stage: ProgressStage, at: number) => ((run: boolean) => void) | undefined }) {
   const [touched, setTouched] = useState<Readonly<Record<string, boolean>>>({});
+  // Под-этапы свёрнуты под строкой владельца: она раскрывается и ради них, а идущий или упавший под-этап раскрывает её сам.
+  const subsOf = (id: string) => stages.filter((stage) => stage.parent === id);
+  const item = (stage: ProgressStage, nested: boolean): ReactNode => {
+    const subs = subsOf(stage.id);
+    const canOpen = expandable(stage) || subs.length > 0;
+    const open = canOpen && (touched[stage.id] ?? (openByDefault(stage) || subs.some((sub) => sub.state === "now" || sub.state === "fail")));
+    const toggle = toggleOf?.(stage, stages.indexOf(stage));
+    return (
+      <div key={stage.id} className="flex flex-col">
+        <Row
+          stage={stage}
+          roots={roots}
+          {...(toggle === undefined ? {} : { onToggle: toggle })}
+          {...(nested ? { subOf: stages.find((owner) => owner.id === stage.parent) } : {})}
+          expanded={open}
+          {...(canOpen ? { onExpand: () => setTouched((current) => ({ ...current, [stage.id]: !open })) } : {})}
+        />
+        {open && stage.results.length > 1 && <MoreResults stage={stage} roots={roots} />}
+        {open && stage.automation !== undefined && <AutomationSteps stage={stage} threadId={threadId} />}
+        {open && subs.length > 0 && <div className="ml-6 flex flex-col border-l border-border">{subs.map((sub) => item(sub, true))}</div>}
+      </div>
+    );
+  };
   return (
     <>
-      {stages.map((stage, at) => {
-        const open = expandable(stage) && (touched[stage.id] ?? openByDefault(stage));
-        const toggle = toggleOf?.(stage, at);
-        return (
-          <div key={stage.id} className="flex flex-col">
-            <Row
-              stage={stage}
-              roots={roots}
-              {...(toggle === undefined ? {} : { onToggle: toggle })}
-              expanded={open}
-              {...(expandable(stage) ? { onExpand: () => setTouched((current) => ({ ...current, [stage.id]: !open })) } : {})}
-            />
-            {open && stage.results.length > 1 && <MoreResults stage={stage} roots={roots} />}
-            {open && stage.automation !== undefined && <AutomationSteps stage={stage} threadId={threadId} />}
-          </div>
-        );
-      })}
+      {stages.filter((stage) => stage.parent === undefined).map((stage) => item(stage, false))}
       {stages.some((stage) => stage.state === "done") && <TotalRow stages={stages} />}
     </>
   );
@@ -569,11 +581,14 @@ function useStageToggles(stages: readonly ProgressStage[], threadId: string) {
     const confirmed = stages.filter((stage) => toggled[stage.id] === stage.state).map((stage) => stage.id);
     if (confirmed.length > 0) setToggled((current) => Object.fromEntries(Object.entries(current).filter(([id]) => !confirmed.includes(id))));
   }, [stages, toggled]);
+  // Связка переключается сразу вся (`runCascade`), а сервер зовётся один раз: каскад он делает сам тем же правилом.
   const toggleStage = (stageId: string, run: boolean) => {
-    setToggled((current) => ({ ...current, [stageId]: run ? "todo" : "skip" }));
+    const ids = runCascade(stages, stageId, run).filter((id) => stages.some((stage) => stage.id === id && (stage.state === "todo" || stage.state === "skip")));
+    const settleAll = () => ids.forEach(settled);
+    setToggled((current) => ({ ...current, ...Object.fromEntries(ids.map((id) => [id, run ? "todo" : "skip"])) }));
     rpc.call("setStageInRun", { threadId, stageId, run }).then(
-      (answer) => answer.kind === "failed" && settled(stageId),
-      () => settled(stageId),
+      (answer) => answer.kind === "failed" && settleAll(),
+      settleAll,
     );
   };
   const shown = stages.map((stage) => {

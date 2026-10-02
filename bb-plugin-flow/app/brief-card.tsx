@@ -18,7 +18,7 @@ import { DEFAULT_ROUTE, offeredPlace, placeColumns, withBranch, withPlace, withP
 import { stageItems } from "../core/stages";
 import type { FileRoots } from "../core/result-link";
 import { demoVerdict } from "../core/outcome";
-import { hasLinks, plainText } from "../core/inline-links";
+import { hasMarkup, plainText } from "../core/inline-links";
 import { REVIEW_ROWS, SETUP_ROW, artifactVerb, checkerAllowed, rowsOf } from "../core/rows";
 import { Button } from "../components/ui/button";
 import { Icon } from "../components/ui/icon";
@@ -534,13 +534,13 @@ type FieldVoice = Pick<ReturnType<typeof useVoiceField>, "ref" | "onChange">;
 
 /**
  * Текст пункта; правка идёт через голосовой ввод строки, чтобы ошибка записи снималась при наборе.
- * Пункт со ссылками вне правки виден текстом со ссылками: клик мимо ссылки или фокус с клавиатуры открывает правку.
+ * Пункт с разметкой — ссылками или жирным — вне правки виден размеченным текстом: клик мимо ссылки или фокус с клавиатуры открывает правку.
  */
 function ItemField(props: { view: View; label: string; value: string; className?: string; voice: FieldVoice; onText: (text: string) => void; onBlur?: () => void }) {
   const paste = usePasteImages({ value: props.value, onText: props.onText });
   const field = useRef<HTMLTextAreaElement | null>(null);
   const [editing, setEditing] = useState(false);
-  const linked = !editing && hasLinks(props.value);
+  const linked = !editing && hasMarkup(props.value);
   const edit = () => {
     field.current?.focus();
     field.current?.setSelectionRange(props.value.length, props.value.length);

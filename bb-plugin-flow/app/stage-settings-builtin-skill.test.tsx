@@ -89,26 +89,12 @@ describe("иконки файла навыка в поле навыка", () => 
       settings: { language: "Русский" },
     });
 
-  it("в поле навыка нет шеврона, есть две кнопки файла навыка", async () => {
-    const slot = openWith(() => null);
-    const questions = await row(slot, 1);
-    expect(questions.getByRole("button", { name: "Открыть навык flow-questions" })).toBeTruthy();
-    expect(questions.getByRole("button", { name: "Показать навык flow-questions в файловой системе" })).toBeTruthy();
-    expect(slot.container.querySelector('[data-icon="ChevronDown"]')).toBeNull();
-  });
-
   it("первая кнопка открывает файл навыка просмотрщиком bb на его хосте", async () => {
     const slot = openWith(({ name }) => ({ hostId: "host_local", path: `/home/owner/.claude/skills/${name}/SKILL.md` }));
     fireEvent.click((await row(slot, 2)).getByRole("button", { name: "Открыть навык my-demo" }));
     await vi.waitFor(() =>
       expect(slot.navigateCalls.at(-1)).toMatchObject({ method: "experimental_openFilePreview", options: { target: { kind: "host", hostId: "host_local", path: "/home/owner/.claude/skills/my-demo/SKILL.md" } } }),
     );
-  });
-
-  it("вторая кнопка просит сервер показать файл навыка в файловой системе", async () => {
-    const slot = openWith(() => null);
-    fireEvent.click((await row(slot, 1)).getByRole("button", { name: "Показать навык flow-questions в файловой системе" }));
-    await vi.waitFor(() => expect(slot.rpcCalls.find((c) => c.method === "revealSkill")?.input).toEqual({ name: "flow-questions" }));
   });
 
   it("файл навыка не найден — подпись у поля, превью не открывается", async () => {

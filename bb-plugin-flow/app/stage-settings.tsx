@@ -9,9 +9,9 @@ import { useBbNavigate, useRpc } from "@get-bb/plugin-sdk/app";
 
 import { retryPolicyOf } from "../core/automation-run";
 import { executorGroups, skillGroups, skillShortName, type ExecutorGroup } from "../core/catalog";
-import { dropIndex, moveItem } from "../core/reorder";
 import { setFlowStages } from "../core/flows";
 import { stageLabel } from "../core/stages";
+import { dropStage, linkApart, ownerOf, removeStage, stageNumbers, stageScope, type DropZone } from "../core/sub-stages";
 import { FieldOverlay, overlayItem, useFieldOverlay } from "../components/ui/field-overlay";
 import { Icon } from "../components/ui/icon";
 import { Input } from "../components/ui/input";
@@ -22,7 +22,7 @@ import { AddAction, AddBuiltinAutomation, type AutomationSets, AutomationKindCel
 import { useMessages } from "./locale-context";
 import { ExecutorMark } from "./provider-logos";
 import { KIND_ICONS, SKILL_ICON, stageIcon } from "./stage-icons";
-import { commitFlowSettings, updateFlowSettings, useAutomationSets, useFlowSettings } from "./stage-settings-store";
+import { updateFlowSettings, useAutomationSets, useFlowSettings } from "./stage-settings-store";
 
 const field = "h-7 min-h-7 w-full min-w-0 rounded-md border-0 bg-card px-2 py-0 text-[13px] shadow-none focus-visible:ring-1";
 const square = "flex size-7 shrink-0 items-center justify-center rounded-md";
@@ -130,7 +130,7 @@ function SkillOptions({ catalog, query, current, onPick }: { catalog: StageCatal
   );
 }
 
-/** Две кнопки справа в поле навыка: файл навыка просмотрщиком bb и показ файла в файловой системе. Путь находит сервер по имени навыка. */
+/** Кнопка справа в поле навыка: файл навыка открывается просмотрщиком bb. Путь находит сервер по имени навыка. */
 function SkillFileButtons({ skill }: { skill: string }) {
   const t = useMessages();
   const rpc = useRpc<typeof flowSettingsRpcContract>();
@@ -144,18 +144,17 @@ function SkillFileButtons({ skill }: { skill: string }) {
       if (file === null) failed();
       else navigate.experimental_openFilePreview({ target: { kind: "host", hostId: file.hostId, path: file.path }, location: null });
     }, failed);
-  const reveal = () => void rpc.call("revealSkill", { name: skill }).then((result) => !result.revealed && failed(), failed);
-  const button = "flex size-5 items-center justify-center rounded text-muted-foreground hover:bg-state-hover hover:text-foreground";
   return (
     <>
-      <span className="absolute right-1 top-1 flex items-center gap-0.5">
-        <button type="button" aria-label={t.settings.openSkill(skill)} title={t.settings.openSkill(skill)} onClick={open} className={button}>
-          <Icon name="PanelRight" aria-hidden="true" className="size-3.5" />
-        </button>
-        <button type="button" aria-label={t.settings.revealSkill(skill)} title={t.settings.revealSkill(skill)} onClick={reveal} className={button}>
-          <Icon name="Folder" aria-hidden="true" className="size-3.5" />
-        </button>
-      </span>
+      <button
+        type="button"
+        aria-label={t.settings.openSkill(skill)}
+        title={t.settings.openSkill(skill)}
+        onClick={open}
+        className="absolute right-1 top-1 flex size-5 items-center justify-center rounded text-muted-foreground hover:bg-state-hover hover:text-foreground"
+      >
+        <Icon name="ArrowUpRight" aria-hidden="true" className="size-3.5" />
+      </button>
       {missing && (
         <span role="status" className="mt-1 block text-[11px] text-muted-foreground">
           {t.settings.skillFileMissing}
@@ -297,6 +296,8 @@ function ExecutorTags({ stage, catalog }: { stage: WorkStage; catalog: StageCata
 
 /** Сетка строки: номер с ручкой и иконка вида, средние ячейки одной группой, крест. */
 const rowGrid = "grid grid-cols-[46px_minmax(0,1fr)_28px] items-start gap-2";
+/** Отступ над краем связки: 7 px и 1 px зазора таблицы — 8 px; угол у края скругляется. */
+const linkGap = "mt-[7px] rounded-t-lg";
 
 /**
  * Средние ячейки — навык или вид, название, исполнение. Стоят в ряд, пока каждой хватает её основы, и переносятся
@@ -350,16 +351,17 @@ function useStageName(stage: WorkStage) {
   return { name, change, flush: () => flush.current() };
 }
 
-/** Номер этапа, под наведением — ручка перетаскивания, и сразу за ним иконка вида этапа. */
-function StageLead({ stage, index, dragging, onGrab }: { stage: WorkStage; index: number; dragging: boolean; onGrab: () => void }) {
+/** Номер этапа, у под-этапа — пусто; под наведением — ручка перетаскивания, и сразу за ним иконка вида этапа. */
+function StageLead({ stage, place, dragging, onGrab }: { stage: WorkStage; place: RowPlace; dragging: boolean; onGrab: () => void }) {
   const t = useMessages();
+  const name = stageLabel(stage, t.stages);
   return (
     <span role="cell" className="flex h-7 items-center gap-1 text-muted-foreground">
       <span className="relative flex size-7 shrink-0 items-center justify-center">
-        <span className="text-xs tabular-nums group-hover:opacity-0">{index + 1}</span>
+        <span className="text-xs tabular-nums group-hover:opacity-0">{place.number}</span>
         <button
           type="button"
-          aria-label={t.settings.drag(stageLabel(stage, t.stages))}
+          aria-label={place.owner === null ? t.settings.drag(name) : t.subStages.drag(name, place.owner)}
           onPointerDown={(e) => {
             e.preventDefault();
             onGrab();
@@ -374,6 +376,42 @@ function StageLead({ stage, index, dragging, onGrab }: { stage: WorkStage; index
   );
 }
 
+/** Подсветка места под перетаскиваемым: четверть строки у стыка или вся строка; у места в связке — плашка, чей это под-этап. */
+function DropHighlight({ place }: { place: RowPlace }) {
+  return (
+    <>
+      {place.drop === "top" && <span aria-hidden="true" className="pointer-events-none absolute inset-x-0 top-0 h-1/4 rounded-[inherit] border-t-2 border-primary bg-primary/10" />}
+      {place.drop === "bottom" && <span aria-hidden="true" className="pointer-events-none absolute inset-x-0 bottom-0 h-1/4 rounded-[inherit] border-b-2 border-primary bg-primary/10" />}
+      {place.drop === "whole" && <span aria-hidden="true" className="pointer-events-none absolute inset-0 rounded-[inherit] bg-primary/10 ring-1 ring-inset ring-primary" />}
+      {place.dropLabel !== null && (
+        <span className="pointer-events-none absolute right-10 top-1/2 -translate-y-1/2 rounded-md border border-border bg-card px-2 py-0.5 text-[11px] text-foreground">{place.dropLabel}</span>
+      )}
+    </>
+  );
+}
+
+/**
+ * Строка таблицы: номер с ручкой, средние ячейки строки, крест; поверх — подсветка перетаскивания. На краю связки строка
+ * отходит от соседней на 8 px (7 px отступа и 1 px зазора таблицы) и скругляет угол.
+ */
+function RowShell({ stage, index, place, dragging, onGrab, children }: Pick<RowProps, "stage" | "index" | "place" | "dragging" | "onGrab"> & { children: ReactNode }) {
+  const t = useMessages();
+  return (
+    <div
+      role="row"
+      aria-label={t.settings.stage(index + 1)}
+      data-stage-row={stage.id}
+      {...(place.drop === null ? {} : { "data-drop": place.drop })}
+      className={cn("group relative", rowGrid, "bg-surface-recessed-solid py-2 pl-1 pr-2", place.apart && linkGap, place.edge && "rounded-b-lg", dragging && "opacity-40")}
+    >
+      <StageLead stage={stage} place={place} dragging={dragging} onGrab={onGrab} />
+      {children}
+      <DeleteStage stage={stage} />
+      <DropHighlight place={place} />
+    </div>
+  );
+}
+
 function DeleteStage({ stage }: { stage: WorkStage }) {
   const t = useMessages();
   const update = useStagesUpdate();
@@ -382,7 +420,7 @@ function DeleteStage({ stage }: { stage: WorkStage }) {
       <button
         type="button"
         aria-label={t.settings.deleteStage(stageLabel(stage, t.stages))}
-        onClick={() => update((stages) => stages.filter((x) => x.id !== stage.id))}
+        onClick={() => update((stages) => removeStage(stages, stage.id))}
         className={cn(square, "text-muted-foreground hover:bg-state-hover hover:text-foreground")}
       >
         <Icon name="X" aria-hidden="true" className="size-3.5" />
@@ -391,31 +429,27 @@ function DeleteStage({ stage }: { stage: WorkStage }) {
   );
 }
 
-type RowProps = { stage: WorkStage; index: number; stages: readonly WorkStage[]; catalog: StageCatalog; dragging: boolean; onGrab: () => void };
+/** Подсветка строки под перетаскиваемым: четверть у верхнего стыка, у нижнего или вся строка. */
+type DropMark = "top" | "bottom" | "whole";
 
-/** Номера этапов, которые охватывает встроенный этап: Выбор — до следующего Выбора, Демонстрация — с прошлой Демонстрации. */
-const scopeOf = (stages: readonly WorkStage[], index: number): [number, number] | null => {
-  const kinds = stages.map(stageKindOf);
-  const own = kinds[index];
-  const bound = (from: number, step: 1 | -1): number => {
-    let i = from;
-    while (i >= 0 && i < kinds.length && kinds[i] !== own) i += step;
-    return i;
-  };
-  const [first, last] = own === "select" ? [index + 1, bound(index + 1, 1) - 1] : [bound(index - 1, -1) + 1, index - 1];
-  return first > last ? null : [first + 1, last + 1];
-};
+/**
+ * Место строки в таблице. `number` — номер этапа верхнего уровня, у под-этапа его нет, а `owner` — название владельца.
+ * `apart` — строка начинает связку или первой идёт после неё и отходит от строки выше; `edge` — за строкой такой отступ.
+ * `drop` и `dropLabel` — подсветка перетаскивания.
+ */
+type RowPlace = { number: number | null; owner: string | null; apart: boolean; edge: boolean; drop: DropMark | null; dropLabel: string | null };
+
+type RowProps = { stage: WorkStage; index: number; stages: readonly WorkStage[]; catalog: StageCatalog; place: RowPlace; dragging: boolean; onGrab: () => void };
 
 /** Строка встроенного вида: навык вида полем, название полем, имя вида и охват; исполнителей у него нет. */
-function BuiltinStageRow({ stage, index, stages, catalog, dragging, onGrab }: RowProps) {
+function BuiltinStageRow({ stage, index, stages, catalog, place, dragging, onGrab }: RowProps) {
   const t = useMessages();
   const kind = stageKindOf(stage) as BuiltinKind;
   const { name, change, flush } = useStageName(stage);
-  const scope = kind === "select" || kind === "demo" ? scopeOf(stages, index) : null;
+  const scope = kind === "select" || kind === "demo" ? stageScope(stages, index) : null;
   const scopeText = kind === "select" || kind === "demo" ? (scope === null ? t.settings.scopeNone : kind === "select" ? t.settings.scopeSelect(...scope) : t.settings.scopeDemo(...scope)) : "";
   return (
-    <div role="row" aria-label={t.settings.stage(index + 1)} data-stage-row={stage.id} className={cn("group", rowGrid, "bg-surface-recessed-solid py-2 pl-1 pr-2", dragging && "bg-state-active")}>
-      <StageLead stage={stage} index={index} dragging={dragging} onGrab={onGrab} />
+    <RowShell stage={stage} index={index} place={place} dragging={dragging} onGrab={onGrab}>
       <StageCells>
         <span role="cell" className={cell}>
           <SkillField stage={stage} index={index} catalog={catalog} />
@@ -428,8 +462,7 @@ function BuiltinStageRow({ stage, index, stages, catalog, dragging, onGrab }: Ro
           {scopeText !== "" && <span className="truncate">{scopeText}</span>}
         </span>
       </StageCells>
-      <DeleteStage stage={stage} />
-    </div>
+    </RowShell>
   );
 }
 
@@ -437,15 +470,14 @@ function BuiltinStageRow({ stage, index, stages, catalog, dragging, onGrab }: Ro
  * Этап-автоматизация: вместо навыка — чья автоматизация, вместо исполнителей — шаги тегами. Встроенная правит название и шаги;
  * у автоматизации Automations название и шаги — снимок, правятся в том плагине. Исполняет этап Flow (server/automation-runner.ts).
  */
-function AutomationStageRow({ stage, index, stages, dragging, onGrab }: RowProps) {
+function AutomationStageRow({ stage, index, stages, place, dragging, onGrab }: RowProps) {
   const t = useMessages();
   const setStage = useSetStage();
   const sets = useSets();
   const { name, change, flush } = useStageName(stage);
   const builtin = stage.automation !== undefined && "source" in stage.automation;
   return (
-    <div role="row" aria-label={t.settings.stage(index + 1)} data-stage-row={stage.id} className={cn("group", rowGrid, "bg-surface-recessed-solid py-2 pl-1 pr-2", dragging && "bg-state-active")}>
-      <StageLead stage={stage} index={index} dragging={dragging} onGrab={onGrab} />
+    <RowShell stage={stage} index={index} place={place} dragging={dragging} onGrab={onGrab}>
       <StageCells>
         <AutomationKindCell stage={stage} className={cell} />
         <span role="cell" className={cell}>
@@ -461,20 +493,18 @@ function AutomationStageRow({ stage, index, stages, dragging, onGrab }: RowProps
           <AutomationStepTags stage={stage} stages={stages} sets={sets} onChange={(change) => setStage(stage.id, change)} />
         </span>
       </StageCells>
-      <DeleteStage stage={stage} />
-    </div>
+    </RowShell>
   );
 }
 
 function StageRow(props: RowProps) {
-  const { stage, index, catalog, dragging, onGrab } = props;
+  const { stage, index, catalog, place, dragging, onGrab } = props;
   const t = useMessages();
   const { name, change, flush } = useStageName(stage);
   if (stage.automation !== undefined) return <AutomationStageRow {...props} />;
   if (stageKindOf(stage) !== "skill") return <BuiltinStageRow {...props} />;
   return (
-    <div role="row" aria-label={t.settings.stage(index + 1)} data-stage-row={stage.id} className={cn("group", rowGrid, "bg-surface-recessed-solid py-2 pl-1 pr-2", dragging && "bg-state-active")}>
-      <StageLead stage={stage} index={index} dragging={dragging} onGrab={onGrab} />
+    <RowShell stage={stage} index={index} place={place} dragging={dragging} onGrab={onGrab}>
       <StageCells>
         <span role="cell" className={cell}>
           <SkillField stage={stage} index={index} catalog={catalog} />
@@ -493,8 +523,7 @@ function StageRow(props: RowProps) {
           <ExecutorTags stage={stage} catalog={catalog} />
         </span>
       </StageCells>
-      <DeleteStage stage={stage} />
-    </div>
+    </RowShell>
   );
 }
 
@@ -514,7 +543,7 @@ function AddStage({ catalog, stages }: { catalog: StageCatalog; stages: readonly
   };
   const addBuiltin = (kind: BuiltinKind) => update((current) => [...current, builtinStage(kind, current.map((s) => s.id))]);
   return (
-    <div ref={root} className="relative flex flex-wrap items-center gap-0.5 bg-surface-recessed-solid py-2 pl-1 pr-2">
+    <div ref={root} className={cn("relative flex flex-wrap items-center gap-0.5 bg-surface-recessed-solid py-2 pl-1 pr-2", linkApart(stages, stages.length) && linkGap)}>
       <span aria-hidden="true" className="flex size-7 items-center justify-center text-muted-foreground">
         <Icon name="Plus" className="size-3.5" />
       </span>
@@ -553,25 +582,55 @@ function Loading({ failed, children }: { failed: boolean; children: ReactNode })
   return failed ? <div className="text-xs text-destructive">{t.settings.loadFailed}</div> : <>{children}</>;
 }
 
-/** Перетаскивание за ручку: строка переезжает на лету, сохраняется порядок на отпускании. */
-function useRowDrag(table: React.RefObject<HTMLDivElement | null>) {
+/** Строка под указателем и четверть её высоты. Выше таблицы — верх первой строки, ниже — низ последней; строк нет — `null`. */
+type Hover = { target: string; zone: DropZone };
+
+const hoverAt = (table: HTMLElement | null, y: number): Hover | null => {
+  const rows = [...(table?.querySelectorAll<HTMLElement>("[data-stage-row]") ?? [])].map((el) => ({ id: el.dataset.stageRow!, box: el.getBoundingClientRect() }));
+  const first = rows[0];
+  const last = rows[rows.length - 1];
+  if (first === undefined || last === undefined) return null;
+  if (y < first.box.top) return { target: first.id, zone: 1 };
+  if (y >= last.box.bottom) return { target: last.id, zone: 4 };
+  // Зазор между строками принадлежит верхней четверти следующей строки.
+  const row = rows.find(({ box }) => y < box.bottom) ?? last;
+  return { target: row.id, zone: Math.min(4, Math.max(1, Math.floor(((y - row.box.top) / row.box.height) * 4) + 1)) as DropZone };
+};
+
+/** Подсветка места: четверть 1 — низ строки выше и верх целевой, 2 и 3 — вся целевая, 4 — низ целевой и верх строки ниже. */
+const dropMarks = (stages: readonly WorkStage[], hover: Hover): Record<string, DropMark> => {
+  const at = stages.findIndex((stage) => stage.id === hover.target);
+  const neighbour = (step: number): Record<string, DropMark> => {
+    const id = stages[at + step]?.id;
+    return id === undefined ? {} : { [id]: step < 0 ? "bottom" : "top" };
+  };
+  if (hover.zone === 1) return { ...neighbour(-1), [hover.target]: "top" };
+  if (hover.zone === 4) return { ...neighbour(1), [hover.target]: "bottom" };
+  return { [hover.target]: "whole" };
+};
+
+/**
+ * Перетаскивание за ручку: строка стоит на месте, под указателем подсвечивается, куда она встанет по четверти целевой
+ * строки (`dropStage`); на отпускании таблица сохраняется, если место есть.
+ */
+function useRowDrag(table: React.RefObject<HTMLDivElement | null>, stages: readonly WorkStage[]) {
   const update = useStagesUpdate();
   const [dragged, setDragged] = useState<string | null>(null);
+  const [hover, setHover] = useState<Hover | null>(null);
+  const latest = useRef(stages);
+  latest.current = stages;
   useEffect(() => {
     if (dragged === null) return;
+    let last: Hover | null = null;
     const onMove = (event: PointerEvent) => {
-      const rows = [...(table.current?.querySelectorAll<HTMLElement>("[data-stage-row]") ?? [])];
-      const from = rows.findIndex((row) => row.dataset.stageRow === dragged);
-      const middles = rows.map((row) => {
-        const box = row.getBoundingClientRect();
-        return box.top + box.height / 2;
-      });
-      const to = dropIndex(middles, event.clientY);
-      if (from !== -1 && to !== from) update((stages) => moveItem(stages, from, to), false);
+      last = hoverAt(table.current, event.clientY);
+      setHover(last);
     };
     const onUp = () => {
+      const next = last === null ? null : dropStage(latest.current, dragged, last.target, last.zone);
       setDragged(null);
-      commitFlowSettings();
+      setHover(null);
+      if (next !== null) update(() => next);
     };
     window.addEventListener("pointermove", onMove);
     window.addEventListener("pointerup", onUp, { once: true });
@@ -581,7 +640,30 @@ function useRowDrag(table: React.RefObject<HTMLDivElement | null>) {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps -- правка берёт flow из контекста, подписка — на начало перетаскивания
   }, [dragged, table]);
-  return { dragged, grab: setDragged };
+  const result = dragged === null || hover === null ? null : dropStage(stages, dragged, hover.target, hover.zone);
+  return { dragged, grab: setDragged, hover: result === null ? null : hover, result };
+}
+
+/** Место каждой строки: номер, отступы связки, подсветка и плашка перетаскивания. */
+function useRowPlaces(stages: readonly WorkStage[], dragged: string | null, hover: Hover | null, result: readonly WorkStage[] | null): RowPlace[] {
+  const t = useMessages();
+  const numbers = stageNumbers(stages);
+  const marks = hover === null ? {} : dropMarks(stages, hover);
+  const labelOf = (id: string): string => stageLabel(stages.find((stage) => stage.id === id)!, t.stages);
+  const moved = result?.find((stage) => stage.id === dragged);
+  const dropLabel =
+    moved?.parent === undefined || result === null ? null : t.subStages.drop(labelOf(moved.parent), result.indexOf(moved) < result.findIndex((stage) => stage.id === moved.parent));
+  return stages.map((stage, at) => {
+    const owner = ownerOf(stages, stage.id);
+    return {
+      number: numbers.get(stage.id) ?? null,
+      owner: owner === null ? null : labelOf(owner),
+      apart: linkApart(stages, at),
+      edge: linkApart(stages, at + 1),
+      drop: marks[stage.id] ?? null,
+      dropLabel: hover?.target === stage.id ? dropLabel : null,
+    };
+  });
 }
 
 /** Таблица этапов flow `flowId`. Хранилище коллекции держит страница. */
@@ -597,8 +679,9 @@ function WorkStages({ flowId }: { flowId: string }) {
   const t = useMessages();
   const { settings, catalog, failed, saveError, saveProblem } = useFlowSettings();
   const table = useRef<HTMLDivElement>(null);
-  const { dragged, grab } = useRowDrag(table);
   const stages = settings?.flows.find((f) => f.id === flowId)?.stages ?? [];
+  const { dragged, grab, hover, result } = useRowDrag(table, stages);
+  const places = useRowPlaces(stages, dragged, hover, result);
   return (
     <Loading failed={failed}>
       {(saveProblem !== null || saveError !== null) && (
@@ -606,8 +689,8 @@ function WorkStages({ flowId }: { flowId: string }) {
           {saveProblem === null ? saveError : t.settings.stepOrderRefused(t.steps[saveProblem.step], saveProblem.stageName, t.steps["git.create-pr"])}
         </div>
       )}
-      <div ref={table} role="table" aria-label={t.settings.table} aria-busy={settings === null || undefined} className="@container flex flex-col gap-px overflow-visible [&>*:first-child]:rounded-t-lg [&>*:last-child]:rounded-b-lg">
-        <div role="row" className={cn(rowGrid, "hidden bg-surface-recessed-solid py-1 pl-1 pr-2 text-[11px] text-muted-foreground @[46rem]:grid")}>
+      <div ref={table} role="table" aria-label={t.settings.table} aria-busy={settings === null || undefined} className="@container flex flex-col gap-px overflow-visible [&>*:last-child]:rounded-b-lg [&>*:nth-child(2)]:rounded-t-lg">
+        <div role="row" className={cn(rowGrid, "hidden py-1 pl-1 pr-2 text-[11px] text-muted-foreground @[46rem]:grid")}>
           <span role="columnheader" className="text-center">
             №
           </span>
@@ -627,7 +710,7 @@ function WorkStages({ flowId }: { flowId: string }) {
           </span>
         </div>
         {stages.map((stage, index) => (
-          <StageRow key={stage.id} stage={stage} index={index} stages={stages} catalog={catalog} dragging={dragged === stage.id} onGrab={() => grab(stage.id)} />
+          <StageRow key={stage.id} stage={stage} index={index} stages={stages} catalog={catalog} place={places[index]!} dragging={dragged === stage.id} onGrab={() => grab(stage.id)} />
         ))}
         {settings !== null && <AddStage catalog={catalog} stages={stages} />}
       </div>

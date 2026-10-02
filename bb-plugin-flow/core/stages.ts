@@ -5,7 +5,8 @@
 import type { Locale } from "../lib/i18n";
 import { messages } from "../lib/messages";
 import { isDefaultName, SELF_EXECUTOR, stageKindOf, stageSkillOf, type BuiltinKind } from "../lib/stage-constants";
-import { actionInstruction, automationInstruction } from "./automation-run";
+import { ACTION_TAIL, AUTOMATION_TAIL } from "./automation-run";
+import { stageNumbers } from "./sub-stages";
 import type { Add, DecisionAnswer, DecisionBrief, Flow, FlowProgress, StageAnswer, StageReport, WorkStage } from "../shared/contract";
 import { sumAdds } from "./adds";
 
@@ -229,21 +230,32 @@ export const stageLabel = (stage: Pick<WorkStage, "id" | "name" | "kind">, names
   return kind === "skill" || !isDefaultName(stage) ? stage.name : (names[kind] ?? stage.name);
 };
 
-/** Этапы настроек строкой для инструкций агенту; без этапов — `null`. */
-export const stageInstructions = (stages: readonly WorkStage[]): string | null =>
-  stages.length === 0
-    ? null
-    : [
-        "Work stages in the Flow settings — send all of them in setup.stages, in this order:",
-        ...stages.map((s, i) => {
-          const kind = stageKindOf(s);
-          if (kind === "action") return actionInstruction(s, i);
-          if (kind !== "skill") return `${i + 1}. ${s.id} "${s.name}" — skill ${stageSkillOf(s)}: load it for the stage's work; ${BUILTIN_ANSWERS[kind]}; you execute it yourself, a done stage needs no results`;
-          if (s.automation !== undefined) return automationInstruction(s, i);
-          const executors = s.executors.length === 0 ? "you execute it yourself" : `executors: self, ${s.executors.map((e) => e.id).join(", ")}`;
-          // Названного навыка мало: агент дойдёт до этапа и уйдёт работать, не
-          // прочитав его, — поэтому этап-навык, как и встроенный, велит его загрузить.
-          const skill = s.skill === "" ? "" : ` — skill ${s.skill}: load it for the stage's work`;
-          return `${i + 1}. ${s.id} "${s.name}"${skill}; ${executors}`;
-        }),
-      ].join("\n");
+/**
+ * Начало строки этапа в инструкциях: у этапа верхнего уровня — номер, у под-этапа — отступ, а за названием — владелец,
+ * место и общая галочка.
+ */
+const stageHead = (stages: readonly WorkStage[], s: WorkStage, numbers: ReadonlyMap<string, number | null>): string => {
+  if (s.parent === undefined) return `${numbers.get(s.id)}. ${s.id} "${s.name}"`;
+  const before = stages.indexOf(s) < stages.findIndex((owner) => owner.id === s.parent);
+  return `   - ${s.id} "${s.name}" — sub-stage of ${s.parent}, runs ${before ? "before" : "after"} it, switched on and off together with it`;
+};
+
+/** Этапы настроек строкой для инструкций агенту: номер — у этапов верхнего уровня, под-этап помечен владельцем; без этапов — `null`. */
+export const stageInstructions = (stages: readonly WorkStage[]): string | null => {
+  if (stages.length === 0) return null;
+  const numbers = stageNumbers(stages);
+  return ["Work stages in the Flow settings — send all of them in setup.stages, in this order:", ...stages.map((s) => stageLine(s, stageHead(stages, s, numbers)))].join("\n");
+};
+
+/** Строка этапа в инструкциях: начало `head` и то, что агенту делать на этапе этого вида. */
+const stageLine = (s: WorkStage, head: string): string => {
+  const kind = stageKindOf(s);
+  if (kind === "action") return `${head}${ACTION_TAIL}`;
+  if (kind !== "skill") return `${head} — skill ${stageSkillOf(s)}: load it for the stage's work; ${BUILTIN_ANSWERS[kind]}; you execute it yourself, a done stage needs no results`;
+  if (s.automation !== undefined) return `${head}${AUTOMATION_TAIL}`;
+  const executors = s.executors.length === 0 ? "you execute it yourself" : `executors: self, ${s.executors.map((e) => e.id).join(", ")}`;
+  // Названного навыка мало: агент дойдёт до этапа и уйдёт работать, не
+  // прочитав его, — поэтому этап-навык, как и встроенный, велит его загрузить.
+  const skill = s.skill === "" ? "" : ` — skill ${s.skill}: load it for the stage's work`;
+  return `${head}${skill}; ${executors}`;
+};

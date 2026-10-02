@@ -18,15 +18,17 @@ export const onLink = (event: MouseEvent): boolean => event.target instanceof El
 
 export function LinkedText({ text }: { text: string }) {
   const roots = useContext(FileRootsContext);
-  return textParts(text).map((part, i) =>
-    part.kind === "text" ? (
-      part.text
-    ) : (
-      <ResultAnchor key={i} target={part.target} line={part.line} roots={roots} className="underline underline-offset-2 hover:text-primary">
-        {part.label}
-      </ResultAnchor>
-    ),
-  );
+  return textParts(text).map((part, i) => {
+    const shown =
+      part.kind === "text" ? (
+        part.text
+      ) : (
+        <ResultAnchor key={i} target={part.target} line={part.line} roots={roots} className="underline underline-offset-2 hover:text-primary">
+          {part.label}
+        </ResultAnchor>
+      );
+    return part.strong ? <strong key={i}>{shown}</strong> : shown;
+  });
 }
 
 const LIST_CLASS = { ordered: "list-decimal", bullet: "list-disc" } as const;
