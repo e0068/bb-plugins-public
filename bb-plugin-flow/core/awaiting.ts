@@ -25,3 +25,9 @@ export const awaitingChanges = <K>(prev: ReadonlyMap<string, K>, next: ReadonlyM
  * его снимает сам прогон, когда владелец нажимает кнопку в баннере.
  */
 export const waitsForAnswer = (kind: AwaitingKind): boolean => kind !== "automation" && kind !== "action";
+
+/**
+ * Возвращает ли сообщение ждущий бриф агенту: пишет владелец, а не агент, и это не повтор упавшего хода; вклинившееся
+ * в идущий ход тоже. Сообщение, которое другой плагин отправил от имени владельца, — комментарий из Tasks+ — тоже его слова.
+ */
+export const returnsBrief = ({ initiator, retry }: { initiator: string; retry: boolean }): boolean => initiator === "user" && !retry;

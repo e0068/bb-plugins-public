@@ -49,6 +49,8 @@ import {
   routeIn,
   settleDispatch,
 } from "./draft";
+import { withRestored } from "./draft-restore";
+import { useDraftSender } from "./draft-sync";
 import { AddRow, addRowText } from "./add-row";
 import { AttachmentThumbs, AttachmentsProvider, usePasteImages } from "./attachments";
 import { LinkedText, RichText, onLink } from "./linked-text";
@@ -1329,7 +1331,8 @@ function Body({ brief, view }: { brief: DecisionBrief; view: View }) {
 }
 
 export function BriefCard({ brief, send, onResult, roots, place = "here", route = DEFAULT_ROUTE }: FormProps & { roots: FileRoots | null; place?: DispatchPlace; route?: DispatchRoute }) {
-  const [draft, setDraft] = useStoredDraft(brief.id, () => initialDraft(brief));
+  // Бриф, присланный взамен возвращённого, открывается с выбором владельца из возвращённого.
+  const [draft, setDraft] = useStoredDraft(brief.id, () => withRestored(brief, initialDraft(brief)), useDraftSender(brief.id));
   const [expanded, setExpanded] = useState<string | null>(null);
   const anchor = useScrollAnchor();
   const { sending, failed, missing, touch, submit } = useSubmit({ send, onResult });

@@ -106,6 +106,7 @@ export const en: Messages = {
     retry: "Retry",
     notFound: "brief not found — the plugin was reinstalled or its storage was cleared",
     loading: "Brief is loading",
+    returned: "Brief returned to the agent: you wrote in the chat. Your choices carry over to the new brief.",
     ownValue: "Your value",
     ownPlaceholder: "your own",
     price: "Price",

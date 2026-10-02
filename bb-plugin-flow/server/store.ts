@@ -12,6 +12,7 @@ import {
   decisionBriefSchema,
   dispatchRouteSchema,
   type Add,
+  briefDraftSchema,
   type AnswerRecord,
   type DecisionBrief,
   type DispatchRoute,
@@ -23,6 +24,9 @@ const BRIEF_PREFIX = "decision:";
 const briefKey = (id: string) => `${BRIEF_PREFIX}${id}`;
 const answerKey = (id: string) => `decision-answer:${id}`;
 const threadCarryKey = (threadId: string) => `decision-thread-carry:${threadId}`;
+const draftKey = (id: string) => `decision-draft:${id}`;
+const returnedKey = (id: string) => `decision-returned:${id}`;
+const threadReturnedKey = (threadId: string) => `decision-thread-returned:${threadId}`;
 const threadCriteriaKey = (threadId: string): string => `thread-criteria:${threadId}`;
 
 const criteriaListSchema = z.array(z.string());
@@ -55,6 +59,19 @@ export type DecisionStore = {
   dropAnswer(id: string): Promise<void>;
   /** Тред, созданный передачей работы: дописывается к уже записанному ответу. */
   attachHandoff(id: string, threadId: string): Promise<void>;
+  /** Черновик ответа владельца, пока бриф не отправлен; новый заменяет прежний. */
+  putDraft(id: string, draft: string): Promise<void>;
+  getDraft(id: string): Promise<string | null>;
+  /** Отвеченному и забранному новым брифом черновик не нужен. */
+  dropDraft(id: string): Promise<void>;
+  /** Бриф вернулся агенту: владелец написал в чат, не отправив его. */
+  markReturned(id: string): Promise<void>;
+  isReturned(id: string): Promise<boolean>;
+  /** Последний возвращённый бриф треда — до нового брифа, который его заберёт. */
+  putThreadReturned(threadId: string, briefId: string): Promise<void>;
+  getThreadReturned(threadId: string): Promise<string | null>;
+  /** Новый бриф забрал возвращённый: второй его уже не получит. Указатель на другой бриф не трогается. */
+  clearThreadReturned(threadId: string, briefId: string): Promise<void>;
   /** Перенос последнего отвеченного брифа треда — целиком, пустой тоже: он заменяет прежний. */
   putThreadCarry(threadId: string, carried: Carried): Promise<void>;
   /** Перенос треда; нет записи или она чужая — пустой перенос. */
@@ -131,6 +148,31 @@ export const createStore = (kv: PluginKvStorage): DecisionStore => {
       serialized(id, async () => {
         const existing = await getAnswer(id);
         if (existing !== null) await kv.set(answerKey(id), { ...existing, handoffThreadId: threadId });
+      }),
+    async putDraft(id, draft) {
+      await kv.set(draftKey(id), draft);
+    },
+    async getDraft(id) {
+      const parsed = briefDraftSchema.safeParse(await kv.get(draftKey(id)));
+      return parsed.success ? parsed.data : null;
+    },
+    async dropDraft(id) {
+      await kv.delete(draftKey(id));
+    },
+    async markReturned(id) {
+      await kv.set(returnedKey(id), true);
+    },
+    async isReturned(id) {
+      return (await kv.get(returnedKey(id))) === true;
+    },
+    putThreadReturned: (threadId, briefId) => serialized(threadReturnedKey(threadId), () => kv.set(threadReturnedKey(threadId), briefId)),
+    async getThreadReturned(threadId) {
+      const briefId = await kv.get(threadReturnedKey(threadId));
+      return typeof briefId === "string" ? briefId : null;
+    },
+    clearThreadReturned: (threadId, briefId) =>
+      serialized(threadReturnedKey(threadId), async () => {
+        if ((await kv.get(threadReturnedKey(threadId))) === briefId) await kv.delete(threadReturnedKey(threadId));
       }),
     async putThreadCarry(threadId, carried) {
       await kv.set(threadCarryKey(threadId), carried);

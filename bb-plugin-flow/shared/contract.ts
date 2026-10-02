@@ -540,6 +540,13 @@ export const askDecisionParamsSchema = z.object(briefFields).superRefine(checkBr
 /** Выбор владельца, перенесённый из прошлого отвеченного брифа треда: строка `setup.*` → варианты. */
 export const carriedSchema = z.record(z.string(), z.array(z.string()));
 
+/** Черновик ответа на бриф строкой виджета; сервер его не читает, а хранит и передаёт. */
+export const BRIEF_DRAFT_MAX = 64 * 1024;
+export const briefDraftSchema = z.string().max(BRIEF_DRAFT_MAX);
+
+/** Черновик возвращённого брифа и тексты его пунктов «Готово, когда»: правки пунктов ложатся на новый бриф по тексту, а не по номеру. */
+export const restoredDraftSchema = z.object({ draft: briefDraftSchema, criteria: z.array(z.string()).optional() });
+
 export const decisionBriefSchema = z
   .object({
     id: text,
@@ -559,6 +566,8 @@ export const decisionBriefSchema = z
     planning: z.object({ minutes: z.number().int().nonnegative(), cost: z.number().nonnegative().optional() }).optional(),
     /** Ставит сервер: исполнитель, ревью и тестирование, которые владелец выбрал сам в прошлом отвеченном брифе треда. */
     carried: carriedSchema.optional(),
+    /** Ставит сервер: черновик возвращённого брифа треда — владелец написал в чат, не отправив его; виджет кладёт выбор на совпавшие вопросы. */
+    restored: restoredDraftSchema.optional(),
     /** Ставит сервер: этапы работ и название flow на момент брифа — отвеченный бриф рисуется ими, даже если настройки потом поменялись. */
     stages: z.object({ list: z.array(workStageSchema), minButtonWidth: z.number().int(), flowName: z.string().optional() }).optional(),
     ...briefFields,
@@ -663,7 +672,8 @@ export const decisionsRpcContract = defineRpcContract({
   getBrief: {
     input: z.object({ id: z.string() }),
     output: z.discriminatedUnion("kind", [
-      z.object({ kind: z.literal("found"), brief: decisionBriefSchema, answer: answerRecordSchema.nullable() }),
+      /** `returned` — владелец написал в чат, не отправив бриф: бриф вернулся агенту и в ленте свёрнут. */
+      z.object({ kind: z.literal("found"), brief: decisionBriefSchema, answer: answerRecordSchema.nullable(), returned: z.literal(true).optional() }),
       z.object({ kind: z.literal("not_found") }),
     ]),
   },
@@ -676,6 +686,15 @@ export const decisionsRpcContract = defineRpcContract({
       z.object({ kind: z.literal("not_found") }),
       z.object({ kind: z.literal("incomplete"), questionIds: z.array(z.string()) }),
     ]),
+  },
+});
+
+/** Черновик брифа на сервере — своим контрактом, как место исполнения: бриф, возвращённый сообщением в чат, переносит выбор владельца в новый. */
+export const briefDraftRpcContract = defineRpcContract({
+  /** `closed` — бриф отвечен или возвращён: его черновик больше никуда не ляжет. */
+  saveBriefDraft: {
+    input: z.object({ id: text, draft: briefDraftSchema }),
+    output: z.discriminatedUnion("kind", [z.object({ kind: z.literal("saved") }), z.object({ kind: z.literal("closed") }), z.object({ kind: z.literal("not_found") })]),
   },
 });
 
@@ -1104,6 +1123,7 @@ export const voiceRpcContract = defineRpcContract({
 export type RiskLevel = z.output<typeof riskLevelSchema>;
 export type Add = z.output<typeof addSchema>;
 export type Criterion = z.output<typeof criterionSchema>;
+export type RestoredDraft = z.output<typeof restoredDraftSchema>;
 export type Planning = NonNullable<z.output<typeof decisionBriefSchema>["planning"]>;
 export type Artifact = z.output<typeof artifactSchema>;
 export type Scale = z.output<typeof scaleSchema>;

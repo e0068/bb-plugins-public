@@ -12,7 +12,7 @@ import { routeAllowed } from "../core/places";
 import { onAnswer } from "../core/progress";
 import type { Locale } from "../lib/i18n";
 import { stageItems } from "../core/stages";
-import { awaitingRpcContract, decisionsRpcContract, dispatchRpcContract, filesRpcContract, type DecisionAnswer, type DecisionBrief, type DispatchRoute } from "../shared/contract";
+import { awaitingRpcContract, briefDraftRpcContract, decisionsRpcContract, dispatchRpcContract, filesRpcContract, type DecisionAnswer, type DecisionBrief, type DispatchRoute } from "../shared/contract";
 import { attachmentsLine, lostImages, uploadAttachments } from "./attachments";
 import { handoff } from "./handoff";
 import type { ProgressStore } from "./progress";
@@ -44,7 +44,10 @@ export const registerApi = (
   bb.rpc.register(decisionsRpcContract, {
     async getBrief({ id }) {
       const brief = await store.getBrief(id);
-      return brief === null ? { kind: "not_found" as const } : { kind: "found" as const, brief, answer: await store.getAnswer(id) };
+      if (brief === null) return { kind: "not_found" as const };
+      const answer = await store.getAnswer(id);
+      // Отвеченный бриф рисуется ответом, даже если его возвращали: ответ кнопкой — последнее слово владельца.
+      return { kind: "found" as const, brief, answer, ...(answer === null && (await store.isReturned(id)) ? { returned: true as const } : {}) };
     },
 
     async answerBrief({ id, answer, messageId, images = [], locale }) {
@@ -138,6 +141,9 @@ export const registerApi = (
         }
       }
       await quietly(store.clearAwaiting(brief.threadId, id));
+      // Ответ кнопкой — последнее слово владельца: возвращённым бриф больше не считается, и черновик не нужен.
+      await quietly(store.clearThreadReturned(brief.threadId, id));
+      await quietly(store.dropDraft(id));
       bb.realtime.publish(ANSWERED_CHANNEL, { id });
       // Ответ уже записан и ушёл: событие для Automations — последнее и ничего не отменяет.
       const emit = (trigger: FlowTrigger) => {
@@ -160,6 +166,15 @@ export const registerApi = (
     const thread = await bb.sdk.threads.get({ threadId: brief.threadId });
     await store.putRoute(thread.projectId, route);
   }
+
+  bb.rpc.register(briefDraftRpcContract, {
+    async saveBriefDraft({ id, draft }) {
+      if ((await store.getBrief(id)) === null) return { kind: "not_found" as const };
+      if ((await store.getAnswer(id)) !== null || (await store.isReturned(id))) return { kind: "closed" as const };
+      await store.putDraft(id, draft);
+      return { kind: "saved" as const };
+    },
+  });
 
   bb.rpc.register(awaitingRpcContract, {
     awaitingThreads: () => store.listAwaiting().then((list) => list.map(({ threadId, kind }) => ({ threadId, kind }))),

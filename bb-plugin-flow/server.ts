@@ -7,7 +7,8 @@ import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import { createSteps } from "@bb-plugins/automation-steps/index";
 import { retryPolicyOf } from "./core/automation-run";
 import { OWN_PLUGIN_ID } from "./core/plugin-id";
-import { registerApi } from "./server/api";
+import { ANSWERED_CHANNEL, registerApi } from "./server/api";
+import { returnAwaitingBrief } from "./server/brief-return";
 import { flowTurnInstructions, registerAskTool } from "./server/ask-tool";
 import { registerChooseFlow } from "./server/choose-flow";
 import { scriptStep } from "./server/script-step";
@@ -260,7 +261,12 @@ export default async function plugin(bb: BbPluginApi): Promise<void> {
   const choice = registerFlowChoice(bb, { flows, threads, progress, store, cancelRun: (threadId) => runner.cancel(threadId), finished: runFinished });
   // Ход владельца применяет flow, выбранный в контейнере состояния Flow; после завершённого прогона — начинает следующий.
   // Первое сообщение нового треда даёт ему flow и прогон: тред передачи — flow исходного, остальные с flow — пустой прогон.
-  registerOwnerTurn(bb, { ownSend: own.has, ownerTurn: choice.ownerTurn, firstMessage: startThread({ threads, progress, hasFlow: (threadId) => flowOf(threadId) !== null }) });
+  registerOwnerTurn(bb, {
+    ownSend: own.has,
+    ownerTurn: choice.ownerTurn,
+    ownerMessage: (threadId) => returnAwaitingBrief({ store, publish: (id) => bb.realtime.publish(ANSWERED_CHANNEL, { id }) }, threadId),
+    firstMessage: startThread({ threads, progress, hasFlow: (threadId) => flowOf(threadId) !== null }),
+  });
   // Ушедшая своя отправка забывается — тем же текстом, что хук видит в `input.text`: текстовые блоки через перевод строки.
   bb.events.on("message.dispatched", ({ entry }) =>
     own.forget(entry.threadId, entry.content.flatMap((part) => (part.type === "text" ? [part.text] : [])).join("\n")),

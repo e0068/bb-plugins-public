@@ -1,9 +1,10 @@
 // Хук `message.dispatch` — раньше инструкций хода. Первое сообщение треда даёт ему flow и прогон (./thread-start.ts);
 // ход владельца применяет flow, выбранный в контейнере состояния Flow над композером. Сообщение не придерживается
 // никогда: тред без flow виден в самом контейнере, а ход после завершённого прогона начинает следующий — с выбранным
-// flow или с «Автоматически» (./flow-choice.ts).
+// flow или с «Автоматически» (./flow-choice.ts). Сообщение владельца при ждущем брифе возвращает бриф агенту.
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 
+import { returnsBrief } from "../core/awaiting";
 import { appliesPickedFlow } from "../core/picked-flow";
 import type { FirstMessage } from "./thread-start";
 
@@ -30,6 +31,8 @@ export const registerOwnerTurn = (
     ownSend: (threadId: string, text: string) => boolean;
     /** Владелец начинает ход: выбранный flow достаётся треду (./flow-choice.ts). */
     ownerTurn: (threadId: string) => Promise<void>;
+    /** Владелец пишет в чат — в начале хода или посреди него: ждущий бриф возвращается агенту (./brief-return.ts). */
+    ownerMessage?: (threadId: string) => Promise<unknown>;
   },
 ): void => {
   bb.experimental_hooks.on("message.dispatch", async (context) => {
@@ -42,6 +45,7 @@ export const registerOwnerTurn = (
     const turn = { attempt: context.attempt, initiator: initiatorOf(context), retry: context.queuedMessage?.payload.kind === "retry" };
     // Хук, который бросает, запирает тред: сбой применения выбора пропускает сообщение.
     if (appliesPickedFlow(turn)) await deps.ownerTurn(context.thread.id).catch(() => undefined);
+    if (returnsBrief(turn)) await deps.ownerMessage?.(context.thread.id).catch(() => undefined);
     return { action: "proceed" };
   });
 };

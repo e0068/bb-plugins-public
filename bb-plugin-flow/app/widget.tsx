@@ -54,7 +54,7 @@ type Loaded =
   | { kind: "loading" }
   | { kind: "error" }
   | { kind: "not_found" }
-  | { kind: "found"; brief: DecisionBrief; answer: AnswerRecord | null };
+  | { kind: "found"; brief: DecisionBrief; answer: AnswerRecord | null; returned?: true };
 
 type Rpc = ReturnType<typeof useRpc<typeof decisionsRpcContract>>;
 
@@ -146,13 +146,13 @@ function BriefLoader({ id, source, messageId, threadId }: { id: string; source: 
   const roots = useFileRoots(threadId);
   const { state, retry, answered, rpcRef } = useBrief(id);
   const voiceRpc = useRpc<typeof voiceRpcContract>();
-  const isAnswered = state.kind === "found" && state.answer !== null;
+  const isClosed = state.kind === "found" && (state.answer !== null || state.returned === true);
   useEffect(() => {
-    // Отвеченному брифу черновик и картинки не нужны — отсюда ли ушёл ответ или из другой вкладки.
-    if (!isAnswered) return;
+    // Отвеченному и возвращённому брифу черновик и картинки не нужны — отсюда ли ушёл ответ или из другой вкладки.
+    if (!isClosed) return;
     clearStoredDraft(id);
     clearAttachments(id);
-  }, [id, isAnswered]);
+  }, [id, isClosed]);
   // Бриф на экране — карточка встала: её высоту запоминает рамка. Ошибка встала не карточкой и держит прежнюю высоту.
   const { held, frame } = useHeldHeight(briefHeightKey(id), state.kind === "found" || state.kind === "not_found");
   const content = (): ReactNode => {
@@ -173,6 +173,8 @@ function BriefLoader({ id, source, messageId, threadId }: { id: string; source: 
         return <Dashed source={source}>{t.legacy.notFound}</Dashed>;
       case "found": {
         const legacy = isLegacyBrief(state.brief);
+        // Владелец написал в чат, не отправив бриф: бриф у агента, в ленте от него одна строка.
+        if (state.answer === null && state.returned === true) return <ReturnedBrief />;
         if (state.answer !== null)
           return legacy ? (
             <AnsweredBrief brief={state.brief} record={state.answer} />
@@ -207,6 +209,16 @@ function BriefLoader({ id, source, messageId, threadId }: { id: string; source: 
 }
 
 // ——— рамки и состояния ———
+
+function ReturnedBrief() {
+  const t = useMessages();
+  return (
+    <div data-brief-returned="" className="my-3 flex items-center gap-2 rounded-lg border border-border bg-surface-recessed-solid px-3 py-2 text-sm text-muted-foreground">
+      <Icon name="ArrowTurnBackward" className="size-4" />
+      <span>{t.legacy.returned}</span>
+    </div>
+  );
+}
 
 function Dashed({ source, children }: { source: string; children: ReactNode }) {
   return (
