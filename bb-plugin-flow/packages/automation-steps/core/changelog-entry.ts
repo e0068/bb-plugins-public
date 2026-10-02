@@ -19,7 +19,7 @@ const HEADER = /^---\r?\n([\s\S]*?)\r?\n---(\r?\n|$)/;
 const STAMPED_FIELD = /^(version|date|pr):/;
 const COMING_SOON = "coming-soon";
 
-/** What the bump writes into an entry's header: the version the plugin lands on, the merge day (YYYY-MM-DD), the PR number. */
+/** What the bump writes into an entry's header: the version the plugin lands on, the merge moment, UTC to the minute (`YYYY-MM-DDTHH:MMZ`), the PR number. */
 export interface EntryStamp {
   version: string;
   date: string;

@@ -320,9 +320,8 @@ export async function attemptArchive(run: () => Promise<unknown>): Promise<Archi
   }
 }
 
-/** YYYY-MM-DD of a moment in local time. */
-const localDay = (at: Date): string =>
-  `${at.getFullYear()}-${String(at.getMonth() + 1).padStart(2, "0")}-${String(at.getDate()).padStart(2, "0")}`;
+/** A moment in UTC to the minute: `YYYY-MM-DDTHH:MMZ`. */
+export const mergeMoment = (at: Date): string => `${at.toISOString().slice(0, 16)}Z`;
 
 // Resolves everything bumpVersionsBeforeMerge needs from the environment
 // and hands off. Every way of not getting there is a `problems` entry, not
@@ -836,12 +835,12 @@ export function decode(file: FileRead): string {
  * (Flow, where the chain must stop) both see the same fact.
  *
  * The same commit stamps the plugins' changelog entries with `changelogDate`
- * — by default today, in local time: the day the owner sees the merge.
+ * — by default the merge moment, in UTC to the minute (`YYYY-MM-DDTHH:MMZ`).
  */
 export async function settleVersionsForMerge(
   gh: GithubPull,
   level: BumpLevel,
-  changelogDate: string = localDay(new Date()),
+  changelogDate: string = mergeMoment(new Date()),
 ): Promise<MergeTimeBumpReport & { unavailable: string | null }> {
   const skipped = (reason: string, gap: BumpGap | null = null): MergeTimeBumpReport & { unavailable: string | null } => ({
     changedPaths: [],

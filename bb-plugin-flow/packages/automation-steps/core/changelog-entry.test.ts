@@ -21,7 +21,8 @@ date: 2026-09-27
 
 const stampArb: fc.Arbitrary<EntryStamp> = fc.record({
   version: fc.tuple(fc.nat(99), fc.nat(99), fc.nat(999)).map(([a, b, c]) => `${a}.${b}.${c}`),
-  date: fc.date({ min: new Date("2020-01-01"), max: new Date("2099-12-31"), noInvalidDate: true }).map((d) => d.toISOString().slice(0, 10)),
+  // What the bump writes since entries carry the merge moment: UTC to the minute, `YYYY-MM-DDTHH:MMZ`.
+  date: fc.date({ min: new Date("2020-01-01"), max: new Date("2099-12-31"), noInvalidDate: true }).map((d) => `${d.toISOString().slice(0, 16)}Z`),
   pull: fc.integer({ min: 1, max: 100_000 }),
 });
 const bodyOf = (text: string): string => text.slice(text.indexOf("\n---", 3) + 4);
@@ -65,6 +66,10 @@ pr: 585
         expect(bodyOf(stampEntry(text, stamp) as string)).toBe(bodyOf(text));
       }),
     );
+  });
+
+  it("a merge moment goes into the header exactly as the bump gives it", () => {
+    expect(stampEntry(comingSoon, { version: "0.6.78", date: "2026-10-01T11:32Z", pull: 626 })).toContain("version: 0.6.78\ndate: 2026-10-01T11:32Z\npr: 626\n---\n");
   });
 
   it("header lines other than the stamped ones survive the stamp", () => {
