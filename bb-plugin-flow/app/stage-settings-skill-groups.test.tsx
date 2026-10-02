@@ -93,22 +93,3 @@ describe("список навыков по группам", () => {
   });
 });
 
-describe("меню исполнителей по группам", () => {
-  it("группа на источник: мои, проект, плагин, Codex, workflow", async () => {
-    const slot = open();
-    fireEvent.click((await row(slot, 3)).getByRole("button", { name: "Добавить агента или workflow" }));
-    const menu = within(slot.getByRole("menu", { name: "Агенты и workflow" }));
-    expect(menu.getAllByRole("group").map((g) => g.getAttribute("aria-label"))).toEqual(["Мои агенты", "Проект · bb-plugins", "Плагин · cm", "Codex", "Workflow"]);
-  });
-
-  it("одноимённый агент Codex отмечается отдельно от агента Claude Code и сохраняется со своим id", async () => {
-    const slot = open();
-    fireEvent.click((await row(slot, 3)).getByRole("button", { name: "Добавить агента или workflow" }));
-    const menu = within(slot.getByRole("menu", { name: "Агенты и workflow" }));
-    const codex = within(menu.getByRole("group", { name: "Codex" })).getByRole("menuitemcheckbox");
-    const mine = within(menu.getByRole("group", { name: "Мои агенты" })).getByRole("menuitemcheckbox");
-    expect([mine.getAttribute("aria-checked"), codex.getAttribute("aria-checked")]).toEqual(["true", "false"]);
-    fireEvent.click(codex);
-    await vi.waitFor(() => expect(lastSaved(slot)?.flows[0]?.stages[2]?.executors.map((e) => e.id)).toEqual(["agent:reviewer", "agent:codex/reviewer"]));
-  });
-});

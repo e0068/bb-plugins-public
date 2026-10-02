@@ -55,6 +55,14 @@ const LEGACY_NAMES: readonly string[] = ["Clarification"];
 /** Имя этапа Action в хранилище, пока владелец не назвал его своим. */
 const ACTION_NAME = "Action";
 
+/**
+ * Имя, под которым «Добавить этап» заводит этап, — по языку интерфейса. Этап с таким именем владелец ещё не назвал:
+ * его подписывает первый выбор навыка, виджета или шагов, на каком бы языке ни был заведён.
+ */
+export const NEW_STAGE_NAMES: Readonly<Record<"ru" | "en", string>> = { ru: "Новый этап", en: "New stage" };
+
+export const isNewStageName = (name: string): boolean => Object.values(NEW_STAGE_NAMES).includes(name);
+
 /** Имя этапа вида не менялось владельцем: подписывается по виду и языку интерфейса. */
 export const isDefaultName = (stage: { id: string; kind?: StageKind | undefined; name: string }): boolean => {
   const kind = stageKindOf(stage);

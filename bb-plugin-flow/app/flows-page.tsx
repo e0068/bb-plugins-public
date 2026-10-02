@@ -1,5 +1,6 @@
 // Страница Flow в левом меню bb: выбранный flow — имя и описание «когда
-// выбирать» правятся на месте, таблица его этапов и удаление flow внизу. Сам
+// выбирать» правятся на месте, таблица его этапов, а под ней одной строкой —
+// «Добавить этап» слева и «Удалить flow» справа. Сам
 // выбор и создание — лентой в начале страницы (./flows-header); общее на все
 // flow — ширина кнопки и выбор flow агентом — в настройках плагина
 // (./flow-settings-sections). Страницу листает её корень целиком, вместе с
@@ -21,7 +22,7 @@ import { LocaleProvider } from "./locale";
 import { ProviderLogosProvider } from "./provider-logos-source";
 import { useMessages } from "./locale-context";
 import { updateFlowSettings, useFlowSettings } from "./stage-settings-store";
-import { WorkStagesTable } from "./stage-settings";
+import { AddStage, WorkStagesTable } from "./stage-settings";
 import { HISTORY_SUB_PATH, RunHistory } from "./run-history";
 import { FlowsHeader } from "./flows-header";
 
@@ -75,13 +76,13 @@ function FlowDescription({ flow }: { flow: Flow }) {
   );
 }
 
-/** Удаление flow внизу страницы: первый клик спрашивает, второй удаляет — этапы не должны пропадать с одного промаха. */
+/** Удаление flow под таблицей справа: первый клик спрашивает, второй удаляет — этапы не должны пропадать с одного промаха. */
 function DeleteFlow({ flow }: { flow: Flow }) {
   const t = useMessages();
   const [asking, setAsking] = useState(false);
   if (!asking)
     return (
-      <Button variant="outline" size="sm" aria-label={t.flows.remove(flow.name)} onClick={() => setAsking(true)} className="text-muted-foreground hover:text-destructive">
+      <Button variant="secondary" size="sm" aria-label={t.flows.remove(flow.name)} onClick={() => setAsking(true)} className="text-destructive">
         {t.flows.removeAction}
       </Button>
     );
@@ -126,12 +127,11 @@ function FlowEditor({ subPath }: { subPath: string }) {
         <h2 className="text-[13px] font-medium">{t.settings.stagesTitle}</h2>
         <p className="text-xs text-muted-foreground">{t.settings.stagesDescription}</p>
         <WorkStagesTable flowId={flow.id} />
-      </div>
-      {settings.flows.length > 1 && (
-        <div className="mt-2 border-t border-border pt-4">
-          <DeleteFlow key={flow.id} flow={flow} />
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <AddStage flowId={flow.id} />
+          {settings.flows.length > 1 && <DeleteFlow key={flow.id} flow={flow} />}
         </div>
-      )}
+      </div>
     </section>
   );
 }

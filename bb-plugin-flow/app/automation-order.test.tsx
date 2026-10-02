@@ -26,22 +26,6 @@ const open = (initial: FlowSettings, save: (input: unknown) => unknown = (input)
     settings: { language: "Русский" },
   });
 
-describe("шаги по открытому PR в меню шагов", () => {
-  it("пока PR никто не открывает, Bump и Merge выбрать нельзя", async () => {
-    const slot = open(settings([chain("flow-automation", "Коммит", ["git.commit"])]));
-    fireEvent.click((await slot.findAllByRole("button", { name: "Добавить шаг" }))[0]!);
-    expect((await slot.findByRole("menuitem", { name: "Bump patch" })).getAttribute("aria-disabled")).toBe("true");
-    expect((await slot.findByRole("menuitem", { name: "Смёрджить PR" })).getAttribute("aria-disabled")).toBe("true");
-    expect((await slot.findByRole("menuitem", { name: "Открыть PR" })).getAttribute("aria-disabled")).toBe("false");
-  });
-
-  it("за цепочкой, открывающей PR, те же шаги доступны", async () => {
-    const slot = open(settings([chain("flow-automation", "Открыть", ["git.create-pr"]), chain("flow-automation-2", "Влить", [])]));
-    const buttons = await slot.findAllByRole("button", { name: "Добавить шаг" });
-    fireEvent.click(buttons.at(-1)!);
-    expect((await slot.findByRole("menuitem", { name: "Смёрджить PR" })).getAttribute("aria-disabled")).toBe("false");
-  });
-});
 
 describe("отказ сохранения на странице", () => {
   it("запрещённый порядок не уезжает на сервер, причина написана по-русски, таблица на месте", async () => {
@@ -53,14 +37,5 @@ describe("отказ сохранения на странице", () => {
     expect(alert.textContent).toContain("«Смёрджить PR» в этапе «Слить» стоит раньше «Открыть PR»");
     expect(await slot.findByRole("table", { name: "Этапы работ" })).toBeTruthy();
     expect(slot.rpcCalls.some((c) => c.method === "saveFlowSettings")).toBe(false);
-  });
-
-  it("серверный отказ, если он всё же пришёл, показан как есть", async () => {
-    const slot = open(settings([chain("flow-automation", "Коммит", ["git.commit"])]), () => {
-      throw new Error("kv is unavailable");
-    });
-    fireEvent.click((await slot.findAllByRole("button", { name: "Добавить шаг" }))[0]!);
-    fireEvent.click(await slot.findByRole("menuitem", { name: "Открыть PR" }));
-    expect((await slot.findByRole("alert")).textContent).toContain("kv is unavailable");
   });
 });

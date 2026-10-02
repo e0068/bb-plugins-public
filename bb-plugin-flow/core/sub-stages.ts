@@ -2,7 +2,6 @@
 // ниже после — и включается вместе с ним. Номера, связка, перетаскивание по зонам
 // строки, одна галочка на связку и удаление — здесь, одни для страницы, брифа,
 // полосы прогресса и сервера.
-import { stageKindOf } from "../lib/stage-constants";
 import type { WorkStage } from "../shared/contract";
 
 type Linked = { id: string; parent?: string | undefined };
@@ -28,24 +27,6 @@ const linkOf = (stages: readonly Linked[], stage: Linked | undefined): string | 
 
 /** Отходит ли строка `at` от строки выше: на границе связки; `at` за концом списка — отходит ли то, что идёт после него. */
 export const linkApart = (stages: readonly Linked[], at: number): boolean => linkOf(stages, stages[at]) !== (at === 0 ? null : linkOf(stages, stages[at - 1]));
-
-/**
- * Охват встроенного этапа номерами верхнего уровня: Выбор — до следующего Выбора, Демонстрация — с прошлой Демонстрации.
- * Охватывать нечего — `null`.
- */
-export const stageScope = (stages: readonly WorkStage[], index: number): [number, number] | null => {
-  const kinds = stages.map(stageKindOf);
-  const own = kinds[index];
-  const bound = (from: number, step: 1 | -1): number => {
-    let at = from;
-    while (at >= 0 && at < kinds.length && kinds[at] !== own) at += step;
-    return at;
-  };
-  const [first, last] = own === "select" ? [index + 1, bound(index + 1, 1) - 1] : [bound(index - 1, -1) + 1, index - 1];
-  const numbers = stageNumbers(stages);
-  const covered = stages.slice(Math.max(0, first), last + 1).flatMap((stage) => numbers.get(stage.id) ?? []);
-  return covered.length === 0 ? null : [covered[0]!, covered[covered.length - 1]!];
-};
 
 /** Какие этапы меняет одна галочка: владелец — всю связку; снятый под-этап — себя; возвращённый — себя и владельца. */
 export const runCascade = (stages: readonly Linked[], id: string, run: boolean): string[] => {

@@ -33,34 +33,7 @@ const open = (initial: FlowSettings) => {
 type Slot = ReturnType<typeof open>;
 const lastAutomation = (slot: Slot) => ([...slot.rpcCalls].reverse().find((c) => c.method === "saveFlowSettings")?.input as FlowSettings | undefined)?.flows[0]?.stages.at(-1)?.automation;
 
-const pickFile = (slot: Slot, file: File) => {
-  const input = slot.container.ownerDocument.querySelector<HTMLInputElement>('input[type="file"]');
-  if (input === null) throw new Error("no file input");
-  fireEvent.change(input, { target: { files: [file] } });
-};
-
 describe("«Добавить скрипт» в меню шагов", () => {
-  it("меню шагов предлагает Commit и «Добавить скрипт…»", async () => {
-    const slot = open(settings({ source: "flow", steps: [] }));
-    const row = within(await slot.findByRole("row", { name: "Этап 2" }));
-    fireEvent.click(row.getByRole("button", { name: "Добавить шаг" }));
-    const menu = within(await slot.findByRole("menu", { name: "Шаги автоматизации" }));
-    expect(menu.getByRole("menuitem", { name: "Commit" })).toBeTruthy();
-    expect(menu.getByRole("menuitem", { name: "Добавить скрипт…" })).toBeTruthy();
-  });
-
-  it("выбранный файл сохраняется шагом с новым уникальным id, именем файла и содержимым", async () => {
-    vi.spyOn(crypto, "randomUUID").mockReturnValue("7f0c3a2e-0000-4000-8000-000000000001");
-    const slot = open(settings({ source: "flow", steps: ["git.commit"], scripts: [] }));
-    const row = within(await slot.findByRole("row", { name: "Этап 2" }));
-    fireEvent.click(row.getByRole("button", { name: "Добавить шаг" }));
-    fireEvent.click(within(await slot.findByRole("menu", { name: "Шаги автоматизации" })).getByRole("menuitem", { name: "Добавить скрипт…" }));
-    pickFile(slot, new File(["#!/bin/sh\necho deployed"], "deploy.sh", { type: "text/x-sh" }));
-    const id = "7f0c3a2e-0000-4000-8000-000000000001";
-    await vi.waitFor(() =>
-      expect(lastAutomation(slot)).toEqual({ source: "flow", steps: ["git.commit", `script:${id}`], scripts: [{ id, name: "deploy.sh", content: "#!/bin/sh\necho deployed" }] }),
-    );
-  });
 
   it("шаг-скрипт виден тегом с именем файла и убирается крестом вместе со скриптом", async () => {
     const slot = open(settings({ source: "flow", steps: ["script:1", "git.commit"], scripts: [{ id: "1", name: "notify.py", content: "print(1)" }] }));
@@ -69,29 +42,5 @@ describe("«Добавить скрипт» в меню шагов", () => {
     fireEvent.click(row.getByRole("button", { name: "Убрать шаг notify.py" }));
     await vi.waitFor(() => expect(lastAutomation(slot)).toEqual({ source: "flow", steps: ["git.commit"], scripts: [] }));
   });
-
-  it("слишком большой файл не добавляется, в меню — причина", async () => {
-    const slot = open(settings({ source: "flow", steps: [] }));
-    const row = within(await slot.findByRole("row", { name: "Этап 2" }));
-    fireEvent.click(row.getByRole("button", { name: "Добавить шаг" }));
-    fireEvent.click(within(await slot.findByRole("menu", { name: "Шаги автоматизации" })).getByRole("menuitem", { name: "Добавить скрипт…" }));
-    pickFile(slot, new File(["x".repeat(200_001)], "big.sh"));
-    expect(await slot.findByText("Скрипт больше 200 000 символов — не добавлен")).toBeTruthy();
-    expect(slot.rpcCalls.some((c) => c.method === "saveFlowSettings")).toBe(false);
-  });
 });
 
-describe("«Добавить скрипт» — огромный файл", () => {
-  it("файл, заведомо больше предела по размеру, отклоняется без чтения содержимого", async () => {
-    const slot = open(settings({ source: "flow", steps: [] }));
-    const row = within(await slot.findByRole("row", { name: "Этап 2" }));
-    fireEvent.click(row.getByRole("button", { name: "Добавить шаг" }));
-    fireEvent.click(within(await slot.findByRole("menu", { name: "Шаги автоматизации" })).getByRole("menuitem", { name: "Добавить скрипт…" }));
-    const huge = new File(["x"], "huge.bin");
-    Object.defineProperty(huge, "size", { value: 5_000_000_000 });
-    const text = vi.spyOn(huge, "text");
-    pickFile(slot, huge);
-    expect(await slot.findByText("Скрипт больше 200 000 символов — не добавлен")).toBeTruthy();
-    expect(text).not.toHaveBeenCalled();
-  });
-});

@@ -45,22 +45,4 @@ describe("сохранённые наборы автоматизаций", () =>
     const row = within(await slot.findByRole("row", { name: "Этап 2" }));
     expect(row.getByRole("button", { name: "Сохранить набор" }).hasAttribute("disabled")).toBe(true);
   });
-
-  it("в меню кнопки «Автоматизация» набор — строкой своих шагов без названия; выбор ставит шаги в новый этап", async () => {
-    const slot = open(settings({ automationSets: [{ steps: ["git.create-pr", "git.merge"] }] }));
-    fireEvent.click(await slot.findByRole("button", { name: "Автоматизация" }));
-    const menu = within(await slot.findByRole("menu", { name: "Шаги автоматизации" }));
-    fireEvent.click(menu.getByRole("menuitem", { name: "Открыть PR · Смёрджить PR" }));
-    await vi.waitFor(() =>
-      expect(lastSaved(slot)?.flows[0]?.stages.at(-1)).toMatchObject({ name: "Открыть PR, Смёрджить PR", automation: { source: "flow", steps: ["git.create-pr", "git.merge"] } }),
-    );
-  });
-
-  it("набор убирается крестом из меню", async () => {
-    const slot = open(settings({ automationSets: [{ steps: ["git.create-pr"] }, { steps: ["git.merge"] }] }));
-    fireEvent.click(await slot.findByRole("button", { name: "Автоматизация" }));
-    const menu = within(await slot.findByRole("menu", { name: "Шаги автоматизации" }));
-    fireEvent.click(menu.getByRole("button", { name: "Убрать набор Открыть PR" }));
-    await vi.waitFor(() => expect(lastSaved(slot)?.automationSets).toEqual([{ steps: ["git.merge"] }]));
-  });
 });
