@@ -33,6 +33,8 @@
  *
  * Modes: single = one step; parallel = N independent steps run at once; pipeline = N stages in order,
  * each stage sees the previous stage's result as `{{prev}}` interpolated into an agent prompt.
+ * `{{args}}` in any prompt is the run input — the engine's global `args`. Every placeholder reaches the
+ * prompt as text: a string verbatim, anything else (a schema'd agent's object) as JSON.
  *
  * Node settings, not node types (decision workflow-node-settings-model, BP-134):
  *   iterateOver — non-empty on a "parallel" node = fan-out from data, not authored branches. `steps[0]`
@@ -160,17 +162,32 @@ function dq(s: unknown): string {
   return JSON.stringify(String(s == null ? "" : s)); // a double-quoted JS string literal (safe for any content)
 }
 
-// a template-literal for a (possibly multi-line) prompt; {{prev}} becomes ${prev} so a pipeline stage
-// can splice in the previous stage's result, and (only for an each-template step) {{item}} becomes
-// ${item}. Escapes backslashes, backticks and ${ first, THEN restores the placeholders as real
+// A placeholder's value as prompt text: a string verbatim, anything else (a schema'd agent's object, a
+// plan's element, a JSON run input) as JSON — a bare `${prev}` would splice "[object Object]".
+type Placeholder = "args" | "prev" | "item";
+function asText(name: Placeholder): string {
+  return "${typeof " + name + ' === "string" ? ' + name + " : JSON.stringify(" + name + ")}";
+}
+// The same interpolation found back in a compiled literal — un-escaped only, so a `${…}` the author
+// typed as text (compiled as `\${…}`) stays text.
+function asTextPattern(name: Placeholder): RegExp {
+  return new RegExp("(?<!\\\\)" + asText(name).replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "g");
+}
+const PLACEHOLDERS: Placeholder[] = ["args", "prev", "item"];
+const PLACEHOLDER_PATTERNS = PLACEHOLDERS.map((name) => ({ name, pattern: asTextPattern(name) }));
+
+// a template-literal for a (possibly multi-line) prompt; {{prev}} becomes the previous stage's result
+// inside a pipeline stage, {{item}} the current element anywhere inside an each-template, and {{args}}
+// the run input (the engine's global `args`) everywhere. A placeholder with no meaning where it stands
+// is dropped. Escapes backslashes, backticks and ${ first, THEN restores the placeholders as real
 // interpolations.
 function promptLiteral(s: unknown, allowPrev: boolean, allowItem: boolean): string {
   let esc = String(s == null ? "" : s)
     .replace(/\\/g, "\\\\")
     .replace(/`/g, "\\`")
     .replace(/\$\{/g, "\\${");
-  esc = esc.replace(/\{\{prev\}\}/g, allowPrev ? "${prev}" : ""); // no meaning outside a pipeline stage → drop it
-  esc = esc.replace(/\{\{item\}\}/g, allowItem ? "${item}" : ""); // no meaning outside an each-template → drop it
+  const allowed: Record<Placeholder, boolean> = { args: true, prev: allowPrev, item: allowItem };
+  for (const name of PLACEHOLDERS) esc = esc.split("{{" + name + "}}").join(allowed[name] ? asText(name) : "");
   return "`" + esc + "`";
 }
 
@@ -276,6 +293,7 @@ function stepExpr(step: Step, level: number, allowPrev: boolean, allowItem: bool
       engine,
       { iterateOver: step.iterateOver, iterateInWaves: step.iterateInWaves, maxParallel: step.maxParallel },
       allowPrev,
+      allowItem,
     );
     return wrapRepeat(inner, step.repeat, level);
   }
@@ -286,6 +304,8 @@ function stepExpr(step: Step, level: number, allowPrev: boolean, allowItem: bool
 // `allowPrev` says whether a `prev` binding genuinely exists in the enclosing lexical scope right now
 // (true only inside a pipeline stage's `(prev) => …`) — threaded down so a container nested inside a
 // pipeline stage can still resolve {{prev}}, which previously only worked for a bare agent stage.
+// `allowItem` does the same for {{item}}: true anywhere inside an each-template, so a template that is
+// itself a pipeline or group (implement → review, say) hands the current element to every agent in it.
 function modeExpr(
   mode: string,
   steps: Step[],
@@ -293,6 +313,7 @@ function modeExpr(
   engine: Engine,
   groupOpts: { iterateOver: string; iterateInWaves?: boolean; maxParallel: number | null },
   allowPrev: boolean,
+  allowItem: boolean,
 ): string {
   steps = steps || [];
   if (mode === "single" || (steps.length === 1 && mode !== "pipeline" && mode !== "parallel"))
@@ -309,14 +330,14 @@ function modeExpr(
       if (groupOpts.iterateInWaves) return wavesWithLimit(arr, thunk, groupOpts.maxParallel, level);
       return parallelWithLimit("(" + arr + ").map((item) => () => " + thunk + ")", groupOpts.maxParallel, level);
     }
-    const thunks = steps.map((s) => pad(level + 1) + "() => " + stepExpr(s, level + 1, allowPrev, false, engine));
+    const thunks = steps.map((s) => pad(level + 1) + "() => " + stepExpr(s, level + 1, allowPrev, allowItem, engine));
     return parallelWithLimit("[\n" + thunks.join(",\n") + ",\n" + pad(level) + "]", groupOpts.maxParallel, level);
   }
   // pipeline: seed with a single truthy placeholder item, each stage is (prev) => <step>; agents may use
   // {{prev}} — and so may a nested container's own descendants, via the threaded allowPrev=true below.
   // The seed is NOT null: the engine treats a null pipeline item as "dropped" and skips every
   // remaining stage, so pipeline([null]) silently runs zero agents. See task workflow-composer-pipeline-null-seed.
-  const stages = steps.map((s) => pad(level + 1) + "(prev) => " + stepExpr(s, level + 1, true, false, engine));
+  const stages = steps.map((s) => pad(level + 1) + "(prev) => " + stepExpr(s, level + 1, true, allowItem, engine));
   return "pipeline([{}],\n" + stages.join(",\n") + ",\n" + pad(level) + ")";
 }
 
@@ -330,6 +351,7 @@ function phaseBody(phase: Phase, engine: Engine): string {
     engine,
     { iterateOver: phase.iterateOver, iterateInWaves: phase.iterateInWaves, maxParallel: phase.maxParallel },
     false, // a phase is never itself nested inside a pipeline stage — no cross-phase `prev` (see decision)
+    false, // nor inside an each-template — no `item` at phase level
   );
   expr = wrapRepeat(expr, phase.repeat, 1);
   const lines = ["  phase(" + dq(phase.title || "Phase") + ")"];
@@ -526,11 +548,9 @@ function splitTopLevel(inner: string): string[] {
 }
 
 // Reverse promptLiteral: backtick content → the authored prompt. Placeholders first (the un-escaped
-// ${prev}/${item} interpolations compile wrote), then unescape \${ \` \\.
+// interpolations compile wrote), then unescape \${ \` \\.
 function reversePrompt(lit: string): string {
-  return lit
-    .replace(/(?<!\\)\$\{prev\}/g, "{{prev}}")
-    .replace(/(?<!\\)\$\{item\}/g, "{{item}}")
+  return PLACEHOLDER_PATTERNS.reduce((acc, { name, pattern }) => acc.replace(pattern, "{{" + name + "}}"), lit)
     .replace(/\\\$\{/g, "${")
     .replace(/\\`/g, "`")
     .replace(/\\\\/g, "\\");

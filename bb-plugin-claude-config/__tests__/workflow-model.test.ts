@@ -134,25 +134,6 @@ describe("compile", () => {
     expect(src).toContain("while (budget.total && budget.remaining() > 500000) {");
   });
 
-  it("interpolates {{prev}} only inside a pipeline stage, drops it elsewhere", () => {
-    const pipe = compile({
-      name: "w",
-      description: "",
-      phases: [{ title: "P", mode: "pipeline", repeatBudget: null, steps: [agent({ prompt: "x" }), agent({ prompt: "use {{prev}}" })] }],
-    });
-    expect(pipe).toContain("${prev}");
-
-    // Assert on the executable body only — the trailing mirror keeps the original prompt verbatim
-    // (that is what makes round-trip exact), so {{prev}} legitimately survives there.
-    const single = compile({
-      name: "w",
-      description: "",
-      phases: [{ title: "P", mode: "single", repeatBudget: null, steps: [agent({ prompt: "use {{prev}}" })] }],
-    });
-    const body = single.split("/* @composer-workflow")[0];
-    expect(body).not.toContain("${prev}");
-    expect(body).not.toContain("{{prev}}");
-  });
 });
 
 describe("parse (mirror round-trip)", () => {
@@ -255,24 +236,6 @@ describe("iterateOver — fan-out from a collection, no new node type", () => {
     expect(body).toContain("parallel(");
   });
 
-  it("interpolates {{item}} as ${item} and {{prev}} as ${prev} inside the per-item template", () => {
-    const body = compile(fanOutTree()).split("/* @composer-workflow")[0];
-    expect(body).toContain("${item}");
-    expect(body).toContain("${prev}");
-  });
-
-  it("a container nested in a pipeline stage can now resolve {{prev}} (previously only a bare agent stage could)", () => {
-    const group = blankContainer("parallel");
-    group.steps = [agent({ prompt: "use {{prev}}" })];
-    const src = compile({
-      name: "w",
-      description: "",
-      phases: [{ ...blankPhase("P"), mode: "pipeline", steps: [agent({ prompt: "first" }), group] }],
-    });
-    const body = src.split("/* @composer-workflow")[0];
-    expect(body).toContain("${prev}");
-  });
-
   it("empty iterateOver keeps the pre-BP-134 static-branches compilation untouched", () => {
     const group = blankContainer("parallel");
     group.steps = [agent({ prompt: "A" }), agent({ prompt: "B" })];
@@ -320,12 +283,6 @@ describe("iterateInWaves — sequential rounds of parallel fan-out, from data (n
     expect(body).toContain(".map((item) => () =>");
     expect(body).toContain("parallel(");
     expect(body).toContain("out.push(...(await");
-  });
-
-  it("interpolates {{item}}/{{prev}} inside the per-wave template same as flat iterateOver", () => {
-    const body = compile(wavesTree()).split("/* @composer-workflow")[0];
-    expect(body).toContain("${item}");
-    expect(body).toContain("${prev}");
   });
 
   it("still batches by maxParallel WITHIN a wave", () => {
@@ -610,5 +567,236 @@ describe("readMetaDescription (hand-written fallback)", () => {
     expect(readMetaDescription("export const meta = { name: 'x', phases: [] }\n")).toBe("");
     expect(readMetaDescription("")).toBe("");
     expect(readMetaDescription(null as unknown as string)).toBe("");
+  });
+});
+
+// Runs a compiled body for real against fake engine primitives. `agentImpl` answers every agent()
+// call; every call is recorded as { label, prompt } in order of invocation.
+async function runCompiled(
+  source: string,
+  args: unknown,
+  agentImpl: (prompt: string, opts: { label?: string }) => unknown,
+): Promise<Array<{ label: string; prompt: string }>> {
+  const body = source.split("\n// Made with Claude Config")[0];
+  const statements = body.slice(body.indexOf("}\n\n") + "}\n\n".length);
+  const calls: Array<{ label: string; prompt: string }> = [];
+  async function pipeline(items: unknown[], ...stages: Array<(prev: unknown) => unknown>) {
+    return Promise.all(
+      items.map(async (item) => {
+        let prev: unknown = item;
+        for (const stage of stages) prev = await stage(prev);
+        return prev;
+      }),
+    );
+  }
+  async function parallel(thunks: Array<() => Promise<unknown>>) {
+    return Promise.all(thunks.map((t) => t()));
+  }
+  async function agentFake(prompt: string, opts: { label?: string }) {
+    calls.push({ label: opts.label ?? "", prompt });
+    return agentImpl(prompt, opts);
+  }
+  const run = new Function("phase", "pipeline", "parallel", "agent", "budget", "args", `return (async () => {\n${statements}\n})()`);
+  await run(() => {}, pipeline, parallel, agentFake, { total: null, remaining: () => Infinity }, args);
+  return calls;
+}
+
+describe("{{item}} reaches every agent nested inside a per-item template", () => {
+  // plan → waves group whose per-item template is a pipeline implement → review.
+  function chainTree(): Tree {
+    const chain = blankContainer("pipeline");
+    chain.steps = [
+      agent({ label: "implement", prompt: "Build {{item}}" }),
+      agent({ label: "review", prompt: "Review {{item}} after {{prev}}" }),
+    ];
+    const group = blankContainer("parallel");
+    group.iterateOver = "waves";
+    group.iterateInWaves = true;
+    group.steps = [chain];
+    return {
+      name: "chain",
+      description: "",
+      phases: [{ ...blankPhase("Build"), mode: "pipeline", steps: [agent({ label: "plan", prompt: "Plan" }), group] }],
+    };
+  }
+
+  it("each stage of a pipeline template gets its own element, and review sees implement's result", async () => {
+    const calls = await runCompiled(compile(chainTree(), "claude"), undefined, (prompt, opts) =>
+      opts.label === "plan" ? { waves: [["a", "b"], ["c"]] } : opts.label === "implement" ? "built-" + prompt.slice(6) : "ok",
+    );
+    const reviews = calls.filter((c) => c.label === "review").map((c) => c.prompt).sort();
+    expect(reviews).toEqual(["Review a after built-a", "Review b after built-b", "Review c after built-c"]);
+    const implements_ = calls.filter((c) => c.label === "implement").map((c) => c.prompt).sort();
+    expect(implements_).toEqual(["Build a", "Build b", "Build c"]);
+  });
+
+  it("wave 2's chain starts only after every chain of wave 1 has finished its last stage", async () => {
+    const calls = await runCompiled(compile(chainTree(), "claude"), undefined, (prompt, opts) =>
+      opts.label === "plan" ? { waves: [["a", "b"], ["c"]] } : "x",
+    );
+    const at = (p: string) => calls.findIndex((c) => c.prompt.startsWith(p));
+    expect(at("Build c")).toBeGreaterThan(at("Review a"));
+    expect(at("Build c")).toBeGreaterThan(at("Review b"));
+  });
+
+  it("outside any iterated group {{item}} still has no meaning and is dropped", () => {
+    const chain = blankContainer("pipeline");
+    chain.steps = [agent({ prompt: "Build {{item}}" })];
+    const tree: Tree = { name: "n", description: "", phases: [{ ...blankPhase("N"), mode: "pipeline", steps: [agent({ prompt: "Plan" }), chain] }] };
+    expect(compile(tree, "claude")).not.toContain("${item}");
+  });
+
+  it("a file with a nested per-item chain opens for editing: parse recovers the same tree", () => {
+    const tree = chainTree();
+    expect(parse(compile(tree, "claude"), "claude")).toEqual(tree);
+  });
+});
+
+describe("{{args}} — the run input, usable in any prompt", () => {
+  const ARGS_EXPR = '${typeof args === "string" ? args : JSON.stringify(args)}';
+
+  function argsTree(): Tree {
+    const chain = blankContainer("pipeline");
+    chain.steps = [agent({ label: "implement", prompt: "Do {{item}} of {{args}}" })];
+    const group = blankContainer("parallel");
+    group.iterateOver = "waves";
+    group.iterateInWaves = true;
+    group.steps = [chain];
+    return {
+      name: "args",
+      description: "",
+      phases: [
+        { ...blankPhase("Read"), steps: [agent({ label: "solo", prompt: "Input is {{args}}" })] },
+        {
+          ...blankPhase("Build"),
+          mode: "pipeline",
+          steps: [agent({ label: "plan", prompt: "Read plan {{args}} after {{prev}}" }), group],
+        },
+      ],
+    };
+  }
+
+  it("an object input reaches the prompt as JSON", async () => {
+    const calls = await runCompiled(compile(argsTree(), "claude"), { plan: "p.md" }, (_p, opts) =>
+      opts.label === "plan" ? { waves: [] } : "ok",
+    );
+    expect(calls[0].prompt).toBe('Input is {"plan":"p.md"}');
+  });
+
+  it("works the same under the bb engine", () => {
+    expect(compile(argsTree(), "bb")).toContain("`Input is " + ARGS_EXPR + "`");
+  });
+
+  it("a literal ${args} typed into a prompt stays text, not an input", async () => {
+    const tree: Tree = { name: "lit", description: "", phases: [{ ...blankPhase("L"), steps: [agent({ prompt: "Write ${args} literally" })] }] };
+    const src = compile(tree, "claude");
+    expect(parse(src, "claude")).toEqual(tree);
+    const calls = await runCompiled(src, "IGNORED", () => "ok");
+    expect(calls[0].prompt).toBe("Write ${args} literally");
+  });
+
+  it("a file using {{args}}, {{prev}} and {{item}} together opens for editing: parse recovers the same tree", () => {
+    const tree = argsTree();
+    expect(parse(compile(tree, "claude"), "claude")).toEqual(tree);
+    expect(parse(compile(tree, "bb"), "bb")).toEqual(tree);
+  });
+});
+
+describe("{{prev}} and {{item}} reach the prompt as text", () => {
+  function stagesTree(first: Agent, second: Agent): Tree {
+    return { name: "s", description: "", phases: [{ ...blankPhase("P"), mode: "pipeline", steps: [first, second] }] };
+  }
+
+  it("a structured result of the previous stage reaches the next prompt as JSON", async () => {
+    const tree = stagesTree(agent({ label: "judge", prompt: "Judge" }), agent({ label: "fix", prompt: "Fix by {{prev}}" }));
+    const calls = await runCompiled(compile(tree, "claude"), undefined, (_p, opts) =>
+      opts.label === "judge" ? { verdict: "NOT_SATISFIED", findings: ["a.ts:1 — x"] } : "ok",
+    );
+    expect(calls[1].prompt).toBe('Fix by {"verdict":"NOT_SATISFIED","findings":["a.ts:1 — x"]}');
+  });
+
+  it("a text result of the previous stage reaches the next prompt verbatim", async () => {
+    const tree = stagesTree(agent({ label: "scout", prompt: "Scout" }), agent({ label: "plan", prompt: "Plan from {{prev}}" }));
+    const calls = await runCompiled(compile(tree, "bb"), undefined, () => "src/a.ts:12");
+    expect(calls[1].prompt).toBe("Plan from src/a.ts:12");
+  });
+
+  it("outside a pipeline stage {{prev}} has no meaning and leaves no trace in the prompt", async () => {
+    const tree: Tree = { name: "o", description: "", phases: [{ ...blankPhase("P"), steps: [agent({ prompt: "use {{prev}}" })] }] };
+    const calls = await runCompiled(compile(tree, "claude"), undefined, () => "ok");
+    expect(calls[0].prompt).toBe("use ");
+  });
+
+  it("a group nested in a pipeline stage resolves {{prev}} for its agents", async () => {
+    const group = blankContainer("parallel");
+    group.steps = [agent({ label: "a", prompt: "A sees {{prev}}" }), agent({ label: "b", prompt: "B sees {{prev}}" })];
+    const tree = stagesTree(agent({ label: "first", prompt: "First" }), group as unknown as Agent);
+    const calls = await runCompiled(compile(tree, "claude"), undefined, (_p, opts) => (opts.label === "first" ? { n: 1 } : "ok"));
+    expect(calls.slice(1).map((c) => c.prompt).sort()).toEqual(['A sees {"n":1}', 'B sees {"n":1}']);
+  });
+
+  it("an element that is an object reaches the per-item prompt as JSON, a string element verbatim", async () => {
+    const group = blankContainer("parallel");
+    group.iterateOver = "units";
+    group.steps = [agent({ label: "impl", prompt: "Build {{item}}" })];
+    const tree = stagesTree(agent({ label: "plan", prompt: "Plan" }), group as unknown as Agent);
+    const calls = await runCompiled(compile(tree, "claude"), undefined, (_p, opts) =>
+      opts.label === "plan" ? { units: ["u1", { slug: "u2" }] } : "ok",
+    );
+    expect(calls.slice(1).map((c) => c.prompt).sort()).toEqual(["Build u1", 'Build {"slug":"u2"}']);
+  });
+
+  it("a string input reaches every prompt verbatim, alongside {{prev}} and {{item}}", async () => {
+    const chain = blankContainer("pipeline");
+    chain.steps = [agent({ label: "implement", prompt: "Do {{item}} of {{args}}" })];
+    const group = blankContainer("parallel");
+    group.iterateOver = "waves";
+    group.iterateInWaves = true;
+    group.steps = [chain];
+    const tree = stagesTree(agent({ label: "plan", prompt: "Read plan {{args}}" }), group as unknown as Agent);
+    const calls = await runCompiled(compile(tree, "claude"), "docs/plans/x.md", (_p, opts) =>
+      opts.label === "plan" ? { waves: [["a"]] } : "ok",
+    );
+    expect(calls.map((c) => c.prompt)).toEqual(["Read plan docs/plans/x.md", "Do a of docs/plans/x.md"]);
+  });
+
+  it("a literal ${prev} or ${item} typed into a prompt stays text through save and run", async () => {
+    const tree = stagesTree(agent({ prompt: "Plan" }), agent({ label: "lit", prompt: "Keep ${prev} and ${item} as text" }));
+    const src = compile(tree, "claude");
+    expect(parse(src, "claude")).toEqual(tree);
+    const calls = await runCompiled(src, undefined, () => "ok");
+    expect(calls[1].prompt).toBe("Keep ${prev} and ${item} as text");
+  });
+});
+
+describe("placeholders at any depth of a per-item template", () => {
+  it("a parallel group nested inside the template hands the element to both branches", async () => {
+    const inner = blankContainer("parallel");
+    inner.steps = [agent({ label: "left", prompt: "Left {{item}}" }), agent({ label: "right", prompt: "Right {{item}}" })];
+    const group = blankContainer("parallel");
+    group.iterateOver = "units";
+    group.steps = [inner];
+    const tree: Tree = { name: "p", description: "", phases: [{ ...blankPhase("P"), mode: "pipeline", steps: [agent({ label: "plan", prompt: "Plan" }), group] }] };
+    const calls = await runCompiled(compile(tree, "claude"), undefined, (_p, opts) => (opts.label === "plan" ? { units: ["u1", "u2"] } : "ok"));
+    expect(calls.slice(1).map((c) => c.prompt).sort()).toEqual(["Left u1", "Left u2", "Right u1", "Right u2"]);
+  });
+
+  it("{{args}} reaches a phase agent, a pipeline stage and a wave template alike", async () => {
+    const chain = blankContainer("pipeline");
+    chain.steps = [agent({ label: "implement", prompt: "Do {{item}} of {{args}}" })];
+    const group = blankContainer("parallel");
+    group.iterateOver = "waves";
+    group.iterateInWaves = true;
+    group.steps = [chain];
+    const tree: Tree = {
+      name: "a",
+      description: "",
+      phases: [
+        { ...blankPhase("Read"), steps: [agent({ label: "solo", prompt: "Input {{args}}" })] },
+        { ...blankPhase("Build"), mode: "pipeline", steps: [agent({ label: "plan", prompt: "Plan {{args}}" }), group] },
+      ],
+    };
+    const calls = await runCompiled(compile(tree, "bb"), "p.md", (_p, opts) => (opts.label === "plan" ? { waves: [["a"]] } : "ok"));
+    expect(calls.map((c) => c.prompt)).toEqual(["Input p.md", "Plan p.md", "Do a of p.md"]);
   });
 });

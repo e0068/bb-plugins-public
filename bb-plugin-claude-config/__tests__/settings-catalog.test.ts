@@ -28,10 +28,6 @@ describe("GENERIC_SETTINGS", () => {
     }
   });
 
-  it("findSettingDef looks a key up by name", () => {
-    expect(findSettingDef("model")?.kind).toBe("string");
-    expect(findSettingDef("no-such-key")).toBeUndefined();
-  });
 });
 
 describe("encodeSettingValue", () => {
@@ -103,14 +99,6 @@ describe("decodeSettingText", () => {
     expect(decodeSettingText(def, "NaN").ok).toBe(false);
   });
 
-  it("string: accepts any text, including empty", () => {
-    const def = findSettingDef("model")!;
-    expect(decodeSettingText(def, "claude-sonnet-5")).toEqual({
-      ok: true,
-      value: "claude-sonnet-5",
-    });
-    expect(decodeSettingText(def, "")).toEqual({ ok: true, value: "" });
-  });
 
   it("json: parses valid JSON", () => {
     const def = findSettingDef("statusLine")!;

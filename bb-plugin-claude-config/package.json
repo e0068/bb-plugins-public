@@ -1,6 +1,6 @@
 {
   "name": "bb-plugin-claude-config",
-  "version": "0.2.18",
+  "version": "0.2.25",
   "type": "module",
   "engines": {
     "bb": ">=0.39",
@@ -64,6 +64,7 @@
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "cron-parser": "^5.10.0",
+    "fast-check": "^4.10.2",
     "hono": "^4.11.9",
     "sonner": "^1.7.4",
     "tailwind-merge": "^3.4.0",
@@ -73,7 +74,8 @@
   },
   "scripts": {
     "test": "vitest run",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "defaults:update": "node -e \"const {execSync: run} = require('node:child_process'); const version = run('claude --version').toString().split(' ')[0]; const defaults = JSON.parse(run('claude auto-mode defaults')); require('node:fs').writeFileSync('src/auto-mode-defaults.json', JSON.stringify({ claudeCodeVersion: version, ...defaults }, null, 2) + '\\\\n');\""
   },
   "allowScripts": {
     "esbuild@0.28.2": true,

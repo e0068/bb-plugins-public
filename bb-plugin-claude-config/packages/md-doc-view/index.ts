@@ -11,6 +11,8 @@ export type {
   LoadedDoc,
   SaveResult,
   RevealResult,
+  RenameResult,
+  RemoveResult,
 } from "./MdDocView";
 // The rule both renderers share for "does this document open in edit mode".
 // A server imports it from "./open-mode" directly, bypassing this barrel.

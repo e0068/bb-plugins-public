@@ -1,5 +1,5 @@
 {
-  "extends": "../packages/plugin-base/tsconfig.base.json",
+  "extends": "./packages/plugin-base/tsconfig.base.json",
   "compilerOptions": {
     "jsx": "react-jsx",
     "types": [
@@ -14,15 +14,24 @@
       ],
       "react/*": [
         "./node_modules/@types/react/*"
+      ],
+      "@bb-plugins/*": [
+        "./packages/*"
       ]
     },
-    "skipLibCheck": false
+    "skipLibCheck": false,
+    "allowJs": true,
+    "checkJs": false,
+    "resolveJsonModule": true
   },
   "include": [
     "server.ts",
     "app.tsx",
     "components",
     "lib",
-    "hooks"
+    "hooks",
+    "./packages/cellular-kit/index.ts",
+    "./packages/cellular-kit/vendor/index.js",
+    "./packages/cellular-kit/vendor/manifest.json"
   ]
 }

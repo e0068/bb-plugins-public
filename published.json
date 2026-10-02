@@ -1,8 +1,8 @@
 {
   "bb-plugin-claude-config": {
-    "version": "0.2.18",
-    "commit": "0e99a018f865128aea398c6500943c70ca1efa4c",
-    "publishedAt": "2026-09-16T12:11:36.283Z"
+    "version": "0.2.25",
+    "commit": "f4b45c629b9ed89dd791af6044feeaefea486bd8",
+    "publishedAt": "2026-10-02T07:15:03.937Z"
   },
   "bb-plugin-flow": {
     "version": "0.6.83",

@@ -370,19 +370,6 @@ describe("MdDocView: read, write and raw", () => {
 });
 
 describe("MdDocView: the unsaved draft", () => {
-  it("the second row appears as soon as the draft leaves the file", async () => {
-    const view = renderView();
-    await view.findByTestId("mde");
-    expect(view.queryByText("Save")).toBeNull();
-
-    switchTo("Write");
-    typeInto("mde-input", "one\ntwo");
-
-    expect(view.getByLabelText("Draft difference")).toHaveTextContent("+2");
-    expect(view.getByText("Save")).toBeInTheDocument();
-    expect(view.getByRole("button", { name: "Reload" })).toBeDisabled();
-  });
-
   it("Save writes the draft with the sha of the last read, and stays in the mode", async () => {
     const save = vi.fn(async () => written());
     const view = renderView({ save });
@@ -913,5 +900,215 @@ describe("MdDocView: initialLine", () => {
 
     await view.findByText("file not found");
     expect(view.queryByTestId("raw")).toBeNull();
+  });
+});
+
+// Three files, each linking to the next: a → b → c.
+const CHAIN: Record<string, LoadedDoc> = {
+  "/a.md": { path: "/a.md", content: "A [next](b.md)", sha256: "sa" },
+  "/b.md": { path: "/b.md", content: "B [next](c.md)", sha256: "sb" },
+  "/c.md": { path: "/c.md", content: "C [back to a](a.md)", sha256: "sc" },
+};
+const chainLoad = () =>
+  vi.fn(async (path: string): Promise<LoadedDoc> =>
+    CHAIN[path] ?? { path, content: null, sha256: null, error: "File not found." },
+  );
+
+const button = (name: string) => screen.getByRole("button", { name });
+const walkToC = async (view: ReturnType<typeof renderView>) => {
+  fireEvent.click(await view.findByTestId("link-b.md"));
+  fireEvent.click(await view.findByTestId("link-c.md"));
+  await view.findByText("C [back to a](a.md)");
+};
+
+describe("MdDocView: back and forward", () => {
+  it("back is there on the first document, disabled", async () => {
+    const view = renderView({ load: chainLoad() });
+    await view.findByText("A [next](b.md)");
+    expect(button("Back")).toBeDisabled();
+    expect(view.queryByRole("button", { name: "Forward" })).toBeNull();
+  });
+
+  it("back and forward walk the files in the order they were opened", async () => {
+    const view = renderView({ load: chainLoad() });
+    await walkToC(view);
+
+    fireEvent.click(button("Back"));
+    await view.findByText("B [next](c.md)");
+    fireEvent.click(button("Back"));
+    await view.findByText("A [next](b.md)");
+
+    fireEvent.click(button("Forward"));
+    await view.findByText("B [next](c.md)");
+    fireEvent.click(button("Forward"));
+    await view.findByText("C [back to a](a.md)");
+    expect(view.queryByRole("button", { name: "Forward" })).toBeNull();
+  });
+
+  it("a jump from the middle of the history wipes what lay ahead", async () => {
+    const view = renderView({ load: chainLoad() });
+    await walkToC(view);
+    fireEvent.click(button("Back"));
+    fireEvent.click(await view.findByTestId("link-c.md"));
+    await view.findByText("C [back to a](a.md)");
+    fireEvent.click(button("Back"));
+    await view.findByText("B [next](c.md)");
+    fireEvent.click(button("Back"));
+    await view.findByText("A [next](b.md)");
+    expect(button("Back")).toBeDisabled();
+  });
+
+  it("an unsaved draft hides back and forward behind Save and Cancel", async () => {
+    const view = renderView({ load: chainLoad() });
+    fireEvent.click(await view.findByTestId("link-b.md"));
+    await view.findByText("B [next](c.md)");
+    switchTo("Write");
+    typeInto("mde-input", "changed");
+    expect(view.queryByRole("button", { name: "Back" })).toBeNull();
+    expect(view.queryByRole("button", { name: "Reload" })).toBeNull();
+    expect(view.getByLabelText("Draft difference")).toHaveTextContent("+1");
+    expect(button("Save")).toBeInTheDocument();
+  });
+});
+
+const openMenuItem = async (view: ReturnType<typeof renderView>, item: "Rename" | "Delete") => {
+  fireEvent.click(await view.findByRole("button", { name: "More actions" }));
+  fireEvent.click(button(item));
+};
+
+describe("MdDocView: renaming and deleting the file", () => {
+  it("no rename and no remove — no menu", async () => {
+    const view = renderView({ load: chainLoad() });
+    await view.findByText("A [next](b.md)");
+    expect(view.queryByRole("button", { name: "More actions" })).toBeNull();
+  });
+
+  it("a read-only document has no menu", async () => {
+    const view = renderView({
+      load: chainLoad(),
+      readOnly: true,
+      rename: vi.fn(),
+      remove: vi.fn(),
+    });
+    await view.findByText("A [next](b.md)");
+    expect(view.queryByRole("button", { name: "More actions" })).toBeNull();
+  });
+
+  it("a rename asks the host for the file on screen and shows the new path", async () => {
+    const rename = vi.fn(async (_path: string, name: string) => ({
+      outcome: "renamed" as const,
+      path: `/${name}`,
+    }));
+    const view = renderView({ load: chainLoad(), rename });
+    fireEvent.click(await view.findByTestId("link-b.md"));
+    await view.findByText("B [next](c.md)");
+
+    await openMenuItem(view, "Rename");
+    const field = screen.getByRole("dialog").querySelector("input") as HTMLInputElement;
+    field.value = "bee.md";
+    await act(async () => {
+      fireEvent.keyDown(field, { key: "Enter" });
+    });
+
+    expect(rename).toHaveBeenCalledWith("/b.md", "bee.md");
+    expect(await view.findByText("/bee.md")).toBeInTheDocument();
+  });
+
+  it("after a rename, walking back and forward lands on the new path", async () => {
+    const load = chainLoad();
+    const rename = vi.fn(async () => ({ outcome: "renamed" as const, path: "/bee.md" }));
+    const view = renderView({ load, rename });
+    fireEvent.click(await view.findByTestId("link-b.md"));
+    await view.findByText("B [next](c.md)");
+    await openMenuItem(view, "Rename");
+    const field = screen.getByRole("dialog").querySelector("input") as HTMLInputElement;
+    field.value = "bee.md";
+    await act(async () => {
+      fireEvent.keyDown(field, { key: "Enter" });
+    });
+    await view.findByText("/bee.md");
+
+    fireEvent.click(button("Back"));
+    await view.findByText("A [next](b.md)");
+    load.mockClear();
+    fireEvent.click(button("Forward"));
+    await waitFor(() => expect(load).toHaveBeenCalledWith("/bee.md"));
+  });
+
+  it("a refused rename keeps the dialog open with the host's message", async () => {
+    const rename = vi.fn(async () => ({
+      outcome: "exists" as const,
+      message: "A file with that name already exists.",
+    }));
+    const view = renderView({ load: chainLoad(), rename });
+    await view.findByText("A [next](b.md)");
+    await openMenuItem(view, "Rename");
+    const field = screen.getByRole("dialog").querySelector("input") as HTMLInputElement;
+    field.value = "b.md";
+    await act(async () => {
+      fireEvent.keyDown(field, { key: "Enter" });
+    });
+    expect(await view.findByText("A file with that name already exists.")).toBeInTheDocument();
+    expect(view.getByText("/a.md")).toBeInTheDocument();
+  });
+
+  it("a delete says the file is gone, and back leads to the file before it", async () => {
+    const remove = vi.fn(async () => ({ outcome: "removed" as const }));
+    const view = renderView({ load: chainLoad(), remove });
+    fireEvent.click(await view.findByTestId("link-b.md"));
+    await view.findByText("B [next](c.md)");
+
+    await openMenuItem(view, "Delete");
+    const dialog = screen.getByRole("dialog");
+    await act(async () => {
+      fireEvent.click(
+        [...dialog.querySelectorAll('[role="button"]')].find((b) => b.textContent === "Delete")!,
+      );
+    });
+
+    expect(remove).toHaveBeenCalledWith("/b.md");
+    expect(await view.findByText("File deleted.")).toBeInTheDocument();
+    fireEvent.click(button("Back"));
+    await view.findByText("A [next](b.md)");
+    expect(view.queryByRole("button", { name: "Forward" })).toBeNull();
+  });
+});
+
+describe("MdDocView: answers that arrive late", () => {
+  it("a file read that was overtaken by a later one never lands on screen", async () => {
+    let arriveB: (doc: LoadedDoc) => void = () => {};
+    const load = vi.fn(
+      (path: string) =>
+        new Promise<LoadedDoc>((resolve) => {
+          if (path === "/b.md") arriveB = resolve;
+          else resolve(CHAIN[path]);
+        }),
+    );
+    const view = renderView({ load });
+    // A jump to /b.md is on its way; the reader re-reads /a.md meanwhile —
+    // the later request is the one the screen follows.
+    fireEvent.click(await view.findByTestId("link-b.md"));
+    fireEvent.click(button("Reload"));
+    await view.findByText("A [next](b.md)");
+    await act(async () => arriveB(CHAIN["/b.md"]));
+    expect(view.getByText("A [next](b.md)")).toBeInTheDocument();
+    expect(view.getByText("/a.md")).toBeInTheDocument();
+    expect(button("Back")).toBeDisabled();
+  });
+
+  it("after a delete the file's button stays in place, disabled", async () => {
+    const remove = vi.fn(async () => ({ outcome: "removed" as const }));
+    const view = renderView({ load: chainLoad(), remove });
+    await view.findByText("A [next](b.md)");
+    await openMenuItem(view, "Delete");
+    const dialog = screen.getByRole("dialog");
+    await act(async () => {
+      fireEvent.click(
+        [...dialog.querySelectorAll('[role="button"]')].find((b) => b.textContent === "Delete")!,
+      );
+    });
+    await view.findByText("File deleted.");
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(button("More actions")).toHaveAttribute("aria-disabled", "true");
   });
 });

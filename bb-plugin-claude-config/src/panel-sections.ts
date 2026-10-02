@@ -8,7 +8,7 @@
 /**
  * What a section's "+" creates. A section whose items can't be created from
  * this panel has none, and gets no "+" — a permanently disabled button
- * explains nothing (memory/decisions/plus-button-only-where-creation-exists).
+ * explains nothing (docs/decisions/plus-button-only-where-creation-exists).
  */
 export type CreateKind = "hook" | "skill" | "agent" | "workflow";
 

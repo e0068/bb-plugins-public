@@ -17,7 +17,7 @@ front-end build fails with `Could not resolve "kasimov" / "kasimov/css"`. A
 ready-made build in git removes the build-on-install step: it resolves without scripts.
 
 Analysis and rejected alternatives —
-[memory/decisions/md-opener-vendor-kasimov.md](../../memory/decisions/md-opener-vendor-kasimov.md).
+[docs/decisions/md-opener-vendor-kasimov.md](../../docs/decisions/md-opener-vendor-kasimov.md).
 
 ## Files at the root, not in dist/
 

@@ -111,7 +111,7 @@ describe("resolveOpenTarget", () => {
 // hook then made every later getConfig call for that area reject with an
 // output-validation error the panel never surfaces (no .catch() on the
 // RPC), which read as "the panel stopped loading" (see
-// memory/tasks/in_progress/cloud-config-plugin-kasimov-switch.md, "Правка 5").
+// docs/tasks/in_progress/cloud-config-plugin-kasimov-switch.md, "Правка 5").
 describe("getConfig", () => {
   const REAL_HOME = process.env.HOME;
   const tempHomes: string[] = [];
@@ -178,64 +178,6 @@ describe("getConfig", () => {
         index: -1,
         enabled: false,
       },
-    ]);
-  });
-
-  // readmePath is what the panel now opens through the shared file-opener
-  // path (useOpenFile), the same way it already opens a skill's SKILL.md —
-  // see decisions/claude-config-plugin-readme-like-skill.md.
-  it("a plugin's readmePath points at its README when present, null otherwise", async () => {
-    const fakeHome = mkdtempSync(join(tmpdir(), "claude-config-home-"));
-    tempHomes.push(fakeHome);
-    process.env.HOME = fakeHome;
-
-    const withReadmeDir = join(fakeHome, "plugins", "with-readme");
-    const withoutReadmeDir = join(fakeHome, "plugins", "without-readme");
-    const installedPath = join(
-      fakeHome,
-      ".claude",
-      "plugins",
-      "installed_plugins.json",
-    );
-    const files: Record<string, string> = {
-      [installedPath]: JSON.stringify({
-        plugins: {
-          "with-readme@m": [{ installPath: withReadmeDir, version: "1.0.0" }],
-          "without-readme@m": [{ installPath: withoutReadmeDir, version: "1.0.0" }],
-        },
-      }),
-      [join(withReadmeDir, ".claude-plugin", "plugin.json")]: '{"name":"with-readme"}',
-      [join(withReadmeDir, "README.md")]: "# With Readme",
-      [join(withoutReadmeDir, ".claude-plugin", "plugin.json")]:
-        '{"name":"without-readme"}',
-    };
-
-    const { bb, harness } = host();
-    harness.sdk.stub("files.read", (args: { path: string }) => {
-      const content = files[args.path];
-      if (content === undefined) throw new Error("not found");
-      return {
-        content,
-        sha256: "x",
-        contentEncoding: "utf8",
-        sizeBytes: content.length,
-      };
-    });
-    await plugin(bb);
-
-    const config = (await harness.behavior.callRpc("getConfig", {
-      areaId: "global",
-    })) as { plugins: { key: string; readmePath: string | null }[] };
-
-    expect(config.plugins).toEqual([
-      expect.objectContaining({
-        key: "with-readme@m",
-        readmePath: join(withReadmeDir, "README.md"),
-      }),
-      expect.objectContaining({
-        key: "without-readme@m",
-        readmePath: null,
-      }),
     ]);
   });
 });

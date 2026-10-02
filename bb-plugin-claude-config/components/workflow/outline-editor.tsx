@@ -18,7 +18,7 @@ import {
   type OutlinePath,
 } from "../../src/workflow/outline-ops";
 import { editorStore, type EditorSnapshot } from "../../src/workflow/store";
-import { MarkdownEditor } from "../../packages/md-editor/react";
+import { MarkdownEditor } from "@bb-plugins/md-editor/react";
 
 // A discovered agent (from the `agents` RPC): its agentType value, frontmatter-derived
 // model/effort/provider, and — for the Save/Override decision and the tools written back to the
@@ -413,6 +413,10 @@ export function AgentDetails({
           <div className="rounded-md border border-border">
             <MarkdownEditor editable value={agent.prompt} onChange={(v) => onSetField({ prompt: v })} flush />
           </div>
+          <p className="text-[11px] text-foreground/60">
+            <code>{"{{args}}"}</code> — the run input · <code>{"{{prev}}"}</code> — the previous pipeline stage's result ·{" "}
+            <code>{"{{item}}"}</code> — the current element of an iterated group
+          </p>
         </section>
         <section className="space-y-1.5">
           <span className="text-xs text-muted-foreground">Result format (JSON schema, optional)</span>
@@ -471,10 +475,13 @@ export function GroupDetails({ node, onSetField }: { node: Phase | Container; on
             />
             {node.iterateOver.trim() !== "" && (
               <div className="space-y-1 rounded-md border border-border bg-muted/40 p-2 text-[11px] text-foreground/60">
-                <p>First branch is the per-item template, run once per element of the incoming value's field.</p>
                 <p>
-                  <code>{"{{prev}}"}</code> — the whole incoming value · <code>{"{{item}}"}</code> — the current element ·{" "}
-                  <code>{"{{results}}"}</code> — what earlier items already returned
+                  First branch is the per-item template, run once per element of the incoming value's field; branches below it don't
+                  run. For a chain per element (implement → review), make the first branch a pipeline group.
+                </p>
+                <p>
+                  <code>{"{{prev}}"}</code> — the whole incoming value · <code>{"{{item}}"}</code> — the current element, in every
+                  agent of the template · <code>{"{{args}}"}</code> — the run input
                 </p>
                 <label className="flex items-center gap-1.5 pt-1 text-foreground/80">
                   <input

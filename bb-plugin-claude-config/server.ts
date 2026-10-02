@@ -8,6 +8,7 @@
 // than an exception.
 import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
+import { lstat, readdir, realpath, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join, posix as posixPath, resolve } from "node:path";
 import { defineRpcContract, type BbPluginApi } from "@get-bb/plugin-sdk";
@@ -28,7 +29,7 @@ import {
   encodeSettingValue,
   findSettingDef,
 } from "./src/settings-catalog";
-import { estimateTokens } from "./src/weight";
+import { estimateTokens, skillWeightKey, type SkillOrigin } from "./src/weight";
 import { parseClaudeJsonServers, parseMcpJson } from "./src/catalog";
 import { parseImports, resolveImportPath } from "./src/imports";
 import { extractCommandFile } from "./src/hook-script";
@@ -44,7 +45,7 @@ import {
 import {
   NATIVE_VIEWER_TOKEN_DEFAULTS,
   buildDescriptors,
-} from "./packages/md-doc-view/kasimov-settings";
+} from "@bb-plugins/md-doc-view/kasimov-settings";
 // Port of the workflow builder (bb-plugin-workflow-composer → here): the
 // tree<->.js core stays a DOM-free module under src/workflow; the server
 // here only reads/writes files and calls `bb workflows` — same as in the
@@ -245,6 +246,20 @@ export const rpcContract = defineRpcContract({
   getConfig: {
     input: z.object({ areaId: z.string() }).strict(),
     output: configOutput,
+  },
+  getWeights: {
+    // Row weights for getConfig's rows, fetched after the area is drawn:
+    // plugins by key (with README path), skills by skillWeightKey, agents
+    // by file path.
+    input: z.object({ areaId: z.string() }).strict(),
+    output: z.object({
+      plugins: z.record(
+        z.string(),
+        z.object({ tokens: z.number().nullable(), readmePath: z.string().nullable() }),
+      ),
+      skills: z.record(z.string(), z.number().nullable()),
+      agents: z.record(z.string(), z.number().nullable()),
+    }),
   },
   setPlugin: {
     // The switch is binary: value — the desired effective on/off in this area.
@@ -695,14 +710,64 @@ export function extractRunId(text: string): string | null {
 // Which agents/ directory an agent was discovered in — mirrors rpcContract.wfAgents' output `scope`.
 type AgentScope = "user" | "project" | "plugin";
 
-// listPaths, but a missing directory (throw) yields [] instead of failing the caller.
-async function listPathsSafe(bb: BbPluginApi, args: { hostId?: string; path: string }): Promise<string[]> {
-  try {
-    const res = await bb.sdk.files.listPaths({ ...args, includeFiles: true, includeDirectories: false });
-    return res.paths.map((p) => p.path);
-  } catch {
-    return [];
+// Files under `path`, relative to it; a missing directory yields []. The
+// host daemon skips symlinks while walking and refuses a symlinked root, yet
+// Claude Code and bb's own skill index follow them — so a skill linked into
+// ~/.claude/skills from a marketplace clone would vanish from the panel. On
+// the server's own host (`followLinks`) the links are resolved here: a linked
+// folder is listed at its real path and put back under the link's name, a
+// linked file is listed as is. A remote host's links stay invisible — the
+// plugin has no file system there.
+async function listPathsFollowingLinks(
+  bb: BbPluginApi,
+  followLinks: boolean,
+  args: { hostId?: string; path: string; limit?: number },
+): Promise<string[]> {
+  const list = async (path: string): Promise<string[]> => {
+    try {
+      const res = await bb.sdk.files.listPaths({ ...args, path, includeFiles: true, includeDirectories: false });
+      return res.paths.map((p) => p.path);
+    } catch {
+      return [];
+    }
+  };
+  if (!followLinks) return list(args.path);
+  const root = await realpath(args.path).catch(() => args.path);
+  const entries = await readdir(root, { withFileTypes: true }).catch(() => []);
+  const linked = await Promise.all(
+    entries
+      .filter((entry) => entry.isSymbolicLink() && !entry.name.startsWith("."))
+      .map(async (entry): Promise<string[]> => {
+        const target = await stat(join(root, entry.name)).catch(() => null);
+        if (target?.isFile()) return [entry.name];
+        if (!target?.isDirectory()) return [];
+        const real = await realpath(join(root, entry.name));
+        return (await list(real)).map((rel) => `${entry.name}/${rel}`);
+      }),
+  );
+  return [...(await list(root)), ...linked.flat()];
+}
+
+// The folder a read of `path` must be confined to when `path` reaches into
+// `dir` through a link that listPathsFollowingLinks follows — the first entry
+// under `dir`, or `dir` itself. The daemon checks a read's real path against
+// its root, and a link's target lies outside `.claude`, so the root moves to
+// the target: a linked folder confines to itself, a linked file to its own
+// folder. Only those links count, never one picked by a path from the client.
+// null — no such link, or `path` is not plainly inside `dir`.
+async function linkedReadRoot(dir: string, path: string): Promise<string | null> {
+  if (!isWithin(dir, path) || path.split("/").includes("..")) return null;
+  const [first] = path.slice(dir.length).split("/").filter(Boolean);
+  if (first !== undefined && (await isLink(join(dir, first)))) {
+    const real = await realpath(join(dir, first)).catch(() => null);
+    if (real === null) return null;
+    return (await stat(real)).isDirectory() ? real : dirname(real);
   }
+  return (await isLink(dir)) ? realpath(dir).catch(() => null) : null;
+}
+
+async function isLink(path: string): Promise<boolean> {
+  return (await lstat(path).catch(() => null))?.isSymbolicLink() ?? false;
 }
 
 // Bare agent names from top-level (no "/") *.md files in a single agents dir.
@@ -1045,7 +1110,7 @@ function memoryCandidates(area: Area): MemoryEntry[] {
       { id: "project-claude-local", label: "CLAUDE.local.md", path: join(root, "CLAUDE.local.md"), hostId: area.hostId },
       { id: "project-agents", label: "AGENTS.md", path: join(root, "AGENTS.md"), hostId: area.hostId },
       { id: "project-memory", label: "memory/MEMORY.md", path: join(root, "memory", "MEMORY.md"), hostId: area.hostId },
-      { id: "project-memory-index", label: "memory/INDEX.md", path: join(root, "memory", "INDEX.md"), hostId: area.hostId },
+      { id: "project-memory-index", label: "docs/INDEX.md", path: join(root, "memory", "INDEX.md"), hostId: area.hostId },
       { id: "auto-memory", label: "Auto-memory MEMORY.md", path: join(area.claudeHome, "projects", enc, "memory", "MEMORY.md"), hostId: undefined },
     );
   }
@@ -1130,7 +1195,7 @@ export default function plugin(bb: BbPluginApi) {
   //     settings schema has no conditional visibility, and a dedicated
   //     settingsSection to hide the moot field was ruled not worth it.
   // Supersedes decision claude-config-opener-setting.md's single three-way
-  // enum (memory/decisions/claude-config-opener-two-axes.md).
+  // enum (docs/decisions/claude-config-opener-two-axes.md).
   // Kasimov settings (font size/spacing/colors/fonts + flags) are declared as
   // a single table in src/kasimov-settings; here we just mix them into the
   // plugin's settings alongside the two opener settings. The front end reads
@@ -1140,7 +1205,7 @@ export default function plugin(bb: BbPluginApi) {
   // Default presets are "to match the native bb viewer", the same as MD
   // Opener: both render Kasimov through the same MdDocView/md-doc-view.css
   // (used to be hardcoded there, see
-  // memory/decisions/kasimov-opener-css-uses-token-defaults.md) — the owner
+  // docs/decisions/kasimov-opener-css-uses-token-defaults.md) — the owner
   // explicitly asked for both consumers to look the same.
   // (doc-editor.css in this plugin is about a different editor,
   // packages/md-editor with the cc-doc-mde class; it has nothing to do with
@@ -1149,6 +1214,37 @@ export default function plugin(bb: BbPluginApi) {
     ...OPENER_DESCRIPTORS,
     ...buildDescriptors(NATIVE_VIEWER_TOKEN_DEFAULTS),
   });
+
+  // Whether `hostId` names the host this server runs on: no id means the
+  // local host, an id is compared with bb's primary host. The primary host
+  // doesn't change while bb runs; a failed lookup isn't kept.
+  let primaryHost: Promise<string | null> | null = null;
+  async function onServerHost(hostId: string | undefined): Promise<boolean> {
+    if (hostId === undefined) return true;
+    primaryHost ??= bb.sdk.system.config().then(
+      (config) => config.primaryHostId,
+      () => {
+        primaryHost = null;
+        return null;
+      },
+    );
+    return (await primaryHost) === hostId;
+  }
+
+  // Read root for `path` in the area's skills or agents folders when it
+  // reaches there through a followed link (linkedReadRoot); null otherwise.
+  async function linkedRoot(area: Area, path: string): Promise<string | null> {
+    if (!(await onServerHost(area.hostId))) return null;
+    const dirs = [area.projectSkillsDir, area.personalSkillsDir, area.projectAgentsDir, area.personalAgentsDir];
+    const dir = dirs.find((candidate): candidate is string => candidate !== null && isWithin(candidate, path));
+    return dir === undefined ? null : linkedReadRoot(dir, path);
+  }
+
+  // The daemon refuses to remove a symlink, so a linked skill or agent is
+  // refused here with words rather than an RPC error.
+  async function isLinkOnServer(area: Area, path: string): Promise<boolean> {
+    return (await onServerHost(area.hostId)) && isLink(path);
+  }
 
   // Reading a file: absence is an empty document (text=null), not an error.
   // sha is needed for a CAS write; if the file is absent, the write proceeds
@@ -1176,19 +1272,175 @@ export default function plugin(bb: BbPluginApi) {
     hostId: string | undefined,
   ): Promise<string[]> {
     if (!dir) return [];
-    try {
-      const result = await bb.sdk.files.listPaths({
-        path: dir,
-        hostId,
-        includeFiles: true,
-        includeDirectories: false,
-        limit: 5000,
-      });
-      return result.paths.map((entry) => entry.path);
-    } catch {
-      return [];
-    }
+    return listPathsFollowingLinks(bb, await onServerHost(hostId), { path: dir, hostId, limit: 5000 });
   }
+
+  // Everything getConfig and getWeights share: the area, its parsed levels
+  // and the config view. Reads only area-level files (settings levels,
+  // installed_plugins.json, .mcp.json, ~/.claude.json) and lists the skills
+  // and agents directories — no per-row file.
+  async function loadAreaView(areaId: string) {
+    const area = await resolveArea(bb, areaId);
+    if (!area) {
+      return {
+        kind: "error" as const,
+        config: emptyConfig("—", "", { file: "", message: "Area not found." }),
+      };
+    }
+
+    // Parse each level tied to its file: corrupt JSON becomes a UI
+    // message, not a swap-in empty document (otherwise the first write
+    // would clobber the file).
+    const parsedLevels: sd.SettingsDoc[] = [];
+    for (const path of area.levelPaths) {
+      const { text } = await readFile(path, area.hostId);
+      try {
+        parsedLevels.push(sd.parse(text));
+      } catch (error) {
+        if (error instanceof SettingsParseError) {
+          return {
+            kind: "error" as const,
+            config: emptyConfig(area.label, area.editedPath, {
+              file: path,
+              message: error.message,
+            }),
+          };
+        }
+        throw error;
+      }
+    }
+    // The edited file is the last of the levels (local or global).
+    const editedDoc = parsedLevels[parsedLevels.length - 1] ?? {};
+
+    const [
+      installed,
+      mcpJson,
+      claudeJson,
+      personalSkillPaths,
+      projectSkillPaths,
+      personalAgentPaths,
+      projectAgentPaths,
+    ] = await Promise.all([
+      readFile(area.installedPath, area.hostId),
+      // .mcp.json — on the project's host; ~/.claude.json — on the local host.
+      area.mcpJsonPath
+        ? readFile(area.mcpJsonPath, area.hostId)
+        : Promise.resolve({ text: null, sha256: null }),
+      readFile(area.claudeJsonPath, undefined),
+      listDirFiles(area.personalSkillsDir, area.hostId),
+      listDirFiles(area.projectSkillsDir, area.hostId),
+      listDirFiles(area.personalAgentsDir, area.hostId),
+      listDirFiles(area.projectAgentsDir, area.hostId),
+    ]);
+    // Keyed by the level file's PATH, not by area: ~/.claude/settings.json
+    // is shared across all project areas, and the disabled hooks in it
+    // must be shared too.
+    const disabledHooksByLevel = await Promise.all(
+      area.levelPaths.map((path) => readDisabledHooks(path)),
+    );
+
+    // Level origins: one (user) globally, three in order for a project.
+    const levelOrigins =
+      area.kind === "global"
+        ? (["user"] as const)
+        : (["user", "project", "local"] as const);
+
+    const view = buildConfigView({
+      areaKind: area.kind,
+      editedDoc,
+      levelDocs: parsedLevels,
+      installedPluginsText: installed.text,
+      personalSkillPaths,
+      projectSkillPaths,
+      personalAgentDir: area.personalAgentsDir,
+      projectAgentDir: area.projectAgentsDir,
+      personalAgentPaths,
+      projectAgentPaths,
+      mcpJsonText: mcpJson.text,
+      claudeJsonText: claudeJson.text,
+      projectRoot: area.projectRoot,
+      levelOrigins: [...levelOrigins],
+      disabledHooksByLevel,
+    });
+
+    // Skill name -> path to its SKILL.md (same layout as collectSkillNames).
+    const skillFileByName = (
+      dir: string | null,
+      relPaths: string[],
+    ): Map<string, string> => {
+      const map = new Map<string, string>();
+      if (!dir) return map;
+      for (const rel of relPaths) {
+        const seg = rel.split("/").filter(Boolean);
+        if (seg[seg.length - 1] !== "SKILL.md") continue;
+        const name =
+          seg[0] === "synced" && seg.length === 3
+            ? seg[1]
+            : seg.length === 2
+              ? seg[0]
+              : null;
+        if (name) map.set(name, join(dir, rel));
+      }
+      return map;
+    };
+    const skillFiles = {
+      personal: skillFileByName(area.personalSkillsDir, personalSkillPaths),
+      project: skillFileByName(area.projectSkillsDir, projectSkillPaths),
+    };
+
+    // Connector definitions (JSON) keyed by origin:name — their weight.
+    const connectorDefs = new Map<string, string>();
+    for (const server of parseMcpJson(mcpJson.text)) {
+      connectorDefs.set(`mcpjson:${server.name}`, JSON.stringify(server.config));
+    }
+    const claudeServers = parseClaudeJsonServers(claudeJson.text, area.projectRoot);
+    for (const server of claudeServers.user) {
+      connectorDefs.set(`user:${server.name}`, JSON.stringify(server.config));
+    }
+    for (const server of claudeServers.local) {
+      connectorDefs.set(`local:${server.name}`, JSON.stringify(server.config));
+    }
+
+    return {
+      kind: "ok" as const,
+      area,
+      view,
+      connectorDefs,
+      skillFile: (origin: SkillOrigin, name: string): string | null =>
+        skillFiles[origin].get(name) ?? null,
+    };
+  }
+
+  // A plugin's weight (manifest + README) and its README path, if any.
+  // README.md wins over readme.md; the second is read only when the first
+  // is missing.
+  async function pluginWeight(
+    installPath: string,
+    area: { hostId: string | undefined; claudeHome: string },
+  ): Promise<PluginWeight> {
+    const read = (rel: string) =>
+      readFile(join(installPath, rel), area.hostId, area.claudeHome);
+    const findReadme = async () => {
+      for (const name of ["README.md", "readme.md"]) {
+        const { text } = await read(name);
+        if (text != null) return { text, path: join(installPath, name) };
+      }
+      return null;
+    };
+    const [manifest, readme] = await Promise.all([
+      read(join(".claude-plugin", "plugin.json")),
+      findReadme(),
+    ]);
+    const combined = (manifest.text ?? "") + (readme?.text ?? "");
+    return {
+      tokens: combined.length ? estimateTokens(combined) : null,
+      readmePath: readme?.path ?? null,
+    };
+  }
+
+  // The weight run getWeights is on. A newer getWeights, or getConfig for
+  // another area, bumps the id; the old run stops starting reads.
+  let weightsRun = { id: 0, areaId: "" };
 
   /** Hooks toggled off for a settings file, keyed by its path (or []). */
   async function readDisabledHooks(path: string): Promise<sd.HookEntry[]> {
@@ -1365,210 +1617,87 @@ export default function plugin(bb: BbPluginApi) {
     },
 
     async getConfig({ areaId }) {
-      const area = await resolveArea(bb, areaId);
-      if (!area) {
-        return emptyConfig("—", "", {
-          file: "",
-          message: "Area not found.",
-        });
-      }
-
-      // Parse each level tied to its file: corrupt JSON becomes a UI
-      // message, not a swap-in empty document (otherwise the first write
-      // would clobber the file).
-      const parsedLevels: sd.SettingsDoc[] = [];
-      for (const path of area.levelPaths) {
-        const { text } = await readFile(path, area.hostId);
-        try {
-          parsedLevels.push(sd.parse(text));
-        } catch (error) {
-          if (error instanceof SettingsParseError) {
-            return emptyConfig(area.label, area.editedPath, {
-              file: path,
-              message: error.message,
-            });
-          }
-          throw error;
-        }
-      }
-      // The edited file is the last of the levels (local or global).
-      const editedDoc = parsedLevels[parsedLevels.length - 1] ?? {};
-
-      const installed = await readFile(area.installedPath, area.hostId);
-      // .mcp.json — on the project's host; ~/.claude.json — on the local host.
-      const mcpJson = area.mcpJsonPath
-        ? await readFile(area.mcpJsonPath, area.hostId)
-        : { text: null, sha256: null };
-      const claudeJson = await readFile(area.claudeJsonPath, undefined);
-      const [
-        personalSkillPaths,
-        projectSkillPaths,
-        personalAgentPaths,
-        projectAgentPaths,
-      ] = await Promise.all([
-        listDirFiles(area.personalSkillsDir, area.hostId),
-        listDirFiles(area.projectSkillsDir, area.hostId),
-        listDirFiles(area.personalAgentsDir, area.hostId),
-        listDirFiles(area.projectAgentsDir, area.hostId),
-      ]);
-      // Keyed by the level file's PATH, not by area: ~/.claude/settings.json
-      // is shared across all project areas, and the disabled hooks in it
-      // must be shared too.
-      const disabledHooksByLevel = await Promise.all(
-        area.levelPaths.map((path) => readDisabledHooks(path)),
-      );
-
-      // Level origins: one (user) globally, three in order for a project.
-      const levelOrigins =
-        area.kind === "global"
-          ? (["user"] as const)
-          : (["user", "project", "local"] as const);
-
-      const view = buildConfigView({
-        areaKind: area.kind,
-        editedDoc,
-        levelDocs: parsedLevels,
-        installedPluginsText: installed.text,
-        personalSkillPaths,
-        projectSkillPaths,
-        personalAgentDir: area.personalAgentsDir,
-        projectAgentDir: area.projectAgentsDir,
-        personalAgentPaths,
-        projectAgentPaths,
-        mcpJsonText: mcpJson.text,
-        claudeJsonText: claudeJson.text,
-        projectRoot: area.projectRoot,
-        levelOrigins: [...levelOrigins],
-        disabledHooksByLevel,
-      });
-
-      // Row "weight" in tokens: read the section's file contents and
-      // estimate. A read error means tokens=null (the UI label just shows
-      // no weight).
-      const tokensOf = async (
-        path: string | null,
-        hostId: string | undefined,
-        rootPath?: string,
-      ): Promise<number | null> => {
-        if (!path) return null;
-        const { text } = await readFile(path, hostId, rootPath);
-        return text == null ? null : estimateTokens(text);
-      };
-
-      // Skill name -> path to its SKILL.md (same layout as collectSkillNames).
-      const skillFileByName = (
-        dir: string | null,
-        relPaths: string[],
-      ): Map<string, string> => {
-        const map = new Map<string, string>();
-        if (!dir) return map;
-        for (const rel of relPaths) {
-          const seg = rel.split("/").filter(Boolean);
-          if (seg[seg.length - 1] !== "SKILL.md") continue;
-          const name =
-            seg[0] === "synced" && seg.length === 3
-              ? seg[1]
-              : seg.length === 2
-                ? seg[0]
-                : null;
-          if (name) map.set(name, join(dir, rel));
-        }
-        return map;
-      };
-      const personalSkillFiles = skillFileByName(
-        area.personalSkillsDir,
-        personalSkillPaths,
-      );
-      const projectSkillFiles = skillFileByName(
-        area.projectSkillsDir,
-        projectSkillPaths,
-      );
-
-      // Connector definitions (JSON) keyed by origin:name — their weight.
-      const connectorDefs = new Map<string, string>();
-      for (const server of parseMcpJson(mcpJson.text)) {
-        connectorDefs.set(
-          `mcpjson:${server.name}`,
-          JSON.stringify(server.config),
-        );
-      }
-      const claudeServers = parseClaudeJsonServers(
-        claudeJson.text,
-        area.projectRoot,
-      );
-      for (const server of claudeServers.user) {
-        connectorDefs.set(`user:${server.name}`, JSON.stringify(server.config));
-      }
-      for (const server of claudeServers.local) {
-        connectorDefs.set(`local:${server.name}`, JSON.stringify(server.config));
-      }
-
-      const [skills, agents, plugins] = await Promise.all([
-        Promise.all(
-          view.skills.map(async (skill) => {
-            const path = (
-              skill.origin === "project" ? projectSkillFiles : personalSkillFiles
-            ).get(skill.name);
-            return {
-              ...skill,
-              path: path ?? null,
-              tokens: await tokensOf(path ?? null, area.hostId),
-            };
-          }),
-        ),
-        Promise.all(
-          view.agents.map(async (agent) => ({
-            ...agent,
-            tokens: await tokensOf(agent.path, area.hostId),
-          })),
-        ),
-        Promise.all(
-          view.plugins.map(async (plugin) => {
-            if (!plugin.installPath)
-              return { ...plugin, tokens: null, readmePath: null };
-            const manifest = await readFile(
-              join(plugin.installPath, ".claude-plugin", "plugin.json"),
-              area.hostId,
-              area.claudeHome,
-            );
-            let readme = "";
-            let readmePath: string | null = null;
-            for (const name of ["README.md", "readme.md"]) {
-              const candidate = join(plugin.installPath, name);
-              const { text } = await readFile(
-                candidate,
-                area.hostId,
-                area.claudeHome,
-              );
-              if (text != null) {
-                readme = text;
-                readmePath = candidate;
-                break;
-              }
-            }
-            const combined = (manifest.text ?? "") + readme;
-            return {
-              ...plugin,
-              tokens: combined.length ? estimateTokens(combined) : null,
-              readmePath,
-            };
-          }),
-        ),
-      ]);
+      // Leaving an area retires its weight run: its reads would otherwise
+      // queue in front of this area's.
+      if (weightsRun.areaId !== areaId) weightsRun = { id: weightsRun.id + 1, areaId };
+      const loaded = await loadAreaView(areaId);
+      if (loaded.kind === "error") return loaded.config;
+      const { area, view, connectorDefs } = loaded;
       const connectors = view.connectors.map((connector) => {
         const def = connectorDefs.get(`${connector.origin}:${connector.name}`);
         return { ...connector, tokens: def ? estimateTokens(def) : null };
       });
 
+      // Per-row weights and plugin READMEs come from getWeights: each read is
+      // a host-daemon round-trip served one at a time, and there are about a
+      // hundred of them (BBPL-333).
       return {
         areaLabel: area.label,
         editedFilePath: area.editedPath,
         error: null,
         ...view,
-        plugins,
+        plugins: view.plugins.map((plugin) => ({
+          ...plugin,
+          tokens: null,
+          readmePath: null,
+        })),
         connectors,
-        skills,
-        agents,
+        skills: view.skills.map((skill) => ({
+          ...skill,
+          path: loaded.skillFile(skill.origin, skill.name),
+          tokens: null,
+        })),
+        agents: view.agents.map((agent) => ({ ...agent, tokens: null })),
+      };
+    },
+
+    async getWeights({ areaId }) {
+      const run = weightsRun.id + 1;
+      weightsRun = { id: run, areaId };
+      const live = () => weightsRun.id === run;
+
+      const loaded = await loadAreaView(areaId);
+      if (loaded.kind === "error") return { plugins: {}, skills: {}, agents: {} };
+      const { area, view } = loaded;
+
+      // A read error means tokens=null (the UI label just shows no weight).
+      const tokensOf = async (path: string | null): Promise<number | null> => {
+        if (!path) return null;
+        const { text } = await readFile(path, area.hostId);
+        return text == null ? null : estimateTokens(text);
+      };
+
+      const skills: [string, number | null][] = [];
+      const agents: [string, number | null][] = [];
+      const plugins: [string, PluginWeight][] = [];
+      await runWhile(
+        [
+          ...view.skills.map((skill) => async () => {
+            const key = skillWeightKey(skill.origin, skill.name);
+            const path = loaded.skillFile(skill.origin, skill.name);
+            skills.push([key, await tokensOf(path)]);
+          }),
+          ...view.agents.map((agent) => async () => {
+            agents.push([agent.path, await tokensOf(agent.path)]);
+          }),
+          ...view.plugins.flatMap(({ key, installPath }) =>
+            installPath
+              ? [async () => {
+                  plugins.push([key, await pluginWeight(installPath, area)]);
+                }]
+              : [],
+          ),
+        ],
+        live,
+        WEIGHT_READ_LANES,
+      );
+      // Retired by a newer run or by the panel leaving the area: whatever
+      // was gathered is partial, and nobody is waiting for it.
+      if (!live()) throw new Error("Weights request superseded.");
+      return {
+        plugins: Object.fromEntries(plugins),
+        skills: Object.fromEntries(skills),
+        agents: Object.fromEntries(agents),
       };
     },
 
@@ -1887,7 +2016,7 @@ export default function plugin(bb: BbPluginApi) {
       }
 
       const target = join(found.base, relPath);
-      const { text, sha256 } = await readFile(target, area.hostId, found.root);
+      const { text, sha256 } = await readFile(target, area.hostId, (await linkedRoot(area, target)) ?? found.root);
       if (text === null) {
         return { path: "", content: null, error: "File not found.", sha256: null };
       }
@@ -2009,7 +2138,7 @@ export default function plugin(bb: BbPluginApi) {
       if (!match) {
         return { path: "", content: null, error: "Path outside the available folders.", sha256: null };
       }
-      const { text, sha256 } = await readFile(abs, match.hostId, match.root);
+      const { text, sha256 } = await readFile(abs, match.hostId, (await linkedRoot(area, abs)) ?? match.root);
       if (text === null) {
         return { path: "", content: null, error: "File not found.", sha256: null };
       }
@@ -2080,7 +2209,7 @@ export default function plugin(bb: BbPluginApi) {
       const written = await bb.sdk.files.write({
         path,
         hostId: match.hostId,
-        rootPath: match.root,
+        rootPath: (await linkedRoot(area, path)) ?? match.root,
         content,
         expectedSha256,
       });
@@ -2182,6 +2311,9 @@ export default function plugin(bb: BbPluginApi) {
       // answer is already confined — the folder it points at is the skill.
       const found = await findSkill(area, name);
       if (!found) return { outcome: "not-found", message: "Skill not found." };
+      if (await isLinkOnServer(area, found.base)) {
+        return { outcome: "denied", message: "This skill is a symlink — remove the link in the skills folder yourself." };
+      }
 
       await bb.sdk.files.remove({
         path: found.base,
@@ -2205,6 +2337,9 @@ export default function plugin(bb: BbPluginApi) {
           outcome: "denied",
           message: "This file isn't in the agents directory.",
         };
+      }
+      if (await isLinkOnServer(area, path)) {
+        return { outcome: "denied", message: "This agent is a symlink — remove the link in the agents folder yourself." };
       }
 
       await bb.sdk.files.remove({ path, hostId: area.hostId });
@@ -2299,14 +2434,14 @@ export default function plugin(bb: BbPluginApi) {
       };
 
       const userDir = joinPath(wfHome, ".claude", "agents");
-      const userPaths = await listPathsSafe(bb, { path: userDir });
+      const userPaths = await listPathsFollowingLinks(bb, true, { path: userDir });
       for (const name of bareAgentNames(userPaths)) await addAgent(name, undefined, joinPath(userDir, name + ".md"), "user");
 
       if (projectId !== null) {
         try {
           const src = await projectSource(projectId);
           const projectDir = joinPath(src.path, ".claude", "agents");
-          const projectPaths = await listPathsSafe(bb, { hostId: src.hostId, path: projectDir });
+          const projectPaths = await listPathsFollowingLinks(bb, await onServerHost(src.hostId), { hostId: src.hostId, path: projectDir });
           for (const name of bareAgentNames(projectPaths))
             await addAgent(name, src.hostId, joinPath(projectDir, name + ".md"), "project");
         } catch {
@@ -2315,7 +2450,7 @@ export default function plugin(bb: BbPluginApi) {
       }
 
       const pluginsDir = joinPath(wfHome, ".claude", "plugins");
-      const pluginPaths = await listPathsSafe(bb, { path: pluginsDir });
+      const pluginPaths = await listPathsFollowingLinks(bb, true, { path: pluginsDir });
       for (const relPath of pluginPaths) {
         const name = pluginAgentName(relPath);
         if (name) await addAgent(name, undefined, joinPath(pluginsDir, relPath), "plugin");
@@ -2434,7 +2569,7 @@ export default function plugin(bb: BbPluginApi) {
     );
     for (const dir of dirs) {
       for (const rel of [`${name}/SKILL.md`, `synced/${name}/SKILL.md`]) {
-        const { text } = await readFile(join(dir, rel), area.hostId, dir);
+        const { text } = await readFile(join(dir, rel), area.hostId, (await linkedRoot(area, join(dir, rel))) ?? dir);
         if (text !== null) {
           return { base: dirname(join(dir, rel)), root: dirname(dir) };
         }
@@ -2572,6 +2707,26 @@ export default function plugin(bb: BbPluginApi) {
   bb.onDispose(() => {
     bb.log.info("disposed");
   });
+}
+
+type PluginWeight = { tokens: number | null; readmePath: string | null };
+
+// host-daemon serves reads one at a time, so wider lanes buy nothing; a few
+// keep a retired run from having queued its whole backlog up front.
+const WEIGHT_READ_LANES = 4;
+
+// Runs tasks a few at a time; once `live` turns false no further task
+// starts.
+async function runWhile(
+  tasks: (() => Promise<void>)[],
+  live: () => boolean,
+  lanes: number,
+): Promise<void> {
+  let next = 0;
+  const lane = async () => {
+    while (next < tasks.length && live()) await tasks[next++]!();
+  };
+  await Promise.all(Array.from({ length: lanes }, lane));
 }
 
 function emptyConfig(

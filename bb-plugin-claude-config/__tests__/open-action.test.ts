@@ -10,7 +10,7 @@ import {
   readOpenerSettings,
 } from "../src/open-action";
 
-// Two independent settings (memory/decisions/claude-config-opener-two-axes.md):
+// Two independent settings (docs/decisions/claude-config-opener-two-axes.md):
 // where a file opens (inline column vs. bb's host tab) and, only when
 // inline, what renders it (Kasimov vs. the older builtin column).
 describe("normalizeOpenerLocation", () => {

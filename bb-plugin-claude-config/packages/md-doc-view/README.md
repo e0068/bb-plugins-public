@@ -2,7 +2,7 @@
 
 Shared layer: the presentational experience of **MD Opener** (the
 [Kasimov](https://github.com/e0068/Kasimov) editor) with inverted
-dependencies. The `MdDocView` component owns the jump stack, the mode, the
+dependencies. The `MdDocView` component owns the history of jumps, the mode, the
 draft and the CAS note, while effects arrive as function props — the consuming
 plugin supplies its own RPC.
 
@@ -10,9 +10,13 @@ A document has three modes and one draft. **Read** is the rendered document,
 **Write** is Kasimov editing it in place, **Raw** is its markdown source in a
 code editor with highlighting and line numbers. The three are three views of
 the same text: an edit made in Raw is what Read shows, and Save writes
-whichever of them was typed into. The header carries the switcher and a reload
-control, and gains a second row — `+N −M`, Save, Cancel — for exactly as long
-as the draft differs from the file.
+whichever of them was typed into.
+
+The header is one row: back (always there, disabled at the start of the history), the path, forward (only while a step back left something ahead), reload, the switcher, and the file's "⋯" menu. While the draft differs from the file, back, the path, forward and reload give way to `+N −M`, Save and Cancel, so the draft cannot be walked away from and nothing to the right of them moves. The history is the jumps made inside the view; a new jump from the middle of it wipes what lay ahead. The "⋯" menu offers Rename and Delete when the consumer passes `rename` and `remove`: Rename opens a dialog with the file's name (same folder only), Delete asks first. After a rename every entry of the old path in the history leads to the new one; after a delete the document says "File deleted.", the file is gone from the history, and back leads to the file before it. An answer to a file read that a later read overtook is dropped, so the screen follows the file asked for last.
+
+A picture in the document has two of its own. In **Write** a "⋯" button sits in its corner and opens a Cellular kit menu with the alignment, a width slider, a Hide caption switch and Delete; every one of them rewrites that one line of markdown, because a picture's settings live in the tail after `|` inside its alt text and nowhere else. The tail is written with no separators — size, then `c` or `r`, then `h`: `![caption|600ch](img.png)`, `![caption|600x400c](img.png)`, `![caption|x400h](img.png)`. A space anywhere inside it is not a tail at all: the whole of it stays in the caption and the picture gets no settings. The caption itself IS the alt text, so its words are edited where the rest of the words are: the engine's patch carries the geometry and the hide flag, never the text. The button is the engine's, created only when a host offers to draw the menu; the menu is drawn here.
+
+In **Read** and **Write** alike, a click on a picture unfolds it over bb at the height of the window, with its caption under it; a second click on it, a click beside it or Escape folds it back. Only a raster picture unfolds — an SVG the engine inlines has no address of its own. The click is caught once for the whole document, not per picture: the engine rebuilds its DOM on every keystroke.
 
 With `guardDraft` the unsaved draft also holds the rest of the app: everything
 on screen outside the view is shaded, and a click on the shade opens a dialog
@@ -28,7 +32,7 @@ Used by two plugins: the `fileOpener` slot in
 [bb-plugin-claude-config](../../bb-plugin-claude-config) (`md-opener` opener
 mode). One component — one experience, no code duplication and no detour
 through the host tab
-([decision](../../memory/decisions/claude-config-opener-setting.md)).
+([decision](../../docs/decisions/claude-config-opener-setting.md)).
 
 ## Contract
 
@@ -39,6 +43,8 @@ interface MdDocViewProps {
   load: (path) => Promise<LoadedDoc>;                       // {path, content, sha256, error?}
   save: (path, content, expectedSha256) => Promise<SaveResult>; // CAS
   resolveLinkTarget: (href, fromPath) => string | null;     // absolute in-tab target or null
+  rename?: (path, name) => Promise<RenameResult>;           // {outcome: "renamed", path} | {outcome, message}
+  remove?: (path) => Promise<RemoveResult>;                 // {outcome: "removed"} | {outcome, message}
 }
 ```
 
@@ -57,25 +63,33 @@ arrive in Write instead of Read (an unreadable one stays an error).
 the first, and opens it in Raw on that line — a line number is an address in
 the source, and a jump away from that document drops it. Consumers derive the whole set from the settings table with
 `toFlags` and spread it, so a new field needs no pass-through of its own
-([decision](../../memory/decisions/doc-start-in-edit-setting.md)).
+([decision](../../docs/decisions/doc-start-in-edit-setting.md)).
 
 ## Layers
 
 - `doc-mode.ts`, `line-diff.ts`, `shade-rects.ts` — pure, zero imports: which
   modes a document offers and which it opens in, how far the draft has drifted
   in lines, and the four boxes that shade the viewport around the view.
+- `doc-history.ts` — pure: the history as three parts (behind, on screen, ahead) with the steps, the jump, and what a rename or a delete does to it.
+- `file-name.ts` — pure: which name a file may be renamed to and where it lands. A plugin's server imports it directly, so the dialog and the server agree.
+- `portal-scope.ts` — the marks every portaled dialog of the package carries.
+- `image-menu.ts` — pure: the picture's menu as a kit `MenuSpec` over the picture the engine parsed and the five actions it handed over, plus `trailing` — the pause the width slider waits out, because every action rebuilds the whole document. The clock is injected like the actions are, and the wait can be called off: a width still on its way would otherwise land on an editor a switch out of Write has already destroyed.
+- `image-zoom.ts` — pure: whether a click inside the document landed on a raster picture, and which.
 - `libraries.ts` — types only: the CodeMirror kit and Radix Tabs a plugin
   hands down as one `DocLibraries`.
 - `DocHeader.tsx` — the header as a view with no state: everything it shows
   arrives as a prop, so all three surfaces get the same one by construction.
+- `FileActions.tsx` — the "⋯" button (a Cellular kit button, its menu opened by `uiMenu`), the Rename dialog with Cellular's `EditField`, and the Delete confirmation. Dialogs are Radix. The package pulls in [cellular-react](../cellular-react) and its styles, so a consumer's `tsconfig.json` reads the vendored kit with `allowJs`, like [db-view](../../bb-plugin-db-view/tsconfig.json).
 - `DraftGuard.tsx` — the shade and the Unsaved changes dialog. It imports a
   Radix dialog and `@pierre/diffs` by value, which is allowed because the host
   shims both; a plugin rendering `MdDocView` in tests adds `mdDocViewDedupe`
   from [plugin-base](../plugin-base/vitest-react-dedupe.ts) so both resolve
   from its own root.
-- `KasimovEditor.tsx` — a React wrapper over `kasimov` (an internal detail of the package).
-- `MdDocView.tsx` — the jump stack, the mode, the draft, CAS; renders
-  `DocHeader` over either `KasimovEditor` (Read, Write) or `CodeEditor` (Raw).
+- `ImageZoom.tsx` — the picture unfolded over bb: a Radix dialog whose whole content is the picture, closed by a click on it, a click beside it or Escape.
+- `KasimovEditor.tsx` — a React wrapper over `kasimov` (an internal detail of the package). It also answers the engine's `imageMenu`: a fresh `uiMenu` per ask, because every action rebuilds the document and destroys the button the previous menu was anchored to.
+- `MdDocView.tsx` — the history, the mode, the draft, CAS, rename and delete; renders
+  `DocHeader` over either `KasimovEditor` (Read, Write) or `CodeEditor` (Raw), and
+  holds the one click listener that unfolds a picture.
 - Link and path resolution is **injected** — the package doesn't depend on
   [link-navigation](../link-navigation); the consumer supplies it.
 
@@ -102,8 +116,8 @@ npm test
 Tests render `MdDocView` from `test-support/libraries.tsx`, which fills
 `libraries` with the test kits of code-editor and segmented-control.
 `KasimovEditor` and `CodeEditor` are mocked (jsdom reproduces neither
-contenteditable nor CodeMirror); loading, the jump stack, the three modes and
-the shared draft, the second row, CAS and conflicts, reload, `initialLine`, the
+contenteditable nor CodeMirror); loading, back and forward, late answers, the three modes and
+the shared draft, the draft's controls in the header, rename and delete through the menu, CAS and conflicts, reload, `initialLine`, the
 draft guard and errors are all tested; the diff viewer is mocked, and the
-shade's geometry has property tests of its own in `shade-rects.test.ts`. `atimport-click.test.tsx` runs against the REAL engine:
+shade's geometry has property tests of its own in `shade-rects.test.ts`, the history in `doc-history.test.ts`, and the file name rules in `file-name.test.ts`. `atimport-click.test.tsx` runs against the REAL engine:
 what it pins is the engine's own markup, which no mock can vouch for.

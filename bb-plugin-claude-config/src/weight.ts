@@ -15,3 +15,43 @@ export function formatWeight(tokens: number): string {
   const thousands = tokens / 1000;
   return `~${thousands < 10 ? thousands.toFixed(1) : Math.round(thousands)}k`;
 }
+
+// Row weights arrive separately from the area itself (BBPL-333): getConfig
+// draws the rows with tokens/readmePath null, getWeights reads the per-row
+// files afterwards. Keys: plugin key, skill origin+name, agent file path.
+export type SkillOrigin = "personal" | "project";
+
+export type RowWeights = {
+  plugins: Record<string, { tokens: number | null; readmePath: string | null }>;
+  skills: Record<string, number | null>;
+  agents: Record<string, number | null>;
+};
+
+export const skillWeightKey = (origin: SkillOrigin, name: string): string =>
+  `${origin}:${name}`;
+
+type Weighable = {
+  plugins: { key: string; tokens: number | null; readmePath: string | null }[];
+  skills: { name: string; origin: SkillOrigin; tokens: number | null }[];
+  agents: { path: string; tokens: number | null }[];
+};
+
+// A row the weights don't mention keeps what it had.
+export function mergeWeights<C extends Weighable>(config: C, weights: RowWeights): C {
+  return {
+    ...config,
+    plugins: config.plugins.map((plugin) => ({
+      ...plugin,
+      ...weights.plugins[plugin.key],
+    })),
+    skills: config.skills.map((skill) => {
+      const key = skillWeightKey(skill.origin, skill.name);
+      return key in weights.skills ? { ...skill, tokens: weights.skills[key] } : skill;
+    }),
+    agents: config.agents.map((agent) =>
+      agent.path in weights.agents
+        ? { ...agent, tokens: weights.agents[agent.path] }
+        : agent,
+    ),
+  };
+}
