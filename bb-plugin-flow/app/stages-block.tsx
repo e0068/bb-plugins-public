@@ -22,6 +22,7 @@ import { pickStageExecutor, stageChoiceIn, toAnswer, toggleStageRun, type Draft 
 import { useLocale, useMessages } from "./locale-context";
 import { ROW_CELL, cellOrder, panelOrder, useRowEnds } from "./row-order";
 import { AUTOMATION_ICON } from "./stage-icons";
+import { hasOwnIcon, StageGlyph } from "./stage-glyph";
 import { copyText, useFlash } from "./flash";
 import { ExecutorMark } from "./provider-logos";
 
@@ -74,6 +75,7 @@ function StageCell({ state, subs, view, roots, order, width }: { state: StageSta
     <CardText
       label={
         <span title={name} className="line-clamp-2">
+          {hasOwnIcon(item.stage.icon) && <StageGlyph icon={item.stage.icon} fallback="" className="mr-1 inline size-3 align-[-2px]" />}
           {name}
         </span>
       }

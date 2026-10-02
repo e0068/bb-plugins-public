@@ -13,6 +13,7 @@ import { setFlowStages } from "../core/flows";
 import { stageLabel } from "../core/stages";
 import { executionOf, withExecutor, withoutWidget } from "../core/stage-execution";
 import { dropStage, linkApart, ownerOf, removeStage, stageNumbers, type DropZone } from "../core/sub-stages";
+import { isTemplateSaved, removeTemplate, saveTemplate, stageFromTemplate } from "../core/stage-templates";
 import { FieldOverlay, overlayItem, useFieldOverlay } from "../components/ui/field-overlay";
 import { Button } from "../components/ui/button";
 import { Icon } from "../components/ui/icon";
@@ -24,8 +25,10 @@ import { type AutomationSets, AutomationStepTags, ManualMark, ScriptOptions } fr
 import { useMessages } from "./locale-context";
 import { ExecutorMark } from "./provider-logos";
 import { Segmented } from "./segmented";
-import { stageIcon } from "./stage-icons";
-import { updateFlowSettings, useAutomationSets, useFlowSettings } from "./stage-settings-store";
+import { KIND_ICONS, stageIcon } from "./stage-icons";
+import { StageGlyph } from "./stage-glyph";
+import { StageIconPicker } from "./stage-icon-picker";
+import { updateFlowSettings, useAutomationSets, useFlowSettings, useStageTemplates } from "./stage-settings-store";
 
 const field = "h-7 min-h-7 w-full min-w-0 rounded-md border-0 bg-card px-2 py-0 text-[13px] shadow-none focus-visible:ring-1";
 const square = "flex size-7 shrink-0 items-center justify-center rounded-md";
@@ -352,12 +355,13 @@ function ExecutorTag({ stage, executor }: { stage: WorkStage; executor: StageExe
   );
 }
 
-/** Виджет тегом с крестом, как шаги скрипта; иконку вида строка уже показывает у номера. Крест оставляет этап навыком без исполнителей. */
+/** Виджет тегом с иконкой своего вида и крестом, как шаги скрипта. Крест оставляет этап навыком без исполнителей. */
 function WidgetTag({ stage, widget }: { stage: WorkStage; widget: BuiltinKind }) {
   const t = useMessages();
   const setStage = useSetStage();
   return (
     <span className={cn(tag, "pl-2 pr-0.5")}>
+      <Icon name={KIND_ICONS[widget]} aria-hidden="true" className="size-3.5 shrink-0 text-muted-foreground" />
       <span className="min-w-0 truncate">{t.stages[widget]}</span>
       <button type="button" aria-label={t.settings.remove(t.stages[widget])} onClick={() => setStage(stage.id, (s) => withoutWidget(s, stageLabel(s, t.stages)))} className={tagCross}>
         <Icon name="X" aria-hidden="true" className="size-3" />
@@ -373,7 +377,6 @@ function WidgetTag({ stage, widget }: { stage: WorkStage; widget: BuiltinKind })
 function ExecutionCell({ stage, stages, catalog }: { stage: WorkStage; stages: readonly WorkStage[]; catalog: StageCatalog }) {
   const t = useMessages();
   const setStage = useSetStage();
-  const sets = useSets();
   const [open, setOpen] = useState(false);
   const close = () => setOpen(false);
   const { root } = useFieldOverlay(open, close);
@@ -391,15 +394,18 @@ function ExecutionCell({ stage, stages, catalog }: { stage: WorkStage; stages: r
         {execution.kind === "executors" && execution.executors.map((executor) => <ExecutorTag key={executor.id} stage={stage} executor={executor} />)}
         {execution.kind === "widget" && <WidgetTag stage={stage} widget={execution.widget} />}
         {execution.kind === "script" && execution.manual && <ManualMark />}
-        {(execution.kind === "script" || execution.kind === "external") && <AutomationStepTags stage={stage} sets={sets} onChange={(change) => setStage(stage.id, change)} />}
+        {(execution.kind === "script" || execution.kind === "external") && <AutomationStepTags stage={stage} onChange={(change) => setStage(stage.id, change)} />}
         {execution.kind !== "external" && <ExecutionMenu stage={stage} stages={stages} catalog={catalog} open={open} onClose={close} />}
       </div>
     </span>
   );
 }
 
-/** Сетка строки: номер с ручкой и иконка вида, средние ячейки одной группой, крест. */
-const rowGrid = "grid grid-cols-[46px_minmax(0,1fr)_28px] items-start gap-2";
+/**
+ * Сетка строки: номер с ручкой и иконка, средние ячейки одной группой, закладка шаблона и крест. Широкая строка — закладка
+ * левее креста; узкая — закладка под крестом, а средние ячейки занимают обе строки сетки, чтобы она встала вплотную.
+ */
+const rowGrid = "grid grid-cols-[46px_minmax(0,1fr)_28px] items-start gap-2 @[44rem]:grid-cols-[46px_minmax(0,1fr)_28px_28px]";
 /** Отступ над краем связки: 7 px и 1 px зазора таблицы — 8 px; угол у края скругляется. */
 const linkGap = "mt-[7px] rounded-t-lg";
 
@@ -410,22 +416,26 @@ const linkGap = "mt-[7px] rounded-t-lg";
  */
 const cellGroup = "flex min-w-0 flex-wrap items-start gap-2";
 
-/** Основа ячейки — 200px: ниже неё поля уже не читаются, и ряд переносится. */
-const cell = "min-w-0 grow basis-[200px]";
+/**
+ * Основа названия и навыка — 133px: уже них поля не читаются, и ряд переносится. Основы и доли роста выбраны так, что
+ * поля на любой ширине в полтора раза уже, чем были при основах 200px и исполнении с долей 2.2, а сумма основ — те же
+ * 600px, поэтому ряд переносится на прежней ширине.
+ */
+const cell = "min-w-0 grow basis-[133px]";
 
 /** Исполнение тянется шире полей — там теги, а не одна строка текста. */
-const cellWide = "min-w-0 grow-[2.2] basis-[200px]";
+const cellWide = "min-w-0 grow-[4.3] basis-[334px]";
 
 /**
  * Исполнение из одного плюса: в узкой раскладке без шапки оно не тянется и встаёт справа от навыка, а с шапкой
  * колонок — как обычное исполнение, чтобы плюс стоял под своей колонкой.
  */
-const cellPlus = "min-w-0 grow-0 basis-auto @[46rem]:grow-[2.2] @[46rem]:basis-[200px]";
+const cellPlus = "min-w-0 grow-0 basis-auto @[46rem]:grow-[4.3] @[46rem]:basis-[334px]";
 
 /** Ячейки строки между номером и крестом. Группа в тексте роли не имеет: ячейки остаются ячейками строки. */
 function StageCells({ children }: { children: ReactNode }) {
   return (
-    <span role="none" className={cellGroup}>
+    <span role="none" className={cn(cellGroup, "row-span-2 @[44rem]:row-span-1")}>
       {children}
     </span>
   );
@@ -461,9 +471,13 @@ function useStageName(stage: WorkStage) {
   return { name, change, flush: () => flush.current() };
 }
 
-/** Номер этапа, у под-этапа — пусто; под наведением — ручка перетаскивания, и сразу за ним иконка вида этапа. */
+/**
+ * Номер этапа, у под-этапа — пусто; под наведением — ручка перетаскивания, и сразу за ним иконка этапа — кнопка выбора
+ * иконки. У под-этапа иконки нет: он стоит под своим владельцем.
+ */
 function StageLead({ stage, place, dragging, onGrab }: { stage: WorkStage; place: RowPlace; dragging: boolean; onGrab: () => void }) {
   const t = useMessages();
+  const setStage = useSetStage();
   const name = stageLabel(stage, t.stages);
   return (
     <span role="cell" className="flex h-7 items-center gap-1 text-muted-foreground">
@@ -481,7 +495,9 @@ function StageLead({ stage, place, dragging, onGrab }: { stage: WorkStage; place
           <Icon name="DragDropVertical" aria-hidden="true" className="size-3.5" />
         </button>
       </span>
-      <Icon name={stageIcon(stage)} aria-hidden="true" className="size-3.5 shrink-0" />
+      {place.owner === null && (
+        <StageIconPicker icon={stage.icon} fallback={stageIcon(stage)} name={name} onPick={(icon) => setStage(stage.id, ({ icon: _, ...s }) => (icon === undefined ? s : { ...s, icon }))} />
+      )}
     </span>
   );
 }
@@ -516,9 +532,32 @@ function RowShell({ stage, index, place, dragging, onGrab, children }: Pick<RowP
     >
       <StageLead stage={stage} place={place} dragging={dragging} onGrab={onGrab} />
       {children}
+      <SaveTemplate stage={stage} />
       <DeleteStage stage={stage} />
       <DropHighlight place={place} />
     </div>
+  );
+}
+
+/** Закладка строки: этап целиком — шаблоном в меню «Добавить этап»; сохранённый — закладка закрашена и недоступна. */
+function SaveTemplate({ stage }: { stage: WorkStage }) {
+  const t = useMessages();
+  const templates = useStageTemplates();
+  const saved = isTemplateSaved(templates, stage);
+  return (
+    <span role="cell" className="col-start-3 row-start-2 @[44rem]:col-start-auto @[44rem]:row-start-auto">
+      <button
+        type="button"
+        aria-label={t.settings.saveTemplate}
+        aria-description={saved ? t.settings.templateSaved : undefined}
+        title={saved ? t.settings.templateSaved : t.settings.saveTemplate}
+        disabled={saved}
+        onClick={() => updateFlowSettings((s) => ({ ...s, stageTemplates: [...saveTemplate(s.stageTemplates ?? [], stage)] }))}
+        className={cn(square, "text-muted-foreground hover:bg-state-hover hover:text-foreground disabled:cursor-default disabled:text-foreground disabled:hover:bg-transparent")}
+      >
+        <Icon name="Bookmark" aria-hidden="true" className={cn("size-3.5", saved && "fill-current")} />
+      </button>
+    </span>
   );
 }
 
@@ -572,6 +611,10 @@ function StageRow({ stage, index, stages, catalog, place, dragging, onGrab }: Ro
   return (
     <RowShell stage={stage} index={index} place={place} dragging={dragging} onGrab={onGrab}>
       <StageCells>
+        {place.owner !== null ? (
+          // Под-этап без названия: на широкой таблице клетка стоит пустой, чтобы колонки не съехали; на узкой её нет.
+          <span role="cell" className={cn(cell, "hidden @[44rem]:block")} />
+        ) : (
         <span role="cell" className={cell}>
           {execution.kind === "external" ? (
             <span title={stage.name} className="flex h-7 min-w-0 items-center truncate px-2 text-[13px]">
@@ -581,6 +624,7 @@ function StageRow({ stage, index, stages, catalog, place, dragging, onGrab }: Ro
             <Input aria-label={t.settings.stageName(index + 1)} placeholder={t.settings.namePlaceholder} value={name} onChange={(e) => change(e.target.value)} onBlur={flush} className={field} />
           )}
         </span>
+        )}
         <span role="cell" className={cell}>
           {execution.kind === "script" || execution.kind === "external" ? <NoSkill index={index} /> : <SkillField stage={stage} index={index} catalog={catalog} />}
         </span>
@@ -599,24 +643,71 @@ export function AddStage({ flowId }: { flowId: string }) {
   );
 }
 
-/** Пустой этап в конец таблицы; поле его названия — в фокусе и выделено, чтобы сразу набрать своё. */
+/** Поле названия нового этапа — в фокусе и выделено, чтобы сразу набрать своё. */
+const focusName = (id: string) =>
+  requestAnimationFrame(() => {
+    const input = document.querySelector<HTMLInputElement>(`[data-stage-row="${id}"] input`);
+    input?.focus();
+    input?.select();
+  });
+
+/**
+ * «Добавить этап»: без шаблонов — сразу пустой этап в конец таблицы; с шаблонами — меню из пустого этапа и сохранённых
+ * шаблонов, у каждого крест. Этап из шаблона встаёт в конец таким, каким его сохранили.
+ */
 function AddStageButton() {
   const t = useMessages();
   const update = useStagesUpdate();
-  const add = () => {
-    const id = newStageId();
-    update((stages) => [...stages, { id, kind: "skill", skill: "", name: t.settings.newStage, executors: [] }]);
-    requestAnimationFrame(() => {
-      const input = document.querySelector<HTMLInputElement>(`[data-stage-row="${id}"] input`);
-      input?.focus();
-      input?.select();
-    });
+  const templates = useStageTemplates();
+  const [open, setOpen] = useState(false);
+  const close = () => setOpen(false);
+  const { root } = useFieldOverlay(open, close);
+  const add = (stage: WorkStage) => {
+    update((stages) => [...stages, stage]);
+    close();
+    focusName(stage.id);
   };
+  // Убран последний шаблон — меню не из чего собирать: оно закрывается, и кнопка снова сразу добавляет пустой этап.
+  const remove = (index: number) => {
+    if (templates.length === 1) close();
+    updateFlowSettings((s) => ({ ...s, stageTemplates: [...removeTemplate(s.stageTemplates ?? [], index)] }));
+  };
+  const empty = () => add({ id: newStageId(), kind: "skill", skill: "", name: t.settings.newStage, executors: [] });
   return (
-    <Button variant="secondary" size="sm" onClick={add}>
-      <Icon name="Plus" aria-hidden="true" />
-      {t.settings.addStage}
-    </Button>
+    <div ref={root} className="relative">
+      <Button variant="secondary" size="sm" aria-expanded={templates.length > 0 ? open : undefined} onClick={() => (templates.length === 0 ? empty() : setOpen(!open))}>
+        <Icon name="Plus" aria-hidden="true" />
+        {t.settings.addStage}
+      </Button>
+      <FieldOverlay open={open} onClose={close} role="menu" label={t.settings.addStage} className="w-[18rem]">
+        <button type="button" role="menuitem" onClick={empty} className={overlayItem}>
+          <Icon name="Plus" aria-hidden="true" className="size-3.5 shrink-0 text-muted-foreground" />
+          {t.settings.emptyStage}
+        </button>
+        <div role="group" aria-label={t.settings.templates}>
+          <div className={groupTitle}>{t.settings.templates}</div>
+          {templates.map((template, i) => {
+            const name = template.name;
+            return (
+              <div key={`${i}-${name}`} className="flex items-center gap-0.5">
+                <button type="button" role="menuitem" title={name} onClick={() => add(stageFromTemplate(template, newStageId(), () => crypto.randomUUID()))} className={cn(overlayItem, "min-w-0 flex-1")}>
+                  <StageGlyph icon={template.icon} fallback={stageIcon({ id: "", ...template })} className="size-3.5 shrink-0 text-muted-foreground" />
+                  <span className="min-w-0 truncate">{name}</span>
+                </button>
+                <button
+                  type="button"
+                  aria-label={t.settings.removeTemplate(name)}
+                  onClick={() => remove(i)}
+                  className="flex size-6 shrink-0 items-center justify-center rounded text-muted-foreground hover:bg-state-hover hover:text-foreground"
+                >
+                  <Icon name="X" aria-hidden="true" className="size-3" />
+                </button>
+              </div>
+            );
+          })}
+        </div>
+      </FieldOverlay>
+    </div>
   );
 }
 
@@ -748,6 +839,9 @@ function WorkStages({ flowId }: { flowId: string }) {
               {t.settings.colExecution}
             </span>
           </StageCells>
+          <span role="columnheader">
+            <span className="sr-only">{t.settings.colTemplate}</span>
+          </span>
           <span role="columnheader">
             <span className="sr-only">{t.settings.colDelete}</span>
           </span>

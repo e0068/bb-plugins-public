@@ -30,6 +30,7 @@ import { ProviderLogosProvider } from "./provider-logos-source";
 import { ProviderMark } from "./provider-logos";
 import { useMessages } from "./locale-context";
 import { AUTOMATION_ICON, KIND_ICONS } from "./stage-icons";
+import { hasOwnIcon, StageGlyph } from "./stage-glyph";
 
 /** Тон заливки занятого окна: те же семантические токены, что у остальных состояний баннера. */
 const CONTEXT_TONES = { normal: "bg-primary", warn: "bg-warning", alert: "bg-destructive" } as const;
@@ -79,11 +80,13 @@ const byProvider = (stage: ProgressStage): boolean => stage.automation === undef
 /** Приглушённое мерцание элемента, на этапе которого идёт работа; кадры кладёт полоса. */
 export const pulse = (live: boolean | undefined) => (live === true ? { "data-pulse": "", style: { animation: mutedBlinkAnimation } } : {});
 
-/** Значок этапа: мерцает, пока на этапе идёт работа. */
+/** Значок этапа: иконка, выбранная владельцем, а без неё — логотип исполнителя или иконка вида; мерцает, пока на этапе идёт работа. */
 export function StageIcon({ stage, className }: { stage: ProgressStage; className?: string }) {
   return (
     <span data-stage-icon {...pulse(stage.live)} className={cn("flex items-center justify-center", stage.state === "fail" && "text-destructive")}>
-      {byProvider(stage) ? (
+      {hasOwnIcon(stage.icon) ? (
+        <StageGlyph icon={stage.icon} fallback={iconOf(stage)} className={cn("size-3.5", className)} />
+      ) : byProvider(stage) ? (
         <ProviderMark providerId={stage.provider} framed={stage.executor === "agent"} fallback={iconOf(stage)} className={cn("size-3.5", className)} />
       ) : (
         <Icon name={iconOf(stage)} aria-hidden="true" className={cn("size-3.5", className)} />

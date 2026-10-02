@@ -41,9 +41,13 @@ const defaultName = (draft: StageDraft): string => {
 
 /**
  * `taken` — id уже разобранных этапов, `reserved` — id, заданные в черновике: сгенерированный id не занимает ни тех, ни других.
- * `kept` — этапы сохранённого flow: их навык проходит и без каталога, иначе пропавший навык запер бы flow от любой правки.
+ * `kept` — этапы сохранённого flow: их навык проходит и без каталога, иначе пропавший навык запер бы flow от любой правки,
+ * а иконку, выбранную владельцем, этап того же id берёт оттуда — агент её не знает. `owners` — id владельцев под-этапов
+ * черновика: этап навыка без навыка с под-этапами — заголовок, и навык ему не нужен.
  */
-const resolveStage = (draft: StageDraft, n: number, taken: readonly string[], reserved: readonly string[], catalog: StageCatalog, kept: readonly WorkStage[]): Resolved => {
+type DraftContext = { reserved: readonly string[]; catalog: StageCatalog; kept: readonly WorkStage[]; owners: ReadonlySet<string> };
+
+const resolveStage = (draft: StageDraft, n: number, taken: readonly string[], { reserved, catalog, kept, owners }: DraftContext): Resolved => {
   const at = `stage ${n}`;
   const skill = draft.automation === undefined ? (draft.skill ?? "").trim() : "";
   const known = new Set(catalog.skills.map((s) => s.name));
@@ -51,10 +55,11 @@ const resolveStage = (draft: StageDraft, n: number, taken: readonly string[], re
   const executorIds = draft.executors ?? [];
   const id = stageId(draft, [...taken, ...reserved]);
   const isKept = kept.some((s) => s.id === id && s.skill === skill);
+  const icon = kept.find((s) => s.id === id)?.icon;
   const executors = executorIds.map((e) => byId.get(e)).filter((e): e is StageExecutor => e !== undefined);
   const problems = [
     ...(draft.id !== undefined && taken.includes(draft.id) ? [`${at}: the stage id "${draft.id}" repeats an earlier stage`] : []),
-    ...(draft.kind === "skill" && draft.automation === undefined && skill === "" ? [`${at}: a skill stage needs a skill or an automation`] : []),
+    ...(draft.kind === "skill" && draft.automation === undefined && skill === "" && !owners.has(id) ? [`${at}: a skill stage needs a skill or an automation`] : []),
     ...(draft.kind !== "skill" && draft.kind !== "action" && draft.automation !== undefined ? [`${at}: an automation belongs to a stage of kind skill or action, not ${draft.kind}`] : []),
     ...(draft.kind === "action" && draft.automation === undefined ? [`${at}: an action stage needs steps`] : []),
     ...(draft.automation !== undefined && executorIds.length > 0 ? [`${at}: an automation stage takes no executor — Flow runs it itself`] : []),
@@ -70,6 +75,7 @@ const resolveStage = (draft: StageDraft, n: number, taken: readonly string[], re
     executors,
     ...(draft.automation === undefined ? {} : { automation: draft.automation }),
     ...(draft.parent === undefined ? {} : { parent: draft.parent }),
+    ...(icon === undefined ? {} : { icon }),
   };
   return { stage, problems };
 };
@@ -81,7 +87,8 @@ export const resolveFlowDraft = (draft: FlowDraft, catalog: StageCatalog, newId:
   const unreadParts = [...(referencesSkills && catalog.skills.length === 0 ? [unread("skill")] : []), ...(referencesExecutors && catalog.executors.length === 0 ? [unread("executor")] : [])];
   if (unreadParts.length > 0) return { ok: false, problems: unreadParts };
   const reserved = draft.stages.flatMap((s) => (s.id === undefined ? [] : [s.id]));
-  const resolved = draft.stages.reduce<Resolved[]>((done, stage, i) => [...done, resolveStage(stage, i + 1, done.map((r) => r.stage.id), reserved, catalog, stored?.stages ?? [])], []);
+  const context: DraftContext = { reserved, catalog, kept: stored?.stages ?? [], owners: new Set(draft.stages.flatMap((s) => (s.parent === undefined ? [] : [s.parent]))) };
+  const resolved = draft.stages.reduce<Resolved[]>((done, stage, i) => [...done, resolveStage(stage, i + 1, done.map((r) => r.stage.id), context)], []);
   const problems = [
     // Иначе flow с этим id был бы невыбираем: кнопка композера читает его как отказ от flow.
     ...(draft.id === NO_FLOW ? [`the flow id "${NO_FLOW}" is reserved for the "no flow" choice of the composer`] : []),

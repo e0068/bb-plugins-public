@@ -42,13 +42,12 @@ describe("иконка этапа на странице Flow", () => {
     [2, SKILL_ICON],
     [3, AUTOMATION_ICON],
     [4, AUTOMATION_ICON],
-  ])("в строке %i стоит сразу после номера, перед полями, и больше нигде в строке", async (n, icon) => {
+  ])("в строке %i иконка вида стоит в клетке номера, перед полями", async (n, icon) => {
     const slot = open();
     const row = await slot.findByRole("row", { name: `Этап ${n}` });
     const cells = [...row.querySelectorAll('[role="cell"]')];
     expect(cells[0]!.textContent).toContain(String(n));
     expect(cells[0]!.querySelector(`[data-icon="${icon}"]`)).not.toBeNull();
     expect(cells[0]!.querySelector("input")).toBeNull();
-    expect(row.querySelectorAll(`[data-icon="${icon}"]`)).toHaveLength(1);
   });
 });

@@ -2,6 +2,7 @@
 // ниже после — и включается вместе с ним. Номера, связка, перетаскивание по зонам
 // строки, одна галочка на связку и удаление — здесь, одни для страницы, брифа,
 // полосы прогресса и сервера.
+import { stageKindOf } from "../lib/stage-constants";
 import type { WorkStage } from "../shared/contract";
 
 type Linked = { id: string; parent?: string | undefined };
@@ -17,6 +18,13 @@ export const stageNumbers = (stages: readonly Linked[]): ReadonlyMap<string, num
 
 /** Под-этапы владельца в порядке списка. */
 export const subStagesOf = (stages: readonly Linked[], id: string): string[] => stages.filter((stage) => stage.parent === id).map((stage) => stage.id);
+
+/**
+ * Этап-заголовок: этап навыка без навыка, исполнителей и шагов, у которого есть под-этапы. Своей работы у него нет —
+ * её несут под-этапы, а он лишь собирает их под своим названием.
+ */
+export const isHeadingStage = (stages: readonly Linked[], stage: WorkStage): boolean =>
+  stageKindOf(stage) === "skill" && stage.skill === "" && stage.executors.length === 0 && stage.automation === undefined && subStagesOf(stages, stage.id).length > 0;
 
 /** Владелец под-этапа; у этапа верхнего уровня — `null`. */
 export const ownerOf = (stages: readonly Linked[], id: string): string | null => stages.find((stage) => stage.id === id)?.parent ?? null;

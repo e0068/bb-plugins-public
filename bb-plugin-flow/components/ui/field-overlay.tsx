@@ -4,14 +4,43 @@
 // попадает в строку высотой 28px. Штора тут та же, что открывает выбор flow в
 // композере (./responsive-overlay), и живёт порталом вне корня поля — поэтому
 // закрытие по нажатию мимо поля остаётся только широкому экрану.
-import { useEffect, useRef, type ReactNode } from "react";
+import { useEffect, useLayoutEffect, useReducer, useRef, useState, type ReactNode } from "react";
 
 import { useIsCompactViewport } from "./hooks/use-compact-viewport.js";
+import { popoverPlace, type PopoverPlace } from "./popover-place.js";
 import { ResponsiveDrawerShell } from "./responsive-overlay.js";
 import { cn } from "../../lib/utils.js";
 
-/** Всплывашка поля: прижата к его левому краю, не уже поля и не шире 22rem. */
-const POPOVER = "absolute left-0 top-full z-20 mt-1 max-h-80 w-max min-w-full max-w-[22rem] overflow-auto rounded-lg border border-border bg-card p-1 shadow-lg";
+/** Всплывашка поля: от его левого края, не уже поля и не шире 22rem; сторону, сдвиг и высоту задаёт `usePopoverPlace`. */
+const POPOVER = "absolute left-0 z-20 w-max min-w-full max-w-[22rem] overflow-auto rounded-lg border border-border bg-card p-1 shadow-lg";
+
+const samePlace = (a: PopoverPlace | null, b: PopoverPlace): boolean => a !== null && a.up === b.up && a.dx === b.dx && a.maxHeight === b.maxHeight;
+
+/**
+ * Место открытой всплывашки в окне: после каждой отрисовки меряет поле — её родителя — и полную высоту содержимого
+ * и до кадра браузера ставит её вверх или вниз, сдвигает внутрь окна и ограничивает по высоте. Смена размера окна
+ * пересчитывает место.
+ */
+function usePopoverPlace(open: boolean) {
+  const ref = useRef<HTMLDivElement>(null);
+  const [place, setPlace] = useState<PopoverPlace | null>(null);
+  const [, remeasure] = useReducer((n: number) => n + 1, 0);
+  useEffect(() => {
+    if (!open) return;
+    window.addEventListener("resize", remeasure);
+    return () => window.removeEventListener("resize", remeasure);
+  }, [open]);
+  useLayoutEffect(() => {
+    const popover = ref.current;
+    const field = popover?.parentElement;
+    if (!open || popover === null || field === null || field === undefined) return;
+    const box = field.getBoundingClientRect();
+    // Высота — всего содержимого, а не урезанной всплывашки: иначе потолок, раз поставленный, держал бы сам себя.
+    const next = popoverPlace(box, { width: popover.offsetWidth, height: popover.scrollHeight + 2 }, { width: window.innerWidth, height: window.innerHeight });
+    setPlace((current) => (samePlace(current, next) ? current : next));
+  });
+  return { ref, place };
+}
 
 /** Строка списка — одна и во всплывашке, и в шторе. */
 export const overlayItem = "flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-[13px] hover:bg-state-hover";
@@ -50,6 +79,7 @@ export interface FieldOverlayProps {
 
 export function FieldOverlay({ open, onClose, role, label, id, className, children }: FieldOverlayProps) {
   const compact = useIsCompactViewport();
+  const { ref, place } = usePopoverPlace(open && !compact);
   if (compact)
     return (
       <ResponsiveDrawerShell open={open} onOpenChange={(next) => !next && onClose()} srLabel={label}>
@@ -60,7 +90,15 @@ export function FieldOverlay({ open, onClose, role, label, id, className, childr
       </ResponsiveDrawerShell>
     );
   return open ? (
-    <div id={id} role={role} aria-label={label} className={cn(POPOVER, className)}>
+    <div
+      ref={ref}
+      id={id}
+      role={role}
+      aria-label={label}
+      // До первого замера — вниз и не выше 70% окна; дальше место по замеру.
+      style={place === null ? { maxHeight: "70vh" } : { maxHeight: place.maxHeight, left: place.dx }}
+      className={cn(POPOVER, place?.up === true ? "bottom-full mb-1" : "top-full mt-1", className)}
+    >
       {children}
     </div>
   ) : null;
