@@ -1,5 +1,6 @@
 import { readFile, rm } from "node:fs/promises";
 import type { TaskStatus } from "../db/types.js";
+import { unreachableSentence, type UnreachableCause } from "../remote/hrana.js";
 import { readTaskFiles, writeTaskFile, type RepoTaskFile } from "./fs-repo.js";
 import { createParseCache, type ParseCache } from "./parse-cache.js";
 import type { TaskPlacement } from "./placement.js";
@@ -53,10 +54,12 @@ export class WriteConflict extends Error {
   }
 }
 
-/** The database cannot be reached, and nothing is known to show in its place. */
+/** The database cannot be reached, and nothing is known to show in its place.
+ *  `why` is the cause when this very attempt failed; a link already known to
+ *  be down refuses without trying, and has none. */
 export class DatabaseUnreachable extends Error {
-  constructor() {
-    super("the database cannot be reached");
+  constructor(readonly why: UnreachableCause | null = null) {
+    super(unreachableSentence(why));
     this.name = "DatabaseUnreachable";
   }
 }

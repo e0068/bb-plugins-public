@@ -9,7 +9,7 @@ import { resolveMainRoot } from "../filesync/resolve-roots.js";
 import { defaultSourcePath } from "../filesync/resolve-roots.js";
 import { DatabaseAuthFailed, DatabaseUnreachable, diskRepo } from "../filesync/task-repo.js";
 import { createUlid } from "../filesync/validators.js";
-import { createHranaClient, type HranaClient } from "../remote/hrana.js";
+import { createHranaClient, unreachableSentence, type HranaClient, type UnreachableCause } from "../remote/hrana.js";
 import { createTursoApi, databaseBaseName, type TursoApi, type TursoError, type TursoResult } from "../remote/turso.js";
 import { mintCliApiToken, tursoCliCandidates } from "../remote/turso-cli.js";
 import {
@@ -78,7 +78,7 @@ function fromTurso<T>(result: TursoResult<T>, origin: TokenOrigin): Step<T> {
 
 /** What a failed open, sync or write of a database means to the dialog. */
 function databaseFailure(error: unknown): FolderDomainError {
-  if (error instanceof DatabaseUnreachable) return { code: "database_unreachable", message: "The database cannot be reached." };
+  if (error instanceof DatabaseUnreachable) return { code: "database_unreachable", message: error.message };
   if (error instanceof DatabaseAuthFailed) return { code: "database_auth_failed", message: "The database refused the token." };
   return { code: "folder_connect_failed", message: error instanceof Error ? error.message : String(error) };
 }
@@ -185,6 +185,11 @@ export function registerFolders(bb: BbPluginApi, store: TasksApiStore): void {
 
   // ------------------------------------------------------------ Databases
 
+  /** The one line the bb log gets about a database that stopped answering: the sentence the dialog shows and the address, never the token. */
+  function warnUnreachable(url: string, why: UnreachableCause): void {
+    bb.log.warn(`tasks-plus: ${unreachableSentence(why)} (${url})`);
+  }
+
   /**
    * A repository for a database board over the given client. The board's id
    * is known before the board exists, so a change or a link that moves is
@@ -193,6 +198,7 @@ export function registerFolders(bb: BbPluginApi, store: TasksApiStore): void {
   function openRepo(boardId: string, url: string, client: HranaClient): DbRepo {
     const repo = createDbRepo(client, {
       url,
+      onLinkLost: (why) => warnUnreachable(url, why),
       onChange: () => {
         publishProjectTasksChanged(bb, boardId);
         void adoptPrefix(boardId, repo);
@@ -419,7 +425,10 @@ export function registerFolders(bb: BbPluginApi, store: TasksApiStore): void {
     const token = source.kind === "given" ? proceed(source.token) : await mintDatabaseToken(address.url, input.tursoApiToken);
     if (!token.ok) return token;
     const peeked = await peekBoard(createHranaClient({ url: address.url, token: token.value }));
-    if (!peeked.ok) return { ok: false, error: databaseFailure(failureOf(peeked.error)) };
+    if (!peeked.ok) {
+      if (peeked.error.kind === "unreachable") warnUnreachable(address.url, peeked.error.why);
+      return { ok: false, error: databaseFailure(failureOf(peeked.error)) };
+    }
     if (source.kind === "mint") await secrets.saveDatabaseToken(address.url, token.value);
     return { ok: true, board: peeked.value };
   }
