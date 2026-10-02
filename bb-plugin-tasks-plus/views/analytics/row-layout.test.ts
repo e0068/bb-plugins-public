@@ -1,7 +1,7 @@
 import fc from "fast-check";
 import { describe, expect, it } from "vitest";
 
-import { MIN_SHARE, mergeSaved, parseSaved, resizeCells, resizeRow, serializeLayout, type RowLayout } from "./row-layout";
+import { MIN_SHARE, resizeCells, resizeRow, type RowLayout } from "./row-layout";
 
 const LAYOUT: RowLayout = {
   rows: [
@@ -57,40 +57,5 @@ describe("resizeRow — the splitter under a row sets that row's height only", (
 
   it("rounds to whole pixels", () => {
     expect(resizeRow(LAYOUT, "mid", 250.6).rows[1]!.height).toBe(251);
-  });
-});
-
-describe("saved sizes — order and content come from the defaults, sizes from storage", () => {
-  it("round-trips a layout's sizes", () => {
-    const resized = resizeRow(resizeCells(LAYOUT, "mid", 2, -0.05), "top", 90);
-    expect(mergeSaved(LAYOUT, parseSaved(serializeLayout(resized)))).toEqual(resized);
-  });
-
-  it("falls back to the defaults on anything unreadable", () => {
-    fc.assert(
-      fc.property(fc.string(), (text) => {
-        const saved = parseSaved(text);
-        expect(() => mergeSaved(LAYOUT, saved)).not.toThrow();
-      }),
-    );
-    expect(mergeSaved(LAYOUT, parseSaved("{"))).toEqual(LAYOUT);
-    expect(mergeSaved(LAYOUT, parseSaved(null))).toEqual(LAYOUT);
-    expect(mergeSaved(LAYOUT, parseSaved('{"version":1,"sections":[]}'))).toEqual(LAYOUT);
-  });
-
-  it("keeps saved widths only when the row still has the same cells", () => {
-    const saved = parseSaved(
-      JSON.stringify({ version: 2, rows: [{ id: "mid", height: 200, cells: [{ id: "a", weight: 0.9 }, { id: "b", weight: 0.1 }] }] }),
-    );
-    const merged = mergeSaved(LAYOUT, saved);
-    expect(merged.rows[1]!.height).toBe(200);
-    expect(weights(merged, "mid")).toEqual(weights(LAYOUT, "mid"));
-  });
-
-  it("lifts a saved height below the row's minimum and ignores rows the defaults no longer have", () => {
-    const saved = parseSaved(JSON.stringify({ version: 2, rows: [{ id: "top", height: 1, cells: [] }, { id: "gone", height: 500, cells: [] }] }));
-    const merged = mergeSaved(LAYOUT, saved);
-    expect(merged.rows.map((row) => row.id)).toEqual(["top", "mid"]);
-    expect(merged.rows[0]!.height).toBe(64);
   });
 });

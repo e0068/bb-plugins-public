@@ -363,6 +363,7 @@ const PLAN_DATES = {
   due: {
     icon: "Clock",
     label: "Due date",
+    timeLabel: "Due time",
     placeholder: "Set due date",
     remove: "Remove due date",
     read: (task: Task) => task.dueDate,
@@ -371,6 +372,7 @@ const PLAN_DATES = {
   start: {
     icon: "Calendar",
     label: "Start date",
+    timeLabel: "Start time",
     placeholder: "Set start date",
     remove: "Remove start date",
     read: (task: Task) => task.startDate,
@@ -392,6 +394,11 @@ function PlanDateMenu({
   const [open, setOpen] = useState(false);
   const copy = PLAN_DATES[kind];
   const value = copy.read(task);
+  // A plan date is a day, optionally with a time (shared/plan-date.ts): the
+  // day input sets the day and keeps the time, the time input the reverse.
+  const day = value?.slice(0, 10) ?? "";
+  const time = value?.slice(11) ?? "";
+  const withTime = (nextDay: string, nextTime: string) => (nextTime === "" ? nextDay : `${nextDay}T${nextTime}`);
   const pick = (date: string | null) => {
     onUpdate(copy.write(date));
     setOpen(false);
@@ -429,11 +436,20 @@ function PlanDateMenu({
             type="date"
             aria-label={copy.label}
             className="mt-1 h-7 rounded-md border border-input bg-transparent px-2 text-sm text-foreground"
-            value={value ?? ""}
+            value={day}
             onChange={(event) => {
-              if (event.target.value) pick(event.target.value);
+              if (event.target.value) pick(withTime(event.target.value, time));
             }}
           />
+          {day !== "" ? (
+            <input
+              type="time"
+              aria-label={copy.timeLabel}
+              className="mt-1 h-7 rounded-md border border-input bg-transparent px-2 text-sm text-foreground"
+              value={time}
+              onChange={(event) => onUpdate(copy.write(withTime(day, event.target.value)))}
+            />
+          ) : null}
           {value ? (
             <button
               type="button"

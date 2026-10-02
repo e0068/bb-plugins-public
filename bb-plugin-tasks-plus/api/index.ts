@@ -2,6 +2,9 @@ import type { BbPluginApi, PluginRpcHandlers } from "@get-bb/plugin-sdk";
 import { parseReducedColors, REDUCED_COLORS_KV_KEY } from "@bb-plugins/reduced-colors/core/settings";
 import { burndownEnds, forecastDays, openSeriesOf } from "../analytics/burndown.js";
 import { ganttRowsOf } from "../analytics/gantt.js";
+import { tileAnswer } from "../analytics/tile.js";
+import { isWorkingThread } from "../shared/thread-activity.js";
+import { factsOf, type TaskFacts } from "../shared/task-fields.js";
 import { descendantsOf } from "../shared/subtree.js";
 import { hostname } from "node:os";
 import {
@@ -22,7 +25,7 @@ import type {
 } from "../db/types.js";
 import { createTransitionLog, type TransitionLog } from "../db/transition-log.js";
 import { snapshotOf } from "../analytics/aggregate.js";
-import { createdMs, flowOf, inProjects, movesByTask } from "../analytics/flow.js";
+import { createdMs, inProjects, movesByTask } from "../analytics/flow.js";
 import { closedInBins } from "../analytics/closed.js";
 import {
   AttachmentReferencedError,
@@ -37,7 +40,9 @@ import {
 } from "@bb-plugins/reveal-in-finder";
 import {
   ALL_TIME,
+  parseDashboard,
   tasksRpcContract,
+  type Tile,
   type Attachment as AttachmentMetadata,
   type Project,
   type ProjectsChangedEvent,
@@ -716,6 +721,32 @@ async function listTaskPullRequests(
   };
 }
 
+/** Where the analytics screen keeps its tiles and their rows. */
+export const ANALYTICS_DASHBOARD_KV_KEY = "analytics:dashboard";
+
+/** Fields whose values live outside the task: agents on it and its attachments, read from the card meta. */
+const CARD_META_FIELDS: ReadonlySet<string> = new Set(["active", "attachments"]);
+
+/** Whether a tile reads a field only the card meta knows — the meta is read only then. */
+function readsCardMeta(tile: Tile): boolean {
+  const named = [tile.x, tile.breakdown, tile.switch, tile.sort?.by, tile.y.field, ...tile.conditions.map((condition) => condition.field)];
+  return named.some((field) => field != null && CARD_META_FIELDS.has(field));
+}
+
+/** What a tile's fields read beyond the task: names of projects, labels and tasks, the sub-task counts, and the card meta when the tile needs it. */
+async function tileFacts(store: TasksApiStore, tile: Tile, tasks: readonly Task[], projects: readonly { id: string; name: string }[]): Promise<TaskFacts> {
+  const labels = (await Promise.all(projects.map((project) => store.tasks.listLabels(project.id)))).flat();
+  const cards = readsCardMeta(tile) ? await store.tasks.taskCardMeta(tasks.map((task) => task.id)) : [];
+  return factsOf({
+    projectNames: new Map(projects.map((project) => [project.id, project.name])),
+    taskKeys: new Map(tasks.map((task) => [task.id, task.key])),
+    labelNames: new Map(labels.map((label) => [label.id, label.name])),
+    descendantCounts: new Map([...descendantsOf(tasks)].map(([id, below]) => [id, below.length])),
+    activeCounts: new Map(cards.map((card) => [card.taskId, card.taskThreads.filter(isWorkingThread).length])),
+    attachmentCounts: new Map(cards.map((card) => [card.taskId, card.attachmentCount])),
+  });
+}
+
 export function registerHandlers(
   bb: BbPluginApi,
   store: TasksApiStore,
@@ -1353,59 +1384,6 @@ export function registerHandlers(
     async sidebarSummary() {
       return { projects: await store.sidebarSummary() };
     },
-    async analyticsSnapshot(input) {
-      const tasks = await store.tasks.listTasks(
-        input.projectId != null ? { projectId: input.projectId } : {},
-      );
-      return snapshotOf(tasks.filter((task) => inProjects(input.projectIds, task.projectId)));
-    },
-    async analyticsClosed(input) {
-      const perWindow = input.windows.map((edges) =>
-        closedInBins(
-          store.transitions
-            .range(edges[0]!, edges[edges.length - 1]!)
-            .filter((move) => inProjects(input.projectIds, move.projectId)),
-          edges,
-        ),
-      );
-      // One board read for every window, and none when nothing closed at all.
-      const tasksById = perWindow.some((closings) => closings.length > 0)
-        ? new Map((await store.tasks.listTasks({})).map((task) => [task.id, task]))
-        : new Map<string, Task>();
-      return {
-        windows: perWindow.map((closings) => ({
-          closings: closings.map((closing) => {
-            const task = tasksById.get(closing.taskId);
-            return { ...closing, key: task?.key ?? null, title: task?.title ?? "Deleted task" };
-          }),
-        })),
-        projects: boardProjects(),
-        logStartMs: store.transitions.firstAtMs(),
-      };
-    },
-    async analyticsFlow(input) {
-      // One board read and one log read answer every flow chart.
-      const tasks = await store.tasks.listTasks({});
-      const nowMs = Date.now();
-      const flow = flowOf({
-        tasks,
-        transitions: store.transitions.range(Number.MIN_SAFE_INTEGER, nowMs + 1),
-        edges: input.edges,
-        weekEdges: input.weekEdges,
-        projectIds: input.projectIds ?? [],
-        nowMs,
-      });
-      const tasksById = new Map(tasks.map((task) => [task.id, task]));
-      return {
-        ...flow,
-        aging: flow.aging.flatMap((entry) => {
-          const task = tasksById.get(entry.taskId);
-          return task === undefined ? [] : [{ ...entry, key: task.key, title: task.title }];
-        }),
-        projects: boardProjects(),
-        logStartMs: store.transitions.firstAtMs(),
-      };
-    },
     async analyticsSpan(input) {
       const born = (await store.tasks.listTasks({}))
         .filter((task) => inProjects(input.projectIds, task.projectId))
@@ -1441,6 +1419,33 @@ export function registerHandlers(
         }),
         projects: boardProjects(),
       };
+    },
+    async analyticsTile(input) {
+      // One board read and one log read answer the tile.
+      const nowMs = Date.now();
+      const tasks = await store.tasks.listTasks({});
+      const projects = boardProjects();
+      return {
+        ...tileAnswer({
+          tile: input.tile,
+          tasks,
+          transitions: store.transitions.range(Number.MIN_SAFE_INTEGER, nowMs + 1),
+          edges: input.edges,
+          projectIds: input.projectIds ?? [],
+          picked: input.picked,
+          nowMs,
+          facts: await tileFacts(store, input.tile, tasks, projects),
+        }),
+        projects,
+        logStartMs: store.transitions.firstAtMs(),
+      };
+    },
+    async loadAnalyticsDashboard() {
+      return parseDashboard(await bb.storage.kv.get<unknown>(ANALYTICS_DASHBOARD_KV_KEY));
+    },
+    async saveAnalyticsDashboard(dashboard) {
+      await bb.storage.kv.set(ANALYTICS_DASHBOARD_KV_KEY, parseDashboard(dashboard));
+      return { ok: true as const };
     },
     async loadReducedColors() {
       return parseReducedColors(await bb.storage.kv.get<unknown>(REDUCED_COLORS_KV_KEY));

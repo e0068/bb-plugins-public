@@ -1,28 +1,5 @@
-// Pure helpers of the flow sections (flow-sections.tsx): what is left in a
-// project per column, work in progress per column, a least-squares trend for
-// the burndown forecast, and durations in words. No React.
-import type { TaskStatus } from "../../db/types.js";
-
-type StatusByBin = Readonly<Record<string, readonly Readonly<Record<TaskStatus, number>>[]>>;
-
-/** Statuses that still owe work — what a burndown burns down. */
-export const OPEN_STATUSES = ["backlog", "todo", "in_progress", "in_review"] as const satisfies readonly TaskStatus[];
-
-/** Open tasks of one project at the end of every column. */
-export function openByColumn(byBin: StatusByBin, projectId: string): number[] {
-  return (byBin[projectId] ?? []).map((counts) => OPEN_STATUSES.reduce((sum, status) => sum + counts[status], 0));
-}
-
-/** Per column, [in progress, in review] summed over every project. */
-export function wipByColumn(byBin: StatusByBin, columns: number): [number, number][] {
-  const projects = Object.values(byBin);
-  return Array.from({ length: columns }, (_, column) =>
-    projects.reduce<[number, number]>(
-      ([progress, review], rows) => [progress + (rows[column]?.in_progress ?? 0), review + (rows[column]?.in_review ?? 0)],
-      [0, 0],
-    ),
-  );
-}
+// Pure helpers of the analytics tiles (tile-charts.tsx): a least-squares
+// trend for the burndown forecast, and durations in words. No React.
 
 // The trend moved to the analytics core, where the card burndown forecasts with it too.
 export { trendOf, type Trend } from "../../analytics/trend.js";

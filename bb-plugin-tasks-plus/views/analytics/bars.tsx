@@ -1,12 +1,14 @@
 // Column charts of the analytics screen, drawn with divs the way Usage
 // Analytics draws its token bars (thread-chart.tsx, hourly-burn-chart.tsx):
-// no axes and no grid, 2px-rounded columns 2px apart, stacked segments 1px
+// 2px-rounded columns 2px apart, stacked segments 1px
 // apart, an empty column as a floor line, the hovered column highlighted and
 // a popover by the pointer naming every series in it. Heights are
 // percentages, so a chart follows its section's size without measuring. A
-// column that opens a week carries a line and the week's label, when the
-// section says where weeks start (WeekBreaksScope).
-import { createContext, useContext, useState, type ReactNode } from "react";
+// column that opens a week carries a line, when the section says where weeks
+// start (WeekBreaksScope); dates are written only under the chart. The frame
+// (PlotFrame) keeps a column for the Y labels left of the plot box and the X
+// labels under it; the grid comes from the caller, laid under the columns.
+import { createContext, useContext, useState, type CSSProperties, type ReactNode } from "react";
 import { useViewportClamp } from "@bb-plugins/viewport-clamp";
 
 import { cn } from "../../lib/utils";
@@ -78,10 +80,9 @@ function Ticks({ ticks }: { ticks: readonly string[] }) {
   );
 }
 
-/** A column that opens a week, and the label the week goes by. */
+/** A column that opens a week. */
 export interface ColumnWeekBreak {
   column: number;
-  label: string;
 }
 
 const WeekBreaksContext = createContext<readonly ColumnWeekBreak[]>([]);
@@ -91,20 +92,14 @@ export function WeekBreaksScope({ breaks, children }: { breaks: readonly ColumnW
   return <WeekBreaksContext.Provider value={breaks}>{children}</WeekBreaksContext.Provider>;
 }
 
-/** The label of the week a column opens, per column. */
-function useWeekLabels(): ReadonlyMap<number, string> {
-  const breaks = useContext(WeekBreaksContext);
-  return new Map(breaks.map((entry) => [entry.column, entry.label]));
+/** The columns that open a week. */
+function useWeekColumns(): ReadonlySet<number> {
+  return new Set(useContext(WeekBreaksContext).map((entry) => entry.column));
 }
 
-/** A line down the left edge of a column that opens a week, the week's label at its top. */
-function WeekMark({ label }: { label: string | undefined }) {
-  if (label === undefined) return null;
-  return (
-    <span data-week-break aria-hidden className="pointer-events-none absolute inset-y-0 -left-px w-px bg-border">
-      <span className="absolute left-1 top-0 whitespace-nowrap text-2xs leading-none text-subtle-foreground">{label}</span>
-    </span>
-  );
+/** A line down the left edge of a column that opens a week. Dates stay under the chart; none is written over it. */
+function WeekMark({ opens }: { opens: boolean }) {
+  return opens ? <span data-week-break aria-hidden className="pointer-events-none absolute inset-y-0 -left-px w-px bg-border" /> : null;
 }
 
 /** Hover state shared by both charts: which column the pointer is over, and where. */
@@ -132,70 +127,105 @@ export interface StackedBarsProps {
   ticks: readonly string[];
   selected?: BarSelection | null;
   onSelect?: (column: number, seriesId: string) => void;
+  /** Drawn under the columns, filling the chart box — the grid. */
+  underlay?: ReactNode;
   /** Drawn over the columns, filling the chart box — a trend line. */
   overlay?: ReactNode;
+  /** The Y labels' gutter to the left of the chart box: it moves the columns aside, as the labels under them do. */
+  axis?: ReactNode;
   /** px; a fixed chart width. Omitted, the chart fills its section. */
   width?: number;
 }
 
-export function StackedBars({ columns, series, columnLabel, ticks, selected = null, onSelect, overlay, width }: StackedBarsProps) {
+/**
+ * A plot box with its Y labels to the left and its X labels under it: the
+ * labels take their own room and the box keeps what is left.
+ */
+export function PlotFrame({ axis, ticks, plot, style }: { axis: ReactNode | undefined; ticks: readonly string[]; plot: ReactNode; style?: CSSProperties }) {
+  const plotColumn = axis === undefined ? 1 : 2;
+  return (
+    <div
+      className="grid min-h-0 flex-1 gap-x-1.5 gap-y-1"
+      style={{ ...style, gridTemplateColumns: axis === undefined ? "minmax(0, 1fr)" : "auto minmax(0, 1fr)", gridTemplateRows: "minmax(6rem, 1fr) auto" }}
+    >
+      {axis === undefined ? null : <div style={{ gridColumn: 1, gridRow: 1 }}>{axis}</div>}
+      <div className="flex min-h-0 min-w-0 flex-col" style={{ gridColumn: plotColumn, gridRow: 1 }}>
+        {plot}
+      </div>
+      <div className="min-w-0" style={{ gridColumn: plotColumn, gridRow: 2 }}>
+        <Ticks ticks={ticks} />
+      </div>
+    </div>
+  );
+}
+
+export function StackedBars({ columns, series, columnLabel, ticks, selected = null, onSelect, underlay, overlay, axis, width }: StackedBarsProps) {
   const { hover, bind } = useHover();
-  const weekLabels = useWeekLabels();
+  const weekColumns = useWeekColumns();
   const totals = columns.map((values) => values.reduce((sum, value) => sum + value, 0));
   const max = Math.max(1, ...totals);
   const hovered = hover === null ? undefined : columns[hover.column];
 
+  const plot = (
+    <div data-plot className={cn("relative flex min-h-24 flex-1 items-end", columns.length > FEW_COLUMNS ? "gap-0.5" : "gap-1.5")}>
+      {underlay}
+      {columns.map((values, column) => (
+        <div
+          key={column}
+          data-column={column}
+          className={cn(COLUMN_CLASS, hover?.column === column && "bg-state-hover")}
+          {...bind(column)}
+        >
+          <WeekMark opens={weekColumns.has(column)} />
+          {totals[column] === 0 ? (
+            <div data-empty className="absolute bottom-0 h-0.5 w-full rounded-sm bg-muted/50" />
+          ) : (
+            <div
+              data-stack
+              className="absolute bottom-0 flex w-full flex-col-reverse gap-px overflow-hidden rounded-sm"
+              style={{ height: `${(totals[column]! / max) * 100}%` }}
+            >
+              {series.map((entry, index) => {
+                const value = values[index] ?? 0;
+                if (value <= 0) return null;
+                const isSelected = selected?.column === column && selected.seriesId === entry.id;
+                const dimmed = selected !== null && !isSelected;
+                const mark = {
+                  "data-segment": `${column}:${entry.id}`,
+                  "data-dimmed": String(dimmed),
+                  style: { flexGrow: value, flexBasis: 0, minHeight: 1, backgroundColor: entry.color },
+                };
+                const look = cn("block w-full rounded-sm", dimmed && "opacity-30");
+                // Only a segment that can be picked is a button; the rest are marks the tooltip reads out.
+                return onSelect === undefined ? (
+                  <span key={entry.id} {...mark} className={look} />
+                ) : (
+                  <button
+                    key={entry.id}
+                    type="button"
+                    {...mark}
+                    data-pickable
+                    aria-label={`${columnLabel(column)} · ${entry.label}: ${value}`}
+                    className={cn(look, "transition-opacity hover:opacity-80 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring")}
+                    onClick={() => onSelect(column, entry.id)}
+                  />
+                );
+              })}
+            </div>
+          )}
+        </div>
+      ))}
+      {overlay}
+    </div>
+  );
   return (
-    <div className="flex min-h-0 flex-1 flex-col gap-1" style={width === undefined ? undefined : { width }}>
-      <div className={cn("relative flex min-h-24 flex-1 items-end", columns.length > FEW_COLUMNS ? "gap-0.5" : "gap-1.5")}>
-        {columns.map((values, column) => (
-          <div
-            key={column}
-            data-column={column}
-            className={cn(COLUMN_CLASS, hover?.column === column && "bg-state-hover")}
-            {...bind(column)}
-          >
-            <WeekMark label={weekLabels.get(column)} />
-            {totals[column] === 0 ? (
-              <div data-empty className="absolute bottom-0 h-0.5 w-full rounded-sm bg-muted/50" />
-            ) : (
-              <div
-                data-stack
-                className="absolute bottom-0 flex w-full flex-col-reverse gap-px overflow-hidden rounded-sm"
-                style={{ height: `${(totals[column]! / max) * 100}%` }}
-              >
-                {series.map((entry, index) => {
-                  const value = values[index] ?? 0;
-                  if (value <= 0) return null;
-                  const isSelected = selected?.column === column && selected.seriesId === entry.id;
-                  const dimmed = selected !== null && !isSelected;
-                  const mark = {
-                    "data-segment": `${column}:${entry.id}`,
-                    "data-dimmed": String(dimmed),
-                    style: { flexGrow: value, flexBasis: 0, minHeight: 1, backgroundColor: entry.color },
-                  };
-                  const look = cn("block w-full rounded-sm", dimmed && "opacity-30");
-                  // Only a segment that can be picked is a button; the rest are marks the tooltip reads out.
-                  return onSelect === undefined ? (
-                    <span key={entry.id} {...mark} className={look} />
-                  ) : (
-                    <button
-                      key={entry.id}
-                      type="button"
-                      {...mark}
-                      aria-label={`${columnLabel(column)} · ${entry.label}: ${value}`}
-                      className={cn(look, "transition-opacity hover:opacity-80 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring")}
-                      onClick={() => onSelect(column, entry.id)}
-                    />
-                  );
-                })}
-              </div>
-            )}
-          </div>
-        ))}
-        {overlay}
-      </div>
-      <Ticks ticks={ticks} />
+    <>
+      <PlotFrame
+        axis={axis}
+        ticks={ticks}
+        style={width === undefined ? undefined : { width }}
+        plot={plot}
+      />
       {hover !== null && hovered !== undefined ? (
         <Tip
           hover={hover}
@@ -205,11 +235,13 @@ export function StackedBars({ columns, series, columnLabel, ticks, selected = nu
           )}
         />
       ) : null}
-    </div>
+    </>
   );
 }
 
 export interface DivergingSide {
+  /** What a pick names the side by; its label when absent. */
+  id?: string;
   label: string;
   color: string;
   values: readonly number[];
@@ -220,46 +252,77 @@ export interface DivergingBarsProps {
   down: DivergingSide;
   columnLabel: (column: number) => string;
   ticks: readonly string[];
+  /** The value at the top and at the bottom; the larger of the two sides when absent. Pass the scale a grid laid under it uses. */
+  max?: number;
+  selected?: BarSelection | null;
+  onSelect?: (column: number, seriesId: string) => void;
+  /** Drawn under the columns, filling the chart box — the grid. */
+  underlay?: ReactNode;
+  /** Drawn over the columns, filling the chart box. */
+  overlay?: ReactNode;
+  /** The Y labels' gutter to the left of the chart box. */
+  axis?: ReactNode;
 }
 
 /** Two series from one axis: `up` grows upward, `down` downward, both on one scale. */
-export function DivergingBars({ up, down, columnLabel, ticks }: DivergingBarsProps) {
+export function DivergingBars({ up, down, columnLabel, ticks, max = Math.max(1, ...up.values, ...down.values), selected = null, onSelect, underlay, overlay, axis }: DivergingBarsProps) {
   const { hover, bind } = useHover();
-  const weekLabels = useWeekLabels();
-  const max = Math.max(1, ...up.values, ...down.values);
+  const weekColumns = useWeekColumns();
   const half = (side: "up" | "down", entry: DivergingSide, column: number) => {
     const value = entry.values[column] ?? 0;
+    const id = entry.id ?? entry.label;
+    const dimmed = selected !== null && !(selected.column === column && selected.seriesId === id);
+    const mark = {
+      "data-side": side,
+      "data-segment": `${column}:${id}`,
+      "data-dimmed": String(dimmed),
+      style: { height: `${(value / max) * 100}%`, backgroundColor: entry.color },
+    };
+    const look = cn("block w-full rounded-sm", dimmed && "opacity-30");
     return (
       <div className={cn("relative flex-1", side === "up" ? "flex items-end" : "flex items-start")}>
-        {value > 0 ? (
-          <div
-            data-side={side}
-            className="w-full rounded-sm"
-            style={{ height: `${(value / max) * 100}%`, backgroundColor: entry.color }}
+        {value <= 0 ? null : onSelect === undefined ? (
+          <div {...mark} className={look} />
+        ) : (
+          <button
+            type="button"
+            {...mark}
+            data-pickable
+            aria-label={`${columnLabel(column)} · ${entry.label}: ${value}`}
+            className={cn(look, "transition-opacity hover:opacity-80 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring")}
+            onClick={() => onSelect(column, id)}
           />
-        ) : null}
+        )}
       </div>
     );
   };
 
+  const plot = (
+    <div data-plot className={cn("relative flex min-h-24 flex-1", up.values.length > FEW_COLUMNS ? "gap-0.5" : "gap-1.5")}>
+      {underlay}
+      {up.values.map((_, column) => (
+        <div
+          key={column}
+          data-column={column}
+          className={cn(COLUMN_CLASS, "flex flex-col", hover?.column === column && "bg-state-hover")}
+          {...bind(column)}
+        >
+          <WeekMark opens={weekColumns.has(column)} />
+          {half("up", up, column)}
+          <div className="h-px w-full bg-border" />
+          {half("down", down, column)}
+        </div>
+      ))}
+      {overlay}
+    </div>
+  );
   return (
-    <div className="flex min-h-0 flex-1 flex-col gap-1">
-      <div className={cn("flex min-h-24 flex-1", up.values.length > FEW_COLUMNS ? "gap-0.5" : "gap-1.5")}>
-        {up.values.map((_, column) => (
-          <div
-            key={column}
-            data-column={column}
-            className={cn(COLUMN_CLASS, "flex flex-col", hover?.column === column && "bg-state-hover")}
-            {...bind(column)}
-          >
-            <WeekMark label={weekLabels.get(column)} />
-            {half("up", up, column)}
-            <div className="h-px w-full bg-border" />
-            {half("down", down, column)}
-          </div>
-        ))}
-      </div>
-      <Ticks ticks={ticks} />
+    <>
+      <PlotFrame
+        axis={axis}
+        ticks={ticks}
+        plot={plot}
+      />
       {hover !== null ? (
         <Tip
           hover={hover}
@@ -267,20 +330,7 @@ export function DivergingBars({ up, down, columnLabel, ticks }: DivergingBarsPro
           rows={[up, down].map((entry) => ({ color: entry.color, label: entry.label, value: entry.values[hover.column] ?? 0 }))}
         />
       ) : null}
-    </div>
-  );
-}
-
-/** A section's frame, as a Usage Analytics card: title on the left, its figure on the right. */
-export function ChartCard({ title, aside, children }: { title: string; aside?: ReactNode; children: ReactNode }) {
-  return (
-    <section aria-label={title} className="flex h-full min-h-0 w-full min-w-0 flex-col gap-2 overflow-hidden rounded-md border border-border p-3">
-      <header className="flex items-baseline gap-3 text-xs text-muted-foreground">
-        <h2 className="text-xs font-medium text-foreground">{title}</h2>
-        {aside === undefined ? null : <span className="ml-auto truncate tabular-nums">{aside}</span>}
-      </header>
-      {children}
-    </section>
+    </>
   );
 }
 

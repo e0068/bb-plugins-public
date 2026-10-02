@@ -263,7 +263,7 @@ function dayValue(field: DateField, task: Task): string | null {
   return value === null ? null : value.slice(0, 10);
 }
 
-function numberValue(field: NumberField, task: Task, facts: TaskFacts): number | null {
+export function numberValue(field: NumberField, task: Task, facts: TaskFacts): number | null {
   switch (field) {
     case "subtasks":
       return facts.descendantCounts.get(task.id) ?? 0;

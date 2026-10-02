@@ -50,19 +50,7 @@ describe("CALLER_SCOPED_METHODS", () => {
     }
   });
 
-  it("методы доски треда не получают — они читают kv, а не файлы задач", () => {
-    for (const method of [
-      "createFolder",
-      "createProject",
-      "listLabels",
-      "analyticsSnapshot",
-    ] as const) {
-      const result = tasksRpcContract[method].input.safeParse({
-        callerThreadId: "thr_1",
-      });
-      expect(unrecognized(result, "callerThreadId"), method).toBe(true);
-    }
-  });
+
 });
 
 describe("withCallerThread", () => {

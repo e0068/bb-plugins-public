@@ -1,5 +1,6 @@
 import { createHash, randomBytes } from "node:crypto";
 import { roundToCents } from "../shared/amounts.js";
+import { isPlanDate } from "../shared/plan-date.js";
 
 /** Pure identity/validation helpers, carried over from the SQL store as-is —
  *  that file is deleted once U6 removes SQLite; until then these two copies
@@ -8,7 +9,6 @@ import { roundToCents } from "../shared/amounts.js";
 
 const ULID_ALPHABET = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";
 const ULID_PATTERN = /^[0-7][0-9A-HJKMNP-TV-Z]{25}$/;
-const ISO_DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 
 let lastUlidMs = -1;
 let lastUlidRandom = 0n;
@@ -47,15 +47,8 @@ export function requireNonEmpty(value: string, field: string): string {
 /** Shared by both plan dates; the field name is what the message reports. */
 function validatePlanDate(value: string | null, field: string): string | null {
   if (value === null) return null;
-  if (!ISO_DATE_PATTERN.test(value)) {
-    throw new Error(`${field} must be an ISO date in YYYY-MM-DD format`);
-  }
-  const parsed = new Date(`${value}T00:00:00.000Z`);
-  if (
-    Number.isNaN(parsed.valueOf()) ||
-    parsed.toISOString().slice(0, 10) !== value
-  ) {
-    throw new Error(`${field} must be a valid calendar date`);
+  if (!isPlanDate(value)) {
+    throw new Error(`${field} must be a calendar date in YYYY-MM-DD or YYYY-MM-DDTHH:mm format`);
   }
   return value;
 }

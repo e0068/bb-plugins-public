@@ -1,3 +1,4 @@
+import { formatPlanDate, VIEWER_LOCALE } from "../shared/plan-date.js";
 import type {
   TaskEstimate,
   TaskPriority,
@@ -302,16 +303,9 @@ export function formatDateTime(iso: string): string {
   });
 }
 
-/** Formats a YYYY-MM-DD due date like "Jul 22" (with year when not this year). */
+/** Formats a plan date like "Jul 22" or "Jul 22, 15:00" (with year when not this year), in the viewer's locale. */
 export function formatDueDate(dueDate: string): string {
-  const parsed = new Date(`${dueDate}T00:00:00`);
-  if (Number.isNaN(parsed.valueOf())) return dueDate;
-  const sameYear = parsed.getFullYear() === new Date().getFullYear();
-  return parsed.toLocaleDateString(undefined, {
-    month: "short",
-    day: "numeric",
-    ...(sameYear ? {} : { year: "numeric" }),
-  });
+  return formatPlanDate(dueDate, new Date(), VIEWER_LOCALE);
 }
 
 /**

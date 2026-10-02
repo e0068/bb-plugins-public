@@ -9,9 +9,9 @@ import { createTransitionLog } from "../db/transition-log.js";
 import { createFileTasksStore } from "../filesync/store.js";
 import type { BoardConfig, KvStore } from "../filesync/board-config.js";
 import { registerTasksApi, type TasksApiStore } from ".";
+import { WINDOW_COUNT_MAX, WINDOW_UNITS } from "../shared/analytics-tile.js";
 
-// End-to-end over the RPC boundary: callRpc validates every output against the
-// contract schema, so these also prove the snapshot/series shapes are wire-valid.
+// The longest period a tile may count must pass the call that fetches its data.
 const BOARD: BoardConfig = {
   id: "01M0T4QGCQ3BYK15NH50AD38RV",
   name: "Board",
@@ -39,7 +39,7 @@ let root: string;
 let tasks: ReturnType<typeof createFileTasksStore>;
 
 beforeEach(() => {
-  root = mkdtempSync(join(tmpdir(), "analytics-rpc-"));
+  root = mkdtempSync(join(tmpdir(), "analytics-tile-longest-"));
   tasks = createFileTasksStore(fakeKv(), [BOARD], [], [], [], () => {});
   tasks.setBoardRoots(BOARD.id, [{ absPath: root, origin: { kind: "main" } }]);
 });
@@ -58,23 +58,37 @@ function setup() {
     openTaskCount: async () => (await tasks.listTasks({})).length,
     sidebarSummary: async () => [],
   };
-  registerTasksApi(bb, store);
+  registerTasksApi(bb, store, { get: async () => null });
   return { harness };
 }
 
-describe("analyticsSnapshot RPC", () => {
-  it("counts the board's tasks by status, summing to the total", async () => {
-    const { harness } = setup();
-    const a = await tasks.createTask({ projectId: BOARD.id, title: "A" });
-    await tasks.createTask({ projectId: BOARD.id, title: "B" });
-    await harness.callRpc("boardMove", { taskId: a.id, status: "in_progress", authorName: "Me" });
+const tile = (patch: Record<string, unknown> = {}) => ({
+  id: "t1",
+  type: "columns",
+  title: "By status",
+  window: "page",
+  x: "status",
+  y: { metric: "count", field: null },
+  breakdown: null,
+  switch: "project",
+  conditions: [],
+  sort: null,
+  limit: 20,
+  bars: { length: "value", gantt: "fact" },
+  figures: [],
+  display: { legend: "bottom", xLabels: true, yLabels: false, grid: { x: null, y: null }, trend: false },
+  ...patch,
+});
 
-    const snap = (await harness.callRpc("analyticsSnapshot", { projectId: BOARD.id })) as {
-      total: number;
-      byStatus: Record<string, number>;
-    };
-    expect(snap.total).toBe(2);
-    expect(snap.byStatus.in_progress).toBe(1);
-    expect(snap.byStatus.backlog).toBe(1);
+describe("analyticsTile over the longest periods", () => {
+  it("answers a tile of every unit at its cap", async () => {
+    const { harness } = setup();
+    await tasks.createTask({ projectId: BOARD.id, title: "A" });
+    for (const unit of WINDOW_UNITS) {
+      const step = { minute: 60_000, hour: 3_600_000, day: 86_400_000 }[unit];
+      const edges = Array.from({ length: WINDOW_COUNT_MAX[unit] + 1 }, (_, index) => Date.now() - (WINDOW_COUNT_MAX[unit] - index) * step);
+      const answer = (await harness.callRpc("analyticsTile", { tile: tile({ x: "time", window: { unit, count: WINDOW_COUNT_MAX[unit] } }), edges, projectIds: [], picked: null })) as { columns: unknown[] };
+      expect(answer.columns).toHaveLength(WINDOW_COUNT_MAX[unit]);
+    }
   });
 });
