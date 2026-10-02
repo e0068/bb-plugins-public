@@ -127,3 +127,27 @@ describe("TileCard", () => {
     expect(container.querySelector("[data-legend]")).toBeNull();
   });
 });
+
+describe("TileCard — lines down a time chart", () => {
+  const DAY_MS = 86_400_000;
+  // Two weeks of days from a Wednesday: two Mondays fall inside.
+  const edges = Array.from({ length: 15 }, (_, index) => new Date(2026, 8, 2).getTime() + index * DAY_MS);
+  const days = answer({
+    columns: edges.slice(0, -1).map((at) => ({ key: String(at), label: "" })),
+    values: edges.slice(0, -1).map(() => [1]),
+    cells: edges.slice(0, -1).map(() => [[]]),
+  });
+  const tile = (across: number | null) => newTile("t", { title: "Closed", display: { legend: "hidden", xLabels: true, yLabels: false, grid: { x: across, y: null }, trend: false } });
+  const lines = (container: HTMLElement) => container.querySelectorAll("[data-week-break], [data-grid-x]").length;
+
+  it("draws none when the grid across is off", () => {
+    const { container } = render(<TileCard {...props({ tile: tile(null), answer: days, edges })} />);
+    expect(lines(container)).toBe(0);
+  });
+
+  it("draws only the grid's lines when the grid across is on", () => {
+    const { container } = render(<TileCard {...props({ tile: tile(7), answer: days, edges })} />);
+    expect(container.querySelectorAll("[data-week-break]")).toHaveLength(0);
+    expect(container.querySelectorAll("[data-grid-x]")).toHaveLength(1);
+  });
+});

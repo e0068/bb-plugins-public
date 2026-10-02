@@ -128,3 +128,23 @@ describe("DivergingBars", () => {
     expect(height("down", 1)).toBeUndefined();
   });
 });
+
+describe("StackedBars — layers over the plot", () => {
+  it("lays the underlay under the columns", () => {
+    const { container } = render(
+      <StackedBars
+        columns={[[1], [2], [0], [3], [1]]}
+        series={[{ id: "p", label: "Plugins", color: "#111" }]}
+        columnLabel={(column) => `col ${column}`}
+        ticks={[]}
+        underlay={<div data-under />}
+        overlay={<div data-over />}
+      />,
+    );
+    const order = Array.from(container.querySelectorAll("[data-under], [data-column], [data-over]"), (node) =>
+      node.hasAttribute("data-under") ? "under" : node.hasAttribute("data-over") ? "over" : "column",
+    );
+    expect(order[0]).toBe("under");
+    expect(order.at(-1)).toBe("over");
+  });
+});

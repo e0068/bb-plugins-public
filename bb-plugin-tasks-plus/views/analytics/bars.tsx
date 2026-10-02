@@ -4,12 +4,11 @@
 // apart, an empty column as a floor line, what a click would pick lit and the
 // rest dimmed while hovered, and a popover by the pointer naming every series
 // in it. Heights are
-// percentages, so a chart follows its section's size without measuring. A
-// column that opens a week carries a line, when the section says where weeks
-// start (WeekBreaksScope); dates are written only under the chart. The frame
+// percentages, so a chart follows its section's size without measuring.
+// Dates are written only under the chart. The frame
 // (PlotFrame) keeps a column for the Y labels left of the plot box and the X
 // labels under it; the grid comes from the caller, laid under the columns.
-import { createContext, useContext, useState, type CSSProperties, type ReactNode } from "react";
+import { useState, type CSSProperties, type ReactNode } from "react";
 import { useViewportClamp } from "@bb-plugins/viewport-clamp";
 
 import { cn } from "../../lib/utils";
@@ -80,28 +79,6 @@ function Ticks({ ticks }: { ticks: readonly string[] }) {
       ))}
     </div>
   );
-}
-
-/** A column that opens a week. */
-export interface ColumnWeekBreak {
-  column: number;
-}
-
-const WeekBreaksContext = createContext<readonly ColumnWeekBreak[]>([]);
-
-/** Where the charts inside mark a new week — a section's columns are its own, so the section sets them. */
-export function WeekBreaksScope({ breaks, children }: { breaks: readonly ColumnWeekBreak[]; children: ReactNode }) {
-  return <WeekBreaksContext.Provider value={breaks}>{children}</WeekBreaksContext.Provider>;
-}
-
-/** The columns that open a week. */
-function useWeekColumns(): ReadonlySet<number> {
-  return new Set(useContext(WeekBreaksContext).map((entry) => entry.column));
-}
-
-/** A line down the left edge of a column that opens a week. Dates stay under the chart; none is written over it. */
-function WeekMark({ opens }: { opens: boolean }) {
-  return opens ? <span data-week-break aria-hidden className="pointer-events-none absolute inset-y-0 -left-px w-px bg-border" /> : null;
 }
 
 /** Hover state shared by both charts: which column — and segment of it — the pointer is over, and where. */
@@ -182,7 +159,6 @@ export function PlotFrame({ axis, ticks, plot, style }: { axis: ReactNode | unde
 
 export function StackedBars({ columns, series, columnLabel, ticks, selected = null, onSelect, onSelectColumn, underlay, overlay, axis, width }: StackedBarsProps) {
   const { hover, bind } = useHover();
-  const weekColumns = useWeekColumns();
   const totals = columns.map((values) => values.reduce((sum, value) => sum + value, 0));
   const max = Math.max(1, ...totals);
   const hovered = hover === null ? undefined : columns[hover.column];
@@ -200,7 +176,6 @@ export function StackedBars({ columns, series, columnLabel, ticks, selected = nu
           {...bind(column)}
           {...columnPick(column, totals[column] === 0 ? undefined : onSelectColumn)}
         >
-          <WeekMark opens={weekColumns.has(column)} />
           {totals[column] === 0 ? (
             <div data-empty className="absolute bottom-0 h-0.5 w-full rounded-sm bg-muted/50" />
           ) : (
@@ -293,7 +268,6 @@ export interface DivergingBarsProps {
 /** Two series from one axis: `up` grows upward, `down` downward, both on one scale. */
 export function DivergingBars({ up, down, columnLabel, ticks, max = Math.max(1, ...up.values, ...down.values), selected = null, onSelect, onSelectColumn, underlay, overlay, axis }: DivergingBarsProps) {
   const { hover, bind } = useHover();
-  const weekColumns = useWeekColumns();
   const columnTotal = (column: number) => (up.values[column] ?? 0) + (down.values[column] ?? 0);
   const aim = onSelect === undefined || hover === null || columnTotal(hover.column) === 0 ? null : hover;
   const half = (side: "up" | "down", entry: DivergingSide, column: number) => {
@@ -337,7 +311,6 @@ export function DivergingBars({ up, down, columnLabel, ticks, max = Math.max(1, 
           {...bind(column)}
           {...columnPick(column, columnTotal(column) === 0 ? undefined : onSelectColumn)}
         >
-          <WeekMark opens={weekColumns.has(column)} />
           {half("up", up, column)}
           <div className="h-px w-full bg-border" />
           {half("down", down, column)}
