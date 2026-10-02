@@ -32,8 +32,8 @@ A stage is a step of work that has its own outcome or its own stop. The order in
 
 - Questions, Criteria and Stage selection stand at the start, in this order: the brief gathers them into one.
 - A Demo goes after a stage whose outcome the owner must see before the work goes on, and at the end.
-- A skill stage is a skill from the `read_flows` catalog for a work step. Which skills the owner puts on which steps — task, prototype, spec, plan, implementation, review, testing, research, reproduction, document draft — is visible in the descriptions of existing flows: take it from there rather than picking one by a similar name. A step the work never has does not go into the flow: a step optional for a particular task is dropped at Stage selection, not removed from the flow.
-- The flow description is the only place where skills are listed by name: "When to take", "When not to take", "Stages" with the skill and a short "why" for each, "Executors". An agent chooses the flow for a thread created with "Automatic" by the descriptions, so a description is written so that an agent can choose the flow by it and understand which skill to load at each stage.
+- A skill stage is a skill from the `read_flows` catalog for a work step. Which skills the owner puts on which steps — task, prototype, spec, plan, implementation, review, testing, research, reproduction, document draft — is visible in the stages of existing flows in `read_flows`: take it from there rather than picking one by a similar name. A step the work never has does not go into the flow: a step optional for a particular task is dropped at Stage selection, not removed from the flow.
+- The flow description says only when to take the flow: "When to take" and "When not to take", two or three sentences. An agent chooses the flow for a thread created with "Automatic" by the descriptions, and they stand in the instructions of every such thread. Stages, their skills and executors are not retold in the description: the agent gets them from `choose_flow` and the owner sees them in the table.
 - Stage executors are ids from the catalog: `"executors": ["agent:tester"]`. The thread's own agent can always execute any stage and is not listed. Add an executor when the work behind it is bigger than the cost of handing it to a subagent: implementation, review, test runs.
 - A built-in stage gets its own skill in the `skill` field only if the owner named it; without the field — the kind's default skill.
 - `id` and `name` may be omitted: the id comes from the kind or skill, the name is the English kind name or the skill name. Flow and stage names are in English, like the other flows, unless the owner named others.
@@ -92,9 +92,9 @@ A failed undo step does not stop the others and does not block the rework: the a
 
 ## 4. Save and check
 
-`save_flow` — one flow per call: `{ "name", "stages", "id"?, "position"? }`.
+`save_flow` — one flow per call: `{ "name", "description"?, "stages", "id"?, "position"? }`.
 
-- Without `id` — a new flow; with the `id` of an existing one — a full replacement, so first take its stages from `read_flows` and send all of them.
+- Without `id` — a new flow; with the `id` of an existing one — a full replacement, so first take its stages and description from `read_flows` and send all of them: a description left out is erased.
 - `position: 0` puts the flow first — the default flow. Change the default flow only if the owner said so.
 - A rejection lists all problems at once, with stage numbers: fix them and send again. Nothing is saved on rejection.
 - The answer is the saved flow and the order of all flows. Check the stages against what you assembled and that the other flows are in place.
