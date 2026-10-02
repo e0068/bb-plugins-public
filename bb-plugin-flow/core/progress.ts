@@ -243,6 +243,7 @@ export const progressView = (progress: FlowProgress, stages: readonly WorkStage[
       ...(plan === undefined || (state !== "todo" && state !== "now") ? {} : { plan }),
       ...(stage.automation === undefined ? {} : { automation: automationView(stage, track) }),
       ...(stage.parent === undefined ? {} : { parent: stage.parent }),
+      ...(stage.icon === undefined ? {} : { icon: stage.icon }),
     } as const;
   });
   // Вычеркнутые этапы и под-этапы не нумеруются: номер этапа — его место среди этапов прогона верхнего уровня, он же числитель

@@ -124,8 +124,6 @@ function FlowEditor({ subPath }: { subPath: string }) {
         <FlowDescription flow={flow} />
       </div>
       <div className="flex flex-col gap-2">
-        <h2 className="text-[13px] font-medium">{t.settings.stagesTitle}</h2>
-        <p className="text-xs text-muted-foreground">{t.settings.stagesDescription}</p>
         <WorkStagesTable flowId={flow.id} />
         <div className="flex flex-wrap items-center justify-between gap-2">
           <AddStage flowId={flow.id} />

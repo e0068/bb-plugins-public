@@ -6,7 +6,7 @@ import type { Locale } from "../lib/i18n";
 import { messages } from "../lib/messages";
 import { isDefaultName, SELF_EXECUTOR, stageKindOf, stageSkillOf, type BuiltinKind } from "../lib/stage-constants";
 import { ACTION_TAIL, AUTOMATION_TAIL } from "./automation-run";
-import { stageNumbers } from "./sub-stages";
+import { isHeadingStage, stageNumbers } from "./sub-stages";
 import type { Add, DecisionAnswer, DecisionBrief, Flow, FlowProgress, StageAnswer, StageReport, WorkStage } from "../shared/contract";
 import { sumAdds } from "./adds";
 
@@ -177,7 +177,8 @@ export const reportIssues = (stages: readonly WorkStage[], reports: readonly Sta
     const allowed = idList([SELF, ...stage.executors.map((e) => e.id)]);
     // Встроенные этапы сдаются в самом брифе — ссылаться у них не на что; этап навыка сдаётся ссылками,
     // а ссылки автоматизации дают её шаги — их подставляет сам Flow (withStepResults).
-    const unlinked = r.state !== "todo" && r.results === undefined && stageKindOf(stage) === "skill" && !isAutomationStage(stage);
+    // Заголовку ссылаться не на что: его работу сдают под-этапы.
+    const unlinked = r.state !== "todo" && r.results === undefined && stageKindOf(stage) === "skill" && !isAutomationStage(stage) && !isHeadingStage(stages, stage);
     return [
       ...(unlinked ? [`stage ${r.id}: a ${r.state} skill stage needs results with links`] : []),
       ...(knownExecutor(stage, r.executor) ? [] : [`stage ${r.id}: executor ${r.executor} is not one of the stage's — ${allowed}`]),
@@ -244,8 +245,11 @@ const stageHead = (stages: readonly WorkStage[], s: WorkStage, numbers: Readonly
 export const stageInstructions = (stages: readonly WorkStage[]): string | null => {
   if (stages.length === 0) return null;
   const numbers = stageNumbers(stages);
-  return ["Work stages in the Flow settings — send all of them in setup.stages, in this order:", ...stages.map((s) => stageLine(s, stageHead(stages, s, numbers)))].join("\n");
+  return ["Work stages in the Flow settings — send all of them in setup.stages, in this order:", ...stages.map((s) => (isHeadingStage(stages, s) ? `${stageHead(stages, s, numbers)}${HEADING_TAIL}` : stageLine(s, stageHead(stages, s, numbers))))].join("\n");
 };
+
+/** Хвост этапа-заголовка: исполнять в нём нечего, работа — в его под-этапах. */
+const HEADING_TAIL = " — heading: no work of its own, its sub-stages carry the work; send it in setup.stages without share, and when you reach it mark it done without results";
 
 /** Строка этапа в инструкциях: начало `head` и то, что агенту делать на этапе этого вида. */
 const stageLine = (s: WorkStage, head: string): string => {

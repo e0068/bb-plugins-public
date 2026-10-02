@@ -101,6 +101,14 @@ describe("ответ агенту", () => {
     expect(reply).toMatch(/queued/);
   });
 
+  it("запущенная или поставленная в очередь автоматизация — ход кончается без сообщения владельцу", () => {
+    for (const fact of [{ kind: "started" }, { kind: "busy", stage: "land" }] as const) {
+      const reply = markReply("review", due, fact);
+      expect(reply).toMatch(/end your turn without a message to the owner/i);
+      expect(reply).not.toMatch(/tell the owner/i);
+    }
+  });
+
   it("причины блокировки называются с шагом и ошибкой", () => {
     const self = markReply("review", { kind: "blocked", stage: publish, reason: { kind: "failed", stage: publish, step: "git.create-pr", error: "no token" } }, null);
     expect(self).toMatch(/was NOT started/);

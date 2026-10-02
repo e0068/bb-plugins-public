@@ -509,7 +509,7 @@ function AnswerBlock({ brief, view, roots, footer, below }: { brief: DecisionBri
 
 // ——— «Готово, когда» ———
 
-const itemText = "min-w-0 flex-1 whitespace-pre-wrap break-words py-2 text-[13px] leading-snug";
+const itemText = "min-w-0 flex-1 whitespace-pre-wrap break-words py-2 text-sm leading-relaxed";
 const itemButton = "flex h-7 shrink-0 items-center justify-center rounded-md px-1.5 text-xs text-muted-foreground hover:bg-state-hover hover:text-foreground disabled:cursor-default";
 
 /**
@@ -583,7 +583,7 @@ function Delta({ before, after }: { before: string; after: ReactNode }) {
   return (
     <span className="@container block w-full pb-2">
       <span className="grid grid-cols-1 items-start gap-x-2 gap-y-1 @[31.5rem]:grid-cols-[minmax(240px,1fr)_auto_minmax(240px,1fr)]">
-        <span className="min-w-0 whitespace-pre-wrap break-words text-[13px] leading-snug text-muted-foreground">
+        <span className="min-w-0 whitespace-pre-wrap break-words text-sm leading-relaxed text-muted-foreground">
           <LinkedText text={before} />
         </span>
         <span data-testid="delta-arrow" aria-hidden="true" className="flex h-[18px] items-center text-muted-foreground">
@@ -630,7 +630,7 @@ function CriterionRow({ item, index, view, byOption }: { item: Criterion; index:
             <Delta
               before={change.before}
               after={
-                <span className="whitespace-pre-wrap break-words text-[13px] leading-snug">
+                <span className="whitespace-pre-wrap break-words text-sm leading-relaxed">
                   <LinkedText text={text} />
                 </span>
               }
@@ -828,7 +828,7 @@ function OptionCards({ question, view }: { question: DecisionQuestion; view: Vie
             )}
             <span className="min-w-0 flex-1">
               <span className="flex flex-wrap items-start gap-x-3 gap-y-0.5">
-                <span className="min-w-[min(12rem,100%)] flex-1 text-[13px] font-medium leading-snug">
+                <span className="min-w-[min(12rem,100%)] flex-1 text-sm font-medium leading-relaxed">
                   <Starred on={option.recommended}>
                     <LinkedText text={option.action} />
                   </Starred>
@@ -836,12 +836,12 @@ function OptionCards({ question, view }: { question: DecisionQuestion; view: Vie
                 <OptionMeta option={option} />
               </span>
               {option.description !== undefined && (
-                <span className="mt-1 block break-words text-xs leading-relaxed text-muted-foreground">
+                <span className="mt-1 block break-words text-sm leading-relaxed text-muted-foreground">
                   <RichText text={option.description} />
                 </span>
               )}
               {option.risks !== undefined && (
-                <span className="mt-1 block break-words text-xs leading-relaxed text-muted-foreground">
+                <span className="mt-1 block break-words text-sm leading-relaxed text-muted-foreground">
                   {t.brief.risks} <LinkedText text={option.risks} />
                 </span>
               )}
@@ -915,11 +915,11 @@ function ScopeBlock({ brief, view, scope }: { brief: DecisionBrief; view: View; 
   const base = criteriaSum(brief, removedCriteria(brief, toAnswer(brief, view.draft)));
   return (
     <div role="group" aria-label={t.brief.scope}>
-      <div className="flex flex-wrap items-baseline gap-x-3 text-[13px] font-medium leading-snug">
+      <div className="flex flex-wrap items-baseline gap-x-3 text-sm font-medium leading-relaxed">
         <span>{t.brief.scope}</span>
         <AddMeta add={base} className="ml-auto font-normal" />
       </div>
-      <div className="mt-0.5 break-words text-xs leading-relaxed text-muted-foreground">
+      <div className="mt-0.5 break-words text-sm leading-relaxed text-muted-foreground">
         <RichText text={scope} />
       </div>
     </div>
@@ -938,12 +938,12 @@ function QuestionsSection({ brief, view }: { brief: DecisionBrief; view: View })
       {scope !== undefined && <ScopeBlock brief={brief} view={view} scope={scope} />}
       {visible.map((question, i) => (
         <div key={question.id} role="group" aria-label={plainText(question.question)}>
-          <div className="break-words text-[13px] font-medium leading-snug">
+          <div className="break-words text-sm font-medium leading-relaxed">
             {`${i + 1}. `}
             <LinkedText text={question.question} />
           </div>
           {question.context !== undefined && (
-            <div className="mt-0.5 break-words text-xs text-muted-foreground">
+            <div className="mt-0.5 break-words text-sm leading-relaxed text-muted-foreground">
               <RichText text={question.context} />
             </div>
           )}
@@ -1308,11 +1308,11 @@ function Heading({ brief, subtitle }: { brief: DecisionBrief; subtitle?: string 
   const second = subtitle ?? brief.intro;
   return (
     <div className="flex flex-col gap-0.5">
-      <div className="break-words text-sm font-medium leading-snug">
+      <div className="break-words text-sm font-medium leading-relaxed">
         <LinkedText text={brief.title} />
       </div>
       {second !== undefined && (
-        <div className="break-words text-xs text-muted-foreground">
+        <div className="break-words text-sm leading-relaxed text-muted-foreground">
           <LinkedText text={second} />
         </div>
       )}
@@ -1446,11 +1446,11 @@ export function ClarifyCard({ brief, send, onResult }: FormProps) {
       <SectionTag kind="clarify" className="-mb-3" />
       {brief.questions.map((question) => (
         <div key={question.id} role="group" aria-label={plainText(question.question)}>
-          <div className="break-words text-[13px] font-medium leading-snug">
+          <div className="break-words text-sm font-medium leading-relaxed">
             <LinkedText text={question.question} />
           </div>
           {question.context !== undefined && (
-            <div className="mt-0.5 break-words text-xs text-muted-foreground">
+            <div className="mt-0.5 break-words text-sm leading-relaxed text-muted-foreground">
               <RichText text={question.context} />
             </div>
           )}
@@ -1480,7 +1480,7 @@ export function AnsweredBriefCard({ brief, record, roots }: { brief: DecisionBri
         <>
           <DemoCard brief={brief} roots={roots} />
           <Body brief={brief} view={view} />
-          <div className="break-words text-xs text-muted-foreground">
+          <div className="break-words text-sm leading-relaxed text-muted-foreground">
             <b className="font-semibold text-foreground">{t.outcome.verdict(demoVerdict(record.answer) ?? "comment")}</b>
             {!blank(record.answer.outcome?.note ?? "") && ` — ${record.answer.outcome?.note ?? ""}`}
           </div>
@@ -1493,7 +1493,7 @@ export function AnsweredBriefCard({ brief, record, roots }: { brief: DecisionBri
         </>
       )}
       {!blank(record.answer.note ?? "") && (
-        <div className="break-words text-xs text-muted-foreground">
+        <div className="break-words text-sm leading-relaxed text-muted-foreground">
           <b className="font-semibold text-foreground">{t.common.noteToBrief}</b> {record.answer.note}
         </div>
       )}

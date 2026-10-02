@@ -37,7 +37,7 @@ function Paragraphs({ text }: { text: string }) {
   return (
     <div className="flex flex-col gap-2">
       {paragraphs(text).map((part, i) => (
-        <p key={i} className="m-0 whitespace-pre-wrap break-words text-[13px] leading-relaxed">
+        <p key={i} className="m-0 whitespace-pre-wrap break-words text-sm leading-relaxed">
           <LinkedText text={part} />
         </p>
       ))}
@@ -52,7 +52,7 @@ function Items({ outcome, done }: { outcome: StageOutcome; done: boolean }) {
   return (
     <Group title={done ? t.outcome.done : t.outcome.pending}>
       {items.map((item) => (
-        <div key={item.text} data-demo-item className="flex items-start gap-2 text-[13px] leading-relaxed">
+        <div key={item.text} data-demo-item className="flex items-start gap-2 text-sm leading-relaxed">
           <Icon name={done ? "Check" : "X"} className={cn("mt-1 size-3.5 shrink-0", done ? "text-success" : "text-muted-foreground")} />
           <span className="break-words">
             <LinkedText text={item.text} />
