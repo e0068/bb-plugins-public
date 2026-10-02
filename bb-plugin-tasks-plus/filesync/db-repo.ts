@@ -38,6 +38,8 @@ export interface BoardRow {
 export interface DbRepo extends TaskRepo {
   readBoard(): Promise<BoardRow | null>;
   writeBoard(row: BoardRow): Promise<void>;
+  /** Changes the board's prefix and keeps its name. */
+  writePrefix(prefix: string): Promise<void>;
   /** How many tasks the mirror holds. */
   count(): number;
   /** Polls the database every `pollMs` until `stop()`. */
@@ -495,6 +497,14 @@ export function createDbRepo(client: HranaClient, options: DbRepoOptions): DbRep
         await ready();
         unwrap(await client.execute("UPDATE board SET name = ?, prefix = ?, seq = seq + 1 WHERE id = 1", [row.name, row.prefix]));
         board = { name: row.name, prefix: row.prefix };
+      });
+    },
+
+    writePrefix(prefix) {
+      return serialized(async () => {
+        await ready();
+        unwrap(await client.execute("UPDATE board SET prefix = ?, seq = seq + 1 WHERE id = 1", [prefix]));
+        board = { ...board, prefix };
       });
     },
 

@@ -29,7 +29,7 @@ import {
   savePresetDraft,
   type PresetDraft,
 } from "./preset-dialog.js";
-import { ColorSwatchPicker, DEFAULT_COLOR, Field } from "./shared.js";
+import { ColorSwatchPicker, DEFAULT_COLOR, Field, prefixProblem } from "./shared.js";
 import { FoldersSection } from "./folders-section.js";
 
 function describeError(error: unknown): string {
@@ -42,6 +42,14 @@ function describeError(error: unknown): string {
 
 const NOT_EMPTY_HINT = "Move or delete this project's tasks to delete it.";
 
+/** What a new prefix does beyond the keys: where the change lands and what is left to do. */
+function renameConsequence(project: { database?: { url: string } | null }): string {
+  const mentions = "Mentions of the old keys in task descriptions and comments are rewritten too.";
+  return project.database
+    ? `${mentions} Every machine that opens this board takes the new prefix.`
+    : `${mentions} The task files in the repository change — commit them. Other machines keep the old prefix until it is changed there too.`;
+}
+
 function ProjectSection() {
   const rpc = useTasksRpc();
   const projects = useProjects();
@@ -53,7 +61,9 @@ function ProjectSection() {
   const project = projectList.find((entry) => entry.id === projectId) ?? null;
 
   const [name, setName] = useState("");
+  const [prefix, setPrefix] = useState("");
   const [color, setColor] = useState<string>(DEFAULT_COLOR);
+  const [confirmingRename, setConfirmingRename] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
@@ -67,9 +77,10 @@ function ProjectSection() {
   useEffect(() => {
     if (project) {
       setName(project.name);
+      setPrefix(project.prefix);
       setColor(project.color);
     }
-  }, [project?.id, project?.name, project?.color]);
+  }, [project?.id, project?.name, project?.prefix, project?.color]);
 
   if (projectList.length === 0) {
     return (
@@ -79,24 +90,52 @@ function ProjectSection() {
     );
   }
 
-  const dirty =
+  const prefixChanged = project !== null && prefix !== project.prefix;
+  const prefixError = prefixChanged ? prefixProblem(prefix, projectList, project.id) : null;
+  const fieldsChanged =
     project !== null &&
     (name.trim() !== project.name || color !== project.color);
   const canSave =
-    project !== null && name.trim() !== "" && dirty && !saving && !deleting;
+    project !== null &&
+    name.trim() !== "" &&
+    (fieldsChanged || prefixChanged) &&
+    prefixError === null &&
+    !saving &&
+    !deleting;
   const canDelete =
     project !== null && taskCount === 0 && !saving && !deleting;
 
-  const save = async () => {
+  // A new prefix renames every task key of the board, so it is asked first.
+  const save = () => {
     if (!project || !canSave) return;
+    if (prefixChanged) setConfirmingRename(true);
+    else void write();
+  };
+
+  // The prefix goes first: refused, it leaves the name and color unsaved too.
+  const write = async () => {
+    if (!project) return;
     setSaving(true);
     setError(null);
     try {
-      await rpc.call("updateProject", {
-        projectId: project.id,
-        name: name.trim(),
-        color,
-      });
+      if (prefixChanged) {
+        const renamed = await rpc.call("renameProjectPrefix", { projectId: project.id, prefix });
+        if (!renamed.ok) {
+          setError(
+            renamed.error.code === "project_prefix_conflict"
+              ? `Another board already uses the prefix ${prefix}.`
+              : renamed.error.message,
+          );
+          return;
+        }
+      }
+      if (fieldsChanged) {
+        await rpc.call("updateProject", {
+          projectId: project.id,
+          name: name.trim(),
+          color,
+        });
+      }
     } catch (saveError) {
       setError(describeError(saveError));
     } finally {
@@ -165,6 +204,22 @@ function ProjectSection() {
           className="h-8 w-56"
         />
       </Field>
+      <Field
+        label="Key prefix"
+        hint={prefixError ?? "Task keys use this prefix, e.g. TSK-12. Changing it renames every task key of the board."}
+      >
+        <Input
+          value={prefix}
+          aria-label="Key prefix"
+          aria-invalid={prefixError !== null}
+          onChange={(event) => setPrefix(event.target.value.toUpperCase())}
+          className={
+            prefixError !== null
+              ? "h-8 w-32 border-destructive focus-visible:ring-destructive"
+              : "h-8 w-32"
+          }
+        />
+      </Field>
       <Field label="Color">
         <ColorSwatchPicker value={color} onChange={setColor} />
       </Field>
@@ -173,7 +228,7 @@ function ProjectSection() {
           size="sm"
           className="h-7"
           disabled={!canSave}
-          onClick={() => void save()}
+          onClick={save}
         >
           Save
         </Button>
@@ -195,6 +250,14 @@ function ProjectSection() {
           {error}
         </p>
       ) : null}
+      <ConfirmDialog
+        open={confirmingRename}
+        onOpenChange={setConfirmingRename}
+        title={`Rename the board's task keys from ${project?.prefix ?? ""}-n to ${prefix}-n?`}
+        description={project ? renameConsequence(project) : ""}
+        confirmLabel="Rename keys"
+        onConfirm={() => void write()}
+      />
     </div>
   );
 }

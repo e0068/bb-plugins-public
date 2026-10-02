@@ -9,6 +9,7 @@ import { z } from "zod";
 import {
   createComment,
   publishProjectsChanged,
+  publishProjectTasksChanged,
   registerHandlers,
   type TasksApiStore,
 } from "../api";
@@ -785,9 +786,9 @@ async function runProject(
         `Project prefix is already in use: ${renameInput.prefix}`,
       );
     }
+    if (renameInput) await store.tasks.renameBoardPrefix(project.id, renameInput.prefix);
     const updated = await store.transaction(() =>
       store.tasks.updateProject(project.id, {
-        prefix: renameInput?.prefix,
         name: updateInput?.name,
         color: updateInput?.color,
         folderId: updateInput?.folderId,
@@ -796,6 +797,7 @@ async function runProject(
       }),
     );
     publishProjectsChanged(bb, updated.id);
+    if (renameInput) publishProjectTasksChanged(bb, updated.id);
     return args.flags.has("json")
       ? json({ project: updated })
       : `Updated project ${updated.prefix}  ${updated.name}`;

@@ -801,10 +801,9 @@ export function registerHandlers(
             `Project prefix is already in use: ${input.prefix}`,
           );
         }
-        const project = store.tasks.updateProject(input.projectId, {
-          prefix: input.prefix,
-        });
+        const project = await store.tasks.renameBoardPrefix(input.projectId, input.prefix);
         publishProjectsChanged(bb, project.id);
+        publishProjectTasksChanged(bb, project.id);
         return { ok: true, project: await apiProject(store, project) };
       } catch (error) {
         if (error instanceof TasksDomainFailure) return projectFailure(error);

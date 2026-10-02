@@ -31,7 +31,7 @@ import {
   describeCreateProjectError,
   derivePrefix,
   Field,
-  PROJECT_PREFIX_PATTERN,
+  prefixProblem,
 } from "./shared.js";
 import {
   BbProjectLinkPicker,
@@ -87,16 +87,10 @@ export function NewProjectDialog({ open, onOpenChange }: NewProjectDialogProps) 
     setError(null);
   }, [open]);
 
-  const prefixError = useMemo(() => {
-    if (prefix === "") return null;
-    if (!PROJECT_PREFIX_PATTERN.test(prefix)) {
-      return "Use 1–10 uppercase letters and digits, starting with a letter.";
-    }
-    const clash = (projects.data ?? []).find(
-      (project) => project.prefix.toUpperCase() === prefix.toUpperCase(),
-    );
-    return clash ? `Already used by ${clash.name}.` : null;
-  }, [prefix, projects.data]);
+  const prefixError = useMemo(
+    () => (prefix === "" ? null : prefixProblem(prefix, projects.data ?? [], null)),
+    [prefix, projects.data],
+  );
 
   const linkedTrimmed = resolveBbProjectLink(linkState);
 
