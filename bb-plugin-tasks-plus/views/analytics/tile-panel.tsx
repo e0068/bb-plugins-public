@@ -4,17 +4,18 @@
 // axis labels, grid, trend). Only what the type reads is shown
 // (TILE_USES). Every change goes out at once — the tile on the screen is
 // drawn from the draft — and Save or Cancel ends the edit.
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 
 import { Button } from "../../components/ui/button";
 import { Checkbox } from "../../components/ui/checkbox";
 import { Icon, type IconName } from "../../components/ui/icon";
 import { Input } from "../../components/ui/input";
 import { Select, SelectContent, SelectGroup, SelectItem, SelectLabel, SelectTrigger, SelectValue } from "../../components/ui/select";
-import { CONTENTS_SHARE, FIGURES, FIELD_METRICS, TILE_TITLE_MAX, readsSetting, type Figure, type TileSetting, type TileType, type TileWindow, type WindowUnit, type YMetric, WINDOW_COUNT_MAX, WINDOW_UNITS } from "../../shared/analytics-tile.js";
+import { CONTENTS_SHARE, FIGURES, FIELD_METRICS, TILE_TABLE_FIELDS, TILE_TABLE_ROWS, TILE_TITLE_MAX, readsSetting, tileTable, type TileTable, type Figure, type TileSetting, type TileType, type TileWindow, type WindowUnit, type YMetric, WINDOW_COUNT_MAX, WINDOW_UNITS } from "../../shared/analytics-tile.js";
 import type { Tile } from "../../shared/contract.js";
 import { FIELD_FILTER_KINDS, NUMBER_FIELDS, QUERY_FIELDS, type NumberField, type QueryField } from "../../shared/enums.js";
 import { cn } from "../../lib/utils";
+import { ReorderList } from "../common/reorder-list.js";
 import { ROW_FIELD_LABELS } from "../common/row-field-preference.js";
 import type { SuggestionScope } from "../../shared/tile-conditions.js";
 import { ConditionFilter } from "./condition-filter";
@@ -199,10 +200,120 @@ function PeriodLength({ window, onChange }: { window: Exclude<TileWindow, "page"
   );
 }
 
+/** The table's fields as the list shows them: the shown ones in their order, then the hidden ones in the task table's. */
+const columnItems = (columns: readonly QueryField[]): QueryField[] => [...columns, ...TILE_TABLE_FIELDS.filter((field) => !columns.includes(field))];
+
+/** The shown columns after the list's row at `from` moved to `to`: the hidden rows move too, but only the shown ones are kept. */
+function movedColumns(columns: readonly QueryField[], from: number, to: number): QueryField[] {
+  const items = columnItems(columns);
+  const rest = items.filter((_, index) => index !== from);
+  return [...rest.slice(0, to), items[from]!, ...rest.slice(to)].filter((field) => columns.includes(field));
+}
+
+/** The shown columns with a field shown or hidden; the title stays. */
+const toggledColumn = (columns: readonly QueryField[], field: QueryField): QueryField[] =>
+  field === "title" ? [...columns] : columns.includes(field) ? columns.filter((column) => column !== field) : [...columns, field];
+
+/** «Columns — drag to reorder»: every field the table can show, a check to show it, a grip to move it — Display's list. */
+function TableColumns({ columns, onChange }: { columns: readonly QueryField[]; onChange: (columns: QueryField[]) => void }) {
+  const rows = columnItems(columns).map((field) => ({ id: field, label: fieldLabel(field), visible: columns.includes(field), locked: field === "title" }));
+  return (
+    <ReorderList
+      label="Table columns"
+      rows={rows}
+      onToggle={(field) => onChange(toggledColumn(columns, field as QueryField))}
+      onMove={(from, to) => onChange(movedColumns(columns, from, to))}
+    />
+  );
+}
+
+/** The rows a segment shows at first, typed; only a whole number inside the bounds reaches the tile. */
+function TableRows({ rows, onChange }: { rows: number; onChange: (rows: number) => void }) {
+  const [text, setText] = useState(String(rows));
+  useEffect(() => setText(String(rows)), [rows]);
+  return (
+    <Input
+      type="number"
+      aria-label="Rows per segment"
+      min={TILE_TABLE_ROWS.min}
+      max={TILE_TABLE_ROWS.max}
+      className="h-7 w-20 shrink-0 text-sm tabular-nums"
+      value={text}
+      onChange={(event) => {
+        setText(event.target.value);
+        const value = positive(event.target.value);
+        if (value !== null) onChange(Math.max(TILE_TABLE_ROWS.min, Math.min(TILE_TABLE_ROWS.max, Math.round(value))));
+      }}
+    />
+  );
+}
+
+/** What the table under the chart shows, under «Show segment contents»: columns, sort, rows, row height; the filter is the chart's. */
+function TableSettings({ table, onChange, onShowFilter }: { table: TileTable; onChange: (table: TileTable) => void; onShowFilter: () => void }) {
+  const patch = (next: Partial<TileTable>) => onChange({ ...table, ...next });
+  return (
+    <div data-table-settings className="flex flex-col gap-2 pt-1 pl-6">
+      <div className="flex flex-col gap-1">
+        <span className="px-1.5 text-xs text-muted-foreground">Columns — drag to reorder</span>
+        <TableColumns columns={table.columns} onChange={(columns) => patch({ columns })} />
+      </div>
+      <Row label="Sort">
+        <Pick
+          label="Table sort"
+          value={table.sort?.column ?? NONE}
+          onChange={(value) => patch({ sort: value === NONE ? null : { column: value as QueryField, direction: table.sort?.direction ?? "asc" } })}
+        >
+          <SelectItem value={NONE}>None</SelectItem>
+          {TILE_TABLE_FIELDS.map((field) => (
+            <SelectItem key={field} value={field}>
+              {fieldLabel(field)}
+            </SelectItem>
+          ))}
+        </Pick>
+        {table.sort === null ? null : (
+          <div className="w-24 shrink-0">
+            <Segments
+              label="Table sort direction"
+              value={table.sort.direction}
+              options={[
+                { value: "asc", label: "Asc" },
+                { value: "desc", label: "Desc" },
+              ]}
+              onChange={(direction) => patch({ sort: { ...table.sort!, direction } })}
+            />
+          </div>
+        )}
+      </Row>
+      <Row label="Rows">
+        <TableRows rows={table.rows} onChange={(rows) => patch({ rows })} />
+        <span className="text-sm text-muted-foreground">per segment</span>
+      </Row>
+      <Row label="Row height">
+        <Segments
+          label="Row height"
+          value={table.rowHeight}
+          options={[
+            { value: "regular", label: "Regular" },
+            { value: "compact", label: "Compact" },
+          ]}
+          onChange={(rowHeight) => patch({ rowHeight })}
+        />
+      </Row>
+      <p className="px-1.5 text-xs text-muted-foreground">
+        Filter — shared with the chart,{" "}
+        <button type="button" className="underline underline-offset-2 hover:text-foreground" onClick={onShowFilter}>
+          in Selection
+        </button>
+      </p>
+    </div>
+  );
+}
+
 export function TilePanel({ draft, isNew, scope, onChange, onSave, onCancel }: TilePanelProps) {
   const ganttish = draft.type === "bars" && draft.bars.length === "range";
   const uses = (setting: TileSetting) => readsSetting(draft.type, draft.bars.length, setting);
   const set = (patch: Partial<Tile>) => onChange({ ...draft, ...patch });
+  const filterRef = useRef<HTMLDivElement | null>(null);
   const display = (patch: Partial<Tile["display"]>) => set({ display: { ...draft.display, ...patch } });
   const showContents = (on: boolean) => {
     const { contents: _contents, ...rest } = draft.display;
@@ -364,8 +475,10 @@ export function TilePanel({ draft, isNew, scope, onChange, onSave, onCancel }: T
               </Pick>
             </Row>
           ) : null}
-          <div className="flex flex-col gap-1 px-1.5">
-            <span className="text-sm">Filter</span>
+          <div ref={filterRef} className="flex flex-col gap-1 px-1.5">
+            <span className="text-sm">
+              Filter{draft.display.contents === undefined ? null : <span className="text-xs text-muted-foreground"> — chart and table</span>}
+            </span>
             <ConditionFilter conditions={draft.conditions} scope={scope} onChange={(conditions) => set({ conditions })} />
           </div>
           {uses("sort") ? (
@@ -467,10 +580,13 @@ export function TilePanel({ draft, isNew, scope, onChange, onSave, onCancel }: T
             {uses("contents") ? (
               <Check
                 label="Show segment contents"
-                hint="Lists the tasks under the chart; a click on a segment narrows the list"
+                hint="Lists the tasks under the chart as a table; a click on a segment narrows it"
                 checked={draft.display.contents !== undefined}
                 onChange={showContents}
               />
+            ) : null}
+            {uses("contents") && draft.display.contents !== undefined ? (
+              <TableSettings table={tileTable(draft)} onChange={(table) => set({ table })} onShowFilter={() => filterRef.current?.scrollIntoView({ block: "center", behavior: "smooth" })} />
             ) : null}
           </Section>
         ) : null}

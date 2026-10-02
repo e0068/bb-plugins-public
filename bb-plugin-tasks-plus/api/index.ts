@@ -2,7 +2,7 @@ import type { BbPluginApi, PluginRpcHandlers } from "@get-bb/plugin-sdk";
 import { parseReducedColors, REDUCED_COLORS_KV_KEY } from "@bb-plugins/reduced-colors/core/settings";
 import { burndownEnds, forecastDays, openSeriesOf } from "../analytics/burndown.js";
 import { ganttRowsOf } from "../analytics/gantt.js";
-import { tileAnswer } from "../analytics/tile.js";
+import { segmentTasks, tileAnswer } from "../analytics/tile.js";
 import { isWorkingThread } from "../shared/thread-activity.js";
 import { factsOf, type TaskFacts } from "../shared/task-fields.js";
 import { descendantsOf } from "../shared/subtree.js";
@@ -1439,6 +1439,26 @@ export function registerHandlers(
         projects,
         logStartMs: store.transitions.firstAtMs(),
       };
+    },
+    async analyticsTileTasks(input) {
+      const nowMs = Date.now();
+      const tasks = await store.tasks.listTasks({});
+      const projects = boardProjects();
+      return segmentTasks(
+        {
+          tile: input.tile,
+          tasks,
+          transitions: store.transitions.range(Number.MIN_SAFE_INTEGER, nowMs + 1),
+          edges: input.edges,
+          projectIds: input.projectIds ?? [],
+          picked: input.picked,
+          nowMs,
+          facts: await tileFacts(store, input.tile, tasks, projects),
+        },
+        input.pick,
+        input.sort,
+        input.limit,
+      );
     },
     async loadAnalyticsDashboard() {
       return parseDashboard(await bb.storage.kv.get<unknown>(ANALYTICS_DASHBOARD_KV_KEY));

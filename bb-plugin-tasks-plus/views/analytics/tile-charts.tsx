@@ -5,9 +5,9 @@
 // trend over it. Which segment is picked is the frame's: it lists the
 // segment's tasks — the frame around it, title, menu, switch, legend and the
 // list, is tile-card.tsx.
-import { Fragment, type ReactNode } from "react";
+import { Fragment, useState, type MouseEvent, type ReactNode } from "react";
 
-import { CELL_KEYS_MAX, GRID_LINES_MAX, NONE_KEY, OTHER_KEY, type Figure } from "../../shared/analytics-tile.js";
+import { GRID_LINES_MAX, NONE_KEY, OTHER_KEY, type Figure } from "../../shared/analytics-tile.js";
 import { formatDollars, formatMinutes } from "../../shared/amounts.js";
 import type { TaskStatus, TaskType } from "../../shared/enums.js";
 import type { Tile, TileAnswer } from "../../shared/contract.js";
@@ -19,13 +19,11 @@ import { formatDay, formatHour } from "./closed-model";
 import type { ColumnUnit } from "./default-dashboard";
 import { formatDuration, trendOf } from "./flow-model";
 import { GanttChart } from "./gantt-chart";
+import { lookOf, type PickTarget } from "./segment-pick";
 import { STATUS_LABEL } from "./palette";
 
-/** A picked segment: a column's one series, or — on a ring, whose slice is a whole column — the column. */
-export interface SegmentPick {
-  column: number;
-  seriesId: string | null;
-}
+/** A picked segment: a column's one series, or — series null — the whole column, as a ring's slice is. */
+export type SegmentPick = PickTarget;
 
 export interface TileChartProps {
   tile: Tile;
@@ -40,25 +38,11 @@ export interface TileChartProps {
   onSelect?: (pick: SegmentPick) => void;
 }
 
-/** The cells a pick covers: every cell while nothing is picked, a column's, or one segment's. */
-function pickedCells(answer: TileAnswer, pick: SegmentPick | null): (readonly string[])[] {
-  const series = pick?.seriesId == null ? null : answer.series.findIndex((entry) => entry.key === pick.seriesId);
-  const columns = pick === null ? answer.cells : answer.cells.slice(pick.column, pick.column + 1);
-  return columns.flatMap((column) => (series === null ? column : series < 0 ? [] : [column[series] ?? []]));
-}
-
-/** The tasks behind a pick, each once. */
-export const segmentKeys = (answer: TileAnswer, pick: SegmentPick | null): string[] => [...new Set(pickedCells(answer, pick).flat())];
-
-/** Whether some cell under a pick lists only its first CELL_KEYS_MAX tasks, so the list is cut. */
-export const segmentIsCut = (answer: TileAnswer, pick: SegmentPick | null): boolean => pickedCells(answer, pick).some((cell) => cell.length >= CELL_KEYS_MAX);
-
-/** A pick as the column charts read it: one segment of one series, none for a whole column. */
-const barPick = (selected: SegmentPick | null | undefined) =>
-  selected == null || selected.seriesId === null ? null : { column: selected.column, seriesId: selected.seriesId };
-
-/** What a column chart calls when a segment is clicked, when anything listens. */
-const barSelect = (onSelect: TileChartProps["onSelect"]) => (onSelect === undefined ? undefined : (column: number, seriesId: string) => onSelect({ column, seriesId }));
+/** What a column chart calls when a segment, or a column's empty part, is clicked — when anything listens. */
+const barSelect = (onSelect: TileChartProps["onSelect"]) =>
+  onSelect === undefined
+    ? {}
+    : { onSelect: (column: number, seriesId: string) => onSelect({ column, seriesId }), onSelectColumn: (column: number) => onSelect({ column, seriesId: null }) };
 
 /* ---------- names, colours, numbers ---------- */
 
@@ -87,7 +71,7 @@ export function formatValue(tile: Tile, value: number): string {
 }
 
 /** Whether the X axis reads the window's columns. */
-const timeAxis = (tile: Tile) => tile.x === "time" || ["dueDate", "startDate", "createdAt", "updatedAt"].includes(tile.x);
+export const timeAxis = (tile: Tile) => tile.x === "time" || ["dueDate", "startDate", "createdAt", "updatedAt"].includes(tile.x);
 
 /** A column's name: its time on a time axis, with the day when the columns run past one; its category otherwise. */
 export function columnName(tile: Tile, answer: TileAnswer, edges: readonly number[], unit: ColumnUnit, column: number): string {
@@ -277,8 +261,8 @@ function ColumnsChart({ tile, answer, edges, unit, selected, onSelect }: TileCha
         columnLabel={name}
         ticks={ticks}
         max={max}
-        selected={barPick(selected)}
-        onSelect={barSelect(onSelect)}
+        selected={selected ?? null}
+        {...barSelect(onSelect)}
         underlay={<PlotGrid tile={tile} max={max} columns={count} mirrored />}
         axis={yAxis(tile, max, true)}
       />
@@ -291,8 +275,8 @@ function ColumnsChart({ tile, answer, edges, unit, selected, onSelect }: TileCha
       series={series}
       columnLabel={name}
       ticks={ticks}
-      selected={barPick(selected)}
-      onSelect={barSelect(onSelect)}
+      selected={selected ?? null}
+      {...barSelect(onSelect)}
       underlay={<PlotGrid tile={tile} max={max} columns={count} />}
       overlay={<TrendLine tile={tile} answer={answer} max={max} columns={count} />}
       axis={yAxis(tile, max)}
@@ -310,6 +294,22 @@ const SEGMENT_LOOK = "h-full transition-opacity";
 function BarsChart(props: TileChartProps) {
   const { tile, answer, edges, nowMs, onOpenTask, selected, onSelect } = props;
   const colors = useChartColors();
+  const [hover, setHover] = useState<SegmentPick | null>(null);
+  // A row whose segments can be picked: the pointer over it shows what a click picks, a click beside its segments picks the whole row.
+  const rowPick = (column: number, row: readonly number[]) =>
+    onSelect === undefined || row.every((value) => value <= 0)
+      ? {}
+      : {
+          "data-pickable": true,
+          onMouseMove: (event: MouseEvent) => {
+            const segment = event.target instanceof Element ? event.target.closest("[data-series]") : null;
+            setHover({ column, seriesId: segment?.getAttribute("data-series") ?? null });
+          },
+          onMouseLeave: () => setHover(null),
+          onClick: (event: MouseEvent) => {
+            if (!(event.target instanceof Element && event.target.closest("[data-series]") !== null)) onSelect({ column, seriesId: null });
+          },
+        };
   if (tile.bars.length === "range") {
     const rows = answer.rows.map(({ sinceMs: _since, ...row }) => row);
     return <GanttChart rows={rows} fromMs={edges[0] ?? nowMs} toMs={nowMs} mode={tile.bars.gantt} onOpenTask={onOpenTask} />;
@@ -320,13 +320,12 @@ function BarsChart(props: TileChartProps) {
   const { xLabels, yLabels, grid } = tile.display;
   const count = answer.columns.length;
   const track = xLabels ? 2 : 1;
-  const picked = barPick(selected);
-  // A segment of a bar: a button when a pick is listened for, a plain mark otherwise.
+  // A segment of a bar: a button when a pick is listened for, a plain mark otherwise; the hover shows what a click would pick.
   const segment = (column: number, index: number, value: number) => {
     const entry = series[index];
     if (entry === undefined || value <= 0) return null;
-    const dimmed = picked !== null && !(picked.column === column && picked.seriesId === entry.id);
-    const mark = { "data-segment": `${column}:${entry.id}`, "data-dimmed": String(dimmed), style: { width: `${(value / max) * 100}%`, backgroundColor: entry.color } };
+    const dimmed = lookOf(onSelect === undefined ? null : hover, selected ?? null, column, entry.id) === "dim";
+    const mark = { "data-segment": `${column}:${entry.id}`, "data-series": entry.id, "data-dimmed": String(dimmed), style: { width: `${(value / max) * 100}%`, backgroundColor: entry.color } };
     const look = cn(SEGMENT_LOOK, dimmed && "opacity-30");
     return onSelect === undefined ? (
       <span key={entry.id} {...mark} className={look} />
@@ -337,7 +336,7 @@ function BarsChart(props: TileChartProps) {
         {...mark}
         data-pickable
         aria-label={`${columnName(tile, answer, edges, props.unit, column)} · ${entry.label}: ${formatValue(tile, value)}`}
-        className={cn(look, "hover:opacity-80 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring")}
+        className={cn(look, "focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring")}
         onClick={() => onSelect({ column, seriesId: entry.id })}
       />
     );
@@ -370,7 +369,12 @@ function BarsChart(props: TileChartProps) {
                 {columnName(tile, answer, edges, props.unit, index)}
               </span>
             ) : null}
-            <span data-bar-row className="flex min-w-0 flex-col justify-center gap-0.5 py-1" style={{ gridColumn: track, gridRow: index + 1 }}>
+            <span
+              data-bar-row
+              className="flex min-w-0 flex-col justify-center gap-0.5 py-1"
+              style={{ gridColumn: track, gridRow: index + 1 }}
+              {...rowPick(index, row)}
+            >
               {tracks.map((parts, trackIndex) => (
                 <span key={trackIndex} className="relative flex min-h-1.5 max-h-4 flex-1 overflow-hidden rounded-full bg-muted">
                   {parts.map(({ value, seriesIndex }) => segment(index, seriesIndex, value))}

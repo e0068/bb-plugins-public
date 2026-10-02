@@ -6,20 +6,22 @@
 // picked on it — every task of the chart while none is. The chart itself is
 // tile-charts.tsx; the header doubles as the handle the row board moves the
 // tile by.
-import { useCallback, useLayoutEffect, useRef, useState, type CSSProperties, type KeyboardEvent, type MouseEvent, type PointerEvent } from "react";
+import { useCallback, useLayoutEffect, useRef, useState, type CSSProperties, type KeyboardEvent, type MouseEvent, type PointerEvent, type ReactNode } from "react";
 import { weekBreaks } from "@bb-plugins/analytics-viz/core/weeks";
 
 import { Button } from "../../components/ui/button";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "../../components/ui/dropdown-menu";
 import { Icon } from "../../components/ui/icon";
-import { CELL_KEYS_MAX, CONTENTS_SHARE, readsSetting } from "../../shared/analytics-tile.js";
+import { CONTENTS_SHARE, readsSetting } from "../../shared/analytics-tile.js";
 import type { Tile, TileAnswer } from "../../shared/contract.js";
 import { cn } from "../../lib/utils";
 import { Legend, Swatch, WeekBreaksScope } from "./bars";
 import { useChartColors } from "./chart-colors";
 import { formatDay } from "./closed-model";
 import type { ColumnUnit } from "./default-dashboard";
-import { columnName, formatValue, ROW_CLASS, segmentIsCut, segmentKeys, tileLegend, TileChart, tileSeries, trendAside, type SegmentPick } from "./tile-charts";
+import { useKeepClick, useOutsideReset } from "./pick-scope";
+import { togglePick } from "./segment-pick";
+import { columnName, formatValue, tileLegend, TileChart, tileSeries, timeAxis, trendAside, type SegmentPick } from "./tile-charts";
 
 export interface TileCardProps {
   tile: Tile;
@@ -40,6 +42,8 @@ export interface TileCardProps {
   onOpenTask: (taskKey: string) => void;
   /** The divider let go: the chart's new share of the height. Absent, nothing keeps it. */
   onSplit?: (share: number) => void;
+  /** What stands under the divider: the table of the picked segment's tasks, headed as given, in the given room. */
+  contents?: (segment: { pick: SegmentPick | null; heading: ReactNode; style: CSSProperties }) => ReactNode;
 }
 
 const ALL = "__all";
@@ -189,39 +193,36 @@ function contentsShare(tile: Tile): number | null {
   return share === undefined || !readsSetting(tile.type, tile.bars.length, "contents") ? null : share;
 }
 
-/** The tasks of the picked segment, or of the whole chart while none is picked. */
-function SegmentContents({ tile, answer, edges, unit, pick, style, onOpenTask }: Pick<TileCardProps, "tile" | "edges" | "unit" | "onOpenTask"> & { answer: TileAnswer; pick: SegmentPick | null; style: CSSProperties }) {
+/** «All tasks», or the picked segment's series and column — what the table under the chart is headed with. */
+function SegmentHeading({ tile, answer, edges, unit, pick }: Pick<TileCardProps, "tile" | "edges" | "unit"> & { answer: TileAnswer; pick: SegmentPick | null }) {
   const colors = useChartColors();
-  const keys = segmentKeys(answer, pick);
-  const cut = segmentIsCut(answer, pick);
   const series = pick?.seriesId == null ? undefined : tileSeries(tile, answer, colors).find((entry) => entry.id === pick.seriesId);
   const heading = pick === null ? "All tasks" : [series?.label, columnName(tile, answer, edges, unit, pick.column)].filter(Boolean).join(" · ");
   return (
-    <div data-segment-contents className="flex min-h-0 flex-col gap-1" style={style}>
-      <div className="flex items-center gap-1.5 text-2xs text-muted-foreground">
-        {series === undefined ? null : <Swatch color={series.color} />}
-        <span className="truncate text-foreground">{heading}</span>
-        <span className="shrink-0 tabular-nums">{`· ${keys.length}${cut ? "+" : ""}`}</span>
-      </div>
-      {cut ? <p className="text-2xs text-subtle-foreground">{`Each segment lists its first ${CELL_KEYS_MAX} tasks`}</p> : null}
-      <ul className="min-h-0 flex-1 overflow-auto">
-        {keys.map((key) => (
-          <li key={key} data-task-key={key}>
-            <button type="button" onClick={() => onOpenTask(key)} className={ROW_CLASS}>
-              <span className="max-w-[40%] shrink-0 truncate tabular-nums text-muted-foreground">{key}</span>
-              <span className="min-w-0 flex-1 truncate text-foreground">{answer.titles[key] ?? key}</span>
-            </button>
-          </li>
-        ))}
-      </ul>
-    </div>
+    <>
+      {series === undefined ? null : <Swatch color={series.color} />}
+      <span className="truncate text-foreground">{heading}</span>
+    </>
   );
 }
 
-/** The pick on the chart: dropped with a new answer, whose columns may stand elsewhere. */
-function usePick(answer: TileAnswer | undefined): [SegmentPick | null, (pick: SegmentPick | null) => void] {
-  const [held, setHeld] = useState<{ answer: TileAnswer | undefined; pick: SegmentPick | null }>({ answer, pick: null });
-  return [held.answer === answer ? held.pick : null, (pick) => setHeld({ answer, pick })];
+/**
+ * The pick on the chart, held by its column's key: a new answer — a task
+ * edited, the hour turned — keeps it wherever that column now stands, and
+ * drops it when the column or the series is gone. A time column's key is its
+ * place in the window, so the pick holds the window's start too and goes
+ * when the window moves on.
+ */
+function usePick(answer: TileAnswer | undefined, start: number | null): [SegmentPick | null, (pick: SegmentPick | null) => void] {
+  const [held, setHeld] = useState<{ columnKey: string; seriesId: string | null; start: number | null } | null>(null);
+  const column = held === null || answer === undefined || held.start !== start ? -1 : answer.columns.findIndex((entry) => entry.key === held.columnKey);
+  const seriesKept = held?.seriesId == null || answer?.series.some((entry) => entry.key === held.seriesId) === true;
+  const pick = held === null || column < 0 || !seriesKept ? null : { column, seriesId: held.seriesId };
+  const setPick = (next: SegmentPick | null) => {
+    const columnKey = next === null ? undefined : answer?.columns[next.column]?.key;
+    setHeld(next === null || columnKey === undefined ? null : { columnKey, seriesId: next.seriesId, start });
+  };
+  return [pick, setPick];
 }
 
 /** The divider's share while it is dragged, and the handlers that drag it or move it by the arrows. */
@@ -268,9 +269,12 @@ export function TileCard(props: TileCardProps) {
   const logStart = answer?.logStartMs ?? null;
   const logStartsInside = LOGGED.has(tile.y.metric) && logStart !== null && logStart > (edges[0] ?? 0) && logStart < (edges.at(-1) ?? 0);
   const listed = contentsShare(tile);
-  const [pick, setPick] = usePick(answer);
+  const [pick, setPick] = usePick(answer, timeAxis(tile) ? (edges[0] ?? null) : null);
   const divider = useDivider(listed ?? CONTENTS_SHARE.start, (share) => props.onSplit?.(share));
-  const select = listed === null ? undefined : (next: SegmentPick) => setPick(pick?.column === next.column && pick.seriesId === next.seriesId ? null : next);
+  const select = listed === null ? undefined : (next: SegmentPick) => setPick(togglePick(pick, next));
+  // The pick stays through clicks on the chart, its table and the settings panel, and goes on any other.
+  const keepClick = useKeepClick(tile.id);
+  useOutsideReset(tile.id, pick !== null, () => setPick(null));
   // A click on the chart that lands on no segment drops the pick.
   const clickAside = (event: MouseEvent) => {
     if (!(event.target instanceof Element && event.target.closest("[data-pickable]") !== null)) setPick(null);
@@ -370,7 +374,7 @@ export function TileCard(props: TileCardProps) {
           {chartWithLegend}
         </div>
       ) : (
-        <div ref={divider.boxRef} className="flex min-h-0 flex-1 flex-col">
+        <div ref={divider.boxRef} className="flex min-h-0 flex-1 flex-col" onClickCapture={keepClick}>
           <div data-chart-pane className="flex min-h-0 flex-col gap-2 pb-1.5" style={{ flex: `${divider.share} 1 0px` }} onClick={clickAside}>
             {chartWithLegend}
           </div>
@@ -387,7 +391,11 @@ export function TileCard(props: TileCardProps) {
           >
             <div className="h-px w-full bg-border group-hover/divider:h-0.5 group-hover/divider:bg-foreground/40 group-focus-visible/divider:h-0.5 group-focus-visible/divider:bg-ring" />
           </div>
-          <SegmentContents tile={tile} answer={answer} edges={edges} unit={unit} pick={pick} style={{ flex: `${1 - divider.share} 1 0px` }} onOpenTask={props.onOpenTask} />
+          {props.contents?.({
+            pick,
+            heading: <SegmentHeading tile={tile} answer={answer} edges={edges} unit={unit} pick={pick} />,
+            style: { flex: `${1 - divider.share} 1 0px` },
+          })}
         </div>
       )}
       {logStartsInside ? <p className="text-2xs text-subtle-foreground">Transition log starts on {formatDay(logStart!)} — earlier moves are not recorded.</p> : null}
