@@ -42,10 +42,15 @@ const ruleFor = (glyph: GlyphOverride): string =>
 
 /**
  * Колёсико хода — иконка `Loading` хоста — в строке треда получает логотип его провайдера; вращение остаётся хостовым.
+ * Признак строки хост ставит и на обёртку группы, поэтому строка — та, где ссылка треда не во вложенной строке,
+ * а колёсико — в её собственном хвосте: иначе логотип одного треда лёг бы на колёсики всей группы.
  * Хост переименует иконку или атрибуты строки — селектор промахнётся, и вернётся обычное колёсико.
  */
-const spinnerRuleFor = ({ threadId, logoUrl }: SpinnerLogo): string =>
-  maskRule(`[data-sidebar-rename-row]:has(a[data-sidebar-thread-id="${escapeAttr(threadId)}"]) [data-sidebar-thread-trailing-indicator] > [data-icon="Loading"]`, cssUrl(logoUrl));
+const spinnerRuleFor = ({ threadId, logoUrl }: SpinnerLogo): string => {
+  const link = `a[data-sidebar-thread-id="${escapeAttr(threadId)}"]`;
+  const ownRow = `[data-sidebar-rename-row]:has(${link}):not(:has([data-sidebar-rename-row] ${link}))`;
+  return maskRule(`${ownRow} > [data-sidebar-thread-trailing] [data-sidebar-thread-trailing-indicator] > [data-icon="Loading"]`, cssUrl(logoUrl));
+};
 
 /** Весь стиль; пустые списки — пустая строка. */
 export const glyphCss = (overrides: readonly GlyphOverride[], spinners: readonly SpinnerLogo[] = []): string =>
