@@ -1,52 +1,41 @@
-// The analytics screen: header with the project filter and the D/W/M/All cut,
-// the figure strip, then rows of sections that stay where they are — only
-// the splitters between and under them resize (row-board.tsx), and the sizes
-// are remembered. Laid out after Usage Analytics. This file is the shell:
-// it asks the server, keeps the filter and the sizes, and hands numbers to
-// the sections; every pure piece lives in the modules it imports.
-import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+// The analytics screen: header with the project filter and the D/W/M/All
+// cut, then rows of tiles. Every tile is a setting of one model
+// (shared/analytics-tile.ts) answered by one RPC (analyticsTile); the set of
+// tiles and their rows are kept in the plugin's KV, the same on every device.
+// The owner edits a tile in the side panel — the tile on the screen is drawn
+// from the draft while the panel is open — duplicates, deletes and moves it,
+// and adds new ones from the empty tile at the end. This file is the shell:
+// it asks the server and keeps the state; every pure piece lives in the
+// modules it imports.
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 
-import { weekBreaks } from "@bb-plugins/analytics-viz/core/weeks";
 import { Button } from "../../components/ui/button";
-import type { ClosedTasks, ClosedWindows, FlowAnswer, GanttAnswer, TasksSnapshot } from "../../shared/contract.js";
-import { GANTT_MODES, type GanttMode } from "../../shared/enums.js";
-import { useTasksQuery } from "../../client/data";
+import { DropdownMenu, DropdownMenuCheckboxItem, DropdownMenuContent, DropdownMenuTrigger } from "../../components/ui/dropdown-menu";
+import { Icon } from "../../components/ui/icon";
+import type { Dashboard, Tile, TileAnswer } from "../../shared/contract.js";
+import { useTasksQuery, useTasksRpc } from "../../client/data";
 import { useTasksNavigation } from "../../client/routes.js";
-import { ChartCard, Swatch, WeekBreaksScope, type ColumnWeekBreak } from "./bars";
+import { cn } from "../../lib/utils";
+import { isSuggested } from "../../shared/tile-conditions.js";
+import { Swatch } from "./bars";
+import { useSuggestionScope } from "./suggestion-scope";
 import { ChartColorsScope, useChartColors } from "./chart-colors";
-import { dayEdges, hourEdges } from "./closed-model";
-import { ClosedSection, formatDay, formatHour } from "./closed-section";
+import { hourEdges } from "./closed-model";
 import {
   ANALYTICS_WINDOWS,
   type AnalyticsFilter,
   type AnalyticsWindow,
-  columnDays,
+  columnUnit,
+  copyTitle,
   DEFAULT_FILTER,
-  defaultAnalyticsRows,
-  type SectionKind,
-  weekBreaksOf,
-  weekEdges,
-  windowEdges,
+  defaultDashboard,
+  newTile,
+  tileEdges,
 } from "./default-dashboard";
-import {
-  Aging,
-  Burndown,
-  ClosedByType,
-  CostByProject,
-  CreatedClosed,
-  CycleTime,
-  EstimateAccuracy,
-  KpiStrip,
-  StatusChanges,
-  WorkInProgress,
-} from "./flow-sections";
-import { GanttChart } from "./gantt-chart";
 import { RowBoard } from "./row-board";
-import { useSavedLayout } from "./saved-layout";
-
-const LAYOUT_KEY = "bb-plugins:tasks-plus:analytics:rows";
-
-const DEFAULT_ROWS = defaultAnalyticsRows();
+import { insertCell, insertRow, keepCells, removeCell, type RowLayout } from "./row-layout";
+import { fitting, TileCard } from "./tile-card";
+import { TilePanel } from "./tile-panel";
 
 /** Below this width the rows stack into one column. */
 const STACK_BELOW_PX = 768;
@@ -66,34 +55,29 @@ function useMeasuredWidth(): [React.RefObject<HTMLDivElement | null>, number] {
   return [ref, width];
 }
 
-const HOUR_CHECK_MS = 60_000;
+const CLOCK_TICK_MS = 60_000;
 
 /** Start of the viewer's current local hour — the last column of the hourly charts. */
 const currentHourStart = () => hourEdges(Date.now())[23]!;
 
-/** The current local hour, re-read every minute — the charts refetch when it rolls over. */
-function useCurrentHour(): number {
+/** Start of the current minute. */
+const currentMinuteStart = () => Math.floor(Date.now() / CLOCK_TICK_MS) * CLOCK_TICK_MS;
+
+/** The current local hour, re-read every minute; and the current minute, ticking only while some tile counts minutes — so a quiet screen does not re-render each minute. */
+function useClock(countsMinutes: boolean): { hour: number; minute: number } {
   const [hour, setHour] = useState(currentHourStart);
+  const [minute, setMinute] = useState(currentMinuteStart);
   useEffect(() => {
-    const timer = window.setInterval(() => setHour(currentHourStart()), HOUR_CHECK_MS);
+    const timer = window.setInterval(() => {
+      setHour(currentHourStart());
+      if (countsMinutes) setMinute(currentMinuteStart());
+    }, CLOCK_TICK_MS);
     return () => window.clearInterval(timer);
-  }, []);
-  return hour;
+  }, [countsMinutes]);
+  return { hour, minute };
 }
 
-/** Closed tasks of one chart, with the column edges they were fetched for. */
-type ClosedWindow = { edges: number[]; data: ClosedTasks };
-
-interface AnalyticsData {
-  nowMs: number;
-  edges: number[];
-  weeks: number[];
-  snapshot: TasksSnapshot;
-  flow: FlowAnswer;
-  hourly: ClosedWindow;
-  daily: ClosedWindow;
-  gantt: GanttAnswer;
-}
+const countsMinutes = (tile: Tile): boolean => tile.window !== "page" && tile.window.unit === "minute";
 
 const WINDOW_TITLE: Record<AnalyticsWindow, string> = { day: "Day", week: "Week", month: "Month", all: "All time" };
 
@@ -102,40 +86,195 @@ function ProjectSwatch({ index }: { index: number }) {
   return <Swatch color={useChartColors().project(index)} />;
 }
 
-export function AnalyticsDashboard() {
-  const [filter, setFilter] = useState<AnalyticsFilter>(DEFAULT_FILTER);
-  const [layout, setLayout] = useSavedLayout(LAYOUT_KEY, DEFAULT_ROWS);
-  const [pageRef, pageWidth] = useMeasuredWidth();
-  const navigation = useTasksNavigation();
-  const hour = useCurrentHour();
+export interface ProjectChipsProps {
+  projects: readonly { id: string; name: string }[];
+  /** The projects picked; none — all of them. */
+  picked: readonly string[];
+  onAll: () => void;
+  onToggle: (projectId: string) => void;
+}
 
-  const query = useTasksQuery<AnalyticsData>(
+/**
+ * The project filter in one row: All projects and the projects that fit,
+ * the rest under «+N» with a check on the picked ones. A hidden ruler holds
+ * every chip, each with the gap after it, so the row knows how many fit.
+ */
+export function ProjectChips({ projects, picked, onAll, onToggle }: ProjectChipsProps) {
+  const rowRef = useRef<HTMLDivElement | null>(null);
+  const rulerRef = useRef<HTMLDivElement | null>(null);
+  const [shown, setShown] = useState(projects.length + 1);
+  const measure = useCallback(() => {
+    const row = rowRef.current;
+    const ruler = rulerRef.current;
+    if (row === null || ruler === null) return;
+    setShown(fitting((Array.from(ruler.children) as HTMLElement[]).map((chip) => chip.offsetWidth), row.offsetWidth));
+  }, []);
+  const signature = projects.map((project) => project.name).join("|");
+  useLayoutEffect(() => {
+    measure();
+    const row = rowRef.current;
+    if (row === null) return;
+    const observer = new ResizeObserver(measure);
+    observer.observe(row);
+    return () => observer.disconnect();
+  }, [measure, signature]);
+
+  const all = (
+    <Button type="button" size="sm" variant={picked.length === 0 ? "default" : "outline"} aria-pressed={picked.length === 0} onClick={onAll}>
+      All projects
+    </Button>
+  );
+  const chip = (project: { id: string; name: string }, index: number) => (
+    <Button key={project.id} type="button" size="sm" variant={picked.includes(project.id) ? "default" : "outline"} aria-pressed={picked.includes(project.id)} onClick={() => onToggle(project.id)}>
+      <ProjectSwatch index={index} />
+      {project.name}
+    </Button>
+  );
+  const chips = projects.slice(0, Math.max(0, shown - 1));
+  const folded = projects.slice(chips.length);
+  return (
+    <div ref={rowRef} data-chips-row role="group" aria-label="Projects" className="relative flex min-w-0 flex-1 basis-40 items-center gap-2">
+      <div ref={rulerRef} aria-hidden className="pointer-events-none invisible absolute flex">
+        {[all, ...projects.map(chip)].map((entry, index) => (
+          <span key={index} data-chip className="shrink-0 pr-2">
+            {entry}
+          </span>
+        ))}
+      </div>
+      {all}
+      {chips.map(chip)}
+      {folded.length === 0 ? null : (
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button type="button" size="sm" variant={folded.some((project) => picked.includes(project.id)) ? "default" : "outline"}>{`+${folded.length}`}</Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="start" collisionPadding={8} mobileTitle="Projects">
+            {folded.map((project, index) => (
+              <DropdownMenuCheckboxItem key={project.id} checked={picked.includes(project.id)} onCheckedChange={() => onToggle(project.id)}>
+                <ProjectSwatch index={chips.length + index} />
+                {project.name}
+              </DropdownMenuCheckboxItem>
+            ))}
+          </DropdownMenuContent>
+        </DropdownMenu>
+      )}
+    </div>
+  );
+}
+
+/** The tile being edited: its draft, and whether Save adds it rather than replaces it. */
+interface Editing {
+  id: string;
+  draft: Tile;
+  isNew: boolean;
+}
+
+/** A layout's rows as the dashboard keeps them. */
+const rowsOf = (layout: RowLayout): Dashboard["rows"] => layout.rows.map((row) => ({ ...row, cells: row.cells.map((cell) => ({ ...cell })) }));
+
+/** An id no tile of the dashboard has. */
+const freshId = (dashboard: Dashboard) => {
+  const taken = new Set(dashboard.tiles.map((tile) => tile.id));
+  const stamp = Date.now().toString(36);
+  return [...Array(dashboard.tiles.length + 1).keys()].map((n) => `tile-${stamp}-${n}`).find((id) => !taken.has(id))!;
+};
+
+interface TileSlotProps {
+  tile: Tile;
+  filter: AnalyticsFilter;
+  /** When the asked projects' history starts — where all time opens. */
+  firstMs: number;
+  hour: number;
+  /** Start of the current minute; only a tile counting minutes asks again on it. */
+  minute: number;
+  picked: string | null;
+  editing: boolean;
+  onPick: (key: string | null) => void;
+  onEdit: () => void;
+  onDuplicate: () => void;
+  onDelete: () => void;
+  onOpenTask: (taskKey: string) => void;
+  onSplit: (share: number) => void;
+}
+
+/** One tile and its own answer, asked again when its settings, the page's cut or the hour change. */
+function TileSlot({ tile, filter, firstMs, hour, minute, picked, ...card }: TileSlotProps) {
+  const query = useTasksQuery<{ answer: TileAnswer; edges: number[]; nowMs: number }>(
     async (rpc) => {
       const nowMs = Date.now();
-      const projectIds = [...filter.projectIds];
-      // All time opens at the first task, which only the server knows.
-      const firstMs = filter.window === "all" ? ((await rpc.call("analyticsSpan", { projectIds })).firstCreatedMs ?? nowMs) : nowMs;
-      const edges = windowEdges(filter.window, nowMs, firstMs);
-      const weeks = weekEdges(nowMs);
-      const closedEdges = [hourEdges(nowMs), dayEdges(nowMs)];
-      const [snapshot, flow, closed, gantt] = await Promise.all([
-        rpc.call("analyticsSnapshot", { projectIds }),
-        rpc.call("analyticsFlow", { edges, weekEdges: weeks, projectIds }),
-        rpc.call("analyticsClosed", { windows: closedEdges, projectIds }),
-        rpc.call("ganttRows", { fromMs: edges[0]!, projectIds }),
-      ]);
-      const answer = closed as ClosedWindows;
-      const chart = (index: number): ClosedWindow => ({
-        edges: closedEdges[index]!,
-        data: { closings: answer.windows[index]?.closings ?? [], projects: answer.projects, logStartMs: answer.logStartMs },
-      });
-      return { nowMs, edges, weeks, snapshot, flow, hourly: chart(0), daily: chart(1), gantt } as AnalyticsData;
+      const edges = tileEdges(tile.window, filter.window, nowMs, firstMs);
+      const answer = await rpc.call("analyticsTile", { tile, edges, projectIds: [...filter.projectIds], picked });
+      return { answer, edges, nowMs };
     },
     ["tasks:changed"],
-    [filter.window, filter.projectIds, hour],
+    // The answer reads neither the title nor the look, so typing a title or toggling the legend asks nothing again.
+    [{ ...tile, title: "", display: null }, filter.window, filter.projectIds, firstMs, countsMinutes(tile) ? minute : hour, picked],
+  );
+  const data = query.data;
+  return (
+    <TileCard
+      {...card}
+      tile={tile}
+      answer={data?.answer}
+      error={query.error}
+      edges={data?.edges ?? []}
+      unit={columnUnit(tile.window, filter.window)}
+      nowMs={data?.nowMs ?? Date.now()}
+      picked={picked}
+    />
+  );
+}
+
+export function AnalyticsDashboard() {
+  const [filter, setFilter] = useState<AnalyticsFilter>(DEFAULT_FILTER);
+  const [pageRef, pageWidth] = useMeasuredWidth();
+  const navigation = useTasksNavigation();
+  const rpc = useTasksRpc();
+  const [dashboard, setDashboard] = useState<Dashboard | null>(null);
+  const [editing, setEditing] = useState<Editing | null>(null);
+  const { hour, minute } = useClock(Boolean(dashboard?.tiles.some(countsMinutes)) || (editing !== null && countsMinutes(editing.draft)));
+  // The boards' values, loaded only while the tile being edited filters a field that has some to offer.
+  const scope = useSuggestionScope(editing?.draft.conditions.some((condition) => isSuggested(condition.field)) ?? false);
+  const [picks, setPicks] = useState<Readonly<Record<string, string | null>>>({});
+
+  const stored = useTasksQuery((client) => client.call("loadAnalyticsDashboard", {}), [], []);
+  useEffect(() => {
+    if (dashboard === null && stored.data !== undefined) setDashboard(stored.data ?? defaultDashboard());
+  }, [dashboard, stored.data]);
+
+  const projectsQuery = useTasksQuery((client) => client.call("listProjects", {}), ["projects:changed"], []);
+  const projects = [...(projectsQuery.data?.projects ?? [])].sort((a, b) => a.name.localeCompare(b.name) || a.id.localeCompare(b.id));
+
+  const span = useTasksQuery(
+    async (client) => (filter.window === "all" ? ((await client.call("analyticsSpan", { projectIds: [...filter.projectIds] })).firstCreatedMs ?? Date.now()) : Date.now()),
+    ["tasks:changed"],
+    [filter.window, filter.projectIds],
+  );
+  const firstMs = filter.window === "all" ? (span.data ?? null) : hour;
+
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const save = useCallback(
+    (next: Dashboard) => {
+      setDashboard(next);
+      rpc.call("saveAnalyticsDashboard", next).then(
+        () => setSaveError(null),
+        (error: unknown) => setSaveError(`The charts were not saved — ${error instanceof Error ? error.message : String(error)}`),
+      );
+    },
+    [rpc],
   );
 
   const openTask = useCallback((taskKey: string) => navigation.go({ kind: "task", taskKey }), [navigation]);
+
+  // Escape closes the panel the way Cancel does.
+  useEffect(() => {
+    if (editing === null) return;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape" && !event.defaultPrevented) setEditing(null);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [editing]);
 
   const toggleProject = (projectId: string) =>
     setFilter((current) => ({
@@ -145,189 +284,149 @@ export function AnalyticsDashboard() {
         : [...current.projectIds, projectId],
     }));
 
-  const data = query.data;
-  const projects = data?.flow.projects ?? [];
+  /** The dashboard as drawn: a new tile being added stands in its own row at the bottom until it is saved or dropped. */
+  const shown: Dashboard | null =
+    dashboard === null
+      ? null
+      : editing?.isNew
+        ? { ...dashboard, tiles: [...dashboard.tiles, editing.draft], rows: rowsOf(insertRow({ rows: dashboard.rows }, editing.id)) }
+        : dashboard;
+
+  const tileOf = (id: string): Tile | undefined => (editing?.id === id ? editing.draft : shown?.tiles.find((tile) => tile.id === id));
+
+  const addTile = () => {
+    if (dashboard === null) return;
+    const id = freshId(dashboard);
+    setEditing({ id, draft: newTile(id), isNew: true });
+  };
+
+  const commit = () => {
+    if (dashboard === null || editing === null) return;
+    // A value picked on the old switch means nothing on a new one.
+    if (dashboard.tiles.find((tile) => tile.id === editing.id)?.switch !== editing.draft.switch) setPicks((current) => ({ ...current, [editing.id]: null }));
+    save(
+      editing.isNew
+        ? { ...dashboard, tiles: [...dashboard.tiles, editing.draft], rows: rowsOf(insertRow({ rows: dashboard.rows }, editing.id)) }
+        : { ...dashboard, tiles: dashboard.tiles.map((tile) => (tile.id === editing.id ? editing.draft : tile)) },
+    );
+    setEditing(null);
+  };
+
+  const duplicate = (tile: Tile) => {
+    if (dashboard === null) return;
+    const id = freshId(dashboard);
+    save({ ...dashboard, tiles: [...dashboard.tiles, { ...tile, id, title: copyTitle(tile.title) }], rows: rowsOf(insertCell({ rows: dashboard.rows }, tile.id, id)) });
+  };
+
+  const remove = (id: string) => {
+    if (dashboard === null) return;
+    if (editing?.id === id) setEditing(null);
+    save({ ...dashboard, tiles: dashboard.tiles.filter((tile) => tile.id !== id), rows: rowsOf(removeCell({ rows: dashboard.rows }, id)) });
+  };
+
+  /** The divider of a tile let go: its chart's share, kept in the saved tile and in the draft the panel holds. */
+  const split = (id: string, share: number) => {
+    const withShare = (tile: Tile): Tile => ({ ...tile, display: { ...tile.display, contents: share } });
+    if (editing?.id === id) setEditing((current) => (current === null ? null : { ...current, draft: withShare(current.draft) }));
+    // A tile whose contents are only turned on in its draft keeps nothing until it is saved.
+    if (dashboard?.tiles.some((tile) => tile.id === id && tile.display.contents !== undefined)) save({ ...dashboard, tiles: dashboard.tiles.map((tile) => (tile.id === id ? withShare(tile) : tile)) });
+  };
+
+  const relayout = (layout: RowLayout) => {
+    // A tile being added has a cell but is no tile yet: only that cell goes, never the tiles sharing its row.
+    if (dashboard !== null) save({ ...dashboard, rows: rowsOf(keepCells(layout, dashboard.tiles.map((tile) => tile.id))) });
+  };
 
   return (
     <ChartColorsScope boardProjects={projects.length}>
-      <div ref={pageRef} className="h-full overflow-y-auto">
-        <div className="flex min-h-full flex-col gap-6 px-6 py-8">
-          <header className="space-y-1">
-            <h1 className="text-lg font-semibold text-foreground">Analytics</h1>
-            <p className="text-sm text-muted-foreground">Tasks across your boards — how statuses move, what is left and what got closed</p>
-          </header>
+      <div className="relative flex h-full min-h-0">
+        <div ref={pageRef} className="h-full min-w-0 flex-1 overflow-y-auto">
+          <div className="flex min-h-full flex-col gap-6 px-6 py-8">
+            <header className="space-y-1">
+              <h1 className="text-lg font-semibold text-foreground">Analytics</h1>
+              <p className="text-sm text-muted-foreground">Tasks across your boards — how statuses move, what is left and what got closed</p>
+            </header>
 
-          <section className="flex flex-wrap items-center gap-x-4 gap-y-2 border-b border-border pb-4">
-            <div className="flex flex-wrap items-center gap-2" role="group" aria-label="Projects">
-              <Button
-                type="button"
-                size="sm"
-                variant={filter.projectIds.length === 0 ? "default" : "outline"}
-                aria-pressed={filter.projectIds.length === 0}
-                onClick={() => setFilter((current) => ({ ...current, projectIds: [] }))}
-              >
-                All projects
-              </Button>
-              {projects.map((project, index) => (
-                <Button
-                  key={project.id}
-                  type="button"
-                  size="sm"
-                  variant={filter.projectIds.includes(project.id) ? "default" : "outline"}
-                  aria-pressed={filter.projectIds.includes(project.id)}
-                  onClick={() => toggleProject(project.id)}
-                >
-                  <ProjectSwatch index={index} />
-                  {project.name}
-                </Button>
-              ))}
-            </div>
-            <div className="ml-auto flex gap-1" role="group" aria-label="Period">
-              {ANALYTICS_WINDOWS.map((window) => (
-                <Button
-                  key={window}
-                  type="button"
-                  size="sm"
-                  variant={filter.window === window ? "default" : "outline"}
-                  aria-pressed={filter.window === window}
-                  onClick={() => setFilter((current) => ({ ...current, window }))}
-                >
-                  {WINDOW_TITLE[window]}
-                </Button>
-              ))}
-            </div>
-          </section>
+            {/* One row: the projects fold under +N; only a page too narrow for All projects, +N and the period puts the period under them. */}
+            <section className="flex flex-wrap items-center gap-x-4 gap-y-2 border-b border-border pb-4">
+              <ProjectChips projects={projects} picked={filter.projectIds} onAll={() => setFilter((current) => ({ ...current, projectIds: [] }))} onToggle={toggleProject} />
+              <div className="ml-auto flex shrink-0 gap-1" role="group" aria-label="Period">
+                {ANALYTICS_WINDOWS.map((window) => (
+                  <Button
+                    key={window}
+                    type="button"
+                    size="sm"
+                    variant={filter.window === window ? "default" : "outline"}
+                    aria-pressed={filter.window === window}
+                    onClick={() => setFilter((current) => ({ ...current, window }))}
+                  >
+                    {WINDOW_TITLE[window]}
+                  </Button>
+                ))}
+              </div>
+            </section>
 
-          {query.error ? <p className="text-xs text-destructive">{query.error}</p> : null}
+            {stored.error ? <p className="text-xs text-destructive">{stored.error}</p> : null}
+            {saveError ? <p className="text-xs text-destructive">{saveError}</p> : null}
 
-          {data === undefined ? <div className="h-14 animate-pulse rounded-md bg-muted/40" /> : <KpiStrip snapshot={data.snapshot} flow={data.flow} />}
-
-          {pageWidth > 0 ? (
-            <RowBoard
-              layout={layout}
-              stacked={pageWidth < STACK_BELOW_PX}
-              onChange={setLayout}
-              renderCell={(id) => (data === undefined ? <Pulse /> : <Section kind={id as SectionKind} data={data} window={filter.window} onOpenTask={openTask} />)}
-            />
-          ) : null}
+            {shown === null || pageWidth === 0 || firstMs === null ? (
+              <div className="h-40 animate-pulse rounded-lg bg-muted/40" />
+            ) : (
+              <>
+                <RowBoard
+                  layout={{ rows: shown.rows }}
+                  stacked={pageWidth < STACK_BELOW_PX}
+                  onChange={relayout}
+                  renderCell={(id) => {
+                    const tile = tileOf(id);
+                    return tile === undefined ? null : (
+                      <TileSlot
+                        tile={tile}
+                        filter={filter}
+                        firstMs={firstMs}
+                        hour={hour}
+                        minute={minute}
+                        // A draft whose switch reads another field has no value picked on it yet.
+                        picked={editing?.id === id && editing.draft.switch !== dashboard?.tiles.find((entry) => entry.id === id)?.switch ? null : (picks[id] ?? null)}
+                        editing={editing?.id === id}
+                        onPick={(key) => setPicks((current) => ({ ...current, [id]: key }))}
+                        onEdit={() => setEditing({ id, draft: tile, isNew: false })}
+                        onDuplicate={() => duplicate(tile)}
+                        onDelete={() => remove(id)}
+                        onOpenTask={openTask}
+                        onSplit={(share) => split(id, share)}
+                      />
+                    );
+                  }}
+                />
+                {editing?.isNew ? null : (
+                  <button
+                    type="button"
+                    onClick={addTile}
+                    className="flex min-h-24 shrink-0 items-center justify-center gap-1.5 rounded-lg text-sm text-muted-foreground ring-1 ring-border ring-inset hover:bg-state-hover hover:text-foreground"
+                  >
+                    <Icon name="Plus" className="size-3.5" />
+                    Add chart
+                  </button>
+                )}
+              </>
+            )}
+          </div>
         </div>
+        {editing === null ? null : (
+          // Beside the tiles on a wide screen, pushing them narrower; over them, full width, on a narrow one — as Display.
+          <div className={cn("w-[320px] shrink-0 border-l border-border-hairline", "max-md:absolute max-md:inset-0 max-md:z-30 max-md:w-full max-md:border-l-0")}>
+            <TilePanel
+              draft={editing.draft}
+              isNew={editing.isNew}
+              scope={scope}
+              onChange={(draft) => setEditing((current) => (current === null ? null : { ...current, draft }))}
+              onSave={commit}
+              onCancel={() => setEditing(null)}
+            />
+          </div>
+        )}
       </div>
     </ChartColorsScope>
-  );
-}
-
-function Pulse() {
-  return <div className="h-full w-full animate-pulse rounded-md bg-muted/40" />;
-}
-
-interface SectionProps {
-  kind: SectionKind;
-  data: AnalyticsData;
-  window: AnalyticsWindow;
-  onOpenTask: (taskKey: string) => void;
-}
-
-/** Week breaks of a chart's columns, labelled by their Monday. */
-const labelled = (breaks: readonly { column: number; mondayMs: number }[]): ColumnWeekBreak[] =>
-  breaks.map(({ column, mondayMs }) => ({ column, label: formatDay(mondayMs) }));
-
-function Section({ kind, data, window, onOpenTask }: SectionProps): ReactNode {
-  const columnLabel = (column: number) => {
-    const start = data.edges[column]!;
-    switch (window) {
-      case "day":
-        return formatHour(start);
-      case "week":
-      case "month":
-        return formatDay(start);
-      case "all":
-        return `Week of ${formatDay(start)}`;
-    }
-  };
-  const weekLabel = (week: number) => `Week of ${formatDay(data.weeks[week]!)}`;
-  const windowBreaks = labelled(weekBreaksOf(window, data.edges));
-  const inWeeks = (chart: ReactNode) => <WeekBreaksScope breaks={windowBreaks}>{chart}</WeekBreaksScope>;
-  switch (kind) {
-    case "changes":
-      return inWeeks(<StatusChanges flow={data.flow} columnLabel={columnLabel} />);
-    case "burndown":
-      return inWeeks(<Burndown flow={data.flow} columnLabel={columnLabel} columnsPerDay={1 / columnDays(window)} />);
-    case "closed-hourly":
-    case "closed-daily": {
-      const hourly = kind === "closed-hourly";
-      const chart = hourly ? data.hourly : data.daily;
-      return (
-        // Keyed by the first column: when the window rolls over, a picked
-        // segment would point at a different hour or day, so the pick resets.
-        // Days mark their weeks; hours are too fine for it.
-        <WeekBreaksScope breaks={hourly ? [] : labelled(weekBreaks(chart.edges.slice(0, -1)))}>
-          <ClosedSection
-            key={chart.edges[0]}
-            title={hourly ? "Closed — last 24 hours" : "Closed — last 30 days"}
-            edges={chart.edges}
-            data={chart.data}
-            formatBin={hourly ? formatHour : formatDay}
-            onOpenTask={onOpenTask}
-          />
-        </WeekBreaksScope>
-      );
-    }
-    case "created-closed":
-      return inWeeks(<CreatedClosed flow={data.flow} columnLabel={columnLabel} />);
-    case "wip":
-      return inWeeks(<WorkInProgress flow={data.flow} columnLabel={columnLabel} />);
-    case "cycle":
-      return <CycleTime rows={data.flow.cycle} />;
-    case "accuracy":
-      return <EstimateAccuracy rows={data.flow.accuracy} />;
-    case "cost":
-      return <CostByProject costs={data.flow.costByProject} projects={data.flow.projects} />;
-    case "aging":
-      return <Aging entries={data.flow.aging} projects={data.flow.projects} nowMs={data.nowMs} onOpenTask={onOpenTask} />;
-    case "types":
-      return <ClosedByType weeks={data.flow.typesByWeek} weekLabel={weekLabel} />;
-    case "gantt":
-      return <GanttSection rows={data.gantt.rows} fromMs={data.edges[0]!} toMs={data.nowMs} onOpenTask={onOpenTask} />;
-  }
-}
-
-const GANTT_MODE_TITLE: Record<GanttMode, string> = { plan: "Plan", fact: "Fact", both: "Both" };
-
-/** The tasks of the period on a Gantt, the plan, the facts or both at the owner's pick. */
-function GanttSection({
-  rows,
-  fromMs,
-  toMs,
-  onOpenTask,
-}: {
-  rows: GanttAnswer["rows"];
-  fromMs: number;
-  toMs: number;
-  onOpenTask: (taskKey: string) => void;
-}) {
-  const [mode, setMode] = useState<GanttMode>("fact");
-  return (
-    <ChartCard
-      title="Gantt"
-      aside={
-        <span className="inline-flex gap-1" role="group" aria-label="Gantt shows">
-          {GANTT_MODES.map((option) => (
-            <Button
-              key={option}
-              type="button"
-              size="sm"
-              className="h-6 px-2"
-              variant={mode === option ? "default" : "outline"}
-              aria-pressed={mode === option}
-              onClick={() => setMode(option)}
-            >
-              {GANTT_MODE_TITLE[option]}
-            </Button>
-          ))}
-        </span>
-      }
-    >
-      <GanttChart rows={rows} fromMs={fromMs} toMs={toMs} mode={mode} onOpenTask={onOpenTask} />
-    </ChartCard>
   );
 }

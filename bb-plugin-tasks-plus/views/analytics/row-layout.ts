@@ -1,9 +1,9 @@
 // Pure model of the analytics rows: which rows there are, how tall each one
-// is and how its width splits between its sections. The order and the set of
-// sections are fixed by the screen's defaults; the owner changes sizes only,
-// by the splitters between sections and under rows (row-board.tsx). Only the
-// sizes are remembered — a saved layout never adds, drops or reorders.
-import { z } from "zod";
+// is, how its width splits between its tiles, and how a tile moves, comes and
+// goes. The owner resizes by the splitters and moves a tile by its header
+// (row-board.tsx); the layout is kept with the tiles in the plugin's KV
+// (AnalyticsDashboard.tsx). Every change leaves each row's shares summing to
+// 1 and no row empty.
 
 /** The narrowest share a section keeps when a splitter squeezes it. */
 export const MIN_SHARE = 0.15;
@@ -25,20 +25,6 @@ export interface Row {
 export interface RowLayout {
   rows: readonly Row[];
 }
-
-const savedSchema = z.object({
-  version: z.literal(2),
-  rows: z.array(
-    z.object({
-      id: z.string(),
-      height: z.number().finite(),
-      cells: z.array(z.object({ id: z.string(), weight: z.number().finite().positive() })),
-    }),
-  ),
-});
-
-/** Sizes read back from storage; unreadable storage reads as nothing saved. */
-export type SavedLayout = z.infer<typeof savedSchema> | null;
 
 const withRow = (layout: RowLayout, rowId: string, change: (row: Row) => Row): RowLayout =>
   layout.rows.some((row) => row.id === rowId)
@@ -70,46 +56,98 @@ export function resizeRow(layout: RowLayout, rowId: string, height: number): Row
   return withRow(layout, rowId, (row) => ({ ...row, height: Math.max(row.minHeight, Math.round(height)) }));
 }
 
-export function serializeLayout(layout: RowLayout): string {
-  return JSON.stringify({
-    version: 2,
-    rows: layout.rows.map((row) => ({ id: row.id, height: row.height, cells: row.cells.map(({ id, weight }) => ({ id, weight })) })),
-  });
-}
+/** Shares scaled to sum to 1, the order kept. */
+const normalized = (row: Row): Row => {
+  const sum = row.cells.reduce((total, cell) => total + cell.weight, 0);
+  return { ...row, cells: row.cells.map((cell) => ({ ...cell, weight: sum > 0 ? cell.weight / sum : 1 / row.cells.length })) };
+};
 
-/** Reads stored sizes; anything unreadable — no value, bad JSON, an older layout — is nothing saved. */
-export function parseSaved(text: string | null): SavedLayout {
-  if (text === null) return null;
-  try {
-    const parsed = savedSchema.safeParse(JSON.parse(text));
-    return parsed.success ? parsed.data : null;
-  } catch {
-    return null;
-  }
-}
-
-const sameCells = (a: readonly { id: string }[], b: readonly { id: string }[]) =>
-  a.length === b.length && a.every((cell, index) => cell.id === b[index]!.id);
-
-/**
- * The default layout with the saved sizes laid over it: a saved row's height
- * (lifted to the row's minimum) and — while the row still holds the same
- * sections in the same order — its widths, rescaled to sum to 1. Rows the
- * defaults no longer have are dropped.
- */
-export function mergeSaved(defaults: RowLayout, saved: SavedLayout): RowLayout {
-  if (saved === null) return defaults;
-  const byId = new Map(saved.rows.map((row) => [row.id, row]));
+/** Rows without the cell, emptied rows dropped, the rest rescaled. */
+export function removeCell(layout: RowLayout, cellId: string): RowLayout {
   return {
-    rows: defaults.rows.map((row) => {
-      const stored = byId.get(row.id);
-      if (stored === undefined) return row;
-      const sum = stored.cells.reduce((acc, cell) => acc + cell.weight, 0);
-      return {
-        ...row,
-        height: Math.max(row.minHeight, Math.round(stored.height)),
-        cells: sameCells(row.cells, stored.cells) ? stored.cells.map((cell) => ({ id: cell.id, weight: cell.weight / sum })) : row.cells,
-      };
+    rows: layout.rows
+      .map((row) => (row.cells.some((cell) => cell.id === cellId) ? normalized({ ...row, cells: row.cells.filter((cell) => cell.id !== cellId) }) : row))
+      .filter((row) => row.cells.length > 0),
+  };
+}
+
+/** A cell set into a row at `index`, taking an equal share of it. */
+const withCellAt = (row: Row, cellId: string, index: number): Row => {
+  const share = 1 / (row.cells.length + 1);
+  const cells = row.cells.map((cell) => ({ ...cell, weight: cell.weight * (1 - share) }));
+  const at = Math.max(0, Math.min(index, cells.length));
+  return normalized({ ...row, cells: [...cells.slice(0, at), { id: cellId, weight: share }, ...cells.slice(at)] });
+};
+
+/** Where a moved tile lands: a place in a row, or a row of its own under a row (null — on top). */
+export type CellTarget = { kind: "row"; rowId: string; index: number } | { kind: "newRow"; afterRowId: string | null };
+
+/** px; the height a tile's own new row opens with. */
+export const NEW_ROW_HEIGHT = 260;
+const NEW_ROW_MIN = 180;
+
+const rowFor = (cellId: string, height: number): Row => ({ id: `row-${cellId}`, height, minHeight: NEW_ROW_MIN, cells: [{ id: cellId, weight: 1 }] });
+
+/** A cell moved to `target`; a target row that is gone leaves the layout as it was. */
+export function moveCell(layout: RowLayout, cellId: string, target: CellTarget): RowLayout {
+  const source = layout.rows.find((row) => row.cells.some((cell) => cell.id === cellId));
+  if (source === undefined) return layout;
+  const rest = removeCell(layout, cellId);
+  if (target.kind === "row") {
+    if (!rest.rows.some((row) => row.id === target.rowId)) return layout;
+    const from = source.cells.findIndex((cell) => cell.id === cellId);
+    // Within its own row, a place past the cell's old one shifts down by the cell itself.
+    const index = source.id === target.rowId && target.index > from ? target.index - 1 : target.index;
+    return { rows: rest.rows.map((row) => (row.id === target.rowId ? withCellAt(row, cellId, index) : row)) };
+  }
+  const own = rowFor(cellId, source.cells.length === 1 ? source.height : NEW_ROW_HEIGHT);
+  const fresh = { ...own, id: rest.rows.some((row) => row.id === own.id) ? `${own.id}-${rest.rows.length}` : own.id };
+  const after = target.afterRowId === null ? -1 : rest.rows.findIndex((row) => row.id === target.afterRowId);
+  if (target.afterRowId !== null && after < 0) return layout;
+  return { rows: [...rest.rows.slice(0, after + 1), fresh, ...rest.rows.slice(after + 1)] };
+}
+
+/** A new cell right after `afterCellId` in its row — a duplicated tile beside its original. */
+export function insertCell(layout: RowLayout, afterCellId: string, cellId: string): RowLayout {
+  return {
+    rows: layout.rows.map((row) => {
+      const at = row.cells.findIndex((cell) => cell.id === afterCellId);
+      return at < 0 ? row : withCellAt(row, cellId, at + 1);
     }),
   };
+}
+
+/** A new row at the bottom holding one cell — a tile just added. */
+export function insertRow(layout: RowLayout, cellId: string, height: number = NEW_ROW_HEIGHT): RowLayout {
+  return { rows: [...layout.rows, rowFor(cellId, height)] };
+}
+
+/** A row and its cells as they lie on screen, px. */
+export interface RowBox {
+  id: string;
+  top: number;
+  bottom: number;
+  cells: readonly { id: string; left: number; right: number }[];
+}
+
+/**
+ * Where a tile dragged to (x, y) lands: inside a row, before the first cell
+ * whose middle lies right of the pointer; between rows, above the first or
+ * under the last — in a row of its own there.
+ */
+export function dropTarget(rows: readonly RowBox[], x: number, y: number): CellTarget {
+  const inside = rows.find((row) => y >= row.top && y < row.bottom);
+  if (inside !== undefined) {
+    return { kind: "row", rowId: inside.id, index: inside.cells.filter((cell) => (cell.left + cell.right) / 2 < x).length };
+  }
+  const above = rows.filter((row) => row.bottom <= y).at(-1);
+  return { kind: "newRow", afterRowId: above?.id ?? null };
+}
+
+/** The layout with only the cells named in `ids`; the others go as removeCell takes them. */
+export function keepCells(layout: RowLayout, ids: readonly string[]): RowLayout {
+  return layout.rows
+    .flatMap((row) => row.cells.map((cell) => cell.id))
+    .filter((id) => !ids.includes(id))
+    .reduce(removeCell, layout);
 }

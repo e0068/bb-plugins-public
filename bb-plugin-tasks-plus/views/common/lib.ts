@@ -1,3 +1,4 @@
+import { formatPlanDate } from "../../shared/plan-date.js";
 import {
   TASK_STATUSES,
   type TaskPriority,
@@ -152,14 +153,7 @@ export function parentFilterOptions(tasks: readonly Task[]): ParentFilterOption[
 }
 
 export function formatDueDate(dueDate: string, today = new Date()): string {
-  const date = new Date(`${dueDate}T00:00:00`);
-  return date.toLocaleDateString("en-US", {
-    month: "short",
-    day: "numeric",
-    ...(date.getFullYear() === today.getFullYear()
-      ? {}
-      : { year: "numeric" }),
-  });
+  return formatPlanDate(dueDate, today);
 }
 
 function isSameCalendarDay(a: Date, b: Date): boolean {

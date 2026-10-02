@@ -7,6 +7,7 @@ import {
   TASKS_PAGE_MAX_LIMIT,
   TASK_CARD_META_MAX_IDS,
 } from "./pagination.js";
+import { isPlanDate } from "./plan-date.js";
 import {
   TASK_STATUSES,
   TASK_PRIORITIES,
@@ -31,14 +32,33 @@ import {
   TEXT_FIELDS,
   DATE_FIELDS,
   NUMBER_FIELDS,
+  QUERY_FIELDS,
+  GANTT_MODES,
 } from "./enums.js";
-import type { TaskLayout } from "./enums.js";
+import type { QueryField, TaskLayout } from "./enums.js";
+import {
+  BAR_LENGTHS,
+  FIGURES,
+  LEGEND_PLACES,
+  TILE_LIMIT,
+  TILE_SORT_KEYS,
+  TILE_TITLE_MAX,
+  TILE_TYPES,
+  LEGACY_WINDOWS,
+  WINDOW_COUNT_MAX,
+  WINDOW_UNITS,
+  Y_METRICS,
+  CONDITION_OPS,
+  CONDITION_VALUE_MAX,
+  CONDITIONS_MAX,
+  CONTENTS_SHARE,
+  conditionsFromFilters,
+} from "./analytics-tile.js";
 
 // Enums and derived types live in enums.js (no @get-bb/plugin-sdk import),
 // so the frontend bundle doesn't pull in the server SDK. The re-export keeps
 // the old path working for server code: import { TASK_STATUSES, ... } from "../shared/contract".
 export * from "./enums.js";
-
 
 export const TASK_THREAD_LIVE_STATUSES = [
   "starting",
@@ -92,14 +112,7 @@ const projectPrefixSchema = z
   );
 const dueDateSchema = z
   .string()
-  .regex(ISO_DATE_PATTERN)
-  .refine((value) => {
-    const parsed = new Date(`${value}T00:00:00.000Z`);
-    return (
-      !Number.isNaN(parsed.valueOf()) &&
-      parsed.toISOString().slice(0, 10) === value
-    );
-  }, "must be a valid calendar date in YYYY-MM-DD format");
+  .refine(isPlanDate, "must be a valid date in YYYY-MM-DD or YYYY-MM-DDTHH:mm format");
 const taskStatusSchema = z.enum(TASK_STATUSES);
 const taskPrioritySchema = z.enum(TASK_PRIORITIES);
 const taskTypeSchema = z.enum(TASK_TYPES);
@@ -109,88 +122,8 @@ const minutesSchema = z.number().int().min(0);
 const dollarsSchema = z.number().finite().min(0);
 const taskSortSchema = z.enum(TASK_SORTS);
 
-// Analytics aggregates (BBPL-258). Counts are partial records over each enum —
-// the handler fills every key, but a record keeps the contract terse against
-// six statuses / five priorities / seven type buckets. "untyped" is the bucket
-// for tasks whose type is null.
-const analyticsTypeKeySchema = z.union([taskTypeSchema, z.literal("untyped")]);
-const nonNegIntSchema = z.number().int().nonnegative();
-const tasksSnapshotSchema = z
-  .object({
-    total: nonNegIntSchema,
-    byStatus: z.record(taskStatusSchema, nonNegIntSchema),
-    byPriority: z.record(taskPrioritySchema, nonNegIntSchema),
-    byType: z.record(analyticsTypeKeySchema, nonNegIntSchema),
-    plannedMinutes: nonNegIntSchema,
-    actualMinutes: nonNegIntSchema,
-    budget: dollarsSchema,
-    budgetLimit: dollarsSchema,
-    cost: dollarsSchema,
-  })
-  .strict();
-// Tasks closed per column (hour or day) of a chart. The client sends each
-// chart's column edges in its own zone; each closing names the column it falls
-// in. One call answers every chart, so the boards are read once.
-const closedTaskSchema = z
-  .object({
-    taskId: z.string(),
-    /** The board key to open the task by; null once the task is gone. */
-    key: z.string().nullable(),
-    title: z.string(),
-    projectId: z.string(),
-    atMs: z.number(),
-    bin: nonNegIntSchema,
-  })
-  .strict();
-const closedWindowsSchema = z
-  .object({
-    /** One entry per requested window, in request order. */
-    windows: z.array(z.object({ closings: z.array(closedTaskSchema) }).strict()),
-    projects: z.array(z.object({ id: z.string(), name: z.string() }).strict()),
-    /** When the transition log starts; null while nothing was ever recorded. */
-    logStartMs: z.number().nullable(),
-  })
-  .strict();
-const columnEdgesSchema = z.array(z.number().finite()).min(2).max(1000);
-// The flow charts (analytics/flow.ts): status per column for burndown and
-// work in progress, created against closed, moves per status, cycle time,
-// estimate accuracy, spend, closings by type and the tasks standing longest.
-// Partial records like the snapshot's: the handler fills every key.
-const statusCountsSchema = z.record(taskStatusSchema, nonNegIntSchema);
-const planFactSchema = z
-  .object({ count: nonNegIntSchema, planned: z.number().min(0), actual: z.number().min(0), ratio: z.number().min(0) })
-  .strict();
-const flowAnswerSchema = z
-  .object({
-    statusByBin: z.record(z.string(), z.array(statusCountsSchema)),
-    created: z.array(nonNegIntSchema),
-    closed: z.array(nonNegIntSchema),
-    changes: z.array(statusCountsSchema),
-    cycle: z.array(
-      z.object({ estimate: taskEstimateSchema, count: nonNegIntSchema, medianMs: z.number().min(0), p90Ms: z.number().min(0) }).strict(),
-    ),
-    medianCycleMs: z.number().min(0).nullable(),
-    accuracy: z.array(
-      z.object({ estimate: taskEstimateSchema, minutes: planFactSchema.optional(), money: planFactSchema.optional() }).strict(),
-    ),
-    costByProject: z.array(z.object({ projectId: z.string(), cost: dollarsSchema }).strict()),
-    typesByWeek: z.array(z.record(analyticsTypeKeySchema, nonNegIntSchema)),
-    aging: z.array(
-      z
-        .object({
-          taskId: z.string(),
-          key: z.string(),
-          title: z.string(),
-          projectId: z.string(),
-          status: taskStatusSchema,
-          sinceMs: z.number(),
-        })
-        .strict(),
-    ),
-    projects: z.array(z.object({ id: z.string(), name: z.string() }).strict()),
-    logStartMs: z.number().nullable(),
-  })
-  .strict();
+/** Column edges: one more than the columns, up to the longest period a tile may count (WINDOW_COUNT_MAX). */
+const columnEdgesSchema = z.array(z.number().finite()).min(2).max(Math.max(1000, ...Object.values(WINDOW_COUNT_MAX)) + 1);
 /** Projects to narrow an analytics call to; absent or empty — every project. */
 const projectIdsSchema = z.array(idSchema).max(200).optional();
 // The Gantt charts (analytics/gantt.ts): per task, the stretches it stood in
@@ -545,6 +478,150 @@ export const savedViewFiltersSchema = z
   })
   .strict();
 
+/* ---------- analytics tiles (shared/analytics-tile.ts) ---------- */
+
+const queryFieldSchema = z.enum(QUERY_FIELDS as unknown as [QueryField, ...QueryField[]]);
+
+/** One tile of the analytics screen — docs/specs/analitika-model-plitki-i-agregaciya-po-lyubomu-polyu.md. */
+export const tileSchema = z
+  .object({
+    id: z.string().min(1).max(64),
+    type: z.enum(TILE_TYPES),
+    title: z.string().max(TILE_TITLE_MAX),
+    /** The header's period, or the last `count` minutes, hours or days. */
+    window: z.union([
+      z.literal("page"),
+      z
+        .object({ unit: z.enum(WINDOW_UNITS), count: z.number().int().min(1) })
+        .strict()
+        .refine((window) => window.count <= WINDOW_COUNT_MAX[window.unit], "Too many columns for the unit"),
+    ]),
+    x: z.union([z.literal("time"), queryFieldSchema]),
+    y: z.object({ metric: z.enum(Y_METRICS), field: z.enum(NUMBER_FIELDS).nullable() }).strict(),
+    breakdown: queryFieldSchema.nullable(),
+    switch: queryFieldSchema.nullable(),
+    /** The tile's filter: rows "field · operator · value" (shared/tile-conditions.ts). */
+    conditions: z
+      .array(z.object({ field: queryFieldSchema, op: z.enum(CONDITION_OPS), value: z.string().max(CONDITION_VALUE_MAX) }).strict())
+      .max(CONDITIONS_MAX),
+    sort: z
+      .object({ by: z.union([z.enum(TILE_SORT_KEYS), queryFieldSchema]), direction: z.enum(TABLE_SORT_DIRECTIONS) })
+      .strict()
+      .nullable(),
+    limit: z.number().int().min(TILE_LIMIT.min).max(TILE_LIMIT.max),
+    bars: z.object({ length: z.enum(BAR_LENGTHS), gantt: z.enum(GANTT_MODES) }).strict(),
+    figures: z.array(z.enum(FIGURES)).max(FIGURES.length),
+    display: z
+      .object({
+        legend: z.enum(LEGEND_PLACES),
+        xLabels: z.boolean(),
+        yLabels: z.boolean(),
+        /** A grid line every N columns across, and every `y` units of the value up; null — no lines that way. */
+        grid: z.object({ x: z.number().int().min(1).nullable(), y: z.number().positive().nullable() }).strict(),
+        trend: z.boolean(),
+        /** The chart's share of the height while the tile lists its segments' tasks under it; absent — no list, segments not clickable. */
+        contents: z.number().min(CONTENTS_SHARE.min).max(CONTENTS_SHARE.max).optional(),
+      })
+      .strict(),
+  })
+  .strict();
+
+const dashboardRowSchema = z
+  .object({
+    id: z.string().min(1),
+    height: z.number().finite().positive(),
+    minHeight: z.number().finite().positive(),
+    cells: z.array(z.object({ id: z.string().min(1), weight: z.number().finite().positive() }).strict()).min(1),
+  })
+  .strict();
+
+/** The tiles of the analytics screen and the rows they stand in. */
+export const dashboardSchema = z
+  .object({ version: z.literal(1), tiles: z.array(tileSchema).max(100), rows: z.array(dashboardRowSchema).max(100) })
+  .strict();
+
+export type Tile = z.infer<typeof tileSchema>;
+export type Dashboard = z.infer<typeof dashboardSchema>;
+
+/**
+ * A dashboard saved by an older build: a tile's board-style `filters` become
+ * its `conditions` (conditionsFromFilters), and a fixed period — last24h,
+ * last30d, last8w — the hours or days it meant (LEGACY_WINDOWS); anything
+ * else goes on as it came, for the schema to judge.
+ */
+function upgraded(value: unknown): unknown {
+  const stored = z.object({ tiles: z.array(z.unknown()) }).passthrough().safeParse(value);
+  if (!stored.success) return value;
+  const tiles = stored.data.tiles.map((tile) => {
+    const legacy = z.object({ filters: savedViewFiltersSchema }).passthrough().safeParse(tile);
+    if (!legacy.success) return tile;
+    const { filters, ...rest } = legacy.data;
+    return { ...rest, conditions: conditionsFromFilters(filters) };
+  }).map((tile) => {
+    const fixed = z.object({ window: z.enum(Object.keys(LEGACY_WINDOWS) as [string, ...string[]]) }).passthrough().safeParse(tile);
+    return fixed.success ? { ...fixed.data, window: LEGACY_WINDOWS[fixed.data.window] } : tile;
+  });
+  return { ...stored.data, tiles };
+}
+
+/**
+ * A stored dashboard, or null when the value is not one. A tile without a
+ * cell and a cell without a tile are dropped, and a row left without cells
+ * with them, so the tiles and the rows always name each other.
+ */
+export function parseDashboard(value: unknown): Dashboard | null {
+  const parsed = dashboardSchema.safeParse(upgraded(value));
+  if (!parsed.success) return null;
+  const tileIds = new Set(parsed.data.tiles.map((tile) => tile.id));
+  const rows = parsed.data.rows
+    .map((row) => ({ ...row, cells: row.cells.filter((cell) => tileIds.has(cell.id)) }))
+    .filter((row) => row.cells.length > 0);
+  const placed = new Set(rows.flatMap((row) => row.cells.map((cell) => cell.id)));
+  return { version: 1, tiles: parsed.data.tiles.filter((tile) => placed.has(tile.id)), rows };
+}
+
+const tileRowSchema = z
+  .object({
+    taskId: z.string(),
+    key: z.string(),
+    title: z.string(),
+    projectId: z.string(),
+    parentTaskId: z.string().nullable(),
+    status: taskStatusSchema,
+    createdMs: z.number().nullable(),
+    startDate: dueDateSchema.nullable(),
+    dueDate: dueDateSchema.nullable(),
+    segments: z.array(z.object({ status: taskStatusSchema, fromMs: z.number(), toMs: z.number() }).strict()),
+    /** Since when the task stands in its status. */
+    sinceMs: z.number().nullable(),
+  })
+  .strict();
+
+const keyLabelSchema = z.object({ key: z.string(), label: z.string() }).strict();
+
+/** What a tile draws — analytics/tile.ts. */
+export const tileAnswerSchema = z
+  .object({
+    columns: z.array(keyLabelSchema),
+    series: z.array(keyLabelSchema),
+    /** values[column][series]. */
+    values: z.array(z.array(z.number())),
+    /** Keys of the tasks behind each value, cells[column][series]. */
+    cells: z.array(z.array(z.array(z.string()))),
+    /** Titles of the tasks the cells name, by key. */
+    titles: z.record(z.string(), z.string()),
+    switchValues: z.array(z.object({ key: z.string(), label: z.string(), count: z.number().int() }).strict()),
+    /** Tasks the tile's filter keeps. */
+    total: z.number(),
+    rows: z.array(tileRowSchema),
+    figures: z.partialRecord(z.enum(FIGURES), z.number().nullable()),
+    projects: z.array(z.object({ id: z.string(), name: z.string() }).strict()),
+    logStartMs: z.number().nullable(),
+  })
+  .strict();
+
+export type TileAnswer = z.infer<typeof tileAnswerSchema>;
+
 /** Days a board's card charts look back; 0 is all time (enums.ts). */
 const cardChartPeriodSchema = z.number().int().min(0).max(MAX_CARD_CHART_DAYS);
 
@@ -874,7 +951,6 @@ const updatePresetInputSchema = z
 export function withCallerThread<Schema extends z.ZodObject>(schema: Schema) {
   return schema.extend({ [CALLER_THREAD_FIELD]: z.string().optional() });
 }
-
 
 /**
  * Владелец вложений — объединение двух форм, а расширять надо каждую: у
@@ -1380,18 +1456,7 @@ export const tasksRpcContract = defineRpcContract({
       })
       .strict(),
   },
-  analyticsSnapshot: {
-    input: z.object({ projectId: idSchema.nullable().optional(), projectIds: projectIdsSchema }).strict(),
-    output: tasksSnapshotSchema,
-  },
-  analyticsClosed: {
-    input: z.object({ windows: z.array(columnEdgesSchema).min(1).max(4), projectIds: projectIdsSchema }).strict(),
-    output: closedWindowsSchema,
-  },
-  analyticsFlow: {
-    input: z.object({ edges: columnEdgesSchema, weekEdges: columnEdgesSchema, projectIds: projectIdsSchema }).strict(),
-    output: flowAnswerSchema,
-  },
+
   // When the history of the asked projects starts — where "all time" opens.
   analyticsSpan: {
     input: z.object({ projectIds: projectIdsSchema }).strict(),
@@ -1400,6 +1465,22 @@ export const tasksRpcContract = defineRpcContract({
   ganttRows: {
     input: z.object({ fromMs: z.number().finite(), projectIds: projectIdsSchema }).strict(),
     output: ganttAnswerSchema,
+  },
+  // One tile of the analytics screen over the client's column edges.
+  analyticsTile: {
+    input: z
+      .object({ tile: tileSchema, edges: columnEdgesSchema, projectIds: projectIdsSchema, picked: z.string().nullable() })
+      .strict(),
+    output: tileAnswerSchema,
+  },
+  // The tiles of the analytics screen, kept in the plugin's KV; null — none saved yet.
+  loadAnalyticsDashboard: {
+    input: z.object({}).strict(),
+    output: dashboardSchema.nullable(),
+  },
+  saveAnalyticsDashboard: {
+    input: dashboardSchema,
+    output: z.object({ ok: z.literal(true) }),
   },
   // Reduced Colors of the analytics screen (packages/reduced-colors). The
   // shape is owned by the package's total parse, which both ends run the
@@ -1415,13 +1496,7 @@ export const tasksRpcContract = defineRpcContract({
 });
 
 export type TasksRpcContract = typeof tasksRpcContract;
-export type TasksSnapshot = z.infer<typeof tasksSnapshotSchema>;
-export type FlowAnswer = z.infer<typeof flowAnswerSchema>;
-export type ClosedWindows = z.infer<typeof closedWindowsSchema>;
 export type GanttAnswer = z.infer<typeof ganttAnswerSchema>;
-export type ClosedTask = z.infer<typeof closedTaskSchema>;
-/** What one closed-tasks chart draws: its window's closings and the board context. */
-export type ClosedTasks = { closings: ClosedTask[] } & Omit<ClosedWindows, "windows">;
 export type Folder = z.infer<typeof folderSchema>;
 export type Project = z.infer<typeof projectSchema>;
 export type Task = z.infer<typeof taskSchema>;

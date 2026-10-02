@@ -10,6 +10,7 @@ import {
 } from "../db/types.js";
 import { readDollars, readMinutes } from "../shared/amounts.js";
 import type { Task } from "../shared/contract.js";
+import { isPlanDate } from "../shared/plan-date.js";
 import type { TakenBy } from "../shared/task-claim.js";
 
 /** A task assembled from one markdown file's frontmatter + its folder. */
@@ -41,8 +42,6 @@ export interface MappedTaskFile {
 
 /** A flow as the file's `flow:` block names it — see mapFlow. */
 export type TaskFlow = NonNullable<Task["flow"]>;
-
-const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
 
 // Spaces and hyphens read as underscores, so "In progress" and the old
 // project-memory-v2 "in-progress" both land on in_progress; "to do" and
@@ -181,8 +180,8 @@ export function mapFrontmatter(
     budget: parseDollars(data.budget),
     budgetLimit: parseDollars(data.limit),
     cost: parseDollars(data.cost),
-    dueDate: due !== null && ISO_DATE.test(due) ? due : null,
-    startDate: start !== null && ISO_DATE.test(start) ? start : null,
+    dueDate: due !== null && isPlanDate(due) ? due : null,
+    startDate: start !== null && isPlanDate(start) ? start : null,
     labels: stringArray(data.labels),
     parentRef: firstString(data.parent),
     flow: mapFlow(data.flow),

@@ -2,7 +2,7 @@ import { weekBreaks, type WeekBreak } from "@bb-plugins/analytics-viz/core/weeks
 import { ALL_TIME, type CardChartPeriod, type TaskStatus } from "../../shared/enums.js";
 import type { SubtreeProgress } from "../../shared/subtree.js";
 import { trendOf } from "../../analytics/trend.js";
-import { formatDay } from "../analytics/closed-section.js";
+import { formatDay } from "../analytics/closed-model.js";
 import { STATUS_LABELS } from "./icons.js";
 
 /** The bar's order, closest to done first; canceled work is not work and stays off it. */

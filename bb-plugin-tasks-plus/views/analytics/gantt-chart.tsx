@@ -9,12 +9,13 @@ import { weekEdgesSince } from "@bb-plugins/analytics-viz/core/weeks";
 
 import type { GanttMode, TaskStatus } from "../../shared/enums.js";
 import type { GanttAnswer } from "../../shared/contract.js";
+import { formatPlanDate, planDateMs, VIEWER_LOCALE } from "../../shared/plan-date.js";
 import { cn } from "../../lib/utils";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "../../components/ui/tooltip";
 import { StatusIcon } from "../board/icons";
 import { Empty } from "./bars";
 import { useChartColors } from "./chart-colors";
-import { formatDay } from "./closed-section";
+import { formatDay } from "./closed-model";
 import { STATUS_LABEL } from "./palette";
 
 export type GanttRowData = GanttAnswer["rows"][number];
@@ -24,25 +25,22 @@ interface Span {
   toMs: number;
 }
 
-/** A calendar day's local midnight, `days` after the day written as YYYY-MM-DD. */
-function dayStart(text: string, days = 0): number {
-  const [year, month, day] = text.split("-").map(Number);
-  return new Date(year!, month! - 1, day! + days).getTime();
-}
+/** The day a plan date falls on, YYYY-MM-DD — the date without its time. */
+const dayOf = (planDate: string) => planDate.slice(0, 10);
 
 /**
- * The planned stretch on the viewer's calendar: from the start day's midnight
- * — or the task's creation, when only a due date is set — through the end of
- * the due day, or of the start day when that is all there is. A task made
- * after its due day plans that day alone. No dates, no plan.
+ * The planned stretch on the viewer's calendar: from the start — its time,
+ * or its day's midnight — or the task's creation, when only a due date is
+ * set, through the due time or the end of the due day, or of the start day
+ * when that is all there is. A task made after its due plans the due day
+ * alone. No dates, no plan.
  */
 export function planSpan(row: GanttRowData): Span | null {
   const { startDate, dueDate } = row;
   if (startDate === null && dueDate === null) return null;
-  const lastDay = (dueDate ?? startDate)!;
-  const toMs = dayStart(lastDay, 1);
-  const fromMs = startDate !== null ? dayStart(startDate) : (row.createdMs ?? dayStart(lastDay));
-  return { fromMs: fromMs < toMs ? fromMs : dayStart(lastDay), toMs };
+  const toMs = dueDate !== null ? planDateMs(dueDate, "end") : planDateMs(dayOf(startDate!), "end");
+  const fromMs = startDate !== null ? planDateMs(startDate, "start") : (row.createdMs ?? planDateMs(dayOf(dueDate!), "start"));
+  return { fromMs: fromMs < toMs ? fromMs : planDateMs(dayOf((dueDate ?? startDate)!), "start"), toMs };
 }
 
 /** A stretch placed on a lane, as fractions of the lane's width. */
@@ -120,9 +118,8 @@ const percent = (fraction: number) => `${fraction * 100}%`;
 
 /** A row's plan as the tooltip spells it: "Start → Due", one end when only one is set. */
 function planText(row: GanttRowData): string {
-  const day = (text: string) => formatDay(new Date(`${text}T00:00`).getTime());
   if (row.startDate === null && row.dueDate === null) return "No plan";
-  return `${row.startDate === null ? "…" : day(row.startDate)} → ${row.dueDate === null ? "…" : day(row.dueDate)}`;
+  return `${row.startDate === null ? "…" : formatPlanDate(row.startDate, new Date(), VIEWER_LOCALE)} → ${row.dueDate === null ? "…" : formatPlanDate(row.dueDate, new Date(), VIEWER_LOCALE)}`;
 }
 
 /**
@@ -208,11 +205,7 @@ export function GanttChart({ rows, fromMs, toMs, mode, compact = false, onOpenTa
           aria-hidden
           className="pointer-events-none absolute inset-y-0 w-px bg-border"
           style={{ left: percent(week.at) }}
-        >
-          {compact || !week.labelled ? null : (
-            <span className="absolute -top-4 left-1 whitespace-nowrap text-2xs leading-none text-subtle-foreground">{formatDay(week.mondayMs)}</span>
-          )}
-        </span>
+        />
       ))}
       <ul className={cn("relative flex flex-col", compact ? "gap-px" : "gap-0.5")}>
         {lines.map(({ row, plan, fact, doneAt }) => (
@@ -262,7 +255,7 @@ export function GanttChart({ rows, fromMs, toMs, mode, compact = false, onOpenTa
 
   return (
     <TooltipProvider delayDuration={150}>
-      <div className="flex min-h-0 flex-1 flex-col overflow-y-auto pt-4">
+      <div className="flex min-h-0 flex-1 flex-col overflow-x-hidden overflow-y-auto">
         <div className="flex gap-2">
           <ul className="flex w-48 shrink-0 flex-col gap-0.5">
             {lines.map(({ row }) => (
@@ -282,6 +275,24 @@ export function GanttChart({ rows, fromMs, toMs, mode, compact = false, onOpenTa
             ))}
           </ul>
           {lanes}
+        </div>
+      </div>
+      {/* The week dates under the lanes, where every chart writes its dates. */}
+      <div className="flex shrink-0 gap-2 pt-1">
+        <span className="w-48 shrink-0" />
+        <div className="relative h-3 min-w-0 flex-1 overflow-hidden">
+          {weeks
+            .filter((week) => week.labelled)
+            .map((week) => (
+              <span
+                key={week.mondayMs}
+                data-week-label
+                className="absolute top-0 whitespace-nowrap pl-1 text-2xs leading-none text-subtle-foreground"
+                style={{ left: percent(week.at) }}
+              >
+                {formatDay(week.mondayMs)}
+              </span>
+            ))}
         </div>
       </div>
     </TooltipProvider>

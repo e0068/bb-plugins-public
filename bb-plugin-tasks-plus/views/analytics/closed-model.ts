@@ -1,10 +1,8 @@
-// Pure model of the "closed tasks" charts: the column edges the client asks
-// the server for, the stacked rows the chart draws, the project colours and the
-// tasks behind a clicked segment. No React, no RPC — closed-section.tsx
-// renders this. The edges are local-calendar: an hour starts on the viewer's
-// clock hour and a day on the viewer's midnight, which is why the client and
-// not the server computes them.
-import type { ClosedTask } from "../../shared/contract.js";
+// Pure model of the analytics columns in time: the hour and day edges the
+// client asks the server for, the project colours, and how a column's start
+// is named. No React, no RPC. The edges are local-calendar: an hour starts on
+// the viewer's clock hour and a day on the viewer's midnight, which is why
+// the client and not the server computes them.
 import { OVERFLOW_COLOR, PROJECT_PALETTE } from "./palette";
 
 const HOUR_MS = 3_600_000;
@@ -16,43 +14,32 @@ export type Edges = readonly number[];
 
 const range = (count: number) => Array.from({ length: count }, (_, index) => index);
 
-/** The 24 hours ending with the current local hour: 25 edges, the last one where the current hour ends. */
-export function hourEdges(nowMs: number): number[] {
-  const hourStart = new Date(nowMs);
-  hourStart.setMinutes(0, 0, 0);
-  const firstMs = hourStart.getTime() - (HOURS - 1) * HOUR_MS;
-  return range(HOURS + 1).map((index) => firstMs + index * HOUR_MS);
-}
+const UNIT_MS = { minute: 60_000, hour: HOUR_MS } as const;
 
 /**
- * The 30 local days ending with today: 31 local midnights, the last one
- * tomorrow's. Built from calendar fields, not by adding 24 hours, so a
- * daylight-saving day keeps its 23 or 25 hours and every edge stays a midnight.
+ * The last `count` minutes, hours or local days: count + 1 edges, the last one
+ * the start of the next minute, hour or day. Days are built from calendar
+ * fields, not by adding 24 hours, so a daylight-saving day keeps its 23 or 25
+ * hours and every edge stays a midnight.
  */
-export function dayEdges(nowMs: number): number[] {
+export function unitEdges(unit: "minute" | "hour" | "day", count: number, nowMs: number): number[] {
   const now = new Date(nowMs);
-  const firstDay = now.getDate() - (DAYS - 1);
-  return range(DAYS + 1).map((index) => new Date(now.getFullYear(), now.getMonth(), firstDay + index).getTime());
+  if (unit === "day") {
+    const firstDay = now.getDate() - (count - 1);
+    return range(count + 1).map((index) => new Date(now.getFullYear(), now.getMonth(), firstDay + index).getTime());
+  }
+  const start = new Date(nowMs);
+  start.setSeconds(0, 0);
+  if (unit === "hour") start.setMinutes(0);
+  const firstMs = start.getTime() - (count - 1) * UNIT_MS[unit];
+  return range(count + 1).map((index) => firstMs + index * UNIT_MS[unit]);
 }
 
-/** One chart column: its index and how many tasks each project closed in it (absent = none). */
-export interface StackRow {
-  bin: number;
-  counts: Record<string, number>;
-}
+/** The 24 hours ending with the current local hour: 25 edges, the last one where the current hour ends. */
+export const hourEdges = (nowMs: number): number[] => unitEdges("hour", HOURS, nowMs);
 
-/** A row for each of `binCount` columns — empty ones included, so the axis has no gaps. */
-export function stackRows(closings: readonly Pick<ClosedTask, "projectId" | "bin">[], binCount: number): StackRow[] {
-  return range(binCount).map((bin) => ({
-    bin,
-    counts: closings
-      .filter((closing) => closing.bin === bin)
-      .reduce<Record<string, number>>(
-        (counts, { projectId }) => ({ ...counts, [projectId]: (counts[projectId] ?? 0) + 1 }),
-        {},
-      ),
-  }));
-}
+/** The 30 local days ending with today: 31 local midnights, the last one tomorrow's. */
+export const dayEdges = (nowMs: number): number[] => unitEdges("day", DAYS, nowMs);
 
 /** Categorical slots in fixed order (palette.ts); past the last one a project is drawn muted. */
 export const SERIES_SLOTS = PROJECT_PALETTE.length;
@@ -61,41 +48,12 @@ export function seriesColor(index: number): string {
   return PROJECT_PALETTE[index] ?? OVERFLOW_COLOR;
 }
 
-/** A project as a chart series: its segments, its legend entry. */
-export interface ProjectSeries {
-  id: string;
-  name: string;
-  color: string;
+/** An hour as the viewer's clock shows it, e.g. "14:00". */
+export function formatHour(ms: number): string {
+  return new Date(ms).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
 }
 
-/**
- * The projects that closed something in the window, in board order. The
- * colour follows the project's place on the whole board — not its rank in
- * this window — so the hourly and daily charts paint a project the same.
- * A project the board no longer lists comes after the board's, named by id.
- */
-export function projectSeries(
-  closings: readonly Pick<ClosedTask, "projectId">[],
-  projects: readonly { id: string; name: string }[],
-  colorAt: (index: number) => string = seriesColor,
-): ProjectSeries[] {
-  const closedIds = new Set(closings.map((closing) => closing.projectId));
-  const known = new Set(projects.map((project) => project.id));
-  const unknown = [...closedIds].filter((id) => !known.has(id)).map((id) => ({ id, name: id }));
-  return [...projects, ...unknown]
-    .map((project, index) => ({ ...project, color: colorAt(index) }))
-    .filter((project) => closedIds.has(project.id));
-}
-
-/** A clicked segment: one column of one project. */
-export interface Segment {
-  bin: number;
-  projectId: string;
-}
-
-/** The tasks behind a segment, newest first. */
-export function closingsIn(closings: readonly ClosedTask[], segment: Segment): ClosedTask[] {
-  return closings
-    .filter((closing) => closing.bin === segment.bin && closing.projectId === segment.projectId)
-    .sort((a, b) => b.atMs - a.atMs);
+/** A day as the viewer's calendar shows it, e.g. "Sep 24". */
+export function formatDay(ms: number): string {
+  return new Date(ms).toLocaleDateString(undefined, { month: "short", day: "numeric" });
 }

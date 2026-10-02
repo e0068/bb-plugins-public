@@ -1,8 +1,7 @@
 import fc from "fast-check";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
-import type { ClosedTask } from "../../shared/contract.js";
-import { closingsIn, dayEdges, hourEdges, projectSeries, SERIES_SLOTS, seriesColor, stackRows } from "./closed-model";
+import { dayEdges, hourEdges, SERIES_SLOTS, seriesColor } from "./closed-model";
 
 // Local calendar arithmetic is the point of these edges, so pin a zone with a
 // daylight-saving switch (Europe/Berlin: 2026-03-29 has 23 hours).
@@ -16,10 +15,6 @@ afterAll(() => {
 
 const HOUR_MS = 3_600_000;
 const local = (text: string) => new Date(text).getTime();
-
-function closing(over: Partial<ClosedTask> = {}): ClosedTask {
-  return { taskId: "T", key: "T-1", title: "Task", projectId: "P", atMs: 0, bin: 0, ...over };
-}
 
 const arbitraryNow = fc.integer({ min: local("2020-01-01T00:00:00"), max: local("2030-01-01T00:00:00") });
 
@@ -74,61 +69,6 @@ describe("dayEdges — the 30 local days ending with today", () => {
   });
 });
 
-describe("stackRows — one row per column, a count per project", () => {
-  it("counts each column's closings by project, with a row for every empty column", () => {
-    const rows = stackRows(
-      [closing({ projectId: "P", bin: 0 }), closing({ projectId: "Q", bin: 0 }), closing({ projectId: "P", bin: 2 })],
-      3,
-    );
-    expect(rows).toEqual([
-      { bin: 0, counts: { P: 1, Q: 1 } },
-      { bin: 1, counts: {} },
-      { bin: 2, counts: { P: 1 } },
-    ]);
-  });
-
-  it("keeps every closing: the counts add up to the number of closings in range", () => {
-    fc.assert(
-      fc.property(
-        fc.array(fc.record({ projectId: fc.constantFrom("P", "Q", "R"), bin: fc.integer({ min: 0, max: 5 }) })),
-        (entries) => {
-          const rows = stackRows(entries.map((entry) => closing(entry)), 6);
-          const total = rows.flatMap((row) => Object.values(row.counts)).reduce((sum, count) => sum + count, 0);
-          expect(rows).toHaveLength(6);
-          expect(total).toBe(entries.length);
-        },
-      ),
-    );
-  });
-});
-
-describe("projectSeries — the projects a chart draws, coloured by their place on the board", () => {
-  const projects = [
-    { id: "A", name: "Alpha" },
-    { id: "B", name: "Beta" },
-    { id: "C", name: "Gamma" },
-  ];
-
-  it("lists only the projects with a closing in the window, in board order", () => {
-    const series = projectSeries([closing({ projectId: "C" }), closing({ projectId: "A" })], projects);
-    expect(series.map((entry) => entry.id)).toEqual(["A", "C"]);
-    expect(series.map((entry) => entry.name)).toEqual(["Alpha", "Gamma"]);
-  });
-
-  it("colours a project by its board position, so both charts agree whatever else closed", () => {
-    const onlyGamma = projectSeries([closing({ projectId: "C" })], projects);
-    const all = projectSeries([closing({ projectId: "A" }), closing({ projectId: "C" })], projects);
-    expect(onlyGamma[0]?.color).toBe(seriesColor(2));
-    expect(all.find((entry) => entry.id === "C")?.color).toBe(seriesColor(2));
-  });
-
-  it("names a project the board no longer knows by its id", () => {
-    expect(projectSeries([closing({ projectId: "Z" })], projects)).toEqual([
-      { id: "Z", name: "Z", color: seriesColor(projects.length) },
-    ]);
-  });
-});
-
 describe("seriesColor — a fixed categorical order, never cycled", () => {
   it("gives each of the first slots its own colour and every later project the muted one", () => {
     const slots = Array.from({ length: SERIES_SLOTS }, (_, index) => seriesColor(index));
@@ -138,12 +78,3 @@ describe("seriesColor — a fixed categorical order, never cycled", () => {
   });
 });
 
-describe("closingsIn — the tasks behind one segment", () => {
-  it("returns the segment's tasks newest first and nothing from other columns or projects", () => {
-    const early = closing({ taskId: "1", projectId: "P", bin: 1, atMs: 10 });
-    const late = closing({ taskId: "2", projectId: "P", bin: 1, atMs: 20 });
-    const otherProject = closing({ taskId: "3", projectId: "Q", bin: 1, atMs: 15 });
-    const otherColumn = closing({ taskId: "4", projectId: "P", bin: 0, atMs: 5 });
-    expect(closingsIn([early, otherProject, late, otherColumn], { bin: 1, projectId: "P" })).toEqual([late, early]);
-  });
-});

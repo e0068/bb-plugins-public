@@ -5,14 +5,10 @@ import { dayEdges, hourEdges } from "./closed-model";
 import {
   ANALYTICS_WINDOWS,
   DEFAULT_FILTER,
-  SECTION_KINDS,
   columnDays,
-  defaultAnalyticsRows,
   weekBreaksOf,
-  weekEdges,
   windowEdges,
 } from "./default-dashboard";
-import { mergeSaved, parseSaved, serializeLayout } from "./row-layout";
 
 // Same pinned zone as the closed-model edges: a daylight-saving switch inside.
 const previousTz = process.env.TZ;
@@ -41,35 +37,7 @@ describe("windowEdges — the columns each D/W/M cut is drawn in", () => {
   });
 });
 
-describe("weekEdges — the weeks of the closings-by-type chart", () => {
-  it("starts every week on a local Monday midnight and ends with the week holding now", () => {
-    const now = local("2026-09-25T02:30:00");
-    const edges = weekEdges(now);
-    expect(edges).toHaveLength(9);
-    expect(edges[7]).toBe(local("2026-09-21T00:00:00"));
-    expect(edges[8]).toBe(local("2026-09-28T00:00:00"));
-  });
-
-  it("always gives 9 strictly increasing Monday edges with now inside the last week", () => {
-    fc.assert(
-      fc.property(arbitraryNow, (now) => {
-        const edges = weekEdges(now);
-        expect(edges).toHaveLength(9);
-        expect(increasing(edges)).toBe(true);
-        edges.forEach((edge) => expect(new Date(edge).getDay()).toBe(1));
-        expect(edges[7]! <= now && now < edges[8]!).toBe(true);
-      }),
-    );
-  });
-});
-
 describe("defaultAnalyticsRows", () => {
-  it("places every section exactly once, each row's widths summing to 1", () => {
-    const rows = defaultAnalyticsRows().rows;
-    expect(rows.flatMap((row) => row.cells.map((cell) => cell.id)).sort()).toEqual([...SECTION_KINDS].sort());
-    rows.forEach((row) => expect(row.cells.reduce((sum, cell) => sum + cell.weight, 0)).toBeCloseTo(1, 9));
-  });
-
   it("opens on the week cut across every project", () => {
     expect(DEFAULT_FILTER).toEqual({ window: "week", projectIds: [] });
   });
@@ -116,23 +84,5 @@ describe("columnDays — how many days one column of a cut spans", () => {
     expect(columnDays("week")).toBe(1);
     expect(columnDays("month")).toBe(1);
     expect(columnDays("all")).toBe(7);
-  });
-});
-
-describe("the Gantt section", () => {
-  it("stands in its own row at the bottom of the screen", () => {
-    const rows = defaultAnalyticsRows().rows;
-    expect(rows.at(-1)?.cells.map((cell) => cell.id)).toEqual(["gantt"]);
-  });
-});
-
-describe("a layout saved before the Gantt", () => {
-  it("gains the Gantt row and keeps its own sizes", () => {
-    const defaults = defaultAnalyticsRows();
-    const before = { rows: defaults.rows.filter((row) => row.id !== "timeline").map((row) => ({ ...row, height: row.height + 40 })) };
-    const merged = mergeSaved(defaults, parseSaved(serializeLayout(before)));
-    expect(merged.rows.map((row) => row.id)).toEqual(defaults.rows.map((row) => row.id));
-    expect(merged.rows.at(-1)!.cells.map((cell) => cell.id)).toEqual(["gantt"]);
-    expect(merged.rows[0]!.height).toBe(defaults.rows[0]!.height + 40);
   });
 });

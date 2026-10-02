@@ -1,35 +1,7 @@
 import fc from "fast-check";
 import { describe, expect, it } from "vitest";
 
-import { TASK_STATUSES, type TaskStatus } from "../../db/types.js";
-import { formatDuration, openByColumn, trendOf, wipByColumn } from "./flow-model";
-
-const counts = (over: Partial<Record<TaskStatus, number>>) =>
-  ({ ...Object.fromEntries(TASK_STATUSES.map((status) => [status, 0])), ...over }) as Record<TaskStatus, number>;
-
-describe("openByColumn — what is left to do in a project, column by column", () => {
-  it("counts backlog, to do, in progress and in review; not done or canceled", () => {
-    const byBin = { P: [counts({ backlog: 2, todo: 1, in_progress: 1, in_review: 1, done: 5, canceled: 3 })] };
-    expect(openByColumn(byBin, "P")).toEqual([5]);
-  });
-
-  it("is empty for a project with no tasks", () => {
-    expect(openByColumn({}, "P")).toEqual([]);
-  });
-});
-
-describe("wipByColumn — work in progress over every project", () => {
-  it("sums in progress and in review across projects, column by column", () => {
-    const byBin = {
-      P: [counts({ in_progress: 1, in_review: 2 }), counts({ in_progress: 3 })],
-      Q: [counts({ in_progress: 4 }), counts({ in_review: 1, done: 9 })],
-    };
-    expect(wipByColumn(byBin, 2)).toEqual([
-      [5, 2],
-      [3, 1],
-    ]);
-  });
-});
+import { formatDuration, trendOf } from "./flow-model";
 
 describe("trendOf — least-squares line through a series", () => {
   it("recovers a straight line exactly", () => {
