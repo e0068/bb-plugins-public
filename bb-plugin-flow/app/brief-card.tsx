@@ -435,7 +435,8 @@ function LegacyScales({ brief, view }: { brief: DecisionBrief; view: View }) {
  * Один блок стык в стык: артефакты, кнопки первой части, раскрытый выбор и низ формы.
  * Что осталось незакрытым — одной строкой под блоком, чтобы подписи не рвали шов.
  */
-function AnswerBlock({ brief, view, roots, footer }: { brief: DecisionBrief; view: View; roots: FileRoots | null; footer?: ReactNode }) {
+/** `below` стоит уже под скруглённой группой: внутри неё ряд кнопок перестал бы быть последним и потерял бы нижнее скругление. */
+function AnswerBlock({ brief, view, roots, footer, below }: { brief: DecisionBrief; view: View; roots: FileRoots | null; footer?: ReactNode; below?: ReactNode }) {
   const locale = useLocale();
   const t = useMessages();
   const setup = brief.setup ?? {};
@@ -491,6 +492,7 @@ function AnswerBlock({ brief, view, roots, footer }: { brief: DecisionBrief; vie
         {withBudget && !staged && view.expanded === BUDGET_PANEL && <BudgetPanel view={view} />}
         {footer}
       </div>
+      {below}
       {hints.length > 0 && (
         <div className="flex flex-wrap gap-x-3 text-xs text-destructive">
           {hints.map((hint) => (
@@ -1208,11 +1210,13 @@ export function useDispatchPicker(props: { threadId: string; draft: Draft; setDr
 }
 
 /**
- * Низ формы внутри блока: строка «Дополнить», слева место исполнения, справа отправка.
+ * Блок ответа с низом формы: строка «Дополнить», слева место исполнения, справа отправка; раскрытые списки места — под блоком.
  * Счётчик незакрытого — подпись внутри кнопки над «Отправить», а кнопка выключена, пока решено не всё.
  */
-function BriefFooter(props: {
+function BriefAnswer(props: {
   brief: DecisionBrief;
+  view: View;
+  roots: FileRoots | null;
   draft: Draft;
   setDraft: (update: (draft: Draft) => Draft) => void;
   sending: boolean;
@@ -1226,7 +1230,7 @@ function BriefFooter(props: {
   const t = useMessages();
   const picker = useDispatchPicker({ threadId: props.brief.threadId, draft: props.draft, setDraft: props.setDraft, place: props.place, route: props.route, disabled: sending });
 
-  return (
+  const footer = (
     <>
       <AddRow label={t.common.noteLabel} placeholder={t.brief.addItem} value={props.draft.note} disabled={sending} voiceId="note" onText={(text) => props.setDraft((d) => setNote(d, text))} />
       <AttachmentThumbs className="bg-surface-recessed-solid px-3 py-2" />
@@ -1250,9 +1254,9 @@ function BriefFooter(props: {
           </span>
         </Button>
       </div>
-      {picker.lists}
     </>
   );
+  return <AnswerBlock brief={props.brief} view={props.view} roots={props.roots} footer={footer} below={picker.lists} />;
 }
 
 /** Зазор ряда кнопок Демонстрации; раскрытые списки «Исполнять» под ним — с тем же зазором, чтобы колонки стояли под кнопками. */
@@ -1383,12 +1387,7 @@ export function BriefCard({ brief, send, onResult, roots, place = "here", route 
         <>
           <Body brief={brief} view={view} />
           {stageItems(brief).length > 0 && <SectionTag kind="select" extra={brief.stages?.flowName} className="-mb-3" />}
-          <AnswerBlock
-            brief={brief}
-            view={view}
-            roots={roots}
-            footer={<BriefFooter brief={brief} draft={draft} setDraft={setDraft} sending={sending} status={failed ? t.common.sendFailed : counter} complete={complete} place={place} route={route} onSubmit={trySubmit} />}
-          />
+          <BriefAnswer brief={brief} view={view} roots={roots} draft={draft} setDraft={setDraft} sending={sending} status={failed ? t.common.sendFailed : counter} complete={complete} place={place} route={route} onSubmit={trySubmit} />
         </>
       )}
     </Plain>
