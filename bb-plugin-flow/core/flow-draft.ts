@@ -3,7 +3,7 @@
 // проблемы сразу: навык или исполнитель не из каталога, этап-навык без навыка
 // и автоматизации, автоматизация у встроенного этапа или с исполнителями,
 // шаг-скрипт без скрипта, повтор id, id «без flow». Сохраняет — server/flow-tools.ts.
-import { actionStage, automationStageId, builtinStage, freeId } from "../lib/stage-constants";
+import { actionStage, automationStageId, builtinStage, freeId, linkedSubStages, SUB_STAGE_ISSUE } from "../lib/stage-constants";
 import type { Flow, FlowDraft, StageCatalog, StageDraft, StageExecutor, WorkStage } from "../shared/contract";
 import { AGENT_NO_FLOW, AUTO_FLOW, NO_FLOW, withDescription } from "./flows";
 
@@ -69,6 +69,7 @@ const resolveStage = (draft: StageDraft, n: number, taken: readonly string[], re
     name: draft.name ?? defaultName(draft),
     executors,
     ...(draft.automation === undefined ? {} : { automation: draft.automation }),
+    ...(draft.parent === undefined ? {} : { parent: draft.parent }),
   };
   return { stage, problems };
 };
@@ -87,6 +88,7 @@ export const resolveFlowDraft = (draft: FlowDraft, catalog: StageCatalog, newId:
     ...(draft.id === AUTO_FLOW ? [`the flow id "${AUTO_FLOW}" is reserved for the "automatic" choice of the composer`] : []),
     ...(draft.id === AGENT_NO_FLOW ? [`the flow id "${AGENT_NO_FLOW}" is reserved for the "no flow" choice of the agent`] : []),
     ...resolved.flatMap((r) => r.problems),
+    ...(linkedSubStages(resolved.map((r) => r.stage)) ? [] : [SUB_STAGE_ISSUE]),
   ];
   return problems.length > 0 ? { ok: false, problems } : { ok: true, flow: withDescription({ id: draft.id ?? `flow-${newId()}`, name: draft.name, stages: resolved.map((r) => r.stage) }, draft.description ?? "") };
 };

@@ -35,6 +35,7 @@ import {
   type Draft,
 } from "./draft";
 import { attachmentsPayload, clearAttachments } from "./attachments";
+import { useLatestCopy } from "./brief-copies";
 import { AnsweredBriefCard, BriefCard, ClarifyCard, useDispatchPicker } from "./brief-card";
 import { clearStoredDraft } from "./draft-storage";
 import { Frame, NoteField, RecommendedStar, Titles, answeredAt, useStoredDraft, useSubmit, type FormProps } from "./parts";
@@ -107,13 +108,26 @@ function Directive({ attributes, source, message }: PluginMessageDirectiveProps)
   const t = useMessages();
   const parsed = readDecisionId(attributes);
   return parsed.kind === "ok" ? (
-    <>
-      <BriefLoader id={parsed.id} source={source} messageId={message.id} threadId={message.threadId} />
-      {/* Итог завершённого прогона растёт из карточки, которую назвал сервер: своего слота в ленте у плагина нет. */}
-      <RunSummaryBlock briefId={parsed.id} />
-    </>
+    <BriefCopy id={parsed.id} source={source} messageId={message.id} threadId={message.threadId} />
   ) : (
     <Dashed source={source}>{t.legacy.badId}</Dashed>
+  );
+}
+
+/** Одна из вставок строки брифа: карточку рисует только последняя в ленте. */
+function BriefCopy({ id, source, messageId, threadId }: { id: string; source: string; messageId: string; threadId: string }) {
+  const { anchor, latest } = useLatestCopy(id);
+  return (
+    <>
+      <span ref={anchor} hidden />
+      {latest && (
+        <>
+          <BriefLoader id={id} source={source} messageId={messageId} threadId={threadId} />
+          {/* Итог завершённого прогона растёт из карточки, которую назвал сервер: своего слота в ленте у плагина нет. */}
+          <RunSummaryBlock briefId={id} />
+        </>
+      )}
+    </>
   );
 }
 

@@ -121,7 +121,7 @@ The widget draws the labels. Your recommendation is preselected on the stage but
 | --- | --- | --- |
 | `fork` | A fork: two or more ways, the choice changes the outcome, one answer | Every option has a `description` — a paragraph about what happens and the risks in prose — and an `add`. The old `cost` (up to 40 characters) and `risk` `XS`…`XXL` pair is accepted only on an option without `add` |
 | `pick` | Several answers from a set: which edits to make, what to do after approval | Every option has a `description`; `add` — if the option changes the budget or risk |
-| `confirm` | "Did I get this right" | Exactly one "Yes" option; `context` says what exactly you understood. The owner writes disagreement as their own answer |
+| `confirm` | "Did I get this right" about one reading the `scope` leaves open | Exactly one "Yes" option; `context` says how you read that point — the `scope` above already says what you understood, so the question does not retell it. The owner writes disagreement as their own answer |
 | `yesno` | Only in a `clarify` brief: a clarification you can continue without | Exactly two options, "Yes" and "No"; a clarification has no `setup` |
 
 Mark a question that only matters for one of the answers to another question with the option field `hides` — an array of `id`s of questions of the same brief, placed below, that lose their meaning with this choice: you cannot hide a question above or the option's own question. The owner does not see hidden questions, does not answer them, and they are not in the answer; the owner does not see the mark either.

@@ -247,7 +247,6 @@ export const en: Messages = {
     skillNotFound: "No skill found",
     stageSkill: (n) => `Stage ${n} skill`,
     openSkill: (name) => `Open skill ${name}`,
-    revealSkill: (name) => `Show skill ${name} in the file system`,
     skillFileMissing: "Skill file not found",
     skills: "Skills",
     findSkill: "Find a skill",
@@ -472,5 +471,13 @@ export const en: Messages = {
     dismiss: "Dismiss",
     notWaiting: (stage: string) => `Stage ${quote(stage)} is no longer waiting: the step was retried or skipped already`,
     busy: (stage: string) => `Flow is running stage ${quote(stage)} right now — for example, retrying the step. Press again once the attempt ends`,
+  },
+  subStages: {
+    before: "before",
+    after: "after",
+    drop: (owner, before) => `sub-stage of ${quote(owner)} — ${before ? "before" : "after"}`,
+    drag: (name, owner) => `Drag sub-stage ${name} of ${owner}`,
+    title: "Sub-stages",
+    inRun: (name, owner) => `Sub-stage ${name} of ${owner} in the run`,
   },
 };

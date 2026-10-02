@@ -7,7 +7,8 @@ import { requiredOf } from "../core/required";
 import { REVIEW_NONE, REVIEW_ROWS, SETUP_ROW, checkerAllowed, rowsOf } from "../core/rows";
 import { criterionEditable } from "../core/budget";
 import { carriedFor } from "../core/carry";
-import { initialStageChoice, stageItems, type StageChoice, type StageItem } from "../core/stages";
+import { initialStageChoice, stageItems, stagePhase, type StageChoice, type StageItem } from "../core/stages";
+import { runCascade } from "../core/sub-stages";
 import { withPlace } from "../core/places";
 import { hiddenQuestions } from "../core/visibility";
 import type { Criterion, DecisionAnswer, DecisionBrief, DecisionQuestion, DispatchPlace, DispatchRoute, StageAnswer } from "../shared/contract";
@@ -59,7 +60,17 @@ export const stageChoiceIn = (brief: DecisionBrief, draft: Draft, item: StageIte
   return { run: own.run ?? initial.run, executor: own.executor ?? initial.executor };
 };
 
-export const toggleStageRun = (brief: DecisionBrief, draft: Draft, item: StageItem): Draft => withStage(draft, item.stage.id, { run: !stageChoiceIn(brief, draft, item).run });
+/**
+ * Галочка этапа: владелец переключает всю связку, снятый под-этап — себя, возвращённый — себя и владельца (`runCascade`).
+ * Пройденные этапы связки не меняются — как и в полосе прогресса.
+ */
+export const toggleStageRun = (brief: DecisionBrief, draft: Draft, item: StageItem): Draft => {
+  const run = !stageChoiceIn(brief, draft, item).run;
+  const pending = new Set(stageItems(brief).filter((each) => stagePhase(each) === "todo").map((each) => each.stage.id));
+  return runCascade(brief.stages?.list ?? [item.stage], item.stage.id, run)
+    .filter((id) => id === item.stage.id || pending.has(id))
+    .reduce((current, id) => withStage(current, id, { run }), draft);
+};
 
 export const pickStageExecutor = (draft: Draft, item: StageItem, executor: string): Draft => withStage(draft, item.stage.id, { executor });
 

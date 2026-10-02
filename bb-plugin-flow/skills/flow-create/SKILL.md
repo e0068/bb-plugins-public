@@ -37,6 +37,7 @@ A stage is a step of work that has its own outcome or its own stop. The order in
 - Stage executors are ids from the catalog: `"executors": ["agent:tester"]`. The thread's own agent can always execute any stage and is not listed. Add an executor when the work behind it is bigger than the cost of handing it to a subagent: implementation, review, test runs.
 - A built-in stage gets its own skill in the `skill` field only if the owner named it; without the field — the kind's default skill.
 - `id` and `name` may be omitted: the id comes from the kind or skill, the name is the English kind name or the skill name. Flow and stage names are in English, like the other flows, unless the owner named others.
+- A stage can carry sub-stages that go on and off in the run together with it — say, a repoint automation before a demo and a restore after it. A sub-stage gets `"parent": "<owner stage id>"`, and the owner then needs an explicit `id`. Sub-stages stand right next to their owner: those above it run before it, those below run after. A sub-stage has no number and no sub-stages of its own; the owner is a top-level stage. The owner's checkbox in Stage selection and in the progress bar switches the whole set; a sub-stage also has its own. A flow with a sub-stage away from its owner is refused.
 
 ## 3. Automations
 

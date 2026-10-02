@@ -52,7 +52,7 @@ type StageState = { item: StageItem; finished: boolean };
 
 const stateOf = (item: StageItem): StageState => ({ item, finished: stagePhase(item) !== "todo" });
 
-function StageCell({ state, view, roots, order, width }: { state: StageState; view: StagesView; roots: FileRoots | null; order: number; width: number }) {
+function StageCell({ state, subs, view, roots, order, width }: { state: StageState; subs: readonly StageState[]; view: StagesView; roots: FileRoots | null; order: number; width: number }) {
   const { item, finished } = state;
   const t = useMessages();
   const locale = useLocale();
@@ -67,8 +67,8 @@ function StageCell({ state, view, roots, order, width }: { state: StageState; vi
   // Автоматизацию исполняет сам Flow: выбирать в ней нечего, поэтому у несделанной нечего и раскрывать.
   // Сделанная ведёт себя как остальные: ссылка результата в ячейке, остальные — в раскрытом списке.
   const automation = checkable ? item.stage.automation : undefined;
-  // Раскрывать есть что, только если есть из кого выбирать: одного «Сам» список не стоит.
-  const expandable = checkable ? automation === undefined && item.stage.executors.length > 0 && !view.answered : results.length > 0;
+  // Раскрывать есть что, только если есть из кого выбирать — одного «Сам» список не стоит, — или есть под-этапы со своими галочками.
+  const expandable = checkable ? (automation === undefined && item.stage.executors.length > 0 && !view.answered) || subs.length > 0 : results.length > 0;
   const name = stageLabel(item.stage, t.stages);
   const label = (
     <CardText
@@ -109,7 +109,7 @@ function StageCell({ state, view, roots, order, width }: { state: StageState; vi
           <CheckSquare on={choice.run} />
           {label}
         </button>
-        {automation !== undefined && (
+        {automation !== undefined && !expandable && (
           // На месте шеврона — значок автоматизации: она идёт сама, нажимать не на что.
           <span role="img" aria-label={t.stages.automation} className="flex shrink-0 items-center px-3">
             <Icon name={AUTOMATION_ICON} aria-hidden="true" className="size-3.5 text-muted-foreground" />
@@ -158,11 +158,13 @@ const panelItem = "flex min-h-9 w-full items-center justify-between gap-3 bg-sta
 const panelHover = "enabled:hover:brightness-110 disabled:cursor-default";
 
 /** `cell` — ячейка этапа: выбор сворачивает список, не сдвигая её на экране. */
-function ExecutorPanel({ item, view, order, cell }: { item: StageItem; view: StagesView; order: number; cell: () => Element | null }) {
+function ExecutorPanel({ item, subs, view, order, cell }: { item: StageItem; subs: readonly StageState[]; view: StagesView; order: number; cell: () => Element | null }) {
   const t = useMessages();
   const choice = stageChoiceIn(view.brief, view.draft, item);
   const recommended = item.report?.executor ?? SELF;
-  const options: Array<{ id: string; executor: StageExecutor | undefined }> = [{ id: SELF, executor: undefined }, ...item.stage.executors.map((e) => ({ id: e.id, executor: e }))];
+  // Автоматизация и этап без исполнителей выбирать не дают: их панель — только под-этапы.
+  const choosable = item.stage.automation === undefined && item.stage.executors.length > 0;
+  const options: Array<{ id: string; executor: StageExecutor | undefined }> = choosable ? [{ id: SELF, executor: undefined }, ...item.stage.executors.map((e) => ({ id: e.id, executor: e }))] : [];
   return (
     <div role="group" aria-label={t.stages.executorGroup(stageLabel(item.stage, t.stages))} style={{ order }} className="flex basis-full flex-col gap-px">
       {options.map(({ id, executor }) => {
@@ -199,6 +201,53 @@ function ExecutorPanel({ item, view, order, cell }: { item: StageItem; view: Sta
               <AddMeta add={executorAdd(item, id, scopeOf(view.brief, toAnswer(view.brief, view.draft)))} />
               {on && <Icon name="Check" aria-hidden="true" className="size-3.5" />}
             </span>
+          </button>
+        );
+      })}
+      <SubStages owner={item} subs={subs} view={view} />
+    </div>
+  );
+}
+
+/**
+ * Под-этапы несделанного владельца в его раскрытой панели: своя галочка, название и «до» или «после».
+ * Сделанный под-этап — с первым результатом и без галочки.
+ */
+function SubStages({ owner, subs, view }: { owner: StageItem; subs: readonly StageState[]; view: StagesView }) {
+  const t = useMessages();
+  if (subs.length === 0) return null;
+  const list = view.brief.stages?.list ?? [];
+  const at = (id: string) => list.findIndex((stage) => stage.id === id);
+  const ownerName = stageLabel(owner.stage, t.stages);
+  return (
+    <div role="group" aria-label={t.subStages.title} className="flex flex-col gap-px">
+      <span aria-hidden="true" className="bg-state-active px-3 pt-2 text-[11px] text-muted-foreground">
+        {t.subStages.title}
+      </span>
+      {subs.map(({ item, finished }) => {
+        const name = stageLabel(item.stage, t.stages);
+        const side = <span className="shrink-0 text-[11px] text-muted-foreground">{at(item.stage.id) < at(owner.stage.id) ? t.subStages.before : t.subStages.after}</span>;
+        const first = item.report?.results?.[0];
+        return finished ? (
+          <div key={item.stage.id} className={cn(panelItem, "justify-start")}>
+            <Icon name="Check" aria-hidden="true" className="size-3.5 shrink-0" />
+            <span className="min-w-0 truncate">{name}</span>
+            {side}
+            {first !== undefined && <DocumentName link={first} roots={null} />}
+          </div>
+        ) : (
+          <button
+            key={item.stage.id}
+            type="button"
+            aria-pressed={stageChoiceIn(view.brief, view.draft, item).run}
+            aria-label={t.subStages.inRun(name, ownerName)}
+            disabled={view.answered || view.sending}
+            onClick={() => view.change((d) => toggleStageRun(view.brief, d, item))}
+            className={cn(panelItem, panelHover, "justify-start")}
+          >
+            <CheckSquare on={stageChoiceIn(view.brief, view.draft, item).run} />
+            <span className="min-w-0 truncate">{name}</span>
+            {side}
           </button>
         );
       })}
@@ -252,7 +301,12 @@ function ResultsPanel({ item, roots, order }: { item: StageItem; roots: FileRoot
  */
 export function StagesBlock({ view, roots, budget }: { view: StagesView; roots: FileRoots | null; budget: { key: string; cell: ReactNode; panel: ReactNode } | null }) {
   const container = useRef<HTMLDivElement>(null);
-  const states = stageItems(view.brief).map(stateOf);
+  const all = stageItems(view.brief).map(stateOf);
+  // Под-этап несделанного владельца стоит не своей кнопкой, а в панели владельца; у сделанного владельца — своей кнопкой, как прежде.
+  const finished = (id: string) => all.some((state) => state.item.stage.id === id && state.finished);
+  const pending = (state: StageState) => state.item.stage.parent !== undefined && !finished(state.item.stage.parent);
+  const states = all.filter((state) => !pending(state));
+  const subsOf = (id: string) => all.filter((state) => pending(state) && state.item.stage.parent === id);
   const count = states.length + (budget === null ? 0 : 1);
   const ends = useRowEnds(container, count);
   const width = view.brief.stages?.minButtonWidth ?? STAGE_BUTTON_WIDTH.initial;
@@ -261,13 +315,13 @@ export function StagesBlock({ view, roots, budget }: { view: StagesView; roots: 
     const key = stageKey(state.item.stage.id);
     if (view.expanded !== key) return [];
     const cell = () => [...(container.current?.querySelectorAll<HTMLElement>("[data-stage]") ?? [])].find((el) => el.dataset.stage === state.item.stage.id) ?? null;
-    return [state.finished ? <ResultsPanel key={key} item={state.item} roots={roots} order={order} /> : <ExecutorPanel key={key} item={state.item} view={view} order={order} cell={cell} />];
+    return [state.finished ? <ResultsPanel key={key} item={state.item} roots={roots} order={order} /> : <ExecutorPanel key={key} item={state.item} subs={subsOf(state.item.stage.id)} view={view} order={order} cell={cell} />];
   });
   const budgetIndex = states.length;
   return (
     <div ref={container} className="flex flex-wrap gap-px">
       {states.map((state, index) => (
-        <StageCell key={state.item.stage.id} state={state} view={view} roots={roots} order={cellOrder(index)} width={width} />
+        <StageCell key={state.item.stage.id} state={state} subs={subsOf(state.item.stage.id)} view={view} roots={roots} order={cellOrder(index)} width={width} />
       ))}
       {budget !== null && (
         <div {...rowCellAttr} style={{ order: cellOrder(budgetIndex), ...rowCellStyle(width) }} className="flex min-w-0">

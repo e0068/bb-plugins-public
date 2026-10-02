@@ -357,13 +357,16 @@ export const executorProvider = (stage: WorkStage, track: StageTrack, threadProv
 export const stageLiveIcon = (progress: FlowProgress, stage: WorkStage, agentActive: boolean): RunningIcon | null =>
   progress.waiting.includes(stage.id) ? null : liveIcon(stage, progress.stages[stage.id] ?? {}, agentActive);
 
-/** Строка этапа Action в инструкциях агенту: его шаги запускает владелец кнопками, агент заканчивает ход. */
-export const actionInstruction = (stage: WorkStage, index: number): string =>
-  `${index + 1}. ${stage.id} "${stage.name}" — action: the owner runs this stage step by step with a button above the composer; do not run it and do not mark it — after marking the stage before it, end your turn; a done stage needs no results`;
+/** Что агенту делать на этапе Action: его шаги запускает владелец кнопками, агент заканчивает ход. Идёт за названием этапа. */
+export const ACTION_TAIL =
+  " — action: the owner runs this stage step by step with a button above the composer; do not run it and do not mark it — after marking the stage before it, end your turn; a done stage needs no results";
 
-/** Строка этапа-автоматизации в инструкциях агенту: её ведёт Flow, агент заканчивает ход и о старте говорит только по ответу flow_stage. */
-export const automationInstruction = (stage: WorkStage, index: number): string =>
-  `${index + 1}. ${stage.id} "${stage.name}" — automation: Flow runs this stage by itself once the nearest stage of the run before it is marked done; the flow_stage answer says whether it started — tell the owner only what that answer says; do not run it and do not mark it — after marking the stage before it, end your turn; a done stage needs no results`;
+/** Что агенту делать на этапе-автоматизации: её ведёт Flow, агент заканчивает ход и о старте говорит только по ответу flow_stage. */
+export const AUTOMATION_TAIL =
+  " — automation: Flow runs this stage by itself once the nearest stage of the run before it is marked done; the flow_stage answer says whether it started — tell the owner only what that answer says; do not run it and do not mark it — after marking the stage before it, end your turn; a done stage needs no results";
+
+/** Строка этапа-автоматизации в инструкциях агенту. */
+export const automationInstruction = (stage: WorkStage, index: number): string => `${index + 1}. ${stage.id} "${stage.name}"${AUTOMATION_TAIL}`;
 
 /** Свободный id встроенной автоматизации среди `taken`; префикс не пересекается с `automation-<id>` этапов Automations. */
 const freeAutomationId = (taken: readonly string[]): string => freeId("flow-automation", taken);

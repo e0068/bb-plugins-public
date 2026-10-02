@@ -254,7 +254,6 @@ export const ru = {
     skillNotFound: "Навык не найден",
     stageSkill: (n: number) => `Навык этапа ${n}`,
     openSkill: (name: string) => `Открыть навык ${name}`,
-    revealSkill: (name: string) => `Показать навык ${name} в файловой системе`,
     skillFileMissing: "Файл навыка не найден",
     skills: "Навыки",
     findSkill: "Найти навык",
@@ -480,6 +479,14 @@ export const ru = {
     dismiss: "Закрыть",
     notWaiting: (stage: string) => `Этап ${quote(stage)} уже не ждёт: шаг повторили или пропустили раньше`,
     busy: (stage: string) => `Flow сейчас ведёт этап ${quote(stage)} — например, повторяет шаг. Нажми, когда попытка закончится`,
+  },
+  subStages: {
+    before: "до",
+    after: "после",
+    drop: (owner: string, before: boolean) => `под-этап ${quote(owner)} — ${before ? "до" : "после"}`,
+    drag: (name: string, owner: string) => `Перетащить под-этап ${name} этапа ${owner}`,
+    title: "Под-этапы",
+    inRun: (name: string, owner: string) => `Под-этап ${name} этапа ${owner} в прогоне`,
   },
 };
 

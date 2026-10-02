@@ -105,3 +105,18 @@ export const automationStage = (automation: StageAutomation) => ({
   executors: [] as never[],
   automation: { id: automation.id, name: automation.name },
 });
+
+/**
+ * Под-этапы стоят вплотную к владельцу того же списка: владелец есть, он не сам этап и не под-этап, а между ними —
+ * только под-этапы того же владельца. Иначе номера, галочка связки и инструкции агенту разошлись бы со списком.
+ */
+export const linkedSubStages = (stages: ReadonlyArray<{ id: string; parent?: string | undefined }>): boolean =>
+  stages.every((stage, at) => {
+    if (stage.parent === undefined) return true;
+    const owner = stages.findIndex((other) => other.id === stage.parent);
+    const between = stages.slice(Math.min(at, owner) + 1, Math.max(at, owner));
+    return owner >= 0 && owner !== at && stages[owner]!.parent === undefined && between.every((other) => other.parent === stage.parent);
+  });
+
+/** Причина отказа flow с разорванной связкой — одна для схемы и для save_flow. */
+export const SUB_STAGE_ISSUE = "a sub-stage stands next to its parent, a top-level stage of the same flow, with only that parent's sub-stages between them";

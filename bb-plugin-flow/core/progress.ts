@@ -7,6 +7,7 @@ import { automationView, executorKind, executorProvider, idleMinutes, isFailed, 
 import { stagePlans } from "./budget";
 import { demoVerdict } from "./outcome";
 import { askedStageIds } from "./stages";
+import { runCascade } from "./sub-stages";
 
 export const EMPTY_PROGRESS: FlowProgress = { stages: {}, waiting: [] };
 
@@ -180,12 +181,17 @@ export const isAhead = (progress: FlowProgress, stages: readonly WorkStage[], id
   return index >= 0 && index > Math.max(-1, ...reached);
 };
 
-/** Чекбокс владельца: этап впереди убирается или возвращается, а возвращённый запоминается — агенту о нём скажет ответ flow_stage. */
-export const toggleStageInRun = (progress: FlowProgress, stages: readonly WorkStage[], id: string, run: boolean): FlowProgress => {
-  if (!isAhead(progress, stages, id)) return progress;
-  const others = (progress.returned ?? []).filter((returned) => returned !== id);
-  return { ...setStageInRun(progress, id, run), returned: run ? [...others, id] : others };
-};
+/**
+ * Чекбокс владельца: этап впереди убирается или возвращается вместе со связкой (`runCascade`), а возвращённые
+ * запоминаются — агенту о них скажет ответ flow_stage. Этап связки, до которого прогон дошёл, не меняется.
+ */
+export const toggleStageInRun = (progress: FlowProgress, stages: readonly WorkStage[], id: string, run: boolean): FlowProgress =>
+  runCascade(stages, id, run)
+    .filter((each) => isAhead(progress, stages, each))
+    .reduce((current, each) => {
+      const others = (current.returned ?? []).filter((returned) => returned !== each);
+      return { ...setStageInRun(current, each, run), returned: run ? [...others, each] : others };
+    }, progress);
 
 /** Владелец убирает этап из прогона или возвращает его; этап, до которого прогон дошёл — начатый, закрытый, ждущий владельца, со шагами, — не меняется. */
 export const setStageInRun = (progress: FlowProgress, id: string, run: boolean): FlowProgress => {
@@ -236,12 +242,15 @@ export const progressView = (progress: FlowProgress, stages: readonly WorkStage[
       // План — этапу, который ещё впереди или идёт: у пройденного уже есть факт, у вычеркнутого тратить нечего.
       ...(plan === undefined || (state !== "todo" && state !== "now") ? {} : { plan }),
       ...(stage.automation === undefined ? {} : { automation: automationView(stage, track) }),
+      ...(stage.parent === undefined ? {} : { parent: stage.parent }),
     } as const;
   });
-  // Вычеркнутые этапы не нумеруются: номер этапа — его место среди этапов прогона, он же числитель счётчика; без текущего этапа числитель — их число.
-  const counted = rows.filter((s) => s.state !== "skip");
-  const view = rows.map((row) => ({ ...row, number: row.state === "skip" ? null : counted.indexOf(row) + 1 }));
+  // Вычеркнутые этапы и под-этапы не нумеруются: номер этапа — его место среди этапов прогона верхнего уровня, он же числитель
+  // счётчика и «сделано»; на под-этапе числитель — место его владельца (снятого — последнего номера до него); без текущего этапа — их число.
+  const counted = rows.filter((s, at) => s.state !== "skip" && stages[at]!.parent === undefined);
+  const view = rows.map((row) => ({ ...row, number: counted.includes(row) ? counted.indexOf(row) + 1 : null }));
   const current = view.find((s) => s.state === "now" || s.state === "fail") ?? view.find((s) => s.state === "todo");
-  const step = current?.number ?? counted.length;
-  return { stages: view, done: view.filter((s) => s.state === "done").length, step, total: counted.length, current: current?.id ?? null, planned: progress.planned ?? null };
+  const ownerAt = view.findIndex((s) => s.id === (stages.find((stage) => stage.id === current?.id)?.parent ?? current?.id));
+  const step = ownerAt < 0 ? counted.length : Math.max(1, view.slice(0, ownerAt + 1).filter((s) => s.number !== null).length);
+  return { stages: view, done: counted.filter((s) => s.state === "done").length, step, total: counted.length, current: current?.id ?? null, planned: progress.planned ?? null };
 };

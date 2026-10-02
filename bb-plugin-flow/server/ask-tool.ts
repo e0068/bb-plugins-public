@@ -35,7 +35,7 @@ The budget forecast: scope = base + chosen options; a run stage costs scope × p
 questions — the second part; an id does not start with "setup.".
 - fork — one answer, the choice changes the outcome. Every option requires description and add — what it adds to the scope, from zero (or the old cost plus risk XS…XXL). At most one recommended.
 - pick — several answers. Every option requires description; add if it adds work.
-- confirm — "did I get this right": exactly one option "Yes", and context says what you understood.
+- confirm — "did I get this right" on what scope leaves open: one "Yes"; context — not scope retold.
 hides on an option — ids of questions below it that lose meaning when it is chosen: the owner does not see them.
 criteria on an option — items it adds while chosen, required if priced; an item of an option the owner drops themselves stays in the list struck through, so an item that depends on one answer goes on the option, not into setup.criteria; removes — setup.criteria indexes it strikes then.
 The owner can answer any question in their own words.
