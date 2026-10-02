@@ -339,6 +339,15 @@ describe("логотип агента вместо колёсика хода", (
     expect(await harness.callRpc("agentLogos", {})).toEqual([{ threadId: THREAD, logoUrl: CODEX.logoUrl }]);
   });
 
+  it("логотип берётся у любого провайдера хоста — Pi, OpenCode и прочих, а не только у Claude и Codex", async () => {
+    const { steps } = fakeSteps();
+    for (const id of ["pi", "opencode", "gemini"]) {
+      const provider: Provider = { id, displayName: id, logoUrl: `/api/v1/system/providers/${id}/logo` };
+      const { harness } = setup([review], steps, undefined, undefined, { providerId: id, providers: [CLAUDE, CODEX, provider], flowThreads: [THREAD] });
+      expect(await harness.callRpc("agentLogos", {})).toEqual([{ threadId: THREAD, logoUrl: provider.logoUrl }]);
+    }
+  });
+
   it("у провайдера нет логотипа, его нет в списке хоста или провайдер треда неизвестен — логотипа нет, остаётся колёсико", async () => {
     const { steps } = fakeSteps();
     for (const hosted of [{ providerId: "codex", providers: [{ ...CODEX, logoUrl: null }] }, { providerId: "codex", providers: [CLAUDE] }, { providerId: null, providers: [CLAUDE] }]) {

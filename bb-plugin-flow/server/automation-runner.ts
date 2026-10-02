@@ -65,9 +65,9 @@ export interface AutomationRunnerDeps {
   external: ExternalStep;
   /** Запуск скрипта этапа в треде; нет — шаги-скрипты падают с причиной. */
   script?: (threadId: string, script: AutomationScript) => Promise<StepOutcome>;
-  /** Провайдер треда — для логотипа в строке треда; не прочитался — логотипа нет. */
-  thread: (threadId: string) => Promise<Pick<ThreadState, "providerId">>;
-  /** Треды, которым назначен flow: логотип агента получают они, в том числе до первой отметки этапа. Нет — логотипов нет. */
+  /** Провайдер треда — для логотипа в строке треда, не прочитался — логотипа нет; занятость — для проверки хода агента. */
+  thread: (threadId: string) => Promise<Pick<ThreadState, "providerId" | "active">>;
+  /** Треды под Flow, включая «Автоматически»: логотип агента получают они, в том числе до первой отметки этапа. Нет — логотипов нет. */
   flowThreads?: () => readonly string[];
   /** Провайдеры хоста с логотипами. */
   providers: () => Promise<readonly HostProvider[]>;
