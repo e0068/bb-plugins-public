@@ -260,14 +260,14 @@ describe("the key and the description on a card", () => {
 });
 
 describe("card charts over the board's days", () => {
-  it("draws the status bar and the burndown over the board's 7 days once switched on, only on a card with tasks under it", async () => {
+  it("draws the status bar and the burndown over the board's 7 days in days once switched on, only on a card with tasks under it", async () => {
     for (const field of ["subtaskStats", "burndown"] as const) toggleFieldVisible(`board:${PROJECT_ID}`, field);
     const asked: unknown[] = [];
     const now = Date.now();
     const slot = renderBoard({
       taskBurndowns: (input: never) => {
         asked.push(input);
-        return { burndowns: [{ taskId: EPIC, open: [2, 2, 1], ends: [now - 2 * 86_400_000, now - 86_400_000, now], forecastDays: 2 }] };
+        return { burndowns: [{ taskId: EPIC, open: [2, 2, 1], ends: [now - 2 * 86_400_000, now - 86_400_000, now], forecastMs: 2 * 86_400_000 }] };
       },
     });
     await waitFor(() => card(slot.container, "TSK-1"));
@@ -275,14 +275,14 @@ describe("card charts over the board's days", () => {
 
     expect(epicCard.getByTitle("Done 1 · Todo 1").getAttribute("aria-label")).toBe("50% done");
     await waitFor(() => epicCard.getByText("1 open · ~2 d left"));
-    expect(asked).toEqual([{ projectId: PROJECT_ID, period: 7 }]);
+    expect(asked).toEqual([{ projectId: PROJECT_ID, period: 7, unit: "days" }]);
     expect(within(card(slot.container, "TSK-3")).queryByText(/open ·/)).toBeNull();
   });
 
-  it("asks the burndown for the days the board's Display panel set, 0 for all time", async () => {
+  it("asks the burndown for the period and the unit the board's Display panel set, 0 for all time", async () => {
     toggleFieldVisible(`board:${PROJECT_ID}`, "burndown");
-    const { setChartPreference } = await import("./chart-preference.js");
-    setChartPreference(`board:${PROJECT_ID}`, { period: 0, ganttMode: "fact" });
+    const { setChartPreference, DEFAULT_CHART_PREFERENCE } = await import("./chart-preference.js");
+    setChartPreference(`board:${PROJECT_ID}`, { ...DEFAULT_CHART_PREFERENCE, period: 0, unit: "hours" });
     const asked: unknown[] = [];
     const slot = renderBoard({
       taskBurndowns: (input: never) => {
@@ -291,6 +291,39 @@ describe("card charts over the board's days", () => {
       },
     });
     await waitFor(() => card(slot.container, "TSK-1"));
-    await waitFor(() => expect(asked).toEqual([{ projectId: PROJECT_ID, period: 0 }]));
+    await waitFor(() => expect(asked).toEqual([{ projectId: PROJECT_ID, period: 0, unit: "hours" }]));
+  });
+});
+
+describe("the dates of a card's charts", () => {
+  const burndowns = () => {
+    const now = Date.now();
+    return { burndowns: [{ taskId: EPIC, open: [2, 2, 1], ends: [now - 2 * 86_400_000, now - 86_400_000, now], forecastMs: 2 * 86_400_000 }] };
+  };
+
+  it("writes the dates under the chart by default", async () => {
+    toggleFieldVisible(`board:${PROJECT_ID}`, "burndown");
+    const slot = renderBoard({ taskBurndowns: burndowns });
+    await waitFor(() => within(card(slot.container, "TSK-1")).getByText(/open ·/));
+    const epic = card(slot.container, "TSK-1");
+    expect(epic.querySelector('[data-card-section="burndown"] [data-date-label]')).not.toBeNull();
+    expect(epic.querySelector("[data-card-dates]")).toBeNull();
+  });
+
+  it("writes them once along the card's bottom, under everything, when the board asks — and with them off neither dates nor their lines", async () => {
+    toggleFieldVisible(`board:${PROJECT_ID}`, "burndown");
+    const { setChartPreference, DEFAULT_CHART_PREFERENCE } = await import("./chart-preference.js");
+    setChartPreference(`board:${PROJECT_ID}`, { ...DEFAULT_CHART_PREFERENCE, dates: "card", dateDensity: "many" });
+    const slot = renderBoard({ taskBurndowns: burndowns });
+    await waitFor(() => within(card(slot.container, "TSK-1")).getByText(/open ·/));
+    const epic = card(slot.container, "TSK-1");
+    expect(epic.querySelector('[data-card-section="burndown"] [data-date-label]')).toBeNull();
+    expect(epic.lastElementChild?.matches("[data-card-dates]")).toBe(true);
+    expect(epic.querySelectorAll("[data-card-dates] [data-date-label]").length).toBeGreaterThan(0);
+    expect(card(slot.container, "TSK-3").querySelector("[data-card-dates]")).toBeNull();
+
+    setChartPreference(`board:${PROJECT_ID}`, { ...DEFAULT_CHART_PREFERENCE, dates: "off" });
+    await waitFor(() => expect(epic.querySelector("[data-date-label]")).toBeNull());
+    expect(epic.querySelector("[data-date-grid]")).toBeNull();
   });
 });

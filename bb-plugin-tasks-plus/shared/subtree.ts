@@ -87,19 +87,11 @@ export function progressOf(descendants: readonly Descendant<{ status: TaskStatus
 
 /** What a row or a card shows about a task's place in the tree. */
 export interface TaskFamily<T> {
-  /** The task's nearest epic, looked up by its `epicId`. */
-  epic: T | null;
   descendants: Descendant<T>[];
 }
 
 /** Every task's family, from the whole list at once. */
-export function familiesOf<T extends TreeLink & { epicId?: string | null }>(tasks: readonly T[]): Map<string, TaskFamily<T>> {
-  const byId = new Map(tasks.map((task) => [task.id, task]));
+export function familiesOf<T extends TreeLink>(tasks: readonly T[]): Map<string, TaskFamily<T>> {
   const descendants = descendantsOf(tasks);
-  return new Map(
-    tasks.map((task) => [
-      task.id,
-      { epic: task.epicId ? (byId.get(task.epicId) ?? null) : null, descendants: descendants.get(task.id) ?? [] },
-    ]),
-  );
+  return new Map(tasks.map((task) => [task.id, { descendants: descendants.get(task.id) ?? [] }]));
 }

@@ -91,7 +91,6 @@ export const BOARD_GROUP_PROPERTIES = [
   "type",
   "estimate",
   "assignee",
-  "epic",
   "label",
 ] as const;
 
@@ -143,7 +142,6 @@ export const ROW_FIELDS = [
   "slug",
   "active",
   "assignee",
-  "epic",
   "flow",
   "type",
   "estimate",
@@ -214,7 +212,6 @@ export const FIELD_FILTER_KINDS = {
   slug: "text",
   active: "values",
   assignee: "listed",
-  epic: "values",
   flow: "values",
   type: "listed",
   estimate: "listed",
@@ -237,10 +234,10 @@ export const FIELD_FILTER_KINDS = {
 
 /**
  * Picked-from-a-list filters added after the first seven (statuses …
- * parents, which keep their own keys): the task's epic, project, flow,
- * worktree, the machine that took it and whether an agent works on it.
+ * parents, which keep their own keys): the task's project, flow, worktree,
+ * the machine that took it and whether an agent works on it.
  */
-export const VALUE_FILTER_FIELDS = ["epic", "project", "flow", "worktree", "takenBy", "active"] as const satisfies readonly QueryField[];
+export const VALUE_FILTER_FIELDS = ["project", "flow", "worktree", "takenBy", "active"] as const satisfies readonly QueryField[];
 export type ValueFilterField = (typeof VALUE_FILTER_FIELDS)[number];
 
 /** Fields filtered by "contains". */
@@ -302,21 +299,44 @@ export const BOARD_ONLY_FIELDS: readonly (typeof ROW_FIELDS)[number][] = [
 ];
 
 /**
- * How far back a board's card charts look, in whole days: that many days by
- * the day, or — at ALL_TIME — the whole history by the week, opening at the
- * oldest task.
+ * How long a board's card charts run, in whole units of the board's chart
+ * unit (CHART_UNITS): that many columns of the unit, or — at ALL_TIME — the
+ * whole history by the week, opening at the oldest task.
  */
 export type CardChartPeriod = number;
 
 /** The period with no fixed length. */
 export const ALL_TIME = 0;
 
-/** The longest period a board takes, ten years of day columns. */
-export const MAX_CARD_CHART_DAYS = 3650;
+/** The longest period a board takes, ten years of day columns — as many of any unit. */
+export const MAX_CARD_CHART_PERIOD = 3650;
 
 /** What a Gantt draws: the planned dates, the statuses the task actually went through, or both laid over each other. */
 export const GANTT_MODES = ["plan", "fact", "both"] as const;
 export type GanttMode = (typeof GANTT_MODES)[number];
+
+/**
+ * Where today stands in a card chart's window: at the right edge, the window
+ * looking back over the past; in the middle, half back and half ahead; at
+ * the left edge, the window looking ahead to plan.
+ */
+export const TODAY_PLACES = ["left", "center", "right"] as const;
+export type TodayPlace = (typeof TODAY_PLACES)[number];
+
+/** What a card chart period counts: days, hours or minutes back from now. */
+export const CHART_UNITS = ["days", "hours", "minutes"] as const;
+export type ChartUnit = (typeof CHART_UNITS)[number];
+
+/** How long one of a period's units is. */
+export const CHART_UNIT_MS: Record<ChartUnit, number> = { days: 86_400_000, hours: 3_600_000, minutes: 60_000 };
+
+/** How thickly the dates under the card charts are written: a few, some, many. */
+export const DATE_DENSITIES = ["few", "some", "many"] as const;
+export type DateDensity = (typeof DATE_DENSITIES)[number];
+
+/** Where a card writes its chart dates: nowhere, under each chart, or once along the card's bottom. */
+export const DATE_PLACES = ["off", "charts", "card"] as const;
+export type DatePlace = (typeof DATE_PLACES)[number];
 
 export type TaskStatus = (typeof TASK_STATUSES)[number];
 export type TaskPriority = (typeof TASK_PRIORITIES)[number];

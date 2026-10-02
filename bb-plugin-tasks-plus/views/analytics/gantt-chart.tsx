@@ -13,6 +13,7 @@ import { formatPlanDate, planDateMs, VIEWER_LOCALE } from "../../shared/plan-dat
 import { cn } from "../../lib/utils";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "../../components/ui/tooltip";
 import { StatusIcon } from "../board/icons";
+import type { DateTick } from "../board/date-ticks.js";
 import { Empty } from "./bars";
 import { useChartColors } from "./chart-colors";
 import { formatDay } from "./closed-model";
@@ -28,6 +29,12 @@ interface Span {
 /** The day a plan date falls on, YYYY-MM-DD — the date without its time. */
 const dayOf = (planDate: string) => planDate.slice(0, 10);
 
+/** Where a plan ends on the viewer's calendar: the due time or the end of the due day, or of the start day when that is all there is; null without dates. */
+export function planEndMs({ startDate, dueDate }: { startDate: string | null; dueDate: string | null }): number | null {
+  if (dueDate !== null) return planDateMs(dueDate, "end");
+  return startDate === null ? null : planDateMs(dayOf(startDate), "end");
+}
+
 /**
  * The planned stretch on the viewer's calendar: from the start — its time,
  * or its day's midnight — or the task's creation, when only a due date is
@@ -37,8 +44,8 @@ const dayOf = (planDate: string) => planDate.slice(0, 10);
  */
 export function planSpan(row: GanttRowData): Span | null {
   const { startDate, dueDate } = row;
-  if (startDate === null && dueDate === null) return null;
-  const toMs = dueDate !== null ? planDateMs(dueDate, "end") : planDateMs(dayOf(startDate!), "end");
+  const toMs = planEndMs(row);
+  if (toMs === null) return null;
   const fromMs = startDate !== null ? planDateMs(startDate, "start") : (row.createdMs ?? planDateMs(dayOf(dueDate!), "start"));
   return { fromMs: fromMs < toMs ? fromMs : planDateMs(dayOf((dueDate ?? startDate)!), "start"), toMs };
 }
@@ -59,19 +66,13 @@ export interface GanttLine {
 }
 
 /**
- * When a done task was done: the end of its last stretch — the server leaves
- * the done stretches out, so its line ends right there. Null for a task that
- * is not done, or that has no stretch to end.
- */
-const doneMs = (row: GanttRowData): number | null =>
-  row.status === "done" && row.segments.length > 0 ? row.segments.at(-1)!.toMs : null;
-
-/**
  * What each row draws between `fromMs` and `toMs`: its plan and its stretches
- * by status as the mode asks, cut at the edges. Rows with nothing inside are
- * left out; the rest go by where they start.
+ * by status as the mode asks, cut at the edges. A window that runs past
+ * `todayMs` has no facts there, so the facts alone draw the plans from today
+ * on — what is ahead is only planned. Rows with nothing inside are left out —
+ * in Planned dates, rows without a plan — and the rest go by where they start.
  */
-export function ganttLines(rows: readonly GanttRowData[], fromMs: number, toMs: number, mode: GanttMode): GanttLine[] {
+export function ganttLines(rows: readonly GanttRowData[], fromMs: number, toMs: number, mode: GanttMode, todayMs?: number): GanttLine[] {
   const span = toMs - fromMs;
   const place = ({ fromMs: from, toMs: to }: Span): Bar | null => {
     const left = Math.max(from, fromMs);
@@ -79,8 +80,15 @@ export function ganttLines(rows: readonly GanttRowData[], fromMs: number, toMs: 
     return right > left ? { left: (left - fromMs) / span, width: (right - left) / span } : null;
   };
   const lines = rows.flatMap((row): GanttLine[] => {
-    const plannedSpan = mode === "fact" ? null : planSpan(row);
-    const plan = plannedSpan === null ? null : place(plannedSpan);
+    const plannedSpan = planSpan(row);
+    const plan =
+      plannedSpan === null
+        ? null
+        : mode !== "fact"
+          ? place(plannedSpan)
+          : todayMs === undefined
+            ? null
+            : place({ fromMs: Math.max(plannedSpan.fromMs, todayMs), toMs: plannedSpan.toMs });
     const fact =
       mode === "plan"
         ? []
@@ -88,11 +96,12 @@ export function ganttLines(rows: readonly GanttRowData[], fromMs: number, toMs: 
             const bar = place(segment);
             return bar === null ? [] : [{ status: segment.status, bar }];
           });
-    const done = doneMs(row);
+    const done = row.doneMs;
     const doneAt = done !== null && done >= fromMs && done < toMs ? (done - fromMs) / span : null;
-    return plan === null && fact.length === 0 ? [] : [{ row, plan, fact, doneAt }];
+    const empty = mode === "plan" ? plan === null : plan === null && fact.length === 0 && doneAt === null;
+    return empty ? [] : [{ row, plan, fact, doneAt }];
   });
-  const startOf = (line: GanttLine) => Math.min(line.plan?.left ?? 1, ...line.fact.map((entry) => entry.bar.left));
+  const startOf = (line: GanttLine) => Math.min(line.plan?.left ?? 1, line.doneAt ?? 1, ...line.fact.map((entry) => entry.bar.left));
   return lines.sort((a, b) => startOf(a) - startOf(b));
 }
 
@@ -175,12 +184,16 @@ export interface GanttChartProps {
   fromMs: number;
   toMs: number;
   mode: GanttMode;
+  /** Now, marked with a line across the lanes when it falls inside the window — a card's Gantt that looks ahead. */
+  todayMs?: number;
   /** Bare lanes without names or week dates — a card's room. */
   compact?: boolean;
+  /** The card's dates: a line at each, in place of the Mondays'. */
+  ticks?: readonly DateTick[];
   onOpenTask?: (taskKey: string) => void;
 }
 
-export function GanttChart({ rows, fromMs, toMs, mode, compact = false, onOpenTask }: GanttChartProps) {
+export function GanttChart({ rows, fromMs, toMs, mode, todayMs, compact = false, ticks, onOpenTask }: GanttChartProps) {
   const colors = useChartColors();
   // The row under the pointer, lit in the lanes and, on the analytics
   // screen, in the names down the left — hovering either lights both.
@@ -189,8 +202,9 @@ export function GanttChart({ rows, fromMs, toMs, mode, compact = false, onOpenTa
     onPointerEnter: () => setHovered(taskId),
     onPointerLeave: () => setHovered((current) => (current === taskId ? null : current)),
   });
-  const lines = ganttLines(rows, fromMs, toMs, mode);
-  const weeks = ganttWeeks(fromMs, toMs, MAX_WEEK_LABELS);
+  const lines = ganttLines(rows, fromMs, toMs, mode, todayMs);
+  const weeks = ticks === undefined ? ganttWeeks(fromMs, toMs, MAX_WEEK_LABELS) : [];
+  const todayAt = todayMs !== undefined && todayMs > fromMs && todayMs < toMs ? (todayMs - fromMs) / (toMs - fromMs) : null;
   if (lines.length === 0) {
     return compact ? null : <Empty>Nothing to draw for this period{mode === "fact" ? "" : " — plans need a start or due date"}</Empty>;
   }
@@ -207,6 +221,23 @@ export function GanttChart({ rows, fromMs, toMs, mode, compact = false, onOpenTa
           style={{ left: percent(week.at) }}
         />
       ))}
+      {(ticks ?? []).map((tick) => (
+        <span
+          key={tick.ms}
+          data-date-grid
+          aria-hidden
+          className="pointer-events-none absolute inset-y-0 w-px bg-border"
+          style={{ left: percent(tick.at) }}
+        />
+      ))}
+      {todayAt === null ? null : (
+        <span
+          data-gantt-today
+          aria-label="Today"
+          className="pointer-events-none absolute -inset-y-0.5 z-10 w-px bg-primary"
+          style={{ left: percent(todayAt) }}
+        />
+      )}
       <ul className={cn("relative flex flex-col", compact ? "gap-px" : "gap-0.5")}>
         {lines.map(({ row, plan, fact, doneAt }) => (
           <GanttRowTip key={row.taskId} row={row} onOpenTask={onOpenTask}>

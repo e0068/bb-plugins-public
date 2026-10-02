@@ -86,3 +86,11 @@ describe("boardGroupingSchema", () => {
     expect(boardGroupingSchema.safeParse({ ...grouping, groupBy: "color" }).success).toBe(false);
   });
 });
+
+describe("boardGroupingSchema with Fill width", () => {
+  it("takes Fill width on, and leaves it out when off — a stored false is not a value it knows", () => {
+    expect(boardGroupingSchema.safeParse({ ...grouping, fillWidth: true }).success).toBe(true);
+    expect(boardGroupingSchema.safeParse(grouping).success).toBe(true);
+    expect(boardGroupingSchema.safeParse({ ...grouping, fillWidth: false }).success).toBe(false);
+  });
+});

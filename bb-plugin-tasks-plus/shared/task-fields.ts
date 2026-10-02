@@ -162,8 +162,6 @@ function sortValue(field: RowField, task: Task, facts: TaskFacts): string | numb
       return task.assignee ?? null;
     case "parent":
       return keyOf(task.parentTaskId, facts);
-    case "epic":
-      return keyOf(task.epicId, facts);
     case "project":
       return facts.projectNames.get(task.projectId) ?? task.projectId;
     case "flow":
@@ -229,8 +227,6 @@ export function compareByField(sort: ColumnSort, facts: TaskFacts): (a: Task, b:
 /** The values a picked-from-a-list filter reads off a task. */
 function filterValue(field: ValueFilterField, task: Task, facts: TaskFacts): string | null {
   switch (field) {
-    case "epic":
-      return task.epicId ?? null;
     case "project":
       return task.projectId;
     case "flow":

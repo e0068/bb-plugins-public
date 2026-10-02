@@ -16,21 +16,24 @@ export interface GanttSegment {
   toMs: number;
 }
 
-/** A task on a Gantt and the stretches of it the Gantt shows. */
+/** A task on a Gantt, the stretches of it the Gantt shows and when it was done. */
 export interface GanttRow {
   task: Task;
   segments: GanttSegment[];
+  /** When a done task last went done; null for a task that is not done, or whose closing the log does not hold. */
+  doneMs: number | null;
 }
 
-/** Statuses that end the work: a Gantt bar stops where the task enters one. */
-const FINISHED: ReadonlySet<TaskStatus> = new Set(["done", "canceled"]);
+/** The statuses a Gantt fills — the work itself; waiting in Backlog or To do is not drawn, and Done is a mark, not a stretch. */
+const WORKING: ReadonlySet<TaskStatus> = new Set(["in_progress", "in_review"]);
 
 const isStatus = (value: string | null): value is TaskStatus => TASK_STATUSES.includes(value as TaskStatus);
 
 /**
- * The task's life from creation until now, a stretch per status it stood
- * in; the stretches it stood done or canceled are left out, so a finished
- * task's bar ends and a reopened one picks up after a gap.
+ * The task's work from creation until now, a stretch per working status it
+ * stood in; the stretches it waited in Backlog or To do, or stood done or
+ * canceled, are left out, so a bar starts where the work did, ends where it
+ * stopped and a reopened task picks up after a gap.
  */
 export function ganttSegmentsOf(task: Task, moves: readonly StatusTransition[], nowMs: number): GanttSegment[] {
   const born = createdMs(task);
@@ -40,7 +43,13 @@ export function ganttSegmentsOf(task: Task, moves: readonly StatusTransition[], 
   ];
   return changes
     .map((change, index) => ({ status: change.status, fromMs: change.atMs, toMs: changes[index + 1]?.atMs ?? nowMs }))
-    .filter((segment) => !FINISHED.has(segment.status) && segment.fromMs < segment.toMs);
+    .filter((segment) => WORKING.has(segment.status) && segment.fromMs < segment.toMs);
+}
+
+/** When a done task last went done before now; null for any other task. */
+export function doneMsOf(task: Task, moves: readonly StatusTransition[], nowMs: number): number | null {
+  if (task.status !== "done") return null;
+  return moves.filter((move) => move.toStatus === "done" && move.atMs < nowMs).at(-1)?.atMs ?? null;
 }
 
 export interface GanttInput {
@@ -57,18 +66,22 @@ export interface GanttInput {
 const hasPlan = (task: Task) => task.startDate !== null || task.dueDate !== null;
 
 /**
- * The rows of a Gantt opening at `fromMs`: every task that stood open after
- * it, its stretches cut at it, and every task with planned dates — the
- * client places those on its own calendar, and orders the rows by it.
+ * The rows of a Gantt opening at `fromMs`: every task that worked or was
+ * done after it, its stretches cut at it, and every task with planned dates
+ * — the client places those on its own calendar, and orders the rows by it.
  */
 export function ganttRowsOf(input: GanttInput): GanttRow[] {
   return input.tasks
     .filter((task) => inProjects(input.projectIds, task.projectId))
-    .map((task) => ({
-      task,
-      segments: ganttSegmentsOf(task, input.moves.get(task.id) ?? [], input.nowMs)
-        .filter((segment) => segment.toMs > input.fromMs)
-        .map((segment) => ({ ...segment, fromMs: Math.max(segment.fromMs, input.fromMs) })),
-    }))
-    .filter((row) => row.segments.length > 0 || hasPlan(row.task));
+    .map((task) => {
+      const moves = input.moves.get(task.id) ?? [];
+      return {
+        task,
+        segments: ganttSegmentsOf(task, moves, input.nowMs)
+          .filter((segment) => segment.toMs > input.fromMs)
+          .map((segment) => ({ ...segment, fromMs: Math.max(segment.fromMs, input.fromMs) })),
+        doneMs: doneMsOf(task, moves, input.nowMs),
+      };
+    })
+    .filter((row) => row.segments.length > 0 || (row.doneMs !== null && row.doneMs >= input.fromMs) || hasPlan(row.task));
 }

@@ -1,5 +1,6 @@
 import { useState, type SyntheticEvent } from "react";
 import { Icon } from "@/components/ui/icon";
+import { cn } from "@/lib/utils";
 import type { Task } from "../../shared/contract.js";
 import type { Descendant } from "../../shared/subtree.js";
 import { StatusIcon } from "./icons.js";
@@ -15,15 +16,19 @@ const stayInCard = (event: SyntheticEvent) => event.stopPropagation();
  * Everything under a card, as a tree: each row opens its own task and shows
  * only its status and title — the key or slug would crowd the narrow card.
  * Under the rows stands Add sub-task, so a card with none yet can get its first.
+ * The rows, the field and the button take the board's sub-task type size.
  */
 export function SubtaskList({
   descendants,
   onOpen,
   onAdd,
+  textClassName = "text-2xs",
 }: {
   descendants: readonly Descendant<Task>[];
   onOpen: (task: Task) => void;
   onAdd: (title: string) => Promise<AddSubtaskOutcome>;
+  /** The type size class of the list. */
+  textClassName?: string;
 }) {
   return (
     <div className="flex flex-col border-t border-border pt-1.5">
@@ -38,14 +43,14 @@ export function SubtaskList({
             stayInCard(event);
             onOpen(task);
           }}
-          className="-mx-1 flex min-w-0 items-center gap-1.5 rounded-sm px-1 py-0.5 text-left text-2xs hover:bg-state-hover"
+          className={cn("-mx-1 flex min-w-0 items-center gap-1.5 rounded-sm px-1 py-0.5 text-left hover:bg-state-hover", textClassName)}
           style={{ paddingLeft: `${0.25 + (depth - 1) * 0.75}rem` }}
         >
           <StatusIcon status={task.status} className="size-3" />
           <span className="min-w-0 truncate">{task.title}</span>
         </button>
       ))}
-      <SubtaskAdder onAdd={onAdd} />
+      <SubtaskAdder onAdd={onAdd} textClassName={textClassName} />
     </div>
   );
 }
@@ -57,7 +62,7 @@ export function SubtaskList({
  * title comes back into the field, unless the next is already typed there,
  * with the board's reason under it until the title is edited.
  */
-function SubtaskAdder({ onAdd }: { onAdd: (title: string) => Promise<AddSubtaskOutcome> }) {
+function SubtaskAdder({ onAdd, textClassName }: { onAdd: (title: string) => Promise<AddSubtaskOutcome>; textClassName: string }) {
   const [adding, setAdding] = useState(false);
   const [title, setTitle] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -91,7 +96,7 @@ function SubtaskAdder({ onAdd }: { onAdd: (title: string) => Promise<AddSubtaskO
             value={title}
             aria-label="Sub-task title"
             placeholder="Sub-task title…"
-            className="min-w-0 flex-1 bg-transparent text-2xs outline-none select-text placeholder:text-muted-foreground"
+            className={cn("min-w-0 flex-1 bg-transparent outline-none select-text placeholder:text-muted-foreground", textClassName)}
             onChange={(event) => {
               setTitle(event.target.value);
               setError(null);
@@ -106,10 +111,10 @@ function SubtaskAdder({ onAdd }: { onAdd: (title: string) => Promise<AddSubtaskO
           />
         </div>
       ) : null}
-      {error !== null ? <p className="text-2xs text-destructive">{error}</p> : null}
+      {error !== null ? <p className={cn("text-destructive", textClassName)}>{error}</p> : null}
       <button
         type="button"
-        className="-mx-1 flex items-center gap-1.5 rounded-sm px-1 py-0.5 text-left text-2xs font-medium text-muted-foreground hover:text-foreground"
+        className={cn("-mx-1 flex items-center gap-1.5 rounded-sm px-1 py-0.5 text-left font-medium text-muted-foreground hover:text-foreground", textClassName)}
         onClick={() => setAdding(true)}
       >
         <Icon name="Plus" className="size-3" />

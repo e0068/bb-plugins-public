@@ -49,6 +49,58 @@ function withoutEpicFilter(raw: unknown): unknown {
   return { ...record, filters: { parents: [], ...rest } };
 }
 
+const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === "object" && value !== null;
+
+/** A record without one key; anything else as it came. */
+const without = (value: unknown, key: string): unknown => {
+  if (!isRecord(value) || !(key in value)) return value;
+  const { [key]: _dropped, ...rest } = value;
+  return rest;
+};
+
+/** A sort by the retired Epic field reads as none: null for a table, the manual order for a view. */
+const sortOffEpic = (sort: unknown, none: null | "manual"): unknown => (isRecord(sort) && sort.column === "epic" ? none : sort);
+
+/** A grouping by the retired Epic field falls back on Status, and its Epic column settings go. */
+function groupingOffEpic(grouping: unknown): unknown {
+  if (!isRecord(grouping)) return grouping;
+  return {
+    ...grouping,
+    ...(grouping.groupBy === "epic" ? { groupBy: "status" } : {}),
+    ...(isRecord(grouping.columns) ? { columns: without(grouping.columns, "epic") } : {}),
+  };
+}
+
+/** A table's settings with the retired Epic field out of its sort, grouping, widths and pins. */
+function tableOffEpic(table: unknown): unknown {
+  if (!isRecord(table)) return table;
+  return {
+    ...table,
+    ...("sort" in table ? { sort: sortOffEpic(table.sort, null) } : {}),
+    ...(table.groupBy === "epic" ? { groupBy: "status" } : {}),
+    ...(isRecord(table.widths) ? { widths: without(table.widths, "epic") } : {}),
+    ...(Array.isArray(table.pinned) ? { pinned: table.pinned.filter((field) => field !== "epic") } : {}),
+  };
+}
+
+/**
+ * A view saved while Epic was a field may filter, sort or group by it. The
+ * field is gone — a task's place under an epic reads through Parent — so each
+ * of those falls away and the view keeps the rest; its field list loses Epic
+ * in `withKnownFields`. Before the schema, for the same reason as there.
+ */
+function withoutEpicField(raw: unknown): unknown {
+  if (!isRecord(raw)) return raw;
+  const filters = raw.filters;
+  return {
+    ...raw,
+    ...(isRecord(filters) && isRecord(filters.values) ? { filters: { ...filters, values: without(filters.values, "epic") } } : {}),
+    ...("sort" in raw ? { sort: sortOffEpic(raw.sort, "manual") } : {}),
+    ...("board" in raw ? { board: groupingOffEpic(raw.board) } : {}),
+    ...("table" in raw ? { table: tableOffEpic(raw.table) } : {}),
+  };
+}
+
 /**
  * Reads a stored saved-view record, whatever shape it was written in.
  *
@@ -63,7 +115,7 @@ function withoutEpicFilter(raw: unknown): unknown {
  * A record that cannot be read either way yields `null`; the caller skips it.
  */
 export function migrateSavedView(rawRecord: unknown): SavedView | null {
-  const raw = withoutEpicFilter(withKnownFields(rawRecord));
+  const raw = withoutEpicField(withoutEpicFilter(withKnownFields(rawRecord)));
   const current = savedViewSchema.safeParse(raw);
   if (current.success) return current.data;
 

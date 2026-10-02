@@ -61,8 +61,6 @@ function reading(field: QueryField, task: Task, facts: TaskFacts): Reading {
       return named(...task.labelIds.map((id) => facts.labelNames.get(id) ?? id));
     case "parent":
       return named(task.parentTaskId == null ? null : facts.taskKeys.get(task.parentTaskId));
-    case "epic":
-      return named(task.epicId == null ? null : facts.taskKeys.get(task.epicId));
     case "project":
       return named(facts.projectNames.get(task.projectId) ?? task.projectId);
     case "flow":
@@ -191,14 +189,14 @@ export const SUGGESTIONS_MAX = 8;
 const distinct = (values: readonly (string | null | undefined)[]): Suggestion[] =>
   [...new Set(values.filter((value): value is string => value != null && value !== ""))].sort(COLLATOR.compare).map((value) => ({ value, label: value }));
 
-/** The tasks a field points at — epics or parents — by key, named with their titles. */
+/** The tasks a field points at — parents — by key, named with their titles. */
 function pointedAt(scope: SuggestionScope, ids: readonly (string | null | undefined)[]): Suggestion[] {
   const wanted = new Set(ids.filter((id): id is string => id != null));
   return scope.tasks.filter((task) => wanted.has(task.id)).map((task) => ({ value: task.key, label: `${task.key} ${task.title}` }));
 }
 
 /** Fields whose values already exist somewhere on the boards — offered to pick under the value field. */
-export const SUGGESTED_FIELDS = ["labels", "project", "assignee", "flow", "worktree", "takenBy", "epic", "parent"] as const satisfies readonly QueryField[];
+export const SUGGESTED_FIELDS = ["labels", "project", "assignee", "flow", "worktree", "takenBy", "parent"] as const satisfies readonly QueryField[];
 type SuggestedField = (typeof SUGGESTED_FIELDS)[number];
 
 export const isSuggested = (field: QueryField): field is SuggestedField => (SUGGESTED_FIELDS as readonly QueryField[]).includes(field);
@@ -217,8 +215,6 @@ function candidates(field: SuggestedField, scope: SuggestionScope): Suggestion[]
       return distinct([MAIN_CHECKOUT, ...scope.tasks.map(worktreeOf)]);
     case "takenBy":
       return distinct(scope.tasks.map((task) => task.takenBy?.machine));
-    case "epic":
-      return pointedAt(scope, [...scope.tasks.filter((task) => task.type === "epic").map((task) => task.id), ...scope.tasks.map((task) => task.epicId)]);
     case "parent":
       return pointedAt(scope, scope.tasks.map((task) => task.parentTaskId));
   }

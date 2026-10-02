@@ -78,7 +78,7 @@ async function seed(harness: ReturnType<typeof setup>["harness"]) {
 }
 
 describe("ganttRows RPC", () => {
-  it("gives each task its stretches by status since the start, with its planned dates, over the wire", async () => {
+  it("gives each task the stretches it worked in, when it was done and its planned dates, over the wire", async () => {
     const { harness } = setup();
     const { review, shipped, edges } = await seed(harness);
     const planned = await tasks.createTask({ projectId: PLUGINS.id, title: "Planned", startDate: "2026-10-01", dueDate: "2026-10-09" });
@@ -86,11 +86,12 @@ describe("ganttRows RPC", () => {
     const answer = (await harness.callRpc("ganttRows", { fromMs: edges[0] })) as GanttAnswer;
 
     const byId = new Map(answer.rows.map((row) => [row.taskId, row]));
-    expect(byId.get(review.id)?.segments.map((segment) => segment.status)).toEqual(["backlog", "in_review"]);
-    expect(byId.get(review.id)?.key).toBe(review.key);
-    // Closed within the window: only the stretches it stood open.
-    expect(byId.get(shipped.id)?.segments.map((segment) => segment.status)).toEqual(["backlog", "in_progress"]);
-    expect(byId.get(planned.id)).toMatchObject({ startDate: "2026-10-01", dueDate: "2026-10-09", parentTaskId: null });
+    expect(byId.get(review.id)?.segments.map((segment) => segment.status)).toEqual(["in_review"]);
+    expect(byId.get(review.id)).toMatchObject({ key: review.key, doneMs: null });
+    // Closed within the window: the stretch it worked, and the moment it was done.
+    expect(byId.get(shipped.id)?.segments.map((segment) => segment.status)).toEqual(["in_progress"]);
+    expect(byId.get(shipped.id)?.doneMs).toBe(byId.get(shipped.id)?.segments.at(-1)?.toMs);
+    expect(byId.get(planned.id)).toMatchObject({ startDate: "2026-10-01", dueDate: "2026-10-09", parentTaskId: null, segments: [] });
     expect(answer.projects.map((project) => project.id).sort()).toEqual([PLUGINS.id, QUARRY.id].sort());
   });
 

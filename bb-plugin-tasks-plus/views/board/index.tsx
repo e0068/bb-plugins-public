@@ -6,14 +6,14 @@ import {
   type PointerEvent as ReactPointerEvent,
   type ReactNode,
 } from "react";
-import { ALL_TIME, type CardChartPeriod, type GanttMode, type TaskStatus } from "../../shared/enums.js";
+import type { GanttMode, TaskStatus } from "../../shared/enums.js";
 import {
   ALL_KEY,
   boardColumns,
   canReorder,
   columnWidth,
   dropPatch,
-  dropsUnderItself,
+  fillsWidth,
   gridColumnsOf,
   placedBefore,
   withColumnWidth,
@@ -27,7 +27,6 @@ import {
   fetchScopeBoard,
   fetchScopeBurndowns,
   fetchScopeGantt,
-  ganttFetchStart,
   scopeProjectId,
   type BoardData,
   type BoardGantt,
@@ -60,7 +59,10 @@ import { useIsCompactViewport } from "@/components/ui/hooks/use-compact-viewport
 import { boardCardMeta, type BoardCardMeta } from "./card-meta.js";
 import { SubtaskList, type AddSubtaskOutcome } from "./subtask-list.js";
 import { BurndownChart, SubtaskStats } from "./subtask-stats.js";
-import { DEFAULT_CHART_PREFERENCE, useChartPreference } from "./chart-preference.js";
+import { DEFAULT_CHART_PREFERENCE, useChartPreference, type ChartPreference } from "./chart-preference.js";
+import { chartWindow, type TimeWindow } from "./chart-window.js";
+import { DateAxis } from "./date-axis.js";
+import { dateTicks, type DateTick } from "./date-ticks.js";
 import {
   DEFAULT_CARD_TEXT,
   DESCRIPTION_SIZE_CLASS,
@@ -68,7 +70,7 @@ import {
   useCardText,
   type CardTextPreference,
 } from "./card-text-preference.js";
-import { GanttChart, ganttLines, type GanttRowData } from "../analytics/gantt-chart.js";
+import { GanttChart, ganttLines, planEndMs, type GanttRowData } from "../analytics/gantt-chart.js";
 import { progressOf, subtasksInScope, type Descendant } from "../../shared/subtree.js";
 import { slugOf } from "../../shared/format.js";
 import { firstParagraph } from "../../shared/first-paragraph.js";
@@ -90,6 +92,7 @@ import {
   type RowField,
 } from "../common/row-field-preference.js";
 import { AmountChip } from "../common/amount-chip.js";
+import { labelFill } from "../common/label-fill.js";
 import { planRowFields, type FieldPlanCell } from "../common/field-plan.js";
 import { cardSections, type CardBlockField } from "./card-sections.js";
 import {
@@ -112,7 +115,7 @@ const EMPTY_META: BoardCardMeta = {
   workingThreads: [],
   attachmentCount: 0,
   parent: null,
-  family: { epic: null, descendants: [] },
+  family: { descendants: [] },
   progress: progressOf([]),
 };
 
@@ -125,41 +128,72 @@ export function fetchBoard(rpc: TasksRpc, projectId: string): Promise<BoardData>
   return fetchScopeBoard(rpc, `project:${projectId}`);
 }
 
-/** A card's Gantt: its sub-tasks' rows and the window they are drawn in. */
+/** A card's Gantt: its sub-tasks' rows and what it draws of them. */
 interface CardGantt {
   rows: readonly GanttRowData[];
-  fromMs: number;
-  toMs: number;
   mode: GanttMode;
 }
 
-/** A card's Gantt over the board's period — all time opening at the card's oldest sub-task. */
-function cardGanttOf(
-  gantt: BoardGantt,
-  descendants: readonly Descendant<Task>[],
-  period: CardChartPeriod,
-  mode: GanttMode,
-): CardGantt {
-  const rows = descendants.flatMap(({ task }) => {
-    const row = gantt.rows.get(task.id);
-    return row === undefined ? [] : [row];
-  });
-  const oldest = Math.min(gantt.nowMs - DAY_MS, ...rows.map((row) => row.createdMs ?? gantt.nowMs));
-  const fromMs = period === ALL_TIME ? oldest : ganttFetchStart(period, gantt.nowMs);
-  return { rows, fromMs, toMs: gantt.nowMs, mode };
+/** What every chart on a card draws over: one window, today in it, and the dates across it. */
+interface CardChartFrame {
+  window: TimeWindow;
+  nowMs: number;
+  ticks: readonly DateTick[];
+  /** Whether each chart writes the dates under itself. */
+  datesUnderCharts: boolean;
 }
 
-/** The Gantt of every card that has something to draw in it — a card left out draws no block. */
+/** Where the latest plan among a card's sub-tasks ends; null without plans. */
+function latestPlanMsOf(plans: readonly { startDate: string | null; dueDate: string | null }[]): number | null {
+  const ends = plans.flatMap((plan) => planEndMs(plan) ?? []);
+  return ends.length === 0 ? null : Math.max(...ends);
+}
+
+/** The one window a card's charts draw over the board's period, today in its place — all time opening at the card's oldest sub-task. */
+function cardWindowOf(descendants: readonly Descendant<Task>[], charts: ChartPreference, nowMs: number): TimeWindow {
+  const tasks = descendants.map(({ task }) => task);
+  return chartWindow({
+    period: charts.period,
+    unit: charts.unit,
+    today: charts.today,
+    nowMs,
+    oldestMs: Math.min(nowMs - DAY_MS, ...tasks.map((task) => Date.parse(task.createdAt)).filter(Number.isFinite)),
+    latestPlanMs: latestPlanMsOf(tasks),
+  });
+}
+
+/**
+ * A card's chart frame: its window, now, and the dates across it, written
+ * under each chart or along the card's bottom — with dates off, neither the
+ * dates nor their lines.
+ */
+function cardFrameOf(descendants: readonly Descendant<Task>[], charts: ChartPreference, nowMs: number): CardChartFrame {
+  const window = cardWindowOf(descendants, charts, nowMs);
+  const ticks = charts.dates === "off" ? [] : dateTicks(window, charts.dateDensity);
+  return { window, nowMs, ticks, datesUnderCharts: charts.dates === "charts" };
+}
+
+/** The frame of every card with something under it — a card with none draws no chart. */
+function cardFramesOf(metaByTaskId: ReadonlyMap<string, BoardCardMeta>, charts: ChartPreference, nowMs: number): Map<string, CardChartFrame> {
+  return new Map(
+    [...metaByTaskId].flatMap(([taskId, meta]) =>
+      meta.family.descendants.length === 0 ? [] : [[taskId, cardFrameOf(meta.family.descendants, charts, nowMs)] as const],
+    ),
+  );
+}
+
+/** The Gantt of every card that has something to draw in its frame's window — a card left out draws no block. */
 function cardGanttsOf(
   gantt: BoardGantt,
   metaByTaskId: ReadonlyMap<string, BoardCardMeta>,
-  period: CardChartPeriod,
+  frames: ReadonlyMap<string, CardChartFrame>,
   mode: GanttMode,
 ): Map<string, CardGantt> {
   return new Map(
-    [...metaByTaskId].flatMap(([taskId, meta]) => {
-      const card = cardGanttOf(gantt, meta.family.descendants, period, mode);
-      return ganttLines(card.rows, card.fromMs, card.toMs, mode).length > 0 ? [[taskId, card] as const] : [];
+    [...frames].flatMap(([taskId, { window, nowMs }]) => {
+      const descendants = metaByTaskId.get(taskId)?.family.descendants ?? [];
+      const rows = descendants.flatMap(({ task }) => gantt.rows.get(task.id) ?? []);
+      return ganttLines(rows, window.fromMs, window.toMs, mode, nowMs).length > 0 ? [[taskId, { rows, mode }] as const] : [];
     }),
   );
 }
@@ -230,6 +264,8 @@ function WorkingAgentsChip({ threads }: { threads: TaskThread[] }) {
 const CARD_CHIP_CLASS =
   "flex items-center gap-1 rounded-md border border-border px-1.5 text-2xs text-muted-foreground";
 const CARD_GLYPH_CLASS = "flex items-center text-muted-foreground";
+/** A tag on the card: a chip of the same size, filled with the tag's colour instead of outlined. */
+const CARD_LABEL_CLASS = "flex items-center rounded-md px-1.5 text-2xs font-medium";
 
 /** The tooltip of the Taken by chip: the machine, the thread when the mark has one, and how long ago. */
 function takenByTitle(takenBy: TakenBy): string {
@@ -293,10 +329,11 @@ function CardFieldValue({
       return meta.parent ? (
         <span
           title={`Parent: ${meta.parent.key} ${meta.parent.title}`}
-          className="flex shrink-0 items-center gap-0.5 text-2xs text-subtle-foreground tabular-nums"
+          // Shrinks to the row, the key truncated: a parent without a key shows its long slug.
+          className="flex min-w-0 max-w-full items-center gap-0.5 text-2xs text-subtle-foreground tabular-nums"
         >
-          <Icon name="ArrowUp" className="size-3" />
-          {meta.parent.key}
+          <Icon name="ArrowUp" className="size-3 shrink-0" />
+          <span className="truncate">{meta.parent.key}</span>
         </span>
       ) : null;
     case "attachments":
@@ -326,15 +363,6 @@ function CardFieldValue({
           <span className="truncate">{task.assignee}</span>
         </span>
       ) : null;
-    case "epic": {
-      const epic = meta.family.epic;
-      return epic ? (
-        <span title={`Epic: ${epic.key} ${epic.title}`} className={`${CARD_CHIP_CLASS} max-w-32`}>
-          <Icon name="Mountain" className="size-3 shrink-0" />
-          <span className="truncate">{epic.key} {epic.title}</span>
-        </span>
-      ) : null;
-    }
     case "flow":
       return task.flow ? (
         <span title={`Flow: ${task.flow.name}`} className={`${CARD_CHIP_CLASS} max-w-32`}>
@@ -365,12 +393,7 @@ function CardFieldValue({
       return (
         <>
           {labels.map((label) => (
-            <span key={label.id} className={CARD_CHIP_CLASS}>
-              <span
-                aria-hidden
-                className="size-1.5 rounded-full"
-                style={{ backgroundColor: label.color }}
-              />
+            <span key={label.id} className={CARD_LABEL_CLASS} style={labelFill(label.color)}>
               {label.name}
             </span>
           ))}
@@ -478,7 +501,7 @@ function CardBlock({
   task,
   meta,
   burndown,
-  period,
+  frame,
   gantt,
   listedSubtasks,
   onOpenTask,
@@ -490,7 +513,7 @@ function CardBlock({
   meta: BoardCardMeta;
   text: CardTextPreference;
   burndown: TaskBurndown | undefined;
-  period: CardChartPeriod;
+  frame: CardChartFrame | undefined;
   gantt: CardGantt | undefined;
   listedSubtasks: readonly Descendant<Task>[];
   onOpenTask: ((taskKey: string) => void) | undefined;
@@ -514,27 +537,43 @@ function CardBlock({
         </div>
       );
     case "burndown":
-      return burndown ? (
+      return burndown && frame ? (
         <div>
-          <BurndownChart open={burndown.open} ends={burndown.ends} period={period} forecastDays={burndown.forecastDays} />
+          <BurndownChart
+            open={burndown.open}
+            ends={burndown.ends}
+            window={frame.window}
+            nowMs={frame.nowMs}
+            ticks={frame.ticks}
+            showDates={frame.datesUnderCharts}
+            forecastMs={burndown.forecastMs}
+          />
         </div>
       ) : null;
     case "gantt":
-      return gantt ? (
-        <div>
+      return gantt && frame ? (
+        <div className="flex flex-col gap-0.5">
           <GanttChart
             rows={gantt.rows}
-            fromMs={gantt.fromMs}
-            toMs={gantt.toMs}
+            fromMs={frame.window.fromMs}
+            toMs={frame.window.toMs}
+            todayMs={frame.nowMs}
             mode={gantt.mode}
             compact
+            ticks={frame.ticks}
             onOpenTask={onOpenTask}
           />
+          {frame.datesUnderCharts ? <DateAxis ticks={frame.ticks} /> : null}
         </div>
       ) : null;
     case "subtaskList":
       return onOpenTask && onAddSubtask ? (
-        <SubtaskList descendants={listedSubtasks} onOpen={(child) => onOpenTask(child.key)} onAdd={onAddSubtask} />
+        <SubtaskList
+          descendants={listedSubtasks}
+          onOpen={(child) => onOpenTask(child.key)}
+          onAdd={onAddSubtask}
+          textClassName={DESCRIPTION_SIZE_CLASS[text.subtasks]}
+        />
       ) : null;
   }
 }
@@ -561,14 +600,16 @@ interface TaskCardProps {
   onAddSubtask?: (title: string) => Promise<AddSubtaskOutcome>;
   /** The card's burndown, once loaded. */
   burndown?: TaskBurndown;
-  /** The board's period the card charts cover. */
-  period?: CardChartPeriod;
+  /** The board's period the card charts cover, where today stands in it, and where the dates go. */
+  charts?: ChartPreference;
+  /** The one window the card's charts draw over, and the dates across it. */
+  frame?: CardChartFrame;
   /** The card's Gantt, once loaded and when it has something to draw. */
   gantt?: CardGantt;
   /** Where a card being dragged over the ungrouped grid would land: a line
    *  on this card's left or right edge. */
   dropMark?: "before" | "after";
-  /** The board's type sizes for the title and the description. */
+  /** The board's type sizes for the title, the description and the sub-task list. */
   text?: CardTextPreference;
 }
 
@@ -587,7 +628,8 @@ function TaskCard({
   onOpenTask,
   onAddSubtask,
   burndown,
-  period = DEFAULT_CHART_PREFERENCE.period,
+  charts = DEFAULT_CHART_PREFERENCE,
+  frame,
   gantt,
   dropMark,
   text = DEFAULT_CARD_TEXT,
@@ -608,10 +650,11 @@ function TaskCard({
   // so it splits no row. A list with no sub-task in scope still draws: its
   // Add sub-task gives the card its first.
   const drawable = (cell: FieldPlanCell) =>
-    (cell.field !== "burndown" || burndown !== undefined) &&
-    (cell.field !== "gantt" || gantt !== undefined) &&
+    (cell.field !== "burndown" || (burndown !== undefined && frame !== undefined)) &&
+    (cell.field !== "gantt" || (gantt !== undefined && frame !== undefined)) &&
     (cell.field !== "subtaskList" || (onOpenTask !== undefined && onAddSubtask !== undefined));
   const sections = cardSections(cells.filter(drawable));
+  const drawsChart = sections.some((section) => section.kind === "block" && (section.field === "burndown" || section.field === "gantt"));
   return (
     <div
       ref={cardRef}
@@ -653,7 +696,7 @@ function TaskCard({
               task={task}
               meta={meta}
               burndown={burndown}
-              period={period}
+              frame={frame}
               gantt={gantt}
               listedSubtasks={listedSubtasks}
               onOpenTask={onOpenTask}
@@ -663,6 +706,12 @@ function TaskCard({
           </div>
         ),
       )}
+      {/* The card's dates along its bottom, under everything, when the board writes them there. */}
+      {frame !== undefined && charts.dates === "card" && drawsChart ? (
+        <div data-card-dates className="mt-1.5">
+          <DateAxis ticks={frame.ticks} />
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -757,20 +806,28 @@ export function BoardView({ scope, viewId }: BoardViewProps) {
   const showsBurndown = fieldConfig.fields.some((entry) => entry.field === "burndown" && entry.visible);
   const burndowns = useTasksQuery(
     async (queryRpc) =>
-      showsBurndown ? fetchScopeBurndowns(queryRpc, boardProjectIds, charts.period) : new Map<string, TaskBurndown>(),
+      showsBurndown ? fetchScopeBurndowns(queryRpc, boardProjectIds, charts.period, charts.unit) : new Map<string, TaskBurndown>(),
     ["tasks:changed"],
-    [boardProjectIds.join(), showsBurndown, charts.period],
+    [boardProjectIds.join(), showsBurndown, charts.period, charts.unit],
   );
   const showsGantt = fieldConfig.fields.some((entry) => entry.field === "gantt" && entry.visible);
   const gantt = useTasksQuery(
-    async (queryRpc) => (showsGantt ? fetchScopeGantt(queryRpc, boardProjectIds, charts.period) : undefined),
+    async (queryRpc) => (showsGantt ? fetchScopeGantt(queryRpc, boardProjectIds, charts.period, charts.unit) : undefined),
     ["tasks:changed"],
-    [boardProjectIds.join(), showsGantt, charts.period],
+    [boardProjectIds.join(), showsGantt, charts.period, charts.unit],
   );
+  // One now for every chart on the board, so today stands at the same spot on
+  // a card's burndown and Gantt: the Gantt's read, or the burndowns' answer.
+  const chartNowMs = useMemo(
+    () => gantt.data?.nowMs ?? Math.max(0, ...[...(burndowns.data?.values() ?? [])].map((entry) => entry.ends.at(-1) ?? 0)),
+    [gantt.data, burndowns.data],
+  );
+  // Each card's window and dates once per answer, not per render: a drag re-renders the board on every move.
+  const cardFrames = useMemo(() => cardFramesOf(metaByTaskId, charts, chartNowMs), [metaByTaskId, charts, chartNowMs]);
   // Once per answer, not per render: a drag re-renders the board on every move.
   const cardGantts = useMemo(
-    () => (gantt.data === undefined ? new Map<string, CardGantt>() : cardGanttsOf(gantt.data, metaByTaskId, charts.period, charts.ganttMode)),
-    [gantt.data, metaByTaskId, charts.period, charts.ganttMode],
+    () => (gantt.data === undefined ? new Map<string, CardGantt>() : cardGanttsOf(gantt.data, metaByTaskId, cardFrames, charts.ganttMode)),
+    [gantt.data, metaByTaskId, cardFrames, charts.ganttMode],
   );
 
   // Local tasks render a drop instantly; realtime refetches replace them with
@@ -808,6 +865,7 @@ export function BoardView({ scope, viewId }: BoardViewProps) {
 
   const groupBy = layout.grouping.groupBy;
   const gridColumns = gridColumnsOf(layout.grouping);
+  const fillWidth = fillsWidth(layout.grouping);
   // Manual order is a project's own hand-set order; a cross-project screen's
   // columns mix several projects' orders, so a drop there never reorders.
   const reorder = singleProjectId !== null && canReorder(groupBy, layout.sort);
@@ -912,7 +970,6 @@ export function BoardView({ scope, viewId }: BoardViewProps) {
     if (!current || !all) return;
     const sameColumn = fromKey === toKey;
     if (sameColumn && !reorder) return;
-    if (groupBy === "epic" && dropsUnderItself(task, toKey, all)) return;
     const change: DropChange = sameColumn
       ? { kind: "status", status: task.status }
       : dropPatch(task, groupBy, fromKey, toKey, labels);
@@ -1096,7 +1153,8 @@ export function BoardView({ scope, viewId }: BoardViewProps) {
       onOpenTask={openTaskByKey}
       onAddSubtask={addSubtask(task)}
       burndown={burndowns.data?.get(task.id)}
-      period={charts.period}
+      charts={charts}
+      frame={cardFrames.get(task.id)}
       gantt={cardGantts.get(task.id)}
       text={cardText}
     />
@@ -1194,8 +1252,10 @@ export function BoardView({ scope, viewId }: BoardViewProps) {
     return (
       <div
         key={column.key}
-        className={cn("relative flex max-h-full flex-col", isNarrow ? "w-full" : "shrink-0")}
-        style={isNarrow ? undefined : { width }}
+        className={cn("relative flex max-h-full flex-col", isNarrow ? "w-full" : !fillWidth && "shrink-0")}
+        // Fill width fits the columns to the board: each grows by an equal share
+        // of the spare room, or shrinks by its width's share of the shortfall.
+        style={isNarrow ? undefined : fillWidth ? { flexGrow: 1, flexShrink: 1, flexBasis: width, minWidth: 0 } : { width }}
       >
         <div className="flex items-center gap-1.5 px-1 pb-2 text-sm font-semibold">
           <GroupIcon groupBy={groupBy} groupKey={column.key} labels={labels} />

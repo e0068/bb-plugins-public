@@ -124,3 +124,21 @@ describe("taskBurndowns RPC by a period in days", () => {
     }
   });
 });
+
+describe("taskBurndowns RPC by a period in hours or minutes", () => {
+  it("reads a period of hours hour by hour, and of minutes minute by minute", async () => {
+    const epic = await tasks.createTask({ projectId: BOARD.id, title: "Flow", type: "epic" });
+    await tasks.createTask({ projectId: BOARD.id, title: "Child", parentTaskId: epic.id });
+
+    for (const [unit, unitMs] of [["hours", 3_600_000], ["minutes", 60_000]] as const) {
+      const result = tasksRpcContract.taskBurndowns.output.parse(await call({ projectId: BOARD.id, period: 6, unit }));
+      const ends = result.burndowns.find((entry) => entry.taskId === epic.id)!.ends;
+      expect(ends).toHaveLength(7);
+      ends.slice(1).forEach((end, index) => expect(end - ends[index]!).toBe(unitMs));
+    }
+  });
+
+  it("refuses a unit it does not count by", async () => {
+    await expect(call({ projectId: BOARD.id, period: 6, unit: "weeks" })).rejects.toThrow();
+  });
+});

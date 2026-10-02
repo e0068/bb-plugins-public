@@ -66,8 +66,6 @@ export function isRowFieldEmpty(
       return ctx.activeCount === 0;
     case "assignee":
       return !task.assignee;
-    case "epic":
-      return !task.epicId;
     case "flow":
       return !task.flow;
     case "takenBy":

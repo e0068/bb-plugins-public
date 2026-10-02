@@ -17,13 +17,13 @@ const endsBack = (nowMs: number, count: number, stepMs: number) =>
   Array.from({ length: count + 1 }, (_, index) => nowMs - (count - index) * stepMs);
 
 /**
- * Where a card's burndown reads its tasks: the day ends of the period's days,
- * or for all time the week ends back to the week holding `firstMs` — the
- * oldest task under the card; an unreadable one gives a single week. The
- * last end is now.
+ * Where a card's burndown reads its tasks: the ends of the period's units —
+ * days unless `unitMs` says hours or minutes — or for all time the week ends
+ * back to the week holding `firstMs` — the oldest task under the card; an
+ * unreadable one gives a single week. The last end is now.
  */
-export function burndownEnds(period: CardChartPeriod, nowMs: number, firstMs: number): number[] {
-  if (period !== ALL_TIME) return endsBack(nowMs, period, DAY_MS);
+export function burndownEnds(period: CardChartPeriod, nowMs: number, firstMs: number, unitMs = DAY_MS): number[] {
+  if (period !== ALL_TIME) return endsBack(nowMs, period, unitMs);
   const weeks = Number.isFinite(firstMs) ? Math.ceil((nowMs - firstMs) / WEEK_MS) : 1;
   return endsBack(nowMs, Math.max(1, weeks), WEEK_MS);
 }
@@ -47,9 +47,9 @@ export function openSeriesOf(
 export const openSeries = (tasks: readonly Task[], transitions: readonly StatusTransition[], ends: readonly number[]): number[] =>
   openSeriesOf(tasks, movesByTask(transitions), ends);
 
-/** Days until the trend line reaches zero at its pace, a column spanning `columnDays`; null while it does not fall. */
-export function forecastDays(series: readonly number[], columnDays = 1): number | null {
+/** Milliseconds until the trend line reaches zero at its pace, a column spanning `columnMs`; null while it does not fall. */
+export function forecastMs(series: readonly number[], columnMs: number): number | null {
   const trend = trendOf(series);
   if (trend === null || trend.slope >= 0) return null;
-  return Math.ceil((series[series.length - 1]! / -trend.slope) * columnDays);
+  return Math.round((series[series.length - 1]! / -trend.slope) * columnMs);
 }

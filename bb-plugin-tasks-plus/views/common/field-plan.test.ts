@@ -49,11 +49,9 @@ describe("isRowFieldEmpty", () => {
     expect(isRowFieldEmpty("active", task(), { ...CTX, activeCount: 1 })).toBe(false);
   });
 
-  it("assignee is empty outside an assignee folder, epic when no ancestor is an epic", () => {
+  it("assignee is empty outside an assignee folder", () => {
     expect(isRowFieldEmpty("assignee", task(), CTX)).toBe(true);
     expect(isRowFieldEmpty("assignee", task({ assignee: "Claude" }), CTX)).toBe(false);
-    expect(isRowFieldEmpty("epic", task({ epicId: null }), CTX)).toBe(true);
-    expect(isRowFieldEmpty("epic", task({ epicId: "01HZZZZZZZZZZZZZZZZZZZZZE1" }), CTX)).toBe(false);
   });
 
   it("createdAt and updatedAt (Edited) are never empty — every task has both", () => {

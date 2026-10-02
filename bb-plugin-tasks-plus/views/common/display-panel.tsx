@@ -21,13 +21,21 @@ import {
   BOARD_GRID_COLUMN_COUNTS,
   BOARD_GROUP_BYS,
   BOARD_GROUP_PROPERTIES,
+  CHART_UNITS,
+  DATE_DENSITIES,
+  DATE_PLACES,
   GANTT_MODES,
-  MAX_CARD_CHART_DAYS,
+  MAX_CARD_CHART_PERIOD,
   SUBTASK_SCOPES,
+  TODAY_PLACES,
   type BoardGridColumns,
   type BoardGroupBy,
+  type ChartUnit,
+  type DateDensity,
+  type DatePlace,
   type GanttMode,
   type SubtaskScope,
+  type TodayPlace,
 } from "../../shared/enums.js";
 import { useTasksQuery } from "../../client/data.js";
 import type { TaskViewMode } from "../../client/routes.js";
@@ -43,7 +51,7 @@ import {
   type DescriptionSize,
   type TitleSize,
 } from "../board/card-text-preference.js";
-import { gridColumnsOf, groupKeys, withColumnOrder, withHiddenToggled, type BoardLayout } from "../board/grouping.js";
+import { fillsWidth, gridColumnsOf, groupKeys, withColumnOrder, withFillWidth, withHiddenToggled, type BoardLayout } from "../board/grouping.js";
 import { fetchScopeBoard } from "../board/scope-data.js";
 import { setTableSettings, useTableSettings } from "../table/table-preference.js";
 import { ReorderList } from "./reorder-list.js";
@@ -125,12 +133,19 @@ const GROUP_LABELS: Record<BoardGroupBy, string> = {
   type: "Type",
   estimate: "Estimate",
   assignee: "Assignee",
-  epic: "Epic",
   label: "Label",
   none: "No grouping",
 };
 
 const GANTT_MODE_LABELS: Record<GanttMode, string> = { plan: "Planned dates", fact: "Actual statuses", both: "Planned and actual" };
+
+const TODAY_PLACE_LABELS: Record<TodayPlace, string> = { left: "Left", center: "Center", right: "Right" };
+
+const CHART_UNIT_LABELS: Record<ChartUnit, string> = { days: "Days", hours: "Hours", minutes: "Minutes" };
+
+const DATE_PLACE_LABELS: Record<DatePlace, string> = { off: "Off", charts: "Under each chart", card: "Along the card's bottom" };
+
+const DATE_DENSITY_LABELS: Record<DateDensity, string> = { few: "Few", some: "Some", many: "Many" };
 
 /** One stretch of the panel under its heading; stretches part by air, not rules. */
 function Section({ title, children }: { title: string; children: ReactNode }) {
@@ -279,11 +294,18 @@ function GroupingSection({ scope, boardKeyOf }: { scope: ListPreferenceScope; bo
       ) : (
         <Section title="Columns — drag to reorder">
           <GroupColumns scope={scope} layout={layout} onChange={onChange} />
-          <ToggleRow
-            checked={grouping.hideEmpty}
-            label="Hide empty columns"
-            onToggle={() => onChange({ ...grouping, hideEmpty: !grouping.hideEmpty })}
-          />
+          <div role="group" aria-label="Board columns">
+            <ToggleRow
+              checked={grouping.hideEmpty}
+              label="Hide empty columns"
+              onToggle={() => onChange({ ...grouping, hideEmpty: !grouping.hideEmpty })}
+            />
+            <ToggleRow
+              checked={fillsWidth(grouping)}
+              label="Fill width"
+              onToggle={() => onChange(withFillWidth(grouping, !fillsWidth(grouping)))}
+            />
+          </div>
         </Section>
       )}
     </>
@@ -307,11 +329,11 @@ function TableGroupSection({ scope }: { scope: ListPreferenceScope }) {
 }
 
 /**
- * The days the card charts look back over, typed in; 0 is all time. A draft
- * that is not a day count yet — empty, negative, too long — stays in the
+ * How many of the unit the card charts cover, typed in; 0 is all time. A
+ * draft that is not a count yet — empty, negative, too long — stays in the
  * field and changes nothing until it is one.
  */
-function PeriodInput({ value, onChange }: { value: number; onChange: (days: number) => void }) {
+function PeriodInput({ value, unit, onChange }: { value: number; unit: ChartUnit; onChange: (count: number) => void }) {
   const [draft, setDraft] = useState(String(value));
   const [shown, setShown] = useState(value);
   // Another tab or a reset moved the stored value: the field follows it.
@@ -320,35 +342,56 @@ function PeriodInput({ value, onChange }: { value: number; onChange: (days: numb
     setDraft(String(value));
   }
   return (
-    <div role="group" aria-label="Card charts cover" className="flex items-center gap-2 px-1.5">
-      <Input
-        type="number"
-        inputMode="numeric"
-        min={0}
-        max={MAX_CARD_CHART_DAYS}
-        aria-label="Days the card charts cover"
-        value={draft}
-        className="h-7 w-20 px-2 text-sm tabular-nums"
-        onChange={(event) => {
-          setDraft(event.target.value);
-          const days = event.target.value.trim() === "" ? null : parseChartPeriod(Number(event.target.value));
-          if (days !== null) onChange(days);
-        }}
-        onBlur={() => setDraft(String(value))}
-      />
-      <span className="text-sm text-muted-foreground">days</span>
-    </div>
+    <Input
+      type="number"
+      inputMode="numeric"
+      min={0}
+      max={MAX_CARD_CHART_PERIOD}
+      aria-label={`${CHART_UNIT_LABELS[unit]} the card charts cover`}
+      value={draft}
+      className="h-7 w-16 px-2 text-sm tabular-nums"
+      onChange={(event) => {
+        setDraft(event.target.value);
+        const count = event.target.value.trim() === "" ? null : parseChartPeriod(Number(event.target.value));
+        if (count !== null) onChange(count);
+      }}
+      onBlur={() => setDraft(String(value))}
+    />
   );
 }
 
-/** What the cards' burndown and Gantt look back over, and what the Gantt draws — one choice for the whole board. */
+/**
+ * What the cards' burndown and Gantt cover — so many days, hours or minutes
+ * — where today stands in it — right to look back over the past, center to
+ * watch the present, left to plan ahead — what the Gantt draws, and where
+ * and how thickly the dates are written: one choice for the whole board.
+ */
 function ChartsSection({ boardKeyOf }: { boardKeyOf: BoardKey }) {
   const charts = useChartPreference(boardKeyOf);
   return (
     <>
       <Section title="Card charts cover">
-        <PeriodInput value={charts.period} onChange={(period) => setChartPreference(boardKeyOf, { ...charts, period })} />
+        <div role="group" aria-label="Card charts cover" className="flex items-center gap-1 pl-1.5">
+          <PeriodInput value={charts.period} unit={charts.unit} onChange={(period) => setChartPreference(boardKeyOf, { ...charts, period })} />
+          <ButtonChoice
+            groupLabel="Period unit"
+            options={CHART_UNITS}
+            labels={CHART_UNIT_LABELS}
+            value={charts.unit}
+            onChange={(unit) => setChartPreference(boardKeyOf, { ...charts, unit })}
+          />
+        </div>
         <p className="px-1.5 pt-1 text-xs text-subtle-foreground">0 — all time</p>
+        <div className="pt-2">
+          <SizePicker
+            label="Today"
+            groupLabel="Today"
+            options={TODAY_PLACES}
+            labels={TODAY_PLACE_LABELS}
+            value={charts.today}
+            onChange={(today) => setChartPreference(boardKeyOf, { ...charts, today })}
+          />
+        </div>
       </Section>
       <Section title="Gantt shows">
         <ChoiceRows
@@ -359,6 +402,25 @@ function ChartsSection({ boardKeyOf }: { boardKeyOf: BoardKey }) {
           onChange={(ganttMode) => setChartPreference(boardKeyOf, { ...charts, ganttMode })}
         />
       </Section>
+      <Section title="Card chart dates">
+        <ChoiceRows
+          label="Card chart dates"
+          options={DATE_PLACES}
+          labels={DATE_PLACE_LABELS}
+          value={charts.dates}
+          onChange={(dates) => setChartPreference(boardKeyOf, { ...charts, dates })}
+        />
+        <div className="pt-2">
+          <SizePicker
+            label="Density"
+            groupLabel="Date density"
+            options={DATE_DENSITIES}
+            labels={DATE_DENSITY_LABELS}
+            value={charts.dateDensity}
+            onChange={(dateDensity) => setChartPreference(boardKeyOf, { ...charts, dateDensity })}
+          />
+        </div>
+      </Section>
     </>
   );
 }
@@ -366,9 +428,39 @@ function ChartsSection({ boardKeyOf }: { boardKeyOf: BoardKey }) {
 const TITLE_SIZE_LABELS: Record<TitleSize, string> = { s: "S", m: "M", l: "L" };
 const DESCRIPTION_SIZE_LABELS: Record<DescriptionSize, string> = { xs: "XS", s: "S", m: "M" };
 
-/** One size picked from a few, as a row of buttons like the grid's column count. */
-function SizePicker<T extends string>({ label, options, labels, value, onChange }: {
+/** One choice picked from a few, as a row of buttons like the grid's column count. */
+function ButtonChoice<T extends string>({ groupLabel, options, labels, value, onChange }: {
+  /** The buttons' group as a screen reader names it. */
+  groupLabel: string;
+  options: readonly T[];
+  labels: Record<T, string>;
+  value: T;
+  onChange: (value: T) => void;
+}) {
+  return (
+    <div role="group" aria-label={groupLabel} className="flex gap-0.5 pr-1">
+      {options.map((option) => (
+        <Button
+          key={option}
+          type="button"
+          variant="ghost"
+          size="sm"
+          aria-pressed={value === option}
+          className="h-7 min-w-9 px-1.5"
+          onClick={() => onChange(option)}
+        >
+          {labels[option]}
+        </Button>
+      ))}
+    </div>
+  );
+}
+
+/** A named choice of a few, its buttons on the right of its name. */
+function SizePicker<T extends string>({ label, groupLabel = `${label} size`, ...choice }: {
   label: string;
+  /** The buttons' group as a screen reader names it; a size picker by default. */
+  groupLabel?: string;
   options: readonly T[];
   labels: Record<T, string>;
   value: T;
@@ -377,26 +469,12 @@ function SizePicker<T extends string>({ label, options, labels, value, onChange 
   return (
     <div className="flex items-center gap-2 pl-1.5">
       <span className="flex-1 text-sm">{label}</span>
-      <div role="group" aria-label={`${label} size`} className="flex gap-0.5 pr-1">
-        {options.map((option) => (
-          <Button
-            key={option}
-            type="button"
-            variant="ghost"
-            size="sm"
-            aria-pressed={value === option}
-            className="h-7 min-w-9 px-1.5"
-            onClick={() => onChange(option)}
-          >
-            {labels[option]}
-          </Button>
-        ))}
-      </div>
+      <ButtonChoice groupLabel={groupLabel} {...choice} />
     </div>
   );
 }
 
-/** The type sizes of the board's cards, the title's and the description's. */
+/** The type sizes of the board's cards: the title's, the description's and the sub-task list's. */
 function CardTextSection({ boardKeyOf }: { boardKeyOf: BoardKey }) {
   const text = useCardText(boardKeyOf);
   return (
@@ -414,6 +492,13 @@ function CardTextSection({ boardKeyOf }: { boardKeyOf: BoardKey }) {
         labels={DESCRIPTION_SIZE_LABELS}
         value={text.description}
         onChange={(description) => setCardText(boardKeyOf, { ...text, description })}
+      />
+      <SizePicker
+        label="Sub-tasks"
+        options={DESCRIPTION_SIZES}
+        labels={DESCRIPTION_SIZE_LABELS}
+        value={text.subtasks}
+        onChange={(subtasks) => setCardText(boardKeyOf, { ...text, subtasks })}
       />
     </Section>
   );

@@ -151,4 +151,13 @@ describe("tileAnswer — rows and figures", () => {
     expect(answer.rows.map((row) => [row.key, row.startDate, row.dueDate])).toEqual([["TSK-9", "2026-10-03T15:00", "2026-10-03T17:00"]]);
   });
 
+  it("names when a Gantt row's task was done, for its Done mark, and nothing on a list", () => {
+    const shipped = aTask(7, { status: "done", createdAt: new Date(oct(2)).toISOString() });
+    const transitions = [aMove(shipped, "todo", "in_progress", oct(3)), aMove(shipped, "in_progress", "done", oct(5))];
+    const gantt = tileAnswer(input({ tasks: [shipped], transitions, tile: tile({ type: "bars", bars: { length: "range", gantt: "fact" } }) }));
+    expect(gantt.rows.map((row) => [row.key, row.doneMs])).toEqual([["TSK-7", oct(5)]]);
+    const list = tileAnswer(input({ tasks: [shipped], transitions, tile: tile({ type: "list" }) }));
+    expect(list.rows.map((row) => row.doneMs)).toEqual([null]);
+  });
+
 });

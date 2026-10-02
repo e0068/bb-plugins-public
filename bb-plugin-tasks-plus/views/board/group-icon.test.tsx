@@ -42,9 +42,7 @@ describe("a group's icon shows the value the group stands for", () => {
     expect(dot.style.backgroundColor).toBe("rgb(0, 170, 0)");
   });
 
-  it("an epic group and an assignee group carry no icon", () => {
-    expect(icon("epic", "01HZ").firstElementChild).toBeNull();
-    cleanup();
+  it("an assignee group carries no icon", () => {
     expect(icon("assignee", "Vakhnin Sergei").firstElementChild).toBeNull();
   });
 });

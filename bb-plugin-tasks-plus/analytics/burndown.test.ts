@@ -2,8 +2,8 @@ import fc from "fast-check";
 import { describe, expect, it } from "vitest";
 import type { StatusTransition } from "../db/transition-log.js";
 import type { Task } from "../shared/contract.js";
-import { ALL_TIME, MAX_CARD_CHART_DAYS } from "../shared/enums.js";
-import { burndownEnds, forecastDays, openSeries, openSeriesOf } from "./burndown.js";
+import { ALL_TIME, MAX_CARD_CHART_PERIOD } from "../shared/enums.js";
+import { burndownEnds, forecastMs, openSeries, openSeriesOf } from "./burndown.js";
 import { movesByTask } from "./flow.js";
 
 const DAY = 86_400_000;
@@ -49,16 +49,6 @@ describe("openSeries", () => {
   });
 });
 
-describe("forecastDays", () => {
-  it("is the days left at the trend's pace, and none while the trend does not fall", () => {
-    expect(forecastDays([6, 5, 4, 3])).toBe(3);
-    expect(forecastDays([2, 2, 2])).toBeNull();
-    expect(forecastDays([1, 2])).toBeNull();
-    expect(forecastDays([4])).toBeNull();
-    expect(forecastDays([3, 0])).toBe(0);
-  });
-});
-
 describe("openSeriesOf", () => {
   it("reads the moves grouped once per call, the same series as the raw log gives", () => {
     const tasks = [task("a", "done"), task("b", "in_progress")];
@@ -67,11 +57,15 @@ describe("openSeriesOf", () => {
   });
 });
 
-describe("forecastDays over columns longer than a day", () => {
-  it("turns the pace per column into days", () => {
-    // Two a week gone, four left: two more weeks, fourteen days.
-    expect(forecastDays([8, 6, 4], 7)).toBe(14);
-    expect(forecastDays([8, 6, 4], 1)).toBe(2);
+describe("forecastMs — how long the trend takes to reach zero", () => {
+  it("is the time left at the trend's pace per column, and none while the trend does not fall", () => {
+    expect(forecastMs([6, 5, 4, 3], DAY)).toBe(3 * DAY);
+    expect(forecastMs([8, 6, 4], 7 * DAY)).toBe(14 * DAY);
+    expect(forecastMs([3, 2, 1], 60_000)).toBe(60_000);
+    expect(forecastMs([3, 0], DAY)).toBe(0);
+    expect(forecastMs([2, 2, 2], DAY)).toBeNull();
+    expect(forecastMs([1, 2], DAY)).toBeNull();
+    expect(forecastMs([4], DAY)).toBeNull();
   });
 });
 
@@ -81,7 +75,7 @@ describe("burndownEnds — the column ends of a card's burndown for a period in 
 
   it("reads any number of days day by day, one end per day back and the last one now", () => {
     fc.assert(
-      fc.property(fc.integer({ min: 1, max: MAX_CARD_CHART_DAYS }), (days) => {
+      fc.property(fc.integer({ min: 1, max: MAX_CARD_CHART_PERIOD }), (days) => {
         expect(burndownEnds(days, NOW, T0)).toEqual(Array.from({ length: days + 1 }, (_, i) => NOW - (days - i) * DAY));
       }),
       { numRuns: 30 },
@@ -111,5 +105,14 @@ describe("burndownEnds over all time from an unreadable first date", () => {
     const NOW = T0 + 100 * DAY;
     expect(burndownEnds(ALL_TIME, NOW, Number.NEGATIVE_INFINITY)).toEqual([NOW - 7 * DAY, NOW]);
     expect(burndownEnds(ALL_TIME, NOW, Number.NaN)).toEqual([NOW - 7 * DAY, NOW]);
+  });
+});
+
+describe("burndownEnds for a period in hours or minutes", () => {
+  it("reads that many units back, one end per unit and the last one now; all time stays weekly", () => {
+    const NOW = T0 + 100 * DAY;
+    expect(burndownEnds(3, NOW, T0, 3_600_000)).toEqual([NOW - 3 * 3_600_000, NOW - 2 * 3_600_000, NOW - 3_600_000, NOW]);
+    expect(burndownEnds(2, NOW, T0, 60_000)).toEqual([NOW - 120_000, NOW - 60_000, NOW]);
+    expect(burndownEnds(ALL_TIME, NOW, NOW - DAY, 60_000)).toEqual([NOW - 7 * DAY, NOW]);
   });
 });

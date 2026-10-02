@@ -37,7 +37,7 @@ const input = {
   listScope: null,
   filters: {
     ...SEVEN,
-    values: { epic: ["b1:epic"], flow: ["Code"] },
+    values: { worktree: ["main"], flow: ["Code"] },
     texts: { title: "login" },
     dates: { dueDate: { from: "2026-10-01", to: null, empty: true } },
     numbers: { cost: { from: null, to: 5, empty: false } },

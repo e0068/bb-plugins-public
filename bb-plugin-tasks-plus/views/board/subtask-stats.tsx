@@ -1,8 +1,10 @@
-import { weekBreaks, type WeekBreak } from "@bb-plugins/analytics-viz/core/weeks";
-import { ALL_TIME, type CardChartPeriod, type TaskStatus } from "../../shared/enums.js";
+import type { TaskStatus } from "../../shared/enums.js";
 import type { SubtreeProgress } from "../../shared/subtree.js";
 import { trendOf } from "../../analytics/trend.js";
 import { formatDay } from "../analytics/closed-model.js";
+import { placeIn, type TimeWindow } from "./chart-window.js";
+import { DateAxis } from "./date-axis.js";
+import type { DateTick } from "./date-ticks.js";
 import { STATUS_LABELS } from "./icons.js";
 
 /** The bar's order, closest to done first; canceled work is not work and stays off it. */
@@ -44,64 +46,91 @@ export function SubtaskStats({ progress }: { progress: SubtreeProgress }) {
 
 const CHART = { width: 208, height: 36, pad: 2 } as const;
 
-const DAY_MS = 86_400_000;
+const MINUTE_MS = 60_000;
+const HOUR_MS = 60 * MINUTE_MS;
+const DAY_MS = 24 * HOUR_MS;
 /** Up to this many days back the chart says "N d ago"; further back it names the first day. */
 const DAYS_SPOKEN = 31;
 
-/** Where a new week starts along the chart: day columns only — on week columns every column is a week. */
-export function cardWeekBreaks(period: CardChartPeriod, ends: readonly number[]): WeekBreak[] {
-  return period === ALL_TIME ? [] : weekBreaks(ends);
+/** How far back the window looks from now, in words: minutes, hours, days, or the first day; today when it opens at now. */
+function lookBack({ fromMs }: TimeWindow, nowMs: number): string {
+  const backMs = nowMs - fromMs;
+  if (backMs < MINUTE_MS) return "today";
+  if (backMs < HOUR_MS) return `${Math.round(backMs / MINUTE_MS)} min ago`;
+  if (backMs < DAY_MS) return `${Math.round(backMs / HOUR_MS)} h ago`;
+  const days = Math.round(backMs / DAY_MS);
+  return days <= DAYS_SPOKEN ? `${days} d ago` : `since ${formatDay(fromMs)}`;
 }
 
-/** How far back the chart looks, in words. */
-function lookBack(ends: readonly number[]): string {
-  const first = ends[0] ?? 0;
-  const days = Math.round(((ends[ends.length - 1] ?? first) - first) / DAY_MS);
-  return days <= DAYS_SPOKEN ? `${days} d ago` : `since ${formatDay(first)}`;
+/** A forecast in words, rounded up: minutes under an hour, hours under a day, days after. */
+function timeLeft(ms: number): string {
+  if (ms < HOUR_MS) return `${Math.ceil(ms / MINUTE_MS)} min`;
+  if (ms < DAY_MS) return `${Math.ceil(ms / HOUR_MS)} h`;
+  return `${Math.ceil(ms / DAY_MS)} d`;
 }
 
-/** Open tasks under a card at each column end, the trend dashed, each new week marked, and when it reaches zero. */
+/**
+ * Open tasks under a card at each read, the trend dashed, and when it
+ * reaches zero — drawn by time across the card's window, as the card's
+ * Gantt is, so today falls at the same spot in both: a line at today when it
+ * stands inside the window, the trend alone running on past it. A line
+ * stands at each date, written under the chart unless the card writes its
+ * dates along its bottom.
+ */
 export function BurndownChart({
   open,
   ends,
-  period,
-  forecastDays,
+  window,
+  nowMs,
+  ticks,
+  showDates,
+  forecastMs,
 }: {
   open: readonly number[];
-  /** The moment each value was read at, oldest first. */
+  /** The moment each value was read at, oldest first; the last is now. */
   ends: readonly number[];
-  period: CardChartPeriod;
-  forecastDays: number | null;
+  /** The stretch of time the card's charts draw. */
+  window: TimeWindow;
+  nowMs: number;
+  /** The dates across the window, each with a line. */
+  ticks: readonly DateTick[];
+  /** Whether the dates are written under this chart. */
+  showDates: boolean;
+  /** How long the trend needs to reach zero; null while it does not fall. */
+  forecastMs: number | null;
 }) {
-  const max = Math.max(...open, 1);
-  const step = (CHART.width - 2 * CHART.pad) / Math.max(open.length - 1, 1);
-  const x = (index: number) => CHART.pad + index * step;
-  const y = (value: number) => CHART.height - CHART.pad - (value / max) * (CHART.height - 2 * CHART.pad);
-  const line = open.map((value, index) => `${x(index)},${y(value)}`).join(" ");
-  const area = `${x(0)},${y(0)} ${line} ${x(open.length - 1)},${y(0)}`;
-  const last = open[open.length - 1] ?? 0;
+  const x = (ms: number) => placeIn(window, ms) * CHART.width;
+  // The reads inside the window, and the one before it, so the line enters
+  // from the left edge; the svg cuts what lies outside.
+  const firstRead = Math.max(0, ends.findIndex((end) => end >= window.fromMs) - 1);
+  const reads = open.map((value, index) => ({ value, ms: ends[index]! })).slice(firstRead);
+  const columnMs = ends.length > 1 ? ends[1]! - ends[0]! : DAY_MS;
   const trend = trendOf(open);
-  const trendAt = (index: number) => Math.max(0, trend === null ? 0 : trend.start + trend.slope * index);
-  // A Monday lies between two reads: placed by its time between them.
-  const weeks = cardWeekBreaks(period, ends).map(({ column, mondayMs }) => {
-    const from = ends[column - 1]!;
-    return { mondayMs, at: x(column - 1) + ((mondayMs - from) / (ends[column]! - from)) * step };
-  });
+  // The trend is fitted to every read by its index; a moment sits that many columns past the first read.
+  const trendAt = (ms: number) => Math.max(0, trend === null ? 0 : trend.start + trend.slope * ((ms - ends[0]!) / columnMs));
+  const trendFromMs = Math.max(window.fromMs, ends[0] ?? window.fromMs);
+  const ahead = nowMs < window.toMs;
+  // Ahead of today the trend may stand above every read shown.
+  const max = Math.max(...reads.map((read) => read.value), ahead ? Math.max(trendAt(trendFromMs), trendAt(window.toMs)) : 0, 1);
+  const y = (value: number) => CHART.height - CHART.pad - (value / max) * (CHART.height - 2 * CHART.pad);
+  const line = reads.map((read) => `${x(read.ms)},${y(read.value)}`).join(" ");
+  const area = reads.length === 0 ? "" : `${x(reads[0]!.ms)},${y(0)} ${line} ${x(reads.at(-1)!.ms)},${y(0)}`;
+  const last = open[open.length - 1] ?? 0;
   return (
     <div className="flex flex-col gap-0.5">
       <svg
         viewBox={`0 0 ${CHART.width} ${CHART.height}`}
         preserveAspectRatio="none"
         aria-hidden
-        className="h-9 w-full"
+        className="h-9 w-full overflow-hidden"
       >
-        {weeks.map((week) => (
+        {ticks.map((tick) => (
           <line
-            key={week.mondayMs}
-            data-week-break
-            x1={week.at}
+            key={tick.ms}
+            data-date-grid
+            x1={tick.at * CHART.width}
             y1={0}
-            x2={week.at}
+            x2={tick.at * CHART.width}
             y2={CHART.height}
             strokeWidth={1}
             strokeDasharray="1 2"
@@ -118,12 +147,25 @@ export function BurndownChart({
           strokeLinejoin="round"
           style={{ stroke: "var(--timeline-accent)" }}
         />
+        {nowMs > window.fromMs && ahead ? (
+          <line
+            data-burndown-today
+            x1={x(nowMs)}
+            y1={0}
+            x2={x(nowMs)}
+            y2={CHART.height}
+            strokeWidth={1}
+            vectorEffect="non-scaling-stroke"
+            style={{ stroke: "var(--primary)" }}
+          />
+        ) : null}
         {trend === null ? null : (
           <line
-            x1={x(0)}
-            y1={y(trendAt(0))}
-            x2={x(open.length - 1)}
-            y2={y(trendAt(open.length - 1))}
+            data-burndown-trend
+            x1={x(trendFromMs)}
+            y1={y(trendAt(trendFromMs))}
+            x2={x(ahead ? window.toMs : nowMs)}
+            y2={y(trendAt(ahead ? window.toMs : nowMs))}
             strokeWidth={1}
             strokeDasharray="2 2"
             vectorEffect="non-scaling-stroke"
@@ -131,23 +173,10 @@ export function BurndownChart({
           />
         )}
       </svg>
-      {weeks.length === 0 ? null : (
-        <div aria-hidden className="relative h-3 text-[10px] leading-3 text-subtle-foreground tabular-nums">
-          {weeks.map((week) => (
-            <span
-              key={week.mondayMs}
-              data-week-label
-              className="absolute -translate-x-1/2 whitespace-nowrap"
-              style={{ left: `${(week.at / CHART.width) * 100}%` }}
-            >
-              {formatDay(week.mondayMs)}
-            </span>
-          ))}
-        </div>
-      )}
+      {showDates ? <DateAxis ticks={ticks} /> : null}
       <div className="flex justify-between text-[10px] text-subtle-foreground tabular-nums">
-        <span>{lookBack(ends)}</span>
-        <span>{forecastDays === null ? `${last} open` : `${last} open · ~${forecastDays} d left`}</span>
+        <span>{lookBack(window, nowMs)}</span>
+        <span>{forecastMs === null ? `${last} open` : `${last} open · ~${timeLeft(forecastMs)} left`}</span>
       </div>
     </div>
   );

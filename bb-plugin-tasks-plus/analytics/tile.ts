@@ -24,7 +24,7 @@ import { matchesConditions } from "../shared/tile-conditions.js";
 import { snapshotOf } from "./aggregate.js";
 import { closedInBins, strictlyIncreasing, type ClosedEntry } from "./closed.js";
 import { ascending, columnEnds, columnOf, createdMs, cycleMs, inProjects, median, movesByTask, p90, planFact, sinceOf, statusBefore } from "./flow.js";
-import { ganttRowsOf } from "./gantt.js";
+import { ganttRowsOf, type GanttRow } from "./gantt.js";
 
 export interface TileInput {
   tile: Tile;
@@ -153,8 +153,6 @@ function keysOf(field: QueryField, task: Task, status: TaskStatus, input: TileIn
       return [orNone(task.assignee)];
     case "parent":
       return [orNone(task.parentTaskId)];
-    case "epic":
-      return [orNone(task.epicId)];
     case "labels":
       return task.labelIds.length === 0 ? [NONE_KEY] : [...task.labelIds];
     case "project":
@@ -209,7 +207,6 @@ function labelOf(field: QueryField | "time", key: string, input: TileInput): str
     case "labels":
       return input.facts.labelNames.get(key) ?? key;
     case "parent":
-    case "epic":
       return input.facts.taskKeys.get(key) ?? input.tasks.find((task) => task.id === key)?.key ?? key;
     default:
       return runsLikeTime(field) ? "" : key;
@@ -363,10 +360,10 @@ function rowsOf(input: TileInput, tasks: readonly Task[], moves: Map<string, Sta
   const ganttish = tile.type === "bars" && tile.bars.length === "range";
   if (tile.type !== "list" && !ganttish) return [];
   const since = (task: Task) => sinceOf(task, moves.get(task.id) ?? []);
-  const segments = ganttish
-    ? new Map(ganttRowsOf({ tasks, moves, projectIds: [], fromMs: edges[0] ?? input.nowMs, nowMs: input.nowMs }).map((row) => [row.task.id, row.segments]))
-    : new Map<string, never[]>();
-  const shown = ganttish ? tasks.filter((task) => segments.has(task.id)) : tasks;
+  const gantt = ganttish
+    ? new Map(ganttRowsOf({ tasks, moves, projectIds: [], fromMs: edges[0] ?? input.nowMs, nowMs: input.nowMs }).map((row) => [row.task.id, row]))
+    : new Map<string, GanttRow>();
+  const shown = ganttish ? tasks.filter((task) => gantt.has(task.id)) : tasks;
   const sort = tile.sort;
   const sorted =
     sort === null || sort.by === "value"
@@ -386,7 +383,8 @@ function rowsOf(input: TileInput, tasks: readonly Task[], moves: Map<string, Sta
       createdMs: Number.isFinite(born) ? born : null,
       startDate: task.startDate,
       dueDate: task.dueDate,
-      segments: segments.get(task.id) ?? [],
+      segments: gantt.get(task.id)?.segments ?? [],
+      doneMs: gantt.get(task.id)?.doneMs ?? null,
       sinceMs: Number.isFinite(since(task)) ? since(task) : null,
     };
   });

@@ -21,22 +21,27 @@ describe("parseCardText", () => {
         const text = parseCardText(raw);
         expect(TITLE_SIZES).toContain(text.title);
         expect(DESCRIPTION_SIZES).toContain(text.description);
+        expect(DESCRIPTION_SIZES).toContain(text.subtasks);
       }),
     );
-    expect(parseCardText({ title: "l", description: "huge" })).toEqual({ title: "l", description: DEFAULT_CARD_TEXT.description });
+    expect(parseCardText({ title: "l", description: "huge", subtasks: "m" })).toEqual({ title: "l", description: DEFAULT_CARD_TEXT.description, subtasks: "m" });
   });
 
-  it("opens on what a card drew before: a medium title over an extra-small description", () => {
-    expect(DEFAULT_CARD_TEXT).toEqual({ title: "m", description: "xs" });
+  it("opens on what a card drew before: a medium title over an extra-small description and extra-small sub-task rows", () => {
+    expect(DEFAULT_CARD_TEXT).toEqual({ title: "m", description: "xs", subtasks: "xs" });
+  });
+
+  it("reads text stored before the sub-task size with the sub-tasks as they were drawn", () => {
+    expect(parseCardText({ title: "s", description: "m" })).toEqual({ title: "s", description: "m", subtasks: "xs" });
   });
 });
 
 describe("a board's card text", () => {
   it("survives a reload, board by board", () => {
-    setCardText("board:A", { title: "l", description: "m" });
-    setCardText("board:B", { title: "s", description: "s" });
-    expect(loadCardText("board:A")).toEqual({ title: "l", description: "m" });
-    expect(loadCardText("board:B")).toEqual({ title: "s", description: "s" });
+    setCardText("board:A", { title: "l", description: "m", subtasks: "s" });
+    setCardText("board:B", { title: "s", description: "s", subtasks: "m" });
+    expect(loadCardText("board:A")).toEqual({ title: "l", description: "m", subtasks: "s" });
+    expect(loadCardText("board:B")).toEqual({ title: "s", description: "s", subtasks: "m" });
     expect(loadCardText("board:C")).toEqual(DEFAULT_CARD_TEXT);
   });
 

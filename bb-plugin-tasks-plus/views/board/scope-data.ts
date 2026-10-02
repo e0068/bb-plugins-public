@@ -3,7 +3,7 @@
 import type { Label, Task } from "../../shared/contract.js";
 import { listAllTasks, type TaskListQuery, type TasksRpc } from "../../client/data.js";
 import type { ListPreferenceScope } from "../common/list-preference.js";
-import { ALL_TIME, type CardChartPeriod } from "../../shared/enums.js";
+import { ALL_TIME, CHART_UNIT_MS, type CardChartPeriod, type ChartUnit } from "../../shared/enums.js";
 import type { GanttRowData } from "../analytics/gantt-chart.js";
 
 /** Every task and label a board's screen needs, whatever project it opens on. */
@@ -81,21 +81,22 @@ export async function fetchScopeBoard(rpc: TasksRpc, scope: ListPreferenceScope)
 }
 
 /** One card's sub-task burndown, as taskBurndowns serves it. */
-export type TaskBurndown = { open: number[]; ends: number[]; forecastDays: number | null };
+export type TaskBurndown = { open: number[]; ends: number[]; forecastMs: number | null };
 
 /**
- * The board's burndowns by task over its period, across every project on
- * screen; a project's failure leaves its own cards without charts, not the
- * rest.
+ * The board's burndowns by task over its period in its unit, across every
+ * project on screen; a project's failure leaves its own cards without
+ * charts, not the rest.
  */
 export async function fetchScopeBurndowns(
   rpc: TasksRpc,
   projectIds: readonly string[],
   period: CardChartPeriod,
+  unit: ChartUnit = "days",
 ): Promise<Map<string, TaskBurndown>> {
   const answers = await Promise.all(
     projectIds.map((projectId) =>
-      rpc.call("taskBurndowns", { projectId, period }).then(
+      rpc.call("taskBurndowns", { projectId, period, unit }).then(
         (result) => result.burndowns,
         () => [],
       ),
@@ -109,12 +110,12 @@ export const DAY_MS = 86_400_000;
 /** The board's Gantt rows by task, read at `nowMs`. */
 export type BoardGantt = { nowMs: number; rows: ReadonlyMap<string, GanttRowData> };
 
-/** Where the board's Gantt data opens for a period: the period's days back, or the whole history. */
-export const ganttFetchStart = (period: CardChartPeriod, nowMs: number) =>
-  period === ALL_TIME ? 0 : nowMs - period * DAY_MS;
+/** Where the board's Gantt data opens for a period: the period's units back, or the whole history. */
+export const ganttFetchStart = (period: CardChartPeriod, unit: ChartUnit, nowMs: number) =>
+  period === ALL_TIME ? 0 : nowMs - period * CHART_UNIT_MS[unit];
 
 /**
- * The board's Gantt rows over its period, across every project on screen; a
+ * The board's Gantt rows over its period in its unit, across every project on screen; a
  * failure leaves the cards without Gantts. No project — a cross-project
  * screen with no tasks yet — asks no RPC either: the server reads an empty
  * `projectIds` as "every project", which would fetch the whole workspace.
@@ -123,11 +124,12 @@ export function fetchScopeGantt(
   rpc: TasksRpc,
   projectIds: readonly string[],
   period: CardChartPeriod,
+  unit: ChartUnit = "days",
 ): Promise<BoardGantt | undefined> {
   if (projectIds.length === 0) return Promise.resolve(undefined);
   const nowMs = Date.now();
   return rpc
-    .call("ganttRows", { fromMs: ganttFetchStart(period, nowMs), projectIds: [...projectIds] })
+    .call("ganttRows", { fromMs: ganttFetchStart(period, unit, nowMs), projectIds: [...projectIds] })
     .then(
       (result) => ({ nowMs, rows: new Map(result.rows.map((row) => [row.taskId, row])) }),
       () => undefined,

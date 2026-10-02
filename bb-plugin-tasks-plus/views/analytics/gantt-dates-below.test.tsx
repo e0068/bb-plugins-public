@@ -20,6 +20,7 @@ const rows: GanttRowData[] = ["a", "b"].map((taskId, index) => ({
   startDate: null,
   dueDate: null,
   segments: [{ status: "in_progress", fromMs: from, toMs: to }],
+  doneMs: null,
 }));
 
 describe("GanttChart's dates", () => {
