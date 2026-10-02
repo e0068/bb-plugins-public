@@ -144,14 +144,6 @@ export const ru = {
     documentsOnly: "Только документы — живой ссылки нет",
     verdict: (verdict: "continue" | "comment"): string => (verdict === "continue" ? "Продолжено" : "Комментарий"),
   },
-  nextFlow: {
-    title: "Каким flow идти дальше?",
-    done: "прошлый прогон завершён",
-    none: "Без flow",
-    compact: "Сперва компактировать тред",
-    send: "Отправить агенту",
-    held: "Каким flow идти дальше? — выберите над композером",
-  },
   flowChoice: {
     none: "Flow не выбран",
     stages: (n: number) => plural(n, "этап", "этапа", "этапов"),
@@ -186,6 +178,8 @@ export const ru = {
     context: (percent: number, used: string, window: string, warn: string, alert: string) =>
       `Окно контекста занято на ${percent}% — ${used} из ${window}. Жёлтая с ${warn}, красная с ${alert}`,
     minutes: (n: number) => `${n} м`,
+    details: (name: string) => `${name}: подробности`,
+    total: "Потрачено",
     spentOf: (active: number, wall: number) => `в работе ${active} м из ${wall} м`,
     brokenFor: (active: number, idle: number) => `в работе ${active} м, сломанной стояла ${idle} м`,
     waitedFor: (active: number, idle: number) => `в работе ${active} м, ждал нажатия ${idle} м`,

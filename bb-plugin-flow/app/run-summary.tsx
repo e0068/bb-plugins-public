@@ -14,7 +14,7 @@ import { cn } from "../lib/utils";
 import type { FileRoots } from "../core/result-link";
 import type { FrozenRun, ProgressStage, RunSummaryView, progressRpcContract } from "../shared/contract";
 import { ResultAnchor, TaskLink } from "./cells";
-import { AutomationSteps, Row, money, useRunRoots } from "./progress-banner";
+import { StageList, money, useRunRoots } from "./progress-banner";
 import { summaryHeightKey, useHeldHeight } from "./held-height";
 import { useMessages } from "./locale-context";
 
@@ -141,12 +141,7 @@ function RunBar({ view, threadId, roots, stagesOpen }: { view: FrozenRun; thread
       <style>{mutedBlinkKeyframes}</style>
       {open && (
         <div className={cn("flex flex-col gap-px pt-1", !stagesOpen && "max-h-[50vh] overflow-y-auto")}>
-          {view.stages.map((stage: ProgressStage) => (
-            <div key={stage.id} className="flex flex-col">
-              <Row stage={stage} roots={roots} />
-              {stage.automation !== undefined && stage.state !== "todo" && stage.state !== "skip" && <AutomationSteps stage={stage} threadId={threadId} />}
-            </div>
-          ))}
+          <StageList stages={view.stages} roots={roots} threadId={threadId} />
         </div>
       )}
       <button

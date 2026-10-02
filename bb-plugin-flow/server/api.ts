@@ -31,8 +31,10 @@ export const registerApi = (
     progress?: Pick<ProgressStore, "recordAnswer" | "handOver" | "get">;
     /** Сообщает Automations о событии Flow; сбой не трогает ответ (./automations.ts). */
     emit?: (trigger: FlowTrigger, threadId: string) => void;
-    /** Отмечает реплику своей отправкой Flow до отправки: хук следующего прогона её не придерживает (./own-sends.ts). */
+    /** Отмечает реплику своей отправкой Flow до отправки: ход владельца по ней выбор flow не применяет (./own-sends.ts). */
     ownSend?: (threadId: string, text: string) => void;
+    /** Новый тред передачи получает flow исходного; обычно его уже дало первое сообщение (./thread-start.ts), здесь — страховка. */
+    carryFlow?: (fromThreadId: string, toThreadId: string) => Promise<void>;
   },
 ): void => {
   /** Работа запущена, когда владелец взял в ближайший прогон хотя бы один этап: дальше бриф спрашивает только по делу. */
@@ -130,7 +132,10 @@ export const registerApi = (
         await quietly(deps.progress?.recordAnswer(brief, answer, written.record.answeredAt, planned) ?? Promise.resolve());
         // Работа ушла в новый тред — он ведёт дальше тот же прогон, уже с планом этого ответа, а исходный его только показывает;
         // этапы прогона ответа стоят непройденными: сделал их предшественник, а не новый тред.
-        if (handoffThreadId !== undefined) await quietly(deps.progress?.handOver(brief.threadId, handoffThreadId, answer.stages ?? []) ?? Promise.resolve());
+        if (handoffThreadId !== undefined) {
+          await quietly(deps.carryFlow?.(brief.threadId, handoffThreadId) ?? Promise.resolve());
+          await quietly(deps.progress?.handOver(brief.threadId, handoffThreadId, answer.stages ?? []) ?? Promise.resolve());
+        }
       }
       await quietly(store.clearAwaiting(brief.threadId, id));
       bb.realtime.publish(ANSWERED_CHANNEL, { id });

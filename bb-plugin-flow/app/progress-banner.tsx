@@ -2,8 +2,11 @@
 // этапа и общее число, сегменты этапов со значком идущего поверх его сегмента и
 // план времени и бюджета; тап раскрывает над шапкой список этапов. Опрос RPC раз
 // в 5 секунд — прогресс пишут бриф, ответ, отметки агента и исполнитель
-// автоматизаций. Этап, на котором идёт работа, приглушённо мерцает значком; под
-// строкой автоматизации — её шаги с тем, что каждый сделал, и повтором упавшего.
+// автоматизаций. Этап, на котором идёт работа, приглушённо мерцает значком.
+// Строка этапа — аккордеон: развёрнутая показывает все его результаты, у
+// автоматизации — её шаги с тем, что каждый сделал, и повтором упавшего.
+// Минуты и доллары — своими колонками: у пройденного этапа факт, у этапа
+// впереди — едва заметный план, последней строкой — сколько потрачено всего.
 import { useEffect, useRef, useState } from "react";
 import { useBbNavigate, useComposerView, useRpc } from "@get-bb/plugin-sdk/app";
 
@@ -204,16 +207,19 @@ export function AutomationSteps({ stage, threadId }: { stage: ProgressStage; thr
           <span />
           {/* Название и кнопки — одной переносимой ячейкой: где кнопкам не хватает места рядом с названием, они уходят строкой ниже, а не выводят строку за край списка. */}
           <span className="flex min-w-0 flex-wrap items-baseline justify-end gap-x-2">
-            <span className="flex min-w-0 flex-[1_1_8rem] items-baseline gap-2 pl-3">
-              <span title={label(step)} className={cn("max-w-full shrink-0 truncate", step.state === "todo" && "text-muted-foreground", step.state === "fail" && "text-destructive")}>
-                {label(step)}
+            {/* Ошибка — своей строкой под названием шага и целиком: в одной строке с названием она обрезалась на полуслове. */}
+            <span className="flex min-w-0 flex-[1_1_8rem] flex-col pl-3">
+              <span data-step-name className="flex min-w-0 items-baseline gap-2">
+                <span title={label(step)} className={cn("max-w-full shrink-0 truncate", step.state === "todo" && "text-muted-foreground", step.state === "fail" && "text-destructive")}>
+                  {label(step)}
+                </span>
+                {step.error === null && <StepDetail detail={step.detail} />}
               </span>
               {step.error !== null && (
-                <span title={step.error} className="min-w-0 truncate text-muted-foreground">
+                <span data-step-error className="min-w-0 whitespace-normal break-words text-muted-foreground">
                   {step.error}
                 </span>
               )}
-              {step.error === null && <StepDetail detail={step.detail} />}
             </span>
             {threadId === null ? null : stage.kind === "action" ? (
               step.state === "wait" || step.state === "now" || step.state === "fail" ? (
@@ -244,6 +250,7 @@ export function AutomationSteps({ stage, threadId }: { stage: ProgressStage; thr
               </span>
             ) : null}
           </span>
+          <span />
           <span />
           <Mark state={step.state} live={stage.live} />
         </div>
@@ -283,11 +290,12 @@ function Mark({ state, live }: { state: StepView["state"]; live: boolean | undef
 export const money = (value: number): string => `$${Number.isInteger(value) ? value : value.toFixed(1)}`;
 
 /**
- * Колонки шапки и строк: номер, значок, середина, минуты и доллары вплотную, отметка.
+ * Колонки строк: номер, значок, середина, минуты, доллары, отметка.
  * Номер держит свою колонку слева от значка, поэтому номера стоят в столбец и не уезжают
- * от длины названия, а строка без номера оставляет колонку пустой.
+ * от длины названия, а строка без номера оставляет колонку пустой. Минуты и доллары —
+ * колонками постоянной ширины: строка без долларов не сдвигает минуты в их колонку.
  */
-const COLUMNS = "grid grid-cols-[16px_16px_minmax(0,1fr)_auto_20px] items-center gap-2.5";
+const COLUMNS = "grid grid-cols-[16px_16px_minmax(0,1fr)_2.75rem_3.25rem_20px] items-center gap-2.5";
 
 export function ProgressBanner() {
   return (
@@ -355,19 +363,37 @@ function spentTitle(t: ReturnType<typeof useMessages>, { minutes, wall, idle, ki
   return wall !== null && wall !== minutes ? t.progress.spentOf(minutes, wall) : undefined;
 }
 
-function Spent({ minutes, wall, idle, kind, cost }: { minutes: number | null; wall: number | null; idle: number | null; kind: ProgressStage["kind"]; cost: number | null }) {
+/** Ячейки минут и долларов строки — каждая своей колонкой; пустая ячейка держит место. `plan` — прогноз: с тильдой и едва заметно, как вычеркнутый этап. */
+function Cells({ minutes, cost, title, plan = false }: { minutes: number | null; cost: number | null; title?: string | undefined; plan?: boolean }) {
   const t = useMessages();
-  const title = spentTitle(t, { minutes, wall, idle, kind });
+  const mark = plan ? "~" : "";
   return (
-    <span data-progress-spent {...(title === undefined ? {} : { title })} className="flex justify-end gap-1.5 whitespace-nowrap tabular-nums">
-      {minutes !== null && <span className="min-w-8 text-right">{t.progress.minutes(minutes)}</span>}
-      {cost !== null && <span className="min-w-10 text-right">{money(cost)}</span>}
-    </span>
+    <>
+      <span data-progress-minutes data-progress-spent {...(title === undefined ? {} : { title })} className={cn("whitespace-nowrap text-right tabular-nums leading-5", plan && "opacity-40")}>
+        {minutes === null ? "" : `${mark}${t.progress.minutes(minutes)}`}
+      </span>
+      <span data-progress-cost className={cn("whitespace-nowrap text-right tabular-nums leading-5", plan && "opacity-40")}>
+        {cost === null ? "" : `${mark}${money(cost)}`}
+      </span>
+    </>
   );
 }
 
-/** `onToggle` — у живого бара треда, который ведёт прогон: этап, до которого прогон не дошёл, получает чекбокс «в прогоне». */
-export function Row({ stage, roots, onToggle }: { stage: ProgressStage; roots: FileRoots | null; onToggle?: (run: boolean) => void }) {
+/** Факт пройденного этапа, план этапа впереди или идущего; у остальных ячейки пусты. */
+function Spent({ stage }: { stage: ProgressStage }) {
+  const t = useMessages();
+  if (stage.state === "done") {
+    const title = spentTitle(t, { minutes: stage.minutes, wall: stage.wallMinutes ?? null, idle: stage.idleMinutes ?? null, kind: stage.kind });
+    return <Cells minutes={stage.minutes} cost={stage.cost} title={title} />;
+  }
+  return stage.plan === undefined ? <Cells minutes={null} cost={null} /> : <Cells minutes={stage.plan.minutes} cost={stage.plan.target} plan />;
+}
+
+/**
+ * `onToggle` — у живого бара треда, который ведёт прогон: этап, до которого прогон не дошёл, получает чекбокс «в прогоне».
+ * `onExpand` — у строки, которой есть что развернуть: название становится кнопкой аккордеона.
+ */
+export function Row({ stage, roots, onToggle, expanded = false, onExpand }: { stage: ProgressStage; roots: FileRoots | null; onToggle?: (run: boolean) => void; expanded?: boolean; onExpand?: () => void }) {
   const t = useMessages();
   const first = stage.results[0];
   const muted = stage.state === "todo" || stage.state === "skip";
@@ -384,13 +410,25 @@ export function Row({ stage, roots, onToggle }: { stage: ProgressStage; roots: F
       )}
       <StageIcon stage={stage} className={cn("mt-0.5", muted ? "text-muted-foreground" : "text-foreground")} />
       <span className="flex min-w-0 flex-wrap items-baseline gap-x-2.5 gap-y-0.5 leading-5">
-        <span data-progress-label className={cn(muted && "text-muted-foreground", stage.state === "skip" && "line-through")}>{stageLabel(stage, t.stages)}</span>
+        {onExpand === undefined ? (
+          <span data-progress-label className={cn(muted && "text-muted-foreground", stage.state === "skip" && "line-through")}>{stageLabel(stage, t.stages)}</span>
+        ) : (
+          <button type="button" data-progress-label aria-expanded={expanded} aria-label={t.progress.details(stageLabel(stage, t.stages))} onClick={onExpand} className={cn("inline-flex items-baseline gap-1 rounded text-left hover:text-primary", muted && "text-muted-foreground")}>
+            {stageLabel(stage, t.stages)}
+            <Icon name="ChevronRight" aria-hidden="true" className={cn("size-3 shrink-0 self-center text-muted-foreground transition-transform", expanded && "rotate-90")} />
+          </button>
+        )}
         {stage.state === "done" && first !== undefined ? (
           <>
             <ResultAnchor target={first.target} roots={roots} className="min-w-0 break-all text-left underline decoration-foreground/35 underline-offset-2 hover:text-primary">
               {first.label}
             </ResultAnchor>
-            {stage.results.length > 1 && <span className="shrink-0 text-[11px] text-muted-foreground">+{stage.results.length - 1}</span>}
+            {stage.results.length > 1 && !expanded && (
+              // Счёт остальных — та же кнопка аккордеона: за ним и прячутся остальные результаты; для диктора она уже названа выше.
+              <button type="button" tabIndex={-1} aria-hidden="true" onClick={onExpand} className="shrink-0 text-[11px] text-muted-foreground hover:text-primary">
+                +{stage.results.length - 1}
+              </button>
+            )}
           </>
         ) : (
           <span className="min-w-0 text-[11px] text-muted-foreground">
@@ -410,13 +448,7 @@ export function Row({ stage, roots, onToggle }: { stage: ProgressStage; roots: F
           </span>
         )}
       </span>
-      <Spent
-        minutes={stage.state === "done" ? stage.minutes : null}
-        wall={stage.state === "done" ? (stage.wallMinutes ?? null) : null}
-        idle={stage.state === "done" ? (stage.idleMinutes ?? null) : null}
-        kind={stage.kind}
-        cost={stage.state === "done" ? stage.cost : null}
-      />
+      <Spent stage={stage} />
       <span className="flex size-5 items-center justify-center">
         {stage.state === "done" && first !== undefined ? (
           <ResultAnchor target={first.target} roots={roots} label={t.progress.open(first.label)} className="flex size-5 items-center justify-center rounded hover:bg-state-hover hover:text-primary">
@@ -437,6 +469,80 @@ export function Row({ stage, roots, onToggle }: { stage: ProgressStage; roots: F
         )}
       </span>
     </div>
+  );
+}
+
+/** Есть ли строке что развернуть: результаты сверх первого или шаги автоматизации, до которой прогон дошёл. */
+const expandable = (stage: ProgressStage): boolean =>
+  stage.state !== "todo" && stage.state !== "skip" && (stage.results.length > 1 || (stage.automation?.steps.length ?? 0) > 0);
+
+/** Развёрнута ли строка, пока владелец её не трогал: идущая и упавшая автоматизация — да, её шаги и кнопки нужны сейчас. */
+const openByDefault = (stage: ProgressStage): boolean => stage.automation !== undefined && (stage.state === "now" || stage.state === "fail");
+
+/** Результаты сверх первого — по строке на каждый, под серединой строки этапа. */
+function MoreResults({ stage, roots }: { stage: ProgressStage; roots: FileRoots | null }) {
+  return (
+    <div className="flex flex-col">
+      {stage.results.slice(1).map((result) => (
+        <div key={result.target} data-progress-result className={cn(COLUMNS, "min-h-6 px-3 py-0.5")}>
+          <span />
+          <span />
+          <ResultAnchor target={result.target} roots={roots} className="min-w-0 break-all text-left underline decoration-foreground/35 underline-offset-2 hover:text-primary">
+            {result.label}
+          </ResultAnchor>
+          <span />
+          <span />
+          <span />
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/** Последняя строка списка: сколько потрачено на пройденных этапах — в колонках минут и долларов. */
+function TotalRow({ stages }: { stages: readonly ProgressStage[] }) {
+  const t = useMessages();
+  const done = stages.filter((stage) => stage.state === "done");
+  const sum = (values: ReadonlyArray<number | null>) => (values.every((value) => value === null) ? null : values.reduce<number>((total, value) => total + (value ?? 0), 0));
+  return (
+    <div data-progress-total className={cn(COLUMNS, "min-h-7 border-t border-border px-3 py-1 text-muted-foreground")}>
+      <span />
+      <span />
+      <span className="leading-5">{t.progress.total}</span>
+      <Cells minutes={sum(done.map((stage) => stage.minutes))} cost={sum(done.map((stage) => stage.cost))} />
+      <span />
+    </div>
+  );
+}
+
+/**
+ * Этапы прогона строками-аккордеонами и итог потраченного под ними — общий для бара над композером и итога в ленте.
+ * `threadId` — тред, который ведёт прогон: из него нажимаются шаги автоматизаций; `null` — шаги только видны.
+ * `toggleOf` — чекбокс «в прогоне» у этапа; нет — у этапа чекбокса нет.
+ */
+export function StageList({ stages, roots, threadId, toggleOf }: { stages: readonly ProgressStage[]; roots: FileRoots | null; threadId: string | null; toggleOf?: (stage: ProgressStage, at: number) => ((run: boolean) => void) | undefined }) {
+  const [touched, setTouched] = useState<Readonly<Record<string, boolean>>>({});
+  return (
+    <>
+      {stages.map((stage, at) => {
+        const open = expandable(stage) && (touched[stage.id] ?? openByDefault(stage));
+        const toggle = toggleOf?.(stage, at);
+        return (
+          <div key={stage.id} className="flex flex-col">
+            <Row
+              stage={stage}
+              roots={roots}
+              {...(toggle === undefined ? {} : { onToggle: toggle })}
+              expanded={open}
+              {...(expandable(stage) ? { onExpand: () => setTouched((current) => ({ ...current, [stage.id]: !open })) } : {})}
+            />
+            {open && stage.results.length > 1 && <MoreResults stage={stage} roots={roots} />}
+            {open && stage.automation !== undefined && <AutomationSteps stage={stage} threadId={threadId} />}
+          </div>
+        );
+      })}
+      {stages.some((stage) => stage.state === "done") && <TotalRow stages={stages} />}
+    </>
   );
 }
 
@@ -601,12 +707,7 @@ function Progress({ view, threadId, open, toggle, onCancelled }: { view: Progres
               {driver !== null && <FlowMenu threadId={driver} onCancelled={onCancelled} />}
             </div>
           )}
-          {stages.map((stage, at) => (
-            <div key={stage.id} className="flex flex-col">
-              <Row stage={stage} roots={roots} onToggle={driver === null || at <= reached ? undefined : (run) => toggleStage(stage.id, run)} />
-              {stage.automation !== undefined && stage.state !== "todo" && stage.state !== "skip" && <AutomationSteps stage={stage} threadId={driver} />}
-            </div>
-          ))}
+          <StageList stages={stages} roots={roots} threadId={driver} toggleOf={(stage, at) => (driver === null || at <= reached ? undefined : (run) => toggleStage(stage.id, run))} />
         </div>
       )}
       {view.carrier !== undefined && (

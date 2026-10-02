@@ -7,7 +7,7 @@
 // поэтому одинаково и в кнопке виджета, и в реплике агенту.
 import type { Locale } from "../lib/i18n";
 import { messages } from "../lib/messages";
-import type { Add, Checker, Criterion, DecisionAnswer, DecisionBrief } from "../shared/contract";
+import type { Add, Checker, Criterion, DecisionAnswer, DecisionBrief, StagePlan } from "../shared/contract";
 import { SETUP_ROW, rowsOf } from "./rows";
 import { sumAdds } from "./adds";
 import { removedCriteria } from "./option-criteria";
@@ -158,6 +158,20 @@ const scopeLines = (brief: DecisionBrief, answer: DecisionAnswer, locale?: Local
 const scopePricedLines = (brief: DecisionBrief, answer: DecisionAnswer, locale?: Locale): ForecastLine[] => {
   const stages = stageLines(brief, answer, scopeOf(brief, answer), locale);
   return hasWorkStage(brief) ? [...stages, ...optionRiskLines(brief, answer, locale)] : [...scopeLines(brief, answer, locale), ...stages];
+};
+
+/** План этапов, взятых ответом в прогон: минуты и доллары цены этапа с исполнителем — от объёма работы; этап без цены плана не получает. */
+export const stagePlans = (brief: DecisionBrief, answer: DecisionAnswer): Record<string, StagePlan> => {
+  const scope = scopeOf(brief, answer);
+  return Object.fromEntries(
+    stageItems(brief).flatMap((item) => {
+      const choice = answeredStageChoice(brief, answer, item);
+      const add = stagePhase(item) === "todo" && choice.run ? stageAdd(item, choice.executor, scope) : undefined;
+      // Пустая цена — доля от объёма без цены — плана не даёт: «~$0» в контейнере ничего не обещает.
+      const empty = add === undefined || (add.minutes === undefined && add.target === 0);
+      return empty ? [] : [[item.stage.id, { minutes: add.minutes ?? null, target: add.target }]];
+    }),
+  );
 };
 
 /** Планирование в треде одной строкой: «42 мин, $4.2», без цены — только минуты; `null`, если планирования нет. */

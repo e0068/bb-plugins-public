@@ -137,14 +137,6 @@ export const en: Messages = {
     documentsOnly: "Documents only — no live link",
     verdict: (verdict) => (verdict === "continue" ? "Continued" : "Comment"),
   },
-  nextFlow: {
-    title: "Which flow next?",
-    done: "the last run is finished",
-    none: "No flow",
-    compact: "Compact the thread first",
-    send: "Send to the agent",
-    held: "Which flow next? — choose above the composer",
-  },
   flowChoice: {
     none: "No flow selected",
     stages: (n) => count(n, "stage"),
@@ -179,6 +171,8 @@ export const en: Messages = {
     context: (percent: number, used: string, window: string, warn: string, alert: string) =>
       `Context window ${percent}% used — ${used} of ${window}. Yellow from ${warn}, red from ${alert}`,
     minutes: (n) => `${n} m`,
+    details: (name) => `${name}: details`,
+    total: "Spent",
     spentOf: (active, wall) => `working ${active} m of ${wall} m`,
     brokenFor: (active, idle) => `working ${active} m, broken for ${idle} m`,
     waitedFor: (active, idle) => `working ${active} m, waiting for a press for ${idle} m`,
