@@ -927,11 +927,13 @@ function ScopeBlock({ brief, view, scope }: { brief: DecisionBrief; view: View; 
 function QuestionsSection({ brief, view }: { brief: DecisionBrief; view: View }) {
   const hidden = hiddenIn(brief, view.draft);
   const visible = brief.questions.filter((q) => !hidden.has(q.id));
-  if (visible.length === 0 && brief.scope === undefined) return null;
+  // «Что я понял» — о работе до запуска; у Демонстрации его место занимает итог.
+  const scope = brief.outcome === undefined ? brief.scope : undefined;
+  if (visible.length === 0 && scope === undefined) return null;
   return (
     <div className="flex flex-col gap-4">
       <SectionTag kind="questions" className="-mb-2" />
-      {brief.scope !== undefined && <ScopeBlock brief={brief} view={view} scope={brief.scope} />}
+      {scope !== undefined && <ScopeBlock brief={brief} view={view} scope={scope} />}
       {visible.map((question, i) => (
         <div key={question.id} role="group" aria-label={plainText(question.question)}>
           <div className="break-words text-[13px] font-medium leading-snug">
