@@ -1,6 +1,6 @@
 ---
 name: flow-questions
-description: The Questions stage — ask the owner about whatever blocks the work: forks, picking several options, "did I get this right". In bb — one ask_decision brief; in plain Claude Code — AskUserQuestion. Use it on the Questions stage of a Flow and whenever a fork or a misunderstanding stands before the work and cannot be settled by the code, the task or a sensible default. Этап Вопросы — развилки, выбор нескольких, «правильно ли я понял».
+description: 'The Questions stage — ask the owner about whatever blocks the work: forks, picking several options, "did I get this right". In bb — one ask_decision brief; in plain Claude Code — AskUserQuestion. Use it on the Questions stage of a Flow and whenever a fork or a misunderstanding stands before the work and cannot be settled by the code, the task or a sensible default. Этап Вопросы — развилки, выбор нескольких, «правильно ли я понял».'
 ---
 
 # Questions
