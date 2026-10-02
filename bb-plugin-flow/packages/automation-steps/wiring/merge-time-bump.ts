@@ -71,7 +71,7 @@ export interface MergeTimeBumpInput {
    */
   level: BumpLevel;
   /**
-   * The day (YYYY-MM-DD) the plugins' changelog entries are stamped with.
+   * The merge moment, UTC to the minute (YYYY-MM-DDTHH:MMZ), the plugins' changelog entries are stamped with; older entries carry a day (YYYY-MM-DD).
    * Absent — the changelog is not touched at all, only the versions.
    */
   changelogDate?: string;

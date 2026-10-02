@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { encodeBase64 } from "../core/base64";
 import type { GithubRequest, RepoRef } from "../core/github-requests";
@@ -239,8 +239,8 @@ describe("settleVersionsForMerge — ченж-лог", () => {
   });
 });
 
-describe("settleVersionsForMerge — день по умолчанию", () => {
-  it("without a day given the entry is stamped with today's local date — every caller gets the changelog", async () => {
+describe("settleVersionsForMerge — момент по умолчанию", () => {
+  it("without a moment given the entry is stamped with the merge moment in UTC, to the minute — every caller gets the time", async () => {
     const { gh, calls } = pull({
       changedPaths: ["bb-plugin-x/app.tsx", "bb-plugin-x/changelog/new-button.md"],
       files: {
@@ -249,11 +249,16 @@ describe("settleVersionsForMerge — день по умолчанию", () => {
         "bb/thr_x:bb-plugin-x/changelog/new-button.md": "---\nversion: coming-soon\n---\n\n- ru: Кнопка\n  en: Button\n",
       },
     });
-    const now = new Date();
-    const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
-    await settleVersionsForMerge(gh, "patch");
+    // Последняя минута суток по UTC: в поясе машины это может быть уже завтра — пункт всё равно несёт момент UTC.
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-10-01T23:59:30.500Z"));
+    try {
+      await settleVersionsForMerge(gh, "patch");
+    } finally {
+      vi.useRealTimers();
+    }
     const blobs = calls.filter((c) => c.path.endsWith("/git/blobs")).map((c) => String((c.body as { content: string }).content));
-    expect(blobs.some((blob) => blob.includes(`version: 0.2.12\ndate: ${today}\npr: 42\n`))).toBe(true);
+    expect(blobs.some((blob) => blob.includes("version: 0.2.12\ndate: 2026-10-01T23:59Z\npr: 42\n"))).toBe(true);
   });
 
   it("a PR title GitHub will not give is a named problem, the version is still raised", async () => {
