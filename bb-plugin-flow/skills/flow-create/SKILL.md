@@ -1,6 +1,6 @@
 ---
 name: flow-create
-description: Create or change a flow of the Flow plugin — a named table of stages a thread follows: built-in stages (Questions, Criteria, Stage selection, Demo), skill stages with executors, and automations — Flow steps, your own scripts as a "Script" step, or automations of the Automations plugin. In bb — with the read_flows and save_flow tools; without them — as a table for the Flow page. Use it when the owner asks "make a flow for …", "add a stage to the flow", "put an automation after review", "run a script after the stage", "make it the default flow", and when no flow fits the work. «Сделай flow», «заведи flow», «добавь в flow этап».
+description: 'Create or change a flow of the Flow plugin — a named table of stages a thread follows: built-in stages (Questions, Criteria, Stage selection, Demo), skill stages with executors, and automations — Flow steps, your own scripts as a "Script" step, or automations of the Automations plugin. In bb — with the read_flows and save_flow tools; without them — as a table for the Flow page. Use it when the owner asks "make a flow for …", "add a stage to the flow", "put an automation after review", "run a script after the stage", "make it the default flow", and when no flow fits the work. «Сделай flow», «заведи flow», «добавь в flow этап».'
 ---
 
 # Creating a flow
