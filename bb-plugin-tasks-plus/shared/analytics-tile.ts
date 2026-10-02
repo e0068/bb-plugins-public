@@ -3,7 +3,7 @@
 // pure helpers only, no zod — the client imports this; the schemas over these
 // lists live in contract.ts, which only the server reads by value.
 import type { SavedViewFilters } from "./contract.js";
-import type { QueryField } from "./enums.js";
+import { QUERY_FIELDS, type QueryField, type TableSortDirection } from "./enums.js";
 
 /** How a tile draws. Gantt is `bars` whose length runs Start → Due. */
 export const TILE_TYPES = ["columns", "bars", "line", "ring", "list", "table", "big"] as const;
@@ -96,6 +96,37 @@ export const TILE_LIMIT = { min: 1, max: 200, list: 15, chart: 20 } as const;
 
 /** Most task keys a cell lists for its segment; past it the list is cut. */
 export const CELL_KEYS_MAX = 50;
+
+/** Rows the table under a chart shows at first and per «Show more»: the bounds and where it starts. */
+export const TILE_TABLE_ROWS = { min: 1, max: 500, start: 50 } as const;
+
+/** Most tasks the table lists after «Show more» — what one answer carries at most. */
+export const TILE_TABLE_SHOWN_MAX = 2000;
+
+/** The table's row heights: the task table's 34 px, or 28 px. */
+export const TILE_TABLE_HEIGHTS = ["regular", "compact"] as const;
+export type TileTableHeight = (typeof TILE_TABLE_HEIGHTS)[number];
+
+/** Fields that need what the analytics answer does not carry — threads, sub-tasks, files, other tasks' keys — stay out of the table. */
+const TILE_TABLE_UNDRAWN: ReadonlySet<QueryField> = new Set(["active", "subtasks", "attachments", "worktree", "parent", "epic"]);
+
+/** Fields the table under a chart can show, in the task table's order. */
+export const TILE_TABLE_FIELDS: readonly QueryField[] = QUERY_FIELDS.filter((field) => !TILE_TABLE_UNDRAWN.has(field));
+
+/** The columns a new table shows. */
+export const TILE_TABLE_COLUMNS_START: readonly QueryField[] = ["key", "title", "status", "project"];
+
+/** How the table under a chart is set: its columns in order, its sort, rows per segment and row height. */
+export interface TileTable {
+  columns: QueryField[];
+  sort: { column: QueryField; direction: TableSortDirection } | null;
+  rows: number;
+  rowHeight: TileTableHeight;
+}
+
+/** A tile's table settings, the starting ones for a tile saved before it had a table. */
+export const tileTable = (tile: { table?: TileTable }): TileTable =>
+  tile.table ?? { columns: [...TILE_TABLE_COLUMNS_START], sort: null, rows: TILE_TABLE_ROWS.start, rowHeight: "regular" };
 
 /** The chart's share of a tile's height while the tile lists its segments' tasks under it: the bounds the divider moves in, and where it starts. */
 export const CONTENTS_SHARE = { min: 0.2, max: 0.8, start: 0.6 } as const;

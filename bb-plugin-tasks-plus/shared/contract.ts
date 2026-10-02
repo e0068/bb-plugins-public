@@ -52,6 +52,10 @@ import {
   CONDITION_VALUE_MAX,
   CONDITIONS_MAX,
   CONTENTS_SHARE,
+  TILE_TABLE_FIELDS,
+  TILE_TABLE_HEIGHTS,
+  TILE_TABLE_ROWS,
+  TILE_TABLE_SHOWN_MAX,
   conditionsFromFilters,
 } from "./analytics-tile.js";
 
@@ -482,6 +486,21 @@ export const savedViewFiltersSchema = z
 
 const queryFieldSchema = z.enum(QUERY_FIELDS as unknown as [QueryField, ...QueryField[]]);
 
+const tileTableFieldSchema = z.enum(TILE_TABLE_FIELDS as unknown as [QueryField, ...QueryField[]]);
+
+/** The table under a tile's chart (shared/analytics-tile.ts): the title always shown, no column twice. */
+const tileTableSchema = z
+  .object({
+    columns: z
+      .array(tileTableFieldSchema)
+      .refine((columns) => columns.includes("title"), "The title is always shown")
+      .refine((columns) => new Set(columns).size === columns.length, "A column is shown once"),
+    sort: z.object({ column: tileTableFieldSchema, direction: z.enum(TABLE_SORT_DIRECTIONS) }).strict().nullable(),
+    rows: z.number().int().min(TILE_TABLE_ROWS.min).max(TILE_TABLE_ROWS.max),
+    rowHeight: z.enum(TILE_TABLE_HEIGHTS),
+  })
+  .strict();
+
 /** One tile of the analytics screen — docs/specs/analitika-model-plitki-i-agregaciya-po-lyubomu-polyu.md. */
 export const tileSchema = z
   .object({
@@ -523,6 +542,8 @@ export const tileSchema = z
         contents: z.number().min(CONTENTS_SHARE.min).max(CONTENTS_SHARE.max).optional(),
       })
       .strict(),
+    /** The table of the segments' tasks under the chart; absent — a tile saved before it, read with tileTable's start. */
+    table: tileTableSchema.optional(),
   })
   .strict();
 
@@ -1472,6 +1493,22 @@ export const tasksRpcContract = defineRpcContract({
       .object({ tile: tileSchema, edges: columnEdgesSchema, projectIds: projectIdsSchema, picked: z.string().nullable() })
       .strict(),
     output: tileAnswerSchema,
+  },
+  // The tasks behind a pick on a tile's chart — all of the chart's while none
+  // is picked — sorted, the first `limit` of them, and how many in all.
+  analyticsTileTasks: {
+    input: z
+      .object({
+        tile: tileSchema,
+        edges: columnEdgesSchema,
+        projectIds: projectIdsSchema,
+        picked: z.string().nullable(),
+        pick: z.object({ column: z.number().int().min(0), series: z.string().nullable() }).strict().nullable(),
+        sort: z.object({ column: queryFieldSchema, direction: z.enum(TABLE_SORT_DIRECTIONS) }).strict().nullable(),
+        limit: z.number().int().min(TILE_TABLE_ROWS.min).max(TILE_TABLE_SHOWN_MAX),
+      })
+      .strict(),
+    output: z.object({ tasks: z.array(taskSchema), total: z.number().int().nonnegative() }).strict(),
   },
   // The tiles of the analytics screen, kept in the plugin's KV; null — none saved yet.
   loadAnalyticsDashboard: {

@@ -19,7 +19,7 @@ import { ACTIVITY_VALUES, FIELD_FILTER_KINDS, MAIN_CHECKOUT, type NumberField, t
 import { firstParagraph } from "../shared/first-paragraph.js";
 import { slugOf } from "../shared/format.js";
 import { planDateMs } from "../shared/plan-date.js";
-import { compareByField, numberValue, worktreeOf, type TaskFacts } from "../shared/task-fields.js";
+import { compareByField, numberValue, worktreeOf, type ColumnSort, type TaskFacts } from "../shared/task-fields.js";
 import { matchesConditions } from "../shared/tile-conditions.js";
 import { snapshotOf } from "./aggregate.js";
 import { closedInBins, strictlyIncreasing, type ClosedEntry } from "./closed.js";
@@ -416,7 +416,18 @@ function figuresOf(input: TileInput, tasks: readonly Task[], moves: Map<string, 
   };
 }
 
-export function tileAnswer(input: TileInput): TileCore {
+/** A pick on the chart: a column's one series, or — series null — the whole column. */
+export interface GridPick {
+  column: number;
+  series: string | null;
+}
+
+/**
+ * The tile's cells before they are folded to numbers: the switch's values,
+ * the tasks shown, the series and the columns kept, and the events in each
+ * cell — what the chart counts and the table under it lists.
+ */
+function tileGrid(input: TileInput) {
   const { tile, facts } = input;
   const edges = input.edges.length >= 2 && strictlyIncreasing(input.edges) ? input.edges : [];
   const tasks = input.tasks.filter((task) => inProjects(input.projectIds, task.projectId));
@@ -497,6 +508,13 @@ export function tileAnswer(input: TileInput): TileCore {
     }),
   );
   const columnKeys = columnCap.kept.filter((column) => merged.has(column) && (runsLikeTime(tile.x) || measured(metric, folded.get(column)!.values)));
+  const cellTasks = (column: string, index: number): Task[] => [...new Map(cellOf(column, index).map((entry) => [entry.task.id, entry.task])).values()];
+  return { split, metric, seriesKeys, columnKeys, folded, cellTasks, shownTasks, currentTasks, switchValues, moves, edges };
+}
+
+export function tileAnswer(input: TileInput): TileCore {
+  const { tile } = input;
+  const { split, metric, seriesKeys, columnKeys, folded, shownTasks, currentTasks, switchValues, moves, edges } = tileGrid(input);
   const titleOf = new Map(shownTasks.map((task) => [task.key, task.title]));
 
   return {
@@ -515,4 +533,19 @@ export function tileAnswer(input: TileInput): TileCore {
     rows: rowsOf(input, currentTasks, moves, edges),
     figures: figuresOf(input, currentTasks, moves, edges),
   };
+}
+
+/**
+ * The tasks behind a pick — every task of the chart while none is picked —
+ * each once, in the sort asked or by key, the first `limit` of them, and how
+ * many there are in all.
+ */
+export function segmentTasks(input: TileInput, pick: GridPick | null, sort: ColumnSort | null, limit: number): { tasks: Task[]; total: number } {
+  const { seriesKeys, columnKeys, cellTasks } = tileGrid(input);
+  const columns = pick === null ? columnKeys : columnKeys.slice(pick.column, pick.column + 1);
+  const seriesIndexes = seriesKeys.map((_, index) => index).filter((index) => pick?.series == null || seriesKeys[index] === pick.series);
+  const picked = [...new Map(columns.flatMap((column) => seriesIndexes.flatMap((index) => cellTasks(column, index))).map((task) => [task.id, task])).values()];
+  const byKey = [...picked].sort(compareByField({ column: "key", direction: "asc" }, input.facts));
+  const sorted = sort === null ? byKey : [...byKey].sort(compareByField(sort, input.facts));
+  return { tasks: sorted.slice(0, limit), total: sorted.length };
 }

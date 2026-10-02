@@ -1,4 +1,4 @@
-import { useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Icon } from "@/components/ui/icon";
@@ -46,45 +46,7 @@ import {
 import { gridColumnsOf, groupKeys, withColumnOrder, withHiddenToggled, type BoardLayout } from "../board/grouping.js";
 import { fetchScopeBoard } from "../board/scope-data.js";
 import { setTableSettings, useTableSettings } from "../table/table-preference.js";
-
-/**
- * Destination index `moveField` expects, from an "insert before slot N" drop.
- * Once the dragged item at `from` is removed, everything after it shifts down
- * one, so a slot past `from` lands one lower. The array mechanics themselves
- * are covered by `moveField`'s tests.
- */
-function dropDestination(from: number, insertBefore: number): number {
-  return insertBefore > from ? insertBefore - 1 : insertBefore;
-}
-
-interface DragState {
-  from: number;
-  /** Slot the row would drop before (0..length; length = past the end). */
-  insertBefore: number;
-}
-
-function FieldToggle({
-  label,
-  visible,
-  onToggle,
-}: {
-  label: string;
-  visible: boolean;
-  onToggle: () => void;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onToggle}
-      className="flex flex-1 items-center gap-2 rounded-sm px-1.5 py-1 text-left text-sm hover:bg-state-hover"
-    >
-      <span className={cn("flex-1 truncate", !visible && "text-muted-foreground")}>{label}</span>
-      <span className="flex size-4 shrink-0 items-center justify-center">
-        {visible ? <Icon name="Check" className="size-3.5" /> : null}
-      </span>
-    </button>
-  );
-}
+import { ReorderList } from "./reorder-list.js";
 
 /** A visible column's pin state and the way to flip it — the table only; a board's field list carries none. */
 interface PinControl {
@@ -94,100 +56,36 @@ interface PinControl {
 
 function FieldList({ scope, pin }: { scope: FieldScope; pin?: PinControl }) {
   const config = useFieldDisplay(scope);
-  const rowRefs = useRef<(HTMLDivElement | null)[]>([]);
-  const [drag, setDrag] = useState<DragState | null>(null);
-
-  const beginDrag = (event: ReactPointerEvent, from: number) => {
-    // The grip owns the gesture; keep it off the row's toggle click.
-    event.preventDefault();
-    event.stopPropagation();
-    const fields = config.fields;
-    let insertBefore = from;
-
-    const onMove = (moveEvent: PointerEvent) => {
-      const y = moveEvent.clientY;
-      let slot = fields.length;
-      for (let index = 0; index < fields.length; index += 1) {
-        const element = rowRefs.current[index];
-        if (!element) continue;
-        const rect = element.getBoundingClientRect();
-        if (y < rect.top + rect.height / 2) {
-          slot = index;
-          break;
-        }
-      }
-      insertBefore = slot;
-      setDrag({ from, insertBefore: slot });
-    };
-    const onUp = () => {
-      window.removeEventListener("pointermove", onMove);
-      window.removeEventListener("pointerup", onUp);
-      setDrag(null);
-      moveField(scope, from, dropDestination(from, insertBefore));
-    };
-    window.addEventListener("pointermove", onMove);
-    window.addEventListener("pointerup", onUp);
-    setDrag({ from, insertBefore: from });
-  };
-
+  const rows = config.fields.map((entry) => ({
+    id: entry.field,
+    label: ROW_FIELD_LABELS[entry.field],
+    visible: entry.field === "title" || entry.visible,
+    // The card always draws its title: it only moves, so it has no check.
+    locked: entry.field === "title",
+  }));
   return (
-    <div role="group" aria-label="Fields" className="flex flex-col">
-      {config.fields.map((entry, index) => {
-        const dragging = drag?.from === index;
-        const showIndicator = drag !== null && drag.insertBefore === index;
-        const visible = entry.field === "title" || entry.visible;
-        const pinned = pin?.pinned.includes(entry.field) ?? false;
-        const label = ROW_FIELD_LABELS[entry.field];
+    <ReorderList
+      label="Fields"
+      rows={rows}
+      onToggle={(field) => toggleFieldVisible(scope, field as RowField)}
+      onMove={(from, to) => moveField(scope, from, to)}
+      trailing={(row) => {
+        if (!pin || !row.visible) return null;
+        const field = row.id as RowField;
+        const pinned = pin.pinned.includes(field);
         return (
-          <div
-            key={entry.field}
-            ref={(element) => {
-              rowRefs.current[index] = element;
-            }}
-            className={cn(
-              "relative flex items-center gap-1 rounded-sm",
-              dragging && "opacity-40",
-            )}
+          <button
+            type="button"
+            aria-label={`${pinned ? "Unpin" : "Pin"} ${row.label}`}
+            aria-pressed={pinned}
+            onClick={() => pin.onTogglePin(field)}
+            className="flex size-6 shrink-0 items-center justify-center rounded-sm text-muted-foreground hover:bg-state-hover hover:text-foreground"
           >
-            {showIndicator ? (
-              <div className="pointer-events-none absolute inset-x-1 -top-px h-0.5 rounded-full bg-primary" />
-            ) : null}
-            <button
-              type="button"
-              aria-label={`Reorder ${label}`}
-              onPointerDown={(event) => beginDrag(event, index)}
-              className="flex size-6 shrink-0 cursor-grab touch-none items-center justify-center text-subtle-foreground hover:text-foreground"
-            >
-              <Icon name="DragDropVertical" className="size-3.5" />
-            </button>
-            {entry.field === "title" ? (
-              // The card always draws its title: it only moves, so it has no check.
-              <span className="flex flex-1 items-center gap-2 px-1.5 py-1 text-sm">
-                <span className="flex-1 truncate">{ROW_FIELD_LABELS.title}</span>
-                <span className="text-xs text-subtle-foreground">always shown</span>
-              </span>
-            ) : (
-              <FieldToggle
-                label={label}
-                visible={entry.visible}
-                onToggle={() => toggleFieldVisible(scope, entry.field)}
-              />
-            )}
-            {pin && visible ? (
-              <button
-                type="button"
-                aria-label={`${pinned ? "Unpin" : "Pin"} ${label}`}
-                aria-pressed={pinned}
-                onClick={() => pin.onTogglePin(entry.field)}
-                className="flex size-6 shrink-0 items-center justify-center rounded-sm text-muted-foreground hover:bg-state-hover hover:text-foreground"
-              >
-                <Icon name="Pin" className={cn("size-3.5", !pinned && "opacity-40")} />
-              </button>
-            ) : null}
-          </div>
+            <Icon name="Pin" className={cn("size-3.5", !pinned && "opacity-40")} />
+          </button>
         );
-      })}
-    </div>
+      }}
+    />
   );
 }
 

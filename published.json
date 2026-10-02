@@ -20,9 +20,9 @@
     "publishedAt": "2026-09-30T19:47:41.509Z"
   },
   "bb-plugin-tasks-plus": {
-    "version": "0.1.60",
-    "commit": "0ce3dd4221f081d275a8013fce4300a73bffc6a1",
-    "publishedAt": "2026-10-02T06:38:44.816Z"
+    "version": "0.1.61",
+    "commit": "14fab5bf2f7d1b96a7a9a9554abfcf6e4ac63de7",
+    "publishedAt": "2026-10-02T07:53:56.919Z"
   },
   "bb-plugin-threads-overview": {
     "version": "0.3.23",

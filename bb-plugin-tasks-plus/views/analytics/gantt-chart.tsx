@@ -132,7 +132,7 @@ function GanttRowTip({ row, onOpenTask, children }: { row: GanttRowData; onOpenT
   const body = (
     <>
       <span className="flex min-w-0 items-baseline gap-1.5">
-        <span className="shrink-0 tabular-nums text-muted-foreground">{row.key}</span>
+        <span className="max-w-[40%] shrink-0 truncate tabular-nums text-muted-foreground">{row.key}</span>
         <span className="truncate font-medium">{row.title}</span>
       </span>
       <span className="flex items-center gap-1.5 text-muted-foreground">
@@ -268,7 +268,7 @@ export function GanttChart({ rows, fromMs, toMs, mode, compact = false, onOpenTa
                   )}
                   onClick={() => onOpenTask?.(row.key)}
                 >
-                  <span className="shrink-0 tabular-nums text-muted-foreground">{row.key}</span>
+                  <span className="max-w-[40%] shrink-0 truncate tabular-nums text-muted-foreground">{row.key}</span>
                   <span className="truncate text-foreground">{row.title}</span>
                 </button>
               </li>

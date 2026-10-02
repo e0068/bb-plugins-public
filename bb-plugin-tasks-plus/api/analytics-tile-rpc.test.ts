@@ -139,3 +139,22 @@ describe("analytics dashboard RPC", () => {
     expect(await harness.callRpc("loadAnalyticsDashboard", {})).toEqual({ ...dashboard, rows: [dashboard.rows[0]] });
   });
 });
+
+describe("analyticsTileTasks RPC", () => {
+  it("lists the tasks of a picked segment in the asked order, wire-valid, with how many there are", async () => {
+    const { harness } = setup();
+    const a = await tasks.createTask({ projectId: BOARD.id, title: "A" });
+    const b = await tasks.createTask({ projectId: BOARD.id, title: "B" });
+    const c = await tasks.createTask({ projectId: BOARD.id, title: "C" });
+    await harness.callRpc("boardMove", { taskId: c.id, status: "in_progress", authorName: "Me" });
+    const ask = { tile: tile({ switch: null }), edges: EDGES, projectIds: [], picked: null, sort: { column: "title", direction: "desc" } };
+
+    const all = (await harness.callRpc("analyticsTileTasks", { ...ask, pick: null, limit: 2 })) as { tasks: { key: string }[]; total: number };
+    expect(all.total).toBe(3);
+    expect(all.tasks.map((task) => task.key)).toEqual([c.key, b.key]);
+
+    const backlog = (await harness.callRpc("analyticsTileTasks", { ...ask, pick: { column: 0, series: null }, limit: 10 })) as { tasks: { key: string }[]; total: number };
+    expect(backlog).toMatchObject({ total: 2 });
+    expect(backlog.tasks.map((task) => task.key)).toEqual([b.key, a.key]);
+  });
+});

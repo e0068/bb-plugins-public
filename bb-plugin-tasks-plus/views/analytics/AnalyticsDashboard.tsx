@@ -17,6 +17,7 @@ import { useTasksQuery, useTasksRpc } from "../../client/data";
 import { useTasksNavigation } from "../../client/routes.js";
 import { cn } from "../../lib/utils";
 import { isSuggested } from "../../shared/tile-conditions.js";
+import { tileTable, type TileTable } from "../../shared/analytics-tile.js";
 import { Swatch } from "./bars";
 import { useSuggestionScope } from "./suggestion-scope";
 import { ChartColorsScope, useChartColors } from "./chart-colors";
@@ -33,6 +34,8 @@ import {
   tileEdges,
 } from "./default-dashboard";
 import { RowBoard } from "./row-board";
+import { ClaimClicks, PANEL, PickScope } from "./pick-scope";
+import { SegmentTable } from "./segment-table";
 import { insertCell, insertRow, keepCells, removeCell, type RowLayout } from "./row-layout";
 import { fitting, TileCard } from "./tile-card";
 import { TilePanel } from "./tile-panel";
@@ -134,12 +137,15 @@ export function ProjectChips({ projects, picked, onAll, onToggle }: ProjectChips
   const folded = projects.slice(chips.length);
   return (
     <div ref={rowRef} data-chips-row role="group" aria-label="Projects" className="relative flex min-w-0 flex-1 basis-40 items-center gap-2">
-      <div ref={rulerRef} aria-hidden className="pointer-events-none invisible absolute flex">
-        {[all, ...projects.map(chip)].map((entry, index) => (
-          <span key={index} data-chip className="shrink-0 pr-2">
-            {entry}
-          </span>
-        ))}
+      {/* Clipped to the row: the ruler is as wide as every chip, and unclipped it would widen the page. */}
+      <div aria-hidden className="pointer-events-none invisible absolute inset-x-0 top-0 h-0 overflow-hidden">
+        <div ref={rulerRef} className="flex w-max">
+          {[all, ...projects.map(chip)].map((entry, index) => (
+            <span key={index} data-chip className="shrink-0 pr-2">
+              {entry}
+            </span>
+          ))}
+        </div>
       </div>
       {all}
       {chips.map(chip)}
@@ -195,10 +201,12 @@ interface TileSlotProps {
   onDelete: () => void;
   onOpenTask: (taskKey: string) => void;
   onSplit: (share: number) => void;
+  /** A header of the table under the chart was clicked: the sort the tile keeps. */
+  onTableSort: (sort: TileTable["sort"]) => void;
 }
 
 /** One tile and its own answer, asked again when its settings, the page's cut or the hour change. */
-function TileSlot({ tile, filter, firstMs, hour, minute, picked, ...card }: TileSlotProps) {
+function TileSlot({ tile, filter, firstMs, hour, minute, picked, onTableSort, ...card }: TileSlotProps) {
   const query = useTasksQuery<{ answer: TileAnswer; edges: number[]; nowMs: number }>(
     async (rpc) => {
       const nowMs = Date.now();
@@ -221,6 +229,20 @@ function TileSlot({ tile, filter, firstMs, hour, minute, picked, ...card }: Tile
       unit={columnUnit(tile.window, filter.window)}
       nowMs={data?.nowMs ?? Date.now()}
       picked={picked}
+      contents={({ pick, heading, style }) => (
+        <SegmentTable
+          tile={tile}
+          edges={data?.edges ?? []}
+          asked={data?.nowMs ?? 0}
+          projectIds={filter.projectIds}
+          picked={picked}
+          pick={pick}
+          heading={heading}
+          onSort={onTableSort}
+          onOpenTask={card.onOpenTask}
+          style={style}
+        />
+      )}
     />
   );
 }
@@ -325,12 +347,14 @@ export function AnalyticsDashboard() {
   };
 
   /** The divider of a tile let go: its chart's share, kept in the saved tile and in the draft the panel holds. */
-  const split = (id: string, share: number) => {
-    const withShare = (tile: Tile): Tile => ({ ...tile, display: { ...tile.display, contents: share } });
-    if (editing?.id === id) setEditing((current) => (current === null ? null : { ...current, draft: withShare(current.draft) }));
+  // A change made on the tile itself — the divider, a header's sort: into the draft while it is edited, and kept by a tile that lists its contents.
+  const retouch = (id: string, change: (tile: Tile) => Tile) => {
+    if (editing?.id === id) setEditing((current) => (current === null ? null : { ...current, draft: change(current.draft) }));
     // A tile whose contents are only turned on in its draft keeps nothing until it is saved.
-    if (dashboard?.tiles.some((tile) => tile.id === id && tile.display.contents !== undefined)) save({ ...dashboard, tiles: dashboard.tiles.map((tile) => (tile.id === id ? withShare(tile) : tile)) });
+    if (dashboard?.tiles.some((tile) => tile.id === id && tile.display.contents !== undefined)) save({ ...dashboard, tiles: dashboard.tiles.map((tile) => (tile.id === id ? change(tile) : tile)) });
   };
+  const split = (id: string, share: number) => retouch(id, (tile) => ({ ...tile, display: { ...tile.display, contents: share } }));
+  const sortTable = (id: string, sort: TileTable["sort"]) => retouch(id, (tile) => ({ ...tile, table: { ...tileTable(tile), sort } }));
 
   const relayout = (layout: RowLayout) => {
     // A tile being added has a cell but is no tile yet: only that cell goes, never the tiles sharing its row.
@@ -339,94 +363,97 @@ export function AnalyticsDashboard() {
 
   return (
     <ChartColorsScope boardProjects={projects.length}>
-      <div className="relative flex h-full min-h-0">
-        <div ref={pageRef} className="h-full min-w-0 flex-1 overflow-y-auto">
-          <div className="flex min-h-full flex-col gap-6 px-6 py-8">
-            <header className="space-y-1">
-              <h1 className="text-lg font-semibold text-foreground">Analytics</h1>
-              <p className="text-sm text-muted-foreground">Tasks across your boards — how statuses move, what is left and what got closed</p>
-            </header>
+      <PickScope>
+        <div className="relative flex h-full min-h-0">
+          <div ref={pageRef} className="h-full min-w-0 flex-1 overflow-x-hidden overflow-y-auto">
+            <div className="flex min-h-full flex-col gap-6 px-6 py-8">
+              <header className="space-y-1">
+                <h1 className="text-lg font-semibold text-foreground">Analytics</h1>
+                <p className="text-sm text-muted-foreground">Tasks across your boards — how statuses move, what is left and what got closed</p>
+              </header>
 
-            {/* One row: the projects fold under +N; only a page too narrow for All projects, +N and the period puts the period under them. */}
-            <section className="flex flex-wrap items-center gap-x-4 gap-y-2 border-b border-border pb-4">
-              <ProjectChips projects={projects} picked={filter.projectIds} onAll={() => setFilter((current) => ({ ...current, projectIds: [] }))} onToggle={toggleProject} />
-              <div className="ml-auto flex shrink-0 gap-1" role="group" aria-label="Period">
-                {ANALYTICS_WINDOWS.map((window) => (
-                  <Button
-                    key={window}
-                    type="button"
-                    size="sm"
-                    variant={filter.window === window ? "default" : "outline"}
-                    aria-pressed={filter.window === window}
-                    onClick={() => setFilter((current) => ({ ...current, window }))}
-                  >
-                    {WINDOW_TITLE[window]}
-                  </Button>
-                ))}
-              </div>
-            </section>
+              {/* One row: the projects fold under +N; only a page too narrow for All projects, +N and the period puts the period under them. */}
+              <section className="flex flex-wrap items-center gap-x-4 gap-y-2 border-b border-border pb-4">
+                <ProjectChips projects={projects} picked={filter.projectIds} onAll={() => setFilter((current) => ({ ...current, projectIds: [] }))} onToggle={toggleProject} />
+                <div className="ml-auto flex shrink-0 gap-1" role="group" aria-label="Period">
+                  {ANALYTICS_WINDOWS.map((window) => (
+                    <Button
+                      key={window}
+                      type="button"
+                      size="sm"
+                      variant={filter.window === window ? "default" : "outline"}
+                      aria-pressed={filter.window === window}
+                      onClick={() => setFilter((current) => ({ ...current, window }))}
+                    >
+                      {WINDOW_TITLE[window]}
+                    </Button>
+                  ))}
+                </div>
+              </section>
 
-            {stored.error ? <p className="text-xs text-destructive">{stored.error}</p> : null}
-            {saveError ? <p className="text-xs text-destructive">{saveError}</p> : null}
+              {stored.error ? <p className="text-xs text-destructive">{stored.error}</p> : null}
+              {saveError ? <p className="text-xs text-destructive">{saveError}</p> : null}
 
-            {shown === null || pageWidth === 0 || firstMs === null ? (
-              <div className="h-40 animate-pulse rounded-lg bg-muted/40" />
-            ) : (
-              <>
-                <RowBoard
-                  layout={{ rows: shown.rows }}
-                  stacked={pageWidth < STACK_BELOW_PX}
-                  onChange={relayout}
-                  renderCell={(id) => {
-                    const tile = tileOf(id);
-                    return tile === undefined ? null : (
-                      <TileSlot
-                        tile={tile}
-                        filter={filter}
-                        firstMs={firstMs}
-                        hour={hour}
-                        minute={minute}
-                        // A draft whose switch reads another field has no value picked on it yet.
-                        picked={editing?.id === id && editing.draft.switch !== dashboard?.tiles.find((entry) => entry.id === id)?.switch ? null : (picks[id] ?? null)}
-                        editing={editing?.id === id}
-                        onPick={(key) => setPicks((current) => ({ ...current, [id]: key }))}
-                        onEdit={() => setEditing({ id, draft: tile, isNew: false })}
-                        onDuplicate={() => duplicate(tile)}
-                        onDelete={() => remove(id)}
-                        onOpenTask={openTask}
-                        onSplit={(share) => split(id, share)}
-                      />
-                    );
-                  }}
-                />
-                {editing?.isNew ? null : (
-                  <button
-                    type="button"
-                    onClick={addTile}
-                    className="flex min-h-24 shrink-0 items-center justify-center gap-1.5 rounded-lg text-sm text-muted-foreground ring-1 ring-border ring-inset hover:bg-state-hover hover:text-foreground"
-                  >
-                    <Icon name="Plus" className="size-3.5" />
-                    Add chart
-                  </button>
-                )}
-              </>
-            )}
+              {shown === null || pageWidth === 0 || firstMs === null ? (
+                <div className="h-40 animate-pulse rounded-lg bg-muted/40" />
+              ) : (
+                <>
+                  <RowBoard
+                    layout={{ rows: shown.rows }}
+                    stacked={pageWidth < STACK_BELOW_PX}
+                    onChange={relayout}
+                    renderCell={(id) => {
+                      const tile = tileOf(id);
+                      return tile === undefined ? null : (
+                        <TileSlot
+                          tile={tile}
+                          filter={filter}
+                          firstMs={firstMs}
+                          hour={hour}
+                          minute={minute}
+                          // A draft whose switch reads another field has no value picked on it yet.
+                          picked={editing?.id === id && editing.draft.switch !== dashboard?.tiles.find((entry) => entry.id === id)?.switch ? null : (picks[id] ?? null)}
+                          editing={editing?.id === id}
+                          onPick={(key) => setPicks((current) => ({ ...current, [id]: key }))}
+                          onEdit={() => setEditing({ id, draft: tile, isNew: false })}
+                          onDuplicate={() => duplicate(tile)}
+                          onDelete={() => remove(id)}
+                          onOpenTask={openTask}
+                          onSplit={(share) => split(id, share)}
+                          onTableSort={(sort) => sortTable(id, sort)}
+                        />
+                      );
+                    }}
+                  />
+                  {editing?.isNew ? null : (
+                    <button
+                      type="button"
+                      onClick={addTile}
+                      className="flex min-h-24 shrink-0 items-center justify-center gap-1.5 rounded-lg text-sm text-muted-foreground ring-1 ring-border ring-inset hover:bg-state-hover hover:text-foreground"
+                    >
+                      <Icon name="Plus" className="size-3.5" />
+                      Add chart
+                    </button>
+                  )}
+                </>
+              )}
+            </div>
           </div>
+          {editing === null ? null : (
+            // Beside the tiles on a wide screen, pushing them narrower; over them, full width, on a narrow one — as Display.
+            <ClaimClicks owner={PANEL} className={cn("w-[320px] shrink-0 border-l border-border-hairline", "max-md:absolute max-md:inset-0 max-md:z-30 max-md:w-full max-md:border-l-0")}>
+              <TilePanel
+                draft={editing.draft}
+                isNew={editing.isNew}
+                scope={scope}
+                onChange={(draft) => setEditing((current) => (current === null ? null : { ...current, draft }))}
+                onSave={commit}
+                onCancel={() => setEditing(null)}
+              />
+            </ClaimClicks>
+          )}
         </div>
-        {editing === null ? null : (
-          // Beside the tiles on a wide screen, pushing them narrower; over them, full width, on a narrow one — as Display.
-          <div className={cn("w-[320px] shrink-0 border-l border-border-hairline", "max-md:absolute max-md:inset-0 max-md:z-30 max-md:w-full max-md:border-l-0")}>
-            <TilePanel
-              draft={editing.draft}
-              isNew={editing.isNew}
-              scope={scope}
-              onChange={(draft) => setEditing((current) => (current === null ? null : { ...current, draft }))}
-              onSave={commit}
-              onCancel={() => setEditing(null)}
-            />
-          </div>
-        )}
-      </div>
+      </PickScope>
     </ChartColorsScope>
   );
 }

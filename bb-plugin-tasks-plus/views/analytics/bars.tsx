@@ -1,8 +1,9 @@
 // Column charts of the analytics screen, drawn with divs the way Usage
 // Analytics draws its token bars (thread-chart.tsx, hourly-burn-chart.tsx):
 // 2px-rounded columns 2px apart, stacked segments 1px
-// apart, an empty column as a floor line, the hovered column highlighted and
-// a popover by the pointer naming every series in it. Heights are
+// apart, an empty column as a floor line, what a click would pick lit and the
+// rest dimmed while hovered, and a popover by the pointer naming every series
+// in it. Heights are
 // percentages, so a chart follows its section's size without measuring. A
 // column that opens a week carries a line, when the section says where weeks
 // start (WeekBreaksScope); dates are written only under the chart. The frame
@@ -12,6 +13,7 @@ import { createContext, useContext, useState, type CSSProperties, type ReactNode
 import { useViewportClamp } from "@bb-plugins/viewport-clamp";
 
 import { cn } from "../../lib/utils";
+import { lookOf, type PickTarget } from "./segment-pick";
 
 export interface BarSeries {
   id: string;
@@ -19,13 +21,13 @@ export interface BarSeries {
   color: string;
 }
 
-export interface BarSelection {
-  column: number;
-  seriesId: string;
-}
+/** The picked segment, or — series null — the whole picked column. */
+export type BarSelection = PickTarget;
 
 interface Hover {
   column: number;
+  /** The segment under the pointer; null over the column's empty part. */
+  seriesId: string | null;
   x: number;
   y: number;
 }
@@ -102,14 +104,31 @@ function WeekMark({ opens }: { opens: boolean }) {
   return opens ? <span data-week-break aria-hidden className="pointer-events-none absolute inset-y-0 -left-px w-px bg-border" /> : null;
 }
 
-/** Hover state shared by both charts: which column the pointer is over, and where. */
+/** Hover state shared by both charts: which column — and segment of it — the pointer is over, and where. */
 function useHover() {
   const [hover, setHover] = useState<Hover | null>(null);
   const bind = (column: number) => ({
-    onMouseMove: (event: React.MouseEvent) => setHover({ column, x: event.clientX, y: event.clientY }),
+    onMouseMove: (event: React.MouseEvent) => {
+      const segment = event.target instanceof Element ? event.target.closest("[data-series]") : null;
+      setHover({ column, seriesId: segment?.getAttribute("data-series") ?? null, x: event.clientX, y: event.clientY });
+    },
     onMouseLeave: () => setHover(null),
   });
   return { hover, bind };
+}
+
+/**
+ * What a column does when its segments can be picked: a click on its empty
+ * part picks the whole column — a segment's own click picks the segment.
+ */
+function columnPick(column: number, onSelectColumn: ((column: number) => void) | undefined) {
+  if (onSelectColumn === undefined) return {};
+  return {
+    "data-pickable": true,
+    onClick: (event: React.MouseEvent) => {
+      if (!(event.target instanceof Element && event.target.closest("[data-series]") !== null)) onSelectColumn(column);
+    },
+  };
 }
 
 /** Up to this many columns stand wider apart, so a week of seven reads as seven days, not a wall. */
@@ -127,6 +146,8 @@ export interface StackedBarsProps {
   ticks: readonly string[];
   selected?: BarSelection | null;
   onSelect?: (column: number, seriesId: string) => void;
+  /** A click on a column's empty part: the whole column is picked. */
+  onSelectColumn?: (column: number) => void;
   /** Drawn under the columns, filling the chart box — the grid. */
   underlay?: ReactNode;
   /** Drawn over the columns, filling the chart box — a trend line. */
@@ -159,12 +180,14 @@ export function PlotFrame({ axis, ticks, plot, style }: { axis: ReactNode | unde
   );
 }
 
-export function StackedBars({ columns, series, columnLabel, ticks, selected = null, onSelect, underlay, overlay, axis, width }: StackedBarsProps) {
+export function StackedBars({ columns, series, columnLabel, ticks, selected = null, onSelect, onSelectColumn, underlay, overlay, axis, width }: StackedBarsProps) {
   const { hover, bind } = useHover();
   const weekColumns = useWeekColumns();
   const totals = columns.map((values) => values.reduce((sum, value) => sum + value, 0));
   const max = Math.max(1, ...totals);
   const hovered = hover === null ? undefined : columns[hover.column];
+  // The hover shows what a click would pick — only where a click picks: a pickable chart, a column with something in it.
+  const aim = onSelect === undefined || hover === null || totals[hover.column] === 0 ? null : hover;
 
   const plot = (
     <div data-plot className={cn("relative flex min-h-24 flex-1 items-end", columns.length > FEW_COLUMNS ? "gap-0.5" : "gap-1.5")}>
@@ -173,8 +196,9 @@ export function StackedBars({ columns, series, columnLabel, ticks, selected = nu
         <div
           key={column}
           data-column={column}
-          className={cn(COLUMN_CLASS, hover?.column === column && "bg-state-hover")}
+          className={COLUMN_CLASS}
           {...bind(column)}
+          {...columnPick(column, totals[column] === 0 ? undefined : onSelectColumn)}
         >
           <WeekMark opens={weekColumns.has(column)} />
           {totals[column] === 0 ? (
@@ -188,10 +212,10 @@ export function StackedBars({ columns, series, columnLabel, ticks, selected = nu
               {series.map((entry, index) => {
                 const value = values[index] ?? 0;
                 if (value <= 0) return null;
-                const isSelected = selected?.column === column && selected.seriesId === entry.id;
-                const dimmed = selected !== null && !isSelected;
+                const dimmed = lookOf(aim, selected, column, entry.id) === "dim";
                 const mark = {
                   "data-segment": `${column}:${entry.id}`,
+                  "data-series": entry.id,
                   "data-dimmed": String(dimmed),
                   style: { flexGrow: value, flexBasis: 0, minHeight: 1, backgroundColor: entry.color },
                 };
@@ -206,7 +230,7 @@ export function StackedBars({ columns, series, columnLabel, ticks, selected = nu
                     {...mark}
                     data-pickable
                     aria-label={`${columnLabel(column)} · ${entry.label}: ${value}`}
-                    className={cn(look, "transition-opacity hover:opacity-80 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring")}
+                    className={cn(look, "transition-opacity focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring")}
                     onClick={() => onSelect(column, entry.id)}
                   />
                 );
@@ -256,6 +280,8 @@ export interface DivergingBarsProps {
   max?: number;
   selected?: BarSelection | null;
   onSelect?: (column: number, seriesId: string) => void;
+  /** A click beside a column's halves: the whole column is picked. */
+  onSelectColumn?: (column: number) => void;
   /** Drawn under the columns, filling the chart box — the grid. */
   underlay?: ReactNode;
   /** Drawn over the columns, filling the chart box. */
@@ -265,16 +291,19 @@ export interface DivergingBarsProps {
 }
 
 /** Two series from one axis: `up` grows upward, `down` downward, both on one scale. */
-export function DivergingBars({ up, down, columnLabel, ticks, max = Math.max(1, ...up.values, ...down.values), selected = null, onSelect, underlay, overlay, axis }: DivergingBarsProps) {
+export function DivergingBars({ up, down, columnLabel, ticks, max = Math.max(1, ...up.values, ...down.values), selected = null, onSelect, onSelectColumn, underlay, overlay, axis }: DivergingBarsProps) {
   const { hover, bind } = useHover();
   const weekColumns = useWeekColumns();
+  const columnTotal = (column: number) => (up.values[column] ?? 0) + (down.values[column] ?? 0);
+  const aim = onSelect === undefined || hover === null || columnTotal(hover.column) === 0 ? null : hover;
   const half = (side: "up" | "down", entry: DivergingSide, column: number) => {
     const value = entry.values[column] ?? 0;
     const id = entry.id ?? entry.label;
-    const dimmed = selected !== null && !(selected.column === column && selected.seriesId === id);
+    const dimmed = lookOf(aim, selected, column, id) === "dim";
     const mark = {
       "data-side": side,
       "data-segment": `${column}:${id}`,
+      "data-series": id,
       "data-dimmed": String(dimmed),
       style: { height: `${(value / max) * 100}%`, backgroundColor: entry.color },
     };
@@ -289,7 +318,7 @@ export function DivergingBars({ up, down, columnLabel, ticks, max = Math.max(1, 
             {...mark}
             data-pickable
             aria-label={`${columnLabel(column)} · ${entry.label}: ${value}`}
-            className={cn(look, "transition-opacity hover:opacity-80 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring")}
+            className={cn(look, "transition-opacity focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring")}
             onClick={() => onSelect(column, id)}
           />
         )}
@@ -304,8 +333,9 @@ export function DivergingBars({ up, down, columnLabel, ticks, max = Math.max(1, 
         <div
           key={column}
           data-column={column}
-          className={cn(COLUMN_CLASS, "flex flex-col", hover?.column === column && "bg-state-hover")}
+          className={cn(COLUMN_CLASS, "flex flex-col")}
           {...bind(column)}
+          {...columnPick(column, columnTotal(column) === 0 ? undefined : onSelectColumn)}
         >
           <WeekMark opens={weekColumns.has(column)} />
           {half("up", up, column)}
