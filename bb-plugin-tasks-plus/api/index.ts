@@ -4,6 +4,7 @@ import { burndownEnds, forecastMs, openSeriesOf } from "../analytics/burndown.js
 import { ganttRowsOf } from "../analytics/gantt.js";
 import { segmentTasks, tileAnswer } from "../analytics/tile.js";
 import { isWorkingThread } from "../shared/thread-activity.js";
+import { parseReducedProjects, REDUCED_PROJECTS_KV_KEY } from "../shared/reduced-projects.js";
 import { factsOf, type TaskFacts } from "../shared/task-fields.js";
 import { descendantsOf } from "../shared/subtree.js";
 import { hostname } from "node:os";
@@ -752,7 +753,8 @@ export function registerHandlers(
   bb: BbPluginApi,
   store: TasksApiStore,
 ): PluginRpcHandlers<typeof tasksRpcContract> {
-  // The sidebar's order: a project's place here picks its chart colour.
+  // The sidebar's order: names the tile's projects. Their colours come from the
+  // client's board, sorted the same way for the Reduced Colors ramp.
   const boardProjects = () =>
     [...store.tasks.listProjects()].sort(byNameThenId).map((project) => ({ id: project.id, name: project.name }));
   return {
@@ -1474,6 +1476,13 @@ export function registerHandlers(
     },
     async saveReducedColors(value) {
       await bb.storage.kv.set(REDUCED_COLORS_KV_KEY, parseReducedColors(value));
+      return { ok: true as const };
+    },
+    async loadReducedProjects() {
+      return parseReducedProjects(await bb.storage.kv.get<unknown>(REDUCED_PROJECTS_KV_KEY));
+    },
+    async saveReducedProjects({ value }) {
+      await bb.storage.kv.set(REDUCED_PROJECTS_KV_KEY, value);
       return { ok: true as const };
     },
   };

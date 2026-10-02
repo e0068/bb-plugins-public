@@ -12,6 +12,7 @@ import { useState, type CSSProperties, type ReactNode } from "react";
 import { useViewportClamp } from "@bb-plugins/viewport-clamp";
 
 import { cn } from "../../lib/utils";
+import { fillStyle } from "./palette";
 import { lookOf, type PickTarget } from "./segment-pick";
 
 export interface BarSeries {
@@ -33,7 +34,7 @@ interface Hover {
 
 /** A legend or tooltip swatch. */
 export function Swatch({ color }: { color: string }) {
-  return <span className="inline-block size-2.5 shrink-0 rounded-sm" style={{ backgroundColor: color }} />;
+  return <span className="inline-block size-2.5 shrink-0 rounded-sm" style={fillStyle(color)} />;
 }
 
 export interface TipRow {
@@ -192,7 +193,7 @@ export function StackedBars({ columns, series, columnLabel, ticks, selected = nu
                   "data-segment": `${column}:${entry.id}`,
                   "data-series": entry.id,
                   "data-dimmed": String(dimmed),
-                  style: { flexGrow: value, flexBasis: 0, minHeight: 1, backgroundColor: entry.color },
+                  style: { flexGrow: value, flexBasis: 0, minHeight: 1, ...fillStyle(entry.color) },
                 };
                 const look = cn("block w-full rounded-sm", dimmed && "opacity-30");
                 // Only a segment that can be picked is a button; the rest are marks the tooltip reads out.
@@ -279,7 +280,7 @@ export function DivergingBars({ up, down, columnLabel, ticks, max = Math.max(1, 
       "data-segment": `${column}:${id}`,
       "data-series": id,
       "data-dimmed": String(dimmed),
-      style: { height: `${(value / max) * 100}%`, backgroundColor: entry.color },
+      style: { height: `${(value / max) * 100}%`, ...fillStyle(entry.color) },
     };
     const look = cn("block w-full rounded-sm", dimmed && "opacity-30");
     return (

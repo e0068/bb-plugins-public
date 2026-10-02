@@ -3,15 +3,19 @@ import { ReducedColorsSection } from "@bb-plugins/reduced-colors";
 import { useTasksRpc } from "./shell/data.js";
 import { TasksAppShell } from "./shell/app-shell.js";
 import { TasksSidebarAccessory } from "./shell/sidebar-accessory.js";
+import { ReducedProjectsSetting } from "./shell/reduced-projects-setting.js";
 import { TaskDirectiveCard, TaskEmbedPanel, TaskSidePanelTab } from "./views/embed/index.js";
 import { TASK_TAB } from "./client/task-opening.js";
 import { CurrentTaskHeaderAction } from "./views/header/current-task.js";
 
-/** The settings page's Reduced Colors block for the analytics charts — bb's declared settings have no colour field. */
+/** The settings page's Reduced Colors block for the analytics charts — bb's declared settings have no colour field — and whether it repaints the projects. */
 function ReducedColorsSettings() {
   const rpc = useTasksRpc();
   return (
-    <ReducedColorsSection load={() => rpc.call("loadReducedColors", {})} save={(value) => rpc.call("saveReducedColors", value)} />
+    <>
+      <ReducedColorsSection load={() => rpc.call("loadReducedColors", {})} save={(value) => rpc.call("saveReducedColors", value)} />
+      <ReducedProjectsSetting />
+    </>
   );
 }
 
