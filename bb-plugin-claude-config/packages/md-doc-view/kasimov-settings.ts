@@ -413,7 +413,7 @@ const tokenSpecByTarget = new Map(TOKEN_SELECT_FIELDS.map((t) => [t.target, t]))
  * (MD Opener and Cloud Config), which used to achieve the same look by
  * hardcoding it on top of Kasimov in the shared
  * packages/md-doc-view/md-doc-view.css (see
- * memory/decisions/kasimov-opener-css-uses-token-defaults.md). One source —
+ * docs/decisions/kasimov-opener-css-uses-token-defaults.md). One source —
  * not a copy in each server.ts (G1). All 7 TOKEN_SELECT_FIELDS fields are
  * covered explicitly, including `bgToken` (`--kasi-bg` only controls inner
  * panels — mermaid/zoom, not the document background, but the panels are

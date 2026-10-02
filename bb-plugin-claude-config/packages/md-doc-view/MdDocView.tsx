@@ -7,13 +7,27 @@
 // Ported from bb-plugin-md-opener/app.tsx (DocOpener), where useRpc/source were
 // replaced with load/save/resolveLinkTarget. Any file — markdown or not — is
 // edited as raw text; there is no separate "read-only" mode for non-md, per the
-// owner's decision (memory/decisions/claude-config-opener-setting.md).
+// owner's decision (docs/decisions/claude-config-opener-setting.md).
 import { useEffect, useRef, useState } from "react";
 import type { CSSProperties, ReactNode } from "react";
 
 import { CodeEditor, languageOf } from "../code-editor";
 import { DocHeader } from "./DocHeader";
+import {
+  canGoBack,
+  canGoForward,
+  goBack,
+  goForward,
+  removePath,
+  renamePath,
+  startAt,
+  visit,
+  type DocHistory,
+} from "./doc-history";
 import { DraftGuard } from "./DraftGuard";
+import { FileActions } from "./FileActions";
+import { zoomTargetOf, type ZoomTarget } from "./image-zoom";
+import { ImageZoom } from "./ImageZoom";
 import type { DocLibraries } from "./libraries";
 import { KasimovEditor } from "./KasimovEditor";
 import {
@@ -39,6 +53,19 @@ export interface SaveResult {
 }
 
 const ZERO_DIFF = { added: 0, removed: 0 } as const;
+
+/** The host's answer to a rename: the new path, or why it refused. */
+export type RenameResult =
+  | { outcome: "renamed"; path: string }
+  | { outcome: "exists" | "invalid" | "denied" | "not-found"; message: string };
+
+/** The host's answer to a delete. */
+export type RemoveResult =
+  | { outcome: "removed" }
+  | { outcome: "denied" | "not-found"; message: string };
+
+/** What the document says once its file was deleted from under it. */
+const DELETED = "File deleted.";
 
 export interface RevealResult {
   revealed: boolean;
@@ -127,6 +154,16 @@ export interface MdDocViewProps {
    * not for one embedded among the host's own controls. default false.
    */
   guardDraft?: boolean;
+  /**
+   * Renames the file within its folder to `name`. Passed — the header's "⋯"
+   * menu offers Rename; the history follows the file to its new path.
+   */
+  rename?: (path: string, name: string) => Promise<RenameResult>;
+  /**
+   * Deletes the file. Passed — the "⋯" menu offers Delete; the document then
+   * says the file is gone, and back leads to the file before it.
+   */
+  remove?: (path: string) => Promise<RemoveResult>;
 }
 
 export function MdDocView({
@@ -147,9 +184,11 @@ export function MdDocView({
   onReveal,
   trailing,
   guardDraft = false,
+  rename,
+  remove,
 }: MdDocViewProps) {
   const [doc, setDoc] = useState<LoadedDoc | null>(null);
-  const [stack, setStack] = useState<string[]>([]);
+  const [history, setHistory] = useState<DocHistory>(() => startAt(initialPath));
   const [loading, setLoading] = useState(true);
   const [pickedMode, setMode] = useState<DocMode>("read");
   const [draft, setDraft] = useState("");
@@ -157,11 +196,25 @@ export function MdDocView({
   // The line Raw opens on. Belongs to the document that arrived with it and to
   // no other: a jump away from that document has nothing to do with line 42.
   const [line, setLine] = useState<number | null>(initialLine);
+  // The picture unfolded over bb, if any. One listener for the whole document:
+  // the engine rebuilds its DOM on every keystroke, and a listener on a single
+  // picture would not survive one.
+  const [zoom, setZoom] = useState<ZoomTarget | null>(null);
   // The document the line effect below reasons about. A ref, not the state
   // itself: the effect must fire when the LINE changes and at no other time,
   // and a document in its dependencies would fire it on every re-read too.
   const docRef = useRef<LoadedDoc | null>(null);
   docRef.current = doc;
+  // The number of the latest file read. An answer to an earlier one is dropped:
+  // two reads racing — a jump overtaken by a reload, two quick steps — must
+  // leave the screen on the file asked for last, not the one answered last.
+  const latestRead = useRef(0);
+  const read = (target: string, show: (res: LoadedDoc) => void) => {
+    const mine = ++latestRead.current;
+    void load(target).then((res) => {
+      if (mine === latestRead.current) show(res);
+    });
+  };
   // The hole the draft guard leaves in its shade.
   const rootRef = useRef<HTMLDivElement>(null);
 
@@ -180,14 +233,14 @@ export function MdDocView({
     if (!keepMode) setMode(initialMode(startInEdit, readOnly, res));
   };
 
-  // Single load resolver. push=true — a jump (pushed onto the stack), false —
-  // a return (the caller already trimmed the stack) or the initial load.
+  // Single load resolver. push=true — a jump (visited in the history), false —
+  // a step back or forward (the caller already moved the history).
   const runLoad = (target: string, push: boolean) => {
     setLoading(true);
     setHeaderNote(null);
     setLine(null);
-    void load(target).then((res) => {
-      setStack((s) => (push ? [...s, res.path || target] : s));
+    read(target, (res) => {
+      if (push) setHistory((h) => visit(h, res.path || target));
       present(res);
     });
   };
@@ -196,12 +249,12 @@ export function MdDocView({
 
   // Initial load — by initialPath. Changing the path resets the tab/draft.
   useEffect(() => {
-    setStack([]);
+    setHistory(startAt(initialPath));
     setLoading(true);
     setHeaderNote(null);
     setLine(initialLine);
-    void load(initialPath).then((res) => {
-      setStack([res.path || initialPath]);
+    read(initialPath, (res) => {
+      setHistory(startAt(res.path || initialPath));
       setDoc(res);
       setLoading(false);
       setDraft(res.content ?? "");
@@ -235,14 +288,16 @@ export function MdDocView({
 
   const openAbs = (abs: string) => loadRef.current(abs, true);
 
-  const back = () => {
-    if (stack.length < 2) return;
-    const prev = stack[stack.length - 2];
-    setStack((s) => s.slice(0, -1));
-    runLoad(prev, false);
+  // A step moves the history first and reads the file it lands on; a step with
+  // nowhere to go lands on nothing and reads nothing.
+  const step = (move: (h: DocHistory) => DocHistory) => {
+    const next = move(history);
+    if (next === history || next.current === null) return;
+    setHistory(next);
+    runLoad(next.current, false);
   };
 
-  const current = stack[stack.length - 1] ?? doc?.path ?? initialPath;
+  const current = history.current ?? doc?.path ?? initialPath;
 
   // An in-tab link is clickable if resolveLinkTarget returned an absolute
   // target; clicking a missing one will surface an error from load.
@@ -284,13 +339,49 @@ export function MdDocView({
     setHeaderNote(null);
   };
 
+  // The file's actions answer FileActions with null (done) or the host's
+  // reason. Both act on the path on screen: a rename moves every entry of it
+  // in the history and keeps the text, a delete strikes it from the history
+  // and leaves the document saying so.
+  const renameFile =
+    rename &&
+    (async (name: string): Promise<string | null> => {
+      const from = doc?.path ?? current;
+      const res = await rename(from, name);
+      if (res.outcome !== "renamed") return res.message;
+      setHistory((h) => renamePath(h, from, res.path));
+      setDoc((d) => d && { ...d, path: res.path });
+      return null;
+    });
+  const removeFile =
+    remove &&
+    (async (): Promise<string | null> => {
+      const gone = doc?.path ?? current;
+      const res = await remove(gone);
+      if (res.outcome !== "removed") return res.message;
+      setHistory((h) => removePath(h, gone));
+      present({ path: gone, content: null, sha256: null, error: DELETED }, true);
+      return null;
+    });
+  // The button stays on every document it was offered for, so the header does
+  // not shift from file to file; with nothing to act on — an unreadable or
+  // deleted file — or with a draft unsaved, it opens nothing.
+  const actions = (renameFile || removeFile) && !readOnly && doc && (
+    <FileActions
+      path={doc.path}
+      disabled={dirty || doc.content == null}
+      onRename={renameFile}
+      onDelete={removeFile}
+    />
+  );
+
   // Re-reading the file the header currently shows. Only reachable while the
-  // draft matches it (the control is disabled otherwise), so nothing typed is
-  // at stake here.
+  // draft matches it (the control gives way to Save and Cancel otherwise), so
+  // nothing typed is at stake here.
   const reload = () => {
     setLoading(true);
     setHeaderNote(null);
-    void load(current).then((res) => present(res, true));
+    read(current, (res) => present(res, true));
   };
 
   return (
@@ -315,8 +406,11 @@ export function MdDocView({
         leading={leading}
         trailing={trailing}
         note={headerNote}
-        canGoBack={stack.length > 1}
-        onBack={back}
+        canGoBack={canGoBack(history)}
+        onBack={() => step(goBack)}
+        canGoForward={canGoForward(history)}
+        onForward={() => step(goForward)}
+        actions={actions}
         mode={mode}
         modes={modes}
         onModeChange={setMode}
@@ -337,6 +431,8 @@ export function MdDocView({
           onDiscard={discard}
         />
       )}
+
+      <ImageZoom target={zoom} onClose={() => setZoom(null)} />
 
       <div className="mdo-body">
         {loading && <p className="mdo-msg">Loading…</p>}
@@ -359,7 +455,9 @@ export function MdDocView({
           </div>
         )}
         {!loading && doc?.content != null && mode !== "raw" && (
-          <div className="mdo-doc">
+          // The click is not stopped: under the unfolded picture the engine
+          // goes on doing whatever it does with a click of its own.
+          <div className="mdo-doc" onClick={(event) => setZoom(zoomTargetOf(event.target))}>
             <KasimovEditor
               editable={mode === "write"}
               followLinks={followLinks}

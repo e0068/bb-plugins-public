@@ -18,7 +18,7 @@ useRememberedRoute(PANEL_PATH, subPath, (next) =>
 varies within a panel — the area, the section, the open file — belongs in the
 route itself. That is what makes each place a link and lets Back walk through
 them; a second carrier alongside the route buys nothing and has to be kept in
-step (memory/decisions/panel-route-grammar.md).
+step (docs/decisions/panel-route-grammar.md).
 
 **Reading is parsing.** The browser profile outlives builds, so a stored route
 that a panel can no longer read costs only what it can't read — the panel

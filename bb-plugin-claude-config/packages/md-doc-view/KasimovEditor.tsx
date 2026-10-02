@@ -5,7 +5,7 @@
 // relative import: the bare specifier "kasimov" from this package doesn't
 // resolve through the plugin's bundler — the dependency is installed into
 // the sibling plugin's node_modules, not the ancestor's (see
-// memory/decisions/md-opener-vendor-kasimov.md).
+// docs/decisions/md-opener-vendor-kasimov.md).
 // Kasimov ships as vanilla ESM: the factory mounts its own contenteditable
 // into the host element and owns the DOM entirely; the wrapper just bridges it
 // into React's value/onChange world and keeps the instance identity stable
@@ -20,12 +20,21 @@
 // `createEditor(host, opts)`. As of 3eb7ba5 the engine also knows about
 // Claude `@import` (the `atLinks` flag) and mermaid node style
 // (`mermaidNodes`) — both are threaded through as props (see
-// memory/decisions/md-opener-kasimov-editor.md).
+// docs/decisions/md-opener-kasimov-editor.md).
 import { useEffect, useId, useRef } from "react";
+import { uiMenu, type MenuController } from "../cellular-react";
+import "../cellular-react/styles.css";
 import { createEditor } from "../kasimov/kasimov.js";
 import type { KasimovEditorInstance, KasimovLink } from "../kasimov/kasimov.js";
 import "../kasimov/kasimov.css";
+import { imageMenuSpec, type Schedule } from "./image-menu";
 import { kasimovCssRule } from "./kasimov-settings";
+
+// The clock the width slider waits on. The shell's, not the pure module's.
+const timerSchedule: Schedule = (fn, ms) => {
+  const id = setTimeout(fn, ms);
+  return () => clearTimeout(id);
+};
 
 export interface KasimovEditorProps {
   value: string;
@@ -62,6 +71,12 @@ export function KasimovEditor({
 }: KasimovEditorProps) {
   const hostRef = useRef<HTMLDivElement | null>(null);
   const editorRef = useRef<KasimovEditorInstance | null>(null);
+  // The picture's menu hangs on document.body, outside anything React takes
+  // away, so the last one opened is kept to be closed by hand — and with it the
+  // width the slider has not handed over yet, which would otherwise land on an
+  // editor that is already destroyed.
+  const imageMenuRef = useRef<MenuController | null>(null);
+  const imageMenuCancelRef = useRef<(() => void) | null>(null);
   // ID selector for the skin rule (see the vars effect below). React 18 returns
   // useId() with colons ("`:r0:`"), which are invalid in raw CSS/HTML ids
   // without escaping — strip them; React 19 (current here) returns "_r0_"
@@ -107,10 +122,30 @@ export function KasimovEditor({
       linkResolver: (href) =>
         linkResolverRef.current ? linkResolverRef.current(href) : null,
       onSave: (md) => onSaveRef.current?.(md),
+      // Without this the engine creates no "⋯" button at all — it draws no
+      // menu of its own, it asks for one. A fresh menu every time rather than
+      // a kept one reopened: every action rebuilds the document and destroys
+      // the button this menu was anchored to.
+      imageMenu: (anchor, image, actions) => {
+        imageMenuRef.current?.close();
+        imageMenuCancelRef.current?.();
+        const { spec, cancel } = imageMenuSpec(image, actions, timerSchedule);
+        const menu = uiMenu(anchor, spec);
+        imageMenuRef.current = menu;
+        imageMenuCancelRef.current = cancel;
+        menu.open();
+      },
     });
     editorRef.current = editor;
 
     return () => {
+      imageMenuRef.current?.close();
+      imageMenuRef.current = null;
+      // Not on closing the menu: kit puts the menu out on a click outside, and
+      // the last step of the slider still has to arrive. Only when the editor
+      // that edit was meant for stops existing.
+      imageMenuCancelRef.current?.();
+      imageMenuCancelRef.current = null;
       editor.destroy();
       editorRef.current = null;
     };
@@ -134,7 +169,7 @@ export function KasimovEditor({
   // editor/md-editor/md-editor.js upstream. A value declared on the element
   // itself always wins over one inherited from an ancestor regardless of
   // specificity (the contract is documented upstream in
-  // memory/wiki/kasi-css-contract.md), so host.style.setProperty is
+  // docs/wiki/kasi-css-contract.md), so host.style.setProperty is
   // immediately overridden by the local default of the same name on
   // .mde-root. The correct point of application is a CSS rule with higher
   // specificity targeting `.mde-root` (upstream example:

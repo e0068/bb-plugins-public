@@ -1,5 +1,5 @@
 // Pure routing decision for opening a file, based on two independent
-// settings (memory/decisions/claude-config-opener-two-axes.md — supersedes
+// settings (docs/decisions/claude-config-opener-two-axes.md — supersedes
 // claude-config-opener-setting.md's single three-way enum):
 //   - fileOpenerLocation: "inline" (the panel's own column) vs. "host" (bb's
 //     host tab). Separated from app.tsx so it can be tested without jsdom
@@ -10,7 +10,7 @@
 //     to request a specific registered fileOpener plugin (checked against
 //     ExperimentalFileOpenOptions in @get-bb/plugin-sdk/app).
 
-import { opensInEditMode as opensInEditModeCore } from "../packages/md-doc-view/open-mode";
+import { opensInEditMode as opensInEditModeCore } from "@bb-plugins/md-doc-view/open-mode";
 
 export type FileOpenerLocation = "inline" | "host";
 export type FileOpenerRenderer = "md-opener" | "builtin";

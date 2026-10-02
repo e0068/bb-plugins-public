@@ -17,6 +17,7 @@
 import {
   useCallback,
   useEffect,
+  useMemo,
   useRef,
   useState,
   useSyncExternalStore,
@@ -32,15 +33,15 @@ import {
 import type { PluginNavPanelProps } from "@get-bb/plugin-sdk/app";
 import { toast } from "sonner";
 import type { AreaConfig, rpcContract, WriteOutcome } from "./server";
-import { MdDocView } from "./packages/md-doc-view";
-import type { LoadedDoc, SaveResult } from "./packages/md-doc-view";
+import { MdDocView } from "@bb-plugins/md-doc-view";
+import type { LoadedDoc, SaveResult } from "@bb-plugins/md-doc-view";
 import { docLibraries } from "./libraries";
 import {
   NATIVE_VIEWER_TOKEN_DEFAULTS,
   parseKasimovSettings,
   kasimovCssVars,
   kasimovFlags,
-} from "./packages/md-doc-view";
+} from "@bb-plugins/md-doc-view";
 import {
   isHostOpen,
   opensInEditMode,
@@ -49,6 +50,8 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Icon } from "@/components/ui/icon";
+import { useIsCompactViewport } from "@/components/ui/hooks/use-compact-viewport";
+import { visibleColumns, workflowColumns } from "./src/panel-columns";
 import {
   Dialog,
   DialogContent,
@@ -79,30 +82,33 @@ import {
   type PanelPlace,
   type WorkflowTarget,
 } from "./src/panel-route";
-import { useRememberedRoute } from "./packages/panel-state/react";
+import { useRememberedRoute } from "@bb-plugins/panel-state/react";
 import {
   type FrontmatterEntry,
   parseFrontmatter,
   serializeFrontmatter,
   setFieldValue,
 } from "./src/frontmatter";
-import { MarkdownEditor } from "./packages/md-editor/react";
+import { MarkdownEditor } from "@bb-plugins/md-editor/react";
 // The built-in editor's link classes — not Kasimov's: the two engines use different prefixes.
-import { LINK_TOKEN_SELECTOR } from "./packages/md-editor/link-tokens";
-import { formatWeight } from "./src/weight";
+import { LINK_TOKEN_SELECTOR } from "@bb-plugins/md-editor/link-tokens";
+import { formatWeight, mergeWeights, type RowWeights } from "./src/weight";
+import { parseRuleSetText, ruleSetFor } from "./src/rule-set";
+import { AutoModeEditor, Dropdown, PermissionsEditor, Switch } from "@/components/settings/controls";
+import { SETTING_GROUPS, findSettingDef, formValues, objectOf, settingSummary, withFormValue } from "./src/settings-catalog";
 import {
   fileRefFromCode,
   isInTabLink,
   parseHref,
   resolveRelative,
-} from "./packages/link-navigation/resolve";
+} from "@bb-plugins/link-navigation/resolve";
 import {
   ResizeHandle,
   HorizontalResizeHandle,
   useResizableWidth,
   useResizableHeight,
-} from "./packages/resizable-pane/react";
-import { ProjectSwitcher } from "./packages/project-switcher/react";
+} from "@bb-plugins/resizable-pane/react";
+import { ProjectSwitcher } from "@bb-plugins/project-switcher/react";
 import { rankCandidates } from "./src/suggest";
 import { extractCommandFile } from "./src/hook-script";
 import "./doc-editor.css";
@@ -133,6 +139,12 @@ const PANEL_PATH = "claude-config";
  * step the user could go Back from.
  */
 type GoTo = (open: OpenTarget | null, replace?: boolean) => void;
+
+// getWeights for the open area: still out, failed, or in.
+type WeightsState =
+  | { status: "loading" }
+  | { status: "failed" }
+  | { status: "ready"; weights: RowWeights };
 
 type Rpc = ReturnType<typeof useRpc<typeof rpcContract>>;
 
@@ -182,7 +194,7 @@ function connectorSubtitle(origin: ConnectorOrigin, transport: string): string {
 // the grammar of that address lives in ./src/panel-route: one parser, one
 // builder, both tested. Nothing here assembles a subPath by hand.
 
-// Open a real file per the `fileOpenerLocation` setting (memory/decisions/
+// Open a real file per the `fileOpenerLocation` setting (docs/decisions/
 // claude-config-opener-two-axes.md — supersedes claude-config-opener-setting.md).
 // "inline" — in the embedded column (DocTab, which picks how to render what's
 // open, per the separate `fileOpenerRenderer` setting). "host" — delegate to
@@ -286,7 +298,7 @@ function ColumnMdDocView({
       // All engine flags at once (toFlags returns exactly the MdDocView flag
       // props): a hand-written list is one `atLinks` away from a setting that
       // silently does nothing — see
-      // memory/decisions/kasimov-atlink-click-guard.md.
+      // docs/decisions/kasimov-atlink-click-guard.md.
       {...flags}
       leading={leading}
     />
@@ -359,85 +371,11 @@ function renderCommandWithFileLink(
  * style still won that cascade fight against a class-based `!important` on
  * `[role="switch"]` (on-screen the track read the same gray in both states,
  * which read as "the switch doesn't respond to clicks" — see
- * memory/tasks/in_progress/cloud-config-plugin-kasimov-switch.md). An
+ * docs/tasks/in_progress/cloud-config-plugin-kasimov-switch.md). An
  * element's own inline style, written `important`, outranks every
  * author-stylesheet rule regardless of that rule's selector specificity —
  * there's no cascade fight left to lose.
  */
-function Switch({
-  checked,
-  onChange,
-}: {
-  checked: boolean;
-  onChange: (next: boolean) => void;
-}) {
-  const trackRef = useRef<HTMLButtonElement>(null);
-  const thumbRef = useRef<HTMLSpanElement>(null);
-  useEffect(() => {
-    trackRef.current?.style.setProperty(
-      "background-color",
-      checked ? "var(--foreground)" : "var(--muted)",
-      "important",
-    );
-  }, [checked]);
-  useEffect(() => {
-    thumbRef.current?.style.setProperty(
-      "background-color",
-      "var(--background)",
-      "important",
-    );
-  }, []);
-  return (
-    <button
-      ref={trackRef}
-      type="button"
-      role="switch"
-      aria-checked={checked}
-      onClick={() => onChange(!checked)}
-      className="relative inline-flex h-4 w-7 shrink-0 items-center rounded-full transition-colors"
-    >
-      <span
-        ref={thumbRef}
-        className={cn(
-          "inline-block size-3 rounded-full shadow transition-transform",
-          checked ? "translate-x-3" : "translate-x-0",
-        )}
-      />
-    </button>
-  );
-}
-
-/** Mode dropdown; disabled (translucent) when the toggle is off. */
-function Dropdown<T extends string>({
-  value,
-  options,
-  disabled,
-  onChange,
-}: {
-  value: T;
-  options: { value: T; label: string }[];
-  disabled: boolean;
-  onChange: (next: T) => void;
-}) {
-  return (
-    <select
-      value={value}
-      disabled={disabled}
-      onChange={(event) => onChange(event.target.value as T)}
-      className={cn(
-        "h-8 rounded-md border border-border bg-background px-2 text-sm",
-        disabled && "opacity-50",
-      )}
-    >
-      {options.map((option) => (
-        <option key={option.value} value={option.value}>
-          {option.label}
-        </option>
-      ))}
-    </select>
-  );
-}
-
 /**
  * Click-to-edit block for raw text that isn't markdown (JSON, a shell/JS
  * script) — a plain monospace textarea, not MarkdownEditor: WYSIWYG markdown
@@ -527,31 +465,61 @@ function TextSettingInput({
   );
 }
 
+/** The value "Custom…" stands for in a dropdown that accepts own text. */
+const CUSTOM_OPTION = "__custom__";
+
 /**
  * One row of the generic "Settings" section — the control depends on the
- * key's kind (see settings-catalog): a Switch for booleans (same widget and
- * "no explicit revert" convention as Plugins), a Dropdown for enums (as
- * Skills), a single-line field for strings/numbers, and a JSON block (the
- * same PlainTextBlock hooks uses for a script file) for nested objects. A
- * value already set explicitly gets a "Reset" action — the only way back to
- * "unset, Claude Code's own default applies" for kinds without an implicit
- * off/inherit position.
+ * key's kind (see settings-catalog): a Switch for booleans, a Dropdown for
+ * enums (with "Default" and "Custom…" when the key takes own text), a
+ * single-line field for strings and numbers. A key that opens in the
+ * document column (autoMode, permissions, statusLine, attribution) is a row
+ * with a one-line summary and a chevron instead. A string or number already
+ * set gets a "Reset" action — the way back to "unset, Claude Code's default".
  */
 function SettingField({
   setting,
+  selected,
   onChange,
+  onOpen,
 }: {
   setting: AreaConfig["settings"][number];
-  onChange: (value: string | null) => void;
+  selected: boolean;
+  onChange: (value: string | null) => Promise<boolean>;
+  onOpen: () => void;
 }) {
+  const def = findSettingDef(setting.key);
+  const [custom, setCustom] = useState(false);
+  // A saved value — own or one of the options — closes the "Custom…" field.
+  useEffect(() => setCustom(false), [setting.value]);
   const label = (
     // The text never squeezes below 200px: in this column it used to share a
     // flex row with the control and got wrung out to one word per line.
-    <div className="min-w-[200px] flex-1">
+    <div className="min-w-[200px] flex-[2]">
       <div className="text-sm font-medium">{setting.label}</div>
       <div className="text-xs text-muted-foreground">{setting.description}</div>
     </div>
   );
+
+  if (def?.detail) {
+    return (
+      <button
+        type="button"
+        onClick={onOpen}
+        className={cn(
+          "flex w-full flex-wrap items-center gap-x-3 gap-y-1 rounded-md px-2 py-1.5 text-left hover:bg-muted/40",
+          selected && "bg-accent hover:bg-accent",
+          setting.dimmed && "opacity-60",
+        )}
+      >
+        {label}
+        <span className="flex min-w-[100px] flex-1 basis-36 items-center justify-end gap-1 text-right text-xs text-muted-foreground">
+          <span>{settingSummary(setting.key, setting.value)}</span>
+          <Icon name="ChevronRight" className="size-3.5 shrink-0" />
+        </span>
+      </button>
+    );
+  }
 
   const resetButton = setting.value !== null && (
     <button
@@ -563,23 +531,38 @@ function SettingField({
     </button>
   );
 
-  // A JSON value is a multi-line block — it's full width under the label by
-  // nature, and never sits beside it.
-  if (setting.kind === "json") {
-    return (
-      <div
-        className={cn("rounded-md px-2 py-1.5", setting.dimmed && "opacity-60")}
-      >
-        <div className="mb-1 flex items-start justify-between gap-2">
-          {label}
-          {resetButton}
-        </div>
-        <PlainTextBlock value={setting.value ?? ""} onSave={onChange} />
-      </div>
-    );
-  }
-
   const options = setting.kind === "enum" ? (setting.enumOptions ?? []) : [];
+  const ownValue =
+    setting.value !== null && !options.some((option) => option.value === setting.value);
+  const enumControl = def?.allowCustom ? (
+    <>
+      <Dropdown
+        value={custom || ownValue ? CUSTOM_OPTION : (setting.value ?? "")}
+        options={[
+          { value: "", label: "Default" },
+          ...options,
+          { value: CUSTOM_OPTION, label: ownValue ? `Custom: ${setting.value}` : "Custom…" },
+        ]}
+        disabled={false}
+        className="min-w-0"
+        onChange={(next) => {
+          if (next === CUSTOM_OPTION) return setCustom(true);
+          setCustom(false);
+          void onChange(next === "" ? null : next);
+        }}
+      />
+      {(custom || ownValue) && (
+        <TextSettingInput value={ownValue ? (setting.value ?? "") : ""} onSave={onChange} />
+      )}
+    </>
+  ) : (
+    <Dropdown
+      value={setting.value ?? (options[0]?.value ?? "")}
+      options={options}
+      disabled={options.length === 0}
+      onChange={(next) => onChange(next)}
+    />
+  );
   const control =
     setting.kind === "boolean" ? (
       <Switch
@@ -587,12 +570,7 @@ function SettingField({
         onChange={(next) => onChange(next ? "true" : "false")}
       />
     ) : setting.kind === "enum" ? (
-      <Dropdown
-        value={setting.value ?? (options[0]?.value ?? "")}
-        options={options}
-        disabled={options.length === 0}
-        onChange={(next) => onChange(next)}
-      />
+      enumControl
     ) : (
       <>
         <TextSettingInput value={setting.value ?? ""} onSave={onChange} />
@@ -600,10 +578,9 @@ function SettingField({
       </>
     );
 
-  // One wrapping row for every kind but JSON: the text keeps its 200px, the
-  // control its 100px, and when the column can't hold both (under ~300px)
-  // flex-wrap drops the control onto its own line under the label instead of
-  // strangling the text.
+  // One wrapping row: the text keeps its 200px, the control its 100px, and
+  // when the column can't hold both flex-wrap drops the control onto its own
+  // line under the label instead of strangling the text.
   return (
     <div
       className={cn(
@@ -612,9 +589,198 @@ function SettingField({
       )}
     >
       {label}
-      <div className="flex min-w-[100px] flex-1 basis-56 items-center justify-end gap-2">
+      <div className="flex min-w-[100px] flex-1 basis-36 flex-wrap items-center justify-end gap-2">
         {control}
       </div>
+    </div>
+  );
+}
+
+const SETTING_DOC_INTRO: Readonly<Record<string, string>> = {
+  autoMode:
+    "Before every tool call in auto mode, a classifier model decides whether to run it. It reads these settings: the environment tells it what is yours, and the rules say what it allows and what it blocks.",
+  permissions:
+    "Rules checked before the classifier: allow runs without asking, ask always asks, deny never runs.",
+  statusLine: "A shell command whose output is shown under the prompt.",
+  attribution: "What Claude Code appends to commit messages and pull request descriptions.",
+};
+
+/**
+ * A detail key open in the document column: its form, "Edit as JSON" back to
+ * the raw block, and "Reset to default". autoMode in a project area is read
+ * only — Claude Code reads it from the user settings file alone.
+ */
+function SettingDoc({
+  setting,
+  scope,
+  onChange,
+  toGlobal,
+}: {
+  setting: AreaConfig["settings"][number];
+  scope: "global" | "project";
+  onChange: (value: string | null) => Promise<boolean>;
+  toGlobal: () => void;
+}) {
+  const def = findSettingDef(setting.key);
+  const [asJson, setAsJson] = useState(false);
+  const ruleSet = ruleSetFor(setting.key);
+  const parsed = ruleSet ? parseRuleSetText(ruleSet, setting.value) : null;
+  const readOnly = setting.key === "autoMode" && scope === "project";
+  const writeObject = (next: Readonly<Record<string, unknown>>) =>
+    onChange(Object.keys(next).length === 0 ? null : JSON.stringify(next, null, 2));
+
+  const form = (() => {
+    if (setting.key === "autoMode" && parsed?.ok) {
+      return <AutoModeEditor object={parsed.object} onChange={writeObject} scope={scope} readOnly={readOnly} />;
+    }
+    if (setting.key === "permissions" && parsed?.ok) {
+      return <PermissionsEditor object={parsed.object} onChange={writeObject} />;
+    }
+    if (def?.fields && (setting.value === null || objectOf(setting.value) !== null)) {
+      const values = formValues(def, setting.value);
+      return (
+        <div className="max-w-4xl @container">
+          {def.fields.map((field) => (
+            <div
+              key={field.key}
+              className="grid grid-cols-1 gap-x-5 gap-y-1.5 border-t border-border/60 py-2.5 first:border-t-0 @2xl:grid-cols-[220px_1fr]"
+            >
+              <div>
+                <div className="text-sm font-medium">{field.label}</div>
+                <div className="text-xs text-muted-foreground">{field.description}</div>
+              </div>
+              <FormFieldInput
+                kind={field.kind}
+                value={values[field.key]}
+                placeholder={field.placeholder}
+                blankKeeps={field.blankKeeps}
+                onSave={(text) => void onChange(withFormValue(def, setting.value, field.key, text))}
+              />
+            </div>
+          ))}
+        </div>
+      );
+    }
+    return null;
+  })();
+
+  return (
+    <div className="h-full overflow-y-auto px-5 py-4 md:px-7 md:py-5">
+      <div className="mb-1 flex items-start gap-3">
+        <h2 className="flex-1 text-[15px] font-semibold">{setting.label}</h2>
+        <div className="flex shrink-0 gap-3 pt-0.5">
+          {!readOnly && form !== null && (
+            <button
+              type="button"
+              onClick={() => setAsJson(!asJson)}
+              className="text-xs text-muted-foreground hover:underline"
+            >
+              {asJson ? "Edit as form" : "Edit as JSON"}
+            </button>
+          )}
+          {!readOnly && setting.value !== null && (
+            <button
+              type="button"
+              onClick={() => void onChange(null)}
+              className="text-xs text-muted-foreground hover:underline"
+            >
+              Reset to default
+            </button>
+          )}
+        </div>
+      </div>
+      <p className="mb-4 max-w-2xl text-xs text-muted-foreground">
+        {SETTING_DOC_INTRO[setting.key] ?? setting.description}
+      </p>
+      {readOnly && (
+        <div className="mb-4 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+          <Icon name="AlertCircle" className="size-3.5" />
+          <span>Claude Code reads auto mode only from your user settings.</span>
+          <button type="button" onClick={toGlobal} className="text-foreground underline-offset-2 hover:underline">
+            Open in Globally
+          </button>
+        </div>
+      )}
+      {form !== null && !asJson ? (
+        form
+      ) : (
+        <>
+          {form === null && (
+            <p className="mb-2 text-xs text-muted-foreground">
+              {parsed !== null && !parsed.ok
+                ? `Can't show this value as a form — ${parsed.reason}`
+                : "Can't show this value as a form."}
+            </p>
+          )}
+          {readOnly ? (
+            <pre className="whitespace-pre-wrap rounded-md border border-border bg-muted/30 p-2 font-mono text-sm">
+              {setting.value ?? ""}
+            </pre>
+          ) : (
+            <PlainTextBlock value={setting.value ?? ""} onSave={onChange} />
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
+/**
+ * One form field, committed on blur or Enter. `undefined` — the field is
+ * absent and Claude Code's default applies (shown as the placeholder); for a
+ * field where blank means something (attribution), an empty value says so
+ * and "Use default" drops the field.
+ */
+function FormFieldInput({
+  kind,
+  value,
+  placeholder,
+  blankKeeps,
+  onSave,
+}: {
+  kind: "text" | "multiline" | "number";
+  value: string | undefined;
+  placeholder: string;
+  blankKeeps: boolean;
+  onSave: (next: string | null) => void;
+}) {
+  const [draft, setDraft] = useState(value ?? "");
+  useEffect(() => setDraft(value ?? ""), [value]);
+  const commit = () => {
+    if (draft !== (value ?? "")) onSave(draft);
+  };
+  const field =
+    kind === "multiline" ? (
+      <textarea
+        value={draft}
+        rows={2}
+        placeholder={value === "" ? "" : placeholder}
+        onChange={(event) => setDraft(event.target.value)}
+        onBlur={commit}
+        className="w-full resize-y rounded-md border border-border bg-background px-2 py-1.5 text-sm outline-none placeholder:text-muted-foreground/70 focus:border-muted-foreground"
+      />
+    ) : (
+      <Input
+        value={draft}
+        inputMode={kind === "number" ? "numeric" : undefined}
+        placeholder={placeholder}
+        onChange={(event) => setDraft(event.target.value)}
+        onBlur={commit}
+        onKeyDown={(event) => event.key === "Enter" && commit()}
+        className={cn("h-8", kind === "number" ? "w-24" : "w-full")}
+      />
+    );
+  return (
+    <div className="flex min-w-0 flex-col gap-1">
+      {field}
+      {blankKeeps && value !== undefined && (
+        <div className="flex gap-3 text-xs text-muted-foreground">
+          {value === "" && <span>Empty — nothing is added.</span>}
+          <button type="button" onClick={() => onSave(null)} className="hover:underline">
+            Use default
+          </button>
+        </div>
+      )}
     </div>
   );
 }
@@ -1472,7 +1638,7 @@ function DocTab({
     return (
       <div className="flex h-full min-h-0 flex-col">
         {/* MdDocView's header isn't extended with a slot of its own — see
-            memory/decisions/file-actions-stay-in-plugin.md — so the file's
+            docs/decisions/file-actions-stay-in-plugin.md — so the file's
             actions get a thin row above it. */}
         {actions && (
           <div className="flex shrink-0 items-center justify-end gap-1 border-b border-border px-2 py-1">
@@ -1932,14 +2098,24 @@ function WorkflowsView({
   areaId,
   target,
   goTo,
+  toSections,
 }: {
   rpc: Rpc;
   areaId: string;
   /** The workflow the address names; null — none. */
   target: WorkflowTarget | null;
   goTo: GoTo;
+  /**
+   * Out of the section altogether. `goTo` moves within the place and leaves
+   * the section standing, so on a narrow screen — where the section rail is
+   * off the screen — the list column needs this way back of its own.
+   */
+  toSections: () => void;
 }) {
   const { tree, identity, rawSource, draft } = useEditor();
+  // Раздел Workflows держит свои колонки: список слева, конструктор справа. На
+  // телефоне их тоже одна — та же лестница, что у разделов панели.
+  const compact = useIsCompactViewport();
   const codeOnly = rawSource != null;
   // Nothing open at all: no file, no new workflow started. The builder shows
   // an empty state rather than a blank tree that looks like an open document
@@ -2055,6 +2231,13 @@ function WorkflowsView({
   // detail in Kasimov rendering (the same MdDocView as the MD Opener slot). No
   // template or path — no upper half.
   const selAgentPath: string | null = selAgent ? agents.find((a) => a.value === selAgent.agentType)?.path ?? null : null;
+  // Колонки раздела: список workflow, конструктор открытого и деталь того, что
+  // выбрано внутри него. На телефоне — одна, самая внутренняя (src/panel-columns).
+  const columns = workflowColumns({
+    compact,
+    hasOpen: !nothingOpen,
+    hasDetail: !codeOnly && (selAgent !== null || selGroup !== null),
+  });
 
   // A newly selected step: the detail opens right away if a template is
   // already assigned to it, otherwise — the picker list. From there, toggling
@@ -2111,7 +2294,12 @@ function WorkflowsView({
           the section's "+" and nothing else. Save / Validate / Run / Delete
           used to live here even though they act on the workflow shown in the
           next column; they moved there. */}
-      <div style={{ width: listWidth }} className="flex h-full shrink-0 flex-col overflow-hidden border-r border-border">
+      {(columns === "all" || columns === "list") && (
+      <div
+        style={compact ? undefined : { width: listWidth }}
+        className={cn("flex h-full flex-col overflow-hidden", compact ? "w-full" : "shrink-0 border-r border-border")}
+      >
+        {compact && <ColumnBack label="Sections" onClick={toSections} />}
         <div className="min-h-0 flex-1 overflow-y-auto p-4">
           <SectionHeader
             section="workflows"
@@ -2125,18 +2313,21 @@ function WorkflowsView({
           <WfList items={items} onOpen={openItem} open={identity} draft={draft} />
         </div>
       </div>
+      )}
 
-      <ResizeHandle onPointerDown={startListResize} />
+      {columns === "all" && <ResizeHandle onPointerDown={startListResize} />}
 
       {/* Nothing open — the builder is the last column: it takes the rest of
           the width instead of reserving room for a preview of nothing. */}
+      {(columns === "all" || columns === "builder") && (
       <div
-        style={nothingOpen ? undefined : { width: constructorWidth }}
+        style={nothingOpen || compact ? undefined : { width: constructorWidth }}
         className={cn(
           "flex h-full min-h-0 min-w-0 flex-col overflow-hidden",
-          nothingOpen ? "flex-1" : "shrink-0",
+          nothingOpen || compact ? "flex-1" : "shrink-0",
         )}
       >
+        {compact && <ColumnBack label="Workflows" onClick={() => goTo(null)} />}
         <div className="min-h-0 flex-1 overflow-hidden">
           {nothingOpen ? (
             <div className="flex h-full items-center justify-center px-4 text-center text-sm text-muted-foreground">
@@ -2185,10 +2376,11 @@ function WorkflowsView({
         </div>
         )}
       </div>
+      )}
 
-      {!nothingOpen && <ResizeHandle onPointerDown={startConstructorResize} />}
+      {!nothingOpen && columns === "all" && <ResizeHandle onPointerDown={startConstructorResize} />}
 
-      {!nothingOpen && !codeOnly && !selAgent && !selGroup && (
+      {!nothingOpen && !codeOnly && !selAgent && !selGroup && columns === "all" && (
         // Nothing selected — the owner's third panel rule: show what the tree compiles to right now,
         // instead of an empty column. Read-only; editing still happens in the builder / detail panels.
         <div className="flex h-full min-h-0 min-w-0 flex-1 flex-col overflow-hidden border-l border-border">
@@ -2201,10 +2393,11 @@ function WorkflowsView({
         </div>
       )}
 
-      {!codeOnly && selGroup && (
+      {!codeOnly && selGroup && (columns === "all" || columns === "detail") && (
         // A phase/group header is selected — its settings take the whole panel (owner's rule), not a
         // detail alongside something else.
         <div className="flex h-full min-h-0 min-w-0 flex-1 flex-col overflow-hidden border-l border-border">
+          {compact && <ColumnBack label="Workflow" onClick={() => setSelectedPath(null)} />}
           <GroupDetails
             node={selGroup}
             onSetField={(patch) => editorStore.update((draft) => setGroupSettings(draft, selectedPath!, patch))}
@@ -2212,7 +2405,7 @@ function WorkflowsView({
         </div>
       )}
 
-      {!codeOnly && selAgent && (
+      {!codeOnly && selAgent && (columns === "all" || columns === "detail") && (
         // Column 4 — combined: agent list (template picker) or, after
         // selection, the detail — the template file in Kasimov rendering on
         // top and step editing (model·effort, instructions, output format)
@@ -2220,6 +2413,7 @@ function WorkflowsView({
         // remaining page width; toggling between list and detail is done by
         // clicking an agent / the "Back" button, not the neighboring column.
         <div className="flex h-full min-h-0 min-w-0 flex-1 flex-col overflow-hidden border-l border-border">
+          {compact && <ColumnBack label="Workflow" onClick={() => setSelectedPath(null)} />}
           {pickerOpen ? (
             <div className="flex h-full flex-col gap-0.5 overflow-y-auto p-2">
               <div className="mb-1 px-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
@@ -2315,16 +2509,44 @@ function WorkflowsView({
   );
 }
 
+/**
+ * Шаг наружу на узком экране. Колонка там одна, и вернуться к предыдущей —
+ * к списку раздела из документа, к разделам из списка — можно только ею.
+ */
+function ColumnBack({ label, onClick }: { label: string; onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      aria-label={`Back to ${label}`}
+      onClick={onClick}
+      className="flex w-full shrink-0 items-center gap-1.5 border-b border-border px-3 py-2 text-left text-sm text-muted-foreground hover:text-foreground"
+    >
+      <Icon name="ChevronLeft" className="size-4" />
+      {label}
+    </button>
+  );
+}
+
 function ConfigPanel({ subPath }: PluginNavPanelProps) {
   const rpc = useRpc<typeof rpcContract>();
   const navigate = useBbNavigate();
   const [areas, setAreas] = useState<{ id: string; label: string }[]>([]);
   // Where the panel is — area, section, open file — is the address and
-  // nothing else (memory/decisions/panel-route-grammar.md). Leaving the panel
+  // nothing else (docs/decisions/panel-route-grammar.md). Leaving the panel
   // unmounts it and bb hands back an empty address on return; putting the
   // last one back is useRememberedRoute's job, below.
   const { areaId, section, open } = parsePanelRoute(subPath);
-  const [config, setConfig] = useState<AreaConfig | null>(null);
+  const [baseConfig, setConfig] = useState<AreaConfig | null>(null);
+  // Row weights and plugin README paths arrive after the area is drawn
+  // (getWeights, BBPL-333).
+  const [weights, setWeights] = useState<WeightsState>({ status: "loading" });
+  const config = useMemo(
+    () =>
+      baseConfig && weights.status === "ready"
+        ? mergeWeights(baseConfig, weights.weights)
+        : baseConfig,
+    [baseConfig, weights],
+  );
   const [loading, setLoading] = useState(true);
   const [notice, setNotice] = useState<string | null>(null);
   const [memory, setMemory] = useState<
@@ -2355,6 +2577,9 @@ function ConfigPanel({ subPath }: PluginNavPanelProps) {
     side: "left",
     storageKey: "claude-config:section-width",
   });
+  // Телефон держит одну колонку: раздел, его список или открытый документ —
+  // что глубже открыто, то и на экране (src/panel-columns).
+  const compact = useIsCompactViewport();
   // The panel's place is remembered under one constant key: the whole place
   // is the address now, so there is no second key that could change under
   // the hook and no route to put back but the last one.
@@ -2389,8 +2614,11 @@ function ConfigPanel({ subPath }: PluginNavPanelProps) {
 
   // A workflow belongs to its own builder (WorkflowsView), everything else to
   // the document column — two disjoint cases of one address.
+  const columns = visibleColumns({ compact, hasSection: section !== null, hasOpen: open !== null });
   const workflowTarget = open?.kind === "workflow" ? open : null;
-  const openDoc = open !== null && open.kind !== "workflow" ? open : null;
+  const openSetting = open?.kind === "setting" ? open : null;
+  const openDoc = open !== null && open.kind !== "workflow" && open.kind !== "setting" ? open : null;
+  const openSettingRow = openSetting ? config?.settings.find((row) => row.key === openSetting.key) ?? null : null;
   const selectedName = openDoc?.kind === "skill" ? openDoc.name : null;
   const selectedConnector = openDoc?.kind === "connector" ? openDoc : null;
   const selectedHook = openDoc?.kind === "hook" ? openDoc : null;
@@ -2420,6 +2648,8 @@ function ConfigPanel({ subPath }: PluginNavPanelProps) {
     let alive = true;
     setLoading(true);
     setLoadingSinceMs(Date.now());
+    weightsRequest.current += 1;
+    setWeights({ status: "loading" });
     void rpc
       .call("getConfig", { areaId })
       .then((next) => {
@@ -2427,6 +2657,7 @@ function ConfigPanel({ subPath }: PluginNavPanelProps) {
           setConfig(next as AreaConfig);
           setLoading(false);
           setLoadingSinceMs(null);
+          loadWeights();
         }
       })
       // An RPC rejection (e.g. the output failed its own contract) left this
@@ -2460,13 +2691,33 @@ function ConfigPanel({ subPath }: PluginNavPanelProps) {
   const loadingAreaLabel =
     areas.find((area) => area.id === areaId)?.label ?? areaId;
 
+  // Weights are decoration: a failed request leaves the rows without them.
+  // Only the latest request is heard — an answer for an area the panel has
+  // left, or one overtaken by a newer request, is dropped.
+  const weightsRequest = useRef(0);
+  function loadWeights() {
+    const request = (weightsRequest.current += 1);
+    void rpc
+      .call("getWeights", { areaId })
+      .then(
+        (next): WeightsState => ({ status: "ready", weights: next }),
+        (): WeightsState => ({ status: "failed" }),
+      )
+      .then((next) => {
+        if (weightsRequest.current === request) setWeights(next);
+      });
+  }
+
   // Reloading after a write does NOT touch loading: the cards stay mounted,
   // values update in place — the page doesn't jump back to the top.
-  const reload = () => {
+  // Only adding or removing a skill or agent changes which rows have
+  // weights; a toggle keeps the weights already shown.
+  const reload = (rows: "same-rows" | "rows-changed" = "same-rows") => {
     void rpc
       .call("getConfig", { areaId })
       .then((next) => {
         setConfig(next as AreaConfig);
+        if (rows === "rows-changed") loadWeights();
       })
       .catch((error: unknown) => {
         setNotice(error instanceof Error ? error.message : "Failed to reload.");
@@ -2488,8 +2739,13 @@ function ConfigPanel({ subPath }: PluginNavPanelProps) {
     void rpc.call("setSkill", { areaId, name, state }).then(handleResult);
   const setToolSearch = (mode: ToolSearchTarget) =>
     void rpc.call("setToolSearch", { areaId, mode }).then(handleResult);
+  // Resolves with whether the write landed — the rule editor keeps its own
+  // copy of the rules until then, so a second edit builds on the first.
   const setSetting = (key: string, value: string | null) =>
-    void rpc.call("setSetting", { areaId, key, value }).then(handleResult);
+    rpc.call("setSetting", { areaId, key, value }).then((result) => {
+      handleResult(result);
+      return result.outcome === "ok";
+    });
   const setHookEnabled = (
     hook: {
       origin: HookOrigin;
@@ -2559,7 +2815,7 @@ function ConfigPanel({ subPath }: PluginNavPanelProps) {
     rpc.call("createSkill", { areaId, name }).then((result) => {
       if (result.outcome === "created") {
         setCreateKind(null);
-        reload();
+        reload("rows-changed");
         if (result.path) void openFile(result.path);
         return null;
       }
@@ -2571,7 +2827,7 @@ function ConfigPanel({ subPath }: PluginNavPanelProps) {
     rpc.call("createAgent", { areaId, name }).then((result) => {
       if (result.outcome === "created" && result.path) {
         setCreateKind(null);
-        reload();
+        reload("rows-changed");
         void openFile(result.path);
         return null;
       }
@@ -2604,7 +2860,7 @@ function ConfigPanel({ subPath }: PluginNavPanelProps) {
       toast.error(result.message ?? `Failed to delete the ${what}.`);
     }
     // Reload either way: on failure the list shows the file's actual state.
-    reload();
+    reload(what === "hook" ? "same-rows" : "rows-changed");
   };
   const deleteSkill = (name: string) =>
     void rpc
@@ -2726,9 +2982,10 @@ function ConfigPanel({ subPath }: PluginNavPanelProps) {
 
       <div className="flex min-h-0 flex-1">
         {/* Outer navigation level: memory + sections. */}
+        {(columns === "all" || columns === "sections") && (
         <nav
-          style={{ width: railWidth }}
-          className="flex shrink-0 flex-col gap-4 overflow-y-auto p-4"
+          style={compact ? undefined : { width: railWidth }}
+          className={cn("flex flex-col gap-4 overflow-y-auto p-4", compact ? "w-full" : "shrink-0")}
         >
           {memory.length > 0 && (
             <div>
@@ -2777,8 +3034,9 @@ function ConfigPanel({ subPath }: PluginNavPanelProps) {
             ))}
           </div>
         </nav>
+        )}
 
-        <ResizeHandle onPointerDown={startRailResize} />
+        {columns === "all" && <ResizeHandle onPointerDown={startRailResize} />}
 
         {loading ? (
           <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-1 text-sm text-muted-foreground">
@@ -2795,8 +3053,11 @@ function ConfigPanel({ subPath }: PluginNavPanelProps) {
           </div>
         ) : openDoc && section === null ? (
           // Memory file: the document takes the full remaining width, no middle column.
-          <div className="min-h-0 flex-1 overflow-hidden">
-            <DocTab areaId={areaId} target={openDoc} goTo={goTo} />
+          <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+            {compact && <ColumnBack label="Sections" onClick={() => goTo(null)} />}
+            <div className="min-h-0 flex-1 overflow-hidden">
+              <DocTab areaId={areaId} target={openDoc} goTo={goTo} />
+            </div>
           </div>
         ) : section === "workflows" ? (
           <WorkflowsView
@@ -2804,15 +3065,18 @@ function ConfigPanel({ subPath }: PluginNavPanelProps) {
             areaId={areaId}
             target={workflowTarget}
             goTo={goTo}
+            toSections={() => goPlace({ areaId, section: null, open: null })}
           />
         ) : section !== null ? (
           <>
             {/* Middle column — the section list, bounded resizable width. */}
+            {(columns === "all" || columns === "list") && (
             <div
-              style={{ width: midWidth }}
-              className="min-h-0 shrink-0 overflow-y-auto p-4"
+              style={compact ? undefined : { width: midWidth }}
+              className={cn("min-h-0 overflow-y-auto", compact ? "w-full p-0 pb-4" : "shrink-0 p-4")}
             >
-              <div className="space-y-4">
+              {compact && <ColumnBack label="Sections" onClick={() => goPlace({ areaId, section: null, open: null })} />}
+              <div className={cn("space-y-4", compact && "p-4")}>
             {config && !config.error && section === "hooks" && (
               <div>
                 <SectionHeader
@@ -2918,7 +3182,9 @@ function ConfigPanel({ subPath }: PluginNavPanelProps) {
                           onClick={() =>
                             plugin.readmePath
                               ? void openFile(plugin.readmePath)
-                              : toast.error("Plugin has no README.")
+                              : weights.status === "loading"
+                                ? toast.message("Still loading plugin details…")
+                                : toast.error("Plugin has no README.")
                           }
                           className="min-w-0 flex-1 text-left"
                         >
@@ -3151,36 +3417,61 @@ function ConfigPanel({ subPath }: PluginNavPanelProps) {
                   </div>
                 </div>
 
-                <div className="space-y-1">
-                  {config.settings.map((setting) => (
-                    <SettingField
-                      key={setting.key}
-                      setting={setting}
-                      onChange={(value) => setSetting(setting.key, value)}
-                    />
-                  ))}
-                </div>
+                {SETTING_GROUPS.map((group) => (
+                  <div key={group.key}>
+                    <div className="mx-2 mb-1 mt-4 text-xs font-medium text-muted-foreground">
+                      {group.label}
+                    </div>
+                    <div className="space-y-1">
+                      {config.settings
+                        .filter((setting) => findSettingDef(setting.key)?.group === group.key)
+                        .map((setting) => (
+                          <SettingField
+                            key={setting.key}
+                            setting={setting}
+                            selected={openSetting?.key === setting.key}
+                            onChange={(value) => setSetting(setting.key, value)}
+                            onOpen={() => goTo({ kind: "setting", key: setting.key })}
+                          />
+                        ))}
+                    </div>
+                  </div>
+                ))}
               </div>
             )}
               </div>
             </div>
+            )}
 
             {/* Divider between the middle column and the document — takes the rest of the width. */}
-            <ResizeHandle onPointerDown={startMidResize} />
-            <div className="min-h-0 flex-1 overflow-hidden">
-              {openDoc ? (
-                <DocTab
-                  areaId={areaId}
-                  target={openDoc}
-                  goTo={goTo}
-                  actions={docActions}
-                />
-              ) : (
-                <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
-                  Select an item from the list
-                </div>
-              )}
+            {columns === "all" && <ResizeHandle onPointerDown={startMidResize} />}
+            {(columns === "all" || columns === "document") && (
+            <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+              {compact && section !== null && <ColumnBack label={sectionSpec(section).title} onClick={() => goTo(null)} />}
+              <div className="min-h-0 flex-1 overflow-hidden">
+                {openSettingRow ? (
+                  <SettingDoc
+                    key={`${areaId}/${openSettingRow.key}`}
+                    setting={openSettingRow}
+                    scope={areaId === "global" ? "global" : "project"}
+                    onChange={(value) => setSetting(openSettingRow.key, value)}
+                    toGlobal={() => goPlace({ areaId: "global", section, open: openSetting })}
+                  />
+                ) : openDoc ? (
+                  <DocTab
+                    areaId={areaId}
+                    target={openDoc}
+                    goTo={goTo}
+                    actions={docActions}
+                  />
+                ) : (
+                  <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
+                    Select an item from the list
+                  </div>
+                )}
+              </div>
             </div>
+            )}
           </>
         ) : (
           // Neither file nor section — empty state spanning the full width.

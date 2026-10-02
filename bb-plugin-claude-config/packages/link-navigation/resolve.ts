@@ -3,7 +3,7 @@
  * react nor node:path. The same code is called on the server (walking a
  * file's body) and on the front end (the editor's linkResolver on every link).
  *
- * See memory/decisions/link-resolve-shared-layer.md — why this layer is
+ * See docs/decisions/link-resolve-shared-layer.md — why this layer is
  * separate and why node:path can't be used here (the front-end bundle runs in the browser).
  *
  * Semantics were checked against bb-plugin-claude-config/app.tsx's own

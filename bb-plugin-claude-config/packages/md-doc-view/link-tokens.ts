@@ -12,6 +12,6 @@
  * Kasimov doesn't — it widened its own handler's selector instead). A guard
  * that checks only `.mde-link` lets a click the engine already turned into a
  * jump ALSO reach "click the text to edit" — see
- * memory/decisions/kasimov-atlink-click-guard.md.
+ * docs/decisions/kasimov-atlink-click-guard.md.
  */
 export const LINK_TOKEN_SELECTOR = ".mde-link, .mde-atlink";

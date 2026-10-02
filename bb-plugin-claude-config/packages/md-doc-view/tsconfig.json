@@ -1,7 +1,11 @@
 {
   "extends": "../plugin-base/tsconfig.base.json",
   "compilerOptions": {
-    "jsx": "react-jsx"
+    "jsx": "react-jsx",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "allowJs": true,
+    "checkJs": false,
+    "resolveJsonModule": true
   },
   "include": [
     "index.ts",
@@ -10,6 +14,13 @@
     "kasimov.d.ts",
     "libraries.ts",
     "test-support/libraries.tsx",
-    "MdDocView.test.tsx"
+    "MdDocView.test.tsx",
+    "DocHeader.test.tsx",
+    "FileActions.test.tsx",
+    "doc-history.test.ts",
+    "file-name.test.ts",
+    "../cellular-kit/index.ts",
+    "../cellular-kit/vendor/index.js",
+    "../cellular-kit/vendor/manifest.json"
   ]
 }

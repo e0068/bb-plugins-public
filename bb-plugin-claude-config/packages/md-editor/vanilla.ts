@@ -9,8 +9,10 @@
 // declarations (TS2436: "Ambient module declaration cannot specify relative
 // module name"). So instead: import the untyped runtime value directly
 // (suppressing the one resulting "no declaration file" error), and assert a
-// hand-written type onto it.
-// @ts-expect-error -- md-editor.js ships no declaration file; typed below.
+// hand-written type onto it. ts-ignore rather than ts-expect-error: a
+// consumer that turns on allowJs (to read the vendored Cellular kit) types the
+// JS file itself, and the expected error is then not there to expect.
+// @ts-ignore -- md-editor.js ships no declaration file; typed below.
 import { MarkdownEditor as Impl } from "./md-editor.js";
 
 export interface MarkdownEditorOptions {

@@ -29,6 +29,8 @@ export interface UnitEdge {
 export interface EdgeOptions {
   /** Path aliases, e.g. `{ "@/": "" }` maps `@/lib/x` onto `lib/x`. */
   readonly aliases?: Readonly<Record<string, string>>;
+  /** Folders whose subfolders are units of their own, e.g. `["src"]` makes `src/core` and `src/ui` two units. */
+  readonly nested?: ReadonlyArray<string>;
 }
 
 /** Layers from the lowest up; a unit may import only units of strictly lower layers. */
@@ -87,8 +89,14 @@ export function importSpecifiers(source: string): ReadonlyArray<ImportSpecifier>
   return found;
 }
 
-/** `views/list/row.tsx` → `views`; a root file `app.tsx` → `app`. */
-export function moduleUnit(relPath: string): string {
+/**
+ * `views/list/row.tsx` → `views`; a root file `app.tsx` → `app`. Under a
+ * nested root the unit goes one level deeper: with `["src"]`,
+ * `src/core/x.ts` → `src/core` and `src/x.ts` → `src/x`.
+ */
+export function moduleUnit(relPath: string, nested: ReadonlyArray<string> = []): string {
+  const root = nested.find((folder) => relPath.startsWith(`${folder}/`));
+  if (root !== undefined) return `${root}/${moduleUnit(relPath.slice(root.length + 1))}`;
   const slash = relPath.indexOf("/");
   if (slash >= 0) return relPath.slice(0, slash);
   return relPath.replace(/\.[^.]+$/, "");
@@ -134,11 +142,11 @@ export function crossUnitEdges(
 ): ReadonlyArray<UnitEdge> {
   const edges: UnitEdge[] = [];
   for (const file of files) {
-    const from = moduleUnit(file.path);
+    const from = moduleUnit(file.path, options.nested);
     for (const { specifier, typeOnly } of importSpecifiers(file.source)) {
       const target = resolveSpecifier(file.path, specifier, options.aliases);
       if (target === null) continue;
-      const to = moduleUnit(target);
+      const to = moduleUnit(target, options.nested);
       if (to === from) continue;
       edges.push({ importer: file.path, specifier, from, to, typeOnly });
     }

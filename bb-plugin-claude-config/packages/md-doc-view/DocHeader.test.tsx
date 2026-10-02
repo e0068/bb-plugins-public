@@ -83,14 +83,6 @@ describe("DocHeader — reloading the file", () => {
     fireEvent.click(reload());
     expect(onReload).toHaveBeenCalledTimes(1);
   });
-
-  it("an unsaved draft disables it — a re-read would silently drop the draft", () => {
-    const onReload = vi.fn();
-    show({ dirty: true, diff: { added: 1, removed: 0 }, onReload });
-    expect(reload()).toBeDisabled();
-    fireEvent.click(reload());
-    expect(onReload).not.toHaveBeenCalled();
-  });
 });
 
 describe("DocHeader — the second row", () => {
@@ -126,16 +118,6 @@ describe("DocHeader — the second row", () => {
 });
 
 describe("DocHeader — path, note and the host's own chrome", () => {
-  it("the back arrow shows only when there is somewhere to go back to", () => {
-    show();
-    expect(screen.queryByRole("button", { name: "Back" })).toBeNull();
-    cleanup();
-    const onBack = vi.fn();
-    show({ canGoBack: true, onBack });
-    fireEvent.click(screen.getByRole("button", { name: "Back" }));
-    expect(onBack).toHaveBeenCalledTimes(1);
-  });
-
   it("a path without onReveal shows but is not clickable", () => {
     show();
     expect(screen.getByText("/tmp/doc.md")).toBeInTheDocument();
@@ -163,5 +145,79 @@ describe("DocHeader — path, note and the host's own chrome", () => {
     });
     expect(screen.getByRole("button", { name: "Close" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Ask" })).toBeInTheDocument();
+  });
+});
+
+describe("DocHeader — walking the history", () => {
+  const back = () => screen.getByRole("button", { name: "Back" });
+
+  it("back stands before the path even with nowhere to go, and is disabled then", () => {
+    const onBack = vi.fn();
+    show({ onBack });
+    expect(back()).toBeDisabled();
+    fireEvent.click(back());
+    expect(onBack).not.toHaveBeenCalled();
+    expect(back().compareDocumentPosition(screen.getByText("/tmp/doc.md"))).toBe(
+      Node.DOCUMENT_POSITION_FOLLOWING,
+    );
+  });
+
+  it("back with somewhere to go reports the step", () => {
+    const onBack = vi.fn();
+    show({ canGoBack: true, onBack });
+    fireEvent.click(back());
+    expect(onBack).toHaveBeenCalledTimes(1);
+  });
+
+  it("forward is absent until there is something ahead", () => {
+    show();
+    expect(screen.queryByRole("button", { name: "Forward" })).toBeNull();
+  });
+
+  it("forward appears just before reload and reports the step", () => {
+    const onForward = vi.fn();
+    show({ canGoForward: true, onForward });
+    const forward = screen.getByRole("button", { name: "Forward" });
+    expect(forward.nextElementSibling).toBe(screen.getByRole("button", { name: "Reload" }));
+    fireEvent.click(forward);
+    expect(onForward).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("DocHeader — an unsaved draft takes the left of the row", () => {
+  const dirty = { dirty: true, diff: { added: 2, removed: 1 } } as const;
+
+  it("path, back, forward and reload give way to the diff, Save and Cancel", () => {
+    show({ ...dirty, canGoBack: true, canGoForward: true });
+    expect(screen.queryByText("/tmp/doc.md")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Back" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Forward" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Reload" })).toBeNull();
+    expect(screen.getByLabelText("Draft difference")).toHaveTextContent("+2");
+    expect(screen.getByRole("button", { name: "Save" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Cancel" })).toBeInTheDocument();
+  });
+
+  it("the draft's controls sit in the same row as the switcher and the actions", () => {
+    show({ ...dirty, actions: <button type="button">More</button> });
+    const row = screen.getByRole("tablist").closest(".mdo-header");
+    expect(row).toContainElement(screen.getByRole("button", { name: "Save" }));
+    expect(row).toContainElement(screen.getByRole("button", { name: "More" }));
+  });
+});
+
+describe("DocHeader — the file's actions", () => {
+  it("actions stand after the switcher and before trailing", () => {
+    show({
+      actions: <button type="button">More</button>,
+      trailing: <button type="button">Close</button>,
+    });
+    const more = screen.getByRole("button", { name: "More" });
+    expect(screen.getByRole("tablist").compareDocumentPosition(more)).toBe(
+      Node.DOCUMENT_POSITION_FOLLOWING,
+    );
+    expect(more.compareDocumentPosition(screen.getByRole("button", { name: "Close" }))).toBe(
+      Node.DOCUMENT_POSITION_FOLLOWING,
+    );
   });
 });

@@ -7,13 +7,14 @@
 // and every place is a link you can hand to someone. Segments are tagged
 // (`a/` area, `s/` section) so "no section picked" is the absence of a pair
 // rather than a placeholder segment: a memory file is opened from the rail
-// and belongs to no section (memory/decisions/panel-route-grammar.md).
+// and belongs to no section (docs/decisions/panel-route-grammar.md).
 //
 // The area is NOT repeated inside the open target: it is already the first
 // segment, so "the open file belongs to another area" is not a state this
 // type can hold.
 
 import { isSectionId, type SectionId } from "./panel-sections";
+import { findSettingDef } from "./settings-catalog";
 import type { StoreKind } from "./workflow/store";
 
 export type ConnectorOrigin = "mcpjson" | "user" | "local";
@@ -29,13 +30,14 @@ export type OpenTarget =
   | { kind: "connector"; origin: ConnectorOrigin; name: string }
   | { kind: "hook"; origin: HookOrigin; index: number; event: string }
   | { kind: "doc"; path: string }
+  | { kind: "setting"; key: string }
   | { kind: "workflow"; store: StoreKind; name: string };
 
 /**
- * What the document column can show — everything except a workflow, which
- * has its own builder rather than a document view.
+ * What the document column loads as a document — everything except a
+ * workflow, which has its own builder, and a settings key, which is a form.
  */
-export type DocTarget = Exclude<OpenTarget, { kind: "workflow" }>;
+export type DocTarget = Exclude<OpenTarget, { kind: "workflow" } | { kind: "setting" }>;
 
 /** The workflow the address names — the builder's half of the same sum. */
 export type WorkflowTarget = Extract<OpenTarget, { kind: "workflow" }>;
@@ -96,6 +98,8 @@ function openSegments(open: OpenTarget): string[] {
       return ["hook", open.origin, String(open.index), encodePath(open.event)];
     case "doc":
       return ["doc", encodePath(open.path)];
+    case "setting":
+      return ["setting", open.key];
     case "workflow":
       return ["wf", open.store, open.name];
   }
@@ -151,6 +155,9 @@ function parseOpen(seg: string[]): OpenTarget | null {
   if (tag === "doc" && rest[0]) {
     const path = decodePath(rest[0]);
     return path === null ? null : { kind: "doc", path };
+  }
+  if (tag === "setting" && rest[0] && findSettingDef(rest[0])) {
+    return { kind: "setting", key: rest[0] };
   }
   if (tag === "wf" && rest[0] && rest[1] && isOneOf(STORES, rest[0])) {
     return { kind: "workflow", store: rest[0], name: rest[1] };
