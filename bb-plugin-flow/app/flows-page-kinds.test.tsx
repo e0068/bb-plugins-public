@@ -5,7 +5,7 @@ import { loadPluginApp, renderSlot } from "@get-bb/plugin-sdk/testing/app";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { planner } from "../core/stages-fixtures";
-import { builtinStage, stageKindOf } from "../lib/stage-constants";
+import { builtinStage } from "../lib/stage-constants";
 import type { FlowSettings, flowSettingsRpcContract, StageCatalog } from "../shared/contract";
 
 const app = await loadPluginApp(() => import("../app"));
@@ -68,37 +68,6 @@ describe("таблица этапов выбранного flow", () => {
     await vi.waitFor(() => expect(flowOf(lastSaved(slot), "default")?.stages[1]?.name).toBe("Что делаем"), { timeout: 2000 });
   });
 
-  it("исполнитель из меню и удаление этапа сохраняют этапы выбранного flow", async () => {
-    const slot = open();
-    fireEvent.click((await row(slot, 4)).getByRole("button", { name: "Добавить агента или workflow" }));
-    fireEvent.click(slot.getByRole("menuitemcheckbox", { name: /DEV2/ }));
-    await vi.waitFor(() => expect(flowOf(lastSaved(slot), "default")?.stages[3]?.executors.map((e) => e.id)).toEqual([planner.id, "workflow:DEV2"]));
-    fireEvent.click((await row(slot, 3)).getByRole("button", { name: "Удалить этап Задача" }));
-    await vi.waitFor(() => expect(flowOf(lastSaved(slot), "default")?.stages.map((s) => s.id)).toEqual(["questions", "select", "plan", "demo"]));
-    expect(flowOf(lastSaved(slot), "quick")).toEqual(settings.flows[1]);
-  });
-
-  it("кнопки Вопросы, Критерии, Выбор этапов и Демонстрация дописывают этап вида в конец, повторный вид — с новым id", async () => {
-    const slot = open();
-    await row(slot, 1);
-    fireEvent.click(slot.getByRole("button", { name: "Добавить этап Демонстрация" }));
-    await vi.waitFor(() => expect(flowOf(lastSaved(slot), "default")?.stages.at(-1)).toMatchObject({ id: "demo-2", kind: "demo" }));
-    fireEvent.click(slot.getByRole("button", { name: "Добавить этап Выбор этапов" }));
-    await vi.waitFor(() => expect(flowOf(lastSaved(slot), "default")?.stages.at(-1)).toMatchObject({ id: "select-2", kind: "select" }));
-    fireEvent.click(slot.getByRole("button", { name: "Добавить этап Вопросы" }));
-    fireEvent.click(slot.getByRole("button", { name: "Добавить этап Критерии" }));
-    await vi.waitFor(() => expect(flowOf(lastSaved(slot), "default")?.stages.slice(-2).map(stageKindOf)).toEqual(["questions", "criteria"]));
-  });
-
-  it("кнопка Навык открывает список навыков и дописывает этап навыка в конец", async () => {
-    const slot = open();
-    await row(slot, 1);
-    fireEvent.click(slot.getByRole("button", { name: "Добавить этап Навык" }));
-    fireEvent.click(slot.getByRole("option", { name: /spec/ }));
-    await vi.waitFor(() => expect(flowOf(lastSaved(slot), "default")?.stages.at(-1)).toMatchObject({ kind: "skill", skill: "spec", name: "spec" }));
-    expect(flowOf(lastSaved(slot), "default")?.stages.at(-1)?.review).toBeUndefined();
-  });
-
   it("строка, перетащенная за ручку вниз, встаёт в конец и порядок сохраняется на отпускании", async () => {
     const slot = open();
     const handle = (await row(slot, 1)).getByRole("button", { name: "Перетащить этап Вопросы" });
@@ -106,14 +75,5 @@ describe("таблица этапов выбранного flow", () => {
     fireEvent.pointerMove(window, { clientY: 500 });
     fireEvent.pointerUp(window);
     await vi.waitFor(() => expect(flowOf(lastSaved(slot), "default")?.stages.map((s) => s.id).at(-1)).toBe("questions"));
-  });
-
-  it("с настройкой English страница без кириллицы, виды подписаны по-английски", async () => {
-    const english: FlowSettings = { version: 2, flows: [{ id: "default", name: "Default", stages: [builtinStage("questions", []), builtinStage("demo", []), { id: "plan", kind: "skill", skill: "plan", name: "Plan", executors: [planner] }] }], minButtonWidth: 170 };
-    const slot = open({ language: "English", initial: english });
-    expect(within(await slot.findByRole("row", { name: "Stage 1" })).getByText("Questions")).toBeTruthy();
-    expect(slot.getByRole("button", { name: "Add stage Demonstration" })).toBeTruthy();
-    const texts = [slot.container.textContent ?? "", ...[...slot.container.querySelectorAll("[aria-label],[placeholder],[title],[value]")].flatMap((el) => ["aria-label", "placeholder", "title"].map((a) => el.getAttribute(a) ?? ""))];
-    expect(texts.filter((text) => /[А-Яа-яЁё]/.test(text))).toEqual([]);
   });
 });

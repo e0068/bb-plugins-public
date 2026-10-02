@@ -2,7 +2,7 @@
 // Таблица этапов на телефоне: списки полей открываются нижней шторой, а не
 // выпадающим списком, прижатым к полю. Ширину экрана тесты задают через тот же
 // медиазапрос, по которому компактность узнаёт и плагин.
-import { cleanup, fireEvent } from "@testing-library/react";
+import { cleanup, fireEvent, within } from "@testing-library/react";
 import type { PluginNavPanelProps } from "@get-bb/plugin-sdk/app";
 import { loadPluginApp, renderSlot } from "@get-bb/plugin-sdk/testing/app";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -68,17 +68,14 @@ describe("списки таблицы этапов на узком экране"
     await vi.waitFor(() => expect(slot.queryByRole("dialog")).toBeNull());
   });
 
-  it("исполнители этапа открываются нижней шторой", async () => {
+  it("меню исполнения поднимается нижней шторой с сегментами и ставит агента", async () => {
     const slot = open();
-    fireEvent.click(await slot.findByRole("button", { name: "Добавить агента или workflow" }));
-    expect(inSheet(await slot.findByRole("menu", { name: "Агенты и workflow" }))).toBe(true);
-    expect(await slot.findByRole("menuitemcheckbox", { name: /Имплементер/ })).toBeTruthy();
-  });
-
-  it("добавление этапа выбирает навык в шторе", async () => {
-    const slot = open();
-    fireEvent.click(await slot.findByRole("button", { name: "Добавить этап Навык" }));
-    expect(inSheet(await slot.findByRole("listbox", { name: "Навыки" }))).toBe(true);
+    fireEvent.click(await slot.findByRole("button", { name: "Исполнение этапа" }));
+    const menu = await slot.findByRole("menu", { name: "Исполнение" });
+    expect(inSheet(menu)).toBe(true);
+    expect(within(menu).getAllByRole("tab").map((tab) => tab.textContent)).toEqual(["Субагент", "Workflow", "Скрипт"]);
+    fireEvent.click(within(menu).getByRole("menuitemcheckbox", { name: /Имплементер/ }));
+    await vi.waitFor(() => expect(lastSaved(slot)?.flows[0]?.stages[0]?.executors.map((e) => e.id)).toEqual(["agent:implementer"]));
   });
 });
 

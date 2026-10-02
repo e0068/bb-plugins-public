@@ -31,14 +31,6 @@ const row = async (slot: Slot, n: number) => within(await slot.findByRole("row",
 const skillField = async (slot: Slot, n: number) => (await row(slot, n)).getByRole("combobox", { name: `Навык этапа ${n}` }) as HTMLInputElement;
 
 describe("навык встроенного этапа в таблице этапов", () => {
-  it("строка встроенного вида показывает вид, поле навыка, название и охват, но не исполнителей", async () => {
-    const slot = open();
-    const questions = await row(slot, 1);
-    expect(questions.getAllByText("Вопросы").length).toBeGreaterThan(0);
-    expect((await skillField(slot, 1)).value).toBe("flow-questions");
-    expect(questions.queryByRole("button", { name: "Добавить агента или workflow" })).toBeNull();
-    expect((await row(slot, 2)).getByText("показывает этапы 1–1")).toBeTruthy();
-  });
 
   it("поле показывает свой навык владельца вместо навыка вида", async () => {
     const slot = open();
@@ -60,21 +52,6 @@ describe("навык встроенного этапа в таблице эта�
   });
 });
 
-describe("охват встроенных этапов", () => {
-  it("Выбор этапов охватывает этапы до следующего Выбора, Демонстрация — с прошлой Демонстрации", async () => {
-    const mixed: FlowSettings = {
-      version: 2,
-      flows: [{ id: "default", name: "Default", stages: [builtinStage("questions", []), builtinStage("select", []), { id: "task", kind: "skill", skill: "task-flow", name: "Задача", executors: [] }, { id: "plan", kind: "skill", skill: "plan", name: "План", executors: [] }, builtinStage("demo", [])] }],
-      minButtonWidth: 170,
-    };
-    const slot = renderSlot<PluginNavPanelProps, typeof flowSettingsRpcContract>(app.navPanels.find((p) => p.id === "flows")!, { subPath: "" }, {
-      rpc: { getFlowSettings: () => mixed, saveFlowSettings: (input: unknown) => input, getStageCatalog: () => catalog } as never,
-      settings: { language: "Русский" },
-    });
-    expect((await row(slot, 2)).getByText("выбирает этапы 3–5")).toBeTruthy();
-    expect((await row(slot, 5)).getByText("показывает этапы 1–4")).toBeTruthy();
-  });
-});
 
 describe("иконки файла навыка в поле навыка", () => {
   const openWith = (skillFile: (input: { name: string }) => SkillFile) =>

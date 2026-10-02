@@ -3,7 +3,7 @@ import fc from "fast-check";
 import { describe, expect, it } from "vitest";
 
 import { flowSchema, type WorkStage } from "../shared/contract";
-import { dropStage, ownerOf, removeStage, runCascade, stageNumbers, stageScope, subStagesOf, type DropZone } from "./sub-stages";
+import { dropStage, ownerOf, removeStage, runCascade, stageNumbers, subStagesOf, type DropZone } from "./sub-stages";
 
 const stage = (id: string, patch: Partial<WorkStage> = {}): WorkStage => ({ id, kind: "skill", skill: id, name: id, executors: [], ...patch });
 const sub = (id: string, parent: string): WorkStage => stage(id, { parent });
@@ -26,12 +26,6 @@ describe("номера и связка", () => {
     expect(ownerOf(LINKED, "demo")).toBeNull();
   });
 
-  it("охват Выбора и Демонстрации — по номерам верхнего уровня", () => {
-    const stages = [stage("select", { kind: "select" }), stage("task"), sub("preview", "demo"), stage("demo", { kind: "demo" }), sub("restore", "demo"), stage("merge")];
-    expect(stageScope(stages, 0)).toEqual([2, 4]);
-    expect(stageScope(stages, 3)).toEqual([1, 2]);
-    expect(stageScope([stage("demo", { kind: "demo" })], 0)).toBeNull();
-  });
 });
 
 describe("перетаскивание по четырём зонам строки", () => {

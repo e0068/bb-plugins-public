@@ -56,11 +56,6 @@ const LINKED = [stage("ship"), stage("preview", { parent: "demo" }), demo(), sta
 const FLAT = [stage("ship"), stage("preview"), demo(), stage("restore"), stage("merge")];
 
 describe("под-этапы в таблице этапов", () => {
-  it("охват Выбора и Демонстрации — по номерам верхнего уровня", async () => {
-    const slot = open([stage("select", { kind: "select", skill: "", name: "select" }), ...LINKED]);
-    expect((await slot.findByRole("row", { name: "Этап 1" })).textContent).toContain("выбирает этапы 2–4");
-    expect(slot.getByRole("row", { name: "Этап 4" }).textContent).toContain("показывает этапы 1–2");
-  });
 
   it("вторая четверть Демонстрации делает Preview её под-этапом до неё", async () => {
     const slot = open(FLAT);

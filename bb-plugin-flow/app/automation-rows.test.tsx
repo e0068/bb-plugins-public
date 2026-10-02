@@ -64,24 +64,6 @@ describe("Автоматизация Automations в таблице этапов"
 });
 
 describe("встроенная автоматизация", () => {
-  it("кнопка «Автоматизация» добавляет этап без шагов и открывает меню шагов", async () => {
-    stubAutomations(() => new Response("{}", { status: 404 }));
-    const slot = open();
-    fireEvent.click(await slot.findByRole("button", { name: "Автоматизация" }));
-    await vi.waitFor(() => expect(lastSaved(slot)?.at(-1)).toMatchObject({ kind: "skill", skill: "", name: "Автоматизация", automation: { source: "flow", steps: [] } }));
-    expect(await slot.findByRole("menu", { name: "Шаги автоматизации" })).toBeTruthy();
-  });
-
-  it("шаг добавляется из меню, уже стоящий в меню недоступен", async () => {
-    stubAutomations(() => new Response("{}", { status: 404 }));
-    const slot = open(settings([builtin(["git.create-pr"])]));
-    const row = within(await slot.findByRole("row", { name: "Этап 3" }));
-    fireEvent.click(row.getByRole("button", { name: "Добавить шаг" }));
-    const menu = within(await slot.findByRole("menu", { name: "Шаги автоматизации" }));
-    expect(menu.getByRole("menuitem", { name: "Открыть PR" }).getAttribute("aria-disabled")).toBe("true");
-    fireEvent.click(menu.getByRole("menuitem", { name: "Смёрджить PR" }));
-    await vi.waitFor(() => expect(lastSaved(slot)?.at(-1)?.automation).toEqual({ source: "flow", steps: ["git.create-pr", "git.merge"] }));
-  });
 
   it("шаг убирается крестом", async () => {
     stubAutomations(() => new Response("{}", { status: 404 }));

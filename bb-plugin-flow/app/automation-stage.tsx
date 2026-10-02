@@ -1,39 +1,40 @@
-// Автоматизации в таблице этапов flow. Кнопка «Автоматизация» ставит встроенную
-// автоматизацию Flow и сразу открывает меню шагов. В меню шагов, кроме шагов Flow,
-// есть «Добавить скрипт…»: выбранный файл хранится в автоматизации и становится
-// шагом с именем файла. Шаги встроенной — теги, как
-// исполнители у этапа навыка: плюс с меню, крест, перетаскивание. Шаги
-// автоматизации Automations — теги только для чтения: они правятся там.
-// Шаги встроенной сохраняются набором без имени кнопкой у строки; наборы —
-// в меню кнопки «Автоматизация» строкой своих шагов, выбор ставит их в этап.
-import { useEffect, useRef, useState, type ChangeEvent, type DragEvent } from "react";
+// Сегмент «Скрипт» меню исполнения и теги шагов в строке таблицы этапов.
+// Сегмент: наверху — кто запускает шаги, Flow сам или владелец кнопкой (этап
+// Action); дальше виджеты — Вопросы, Критерии, Выбор этапов, Демонстрация;
+// сохранённые наборы, шаги Flow и «Добавить скрипт…»: выбранный файл хранится в
+// автоматизации и становится шагом с именем файла. Шаги встроенной — теги, как
+// исполнители у этапа навыка: крест, перетаскивание, закладка «Сохранить набор».
+// Шаги автоматизации Automations — теги только для чтения: они правятся там.
+// Как этап переходит от одного исполнения к другому — ../core/stage-execution.
+import { useRef, useState, type ChangeEvent, type DragEvent } from "react";
 
 import { isStepId, STEP_IDS, type StepId } from "@bb-plugins/automation-steps/catalog";
-import { FieldOverlay, overlayItem, useFieldOverlay } from "../components/ui/field-overlay";
+import { overlayItem } from "../components/ui/field-overlay";
 import { Icon } from "../components/ui/icon";
-import { builtinAutomationStage } from "../core/automation-run";
 import { NEEDS_OPEN_PR, opensPrBefore } from "../core/automation-order";
 import { addScript, MAX_SCRIPT_CHARS, removeStep, scriptOf } from "../core/automation-scripts";
 import { applySet, isSaved, removeSet, saveSet } from "../core/automation-sets";
 import { moveItem } from "../core/reorder";
-import { actionStage, stageKindOf } from "../lib/stage-constants";
+import { executionOf, withRun, withSteps, withWidget } from "../core/stage-execution";
+import { BUILTIN_KINDS, BUILTIN_SKILLS, isNewStageName } from "../lib/stage-constants";
 import { AUTOMATION_ICON, KIND_ICONS } from "./stage-icons";
+import { Segmented } from "./segmented";
 import { cn } from "../lib/utils";
 import type { AutomationSet, AutomationStep, BuiltinAutomation, WorkStage } from "../shared/contract";
 import { useMessages } from "./locale-context";
 
-/** Строка списка поля, недоступная для уже выбранного шага. */
+/** Строка меню, недоступная для уже выбранного шага. */
 const menuItem = cn(overlayItem, "disabled:cursor-default disabled:opacity-40 disabled:hover:bg-transparent");
-const addButton = "flex h-7 shrink-0 items-center gap-1.5 rounded-md px-2 text-[13px] text-muted-foreground hover:bg-state-hover hover:text-foreground";
+const groupTitle = "px-2 pb-0.5 pt-1.5 text-[11px] text-muted-foreground";
+const separator = <div role="separator" className="my-1 h-px bg-border" />;
 const tag = "inline-flex h-7 max-w-full items-center gap-1.5 rounded-md bg-card text-xs";
 
-/** Закрывает всплывающее по нажатию вне корня. */
 type ScriptFile = { name: string; content: string };
 
 /** Сохранённые наборы и их правка — от таблицы этапов: этот модуль не тянет SDK, его импортируют до загрузки приложения. */
 export type AutomationSets = { sets: readonly AutomationSet[]; update: (change: (sets: readonly AutomationSet[]) => readonly AutomationSet[]) => void };
 
-type SetsMenu = AutomationSets & { onSet: (set: AutomationSet) => void };
+type StageChange = (change: (stage: WorkStage) => WorkStage) => void;
 
 /** Подпись шага автоматизации: шаг Flow — по языку интерфейса, скрипт — именем файла. */
 const useStepLabel = () => {
@@ -46,17 +47,97 @@ const useStepLabels = () => {
   return (automation: BuiltinAutomation): string[] => automation.steps.map((id) => label(automation, id));
 };
 
-/** Меню шагов Flow: сверху — сохранённые наборы, если меню их показывает; уже стоящие шаги недоступны; «Добавить скрипт…» открывает выбор файла. */
-function StepsMenu({ open, onClose, taken, onPick, onScript, sets, prOpened = true }: { open: boolean; onClose: () => void; taken: readonly AutomationStep[]; onPick: (id: StepId) => void; onScript: (file: ScriptFile) => void; sets?: SetsMenu; prOpened?: boolean }) {
+type Run = "auto" | "manual";
+
+/** Кто запускает шаги: Flow сам или владелец кнопкой — этап Action. У виджета шагов нет, и выбора тоже. */
+function RunSwitch({ manual, onChange }: { manual: boolean; onChange: (manual: boolean) => void }) {
+  const t = useMessages();
+  return (
+    <div className="flex items-center justify-between gap-2 px-2 pb-1.5 pt-1 text-xs text-muted-foreground">
+      <span>{t.settings.run}</span>
+      <Segmented<Run>
+        label={t.settings.run}
+        value={manual ? "manual" : "auto"}
+        onChange={(run) => onChange(run === "manual")}
+        options={[
+          { value: "auto", label: t.settings.runAuto },
+          { value: "manual", label: t.settings.runManual },
+        ]}
+      />
+    </div>
+  );
+}
+
+/** Виджеты: этап-бриф ведётся навыком своего вида и виджетом в треде; отмечен тот, что стоит у этапа. */
+function WidgetOptions({ stage, onChange, onDone }: { stage: WorkStage; onChange: StageChange; onDone: () => void }) {
+  const t = useMessages();
+  const current = executionOf(stage);
+  return (
+    <div role="group" aria-label={t.settings.widgets}>
+      <div className={groupTitle}>{t.settings.widgets}</div>
+      {BUILTIN_KINDS.map((kind) => {
+        const on = current.kind === "widget" && current.widget === kind;
+        return (
+          <button
+            key={kind}
+            type="button"
+            role="menuitemradio"
+            aria-checked={on}
+            onClick={() => {
+              onChange((s) => withWidget(s, kind));
+              onDone();
+            }}
+            className={menuItem}
+          >
+            <Icon name={KIND_ICONS[kind]} aria-hidden="true" className="size-3.5 shrink-0 text-muted-foreground" />
+            <span className="flex min-w-0 flex-1 flex-col leading-tight">
+              <span>{t.stages[kind]}</span>
+              <span className="line-clamp-1 font-mono text-[11px] text-muted-foreground">{BUILTIN_SKILLS[kind]}</span>
+            </span>
+            <span aria-hidden="true" className="flex size-4 shrink-0 items-center justify-center rounded-full border border-border">
+              {on && <span className="size-2 rounded-full bg-foreground" />}
+            </span>
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+/** Сохранённые наборы строкой своих шагов; выбор ставит их в этап, крест убирает набор из меню. */
+function SetOptions({ sets, onPick }: { sets: AutomationSets; onPick: (set: AutomationSet) => void }) {
   const t = useMessages();
   const labels = useStepLabels();
+  return (
+    <div role="group" aria-label={t.settings.savedSets}>
+      <div className={groupTitle}>{t.settings.savedSets}</div>
+      {sets.sets.map((set, i) => {
+        const label = labels({ source: "flow", ...set }).join(" · ");
+        return (
+          <div key={`${i}-${label}`} className="flex items-center gap-0.5">
+            <button type="button" role="menuitem" title={label} onClick={() => onPick(set)} className={cn(menuItem, "min-w-0 flex-1")}>
+              <span className="min-w-0 truncate">{label}</span>
+            </button>
+            <button
+              type="button"
+              aria-label={t.settings.removeSet(label)}
+              onClick={() => sets.update((current) => removeSet(current, i))}
+              className="flex size-6 shrink-0 items-center justify-center rounded text-muted-foreground hover:bg-state-hover hover:text-foreground"
+            >
+              <Icon name="X" aria-hidden="true" className="size-3" />
+            </button>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+/** Шаги Flow: уже стоящие и шаги по открытому PR раньше самого открытия недоступны; «Добавить скрипт…» открывает выбор файла. */
+function StepOptions({ taken, prOpened, onPick, onScript }: { taken: readonly AutomationStep[]; prOpened: boolean; onPick: (id: StepId) => void; onScript: (file: ScriptFile) => void }) {
+  const t = useMessages();
   const input = useRef<HTMLInputElement>(null);
   const [tooBig, setTooBig] = useState(false);
-  // Меню живёт между открытиями — раньше оно пересоздавалось каждый раз, и
-  // жалоба на слишком длинный скрипт уходила сама; теперь её снимает закрытие.
-  useEffect(() => {
-    if (!open) setTooBig(false);
-  }, [open]);
   const onFile = async (event: ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     event.target.value = "";
@@ -68,31 +149,8 @@ function StepsMenu({ open, onClose, taken, onPick, onScript, sets, prOpened = tr
     if (content.length <= MAX_SCRIPT_CHARS) onScript({ name: file.name, content });
   };
   return (
-    <FieldOverlay open={open} onClose={onClose} role="menu" label={t.settings.automationSteps} className="min-w-[16rem]">
-      {sets !== undefined && sets.sets.length > 0 && (
-        <>
-          <div className="px-2 pb-1 pt-1.5 text-[11px] text-muted-foreground">{t.settings.savedSets}</div>
-          {sets.sets.map((set, i) => {
-            const label = labels({ source: "flow", ...set }).join(" · ");
-            return (
-              <div key={`${i}-${label}`} className="flex items-center gap-0.5">
-                <button type="button" role="menuitem" title={label} onClick={() => sets.onSet(set)} className={cn(menuItem, "min-w-0 flex-1")}>
-                  <span className="min-w-0 truncate">{label}</span>
-                </button>
-                <button
-                  type="button"
-                  aria-label={t.settings.removeSet(label)}
-                  onClick={() => sets.update((current) => removeSet(current, i))}
-                  className="flex size-6 shrink-0 items-center justify-center rounded text-muted-foreground hover:bg-state-hover hover:text-foreground"
-                >
-                  <Icon name="X" aria-hidden="true" className="size-3" />
-                </button>
-              </div>
-            );
-          })}
-          <div role="separator" className="my-1 h-px bg-border" />
-        </>
-      )}
+    <div role="group" aria-label={t.settings.automationSteps}>
+      <div className={groupTitle}>{t.settings.automationSteps}</div>
       {STEP_IDS.map((id) => {
         // Шаг по номеру открытого PR раньше самого открытия — цепочка, падающая
         // на первом же прогоне. Такой пункт не выбрать, и подпись говорит почему.
@@ -109,139 +167,91 @@ function StepsMenu({ open, onClose, taken, onPick, onScript, sets, prOpened = tr
             onClick={() => onPick(id)}
             className={menuItem}
           >
+            <Icon name={AUTOMATION_ICON} aria-hidden="true" className="size-3.5 shrink-0 text-muted-foreground" />
             {t.steps[id]}
           </button>
         );
       })}
-      <div role="separator" className="my-1 h-px bg-border" />
+      {separator}
       <button type="button" role="menuitem" onClick={() => input.current?.click()} className={menuItem}>
-        <Icon name="Code" aria-hidden="true" className="size-3.5" />
+        <Icon name="Code" aria-hidden="true" className="size-3.5 shrink-0 text-muted-foreground" />
         {t.settings.addScript}
       </button>
       {tooBig && <div className="px-2 py-1.5 text-xs text-destructive">{t.settings.scriptTooBig}</div>}
       <input ref={input} type="file" hidden onChange={(event) => void onFile(event)} />
-    </FieldOverlay>
+    </div>
   );
 }
 
-const EMPTY: BuiltinAutomation = { source: "flow", steps: [] };
-
-const builtinOf = (stage: WorkStage): BuiltinAutomation => (stage.automation !== undefined && "source" in stage.automation ? stage.automation : EMPTY);
-
-const withAutomation = (stage: WorkStage, change: (automation: BuiltinAutomation) => BuiltinAutomation): WorkStage => ({ ...stage, automation: change(builtinOf(stage)) });
-
-const withStep = (id: StepId) => (stage: WorkStage) => withAutomation(stage, (a) => ({ ...a, steps: [...a.steps, id] }));
-
-/** Id скрипта — случайный: номер, освободившийся после удаления, повтор прогона принял бы за прежний скрипт. */
-const withScript = (file: ScriptFile, id: string) => (stage: WorkStage) => withAutomation(stage, (a) => addScript(a, file, id));
-
-/** «Автоматизация»: новая встроенная автоматизация в конец таблицы и меню её шагов под кнопкой. */
-export function AddBuiltinAutomation({ stages, sets, onAdd, onChange }: { stages: readonly WorkStage[]; sets: AutomationSets; onAdd: (stage: WorkStage) => void; onChange: (id: string, change: (stage: WorkStage) => WorkStage) => void }) {
-  const t = useMessages();
-  const [added, setAdded] = useState<string | null>(null);
-  const close = () => setAdded(null);
-  const { root } = useFieldOverlay(added !== null, close);
-  const current = stages.find((s) => s.id === added);
-  // Меню смонтировано и при закрытом этапе — ради выезда шторы; цель правки
-  // сужается здесь один раз, а не стражем в каждом колбэке.
-  const change = (patch: (stage: WorkStage) => WorkStage) => added !== null && onChange(added, patch);
+/**
+ * Сегмент «Скрипт»: запуск, виджеты, сохранённые наборы, шаги Flow и свой файл. Выбор виджета, набора или шага закрывает
+ * меню — этап сменил исполнение и виден в строке; переключатель запуска меню не закрывает. Запуск выбирается только у
+ * скрипта и у пустого этапа: у этапа с агентами он снял бы их одним нажатием, не показав, что снимает. Ещё не названный
+ * новый этап шаги подписывают собой — через запятую.
+ */
+export function ScriptOptions({ stage, stages, sets, onChange, onDone }: { stage: WorkStage; stages: readonly WorkStage[]; sets: AutomationSets; onChange: StageChange; onDone: () => void }) {
   const labels = useStepLabels();
-  const onSet = (set: AutomationSet) => {
-    if (added === null) return;
-    const automation = applySet(set, () => crypto.randomUUID());
-    onChange(added, (stage) => ({ ...stage, name: labels(automation).join(", "), automation }));
-    setAdded(null);
+  const current = executionOf(stage);
+  const automation = current.kind === "script" ? current.automation : null;
+  const steps = automation?.steps ?? [];
+  const runnable = current.kind === "script" || (current.kind === "executors" && current.executors.length === 0);
+  const apply = (change: (automation: BuiltinAutomation) => BuiltinAutomation) => {
+    onChange((s) => {
+      const next = withSteps(change)(s);
+      return isNewStageName(s.name) && next.automation !== undefined && "source" in next.automation ? { ...next, name: labels(next.automation).join(", ") } : next;
+    });
+    onDone();
   };
   return (
-    <div ref={root} className="relative">
-      <button
-        type="button"
-        onClick={() => {
-          const stage = { ...builtinAutomationStage(stages.map((s) => s.id)), name: t.settings.automationStage };
-          onAdd(stage);
-          setAdded(stage.id);
-        }}
-        className={addButton}
-      >
-        <Icon name={AUTOMATION_ICON} aria-hidden="true" className="size-3.5" />
-        {t.settings.addBuiltinAutomation}
-      </button>
-      <StepsMenu
-        open={added !== null}
-        onClose={close}
-        taken={current === undefined ? [] : builtinOf(current).steps}
-        onPick={(id) => change(withStep(id))}
-        onScript={(file) => change(withScript(file, crypto.randomUUID()))}
-        prOpened={added === null || opensPrBefore(stages, added)}
-        // Набор ставится только в пустой этап: к уже выбранным шагам его не подмешать.
-        {...(current === undefined || builtinOf(current).steps.length === 0 ? { sets: { ...sets, onSet } } : {})}
+    <>
+      {runnable && (
+        <>
+          <RunSwitch manual={current.kind === "script" && current.manual} onChange={(manual) => onChange((s) => withRun(s, manual))} />
+          {separator}
+        </>
+      )}
+      <WidgetOptions stage={stage} onChange={onChange} onDone={onDone} />
+      {/* Набор ставится только в этап без шагов: к уже выбранным шагам его не подмешать. */}
+      {sets.sets.length > 0 && steps.length === 0 && (
+        <>
+          {separator}
+          <SetOptions sets={sets} onPick={(set) => apply(() => applySet(set, () => crypto.randomUUID()))} />
+        </>
+      )}
+      {separator}
+      <StepOptions
+        taken={steps}
+        prOpened={opensPrBefore(stages, stage.id)}
+        onPick={(id) => apply((a) => ({ ...a, steps: [...a.steps, id] }))}
+        // Id скрипта — случайный: номер, освободившийся после удаления, повтор прогона принял бы за прежний скрипт.
+        onScript={(file) => apply((a) => addScript(a, file, crypto.randomUUID()))}
       />
-    </div>
+    </>
   );
 }
 
-/** «Action»: новый этап Action в конец таблицы и меню его шагов под кнопкой — те же шаги, что у автоматизации. */
-export function AddAction({ stages, onAdd, onChange }: { stages: readonly WorkStage[]; onAdd: (stage: WorkStage) => void; onChange: (id: string, change: (stage: WorkStage) => WorkStage) => void }) {
+/** Метка этапа Action перед шагами: шаги запускает владелец кнопкой в полосе прогресса. */
+export function ManualMark() {
   const t = useMessages();
-  const [added, setAdded] = useState<string | null>(null);
-  const close = () => setAdded(null);
-  const { root } = useFieldOverlay(added !== null, close);
-  const current = stages.find((s) => s.id === added);
-  const change = (patch: (stage: WorkStage) => WorkStage) => added !== null && onChange(added, patch);
   return (
-    <div ref={root} className="relative">
-      <button
-        type="button"
-        aria-label={t.settings.addStage(t.stages.action)}
-        onClick={() => {
-          const stage = actionStage(stages.map((s) => s.id));
-          onAdd(stage);
-          setAdded(stage.id);
-        }}
-        className={cn(addButton, "text-foreground")}
-      >
-        <Icon name={KIND_ICONS.action} aria-hidden="true" className="size-3.5" />
-        {t.settings.addAction}
-      </button>
-      <StepsMenu
-        open={added !== null}
-        onClose={close}
-        taken={current === undefined ? [] : builtinOf(current).steps}
-        onPick={(id) => change(withStep(id))}
-        onScript={(file) => change(withScript(file, crypto.randomUUID()))}
-        prOpened={added === null || opensPrBefore(stages, added)}
-      />
-    </div>
-  );
-}
-
-/** Ячейка вида этапа с шагами: Action, встроенная автоматизация или автоматизация Automations. */
-export function AutomationKindCell({ stage, className }: { stage: WorkStage; className?: string }) {
-  const t = useMessages();
-  const builtin = stage.automation !== undefined && "source" in stage.automation;
-  const name = stageKindOf(stage) === "action" ? t.stages.action : builtin ? t.settings.automationStage : t.settings.automationsSource;
-  return (
-    <span role="cell" className={cn("flex h-7 min-w-0 items-center px-2 text-xs text-muted-foreground", className)}>
-      <span className="truncate">{name}</span>
+    <span title={t.settings.runManualHint} className="inline-flex h-7 shrink-0 items-center gap-1.5 rounded-md bg-state-active px-2 text-xs">
+      <Icon name={KIND_ICONS.action} aria-hidden="true" className="size-3" />
+      {t.settings.runManual}
     </span>
   );
 }
 
-/** Теги шагов этапа-автоматизации: у встроенной — правка, у автоматизации Automations — только чтение. */
-export function AutomationStepTags({ stage, stages, sets, onChange }: { stage: WorkStage; stages: readonly WorkStage[]; sets: AutomationSets; onChange: (change: (stage: WorkStage) => WorkStage) => void }) {
+/** Теги шагов: у встроенного скрипта — крест, перетаскивание и закладка набора, у автоматизации Automations — только чтение. */
+export function AutomationStepTags({ stage, sets, onChange }: { stage: WorkStage; sets: AutomationSets; onChange: StageChange }) {
   const t = useMessages();
-  const [open, setOpen] = useState(false);
-  const close = () => setOpen(false);
-  const { root } = useFieldOverlay(open, close);
   const [dragged, setDragged] = useState<number | null>(null);
   const label = useStepLabel();
-  const automation = stage.automation;
-  if (automation === undefined) return null;
+  const current = executionOf(stage);
 
-  if (!("source" in automation)) {
+  if (current.kind === "external") {
     return (
-      <ul title={t.settings.stepsReadOnly} className="flex min-w-0 flex-wrap gap-1">
-        {(automation.steps ?? []).map((label, i) => (
+      <ul title={t.settings.stepsReadOnly} className="contents">
+        {(current.automation.steps ?? []).map((label, i) => (
           <li key={`${i}-${label}`} className={cn(tag, "px-2")}>
             <span className="min-w-0 truncate">{label}</span>
           </li>
@@ -249,23 +259,21 @@ export function AutomationStepTags({ stage, stages, sets, onChange }: { stage: W
       </ul>
     );
   }
+  if (current.kind !== "script") return null;
 
-  const steps = automation.steps;
+  const automation = current.automation;
   const labelOf = (id: AutomationStep) => label(automation, id);
   const saved = isSaved(sets.sets, automation);
   const drop = (event: DragEvent, target: number) => {
     event.preventDefault();
-    if (dragged !== null) onChange((s) => withAutomation(s, (a) => ({ ...a, steps: moveItem(a.steps, dragged, target) })));
+    if (dragged !== null) onChange(withSteps((a) => ({ ...a, steps: moveItem(a.steps, dragged, target) })));
     setDragged(null);
   };
   return (
-    <div ref={root} className="relative flex min-w-0 flex-wrap items-center gap-1">
-      <button type="button" aria-label={t.settings.addStep} title={t.settings.addStep} aria-expanded={open} onClick={() => setOpen(!open)} className="flex size-7 shrink-0 items-center justify-center rounded-md bg-card text-muted-foreground hover:bg-state-hover hover:text-foreground">
-        <Icon name="Plus" aria-hidden="true" className="size-3.5" />
-      </button>
-      {steps.length === 0 && <span className="px-1 text-xs text-muted-foreground">{t.settings.noSteps}</span>}
+    <>
+      {automation.steps.length === 0 && <span className="flex h-7 items-center px-1 text-xs text-muted-foreground">{t.settings.noSteps}</span>}
       <ul className="contents">
-        {steps.map((id, i) => (
+        {automation.steps.map((id, i) => (
           <li
             key={id}
             draggable
@@ -277,13 +285,18 @@ export function AutomationStepTags({ stage, stages, sets, onChange }: { stage: W
             className={cn(tag, "cursor-grab pl-2 pr-0.5", dragged === i && "opacity-50")}
           >
             <span className="min-w-0 truncate">{labelOf(id)}</span>
-            <button type="button" aria-label={t.settings.removeStep(labelOf(id))} onClick={() => onChange((s) => withAutomation(s, (a) => removeStep(a, id)))} className="flex size-6 shrink-0 items-center justify-center rounded text-muted-foreground hover:bg-state-hover hover:text-foreground">
+            <button
+              type="button"
+              aria-label={t.settings.removeStep(labelOf(id))}
+              onClick={() => onChange(withSteps((a) => removeStep(a, id)))}
+              className="flex size-6 shrink-0 items-center justify-center rounded text-muted-foreground hover:bg-state-hover hover:text-foreground"
+            >
               <Icon name="X" aria-hidden="true" className="size-3" />
             </button>
           </li>
         ))}
       </ul>
-      {steps.length > 0 && (
+      {automation.steps.length > 0 && (
         <button
           type="button"
           aria-label={t.settings.saveSet}
@@ -296,20 +309,6 @@ export function AutomationStepTags({ stage, stages, sets, onChange }: { stage: W
           <Icon name="Bookmark" aria-hidden="true" className="size-3.5" />
         </button>
       )}
-      <StepsMenu
-        open={open}
-        onClose={close}
-        prOpened={opensPrBefore(stages, stage.id)}
-        taken={steps}
-        onPick={(id) => {
-          onChange(withStep(id));
-          close();
-        }}
-        onScript={(file) => {
-          onChange(withScript(file, crypto.randomUUID()));
-          close();
-        }}
-      />
-    </div>
+    </>
   );
 }
