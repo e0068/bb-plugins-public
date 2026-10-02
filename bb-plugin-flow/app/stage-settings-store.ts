@@ -115,3 +115,8 @@ export function useFlowSettings(): FlowSettingsSnapshot {
 export const useAutomationSets = () => useSyncExternalStore(subscribe, () => snapshot.settings?.automationSets ?? NO_SETS, () => NO_SETS);
 
 const NO_SETS: NonNullable<FlowSettings["automationSets"]> = [];
+
+/** Шаблоны этапов — из той же коллекции: закладкам строк и меню «Добавить этап» не нужно монтировать загрузку. */
+export const useStageTemplates = () => useSyncExternalStore(subscribe, () => snapshot.settings?.stageTemplates ?? NO_TEMPLATES, () => NO_TEMPLATES);
+
+const NO_TEMPLATES: NonNullable<FlowSettings["stageTemplates"]> = [];

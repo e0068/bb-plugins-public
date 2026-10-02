@@ -9,6 +9,7 @@ import { liveIssues } from "../core/outcome";
 import { DECISION_ID_PREFIX, directiveLine } from "../core/directive";
 import { criterionEditable, money, plannedMinutes, recommendedForecast } from "../core/budget";
 import { FLOW_RULE, SELF_ONLY_RULE, isAutomationStage, isStageCarryKey, reportIssues, stageInstructions, withStepResults } from "../core/stages";
+import { isHeadingStage } from "../core/sub-stages";
 import { stageKindOf, type BuiltinKind } from "../lib/stage-constants";
 import { askDecisionParamsSchema, type AskDecisionParams, type Criterion, type DecisionBrief, type Planning, type RestoredDraft, type StageSettings } from "../shared/contract";
 import type { ProgressStore } from "./progress";
@@ -141,7 +142,7 @@ const baseIssues = (params: AskDecisionParams, launched: boolean, stages: StageS
   const criteria = params.setup?.criteria ?? [];
   const unpriced = criteria.flatMap((item, i) => (pricedItem(item) ? [] : [i + 1]));
   const unshared = (params.setup?.stages ?? [])
-    .filter((r) => r.state === "todo" && r.share === undefined && stages.some((s) => s.id === r.id && stageKindOf(s) === "skill" && !isAutomationStage(s)))
+    .filter((r) => r.state === "todo" && r.share === undefined && stages.some((s) => s.id === r.id && stageKindOf(s) === "skill" && !isAutomationStage(s) && !isHeadingStage(stages, s)))
     .map((r) => r.id);
   return [
     ...(params.scope === undefined ? ["scope is missing: start the brief with what you understood — the minimal set of work as a nested list; its items are setup.criteria"] : []),

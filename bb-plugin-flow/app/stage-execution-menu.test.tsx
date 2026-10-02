@@ -78,10 +78,10 @@ const groupItems = (menu: ReturnType<typeof within>, group: string) =>
   [...menu.getByRole("group", { name: group }).querySelectorAll('[role^="menuitem"]')].map((item) => item.textContent);
 
 describe("строка этапа", () => {
-  it("колонки идут по порядку: название, навык, исполнение", async () => {
+  it("колонки идут по порядку: название, навык, исполнение, шаблон, удалить", async () => {
     const slot = open();
     await slot.findByRole("row", { name: "Этап 1" });
-    expect(slot.getAllByRole("columnheader").map((h) => h.textContent)).toEqual(["№", "Название", "Навык", "Исполнение", "Удалить"]);
+    expect(slot.getAllByRole("columnheader").map((h) => h.textContent)).toEqual(["№", "Название", "Навык", "Исполнение", "Шаблон", "Удалить"]);
   });
 
   it("виджет — тег вида с крестом, без надписи охвата", async () => {
@@ -289,10 +289,13 @@ describe("сохранённые наборы в «Скрипте»", () => {
 });
 
 describe("под таблицей", () => {
-  it("«Добавить этап» и «Удалить flow» стоят одной строкой, полосы кнопок видов нет", async () => {
+  it("«Добавить этап» и «Удалить flow» стоят в одной строке под таблицей, полосы кнопок видов нет", async () => {
     const slot = open();
     const add = await slot.findByRole("button", { name: "Добавить этап" });
-    expect(add.parentElement).toBe(slot.getByRole("button", { name: "Удалить flow Default" }).parentElement);
+    const remove = slot.getByRole("button", { name: "Удалить flow Default" });
+    const line = [...slot.container.querySelectorAll<HTMLElement>("div")].filter((el) => el.contains(add) && el.contains(remove)).at(-1)!;
+    expect(line.className).toMatch(/\bflex\b/);
+    expect(line.className).not.toMatch(/flex-col/);
     for (const name of ["Добавить этап Навык", "Добавить этап Вопросы", "Добавить этап Action", "Автоматизация"]) expect(slot.queryByRole("button", { name })).toBeNull();
   });
 

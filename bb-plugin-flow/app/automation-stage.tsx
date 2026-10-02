@@ -3,7 +3,8 @@
 // Action); дальше виджеты — Вопросы, Критерии, Выбор этапов, Демонстрация;
 // сохранённые наборы, шаги Flow и «Добавить скрипт…»: выбранный файл хранится в
 // автоматизации и становится шагом с именем файла. Шаги встроенной — теги, как
-// исполнители у этапа навыка: крест, перетаскивание, закладка «Сохранить набор».
+// исполнители у этапа навыка: крест и перетаскивание. Наборы, сохранённые прежней
+// закладкой, остаются в меню; новые закладка строки кладёт шаблоном этапа.
 // Шаги автоматизации Automations — теги только для чтения: они правятся там.
 // Как этап переходит от одного исполнения к другому — ../core/stage-execution.
 import { useRef, useState, type ChangeEvent, type DragEvent } from "react";
@@ -13,7 +14,7 @@ import { overlayItem } from "../components/ui/field-overlay";
 import { Icon } from "../components/ui/icon";
 import { NEEDS_OPEN_PR, opensPrBefore } from "../core/automation-order";
 import { addScript, MAX_SCRIPT_CHARS, removeStep, scriptOf } from "../core/automation-scripts";
-import { applySet, isSaved, removeSet, saveSet } from "../core/automation-sets";
+import { applySet, removeSet } from "../core/automation-sets";
 import { moveItem } from "../core/reorder";
 import { executionOf, withRun, withSteps, withWidget } from "../core/stage-execution";
 import { BUILTIN_KINDS, BUILTIN_SKILLS, isNewStageName } from "../lib/stage-constants";
@@ -241,8 +242,8 @@ export function ManualMark() {
   );
 }
 
-/** Теги шагов: у встроенного скрипта — крест, перетаскивание и закладка набора, у автоматизации Automations — только чтение. */
-export function AutomationStepTags({ stage, sets, onChange }: { stage: WorkStage; sets: AutomationSets; onChange: StageChange }) {
+/** Теги шагов: у встроенного скрипта — крест и перетаскивание, у автоматизации Automations — только чтение. */
+export function AutomationStepTags({ stage, onChange }: { stage: WorkStage; onChange: StageChange }) {
   const t = useMessages();
   const [dragged, setDragged] = useState<number | null>(null);
   const label = useStepLabel();
@@ -263,7 +264,6 @@ export function AutomationStepTags({ stage, sets, onChange }: { stage: WorkStage
 
   const automation = current.automation;
   const labelOf = (id: AutomationStep) => label(automation, id);
-  const saved = isSaved(sets.sets, automation);
   const drop = (event: DragEvent, target: number) => {
     event.preventDefault();
     if (dragged !== null) onChange(withSteps((a) => ({ ...a, steps: moveItem(a.steps, dragged, target) })));
@@ -296,19 +296,6 @@ export function AutomationStepTags({ stage, sets, onChange }: { stage: WorkStage
           </li>
         ))}
       </ul>
-      {automation.steps.length > 0 && (
-        <button
-          type="button"
-          aria-label={t.settings.saveSet}
-          aria-description={saved ? t.settings.setSaved : undefined}
-          title={saved ? t.settings.setSaved : t.settings.saveSet}
-          disabled={saved}
-          onClick={() => sets.update((current) => saveSet(current, automation))}
-          className="flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-state-hover hover:text-foreground disabled:cursor-default disabled:text-foreground disabled:hover:bg-transparent"
-        >
-          <Icon name="Bookmark" aria-hidden="true" className="size-3.5" />
-        </button>
-      )}
     </>
   );
 }

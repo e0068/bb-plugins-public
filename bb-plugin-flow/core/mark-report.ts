@@ -79,9 +79,9 @@ const dueReply = (markedId: string, stage: WorkStage, fact: StartFact): string =
     case "started":
       return isActionStage(stage)
         ? ` The next stage ${label(stage)} is an action: Flow put its steps above the composer, and the owner runs its steps with a button — end your turn.`
-        : ` Flow started the next stage ${label(stage)} — an automation; it runs by itself now — end your turn and tell the owner it has started.`;
+        : ` Flow started the next stage ${label(stage)} — an automation; it runs by itself now — end your turn without a message to the owner: the owner sees it run above the composer, and the demo reports the work.`;
     case "busy":
-      return ` ${head} was NOT started yet: Flow is still running stage ${fact.stage} of this thread, and ${stage.id} is queued right after it — end your turn and tell the owner it is queued, not running.`;
+      return ` ${head} was NOT started yet: Flow is still running stage ${fact.stage} of this thread, and ${stage.id} is queued right after it — end your turn without a message to the owner: Flow starts it once that stage ends.`;
     case "not-started":
       return ` ${head} was NOT started: Flow recorded no start for it. Do not tell the owner it runs. Tell the owner that Flow did not start ${stage.id}; to retry, mark ${markedId} started and done again.`;
   }

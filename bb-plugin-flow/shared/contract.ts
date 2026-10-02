@@ -221,10 +221,22 @@ export const workStageSchema = z
     automation: stageAutomationSchema.optional(),
     /** Под-этап: id этапа-владельца того же flow. Стоит выше владельца — идёт до него, ниже — после; включается и отключается вместе с ним. */
     parent: text.optional(),
+    /** Иконка, выбранная владельцем, — имя из подборки Hugeicons; нет поля или имя вне подборки — иконка по виду этапа. */
+    icon: text.optional(),
   })
   .superRefine((s, ctx) => {
     if (!uniqueIds(s.executors)) ctx.addIssue({ code: "custom", message: "executor ids must be unique within a stage", path: ["executors"] });
   });
+
+/** Шаблон этапа — этап целиком без места в flow: без id и владельца. Закладка строки кладёт его в меню «Добавить этап». */
+export const stageTemplateSchema = z.object({
+  kind: z.enum(STAGE_KINDS).optional(),
+  skill: z.string(),
+  name: text,
+  icon: text.optional(),
+  executors: z.array(stageExecutorSchema),
+  automation: stageAutomationSchema.optional(),
+});
 
 export const stageSettingsSchema = z
   .object({ stages: z.array(workStageSchema), minButtonWidth: z.number().int().min(STAGE_BUTTON_WIDTH.min).max(STAGE_BUTTON_WIDTH.max) })
@@ -253,6 +265,7 @@ export const flowSettingsSchema = z
     retryInSeconds: z.number().int().min(0).max(RETRY_LIMITS.seconds).optional(),
     retryAttempts: z.number().int().min(0).max(RETRY_LIMITS.attempts).optional(),
     automationSets: z.array(automationSetSchema).optional(),
+    stageTemplates: z.array(stageTemplateSchema).optional(),
     version: z.literal(2).optional(),
   })
   .superRefine((s, ctx) => {
@@ -927,6 +940,8 @@ export const progressStageSchema = z.object({
   number: z.number().int().positive().nullable().optional(),
   /** Под-этап: id этапа-владельца, под строкой которого он свёрнут. */
   parent: text.optional(),
+  /** Иконка, выбранная владельцем на странице Flow; нет — иконка по виду и исполнителю. */
+  icon: text.optional(),
   /** Минуты работы на этапе: активные, а без них — от начала до конца этапа. */
   minutes: z.number().int().nonnegative().nullable(),
   /** Всё время этапа от начала до конца, вместе с ожиданием владельца. */
@@ -1164,6 +1179,7 @@ export type AgentLogo = z.output<typeof automationRpcContract.agentLogos.output>
 export type StageSettings = z.output<typeof stageSettingsSchema>;
 export type Flow = z.output<typeof flowSchema>;
 export type AutomationSet = z.output<typeof automationSetSchema>;
+export type StageTemplate = z.output<typeof stageTemplateSchema>;
 export type FlowSettings = z.output<typeof flowSettingsSchema>;
 export type StageReport = z.output<typeof stageReportSchema>;
 export type StageAnswer = z.output<typeof stageAnswerSchema>;
