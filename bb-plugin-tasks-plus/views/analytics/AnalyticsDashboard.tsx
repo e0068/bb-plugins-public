@@ -7,7 +7,7 @@
 // and adds new ones from the empty tile at the end. This file is the shell:
 // it asks the server and keeps the state; every pure piece lives in the
 // modules it imports.
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 
 import { Button } from "../../components/ui/button";
 import { DropdownMenu, DropdownMenuCheckboxItem, DropdownMenuContent, DropdownMenuTrigger } from "../../components/ui/dropdown-menu";
@@ -18,9 +18,10 @@ import { useTasksNavigation } from "../../client/routes.js";
 import { cn } from "../../lib/utils";
 import { isSuggested } from "../../shared/tile-conditions.js";
 import { tileTable, type TileTable } from "../../shared/analytics-tile.js";
+import { DEFAULT_REDUCED_PROJECTS } from "../../shared/reduced-projects.js";
 import { Swatch } from "./bars";
 import { useSuggestionScope } from "./suggestion-scope";
-import { ChartColorsScope, useChartColors } from "./chart-colors";
+import { ChartColorsScope, useChartColors, type ChartBoard } from "./chart-colors";
 import { hourEdges } from "./closed-model";
 import {
   ANALYTICS_WINDOWS,
@@ -85,8 +86,8 @@ const countsMinutes = (tile: Tile): boolean => tile.window !== "page" && tile.wi
 const WINDOW_TITLE: Record<AnalyticsWindow, string> = { day: "Day", week: "Week", month: "Month", all: "All time" };
 
 /** A project chip's swatch — the project's colour on the charts, Reduced Colors applied. */
-function ProjectSwatch({ index }: { index: number }) {
-  return <Swatch color={useChartColors().project(index)} />;
+function ProjectSwatch({ id }: { id: string }) {
+  return <Swatch color={useChartColors().project(id)} />;
 }
 
 export interface ProjectChipsProps {
@@ -127,9 +128,9 @@ export function ProjectChips({ projects, picked, onAll, onToggle }: ProjectChips
       All projects
     </Button>
   );
-  const chip = (project: { id: string; name: string }, index: number) => (
+  const chip = (project: { id: string; name: string }) => (
     <Button key={project.id} type="button" size="sm" variant={picked.includes(project.id) ? "default" : "outline"} aria-pressed={picked.includes(project.id)} onClick={() => onToggle(project.id)}>
-      <ProjectSwatch index={index} />
+      <ProjectSwatch id={project.id} />
       {project.name}
     </Button>
   );
@@ -155,9 +156,9 @@ export function ProjectChips({ projects, picked, onAll, onToggle }: ProjectChips
             <Button type="button" size="sm" variant={folded.some((project) => picked.includes(project.id)) ? "default" : "outline"}>{`+${folded.length}`}</Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="start" collisionPadding={8} mobileTitle="Projects">
-            {folded.map((project, index) => (
+            {folded.map((project) => (
               <DropdownMenuCheckboxItem key={project.id} checked={picked.includes(project.id)} onCheckedChange={() => onToggle(project.id)}>
-                <ProjectSwatch index={chips.length + index} />
+                <ProjectSwatch id={project.id} />
                 {project.name}
               </DropdownMenuCheckboxItem>
             ))}
@@ -266,6 +267,10 @@ export function AnalyticsDashboard() {
 
   const projectsQuery = useTasksQuery((client) => client.call("listProjects", {}), ["projects:changed"], []);
   const projects = [...(projectsQuery.data?.projects ?? [])].sort((a, b) => a.name.localeCompare(b.name) || a.id.localeCompare(b.id));
+  const reducedProjects = useTasksQuery((client) => client.call("loadReducedProjects", {}), [], []).data ?? DEFAULT_REDUCED_PROJECTS;
+  // A new board only when a project, its colour or the choice changes — the charts' colours are memoised on it.
+  const boardSignature = `${reducedProjects}|${projects.map((project) => `${project.id}:${project.color}`).join("|")}`;
+  const board = useMemo<ChartBoard>(() => ({ projects, reducedProjects }), [boardSignature]);
 
   const span = useTasksQuery(
     async (client) => (filter.window === "all" ? ((await client.call("analyticsSpan", { projectIds: [...filter.projectIds] })).firstCreatedMs ?? Date.now()) : Date.now()),
@@ -362,7 +367,7 @@ export function AnalyticsDashboard() {
   };
 
   return (
-    <ChartColorsScope boardProjects={projects.length}>
+    <ChartColorsScope board={board}>
       <PickScope>
         <div className="relative flex h-full min-h-0">
           <div ref={pageRef} className="h-full min-w-0 flex-1 overflow-x-hidden overflow-y-auto">

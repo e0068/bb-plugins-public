@@ -105,7 +105,7 @@ function SegmentSwitch({ tile, answer, picked, onPick }: { tile: Tile; answer: T
       </DropdownMenuItem>
     ));
   const swatch = (key: string) =>
-    tile.switch === "project" && key !== ALL ? <Swatch color={colors.project(answer.projects.findIndex((project) => project.id === key))} /> : null;
+    tile.switch === "project" && key !== ALL ? <Swatch color={colors.project(key)} /> : null;
   const segment = (value: { key: string; label: string }) => (
     <button
       key={value.key}

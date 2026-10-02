@@ -1,4 +1,5 @@
 import { Icon } from "@/components/ui/icon";
+import { isEdgeless } from "@/lib/edgeless-color";
 import { cn } from "@/lib/utils";
 
 /**
@@ -18,6 +19,8 @@ export const COLOR_PALETTE = [
   { value: "palevioletred", label: "Pink" },
   { value: "mediumpurple", label: "Purple" },
   { value: "slategray", label: "Gray" },
+  { value: "white", label: "White" },
+  { value: "black", label: "Black" },
 ] as const;
 
 export const DEFAULT_COLOR = COLOR_PALETTE[0].value;
@@ -87,6 +90,7 @@ export function ColorSwatchPicker({
           onClick={() => onChange(swatch.value)}
           className={cn(
             "size-5 rounded-md",
+            isEdgeless(swatch.value) && "border border-border",
             value === swatch.value &&
               "ring-2 ring-ring ring-offset-2 ring-offset-background",
           )}

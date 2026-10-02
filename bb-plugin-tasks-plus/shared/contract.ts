@@ -8,6 +8,7 @@ import {
   TASK_CARD_META_MAX_IDS,
 } from "./pagination.js";
 import { isPlanDate } from "./plan-date.js";
+import { REDUCED_PROJECTS } from "./reduced-projects.js";
 import {
   TASK_STATUSES,
   TASK_PRIORITIES,
@@ -1560,6 +1561,15 @@ export const tasksRpcContract = defineRpcContract({
   },
   saveReducedColors: {
     input: z.custom<ReducedColors>(),
+    output: z.object({ ok: z.literal(true) }),
+  },
+  // Whether Reduced Colors repaints the projects too (shared/reduced-projects.ts).
+  loadReducedProjects: {
+    input: z.object({}).strict(),
+    output: z.enum(REDUCED_PROJECTS),
+  },
+  saveReducedProjects: {
+    input: z.object({ value: z.enum(REDUCED_PROJECTS) }).strict(),
     output: z.object({ ok: z.literal(true) }),
   },
 });

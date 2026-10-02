@@ -9,8 +9,9 @@ import { Fragment, useState, type MouseEvent, type ReactNode } from "react";
 
 import { GRID_LINES_MAX, NONE_KEY, OTHER_KEY, type Figure } from "../../shared/analytics-tile.js";
 import { formatDollars, formatMinutes } from "../../shared/amounts.js";
-import type { TaskStatus, TaskType } from "../../shared/enums.js";
+import { TASK_STATUSES, TASK_TYPES, type TaskStatus } from "../../shared/enums.js";
 import type { Tile, TileAnswer } from "../../shared/contract.js";
+import { isEdgeless } from "../../lib/edgeless-color";
 import { cn } from "../../lib/utils";
 import { PRIORITY_LABELS } from "../common/lib.js";
 import { DivergingBars, edgeTicks, Empty, PlotFrame, StackedBars, Swatch, type BarSeries } from "./bars";
@@ -20,7 +21,7 @@ import type { ColumnUnit } from "./default-dashboard";
 import { formatDuration, trendOf } from "./flow-model";
 import { GanttChart } from "./gantt-chart";
 import { lookOf, type PickTarget } from "./segment-pick";
-import { STATUS_LABEL } from "./palette";
+import { fillStyle, STATUS_LABEL } from "./palette";
 
 /** A picked segment: a column's one series, or — series null — the whole column, as a ring's slice is. */
 export type SegmentPick = PickTarget;
@@ -86,19 +87,22 @@ export function columnName(tile: Tile, answer: TileAnswer, edges: readonly numbe
 /** The field whose values a tile's series are, when they are a field's. */
 const seriesField = (tile: Tile): Tile["breakdown"] => (tile.y.metric === "createdClosed" ? null : tile.breakdown);
 
+/** Whether `key` is one of `values` — a status or type the answer names, not one it made up. */
+const memberOf = <T extends string,>(values: readonly T[], key: string): key is T => (values as readonly string[]).includes(key);
+
 /** A series' colour: a project's, a status', a type's by their own scheme; the measure's own series and other fields by place. */
-function seriesColor(tile: Tile, answer: TileAnswer, colors: ChartColors, key: string, index: number): string {
+function seriesColor(tile: Tile, colors: ChartColors, key: string, index: number): string {
   if (key === OTHER_KEY || key === NONE_KEY) return "var(--muted-foreground)";
   if (tile.y.metric === "createdClosed") return key === "created" ? colors.createdClosed.created : colors.createdClosed.closed;
   switch (seriesField(tile)) {
     case "project":
-      return colors.project(answer.projects.findIndex((project) => project.id === key));
+      return colors.project(key);
     case "status":
-      return colors.status(key as TaskStatus);
+      return memberOf(TASK_STATUSES, key) ? colors.status(key) : "var(--muted-foreground)";
     case "type":
-      return colors.type(key as TaskType);
+      return memberOf(TASK_TYPES, key) ? colors.type(key) : "var(--muted-foreground)";
     default:
-      return colors.project(index);
+      return colors.byPlace(index);
   }
 }
 
@@ -106,13 +110,13 @@ export function tileSeries(tile: Tile, answer: TileAnswer, colors: ChartColors):
   return answer.series.map((entry, index) => ({
     id: entry.key,
     label: valueName(seriesField(tile), entry.key, entry.label),
-    color: seriesColor(tile, answer, colors, entry.key, index),
+    color: seriesColor(tile, colors, entry.key, index),
   }));
 }
 
 /** A category's colour on a ring: by its own field's scheme, as a series of that field would be. */
-function categoryColor(tile: Tile, answer: TileAnswer, colors: ChartColors, key: string, index: number): string {
-  return seriesColor({ ...tile, breakdown: tile.x === "time" ? null : tile.x }, answer, colors, key, index);
+function categoryColor(tile: Tile, colors: ChartColors, key: string, index: number): string {
+  return seriesColor({ ...tile, breakdown: tile.x === "time" ? null : tile.x }, colors, key, index);
 }
 
 /** The legend a tile shows: its series; none for a single series, a list, a table, figures — or a ring, which lists its slices with their values itself. */
@@ -325,7 +329,7 @@ function BarsChart(props: TileChartProps) {
     const entry = series[index];
     if (entry === undefined || value <= 0) return null;
     const dimmed = lookOf(onSelect === undefined ? null : hover, selected ?? null, column, entry.id) === "dim";
-    const mark = { "data-segment": `${column}:${entry.id}`, "data-series": entry.id, "data-dimmed": String(dimmed), style: { width: `${(value / max) * 100}%`, backgroundColor: entry.color } };
+    const mark = { "data-segment": `${column}:${entry.id}`, "data-series": entry.id, "data-dimmed": String(dimmed), style: { width: `${(value / max) * 100}%`, ...fillStyle(entry.color) } };
     const look = cn(SEGMENT_LOOK, dimmed && "opacity-30");
     return onSelect === undefined ? (
       <span key={entry.id} {...mark} className={look} />
@@ -404,17 +408,16 @@ function LineChart({ tile, answer, edges, unit }: TileChartProps) {
     <div data-plot className="relative min-h-24 flex-1">
       <PlotGrid tile={tile} max={max} columns={count} />
       <svg className="absolute inset-0 size-full" viewBox="0 0 100 100" preserveAspectRatio="none" aria-label={tile.title}>
-        {series.map((entry, index) => (
-          <polyline
-            key={entry.id}
-            data-line={entry.id}
-            fill="none"
-            stroke={entry.color}
-            strokeWidth={1.6}
-            vectorEffect="non-scaling-stroke"
-            points={answer.values.map((row, column) => `${x(column)},${100 - ((row[index] ?? 0) / max) * 100}`).join(" ")}
-          />
-        ))}
+        {series.map((entry, index) => {
+          const points = answer.values.map((row, column) => `${x(column)},${100 - ((row[index] ?? 0) / max) * 100}`).join(" ");
+          return (
+            <Fragment key={entry.id}>
+              {/* A white or black line runs over a hairline-wider border-coloured one, so it shows on either theme. */}
+              {isEdgeless(entry.color) ? <polyline fill="none" stroke="var(--border)" strokeWidth={3.6} vectorEffect="non-scaling-stroke" points={points} /> : null}
+              <polyline data-line={entry.id} fill="none" stroke={entry.color} strokeWidth={1.6} vectorEffect="non-scaling-stroke" points={points} />
+            </Fragment>
+          );
+        })}
       </svg>
     </div>
   );
@@ -444,35 +447,39 @@ function RingChart({ tile, answer, selected, onSelect }: TileChartProps) {
               ? answer.columns.map((column, index) => {
                   const dimmed = selected != null && selected.column !== index;
                   const choose = onSelect === undefined ? undefined : () => onSelect({ column: index, seriesId: null });
+                  const color = categoryColor(tile, colors, column.key, index);
+                  const dash = { strokeDasharray: `${Math.max(0, (values[index]! / total) * length - 1)} ${length}`, strokeDashoffset: -((starts[index]! / total) * length) };
                   return (
-                    <circle
-                      key={column.key}
-                      data-arc={column.key}
-                      data-pickable={choose === undefined ? undefined : true}
-                      role={choose === undefined ? undefined : "button"}
-                      tabIndex={choose === undefined ? undefined : 0}
-                      aria-label={choose === undefined ? undefined : `${name(index)}: ${formatValue(tile, values[index]!)}`}
-                      className={cn(choose !== undefined && "cursor-pointer transition-opacity hover:opacity-80 focus-visible:outline-none focus-visible:[stroke-width:18]", dimmed && "opacity-30")}
-                      onClick={choose}
-                      onKeyDown={
-                        choose === undefined
-                          ? undefined
-                          : (event) => {
-                              if (event.key !== "Enter" && event.key !== " ") return;
-                              // Space picks, it does not scroll the page.
-                              event.preventDefault();
-                              choose();
-                            }
-                      }
-                      r={radius}
-                      cx={center}
-                      cy={center}
-                      fill="none"
-                      stroke={categoryColor(tile, answer, colors, column.key, index)}
-                      strokeWidth={RING_STROKE}
-                      strokeDasharray={`${Math.max(0, (values[index]! / total) * length - 1)} ${length}`}
-                      strokeDashoffset={-((starts[index]! / total) * length)}
-                    />
+                    <Fragment key={column.key}>
+                      {/* A white or black arc lies on a border-coloured one 2 units wider, so its edges show on either theme. */}
+                      {isEdgeless(color) ? <circle r={radius} cx={center} cy={center} fill="none" stroke="var(--border)" strokeWidth={RING_STROKE + 2} className={cn(dimmed && "opacity-30")} {...dash} /> : null}
+                      <circle
+                        data-arc={column.key}
+                        data-pickable={choose === undefined ? undefined : true}
+                        role={choose === undefined ? undefined : "button"}
+                        tabIndex={choose === undefined ? undefined : 0}
+                        aria-label={choose === undefined ? undefined : `${name(index)}: ${formatValue(tile, values[index]!)}`}
+                        className={cn(choose !== undefined && "cursor-pointer transition-opacity hover:opacity-80 focus-visible:outline-none focus-visible:[stroke-width:18]", dimmed && "opacity-30")}
+                        onClick={choose}
+                        onKeyDown={
+                          choose === undefined
+                            ? undefined
+                            : (event) => {
+                                if (event.key !== "Enter" && event.key !== " ") return;
+                                // Space picks, it does not scroll the page.
+                                event.preventDefault();
+                                choose();
+                              }
+                        }
+                        r={radius}
+                        cx={center}
+                        cy={center}
+                        fill="none"
+                        stroke={color}
+                        strokeWidth={RING_STROKE}
+                        {...dash}
+                      />
+                    </Fragment>
                   );
                 })
               : null}
@@ -487,7 +494,7 @@ function RingChart({ tile, answer, selected, onSelect }: TileChartProps) {
         <ul data-ring-legend className="flex max-h-full w-max max-w-[60%] shrink-0 flex-col gap-1 overflow-y-auto">
           {answer.columns.map((column, index) => (
             <li key={column.key} className="flex items-center gap-2 text-xs">
-              <Swatch color={categoryColor(tile, answer, colors, column.key, index)} />
+              <Swatch color={categoryColor(tile, colors, column.key, index)} />
               <span className="min-w-0 truncate text-foreground">{name(index)}</span>
               <span className="ml-auto shrink-0 pl-2 tabular-nums text-muted-foreground">{formatValue(tile, values[index]!)}</span>
             </li>
