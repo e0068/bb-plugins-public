@@ -7,10 +7,10 @@ import type { Carried } from "../core/carry";
 import { awaitingKind } from "../core/awaiting";
 import { liveIssues } from "../core/outcome";
 import { DECISION_ID_PREFIX, directiveLine } from "../core/directive";
-import { money, plannedMinutes, recommendedForecast } from "../core/budget";
+import { criterionEditable, money, plannedMinutes, recommendedForecast } from "../core/budget";
 import { FLOW_RULE, SELF_ONLY_RULE, isAutomationStage, isStageCarryKey, reportIssues, stageInstructions, withStepResults } from "../core/stages";
 import { stageKindOf, type BuiltinKind } from "../lib/stage-constants";
-import { askDecisionParamsSchema, type AskDecisionParams, type Criterion, type DecisionBrief, type Planning, type StageSettings } from "../shared/contract";
+import { askDecisionParamsSchema, type AskDecisionParams, type Criterion, type DecisionBrief, type Planning, type RestoredDraft, type StageSettings } from "../shared/contract";
 import type { ProgressStore } from "./progress";
 import { KV_VALUE_LIMIT_BYTES, type DecisionStore } from "./store";
 import type { FlowTrigger } from "./automations";
@@ -52,12 +52,33 @@ After the call, paste the directive line from the result into your reply as a st
 
 One brief per run: go through the run stages in order; on a demo stage, stop with a brief carrying its outcome. Another brief only if it is unclear how to proceed, and only about that.`;
 
+/**
+ * Сообщение владельца в чат при ждущем брифе возвращает бриф агенту (./brief-return.ts). В описании инструмента, а не в
+ * инструкциях: те уже упираются в 4096 символов.
+ */
+export const RETURNED_RULE =
+  "A chat message from the owner while your brief waits returns that brief to you: the message outranks the brief — it means the plan changed. Take the message in, its text and attachments, then send the brief again, revised; the owner's choices in the returned brief stay preselected where question and option ids match. A stage closes only when the owner sends a brief with its button.";
+
 const briefResult = (brief: DecisionBrief): string =>
   `${directiveLine(brief.id)}
 
 Paste the line above into your reply as a standalone line — the owner sees the brief in its place.${
     brief.kind === "brief" ? " Then end the turn and wait for the answer." : " Keep working; the answer arrives along the way."
-  }`;
+  }${brief.restored === undefined ? "" : " The owner's choices from the returned brief are preselected where question and option ids match."}`;
+
+/**
+ * Черновик брифа, который владелец вернул сообщением в чат, — для нового брифа треда, вместе с пунктами возвращённого:
+ * правки пунктов ложатся на новый бриф по тексту. Черновика нет — возвращать нечего, указатель снимет новый бриф.
+ */
+const restoredFrom = async (store: DecisionStore, threadId: string): Promise<{ briefId: string; restored?: RestoredDraft } | null> => {
+  const briefId = await store.getThreadReturned(threadId);
+  if (briefId === null) return null;
+  const [draft, old] = await Promise.all([store.getDraft(briefId), store.getBrief(briefId)]);
+  // Бриф взамен возвращённого вернули снова, не тронув: его выбор — тот, что он сам принёс.
+  if (draft === null) return old?.restored === undefined ? { briefId } : { briefId, restored: old.restored };
+  const criteria = old?.setup?.criteria?.map(criterionEditable);
+  return { briefId, restored: { draft, ...(criteria === undefined ? {} : { criteria }) } };
+};
 
 /** Перенос треда — только этапы, которые агент прислал в setup нового брифа: исполнителя, ревью и тестирования прежнего вида инструмент не принимает. */
 const carriedInto = (setup: AskDecisionParams["setup"], carried: Carried): Record<string, string[]> => {
@@ -196,7 +217,8 @@ export const registerAskTool = (
     name: ASK_TOOL_NAME,
     description:
       "Ask the owner: a brief rendered as a widget in the thread. It opens with scope — what you understood; first part (setup) shows the work stages of the thread's flow — done ones with links and ones to run with executor, share and factors — plus done-when criteria priced by one agent and a budget button counted from them with time, recommendations preselected; second part holds questions: forks with description and add, multi-answer picks and confirmations. " +
-      'Every text field takes markdown links [text](target) — a path from the tree root (path:12 for a line), an absolute path or a URL: anything that lives in a file is named as a link to it, a fragment as one link "fragment (what it is) — file".',
+      'Every text field takes markdown links [text](target) — a path from the tree root (path:12 for a line), an absolute path or a URL: anything that lives in a file is named as a link to it, a fragment as one link "fragment (what it is) — file". ' +
+      RETURNED_RULE,
     instructions: ASK_INSTRUCTIONS,
     presentation: { label: { pending: "Preparing a brief", completed: "Brief in the thread" } },
     parameters: askDecisionParamsSchema,
@@ -217,6 +239,7 @@ export const registerAskTool = (
       const planning = params.kind === "brief" ? await deps.planning?.(ctx.threadId) : undefined;
       const flowName = deps.flowName?.(ctx.threadId);
       const carried = params.kind === "brief" ? carriedInto(params.setup, await store.getThreadCarry(ctx.threadId)) : {};
+      const returned = params.kind === "brief" ? await restoredFrom(store, ctx.threadId) : null;
       const midWork = launched && params.kind === "brief" && params.outcome === undefined;
       const approved = midWork ? await store.getThreadCriteria(ctx.threadId) : [];
       const approvedScope = midWork ? await store.getThreadScope(ctx.threadId) : null;
@@ -232,6 +255,7 @@ export const registerAskTool = (
         ...(launched && params.setup?.stages === undefined ? { launched: true as const } : {}),
         ...(planning === undefined ? {} : { planning }),
         ...(Object.keys(carried).length === 0 ? {} : { carried }),
+        ...(returned?.restored === undefined ? {} : { restored: returned.restored }),
         ...(approved.length === 0 ? {} : { approved }),
         ...(approvedScope === null ? {} : { approvedScope }),
         ...(params.setup?.stages === undefined && params.outcome === undefined
@@ -243,6 +267,11 @@ export const registerAskTool = (
       if (zero.length > 0) return toolError(`Brief not accepted: ${zero.join("; ")}.`);
       const stored = await store.putBrief(brief);
       if (stored.kind === "stored") {
+        if (returned !== null) {
+          // Черновик уехал в новый бриф: у возвращённого его больше никто не спросит.
+          await store.clearThreadReturned(ctx.threadId, returned.briefId).catch(() => undefined);
+          await store.dropDraft(returned.briefId).catch(() => undefined);
+        }
         await deps.progress?.recordBrief(brief, brief.createdAt).catch(() => undefined);
         const kind = awaitingKind(brief);
         if (kind !== null) await store.putAwaiting(brief.threadId, { briefId: brief.id, kind }).catch(() => undefined);

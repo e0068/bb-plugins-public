@@ -97,13 +97,17 @@ export function NoteField(props: { value: string; disabled: boolean; onChange: (
   );
 }
 
-/** Черновик брифа, который переживает размонтирование: читается из хранилища окна, каждая правка пишется туда же. */
-export function useStoredDraft(briefId: string, initial: () => Draft = emptyDraft) {
+/** Черновик брифа, который переживает размонтирование: читается из хранилища окна, каждая правка пишется туда же и в `onEdit`. */
+export function useStoredDraft(briefId: string, initial: () => Draft = emptyDraft, onEdit?: (draft: Draft) => void) {
   const [draft, setDraft] = useState<Draft>(() => readStoredDraft(briefId) ?? initial());
   const opened = useRef(draft);
   useEffect(() => {
     // Открытие брифа без правок ничего не пишет: хранилище не копит пустые черновики.
-    if (draft !== opened.current) storeDraft(briefId, draft);
+    if (draft === opened.current) return;
+    storeDraft(briefId, draft);
+    onEdit?.(draft);
+    // onEdit — отправитель с паузой, его смена правкой не считается
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [briefId, draft]);
   return [draft, setDraft] as const;
 }
