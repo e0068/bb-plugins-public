@@ -7,7 +7,6 @@
 // tile-charts.tsx; the header doubles as the handle the row board moves the
 // tile by.
 import { useCallback, useLayoutEffect, useRef, useState, type CSSProperties, type KeyboardEvent, type MouseEvent, type PointerEvent, type ReactNode } from "react";
-import { weekBreaks } from "@bb-plugins/analytics-viz/core/weeks";
 
 import { Button } from "../../components/ui/button";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "../../components/ui/dropdown-menu";
@@ -15,7 +14,7 @@ import { Icon } from "../../components/ui/icon";
 import { CONTENTS_SHARE, readsSetting } from "../../shared/analytics-tile.js";
 import type { Tile, TileAnswer } from "../../shared/contract.js";
 import { cn } from "../../lib/utils";
-import { Legend, Swatch, WeekBreaksScope } from "./bars";
+import { Legend, Swatch } from "./bars";
 import { useChartColors } from "./chart-colors";
 import { formatDay } from "./closed-model";
 import type { ColumnUnit } from "./default-dashboard";
@@ -265,7 +264,6 @@ export function TileCard(props: TileCardProps) {
   const colors = useChartColors();
   const legend = answer === undefined || tile.display.legend === "hidden" ? [] : tileLegend(tile, answer, colors);
   const aside = answer === undefined ? null : asideOf(tile, answer, unit);
-  const breaks = unit === "day" ? weekBreaks(edges.slice(0, -1)).map(({ column }) => ({ column })) : [];
   const logStart = answer?.logStartMs ?? null;
   const logStartsInside = LOGGED.has(tile.y.metric) && logStart !== null && logStart > (edges[0] ?? 0) && logStart < (edges.at(-1) ?? 0);
   const listed = contentsShare(tile);
@@ -285,9 +283,7 @@ export function TileCard(props: TileCardProps) {
     ) : answer === undefined ? (
       <div className="min-h-0 flex-1 animate-pulse rounded-md bg-muted/40" />
     ) : (
-      <WeekBreaksScope breaks={tile.x === "time" ? breaks : []}>
-        <TileChart tile={tile} answer={answer} edges={edges} unit={unit} nowMs={props.nowMs} onOpenTask={props.onOpenTask} selected={listed === null ? null : pick} onSelect={select} />
-      </WeekBreaksScope>
+      <TileChart tile={tile} answer={answer} edges={edges} unit={unit} nowMs={props.nowMs} onOpenTask={props.onOpenTask} selected={listed === null ? null : pick} onSelect={select} />
     );
 
   const chartWithLegend =
