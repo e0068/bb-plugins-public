@@ -48,6 +48,7 @@ import { planMigration } from "./epic-migrate.js";
 import { readdir, readFile, rm, rmdir } from "node:fs/promises";
 import { join } from "node:path";
 import { assembleBoardTasks, parseTaskKey, taskSlug, type AssembledTask } from "./assemble.js";
+import { rekeyBoard, rewriteMentions } from "./prefix-rename.js";
 import {
   serializeAttachedThread,
   withLiveState,
@@ -441,6 +442,61 @@ export function createFileTasksStore(
     persistBoards();
     return updated;
   }
+  /** Changes the board's key prefix and renames its tasks with it (rekeyTasks);
+   *  a database board's prefix is written into the database too, so every
+   *  machine opening it takes the new one. The keys go first: a rename cut
+   *  short leaves the old prefix on the board, and running it again finishes
+   *  the job, since a task that already has its new key keeps it. All of it
+   *  runs in the board's queue, so a task created meanwhile waits and is
+   *  named under the new prefix. */
+  function renameBoardPrefix(id: string, prefix: string): Promise<BoardConfig> {
+    return retrying(() =>
+      serialByBoard(id, async () => {
+        const board = requireBoard(id);
+        await rekeyTasks(board, prefix);
+        await boardRepos.repoFor(board)?.writePrefix?.(prefix);
+        return updateProject(board.id, { prefix });
+      }),
+    );
+  }
+
+  /** Writes every task of the board's main checkout whose name changes under
+   *  `prefix` (filesync/prefix-rename.ts), with the old keys of the board
+   *  replaced in its description and comments, and every child of a renamed
+   *  task so its `parent:` names the new key. Parents go before their
+   *  children — the child's `parent:` is the parent's key as written — and
+   *  the board's unnamed tasks last: written in main, one gets its key minted
+   *  under the new prefix, after every number is already where it goes. */
+  async function rekeyTasks(board: BoardConfig, prefix: string): Promise<void> {
+    const onBoard = await readBoard(board, roots.get(board.id) ?? []);
+    const newKeys = rekeyBoard(onBoard.map((entry) => entry.task), { from: board.prefix, to: prefix });
+    const keyOf = (task: Task) => newKeys.get(task.id) ?? task.key;
+    const renames = new Map(onBoard.filter(({ task }) => keyOf(task) !== task.key).map(({ task }) => [task.key, keyOf(task)]));
+    if (renames.size === 0) return;
+    const byId = new Map(onBoard.map(({ task }) => [task.id, task]));
+    const depth = (task: Task, limit = onBoard.length): number => {
+      const parent = task.parentTaskId === null ? undefined : byId.get(task.parentTaskId);
+      return parent === undefined || limit === 0 ? 0 : 1 + depth(parent, limit - 1);
+    };
+    const unnamedLast = (task: Task) => Number(task.number === null);
+    const order = [...onBoard].sort((a, b) => unnamedLast(a.task) - unnamedLast(b.task) || depth(a.task) - depth(b.task));
+    const renamedBoard = { ...board, prefix };
+    for (const { task, comments } of order) {
+      const description = rewriteMentions(task.description, renames);
+      const rewritten = comments.map((comment) => ({ ...comment, body: rewriteMentions(comment.body, renames) }));
+      const parent = task.parentTaskId === null ? undefined : byId.get(task.parentTaskId);
+      const changed =
+        keyOf(task) !== task.key ||
+        description !== task.description ||
+        rewritten.some((comment, index) => comment.body !== comments[index]?.body) ||
+        (parent !== undefined && keyOf(parent) !== parent.key);
+      if (!changed) continue;
+      const label = task.number === null ? null : parseTaskKey(keyOf(task));
+      const { data } = await readOwnFile(task);
+      await writeNamedTask(renamedBoard, { ...task, description, ...(label ?? {}) }, rewritten, rootOfTask(board, task), data, {});
+    }
+  }
+
   function deleteProject(id: string): boolean {
     const before = boardConfigs.length;
     boardConfigs = removeBoardConfig(boardConfigs, id);
@@ -548,7 +604,8 @@ export function createFileTasksStore(
    *  task files together with the rest of the tree (see
    *  decisions/tasks-plus-no-auto-publish.md). */
   async function persistTask(board: BoardConfig, input: Task, comments: readonly Comment[], root: BoardRoot, existingData: Record<string, unknown>, extraFields: Record<string, unknown>): Promise<WrittenTask> {
-    return serialByBoard(board.id, () => writeNamedTask(board, input, comments, root, existingData, extraFields));
+    // The board as it is once the queue lets this write in: a prefix renamed meanwhile names the task.
+    return serialByBoard(board.id, () => writeNamedTask(requireBoard(board.id), input, comments, root, existingData, extraFields));
   }
 
   async function writeNamedTask(board: BoardConfig, input: Task, comments: readonly Comment[], root: BoardRoot, existingData: Record<string, unknown>, extraFields: Record<string, unknown>): Promise<WrittenTask> {
@@ -597,7 +654,7 @@ export function createFileTasksStore(
     // Под очередью доски целиком: слаг и номер читаются и пишутся неделимо,
     // иначе два одновременных создания взяли бы одно имя. Внутри зовётся
     // writeNamedTask, а не persistTask, — очередь не переиспользуема.
-    return retrying(() => serialByBoard(board.id, () => createTaskInBoard(board, input)));
+    return retrying(() => serialByBoard(board.id, () => createTaskInBoard(requireBoard(board.id), input)));
   }
 
   async function createTaskInBoard(board: BoardConfig, input: CreateTaskInput): Promise<Task> {
@@ -1157,7 +1214,7 @@ export function createFileTasksStore(
     setBoardRoots,
     setBoardRepo, removeBoardRepo,
     createFolder, getFolder, listFolders, updateFolder, deleteFolder,
-    createProject, getProject, listProjects, updateProject, deleteProject,
+    createProject, getProject, listProjects, updateProject, renameBoardPrefix, deleteProject,
     createTask, getTask, getTaskByKey, listTasksPage, listTasks, listSubtasks, getSubtaskDoneCounts, updateTask, deleteTask, placeTask, threadsByTaskId, listPlacements, migrateEpics,
     createLabel, getLabel, listLabels, updateLabel, deleteLabel, addTaskLabel, removeTaskLabel, listTaskLabels, listLabelsForTask,
     createComment, getComment, listComments, getLatestAgentComment, updateComment, deleteComment,

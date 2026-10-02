@@ -41,6 +41,8 @@ export interface TaskRepo {
   /** Catches up with what other machines wrote. */
   sync(): Promise<void>;
   state(): RepoState;
+  /** Keeps the board's new key prefix where every machine reads it; a repository that keeps no board record has none. */
+  writePrefix?(prefix: string): Promise<void>;
 }
 
 /** A conditional write that lost: the row moved on (`version`), or the key or the slug is already taken. */

@@ -191,11 +191,31 @@ export function registerFolders(bb: BbPluginApi, store: TasksApiStore): void {
    * told to the interface under it from the first poll on.
    */
   function openRepo(boardId: string, url: string, client: HranaClient): DbRepo {
-    return createDbRepo(client, {
+    const repo = createDbRepo(client, {
       url,
-      onChange: () => publishProjectTasksChanged(bb, boardId),
+      onChange: () => {
+        publishProjectTasksChanged(bb, boardId);
+        void adoptPrefix(boardId, repo);
+      },
       onStateChange: () => publishProjectsChanged(bb, boardId),
     });
+    return repo;
+  }
+
+  /**
+   * Takes the prefix another machine gave the database's board. The name
+   * stays this machine's own: it is shown here only. A board not created yet
+   * — a connection under way — takes the database's prefix as it is created.
+   * A prefix another board of this machine has is not taken: two boards with
+   * one prefix would share their keys, and a key would open either.
+   */
+  async function adoptPrefix(boardId: string, repo: DbRepo): Promise<void> {
+    const kept = await repo.readBoard().catch(() => null);
+    const board = store.tasks.getProject(boardId);
+    if (kept === null || board === undefined || kept.prefix === "" || kept.prefix === board.prefix) return;
+    if (store.projectPrefixExists(kept.prefix, boardId)) return;
+    store.tasks.updateProject(boardId, { prefix: kept.prefix });
+    publishProjectsChanged(bb, boardId);
   }
 
   /**

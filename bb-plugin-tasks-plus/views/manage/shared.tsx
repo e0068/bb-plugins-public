@@ -25,6 +25,21 @@ export const DEFAULT_COLOR = COLOR_PALETTE[0].value;
 /** Mirrors the contract's project prefix rule (shared/contract.ts). */
 export const PROJECT_PREFIX_PATTERN = /^[A-Z][A-Z0-9]{0,9}$/;
 
+/** What is wrong with a prefix typed for a board, or null: the rule, then a clash with another board. */
+export function prefixProblem(
+  prefix: string,
+  boards: ReadonlyArray<{ id: string; name: string; prefix: string }>,
+  ownId: string | null,
+): string | null {
+  if (!PROJECT_PREFIX_PATTERN.test(prefix)) {
+    return "Use 1–10 uppercase letters and digits, starting with a letter.";
+  }
+  const clash = boards.find(
+    (board) => board.id !== ownId && board.prefix.toUpperCase() === prefix.toUpperCase(),
+  );
+  return clash ? `Already used by ${clash.name}.` : null;
+}
+
 /**
  * Suggest a project prefix from its name: initials for multi-word names,
  * the first three letters otherwise. Must satisfy PROJECT_PREFIX_PATTERN,
