@@ -27,6 +27,7 @@ import { useRememberedRoute } from "@bb-plugins/panel-state/react";
 import { TableView } from "../views/table/index.js";
 import { BoardView } from "../views/board/index.js";
 import { applyBoardState, hasBoardDraft, scopeBoardKey } from "../views/board/board-preference.js";
+import { carryNarrowing } from "../views/board/layout-switch.js";
 import { DetailView } from "../views/detail/index.js";
 import { AnalyticsDashboard } from "../views/analytics/AnalyticsDashboard.js";
 import { ReducedColorsProvider } from "@bb-plugins/reduced-colors";
@@ -100,28 +101,35 @@ function SavedViewOutlet({ savedViewId, target }: { savedViewId: string; target:
   // draws a frame of the state it replaces — hence "applied" gating the
   // render rather than an effect running alongside it.
   const [appliedFor, setAppliedFor] = useState<string | null>(null);
-  // Keyed by view *and* the layout it's applied onto: switching a view's own
-  // Table/Board choice is a second, later apply of the same view, not a
-  // no-op — each layout keeps its own filters, and only the one on screen is
-  // read back. `useSavedViews` handing back a fresh array on every
-  // views:changed (a rename here, a save in another window) must not
-  // re-trigger this — hence keying on the pair, not on the `view` object.
-  const applied = useRef<string | null>(null);
+  // Which layout of which view is on screen, and which layouts this visit
+  // already showed. Opening a view writes its state onto the layout it opens;
+  // switching the view's own Table/Board choice carries the filters and sort
+  // the owner left across instead, and writes the view's state only onto a
+  // layout this visit has not shown yet — its columns or its grouping — never
+  // undoing an unsaved edit. `useSavedViews` handing back a fresh array on
+  // every views:changed (a rename here, a save in another window) must not
+  // re-trigger this — hence keying on the ids, not on the `view` object.
+  const visit = useRef<{ viewId: string; layout: TaskLayout; shown: ReadonlySet<TaskLayout> } | null>(null);
 
   useEffect(() => {
     if (!view || target === null) return;
-    const key = `${savedViewId}:${target.layout}`;
-    if (applied.current === key) return;
-    applied.current = key;
-    if (target.layout === "board") {
-      // A board view keeps its own draft: opened again, it shows what the
-      // owner left there until Reset — and never touches the scope's board.
-      const boardKey = scopeBoardKey(target.scope, view.id);
-      if (!hasBoardDraft(boardKey)) applyBoardState(boardKey, view);
-    } else {
-      applyListState(view);
+    const { layout, scope } = target;
+    const previous = visit.current;
+    if (previous?.viewId === savedViewId && previous.layout === layout) return;
+    const switched = previous?.viewId === savedViewId ? previous : null;
+    if (!switched?.shown.has(layout)) {
+      if (layout === "board") {
+        // A board view keeps its own draft: opened again, it shows what the
+        // owner left there until Reset — and never touches the scope's board.
+        const boardKey = scopeBoardKey(scope, view.id);
+        if (!hasBoardDraft(boardKey)) applyBoardState(boardKey, view);
+      } else {
+        applyListState(view);
+      }
     }
-    setAppliedFor(key);
+    if (switched) carryNarrowing(scope, view.id, switched.layout, layout);
+    visit.current = { viewId: savedViewId, layout, shown: new Set([...(switched?.shown ?? []), layout]) };
+    setAppliedFor(`${savedViewId}:${layout}`);
   }, [savedViewId, view, target]);
 
   if (data === undefined) return null;
@@ -383,7 +391,13 @@ function TasksAppShellContent({ subPath }: PluginNavPanelProps) {
               target={target}
               layout={
                 isScreenRoute(route)
-                  ? { value: route.view, onChange: (view) => navigation.go({ ...route, view }) }
+                  ? {
+                      value: route.view,
+                      onChange: (view) => {
+                        carryNarrowing(target.scope, null, route.view, view);
+                        navigation.go({ ...route, view });
+                      },
+                    }
                   : route.kind === "view"
                     ? { value: target.layout, onChange: (view) => setViewLayout(route.savedViewId, view) }
                     : undefined
