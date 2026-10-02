@@ -37,7 +37,7 @@ questions — the second part; an id does not start with "setup.".
 - pick — several answers. Every option requires description; add if it adds work.
 - confirm — "did I get this right": exactly one option "Yes", and context says what you understood.
 hides on an option — ids of questions below it that lose meaning when it is chosen: the owner does not see them.
-criteria on an option — items it adds while chosen; an item of an option the owner drops themselves stays in the list struck through, so an item that depends on one answer goes on the option, not into setup.criteria; removes — setup.criteria indexes it strikes then.
+criteria on an option — items it adds while chosen, required if priced; an item of an option the owner drops themselves stays in the list struck through, so an item that depends on one answer goes on the option, not into setup.criteria; removes — setup.criteria indexes it strikes then.
 The owner can answer any question in their own words.
 
 outcome — a demo of running work instead of setup: { stage (a demo stage id), final, next (only when not final), done ([text] — closed since the previous demo), pending ([{ text, why }]), notes, tasks ([{ key, done, note }]), results (at least one: { label, target } — a file, path or URL; { label, command } — a command the owner runs with one click), documentsOnly (only when nothing but documents changed since the previous demo) }. Unless documentsOnly, results hold a live one: an http(s) URL or a command.
@@ -114,7 +114,7 @@ const pricedItem = (item: Criterion): boolean => typeof item !== "string" && ite
 /** Бюджет считается у незапущенного брифа, в котором решается работа; уточнение, итог Демонстрации и вопрос посреди работы его не считают. */
 const decidesBudget = (params: Pick<AskDecisionParams, "kind" | "outcome">, launched: boolean): boolean => params.kind === "brief" && !launched && params.outcome === undefined;
 
-/** База бюджета: «Что я понял», цена у каждого пункта «Готово, когда», доля у несделанного этапа-навыка. Ошибки идут в общий отказ брифа. */
+/** База бюджета: «Что я понял», цена у каждого пункта «Готово, когда», пункты у варианта с ценой, доля у несделанного этапа-навыка. Ошибки идут в общий отказ брифа. */
 const baseIssues = (params: AskDecisionParams, launched: boolean, stages: StageSettings["stages"]): string[] => {
   if (!decidesBudget(params, launched)) return [];
   const criteria = params.setup?.criteria ?? [];
@@ -129,7 +129,21 @@ const baseIssues = (params: AskDecisionParams, launched: boolean, stages: StageS
       : []),
     ...(unpriced.length === 0 ? [] : [`setup.criteria items ${unpriced.join(", ")} have no price: each item needs add with target and minutes above zero — what one agent on the current model and effort spends on it`]),
     ...(unshared.length === 0 ? [] : [`stages ${unshared.join(", ")} have no share: a todo skill stage sends share { percent, risk } — implementation by you is 100`]),
+    ...bareOptionIssues(params.questions),
   ];
+};
+
+/**
+ * Вариант с ценой — работа, которую принимают, значит у него свои пункты «Готово, когда».
+ * Без них пункт, зависящий от ответа, оседает в общем списке, и отметка варианта список не меняет.
+ */
+const bareOptionIssues = (questions: AskDecisionParams["questions"]): string[] => {
+  const bare = questions.flatMap((q) => q.options.filter((o) => (o.add?.target ?? 0) > 0 && o.criteria === undefined).map((o) => `${q.id}/${o.id}`));
+  return bare.length === 0
+    ? []
+    : [
+        `options ${bare.join(", ")} add work without done-when items: an option priced above zero sends criteria — the items it adds while chosen; move the items that depend on this answer from setup.criteria onto the option`,
+      ];
 };
 
 /** Прогноз по рекомендациям у брифа с базой: работа всегда стоит денег и времени, ноль значит, что в прогон не взято ничего. */

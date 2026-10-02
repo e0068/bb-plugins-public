@@ -1,5 +1,5 @@
 // Тестовая заготовка: бриф до запуска работы с базой бюджета. Нужна тестам, чей предмет — не цена (прогресс,
-// история, уведомления): инструмент не принимает бриф без «Что я понял», без цен пунктов и без долей этапов.
+// история, уведомления): инструмент не принимает бриф без «Что я понял», без цен пунктов, без долей этапов и без пунктов у вариантов с ценой.
 import type { Add } from "../shared/contract";
 
 export const ITEM_PRICE: Add = { target: 1, max: 2, risk: 0, minutes: 10 };
@@ -16,7 +16,13 @@ const sharedStage = ({ add, adds, ...report }: Loose): Loose => ({
   ...(adds === undefined ? {} : { factors: Object.fromEntries(Object.keys(adds as Loose).map((id) => [id, { factor: 1, risk: 0 }])) }),
 });
 
-/** Тот же бриф с базой: «Что я понял», цена у каждого пункта (или один пункт), доля у несделанных этапов вместо долларов. */
+/** Вариант с ценой несёт свой пункт «Готово, когда»: без него бриф до запуска не принимается. */
+const optionWithItem = (option: Loose): Loose =>
+  ((option.add as { target?: number } | undefined)?.target ?? 0) > 0 && option.criteria === undefined ? { ...option, criteria: [`${String(option.action)} сделано`] } : option;
+
+const questionWithItems = (question: Loose): Loose => ({ ...question, options: (question.options as Loose[]).map(optionWithItem) });
+
+/** Тот же бриф с базой: «Что я понял», цена у каждого пункта (или один пункт), доля у несделанных этапов вместо долларов, пункты у вариантов с ценой. */
 export const priced = (brief: Loose): Loose => {
   if (brief.kind === "clarify" || brief.outcome !== undefined) return brief;
   const setup = (brief.setup ?? {}) as Loose;
@@ -26,5 +32,6 @@ export const priced = (brief: Loose): Loose => {
     scope: "- работа",
     ...brief,
     setup: { ...setup, criteria: criteria.map(pricedItem), ...(stages === undefined ? {} : { stages: stages.map(sharedStage) }) },
+    ...(brief.questions === undefined ? {} : { questions: (brief.questions as Loose[]).map(questionWithItems) }),
   };
 };
