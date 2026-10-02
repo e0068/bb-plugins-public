@@ -108,7 +108,7 @@ export const TILE_TABLE_HEIGHTS = ["regular", "compact"] as const;
 export type TileTableHeight = (typeof TILE_TABLE_HEIGHTS)[number];
 
 /** Fields that need what the analytics answer does not carry — threads, sub-tasks, files, other tasks' keys — stay out of the table. */
-const TILE_TABLE_UNDRAWN: ReadonlySet<QueryField> = new Set(["active", "subtasks", "attachments", "worktree", "parent", "epic"]);
+const TILE_TABLE_UNDRAWN: ReadonlySet<QueryField> = new Set(["active", "subtasks", "attachments", "worktree", "parent"]);
 
 /** Fields the table under a chart can show, in the task table's order. */
 export const TILE_TABLE_FIELDS: readonly QueryField[] = QUERY_FIELDS.filter((field) => !TILE_TABLE_UNDRAWN.has(field));

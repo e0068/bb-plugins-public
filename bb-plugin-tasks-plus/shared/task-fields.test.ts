@@ -140,7 +140,7 @@ describe("compareByField", () => {
 
   it("puts empty values last in both directions", () => {
     fc.assert(
-      fc.property(fc.constantFrom("dueDate", "budget", "flow", "assignee", "labels", "parent", "epic") as fc.Arbitrary<ColumnSort["column"]>, directionArb, fc.array(taskArb, { maxLength: 12 }), (column, direction, tasks) => {
+      fc.property(fc.constantFrom("dueDate", "budget", "flow", "assignee", "labels", "parent") as fc.Arbitrary<ColumnSort["column"]>, directionArb, fc.array(taskArb, { maxLength: 12 }), (column, direction, tasks) => {
         const sorted = [...tasks].sort(compareByField({ column, direction }, FACTS));
         const empty = (t: Task) => compareByField({ column, direction }, FACTS)(t, task({ ...t, dueDate: null, budget: null, flow: null, assignee: null, labelIds: [], parentTaskId: null, epicId: null })) === 0;
         const firstEmpty = sorted.findIndex(empty);
@@ -225,8 +225,6 @@ describe("matchesFieldFilters", () => {
 
   it("keeps a task whose value is one of the picked ones", () => {
     const values = (picked: SavedViewFilters["values"]) => ({ ...NO_FILTERS, values: picked });
-    expect(matchesFieldFilters(task({ epicId: "P1:task-1" }), values({ epic: ["P1:task-1"] }), FACTS)).toBe(true);
-    expect(matchesFieldFilters(task({ epicId: null }), values({ epic: ["P1:task-1"] }), FACTS)).toBe(false);
     expect(matchesFieldFilters(task({ projectId: "P2" }), values({ project: ["P1"] }), FACTS)).toBe(false);
     expect(matchesFieldFilters(task({ flow: { id: "f", name: "Code" } }), values({ flow: ["Code"] }), FACTS)).toBe(true);
     expect(matchesFieldFilters(task({ number: 3 }), values({ active: ["active"] }), FACTS)).toBe(true);

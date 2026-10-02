@@ -16,6 +16,7 @@ const row = (startDate: string | null, dueDate: string | null): GanttRowData => 
   startDate,
   dueDate,
   segments: [],
+  doneMs: null,
 });
 
 describe("planSpan — plan dates with a time", () => {

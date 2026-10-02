@@ -373,9 +373,9 @@ describe("defaults and sanitation with the key", () => {
     expect(window.localStorage.getItem(ROW_FIELD_PREFERENCE_STORAGE_KEY)).toBe(future);
   });
 
-  it("the list shows the key, then every rail field but priority, the timestamps and the opt-in tree fields, active, assignee and epic leading the rail", () => {
+  it("the list shows the key, then every rail field but priority, the timestamps and the opt-in tree fields, active, assignee and flow leading the rail", () => {
     expect(visibleOrder("all")).toEqual(DEFAULT_LIST_RAIL);
-    expect(DEFAULT_LIST_RAIL.slice(0, 4)).toEqual(["key", "active", "assignee", "epic"]);
+    expect(DEFAULT_LIST_RAIL.slice(0, 4)).toEqual(["key", "active", "assignee", "flow"]);
     expect(defaultConfig("list").showEmpty).toBe(false);
   });
 

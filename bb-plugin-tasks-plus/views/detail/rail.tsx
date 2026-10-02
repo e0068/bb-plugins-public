@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from "react";
+import { useState, type CSSProperties, type ReactNode } from "react";
 import type { Label, Project, Task, TaskThread } from "../../shared/contract.js";
 import type {
   TaskEstimate,
@@ -66,6 +66,7 @@ import { Icon } from "@/components/ui/icon";
 import { Input } from "@/components/ui/input";
 import { readDollars, readMinutes } from "../../shared/amounts.js";
 import { cn } from "@/lib/utils";
+import { labelFill } from "../common/label-fill.js";
 
 export interface TaskPropertyUpdate {
   status?: TaskStatus;
@@ -110,23 +111,25 @@ function localIsoDate(daysFromNow: number): string {
  */
 function RemovableChip({
   className,
+  style,
   children,
   onRemove,
   removeLabel,
 }: {
   className: string;
+  style?: CSSProperties;
   children: ReactNode;
   onRemove?: () => void;
   removeLabel: string;
 }) {
   return (
-    <span className={className}>
+    <span className={className} style={style}>
       {children}
       {onRemove ? (
         <button
           type="button"
           aria-label={removeLabel}
-          className="-mr-0.5 rounded-sm hover:text-foreground"
+          className="-mr-0.5 rounded-sm opacity-70 hover:opacity-100"
           onClick={onRemove}
         >
           <Icon name="X" className="size-2.5" />
@@ -145,15 +148,11 @@ function LabelChip({
 }) {
   return (
     <RemovableChip
-      className="inline-flex items-center gap-1 rounded-md bg-muted px-1.5 py-0.5 text-xs text-foreground"
+      className="inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-xs font-medium"
+      style={labelFill(label.color)}
       onRemove={onRemove}
       removeLabel={`Remove ${label.name}`}
     >
-      <span
-        aria-hidden
-        className="size-1.5 rounded-full"
-        style={{ backgroundColor: label.color }}
-      />
       {label.name}
     </RemovableChip>
   );

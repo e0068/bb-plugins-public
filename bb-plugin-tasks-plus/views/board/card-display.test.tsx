@@ -183,6 +183,20 @@ describe("a card's text", () => {
   });
 });
 
+describe("a card's parent chip", () => {
+  // jsdom lays nothing out: what is checked is that the chip may shrink to its
+  // row's width and that the parent's key — a long slug when it has no key —
+  // truncates inside it rather than widening the card.
+  it("keeps to the card's width, the parent's key truncated", async () => {
+    renderBoard();
+    await waitFor(() => card("TSK-2").textContent);
+    const chip = within(card("TSK-2")).getByTitle(/^Parent: TSK-1/);
+    expect(chip.className.split(" ")).toEqual(expect.arrayContaining(["min-w-0", "max-w-full"]));
+    expect(chip.className.split(" ")).not.toContain("shrink-0");
+    expect(within(chip).getByText("TSK-1").className.split(" ")).toContain("truncate");
+  });
+});
+
 describe("the days the card charts cover", () => {
   it("takes a typed day count, 0 for all time, and leaves the stored one alone while the field holds no day count", async () => {
     const slot = renderBoard();
@@ -198,5 +212,98 @@ describe("the days the card charts cover", () => {
     expect(loadChartPreference(BOARD).period).toBe(45);
     fireEvent.change(days, { target: { value: "0" } });
     expect(loadChartPreference(BOARD).period).toBe(0);
+  });
+});
+
+describe("where today stands in the card charts", () => {
+  it("opens with today on the right and keeps the place picked under the days", async () => {
+    const slot = renderBoard();
+    await waitFor(() => card("TSK-1").textContent);
+    const panel = await openDisplay(slot);
+    const today = within(panel.getByRole("group", { name: "Today" }));
+    expect(today.getByRole("button", { name: "Right" }).getAttribute("aria-pressed")).toBe("true");
+
+    fireEvent.click(today.getByRole("button", { name: "Left" }));
+    expect(loadChartPreference(BOARD).today).toBe("left");
+    fireEvent.click(today.getByRole("button", { name: "Center" }));
+    expect(loadChartPreference(BOARD).today).toBe("center");
+    expect(loadChartPreference(BOARD).period).toBe(7);
+  });
+});
+
+describe("the unit the card charts count", () => {
+  it("opens on days and counts the typed period in the unit picked beside it, the field named after it", async () => {
+    const slot = renderBoard();
+    await waitFor(() => card("TSK-1").textContent);
+    const panel = await openDisplay(slot);
+    const unit = within(panel.getByRole("group", { name: "Period unit" }));
+    expect(unit.getByRole("button", { name: "Days" }).getAttribute("aria-pressed")).toBe("true");
+
+    fireEvent.click(unit.getByRole("button", { name: "Hours" }));
+    expect(loadChartPreference(BOARD).unit).toBe("hours");
+    fireEvent.change(panel.getByRole("spinbutton", { name: "Hours the card charts cover" }), { target: { value: "12" } });
+    expect(loadChartPreference(BOARD)).toMatchObject({ period: 12, unit: "hours" });
+    fireEvent.click(unit.getByRole("button", { name: "Minutes" }));
+    expect(panel.getByRole("spinbutton", { name: "Minutes the card charts cover" })).toBeTruthy();
+    expect(loadChartPreference(BOARD)).toMatchObject({ period: 12, unit: "minutes" });
+  });
+});
+
+describe("the card chart dates", () => {
+  it("opens with a few dates under each chart, and keeps where and how thickly the dates go as picked", async () => {
+    const slot = renderBoard();
+    await waitFor(() => card("TSK-1").textContent);
+    const panel = await openDisplay(slot);
+    const place = within(panel.getByRole("group", { name: "Card chart dates" }));
+    const density = within(panel.getByRole("group", { name: "Date density" }));
+    expect(density.getByRole("button", { name: "Few" }).getAttribute("aria-pressed")).toBe("true");
+
+    fireEvent.click(place.getByText("Along the card's bottom"));
+    expect(loadChartPreference(BOARD).dates).toBe("card");
+    fireEvent.click(place.getByText("Off"));
+    expect(loadChartPreference(BOARD).dates).toBe("off");
+    fireEvent.click(density.getByRole("button", { name: "Many" }));
+    expect(loadChartPreference(BOARD)).toMatchObject({ dates: "off", dateDensity: "many", period: 7, today: "right" });
+  });
+});
+
+describe("a card's sub-task list text", () => {
+  it("takes the sub-task size the Display panel picks, extra-small until then", async () => {
+    toggleFieldVisible(BOARD, "subtaskList");
+    const slot = renderBoard();
+    await waitFor(() => within(card("TSK-1")).getByRole("button", { name: "Open TSK-2" }));
+    const row = () => within(card("TSK-1")).getByRole("button", { name: "Open TSK-2" });
+    expect(row().className).toContain(DESCRIPTION_SIZE_CLASS.xs);
+
+    const panel = await openDisplay(slot);
+    fireEvent.click(within(panel.getByRole("group", { name: "Sub-tasks size" })).getByRole("button", { name: "M" }));
+    await waitFor(() => expect(row().className).toContain(DESCRIPTION_SIZE_CLASS.m));
+    expect(within(card("TSK-1")).getByRole("button", { name: "Add sub-task" }).className).toContain(DESCRIPTION_SIZE_CLASS.m);
+  });
+});
+
+describe("a card's tags", () => {
+  it("fills each tag with its own colour, with no dot beside it", async () => {
+    const tagged = tasks.map((entry) => (entry.key === "TSK-4" ? { ...entry, labelIds: ["L1"] } : entry));
+    renderSlot(
+      app.navPanels[0]!,
+      { subPath: `${PROJECT_ID}?view=board` },
+      {
+        rpc: {
+          listProjects: () => ({ projects: [project] }),
+          listFolders: () => ({ folders: [] }),
+          listPresets: () => ({ presets: [] }),
+          sidebarSummary: () => ({ projects: [] }),
+          listLabels: () => ({ labels: [{ id: "L1", projectId: PROJECT_ID, name: "ui", color: "#ef4444" }] }),
+          listSavedViews: () => ({ savedViews: [] }),
+          listTasks: () => ({ tasks: tagged }),
+          taskCardMeta: () => ({ cards: [] }),
+          listTaskThreads: () => ({ taskThreads: [] }),
+        },
+      },
+    );
+    const tag = await waitFor(() => within(card("TSK-4")).getByText("ui"));
+    expect(tag.getAttribute("style")).toContain("background-color");
+    expect(tag.querySelector(".rounded-full")).toBeNull();
   });
 });

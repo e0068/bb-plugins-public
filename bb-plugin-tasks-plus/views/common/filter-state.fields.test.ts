@@ -52,7 +52,7 @@ describe("filters on every field", () => {
 
   it("a blank text, an empty pick or an open range sets no filter", () => {
     expect(withFieldFilter(EMPTY_FILTERS, { kind: "text", field: "title", text: "  " })).toEqual(EMPTY_FILTERS);
-    expect(withFieldFilter(EMPTY_FILTERS, { kind: "values", field: "epic", values: [] })).toEqual(EMPTY_FILTERS);
+    expect(withFieldFilter(EMPTY_FILTERS, { kind: "values", field: "flow", values: [] })).toEqual(EMPTY_FILTERS);
     expect(
       withFieldFilter(EMPTY_FILTERS, { kind: "date", field: "dueDate", range: { from: null, to: null, empty: false } }),
     ).toEqual(EMPTY_FILTERS);
@@ -63,7 +63,7 @@ describe("stored filters on every field", () => {
   it("read back as written", () => {
     const filters = {
       ...EMPTY_FILTERS,
-      values: { epic: ["P:e"], active: ["active"] },
+      values: { flow: ["Code"], active: ["active"] },
       texts: { title: "login" },
       dates: { dueDate: { from: "2026-10-01", to: "2026-10-15", empty: true } },
       numbers: { budget: { from: 5, to: null, empty: false } },
@@ -77,14 +77,14 @@ describe("stored filters on every field", () => {
   it("drop what is malformed and keep the rest", () => {
     const read = sanitizeListPreference({
       filters: {
-        values: { epic: ["P:e", 3], nope: ["x"], active: "active" },
+        values: { flow: ["Code", 3], epic: ["P:e"], nope: ["x"], active: "active" },
         texts: { title: 7, key: "TSK" },
         dates: { dueDate: { from: "tomorrow", to: null, empty: false }, startDate: { from: "2026-10-01", to: null, empty: false } },
         numbers: { cost: { from: "5", to: null, empty: false }, budget: { from: null, to: 9, empty: false } },
       },
       sort: { column: "nope", direction: "asc" },
     });
-    expect(read.filters.values).toEqual({ epic: ["P:e"] });
+    expect(read.filters.values).toEqual({ flow: ["Code"] });
     expect(read.filters.texts).toEqual({ key: "TSK" });
     expect(read.filters.dates).toEqual({ startDate: { from: "2026-10-01", to: null, empty: false } });
     expect(read.filters.numbers).toEqual({ budget: { from: null, to: 9, empty: false } });

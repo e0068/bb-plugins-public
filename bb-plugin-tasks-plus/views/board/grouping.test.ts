@@ -105,7 +105,6 @@ const arbGroupBy = fc.constantFrom<BoardGroupBy>(
   "type",
   "estimate",
   "assignee",
-  "epic",
   "label",
 );
 
@@ -122,8 +121,6 @@ function expectedKeys(entry: Task, groupBy: BoardGroupBy): string[] {
       return [entry.estimate ?? "none"];
     case "assignee":
       return [entry.assignee ?? "none"];
-    case "epic":
-      return [entry.epic ?? "none"];
     case "label": {
       const names = LABELS.filter((label) => entry.labelIds.includes(label.id)).map(
         (label) => label.name,
@@ -136,7 +133,6 @@ function expectedKeys(entry: Task, groupBy: BoardGroupBy): string[] {
 }
 
 describe("boardColumns", () => {
-  // Epic columns follow the task tree, not a field — board/grouping-epic.test.ts.
   it("puts every task in the column of each of its field values, and nowhere else", () => {
     const byField = fc.constantFrom<BoardGroupBy>("status", "priority", "type", "estimate", "assignee", "label");
     fc.assert(
@@ -201,12 +197,11 @@ describe("boardColumns", () => {
     expect(labelOf("type")).toBe("No type");
     expect(labelOf("estimate")).toBe("No estimate");
     expect(labelOf("assignee")).toBe("No assignee");
-    expect(labelOf("epic")).toBe("No epic");
     expect(labelOf("label")).toBe("No label");
     expect(labelOf("priority")).toBe("No priority");
   });
 
-  it("offers the assignees and epics the board's tasks use", () => {
+  it("offers the assignees the board's tasks use", () => {
     const tasks = [task(1, { assignee: "sergey" }), task(2, { assignee: "agent" })];
     expect(keys(boardColumns(tasks, layout("assignee"), LABELS))).toEqual([
       "agent",

@@ -26,8 +26,7 @@ describe("suggestionsOf — values already on the boards, to pick instead of typ
     expect(suggestionsOf("assignee", scope, "CL").map((entry) => entry.value)).toEqual(["claude"]);
   });
 
-  it("offers an epic or a parent by its key, named with its title", () => {
-    expect(suggestionsOf("epic", scope, "")).toEqual([{ value: "TSK-1", label: "TSK-1 Analytics" }]);
+  it("offers a parent by its key, named with its title", () => {
     expect(suggestionsOf("parent", scope, "analytics")).toEqual([{ value: "TSK-1", label: "TSK-1 Analytics" }]);
   });
 

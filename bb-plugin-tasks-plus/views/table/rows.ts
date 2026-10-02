@@ -112,8 +112,6 @@ function rootGroupKey(root: Task, property: BoardGroupProperty, labels: readonly
       return root.estimate ?? NONE_KEY;
     case "assignee":
       return root.assignee ?? NONE_KEY;
-    case "epic":
-      return root.epicId ?? NONE_KEY;
     case "label":
       return labelGroupKey(root, labels, order);
   }

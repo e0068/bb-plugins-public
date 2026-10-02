@@ -59,11 +59,11 @@ describe("progressOf", () => {
 });
 
 describe("familiesOf", () => {
-  it("looks each task's epic up by id and carries its descendants", () => {
-    const epic = { ...node("E"), epicId: null };
-    const child = { ...node("C", "E"), epicId: "E" };
-    const families = familiesOf([epic, child]);
-    expect(families.get("C")).toEqual({ epic, descendants: [] });
-    expect(families.get("E")).toEqual({ epic: null, descendants: [{ task: child, depth: 1 }] });
+  it("carries each task's descendants", () => {
+    const parent = node("E");
+    const child = node("C", "E");
+    const families = familiesOf([parent, child]);
+    expect(families.get("C")).toEqual({ descendants: [] });
+    expect(families.get("E")).toEqual({ descendants: [{ task: child, depth: 1 }] });
   });
 });

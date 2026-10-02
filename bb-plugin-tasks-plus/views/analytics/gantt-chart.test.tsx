@@ -20,6 +20,7 @@ const row = (over: Partial<GanttRowData> = {}): GanttRowData => ({
   startDate: null,
   dueDate: null,
   segments: [],
+  doneMs: null,
   ...over,
 });
 
@@ -135,9 +136,14 @@ describe("the moment a task is done", () => {
   const to = local(2026, 9, 28);
   const worked = [{ status: "in_progress" as const, fromMs: local(2026, 9, 22), toMs: local(2026, 9, 24) }];
 
-  it("marks a done task where its line ends", () => {
-    const [line] = ganttLines([row({ status: "done", segments: worked })], from, to, "fact");
-    expect(line!.doneAt).toBe((local(2026, 9, 24) - from) / (to - from));
+  it("marks a done task where the server says it was done", () => {
+    const [line] = ganttLines([row({ status: "done", segments: worked, doneMs: local(2026, 9, 25) })], from, to, "fact");
+    expect(line!.doneAt).toBe((local(2026, 9, 25) - from) / (to - from));
+  });
+
+  it("draws a task done inside the window with no stretch of work, by its mark alone", () => {
+    const [line] = ganttLines([row({ status: "done", doneMs: local(2026, 9, 23) })], from, to, "fact");
+    expect(line).toMatchObject({ plan: null, fact: [], doneAt: (local(2026, 9, 23) - from) / (to - from) });
   });
 
   it("marks no task that is not done, whatever its line", () => {
@@ -154,7 +160,7 @@ describe("the moment a task is done", () => {
   it("draws the Done mark on a done task's lane and none on an open one", () => {
     render(
       <GanttChart
-        rows={[row({ status: "done", segments: worked }), row({ taskId: "b", key: "TSK-2", segments: worked })]}
+        rows={[row({ status: "done", segments: worked, doneMs: local(2026, 9, 24) }), row({ taskId: "b", key: "TSK-2", segments: worked })]}
         fromMs={from}
         toMs={to}
         mode="fact"
@@ -162,6 +168,23 @@ describe("the moment a task is done", () => {
       />,
     );
     expect(document.querySelectorAll("[data-gantt-done]")).toHaveLength(1);
+  });
+});
+
+describe("today on a Gantt", () => {
+  const from = local(2026, 9, 21);
+  const to = local(2026, 9, 28);
+  const worked = [{ status: "in_progress" as const, fromMs: local(2026, 9, 22), toMs: local(2026, 9, 24) }];
+
+  it("draws a line at today when it falls inside the window", () => {
+    render(<GanttChart rows={[row({ segments: worked })]} fromMs={from} toMs={to} todayMs={local(2026, 9, 24, 12)} mode="fact" compact />);
+    const line = document.querySelector<HTMLElement>("[data-gantt-today]");
+    expect(line?.style.left).toBe(`${((local(2026, 9, 24, 12) - from) / (to - from)) * 100}%`);
+  });
+
+  it("draws none when today stands on an edge or outside", () => {
+    render(<GanttChart rows={[row({ segments: worked })]} fromMs={from} toMs={to} todayMs={to} mode="fact" compact />);
+    expect(document.querySelector("[data-gantt-today]")).toBeNull();
   });
 });
 
@@ -235,3 +258,25 @@ describe("the row under the pointer", () => {
     expect(name.className).not.toContain("bg-state-hover");
   });
 });
+
+describe("plans ahead of today on a Gantt of facts", () => {
+  const from = local(2026, 9, 21);
+  const to = local(2026, 9, 28);
+  const today = local(2026, 9, 24);
+  const planned = row({ startDate: "2026-09-22", dueDate: "2026-09-26" });
+
+  it("draws the plan from today on when the window runs past today", () => {
+    const [line] = ganttLines([planned], from, to, "fact", today);
+    expect(line!.plan).toEqual({ left: (today - from) / (to - from), width: (local(2026, 9, 27) - today) / (to - from) });
+  });
+
+  it("draws no plan without today, or when the window ends at today", () => {
+    expect(ganttLines([planned], from, to, "fact")).toEqual([]);
+    expect(ganttLines([planned], from, today, "fact", today)).toEqual([]);
+  });
+
+  it("keeps a Planned dates Gantt to the rows with a plan, a done mark alone drawing none", () => {
+    expect(ganttLines([row({ status: "done", doneMs: local(2026, 9, 23) })], from, to, "plan")).toEqual([]);
+  });
+});
+

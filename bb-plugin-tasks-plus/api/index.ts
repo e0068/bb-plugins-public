@@ -1,6 +1,6 @@
 import type { BbPluginApi, PluginRpcHandlers } from "@get-bb/plugin-sdk";
 import { parseReducedColors, REDUCED_COLORS_KV_KEY } from "@bb-plugins/reduced-colors/core/settings";
-import { burndownEnds, forecastDays, openSeriesOf } from "../analytics/burndown.js";
+import { burndownEnds, forecastMs, openSeriesOf } from "../analytics/burndown.js";
 import { ganttRowsOf } from "../analytics/gantt.js";
 import { segmentTasks, tileAnswer } from "../analytics/tile.js";
 import { isWorkingThread } from "../shared/thread-activity.js";
@@ -55,6 +55,7 @@ import {
   type CommentsChangedEvent,
   type CommentProvider,
 } from "../shared/contract";
+import { CHART_UNIT_MS } from "../shared/enums.js";
 
 type StoredTask = Task;
 
@@ -1219,14 +1220,15 @@ export function registerHandlers(
       const nowMs = Date.now();
       const tasks = await store.tasks.listTasks({ projectId: input.projectId });
       const moves = movesByTask(store.transitions.range(Number.MIN_SAFE_INTEGER, nowMs + 1, { projectId: input.projectId }));
-      const columnDays = input.period === ALL_TIME ? 7 : 1;
+      const unitMs = CHART_UNIT_MS[input.unit];
+      const columnMs = input.period === ALL_TIME ? 7 * CHART_UNIT_MS.days : unitMs;
       const burndowns = [...descendantsOf(tasks)].flatMap(([taskId, descendants]) => {
         if (descendants.length === 0) return [];
         const under = descendants.map(({ task }) => task);
         // All time starts at the card's own oldest task.
-        const ends = burndownEnds(input.period, nowMs, Math.min(...under.map(createdMs)));
+        const ends = burndownEnds(input.period, nowMs, Math.min(...under.map(createdMs)), unitMs);
         const open = openSeriesOf(under, moves, ends);
-        return [{ taskId, open, ends, forecastDays: forecastDays(open, columnDays) }];
+        return [{ taskId, open, ends, forecastMs: forecastMs(open, columnMs) }];
       });
       return { burndowns };
     },
@@ -1401,7 +1403,7 @@ export function registerHandlers(
         nowMs,
       });
       return {
-        rows: rows.map(({ task, segments }) => {
+        rows: rows.map(({ task, segments, doneMs }) => {
           const born = createdMs(task);
           return {
             taskId: task.id,
@@ -1414,6 +1416,7 @@ export function registerHandlers(
             startDate: task.startDate,
             dueDate: task.dueDate,
             segments,
+            doneMs,
           };
         }),
         projects: boardProjects(),

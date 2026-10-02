@@ -1,8 +1,8 @@
 import { isRecord, oneOf, perBoardStore } from "./per-board-store.js";
 
 /**
- * The type sizes of a board's cards — the title's and the description's —
- * one pair per board, in the browser profile, apart from the board layout
+ * The type sizes of a board's cards — the title's, the description's and the
+ * sub-task list's — one set per board, in the browser profile, apart from the board layout
  * like the chart settings: a size is not a filter.
  */
 export const CARD_TEXT_STORAGE_KEY = "bb-tasks:board-card-text";
@@ -16,10 +16,12 @@ export type DescriptionSize = (typeof DESCRIPTION_SIZES)[number];
 export interface CardTextPreference {
   title: TitleSize;
   description: DescriptionSize;
+  /** The sub-task list's rows take the description's sizes. */
+  subtasks: DescriptionSize;
 }
 
-/** What a card drew before the sizes were a choice: a 13 px title over an 11 px description. */
-export const DEFAULT_CARD_TEXT: CardTextPreference = { title: "m", description: "xs" };
+/** What a card drew before the sizes were a choice: a 13 px title over an 11 px description and 11 px sub-task rows. */
+export const DEFAULT_CARD_TEXT: CardTextPreference = { title: "m", description: "xs", subtasks: "xs" };
 
 /**
  * Each size's type class on bb's scale — 2xs 11, xs 12, sm 13, base 15 px on
@@ -39,6 +41,7 @@ export function parseCardText(raw: unknown): CardTextPreference {
   return {
     title: oneOf(TITLE_SIZES, record.title, DEFAULT_CARD_TEXT.title),
     description: oneOf(DESCRIPTION_SIZES, record.description, DEFAULT_CARD_TEXT.description),
+    subtasks: oneOf(DESCRIPTION_SIZES, record.subtasks, DEFAULT_CARD_TEXT.subtasks),
   };
 }
 

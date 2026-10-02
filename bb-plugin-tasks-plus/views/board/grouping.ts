@@ -25,7 +25,7 @@ import {
   type ViewSort,
 } from "../../shared/task-fields.js";
 import { moveInOrder } from "../../shared/manual-order.js";
-import { descendantsOf, idsUnder } from "../../shared/subtree.js";
+import { idsUnder } from "../../shared/subtree.js";
 import {
   ESTIMATE_LABELS,
   PRIORITY_LABELS,
@@ -57,6 +57,15 @@ export interface BoardColumn {
 /** Columns of the ungrouped grid; a grouping saved before the choice lays them out on auto. */
 export const gridColumnsOf = (grouping: BoardGrouping): BoardGridColumns => grouping.gridColumns ?? "auto";
 
+/** Whether the columns grow to the board's edges; a grouping saved before the choice keeps their widths. */
+export const fillsWidth = (grouping: BoardGrouping): boolean => grouping.fillWidth === true;
+
+/** The grouping with Fill width on, or off — off leaves the field out, as a grouping saved before the choice. */
+export function withFillWidth(grouping: BoardGrouping, fill: boolean): BoardGrouping {
+  const { fillWidth: _, ...rest } = grouping;
+  return fill ? { ...rest, fillWidth: true } : rest;
+}
+
 /** The key of the empty value's column: no type, no label, no assignee… */
 export const NONE_KEY = "none";
 /** The one column of an ungrouped board. */
@@ -68,7 +77,6 @@ const NONE_LABELS: Record<BoardGroupProperty, string> = {
   type: "No type",
   estimate: "No estimate",
   assignee: "No assignee",
-  epic: "No epic",
   label: "No label",
 };
 
@@ -88,8 +96,6 @@ function keysOf(task: Task, property: BoardGroupProperty, labels: readonly Label
       return [task.estimate ?? NONE_KEY];
     case "assignee":
       return [task.assignee ?? NONE_KEY];
-    case "epic":
-      return [task.epicId ?? NONE_KEY];
     case "label": {
       const names = labelNamesOf(task, labels);
       return names.length > 0 ? names : [NONE_KEY];
@@ -118,20 +124,12 @@ function naturalKeys(
       return [...TASK_ESTIMATES, NONE_KEY];
     case "assignee":
       return [...namesInUse(tasks, (task) => task.assignee), NONE_KEY];
-    case "epic":
-      return [...tasks.filter((task) => task.type === "epic").map((task) => task.id), NONE_KEY];
     case "label":
       return [...new Set(labels.map((label) => label.name)), NONE_KEY];
   }
 }
 
-/** An epic column reads as its epic task does elsewhere: key and title. */
-function epicLabel(key: string, tasks: readonly Task[]): string {
-  const epic = tasks.find((task) => task.id === key);
-  return epic === undefined ? key : `${epic.key} ${epic.title}`;
-}
-
-function columnLabel(property: BoardGroupProperty, key: string, tasks: readonly Task[]): string {
+function columnLabel(property: BoardGroupProperty, key: string): string {
   if (key === NONE_KEY && property !== "priority") return NONE_LABELS[property];
   switch (property) {
     case "status":
@@ -142,8 +140,6 @@ function columnLabel(property: BoardGroupProperty, key: string, tasks: readonly 
       return TYPE_LABELS[key as NonNullable<Task["type"]>];
     case "estimate":
       return ESTIMATE_LABELS[key as NonNullable<Task["estimate"]>];
-    case "epic":
-      return epicLabel(key, tasks);
     case "assignee":
     case "label":
       return key;
@@ -169,9 +165,6 @@ function filteredKeys(property: BoardGroupProperty, filters: SavedViewFilters): 
       return filters.estimates;
     case "assignee":
       return filters.assignees;
-    case "epic":
-      // No filter narrows the epics themselves; the parent filter narrows the tasks.
-      return [];
     case "label":
       return filters.labelNames;
   }
@@ -215,7 +208,7 @@ export function boardColumns(
     .filter((key) => onlyKeys.length === 0 || onlyKeys.includes(key))
     .map((key) => ({
       key,
-      label: columnLabel(property, key, tasks),
+      label: columnLabel(property, key),
       tasks: cards.filter((task) => keysOf(task, property, labels).includes(key)),
     }))
     .filter((column) => column.tasks.length > 0 || !layout.grouping.hideEmpty)
@@ -228,8 +221,6 @@ export interface GroupPatch {
   type?: Task["type"];
   estimate?: Task["estimate"];
   assignee?: string | null;
-  /** A drop into an epic's column puts the task under the epic. */
-  parentTaskId?: string | null;
   labelIds?: string[];
 }
 
@@ -293,21 +284,9 @@ export function dropPatch(
       return nullable(TASK_ESTIMATES, (estimate) => ({ estimate }));
     case "assignee":
       return patchWith({ assignee: toKey === NONE_KEY ? null : toKey });
-    case "epic":
-      return patchWith({ parentTaskId: toKey === NONE_KEY ? null : toKey });
     case "label":
       return labelDrop(task, fromKey, toKey, labels);
   }
-}
-
-/**
- * Whether dropping a card into an epic's column would put the task under
- * itself: the column is the task's own, or an epic that lies under it. The
- * server refuses that parent; the board does not ask.
- */
-export function dropsUnderItself(task: Task, toKey: string, tasks: readonly Task[]): boolean {
-  if (toKey === task.id) return true;
-  return (descendantsOf(tasks).get(task.id) ?? []).some(({ task: under }) => under.id === toKey);
 }
 
 /**
@@ -380,7 +359,7 @@ export function groupKeys(
   const settings = grouping.columns[property];
   return ordered(naturalKeys(property, tasks, labels), settings?.order ?? []).map((key) => ({
     key,
-    label: columnLabel(property, key, tasks),
+    label: columnLabel(property, key),
     hidden: (settings?.hidden ?? []).includes(key),
   }));
 }
@@ -392,12 +371,8 @@ export function withDrop(tasks: readonly Task[], taskId: string, change: DropCha
       return [...tasks];
     case "status":
       return tasks.map((task) => (task.id === taskId ? { ...task, status: change.status } : task));
-    case "patch": {
-      // A drop into an epic's column makes that epic the parent — and so the
-      // task's nearest epic, until the server says so itself.
-      const epic = change.patch.parentTaskId === undefined ? {} : { epicId: change.patch.parentTaskId };
-      return tasks.map((task) => (task.id === taskId ? { ...task, ...change.patch, ...epic } : task));
-    }
+    case "patch":
+      return tasks.map((task) => (task.id === taskId ? { ...task, ...change.patch } : task));
   }
 }
 

@@ -31,7 +31,6 @@ export function GroupIcon({ groupBy, groupKey, labels }: {
       const color = labels.find((label) => label.name === groupKey)?.color;
       return color ? <span aria-hidden className="size-2 shrink-0 rounded-full" style={{ backgroundColor: color }} /> : null;
     }
-    case "epic":
     case "assignee":
       return null;
   }

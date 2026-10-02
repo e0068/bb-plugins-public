@@ -132,8 +132,6 @@ export function TableCell({
       return <CellText value={task.key} showEmpty={context.showEmpty} />;
     case "parent":
       return <CellText value={keyOf(task.parentTaskId, context.taskKeys)} showEmpty={context.showEmpty} />;
-    case "epic":
-      return <CellText value={keyOf(task.epicId ?? null, context.taskKeys)} showEmpty={context.showEmpty} />;
     case "flow":
       return <CellText value={task.flow?.name ?? null} showEmpty={context.showEmpty} />;
     case "takenBy":

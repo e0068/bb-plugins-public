@@ -108,6 +108,7 @@ function sanitizeGrouping(raw: unknown): BoardGrouping {
     columns,
     hideEmpty: raw.hideEmpty === true,
     ...sanitizeGridColumns(raw.gridColumns),
+    ...(raw.fillWidth === true ? { fillWidth: true as const } : {}),
   };
 }
 

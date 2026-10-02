@@ -89,7 +89,6 @@ const FACET_ICONS: Record<Facet, IconName> = {
   slug: "Code",
   active: "Zap",
   assignee: "UserRound",
-  epic: "Mountain",
   flow: "Workflow",
   type: "Target",
   estimate: "ChartColumn",
@@ -204,15 +203,11 @@ function useFacetOptions(facet: ListedFacet, projectId: string | null): FacetOpt
 
 const ACTIVITY_NAMES: Record<(typeof ACTIVITY_VALUES)[number], string> = { active: "Active", idle: "Idle" };
 
-/** The values a field added after the first filters offers: the scope's epics, projects, flows, worktrees, machines that took tasks, and whether an agent works. */
+/** The values a field added after the first filters offers: the scope's projects, flows, worktrees, machines that took tasks, and whether an agent works. */
 function useValueOptions(field: ValueFilterField, projectId: string | null): FacetOption[] {
   const tasks = useScopeData(projectId)?.tasks ?? [];
   const projects = useProjects().data ?? [];
   switch (field) {
-    case "epic":
-      return tasks
-        .filter((task) => task.type === "epic")
-        .map((task) => ({ value: task.id, name: `${task.key} ${task.title}` }));
     case "project":
       return projects
         .filter((project) => tasks.some((task) => task.projectId === project.id))

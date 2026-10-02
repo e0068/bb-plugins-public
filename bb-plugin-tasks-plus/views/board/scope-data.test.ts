@@ -97,7 +97,7 @@ describe("card charts across projects", () => {
   it("burndowns of two projects are merged; gantt asks for every project", async () => {
     const { rpc, calls } = fakeRpc({
       taskBurndowns: (input) => ({
-        burndowns: [{ taskId: `${String(input.projectId)}-T1`, open: [1], ends: [0], forecastDays: null }],
+        burndowns: [{ taskId: `${String(input.projectId)}-T1`, open: [1], ends: [0], forecastMs: null }],
       }),
       ganttRows: () => ({ rows: [] }),
     });
@@ -106,5 +106,15 @@ describe("card charts across projects", () => {
     await fetchScopeGantt(rpc, ["P1", "P2"], 14);
     const gantt = calls.find((call) => call.method === "ganttRows")!;
     expect([...(gantt.input.projectIds as string[])].sort()).toEqual(["P1", "P2"]);
+  });
+});
+
+describe("card charts over a period in hours or minutes", () => {
+  it("asks the burndowns in the unit, and the Gantt from that many units back", async () => {
+    const { rpc, calls } = fakeRpc({ taskBurndowns: () => ({ burndowns: [] }), ganttRows: () => ({ rows: [] }) });
+    await fetchScopeBurndowns(rpc, ["P1"], 6, "hours");
+    expect(calls.find((call) => call.method === "taskBurndowns")!.input).toMatchObject({ period: 6, unit: "hours" });
+    const gantt = await fetchScopeGantt(rpc, ["P1"], 30, "minutes");
+    expect(calls.find((call) => call.method === "ganttRows")!.input.fromMs).toBe(gantt!.nowMs - 30 * 60_000);
   });
 });

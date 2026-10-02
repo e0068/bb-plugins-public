@@ -24,7 +24,8 @@ import {
   SUBTASK_SCOPES,
   TASK_OPENINGS,
   CALLER_THREAD_FIELD,
-  MAX_CARD_CHART_DAYS,
+  MAX_CARD_CHART_PERIOD,
+  CHART_UNITS,
   TABLE_SORT_DIRECTIONS,
   TABLE_COLUMN_WIDTH,
   TASK_LAYOUTS,
@@ -130,9 +131,9 @@ const taskSortSchema = z.enum(TASK_SORTS);
 const columnEdgesSchema = z.array(z.number().finite()).min(2).max(Math.max(1000, ...Object.values(WINDOW_COUNT_MAX)) + 1);
 /** Projects to narrow an analytics call to; absent or empty — every project. */
 const projectIdsSchema = z.array(idSchema).max(200).optional();
-// The Gantt charts (analytics/gantt.ts): per task, the stretches it stood in
-// each status since the chart opens, and its planned dates as calendar days —
-// the client places those on the viewer's own calendar.
+// The Gantt charts (analytics/gantt.ts): per task, the stretches it worked in
+// since the chart opens, when it was done, and its planned dates as calendar
+// days — the client places those on the viewer's own calendar.
 const ganttAnswerSchema = z
   .object({
     rows: z.array(
@@ -149,6 +150,8 @@ const ganttAnswerSchema = z
           startDate: dueDateSchema.nullable(),
           dueDate: dueDateSchema.nullable(),
           segments: z.array(z.object({ status: taskStatusSchema, fromMs: z.number(), toMs: z.number() }).strict()),
+          /** When a done task last went done; null for any other. */
+          doneMs: z.number().nullable(),
         })
         .strict(),
     ),
@@ -565,10 +568,34 @@ export type Tile = z.infer<typeof tileSchema>;
 export type Dashboard = z.infer<typeof dashboardSchema>;
 
 /**
+ * A tile saved while Epic was a field: its axis, breakdown, switch and sort
+ * by Epic read by Parent — the nearest thing a task still names — and its
+ * conditions on Epic are dropped, since an epic's key matches only its own
+ * children as a parent. Anything else goes on as it came.
+ */
+function tileOffEpic(tile: unknown): unknown {
+  if (typeof tile !== "object" || tile === null) return tile;
+  const stored = tile as Record<string, unknown>;
+  const byParent = (field: unknown) => (field === "epic" ? "parent" : field);
+  const sort = stored.sort as { by?: unknown } | null | undefined;
+  return {
+    ...stored,
+    ...("x" in stored ? { x: byParent(stored.x) } : {}),
+    ...("breakdown" in stored ? { breakdown: byParent(stored.breakdown) } : {}),
+    ...("switch" in stored ? { switch: byParent(stored.switch) } : {}),
+    ...(typeof sort === "object" && sort !== null && sort.by === "epic" ? { sort: { ...sort, by: "parent" } } : {}),
+    ...(Array.isArray(stored.conditions)
+      ? { conditions: stored.conditions.filter((condition) => (condition as { field?: unknown } | null)?.field !== "epic") }
+      : {}),
+  };
+}
+
+/**
  * A dashboard saved by an older build: a tile's board-style `filters` become
- * its `conditions` (conditionsFromFilters), and a fixed period — last24h,
- * last30d, last8w — the hours or days it meant (LEGACY_WINDOWS); anything
- * else goes on as it came, for the schema to judge.
+ * its `conditions` (conditionsFromFilters), a fixed period — last24h,
+ * last30d, last8w — the hours or days it meant (LEGACY_WINDOWS), and the
+ * retired Epic field falls away (tileOffEpic); anything else goes on as it
+ * came, for the schema to judge.
  */
 function upgraded(value: unknown): unknown {
   const stored = z.object({ tiles: z.array(z.unknown()) }).passthrough().safeParse(value);
@@ -581,7 +608,7 @@ function upgraded(value: unknown): unknown {
   }).map((tile) => {
     const fixed = z.object({ window: z.enum(Object.keys(LEGACY_WINDOWS) as [string, ...string[]]) }).passthrough().safeParse(tile);
     return fixed.success ? { ...fixed.data, window: LEGACY_WINDOWS[fixed.data.window] } : tile;
-  });
+  }).map(tileOffEpic);
   return { ...stored.data, tiles };
 }
 
@@ -613,6 +640,8 @@ const tileRowSchema = z
     startDate: dueDateSchema.nullable(),
     dueDate: dueDateSchema.nullable(),
     segments: z.array(z.object({ status: taskStatusSchema, fromMs: z.number(), toMs: z.number() }).strict()),
+    /** When a done task last went done; null for any other, and on a list tile. */
+    doneMs: z.number().nullable(),
     /** Since when the task stands in its status. */
     sinceMs: z.number().nullable(),
   })
@@ -643,8 +672,8 @@ export const tileAnswerSchema = z
 
 export type TileAnswer = z.infer<typeof tileAnswerSchema>;
 
-/** Days a board's card charts look back; 0 is all time (enums.ts). */
-const cardChartPeriodSchema = z.number().int().min(0).max(MAX_CARD_CHART_DAYS);
+/** Units — days, hours or minutes — a board's card charts look back; 0 is all time (enums.ts). */
+const cardChartPeriodSchema = z.number().int().min(0).max(MAX_CARD_CHART_PERIOD);
 
 /** The cross-project surface a view opens, when it is not bound to a project. */
 const savedViewListScopeSchema = z.enum(["active", "waiting"]).nullable();
@@ -685,6 +714,8 @@ export const boardGroupingSchema = z
     hideEmpty: z.boolean(),
     /** Columns of the ungrouped grid; absent is "auto", as saved before the choice. */
     gridColumns: z.union([z.literal("auto"), z.literal(BOARD_GRID_COLUMN_COUNTS)]).optional(),
+    /** The columns grow from their widths to the board's edges; absent is off, as saved before the choice. */
+    fillWidth: z.literal(true).optional(),
   })
   .strict();
 
@@ -1244,10 +1275,11 @@ export const tasksRpcContract = defineRpcContract({
   },
   // The board's sub-task burndowns, one call per board: per task with tasks
   // under it, how many of them still owed work at each column end (the last
-  // one now), those ends, and the days the trend needs to reach zero. The
-  // columns are the period's (analytics/burndown.ts).
+  // one now), those ends, and how long the trend needs to reach zero. The
+  // columns are the period's, in its unit — days unless hours or minutes are
+  // asked (analytics/burndown.ts).
   taskBurndowns: {
-    input: withCallerThread(z.object({ projectId: idSchema, period: cardChartPeriodSchema }).strict()),
+    input: withCallerThread(z.object({ projectId: idSchema, period: cardChartPeriodSchema, unit: z.enum(CHART_UNITS).default("days") }).strict()),
     output: z
       .object({
         burndowns: z.array(
@@ -1256,7 +1288,7 @@ export const tasksRpcContract = defineRpcContract({
               taskId: taskIdSchema,
               open: z.array(z.number().int().nonnegative()),
               ends: z.array(z.number()),
-              forecastDays: z.number().int().nonnegative().nullable(),
+              forecastMs: z.number().int().nonnegative().nullable(),
             })
             .strict(),
         ),

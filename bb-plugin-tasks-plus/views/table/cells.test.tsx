@@ -136,7 +136,6 @@ describe("a cell reads as text with an icon", () => {
 
   it("names, dates and amounts read as the board shows them", () => {
     expect(text("project", full)).toContain("Shader Lab");
-    expect(text("epic", full)).toContain("SH-8");
     expect(text("parent", full)).toContain("SH-9");
     expect(text("assignee", full)).toContain("Vakhnin Sergei");
     expect(text("labels", full)).toContain("tasks-plus");
@@ -157,7 +156,7 @@ describe("a cell reads as text with an icon", () => {
   });
 
   it("an empty value is blank, or a dash when empty values are shown", () => {
-    for (const column of ["priority", "epic", "parent", "assignee", "labels", "dueDate", "budget", "estimate", "description", "active"] as const) {
+    for (const column of ["priority", "parent", "assignee", "labels", "dueDate", "budget", "estimate", "description", "active"] as const) {
       expect(text(column, empty), column).toBe("");
       expect(text(column, empty, context({ showEmpty: true })), column).toBe("—");
     }
