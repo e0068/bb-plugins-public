@@ -2,14 +2,17 @@
 // файлом по «+». Пул картинок один на бриф и живёт в модуле, а не в состоянии
 // компонента: переживает размонтирование сообщения, как черновик. В поле,
 // куда вставлено, встаёт метка «[картинка N]» — по ней агент понимает, к чему
-// картинка. Сами картинки уходят с ответом с номером метки, сервер кладёт их
+// картинка, — а внизу рамки поля миниатюра, подписанная такой же плашкой. Сами картинки уходят с ответом с номером метки, сервер кладёт их
 // файлами треда и называет агенту, какой путь у какой метки. Прочитанные
 // картинки копируются в IndexedDB: метки в черновике переживают перезагрузку
 // плагина, и картинки должны пережить её вместе с ними.
-import { createContext, useContext, useEffect, useRef, useSyncExternalStore, type ClipboardEvent, type ReactNode } from "react";
+import * as Dialog from "@radix-ui/react-dialog";
+import { createContext, useContext, useEffect, useRef, useState, useSyncExternalStore, type ClipboardEvent, type ReactNode } from "react";
 
 import { Icon } from "../components/ui/icon";
+import { markerNumbers, withoutMarker } from "../core/image-markers";
 import type { Messages } from "../lib/messages";
+import { usePortalScopeProps } from "../lib/portal-scope";
 import { cn } from "../lib/utils";
 import type { AnswerImage } from "../shared/contract";
 import { dropPool, loadPool, savePool } from "./attachment-store";
@@ -218,40 +221,92 @@ export function AttachButton({ target, disabled, className }: { target: AttachTa
   );
 }
 
-/** Превью приложенных картинок с крестиком и строка о превышении предела. */
-export function AttachmentThumbs({ className }: { className?: string }) {
+/** Плашка метки картинки — в тексте поля и под миниатюрой одна и та же. */
+export const imageTag = "rounded-md bg-state-active text-foreground ring-1 ring-inset ring-border";
+
+/** Подпись плашки — метка без скобок: «картинка 1». */
+const tagText = (n: number, m: Messages["attachments"]): string => m.marker(n).slice(1, -1);
+
+/**
+ * Миниатюры картинок поля внизу его рамки, в порядке меток в тексте; под каждой — плашка, как у метки.
+ * Тап по миниатюре разворачивает картинку на весь экран, крестик убирает и картинку, и её метку.
+ */
+export function FieldImages({ target, className }: { target: AttachTarget; className?: string }) {
   const attach = useContext(AttachContext);
   const t = useMessages();
   const pool = useSyncExternalStore(subscribe, () => (attach === null ? EMPTY : poolOf(attach.briefId)));
-  if (attach === null || (pool.images.length === 0 && pool.error === null)) return null;
+  const [shown, setShown] = useState<Attachment | null>(null);
+  if (attach === null) return null;
+  const images = markerNumbers(target.value, t.attachments.marker).flatMap((n) => pool.images.filter((image) => image.n === n));
+  if (images.length === 0) return null;
+  const remove = (n: number) => {
+    update(attach.briefId, (p) => ({ ...p, images: p.images.filter((i) => i.n !== n), error: null }));
+    target.onText(withoutMarker(target.value, n, t.attachments.marker));
+  };
   return (
-    <div className={cn("flex flex-col gap-1", className)}>
-      {pool.images.length > 0 && (
-        <div className="flex flex-wrap gap-1.5">
-          {pool.images.map((image) => (
-            <div key={image.n} className="relative size-14 overflow-hidden rounded-md bg-state-active">
-              {image.dataBase64 === null ? (
-                <div role="status" aria-label={t.attachments.reading(image.n)} className="size-full animate-pulse" />
-              ) : (
-                <img alt={t.attachments.alt(image.n)} src={`data:${image.mimeType};base64,${image.dataBase64}`} className="size-full object-cover" />
-              )}
-              <button
-                type="button"
-                aria-label={t.attachments.remove(image.n)}
-                onClick={() => update(attach.briefId, (p) => ({ ...p, images: p.images.filter((i) => i.n !== image.n), error: null }))}
-                className="absolute right-0.5 top-0.5 flex size-[18px] items-center justify-center rounded-full bg-background/80 text-foreground"
-              >
-                <Icon name="X" className="size-2.5" />
+    <div className={cn("flex flex-wrap gap-1.5", className)}>
+      {images.map((image) => (
+        <div key={image.n} data-field-image className="flex flex-col items-start gap-1">
+          <div className="relative size-14 overflow-hidden rounded-md bg-state-active">
+            {image.dataBase64 === null ? (
+              <div role="status" aria-label={t.attachments.reading(image.n)} className="size-full animate-pulse" />
+            ) : (
+              <button type="button" aria-label={t.attachments.open(image.n)} onClick={() => setShown(image)} className="size-full cursor-zoom-in">
+                <img alt={t.attachments.alt(image.n)} src={imageSrc(image)} className="size-full object-cover" />
               </button>
-            </div>
-          ))}
+            )}
+            <button
+              type="button"
+              aria-label={t.attachments.remove(image.n)}
+              onClick={() => remove(image.n)}
+              className="absolute right-0.5 top-0.5 flex size-[18px] items-center justify-center rounded-full bg-background/80 text-foreground"
+            >
+              <Icon name="X" className="size-2.5" />
+            </button>
+          </div>
+          <span data-image-tag className={cn(imageTag, "px-1 text-xs leading-4")}>
+            {tagText(image.n, t.attachments)}
+          </span>
         </div>
-      )}
-      {pool.error !== null && (
-        <span role="alert" className="text-xs text-destructive">
-          {errorText(pool.error, t.attachments)}
-        </span>
-      )}
+      ))}
+      <ImageViewer image={shown} label={shown === null ? "" : t.attachments.alt(shown.n)} onClose={() => setShown(null)} />
     </div>
+  );
+}
+
+const imageSrc = (image: Attachment): string => `data:${image.mimeType};base64,${image.dataBase64 ?? ""}`;
+
+/** Картинка во весь экран поверх bb; закрывается тапом в любом месте и Esc. */
+function ImageViewer({ image, label, onClose }: { image: Attachment | null; label: string; onClose: () => void }) {
+  const scope = usePortalScopeProps();
+  return (
+    <Dialog.Root open={image !== null} onOpenChange={(open) => !open && onClose()}>
+      <Dialog.Portal>
+        <Dialog.Overlay {...scope} className="fixed inset-0 z-50 bg-black/80" />
+        <Dialog.Content
+          {...scope}
+          aria-describedby={undefined}
+          onClick={onClose}
+          onOpenAutoFocus={(event) => event.preventDefault()}
+          className="fixed inset-0 z-50 flex cursor-zoom-out items-center justify-center p-4 outline-none"
+        >
+          <Dialog.Title className="sr-only">{label}</Dialog.Title>
+          {image !== null && <img alt={label} src={imageSrc(image)} className="max-h-full max-w-full rounded-md object-contain" />}
+        </Dialog.Content>
+      </Dialog.Portal>
+    </Dialog.Root>
+  );
+}
+
+/** Строка о картинке, которая не приложилась: не тот формат, превышен предел, файл не прочитался. */
+export function AttachmentError({ className }: { className?: string }) {
+  const attach = useContext(AttachContext);
+  const t = useMessages();
+  const pool = useSyncExternalStore(subscribe, () => (attach === null ? EMPTY : poolOf(attach.briefId)));
+  if (attach === null || pool.error === null) return null;
+  return (
+    <span role="alert" className={cn("text-xs text-destructive", className)}>
+      {errorText(pool.error, t.attachments)}
+    </span>
   );
 }

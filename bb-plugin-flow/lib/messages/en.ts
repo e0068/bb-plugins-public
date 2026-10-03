@@ -383,6 +383,7 @@ export const en: Messages = {
     reading: (n) => `Image ${n} is loading`,
     alt: (n) => `image ${n}`,
     remove: (n) => `Remove image ${n}`,
+    open: (n) => `Open image ${n}`,
     line: (list) => `Images: ${list}`,
     lost: (list) => `Images not saved: ${list} — ask the owner to send them again instead of guessing what they show`,
   },

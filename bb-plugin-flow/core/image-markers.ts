@@ -9,7 +9,7 @@ const escape = (text: string): string => text.replace(/[.*+?^${}()|[\]\\]/g, "\\
 /** Шаблон метки по её виду: номер в `marker(0)` заменён на любое число. */
 const markerPattern = (marker: (n: number) => string): RegExp => {
   const [before = "", after = ""] = marker(0).split("0");
-  return new RegExp(`${escape(before)}\\d+${escape(after)}`, "g");
+  return new RegExp(`${escape(before)}(\\d+)${escape(after)}`, "g");
 };
 
 /** Текст кусками по порядку; склейка кусков — исходный текст. */
@@ -22,4 +22,15 @@ export const splitMarkers = (text: string, marker: (n: number) => string): Marke
     at = match.index + match[0].length;
   }
   return at < text.length ? [...parts, { text: text.slice(at), marker: false }] : parts;
+};
+
+/** Номера картинок, на которые ссылается текст, — по первому появлению метки. */
+export const markerNumbers = (text: string, marker: (n: number) => string): number[] => [
+  ...new Set([...text.matchAll(markerPattern(marker))].map((match) => Number(match[1]))),
+];
+
+/** Текст без метки картинки `n`: каждое её вхождение уходит вместе с одним пробелом рядом, чтобы слова не слиплись и не разошлись. */
+export const withoutMarker = (text: string, n: number, marker: (n: number) => string): string => {
+  const tag = escape(marker(n));
+  return text.replace(new RegExp(`${tag} | ?${tag}`, "g"), "");
 };

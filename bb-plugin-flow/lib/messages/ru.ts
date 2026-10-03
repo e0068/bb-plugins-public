@@ -390,6 +390,7 @@ export const ru = {
     reading: (n: number) => `Картинка ${n} читается`,
     alt: (n: number) => `картинка ${n}`,
     remove: (n: number) => `Убрать картинку ${n}`,
+    open: (n: number) => `Открыть картинку ${n}`,
     line: (list: string) => `Картинки: ${list}`,
     lost: (list: string) => `Картинки не сохранены: ${list} — попроси владельца прислать их снова, не угадывай, что на них`,
   },
