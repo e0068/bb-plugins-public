@@ -89,6 +89,13 @@ export default async function plugin(bb: BbPluginApi) {
         "Выбор, открывать ли тред на весь экран или в одной боковой панели; стрелки из пустого Composer в очередь и обратно. Держится на поведении bb, которого нет в SDK, поэтому может сломаться после обновления bb.",
       default: false,
     },
+    invertOnPhone: {
+      type: "boolean",
+      label: "Инвертировать на телефоне",
+      description:
+        "На узком экране секция идёт снизу вверх: сразу над Composer число тредов и фильтры, выше ряд проектов, ещё выше треды — первый ближе всех к пальцу.",
+      default: false,
+    },
   });
 
   // A failed lookup leaves its part of the footer empty instead of failing the rpc.

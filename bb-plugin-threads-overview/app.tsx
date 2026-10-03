@@ -104,6 +104,7 @@ import {
 import { describeFooter, type ExecutionFacts, type GitFacts } from "./src/core/details";
 import { parsePreviewDelayMs } from "./src/core/preview";
 import { parsePreviewSize } from "./src/core/preview-size";
+import { queueLayout, type QueueLayout } from "./src/core/queue-layout";
 import { rowStatus, showsWaitingTime, worktreeOf, type RowStatus, type Worktree } from "./src/core/status";
 import { ProviderLogo, type ProviderBrand } from "@/components/provider-logo";
 import { Button } from "@/components/ui/button";
@@ -120,6 +121,7 @@ import {
   HoverCardTrigger,
 } from "@/components/ui/hover-card";
 import { useMediaQuery } from "@/components/ui/hooks/use-media-query";
+import { useIsCompactViewport } from "@/components/ui/hooks/use-compact-viewport";
 import { Popover, PopoverAnchor, PopoverContent } from "@/components/ui/popover";
 import {
   Tooltip,
@@ -1260,6 +1262,9 @@ function useGroupTrack(
 // How long the track has to stand still to count as at rest where the browser has no scrollend, in ms.
 const SCROLL_REST_MS = 150;
 
+// The section's root, as the page and bb's own boxes find it.
+const SECTION_SELECTOR = "[data-threads-overview-section]";
+
 /** The nearest ancestor that cuts off whatever overflows it sideways — where the track has to stop. */
 function clippingAncestor(element: HTMLElement): HTMLElement | null {
   for (let node = element.parentElement; node !== null; node = node.parentElement) {
@@ -1270,9 +1275,10 @@ function clippingAncestor(element: HTMLElement): HTMLElement | null {
 
 /**
  * How far the track reaches past the section on each side: out to the edges of
- * whatever clips the page — bb's own page scroller, which is as wide as the
- * pane — so neighbouring lists run on across the page instead of ending at the
- * composer's width. The section is re-measured whenever it or that box resizes.
+ * whatever clips it — bb's own page scroller, which is as wide as the pane, or,
+ * with the queue bottom-up, the section's own scroller that reaches as far — so
+ * neighbouring lists run on across the page instead of ending at the composer's
+ * width. The section is re-measured whenever it or that box resizes.
  */
 function useTrackBleed(
   trackRef: RefObject<HTMLDivElement | null>,
@@ -1281,9 +1287,10 @@ function useTrackBleed(
   const [bleed, setBleed] = useState<Span>({ left: 0, right: 0 });
 
   useEffect(() => {
-    const section = trackRef.current?.parentElement ?? null;
-    if (!mounted || section === null || typeof ResizeObserver === "undefined") return;
-    const clip = clippingAncestor(section);
+    const track = trackRef.current;
+    const section = track?.closest<HTMLElement>(SECTION_SELECTOR) ?? null;
+    if (!mounted || track === null || section === null || typeof ResizeObserver === "undefined") return;
+    const clip = clippingAncestor(track);
 
     const measure = () => {
       const clipBox =
@@ -1383,6 +1390,7 @@ function GroupedQueue({
   onWheel,
   onSelect,
   renderRow,
+  layout,
 }: {
   groups: readonly ProjectGroup[];
   active: number;
@@ -1394,7 +1402,9 @@ function GroupedQueue({
   onWheel: (event: React.WheelEvent) => void;
   onSelect: (index: number) => void;
   renderRow: (thread: ThreadFacts, focused: boolean) => ReactNode;
+  layout: QueueLayout;
 }) {
+  const classes = QUEUE_LAYOUT[layout];
   // The padding brings `w-full` back to the section's width, and the matching
   // scroll padding keeps snapping and scrollIntoView centring on the section
   // rather than on the wider scrollport — the two bleeds need not be equal.
@@ -1417,6 +1427,7 @@ function GroupedQueue({
       className={cn(
         "relative flex snap-x snap-mandatory overflow-x-auto overscroll-x-contain [scrollbar-width:none] [&::-webkit-scrollbar]:hidden",
         SLIDE_GAP,
+        classes.track,
       )}
     >
       {groups.map((group, index) => {
@@ -1434,7 +1445,7 @@ function GroupedQueue({
           >
             <ul
               inert={!focused}
-              className={cn("flex flex-col", !focused && "pointer-events-none")}
+              className={cn(classes.list, !focused && "pointer-events-none")}
             >
               {group.threads.map((thread) => renderRow(thread, focused))}
             </ul>
@@ -1721,6 +1732,12 @@ function useHomePaneForSidebar(rootRef: RefObject<HTMLElement | null>, enabled: 
 const FILL_PANE_CLASS =
   "flex-1 [div.flex-col:has(>[data-testid=plugin-homepage-sections]_&)]:min-h-full [[data-testid=plugin-homepage-sections]:has(&)]:flex [[data-testid=plugin-homepage-sections]:has(&)]:flex-1 [[data-testid=plugin-homepage-sections]:has(&)]:flex-col [[data-testid=plugin-homepage-sections]>section:has(&)]:flex [[data-testid=plugin-homepage-sections]>section:has(&)]:flex-1 [[data-testid=plugin-homepage-sections]>section:has(&)]:flex-col";
 
+// What the compact Home needs whichever way the queue runs: no gap over the
+// sections, the scroller started under the top bar as a flex column, and
+// Recents hidden with its spacer — see the two classes below.
+const COMPACT_HOME_SHARED_CLASS =
+  "[[data-testid=root-compose-compact-scroll-viewport]_[data-testid=plugin-homepage-sections]:has(&)]:mt-0 [[data-testid=root-compose-compact-scroll-viewport]:has(&)]:top-14! [[data-testid=root-compose-compact-scroll-viewport]:has(&)]:flex [[data-testid=root-compose-compact-scroll-viewport]:has(&)]:flex-col [[data-testid=root-compose-compact-scroll-viewport]:has(&)_[data-root-compose-mobile-recents]]:hidden [[data-testid=root-compose-compact-scroll-viewport]:has(&)_[data-testid=root-compose-compact-recents-offset]]:hidden";
+
 // On the compact home screen bb floats the composer over a scroller that holds
 // its Recents list and, under it, the plugin sections, and starts that scroller
 // low, just above the composer. The queue takes Recents' place: the list is
@@ -1733,8 +1750,61 @@ const FILL_PANE_CLASS =
 // tall and the list spills over its top, where nothing scrolls. bb's sections
 // box keeps its own 24px top margin, which would open a gap under the top bar
 // at the top of the scroller, so it goes too.
-const COMPACT_HOME_CLASS =
-  "[[data-testid=root-compose-compact-scroll-viewport]_[data-testid=plugin-homepage-sections]:has(&)]:mt-0 [[data-testid=root-compose-compact-scroll-viewport]:has(&)]:top-14! [[data-testid=root-compose-compact-scroll-viewport]:has(&)]:flex [[data-testid=root-compose-compact-scroll-viewport]:has(&)]:flex-col [[data-testid=root-compose-compact-scroll-viewport]:has(&)_[data-root-compose-mobile-recents]]:hidden [[data-testid=root-compose-compact-scroll-viewport]:has(&)_[data-testid=root-compose-compact-recents-offset]]:hidden [[data-testid=root-compose-compact-scroll-viewport]>div:has(&)]:flex [[data-testid=root-compose-compact-scroll-viewport]>div:has(&)]:grow [[data-testid=root-compose-compact-scroll-viewport]>div:has(&)]:shrink-0 [[data-testid=root-compose-compact-scroll-viewport]>div:has(&)]:flex-col [[data-testid=root-compose-compact-scroll-viewport]:has(&)_div:has(>[data-testid=plugin-homepage-sections])]:flex [[data-testid=root-compose-compact-scroll-viewport]:has(&)_div:has(>[data-testid=plugin-homepage-sections])]:grow [[data-testid=root-compose-compact-scroll-viewport]:has(&)_div:has(>[data-testid=plugin-homepage-sections])]:flex-col [[data-testid=root-compose-compact-scroll-viewport]:has(&)>div:last-child]:shrink-0";
+const COMPACT_HOME_CLASS = cn(
+  COMPACT_HOME_SHARED_CLASS,
+  "[[data-testid=root-compose-compact-scroll-viewport]>div:has(&)]:flex [[data-testid=root-compose-compact-scroll-viewport]>div:has(&)]:grow [[data-testid=root-compose-compact-scroll-viewport]>div:has(&)]:shrink-0 [[data-testid=root-compose-compact-scroll-viewport]>div:has(&)]:flex-col [[data-testid=root-compose-compact-scroll-viewport]:has(&)_div:has(>[data-testid=plugin-homepage-sections])]:flex [[data-testid=root-compose-compact-scroll-viewport]:has(&)_div:has(>[data-testid=plugin-homepage-sections])]:grow [[data-testid=root-compose-compact-scroll-viewport]:has(&)_div:has(>[data-testid=plugin-homepage-sections])]:flex-col [[data-testid=root-compose-compact-scroll-viewport]:has(&)>div:last-child]:shrink-0",
+);
+
+// The same Home with the queue bottom-up — see `queueLayout`. The section no
+// longer hands the scroller its height to scroll: bb's boxes are held at the
+// scroller's height instead, each let shrink to it (`min-h-0` beats bb's
+// `min-h-full` on specificity), and the threads scroll in a box of the
+// section's own. The count, the filters and the pills stand outside that box,
+// so they stay put above the composer, and the spacer under it keeps its height.
+const COMPACT_HOME_BOTTOM_UP_CLASS = cn(
+  COMPACT_HOME_SHARED_CLASS,
+  "[[data-testid=root-compose-compact-scroll-viewport]>div:has(&)]:flex [[data-testid=root-compose-compact-scroll-viewport]>div:has(&)]:flex-1 [[data-testid=root-compose-compact-scroll-viewport]>div:has(&)]:min-h-0 [[data-testid=root-compose-compact-scroll-viewport]>div:has(&)]:flex-col [[data-testid=root-compose-compact-scroll-viewport]:has(&)_div:has(>[data-testid=plugin-homepage-sections])]:flex [[data-testid=root-compose-compact-scroll-viewport]:has(&)_div:has(>[data-testid=plugin-homepage-sections])]:flex-1 [[data-testid=root-compose-compact-scroll-viewport]:has(&)_div:has(>[data-testid=plugin-homepage-sections])]:min-h-0 [[data-testid=root-compose-compact-scroll-viewport]:has(&)_div:has(>[data-testid=plugin-homepage-sections])]:flex-col [[data-testid=root-compose-compact-scroll-viewport]_[data-testid=plugin-homepage-sections]:has(&)]:min-h-0 [[data-testid=root-compose-compact-scroll-viewport]_[data-testid=plugin-homepage-sections]>section:has(&)]:min-h-0 [[data-testid=root-compose-compact-scroll-viewport]:has(&)_[data-testid=root-compose-compact-bottom-spacer]]:shrink-0",
+);
+
+/**
+ * How each part of the section runs in each layout. Bottom-up, every column is
+ * turned over: the header, the pills and the threads stack up from the
+ * composer, the threads from the first one up, and the postponed ones sit at
+ * the far end, opening upwards. The threads' box is a reversed column too, so
+ * the browser opens it scrolled to its foot. It reaches out over bb's 16 px
+ * side padding and pads itself back in, so the project slides still run out to
+ * the edges of the screen. Top-down that box is no box at all (`contents`).
+ */
+const QUEUE_LAYOUT: Record<
+  QueueLayout,
+  { root: string; threads: string; list: string; track: string; postponed: string; skeleton: string }
+> = {
+  "top-down": {
+    root: cn("flex-col", COMPACT_HOME_CLASS),
+    threads: "contents",
+    list: "flex flex-col",
+    track: "",
+    postponed: "mt-auto flex flex-col",
+    skeleton: "flex-col",
+  },
+  "bottom-up": {
+    root: cn("min-h-0 flex-col-reverse [[data-home-swipe-section]_&]:h-full", COMPACT_HOME_BOTTOM_UP_CLASS),
+    threads:
+      "-mx-4 flex min-h-0 flex-1 flex-col-reverse gap-3 overflow-x-hidden overflow-y-auto overscroll-contain px-4",
+    // A row draws the line under itself, and the last one none; turned over,
+    // the line goes under every row but the first, which stands on the pills.
+    list: "flex flex-col-reverse [&>li:first-child]:border-b-0 [&>li:last-child:not(:first-child)]:border-b",
+    track: "shrink-0 items-end",
+    postponed: "flex flex-col-reverse",
+    skeleton: "h-full flex-col-reverse overflow-hidden",
+  },
+};
+
+/** Which way the queue runs here — see `queueLayout`. */
+function useQueueLayout(): QueueLayout {
+  const settings = useSettings();
+  return queueLayout(settings.values?.invertOnPhone, useIsCompactViewport());
+}
 
 function AttentionSection() {
   const { status, threads, projects } = experimental_useSidebarThreads();
@@ -1744,6 +1814,8 @@ function AttentionSection() {
   const providerOf = useProviderLookup();
   const settings = useSettings();
   const touch = useMediaQuery(TOUCH_QUERY);
+  const layout = useQueueLayout();
+  const classes = QUEUE_LAYOUT[layout];
   // A touch screen has no hover: a preview there only flickers up on a tap.
   const previewDelayMs = touch ? 0 : parsePreviewDelayMs(settings.values?.previewDelaySeconds);
   // One swiped row at a time, as in a mail list, and a touch outside the open
@@ -1910,9 +1982,9 @@ function AttentionSection() {
         data-threads-overview-section=""
         onKeyDown={onQueueKeyDown}
         className={cn(
-          "flex flex-col gap-3 [[data-testid=plugin-homepage-sections]>section:has(&)>h2]:hidden",
+          "flex gap-3 [[data-testid=plugin-homepage-sections]>section:has(&)>h2]:hidden",
           FILL_PANE_CLASS,
-          COMPACT_HOME_CLASS,
+          classes.root,
         )}
       >
         <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
@@ -1955,61 +2027,64 @@ function AttentionSection() {
           />
         )}
 
-        {queue.length === 0 ? (
-          <p className="text-sm text-muted-foreground">
-            Все треды разобраны. Здесь появятся те, в которых не идёт работа.
-          </p>
-        ) : grouped ? (
-          <GroupedQueue
-            groups={groups}
-            active={groupTrack.active}
-            bleed={groupTrack.bleed}
-            trackRef={groupTrack.trackRef}
-            onScroll={groupTrack.onScroll}
-            onScrollEnd={groupTrack.onScrollEnd}
-            onTakeOver={groupTrack.onTakeOver}
-            onWheel={groupTrack.onWheel}
-            onSelect={groupTrack.goTo}
-            renderRow={groupedRow}
-          />
-        ) : (
-          <ul className="flex flex-col">
-            {queue.map(flatRow)}
-          </ul>
-        )}
+        <div className={classes.threads}>
+          {queue.length === 0 ? (
+            <p className="text-sm text-muted-foreground">
+              Все треды разобраны. Здесь появятся те, в которых не идёт работа.
+            </p>
+          ) : grouped ? (
+            <GroupedQueue
+              groups={groups}
+              active={groupTrack.active}
+              bleed={groupTrack.bleed}
+              trackRef={groupTrack.trackRef}
+              onScroll={groupTrack.onScroll}
+              onScrollEnd={groupTrack.onScrollEnd}
+              onTakeOver={groupTrack.onTakeOver}
+              onWheel={groupTrack.onWheel}
+              onSelect={groupTrack.goTo}
+              renderRow={groupedRow}
+              layout={layout}
+            />
+          ) : (
+            <ul className={classes.list}>
+              {queue.map(flatRow)}
+            </ul>
+          )}
 
-        {postponedThreads.length > 0 && (
-          <div className="mt-auto flex flex-col gap-2">
-            <button
-              type="button"
-              onClick={() => setShowPostponed((open) => !open)}
-              className="flex items-center gap-1 self-start text-xs text-muted-foreground hover:text-foreground"
-            >
-              <Icon
-                name={showPostponed ? "ChevronDown" : "ChevronRight"}
-                className="size-3.5"
-                aria-hidden
-              />
-              Отложено: {postponedThreads.length}
-            </button>
-            {showPostponed && (
-              <ul className="flex flex-col">
-                {postponedThreads.map((thread) => (
-                  <PostponedRow
-                    key={thread.id}
-                    thread={thread}
-                    title={threadTitle(thread)}
-                    projectLabel={projectName(thread.projectId)}
-                    provider={providerOf(thread.providerId)}
-                    previewDelayMs={previewDelayMs}
-                    onOpen={() => openThread(thread.id)}
-                    onRestore={() => void setPostponed(thread.id, false)}
-                  />
-                ))}
-              </ul>
-            )}
-          </div>
-        )}
+          {postponedThreads.length > 0 && (
+            <div className={cn("gap-2", classes.postponed)}>
+              <button
+                type="button"
+                onClick={() => setShowPostponed((open) => !open)}
+                className="flex items-center gap-1 self-start text-xs text-muted-foreground hover:text-foreground"
+              >
+                <Icon
+                  name={showPostponed ? "ChevronDown" : "ChevronRight"}
+                  className="size-3.5"
+                  aria-hidden
+                />
+                Отложено: {postponedThreads.length}
+              </button>
+              {showPostponed && (
+                <ul className={classes.list}>
+                  {postponedThreads.map((thread) => (
+                    <PostponedRow
+                      key={thread.id}
+                      thread={thread}
+                      title={threadTitle(thread)}
+                      projectLabel={projectName(thread.projectId)}
+                      provider={providerOf(thread.providerId)}
+                      previewDelayMs={previewDelayMs}
+                      onOpen={() => openThread(thread.id)}
+                      onRestore={() => void setPostponed(thread.id, false)}
+                    />
+                  ))}
+                </ul>
+              )}
+            </div>
+          )}
+        </div>
       </div>
     </TooltipProvider>
   );
@@ -2298,7 +2373,7 @@ const SECTION_INSET = 16;
 
 /** The section on `screen` if Home is on it, or `null` if it is not. */
 function homeSection(screen: HTMLElement): Element | null {
-  return screen.querySelector("[data-testid=root-compose-compact-home] [data-threads-overview-section]");
+  return screen.querySelector(`[data-testid=root-compose-compact-home] ${SECTION_SELECTOR}`);
 }
 
 /**
@@ -2307,6 +2382,7 @@ function homeSection(screen: HTMLElement): Element | null {
  * seen as it will open — and a skeleton of it the rest of the time.
  */
 function HomeSection({ box, live }: { box: Box | null; live: boolean }) {
+  const layout = useQueueLayout();
   // A measured box is the section's own, edge to edge; the fallback spans the
   // screen and keeps the list off its edges. The list stops at the box, as
   // Home's scroller stops it, instead of running on under the composer.
@@ -2316,7 +2392,7 @@ function HomeSection({ box, live }: { box: Box | null; live: boolean }) {
       : { top: box.top, left: box.left, width: box.width, height: box.height };
   return (
     <div data-home-swipe-section="" style={{ position: "absolute", overflow: "hidden", ...place }}>
-      {live ? <AttentionSection /> : <SectionSkeleton />}
+      {live ? <AttentionSection /> : <SectionSkeleton layout={layout} />}
     </div>
   );
 }
@@ -2325,10 +2401,10 @@ function HomeSection({ box, live }: { box: Box | null; live: boolean }) {
 const SKELETON_ROWS = 6;
 
 /** The section's outline before its list is drawn: the heading, the project pills and a column of rows. */
-function SectionSkeleton() {
+function SectionSkeleton({ layout }: { layout: QueueLayout }) {
   const bar = "animate-pulse rounded-md bg-muted";
   return (
-    <div data-home-swipe-skeleton="" className="flex flex-col gap-3 pt-2">
+    <div data-home-swipe-skeleton="" className={cn("flex gap-3 pt-2", QUEUE_LAYOUT[layout].skeleton)}>
       <div className={cn(bar, "h-5 w-32")} />
       <div className={cn(bar, "h-8 w-2/3")} />
       <ul className="flex flex-col">

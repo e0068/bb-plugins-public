@@ -104,3 +104,14 @@ describe("preview size settings", () => {
     );
   });
 });
+
+describe("the bottom-up queue on a phone", () => {
+  it("is a switch in the plugin's settings, off until turned on", async () => {
+    const { bb, harness } = createFakePluginHost({ pluginId: "threads-overview" });
+    await plugin(bb);
+    expect(harness.registrations.settingsDescriptors.invertOnPhone).toMatchObject({
+      type: "boolean",
+      default: false,
+    });
+  });
+});

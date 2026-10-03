@@ -12,52 +12,7 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { cleanup } from "@testing-library/react";
 import { loadPluginApp, renderSlot } from "@get-bb/plugin-sdk/testing/app";
-
-const SCROLLER = "root-compose-compact-scroll-viewport";
-
-/**
- * bb 0.45's compact Home around a plugin section: the scroller, the box bb
- * holds at the scroller's height and pushes its content to the foot of, the
- * column with Recents and the plugin sections, and the spacer under the composer.
- */
-function compactHome045(): { scroller: HTMLElement; slotBox: HTMLElement } {
-  const home = document.createElement("div");
-  home.dataset.testid = "root-compose-compact-home";
-  home.innerHTML = `
-    <div data-testid="${SCROLLER}" class="absolute inset-x-0 bottom-0 overflow-y-auto overscroll-contain">
-      <div data-testid="root-compose-compact-scroll-content" class="flex min-h-full flex-col justify-end">
-        <div data-testid="root-compose-compact-recents-offset"></div>
-        <div class="mx-auto w-full max-w-[760px] px-4">
-          <section class="md:hidden" data-root-compose-mobile-recents=""></section>
-          <div class="mt-6 space-y-6" data-testid="plugin-homepage-sections">
-            <section class="space-y-3"><div class="contents" data-slot-box=""></div></section>
-          </div>
-        </div>
-        <div data-testid="root-compose-compact-bottom-spacer"></div>
-      </div>
-    </div>`;
-  document.body.append(home);
-  return {
-    scroller: home.querySelector<HTMLElement>(`[data-testid=${SCROLLER}]`)!,
-    slotBox: home.querySelector<HTMLElement>("[data-slot-box]")!,
-  };
-}
-
-/** Every utility the section's arbitrary variants put on `box`, read off the classes under `root`. */
-function utilitiesOn(box: Element, root: HTMLElement): string[] {
-  const utilities: string[] = [];
-  const owners = [root, ...Array.from(root.querySelectorAll<HTMLElement>("[class]"))];
-  owners.forEach((owner, index) => {
-    owner.setAttribute("data-variant-owner", String(index));
-    for (const token of owner.classList) {
-      const variant = /^\[(.+)\]:(.+)$/.exec(token);
-      if (variant === null) continue;
-      const selector = variant[1]!.replaceAll("_", " ").replaceAll("&", `[data-variant-owner="${index}"]`);
-      if (Array.from(document.querySelectorAll(selector)).includes(box)) utilities.push(variant[2]!);
-    }
-  });
-  return utilities;
-}
+import { compactHome045, utilitiesOn } from "./compact-home.testkit";
 
 /** The section's markup, copied into bb 0.45's compact Home. */
 async function sectionOnCompactHome(): Promise<{ scroller: HTMLElement; root: HTMLElement }> {
