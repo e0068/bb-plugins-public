@@ -27,6 +27,24 @@ export const executionOf = (stage: WorkStage): Execution => {
   return kind === "skill" ? { kind: "executors", executors: stage.executors } : { kind: "widget", widget: kind };
 };
 
+/** Скрипт — этап, чьи шаги исполняет Flow или Automations, даже пока шагов нет; остальные этапы — агентские. */
+export const isScriptStage = (stage: WorkStage): boolean => {
+  const kind = executionOf(stage).kind;
+  return kind === "script" || kind === "external";
+};
+
+/**
+ * Main Agent — агент, который ведёт тред, — исполняет этап, пока владелец не снял его. Этап без других исполнителей ведёт
+ * он всегда: снять его там нельзя, а снятый вместе с последним исполнителем возвращается.
+ */
+export const hasMainAgent = (stage: WorkStage): boolean => stage.mainAgent !== false || stage.executors.length === 0;
+
+/** Main Agent снят; у этапа без других исполнителей — этап тот же. */
+export const withoutMainAgent = (stage: WorkStage): WorkStage => (stage.executors.length === 0 ? stage : { ...stage, mainAgent: false });
+
+/** Main Agent снова у этапа. */
+export const withMainAgent = ({ mainAgent: _, ...stage }: WorkStage): WorkStage => stage;
+
 /** Общее у этапа при любом исполнении: id, название и владелец под-этапа. */
 const identity = (stage: WorkStage, name: string): Pick<WorkStage, "id" | "name" | "parent"> =>
   stage.parent === undefined ? { id: stage.id, name } : { id: stage.id, name, parent: stage.parent };
@@ -40,7 +58,8 @@ export const withExecutor = (stage: WorkStage, executor: StageExecutor, shownNam
   const current = executionOf(stage);
   if (current.kind === "executors") {
     const on = current.executors.some((e) => e.id === executor.id);
-    return { ...stage, executors: on ? current.executors.filter((e) => e.id !== executor.id) : [...current.executors, executor] };
+    const executors = on ? current.executors.filter((e) => e.id !== executor.id) : [...current.executors, executor];
+    return executors.length === 0 ? { ...withMainAgent(stage), executors } : { ...stage, executors };
   }
   return { ...identity(stage, shownName), kind: "skill", skill: stageSkillOf(stage), executors: [executor] };
 };

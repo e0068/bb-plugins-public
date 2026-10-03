@@ -38,18 +38,11 @@ const row = async (slot: Slot, n: number) => within(await slot.findByRole("row",
 const skillField = async (slot: Slot, n: number) => (await row(slot, n)).getByRole("combobox", { name: `Навык этапа ${n}` }) as HTMLInputElement;
 
 describe("поле навыка у этапов со шагами", () => {
-  it("у скрипта, Action и автоматизации Automations — то же поле выбора навыка", async () => {
+  it("у скрипта и Action поля навыка нет, у автоматизации Automations — есть", async () => {
     const slot = open();
-    expect((await skillField(slot, 3)).value).toBe("git-hygiene");
-    expect((await skillField(slot, 4)).value).toBe("");
+    expect((await row(slot, 3)).queryByRole("combobox", { name: "Навык этапа 3" })).toBeNull();
+    expect((await row(slot, 4)).queryByRole("combobox", { name: "Навык этапа 4" })).toBeNull();
     expect((await skillField(slot, 5)).value).toBe("");
-  });
-
-  it("выбранный навык сохраняется вместе со шагами", async () => {
-    const slot = open();
-    fireEvent.focus(await skillField(slot, 4));
-    fireEvent.click(slot.getByRole("option", { name: /git-hygiene/ }));
-    await vi.waitFor(() => expect(savedStage(slot, 4)).toMatchObject({ kind: "action", skill: "git-hygiene", automation: { steps: ["bb.archive"] } }));
   });
 });
 
@@ -63,12 +56,10 @@ describe("навык автоматизации Automations", () => {
 });
 
 describe("крестик в поле навыка", () => {
-  it("очищает навык, название этапа и шаги остаются", async () => {
+  it("очищает навык, название этапа остаётся", async () => {
     const slot = open();
     fireEvent.click((await row(slot, 2)).getByRole("button", { name: "Очистить навык" }));
     await vi.waitFor(() => expect(savedStage(slot, 2)).toMatchObject({ skill: "", name: "Spec" }));
-    fireEvent.click((await row(slot, 3)).getByRole("button", { name: "Очистить навык" }));
-    await vi.waitFor(() => expect(savedStage(slot, 3)).toMatchObject({ skill: "", automation: { steps: ["git.commit"] } }));
   });
 
   it("у встроенного этапа оставляет его без навыка, а не с навыком вида", async () => {

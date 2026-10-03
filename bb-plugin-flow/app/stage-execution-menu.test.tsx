@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
-// Таблица этапов одного вида: название, навык, исполнение. Исполнение — плюс с
-// меню «Субагент · Workflow · Скрипт»; в «Скрипте» — запуск, виджеты, наборы,
-// шаги Flow и свой файл. Под таблицей — «Добавить этап» и «Удалить flow».
+// Таблица этапов двух видов: агентские и скрипты. Меню исполнения агентского этапа —
+// «Субагент · Workflow · Виджет»; меню скрипта — запуск, наборы, шаги Flow и свой файл.
+// Под таблицей — «Добавить этап», «Добавить скрипт» и «Удалить flow».
 import { cleanup, fireEvent, within } from "@testing-library/react";
 import type { PluginNavPanelProps } from "@get-bb/plugin-sdk/app";
 import { loadPluginApp, renderSlot } from "@get-bb/plugin-sdk/testing/app";
@@ -78,12 +78,6 @@ const groupItems = (menu: ReturnType<typeof within>, group: string) =>
   [...menu.getByRole("group", { name: group }).querySelectorAll('[role^="menuitem"]')].map((item) => item.textContent);
 
 describe("строка этапа", () => {
-  it("колонки идут по порядку: название, навык, исполнение, шаблон, удалить", async () => {
-    const slot = open();
-    await slot.findByRole("row", { name: "Этап 1" });
-    expect(slot.getAllByRole("columnheader").map((h) => h.textContent)).toEqual(["№", "Название", "Навык", "Исполнение", "Шаблон", "Удалить"]);
-  });
-
   it("виджет — тег вида с крестом, без надписи охвата", async () => {
     const slot = open();
     const first = await row(slot, 1);
@@ -104,14 +98,31 @@ describe("строка этапа", () => {
 });
 
 describe("меню исполнения", () => {
-  it("наверху сегменты Субагент, Workflow, Скрипт; открывается на том, чем этап исполняется", async () => {
+  it("у агентского этапа сегменты Субагент, Workflow, Виджет; у виджета меню открывается на «Виджете»", async () => {
     const slot = open();
     const agents = await openMenu(slot, 3);
-    expect(agents.getAllByRole("tab").map((tab) => tab.textContent)).toEqual(["Субагент", "Workflow", "Скрипт"]);
+    expect(agents.getAllByRole("tab").map((tab) => tab.textContent)).toEqual(["Субагент", "Workflow", "Виджет"]);
     expect(agents.getByRole("tab", { name: "Субагент" }).getAttribute("aria-selected")).toBe("true");
     fireEvent.click((await row(slot, 3)).getByRole("button", { name: "Исполнение этапа" }));
-    const script = await openMenu(slot, 4);
-    expect(script.getByRole("tab", { name: "Скрипт" }).getAttribute("aria-selected")).toBe("true");
+    const widget = await openMenu(slot, 1);
+    expect(widget.getByRole("tab", { name: "Виджет" }).getAttribute("aria-selected")).toBe("true");
+  });
+
+  it("в меню агентского этапа нет шагов скрипта и запуска", async () => {
+    const menu = await openMenu(open(), 2);
+    for (const tab of ["Субагент", "Workflow", "Виджет"]) {
+      pickTab(menu, tab);
+      expect(menu.queryByRole("menuitem", { name: "Commit" })).toBeNull();
+      expect(menu.queryByRole("tablist", { name: "Запуск" })).toBeNull();
+    }
+  });
+
+  it("в меню скрипта нет сегментов, агентов и виджетов — только запуск и шаги", async () => {
+    const menu = await openMenu(open(), 4);
+    expect(menu.queryAllByRole("tab").map((tab) => tab.textContent)).toEqual(["Сам", "Кнопкой владельца"]);
+    expect(menu.queryByRole("group", { name: "Виджеты" })).toBeNull();
+    expect(menu.queryByText("scout")).toBeNull();
+    expect(menu.getByRole("menuitem", { name: "Открыть PR" })).toBeTruthy();
   });
 
   it("«Субагент» — только агенты группами по источнику, «Workflow» — только workflow", async () => {
@@ -134,17 +145,6 @@ describe("меню исполнения", () => {
     await vi.waitFor(() => expect(savedStage(slot, 3)?.executors.map((e) => e.id)).toEqual(["agent:reviewer", "agent:codex/reviewer"]));
   });
 
-  it("у этапа с агентами в «Скрипте» нет переключателя запуска, у пустого этапа — есть", async () => {
-    const slot = open();
-    const agents = await openMenu(slot, 3);
-    pickTab(agents, "Скрипт");
-    expect(agents.queryByRole("tablist", { name: "Запуск" })).toBeNull();
-    fireEvent.click((await row(slot, 3)).getByRole("button", { name: "Исполнение этапа" }));
-    const empty = await openMenu(slot, 2);
-    pickTab(empty, "Скрипт");
-    expect(empty.getByRole("tablist", { name: "Запуск" })).toBeTruthy();
-  });
-
   it("агент на виджете делает этап навыком вида с этим агентом и видимым названием", async () => {
     const slot = open();
     const menu = await openMenu(slot, 1);
@@ -156,17 +156,7 @@ describe("меню исполнения", () => {
   });
 });
 
-describe("сегмент «Скрипт»", () => {
-  it("шаг на этапе с агентом делает его автоматизацией без исполнителей, навык этапа остаётся", async () => {
-    const slot = open();
-    const menu = await openMenu(slot, 3);
-    pickTab(menu, "Скрипт");
-    fireEvent.click(menu.getByRole("menuitem", { name: "Commit" }));
-    await vi.waitFor(() =>
-      expect(savedStage(slot, 3)).toEqual({ id: "review", kind: "skill", skill: "code-review", name: "Review", executors: [], automation: { source: "flow", steps: ["git.commit"] } }),
-    );
-  });
-
+describe("меню скрипта", () => {
   it("«Кнопкой владельца» делает этап Action, «Сам» — возвращает; шаги остаются", async () => {
     const slot = open();
     const menu = await openMenu(slot, 4);
@@ -179,7 +169,7 @@ describe("сегмент «Скрипт»", () => {
   it("виджет ставит вид, оставляет свой навык и снимает исполнителей", async () => {
     const slot = open();
     const menu = await openMenu(slot, 3);
-    pickTab(menu, "Скрипт");
+    pickTab(menu, "Виджет");
     expect(groupItems(menu, "Виджеты").map((text) => text?.replace(/flow-.*/, ""))).toEqual(["Вопросы", "Критерии", "Выбор этапов", "Демонстрация"]);
     fireEvent.click(menu.getByRole("menuitemradio", { name: /Критерии/ }));
     await vi.waitFor(() => expect(savedStage(slot, 3)).toEqual({ id: "review", kind: "criteria", skill: "code-review", name: "Review", executors: [] }));
@@ -262,15 +252,14 @@ describe("скрипт файлом", () => {
   });
 });
 
-describe("сохранённые наборы в «Скрипте»", () => {
-  const withSet = settings(STAGES, { automationSets: [{ steps: ["git.create-pr", "git.merge"] }] });
+describe("сохранённые наборы в меню скрипта", () => {
+  const withSet = settings([...STAGES, chain("empty", [])], { automationSets: [{ steps: ["git.create-pr", "git.merge"] }] });
 
-  it("у этапа без шагов набор — строкой своих шагов; выбор ставит шаги", async () => {
+  it("у скрипта без шагов набор — строкой своих шагов; выбор ставит шаги", async () => {
     const slot = open(withSet);
-    const menu = await openMenu(slot, 2);
-    pickTab(menu, "Скрипт");
+    const menu = await openMenu(slot, 7);
     fireEvent.click(within(menu.getByRole("group", { name: "Сохранённые наборы" })).getByRole("menuitem", { name: "Открыть PR · Смёрджить PR" }));
-    await vi.waitFor(() => expect(savedStage(slot, 2)?.automation).toEqual({ source: "flow", steps: ["git.create-pr", "git.merge"] }));
+    await vi.waitFor(() => expect(savedStage(slot, 7)?.automation).toEqual({ source: "flow", steps: ["git.create-pr", "git.merge"] }));
   });
 
   it("у этапа со шагами наборов в меню нет", async () => {
@@ -280,19 +269,21 @@ describe("сохранённые наборы в «Скрипте»", () => {
 
   it("набор убирается крестом", async () => {
     const slot = open(withSet);
-    const menu = await openMenu(slot, 2);
-    pickTab(menu, "Скрипт");
+    const menu = await openMenu(slot, 7);
     fireEvent.click(menu.getByRole("button", { name: "Убрать набор Открыть PR · Смёрджить PR" }));
     await vi.waitFor(() => expect(lastSaved(slot)?.automationSets).toEqual([]));
   });
 });
 
 describe("под таблицей", () => {
-  it("«Добавить этап» и «Удалить flow» стоят в одной строке под таблицей, полосы кнопок видов нет", async () => {
+  it("«Добавить этап», «Добавить скрипт» и «Удалить flow» стоят в одной строке под таблицей, полосы кнопок видов нет", async () => {
     const slot = open();
     const add = await slot.findByRole("button", { name: "Добавить этап" });
+    const script = slot.getByRole("button", { name: "Добавить скрипт" });
     const remove = slot.getByRole("button", { name: "Удалить flow Default" });
     const line = [...slot.container.querySelectorAll<HTMLElement>("div")].filter((el) => el.contains(add) && el.contains(remove)).at(-1)!;
+    expect(line.contains(script)).toBe(true);
+    expect(add.compareDocumentPosition(script) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(line.className).toMatch(/\bflex\b/);
     expect(line.className).not.toMatch(/flex-col/);
     for (const name of ["Добавить этап Навык", "Добавить этап Вопросы", "Добавить этап Action", "Автоматизация"]) expect(slot.queryByRole("button", { name })).toBeNull();
@@ -302,22 +293,31 @@ describe("под таблицей", () => {
     const slot = open();
     fireEvent.click(await slot.findByRole("button", { name: "Добавить этап" }));
     await vi.waitFor(() => expect(lastSaved(slot)?.flows[0]?.stages.at(-1)).toMatchObject({ kind: "skill", skill: "", name: "Новый этап", executors: [] }));
+    expect(lastSaved(slot)?.flows[0]?.stages.at(-1)?.automation).toBeUndefined();
+  });
+
+  it("«Добавить скрипт» дописывает скрипт без шагов, и его меню — меню скрипта", async () => {
+    const slot = open(settings([]));
+    fireEvent.click(await slot.findByRole("button", { name: "Добавить скрипт" }));
+    await vi.waitFor(() => expect(savedStage(slot, 1)).toMatchObject({ kind: "skill", skill: "", executors: [], automation: { source: "flow", steps: [] } }));
+    const menu = await openMenu(slot, 1);
+    expect(menu.queryByRole("tab", { name: "Субагент" })).toBeNull();
+    expect(menu.getByRole("menuitem", { name: "Commit" })).toBeTruthy();
   });
 
   it("виджет на новом этапе подписывает его своим видом", async () => {
     const slot = open(settings([]));
     fireEvent.click(await slot.findByRole("button", { name: "Добавить этап" }));
     const menu = await openMenu(slot, 1);
-    pickTab(menu, "Скрипт");
+    pickTab(menu, "Виджет");
     fireEvent.click(menu.getByRole("menuitemradio", { name: /Демонстрация/ }));
     await vi.waitFor(() => expect(savedStage(slot, 1)).toMatchObject({ kind: "demo", skill: "", name: builtinStage("demo", []).name }));
   });
 
-  it("шаг на новом этапе подписывает его своими шагами, на названном — имя остаётся", async () => {
+  it("шаг на новом скрипте подписывает его своими шагами, на названном — имя остаётся", async () => {
     const slot = open(settings([]));
-    fireEvent.click(await slot.findByRole("button", { name: "Добавить этап" }));
+    fireEvent.click(await slot.findByRole("button", { name: "Добавить скрипт" }));
     const menu = await openMenu(slot, 1);
-    pickTab(menu, "Скрипт");
     fireEvent.click(menu.getByRole("menuitem", { name: "Commit" }));
     await vi.waitFor(() => expect(savedStage(slot, 1)).toMatchObject({ name: "Commit", automation: { steps: ["git.commit"] } }));
     fireEvent.click((await openMenu(slot, 1)).getByRole("menuitem", { name: "Открыть PR" }));
@@ -326,14 +326,17 @@ describe("под таблицей", () => {
 });
 
 describe("по-английски", () => {
-  it("страница и сегмент «Script» меню исполнения без кириллицы — в тексте и в атрибутах", async () => {
+  it("страница, меню агентского этапа и меню скрипта без кириллицы — в тексте и в атрибутах", async () => {
     const slot = open(settings(), { language: "English" });
     const second = within(await slot.findByRole("row", { name: "Stage 2" }));
     fireEvent.click(second.getByRole("button", { name: "Stage execution" }));
     const menu = within(await slot.findByRole("menu", { name: "Execution" }));
-    expect(menu.getAllByRole("tab").map((tab) => tab.textContent)).toEqual(["Subagent", "Workflow", "Script"]);
-    pickTab(menu, "Script");
-    expect(menu.getByRole("tablist", { name: "Run" })).toBeTruthy();
+    expect(menu.getAllByRole("tab").map((tab) => tab.textContent)).toEqual(["Subagent", "Workflow", "Widget"]);
+    expect(slot.getByRole("button", { name: "Add script" })).toBeTruthy();
+    fireEvent.click(second.getByRole("button", { name: "Stage execution" }));
+    fireEvent.click(within(await slot.findByRole("row", { name: "Stage 4" })).getByRole("button", { name: "Stage execution" }));
+    const script = within(await slot.findByRole("menu", { name: "Execution" }));
+    expect(script.getByRole("tablist", { name: "Run" })).toBeTruthy();
     const root = slot.container.ownerDocument.body;
     const texts = [root.textContent ?? "", ...[...root.querySelectorAll("[aria-label],[placeholder],[title]")].flatMap((el) => ["aria-label", "placeholder", "title"].map((a) => el.getAttribute(a) ?? ""))];
     expect(texts.filter((text) => /[А-Яа-яЁё]/.test(text))).toEqual([]);

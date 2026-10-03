@@ -1,13 +1,12 @@
-// Сегмент «Скрипт» меню исполнения и теги шагов в строке таблицы этапов.
-// Сегмент: наверху — кто запускает шаги, Flow сам или владелец кнопкой (этап
-// Action); дальше виджеты — Вопросы, Критерии, Выбор этапов, Демонстрация;
-// сохранённые наборы, шаги Flow и «Добавить скрипт…»: выбранный файл хранится в
+// Меню исполнения скрипта, виджеты для меню агентского этапа и теги шагов в строке таблицы этапов.
+// Меню скрипта: наверху — кто запускает шаги, Flow сам или владелец кнопкой (этап
+// Action); дальше сохранённые наборы, шаги Flow и «Добавить скрипт…»: выбранный файл хранится в
 // автоматизации и становится шагом с именем файла. Шаги встроенной — теги, как
 // исполнители у этапа навыка: крест и перетаскивание. Наборы, сохранённые прежней
 // закладкой, остаются в меню; новые закладка строки кладёт шаблоном этапа.
 // Шаги автоматизации Automations — теги только для чтения: они правятся там.
 // Как этап переходит от одного исполнения к другому — ../core/stage-execution.
-import { useRef, useState, type ChangeEvent, type DragEvent } from "react";
+import { Fragment, useRef, useState, type ChangeEvent, type DragEvent } from "react";
 
 import { isStepId, STEP_IDS, type StepId } from "@bb-plugins/automation-steps/catalog";
 import { overlayItem } from "../components/ui/field-overlay";
@@ -70,7 +69,7 @@ function RunSwitch({ manual, onChange }: { manual: boolean; onChange: (manual: b
 }
 
 /** Виджеты: этап-бриф ведётся навыком своего вида и виджетом в треде; отмечен тот, что стоит у этапа. */
-function WidgetOptions({ stage, onChange, onDone }: { stage: WorkStage; onChange: StageChange; onDone: () => void }) {
+export function WidgetOptions({ stage, onChange, onDone }: { stage: WorkStage; onChange: StageChange; onDone: () => void }) {
   const t = useMessages();
   const current = executionOf(stage);
   return (
@@ -185,17 +184,14 @@ function StepOptions({ taken, prOpened, onPick, onScript }: { taken: readonly Au
 }
 
 /**
- * Сегмент «Скрипт»: запуск, виджеты, сохранённые наборы, шаги Flow и свой файл. Выбор виджета, набора или шага закрывает
- * меню — этап сменил исполнение и виден в строке; переключатель запуска меню не закрывает. Запуск выбирается только у
- * скрипта и у пустого этапа: у этапа с агентами он снял бы их одним нажатием, не показав, что снимает. Ещё не названный
- * новый этап шаги подписывают собой — через запятую.
+ * Меню скрипта: запуск, сохранённые наборы, шаги Flow и свой файл. Выбор набора или шага закрывает меню — шаг виден в
+ * строке; переключатель запуска меню не закрывает. Ещё не названный новый скрипт шаги подписывают собой — через запятую.
  */
 export function ScriptOptions({ stage, stages, sets, onChange, onDone }: { stage: WorkStage; stages: readonly WorkStage[]; sets: AutomationSets; onChange: StageChange; onDone: () => void }) {
   const labels = useStepLabels();
   const current = executionOf(stage);
   const automation = current.kind === "script" ? current.automation : null;
   const steps = automation?.steps ?? [];
-  const runnable = current.kind === "script" || (current.kind === "executors" && current.executors.length === 0);
   const apply = (change: (automation: BuiltinAutomation) => BuiltinAutomation) => {
     onChange((s) => {
       const next = withSteps(change)(s);
@@ -205,13 +201,7 @@ export function ScriptOptions({ stage, stages, sets, onChange, onDone }: { stage
   };
   return (
     <>
-      {runnable && (
-        <>
-          <RunSwitch manual={current.kind === "script" && current.manual} onChange={(manual) => onChange((s) => withRun(s, manual))} />
-          {separator}
-        </>
-      )}
-      <WidgetOptions stage={stage} onChange={onChange} onDone={onDone} />
+      <RunSwitch manual={current.kind === "script" && current.manual} onChange={(manual) => onChange((s) => withRun(s, manual))} />
       {/* Набор ставится только в этап без шагов: к уже выбранным шагам его не подмешать. */}
       {sets.sets.length > 0 && steps.length === 0 && (
         <>
@@ -242,7 +232,7 @@ export function ManualMark() {
   );
 }
 
-/** Теги шагов: у встроенного скрипта — крест и перетаскивание, у автоматизации Automations — только чтение. */
+/** Теги шагов через шеврон: у встроенного скрипта — крест и перетаскивание, у автоматизации Automations — только чтение. */
 export function AutomationStepTags({ stage, onChange }: { stage: WorkStage; onChange: StageChange }) {
   const t = useMessages();
   const [dragged, setDragged] = useState<number | null>(null);
@@ -253,9 +243,12 @@ export function AutomationStepTags({ stage, onChange }: { stage: WorkStage; onCh
     return (
       <ul title={t.settings.stepsReadOnly} className="contents">
         {(current.automation.steps ?? []).map((label, i) => (
-          <li key={`${i}-${label}`} className={cn(tag, "px-2")}>
-            <span className="min-w-0 truncate">{label}</span>
-          </li>
+          <Fragment key={`${i}-${label}`}>
+            {i > 0 && <StepChevron />}
+            <li className={cn(tag, "px-2")}>
+              <span className="min-w-0 truncate">{label}</span>
+            </li>
+          </Fragment>
         ))}
       </ul>
     );
@@ -274,28 +267,39 @@ export function AutomationStepTags({ stage, onChange }: { stage: WorkStage; onCh
       {automation.steps.length === 0 && <span className="flex h-7 items-center px-1 text-xs text-muted-foreground">{t.settings.noSteps}</span>}
       <ul className="contents">
         {automation.steps.map((id, i) => (
-          <li
-            key={id}
-            draggable
-            aria-label={t.settings.moveStep(labelOf(id))}
-            onDragStart={() => setDragged(i)}
-            onDragOver={(event) => event.preventDefault()}
-            onDrop={(event) => drop(event, i)}
-            onDragEnd={() => setDragged(null)}
-            className={cn(tag, "cursor-grab pl-2 pr-0.5", dragged === i && "opacity-50")}
-          >
-            <span className="min-w-0 truncate">{labelOf(id)}</span>
-            <button
-              type="button"
-              aria-label={t.settings.removeStep(labelOf(id))}
-              onClick={() => onChange(withSteps((a) => removeStep(a, id)))}
-              className="flex size-6 shrink-0 items-center justify-center rounded text-muted-foreground hover:bg-state-hover hover:text-foreground"
+          <Fragment key={id}>
+            {i > 0 && <StepChevron />}
+            <li
+              draggable
+              aria-label={t.settings.moveStep(labelOf(id))}
+              onDragStart={() => setDragged(i)}
+              onDragOver={(event) => event.preventDefault()}
+              onDrop={(event) => drop(event, i)}
+              onDragEnd={() => setDragged(null)}
+              className={cn(tag, "cursor-grab pl-2 pr-0.5", dragged === i && "opacity-50")}
             >
-              <Icon name="X" aria-hidden="true" className="size-3" />
-            </button>
-          </li>
+              <span className="min-w-0 truncate">{labelOf(id)}</span>
+              <button
+                type="button"
+                aria-label={t.settings.removeStep(labelOf(id))}
+                onClick={() => onChange(withSteps((a) => removeStep(a, id)))}
+                className="flex size-6 shrink-0 items-center justify-center rounded text-muted-foreground hover:bg-state-hover hover:text-foreground"
+              >
+                <Icon name="X" aria-hidden="true" className="size-3" />
+              </button>
+            </li>
+          </Fragment>
         ))}
       </ul>
     </>
+  );
+}
+
+/** Шеврон между шагами скрипта: шаги идут один за другим, слева направо. */
+function StepChevron() {
+  return (
+    <li aria-hidden="true" className="flex h-7 items-center text-muted-foreground">
+      <Icon name="ChevronRight" className="size-3.5" />
+    </li>
   );
 }

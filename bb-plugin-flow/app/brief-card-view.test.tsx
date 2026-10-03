@@ -157,14 +157,52 @@ describe("картинка внутри своего поля", () => {
   /** Рамка поля: строка ввода или пункт критерия, в котором поле стоит. */
   const frame = (field: HTMLElement) => field.closest<HTMLElement>("[data-item-row]")!;
 
-  it("миниатюра стоит в рамке того поля, куда картинку вставили, и подписана чипом, как метка в тексте", async () => {
+  it("миниатюра стоит в рамке того поля, куда картинку вставили", async () => {
     const { slot } = open();
     const note = await slot.findByRole("textbox", { name: "Дополнить бриф" });
     const item = slot.getByRole("textbox", { name: "Пункт 2" });
     await paste(item, png());
-    const thumb = await waitFor(() => within(frame(item)).getByRole("img", { name: "картинка 1" }));
+    await waitFor(() => within(frame(item)).getByRole("img", { name: "картинка 1" }));
     expect(within(frame(note)).queryByRole("img")).toBeNull();
-    expect(thumb.closest("[data-field-image]")?.querySelector("[data-image-tag]")?.textContent).toBe("картинка 1");
+  });
+
+  it("номер картинки стоит в левом нижнем углу миниатюры, чипа под ней нет", async () => {
+    const { slot } = open();
+    const note = await slot.findByRole("textbox", { name: "Дополнить бриф" });
+    await paste(note, png());
+    const thumb = await waitFor(() => within(frame(note)).getByRole("img", { name: "картинка 1" }));
+    const tile = thumb.closest("[data-field-image]")!;
+    const number = within(tile as HTMLElement).getByRole("button", { name: "Вставить метку картинки 1 в текст" });
+    expect(number.textContent).toBe("1");
+    expect(number.className).toMatch(/\bbottom-/);
+    expect(number.className).toMatch(/\bleft-/);
+    expect(number.parentElement!.contains(thumb)).toBe(true);
+    expect(tile.querySelector("[data-image-tag]")).toBeNull();
+  });
+
+  it("клик по номеру вставляет метку картинки на место каретки", async () => {
+    const { slot } = open();
+    const note = (await slot.findByRole("textbox", { name: "Дополнить бриф" })) as HTMLTextAreaElement;
+    fireEvent.change(note, { target: { value: "Раз два" } });
+    note.setSelectionRange(7, 7);
+    await paste(note, png());
+    await waitFor(() => expect(note.value).toBe("Раз два[картинка 1]"));
+    note.focus();
+    note.setSelectionRange(3, 3);
+    const number = slot.getByRole("button", { name: "Вставить метку картинки 1 в текст" });
+    fireEvent.mouseDown(number);
+    fireEvent.click(number);
+    await waitFor(() => expect(note.value).toBe("Раз[картинка 1] два[картинка 1]"));
+  });
+
+  it("клик по номеру, когда каретки в поле нет, дописывает метку в конец", async () => {
+    const { slot } = open();
+    const note = (await slot.findByRole("textbox", { name: "Дополнить бриф" })) as HTMLTextAreaElement;
+    await paste(note, png());
+    await waitFor(() => expect(note.value).toBe("[картинка 1]"));
+    note.blur();
+    fireEvent.click(slot.getByRole("button", { name: "Вставить метку картинки 1 в текст" }));
+    await waitFor(() => expect(note.value).toBe("[картинка 1][картинка 1]"));
   });
 
   it("тап по миниатюре открывает картинку на весь экран, Esc закрывает", async () => {

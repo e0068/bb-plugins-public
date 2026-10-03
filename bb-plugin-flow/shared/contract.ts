@@ -223,6 +223,8 @@ export const workStageSchema = z
     parent: text.optional(),
     /** Иконка, выбранная владельцем, — имя из подборки Hugeicons; нет поля или имя вне подборки — иконка по виду этапа. */
     icon: text.optional(),
+    /** Владелец снял Main Agent — агента треда — с исполнителей этапа; нет поля — агент треда исполнять может. */
+    mainAgent: z.literal(false).optional(),
   })
   .superRefine((s, ctx) => {
     if (!uniqueIds(s.executors)) ctx.addIssue({ code: "custom", message: "executor ids must be unique within a stage", path: ["executors"] });
@@ -234,6 +236,7 @@ const stageTemplateFields = z.object({
   name: text,
   icon: text.optional(),
   executors: z.array(stageExecutorSchema),
+  mainAgent: z.literal(false).optional(),
   automation: stageAutomationSchema.optional(),
 });
 

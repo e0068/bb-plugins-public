@@ -10,7 +10,7 @@
 // исполнителя, ни цены у неё нет; сделанная ведёт себя как остальные этапы.
 import { useRef, type ReactNode } from "react";
 
-import { SELF, executorAdd, executorLabel, stageAdd, stageItems, stageLabel, stagePhase, type StageItem } from "../core/stages";
+import { SELF, executorAdd, executorLabel, stageAdd, stageExecutorIds, stageItems, stageLabel, stagePhase, type StageItem } from "../core/stages";
 import { scopeOf } from "../core/budget";
 import type { FileRoots } from "../core/result-link";
 import { Icon } from "../components/ui/icon";
@@ -166,7 +166,7 @@ function ExecutorPanel({ item, subs, view, order, cell }: { item: StageItem; sub
   const recommended = item.report?.executor ?? SELF;
   // Автоматизация и этап без исполнителей выбирать не дают: их панель — только под-этапы.
   const choosable = item.stage.automation === undefined && item.stage.executors.length > 0;
-  const options: Array<{ id: string; executor: StageExecutor | undefined }> = choosable ? [{ id: SELF, executor: undefined }, ...item.stage.executors.map((e) => ({ id: e.id, executor: e }))] : [];
+  const options: Array<{ id: string; executor: StageExecutor | undefined }> = choosable ? stageExecutorIds(item.stage).map((id) => ({ id, executor: item.stage.executors.find((e) => e.id === id) })) : [];
   return (
     <div role="group" aria-label={t.stages.executorGroup(stageLabel(item.stage, t.stages))} style={{ order }} className="flex basis-full flex-col gap-px">
       {options.map(({ id, executor }) => {

@@ -5,7 +5,7 @@ import { loadPluginApp, renderSlot } from "@get-bb/plugin-sdk/testing/app";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { builtinStage } from "../lib/stage-constants";
-import type { FlowSettings, flowSettingsRpcContract, WorkStage } from "../shared/contract";
+import type { FlowSettings, flowSettingsRpcContract, StageTemplate, WorkStage } from "../shared/contract";
 
 const app = await loadPluginApp(() => import("../app"));
 
@@ -99,5 +99,40 @@ describe("шаблоны этапов", () => {
     fireEvent.click(await slot.findByRole("button", { name: "Добавить этап" }));
     fireEvent.click(slot.getByRole("button", { name: "Убрать шаблон Спека" }));
     await vi.waitFor(() => expect(lastSaved(slot)?.stageTemplates).toEqual([]));
+  });
+  const deploy: StageTemplate = { kind: "skill", skill: "", name: "Деплой", executors: [], automation: { source: "flow", steps: ["git.commit"] } };
+  const twoKinds = () => settings({ stageTemplates: [{ kind: "skill", skill: "spec", name: "Спека", executors: [] }, deploy] });
+
+  it("шаблон скрипта — в меню «Добавить скрипт», шаблон агентского этапа — в меню «Добавить этап»", async () => {
+    const slot = open(twoKinds());
+    fireEvent.click(await slot.findByRole("button", { name: "Добавить этап" }));
+    expect(slot.getByRole("menuitem", { name: "Спека" })).toBeTruthy();
+    expect(slot.queryByRole("menuitem", { name: "Деплой" })).toBeNull();
+    fireEvent.click(slot.getByRole("button", { name: "Добавить этап" }));
+    fireEvent.click(slot.getByRole("button", { name: "Добавить скрипт" }));
+    expect(slot.queryByRole("menuitem", { name: "Спека" })).toBeNull();
+    fireEvent.click(slot.getByRole("menuitem", { name: "Деплой" }));
+    await vi.waitFor(() => expect(savedStages(slot)?.at(-1)).toMatchObject({ name: "Деплой", automation: { source: "flow", steps: ["git.commit"] } }));
+  });
+
+  it("«Пустой скрипт» в меню добавляет скрипт без шагов", async () => {
+    const slot = open(twoKinds());
+    fireEvent.click(await slot.findByRole("button", { name: "Добавить скрипт" }));
+    fireEvent.click(slot.getByRole("menuitem", { name: "Пустой скрипт" }));
+    await vi.waitFor(() => expect(savedStages(slot)?.at(-1)).toMatchObject({ executors: [], automation: { source: "flow", steps: [] } }));
+  });
+
+  it("без шаблонов своего вида кнопка сразу добавляет этап, без меню", async () => {
+    const slot = open(settings({ stageTemplates: [deploy] }));
+    fireEvent.click(await slot.findByRole("button", { name: "Добавить этап" }));
+    expect(slot.queryByRole("menu")).toBeNull();
+    await vi.waitFor(() => expect(savedStages(slot)?.at(-1)).toMatchObject({ name: "Новый этап", executors: [] }));
+  });
+
+  it("крест у шаблона скрипта убирает именно его", async () => {
+    const slot = open(twoKinds());
+    fireEvent.click(await slot.findByRole("button", { name: "Добавить скрипт" }));
+    fireEvent.click(slot.getByRole("button", { name: "Убрать шаблон Деплой" }));
+    await vi.waitFor(() => expect(lastSaved(slot)?.stageTemplates?.map((t) => t.name)).toEqual(["Спека"]));
   });
 });

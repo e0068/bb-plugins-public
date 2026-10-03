@@ -2,7 +2,7 @@
 // файлом по «+». Пул картинок один на бриф и живёт в модуле, а не в состоянии
 // компонента: переживает размонтирование сообщения, как черновик. В поле,
 // куда вставлено, встаёт метка «[картинка N]» — по ней агент понимает, к чему
-// картинка, — а внизу рамки поля миниатюра, подписанная такой же плашкой. Сами картинки уходят с ответом с номером метки, сервер кладёт их
+// картинка, — а внизу рамки поля миниатюра с номером в углу: клик по номеру ставит метку ещё раз, на место каретки. Сами картинки уходят с ответом с номером метки, сервер кладёт их
 // файлами треда и называет агенту, какой путь у какой метки. Прочитанные
 // картинки копируются в IndexedDB: метки в черновике переживают перезагрузку
 // плагина, и картинки должны пережить её вместе с ними.
@@ -221,21 +221,24 @@ export function AttachButton({ target, disabled, className }: { target: AttachTa
   );
 }
 
-/** Плашка метки картинки — в тексте поля и под миниатюрой одна и та же. */
+/** Плашка метки картинки в тексте поля. */
 export const imageTag = "rounded-md bg-state-active text-foreground ring-1 ring-inset ring-border";
 
-/** Подпись плашки — метка без скобок: «картинка 1». */
-const tagText = (n: number, m: Messages["attachments"]): string => m.marker(n).slice(1, -1);
+/** Кнопка поверх миниатюры — крестик в правом верхнем углу и номер в левом нижнем. */
+const overThumb = "absolute flex h-[18px] min-w-[18px] items-center justify-center rounded-full bg-background/80 text-foreground";
 
 /**
- * Миниатюры картинок поля внизу его рамки, в порядке меток в тексте; под каждой — плашка, как у метки.
- * Тап по миниатюре разворачивает картинку на весь экран, крестик убирает и картинку, и её метку.
+ * Миниатюры картинок поля внизу его рамки, в порядке меток в тексте. Тап по миниатюре разворачивает картинку на весь
+ * экран, крестик убирает и картинку, и её метку, номер в левом нижнем углу ставит её метку на место каретки поля.
+ * Поле миниатюры ищут у себя в рамке: каретка есть, только пока поле в фокусе, и номер не забирает фокус нажатием;
+ * поле не в фокусе — метка встаёт в конец текста.
  */
 export function FieldImages({ target, className }: { target: AttachTarget; className?: string }) {
   const attach = useContext(AttachContext);
   const t = useMessages();
   const pool = useSyncExternalStore(subscribe, () => (attach === null ? EMPTY : poolOf(attach.briefId)));
   const [shown, setShown] = useState<Attachment | null>(null);
+  const root = useRef<HTMLDivElement>(null);
   if (attach === null) return null;
   const images = markerNumbers(target.value, t.attachments.marker).flatMap((n) => pool.images.filter((image) => image.n === n));
   if (images.length === 0) return null;
@@ -243,10 +246,18 @@ export function FieldImages({ target, className }: { target: AttachTarget; class
     update(attach.briefId, (p) => ({ ...p, images: p.images.filter((i) => i.n !== n), error: null }));
     target.onText(withoutMarker(target.value, n, t.attachments.marker));
   };
+  const insert = (n: number) => {
+    const field = [...(root.current?.parentElement?.querySelectorAll("textarea") ?? [])].find((el) => el === el.ownerDocument.activeElement);
+    const at = field?.selectionStart ?? null;
+    withMarkers(target, [n], at, t.attachments);
+    if (field === undefined || at === null) return;
+    const caret = at + t.attachments.marker(n).length;
+    requestAnimationFrame(() => field.setSelectionRange(caret, caret));
+  };
   return (
-    <div className={cn("flex flex-wrap gap-1.5", className)}>
+    <div ref={root} className={cn("flex flex-wrap gap-1.5", className)}>
       {images.map((image) => (
-        <div key={image.n} data-field-image className="flex flex-col items-start gap-1">
+        <div key={image.n} data-field-image>
           <div className="relative size-14 overflow-hidden rounded-md bg-state-active">
             {image.dataBase64 === null ? (
               <div role="status" aria-label={t.attachments.reading(image.n)} className="size-full animate-pulse" />
@@ -259,14 +270,21 @@ export function FieldImages({ target, className }: { target: AttachTarget; class
               type="button"
               aria-label={t.attachments.remove(image.n)}
               onClick={() => remove(image.n)}
-              className="absolute right-0.5 top-0.5 flex size-[18px] items-center justify-center rounded-full bg-background/80 text-foreground"
+              className={cn(overThumb, "right-0.5 top-0.5")}
             >
               <Icon name="X" className="size-2.5" />
             </button>
+            <button
+              type="button"
+              aria-label={t.attachments.insert(image.n)}
+              title={t.attachments.insert(image.n)}
+              onMouseDown={(event) => event.preventDefault()}
+              onClick={() => insert(image.n)}
+              className={cn(overThumb, "bottom-0.5 left-0.5 px-1 text-[11px] leading-none tabular-nums")}
+            >
+              {image.n}
+            </button>
           </div>
-          <span data-image-tag className={cn(imageTag, "px-1 text-xs leading-4")}>
-            {tagText(image.n, t.attachments)}
-          </span>
         </div>
       ))}
       <ImageViewer image={shown} label={shown === null ? "" : t.attachments.alt(shown.n)} onClose={() => setShown(null)} />
