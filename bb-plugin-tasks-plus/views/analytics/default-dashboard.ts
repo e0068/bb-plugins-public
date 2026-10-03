@@ -8,7 +8,7 @@ import { weekBreaks, weekEdgesSince, type WeekBreak } from "@bb-plugins/analytic
 import { TILE_TITLE_MAX, type TileWindow } from "../../shared/analytics-tile.js";
 import type { Dashboard, Tile } from "../../shared/contract.js";
 import type { TileCondition } from "../../shared/tile-conditions.js";
-import type { TaskStatus } from "../../shared/enums.js";
+import { OPEN_STATUSES, type TaskStatus } from "../../shared/enums.js";
 import { dayEdges, hourEdges, unitEdges } from "./closed-model";
 
 /** The cuts of the screen: the rolling D/W/M every analytics surface offers, then the whole history. */
@@ -137,7 +137,7 @@ export function defaultDashboard(): Dashboard {
     newTile("changes", { title: "Status changes", y: { metric: "moves", field: null } }),
     newTile("burndown", {
       title: "Burndown",
-      conditions: byStatus(["backlog", "todo", "in_progress", "in_review"]),
+      conditions: byStatus(OPEN_STATUSES),
       switch: "project",
       display: { legend: "bottom", xLabels: true, yLabels: false, grid: { x: null, y: null }, trend: true },
     }),

@@ -872,6 +872,7 @@ export function BoardView({ scope, viewId }: BoardViewProps) {
         activeCounts: new Map([...metaByTaskId].map(([id, meta]) => [id, meta.workingThreads.length])),
         attachmentCounts: new Map([...metaByTaskId].map(([id, meta]) => [id, meta.attachmentCount])),
         descendantCounts: new Map([...metaByTaskId].map(([id, meta]) => [id, meta.progress.total])),
+        openCounts: new Map([...metaByTaskId].map(([id, meta]) => [id, meta.progress.open])),
       }),
     [projectsById, board.data, labels, metaByTaskId],
   );

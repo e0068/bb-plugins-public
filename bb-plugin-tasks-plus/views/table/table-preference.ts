@@ -4,7 +4,7 @@ import { useMemo, useSyncExternalStore } from "react";
 // list-preference.ts use for the types they store.
 import type { TableSettings } from "../../shared/contract.js";
 import { viewSortColumn, type ViewSort } from "../../shared/task-fields.js";
-import { BOARD_GROUP_BYS, ROW_FIELDS, TABLE_SORT_DIRECTIONS } from "../../shared/enums.js";
+import { BOARD_GROUP_BYS, ROW_FIELDS, SORT_FIELDS, TABLE_SORT_DIRECTIONS, type RowField } from "../../shared/enums.js";
 import { loadListPreference, type ListPreferenceScope } from "../common/list-preference.js";
 import { clampColumnWidth, type ColumnSort } from "./columns.js";
 
@@ -26,7 +26,7 @@ export const DEFAULT_TABLE_SETTINGS: TableSettings = {
   collapsedGroups: [],
 };
 
-type TableColumnValue = ColumnSort["column"];
+type TableColumnValue = RowField;
 type SortDirectionValue = ColumnSort["direction"];
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -34,16 +34,17 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 const COLUMN_SET = new Set<string>(ROW_FIELDS);
+const SORT_SET = new Set<string>(SORT_FIELDS);
 const DIRECTION_SET = new Set<string>(TABLE_SORT_DIRECTIONS);
 const GROUP_BY_SET = new Set<string>(BOARD_GROUP_BYS);
 
 function sanitizeSort(raw: unknown): ColumnSort | null {
   if (!isRecord(raw)) return null;
   const { column, direction } = raw;
-  if (typeof column !== "string" || !COLUMN_SET.has(column)) return null;
+  if (typeof column !== "string" || !SORT_SET.has(column)) return null;
   if (typeof direction !== "string" || !DIRECTION_SET.has(direction)) return null;
   return {
-    column: column as TableColumnValue,
+    column: column as ColumnSort["column"],
     direction: direction as SortDirectionValue,
   };
 }

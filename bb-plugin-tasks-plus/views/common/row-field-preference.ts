@@ -1,7 +1,7 @@
 import { useMemo } from "react";
 import { useSyncExternalStore } from "react";
 import { BOARD_ONLY_FIELDS, ROW_FIELDS, SUBTASK_SCOPES, type SubtaskScope, type TaskOpening } from "../../shared/enums.js";
-import type { RowField as SharedRowField } from "../../shared/enums.js";
+import type { RowField as SharedRowField, SortField } from "../../shared/enums.js";
 // Type-only: erased at compile time, so this never pulls zod or the server
 // SDK (shared/contract.ts's runtime dependencies) into the frontend bundle.
 // Same trick as client/data.ts's `TasksRpcContract`/`Task` imports.
@@ -70,6 +70,9 @@ export const ROW_FIELD_LABELS: Record<RowField, string> = {
   createdAt: "Created",
   updatedAt: "Edited",
 };
+
+/** What the Sort menu and the sort chip call each sort: a field by its label, a sort of its own by its name. */
+export const SORT_FIELD_LABELS: Record<SortField, string> = { ...ROW_FIELD_LABELS, openSubtasks: "Open sub-tasks" };
 
 const BOARD_ONLY = new Set<string>(BOARD_ONLY_FIELDS);
 

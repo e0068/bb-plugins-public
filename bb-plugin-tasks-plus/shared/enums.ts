@@ -15,6 +15,14 @@ export const TASK_STATUSES = [
   "canceled",
 ] as const;
 
+/** Statuses that still owe work — what a burndown burns down, an analytics tile counts open and a card's open sub-tasks are. */
+export const OPEN_STATUSES = ["backlog", "todo", "in_progress", "in_review"] as const satisfies readonly (typeof TASK_STATUSES)[number][];
+
+const OPEN: ReadonlySet<string> = new Set(OPEN_STATUSES);
+
+/** Whether a status still owes work (OPEN_STATUSES). */
+export const isOpenStatus = (status: (typeof TASK_STATUSES)[number]): boolean => OPEN.has(status);
+
 export const TASK_PRIORITIES = [
   "urgent",
   "high",
@@ -179,6 +187,21 @@ export const isQueryField = (field: (typeof ROW_FIELDS)[number]): field is Query
 
 /** The fields the filter and the sort offer, in the canonical field order. */
 export const QUERY_FIELDS: readonly QueryField[] = ROW_FIELDS.filter(isQueryField);
+
+/** Sorts no card field holds: counted from the task's tree for ordering alone, so Filter and Display do not offer them. */
+export const SORT_ONLY_FIELDS = ["openSubtasks"] as const;
+export type SortOnlyField = (typeof SORT_ONLY_FIELDS)[number];
+
+/** What a sort names: a row field, or a sort of its own. */
+export type SortField = (typeof ROW_FIELDS)[number] | SortOnlyField;
+
+/** Every name a stored sort may carry. */
+export const SORT_FIELDS = [...ROW_FIELDS, ...SORT_ONLY_FIELDS] as const;
+
+/** What the Sort menu offers, in order: the query fields, Open sub-tasks right after Sub-tasks. */
+export const SORT_MENU_FIELDS: readonly (QueryField | SortOnlyField)[] = QUERY_FIELDS.flatMap((field) =>
+  field === "subtasks" ? [field, "openSubtasks" as const] : [field],
+);
 
 /**
  * The first filters, each under a key of its own in a view's filters: the
