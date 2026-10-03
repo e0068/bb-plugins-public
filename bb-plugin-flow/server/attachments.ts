@@ -5,6 +5,7 @@
 // в предел значения.
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 
+import { markerNumbers } from "../core/image-markers";
 import type { Locale } from "../lib/i18n";
 import { messages } from "../lib/messages";
 import type { AnswerImage, DecisionAnswer } from "../shared/contract";
@@ -42,14 +43,8 @@ export const uploadAttachments = async (
   };
 };
 
-const escapeRegExp = (text: string): string => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-
 /** Номера меток «[картинка N]» в тексте, без повторов и по возрастанию; метка — в форме языка ответа. */
-const markerNumbers = (text: string, locale?: Locale): number[] => {
-  const [before = "", after = ""] = messages(locale).attachments.marker(0).split("0");
-  const found = [...text.matchAll(new RegExp(`${escapeRegExp(before)}(\\d+)${escapeRegExp(after)}`, "g"))].map((match) => Number(match[1]));
-  return [...new Set(found)].sort((a, b) => a - b);
-};
+const markedNumbers = (text: string, locale?: Locale): number[] => markerNumbers(text, messages(locale).attachments.marker).sort((a, b) => a - b);
 
 /** Всё, что владелец написал в ответе своими словами: метки картинок встают только туда, а не в текст брифа от агента. */
 const ownerWords = (answer: DecisionAnswer): string =>
@@ -63,12 +58,21 @@ const ownerWords = (answer: DecisionAnswer): string =>
   ].join("\n");
 
 /**
+ * Картинки, на которые владелец сослался меткой. Картинка, чью метку стёрли или чей пункт сняли, в виджете больше
+ * нигде не видна, поэтому и агенту не уходит.
+ */
+export const referencedImages = (answer: DecisionAnswer, images: readonly AnswerImage[], locale?: Locale): AnswerImage[] => {
+  const marked = new Set(markedNumbers(ownerWords(answer), locale));
+  return images.filter(({ n }) => marked.has(n));
+};
+
+/**
  * Картинки, о которых агент должен узнать, что их нет: метка стоит в словах владельца, а картинка не легла
  * вложением — потерялась в виджете или bb её не принял. Без такой строки агент видит метку и угадывает, что на картинке.
  */
 export const lostImages = (answer: DecisionAnswer, result: UploadResult, locale?: Locale): number[] => {
   const saved = new Set(result.uploaded.map(({ n }) => n));
-  return [...new Set([...markerNumbers(ownerWords(answer), locale).filter((n) => !saved.has(n)), ...result.failed])].sort((a, b) => a - b);
+  return [...new Set([...markedNumbers(ownerWords(answer), locale).filter((n) => !saved.has(n)), ...result.failed])].sort((a, b) => a - b);
 };
 
 /** Строки реплики о картинках: какая метка у какого пути и какие метки остались без картинки; без картинок и меток строк нет. */
