@@ -138,6 +138,9 @@ export const en: Messages = {
     send: "Send",
     documentsOnly: "Documents only — no live link",
     verdict: (verdict) => (verdict === "continue" ? "Continued" : "Comment"),
+    flowLabel: "Take into work",
+    flowStay: "Stay",
+    flowSwitched: (flow) => `Moved to the ${quote(flow)} flow`,
   },
   flowChoice: {
     none: "No flow selected",
@@ -427,6 +430,9 @@ export const en: Messages = {
     outcomeNext: (name) => `Next — the ${quote(name)} stage.`,
     outcomeFinal: "Next — the work is done: finish the task and report.",
     outcomeComment: "Answer it and send the demo again.",
+    outcomeSwitchHeading: (title, flow) => `Brief ${quote(title)} — move to the ${quote(flow)} flow.`,
+    outcomeSwitch: (flow) =>
+      `The thread now runs the ${quote(flow)} flow: its stages are in the turn instructions, start with the first. The scope is the findings of this demo; the owner's comment above, if any, narrows it.`,
     run: (list) => `Run: ${list}.`,
     noRun: "The run is empty.",
     runStage: (name, executor) => `${name} (${executor})`,

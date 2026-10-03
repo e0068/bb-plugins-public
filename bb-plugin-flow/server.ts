@@ -176,7 +176,7 @@ export default async function plugin(bb: BbPluginApi): Promise<void> {
     if (flowId === AUTO_FLOW) return CHOOSE_FLOW_RULE(flows.current().flows, CHOOSE_FLOW_TOOL, NO_FLOW);
     return flowId === AGENT_NO_FLOW ? CHOOSE_FLOW_AGAIN_RULE(flows.current().flows, CHOOSE_FLOW_TOOL) : null;
   };
-  registerAskTool(bb, store, { newId, now, stages: stagesOf, flowName: flowNameOf, hasFlow: (threadId) => flowOf(threadId) !== null, chooseFlow, emit, planning: (threadId) => readPlanning(bb.sdk, threadId, Date.now(), readClaudeTranscript()), progress });
+  registerAskTool(bb, store, { newId, now, stages: stagesOf, flowIds: () => flows.current().flows.map((flow) => flow.id), flowName: flowNameOf, hasFlow: (threadId) => flowOf(threadId) !== null, chooseFlow, emit, planning: (threadId) => readPlanning(bb.sdk, threadId, Date.now(), readClaudeTranscript()), progress });
   const journalDirs = createJournalDirStore(bb.storage.kv);
   // Каждый ответ на бриф запоминается за тредом вместе с путём файла журнала: по нему итог прогона ссылается на журнал.
   const journalIndex = createJournalIndex(bb.storage.kv, store);
@@ -196,7 +196,26 @@ export default async function plugin(bb: BbPluginApi): Promise<void> {
     const flowId = threads.flowOf(fromThreadId);
     if (flowId !== undefined) await threads.assign(toThreadId, flowId);
   };
-  registerApi(bb, store, { now, emit, writeDecision: writeAndIndex, progress, ownSend: own.mark, carryFlow });
+  /** Передачи, которым Демонстрация выбрала другой flow: исходный тред → выбранный flow; забирает первое сообщение нового треда. */
+  const handoffFlows = new Map<string, string>();
+  const takeHandoffFlow = (sourceThreadId: string) => {
+    const flowId = handoffFlows.get(sourceThreadId);
+    handoffFlows.delete(sourceThreadId);
+    return flowId;
+  };
+  registerApi(bb, store, {
+    now,
+    emit,
+    writeDecision: writeAndIndex,
+    progress,
+    ownSend: own.mark,
+    carryFlow,
+    flowIds: () => flows.current().flows.map((flow) => flow.id),
+    // Смена flow треда живёт в ./server/flow-choice.ts; ответы приходят после запуска плагина, когда `choice` уже есть.
+    switchFlow: (threadId, flowId) => choice.switchTo(threadId, flowId),
+    releaseFlow: (threadId) => choice.release(threadId),
+    handoffFlow: (sourceThreadId, flowId) => void (flowId === null ? handoffFlows.delete(sourceThreadId) : handoffFlows.set(sourceThreadId, flowId)),
+  });
   // Удалённый тред не ждёт владельца и не показывает прогресс: записи и его указатель снимаются, иначе значок висел бы
   // в левой панели. Архивированный тред и тред, отдавший работу, ключей не теряют — их ещё откроют.
   bb.events.on("thread.deleted", ({ thread }) => {
@@ -265,7 +284,7 @@ export default async function plugin(bb: BbPluginApi): Promise<void> {
     ownSend: own.has,
     ownerTurn: choice.ownerTurn,
     ownerMessage: (threadId) => returnAwaitingBrief({ store, publish: (id) => bb.realtime.publish(ANSWERED_CHANNEL, { id }) }, threadId),
-    firstMessage: startThread({ threads, progress, hasFlow: (threadId) => flowOf(threadId) !== null }),
+    firstMessage: startThread({ threads, progress, hasFlow: (threadId) => flowOf(threadId) !== null, handoffFlow: takeHandoffFlow }),
   });
   // Ушедшая своя отправка забывается — тем же текстом, что хук видит в `input.text`: текстовые блоки через перевод строки.
   bb.events.on("message.dispatched", ({ entry }) =>

@@ -24,12 +24,14 @@ export const outcomeStageName = (brief: DecisionBrief): string => {
 };
 
 /**
- * Исход Демонстрации: продолжить или комментарий; `null` — итог не отвечен. Комментарий Демонстрацию не принимает:
- * она остаётся открытой, агент отвечает, flow дальше не идёт.
+ * Исход Демонстрации: продолжить, комментарий или переход в другой flow; `null` — итог не отвечен. Комментарий
+ * Демонстрацию не принимает: она остаётся открытой, агент отвечает, flow дальше не идёт. Переход её тоже не принимает:
+ * тред уходит в выбранный flow, а комментарий едет туда вместе с ним.
  */
-export type DemoVerdict = "continue" | "comment";
+export type DemoVerdict = "continue" | "comment" | "switch";
 
 export const demoVerdict = (answer: Pick<DecisionAnswer, "outcome">): DemoVerdict | null => {
+  if (answer.outcome?.flow !== undefined) return "switch";
   if (answer.outcome?.accepted === true) return "continue";
   return (answer.outcome?.note ?? "").trim().length > 0 ? "comment" : null;
 };
@@ -43,6 +45,12 @@ export const paragraphs = (text: string): string[] =>
 
 /** Демонстрация отвечена одним из двух исходов. */
 export const outcomeAnswered = (answer: Pick<DecisionAnswer, "outcome">): boolean => demoVerdict(answer) !== null;
+
+/** Рекомендованный flow — один из flow владельца: перейти в несуществующий Демонстрация не может. */
+export const nextFlowIssues = (outcome: Pick<StageOutcome, "nextFlow">, flowIds: readonly string[]): string[] =>
+  outcome.nextFlow === undefined || flowIds.includes(outcome.nextFlow)
+    ? []
+    : [`outcome.nextFlow ${outcome.nextFlow} is not one of the owner's flows: ${flowIds.join(", ")}`];
 
 /** Живой результат — то, что владелец видит работающим: страница по адресу http(s) или запуск командой. */
 export const isLiveResult = (result: OutcomeResult): boolean => "command" in result || /^https?:\/\//.test(result.target);

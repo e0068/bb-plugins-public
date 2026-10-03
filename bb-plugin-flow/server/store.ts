@@ -85,6 +85,8 @@ export type DecisionStore = {
   /** Работа треда уже отправлена на исполнение: этапы и бюджет в нём больше не спрашиваются. */
   isLaunched(threadId: string): Promise<boolean>;
   markLaunched(threadId: string): Promise<void>;
+  /** Тред уходит в другой flow: запуск, перенос, утверждённые критерии и объём прежней работы ему больше не принадлежат. */
+  resetThreadWork(threadId: string): Promise<void>;
   /** Последний маршрут нового треда в проекте; нет записи или она чужая — `null`. */
   getRoute(projectId: string): Promise<DispatchRoute | null>;
   putRoute(projectId: string, route: DispatchRoute): Promise<void>;
@@ -200,6 +202,9 @@ export const createStore = (kv: PluginKvStorage): DecisionStore => {
     },
     async markLaunched(threadId) {
       await kv.set(launchedKey(threadId), true);
+    },
+    async resetThreadWork(threadId) {
+      await Promise.all([launchedKey, threadCarryKey, threadCriteriaKey, threadScopeKey].map((key) => kv.delete(key(threadId))));
     },
     async getRoute(projectId) {
       const parsed = routesSchema.safeParse(await kv.get(ROUTES_KEY));

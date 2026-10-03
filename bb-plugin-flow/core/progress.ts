@@ -46,14 +46,16 @@ export const onBrief = (progress: FlowProgress, brief: DecisionBrief, at: string
 };
 
 /**
- * Ответ владельца: закрываются ждущие этапы отвечаемого брифа (Демонстрация с комментарием — нет) — не чужого, пришедшего позже;
+ * Ответ владельца: закрываются ждущие этапы отвечаемого брифа (Демонстрация с комментарием или переходом — нет) — не чужого, пришедшего позже;
  * этапы вне прогона снимаются, исполнитель и план запоминаются. Пройденный этап остаётся пройденным, а выбор для него
  * ждёт нового прохода: иначе доработка вернула бы этапу выбор прошлого прохода.
  */
 export const onAnswer = (progress: FlowProgress, brief: DecisionBrief, answer: DecisionAnswer, at: string, planned?: Planned): FlowProgress => {
   if (!touchesProgress(brief)) return progress;
   const own = waitingOf(brief).filter((id) => progress.waiting.includes(id));
-  const commented = brief.outcome !== undefined && demoVerdict(answer) === "comment";
+  // Комментарий Демонстрацию не закрывает; переход тоже, хотя до прогона он не доходит: прогон после него снят.
+  const verdict = demoVerdict(answer);
+  const commented = brief.outcome !== undefined && (verdict === "comment" || verdict === "switch");
   const closed = commented ? progress : own.reduce((p, id) => patch(p, id, finish(at)), progress);
   const chosen = (answer.stages ?? []).reduce((p, s) => {
     const choice = { skipped: !s.run, executor: s.executor };

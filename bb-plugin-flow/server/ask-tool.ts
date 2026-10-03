@@ -5,7 +5,7 @@ import type { BbPluginApi } from "@get-bb/plugin-sdk";
 
 import type { Carried } from "../core/carry";
 import { awaitingKind } from "../core/awaiting";
-import { liveIssues } from "../core/outcome";
+import { liveIssues, nextFlowIssues } from "../core/outcome";
 import { DECISION_ID_PREFIX, directiveLine } from "../core/directive";
 import { criterionEditable, money, plannedMinutes, recommendedForecast } from "../core/budget";
 import { FLOW_RULE, SELF_ONLY_RULE, isAutomationStage, isStageCarryKey, reportIssues, stageInstructions, withStepResults } from "../core/stages";
@@ -108,13 +108,14 @@ const launchedIssues = (setup: AskDecisionParams["setup"], stages: StageSettings
 };
 
 /** Итог — про запущенную работу и про этап Демонстрации из flow треда. */
-const outcomeIssues = (outcome: AskDecisionParams["outcome"], launched: boolean, stages: StageSettings["stages"]): string[] => {
+const outcomeIssues = (outcome: AskDecisionParams["outcome"], launched: boolean, stages: StageSettings["stages"], flowIds: readonly string[]): string[] => {
   if (outcome === undefined) return [];
   if (!launched) return ["an outcome reports a stage of running work, and the work in this thread has not started yet: send a brief with setup.stages first"];
   const demos = stages.filter((stage) => stageKindOf(stage) === "demo").map((s) => s.id);
   return [
     ...(demos.includes(outcome.stage) ? [] : [`outcome.stage ${outcome.stage} is not a demo stage of the thread's flow: ${demos.length === 0 ? "the flow has none" : demos.join(", ")}`]),
     ...liveIssues(outcome),
+    ...nextFlowIssues(outcome, flowIds),
   ];
 };
 
@@ -200,6 +201,8 @@ export const registerAskTool = (
     newId: () => string;
     now: () => string;
     stages?: (threadId: string) => StageSettings;
+    /** Id flow владельца: рекомендованный Демонстрацией flow должен быть одним из них. */
+    flowIds?: () => readonly string[];
     /** Название flow треда; `undefined` — тред без flow. Бриф с этапами запоминает его и рисует им бирку Выбора этапов. */
     flowName?: (threadId: string) => string | undefined;
     /** Идёт ли тред по flow; `false` — «без flow» или «Автоматически» до выбора агентом, и Flow не вкладывает в ход ничего, кроме `chooseFlow`. */
@@ -228,7 +231,7 @@ export const registerAskTool = (
       const launched = await store.isLaunched(ctx.threadId);
       const legacy = params.kind === "brief" ? legacyIssues(params.setup) : [];
       const launchedSetup = params.kind === "brief" && launched ? launchedIssues(params.setup, settings.stages) : [];
-      const outcomeProblems = outcomeIssues(params.outcome, launched, settings.stages);
+      const outcomeProblems = outcomeIssues(params.outcome, launched, settings.stages, deps.flowIds?.() ?? []);
       const stageIssues = [...missingStagesIssues(params, launched, settings.stages), ...reportIssues(settings.stages, params.setup?.stages)];
       const base = baseIssues(params, launched, settings.stages);
       if (launchedSetup.length > 0 || outcomeProblems.length > 0)

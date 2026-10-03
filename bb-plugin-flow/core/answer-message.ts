@@ -7,7 +7,7 @@ import type { CriteriaAnswer, DecisionAnswer, DecisionBrief, DecisionQuestion, Q
 import { budgetLine, changeOf, criterionTitle, hasForecast, hasOwnBudget } from "./budget";
 import { carriedFor } from "./carry";
 import { optionCriteria, removedCriteria, type OptionCriterion } from "./option-criteria";
-import { OUTCOME_ROW, demoVerdict, isOutcomeBrief, outcomeAnswered, outcomeStageName } from "./outcome";
+import { OUTCOME_ROW, demoVerdict, isOutcomeBrief, outcomeAnswered, outcomeStageName, type DemoVerdict } from "./outcome";
 import { requiredOf } from "./required";
 import { REVIEW_ROWS, SETUP_ROW, checkerAllowed, rowsOf } from "./rows";
 import { hiddenQuestions } from "./visibility";
@@ -150,11 +150,27 @@ const stagesLines = (brief: DecisionBrief, answer: DecisionAnswer, locale: Local
 const outcomeLines = (brief: DecisionBrief, answer: DecisionAnswer, locale: Locale | undefined): string[] =>
   !isOutcomeBrief(brief) || blank(answer.outcome?.note) ? [] : [messages(locale).answer.outcomeNote(answer.outcome?.note ?? "")];
 
-/** Дальше после Демонстрации: продолжить — следующий этап или конец работы; комментарий — ответить и прислать её снова. */
+/**
+ * Дальше после Демонстрации: продолжить — следующий этап или конец работы; комментарий — ответить и прислать её снова;
+ * переход — начать выбранный flow с первого этапа.
+ */
 const outcomeNextStep = (brief: DecisionBrief, answer: DecisionAnswer, m: Messages["answer"]): string => {
+  const flow = answer.outcome?.flow;
+  if (flow !== undefined) return m.outcomeSwitch(flow.name);
   if (demoVerdict(answer) !== "continue") return m.outcomeComment;
   const next = brief.outcome?.next;
   return next === undefined ? m.outcomeFinal : m.outcomeNext(next);
+};
+
+/** Заголовок реплики на Демонстрацию — по её исходу. */
+const outcomeHeading = (brief: DecisionBrief, answer: DecisionAnswer, verdict: DemoVerdict, m: Messages["answer"]): string => {
+  switch (verdict) {
+    case "switch":
+      return m.outcomeSwitchHeading(brief.title, answer.outcome?.flow?.name ?? "");
+    case "comment":
+    case "continue":
+      return m.outcomeHeading(brief.title, verdict === "comment", outcomeStageName(brief));
+  }
 };
 
 /**
@@ -245,7 +261,7 @@ export const deviations = (brief: DecisionBrief, answer: DecisionAnswer): number
 export const answerMessageText = (brief: DecisionBrief, answer: DecisionAnswer, locale?: Locale): string => {
   const m = messages(locale).answer;
   const verdict = isOutcomeBrief(brief) ? demoVerdict(answer) : null;
-  const heading = verdict === null ? m.heading(brief.kind === "clarify", brief.title) : m.outcomeHeading(brief.title, verdict === "comment", outcomeStageName(brief));
+  const heading = verdict === null ? m.heading(brief.kind === "clarify", brief.title) : outcomeHeading(brief, answer, verdict, m);
   const body = readings(brief, answer, locale).map(({ question, reading }, i) => {
     const head = `${i + 1}. ${question.question} — `;
     if (reading === null) return `${head}${m.noAnswer}`;

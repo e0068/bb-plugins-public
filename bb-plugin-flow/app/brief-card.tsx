@@ -37,6 +37,7 @@ import {
   removeAddedCriterion,
   setAddedCriterion,
   setNote,
+  setOutcomeFlow,
   setOwn,
   setOwnBudget,
   toAnswer,
@@ -60,6 +61,7 @@ import type { Messages } from "../lib/messages";
 import { useLocale, useMessages } from "./locale-context";
 import { useScrollAnchor } from "./scroll-anchor";
 import { DemoCard } from "./outcome";
+import { FlowCell, chosenFlow, useOwnerFlows } from "./demo-flow";
 import { SectionTag } from "./section-tag";
 import { StagesBlock } from "./stages-block";
 import { VoiceErrorLine, useVoiceBusy, useVoiceField } from "./voice";
@@ -1272,10 +1274,14 @@ const DEMO_ROW = "grid grid-cols-[repeat(auto-fit,minmax(10rem,1fr))]";
 /**
  * Кнопки Демонстрации — отдельным рядом с отступом от карточки, чтобы не нажать случайно.
  * Пустой комментарий — одна «Продолжить» («Завершить» у финальной); написанный — одна «Отправить»: Демонстрация не принимается, агент отвечает на комментарий.
+ * Агент рекомендовал flow — первой в ряду стоит его ячейка, и «Отправить» уводит работу в выбранный flow, пока владелец не выбрал «Не переходить».
  */
 function DemoActions(props: { brief: DecisionBrief; draft: Draft; setDraft: (update: (draft: Draft) => Draft) => void; sending: boolean; failed: boolean; complete: boolean; place: DispatchPlace; route: DispatchRoute; onSubmit: (draft: Draft) => void }) {
   const t = useMessages();
   const picker = useDispatchPicker({ threadId: props.brief.threadId, draft: props.draft, setDraft: props.setDraft, place: props.place, route: props.route, disabled: props.sending, gap: DEMO_GAP, inRow: true });
+  const recommended = props.brief.outcome?.nextFlow;
+  const flows = useOwnerFlows(props.brief.threadId, recommended !== undefined);
+  const flow = recommended === undefined ? null : chosenFlow(props.draft, recommended, flows);
   const commented = (props.draft.outcomeNote ?? "").trim() !== "";
   const button = "h-auto min-h-10 min-w-0 rounded-lg px-4 text-[13px] font-semibold";
   // Вопросы того же брифа должны быть решены до исхода: неполный ответ иначе отбил бы только сервер.
@@ -1283,10 +1289,21 @@ function DemoActions(props: { brief: DecisionBrief; draft: Draft; setDraft: (upd
   return (
     <div className="-mt-2 flex flex-col items-stretch gap-1.5">
       <div className={cn(DEMO_ROW, DEMO_GAP)}>
+        {recommended !== undefined && (
+          <div data-demo-action className="flex min-w-0 overflow-hidden rounded-lg">
+            <FlowCell
+              className={cn(footerCell, "justify-between gap-2 hover:bg-state-hover")}
+              flow={flow}
+              flows={flows}
+              disabled={props.sending}
+              onPick={(picked) => props.setDraft((d) => setOutcomeFlow(d, picked))}
+            />
+          </div>
+        )}
         <div data-demo-action className="flex min-w-0 overflow-hidden rounded-lg">{picker.cell}</div>
-        <Button type="button" disabled={blocked} onClick={() => props.onSubmit(props.draft)} className={button}>
+        <Button type="button" disabled={blocked} onClick={() => props.onSubmit(recommended === undefined ? props.draft : setOutcomeFlow(props.draft, flow))} className={button}>
           {props.sending && <Icon name="Spinner" className="size-3.5 animate-spin" />}
-          {commented ? t.outcome.send : props.brief.outcome?.final === true ? t.outcome.finish : t.outcome.continue}
+          {commented || flow !== null ? t.outcome.send : props.brief.outcome?.final === true ? t.outcome.finish : t.outcome.continue}
         </Button>
       </div>
       {picker.lists}
@@ -1481,7 +1498,9 @@ export function AnsweredBriefCard({ brief, record, roots }: { brief: DecisionBri
           <DemoCard brief={brief} roots={roots} />
           <Body brief={brief} view={view} />
           <div className="break-words text-sm leading-relaxed text-muted-foreground">
-            <b className="font-semibold text-foreground">{t.outcome.verdict(demoVerdict(record.answer) ?? "comment")}</b>
+            <b className="font-semibold text-foreground">
+              {record.answer.outcome?.flow === undefined ? t.outcome.verdict(demoVerdict(record.answer) === "continue" ? "continue" : "comment") : t.outcome.flowSwitched(record.answer.outcome.flow.name)}
+            </b>
             {!blank(record.answer.outcome?.note ?? "") && ` — ${record.answer.outcome?.note ?? ""}`}
           </div>
         </>

@@ -17,6 +17,10 @@ import type { ThreadFlows } from "./thread-flows";
 export type FlowChoice = {
   /** Владелец начал ход своим сообщением: выбор, сделанный над композером, достаётся треду. */
   ownerTurn(threadId: string): Promise<void>;
+  /** Демонстрация увела работу треда в другой flow: прогон и прежняя работа снимаются, заводится пустой прогон выбранного. */
+  switchTo(threadId: string, flowId: string): Promise<void>;
+  /** Работу треда увели в новый тред: его прогон, шаги автоматизаций и ожидание снимаются, flow остаётся. */
+  release(threadId: string): Promise<void>;
 };
 
 export const registerFlowChoice = (
@@ -25,7 +29,7 @@ export const registerFlowChoice = (
     flows: FlowSettingsStore;
     threads: ThreadFlows;
     progress: Pick<ProgressStore, "annotate" | "remove" | "run">;
-    store: Pick<DecisionStore, "dropAwaiting">;
+    store: Pick<DecisionStore, "dropAwaiting" | "resetThreadWork">;
     /** Гасит отложенные автоповторы треда и останавливает его идущие шаги (./automation-runner.ts). */
     cancelRun: (threadId: string) => void;
     /** Прогон треда завершён: flow у треда больше нет, и следующий выбирается заново. Нет — прогон не завершается никогда. */
@@ -42,6 +46,13 @@ export const registerFlowChoice = (
   /** Что строка показывает выбранным без выбора владельца: после завершённого прогона — «Автоматически», с ним начнётся следующий. */
   const shown = async (threadId: string) => ((await finished(threadId)) ? AUTO_FLOW : current(threadId));
   const known = (flowId: string) => flowId === NO_FLOW || flowId === AUTO_FLOW || deps.flows.current().flows.some((flow) => flow.id === flowId);
+  /** Снять прогон треда: выбор над композером, отложенные шаги автоматизаций, ожидание владельца и сам прогон. */
+  const dropRun = async (threadId: string) => {
+    await deps.threads.pick(threadId, null);
+    deps.cancelRun(threadId);
+    await deps.store.dropAwaiting(threadId);
+    await deps.progress.remove(threadId);
+  };
 
   bb.rpc.register(flowChoiceRpcContract, {
     threadFlowChoice: async ({ threadId }) => ({
@@ -62,15 +73,21 @@ export const registerFlowChoice = (
       if (found !== null && found.carrier !== threadId) return { kind: "failed" as const, reason: "carried" as const };
       // Сперва flow: с этой минуты новый ход треда не получает этапов, а исполнитель автоматизаций не находит, что продолжать.
       await deps.threads.assign(threadId, NO_FLOW);
-      await deps.threads.pick(threadId, null);
-      deps.cancelRun(threadId);
-      await deps.store.dropAwaiting(threadId);
-      await deps.progress.remove(threadId);
+      await dropRun(threadId);
       return { kind: "cancelled" as const };
     },
   });
 
   return {
+    async switchTo(threadId, flowId) {
+      if (flowOrNone(deps.flows.current(), flowId) === null) throw new Error(`unknown flow "${flowId}"`);
+      // Сперва flow, как у «Отменить flow»: исполнитель автоматизаций уже не находит, что продолжать в прежнем.
+      await deps.threads.assign(threadId, flowId);
+      await dropRun(threadId);
+      await deps.store.resetThreadWork(threadId);
+      await deps.progress.annotate(threadId, (progress) => progress);
+    },
+    release: dropRun,
     async ownerTurn(threadId) {
       // Выбор снимается в любом случае: прогон, начатый агентом после выбора, он не перебивает — строки выбора над баром уже нет.
       const taken = await deps.threads.takePicked(threadId);

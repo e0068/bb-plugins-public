@@ -374,6 +374,8 @@ export const stageOutcomeSchema = z
     results: z.array(z.union([z.object({ label: text, target: text }).strict(), z.object({ label: text, command: text.max(COMMAND_MAX_LENGTH) }).strict()])).min(1),
     /** С прошлой Демонстрации менялись только документы — живой ссылки нет. */
     documentsOnly: z.literal(true).optional(),
+    /** Id flow, который агент рекомендует для найденных проблем: Демонстрация предлагает владельцу перейти в него. */
+    nextFlow: text.describe("Id of the owner's flow for problems you found while working: one send of the demo moves the work into it").optional(),
   })
   .superRefine((o, ctx) => {
     if (o.done.length + o.pending.length === 0)
@@ -642,8 +644,8 @@ export const decisionAnswerSchema = z.object({
   route: dispatchRouteSchema.optional(),
   /** Сперва компактировать тред, потом отдать ответ агенту; только у места «в этом треде». */
   compact: z.boolean().optional(),
-  /** Ответ на итог этапа: «Продолжить» и свой ответ. Есть только у брифа с итогом. */
-  outcome: z.object({ accepted: z.boolean(), note: z.string().optional() }).optional(),
+  /** Ответ на итог этапа: «Продолжить», свой ответ или переход в flow, выбранный владельцем. Есть только у брифа с итогом. */
+  outcome: z.object({ accepted: z.boolean(), note: z.string().optional(), flow: z.object({ id: text, name: text }).optional() }).optional(),
 });
 
 /** Прогноз бюджета на момент отправки ответа — та же форма, что считает ядро; `null` — величина неизвестна. */
