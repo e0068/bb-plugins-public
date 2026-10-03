@@ -1726,11 +1726,15 @@ const FILL_PANE_CLASS =
 // low, just above the composer. The queue takes Recents' place: the list is
 // hidden with its spacer, the scroller starts under the top bar (56px, bb's own
 // minimum; `!` beats the inline top bb sets), and a column of flex boxes lets
-// the section fill it down to the spacer bb keeps under the composer. bb's
-// sections box keeps its own 24px top margin, which would open a gap under the
-// top bar at the top of the scroller, so it goes too.
+// the section fill it down to the spacer bb keeps under the composer. The boxes
+// grow from their content, never from a zero basis: since 0.45 bb wraps the
+// column in a box held at the scroller's height (`min-h-full`), which then has
+// no floor of its content — sized from zero or let shrink, it stays one screen
+// tall and the list spills over its top, where nothing scrolls. bb's sections
+// box keeps its own 24px top margin, which would open a gap under the top bar
+// at the top of the scroller, so it goes too.
 const COMPACT_HOME_CLASS =
-  "[[data-testid=root-compose-compact-scroll-viewport]_[data-testid=plugin-homepage-sections]:has(&)]:mt-0 [[data-testid=root-compose-compact-scroll-viewport]:has(&)]:top-14! [[data-testid=root-compose-compact-scroll-viewport]:has(&)]:flex [[data-testid=root-compose-compact-scroll-viewport]:has(&)]:flex-col [[data-testid=root-compose-compact-scroll-viewport]:has(&)_[data-root-compose-mobile-recents]]:hidden [[data-testid=root-compose-compact-scroll-viewport]:has(&)>[data-testid=root-compose-compact-recents-offset]]:hidden [[data-testid=root-compose-compact-scroll-viewport]>div:has(&)]:flex [[data-testid=root-compose-compact-scroll-viewport]>div:has(&)]:flex-1 [[data-testid=root-compose-compact-scroll-viewport]>div:has(&)]:flex-col [[data-testid=root-compose-compact-scroll-viewport]:has(&)>div:last-child]:shrink-0";
+  "[[data-testid=root-compose-compact-scroll-viewport]_[data-testid=plugin-homepage-sections]:has(&)]:mt-0 [[data-testid=root-compose-compact-scroll-viewport]:has(&)]:top-14! [[data-testid=root-compose-compact-scroll-viewport]:has(&)]:flex [[data-testid=root-compose-compact-scroll-viewport]:has(&)]:flex-col [[data-testid=root-compose-compact-scroll-viewport]:has(&)_[data-root-compose-mobile-recents]]:hidden [[data-testid=root-compose-compact-scroll-viewport]:has(&)_[data-testid=root-compose-compact-recents-offset]]:hidden [[data-testid=root-compose-compact-scroll-viewport]>div:has(&)]:flex [[data-testid=root-compose-compact-scroll-viewport]>div:has(&)]:grow [[data-testid=root-compose-compact-scroll-viewport]>div:has(&)]:shrink-0 [[data-testid=root-compose-compact-scroll-viewport]>div:has(&)]:flex-col [[data-testid=root-compose-compact-scroll-viewport]:has(&)_div:has(>[data-testid=plugin-homepage-sections])]:flex [[data-testid=root-compose-compact-scroll-viewport]:has(&)_div:has(>[data-testid=plugin-homepage-sections])]:grow [[data-testid=root-compose-compact-scroll-viewport]:has(&)_div:has(>[data-testid=plugin-homepage-sections])]:flex-col [[data-testid=root-compose-compact-scroll-viewport]:has(&)>div:last-child]:shrink-0";
 
 function AttentionSection() {
   const { status, threads, projects } = experimental_useSidebarThreads();
