@@ -42,7 +42,7 @@ const defaultName = (draft: StageDraft): string => {
 /**
  * `taken` — id уже разобранных этапов, `reserved` — id, заданные в черновике: сгенерированный id не занимает ни тех, ни других.
  * `kept` — этапы сохранённого flow: их навык проходит и без каталога, иначе пропавший навык запер бы flow от любой правки,
- * а иконку, выбранную владельцем, этап того же id берёт оттуда — агент её не знает. `owners` — id владельцев под-этапов
+ * а иконку и снятый Main Agent, выбранные владельцем, этап того же id берёт оттуда — агент их не знает. `owners` — id владельцев под-этапов
  * черновика: этап навыка без навыка с под-этапами — заголовок, и навык ему не нужен.
  */
 type DraftContext = { reserved: readonly string[]; catalog: StageCatalog; kept: readonly WorkStage[]; owners: ReadonlySet<string> };
@@ -56,6 +56,7 @@ const resolveStage = (draft: StageDraft, n: number, taken: readonly string[], { 
   const id = stageId(draft, [...taken, ...reserved]);
   const isKept = kept.some((s) => s.id === id && s.skill === skill);
   const icon = kept.find((s) => s.id === id)?.icon;
+  const mainAgentOff = kept.some((s) => s.id === id && s.mainAgent === false);
   const executors = executorIds.map((e) => byId.get(e)).filter((e): e is StageExecutor => e !== undefined);
   const problems = [
     ...(draft.id !== undefined && taken.includes(draft.id) ? [`${at}: the stage id "${draft.id}" repeats an earlier stage`] : []),
@@ -76,6 +77,7 @@ const resolveStage = (draft: StageDraft, n: number, taken: readonly string[], { 
     ...(draft.automation === undefined ? {} : { automation: draft.automation }),
     ...(draft.parent === undefined ? {} : { parent: draft.parent }),
     ...(icon === undefined ? {} : { icon }),
+    ...(mainAgentOff && executors.length > 0 ? { mainAgent: false as const } : {}),
   };
   return { stage, problems };
 };

@@ -1,7 +1,8 @@
 // Слой 2 — чисто. Шаблоны этапов: закладка строки таблицы сохраняет этап целиком — название, навык, иконку,
-// исполнение и под-этапы, — а «Добавить этап» ставит его новым этапом в любой flow. Места в flow у шаблона нет: ни id, ни владельца.
+// исполнение и под-этапы, — а «Добавить этап» или «Добавить скрипт» — по виду — ставит его новым этапом в любой flow. Места в flow у шаблона нет: ни id, ни владельца.
 import type { StageTemplate, WorkStage } from "../shared/contract";
 import { applySet } from "./automation-sets";
+import { isScriptStage } from "./stage-execution";
 
 type SubStageTemplate = NonNullable<StageTemplate["subStages"]>[number];
 type OwnTemplate = Omit<StageTemplate, "subStages">;
@@ -44,6 +45,10 @@ export const isTemplateSaved = (templates: readonly StageTemplate[], stages: rea
 /** Этап `stage` списка `stages` шаблоном в конец; уже сохранённый — список тот же. */
 export const saveTemplate = (templates: readonly StageTemplate[], stages: readonly WorkStage[], stage: WorkStage): readonly StageTemplate[] =>
   isTemplateSaved(templates, stages, stage) ? templates : [...templates, templateOf(stages, stage)];
+
+/** Шаблоны одного вида — скрипты (`script`) или агентские этапы — с их местом в общем списке: по нему шаблон убирается. */
+export const templatesOfKind = (templates: readonly StageTemplate[], script: boolean): Array<{ template: StageTemplate; index: number }> =>
+  templates.flatMap((template, index) => (isScriptStage({ id: "", ...template }) === script ? [{ template, index }] : []));
 
 export const removeTemplate = (templates: readonly StageTemplate[], index: number): readonly StageTemplate[] => templates.filter((_, i) => i !== index);
 

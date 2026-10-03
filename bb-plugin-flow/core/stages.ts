@@ -6,6 +6,7 @@ import type { Locale } from "../lib/i18n";
 import { messages } from "../lib/messages";
 import { isDefaultName, SELF_EXECUTOR, stageKindOf, stageSkillOf, type BuiltinKind } from "../lib/stage-constants";
 import { ACTION_TAIL, AUTOMATION_TAIL } from "./automation-run";
+import { hasMainAgent } from "./stage-execution";
 import { isHeadingStage, stageNumbers } from "./sub-stages";
 import type { Add, DecisionAnswer, DecisionBrief, Flow, FlowProgress, StageAnswer, StageReport, WorkStage } from "../shared/contract";
 import { sumAdds } from "./adds";
@@ -55,7 +56,10 @@ export const stageItems = (brief: DecisionBrief): StageItem[] => {
 /** Этап без отчёта агента не сделан. */
 export const stagePhase = (item: StageItem): StagePhase => item.report?.state ?? "todo";
 
-export const knownExecutor = (stage: WorkStage, id: string): boolean => id === SELF || stage.executors.some((e) => e.id === id);
+/** Кому владелец может отдать этап: Main Agent, если не снят, и исполнители этапа. */
+export const stageExecutorIds = (stage: WorkStage): string[] => [...(hasMainAgent(stage) ? [SELF] : []), ...stage.executors.map((e) => e.id)];
+
+export const knownExecutor = (stage: WorkStage, id: string): boolean => stageExecutorIds(stage).includes(id);
 
 /** Исполнитель словами: «Сам», «planner · opus», «DEV2». */
 export const executorLabel = (stage: WorkStage, id: string, locale?: Locale): string => {
@@ -71,7 +75,7 @@ export const recommendedStageChoice = (item: StageItem): StageChoice => {
   const executor = item.report?.executor ?? SELF;
   return {
     run: stagePhase(item) === "todo" && item.report?.recommended === true,
-    executor: knownExecutor(item.stage, executor) ? executor : SELF,
+    executor: knownExecutor(item.stage, executor) ? executor : (stageExecutorIds(item.stage)[0] ?? SELF),
   };
 };
 
@@ -174,7 +178,7 @@ export const reportIssues = (stages: readonly WorkStage[], reports: readonly Sta
   const executors = reports.flatMap((r) => {
     const stage = stages.find((s) => s.id === r.id);
     if (stage === undefined) return [];
-    const allowed = idList([SELF, ...stage.executors.map((e) => e.id)]);
+    const allowed = idList(stageExecutorIds(stage));
     // Встроенные этапы сдаются в самом брифе — ссылаться у них не на что; этап навыка сдаётся ссылками,
     // а ссылки автоматизации дают её шаги — их подставляет сам Flow (withStepResults).
     // Заголовку ссылаться не на что: его работу сдают под-этапы.
@@ -260,7 +264,7 @@ const stageLine = (s: WorkStage, head: string): string => {
   if (kind === "action") return `${head}${ACTION_TAIL}`;
   if (kind !== "skill") return `${head} — ${builtinSkill(stageSkillOf(s))}${BUILTIN_ANSWERS[kind]}; you execute it yourself, a done stage needs no results`;
   if (s.automation !== undefined) return `${head}${AUTOMATION_TAIL}`;
-  const executors = s.executors.length === 0 ? "you execute it yourself" : `executors: self, ${s.executors.map((e) => e.id).join(", ")}`;
+  const executors = s.executors.length === 0 ? "you execute it yourself" : `executors: ${stageExecutorIds(s).join(", ")}`;
   // Названного навыка мало: агент дойдёт до этапа и уйдёт работать, не
   // прочитав его, — поэтому этап-навык, как и встроенный, велит его загрузить.
   const skill = s.skill === "" ? "" : ` — skill ${s.skill}: load it for the stage's work`;

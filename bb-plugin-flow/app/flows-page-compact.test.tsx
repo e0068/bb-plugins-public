@@ -73,7 +73,7 @@ describe("списки таблицы этапов на узком экране"
     fireEvent.click(await slot.findByRole("button", { name: "Исполнение этапа" }));
     const menu = await slot.findByRole("menu", { name: "Исполнение" });
     expect(inSheet(menu)).toBe(true);
-    expect(within(menu).getAllByRole("tab").map((tab) => tab.textContent)).toEqual(["Субагент", "Workflow", "Скрипт"]);
+    expect(within(menu).getAllByRole("tab").map((tab) => tab.textContent)).toEqual(["Субагент", "Workflow", "Виджет"]);
     fireEvent.click(within(menu).getByRole("menuitemcheckbox", { name: /Имплементер/ }));
     await vi.waitFor(() => expect(lastSaved(slot)?.flows[0]?.stages[0]?.executors.map((e) => e.id)).toEqual(["agent:implementer"]));
   });
