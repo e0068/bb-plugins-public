@@ -16,11 +16,14 @@ import { AutomationToasts } from "./app/automation-toasts";
 import { ProgressBanner } from "./app/progress-banner";
 import { registerAwaitingStatus } from "./app/row-status";
 import { systemLanguages } from "./app/locale-context";
+import { lockAutoZoom } from "./app/viewport";
 import { DecisionDirective } from "./app/widget";
 import { resolveLocale } from "./lib/i18n";
 import { messages } from "./lib/messages";
 
 export default definePluginApp((app) => {
+  // Каретка в поле на iPhone не приближает тред: предел масштаба на всю страницу с загрузки плагина до перезагрузки страницы.
+  lockAutoZoom(document);
   app.slots.messageDirective({ id: "decision", component: DecisionDirective });
   app.slots.messageDirective({ id: "command", component: CommandDirective });
   // Заголовок секции регистрируется один раз, до настроек плагина, поэтому идёт за языком браузера.

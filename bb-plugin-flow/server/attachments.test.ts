@@ -142,3 +142,13 @@ describe("картинки комментария к демонстрации", 
     expect(reply().input[0]!.text).not.toContain("Картинки не сохранены");
   });
 });
+
+describe("картинка, метку которой стёрли", () => {
+  it("не грузится и не называется агенту: ушла только картинка с меткой в словах владельца", async () => {
+    const { harness, reply } = await setup(uploaded, demo);
+    const note = { ...comment, outcome: { accepted: false, note: "[картинка 2] Подсказка обрезается." } };
+    expect(await harness.callRpc("answerBrief", { id: demo.id, messageId: "m", answer: note, images: pngs })).toMatchObject({ kind: "accepted" });
+    expect(harness.sdk.callsTo("projects.attachments.upload").map(([args]) => (args as Upload).filename)).toEqual(["decision-dec_demo-2.png"]);
+    expect(reply().input[0]!.text).not.toContain("[картинка 1]");
+  });
+});

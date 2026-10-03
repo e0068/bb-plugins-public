@@ -52,8 +52,8 @@ import {
 } from "./draft";
 import { withRestored } from "./draft-restore";
 import { useDraftSender } from "./draft-sync";
-import { AddRow, addRowText } from "./add-row";
-import { AttachmentThumbs, AttachmentsProvider, usePasteImages } from "./attachments";
+import { AddRow, addRowText, MarkedCopy, overCopy, useMarkedParts } from "./add-row";
+import { AttachmentError, AttachmentsProvider, FieldImages, usePasteImages } from "./attachments";
 import { LinkedText, RichText, onLink } from "./linked-text";
 import { AddMeta, CardText, CheckSquare, DocumentName, RiskText, buttonCard, rowCellStyle } from "./cells";
 import { answeredAt, useStoredDraft, useSubmit, type FormProps } from "./parts";
@@ -134,10 +134,13 @@ function Pressable(props: { view: View; on: boolean; onPress: () => void; classN
 /**
  * Поле своего ответа растёт по тексту; в отвеченном брифе — введённый текст или подсказка.
  * С `voiceId` справа микрофон, а на время записи поле уступает место полосе.
+ * Метки картинок в тексте — плашками, миниатюры картинок — под текстом, в той же ячейке.
  */
 function OwnField(props: { view: View; value: string; label: string; onChange: (text: string) => void; className: string; voiceId?: string; onEnter?: () => void }) {
   const voice = useVoiceField({ id: props.view.answered ? null : (props.voiceId ?? null), label: props.label, value: props.value, disabled: props.view.sending, onChange: props.onChange });
-  const paste = usePasteImages({ value: props.value, onText: props.onChange });
+  const target = { value: props.value, onText: props.onChange };
+  const paste = usePasteImages(target);
+  const parts = useMarkedParts(props.value);
   if (props.view.answered)
     return (
       <span className={cn(props.className, "inline-flex items-center", blank(props.value) && "text-muted-foreground/60")}>
@@ -145,24 +148,32 @@ function OwnField(props: { view: View; value: string; label: string; onChange: (
       </span>
     );
   if (voice.phase !== null) return <div className="-ml-1.5 flex min-w-0 flex-1 items-center self-stretch">{voice.strip}</div>;
+  // Ячейка держит фон, а отступы — у поля и его копии, одни и те же: тап в любое место ячейки ставит каретку, а плашки ложатся ровно под метки.
+  const text = "w-full min-w-0 whitespace-pre-wrap break-words px-2 py-2.5 text-center";
   return (
     <>
-      <textarea
-        ref={voice.ref}
-        aria-label={props.label}
-        placeholder={props.label}
-        rows={1}
-        value={props.value}
-        disabled={props.view.sending}
-        onChange={voice.onChange}
-        onPaste={paste}
-        onKeyDown={(event) => {
-          if (props.onEnter === undefined || event.key !== "Enter" || event.shiftKey || blank(props.value)) return;
-          event.preventDefault();
-          props.onEnter();
-        }}
-        className={cn(props.className, "resize-none outline-none [field-sizing:content] placeholder:text-muted-foreground")}
-      />
+      <span className={cn(props.className, "flex-col items-stretch p-0")}>
+        <span className="grid min-w-0">
+          {parts !== null && <MarkedCopy parts={parts} className={text} />}
+          <textarea
+            ref={voice.ref}
+            aria-label={props.label}
+            placeholder={props.label}
+            rows={1}
+            value={props.value}
+            disabled={props.view.sending}
+            onChange={voice.onChange}
+            onPaste={paste}
+            onKeyDown={(event) => {
+              if (props.onEnter === undefined || event.key !== "Enter" || event.shiftKey || blank(props.value)) return;
+              event.preventDefault();
+              props.onEnter();
+            }}
+            className={cn(text, "resize-none bg-transparent outline-none [field-sizing:content] [grid-area:1/1] placeholder:text-muted-foreground", parts !== null && overCopy)}
+          />
+        </span>
+        <FieldImages target={target} className="justify-center px-2 pb-2.5" />
+      </span>
       {voice.mic !== null && <span className="flex shrink-0 self-start py-1.5">{voice.mic}</span>}
     </>
   );
@@ -560,6 +571,7 @@ type FieldVoice = Pick<ReturnType<typeof useVoiceField>, "ref" | "onChange">;
  */
 function ItemField(props: { view: View; label: string; value: string; className?: string; voice: FieldVoice; onText: (text: string) => void; onBlur?: () => void }) {
   const paste = usePasteImages({ value: props.value, onText: props.onText });
+  const parts = useMarkedParts(props.value);
   const field = useRef<HTMLTextAreaElement | null>(null);
   const [editing, setEditing] = useState(false);
   const linked = !editing && hasMarkup(props.value);
@@ -574,25 +586,35 @@ function ItemField(props: { view: View; label: string; value: string; className?
           <LinkedText text={props.value} />
         </span>
       )}
-      <textarea
-        ref={(el) => {
-          field.current = el;
-          props.voice.ref(el);
-        }}
-        aria-label={props.label}
-        placeholder={props.label}
-        rows={1}
-        value={props.value}
-        disabled={props.view.sending}
-        onChange={props.voice.onChange}
-        onPaste={paste}
-        onFocus={() => setEditing(true)}
-        onBlur={() => {
-          setEditing(false);
-          props.onBlur?.();
-        }}
-        className={cn(itemText, "resize-none bg-transparent outline-none [field-sizing:content] placeholder:text-muted-foreground", props.className, linked && "sr-only")}
-      />
+      {/* Обёртка стоит всегда: появление первой метки не пересоздаёт поле и не сбрасывает в нём курсор. */}
+      <span className={cn("grid min-w-0", linked ? "contents" : "flex-1")}>
+        {parts !== null && !linked && <MarkedCopy parts={parts} className={cn(itemText, props.className)} />}
+        <textarea
+          ref={(el) => {
+            field.current = el;
+            props.voice.ref(el);
+          }}
+          aria-label={props.label}
+          placeholder={props.label}
+          rows={1}
+          value={props.value}
+          disabled={props.view.sending}
+          onChange={props.voice.onChange}
+          onPaste={paste}
+          onFocus={() => setEditing(true)}
+          onBlur={() => {
+            setEditing(false);
+            props.onBlur?.();
+          }}
+          className={cn(
+            itemText,
+            "resize-none bg-transparent outline-none [field-sizing:content] [grid-area:1/1] placeholder:text-muted-foreground",
+            props.className,
+            parts !== null && !linked && overCopy,
+            linked && "sr-only",
+          )}
+        />
+      </span>
     </>
   );
 }
@@ -667,6 +689,7 @@ function CriterionRow({ item, index, view, byOption }: { item: Criterion; index:
         )}
       </ItemRow>
     );
+  const edit = (next: string) => view.change((d) => editCriterion(d, index, next));
   const field = (label: string, className?: string) => (
     <ItemField
       view={view}
@@ -674,7 +697,7 @@ function CriterionRow({ item, index, view, byOption }: { item: Criterion; index:
       value={text}
       className={className}
       voice={voice}
-      onText={(t) => view.change((d) => editCriterion(d, index, t))}
+      onText={edit}
       // Пустой пункт в ответ не уходит: чтобы владелец не видел пустоту, которой агент не получит, текст возвращается.
       onBlur={() => text.trim() === "" && view.change((d) => editCriterion(d, index, original))}
     />
@@ -697,6 +720,8 @@ function CriterionRow({ item, index, view, byOption }: { item: Criterion; index:
             <AddMeta add={add} className={criterionMeta} />
           </span>
           {change !== undefined && <Delta before={change.before} after={field(t.brief.itemAfter(n), "w-full py-0")} />}
+          {/* Миниатюры пункта — под текстом и стоимостью, у какого бы из двух полей пункта картинку ни вставили. */}
+          <FieldImages target={{ value: text, onText: edit }} className="pb-2" />
         </span>
         <ItemActions>
           {voice.mic}
@@ -1259,7 +1284,7 @@ function BriefAnswer(props: {
   const footer = (
     <>
       <AddRow label={t.common.noteLabel} placeholder={t.brief.addItem} value={props.draft.note} disabled={sending} voiceId="note" onText={(text) => props.setDraft((d) => setNote(d, text))} />
-      <AttachmentThumbs className="bg-surface-recessed-solid px-3 py-2" />
+      <AttachmentError className="bg-surface-recessed-solid px-3 py-2" />
       <div className="grid grid-cols-1 gap-px @[34rem]:grid-cols-2">
         <div className="flex min-w-0 gap-px">{picker.cell}</div>
         <Button
@@ -1495,7 +1520,7 @@ export function ClarifyCard({ brief, send, onResult }: FormProps) {
           <VoiceErrorLine scope={`own:${question.id}`} className="mt-1" />
         </div>
       ))}
-      <AttachmentThumbs />
+      <AttachmentError />
       <StatusLine icon="MessageQuestion" title={t.brief.clarify} aside={failed ? t.brief.notSent : t.brief.optional} />
     </Plain>
     </AttachmentsProvider>

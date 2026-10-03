@@ -13,7 +13,7 @@ import { onAnswer } from "../core/progress";
 import type { Locale } from "../lib/i18n";
 import { stageItems } from "../core/stages";
 import { awaitingRpcContract, briefDraftRpcContract, decisionsRpcContract, dispatchRpcContract, filesRpcContract, type DecisionAnswer, type DecisionBrief, type DispatchRoute } from "../shared/contract";
-import { attachmentsLine, lostImages, uploadAttachments } from "./attachments";
+import { attachmentsLine, lostImages, referencedImages, uploadAttachments } from "./attachments";
 import { handoff } from "./handoff";
 import type { ProgressStore } from "./progress";
 import type { DecisionStore } from "./store";
@@ -78,7 +78,7 @@ export const registerApi = (
 
       // Снимок прогноза — то, что владелец видел при отправке: отвеченный бриф рисует его, даже если формула потом изменится.
       // Картинки грузятся до записи ответа. Не принятая bb картинка ответ не роняет: реплика назовёт её несохранённой.
-      const { uploaded: attached, failed } = await uploadAttachments(bb.sdk, { threadId: brief.threadId, briefId: id, images });
+      const { uploaded: attached, failed } = await uploadAttachments(bb.sdk, { threadId: brief.threadId, briefId: id, images: referencedImages(answer, images, locale) });
       const predicted = hasForecast(brief) ? forecast(brief, answer, locale) : null;
       const snapshot = predicted === null ? {} : { forecast: { ...predicted, lines: [...predicted.lines] } };
       const written = await store.putAnswer(id, { answer, messageId, answeredAt: deps.now(), ...snapshot });
