@@ -42,8 +42,7 @@ export const withExecutor = (stage: WorkStage, executor: StageExecutor, shownNam
     const on = current.executors.some((e) => e.id === executor.id);
     return { ...stage, executors: on ? current.executors.filter((e) => e.id !== executor.id) : [...current.executors, executor] };
   }
-  const skill = current.kind === "widget" ? stageSkillOf(stage) : "";
-  return { ...identity(stage, shownName), kind: "skill", skill, executors: [executor] };
+  return { ...identity(stage, shownName), kind: "skill", skill: stageSkillOf(stage), executors: [executor] };
 };
 
 const isBuiltinSkill = (skill: string): boolean => BUILTIN_KINDS.some((kind) => BUILTIN_SKILLS[kind] === skill);
@@ -60,11 +59,11 @@ export const withWidget = (stage: WorkStage, widget: BuiltinKind): WorkStage => 
   return { ...identity(stage, name), kind: widget, skill, executors: [] };
 };
 
-/** Скрипт с автоматизацией `automation` и запуском `manual`: навыка и исполнителей у него нет — его шаги исполняет Flow. */
+/** Скрипт с автоматизацией `automation` и запуском `manual`: исполнителей у него нет — его шаги исполняет Flow; навык, что был виден в поле, остаётся. */
 const asScript = (stage: WorkStage, automation: BuiltinAutomation, manual: boolean): WorkStage => ({
   ...identity(stage, stage.name),
   kind: manual ? "action" : "skill",
-  skill: "",
+  skill: stageSkillOf(stage),
   executors: [],
   automation,
 });
