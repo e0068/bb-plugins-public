@@ -9,6 +9,7 @@ import { act, cleanup, fireEvent, within } from "@testing-library/react";
 import { loadPluginApp, renderSlot } from "@get-bb/plugin-sdk/testing/app";
 import type { PluginProvidersState, PluginSidebarThread } from "@get-bb/plugin-sdk/app";
 import { formatWaitingSince } from "./src/core/format";
+import { MemoryStorage } from "./memory-storage.testkit";
 
 function idleThread(over: Partial<PluginSidebarThread> = {}): PluginSidebarThread {
   return {
@@ -118,32 +119,6 @@ function scrollEndOwner(): object {
 function scrollTrackTo(track: HTMLElement, scrollLeft: number): void {
   fix(track, "scrollLeft", scrollLeft);
   fireEvent.scroll(track);
-}
-
-// Node's own global `localStorage` (Storage API, Node 22+) shadows jsdom's
-// and refuses every read/write without a `--localstorage-file` flag, so a
-// plain in-memory stand-in goes in its place — fresh per test, like the
-// section's own defaults.
-class MemoryStorage implements Storage {
-  private readonly map = new Map<string, string>();
-  get length() {
-    return this.map.size;
-  }
-  clear() {
-    this.map.clear();
-  }
-  getItem(key: string) {
-    return this.map.has(key) ? this.map.get(key)! : null;
-  }
-  key(index: number) {
-    return [...this.map.keys()][index] ?? null;
-  }
-  removeItem(key: string) {
-    this.map.delete(key);
-  }
-  setItem(key: string, value: string) {
-    this.map.set(key, value);
-  }
 }
 
 beforeEach(() => {
