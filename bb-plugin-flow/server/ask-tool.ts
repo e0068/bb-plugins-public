@@ -247,6 +247,8 @@ export const registerAskTool = (
       const midWork = launched && params.kind === "brief" && params.outcome === undefined;
       const approved = midWork ? await store.getThreadCriteria(ctx.threadId) : [];
       const approvedScope = midWork ? await store.getThreadScope(ctx.threadId) : null;
+      // Утверждённый бюджет нужен только уточнению: второй Выбор этапов считает прогноз заново.
+      const approvedBudget = midWork && params.setup?.stages === undefined ? ((await deps.progress?.get(ctx.threadId))?.planned ?? null) : null;
       // Ссылки сделанной автоматизации — из её шагов: агент их не присылает.
       const stepped = withStepResults(settings.stages, params.setup?.stages, params.setup?.stages === undefined ? null : ((await deps.progress?.get(ctx.threadId)) ?? null));
       const brief: DecisionBrief = {
@@ -255,13 +257,14 @@ export const registerAskTool = (
         id: `${DECISION_ID_PREFIX}${deps.newId()}`,
         threadId: ctx.threadId,
         revocable: true,
-        // Бюджет прячется только у брифа запущенной работы без этапов: второй Выбор этапов показывает прогноз.
+        // Бриф запущенной работы без этапов считает итог от утверждённого бюджета прогона; второй Выбор этапов — прогноз заново.
         ...(launched && params.setup?.stages === undefined ? { launched: true as const } : {}),
         ...(planning === undefined ? {} : { planning }),
         ...(Object.keys(carried).length === 0 ? {} : { carried }),
         ...(returned?.restored === undefined ? {} : { restored: returned.restored }),
         ...(approved.length === 0 ? {} : { approved }),
         ...(approvedScope === null ? {} : { approvedScope }),
+        ...(approvedBudget === null ? {} : { approvedBudget }),
         ...(params.setup?.stages === undefined && params.outcome === undefined
           ? {}
           : { stages: { list: settings.stages, minButtonWidth: settings.minButtonWidth, ...(flowName === undefined ? {} : { flowName }) } }),

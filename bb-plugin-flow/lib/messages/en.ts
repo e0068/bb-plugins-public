@@ -453,6 +453,7 @@ export const en: Messages = {
     review: "Review",
     testing: "Testing",
     question: (n) => `Question ${n}`,
+    approved: "Approved at launch",
     predicted: (target, max, risk, time) => `forecast ${target} · up to ${max}, risk ${risk}${time === "" ? "" : `, time ${time}`}`,
     line: (predicted) => `Budget — ${predicted}`,
     ownLine: (own, predicted) => `Budget — own price ${own} (${predicted})`,
