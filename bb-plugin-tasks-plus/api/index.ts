@@ -56,7 +56,7 @@ import {
   type CommentsChangedEvent,
   type CommentProvider,
 } from "../shared/contract";
-import { CHART_UNIT_MS } from "../shared/enums.js";
+import { CHART_UNIT_MS, isOpenStatus } from "../shared/enums.js";
 
 type StoredTask = Task;
 
@@ -142,7 +142,7 @@ export async function createStore(bb: BbPluginApi): Promise<TasksApiStore> {
     },
     async openTaskCount(): Promise<number> {
       return (await tasks.listTasks({}))
-        .filter((task) => task.status !== "done" && task.status !== "canceled")
+        .filter((task) => isOpenStatus(task.status))
         .length;
     },
     async sidebarSummary(): Promise<SidebarProjectSummary[]> {

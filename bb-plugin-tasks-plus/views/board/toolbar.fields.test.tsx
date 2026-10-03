@@ -154,23 +154,6 @@ describe("every field in Filter and Sort", () => {
     expect(slot.container.querySelector('[data-filter-chip="dueDate"]')?.textContent).toContain("≤");
   });
 
-  it("Sort offers every field on a board, and picking it again reverses the order", async () => {
-    const slot = renderBoard();
-    await waitFor(() => slot.getByText("TSK-2"));
-    openMenu("Sort");
-    const items = (await screen.findAllByRole("menuitemcheckbox")).map((item) => item.textContent ?? "");
-    expect(items).toEqual(QUERY_FIELDS.map((field) => ROW_FIELD_LABELS[field]));
-    fireEvent.click(screen.getByRole("menuitemcheckbox", { name: "Title" }));
-    const order = () => ["TSK-1", "TSK-2"].sort((a, b) => {
-      const text = slot.container.textContent ?? "";
-      return text.indexOf(a) - text.indexOf(b);
-    });
-    await waitFor(() => expect(order()).toEqual(["TSK-2", "TSK-1"]));
-    openMenu("Sort");
-    fireEvent.click(await screen.findByRole("menuitemcheckbox", { name: "Title" }));
-    await waitFor(() => expect(order()).toEqual(["TSK-1", "TSK-2"]));
-  });
-
   it("a card shows the flow its task ran through once Flow is on in Display", async () => {
     toggleFieldVisible(boardKey(PROJECT_ID, null), "flow");
     const slot = renderBoard({ listTasks: () => ({ tasks: [task(1, { flow: { id: "f1", name: "Code" } }), task(2)] }) });

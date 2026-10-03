@@ -17,6 +17,7 @@ import {
   PRESET_ENVIRONMENT_KINDS,
   PRESET_PERMISSION_MODES,
   ROW_FIELDS,
+  SORT_FIELDS,
   LIST_SORTS,
   BOARD_GROUP_BYS,
   BOARD_GROUP_PROPERTIES,
@@ -681,7 +682,7 @@ const savedViewListScopeSchema = z.enum(["active", "waiting"]).nullable();
 
 /** A sort by one field in one direction — a table's, and a view's since sorts have a direction. */
 const columnSortSchema = z
-  .object({ column: rowFieldSchema, direction: z.enum(TABLE_SORT_DIRECTIONS) })
+  .object({ column: z.enum(SORT_FIELDS), direction: z.enum(TABLE_SORT_DIRECTIONS) })
   .strict();
 
 /** A view's sort: a field and a direction, or one of the list sorts as views stored it before (shared/task-fields.ts). */

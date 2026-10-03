@@ -5,7 +5,7 @@ import { useProjects } from "../../client/data.js";
 import { useOpenTask } from "../../client/task-opening.js";
 import { NewTaskDialog } from "../manage/index.js";
 import { DetailToasts, useDetailToasts } from "../detail/toast.js";
-import { idsUnder } from "../../shared/subtree.js";
+import { idsUnder, openCountsOf } from "../../shared/subtree.js";
 import type { TaskFacts } from "../../shared/task-fields.js";
 import { Button } from "@/components/ui/button";
 import { Icon } from "@/components/ui/icon";
@@ -353,6 +353,7 @@ export function TableView({ scope }: TableViewProps) {
 
   // Everything a filter or a sort reads that the task does not carry: the
   // names of projects, labels and other tasks, and the row meta's counts.
+  const openCounts = useMemo(() => openCountsOf(treeTasks), [treeTasks]);
   const sortContext: TaskFacts = useMemo(
     () => ({
       projectNames,
@@ -361,8 +362,9 @@ export function TableView({ scope }: TableViewProps) {
       activeCounts: new Map([...(meta.data ?? [])].map(([id, row]) => [id, row.activeThreads.length])),
       attachmentCounts: new Map([...(meta.data ?? [])].map(([id, row]) => [id, row.attachmentCount])),
       descendantCounts: new Map(treeTasks.map((task) => [task.id, subtaskStatsOf(task.id, byParent).total])),
+      openCounts,
     }),
-    [projectNames, taskKeys, labels.data, meta.data, treeTasks, byParent],
+    [projectNames, taskKeys, labels.data, meta.data, treeTasks, byParent, openCounts],
   );
   const displayTasks = useMemo(() => {
     if (tasksQuery.data === undefined) return undefined;

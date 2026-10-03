@@ -18,7 +18,7 @@ import {
   type ListSort,
   type NumberField,
   type QueryField,
-  type RowField,
+  type SortField,
   type TableSortDirection,
   type TextField,
   type ValueFilterField,
@@ -54,6 +54,8 @@ export interface TaskFacts {
   labelNames: ReadonlyMap<string, string>;
   activeCounts: ReadonlyMap<string, number>;
   descendantCounts: ReadonlyMap<string, number>;
+  /** Per task, the open tasks at every depth under it. */
+  openCounts: ReadonlyMap<string, number>;
   attachmentCounts: ReadonlyMap<string, number>;
 }
 
@@ -65,6 +67,7 @@ export const EMPTY_FACTS: TaskFacts = {
   labelNames: NOTHING,
   activeCounts: NOTHING,
   descendantCounts: NOTHING,
+  openCounts: NOTHING,
   attachmentCounts: NOTHING,
 };
 
@@ -73,7 +76,7 @@ export const factsOf = (known: Partial<TaskFacts>): TaskFacts => ({ ...EMPTY_FAC
 
 /** A sort by one field in one direction. */
 export interface ColumnSort {
-  column: RowField;
+  column: SortField;
   direction: TableSortDirection;
 }
 
@@ -140,7 +143,7 @@ const keyOf = (id: string | null | undefined, facts: TaskFacts): string | null =
 const orNull = (text: string): string | null => (text === "" ? null : text);
 
 /** A field's value as it orders: text, a number or rank, or null for empty. */
-function sortValue(field: RowField, task: Task, facts: TaskFacts): string | number | null {
+function sortValue(field: SortField, task: Task, facts: TaskFacts): string | number | null {
   switch (field) {
     case "title":
       return task.title;
@@ -180,6 +183,8 @@ function sortValue(field: RowField, task: Task, facts: TaskFacts): string | numb
       return (facts.activeCounts.get(task.id) ?? 0) || null;
     case "subtasks":
       return facts.descendantCounts.get(task.id) ?? 0;
+    case "openSubtasks":
+      return facts.openCounts.get(task.id) ?? 0;
     case "attachments":
       return facts.attachmentCounts.get(task.id) ?? 0;
     case "plannedMinutes":

@@ -8,6 +8,7 @@ import {
   LISTED_FILTER_KEYS,
   MAIN_CHECKOUT,
   QUERY_FIELDS,
+  SORT_MENU_FIELDS,
   TASK_ESTIMATES,
   TASK_PRIORITIES,
   TASK_STATUSES,
@@ -45,7 +46,8 @@ import { parentFilterOptions } from "../common/lib.js";
 import { slugOf } from "../../shared/format.js";
 import { activeFilterFields, EMPTY_FILTERS, hasActiveFilters, withFieldFilter } from "../common/filter-state.js";
 import { storeListPreference, useListPreference } from "../common/list-preference.js";
-import { defaultConfig, normalizeFieldDisplay, ROW_FIELD_LABELS, useFieldDisplay } from "../common/row-field-preference.js";
+import { COARSE_POINTER_CHECK_SLOT_CLASS } from "@/components/ui/coarse-pointer-sizing";
+import { defaultConfig, normalizeFieldDisplay, ROW_FIELD_LABELS, SORT_FIELD_LABELS, useFieldDisplay } from "../common/row-field-preference.js";
 import { applyListState, captureListState, effectiveViewFields, effectiveViewTable, surfaceOf, type ListScopeString, type ViewTarget } from "../common/view-state.js";
 import { PriorityIcon, StatusIcon } from "./icons.js";
 import {
@@ -925,6 +927,17 @@ function ToolbarRow({ controls, compact, displayOpen, onToggleDisplay }: Omit<Vi
   );
 }
 
+/** Which way a sort runs: up ascending, down descending. */
+function DirectionIcon({ direction, className }: { direction: ColumnSort["direction"]; className: string }) {
+  return (
+    <Icon
+      name={direction === "asc" ? "ArrowUp" : "ArrowDown"}
+      aria-label={direction === "asc" ? "Ascending" : "Descending"}
+      className={className}
+    />
+  );
+}
+
 /** The chip a surface's current sort draws among the filter chips — its field and direction — with a way back to unsorted; null while unsorted. */
 function sortChipOf(sort: ColumnSort | null, onClear: () => void): ReactNode {
   if (sort === null) return null;
@@ -932,12 +945,8 @@ function sortChipOf(sort: ColumnSort | null, onClear: () => void): ReactNode {
     <span className={CHIP_CLASS}>
       <span className="flex items-center gap-1.5 pl-2 pr-1">
         <Icon name="Sort" className="size-3" />
-        <span className="font-medium">{ROW_FIELD_LABELS[sort.column]}</span>
-        <Icon
-          name={sort.direction === "asc" ? "ArrowUp" : "ArrowDown"}
-          aria-label={sort.direction === "asc" ? "Ascending" : "Descending"}
-          className="size-3 text-muted-foreground"
-        />
+        <span className="font-medium">{SORT_FIELD_LABELS[sort.column]}</span>
+        <DirectionIcon direction={sort.direction} className="size-3 text-muted-foreground" />
       </span>
       <button
         type="button"
@@ -953,8 +962,9 @@ function sortChipOf(sort: ColumnSort | null, onClear: () => void): ReactNode {
 
 /**
  * The Sort button of a table and of a board alike: every field as a checkbox
- * item, labeled by field. Picking an unsorted field sorts ascending; picking
- * the field already sorted by reverses it.
+ * item, labeled by field, the sorted one marked by an arrow the way it runs.
+ * Picking an unsorted field sorts ascending; picking the field already sorted
+ * by reverses it.
  */
 function SortMenu({ sort, onChange }: { sort: ColumnSort | null; onChange: (sort: ColumnSort | null) => void }) {
   return (
@@ -966,17 +976,18 @@ function SortMenu({ sort, onChange }: { sort: ColumnSort | null; onChange: (sort
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" collisionPadding={8} className={SCROLLING_MENU_CLASS} mobileTitle="Sort by">
         <DropdownMenuLabel>Sort by</DropdownMenuLabel>
-        {QUERY_FIELDS.map((column) => {
+        {SORT_MENU_FIELDS.map((column) => {
           const checked = sort?.column === column;
           return (
             <DropdownMenuCheckboxItem
               key={column}
               checked={checked}
+              indicator={checked && sort !== null ? <DirectionIcon direction={sort.direction} className={COARSE_POINTER_CHECK_SLOT_CLASS} /> : undefined}
               onCheckedChange={() =>
                 onChange({ column, direction: checked && sort?.direction === "asc" ? "desc" : "asc" })
               }
             >
-              {ROW_FIELD_LABELS[column]}
+              {SORT_FIELD_LABELS[column]}
             </DropdownMenuCheckboxItem>
           );
         })}

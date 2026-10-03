@@ -1,4 +1,4 @@
-import type { SubtaskScope, TaskStatus } from "./enums.js";
+import { isOpenStatus, OPEN_STATUSES, type SubtaskScope, type TaskStatus } from "./enums.js";
 
 /** What walking the task tree needs of a task. */
 export interface TreeLink {
@@ -40,8 +40,6 @@ export function idsUnder(tasks: readonly TreeLink[], rootIds: readonly string[])
   return new Set(rootIds.flatMap((rootId) => (descendants.get(rootId) ?? []).map(({ task }) => task.id)));
 }
 
-const isOpen = (status: TaskStatus) => status !== "done" && status !== "canceled";
-
 /** The rows under the one at `index`: everything after it until the depth climbs back to its own. */
 function subtreeAt<T>(rows: readonly Descendant<T>[], index: number): readonly Descendant<T>[] {
   const rest = rows.slice(index + 1);
@@ -61,10 +59,10 @@ export function subtasksInScope<T extends { status: TaskStatus }>(
     case "all":
       return rows;
     case "open-children":
-      return rows.filter(({ task, depth }) => depth === 1 && isOpen(task.status));
+      return rows.filter(({ task, depth }) => depth === 1 && isOpenStatus(task.status));
     case "open":
       return rows.filter(
-        ({ task }, index) => isOpen(task.status) || subtreeAt(rows, index).some((row) => isOpen(row.task.status)),
+        ({ task }, index) => isOpenStatus(task.status) || subtreeAt(rows, index).some((row) => isOpenStatus(row.task.status)),
       );
   }
 }
@@ -73,6 +71,8 @@ export function subtasksInScope<T extends { status: TaskStatus }>(
 export interface SubtreeProgress {
   done: number;
   total: number;
+  /** The tasks that still owe work (enums.ts OPEN_STATUSES). */
+  open: number;
   byStatus: Record<TaskStatus, number>;
 }
 
@@ -82,7 +82,17 @@ export function progressOf(descendants: readonly Descendant<{ status: TaskStatus
     (counts, { task }) => ({ ...counts, [task.status]: counts[task.status] + 1 }),
     byStatus,
   );
-  return { done: counted.done, total: descendants.length - counted.canceled, byStatus: counted };
+  return {
+    done: counted.done,
+    total: descendants.length - counted.canceled,
+    open: OPEN_STATUSES.reduce((sum, status) => sum + counted[status], 0),
+    byStatus: counted,
+  };
+}
+
+/** Per task, the open tasks at every depth under it — what a sort by open sub-tasks reads. */
+export function openCountsOf<T extends TreeLink & { status: TaskStatus }>(tasks: readonly T[]): Map<string, number> {
+  return new Map([...descendantsOf(tasks)].map(([id, below]) => [id, progressOf(below).open]));
 }
 
 /** What a row or a card shows about a task's place in the tree. */

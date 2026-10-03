@@ -3,8 +3,7 @@
 // The RPC handler (api/index.ts) hands it the tasks, the transition log and
 // the column ends; the reading of the log is the flow charts' own (flow.ts).
 import type { StatusTransition } from "../db/transition-log.js";
-import { ALL_TIME, type CardChartPeriod } from "../shared/enums.js";
-import type { TaskStatus } from "../db/types.js";
+import { ALL_TIME, isOpenStatus, type CardChartPeriod } from "../shared/enums.js";
 import type { Task } from "../shared/contract.js";
 import { createdMs, movesByTask, statusBefore } from "./flow.js";
 import { trendOf } from "./trend.js";
@@ -28,9 +27,6 @@ export function burndownEnds(period: CardChartPeriod, nowMs: number, firstMs: nu
   return endsBack(nowMs, Math.max(1, weeks), WEEK_MS);
 }
 
-/** Statuses that still owe work — what a burndown burns down. */
-const OPEN: ReadonlySet<TaskStatus> = new Set(["backlog", "todo", "in_progress", "in_review"]);
-
 /** Per end, the tasks made before it that stood open just before it — over moves already grouped by task (`movesByTask`), so a board's worth of series reads the log once. */
 export function openSeriesOf(
   tasks: readonly Task[],
@@ -39,7 +35,7 @@ export function openSeriesOf(
 ): number[] {
   return ends.map(
     (end) =>
-      tasks.filter((task) => createdMs(task) < end && OPEN.has(statusBefore(task, moves.get(task.id) ?? [], end))).length,
+      tasks.filter((task) => createdMs(task) < end && isOpenStatus(statusBefore(task, moves.get(task.id) ?? [], end))).length,
   );
 }
 

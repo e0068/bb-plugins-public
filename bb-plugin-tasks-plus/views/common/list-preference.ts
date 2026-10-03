@@ -3,7 +3,7 @@ import {
   DATE_FIELDS,
   LIST_SORTS,
   NUMBER_FIELDS,
-  ROW_FIELDS,
+  SORT_FIELDS,
   TABLE_SORT_DIRECTIONS,
   TASK_ESTIMATES,
   TASK_PRIORITIES,
@@ -109,7 +109,7 @@ const inSet =
   (value: string): value is T =>
     set.has(value);
 
-const FIELD_SET = new Set<string>(ROW_FIELDS);
+const FIELD_SET = new Set<string>(SORT_FIELDS);
 const DIRECTION_SET = new Set<string>(TABLE_SORT_DIRECTIONS);
 const DAY = /^\d{4}-\d{2}-\d{2}$/;
 

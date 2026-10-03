@@ -15,7 +15,7 @@ import type { TaskStatus } from "../db/types.js";
 import type { StatusTransition } from "../db/transition-log.js";
 import { CELL_KEYS_MAX, NONE_KEY, OTHER_KEY, SERIES_LIMIT, type Figure, type YMetric } from "../shared/analytics-tile.js";
 import type { Task, Tile, TileAnswer } from "../shared/contract.js";
-import { ACTIVITY_VALUES, FIELD_FILTER_KINDS, MAIN_CHECKOUT, type NumberField, type QueryField } from "../shared/enums.js";
+import { ACTIVITY_VALUES, FIELD_FILTER_KINDS, MAIN_CHECKOUT, OPEN_STATUSES, type NumberField, type QueryField } from "../shared/enums.js";
 import { firstParagraph } from "../shared/first-paragraph.js";
 import { slugOf } from "../shared/format.js";
 import { planDateMs } from "../shared/plan-date.js";
@@ -54,9 +54,6 @@ interface TileEvent {
   /** The fixed series of «Created vs closed». */
   tag: "created" | "closed" | null;
 }
-
-/** Statuses that still owe work — the figure «Open». */
-const OPEN_STATUSES: readonly TaskStatus[] = ["backlog", "todo", "in_progress", "in_review"];
 
 const METRIC_LABEL: Record<YMetric, string> = {
   count: "Tasks",

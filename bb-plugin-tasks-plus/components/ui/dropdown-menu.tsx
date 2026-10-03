@@ -321,13 +321,17 @@ DropdownMenuItem.displayName = "DropdownMenuItem";
 
 const DropdownMenuCheckboxItem = React.forwardRef<
   React.ComponentRef<typeof DropdownMenuPrimitive.CheckboxItem>,
-  React.ComponentPropsWithoutRef<typeof DropdownMenuPrimitive.CheckboxItem>
+  React.ComponentPropsWithoutRef<typeof DropdownMenuPrimitive.CheckboxItem> & {
+    /** What marks the item checked, in place of the check mark — e.g. the way a sort runs. */
+    indicator?: React.ReactNode;
+  }
 >(
   (
     {
       className,
       children,
       checked,
+      indicator = <Icon name="Check" className={COARSE_POINTER_CHECK_SLOT_CLASS} />,
       onSelect,
       onCheckedChange,
       disabled,
@@ -379,9 +383,7 @@ const DropdownMenuCheckboxItem = React.forwardRef<
               COARSE_POINTER_CHECK_SLOT_CLASS,
             )}
           >
-            {(checked === true || checked === "indeterminate") && (
-              <Icon name="Check" className={COARSE_POINTER_CHECK_SLOT_CLASS} />
-            )}
+            {(checked === true || checked === "indeterminate") && indicator}
           </span>
           {children}
         </button>
@@ -411,9 +413,7 @@ const DropdownMenuCheckboxItem = React.forwardRef<
             COARSE_POINTER_CHECK_SLOT_CLASS,
           )}
         >
-          <DropdownMenuPrimitive.ItemIndicator>
-            <Icon name="Check" className={COARSE_POINTER_CHECK_SLOT_CLASS} />
-          </DropdownMenuPrimitive.ItemIndicator>
+          <DropdownMenuPrimitive.ItemIndicator>{indicator}</DropdownMenuPrimitive.ItemIndicator>
         </span>
         {children}
       </DropdownMenuPrimitive.CheckboxItem>
