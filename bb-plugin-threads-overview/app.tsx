@@ -105,6 +105,7 @@ import { describeFooter, type ExecutionFacts, type GitFacts } from "./src/core/d
 import { parsePreviewDelayMs } from "./src/core/preview";
 import { parsePreviewSize } from "./src/core/preview-size";
 import { queueLayout, type QueueLayout } from "./src/core/queue-layout";
+import { scrolledToEnd } from "./src/core/scroll-end";
 import { rowStatus, showsWaitingTime, worktreeOf, type RowStatus, type Worktree } from "./src/core/status";
 import { ProviderLogo, type ProviderBrand } from "@/components/provider-logo";
 import { Button } from "@/components/ui/button";
@@ -1698,6 +1699,48 @@ function useQueueKeys(
   };
 }
 
+/** bb's compact Home scroller, which carries the queue under a fade over its composer. */
+const COMPACT_SCROLLER_SELECTOR = "[data-testid=root-compose-compact-scroll-viewport]";
+
+// bb fades the rows passing under the composer of its compact Home and lifts
+// the fade only when there is nothing to scroll. Scrolled to its foot, the
+// queue's last row stands right above the composer, under the fade: the section
+// marks itself there (`data-scroll-end`) and the fade goes — see `useCompactHomeAtEnd`.
+const FADE_AT_END_CLASS =
+  "[[data-testid=root-compose-compact-home]:has(&)_[data-testid=root-compose-compact-fade]]:transition-opacity [[data-testid=root-compose-compact-home]:has(&[data-scroll-end])_[data-testid=root-compose-compact-fade]]:opacity-0";
+
+/**
+ * Whether bb's compact Home around `root` is scrolled to its foot. Measured at
+ * every scroll of that scroller — heard on the document, since a scroll does
+ * not bubble — and whenever the section or the scroller changes size: the
+ * queue grows under a still scroller, the composer grows into it. Off the
+ * compact Home it never holds.
+ */
+function useCompactHomeAtEnd(root: HTMLElement | null): boolean {
+  const [atEnd, setAtEnd] = useState(false);
+  useEffect(() => {
+    if (root === null) return;
+    const measure = () => {
+      const scroller = root.closest<HTMLElement>(COMPACT_SCROLLER_SELECTOR);
+      setAtEnd(scroller !== null && scrolledToEnd(scroller));
+    };
+    const onScroll = (event: Event) => {
+      if (event.target instanceof Element && event.target.matches(COMPACT_SCROLLER_SELECTOR)) measure();
+    };
+    measure();
+    document.addEventListener("scroll", onScroll, { capture: true, passive: true });
+    const resize = typeof ResizeObserver === "function" ? new ResizeObserver(measure) : null;
+    resize?.observe(root);
+    const scroller = root.closest(COMPACT_SCROLLER_SELECTOR);
+    if (scroller !== null) resize?.observe(scroller);
+    return () => {
+      document.removeEventListener("scroll", onScroll, { capture: true });
+      resize?.disconnect();
+    };
+  }, [root]);
+  return atEnd;
+}
+
 /**
  * Keeps the left panel's thread rows opening in the home screen's pane. bb puts
  * a thread pressed there into the focused pane, and opening one beside the home
@@ -1871,6 +1914,7 @@ function AttentionSection() {
     () => (touch && rootNode !== null ? watchEdgeSwipes(rootNode) : undefined),
     [touch, rootNode],
   );
+  const atScrollEnd = useCompactHomeAtEnd(rootNode);
   const [showPostponed, setShowPostponed] = useState(false);
 
   const projectName = useMemo(() => {
@@ -1980,10 +2024,12 @@ function AttentionSection() {
       <div
         ref={attachRoot}
         data-threads-overview-section=""
+        data-scroll-end={atScrollEnd ? "" : undefined}
         onKeyDown={onQueueKeyDown}
         className={cn(
           "flex gap-3 [[data-testid=plugin-homepage-sections]>section:has(&)>h2]:hidden",
           FILL_PANE_CLASS,
+          FADE_AT_END_CLASS,
           classes.root,
         )}
       >
