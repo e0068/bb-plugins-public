@@ -56,6 +56,7 @@ import { PriorityIcon, STATUS_LABELS, StatusIcon } from "./icons.js";
 import { GroupIcon } from "./group-icon.js";
 import { visibleBoardColumns } from "./narrow-layout.js";
 import { useIsCompactViewport } from "@/components/ui/hooks/use-compact-viewport";
+import { usePointerCoarse } from "@/components/ui/hooks/use-pointer-coarse";
 import { boardCardMeta, type BoardCardMeta } from "./card-meta.js";
 import { SubtaskList, type AddSubtaskOutcome } from "./subtask-list.js";
 import { BurndownChart, SubtaskStats } from "./subtask-stats.js";
@@ -592,6 +593,9 @@ interface TaskCardProps {
   ghost?: boolean;
   dragging?: boolean;
   cardRef?: (element: HTMLDivElement | null) => void;
+  /** A phone's card: a grip strip along its right edge takes the drag, and
+   *  the rest of the card leaves the finger to scroll and tap. */
+  grip?: boolean;
   onPointerDown?: (event: ReactPointerEvent<HTMLDivElement>) => void;
   onClick?: () => void;
   /** Opens a task, by its key, from the card's sub-task list or its Gantt. */
@@ -623,6 +627,7 @@ function TaskCard({
   ghost = false,
   dragging = false,
   cardRef,
+  grip = false,
   onPointerDown,
   onClick,
   onOpenTask,
@@ -659,19 +664,35 @@ function TaskCard({
     <div
       ref={cardRef}
       data-task-key={task.key}
-      onPointerDown={onPointerDown}
+      onPointerDown={grip ? undefined : onPointerDown}
       onClick={onClick}
       // Filled like an option in a Flow brief, no border; hover lays part of
       // the host's hover tint over the fill (an overlay behind the text), so
       // the fill stays and the card only lightens a little.
       className={cn(
-        "relative isolate shrink-0 rounded-lg bg-surface-recessed-solid px-2.5 py-2 select-none",
+        "relative isolate shrink-0 rounded-lg bg-surface-recessed-solid py-2 pl-2.5 select-none",
+        grip ? "pr-9" : "pr-2.5",
         ghost
           ? "rotate-2 shadow-md"
-          : "cursor-pointer touch-none before:pointer-events-none before:absolute before:inset-0 before:-z-10 before:rounded-[inherit] before:bg-state-hover before:opacity-0 hover:before:opacity-40",
+          : "cursor-pointer before:pointer-events-none before:absolute before:inset-0 before:-z-10 before:rounded-[inherit] before:bg-state-hover before:opacity-0 hover:before:opacity-40",
+        // Only a body that takes the drag keeps the finger from scrolling.
+        !grip && onPointerDown !== undefined && "touch-none",
         dragging && "opacity-40",
       )}
     >
+      {grip ? (
+        // The whole strip, not just the glyph, is under the finger. A tap that
+        // misses the drag threshold is swallowed here rather than opening the task.
+        <div
+          data-card-grip
+          aria-hidden
+          onPointerDown={onPointerDown}
+          onClick={(event) => event.stopPropagation()}
+          className="absolute inset-y-0 right-0 flex w-9 touch-none items-center justify-center text-muted-foreground"
+        >
+          <Icon name="Menu" className="size-4" />
+        </div>
+      ) : null}
       {dropMark ? (
         <span
           aria-hidden
@@ -874,6 +895,9 @@ export function BoardView({ scope, viewId }: BoardViewProps) {
   const [quickAddStatus, setQuickAddStatus] = useState<TaskStatus | null>(null);
   const boardRef = useRef<HTMLDivElement | null>(null);
   const isNarrow = useIsCompactViewport();
+  // A phone: a card is dragged by its grip only, so a finger on the rest scrolls.
+  const isPointerCoarse = usePointerCoarse();
+  const dragsByGrip = isNarrow && isPointerCoarse;
   // Which column the narrow board shows. Null until the owner picks one —
   // `visibleBoardColumns` then falls back to the first column.
   const [narrowKey, setNarrowKey] = useState<string | null>(null);
@@ -990,7 +1014,10 @@ export function BoardView({ scope, viewId }: BoardViewProps) {
     fromKey: string,
   ) => {
     if (event.button !== 0 || dragCleanupRef.current) return;
-    const rect = event.currentTarget.getBoundingClientRect();
+    // The press lands on the card or, on a phone, on its grip: the ghost
+    // keeps the whole card's place under the finger either way.
+    const card = event.currentTarget.closest("[data-task-key]")!;
+    const rect = card.getBoundingClientRect();
     const start = {
       x: event.clientX,
       y: event.clientY,
@@ -1143,6 +1170,7 @@ export function BoardView({ scope, viewId }: BoardViewProps) {
       showProject={showProject}
       config={fieldConfig}
       dragging={drag?.taskId === task.id}
+      grip={draggable && dragsByGrip}
       cardRef={(element) => {
         const refKey = cardRefKey(columnKey, task.id);
         if (element) cardRefs.current.set(refKey, element);
@@ -1196,6 +1224,7 @@ export function BoardView({ scope, viewId }: BoardViewProps) {
           showProject={showProject}
           config={fieldConfig}
           text={cardText}
+          grip={dragsByGrip}
           ghost
         />
       </div>
