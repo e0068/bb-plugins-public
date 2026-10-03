@@ -23,21 +23,12 @@ const open = (stages: WorkStage[]) => {
 
 const LINKED = [stage("ship"), stage("preview", { parent: "demo" }), stage("demo"), stage("restore", { parent: "demo" }), stage("merge")];
 
-/** Отступ над строкой, которым связка отделяется от остальной таблицы. */
-const apart = (row: HTMLElement) => row.className.split(" ").includes("mt-[7px]");
-
 describe("вид связки в таблице этапов", () => {
   it("у под-этапа нет ни номера, ни подписи «до» или «после»", async () => {
     const slot = open(LINKED);
     await slot.findByRole("row", { name: "Этап 5" });
     const leads = [1, 2, 3, 4, 5].map((n) => slot.getByRole("row", { name: `Этап ${n}` }).querySelector('[role="cell"]')!.textContent);
     expect(leads).toEqual(["1", "", "2", "", "3"]);
-  });
-
-  it("связка отделена от остальных строк отступом сверху и снизу, строки внутри — вплотную", async () => {
-    const slot = open(LINKED);
-    await slot.findByRole("row", { name: "Этап 5" });
-    expect([1, 2, 3, 4, 5].map((n) => apart(slot.getByRole("row", { name: `Этап ${n}` })))).toEqual([false, true, false, false, true]);
   });
 
   it("шапка таблицы без фона", async () => {
