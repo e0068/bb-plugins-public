@@ -214,6 +214,7 @@ export const ru = {
     automation: "Автоматизация",
   },
   steps: {
+    "bb.rename-thread": "Переименовать тред",
     "git.commit": "Commit",
     "git.fast-forward": "FF Branch ← Main",
     "git.create-pr": "Открыть PR",
