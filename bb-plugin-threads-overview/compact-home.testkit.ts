@@ -8,9 +8,10 @@ export const SCROLLER = "root-compose-compact-scroll-viewport";
 /**
  * bb 0.45's compact Home around a plugin section: the scroller, the box bb
  * holds at the scroller's height and pushes its content to the foot of, the
- * column with Recents and the plugin sections, and the spacer under the composer.
+ * column with Recents and the plugin sections, the spacer under the composer,
+ * and the composer with the fade bb lays over the rows passing under it.
  */
-export function compactHome045(): { scroller: HTMLElement; slotBox: HTMLElement } {
+export function compactHome045(): { scroller: HTMLElement; slotBox: HTMLElement; fade: HTMLElement } {
   const home = document.createElement("div");
   home.dataset.testid = "root-compose-compact-home";
   home.innerHTML = `
@@ -25,11 +26,16 @@ export function compactHome045(): { scroller: HTMLElement; slotBox: HTMLElement 
         </div>
         <div data-testid="root-compose-compact-bottom-spacer"></div>
       </div>
+    </div>
+    <div data-testid="root-compose-compact-composer" class="absolute inset-x-0 bottom-0 z-10">
+      <div data-testid="root-compose-compact-fade"></div>
+      <div class="bg-background pb-4"></div>
     </div>`;
   document.body.append(home);
   return {
     scroller: home.querySelector<HTMLElement>(`[data-testid=${SCROLLER}]`)!,
     slotBox: home.querySelector<HTMLElement>("[data-slot-box]")!,
+    fade: home.querySelector<HTMLElement>("[data-testid=root-compose-compact-fade]")!,
   };
 }
 
