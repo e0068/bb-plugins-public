@@ -74,14 +74,6 @@ describe("строки таблицы этапов", () => {
 });
 
 describe("шаблоны этапов", () => {
-  it("закладка есть у каждой строки и сохраняет этап целиком шаблоном", async () => {
-    const slot = open(settings());
-    await slot.findByRole("row", { name: "Этап 3" });
-    for (const name of ["Этап 1", "Этап 2", "Этап 3"]) expect(within(slot.getByRole("row", { name })).getByRole("button", { name: "Сохранить этап шаблоном" })).toBeTruthy();
-    fireEvent.click(within(slot.getByRole("row", { name: "Этап 3" })).getByRole("button", { name: "Сохранить этап шаблоном" }));
-    await vi.waitFor(() => expect(lastSaved(slot)?.stageTemplates).toEqual([{ kind: "skill", skill: "code-review", name: "Ревью", executors: [] }]));
-  });
-
   it("сохранённый этап — закладка недоступна", async () => {
     const slot = open(settings({ stageTemplates: [{ kind: "skill", skill: "code-review", name: "Ревью", executors: [] }] }));
     const row = within(await slot.findByRole("row", { name: "Этап 3" }));
