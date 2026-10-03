@@ -289,7 +289,7 @@ export const ru = {
     runAuto: "Сам",
     runManual: "Кнопкой владельца",
     runManualHint: "Этап Action: шаги запускает владелец кнопкой в полосе прогресса, по шагу за нажатие",
-    noSkillForScript: "Шаги скрипта исполняет Flow — навык этапу не нужен",
+    clearSkill: "Очистить навык",
     automationSteps: "Шаги автоматизации",
     addScript: "Добавить скрипт…",
     scriptTooBig: "Скрипт больше 200 000 символов — не добавлен",

@@ -80,10 +80,6 @@ describe("шаги скрипта", () => {
     expect(withSteps((a) => a)(script).automation).toEqual(script.automation);
   });
 
-  it("на этапе навыка снимают навык и исполнителей, этап запускает Flow сам", () => {
-    expect(addCommit(skillStage({ executors: [reviewer] }))).toEqual({ id: "spec", kind: "skill", skill: "", name: "Spec", executors: [], automation: { source: "flow", steps: ["git.commit"] } });
-  });
-
   it("на виджете снимают вид", () => {
     expect(executionOf(addCommit(questions))).toEqual({ kind: "script", automation: { source: "flow", steps: ["git.commit"] }, manual: false });
   });

@@ -251,11 +251,14 @@ export const stageInstructions = (stages: readonly WorkStage[]): string | null =
 /** Хвост этапа-заголовка: исполнять в нём нечего, работа — в его под-этапах. */
 const HEADING_TAIL = " — heading: no work of its own, its sub-stages carry the work; send it in setup.stages without share, and when you reach it mark it done without results";
 
+/** Навык встроенного этапа в его строке инструкций; очищенный крестиком — этап идёт без навыка. */
+const builtinSkill = (skill: string): string => (skill === "" ? "" : `skill ${skill}: load it for the stage's work; `);
+
 /** Строка этапа в инструкциях: начало `head` и то, что агенту делать на этапе этого вида. */
 const stageLine = (s: WorkStage, head: string): string => {
   const kind = stageKindOf(s);
   if (kind === "action") return `${head}${ACTION_TAIL}`;
-  if (kind !== "skill") return `${head} — skill ${stageSkillOf(s)}: load it for the stage's work; ${BUILTIN_ANSWERS[kind]}; you execute it yourself, a done stage needs no results`;
+  if (kind !== "skill") return `${head} — ${builtinSkill(stageSkillOf(s))}${BUILTIN_ANSWERS[kind]}; you execute it yourself, a done stage needs no results`;
   if (s.automation !== undefined) return `${head}${AUTOMATION_TAIL}`;
   const executors = s.executors.length === 0 ? "you execute it yourself" : `executors: self, ${s.executors.map((e) => e.id).join(", ")}`;
   // Названного навыка мало: агент дойдёт до этапа и уйдёт работать, не

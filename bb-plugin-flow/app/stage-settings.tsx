@@ -18,7 +18,7 @@ import { FieldOverlay, overlayItem, useFieldOverlay } from "../components/ui/fie
 import { Button } from "../components/ui/button";
 import { Icon } from "../components/ui/icon";
 import { Input } from "../components/ui/input";
-import { BUILTIN_SKILLS, isNewStageName, RETRY_LIMITS, stageKindOf, stageSkillOf, STAGE_BUTTON_WIDTH as WIDTH, type BuiltinKind } from "../lib/stage-constants";
+import { BUILTIN_SKILLS, clearedSkill, isNewStageName, RETRY_LIMITS, stageKindOf, stageSkillOf, STAGE_BUTTON_WIDTH as WIDTH, type BuiltinKind } from "../lib/stage-constants";
 import { cn } from "../lib/utils";
 import type { flowSettingsRpcContract, SkillOrigin, StageCatalog, StageExecutor, WorkStage } from "../shared/contract";
 import { type AutomationSets, AutomationStepTags, ManualMark, ScriptOptions } from "./automation-stage";
@@ -182,11 +182,16 @@ function SkillField({ stage, index, catalog }: { stage: WorkStage; index: number
   // Навыка нет среди прочитанных — файла у него нет, и поле пустое, без имени и без кнопок файла. Каталог не прочитан — судить не по чему,
   // имя остаётся. Сбой списка навыков одного проекта сервер глотает, и навык того проекта тогда тоже выглядит пустым.
   const current = catalog.skills.length === 0 || catalog.skills.some((s) => s.name === named) ? named : "";
-  // Встроенный этап хранит навык вида пустым полем и не берёт имя навыка в название.
+  // Встроенный этап хранит навык вида пустым полем и не берёт имя навыка в название; у автоматизации Automations
+  // название — снимок того плагина, и навык его не трогает. Этап навыка без своего названия берёт имя навыка.
+  const namesStage = kind === "skill" && executionOf(stage).kind !== "external";
   const pick = (skill: string) => {
-    setStage(stage.id, (s) =>
-      kind === "skill" ? { ...s, skill, name: s.name.trim() === "" || s.name === s.skill || isNewStageName(s.name) ? skill : s.name } : { ...s, skill: kind !== "action" && skill === BUILTIN_SKILLS[kind] ? "" : skill },
-    );
+    const stored = kind === "skill" || kind === "action" || skill !== BUILTIN_SKILLS[kind] ? skill : "";
+    setStage(stage.id, (s) => (namesStage ? { ...s, skill, name: s.name.trim() === "" || s.name === s.skill || isNewStageName(s.name) ? skill : s.name } : { ...s, skill: stored }));
+    close();
+  };
+  const clear = () => {
+    setStage(stage.id, (s) => ({ ...s, skill: clearedSkill(s) }));
     close();
   };
   const listId = `stage-skills-${stage.id}`;
@@ -225,6 +230,17 @@ function SkillField({ stage, index, catalog }: { stage: WorkStage; index: number
           }}
           className={cn(field, "pr-14 font-mono text-xs")}
         />
+      )}
+      {current !== "" && (
+        <button
+          type="button"
+          aria-label={t.settings.clearSkill}
+          title={t.settings.clearSkill}
+          onClick={clear}
+          className="absolute right-6 top-1 flex size-5 items-center justify-center rounded text-muted-foreground hover:bg-state-hover hover:text-foreground"
+        >
+          <Icon name="X" aria-hidden="true" className="size-3.5" />
+        </button>
       )}
       <SkillFileButtons skill={current} />
       <FieldOverlay open={open} onClose={close} role="listbox" label={t.settings.skills} id={listId}>
@@ -404,8 +420,9 @@ function ExecutionCell({ stage, stages, catalog }: { stage: WorkStage; stages: r
 /**
  * Сетка строки: номер с ручкой и иконка, средние ячейки одной группой, закладка шаблона и крест. Широкая строка — закладка
  * левее креста; узкая — закладка под крестом, а средние ячейки занимают обе строки сетки, чтобы она встала вплотную.
+ * Первая колонка — 56px: номер 28, зазор 4 и иконка 24 встают в неё целиком, и от поля названия иконку отделяет зазор сетки.
  */
-const rowGrid = "grid grid-cols-[46px_minmax(0,1fr)_28px] items-start gap-2 @[44rem]:grid-cols-[46px_minmax(0,1fr)_28px_28px]";
+const rowGrid = "grid grid-cols-[56px_minmax(0,1fr)_28px] items-start gap-2 @[44rem]:grid-cols-[56px_minmax(0,1fr)_28px_28px]";
 /** Отступ над этапом верхнего уровня — отдельным или связкой: 3 px и 1 px зазора таблицы — 4 px; угол у края скругляется. */
 const stageGap = "mt-[3px] rounded-t-lg";
 
@@ -596,19 +613,8 @@ type RowPlace = { number: number | null; owner: string | null; apart: boolean; e
 
 type RowProps = { stage: WorkStage; index: number; stages: readonly WorkStage[]; catalog: StageCatalog; place: RowPlace; dragging: boolean; onGrab: () => void };
 
-/** Навык этапа со шагами скрипта: шаги исполняет Flow, агент этап не ведёт — поле погашено. */
-function NoSkill({ index }: { index: number }) {
-  const t = useMessages();
-  return (
-    <span role="textbox" aria-readonly="true" aria-label={t.settings.stageSkill(index + 1)} title={t.settings.noSkillForScript} className={cn(field, "flex items-center bg-transparent font-mono text-xs text-muted-foreground")}>
-      —
-    </span>
-  );
-}
-
 /**
- * Строка этапа любого вида: название, навык, исполнение. У этапа со шагами скрипта навык погашен; у автоматизации
- * Automations название — снимок, правится в том плагине.
+ * Строка этапа любого вида: название, навык, исполнение. У автоматизации Automations название — снимок, правится в том плагине.
  */
 function StageRow({ stage, index, stages, catalog, place, dragging, onGrab }: RowProps) {
   const t = useMessages();
@@ -632,7 +638,7 @@ function StageRow({ stage, index, stages, catalog, place, dragging, onGrab }: Ro
         </span>
         )}
         <span role="cell" className={cell}>
-          {execution.kind === "script" || execution.kind === "external" ? <NoSkill index={index} /> : <SkillField stage={stage} index={index} catalog={catalog} />}
+          <SkillField stage={stage} index={index} catalog={catalog} />
         </span>
         <ExecutionCell stage={stage} stages={stages} catalog={catalog} />
       </StageCells>

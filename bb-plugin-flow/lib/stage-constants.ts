@@ -40,10 +40,23 @@ export const ROOT_SKILL = "flow";
 /** Инструмент агента, которым тред с выбором «Автоматически» получает flow, выбранный по описаниям flow. */
 export const CHOOSE_FLOW_TOOL = "choose_flow";
 
-/** Навык этапа: у встроенного пустое поле значит навык его вида — так смена навыка по умолчанию доезжает до сохранённых flow. У Action навыка нет: его шаги исполняет Flow по нажатию владельца. */
+/**
+ * Навык, очищенный крестиком у встроенного этапа. Пустая строка у такого этапа уже значит навык его вида, поэтому
+ * «без навыка» хранится меткой — дефисом, которого нет в имени навыка.
+ */
+export const NO_SKILL = "-";
+
+/** Навык этапа: у встроенного пустое поле значит навык его вида — так смена навыка по умолчанию доезжает до сохранённых flow; `NO_SKILL` — навыка нет. */
 export const stageSkillOf = (stage: { id: string; kind?: StageKind | undefined; skill: string }): string => {
   const kind = stageKindOf(stage);
+  if (stage.skill === NO_SKILL) return "";
   return kind === "skill" || kind === "action" || stage.skill !== "" ? stage.skill : BUILTIN_SKILLS[kind];
+};
+
+/** Навык, который ставит крестик в поле: встроенному этапу — метка «без навыка», остальным — пустое поле. */
+export const clearedSkill = (stage: { id: string; kind?: StageKind | undefined }): string => {
+  const kind = stageKindOf(stage);
+  return kind === "skill" || kind === "action" ? "" : NO_SKILL;
 };
 
 /** Название в хранилище — английское: сервер языка не знает, по языку подписывает фронт. */

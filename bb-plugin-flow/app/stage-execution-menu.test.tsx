@@ -91,9 +91,8 @@ describe("строка этапа", () => {
     expect(first.queryByText(/этапы \d/)).toBeNull();
   });
 
-  it("у этапа со шагами навык погашен прочерком, у Action перед шагами — метка «Кнопкой владельца»", async () => {
+  it("у Action перед шагами — метка «Кнопкой владельца», у этапа со шагами Flow её нет", async () => {
     const slot = open();
-    expect((await row(slot, 4)).getByRole("textbox", { name: "Навык этапа 4" }).textContent).toBe("—");
     expect((await row(slot, 5)).getByText("Кнопкой владельца")).toBeTruthy();
     expect((await row(slot, 4)).queryByText("Кнопкой владельца")).toBeNull();
   });
@@ -158,13 +157,13 @@ describe("меню исполнения", () => {
 });
 
 describe("сегмент «Скрипт»", () => {
-  it("шаг на этапе с агентом делает его автоматизацией без навыка и исполнителей", async () => {
+  it("шаг на этапе с агентом делает его автоматизацией без исполнителей, навык этапа остаётся", async () => {
     const slot = open();
     const menu = await openMenu(slot, 3);
     pickTab(menu, "Скрипт");
     fireEvent.click(menu.getByRole("menuitem", { name: "Commit" }));
     await vi.waitFor(() =>
-      expect(savedStage(slot, 3)).toEqual({ id: "review", kind: "skill", skill: "", name: "Review", executors: [], automation: { source: "flow", steps: ["git.commit"] } }),
+      expect(savedStage(slot, 3)).toEqual({ id: "review", kind: "skill", skill: "code-review", name: "Review", executors: [], automation: { source: "flow", steps: ["git.commit"] } }),
     );
   });
 

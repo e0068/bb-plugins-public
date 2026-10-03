@@ -3,7 +3,7 @@
 // проблемы сразу: навык или исполнитель не из каталога, этап-навык без навыка
 // и автоматизации, автоматизация у встроенного этапа или с исполнителями,
 // шаг-скрипт без скрипта, повтор id, id «без flow». Сохраняет — server/flow-tools.ts.
-import { actionStage, automationStageId, builtinStage, freeId, linkedSubStages, SUB_STAGE_ISSUE } from "../lib/stage-constants";
+import { actionStage, automationStageId, builtinStage, freeId, linkedSubStages, NO_SKILL, SUB_STAGE_ISSUE } from "../lib/stage-constants";
 import type { Flow, FlowDraft, StageCatalog, StageDraft, StageExecutor, WorkStage } from "../shared/contract";
 import { AGENT_NO_FLOW, AUTO_FLOW, NO_FLOW, withDescription } from "./flows";
 
@@ -49,7 +49,7 @@ type DraftContext = { reserved: readonly string[]; catalog: StageCatalog; kept: 
 
 const resolveStage = (draft: StageDraft, n: number, taken: readonly string[], { reserved, catalog, kept, owners }: DraftContext): Resolved => {
   const at = `stage ${n}`;
-  const skill = draft.automation === undefined ? (draft.skill ?? "").trim() : "";
+  const skill = (draft.skill ?? "").trim();
   const known = new Set(catalog.skills.map((s) => s.name));
   const byId = new Map(catalog.executors.map((e) => [e.id, e]));
   const executorIds = draft.executors ?? [];
@@ -63,7 +63,7 @@ const resolveStage = (draft: StageDraft, n: number, taken: readonly string[], { 
     ...(draft.kind !== "skill" && draft.kind !== "action" && draft.automation !== undefined ? [`${at}: an automation belongs to a stage of kind skill or action, not ${draft.kind}`] : []),
     ...(draft.kind === "action" && draft.automation === undefined ? [`${at}: an action stage needs steps`] : []),
     ...(draft.automation !== undefined && executorIds.length > 0 ? [`${at}: an automation stage takes no executor — Flow runs it itself`] : []),
-    ...(skill !== "" && known.size > 0 && !known.has(skill) && !isKept ? [`${at}: the skill "${skill}" is not in the catalog`] : []),
+    ...(namesCatalogSkill(draft.kind, skill) && known.size > 0 && !known.has(skill) && !isKept ? [`${at}: the skill "${skill}" is not in the catalog`] : []),
     ...executorIds.filter((e) => !byId.has(e)).map((e) => `${at}: the executor "${e}" is not in the catalog`),
     ...(draft.automation === undefined ? [] : orphanScripts(draft.automation).map((step) => `${at}: the step "${step}" has no script with that id in the stage`)),
   ];
@@ -80,9 +80,12 @@ const resolveStage = (draft: StageDraft, n: number, taken: readonly string[], { 
   return { stage, problems };
 };
 
+/** Навык этапа ищется в каталоге: пустое поле — не навык, `NO_SKILL` у встроенного этапа — «без навыка», а не имя навыка. */
+const namesCatalogSkill = (kind: StageDraft["kind"], skill: string): boolean => skill !== "" && !(skill === NO_SKILL && kind !== "skill" && kind !== "action");
+
 /** Черновик — в flow; хоть одна проблема — список всех проблем вместо flow. `newId` даёт id новому flow, `stored` — сохранённый flow с тем же id. */
 export const resolveFlowDraft = (draft: FlowDraft, catalog: StageCatalog, newId: () => string, stored?: Flow): FlowDraftResult => {
-  const referencesSkills = draft.stages.some((s) => s.automation === undefined && (s.skill ?? "").trim() !== "");
+  const referencesSkills = draft.stages.some((s) => namesCatalogSkill(s.kind, (s.skill ?? "").trim()));
   const referencesExecutors = draft.stages.some((s) => (s.executors ?? []).length > 0);
   const unreadParts = [...(referencesSkills && catalog.skills.length === 0 ? [unread("skill")] : []), ...(referencesExecutors && catalog.executors.length === 0 ? [unread("executor")] : [])];
   if (unreadParts.length > 0) return { ok: false, problems: unreadParts };

@@ -282,7 +282,7 @@ export const en: Messages = {
     runAuto: "Auto",
     runManual: "Owner's button",
     runManualHint: "Action stage: the owner runs the steps with a button in the progress bar, one step per press",
-    noSkillForScript: "Flow runs the script steps — the stage needs no skill",
+    clearSkill: "Clear skill",
     automationSteps: "Automation steps",
     addScript: "Add a script…",
     scriptTooBig: "The script is over 200,000 characters — not added",
