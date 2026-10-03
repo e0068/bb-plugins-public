@@ -38,7 +38,12 @@ export type Draft = {
   compact?: boolean;
   /** Комментарий к Демонстрации; пустой — «Продолжить», написанный — «Отправить». */
   outcomeNote?: string;
+  /** Flow, в который владелец уводит работу из Демонстрации: нет поля — рекомендованный агентом, `null` — «Не переходить». */
+  outcomeFlow?: OutcomeFlow | null;
 };
+
+/** Flow перехода из Демонстрации — id и название, которое увидит агент. */
+export type OutcomeFlow = { id: string; name: string };
 
 export const emptyCriteria = (): CriteriaDraft => ({ removed: [], edited: {}, added: [] });
 
@@ -100,6 +105,20 @@ export const settleDispatch = (draft: Draft, place: DispatchPlace, route: Dispat
 };
 
 export const setOutcomeNote = (draft: Draft, note: string): Draft => ({ ...draft, outcomeNote: note });
+
+export const setOutcomeFlow = (draft: Draft, flow: OutcomeFlow | null): Draft => ({ ...draft, outcomeFlow: flow });
+
+/**
+ * Ответ на Демонстрацию: выбранный flow — переход, комментарий едет с ним; без перехода пустой комментарий — «Продолжить»,
+ * написанный — «Отправить»: Демонстрация не принята, flow дальше не идёт.
+ */
+const outcomeAnswer = (draft: Draft): NonNullable<DecisionAnswer["outcome"]> => {
+  const note = draft.outcomeNote ?? "";
+  const said = note.trim() !== "";
+  const flow = draft.outcomeFlow ?? undefined;
+  if (flow !== undefined) return { accepted: false, ...(said ? { note } : {}), flow };
+  return said ? { accepted: false, note } : { accepted: true };
+};
 
 const stageAnswers = (brief: DecisionBrief, draft: Draft): StageAnswer[] =>
   stageItems(brief).map((item) => {
@@ -255,8 +274,7 @@ export const toAnswer = (brief: DecisionBrief, draft: Draft): DecisionAnswer => 
     ...(draft.place === undefined ? {} : { place: draft.place }),
     ...(draft.route === undefined ? {} : { route: draft.route }),
     ...(draft.compact === true ? { compact: true } : {}),
-    // Пустой комментарий — «Продолжить»; написанный — «Отправить»: Демонстрация не принята, flow дальше не идёт.
-    ...(brief.outcome === undefined ? {} : { outcome: (draft.outcomeNote ?? "").trim() === "" ? { accepted: true } : { accepted: false, note: draft.outcomeNote ?? "" } }),
+    ...(brief.outcome === undefined ? {} : { outcome: outcomeAnswer(draft) }),
   };
 };
 

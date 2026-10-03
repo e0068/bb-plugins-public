@@ -3,7 +3,7 @@
 // пережить. Разбор не доверяет записи: чужой или битый формат — нет черновика.
 import { ROUTE_BRANCHES, ROUTE_TREES } from "../core/places";
 import type { DispatchPlace, DispatchRoute } from "../shared/contract";
-import { emptyBudget, emptyCriteria, type CriteriaDraft, type Draft } from "./draft";
+import { emptyBudget, emptyCriteria, type CriteriaDraft, type Draft, type OutcomeFlow } from "./draft";
 
 const KEY_PREFIX = "decisions:draft:";
 
@@ -32,11 +32,15 @@ const isRoute = (value: unknown): value is DispatchRoute =>
   (value.projectId === undefined || typeof value.projectId === "string");
 
 /** Выбор места и Демонстрации: поле чужого вида отбрасывается, черновик остаётся. */
-const readChoices = (value: Record<string, unknown>): Pick<Draft, "place" | "route" | "outcomeNote"> => ({
+const readChoices = (value: Record<string, unknown>): Pick<Draft, "place" | "route" | "outcomeNote" | "outcomeFlow"> => ({
   ...((PLACES as readonly unknown[]).includes(value.place) ? { place: value.place as DispatchPlace } : {}),
   ...(isRoute(value.route) ? { route: value.route } : {}),
   ...(typeof value.outcomeNote === "string" ? { outcomeNote: value.outcomeNote } : {}),
+  ...(value.outcomeFlow === null || isOutcomeFlow(value.outcomeFlow) ? { outcomeFlow: value.outcomeFlow } : {}),
 });
+
+const isOutcomeFlow = (value: unknown): value is OutcomeFlow =>
+  typeof value === "object" && value !== null && typeof (value as OutcomeFlow).id === "string" && typeof (value as OutcomeFlow).name === "string";
 
 export const encodeDraft = (draft: Draft): string => JSON.stringify(draft);
 

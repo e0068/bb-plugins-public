@@ -64,5 +64,6 @@ export const withRestored = (brief: DecisionBrief, base: Draft, restored: Restor
     stages: Object.fromEntries(Object.entries(old.stages).filter(([id]) => stageIds.has(id))),
     criteria: fitCriteria(brief, old.criteria, restored?.criteria),
     ...(brief.outcome === undefined || old.outcomeNote === undefined ? {} : { outcomeNote: old.outcomeNote }),
+    ...(brief.outcome?.nextFlow === undefined || old.outcomeFlow === undefined ? {} : { outcomeFlow: old.outcomeFlow }),
   };
 };

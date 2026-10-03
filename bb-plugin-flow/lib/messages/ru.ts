@@ -145,6 +145,9 @@ export const ru = {
     send: "Отправить",
     documentsOnly: "Только документы — живой ссылки нет",
     verdict: (verdict: "continue" | "comment"): string => (verdict === "continue" ? "Продолжено" : "Комментарий"),
+    flowLabel: "Взять в работу",
+    flowStay: "Не переходить",
+    flowSwitched: (flow: string) => `Переход в flow ${quote(flow)}`,
   },
   flowChoice: {
     none: "Flow не выбран",
@@ -435,6 +438,9 @@ export const ru = {
     outcomeNext: (name: string) => `Дальше — этап ${quote(name)}.`,
     outcomeFinal: "Дальше — работа закончена: доведи задачу до конца и отчитайся.",
     outcomeComment: "Ответь и пришли демонстрацию снова.",
+    outcomeSwitchHeading: (title: string, flow: string) => `Бриф ${quote(title)} — перейти в flow ${quote(flow)}.`,
+    outcomeSwitch: (flow: string) =>
+      `Тред переведён на flow ${quote(flow)}: его этапы — в инструкциях хода, начни с первого. Объём работы — находки этой демонстрации; комментарий владельца выше, если он есть, его сужает.`,
     run: (list: string) => `Прогон: ${list}.`,
     noRun: "Прогон пуст.",
     runStage: (name: string, executor: string) => `${name} (${executor})`,
