@@ -84,3 +84,56 @@ export function notificationsClient(baseUrl: string, fetchImpl: typeof fetch, op
     },
   };
 }
+
+// Лента обновлений плагинов витрины. Её собирает сайт витрины на шаге
+// «Publish» (packages/flow-dialog-demo/scenario/plugin-updates.ts) и кладёт
+// рядом со страницами; центр на каждой машине читает её по расписанию и
+// объявляет новые версии установленных плагинов.
+
+export const PLUGIN_UPDATES_URL = "https://bb68.vercel.app/plugin-updates.json";
+
+/** Пункт ченж-лога на двух языках. */
+export interface FeedNote {
+  ru: string;
+  en: string;
+}
+
+/** Вышедшая версия: номер, дата выхода и её пункты. */
+export interface FeedRelease {
+  version: string;
+  date: string;
+  notes: FeedNote[];
+}
+
+/** Опубликованный плагин: id — тот, под которым его держит bb; выпуски — новые сверху. */
+export interface FeedPlugin {
+  id: string;
+  name: string;
+  version: string;
+  releases: FeedRelease[];
+}
+
+export interface PluginUpdatesFeed {
+  plugins: FeedPlugin[];
+}
+
+const VERSION = /^\d+\.\d+\.\d+$/;
+
+/** Сравнение версий вида 1.2.3 по числам: плюс — `a` новее. */
+export const compareVersions = (a: string, b: string): number => {
+  const [x, y] = [a, b].map((version) => version.split(".").map(Number));
+  const length = Math.max(x!.length, y!.length);
+  return Array.from({ length }, (_, i) => (x![i] ?? 0) - (y![i] ?? 0)).find((diff) => diff !== 0) ?? 0;
+};
+const isVersion = (x: unknown): x is string => typeof x === "string" && VERSION.test(x);
+const isArrayOf =
+  <T>(item: (x: unknown) => x is T) =>
+  (x: unknown): x is T[] =>
+    Array.isArray(x) && x.every(item);
+
+const isFeedNote = (x: unknown): x is FeedNote => isRecord(x) && isFilled(x.ru) && isFilled(x.en);
+const isFeedRelease = (x: unknown): x is FeedRelease => isRecord(x) && isVersion(x.version) && isFilled(x.date) && isArrayOf(isFeedNote)(x.notes);
+const isFeedPlugin = (x: unknown): x is FeedPlugin => isRecord(x) && isFilled(x.id) && isFilled(x.name) && isVersion(x.version) && isArrayOf(isFeedRelease)(x.releases);
+
+/** Ответ сайта — недоверенный ввод: лента идёт дальше, только если она целиком такой формы. */
+export const isPluginUpdatesFeed = (x: unknown): x is PluginUpdatesFeed => isRecord(x) && isArrayOf(isFeedPlugin)(x.plugins);

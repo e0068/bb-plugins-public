@@ -461,6 +461,7 @@ export const ru = {
     review: "Ревью",
     testing: "Тестирование",
     question: (n: number) => `Вопрос ${n}`,
+    approved: "Утверждено при запуске",
     predicted: (target: string, max: string, risk: string, time: string) => `прогноз ${target} · до ${max}, риск ${risk}${time === "" ? "" : `, время ${time}`}`,
     line: (predicted: string) => `Бюджет — ${predicted}`,
     ownLine: (own: string, predicted: string) => `Бюджет — своя цена ${own} (${predicted})`,

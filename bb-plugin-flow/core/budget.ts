@@ -1,20 +1,24 @@
 // Прогноз бюджета, риска и времени брифа. Объём работы — цены оставленных
 // пунктов «Готово, когда» (база) плюс цены выбранных вариантов; этап — доля
 // объёма с множителем исполнителя, итог — сумма долей этапов в прогоне, а у
-// брифа без этапов — сам объём. Брифы, записанные раньше, считаются как были:
+// брифа без этапов — сам объём. Бриф-уточнение запущенной работы — утверждённый
+// бюджет прогона плюс выбранные варианты по цене прогона. Брифы, записанные раньше, считаются как были:
 // этапы в долларах с долей пунктов внутри них, а совсем старые — пункты,
 // артефакты, исполнитель, ревью и тестирование. Считается по брифу и ответу,
 // поэтому одинаково и в кнопке виджета, и в реплике агенту.
 import type { Locale } from "../lib/i18n";
 import { messages } from "../lib/messages";
-import type { Add, Checker, Criterion, DecisionAnswer, DecisionBrief, StagePlan } from "../shared/contract";
+import type { Add, Checker, Criterion, DecisionAnswer, DecisionBrief, Planned, StagePlan } from "../shared/contract";
 import { SETUP_ROW, rowsOf } from "./rows";
 import { sumAdds } from "./adds";
 import { removedCriteria } from "./option-criteria";
 import { answeredStageChoice, executorLabel, stageAdd, stageItems, stagePhase } from "./stages";
 
-/** Строка разбивки; `null` — величина неизвестна: у планирования без цены модели нет денег, у добавок без `minutes` — времени. */
-export type ForecastLine = { label: string; note: string; minutes: number | null; risk: number; target: number | null; max: number | null };
+/**
+ * Строка разбивки; `null` — величина неизвестна: у планирования без цены модели нет денег, у добавок без `minutes` — времени.
+ * `base` — строка не добавка, а основа итога: утверждённый бюджет прогона.
+ */
+export type ForecastLine = { label: string; note: string; minutes: number | null; risk: number; target: number | null; max: number | null; base?: true };
 
 /** Итог складывает известное; время `null`, если ни у одной строки его нет; `spent` — сколько первых строк уже потрачено. */
 export type Forecast = { lines: readonly ForecastLine[]; minutes: number | null; risk: number; target: number; max: number; spent?: number };
@@ -34,6 +38,9 @@ const addOf = (item: Criterion): Add | undefined => (typeof item === "string" ? 
 const round = (n: number): number => Math.round(n * 100) / 100;
 
 export const money = (n: number): string => `$${round(n)}`;
+
+/** Цель и потолок одной вилкой: «$35–63», равные — «$35». */
+export const moneySpan = (target: number, max: number): string => (target === max ? money(target) : `${money(target)}–${round(max)}`);
 
 const sign = (n: number): string => (n < 0 ? "–" : "+");
 
@@ -230,10 +237,44 @@ const questionLines = (brief: DecisionBrief, answer: DecisionAnswer, locale?: Lo
     return q.options.filter((o) => ids.includes(o.id)).flatMap((o) => line(messages(locale).budget.question(i + 1), o.action, [o.add]));
   });
 
-/** Итог прогона: сумма запланированного, не меньше нуля; уже потраченное — справочные первые строки разбивки, в итог не входит; потолок не ниже цели. */
+/** Во сколько раз прогон дороже объёма: доли этапов и множители исполнителей уже внутри утверждённого бюджета; без объёма — один к одному. */
+const runFactor = (budget: number, scope: number | undefined): number => (scope === undefined || scope <= 0 ? 1 : budget / scope);
+
+/**
+ * Бриф-уточнение запущенной работы: первая строка — утверждённый бюджет прогона, за ней выбранные варианты.
+ * Вариант дорожает так же, как дорожал объём при запуске: его цена умножена на отношение бюджета к утверждённому объёму.
+ * План без времени не даёт времени и вариантам: иначе время прогона свелось бы к минутам одного варианта.
+ */
+const midWorkLines = (brief: DecisionBrief, answer: DecisionAnswer, approved: Planned, locale?: Locale): ForecastLine[] => {
+  const m = messages(locale).budget;
+  const scope = brief.approvedScope;
+  const factor = { target: runFactor(approved.target, scope?.target), max: runFactor(approved.max, scope?.max) };
+  const base: ForecastLine = { label: m.approved, note: "", minutes: approved.minutes, risk: 0, target: approved.target, max: approved.max, base: true };
+  const options = chosenOptions(brief, answer).flatMap(({ number, option }) => {
+    const add = option.add;
+    if (add === undefined) return [];
+    const minutes = add.minutes === undefined || approved.minutes === null ? null : Math.round(add.minutes * runFactor(approved.minutes, scope?.minutes));
+    return [{ label: m.question(number), note: option.action, minutes, risk: add.risk, target: round(add.target * factor.target), max: round(add.max * factor.max) }];
+  });
+  return [base, ...options];
+};
+
+/** Утверждённый бюджет прогона, от которого считает бриф-уточнение; у брифа до запуска и у записанного без бюджета — `undefined`. */
+export const midWorkBudget = (brief: DecisionBrief): Planned | undefined => (brief.launched === true ? brief.approvedBudget : undefined);
+
+/**
+ * Итог прогона: сумма запланированного, не меньше нуля; уже потраченное — справочные первые строки разбивки, в итог не входит; потолок не ниже цели.
+ * У брифа-уточнения планирования в разбивке нет: время треда после запуска — уже сама работа, и оно внутри утверждённого бюджета.
+ */
 export const forecast = (brief: DecisionBrief, answer: DecisionAnswer, locale?: Locale): Forecast => {
-  const spent = planningLines(brief, locale);
-  const planned = legacyPricing(brief) ? [...setupLines(brief, answer, locale), ...questionLines(brief, answer, locale)] : scopePricedLines(brief, answer, locale);
+  const approved = midWorkBudget(brief);
+  const spent = approved === undefined ? planningLines(brief, locale) : [];
+  const planned =
+    approved !== undefined
+      ? midWorkLines(brief, answer, approved, locale)
+      : legacyPricing(brief)
+        ? [...setupLines(brief, answer, locale), ...questionLines(brief, answer, locale)]
+        : scopePricedLines(brief, answer, locale);
   const lines = [...spent, ...planned];
   const minutes = sumOf(lines.map((l) => l.minutes ?? undefined)) === null ? null : Math.max(0, sumOf(planned.map((l) => l.minutes ?? undefined)) ?? 0);
   const total = (key: "target" | "max") => round(Math.max(0, planned.reduce((s, l) => s + (l[key] ?? 0), 0)));
@@ -254,10 +295,10 @@ export const recommendedForecast = (brief: DecisionBrief): Forecast =>
 
 /**
  * Держит ли бриф прогноз: хоть у одного пункта, артефакта, способа или варианта есть добавка.
- * У брифа запущенной работы прогноза нет: деньги в нём уже не решаются.
+ * Бриф запущенной работы держит его, только когда знает утверждённый бюджет прогона: считать итог больше не от чего.
  */
 export const hasForecast = (brief: DecisionBrief): boolean => {
-  if (brief.launched === true) return false;
+  if (brief.launched === true) return brief.approvedBudget !== undefined;
   const s = brief.setup;
   // Доли этапов без базы дали бы «$0»: прогноз — только когда есть объём, от которого их считать.
   if (!legacyPricing(brief) && (s?.stages ?? []).some((r) => r.share !== undefined))

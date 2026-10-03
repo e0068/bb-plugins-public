@@ -575,6 +575,9 @@ export const briefDraftSchema = z.string().max(BRIEF_DRAFT_MAX);
 /** Черновик возвращённого брифа и тексты его пунктов «Готово, когда»: правки пунктов ложатся на новый бриф по тексту, а не по номеру. */
 export const restoredDraftSchema = z.object({ draft: briefDraftSchema, criteria: z.array(z.string()).optional() });
 
+/** Итог прогона: минуты, цель и потолок в долларах; `null` у минут — времени в прогнозе нет. */
+export const plannedSchema = z.object({ minutes: z.number().nullable(), target: z.number(), max: z.number() });
+
 export const decisionBriefSchema = z
   .object({
     id: text,
@@ -582,12 +585,14 @@ export const decisionBriefSchema = z
     createdAt: text,
     /** Ставит сервер новым брифам: утверждённые артефакты в них можно отозвать. У записанных раньше метки нет — они читаются как были. */
     revocable: z.boolean().optional(),
-    /** Ставит сервер брифу запущенной работы: в нём не считается итог бюджета, цена у варианта — своя. */
+    /** Ставит сервер брифу запущенной работы: итог бюджета в нём — утверждённый бюджет прогона плюс выбранные варианты, без него итога нет. */
     launched: z.literal(true).optional(),
     /** Ставит сервер брифу запущенной работы: утверждённое «Готово, когда» треда — итог последнего ответа с пунктами. */
     approved: z.array(text).min(1).optional(),
     /** Ставит сервер брифу запущенной работы: утверждённый объём треда — база и варианты последнего ответа; без своих пунктов бриф считает от него. */
     approvedScope: addSchema.optional(),
+    /** Ставит сервер брифу-уточнению запущенной работы: бюджет прогона из прогресса треда — итог считается от него. */
+    approvedBudget: plannedSchema.optional(),
     /** Ставит сервер из настроек: какие документы сделать и какие утвердить обязательно. */
     required: z.object({ make: z.array(text), approve: z.array(text) }).optional(),
     /** Ставит сервер: сколько минут шло и сколько долларов стоило планирование в треде до брифа; без известной цены модели — только минуты. */
@@ -658,7 +663,16 @@ export const decisionAnswerSchema = z.object({
 /** Прогноз бюджета на момент отправки ответа — та же форма, что считает ядро; `null` — величина неизвестна. */
 export const forecastSnapshotSchema = z.object({
   lines: z.array(
-    z.object({ label: z.string(), note: z.string(), minutes: z.number().nullable(), risk: z.number(), target: z.number().nullable(), max: z.number().nullable() }),
+    z.object({
+      label: z.string(),
+      note: z.string(),
+      minutes: z.number().nullable(),
+      risk: z.number(),
+      target: z.number().nullable(),
+      max: z.number().nullable(),
+      /** Строка — основа итога, а не добавка: утверждённый бюджет прогона в брифе-уточнении. */
+      base: z.literal(true).optional(),
+    }),
   ),
   minutes: z.number().nullable(),
   risk: z.number(),
@@ -887,8 +901,6 @@ export const stageTrackSchema = z.object({
     })
     .optional(),
 });
-
-export const plannedSchema = z.object({ minutes: z.number().nullable(), target: z.number(), max: z.number() });
 
 /** План одного этапа из прогноза ответа: минуты и доллары его добавки; `null` — величины в добавке нет. */
 export const stagePlanSchema = z.object({ minutes: z.number().nullable(), target: z.number().nullable() });

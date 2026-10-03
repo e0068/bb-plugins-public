@@ -12,7 +12,7 @@ import { useRpc } from "@get-bb/plugin-sdk/app";
 
 import { deviationTotal, deviations } from "../core/answer-message";
 import { requiredOf } from "../core/required";
-import { changeOf, spentLines, criteriaSum, legacyPricing, criterionEditable, criterionTitle, forecast, hasForecast, minutesText, money, ownBudgetText, plannedMinutes } from "../core/budget";
+import { changeOf, spentLines, criteriaSum, legacyPricing, criterionEditable, criterionTitle, forecast, hasForecast, midWorkBudget, minutesText, money, moneySpan, ownBudgetText, plannedMinutes, type Forecast } from "../core/budget";
 import { optionCriteria, optionRemoved, removedCriteria } from "../core/option-criteria";
 import { DEFAULT_ROUTE, offeredPlace, placeColumns, withBranch, withPlace, withProject, withTree } from "../core/places";
 import { stageItems } from "../core/stages";
@@ -220,6 +220,14 @@ function ArtifactCell(props: { artifact: Artifact; row: DecisionQuestion | undef
 /** Раскрытие кнопки бюджета: не строка ответа, а прогноз и своя цена. */
 const BUDGET_PANEL = "budget";
 
+/** Бриф-уточнение запущенной работы: утверждённый бюджет прогона, а изменил его выбор — «утверждено → итог». */
+const midWorkValue = (brief: DecisionBrief, f: Forecast): string | null => {
+  const approved = midWorkBudget(brief);
+  if (approved === undefined) return null;
+  const was = moneySpan(approved.target, approved.max);
+  return approved.target === f.target && approved.max === f.max ? was : `${was} → ${moneySpan(f.target, f.max)}`;
+};
+
 /** Кнопка бюджета раскрывает разбивку и в отвеченном брифе: там она показывает снимок на момент отправки. */
 function BudgetButton({ view }: { view: View }) {
   const locale = useLocale();
@@ -228,7 +236,7 @@ function BudgetButton({ view }: { view: View }) {
   const own = ownBudgetText(view.draft.budget, locale);
   const planned = plannedMinutes(f);
   const open = view.expanded === BUDGET_PANEL;
-  const value = own ?? `${money(f.target)} · ${t.budget.upTo} ${money(f.max)}`;
+  const value = own ?? midWorkValue(view.brief, f) ?? `${money(f.target)} · ${t.budget.upTo} ${money(f.max)}`;
   return (
     <button
       type="button"
@@ -248,9 +256,12 @@ function BudgetButton({ view }: { view: View }) {
 /** Деньги строки разбивки со знаком; неизвестные — прочерк. */
 const signedMoney = (n: number | null): string => (n === null ? "—" : `${n < 0 ? "–" : "+"}${money(Math.abs(n))}`);
 
-/** Время строки разбивки: потраченное на планирование — без знака, добавка — со знаком; неизвестное — пусто. */
-const lineMinutes = (minutes: number | null, spent: boolean, locale: Locale): string =>
-  minutes === null ? "" : spent ? minutesText(minutes, locale) : `${minutes < 0 ? "–" : "+"}${minutesText(Math.abs(minutes), locale)}`;
+/** Время строки разбивки: потраченное на планирование и основа итога — без знака, добавка — со знаком; неизвестное — пусто. */
+const lineMinutes = (minutes: number | null, plain: boolean, locale: Locale): string =>
+  minutes === null ? "" : plain ? minutesText(minutes, locale) : `${minutes < 0 ? "–" : "+"}${minutesText(Math.abs(minutes), locale)}`;
+
+/** Деньги строки разбивки: основа итога — без знака, добавка — со знаком. */
+const lineMoney = (n: number | null, base: boolean): string => (base && n !== null ? money(n) : signedMoney(n));
 
 function BudgetPanel({ view }: { view: View }) {
   const locale = useLocale();
@@ -277,17 +288,20 @@ function BudgetPanel({ view }: { view: View }) {
         <tbody>
           {f.lines.map((l, i) => {
             const spent = i < spentLines(f);
+            const base = l.base === true;
+            const note = spent ? t.brief.spent : l.note;
             return (
               <tr key={`${l.label}-${i}`} className="border-t border-border/40">
                 <td className="px-3 py-1.5">
-                  {l.label} <span className="text-muted-foreground">· {spent ? t.brief.spent : l.note}</span>
+                  {l.label}
+                  {note !== "" && <span className="text-muted-foreground"> · {note}</span>}
                 </td>
-                <td className={num}>{lineMinutes(l.minutes, spent, locale)}</td>
+                <td className={num}>{lineMinutes(l.minutes, spent || base, locale)}</td>
                 <td className={num}>
                   <RiskText risk={l.risk} />
                 </td>
-                <td className={num}>{signedMoney(l.target)}</td>
-                <td className={num}>{signedMoney(l.max)}</td>
+                <td className={num}>{lineMoney(l.target, base)}</td>
+                <td className={num}>{lineMoney(l.max, base)}</td>
               </tr>
             );
           })}
