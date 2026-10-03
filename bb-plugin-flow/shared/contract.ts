@@ -228,14 +228,21 @@ export const workStageSchema = z
     if (!uniqueIds(s.executors)) ctx.addIssue({ code: "custom", message: "executor ids must be unique within a stage", path: ["executors"] });
   });
 
-/** Шаблон этапа — этап целиком без места в flow: без id и владельца. Закладка строки кладёт его в меню «Добавить этап». */
-export const stageTemplateSchema = z.object({
+const stageTemplateFields = z.object({
   kind: z.enum(STAGE_KINDS).optional(),
   skill: z.string(),
   name: text,
   icon: text.optional(),
   executors: z.array(stageExecutorSchema),
   automation: stageAutomationSchema.optional(),
+});
+
+/**
+ * Шаблон этапа — этап целиком без места в flow: без id и владельца, с под-этапами в их порядке; `before` — под-этап
+ * стоит до владельца. Закладка строки кладёт его в меню «Добавить этап».
+ */
+export const stageTemplateSchema = stageTemplateFields.extend({
+  subStages: z.array(stageTemplateFields.extend({ before: z.literal(true).optional() })).optional(),
 });
 
 export const stageSettingsSchema = z

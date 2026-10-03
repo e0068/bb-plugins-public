@@ -12,8 +12,8 @@ import { executorGroups, skillGroups, skillShortName, type ExecutorGroup } from 
 import { setFlowStages } from "../core/flows";
 import { stageLabel } from "../core/stages";
 import { executionOf, withExecutor, withoutWidget } from "../core/stage-execution";
-import { dropStage, linkApart, ownerOf, removeStage, stageNumbers, type DropZone } from "../core/sub-stages";
-import { isTemplateSaved, removeTemplate, saveTemplate, stageFromTemplate } from "../core/stage-templates";
+import { dropStage, ownerOf, removeStage, stageApart, stageNumbers, type DropZone } from "../core/sub-stages";
+import { isTemplateSaved, removeTemplate, saveTemplate, stagesFromTemplate } from "../core/stage-templates";
 import { FieldOverlay, overlayItem, useFieldOverlay } from "../components/ui/field-overlay";
 import { Button } from "../components/ui/button";
 import { Icon } from "../components/ui/icon";
@@ -406,8 +406,8 @@ function ExecutionCell({ stage, stages, catalog }: { stage: WorkStage; stages: r
  * левее креста; узкая — закладка под крестом, а средние ячейки занимают обе строки сетки, чтобы она встала вплотную.
  */
 const rowGrid = "grid grid-cols-[46px_minmax(0,1fr)_28px] items-start gap-2 @[44rem]:grid-cols-[46px_minmax(0,1fr)_28px_28px]";
-/** Отступ над краем связки: 7 px и 1 px зазора таблицы — 8 px; угол у края скругляется. */
-const linkGap = "mt-[7px] rounded-t-lg";
+/** Отступ над этапом верхнего уровня — отдельным или связкой: 3 px и 1 px зазора таблицы — 4 px; угол у края скругляется. */
+const stageGap = "mt-[3px] rounded-t-lg";
 
 /**
  * Средние ячейки — навык или вид, название, исполнение. Стоят в ряд, пока каждой хватает её основы, и переносятся
@@ -517,10 +517,10 @@ function DropHighlight({ place }: { place: RowPlace }) {
 }
 
 /**
- * Строка таблицы: номер с ручкой, средние ячейки строки, крест; поверх — подсветка перетаскивания. На краю связки строка
- * отходит от соседней на 8 px (7 px отступа и 1 px зазора таблицы) и скругляет угол.
+ * Строка таблицы: номер с ручкой, средние ячейки строки, закладка, крест; поверх — подсветка перетаскивания. На краю этапа
+ * верхнего уровня — отдельного или связки — строка отходит от соседней на 4 px и скругляет угол.
  */
-function RowShell({ stage, index, place, dragging, onGrab, children }: Pick<RowProps, "stage" | "index" | "place" | "dragging" | "onGrab"> & { children: ReactNode }) {
+function RowShell({ stage, index, stages, place, dragging, onGrab, children }: Pick<RowProps, "stage" | "index" | "stages" | "place" | "dragging" | "onGrab"> & { children: ReactNode }) {
   const t = useMessages();
   return (
     <div
@@ -528,31 +528,37 @@ function RowShell({ stage, index, place, dragging, onGrab, children }: Pick<RowP
       aria-label={t.settings.stage(index + 1)}
       data-stage-row={stage.id}
       {...(place.drop === null ? {} : { "data-drop": place.drop })}
-      className={cn("group relative", rowGrid, "bg-surface-recessed-solid py-2 pl-1 pr-2", place.apart && linkGap, place.edge && "rounded-b-lg", dragging && "opacity-40")}
+      className={cn("group relative", rowGrid, "bg-surface-recessed-solid py-2 pl-1 pr-2", place.apart && stageGap, place.edge && "rounded-b-lg", dragging && "opacity-40")}
     >
       <StageLead stage={stage} place={place} dragging={dragging} onGrab={onGrab} />
       {children}
-      <SaveTemplate stage={stage} />
+      {place.owner === null ? <SaveTemplate stage={stage} stages={stages} /> : <span role="cell" className={templateCell} />}
       <DeleteStage stage={stage} />
       <DropHighlight place={place} />
     </div>
   );
 }
 
-/** Закладка строки: этап целиком — шаблоном в меню «Добавить этап»; сохранённый — закладка закрашена и недоступна. */
-function SaveTemplate({ stage }: { stage: WorkStage }) {
+/** Клетка закладки: на узкой строке — под крестом, на широкой — левее него. */
+const templateCell = "col-start-3 row-start-2 @[44rem]:col-start-auto @[44rem]:row-start-auto";
+
+/**
+ * Закладка строки этапа верхнего уровня: этап целиком, с под-этапами, — шаблоном в меню «Добавить этап»; у под-этапа
+ * закладки нет. Сохранённый — закладка закрашена и недоступна.
+ */
+function SaveTemplate({ stage, stages }: { stage: WorkStage; stages: readonly WorkStage[] }) {
   const t = useMessages();
   const templates = useStageTemplates();
-  const saved = isTemplateSaved(templates, stage);
+  const saved = isTemplateSaved(templates, stages, stage);
   return (
-    <span role="cell" className="col-start-3 row-start-2 @[44rem]:col-start-auto @[44rem]:row-start-auto">
+    <span role="cell" className={templateCell}>
       <button
         type="button"
         aria-label={t.settings.saveTemplate}
         aria-description={saved ? t.settings.templateSaved : undefined}
         title={saved ? t.settings.templateSaved : t.settings.saveTemplate}
         disabled={saved}
-        onClick={() => updateFlowSettings((s) => ({ ...s, stageTemplates: [...saveTemplate(s.stageTemplates ?? [], stage)] }))}
+        onClick={() => updateFlowSettings((s) => ({ ...s, stageTemplates: [...saveTemplate(s.stageTemplates ?? [], stages, stage)] }))}
         className={cn(square, "text-muted-foreground hover:bg-state-hover hover:text-foreground disabled:cursor-default disabled:text-foreground disabled:hover:bg-transparent")}
       >
         <Icon name="Bookmark" aria-hidden="true" className={cn("size-3.5", saved && "fill-current")} />
@@ -583,7 +589,7 @@ type DropMark = "top" | "bottom" | "whole";
 
 /**
  * Место строки в таблице. `number` — номер этапа верхнего уровня, у под-этапа его нет, а `owner` — название владельца.
- * `apart` — строка начинает связку или первой идёт после неё и отходит от строки выше; `edge` — за строкой такой отступ.
+ * `apart` — строка начинает этап верхнего уровня, отдельный или связку, и отходит от строки выше; `edge` — за строкой такой отступ.
  * `drop` и `dropLabel` — подсветка перетаскивания.
  */
 type RowPlace = { number: number | null; owner: string | null; apart: boolean; edge: boolean; drop: DropMark | null; dropLabel: string | null };
@@ -609,7 +615,7 @@ function StageRow({ stage, index, stages, catalog, place, dragging, onGrab }: Ro
   const { name, change, flush } = useStageName(stage);
   const execution = executionOf(stage);
   return (
-    <RowShell stage={stage} index={index} place={place} dragging={dragging} onGrab={onGrab}>
+    <RowShell stage={stage} index={index} stages={stages} place={place} dragging={dragging} onGrab={onGrab}>
       <StageCells>
         {place.owner !== null ? (
           // Под-этап без названия: на широкой таблице клетка стоит пустой, чтобы колонки не съехали; на узкой её нет.
@@ -653,7 +659,7 @@ const focusName = (id: string) =>
 
 /**
  * «Добавить этап»: без шаблонов — сразу пустой этап в конец таблицы; с шаблонами — меню из пустого этапа и сохранённых
- * шаблонов, у каждого крест. Этап из шаблона встаёт в конец таким, каким его сохранили.
+ * шаблонов, у каждого крест. Этап из шаблона встаёт в конец таким, каким его сохранили, — вместе с под-этапами.
  */
 function AddStageButton() {
   const t = useMessages();
@@ -662,17 +668,18 @@ function AddStageButton() {
   const [open, setOpen] = useState(false);
   const close = () => setOpen(false);
   const { root } = useFieldOverlay(open, close);
-  const add = (stage: WorkStage) => {
-    update((stages) => [...stages, stage]);
+  const add = (added: readonly WorkStage[]) => {
+    update((stages) => [...stages, ...added]);
     close();
-    focusName(stage.id);
+    const owner = added.find((stage) => stage.parent === undefined);
+    if (owner !== undefined) focusName(owner.id);
   };
   // Убран последний шаблон — меню не из чего собирать: оно закрывается, и кнопка снова сразу добавляет пустой этап.
   const remove = (index: number) => {
     if (templates.length === 1) close();
     updateFlowSettings((s) => ({ ...s, stageTemplates: [...removeTemplate(s.stageTemplates ?? [], index)] }));
   };
-  const empty = () => add({ id: newStageId(), kind: "skill", skill: "", name: t.settings.newStage, executors: [] });
+  const empty = () => add([{ id: newStageId(), kind: "skill", skill: "", name: t.settings.newStage, executors: [] }]);
   return (
     <div ref={root} className="relative">
       <Button variant="secondary" size="sm" aria-expanded={templates.length > 0 ? open : undefined} onClick={() => (templates.length === 0 ? empty() : setOpen(!open))}>
@@ -690,7 +697,7 @@ function AddStageButton() {
             const name = template.name;
             return (
               <div key={`${i}-${name}`} className="flex items-center gap-0.5">
-                <button type="button" role="menuitem" title={name} onClick={() => add(stageFromTemplate(template, newStageId(), () => crypto.randomUUID()))} className={cn(overlayItem, "min-w-0 flex-1")}>
+                <button type="button" role="menuitem" title={name} onClick={() => add(stagesFromTemplate(template, newStageId, () => crypto.randomUUID()))} className={cn(overlayItem, "min-w-0 flex-1")}>
                   <StageGlyph icon={template.icon} fallback={stageIcon({ id: "", ...template })} className="size-3.5 shrink-0 text-muted-foreground" />
                   <span className="min-w-0 truncate">{name}</span>
                 </button>
@@ -792,8 +799,8 @@ function useRowPlaces(stages: readonly WorkStage[], dragged: string | null, hove
     return {
       number: numbers.get(stage.id) ?? null,
       owner: owner === null ? null : labelOf(owner),
-      apart: linkApart(stages, at),
-      edge: linkApart(stages, at + 1),
+      apart: stageApart(stages, at),
+      edge: stageApart(stages, at + 1),
       drop: marks[stage.id] ?? null,
       dropLabel: hover?.target === stage.id ? dropLabel : null,
     };

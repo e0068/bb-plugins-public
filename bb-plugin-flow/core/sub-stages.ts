@@ -29,12 +29,18 @@ export const isHeadingStage = (stages: readonly Linked[], stage: WorkStage): boo
 /** Владелец под-этапа; у этапа верхнего уровня — `null`. */
 export const ownerOf = (stages: readonly Linked[], id: string): string | null => stages.find((stage) => stage.id === id)?.parent ?? null;
 
-/** Связка этапа — владелец с под-этапами и его под-этапы, по id владельца; у этапа без под-этапов и за краем списка — `null`. */
-const linkOf = (stages: readonly Linked[], stage: Linked | undefined): string | null =>
-  stage === undefined ? null : (stage.parent ?? (stages.some((other) => other.parent === stage.id) ? stage.id : null));
+/** Этап верхнего уровня строки: владелец под-этапа или сам этап. */
+const unitOf = (stage: Linked): string => stage.parent ?? stage.id;
 
-/** Отходит ли строка `at` от строки выше: на границе связки; `at` за концом списка — отходит ли то, что идёт после него. */
-export const linkApart = (stages: readonly Linked[], at: number): boolean => linkOf(stages, stages[at]) !== (at === 0 ? null : linkOf(stages, stages[at - 1]));
+/**
+ * Отходит ли строка `at` от строки выше: на границе этапов верхнего уровня — отдельного этапа или связки с под-этапами.
+ * Первая строка и место за концом списка не отходят: их край держит сама таблица.
+ */
+export const stageApart = (stages: readonly Linked[], at: number): boolean => {
+  const row = stages[at];
+  const above = stages[at - 1];
+  return row !== undefined && above !== undefined && unitOf(row) !== unitOf(above);
+};
 
 /** Какие этапы меняет одна галочка: владелец — всю связку; снятый под-этап — себя; возвращённый — себя и владельца. */
 export const runCascade = (stages: readonly Linked[], id: string, run: boolean): string[] => {
