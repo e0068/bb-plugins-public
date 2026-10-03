@@ -207,6 +207,7 @@ export const en: Messages = {
     automation: "Automation",
   },
   steps: {
+    "bb.rename-thread": "Rename the thread",
     "git.commit": "Commit",
     "git.fast-forward": "FF Branch ← Main",
     "git.create-pr": "Open a PR",

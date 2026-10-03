@@ -47,6 +47,7 @@ An automation is executed by Flow itself, without an agent: as soon as the agent
 
 | id | What it does |
 | --- | --- |
+| `bb.rename-thread` | Name the thread after its task (title without the key); fails while no task is linked |
 | `git.commit` | Commit |
 | `git.fast-forward` | Fast-forward the thread branch onto main |
 | `git.create-pr` | Open a PR via the GitHub API, without push |

@@ -36,8 +36,9 @@ export function choosePrTitle({
   return candidates.map(oneLine).find((candidate) => candidate !== "") ?? "";
 }
 
-// A commit message's subject is a single line; a thread name or a fallback
-// excerpt is not guaranteed to be one.
-function oneLine(value: string): string {
+// A name is a single line — a commit message's subject, a thread's title —
+// while a task title, a thread name or a fallback excerpt is not guaranteed
+// to be one.
+export function oneLine(value: string): string {
   return value.replace(/\s+/g, " ").trim();
 }

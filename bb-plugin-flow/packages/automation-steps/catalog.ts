@@ -9,9 +9,12 @@
  * и мёрджит, проходит его второй раз перед мёрджем — отдельным нажатием
  * «Merge» или своим шагом в цепочке Flow: за время проверок версию мог
  * занять соседний PR. Шаг обновления плагинов идёт после мёрджа: он
- * переводит плагины на смёрдженный код.
+ * переводит плагины на смёрдженный код. Переименование треда стоит первым:
+ * ему нужна только задача, привязанная к треду, и тред получает её название
+ * раньше, чем владелец начнёт искать его в списке.
  */
 export const STEP_IDS = [
+  "bb.rename-thread",
   "git.commit",
   "git.fast-forward",
   "git.create-pr",
@@ -29,6 +32,7 @@ export const STEP_IDS = [
 export type StepId = (typeof STEP_IDS)[number];
 
 export const STEP_LABELS: Readonly<Record<StepId, { readonly en: string; readonly ru: string }>> = {
+  "bb.rename-thread": { en: "Rename the thread", ru: "Переименовать тред" },
   "git.commit": { en: "Commit", ru: "Commit" },
   "git.fast-forward": { en: "FF Branch ← Main", ru: "FF Branch ← Main" },
   "git.create-pr": { en: "Open a PR", ru: "Открыть PR" },
