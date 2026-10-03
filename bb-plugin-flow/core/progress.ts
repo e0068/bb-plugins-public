@@ -35,6 +35,9 @@ const waitingOf = (brief: DecisionBrief): string[] => (brief.outcome !== undefin
 /** Меняет ли бриф прогресс: вопросы посреди работы без этапов и без итога его не трогают. */
 export const touchesProgress = (brief: DecisionBrief): boolean => brief.setup?.stages !== undefined || brief.outcome !== undefined;
 
+/** Меняет ли ответ прогресс: бриф с этапами или итогом — да; уточнение запущенной работы — только своим прогнозом, новым планом прогона. */
+export const answerMovesProgress = (brief: DecisionBrief, planned: Planned | undefined): boolean => touchesProgress(brief) || (brief.launched === true && planned !== undefined);
+
 /** Бриф агента: сделанные по отчёту получают конец и ссылки, ждущие — начало. */
 export const onBrief = (progress: FlowProgress, brief: DecisionBrief, at: string): FlowProgress => {
   if (!touchesProgress(brief)) return progress;
@@ -51,7 +54,9 @@ export const onBrief = (progress: FlowProgress, brief: DecisionBrief, at: string
  * ждёт нового прохода: иначе доработка вернула бы этапу выбор прошлого прохода.
  */
 export const onAnswer = (progress: FlowProgress, brief: DecisionBrief, answer: DecisionAnswer, at: string, planned?: Planned): FlowProgress => {
-  if (!touchesProgress(brief)) return progress;
+  if (!answerMovesProgress(brief, planned)) return progress;
+  // Уточнение посреди работы этапов не трогает, но его прогноз — новый итог прогона: полоса показывает его.
+  if (!touchesProgress(brief)) return planned === undefined ? progress : { ...progress, planned: { ...planned } };
   const own = waitingOf(brief).filter((id) => progress.waiting.includes(id));
   // Комментарий Демонстрацию не закрывает; переход тоже, хотя до прогона он не доходит: прогон после него снят.
   const verdict = demoVerdict(answer);

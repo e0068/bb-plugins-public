@@ -8,7 +8,7 @@ import { z } from "zod";
 import { idleNote, idleStages, isActionStage } from "../core/automation-run";
 import { undoDue } from "../core/automation-undo";
 import { afterMark, markReply, returnedNote, startFact, type StartFact } from "../core/mark-report";
-import { carriedBy, carrierOf, EMPTY_PROGRESS, forHandoff, onAnswer, onBrief, onMark, pendingActive, progressView, recounted, reopen, isAhead, recountWindows, toggleStageInRun, touchesProgress, withActive } from "../core/progress";
+import { carriedBy, carrierOf, EMPTY_PROGRESS, forHandoff, onAnswer, onBrief, onMark, pendingActive, progressView, recounted, reopen, isAhead, recountWindows, toggleStageInRun, touchesProgress, answerMovesProgress, withActive } from "../core/progress";
 import { historyOrder } from "../core/run-history";
 import { isRunFinished, runSummary } from "../core/run-summary";
 import { isTaskFile, taskTitle } from "../core/run-tasks";
@@ -173,14 +173,14 @@ export const createProgress = (kv: PluginKvStorage, options: ProgressOptions = {
     run,
     update,
     annotate: (threadId, change) => write(threadId, change, false),
-    // Бриф без этапов и без итога — вопросы посреди работы: прогресса он не меняет. Бриф треда, отдавшего работу, — тоже:
-    // прогон двигает только его носитель.
+    // Бриф без этапов и без итога — вопросы посреди работы: этапов он не меняет, а его ответ с прогнозом меняет только план.
+    // Бриф треда, отдавшего работу, прогресса не трогает: прогон двигает только его носитель.
     recordBrief: async (brief, at) => {
       if (!touchesProgress(brief) || (await carrier(brief.threadId)) !== brief.threadId) return;
       await update(brief.threadId, (p) => onBrief(p, brief, at));
     },
     recordAnswer: async (brief, answer, at, planned) => {
-      if (!touchesProgress(brief) || (await get(brief.threadId)) === null || (await carrier(brief.threadId)) !== brief.threadId) return;
+      if (!answerMovesProgress(brief, planned) || (await get(brief.threadId)) === null || (await carrier(brief.threadId)) !== brief.threadId) return;
       await update(brief.threadId, (p) => onAnswer(p, brief, answer, at, planned));
     },
     handOver: (fromThreadId, toThreadId, rerun) =>
