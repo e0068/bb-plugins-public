@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { act, cleanup, fireEvent, waitFor, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import type { PluginMessageDirectiveProps } from "@get-bb/plugin-sdk/app";
 import { loadPluginApp, renderSlot } from "@get-bb/plugin-sdk/testing/app";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -145,5 +145,56 @@ describe("картинки в ответе", () => {
     fireEvent.click(slot.getByRole("button", { name: /Отправить бриф/ }));
     await waitFor(() => expect(sent).toHaveLength(1));
     expect(sent[0]!.images?.map((i) => i.mimeType)).toEqual(["image/png"]);
+  });
+});
+
+describe("картинка внутри своего поля", () => {
+  const png = () => new File([new Uint8Array([137, 80, 78, 71])], "shot.png", { type: "image/png" });
+  const paste = (field: HTMLElement, file: File) =>
+    act(() => {
+      fireEvent.paste(field, { clipboardData: { items: [{ kind: "file", type: file.type, getAsFile: () => file }], files: [file], getData: () => "" } });
+    });
+  /** Рамка поля: строка ввода или пункт критерия, в котором поле стоит. */
+  const frame = (field: HTMLElement) => field.closest<HTMLElement>("[data-item-row]")!;
+
+  it("миниатюра стоит в рамке того поля, куда картинку вставили, и подписана чипом, как метка в тексте", async () => {
+    const { slot } = open();
+    const note = await slot.findByRole("textbox", { name: "Дополнить бриф" });
+    const item = slot.getByRole("textbox", { name: "Пункт 2" });
+    await paste(item, png());
+    const thumb = await waitFor(() => within(frame(item)).getByRole("img", { name: "картинка 1" }));
+    expect(within(frame(note)).queryByRole("img")).toBeNull();
+    expect(thumb.closest("[data-field-image]")?.querySelector("[data-image-tag]")?.textContent).toBe("картинка 1");
+  });
+
+  it("тап по миниатюре открывает картинку на весь экран, Esc закрывает", async () => {
+    const { slot } = open();
+    const note = await slot.findByRole("textbox", { name: "Дополнить бриф" });
+    await paste(note, png());
+    fireEvent.click(await waitFor(() => slot.getByRole("button", { name: "Открыть картинку 1" })));
+    const viewer = await screen.findByRole("dialog", { name: "картинка 1" });
+    expect(within(viewer).getByRole("img", { name: "картинка 1" })).toBeTruthy();
+    fireEvent.keyDown(viewer, { key: "Escape" });
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  });
+
+  it("крестик на миниатюре убирает и картинку, и её метку из текста", async () => {
+    const { slot, sent } = open();
+    const note = (await slot.findByRole("textbox", { name: "Дополнить бриф" })) as HTMLTextAreaElement;
+    await paste(note, png());
+    fireEvent.change(note, { target: { value: "[картинка 1] шапка съехала" } });
+    fireEvent.click(await waitFor(() => slot.getByRole("button", { name: "Убрать картинку 1" })));
+    expect(note.value).toBe("шапка съехала");
+    fireEvent.click(within(slot.getByRole("group", { name: "Как сделать?" })).getByRole("button", { name: /Директивой/ }));
+    fireEvent.click(slot.getByRole("button", { name: /Отправить бриф/ }));
+    await waitFor(() => expect(sent).toHaveLength(1));
+    expect(sent[0]!.images).toBeUndefined();
+  });
+
+  it("общей полосы картинок под брифом нет: картинка видна один раз, в своём поле", async () => {
+    const { slot } = open();
+    const note = await slot.findByRole("textbox", { name: "Дополнить бриф" });
+    await paste(note, png());
+    await waitFor(() => expect(slot.getAllByRole("img", { name: "картинка 1" })).toHaveLength(1));
   });
 });
