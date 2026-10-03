@@ -9,11 +9,13 @@ import type { StepId } from "./catalog";
 import { type ParentDelivery, parentNote } from "./core/parent-delivery";
 import type { BumpLevel } from "./core/plugin-version-bump";
 import { classifyFailure, RETRY_DELAYS_MS } from "./core/retry";
+import { threadTitleOf } from "./core/thread-title";
 import { mergedPullLinks, openedPullOutcome, taskLink, withLinks } from "./core/step-links";
 import { bumpOutcome, reinstallOutcome, stepFailure, type StepOutcome } from "./core/step-outcomes";
 import { bbCliClient } from "./wiring/bb-cli-client";
 import type { CliPorts } from "./wiring/bb-cli-run";
 import type { CatchUpOutcome, ParentDeliveryOutcome } from "./wiring/catch-up";
+import { findLinkedTask } from "./wiring/linked-task";
 import { markLinkedTasksStatus, splitTaskStatusResults } from "./wiring/mark-task-status";
 import type { PluginsPort } from "./wiring/plugin-reinstall";
 import {
@@ -181,6 +183,24 @@ export function createSteps(ports: StepPorts): Steps {
     return status === "done" ? withLinks(outcome, moved) : outcome;
   };
 
+  // Тред получает название своей задачи. Задачи нет — шаг падает, а не
+  // проходит молча: владелец привязывает задачу и жмёт «Повторить».
+  const renameThread = async (threadId: string): Promise<StepOutcome> => {
+    const lookup = await findLinkedTask(cli(), threadId);
+    switch (lookup.kind) {
+      case "unavailable":
+        return failed(`The thread's task could not be read: ${lookup.reason}`);
+      case "none":
+        return failed("No task is linked to the thread. Link a task, then retry.");
+      case "found": {
+        const title = threadTitleOf(lookup.task);
+        if (title === null) return failed(`Task ${lookup.task.key} has no title to name the thread with.`);
+        await sdk.threads.update({ threadId, title });
+        return done(title);
+      }
+    }
+  };
+
   // Дочерний тред, чья база — ветка родителя, сдаёт работу в дерево родителя
   // (core/parent-delivery.ts): PR и его мёрдж становятся слиянием туда, а
   // бамп, подтягивание main и обновление плагинов — делом PR родителя.
@@ -218,6 +238,7 @@ export function createSteps(ports: StepPorts): Steps {
     );
 
   const steps: Steps = {
+    "bb.rename-thread": guarded(renameThread),
     // Чистое дерево — не провал: коммитить нечего, цепочка идёт дальше.
     "git.commit": guarded(async (threadId) => {
       const environmentId = await environmentOf(threadId);
