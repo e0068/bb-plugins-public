@@ -512,6 +512,12 @@ function AnswerBlock({ brief, view, roots, footer, below }: { brief: DecisionBri
 // ——— «Готово, когда» ———
 
 const itemText = "min-w-0 flex-1 whitespace-pre-wrap break-words py-2 text-sm leading-relaxed";
+/**
+ * Текст пункта и его стоимость. В узком брифе стоимость встаёт строкой над текстом, а текст идёт во всю ширину: рядом
+ * со стоимостью он сжимался в узкую колонку. В широком — стоимость справа от текста.
+ */
+const criterionHead = "flex flex-col-reverse @[31.5rem]:flex-row @[31.5rem]:flex-wrap @[31.5rem]:items-baseline @[31.5rem]:gap-x-3";
+const criterionMeta = "-mb-1 pt-2 @[31.5rem]:mb-0 @[31.5rem]:pt-0";
 const itemButton = "flex h-7 shrink-0 items-center justify-center rounded-md px-1.5 text-xs text-muted-foreground hover:bg-state-hover hover:text-foreground disabled:cursor-default";
 
 /**
@@ -622,11 +628,11 @@ function CriterionRow({ item, index, view, byOption }: { item: Criterion; index:
     return (
       <ItemRow mark={String(n)}>
         <span className="flex min-w-0 flex-1 flex-col">
-          <span className="flex flex-wrap items-baseline gap-x-3">
+          <span className={criterionHead}>
             <span className={cn(itemText, removed && "text-muted-foreground line-through")}>
               <LinkedText text={removed || change !== undefined ? title : text} />
             </span>
-            {!removed && <AddMeta add={add} />}
+            {!removed && <AddMeta add={add} className={criterionMeta} />}
           </span>
           {change !== undefined && !removed && (
             <Delta
@@ -666,7 +672,7 @@ function CriterionRow({ item, index, view, byOption }: { item: Criterion; index:
       ) : (
         <>
         <span className="flex min-w-0 flex-1 flex-col">
-          <span className="flex flex-wrap items-baseline gap-x-3">
+          <span className={criterionHead}>
             {change === undefined ? (
               field(t.brief.item(n))
             ) : (
@@ -674,7 +680,7 @@ function CriterionRow({ item, index, view, byOption }: { item: Criterion; index:
                 <LinkedText text={title} />
               </span>
             )}
-            <AddMeta add={add} />
+            <AddMeta add={add} className={criterionMeta} />
           </span>
           {change !== undefined && <Delta before={change.before} after={field(t.brief.itemAfter(n), "w-full py-0")} />}
         </span>
