@@ -11,7 +11,7 @@ import { criterionEditable, money, plannedMinutes, recommendedForecast } from ".
 import { FLOW_RULE, SELF_ONLY_RULE, isAutomationStage, isStageCarryKey, reportIssues, stageInstructions, withStepResults } from "../core/stages";
 import { isHeadingStage } from "../core/sub-stages";
 import { stageKindOf, type BuiltinKind } from "../lib/stage-constants";
-import { askDecisionParamsSchema, type AskDecisionParams, type Criterion, type DecisionBrief, type Planning, type RestoredDraft, type StageSettings } from "../shared/contract";
+import { FORK_ZERO_RULE, OPTION_PRICE_RULE, askDecisionParamsSchema, type AskDecisionParams, type Criterion, type DecisionBrief, type Planning, type RestoredDraft, type StageSettings } from "../shared/contract";
 import type { ProgressStore } from "./progress";
 import { KV_VALUE_LIMIT_BYTES, type DecisionStore } from "./store";
 import type { FlowTrigger } from "./automations";
@@ -24,30 +24,29 @@ export const ASK_INSTRUCTIONS = `${RULE}
 
 A brief has two parts.
 
-scope — what you understood: the minimal work as a nested list; every brief before launch starts with it.
+scope — what you understood: the minimal work, each fork at its simplest answer, as a nested list; every brief before launch starts with it.
 
-setup — the first part: no questions, you show what there is and mark what you recommend.
+setup — the first part: no questions; show what there is and mark what you recommend.
 - criteria — "Done when", one checkable statement per item: { text, add } or { text, before, after, add }, scope items first. add { target, max, risk, minutes } — what one agent on the current model and effort spends, target and minutes > 0; kept items are the base.
 - stages (setup.stages) — all stages of the flow, in order (Flow instructions): { id, state (todo, done), results, recommended, executor, share, factors }. A done skill stage needs results [{ label, target }], label = file name or task key. recommended: true — into the run. executor — self or the stage's agent:…/workflow:…. share { percent, risk } on every todo skill stage — its part of the scope (the work itself 100, a spec ~15); factors { <executor id>: { factor, risk } } — multiplier > 0, you are 1. No add or adds on stages.
-- do not send artifacts, executor, checker, testing, budgetTarget or budgetMax.
 
-The budget forecast: scope = base + chosen options; a run stage costs scope × percent × factor; without a 100 stage the scope counts once, stages on top. Risk: integer, 1r ≈ 10% chance a blocking defect reaches the owner; implementation raises it, spec, plan, prototype, review and testing lower it (scale: flow skill). Refused before launch: no scope, unpriced item, skill stage without share, $0 forecast.
+The budget forecast: scope = base + chosen options; a run stage costs scope × percent × factor; without a 100 stage the scope counts once, stages on top. Risk: integer, 1r ≈ 10% chance a blocking defect reaches the owner; implementation raises it, spec, plan, prototype, review and testing lower it (scale: flow skill). Refused before launch: no scope, unpriced item, skill stage without share, fork without 0, $0 forecast.
 
 questions — the second part; an id does not start with "setup.".
-- fork — one answer, the choice changes the outcome. Every option requires description and add — what it adds to the scope, from zero (or the old cost plus risk XS…XXL). At most one recommended.
+- fork — one answer, the choice changes the outcome. Every option requires description and add (or old cost + risk XS…XXL). The simplest option costs 0, its work in setup.criteria; others: add = price of own criteria ≥ 0, replaced items in removes. At most one recommended.
 - pick — several answers. Every option requires description; add if it adds work.
 - confirm — "did I get this right" on what scope leaves open: one "Yes"; context — not scope retold.
-hides on an option — ids of questions below it that lose meaning when it is chosen: the owner does not see them.
+hides on an option — ids of questions below that lose meaning when it is chosen; the owner does not see them.
 criteria on an option — items it adds while chosen, required if priced; an item of an option the owner drops themselves stays in the list struck through, so an item that depends on one answer goes on the option, not into setup.criteria; removes — setup.criteria indexes it strikes then.
-The owner can answer any question in their own words.
+The owner may answer any question in own words.
 
-outcome — a demo of running work instead of setup: { stage (a demo stage id), final, next (only when not final), done ([text] — closed since the previous demo), pending ([{ text, why }]), notes, tasks ([{ key, done, note }]), results (at least one: { label, target } — a file, path or URL; { label, command } — a command the owner runs with one click), documentsOnly (only when nothing but documents changed since the previous demo) }. Unless documentsOnly, results hold a live one: an http(s) URL or a command.
+outcome — a demo of running work instead of setup: { stage (a demo stage id), final, next (only when not final), done ([text] — closed since the previous demo), pending ([{ text, why }]), notes, tasks ([{ key, done, note }]), results (at least one: { label, target } — a file, path or URL; { label, command } — a command run in one click), documentsOnly (only documents changed since the previous demo) }. Unless documentsOnly, results hold a live one: an http(s) URL or a command.
 
-After the owner launches work (an answered brief with a stage in the run), setup.stages is accepted only while a stage selection or criteria stage in it is todo, setup.criteria only while a criteria stage is todo.
+After launch (an answered brief with a stage in the run), setup.stages is accepted only while a stage selection or criteria stage is todo, setup.criteria only while a criteria stage is todo.
 
 The owner also chooses where the work runs; a new thread takes the answer over and this thread stops.
 
-Brief kind: brief — you wait for the answer; clarify — one yesno question with "Yes" and "No", no setup, and you continue on your own understanding.
+Brief kind: brief — you wait for the answer; clarify — one yesno question with "Yes" and "No", no setup; you continue on your own understanding.
 
 After the call, paste the directive line from the result into your reply as a standalone line, without quotes or backticks. For a brief, end the turn right after it. The answer arrives as "Brief … —" in the owner's language.
 
@@ -153,6 +152,7 @@ const baseIssues = (params: AskDecisionParams, launched: boolean, stages: StageS
     ...(unpriced.length === 0 ? [] : [`setup.criteria items ${unpriced.join(", ")} have no price: each item needs add with target and minutes above zero — what one agent on the current model and effort spends on it`]),
     ...(unshared.length === 0 ? [] : [`stages ${unshared.join(", ")} have no share: a todo skill stage sends share { percent, risk } — implementation by you is 100`]),
     ...bareOptionIssues(params.questions),
+    ...zeroOptionIssues(params.questions),
   ];
 };
 
@@ -167,6 +167,17 @@ const bareOptionIssues = (questions: AskDecisionParams["questions"]): string[] =
     : [
         `options ${bare.join(", ")} add work without done-when items: an option priced above zero sends criteria — the items it adds while chosen; move the items that depend on this answer from setup.criteria onto the option`,
       ];
+};
+
+/**
+ * Развилка до запуска решает, что войдёт в базу: самый простой её ответ стоит 0 и уже лежит в setup.criteria, остальные —
+ * добавка сверх него. Без варианта за 0 в базе лежит ответ богаче, и цены вариантов — разница с ним (BBPL-531).
+ * Посреди работы база — утверждённый объём, и каждый ответ развилки вправе быть добавкой к нему.
+ */
+const zeroOptionIssues = (questions: AskDecisionParams["questions"]): string[] => {
+  const free = (o: AskDecisionParams["questions"][number]["options"][number]) => o.add !== undefined && o.add.target === 0 && o.add.max === 0 && (o.add.minutes ?? 0) === 0;
+  const priced = questions.filter((q) => q.kind === "fork" && q.options.some((o) => o.add !== undefined) && !q.options.some(free)).map((q) => q.id);
+  return priced.length === 0 ? [] : [`forks ${priced.join(", ")} have no option for 0: ${FORK_ZERO_RULE}; ${OPTION_PRICE_RULE}`];
 };
 
 /** Прогноз по рекомендациям у брифа с базой: работа всегда стоит денег и времени, ноль значит, что в прогон не взято ничего. */
