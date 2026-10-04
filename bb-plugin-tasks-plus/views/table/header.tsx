@@ -4,10 +4,14 @@ import { Icon } from "@/components/ui/icon";
 import {
   DropdownMenu,
   DropdownMenuContent,
+  DropdownMenuCheckboxItem,
   DropdownMenuItem,
+  DropdownMenuLabel,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { DATE_FORMATS, type DateFormat } from "../../shared/enums.js";
+import type { ColumnDisplay } from "./column-display.js";
 import { ROW_FIELD_LABELS, type RowField } from "../common/row-field-preference.js";
 import { dropEdge } from "./columns.js";
 
@@ -29,7 +33,17 @@ export interface HeaderColumnState {
   sortable: boolean;
   /** Whether the column's width has been dragged away from its default. */
   widthChanged: boolean;
+  /** How a column of dates reads; null for a column with no dates. */
+  dateFormat: DateFormat | null;
+  /** Whether the column's icon shows; null for a column with no icon to switch. */
+  icon: boolean | null;
 }
+
+const DATE_FORMAT_LABELS: Record<DateFormat, string> = {
+  dateTime: "Date and time",
+  date: "Date",
+  relative: "Relative",
+};
 
 export interface HeaderActions {
   onSort: (column: RowField, direction: "asc" | "desc" | null) => void;
@@ -37,6 +51,7 @@ export interface HeaderActions {
   onHide: (column: RowField) => void;
   onMove: (column: RowField, toIndex: number) => void;
   onResize: (column: RowField, width: number | null) => void;
+  onDisplay: (column: RowField, patch: ColumnDisplay) => void;
 }
 
 /** A drag (reorder) only starts once the pointer has moved this far —
@@ -249,6 +264,33 @@ function HeaderCell({
                   Clear sort
                 </DropdownMenuItem>
               ) : null}
+            </>
+          ) : null}
+          {state.dateFormat !== null ? (
+            <>
+              <DropdownMenuSeparator />
+              <DropdownMenuLabel>Format</DropdownMenuLabel>
+              {/* Checked items, not a radio group: the menu's radio items draw nothing on a phone. */}
+              {DATE_FORMATS.map((format) => (
+                <DropdownMenuCheckboxItem
+                  key={format}
+                  checked={state.dateFormat === format}
+                  onCheckedChange={() => actions.onDisplay(state.column, { format })}
+                >
+                  {DATE_FORMAT_LABELS[format]}
+                </DropdownMenuCheckboxItem>
+              ))}
+            </>
+          ) : null}
+          {state.icon !== null ? (
+            <>
+              <DropdownMenuSeparator />
+              <DropdownMenuCheckboxItem
+                checked={state.icon}
+                onCheckedChange={(checked) => actions.onDisplay(state.column, { icon: checked === true })}
+              >
+                Show icon
+              </DropdownMenuCheckboxItem>
             </>
           ) : null}
           <DropdownMenuSeparator />

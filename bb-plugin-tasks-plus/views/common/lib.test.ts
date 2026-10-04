@@ -138,24 +138,13 @@ describe("formatDueDate", () => {
 describe("formatTimestamp", () => {
   const today = new Date(2026, 6, 15, 12, 0, 0);
 
-  it("shows the time for a timestamp on today's calendar day", () => {
-    const earlier = new Date(2026, 6, 15, 14, 34, 0);
-    expect(formatTimestamp(earlier.toISOString(), today)).toBe(
-      earlier.toLocaleTimeString("en-US", {
-        hour: "numeric",
-        minute: "2-digit",
-        hour12: false,
-      }),
-    );
+  it("always shows hours and minutes after the day, today included", () => {
+    expect(formatTimestamp(new Date(2026, 6, 15, 14, 34, 0).toISOString(), today)).toBe("Jul 15, 14:34");
+    expect(formatTimestamp(new Date(2026, 6, 14, 9, 5, 0).toISOString(), today)).toBe("Jul 14, 09:05");
   });
 
-  it("shows the date for a timestamp on an earlier day, omitting the current year", () => {
-    const yesterday = new Date(2026, 6, 14, 23, 59, 0);
-    const lastYear = new Date(2025, 0, 2, 0, 0, 0);
-    expect(formatTimestamp(yesterday.toISOString(), today)).toBe("Jul 14");
-    expect(formatTimestamp(lastYear.toISOString(), today)).toBe(
-      "Jan 2, 2025",
-    );
+  it("adds the year to a timestamp outside today's", () => {
+    expect(formatTimestamp(new Date(2025, 0, 2, 0, 0, 0).toISOString(), today)).toBe("Jan 2, 2025, 00:00");
   });
 
   it("returns an empty string for an unparsable timestamp", () => {

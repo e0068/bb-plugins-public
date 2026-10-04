@@ -27,7 +27,6 @@ import {
   TYPE_NONE_ICON,
   describeWorktreeOrigin,
   formatDateTime,
-  formatDueDate,
   isActiveThread,
 } from "../../components/task-meta.js";
 import { DispatchControl } from "./threads.js";
@@ -67,6 +66,7 @@ import { Input } from "@/components/ui/input";
 import { readDollars, readMinutes } from "../../shared/amounts.js";
 import { cn } from "@/lib/utils";
 import { labelFill } from "../common/label-fill.js";
+import { PlanDatePopover, type PlanDateKind } from "../common/plan-date-picker.js";
 
 export interface TaskPropertyUpdate {
   status?: TaskStatus;
@@ -93,14 +93,6 @@ export interface TaskPropertiesProps {
   labels: Label[] | undefined;
   threads: TaskThread[];
   onUpdate: (update: TaskPropertyUpdate) => void;
-}
-
-function localIsoDate(daysFromNow: number): string {
-  const date = new Date();
-  date.setDate(date.getDate() + daysFromNow);
-  const month = String(date.getMonth() + 1).padStart(2, "0");
-  const day = String(date.getDate()).padStart(2, "0");
-  return `${date.getFullYear()}-${month}-${day}`;
 }
 
 /**
@@ -354,29 +346,10 @@ function AmountInput({
   );
 }
 
-/**
- * The two plan dates differ only in field, icon and wording — so the
- * difference lives in this table, and the menu below has no branch on `kind`.
- */
-const PLAN_DATES = {
-  due: {
-    icon: "Clock",
-    label: "Due date",
-    timeLabel: "Due time",
-    placeholder: "Set due date",
-    remove: "Remove due date",
-    read: (task: Task) => task.dueDate,
-    write: (dueDate: string | null): TaskPropertyUpdate => ({ dueDate }),
-  },
-  start: {
-    icon: "Calendar",
-    label: "Start date",
-    timeLabel: "Start time",
-    placeholder: "Set start date",
-    remove: "Remove start date",
-    read: (task: Task) => task.startDate,
-    write: (startDate: string | null): TaskPropertyUpdate => ({ startDate }),
-  },
+/** The task's field behind each plan date picker. */
+const PLAN_DATE_FIELDS = {
+  start: { read: (task: Task) => task.startDate, write: (startDate: string | null): TaskPropertyUpdate => ({ startDate }) },
+  due: { read: (task: Task) => task.dueDate, write: (dueDate: string | null): TaskPropertyUpdate => ({ dueDate }) },
 } as const;
 
 function PlanDateMenu({
@@ -385,83 +358,19 @@ function PlanDateMenu({
   onUpdate,
   triggerClassName,
 }: {
-  kind: keyof typeof PLAN_DATES;
+  kind: PlanDateKind;
   task: Task;
   onUpdate: (update: TaskPropertyUpdate) => void;
   triggerClassName: string;
 }) {
-  const [open, setOpen] = useState(false);
-  const copy = PLAN_DATES[kind];
-  const value = copy.read(task);
-  // A plan date is a day, optionally with a time (shared/plan-date.ts): the
-  // day input sets the day and keeps the time, the time input the reverse.
-  const day = value?.slice(0, 10) ?? "";
-  const time = value?.slice(11) ?? "";
-  const withTime = (nextDay: string, nextTime: string) => (nextTime === "" ? nextDay : `${nextDay}T${nextTime}`);
-  const pick = (date: string | null) => {
-    onUpdate(copy.write(date));
-    setOpen(false);
-  };
+  const field = PLAN_DATE_FIELDS[kind];
   return (
-    <Popover open={open} onOpenChange={setOpen}>
-      <PopoverTrigger asChild>
-        <button type="button" className={triggerClassName}>
-          <Icon name={copy.icon} className="size-3.5 shrink-0" />
-          {value ? formatDueDate(value) : copy.placeholder}
-        </button>
-      </PopoverTrigger>
-      <PopoverContent align="start" className="w-52 p-2">
-        <div className="flex flex-col">
-          {(
-            [
-              ["Today", 0],
-              ["Tomorrow", 1],
-              ["Next week", 7],
-            ] as const
-          ).map(([label, days]) => (
-            <button
-              key={label}
-              type="button"
-              className="flex items-center justify-between rounded-sm px-2 py-1.5 text-left text-sm hover:bg-accent hover:text-accent-foreground"
-              onClick={() => pick(localIsoDate(days))}
-            >
-              {label}
-              <span className="text-xs text-muted-foreground">
-                {formatDueDate(localIsoDate(days))}
-              </span>
-            </button>
-          ))}
-          <input
-            type="date"
-            aria-label={copy.label}
-            className="mt-1 h-7 rounded-md border border-input bg-transparent px-2 text-sm text-foreground"
-            value={day}
-            onChange={(event) => {
-              if (event.target.value) pick(withTime(event.target.value, time));
-            }}
-          />
-          {day !== "" ? (
-            <input
-              type="time"
-              aria-label={copy.timeLabel}
-              className="mt-1 h-7 rounded-md border border-input bg-transparent px-2 text-sm text-foreground"
-              value={time}
-              onChange={(event) => onUpdate(copy.write(withTime(day, event.target.value)))}
-            />
-          ) : null}
-          {value ? (
-            <button
-              type="button"
-              className="mt-1 flex items-center gap-2 rounded-sm px-2 py-1.5 text-left text-sm text-muted-foreground hover:bg-accent hover:text-accent-foreground"
-              onClick={() => pick(null)}
-            >
-              <Icon name="X" className="size-3.5" />
-              {copy.remove}
-            </button>
-          ) : null}
-        </div>
-      </PopoverContent>
-    </Popover>
+    <PlanDatePopover
+      kind={kind}
+      value={field.read(task)}
+      onChange={(value) => onUpdate(field.write(value))}
+      triggerClassName={triggerClassName}
+    />
   );
 }
 

@@ -137,3 +137,56 @@ describe("plan date with a time", () => {
     expect(updateCalls[0]).toMatchObject({ dueDate: "2026-10-07T15:30" });
   });
 });
+
+describe("the plan date picker", () => {
+  function pickerRpc(startDate: string | null, updateCalls: Array<Record<string, unknown>>) {
+    let shown = { ...task, startDate };
+    return detailRpc(null, {
+      getTaskByKey: () => ({ task: shown }),
+      listTasks: (input: { parentTaskId?: string } | null) =>
+        input?.parentTaskId ? { tasks: [] } : { tasks: [shown] },
+      updateTask: (input: Record<string, unknown>) => {
+        updateCalls.push(input);
+        shown = { ...shown, ...input };
+        return { ok: true, task: shown };
+      },
+    });
+  }
+
+  const today = () => {
+    const now = new Date();
+    return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+  };
+
+  it("shows the time field before a day is set", async () => {
+    const slot = renderSlot(app.navPanels[0]!, { subPath: "task/TSK-5" }, { rpc: pickerRpc(null, []) });
+
+    fireEvent.click((await slot.findAllByRole("button", { name: /Set start date/ }))[0]!);
+
+    expect(await slot.findByLabelText("Start time")).toBeTruthy();
+  });
+
+  it("puts a time set before the day on today", async () => {
+    const updateCalls: Array<Record<string, unknown>> = [];
+    const slot = renderSlot(app.navPanels[0]!, { subPath: "task/TSK-5" }, { rpc: pickerRpc(null, updateCalls) });
+
+    fireEvent.click((await slot.findAllByRole("button", { name: /Set start date/ }))[0]!);
+    fireEvent.change(await slot.findByLabelText("Start time"), { target: { value: "09:00" } });
+
+    await waitFor(() => expect(updateCalls).toHaveLength(1));
+    expect(updateCalls[0]).toMatchObject({ startDate: `${today()}T09:00` });
+  });
+
+  it("stays open after a day is picked, so the time is set next", async () => {
+    const updateCalls: Array<Record<string, unknown>> = [];
+    const slot = renderSlot(app.navPanels[0]!, { subPath: "task/TSK-5" }, { rpc: pickerRpc(null, updateCalls) });
+
+    fireEvent.click((await slot.findAllByRole("button", { name: /Set start date/ }))[0]!);
+    fireEvent.change(await slot.findByLabelText("Start date"), { target: { value: "2026-10-07" } });
+    await waitFor(() => expect((slot.getByLabelText("Start date") as HTMLInputElement).value).toBe("2026-10-07"));
+    fireEvent.change(slot.getByLabelText("Start time"), { target: { value: "15:30" } });
+
+    await waitFor(() => expect(updateCalls).toHaveLength(2));
+    expect(updateCalls[1]).toMatchObject({ startDate: "2026-10-07T15:30" });
+  });
+});

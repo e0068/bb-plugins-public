@@ -57,6 +57,7 @@ import { Button } from "@/components/ui/button";
 import { Icon } from "@/components/ui/icon";
 import { cn } from "@/lib/utils";
 import { CheckboxField, DEFAULT_COLOR } from "./shared.js";
+import { PlanDatePopover } from "../common/plan-date-picker.js";
 import { readDollars, readMinutes } from "../../shared/amounts.js";
 
 export const STATUS_LABELS: Record<TaskStatus, string> = {
@@ -101,6 +102,10 @@ const PLACEMENT_TRIGGER = cn(
   CHIP_TRIGGER,
   "inline-flex items-center border border-input bg-transparent hover:text-foreground",
 );
+
+/** A plan date's trigger, drawn like the dialog's fields next to it. */
+const PLAN_DATE_TRIGGER =
+  "inline-flex h-7 items-center gap-1.5 rounded-md border border-input bg-transparent px-2 text-xs text-muted-foreground hover:text-foreground focus:outline-none focus:ring-1 focus:ring-ring";
 
 export interface NewTaskDialogProps {
   open: boolean;
@@ -759,19 +764,17 @@ export function NewTaskDialog({
               </Command>
             </PopoverContent>
           </Popover>
-          <input
-            type="date"
-            value={startDate}
-            onChange={(event) => setStartDate(event.target.value)}
-            aria-label="Start date"
-            className="h-7 rounded-md border border-input bg-transparent px-2 text-xs text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring"
+          <PlanDatePopover
+            kind="start"
+            value={startDate === "" ? null : startDate}
+            onChange={(value) => setStartDate(value ?? "")}
+            triggerClassName={PLAN_DATE_TRIGGER}
           />
-          <input
-            type="date"
-            value={dueDate}
-            onChange={(event) => setDueDate(event.target.value)}
-            aria-label="Due date"
-            className="h-7 rounded-md border border-input bg-transparent px-2 text-xs text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring"
+          <PlanDatePopover
+            kind="due"
+            value={dueDate === "" ? null : dueDate}
+            onChange={(value) => setDueDate(value ?? "")}
+            triggerClassName={PLAN_DATE_TRIGGER}
           />
           {showsParent ? (
             <Popover open={parentPickerOpen} onOpenChange={setParentPickerOpen}>

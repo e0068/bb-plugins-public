@@ -60,6 +60,7 @@ import {
   type HeaderColumnState,
 } from "./header.js";
 import { setTableSettings, useTableSettings } from "./table-preference.js";
+import { dateFormatOf, hasIconChoice, iconShownOf, isDateColumn, withColumnDisplay } from "./column-display.js";
 
 export interface TableViewProps {
   /** The screen this table draws — the same scope its list preference lives under. */
@@ -298,6 +299,8 @@ export function TableView({ scope }: TableViewProps) {
   const fieldConfig = useFieldDisplay(fieldScope);
   const openTask = useOpenTask(taskOpeningOf(fieldConfig));
   const settings = useTableSettings(scope);
+  // Relative dates count from the render's own moment, the same for every row.
+  const now = new Date();
   const preference = useListPreference(scope);
   const { filters } = preference;
 
@@ -439,6 +442,8 @@ export function TableView({ scope }: TableViewProps) {
     sort: settings.sort !== null && settings.sort.column === column ? settings.sort.direction : null,
     sortable: sortableColumn(column),
     widthChanged: settings.widths[column] !== undefined,
+    dateFormat: isDateColumn(column) ? dateFormatOf(settings.columns, column) : null,
+    icon: hasIconChoice(column) ? iconShownOf(settings.columns, column) : null,
   }));
 
   const actions: HeaderActions = {
@@ -465,6 +470,8 @@ export function TableView({ scope }: TableViewProps) {
       }
       setTableSettings(scope, { widths: { ...settings.widths, [column]: clampColumnWidth(width) } });
     },
+    onDisplay: (column, patch) =>
+      setTableSettings(scope, { columns: withColumnDisplay(settings.columns, column, patch) }),
   };
 
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -546,6 +553,8 @@ export function TableView({ scope }: TableViewProps) {
                   subtasks: subtaskStatsOf(row.task.id, byParent),
                   showEmpty: fieldConfig.showEmpty,
                   onEdit: edits.edit,
+                  displays: settings.columns,
+                  now,
                 }}
               />
             ))}

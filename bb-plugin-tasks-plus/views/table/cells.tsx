@@ -4,7 +4,9 @@ import { Icon } from "@/components/ui/icon";
 import { PriorityEditor, StatusEditor, type EditFn } from "../common/property-menus.js";
 import { formatDollars, formatMinutes } from "../../shared/amounts.js";
 import type { RowField } from "../common/row-field-preference.js";
-import { formatDueDate, formatTimestamp, PRIORITY_LABELS, STATUS_LABELS } from "../common/lib.js";
+import { PRIORITY_LABELS, STATUS_LABELS } from "../common/lib.js";
+import { formatDateValue, type DateValue } from "../common/date-display.js";
+import { dateFormatOf, iconShownOf, type ColumnDisplays, type DateColumn } from "./column-display.js";
 import { EstimateIcon, TYPE_ICONS, TYPE_LABELS } from "../../components/task-meta.js";
 import { slugOf } from "../../shared/format.js";
 
@@ -19,6 +21,10 @@ export interface CellContext {
   subtasks: { done: number; total: number };
   showEmpty: boolean;
   onEdit: EditFn;
+  /** Each column's format and icon, as its header menu chose them. */
+  displays: ColumnDisplays | undefined;
+  /** The moment relative dates count from, one for the whole render. */
+  now: Date;
 }
 
 const EMPTY_DASH_CLASS = "text-subtle-foreground/60";
@@ -83,22 +89,51 @@ function PriorityCell({ task, showEmpty, onEdit }: { task: Task; showEmpty: bool
   );
 }
 
-function TypeCell({ task, showEmpty }: { task: Task; showEmpty: boolean }) {
+function TypeCell({ task, showEmpty, icon }: { task: Task; showEmpty: boolean; icon: boolean }) {
   if (task.type === null) return <CellEmpty showEmpty={showEmpty} />;
   return (
     <span className="flex min-w-0 items-center gap-1.5">
-      <Icon name={TYPE_ICONS[task.type]} className="size-3.5 shrink-0" />
+      {icon ? <Icon name={TYPE_ICONS[task.type]} className="size-3.5 shrink-0" /> : null}
       <span className="truncate">{TYPE_LABELS[task.type]}</span>
     </span>
   );
 }
 
-function EstimateCell({ task, showEmpty }: { task: Task; showEmpty: boolean }) {
+function EstimateCell({ task, showEmpty, icon }: { task: Task; showEmpty: boolean; icon: boolean }) {
   if (task.estimate === null) return <CellEmpty showEmpty={showEmpty} />;
   return (
     <span className="flex min-w-0 items-center gap-1.5">
-      <Icon name="Timer" className="size-3.5 shrink-0" />
+      {icon ? <Icon name="Timer" className="size-3.5 shrink-0" /> : null}
       <EstimateIcon estimate={task.estimate} />
+    </span>
+  );
+}
+
+/** The icon a date column shows when its header menu turns icons on — the detail rail's and the toolbar's. */
+const DATE_ICONS = { startDate: "Calendar", dueDate: "Clock", createdAt: "DateTime", updatedAt: "Edit" } as const satisfies Record<DateColumn, string>;
+
+function dateValueOf(task: Task, column: DateColumn): DateValue | null {
+  switch (column) {
+    case "startDate":
+      return task.startDate === null ? null : { kind: "plan", value: task.startDate };
+    case "dueDate":
+      return task.dueDate === null ? null : { kind: "plan", value: task.dueDate };
+    case "createdAt":
+      return { kind: "moment", iso: task.createdAt };
+    case "updatedAt":
+      return { kind: "moment", iso: task.updatedAt };
+  }
+}
+
+/** A date in the column's chosen format, after its icon when the column shows one. */
+function DateCell({ task, column, context }: { task: Task; column: DateColumn; context: CellContext }) {
+  const value = dateValueOf(task, column);
+  if (value === null) return <CellEmpty showEmpty={context.showEmpty} />;
+  const text = formatDateValue(value, dateFormatOf(context.displays, column), context.now);
+  return (
+    <span className="flex min-w-0 items-center gap-1.5">
+      {iconShownOf(context.displays, column) ? <Icon name={DATE_ICONS[column]} className="size-3.5 shrink-0" /> : null}
+      <span className="truncate tabular-nums">{text}</span>
     </span>
   );
 }
@@ -125,9 +160,9 @@ export function TableCell({
     case "priority":
       return <PriorityCell task={task} showEmpty={context.showEmpty} onEdit={context.onEdit} />;
     case "type":
-      return <TypeCell task={task} showEmpty={context.showEmpty} />;
+      return <TypeCell task={task} showEmpty={context.showEmpty} icon={iconShownOf(context.displays, column)} />;
     case "estimate":
-      return <EstimateCell task={task} showEmpty={context.showEmpty} />;
+      return <EstimateCell task={task} showEmpty={context.showEmpty} icon={iconShownOf(context.displays, column)} />;
     case "key":
       return <CellText value={task.key} showEmpty={context.showEmpty} />;
     case "parent":
@@ -143,9 +178,10 @@ export function TableCell({
     case "project":
       return <CellText value={context.project?.name ?? null} showEmpty={context.showEmpty} />;
     case "dueDate":
-      return <CellText value={task.dueDate !== null ? formatDueDate(task.dueDate) : null} showEmpty={context.showEmpty} />;
     case "startDate":
-      return <CellText value={task.startDate !== null ? formatDueDate(task.startDate) : null} showEmpty={context.showEmpty} />;
+    case "createdAt":
+    case "updatedAt":
+      return <DateCell task={task} column={column} context={context} />;
     case "plannedMinutes":
       return <CellText value={task.plannedMinutes !== null ? formatMinutes(task.plannedMinutes) : null} showEmpty={context.showEmpty} />;
     case "actualMinutes":
@@ -162,10 +198,6 @@ export function TableCell({
       return <CellText value={`${context.subtasks.done} / ${context.subtasks.total}`} showEmpty={context.showEmpty} />;
     case "active":
       return <CellText value={context.activeThreads > 0 ? "Active" : null} showEmpty={context.showEmpty} />;
-    case "createdAt":
-      return <CellText value={formatTimestamp(task.createdAt)} showEmpty={context.showEmpty} />;
-    case "updatedAt":
-      return <CellText value={formatTimestamp(task.updatedAt)} showEmpty={context.showEmpty} />;
     case "slug":
       return <CellText value={slugOf(task.id)} showEmpty={context.showEmpty} />;
     // The title column renders through `TitleCell`; the rest are fields the

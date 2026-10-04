@@ -18,7 +18,6 @@ import {
   ContextMenuCheckboxItem,
   ContextMenuContent,
   ContextMenuItem,
-  ContextMenuSeparator,
   ContextMenuSub,
   ContextMenuSubContent,
   ContextMenuSubTrigger,
@@ -29,7 +28,8 @@ import { Icon } from "@/components/ui/icon";
 import { cn } from "@/lib/utils";
 import type { TaskEdit } from "./optimistic.js";
 import { PriorityIcon, StatusIcon } from "./icons.js";
-import { formatDueDate, PRIORITY_LABELS, STATUS_LABELS } from "./lib.js";
+import { PRIORITY_LABELS, STATUS_LABELS } from "./lib.js";
+import { PLAN_DATE_COPY, PlanDatePicker, type PlanDateKind } from "./plan-date-picker.js";
 
 export type EditFn = (task: Task, patch: TaskEdit) => void;
 
@@ -75,19 +75,12 @@ export function isBareKey(event: {
   return !event.metaKey && !event.ctrlKey && !event.altKey && !event.shiftKey;
 }
 
-function localIsoDate(daysFromNow: number): string {
-  const date = new Date();
-  date.setDate(date.getDate() + daysFromNow);
-  const month = String(date.getMonth() + 1).padStart(2, "0");
-  const day = String(date.getDate()).padStart(2, "0");
-  return `${date.getFullYear()}-${month}-${day}`;
-}
+const PLAN_DATE_KINDS: readonly PlanDateKind[] = ["due", "start"];
 
-const DUE_DATE_PRESETS: readonly [label: string, days: number][] = [
-  ["Today", 0],
-  ["Tomorrow", 1],
-  ["Next week", 7],
-];
+/** A picker row as the context menu's own item, so the keys walk it and choosing it closes the menu. */
+function MenuPickerItem({ onSelect, children }: { onSelect: () => void; children: ReactNode }) {
+  return <ContextMenuItem onSelect={onSelect}>{children}</ContextMenuItem>;
+}
 
 function MenuHeading({ label, shortcut }: { label: string; shortcut: string }) {
   return (
@@ -365,73 +358,22 @@ export function TaskContextMenu({
           </ContextMenuSubContent>
         </ContextMenuSub>
 
-        <ContextMenuSub>
-          <ContextMenuSubTrigger>
-            <Icon name="Clock" className="size-3.5" />
-            <span>Due date</span>
-          </ContextMenuSubTrigger>
-          <ContextMenuSubContent className="min-w-44">
-            {DUE_DATE_PRESETS.map(([label, days]) => {
-              const value = localIsoDate(days);
-              return (
-                <ContextMenuItem
-                  key={label}
-                  onSelect={() => onEdit(task, { dueDate: value })}
-                >
-                  <span>{label}</span>
-                  <span className="ml-auto text-2xs text-subtle-foreground">
-                    {formatDueDate(value)}
-                  </span>
-                </ContextMenuItem>
-              );
-            })}
-            {task.dueDate !== null ? (
-              <>
-                <ContextMenuSeparator />
-                <ContextMenuItem
-                  onSelect={() => onEdit(task, { dueDate: null })}
-                >
-                  <Icon name="X" className="size-3.5" />
-                  <span>No due date</span>
-                </ContextMenuItem>
-              </>
-            ) : null}
-          </ContextMenuSubContent>
-        </ContextMenuSub>
-
-        <ContextMenuSub>
-          <ContextMenuSubTrigger>
-            <Icon name="Calendar" className="size-3.5" />
-            <span>Start date</span>
-          </ContextMenuSubTrigger>
-          <ContextMenuSubContent className="min-w-44">
-            {DUE_DATE_PRESETS.map(([label, days]) => {
-              const value = localIsoDate(days);
-              return (
-                <ContextMenuItem
-                  key={label}
-                  onSelect={() => onEdit(task, { startDate: value })}
-                >
-                  <span>{label}</span>
-                  <span className="ml-auto text-2xs text-subtle-foreground">
-                    {formatDueDate(value)}
-                  </span>
-                </ContextMenuItem>
-              );
-            })}
-            {task.startDate !== null ? (
-              <>
-                <ContextMenuSeparator />
-                <ContextMenuItem
-                  onSelect={() => onEdit(task, { startDate: null })}
-                >
-                  <Icon name="X" className="size-3.5" />
-                  <span>No start date</span>
-                </ContextMenuItem>
-              </>
-            ) : null}
-          </ContextMenuSubContent>
-        </ContextMenuSub>
+        {PLAN_DATE_KINDS.map((kind) => (
+          <ContextMenuSub key={kind}>
+            <ContextMenuSubTrigger>
+              <Icon name={PLAN_DATE_COPY[kind].icon} className="size-3.5" />
+              <span>{PLAN_DATE_COPY[kind].label}</span>
+            </ContextMenuSubTrigger>
+            <ContextMenuSubContent className="w-64">
+              <PlanDatePicker
+                kind={kind}
+                value={kind === "start" ? task.startDate : task.dueDate}
+                onChange={(value) => onEdit(task, kind === "start" ? { startDate: value } : { dueDate: value })}
+                item={MenuPickerItem}
+              />
+            </ContextMenuSubContent>
+          </ContextMenuSub>
+        ))}
 
         {projectLabels.length > 0 ? (
           <ContextMenuSub>

@@ -104,6 +104,8 @@ const context = (patch: Partial<CellContext> = {}): CellContext => ({
   subtasks: { done: 0, total: 0 },
   showEmpty: false,
   onEdit: () => {},
+  displays: undefined,
+  now: new Date(2026, 9, 4, 12, 0),
   ...patch,
 });
 

@@ -21,6 +21,8 @@ const context = (showEmpty: boolean): CellContext => ({
   subtasks: { done: 0, total: 0 },
   showEmpty,
   onEdit: () => {},
+  displays: undefined,
+  now: new Date(2026, 9, 4, 12, 0),
 });
 
 function text(task: Task, showEmpty = false): string {
