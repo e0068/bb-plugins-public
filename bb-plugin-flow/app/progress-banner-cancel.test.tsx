@@ -70,6 +70,6 @@ describe("«Отменить flow» в меню прогресс-бара", () =
     fireEvent.click(dialog.querySelector<HTMLElement>("[data-confirm]")!);
     await waitFor(() => expect(slot.rpcCalls.find((c) => c.method === "cancelFlow")?.input).toEqual({ threadId: "thr_1" }));
     await waitFor(() => expect(slot.container.querySelector("[data-progress-count]")).toBeNull());
-    expect(await screen.findByRole("button", { name: /Flow не выбран/ })).toBeTruthy();
+    expect(await screen.findByRole("button", { name: /Без flow/ })).toBeTruthy();
   });
 });

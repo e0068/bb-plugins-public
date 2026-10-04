@@ -18,6 +18,7 @@ import { stageLabel } from "../core/stages";
 import { runCascade } from "../core/sub-stages";
 import { ConfirmDialog } from "../components/ui/dialog";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "../components/ui/dropdown-menu";
+import { FlowMark } from "../components/ui/flow-mark";
 import { Icon } from "../components/ui/icon";
 import { cn } from "../lib/utils";
 import type { ContextFillView, ProgressStage, ProgressView, automationRpcContract, flowChoiceRpcContract, progressRpcContract } from "../shared/contract";
@@ -621,7 +622,7 @@ function FlowMenu({ threadId, onCancelled }: { threadId: string; onCancelled: ()
         </DropdownMenuTrigger>
         <DropdownMenuContent align="end" collisionPadding={8}>
           <DropdownMenuItem className="text-destructive" onSelect={() => setConfirming(true)}>
-            <Icon name="X" aria-hidden="true" className="size-3.5" />
+            <FlowMark crossed className="size-3.5" />
             {t.flowChoice.cancel}
           </DropdownMenuItem>
         </DropdownMenuContent>

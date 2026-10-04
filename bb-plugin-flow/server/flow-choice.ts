@@ -36,7 +36,7 @@ export const registerFlowChoice = (
     finished?: (threadId: string) => Promise<boolean>;
   },
 ): FlowChoice => {
-  /** Flow треда так, как его видит строка выбора: отказ агента — тот же «Flow не выбран», тред без привязки — flow по умолчанию. */
+  /** Flow треда так, как его видит строка выбора: отказ агента — тот же «Без flow», тред без привязки — flow по умолчанию. */
   const current = (threadId: string): string => {
     const flowId = deps.threads.flowOf(threadId);
     if (flowId === NO_FLOW || flowId === AGENT_NO_FLOW) return NO_FLOW;

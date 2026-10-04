@@ -6,7 +6,7 @@
 // закладкой, остаются в меню; новые закладка строки кладёт шаблоном этапа.
 // Шаги автоматизации Automations — теги только для чтения: они правятся там.
 // Как этап переходит от одного исполнения к другому — ../core/stage-execution.
-import { Fragment, useRef, useState, type ChangeEvent, type DragEvent } from "react";
+import { Fragment, useRef, useState, type ChangeEvent, type DragEvent, type ReactNode } from "react";
 
 import { isStepId, STEP_IDS, type StepId } from "@bb-plugins/automation-steps/catalog";
 import { overlayItem } from "../components/ui/field-overlay";
@@ -20,7 +20,7 @@ import { BUILTIN_KINDS, BUILTIN_SKILLS, isNewStageName } from "../lib/stage-cons
 import { AUTOMATION_ICON, KIND_ICONS } from "./stage-icons";
 import { Segmented } from "./segmented";
 import { cn } from "../lib/utils";
-import type { AutomationSet, AutomationStep, BuiltinAutomation, WorkStage } from "../shared/contract";
+import type { AutomationScript, AutomationSet, AutomationStep, BuiltinAutomation, WorkStage } from "../shared/contract";
 import { useMessages } from "./locale-context";
 
 /** Строка меню, недоступная для уже выбранного шага. */
@@ -232,8 +232,21 @@ export function ManualMark() {
   );
 }
 
-/** Теги шагов через шеврон: у встроенного скрипта — крест и перетаскивание, у автоматизации Automations — только чтение. */
-export function AutomationStepTags({ stage, onChange }: { stage: WorkStage; onChange: StageChange }) {
+/** Подпись чипа, открывающая его файл в правой панели: иконка, имя и приписка — одной кнопкой, крест чипа стоит отдельно. */
+export function TagOpen({ onOpen, children }: { onOpen: () => void; children: ReactNode }) {
+  const t = useMessages();
+  return (
+    <button type="button" title={t.settings.openFile} onClick={onOpen} className="flex h-full min-w-0 items-center gap-1.5 pl-2 hover:underline hover:underline-offset-2">
+      {children}
+    </button>
+  );
+}
+
+/**
+ * Теги шагов через шеврон: у встроенного скрипта — крест и перетаскивание, у автоматизации Automations — только чтение.
+ * Шаг своего скрипта открывает его текст в правой панели; у шагов Flow файла нет.
+ */
+export function AutomationStepTags({ stage, onChange, onOpenScript }: { stage: WorkStage; onChange: StageChange; onOpenScript: (script: AutomationScript) => void }) {
   const t = useMessages();
   const [dragged, setDragged] = useState<number | null>(null);
   const label = useStepLabel();
@@ -276,9 +289,9 @@ export function AutomationStepTags({ stage, onChange }: { stage: WorkStage; onCh
               onDragOver={(event) => event.preventDefault()}
               onDrop={(event) => drop(event, i)}
               onDragEnd={() => setDragged(null)}
-              className={cn(tag, "cursor-grab pl-2 pr-0.5", dragged === i && "opacity-50")}
+              className={cn(tag, "cursor-grab pr-0.5", scriptOf(automation, id) === null && "pl-2", dragged === i && "opacity-50")}
             >
-              <span className="min-w-0 truncate">{labelOf(id)}</span>
+              <StepLabel script={scriptOf(automation, id)} label={labelOf(id)} onOpen={onOpenScript} />
               <button
                 type="button"
                 aria-label={t.settings.removeStep(labelOf(id))}
@@ -293,6 +306,11 @@ export function AutomationStepTags({ stage, onChange }: { stage: WorkStage; onCh
       </ul>
     </>
   );
+}
+
+function StepLabel({ script, label, onOpen }: { script: AutomationScript | null; label: string; onOpen: (script: AutomationScript) => void }) {
+  const text = <span className="min-w-0 truncate">{label}</span>;
+  return script === null ? text : <TagOpen onOpen={() => onOpen(script)}>{text}</TagOpen>;
 }
 
 /** Шеврон между шагами скрипта: шаги идут один за другим, слева направо. */

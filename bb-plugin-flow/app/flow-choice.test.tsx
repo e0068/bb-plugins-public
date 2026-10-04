@@ -29,25 +29,25 @@ const mount = async (selected = "none") => {
 const rows = (container: HTMLElement) => [...container.querySelectorAll<HTMLElement>("[data-flow-choice-option]")];
 
 describe("строка выбора flow в треде без прогона", () => {
-  it("свёрнутая — «Flow не выбран», список скрыт", async () => {
+  it("свёрнутая — «Без flow», список скрыт", async () => {
     const slot = await mount();
-    const head = await screen.findByRole("button", { name: /Flow не выбран/ });
+    const head = await screen.findByRole("button", { name: /Без flow/ });
     expect(head.getAttribute("aria-expanded")).toBe("false");
     expect(rows(slot.container)).toEqual([]);
   });
 
-  it("раскрывается на месте: «Автоматически», flow с числом этапов, «Flow не выбран»; галочка у выбранного", async () => {
+  it("раскрывается на месте: «Автоматически», flow с числом этапов, «Без flow»; галочка у выбранного", async () => {
     const slot = await mount();
-    fireEvent.click(await screen.findByRole("button", { name: /Flow не выбран/ }));
+    fireEvent.click(await screen.findByRole("button", { name: /Без flow/ }));
     const options = rows(slot.container);
-    expect(options.map((o) => o.textContent)).toEqual(["Автоматически", "General7 этапов", "BB Plugin11 этапов", "Flow не выбран"]);
+    expect(options.map((o) => o.textContent)).toEqual(["Автоматически", "General7 этапов", "BB Plugin11 этапов", "Без flow"]);
     expect(options.map((o) => o.getAttribute("aria-checked"))).toEqual(["false", "false", "false", "true"]);
     expect(slot.container.querySelector('[role="menu"]')).toBeNull();
   });
 
   it("выбор запоминается, контейнер сворачивается, строка показывает flow без бара", async () => {
     const slot = await mount();
-    fireEvent.click(await screen.findByRole("button", { name: /Flow не выбран/ }));
+    fireEvent.click(await screen.findByRole("button", { name: /Без flow/ }));
     fireEvent.click(rows(slot.container)[2]!);
     await waitFor(() => expect(slot.rpcCalls.find((c) => c.method === "pickThreadFlow")?.input).toEqual({ threadId: "thr_1", flowId: "flow-plugin" }));
     const head = await screen.findByRole("button", { name: /Flow: BB Plugin/ });

@@ -3,13 +3,13 @@
 // workflow владельца, а отдельно — где лежит файл навыка по имени.
 // Источник, который не ответил, даёт пустую
 // часть каталога — секция настроек остаётся рабочей и без подсказок.
-import { readdir, readFile } from "node:fs/promises";
-import { homedir } from "node:os";
-import { join } from "node:path";
+import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
+import { homedir, tmpdir } from "node:os";
+import { basename, join } from "node:path";
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 
 import { installedPluginDirs, parseAgentFile, parseCodexAgentFile, parseWorkflowFile, skillOrigin } from "../core/catalog";
-import type { ExecutorOrigin, SkillFile, SkillOrigin, StageCatalog, StageExecutor } from "../shared/contract";
+import type { AutomationScript, ExecutorOrigin, SkillFile, SkillOrigin, StageCatalog, StageExecutor } from "../shared/contract";
 
 export type CatalogSources = {
   projectIds: () => Promise<string[]>;
@@ -52,24 +52,27 @@ const listFiles = async (sources: CatalogSources, dir: string, suffix: string, d
   return [...entries.filter((entry) => entry.endsWith(suffix)).sort().map((entry) => join(dir, entry)), ...nested.flat()];
 };
 
-const readExecutors = async (sources: CatalogSources, paths: readonly string[], parse: (text: string) => StageExecutor | null): Promise<StageExecutor[]> => {
+/** Исполнитель каталога и файл, из которого он прочитан: каталог отдаёт исполнителя, чип открывает файл. */
+type ExecutorEntry = { executor: StageExecutor; path: string };
+
+const readExecutors = async (sources: CatalogSources, paths: readonly string[], parse: (text: string) => StageExecutor | null): Promise<ExecutorEntry[]> => {
   const parsed = await Promise.all(paths.map((path) => settled(async () => parse(await sources.readFile(path)), null)));
-  return parsed.filter((e): e is StageExecutor => e !== null);
+  return parsed.flatMap((executor, i) => (executor === null ? [] : [{ executor, path: paths[i]! }]));
 };
 
-const withOrigin = (origin: ExecutorOrigin) => (executor: StageExecutor): StageExecutor => ({ ...executor, origin });
+const withOrigin = (origin: ExecutorOrigin) => (entry: ExecutorEntry): ExecutorEntry => ({ ...entry, executor: { ...entry.executor, origin } });
 
-const readAgentTree = async (sources: CatalogSources, dir: string, origin: ExecutorOrigin): Promise<StageExecutor[]> =>
+const readAgentTree = async (sources: CatalogSources, dir: string, origin: ExecutorOrigin): Promise<ExecutorEntry[]> =>
   (await readExecutors(sources, await listFiles(sources, dir, ".md", AGENT_DEPTH), parseAgentFile)).map(withOrigin(origin));
 
-const readProjectAgents = async (sources: CatalogSources): Promise<StageExecutor[]> => {
+const readProjectAgents = async (sources: CatalogSources): Promise<ExecutorEntry[]> => {
   const projects = await settled(async () => (await sources.projects?.()) ?? [], []);
   const lists = await Promise.all(projects.map(({ name, path }) => readAgentTree(sources, join(path, ".claude", "agents"), { kind: "project", project: name })));
   return lists.flat();
 };
 
 /** Агенты включённых плагинов Claude Code — с префиксом плагина, как их зовёт сам Claude Code. */
-const readPluginAgents = async (sources: CatalogSources): Promise<StageExecutor[]> => {
+const readPluginAgents = async (sources: CatalogSources): Promise<ExecutorEntry[]> => {
   const claude = join(sources.home, ".claude");
   const [installed, settings] = await Promise.all([
     settled(() => sources.readFile(join(claude, "plugins", "installed_plugins.json")), ""),
@@ -77,26 +80,62 @@ const readPluginAgents = async (sources: CatalogSources): Promise<StageExecutor[
   ]);
   const lists = await Promise.all(
     installedPluginDirs(installed, settings).map(async ({ plugin, dir }) =>
-      (await readAgentTree(sources, join(dir, "agents"), { kind: "plugin", plugin })).map((agent) => ({ ...agent, id: `agent:${plugin}:${agent.name}`, name: `${plugin}:${agent.name}` })),
+      (await readAgentTree(sources, join(dir, "agents"), { kind: "plugin", plugin })).map(({ executor, path }) => ({
+        executor: { ...executor, id: `agent:${plugin}:${executor.name}`, name: `${plugin}:${executor.name}` },
+        path,
+      })),
     ),
   );
   return lists.flat();
 };
 
 /** Исполнитель с тем же id — один, первый по порядку источников: свои, проекты, плагины. */
-const distinct = (executors: readonly StageExecutor[]): StageExecutor[] =>
-  executors.reduce<StageExecutor[]>((acc, executor) => (acc.some((seen) => seen.id === executor.id) ? acc : [...acc, executor]), []);
+const distinct = (entries: readonly ExecutorEntry[]): ExecutorEntry[] =>
+  entries.reduce<ExecutorEntry[]>((acc, entry) => (acc.some((seen) => seen.executor.id === entry.executor.id) ? acc : [...acc, entry]), []);
 
-export const readStageCatalog = async (sources: CatalogSources): Promise<StageCatalog> => {
-  const [skills, own, projects, plugins, codex, workflows] = await Promise.all([
-    readSkills(sources),
+const readExecutorEntries = async (sources: CatalogSources): Promise<ExecutorEntry[]> => {
+  const lists = await Promise.all([
     readAgentTree(sources, join(sources.home, ".claude", "agents"), { kind: "own" }),
     readProjectAgents(sources),
     readPluginAgents(sources),
     listFiles(sources, join(sources.home, ".codex", "agents"), ".toml", 0).then((paths) => readExecutors(sources, paths, parseCodexAgentFile)),
     listFiles(sources, join(sources.home, ".claude", "workflows"), ".js", 0).then((paths) => readExecutors(sources, paths, parseWorkflowFile)),
   ]);
-  return { skills, executors: distinct([...own, ...projects, ...plugins, ...codex, ...workflows]) };
+  return distinct(lists.flat());
+};
+
+export const readStageCatalog = async (sources: CatalogSources): Promise<StageCatalog> => {
+  const [skills, entries] = await Promise.all([readSkills(sources), readExecutorEntries(sources)]);
+  return { skills, executors: entries.map((entry) => entry.executor) };
+};
+
+export type ExecutorFileSources = CatalogSources & { primaryHostId: () => Promise<string | null> };
+
+/** Файл агента или workflow по id исполнителя и хост сервера; исполнитель не нашёлся или хоста нет — `null`. */
+export const readExecutorFile = async (sources: ExecutorFileSources, id: string): Promise<SkillFile> => {
+  const [entries, hostId] = await Promise.all([readExecutorEntries(sources), settled(sources.primaryHostId, null)]);
+  const found = entries.find((entry) => entry.executor.id === id);
+  return hostId === null || found === undefined ? null : { hostId, path: found.path };
+};
+
+/** Имя без разделителей пути: id и имя скрипта приходят от страницы и не должны вывести файл из своей папки; «.» и «..» — тоже путь. */
+const safeName = (name: string): string => {
+  const safe = basename(name).replace(/[^\w.-]/g, "_");
+  return /^\.*$/.test(safe) ? "script" : safe;
+};
+
+/**
+ * Свой скрипт живёт текстом в настройках flow, файла у него нет; чтобы показать его в правой панели, текст ложится
+ * файлом во временную папку сервера — снимком для чтения, правка снимка скрипт не меняет.
+ */
+export const writeScriptFile = async (script: Pick<AutomationScript, "id" | "name" | "content">, primaryHostId: () => Promise<string | null>): Promise<SkillFile> => {
+  const hostId = await settled(primaryHostId, null);
+  if (hostId === null) return null;
+  const dir = join(tmpdir(), "bb-flow-scripts", safeName(script.id));
+  const path = join(dir, safeName(script.name));
+  await mkdir(dir, { recursive: true });
+  await writeFile(path, script.content, "utf8");
+  return { hostId, path };
 };
 
 export type SkillFileSources = {

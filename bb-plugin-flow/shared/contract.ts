@@ -842,6 +842,10 @@ export const flowSettingsRpcContract = defineRpcContract({
   getStageCatalog: { input: z.object({}), output: stageCatalogSchema },
   /** Файл навыка по имени — для кнопки «Открыть навык»; `null` — не найден. */
   getSkillFile: { input: z.object({ name: z.string() }), output: skillFileSchema },
+  /** Файл агента или workflow по id исполнителя — для клика по чипу; `null` — не найден. */
+  getExecutorFile: { input: z.object({ id: z.string() }), output: skillFileSchema },
+  /** Свой скрипт этапа снимком в файл — для клика по шагу; `null` — хоста нет. */
+  getScriptFile: { input: automationScriptSchema, output: skillFileSchema },
   /** Показать файл навыка в файловой системе машины сервера bb; путь сервер находит сам по имени. */
   revealSkill: { input: z.object({ name: z.string() }), output: z.object({ revealed: z.boolean(), error: z.string().nullable() }) },
 });

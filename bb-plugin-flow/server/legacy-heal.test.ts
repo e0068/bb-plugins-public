@@ -81,7 +81,7 @@ describe("чистка этапов прежнего flow по умолчани�
       ready: async () => {
       if (!heal.done()) await catalog();
     },
-      skillFile: async () => null,
+      skillFile: async () => null, executorFile: async () => null, scriptFile: async () => null,
       reveal: async () => ({ revealed: false, error: null }),
     });
     const page = (await harness.callRpc("getFlowSettings", {})) as FlowSettings;

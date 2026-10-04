@@ -36,11 +36,4 @@ describe("вид связки в таблице этапов", () => {
     const header = (await slot.findByRole("columnheader", { name: "№" })).closest('[role="row"]') as HTMLElement;
     expect(header.className).not.toMatch(/\bbg-/);
   });
-
-  it("у поля навыка одна кнопка — открыть файл навыка в bb", async () => {
-    const slot = open(LINKED);
-    const row = within(await slot.findByRole("row", { name: "Этап 1" }));
-    expect(row.getByRole("button", { name: "Открыть навык ship" })).toBeTruthy();
-    expect(row.queryByRole("button", { name: /в файловой системе/ })).toBeNull();
-  });
 });
