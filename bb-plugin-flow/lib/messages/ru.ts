@@ -68,9 +68,6 @@ export const ru = {
   brief: {
     requiredSuffix: " (обязательно)",
     requiredTitle: "Обязательно по настройкам плагина",
-    budget: "Бюджет",
-    forecast: "Прогноз бюджета",
-    line: "строка",
     time: "время",
     risk: "риск",
     target: "цель",
@@ -80,6 +77,10 @@ export const ru = {
     ownPrice: "Своя цена",
     ownTarget: "Своя цель",
     ownMax: "Свой потолок",
+    ownMinutes: "Своё время",
+    minutesUnit: "мин",
+    stage: "Этап",
+    stagesTable: "Этапы и бюджет",
     whenWorkflow: "когда исполняет workflow",
     hintNeedAnswer: (list: string) => `Нужен ответ: ${list}`,
     hintRequired: (list: string) => `Отметь обязательные документы: ${list}`,
@@ -231,7 +232,6 @@ export const ru = {
   stages: {
     toRun: (name: string) => `${name}: в ближайший прогон`,
     done: "Этап сделан",
-    automation: "Автоматизация",
     executorGroup: (name: string) => `${name}: исполнитель`,
     results: (name: string) => `${name}: результаты`,
     copyPath: (path: string) => `Скопировать путь ${path}`,
@@ -513,11 +513,8 @@ export const ru = {
     busy: (stage: string) => `Flow сейчас ведёт этап ${quote(stage)} — например, повторяет шаг. Нажми, когда попытка закончится`,
   },
   subStages: {
-    before: "до",
-    after: "после",
     drop: (owner: string, before: boolean) => `под-этап ${quote(owner)} — ${before ? "до" : "после"}`,
     drag: (name: string, owner: string) => `Перетащить под-этап ${name} этапа ${owner}`,
-    title: "Под-этапы",
     inRun: (name: string, owner: string) => `Под-этап ${name} этапа ${owner} в прогоне`,
   },
 };

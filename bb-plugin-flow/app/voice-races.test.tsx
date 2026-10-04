@@ -163,11 +163,10 @@ describe("сбой записи не глушит голосовой ввод", 
 });
 
 describe("денежные поля без микрофона", () => {
-  it("у своей цели и своего потолка в прогнозе бюджета микрофона нет", async () => {
+  it("у полей своей цены в таблице бюджета микрофона нет", async () => {
     installMicrophone();
     const slot = open();
-    fireEvent.click(await slot.findByRole("button", { name: /^Бюджет/ }));
-    const panel = within(slot.getByRole("group", { name: "Прогноз бюджета" }));
+    const panel = within(await slot.findByRole("group", { name: "Этапы и бюджет" }));
     expect(panel.getByRole("textbox", { name: "Своя цель" })).toBeTruthy();
     expect(panel.queryAllByRole("button", { name: MIC })).toHaveLength(0);
   });

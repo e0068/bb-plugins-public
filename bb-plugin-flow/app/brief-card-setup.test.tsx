@@ -55,7 +55,7 @@ describe("ячейки нижнего блока", () => {
   it("в ячейках нижнего блока нет звёздочки, в раскрытом списке есть", async () => {
     const slot = open();
     const b = await block(slot);
-    const cells = [b.getByRole("button", { name: /^Исполняет/ }), b.getByRole("button", { name: /^Ревью/ }), b.getByRole("button", { name: /^Бюджет/ }), artifact(slot, "spec")];
+    const cells = [b.getByRole("button", { name: /^Исполняет/ }), b.getByRole("button", { name: /^Ревью/ }), artifact(slot, "spec")];
     for (const cell of cells) {
       expect(cell.textContent).not.toContain("✦");
       expect(within(cell).queryByText("рекомендация агента")).toBeNull();
@@ -67,7 +67,7 @@ describe("ячейки нижнего блока", () => {
   it("нетронутое значение тусклое", async () => {
     const slot = open();
     const b = await block(slot);
-    for (const name of [/^Исполняет/, /^Ревью/, /^Тестирование/, /^Бюджет/]) expect(dim(b.getByRole("button", { name }))).toBe(true);
+    for (const name of [/^Исполняет/, /^Ревью/, /^Тестирование/]) expect(dim(b.getByRole("button", { name }))).toBe(true);
     expect(dim(artifact(slot, "spec"))).toBe(true);
   });
 
@@ -83,18 +83,17 @@ describe("ячейки нижнего блока", () => {
     expect(dim(artifact(slot, "spec"))).toBe(true);
   });
 
-  it("своя цена делает бюджет контрастным", async () => {
+  it("своя цена встаёт в «Итого» вместо прогноза", async () => {
     const slot = open();
     const b = await block(slot);
-    fireEvent.click(b.getByRole("button", { name: /^Бюджет/ }));
-    fireEvent.change(b.getByRole("textbox", { name: "Своя цель" }), { target: { value: "$20" } });
-    expect(bright(b.getByRole("button", { name: /^Бюджет/ }))).toBe(true);
+    fireEvent.change(b.getByRole("textbox", { name: "Своя цель" }), { target: { value: "20" } });
+    expect(b.getByRole("group", { name: "Этапы и бюджет" }).querySelector("[data-total]")!.textContent).toContain("$20–");
   });
 
   it("после Ревью стоит кнопка Тестирование", async () => {
     const b = await block(open());
-    const names = b.getAllByRole("button", { name: /^(Исполняет|Ревью|Тестирование|Бюджет|Приоритет)/ }).map((el) => el.querySelector("span > span")?.textContent);
-    expect(names).toEqual(["Исполняет", "Ревью", "Тестирование", "Бюджет"]);
+    const names = b.getAllByRole("button", { name: /^(Исполняет|Ревью|Тестирование|Приоритет)/ }).map((el) => el.querySelector("span > span")?.textContent);
+    expect(names).toEqual(["Исполняет", "Ревью", "Тестирование"]);
   });
 });
 
@@ -119,17 +118,16 @@ describe("разница с базой и разбивка", () => {
     expect(list.getByText("+$1–2").className).toContain("text-muted-foreground");
   });
 
-  it("колонки разбивки — время, риск, цель, потолок", async () => {
+  it("подписи колонок — этап, риск, время, цель, потолок; своя цена — в колонках времени, цели и потолка", async () => {
     const b = await block(open());
-    fireEvent.click(b.getByRole("button", { name: /^Бюджет/ }));
-    const panel = within(b.getByRole("group", { name: "Прогноз бюджета" }));
-    expect(panel.getAllByRole("columnheader").map((h) => h.textContent)).toEqual(["строка", "время", "риск", "цель", "потолок"]);
-    const target = panel.getByRole("textbox", { name: "Своя цель" });
-    const max = panel.getByRole("textbox", { name: "Свой потолок" });
-    const ownRow = target.closest("tr")!;
-    expect(max.closest("tr")).toBe(ownRow);
-    const cells = within(ownRow).getAllByRole("cell");
-    expect([cells.findIndex((c) => c.contains(target)), cells.findIndex((c) => c.contains(max))]).toEqual([3, 4]);
+    const table = b.getByRole("group", { name: "Этапы и бюджет" });
+    const head = table.firstElementChild!;
+    expect([...head.children].map((h) => h.textContent).filter((text) => text !== "")).toEqual(["Этап", "риск", "время", "цель", "потолок"]);
+    const field = (name: string) => within(table).getByRole("textbox", { name }).closest("label")!.parentElement!;
+    const time = within(table).getByText("время");
+    expect(field("Своё время").className).toContain(time.className.match(/@\[34rem\]:col-start-\d/)![0]);
+    expect(field("Своя цель").className).toContain(within(table).getByText("цель").className.match(/@\[34rem\]:col-start-\d/)![0]);
+    expect(field("Свой потолок").className).toContain(within(table).getByText("потолок").className.match(/@\[34rem\]:col-start-\d/)![0]);
   });
 
   it("в отвеченном брифе контрастно только расхождение с рекомендацией", async () => {

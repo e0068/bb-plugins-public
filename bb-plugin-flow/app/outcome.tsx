@@ -16,7 +16,7 @@ import type { FileRoots } from "../core/result-link";
 import { setOutcomeNote, type Draft } from "./draft";
 import { useMessages } from "./locale-context";
 import { SectionTag } from "./section-tag";
-import { ResultRow } from "./stages-block";
+import { ResultRow } from "./result-row";
 
 export type OutcomeView = {
   draft: Draft;

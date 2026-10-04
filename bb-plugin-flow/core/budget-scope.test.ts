@@ -110,7 +110,8 @@ describe("flow без этапа самой работы — объём счит
   it("объём — строками пунктов, этапы — надбавкой сверху", () => {
     const f = recommendedForecast(builtins);
     expect(f.lines.map((l) => l.label)).toEqual(["Пункт 1", "Пункт 2", "Спецификация"]);
-    expect(f).toMatchObject({ target: 6.9, max: 10.35, minutes: 35, risk: -1 });
+    // Строки складываются в −1r, но итоговый риск ниже нуля не опускается.
+    expect(f).toMatchObject({ target: 6.9, max: 10.35, minutes: 35, risk: 0 });
   });
 
   it("этапы без доли ничего не стоят, но объём остаётся", () => {

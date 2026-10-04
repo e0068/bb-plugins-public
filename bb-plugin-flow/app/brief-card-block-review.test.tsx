@@ -49,10 +49,11 @@ type Slot = ReturnType<typeof render>;
 const block = async (slot: Slot) => within(await slot.findByRole("group", { name: "Ответ на бриф" }));
 
 describe("блок первой части с ревью и тестированием", () => {
-  it("артефакты, кнопки исполнителя, ревью, тестирования и бюджета, поле и нижняя строка лежат в одной группе", async () => {
+  it("артефакты, кнопки исполнителя, ревью и тестирования, таблица бюджета, поле и нижняя строка лежат в одной группе", async () => {
     const group = await block(open());
     expect(group.getByRole("group", { name: "Артефакты" })).toBeTruthy();
-    for (const name of [/^Исполняет/, /^Ревью/, /^Тестирование/, /^Бюджет/]) expect(group.getByRole("button", { name })).toBeTruthy();
+    for (const name of [/^Исполняет/, /^Ревью/, /^Тестирование/]) expect(group.getByRole("button", { name })).toBeTruthy();
+    expect(group.getByRole("group", { name: "Этапы и бюджет" })).toBeTruthy();
     expect(group.queryByRole("button", { name: /^Приоритет/ })).toBeNull();
     expect(group.getByRole("textbox", { name: "Дополнить бриф" })).toBeTruthy();
     expect(group.getByRole("button", { name: "Исполнять" })).toBeTruthy();

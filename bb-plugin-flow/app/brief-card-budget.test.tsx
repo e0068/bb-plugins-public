@@ -43,40 +43,42 @@ const open = () =>
   );
 
 type Slot = ReturnType<typeof open>;
-const budgetButton = (slot: Slot) => slot.findByRole("button", { name: /^Бюджет/ });
+const table = async (slot: Slot) => within(await slot.findByRole("group", { name: "Этапы и бюджет" }));
+const total = async (slot: Slot) => (await slot.findByRole("group", { name: "Этапы и бюджет" })).querySelector("[data-total]")!.textContent;
 
-describe("кнопка бюджета", () => {
-  it("показывает прогноз «цель · до потолка» и пересчитывает его при снятии пункта и выборе", async () => {
+describe("бюджет таблицей", () => {
+  it("строка «Итого» — цель и потолок через тире; пересчитывается при снятии пункта и выборе", async () => {
     const slot = open();
-    expect((await budgetButton(slot)).textContent).toContain("$7 · до $13");
+    expect(await total(slot)).toContain("$7–$13");
     fireEvent.click(within(slot.getByRole("group", { name: "Как?" })).getByRole("button", { name: /Виджет складывает/ }));
-    expect((await budgetButton(slot)).textContent).toContain("$10 · до $18");
+    expect(await total(slot)).toContain("$10–$18");
     fireEvent.click(slot.getByRole("button", { name: "Пункт 1 не нужен" }));
-    expect((await budgetButton(slot)).textContent).toContain("$5 · до $9");
+    expect(await total(slot)).toContain("$5–$9");
   });
 
-  it("риск в разбивке — тем же форматом, что у добавок: «–1r», итог «+2r»", async () => {
+  it("подписи колонок сверху; риск строк — «–1r», итоговый — «+2r»", async () => {
     const slot = open();
-    fireEvent.click(await budgetButton(slot));
-    const panel = within(slot.getByRole("group", { name: "Прогноз бюджета" }));
-    expect(panel.getByText("–1r")).toBeTruthy();
-    expect(panel.getByText("+2r")).toBeTruthy();
+    const rows = await table(slot);
+    for (const head of ["риск", "время", "цель", "потолок"]) expect(rows.getByText(head)).toBeTruthy();
+    expect(rows.getByText("–1r")).toBeTruthy();
+    expect(within((await slot.findByRole("group", { name: "Этапы и бюджет" })).querySelector<HTMLElement>("[data-total]")!).getByText("+2r")).toBeTruthy();
   });
 
-  it("раскрывает разбивку с бюджетом и риском по строкам и свою цену, которая уходит в ответ", async () => {
+  it("своя цена — поля с маской над «Итого»; набранное встаёт в итог вместо прогноза и уходит в ответ", async () => {
     const slot = open();
     fireEvent.click(within(await slot.findByRole("group", { name: "Как?" })).getByRole("button", { name: /Виджет складывает/ }));
-    fireEvent.click(await budgetButton(slot));
-    const panel = within(slot.getByRole("group", { name: "Прогноз бюджета" }));
-    expect(panel.getByText("Итого")).toBeTruthy();
-    expect(panel.getAllByRole("row").length).toBeGreaterThanOrEqual(4);
-    fireEvent.change(panel.getByRole("textbox", { name: "Своя цель" }), { target: { value: "$25" } });
-    fireEvent.change(panel.getByRole("textbox", { name: "Свой потолок" }), { target: { value: "$40" } });
-    expect((await budgetButton(slot)).textContent).toContain("$25 · до $40");
+    const rows = await table(slot);
+    fireEvent.change(rows.getByRole("textbox", { name: "Своё время" }), { target: { value: "2 ч 90" } });
+    fireEvent.change(rows.getByRole("textbox", { name: "Своя цель" }), { target: { value: "$25.555" } });
+    fireEvent.change(rows.getByRole("textbox", { name: "Свой потолок" }), { target: { value: "40" } });
+    expect(rows.getByRole("textbox", { name: "Своё время" })).toHaveProperty("value", "290");
+    expect(rows.getByRole("textbox", { name: "Своя цель" })).toHaveProperty("value", "25.55");
+    expect(await total(slot)).toContain("290 мин");
+    expect(await total(slot)).toContain("$25.55–$40");
     fireEvent.click(slot.getByRole("button", { name: "Отправить бриф" }));
     await vi.waitFor(() => expect(slot.rpcCalls.some((c) => c.method === "answerBrief")).toBe(true));
     const call = slot.rpcCalls.find((c) => c.method === "answerBrief")?.input as { answer: { budget?: unknown } };
-    expect(call.answer.budget).toEqual({ target: "$25", max: "$40" });
+    expect(call.answer.budget).toEqual({ minutes: "290", target: "25.55", max: "40" });
   });
 });
 

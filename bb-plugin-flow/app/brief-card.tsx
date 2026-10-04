@@ -12,7 +12,7 @@ import { useRpc } from "@get-bb/plugin-sdk/app";
 
 import { deviationTotal, deviations } from "../core/answer-message";
 import { requiredOf } from "../core/required";
-import { changeOf, spentLines, criteriaSum, legacyPricing, criterionEditable, criterionTitle, forecast, hasForecast, midWorkBudget, minutesText, money, moneySpan, ownBudgetText, plannedMinutes, type Forecast } from "../core/budget";
+import { changeOf, criteriaSum, legacyPricing, criterionEditable, criterionTitle, hasForecast } from "../core/budget";
 import { optionCriteria, optionRemoved, removedCriteria } from "../core/option-criteria";
 import { DEFAULT_ROUTE, offeredPlace, placeColumns, withBranch, withPlace, withProject, withTree } from "../core/places";
 import { stageItems } from "../core/stages";
@@ -24,7 +24,6 @@ import { Button } from "../components/ui/button";
 import { Icon } from "../components/ui/icon";
 import { STAGE_BUTTON_WIDTH } from "../lib/stage-constants";
 import { cn } from "../lib/utils";
-import type { Locale } from "../lib/i18n";
 import type { AnswerRecord, Artifact, Criterion, DecisionBrief, DecisionOption, DecisionQuestion, DispatchPlace, DispatchRoute, RouteBranch, RouteTree, dispatchRpcContract } from "../shared/contract";
 import {
   decidedCount,
@@ -39,7 +38,6 @@ import {
   setNote,
   setOutcomeFlow,
   setOwn,
-  setOwnBudget,
   toAnswer,
   toggleCriterion,
   type Draft,
@@ -55,7 +53,7 @@ import { useDraftSender } from "./draft-sync";
 import { AddRow, addRowText, MarkedCopy, overCopy, useMarkedParts } from "./add-row";
 import { AttachmentError, AttachmentsProvider, FieldImages, usePasteImages } from "./attachments";
 import { LinkedText, RichText, onLink } from "./linked-text";
-import { AddMeta, CardText, CheckSquare, DocumentName, RiskText, buttonCard, rowCellStyle } from "./cells";
+import { AddMeta, CardText, CheckSquare, DocumentName, buttonCard, rowCellStyle } from "./cells";
 import { answeredAt, useStoredDraft, useSubmit, type FormProps } from "./parts";
 import type { Messages } from "../lib/messages";
 import { useLocale, useMessages } from "./locale-context";
@@ -63,7 +61,7 @@ import { useScrollAnchor } from "./scroll-anchor";
 import { DemoCard } from "./outcome";
 import { FlowCell, chosenFlow, useOwnerFlows } from "./demo-flow";
 import { SectionTag } from "./section-tag";
-import { StagesBlock } from "./stages-block";
+import { StagesTable } from "./stages-table";
 import { VoiceErrorLine, useVoiceBusy, useVoiceField } from "./voice";
 
 type View = {
@@ -85,9 +83,6 @@ type View = {
   /** Прогноз, который владелец видел при отправке; у живого брифа и старых ответов его нет. */
   snapshot?: AnswerRecord["forecast"];
 };
-
-/** Прогноз ячейки и разбивки: снимок отвеченного брифа или пересчёт по черновику. */
-const viewForecast = (view: View, locale: Locale) => view.snapshot ?? forecast(view.brief, toAnswer(view.brief, view.draft), locale);
 
 /** Несёт ли ответ метки выбора владельца; ответы, записанные до меток, красятся по расхождению с рекомендацией. */
 const hasPicks = (draft: Draft): boolean => Object.values(draft.entries).some((e) => (e.picked ?? []).length > 0);
@@ -228,122 +223,6 @@ function ArtifactCell(props: { artifact: Artifact; row: DecisionQuestion | undef
   );
 }
 
-/** Раскрытие кнопки бюджета: не строка ответа, а прогноз и своя цена. */
-const BUDGET_PANEL = "budget";
-
-/** Бриф-уточнение запущенной работы: утверждённый бюджет прогона, а изменил его выбор — «утверждено → итог». */
-const midWorkValue = (brief: DecisionBrief, f: Forecast): string | null => {
-  const approved = midWorkBudget(brief);
-  if (approved === undefined) return null;
-  const was = moneySpan(approved.target, approved.max);
-  return approved.target === f.target && approved.max === f.max ? was : `${was} → ${moneySpan(f.target, f.max)}`;
-};
-
-/** Кнопка бюджета раскрывает разбивку и в отвеченном брифе: там она показывает снимок на момент отправки. */
-function BudgetButton({ view }: { view: View }) {
-  const locale = useLocale();
-  const t = useMessages();
-  const f = viewForecast(view, locale);
-  const own = ownBudgetText(view.draft.budget, locale);
-  const planned = plannedMinutes(f);
-  const open = view.expanded === BUDGET_PANEL;
-  const value = own ?? midWorkValue(view.brief, f) ?? `${money(f.target)} · ${t.budget.upTo} ${money(f.max)}`;
-  return (
-    <button
-      type="button"
-      aria-expanded={open}
-      disabled={view.sending}
-      onClick={(e) => view.expand(open ? null : BUDGET_PANEL, e.currentTarget)}
-      className={cn(buttonCard, open ? "bg-state-active" : "hover:bg-state-hover", "disabled:cursor-default")}
-    >
-      <CardText label={t.brief.budget} meta={planned === null ? null : minutesText(planned, locale)} bright={own !== null}>
-        {value}
-      </CardText>
-      <Icon name="ChevronDown" aria-hidden="true" className={cn("size-3.5 shrink-0 text-muted-foreground", open && "rotate-180")} />
-    </button>
-  );
-}
-
-/** Деньги строки разбивки со знаком; неизвестные — прочерк. */
-const signedMoney = (n: number | null): string => (n === null ? "—" : `${n < 0 ? "–" : "+"}${money(Math.abs(n))}`);
-
-/** Время строки разбивки: потраченное на планирование и основа итога — без знака, добавка — со знаком; неизвестное — пусто. */
-const lineMinutes = (minutes: number | null, plain: boolean, locale: Locale): string =>
-  minutes === null ? "" : plain ? minutesText(minutes, locale) : `${minutes < 0 ? "–" : "+"}${minutesText(Math.abs(minutes), locale)}`;
-
-/** Деньги строки разбивки: основа итога — без знака, добавка — со знаком. */
-const lineMoney = (n: number | null, base: boolean): string => (base && n !== null ? money(n) : signedMoney(n));
-
-function BudgetPanel({ view }: { view: View }) {
-  const locale = useLocale();
-  const t = useMessages();
-  const f = viewForecast(view, locale);
-  const planned = plannedMinutes(f);
-  const num = "px-3 py-1.5 text-right font-mono text-[11.5px]";
-  const input = "h-7 w-full rounded-md bg-card px-2 text-right font-mono text-[11.5px] outline-none placeholder:text-muted-foreground";
-  const head = "px-3 py-1 text-right font-normal";
-  return (
-    <div role="group" aria-label={t.brief.forecast} className="flex flex-col bg-surface-recessed-solid py-1">
-      <table className="w-full border-collapse text-xs">
-        <thead>
-          <tr className="text-[11px] text-muted-foreground">
-            <th className="px-3 py-1 text-left font-normal">
-              <span className="sr-only">{t.brief.line}</span>
-            </th>
-            <th className={head}>{t.brief.time}</th>
-            <th className={head}>{t.brief.risk}</th>
-            <th className={head}>{t.brief.target}</th>
-            <th className={head}>{t.brief.max}</th>
-          </tr>
-        </thead>
-        <tbody>
-          {f.lines.map((l, i) => {
-            const spent = i < spentLines(f);
-            const base = l.base === true;
-            const note = spent ? t.brief.spent : l.note;
-            return (
-              <tr key={`${l.label}-${i}`} className="border-t border-border/40">
-                <td className="px-3 py-1.5">
-                  {l.label}
-                  {note !== "" && <span className="text-muted-foreground"> · {note}</span>}
-                </td>
-                <td className={num}>{lineMinutes(l.minutes, spent || base, locale)}</td>
-                <td className={num}>
-                  <RiskText risk={l.risk} />
-                </td>
-                <td className={num}>{lineMoney(l.target, base)}</td>
-                <td className={num}>{lineMoney(l.max, base)}</td>
-              </tr>
-            );
-          })}
-          <tr className="border-t border-border font-semibold">
-            <td className="px-3 py-1.5">{t.brief.total}</td>
-            <td className={num}>{planned === null ? "" : minutesText(planned, locale)}</td>
-            <td className={num}>
-              <RiskText risk={f.risk} />
-            </td>
-            <td className={num}>{money(f.target)}</td>
-            <td className={num}>{money(f.max)}</td>
-          </tr>
-          {!view.answered && (
-          <tr className="text-muted-foreground">
-            <td className="px-3 py-1.5">{t.brief.ownPrice}</td>
-            <td />
-            <td />
-            <td className="w-24 px-3 py-1">
-              <input aria-label={t.brief.ownTarget} placeholder="$" value={view.draft.budget.target} disabled={view.sending} onChange={(e) => view.change((d) => setOwnBudget(d, "target", e.target.value))} className={input} />
-            </td>
-            <td className="w-24 px-3 py-1">
-              <input aria-label={t.brief.ownMax} placeholder="$" value={view.draft.budget.max} disabled={view.sending} onChange={(e) => view.change((d) => setOwnBudget(d, "max", e.target.value))} className={input} />
-            </td>
-          </tr>
-          )}
-        </tbody>
-      </table>
-    </div>
-  );
-}
-
 /** Кнопка строки первой части: подпись и выбранное; нажатие раскрывает варианты строкой под кнопками. */
 function ChoiceButton({ question, view }: { question: DecisionQuestion; view: View }) {
   const chosen = question.options.find((o) => view.draft.entries[question.id]?.optionIds.includes(o.id));
@@ -471,7 +350,6 @@ function AnswerBlock({ brief, view, roots, footer, below }: { brief: DecisionBri
   const setup = brief.setup ?? {};
   const withBudget = hasForecast(brief);
   if (brief.setup === undefined && !withBudget && footer === undefined) return null;
-  const stagesView = { ...view, change: view.stageChange };
   const rows = new Map(rowsOf(brief, locale).map((row) => [row.id, row]));
   const artifacts = rows.get(SETUP_ROW.artifacts);
   const buttons = [SETUP_ROW.executor, SETUP_ROW.checker, SETUP_ROW.testing].flatMap((id) => rows.get(id) ?? []);
@@ -486,11 +364,6 @@ function AnswerBlock({ brief, view, roots, footer, below }: { brief: DecisionBri
   const staged = stageItems(brief).length > 0;
   const grid = "grid grid-cols-2 gap-px @[34rem]:grid-cols-4";
   const cellWidth = brief.stages?.minButtonWidth ?? STAGE_BUTTON_WIDTH.initial;
-  // Кнопки без этапов переносятся, как ряд этапов: одна в своём ряду растянута на всю ширину.
-  const rowButtons = [
-    ...buttons.map((question) => ({ key: question.id, node: <ChoiceButton question={question} view={view} /> })),
-    ...(withBudget && !staged ? [{ key: BUDGET_PANEL, node: <BudgetButton view={view} /> }] : []),
-  ];
   return (
     <div className="flex flex-col gap-1">
       <div role="group" aria-label={t.brief.answerGroup} className="flex flex-col gap-px overflow-hidden rounded-lg">
@@ -501,24 +374,17 @@ function AnswerBlock({ brief, view, roots, footer, below }: { brief: DecisionBri
             ))}
           </div>
         )}
-        {staged && (
-          <StagesBlock
-            view={stagesView}
-            roots={roots}
-            budget={withBudget ? { key: BUDGET_PANEL, cell: <BudgetButton view={view} />, panel: <BudgetPanel view={view} /> } : null}
-          />
-        )}
-        {rowButtons.length > 0 && (
+        {buttons.length > 0 && (
           <div className="flex flex-wrap gap-px">
-            {rowButtons.map(({ key, node }) => (
-              <div key={key} style={rowCellStyle(cellWidth)} className="flex min-w-0">
-                {node}
+            {buttons.map((question) => (
+              <div key={question.id} style={rowCellStyle(cellWidth)} className="flex min-w-0">
+                <ChoiceButton question={question} view={view} />
               </div>
             ))}
           </div>
         )}
         {expanded !== undefined && !view.answered && <ChoicePanel question={expanded} view={view} />}
-        {withBudget && !staged && view.expanded === BUDGET_PANEL && <BudgetPanel view={view} />}
+        {(staged || withBudget) && <StagesTable view={view} roots={roots} snapshot={view.snapshot} priced={withBudget} />}
         {footer}
       </div>
       {below}

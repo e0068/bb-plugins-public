@@ -680,7 +680,7 @@ export const decisionAnswerSchema = z.object({
   /** Есть ровно у брифа с критерием. */
   criteria: criteriaAnswerSchema.optional(),
   /** Своя цена владельца вместо прогноза: цель и потолок текстом, как набраны. */
-  budget: z.object({ target: z.string().optional(), max: z.string().optional() }).optional(),
+  budget: z.object({ target: z.string().optional(), max: z.string().optional(), minutes: z.string().optional() }).optional(),
   /** Свободный текст ко всему брифу. */
   note: z.string().optional(),
   /** Где исполнять работу; ответы, записанные раньше, читаются как «в этом треде». */
@@ -705,6 +705,8 @@ export const forecastSnapshotSchema = z.object({
       max: z.number().nullable(),
       /** Строка — основа итога, а не добавка: утверждённый бюджет прогона в брифе-уточнении. */
       base: z.literal(true).optional(),
+      /** Id этапа, чья это цена: таблица отвеченного брифа ставит её в строку этапа. Нет у снимков, записанных раньше. */
+      stage: z.string().optional(),
     }),
   ),
   minutes: z.number().nullable(),

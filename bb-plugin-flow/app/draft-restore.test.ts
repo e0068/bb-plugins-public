@@ -50,7 +50,7 @@ describe("черновик возвращённого брифа на новом
 
   it("текст владельца, своя цена и комментарий к Демонстрации переносятся", () => {
     const demo: DecisionBrief = { ...brief, outcome: { stage: "demo", final: false, next: "x", done: [], pending: [], results: [{ label: "a", target: "b" }] } } as DecisionBrief;
-    const draft = withRestored(demo, initialDraft(demo), returned({ note: "заметка", budget: { target: "5", max: "" }, outcomeNote: "поправь отступы" }));
+    const draft = withRestored(demo, initialDraft(demo), returned({ note: "заметка", budget: { minutes: "", target: "5", max: "" }, outcomeNote: "поправь отступы" }));
     expect([draft.note, draft.budget.target, draft.outcomeNote]).toEqual(["заметка", "5", "поправь отступы"]);
   });
 

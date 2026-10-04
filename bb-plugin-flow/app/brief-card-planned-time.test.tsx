@@ -29,26 +29,25 @@ const open = (shown: DecisionBrief = brief) =>
     { rpc: { getBrief: () => ({ kind: "found", brief: shown, answer: null }), answerBrief: () => ({ kind: "not_found" }) } },
   );
 
-describe("время в кнопке бюджета", () => {
-  it("второй строкой — запланированные минуты работы, а не потраченные на планирование", async () => {
-    const button = within(await open().findByRole("button", { name: /^Бюджет/ }));
-    expect(button.getByText("45 мин")).toBeTruthy();
-    expect(button.queryByText("42 мин, $4.2")).toBeNull();
+type Slot = ReturnType<typeof open>;
+const table = (slot: Slot) => slot.findByRole("group", { name: "Этапы и бюджет" });
+
+describe("время в таблице бюджета", () => {
+  it("итог времени — запланированные минуты работы, а не потраченные на планирование", async () => {
+    const total = (await table(open())).querySelector("[data-total]")!;
+    expect(within(total as HTMLElement).getByText("45 мин")).toBeTruthy();
   });
 
-  it("в разбивке планирование подписано уже потраченным, итог времени — запланированное", async () => {
-    const slot = open();
-    fireEvent.click(await slot.findByRole("button", { name: /^Бюджет/ }));
-    const rows = within(slot.getByRole("group", { name: "Прогноз бюджета" })).getAllByRole("row");
-    expect(rows[1]?.textContent).toContain("уже потрачено");
-    expect(rows.at(-2)?.textContent).toContain("Итого");
-    expect(rows.at(-2)?.textContent).toContain("45 мин");
+  it("планирование — первой строкой с пометкой «уже потрачено»", async () => {
+    const first = (await table(open())).querySelector<HTMLElement>("[data-line]")!;
+    expect(first.textContent).toContain("Планирование в треде");
+    expect(first.textContent).toContain("уже потрачено");
+    expect(first.textContent).toContain("42 мин");
   });
 
   it("планирование без цены модели — минуты и прочерк вместо денег", async () => {
-    const slot = open({ ...brief, planning: { minutes: 42 } });
-    fireEvent.click(await slot.findByRole("button", { name: /^Бюджет/ }));
-    const first = within(slot.getByRole("group", { name: "Прогноз бюджета" })).getAllByRole("row")[1]!;
-    expect(within(first).getAllByRole("cell").map((c) => c.textContent)).toEqual(["Планирование в треде · уже потрачено", "42 мин", "", "—", "—"]);
+    const first = (await table(open({ ...brief, planning: { minutes: 42 } }))).querySelector<HTMLElement>("[data-line]")!;
+    expect(first.textContent).toContain("42 мин");
+    expect(within(first).getAllByText("—")).toHaveLength(2);
   });
 });

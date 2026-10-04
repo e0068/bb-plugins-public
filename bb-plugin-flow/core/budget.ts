@@ -16,11 +16,11 @@ import { answeredStageChoice, executorLabel, stageAdd, stageItems, stagePhase } 
 
 /**
  * Строка разбивки; `null` — величина неизвестна: у планирования без цены модели нет денег, у добавок без `minutes` — времени.
- * `base` — строка не добавка, а основа итога: утверждённый бюджет прогона.
+ * `base` — строка не добавка, а основа итога: утверждённый бюджет прогона. `stage` — id этапа, чья это цена: таблица брифа ставит её в строку этапа.
  */
-export type ForecastLine = { label: string; note: string; minutes: number | null; risk: number; target: number | null; max: number | null; base?: true };
+export type ForecastLine = { label: string; note: string; minutes: number | null; risk: number; target: number | null; max: number | null; base?: true; stage?: string };
 
-/** Итог складывает известное; время `null`, если ни у одной строки его нет; `spent` — сколько первых строк уже потрачено. */
+/** Итог складывает известное; время `null`, если ни у одной строки его нет; риск не ниже нуля; `spent` — сколько первых строк уже потрачено. */
 export type Forecast = { lines: readonly ForecastLine[]; minutes: number | null; risk: number; target: number; max: number; spent?: number };
 
 /** Заголовок пункта — то, чем пункт назван в разбивке и в реплике агенту. */
@@ -38,9 +38,6 @@ const addOf = (item: Criterion): Add | undefined => (typeof item === "string" ? 
 const round = (n: number): number => Math.round(n * 100) / 100;
 
 export const money = (n: number): string => `$${round(n)}`;
-
-/** Цель и потолок одной вилкой: «$35–63», равные — «$35». */
-export const moneySpan = (target: number, max: number): string => (target === max ? money(target) : `${money(target)}–${round(max)}`);
 
 const sign = (n: number): string => (n < 0 ? "–" : "+");
 
@@ -111,7 +108,7 @@ export const plannedMinutes = (f: Pick<Forecast, "lines" | "spent">): number | n
 const stageLines = (brief: DecisionBrief, answer: DecisionAnswer, scope: Add | undefined, locale?: Locale): ForecastLine[] =>
   stageItems(brief).flatMap((item) => {
     const choice = answeredStageChoice(brief, answer, item);
-    return stagePhase(item) !== "todo" || !choice.run ? [] : line(item.stage.name, executorLabel(item.stage, choice.executor, locale), [stageAdd(item, choice.executor, scope)]);
+    return stagePhase(item) !== "todo" || !choice.run ? [] : line(item.stage.name, executorLabel(item.stage, choice.executor, locale), [stageAdd(item, choice.executor, scope)]).map((l) => ({ ...l, stage: item.stage.id }));
   });
 
 /** Бриф, записанный до цены от объёма: этапы в долларах или строки исполнителя, ревью и документов вместо этапов. */
@@ -263,7 +260,7 @@ const midWorkLines = (brief: DecisionBrief, answer: DecisionAnswer, approved: Pl
 export const midWorkBudget = (brief: DecisionBrief): Planned | undefined => (brief.launched === true ? brief.approvedBudget : undefined);
 
 /**
- * Итог прогона: сумма запланированного, не меньше нуля; уже потраченное — справочные первые строки разбивки, в итог не входит; потолок не ниже цели.
+ * Итог прогона: сумма запланированного, не меньше нуля — и деньги, и риск; уже потраченное — справочные первые строки разбивки, в итог не входит; потолок не ниже цели.
  * У брифа-уточнения планирования в разбивке нет: время треда после запуска — уже сама работа, и оно внутри утверждённого бюджета.
  */
 export const forecast = (brief: DecisionBrief, answer: DecisionAnswer, locale?: Locale): Forecast => {
@@ -282,7 +279,7 @@ export const forecast = (brief: DecisionBrief, answer: DecisionAnswer, locale?: 
   return {
     lines,
     minutes,
-    risk: planned.reduce((s, l) => s + l.risk, 0),
+    risk: Math.max(0, planned.reduce((s, l) => s + l.risk, 0)),
     target,
     max: Math.max(target, total("max")),
     spent: spent.length,
@@ -316,11 +313,23 @@ export const hasForecast = (brief: DecisionBrief): boolean => {
 
 const blank = (value: string | undefined): boolean => (value ?? "").trim() === "";
 
-export const hasOwnBudget = (answer: DecisionAnswer): boolean => !blank(answer.budget?.target) || !blank(answer.budget?.max);
+export const hasOwnBudget = (answer: DecisionAnswer): boolean => !blank(answer.budget?.target) || !blank(answer.budget?.max) || !blank(answer.budget?.minutes);
 
-/** Своя цена одной строкой: пустое поле — прочерк; `null`, если своей цены нет. */
-export const ownBudgetText = (budget: { target?: string | undefined; max?: string | undefined }, locale?: Locale): string | null =>
-  blank(budget.target) && blank(budget.max) ? null : `${blank(budget.target) ? "—" : (budget.target ?? "").trim()} · ${messages(locale).budget.upTo} ${blank(budget.max) ? "—" : (budget.max ?? "").trim()}`;
+/** Своя цена владельца: время в минутах, цель и потолок в долларах — как набраны в полях. */
+export type OwnBudget = { minutes?: string | undefined; target?: string | undefined; max?: string | undefined };
+
+/** Сумма своей цены без знака доллара: ответы и черновики до маски хранят набранное как есть, иногда со «$». */
+export const ownDollars = (value: string): string => value.trim().replace(/^\$/, "");
+
+/** Своя цена одной строкой: «$15 · до $30, 120 мин»; пустое денежное поле — прочерк, пустое время не пишется; `null`, если своей цены нет. */
+export const ownBudgetText = (budget: OwnBudget, locale?: Locale): string | null => {
+  if (blank(budget.target) && blank(budget.max) && blank(budget.minutes)) return null;
+  const dollars = (value: string | undefined) => (blank(value) ? "—" : `$${ownDollars(value ?? "")}`);
+  const time = blank(budget.minutes) ? "" : minutesText(Number((budget.minutes ?? "").trim()), locale);
+  if (blank(budget.target) && blank(budget.max)) return time;
+  const price = `${dollars(budget.target)} · ${messages(locale).budget.upTo} ${dollars(budget.max)}`;
+  return time === "" ? price : `${price}, ${time}`;
+};
 
 /** Сумма добавок оставленных пунктов «Готово, когда»; `null`, если добавок нет. */
 export const criteriaSum = (brief: DecisionBrief, removed: readonly number[]): Add | null => {

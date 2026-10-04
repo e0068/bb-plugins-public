@@ -61,9 +61,6 @@ export const en: Messages = {
   brief: {
     requiredSuffix: " (required)",
     requiredTitle: "Required by the plugin settings",
-    budget: "Budget",
-    forecast: "Budget forecast",
-    line: "line",
     time: "time",
     risk: "risk",
     target: "target",
@@ -73,6 +70,10 @@ export const en: Messages = {
     ownPrice: "Your price",
     ownTarget: "Your target",
     ownMax: "Your ceiling",
+    ownMinutes: "Your time",
+    minutesUnit: "min",
+    stage: "Stage",
+    stagesTable: "Stages and budget",
     whenWorkflow: "when a workflow executes",
     hintNeedAnswer: (list) => `Answer needed: ${list}`,
     hintRequired: (list) => `Tick the required documents: ${list}`,
@@ -224,7 +225,6 @@ export const en: Messages = {
   stages: {
     toRun: (name) => `${name}: in the next run`,
     done: "Stage done",
-    automation: "Automation",
     executorGroup: (name) => `${name}: executor`,
     results: (name) => `${name}: results`,
     copyPath: (path) => `Copy path ${path}`,
@@ -505,11 +505,8 @@ export const en: Messages = {
     busy: (stage: string) => `Flow is running stage ${quote(stage)} right now — for example, retrying the step. Press again once the attempt ends`,
   },
   subStages: {
-    before: "before",
-    after: "after",
     drop: (owner, before) => `sub-stage of ${quote(owner)} — ${before ? "before" : "after"}`,
     drag: (name, owner) => `Drag sub-stage ${name} of ${owner}`,
-    title: "Sub-stages",
     inRun: (name, owner) => `Sub-stage ${name} of ${owner} in the run`,
   },
 };

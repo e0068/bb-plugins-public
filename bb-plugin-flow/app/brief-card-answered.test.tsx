@@ -82,19 +82,24 @@ describe("отвеченный бриф", () => {
     expect(valueClass(group, "Сам")).toContain("text-muted-foreground");
   });
 
-  it("кнопка бюджета отвеченного брифа показывает снимок, а не пересчёт", async () => {
-    const group = await block(render(brief, recordOf(answers(true), snapshot)));
-    expect(group.getByRole("button", { name: /^Бюджет/ }).textContent).toContain("$17 · до $33");
+  it("таблица отвеченного брифа показывает снимок, а не пересчёт", async () => {
+    const slot = render(brief, recordOf(answers(true), snapshot));
+    const table = await slot.findByRole("group", { name: "Этапы и бюджет" });
+    expect(within(table).getByText("Снимок на отправке")).toBeTruthy();
+    expect(table.querySelector("[data-total]")!.textContent).toContain("$17–$33");
   });
 
-  it("отвеченный бриф раскрывает разбивку снимка без полей своей цены", async () => {
-    const slot = render(brief, recordOf(answers(true), snapshot));
-    const group = await block(slot);
-    fireEvent.click(group.getByRole("button", { name: /^Бюджет/ }));
-    const panel = within(group.getByRole("group", { name: "Прогноз бюджета" }));
-    expect(panel.getByText("Снимок на отправке")).toBeTruthy();
-    expect(panel.queryByRole("textbox", { name: "Своя цель" })).toBeNull();
-    expect(panel.queryByText("Своя цена")).toBeNull();
+  it("своя цена старого ответа со «$» встаёт в «Итого» одним знаком доллара", async () => {
+    const record = { ...recordOf(answers(true), snapshot), answer: { ...recordOf(answers(true), snapshot).answer, budget: { target: "$20", max: "$40" } } };
+    const table = await render(brief, record).findByRole("group", { name: "Этапы и бюджет" });
+    expect(table.querySelector("[data-total]")!.textContent).toContain("$20–$40");
+    expect(table.textContent).not.toContain("$$");
+  });
+
+  it("у отвеченного брифа нет полей своей цены", async () => {
+    const table = within(await render(brief, recordOf(answers(true), snapshot)).findByRole("group", { name: "Этапы и бюджет" }));
+    expect(table.queryByRole("textbox", { name: "Своя цель" })).toBeNull();
+    expect(table.queryByText("Своя цена")).toBeNull();
   });
 });
 

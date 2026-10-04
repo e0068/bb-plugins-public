@@ -120,18 +120,6 @@ export const stageAdd = (item: StageItem, executor: string, scope?: Add): Add | 
   return sumAdds([item.report?.add, executor === SELF ? undefined : item.report?.adds?.[executor]]);
 };
 
-/** Разница исполнителя с самим агентом — подпись в раскрытом списке; у самого агента разницы нет. */
-export const executorAdd = (item: StageItem, executor: string, scope?: Add): Add | undefined => {
-  if (executor === SELF) return undefined;
-  if (item.report?.share === undefined) return item.report?.adds?.[executor];
-  const own = stageAdd(item, SELF, scope);
-  const other = stageAdd(item, executor, scope);
-  if (own === undefined || other === undefined) return undefined;
-  const minutes = other.minutes === undefined || own.minutes === undefined ? {} : { minutes: other.minutes - own.minutes };
-  const [low, high] = [cents(other.target - own.target), cents(other.max - own.max)].sort((a, b) => a - b) as [number, number];
-  return { target: low, max: high, risk: other.risk - own.risk, ...minutes };
-};
-
 /**
  * Что из выбора по этапу уходит в следующий бриф треда: исполнитель, которого владелец менял сам,
  * и перенесённый из прошлого брифа, если владелец его оставил, — иначе выбор жил бы ровно один бриф.
