@@ -3,6 +3,7 @@ import * as DropdownMenuPrimitive from "@radix-ui/react-dropdown-menu";
 
 import { cn } from "../../lib/utils";
 import { usePortalScopeProps } from "../../lib/portal-scope";
+import { useOverlayContainer } from "./overlay-container";
 import { COARSE_POINTER_CHECK_SLOT_CLASS } from "./coarse-pointer-sizing.js";
 import {
   type ResponsiveOverlayContextValue,
@@ -159,6 +160,7 @@ const DropdownMenuContent = React.forwardRef<
     // Unconditional (rules of hooks — the compact branch returns early); the
     // compact drawer path is covered by the persistent drawer shell.
     const scopeProps = usePortalScopeProps();
+    const container = useOverlayContainer();
 
     if (isCompactViewport) {
       const domProps = stripRadixContentProps(props);
@@ -184,7 +186,7 @@ const DropdownMenuContent = React.forwardRef<
     }
 
     return (
-      <DropdownMenuPrimitive.Portal>
+      <DropdownMenuPrimitive.Portal container={container}>
         <DropdownMenuPrimitive.Content
           ref={ref}
           {...scopeProps}

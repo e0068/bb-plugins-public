@@ -6,6 +6,7 @@ import type {
 import { experimental_useFixedTabTarget, useBbNavigate, useRealtime } from "@get-bb/plugin-sdk/app";
 import { Button } from "@/components/ui/button";
 import { Icon } from "@/components/ui/icon";
+import { OverlayContainerRoot } from "@/components/ui/overlay-container";
 import { Skeleton } from "@/components/ui/skeleton";
 import type { Task } from "../../shared/contract.js";
 import {
@@ -387,7 +388,9 @@ export function TaskSidePanelTab() {
   // wandering into its sub-tasks brings that card back.
   return (
     <TasksRefreshProvider>
-      <TaskPanelBody key={opened.sequence} taskKey={opened.target.taskKey} />
+      <OverlayContainerRoot>
+        <TaskPanelBody key={opened.sequence} taskKey={opened.target.taskKey} />
+      </OverlayContainerRoot>
     </TasksRefreshProvider>
   );
 }
@@ -412,7 +415,9 @@ export function TaskEmbedPanel(props: PluginThreadPanelProps) {
   return (
     <CallerThreadProvider threadId={props.threadId}>
       <TasksRefreshProvider>
-        <TaskEmbedPanelContent {...props} />
+        <OverlayContainerRoot>
+          <TaskEmbedPanelContent {...props} />
+        </OverlayContainerRoot>
       </TasksRefreshProvider>
     </CallerThreadProvider>
   );

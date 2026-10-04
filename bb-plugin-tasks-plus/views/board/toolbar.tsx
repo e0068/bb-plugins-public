@@ -284,6 +284,8 @@ interface FilterChipProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onChange: (filters: SavedViewFilters) => void;
+  /** The cross: drops the chip and the values it picks. */
+  onRemove: () => void;
 }
 
 /** What a chip's trigger reads: the facet, and its values when some are picked. */
@@ -309,8 +311,8 @@ const chipId = (field: Facet): string => {
   return target.kind === "listed" ? LISTED_FILTER_KEYS[target.field] : field;
 };
 
-/** A chip: its menu, and the cross that drops the facet's values. */
-function ChipShell({ facet, filters, onChange, children }: Pick<FilterChipProps, "facet" | "filters" | "onChange"> & { children: ReactNode }) {
+/** A chip: its menu, and the cross that drops it with the facet's values. */
+function ChipShell({ facet, onRemove, children }: Pick<FilterChipProps, "facet" | "onRemove"> & { children: ReactNode }) {
   return (
     <span className={CHIP_CLASS} data-filter-chip={chipId(facet.id)}>
       {children}
@@ -318,7 +320,7 @@ function ChipShell({ facet, filters, onChange, children }: Pick<FilterChipProps,
         type="button"
         aria-label={`Remove ${facet.label} filter`}
         className="flex size-5 items-center justify-center rounded-sm text-muted-foreground hover:bg-state-hover hover:text-foreground"
-        onClick={() => onChange(withFieldFilter(filters, { kind: "clear", field: facet.id }))}
+        onClick={onRemove}
       >
         <Icon name="X" className="size-3" />
       </button>
@@ -326,10 +328,10 @@ function ChipShell({ facet, filters, onChange, children }: Pick<FilterChipProps,
   );
 }
 
-function ListedChip({ facet, facetId, projectId, filters, open, onOpenChange, onChange }: FilterChipProps & { facetId: ListedFacet }) {
+function ListedChip({ facet, facetId, projectId, filters, open, onOpenChange, onChange, onRemove }: FilterChipProps & { facetId: ListedFacet }) {
   const names = filters[facetId].map((value) => valueName(facetId, value));
   return (
-    <ChipShell facet={facet} filters={filters} onChange={onChange}>
+    <ChipShell facet={facet} onRemove={onRemove}>
       <DropdownMenu open={open} onOpenChange={onOpenChange}>
         <DropdownMenuTrigger asChild>
           <button type="button" className={CHIP_TRIGGER_CLASS}>
@@ -350,7 +352,7 @@ function ListedChip({ facet, facetId, projectId, filters, open, onOpenChange, on
  * menu stays open. A picked task no longer offered still shows, greyed, so it
  * can be switched off.
  */
-function ParentChip({ facet, projectId, filters, open, onOpenChange, onChange }: FilterChipProps) {
+function ParentChip({ facet, projectId, filters, open, onOpenChange, onChange, onRemove }: FilterChipProps) {
   const tasks = useScopeData(projectId)?.tasks;
   const options = parentFilterOptions(tasks ?? []);
   const byId = new Map((tasks ?? []).map((task) => [task.id, task]));
@@ -359,7 +361,7 @@ function ParentChip({ facet, projectId, filters, open, onOpenChange, onChange }:
   const stale = selected.filter((id) => !options.some((option) => option.value === id));
   const toggle = (id: string) => onChange({ ...filters, parents: toggled(selected, id) });
   return (
-    <ChipShell facet={facet} filters={filters} onChange={onChange}>
+    <ChipShell facet={facet} onRemove={onRemove}>
       <Popover open={open} onOpenChange={onOpenChange}>
         <PopoverTrigger asChild>
           <button type="button" className={CHIP_TRIGGER_CLASS}>
@@ -400,14 +402,14 @@ function ParentChip({ facet, projectId, filters, open, onOpenChange, onChange }:
 }
 
 /** A chip over values ticked in a plain menu, for the fields filtered since the first seven. */
-function ValuesChip({ facet, field, projectId, filters, open, onOpenChange, onChange }: FilterChipProps & { field: ValueFilterField }) {
+function ValuesChip({ facet, field, projectId, filters, open, onOpenChange, onChange, onRemove }: FilterChipProps & { field: ValueFilterField }) {
   const options = useValueOptions(field, projectId);
   const selected = filters.values?.[field] ?? [];
   const nameOf = new Map(options.map((option) => [option.value, option.name]));
   const stale = selected.filter((value) => !nameOf.has(value));
   const toggle = (value: string) => onChange(withFieldFilter(filters, { kind: "values", field, values: toggled(selected, value) }));
   return (
-    <ChipShell facet={facet} filters={filters} onChange={onChange}>
+    <ChipShell facet={facet} onRemove={onRemove}>
       <DropdownMenu open={open} onOpenChange={onOpenChange}>
         <DropdownMenuTrigger asChild>
           <button type="button" className={CHIP_TRIGGER_CLASS}>
@@ -437,10 +439,10 @@ function ValuesChip({ facet, field, projectId, filters, open, onOpenChange, onCh
 }
 
 /** A chip over a text field: tasks whose field contains the typed text, case aside. */
-function TextChip({ facet, field, filters, open, onOpenChange, onChange }: FilterChipProps & { field: TextField }) {
+function TextChip({ facet, field, filters, open, onOpenChange, onChange, onRemove }: FilterChipProps & { field: TextField }) {
   const text = filters.texts?.[field] ?? "";
   return (
-    <ChipShell facet={facet} filters={filters} onChange={onChange}>
+    <ChipShell facet={facet} onRemove={onRemove}>
       <Popover open={open} onOpenChange={onOpenChange}>
         <PopoverTrigger asChild>
           <button type="button" className={CHIP_TRIGGER_CLASS}>
@@ -533,10 +535,10 @@ const parseNumber = (text: string): number | null => {
 /** A chip over a date or number field: from and to, either open, and — but for counts — whether empty values pass. */
 function RangeChip<T extends string | number>({
   facet,
-  filters,
   open,
   onOpenChange,
   onChange,
+  onRemove,
   range,
   type,
   parse,
@@ -552,7 +554,7 @@ function RangeChip<T extends string | number>({
   set: (range: Range<T>) => SavedViewFilters;
 }) {
   return (
-    <ChipShell facet={facet} filters={filters} onChange={onChange}>
+    <ChipShell facet={facet} onRemove={onRemove}>
       <Popover open={open} onOpenChange={onOpenChange}>
         <PopoverTrigger asChild>
           <button type="button" className={CHIP_TRIGGER_CLASS}>
@@ -865,12 +867,20 @@ export interface ViewToolbarProps {
 
 function ToolbarRow({ controls, compact, displayOpen, onToggleDisplay }: Omit<ViewToolbarProps, "target"> & { controls: ViewControls }) {
   const { projectId, filters, setFilters, sortChip, sortMenu, changes } = controls;
-  // The chip whose value menu is open — a facet just picked from Filter shows
-  // its chip, still empty, until a value is chosen or the menu closes.
+  // The chip whose value menu is open.
   const [openFacet, setOpenFacet] = useState<Facet | null>(null);
+  // Chips shown whether or not they filter: a facet picked from Filter, or a
+  // chip once opened, stays — empty too — until its cross or another view.
+  // Never saved: an empty chip filters nothing.
+  const [kept, setKept] = useState<readonly Facet[]>([]);
+  const keep = (facet: Facet) => setKept((facets) => (facets.includes(facet) ? facets : [...facets, facet]));
+  const open = (facet: Facet) => {
+    keep(facet);
+    setOpenFacet(facet);
+  };
   const active = activeFilterFields(filters);
-  const shownFacets = FACETS.filter((facet) => active.includes(facet.id) || openFacet === facet.id);
-  const { slotRef, chipsRef, overflows } = useChipsOverflow([filters, sortChip, openFacet]);
+  const shownFacets = FACETS.filter((facet) => active.includes(facet.id) || kept.includes(facet.id));
+  const { slotRef, chipsRef, overflows } = useChipsOverflow([filters, sortChip, kept]);
   const collapsed = compact || overflows;
   const chip = (facet: FacetEntry) => (
     <FilterChip
@@ -879,8 +889,12 @@ function ToolbarRow({ controls, compact, displayOpen, onToggleDisplay }: Omit<Vi
       projectId={projectId}
       filters={filters}
       open={openFacet === facet.id}
-      onOpenChange={(open) => setOpenFacet(open ? facet.id : null)}
+      onOpenChange={(isOpen) => (isOpen ? open(facet.id) : setOpenFacet(null))}
       onChange={setFilters}
+      onRemove={() => {
+        setKept((facets) => facets.filter((shown) => shown !== facet.id));
+        setFilters(withFieldFilter(filters, { kind: "clear", field: facet.id }));
+      }}
     />
   );
   // Folded chips still open one: the facet just picked from Filter shows on
@@ -909,8 +923,11 @@ function ToolbarRow({ controls, compact, displayOpen, onToggleDisplay }: Omit<Vi
       <FilterMenu
         filters={filters}
         count={collapsed ? activeCount : 0}
-        onPick={(facet) => setOpenFacet(facet)}
-        onClear={() => setFilters(EMPTY_FILTERS)}
+        onPick={open}
+        onClear={() => {
+          setKept([]);
+          setFilters(EMPTY_FILTERS);
+        }}
       />
       <Button
         type="button"
