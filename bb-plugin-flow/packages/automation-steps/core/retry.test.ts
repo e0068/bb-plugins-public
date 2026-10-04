@@ -45,3 +45,15 @@ describe("classifyFailure", () => {
     expect([...RETRY_DELAYS_MS]).toEqual([2_000, 8_000]);
   });
 });
+
+describe("classifyFailure — облачная база доски", () => {
+  it("временная — база не ответила: Tasks+ ждал её 10 с, а запись могла дойти", () => {
+    const unreachable = "Tasks not moved to done: SHA-54 (The board's database cannot be reached — the task was not changed.)";
+    expect(classifyFailure(unreachable)).toBe("transient");
+  });
+
+  it("постоянная — база отказала по токену: повтор того же токена её не лечит", () => {
+    const refused = "Tasks not moved to done: SHA-54 (The board's database refused its token — the task was not changed.)";
+    expect(classifyFailure(refused)).toBe("permanent");
+  });
+});
