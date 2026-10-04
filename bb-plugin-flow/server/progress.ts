@@ -7,13 +7,14 @@ import { z } from "zod";
 
 import { idleNote, idleStages, isActionStage } from "../core/automation-run";
 import { undoDue } from "../core/automation-undo";
-import { afterMark, markReply, returnedNote, startFact, type StartFact } from "../core/mark-report";
+import { afterMark, markReply, returnedNote, startFact, stopFailure, waitedReply, type StartFact } from "../core/mark-report";
 import { carriedBy, carrierOf, EMPTY_PROGRESS, forHandoff, onAnswer, onBrief, onMark, pendingActive, progressView, recounted, reopen, isAhead, recountWindows, toggleStageInRun, touchesProgress, answerMovesProgress, withActive } from "../core/progress";
 import { historyOrder } from "../core/run-history";
 import { isRunFinished, runSummary } from "../core/run-summary";
 import { isTaskFile, taskTitle } from "../core/run-tasks";
 import { stampFlow, type TaskFlow } from "../core/task-flow";
 import { flowProgressSchema, flowStageParamsSchema, frozenRunSchema, progressRpcContract, type ContextFillView, type DecisionAnswer, type DecisionBrief, type FlowProgress, type FrozenRun, type Planned, type RunHistoryEntry, type StageSettings, type WorkStage } from "../shared/contract";
+import type { AgentRelay, RelayHold } from "./agent-relay";
 
 export const FLOW_STAGE_TOOL = "flow_stage";
 
@@ -262,7 +263,7 @@ const INSTRUCTIONS = `Mark the stages of the thread's flow as you go, so the own
 - Call ${FLOW_STAGE_TOOL} with state "started" when you begin a skill stage of the run, before its first action.
 - Call it with state "done" and results — links to what the stage produced, [{ label, target }] with the file name or task key as label — when you finish the stage.
 - Built-in stages (questions, criteria, stage selection, demo) are marked by the briefs themselves: do not mark them.
-- Automation stages are run and marked by Flow itself: when the next stage is an automation, mark the current stage done and end your turn. The answer says whether Flow started it, and if it did not, why and what to do. Never tell the owner an automation runs unless the answer says it started — relay what the answer says.
+- Automation stages are run and marked by Flow itself: when the next stage is an automation, mark the current stage done and wait for the answer — the call waits until Flow has run it. When the answer hands you Flow's message, act on it in the same turn; when it says to end your turn, end it — Flow sends you a message when your next stage is due. The answer says whether Flow started it, and if it did not, why and what to do. Never tell the owner an automation runs unless the answer says it started — relay what the answer says.
 - Action stages are run by the owner, step by step, with a button above the composer: when the next stage is an action, mark the current stage done and end your turn — Flow marks the action stage itself.
 - A stage sent back for rework is started again: marking a done stage started drops the done state of every stage after it, so the run goes through them again in order and the automations behind them run again. The undo steps of the done automations it reopens run before the answer, which names their outcome — relay a failed one to the owner.
 - Flow measures the time a stage stood waiting for the owner: a failed automation step until the owner retries or skips it, an action stage between presses. When this tool's answer or a reply from Flow names that idle time, carry it into the flow report and the task report — which stages stood and for how long.
@@ -286,6 +287,8 @@ const withTaskTitles = (results: readonly Result[], read: (target: string) => Pr
 /** Сколько ответ flow_stage ждёт записи старта: исполнитель пишет старт через миллисекунды после отметки, срок — с запасом. */
 const START_TIMEOUT_MS = 5000;
 const START_POLL_MS = 25;
+/** Сколько отметка ждёт автоматизацию за этапом: дольше — ход агента держит вызов, а Flow напишет в тред сам. */
+const RELAY_WAIT_MS = 10 * 60_000;
 
 const toolError = (text: string) => ({ isError: true as const, content: [{ type: "text" as const, text }] });
 
@@ -322,6 +325,10 @@ export const registerProgress = (
     startTimeoutMs?: number;
     /** Шаги отката автоматизаций, с которых доработка сняла готовность, — итог строкой на шаг; нет — отката нет. */
     undo?: (threadId: string, stages: readonly WorkStage[]) => Promise<readonly string[]>;
+    /** Ожидание реплики Flow: отметка перед автоматизацией ждёт её конца и отдаёт реплику агенту в ответе; нет — ответ сразу. */
+    relay?: Pick<AgentRelay, "hold">;
+    /** Сколько мс отметка ждёт автоматизацию; нет — 10 минут. */
+    relayWaitMs?: number;
   },
 ): { freezeFinished: (threadId: string) => Promise<void> } => {
   /**
@@ -347,6 +354,13 @@ export const registerProgress = (
     if (Date.now() >= deadline) return { kind: "not-started" };
     await new Promise((resolve) => setTimeout(resolve, START_POLL_MS));
     return awaitStart(threadId, stages, stageId, deadline);
+  };
+
+  /** Ждёт, пока Flow доиграет автоматизацию `next`, и отвечает её итогом: реплика агенту, упавший шаг, тишина или ещё идёт. */
+  const waitFor = async (threadId: string, stages: readonly WorkStage[], next: WorkStage, hold: RelayHold, signal: AbortSignal): Promise<{ text: string; replied: boolean }> => {
+    const outcome = await hold.wait({ ms: deps.relayWaitMs ?? RELAY_WAIT_MS, signal });
+    const failure = outcome.kind === "quiet" ? stopFailure(stages, (await progress.get(threadId)) ?? EMPTY_PROGRESS) : null;
+    return { text: waitedReply(next, outcome, failure), replied: outcome.kind === "reply" };
   };
 
   bb.agents.registerTool({
@@ -376,23 +390,34 @@ export const registerProgress = (
       const cost = window === undefined ? undefined : await deps.windowCost(ctx.threadId, window.from, window.to).catch(() => undefined);
       const minutes = window === undefined ? undefined : (await deps.windowMinutes?.(ctx.threadId, [window]).catch(() => undefined))?.[0];
       const titled = results === undefined ? undefined : await withTaskTitles(results, (target) => readStamped(ctx.threadId, target));
-      let marked = EMPTY_PROGRESS;
-      let undone: WorkStage[] = [];
-      // Снова начатый этап — доработка: этапы за ним теряют готовность, и автоматизации за ним пройдут заново.
-      await progress.update(ctx.threadId, (p) => {
-        if (state === "started") undone = undoDue(p, stages, stage);
-        return (marked = onMark(state === "started" ? reopen(p, stages, stage) : p, stage, state, at, titled, cost, minutes));
-      });
-      // Откат закрытых автоматизаций идёт до ответа: агент берётся за правки, когда их эффект уже отменён.
-      const undoLines = undone.length === 0 || deps.undo === undefined ? [] : await deps.undo(ctx.threadId, undone).catch((error: unknown) => [`Undo failed: ${error instanceof Error ? error.message : String(error)}`]);
-      // Что за отмеченным этапом — по записи этой отметки; о старте ответ говорит только по записанному старту.
-      const verdict = state === "done" ? afterMark(stages, marked, stage) : ({ kind: "none" } as const);
-      const fact = verdict.kind === "due" ? await awaitStart(ctx.threadId, stages, verdict.stage.id, Date.now() + (deps.startTimeoutMs ?? START_TIMEOUT_MS)) : null;
-      const ahead = `${markReply(stage, verdict, fact)}${state === "done" ? returnedNote(stages, marked, stage) : ""}`;
-      // Простой прогона — в ответе отметки: отчёт агент пишет до автоматизаций, и другого места узнать числа у него нет.
-      const idle = state === "done" ? idleNote(idleStages(marked, stages)) : "";
-      const undoNote = undoLines.length === 0 ? "" : ` ${undoLines.join(" ")}`;
-      return `Stage ${stage} marked ${state}.${ahead}${idle === "" ? "" : ` ${idle}`}${undoNote}`;
+      // Ожидание встаёт до отметки: автоматизация, которую она запустит, может доиграть раньше, чем вызов начнёт ждать.
+      // Снимается на любом выходе — иначе реплика ушла бы в вызов, который уже ответил.
+      const hold = state === "done" ? deps.relay?.hold(ctx.threadId) : undefined;
+      try {
+        let marked = EMPTY_PROGRESS;
+        let undone: WorkStage[] = [];
+        // Снова начатый этап — доработка: этапы за ним теряют готовность, и автоматизации за ним пройдут заново.
+        await progress.update(ctx.threadId, (p) => {
+          if (state === "started") undone = undoDue(p, stages, stage);
+          return (marked = onMark(state === "started" ? reopen(p, stages, stage) : p, stage, state, at, titled, cost, minutes));
+        });
+        // Откат закрытых автоматизаций идёт до ответа: агент берётся за правки, когда их эффект уже отменён.
+        const undoLines = undone.length === 0 || deps.undo === undefined ? [] : await deps.undo(ctx.threadId, undone).catch((error: unknown) => [`Undo failed: ${error instanceof Error ? error.message : String(error)}`]);
+        // Что за отмеченным этапом — по записи этой отметки; о старте ответ говорит только по записанному старту.
+        const verdict = state === "done" ? afterMark(stages, marked, stage) : ({ kind: "none" } as const);
+        const fact = verdict.kind === "due" ? await awaitStart(ctx.threadId, stages, verdict.stage.id, Date.now() + (deps.startTimeoutMs ?? START_TIMEOUT_MS)) : null;
+        // Автоматизация пошла или стоит в очереди за идущей — вызов ждёт её конца; этап Action ждёт владельца, и ждать нечего.
+        const waits = hold !== undefined && verdict.kind === "due" && !isActionStage(verdict.stage) && (fact?.kind === "started" || fact?.kind === "busy");
+        const waited = waits ? await waitFor(ctx.threadId, stages, verdict.stage, hold, ctx.signal) : null;
+        const ahead = `${waited?.text ?? markReply(stage, verdict, fact)}${state === "done" ? returnedNote(stages, marked, stage) : ""}`;
+        // Простой прогона — в ответе отметки: отчёт агент пишет до автоматизаций, и другого места узнать числа у него нет.
+        // Реплика Flow, отданная в ответ, уже несёт простой — вместе с простоем самих автоматизаций.
+        const idle = state === "done" && waited?.replied !== true ? idleNote(idleStages(marked, stages)) : "";
+        const undoNote = undoLines.length === 0 ? "" : ` ${undoLines.join(" ")}`;
+        return `Stage ${stage} marked ${state}.${ahead}${idle === "" ? "" : ` ${idle}`}${undoNote}`;
+      } finally {
+        hold?.release();
+      }
     },
   });
 

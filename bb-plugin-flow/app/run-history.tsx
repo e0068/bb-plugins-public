@@ -14,7 +14,7 @@ import { Icon } from "../components/ui/icon";
 import { cn } from "../lib/utils";
 import type { progressRpcContract, RunHistoryEntry } from "../shared/contract";
 import { useMessages } from "./locale-context";
-import { FLOWS_PANEL_PATH } from "./panel-path";
+import { FLOWS_PANEL_PATH } from "../lib/panel-path";
 import { money } from "./progress-banner";
 import { RunSummaryBody } from "./run-summary";
 

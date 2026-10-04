@@ -4,21 +4,23 @@
 // автоматизации за ним Flow ведёт сам.
 import type { DecisionAnswer, DecisionBrief, FlowProgress } from "../shared/contract";
 import { agentStagesAhead } from "./automation-run";
+import { ownWords } from "./outcome";
 
 const said = (text: string | undefined): boolean => (text ?? "").trim().length > 0;
 
 /**
  * Реплика нужна, пока в прогоне остаётся хоть один незакрытый этап агента, и
- * всегда — когда владелец написал своё или приложил картинку: это работа,
+ * всегда — когда владелец написал своё, в том числе в строке вопроса, или приложил картинку: это работа,
  * которую, кроме агента, никто не сделает. Уточнение агент ждёт посреди хода,
  * поэтому уходит всегда. Тред без снимка этапов или без записи прогресса о
- * работе впереди ничего не говорит — тогда реплика уходит, как раньше.
+ * работе впереди ничего не говорит — тогда реплика уходит, как раньше. После
+ * Демонстрации работа впереди — только этапы за ней.
  * `progress` — запись треда уже с этим ответом.
  */
 export const needsAgentReply = (brief: DecisionBrief, answer: DecisionAnswer, progress: FlowProgress | null, attachments = 0): boolean => {
   if (brief.kind !== "brief") return true;
-  if (attachments > 0 || said(answer.note) || said(answer.outcome?.note)) return true;
+  if (attachments > 0 || said(answer.note) || said(answer.outcome?.note) || ownWords(answer)) return true;
   const stages = brief.stages?.list ?? [];
   if (progress === null || stages.length === 0) return true;
-  return agentStagesAhead(stages, progress);
+  return agentStagesAhead(stages, progress, brief.outcome?.stage);
 };

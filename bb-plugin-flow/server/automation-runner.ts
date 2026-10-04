@@ -91,6 +91,8 @@ export interface AutomationRunnerDeps {
 export interface AutomationRunner {
   /** Запускает автоматизации, до которых дошёл прогон треда; идущий прогон треда не трогает. */
   advance(threadId: string): Promise<void>;
+  /** Идёт ли сейчас работа Flow над тредом: цепочка автоматизаций, повтор или пропуск шага. */
+  busy(threadId: string): boolean;
   /** Продолжает только прерванный прогон треда — при загрузке плагина; новых автоматизаций не начинает. */
   resume(threadId: string): Promise<void>;
   /** Снимает ошибку упавшего шага и в фоне продолжает с него цепочку; отказ — этап не падал, `busy` — прогон треда уже идёт. Назначенный автоповтор снимается. */
@@ -530,6 +532,7 @@ export const createAutomationRunner = (deps: AutomationRunnerDeps): AutomationRu
       if (claim(threadId)) await release(threadId, drive(threadId));
       else woken.add(threadId);
     },
+    busy: (threadId) => active.has(threadId),
     resume: async (threadId) => {
       await rearm(threadId).catch(deps.onError);
       if (claim(threadId)) await release(threadId, drive(threadId, true));

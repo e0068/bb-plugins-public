@@ -9,10 +9,9 @@ import { definePluginApp } from "@get-bb/plugin-sdk/app";
 import { CommandDirective } from "./app/command";
 import { FlowPicker } from "./app/flow-picker";
 import { FlowsPage } from "./app/flows-page";
-import { FLOWS_PANEL_PATH } from "./app/panel-path";
+import { FLOWS_PANEL_PATH } from "./lib/panel-path";
 import { JournalDirsSection } from "./app/journal-settings";
 import { AutomationRetrySection, StageButtonsSection } from "./app/flow-settings-sections";
-import { AutomationToasts } from "./app/automation-toasts";
 import { ProgressBanner } from "./app/progress-banner";
 import { registerAwaitingStatus } from "./app/row-status";
 import { systemLanguages } from "./app/locale-context";
@@ -31,7 +30,7 @@ export default definePluginApp((app) => {
   app.slots.navPanel({ id: "flows", title: "Flow", icon: "Workflow", path: FLOWS_PANEL_PATH, component: FlowsPage });
   app.composer.customize({ id: "flow", scopes: ["new-thread"], actions: [{ id: "flow-picker", component: FlowPicker }] });
   // Контейнер состояния Flow: пока прогон идёт — полоса этапов, без прогона и после завершённого — выбор flow.
-  app.composer.customize({ id: "flow-progress", scopes: ["thread"], banners: [{ id: "progress", chrome: "bare", component: ProgressBanner }, { id: "notices", chrome: "bare", component: AutomationToasts }] });
+  app.composer.customize({ id: "flow-progress", scopes: ["thread"], banners: [{ id: "progress", chrome: "bare", component: ProgressBanner }] });
   registerAwaitingStatus(app);
   app.slots.settingsSection({ id: "journal-dirs", title: t.journalTitle, description: t.journalDescription, component: JournalDirsSection });
   app.slots.settingsSection({ id: "stage-buttons", title: t.buttonsTitle, description: t.buttonsDescription, component: StageButtonsSection });

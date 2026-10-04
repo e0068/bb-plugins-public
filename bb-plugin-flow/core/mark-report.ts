@@ -109,3 +109,31 @@ export const markReply = (markedId: string, verdict: AfterMark, fact: StartFact 
       return ` The next stage ${verdict.gate.id} is open; ${label(verdict.stage)} (${kindOf(verdict.stage)}) after it has NOT started — Flow starts it once ${verdict.gate.id} is marked done.`;
   }
 };
+
+/** Чем кончилось ожидание автоматизации в вызове flow_stage: реплика Flow, работа Flow кончилась без неё, срок вышел или вызов отменён. */
+export type WaitOutcome = { kind: "reply"; text: string } | { kind: "quiet" } | { kind: "timeout" } | { kind: "aborted" };
+
+/** Упавший шаг, который держит цепочку после доигранной работы Flow; `null` — цепочку ничто не держит. */
+export const stopFailure = (stages: readonly WorkStage[], progress: FlowProgress): Blocker | null => {
+  const stopper = stoppedBy(stages, progress);
+  return stopper === null ? null : failureOf(progress, stopper);
+};
+
+/**
+ * Хвост ответа flow_stage, который дождался автоматизации `stage`: реплика Flow — агенту в этот же ход, вместо сообщения
+ * в треде; упавший шаг `failure` — сказать владельцу и закончить ход; иначе ход кончается молча.
+ */
+export const waitedReply = (stage: WorkStage, outcome: WaitOutcome, failure: Blocker | null): string => {
+  const ran = ` Flow ran the next stage ${label(stage)} — an automation — while this call waited`;
+  switch (outcome.kind) {
+    case "reply":
+      return `${ran}; here is its message to you instead of a message in the thread. Act on it now, in this turn:\n\n${outcome.text}`;
+    case "quiet":
+      return failure?.kind === "failed"
+        ? `${ran}; automation ${failure.stage.id} failed at step ${failure.step} (${failure.error}) and waits for the owner's Retry or Skip above the composer — end your turn and tell the owner that.`
+        : `${ran}; nothing is due for you now — end your turn without a message to the owner: Flow sends you a message when your next stage is due.`;
+    case "timeout":
+    case "aborted":
+      return ` Flow started the next stage ${label(stage)} — an automation; it still runs — end your turn without a message to the owner: Flow sends you a message when it ends.`;
+  }
+};
