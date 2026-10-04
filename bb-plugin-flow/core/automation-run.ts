@@ -50,15 +50,19 @@ export const isActionStage = (stage: WorkStage): boolean => stageKindOf(stage) =
 /** Этап ведёт агент: автоматизацию исполняет Flow, Action — владелец кнопками, всё остальное — ход агента. */
 export const isAgentStage = (stage: WorkStage): boolean => stage.automation === undefined && !isActionStage(stage);
 
-/** Осталась ли в прогоне работа агента: незакрытый и не вычеркнутый этап, который ведёт агент. */
-export const agentStagesAhead = (stages: readonly WorkStage[], progress: FlowProgress): boolean =>
-  stages.some((stage) => isOpen(progress.stages[stage.id]) && isAgentStage(stage));
+/** Этапы flow после этапа `id`, в порядке flow; этапа `id` во flow нет — весь flow. */
+const after = (stages: readonly WorkStage[], id: string): readonly WorkStage[] => stages.slice(stages.findIndex((stage) => stage.id === id) + 1);
+
+/**
+ * Осталась ли в прогоне работа агента: незакрытый и не вычеркнутый этап, который ведёт агент; `from` — считать только
+ * этапы после него. Этап без записи прогона считается открытым, поэтому этапы до `from` в счёт не идут: flow, пересохранённый
+ * посреди прогона с новыми id, иначе дал бы работу там, где она давно сделана.
+ */
+export const agentStagesAhead = (stages: readonly WorkStage[], progress: FlowProgress, from?: string): boolean =>
+  (from === undefined ? stages : after(stages, from)).some((stage) => isOpen(progress.stages[stage.id]) && isAgentStage(stage));
 
 /** Этап в прогоне: не вычеркнут, а вычеркнутый — если агент его всё же закрыл. */
 const inRun = (track: StageTrack | undefined): boolean => track?.skipped !== true || track.finishedAt !== undefined;
-
-/** Этапы flow после этапа `id`, в порядке flow. */
-const after = (stages: readonly WorkStage[], id: string): readonly WorkStage[] => stages.slice(stages.findIndex((stage) => stage.id === id) + 1);
 
 /** Ближайший этап прогона после этапа `id`; `null` — за ним этапов прогона нет. */
 export const nextInRun = (stages: readonly WorkStage[], progress: FlowProgress, id: string): WorkStage | null =>
@@ -361,9 +365,9 @@ export const stageLiveIcon = (progress: FlowProgress, stage: WorkStage, agentAct
 export const ACTION_TAIL =
   " — action: the owner runs this stage step by step with a button above the composer; do not run it and do not mark it — after marking the stage before it, end your turn; a done stage needs no results";
 
-/** Что агенту делать на этапе-автоматизации: её ведёт Flow, агент заканчивает ход и о старте говорит только по ответу flow_stage. */
+/** Что агенту делать на этапе-автоматизации: её ведёт Flow, агент ждёт ответа flow_stage и по нему продолжает или заканчивает ход. */
 export const AUTOMATION_TAIL =
-  " — automation: Flow runs this stage by itself once the nearest stage of the run before it is marked done; the flow_stage answer says whether it started — tell the owner only what that answer says; do not run it and do not mark it — after marking the stage before it, end your turn; a done stage needs no results";
+  " — automation: Flow runs this stage by itself once the nearest stage of the run before it is marked done; the flow_stage answer says whether it started — tell the owner only what that answer says; do not run it and do not mark it — marking the stage before it waits until Flow has run it: carry on in the same turn when the answer hands you Flow's message, end your turn when it says so; a done stage needs no results";
 
 /** Строка этапа-автоматизации в инструкциях агенту. */
 export const automationInstruction = (stage: WorkStage, index: number): string => `${index + 1}. ${stage.id} "${stage.name}"${AUTOMATION_TAIL}`;

@@ -11,6 +11,7 @@ import { initialStageChoice, stageItems, stagePhase, type StageChoice, type Stag
 import { runCascade } from "../core/sub-stages";
 import { withPlace } from "../core/places";
 import { hiddenQuestions } from "../core/visibility";
+import { ownWords } from "../core/outcome";
 import type { Criterion, DecisionAnswer, DecisionBrief, DecisionQuestion, DispatchPlace, DispatchRoute, StageAnswer } from "../shared/contract";
 
 /** `picked` — варианты, которых владелец коснулся сам, а не поставила рекомендация: виджет рисует их контрастными. */
@@ -110,14 +111,14 @@ export const setOutcomeFlow = (draft: Draft, flow: OutcomeFlow | null): Draft =>
 
 /**
  * Ответ на Демонстрацию: выбранный flow — переход, комментарий едет с ним; без перехода пустой комментарий — «Продолжить»,
- * написанный — «Отправить»: Демонстрация не принята, flow дальше не идёт.
+ * написанный комментарий или свой ответ в строке вопроса — «Отправить»: Демонстрация не принята, flow дальше не идёт.
  */
-const outcomeAnswer = (draft: Draft): NonNullable<DecisionAnswer["outcome"]> => {
+const outcomeAnswer = (draft: Draft, owned: boolean): NonNullable<DecisionAnswer["outcome"]> => {
   const note = draft.outcomeNote ?? "";
   const said = note.trim() !== "";
   const flow = draft.outcomeFlow ?? undefined;
   if (flow !== undefined) return { accepted: false, ...(said ? { note } : {}), flow };
-  return said ? { accepted: false, note } : { accepted: true };
+  return said || owned ? { accepted: false, ...(said ? { note } : {}) } : { accepted: true };
 };
 
 const stageAnswers = (brief: DecisionBrief, draft: Draft): StageAnswer[] =>
@@ -274,7 +275,7 @@ export const toAnswer = (brief: DecisionBrief, draft: Draft): DecisionAnswer => 
     ...(draft.place === undefined ? {} : { place: draft.place }),
     ...(draft.route === undefined ? {} : { route: draft.route }),
     ...(draft.compact === true ? { compact: true } : {}),
-    ...(brief.outcome === undefined ? {} : { outcome: outcomeAnswer(draft) }),
+    ...(brief.outcome === undefined ? {} : { outcome: outcomeAnswer(draft, ownWords({ answers })) }),
   };
 };
 

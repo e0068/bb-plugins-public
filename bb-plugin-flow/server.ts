@@ -13,13 +13,13 @@ import { flowTurnInstructions, registerAskTool } from "./server/ask-tool";
 import { registerChooseFlow } from "./server/choose-flow";
 import { scriptStep } from "./server/script-step";
 import { readTaskFile, writeTaskFile } from "./server/task-file";
+import { createAgentRelay } from "./server/agent-relay";
 import { createAutomationRunner, externalStep, registerAutomationRunner } from "./server/automation-runner";
 import { createNoticePublisher } from "./server/automation-notices";
 import { automationsBridge } from "./server/automations";
-import { centerBridge } from "./server/center";
+import { centerBridge, registerNoticeActions } from "./server/center";
 import { automationEntry, turnEndEntry } from "./core/center-notice";
 import { waitsForAnswer } from "./core/awaiting";
-import { AUTOMATION_NOTICE_CHANNEL } from "./core/automation-notice";
 import { registerCommands } from "./server/command";
 import { createJournalDirStore } from "./server/dir-settings";
 import { registerJournalSettingsApi } from "./server/journal-settings-api";
@@ -130,13 +130,14 @@ export default async function plugin(bb: BbPluginApi): Promise<void> {
     thread,
     flowThreads: () => threads.withFlow(),
     providers,
-    // Доигранный прогон Flow пускает работу дальше. Текст собирает исполнитель — в нём простой по этапам.
-    wake: send,
+    // Доигранный прогон Flow пускает работу дальше. Текст собирает исполнитель — в нём простой по этапам. Агент, чей
+    // вызов flow_stage ждёт автоматизацию, получает реплику ответом инструмента, и в тред она не идёт.
+    wake: (threadId, text) => relay.deliver(threadId, text),
     kv: bb.storage.kv,
     plugins: bb.sdk.plugins,
     now,
     retry: () => retryPolicyOf(flows.current()),
-    // Итог этапа-автоматизации — тостом в любом открытом треде: название треда, flow и PR дописывает публикатор.
+    // Итог этапа-автоматизации — записью центру, тост показывает он: название треда, flow и PR дописывает публикатор.
     notify: createNoticePublisher({
       progress,
       thread: async (threadId) => {
@@ -148,16 +149,18 @@ export default async function plugin(bb: BbPluginApi): Promise<void> {
         return answer.outcome === "available" ? { number: answer.pullRequest.number, url: answer.pullRequest.url } : null;
       },
       flow: flowOf,
-      publish: (notice) => {
-        bb.realtime.publish(AUTOMATION_NOTICE_CHANNEL, notice);
-        void center.push(automationEntry(notice));
-      },
+      publish: (notice) => void center.push(automationEntry(notice)),
       newId,
     }),
     onError: (error) => bb.log.warn(`automations: a run failed to record its progress (${error instanceof Error ? error.message : String(error)})`),
   });
   advance = (threadId) => void runner.advance(threadId);
+  // Ход агента идёт, пока тред active: кончился — ответ вызова уже никто не прочтёт, и реплика идёт в тред.
+  const relay = createAgentRelay({ busy: runner.busy, alive: async (threadId) => (await thread(threadId)).active, send, onError: (error) => bb.log.warn(`flow_stage: a Flow message failed to reach the thread (${error instanceof Error ? error.message : String(error)})`) });
+  // Реплики, застрявшие в ожиданиях выгружаемого Flow, уходят в тред, а ждущие вызовы отвечают.
+  bb.onDispose(() => relay.dispose());
   registerAutomationRunner(bb, runner);
+  registerNoticeActions(bb, runner);
   // Выключенный или перезагружаемый Flow не должен повторять шаги старым процессом: новый поставит повторы заново из записей.
   bb.onDispose(() => runner.dispose());
   // Прогон, прерванный перезапуском сервера, продолжается сразу после загрузки плагина; завершённый до этой версии и не
@@ -237,6 +240,7 @@ export default async function plugin(bb: BbPluginApi): Promise<void> {
     context: (threadId) => contextFillOf(bb.sdk, () => settings.get(), threadId),
     // Доработка откатывает закрытые автоматизации за начатым заново этапом тем же исполнителем шагов.
     undo: (threadId, stages) => runner.undo(threadId, stages),
+    relay,
     readTaskFile: (threadId, target) => readTaskFile(bb.sdk, threadId, target),
     writeTaskFile: (threadId, target, text) => writeTaskFile(bb.sdk, threadId, target, text),
     flow: (threadId) => {

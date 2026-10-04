@@ -21,6 +21,9 @@ import type { FlowTrigger } from "./automations";
 
 export const ANSWERED_CHANNEL = "decisions:answered";
 
+/** Часть реплики, которую bb отдаёт агенту, но не рисует в ленте треда. */
+const AGENT_ONLY = "agent-only" as const;
+
 export const registerApi = (
   bb: Pick<BbPluginApi, "rpc" | "realtime" | "sdk">,
   store: DecisionStore,
@@ -103,10 +106,11 @@ export const registerApi = (
           const ahead = record === null ? null : onAnswer(record, brief, answer, written.record.answeredAt);
           if (switched !== undefined || needsAgentReply(brief, answer, ahead, attached.length + lost.length)) {
             deps.ownSend?.(brief.threadId, text);
+            // Реплика — для агента: владелец уже видит в ленте отвеченный бриф, второй его пересказ в своём пузыре ему не нужен.
             await bb.sdk.threads.send({
               threadId: brief.threadId,
               mode: brief.kind === "clarify" ? "steer-if-active" : "queue-if-active",
-              input: [{ type: "text", text, mentions: [] }, ...attached.map(({ path }) => ({ type: "localImage" as const, path }))],
+              input: [{ type: "text", text, mentions: [], visibility: AGENT_ONLY }, ...attached.map(({ path }) => ({ type: "localImage" as const, path, visibility: AGENT_ONLY }))],
             });
           }
         } else {

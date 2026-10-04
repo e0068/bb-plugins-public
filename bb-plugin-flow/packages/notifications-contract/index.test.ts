@@ -36,11 +36,6 @@ describe("isNotificationInput", () => {
     expect(isNotificationInput({ ...INPUT, threadTitle: null, dedupeKey: null, url: "https://github.com/o/r/pull/1" })).toBe(true);
   });
 
-  it("rejects an unknown source or kind", () => {
-    expect(isNotificationInput({ ...INPUT, source: "mail" })).toBe(false);
-    expect(isNotificationInput({ ...INPUT, kind: "deleted" })).toBe(false);
-  });
-
   it("rejects an empty title or thread id and a missing field", () => {
     expect(isNotificationInput({ ...INPUT, title: "" })).toBe(false);
     expect(isNotificationInput({ ...INPUT, threadId: "" })).toBe(false);

@@ -1,7 +1,7 @@
 // Уведомление об итоге этапа-автоматизации: исполнитель знает этап и шаг, а
 // тосту нужны ещё название треда, flow и ссылка на PR. Здесь событие
-// исполнителя дополняется ими и уходит фронту по realtime; как оно выглядит,
-// решает core/automation-notice.ts.
+// исполнителя дополняется ими и уходит записью в Центр уведомлений, который
+// показывает тост; как он выглядит, решает core/automation-notice.ts.
 import { pullRequestIn, type AutomationNotice, type NoticeStep } from "../core/automation-notice";
 import type { FlowProgress } from "../shared/contract";
 import type { RunnerNotice } from "./automation-runner";

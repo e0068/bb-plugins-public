@@ -7,7 +7,7 @@ import type { CriteriaAnswer, DecisionAnswer, DecisionBrief, DecisionQuestion, Q
 import { budgetLine, changeOf, criterionTitle, hasForecast, hasOwnBudget } from "./budget";
 import { carriedFor } from "./carry";
 import { optionCriteria, removedCriteria, type OptionCriterion } from "./option-criteria";
-import { OUTCOME_ROW, demoVerdict, isOutcomeBrief, outcomeAnswered, outcomeStageName, type DemoVerdict } from "./outcome";
+import { OUTCOME_ROW, demoVerdict, isOutcomeBrief, outcomeAnswered, outcomeStageName, stageNameOf, type DemoVerdict } from "./outcome";
 import { requiredOf } from "./required";
 import { REVIEW_ROWS, SETUP_ROW, checkerAllowed, rowsOf } from "./rows";
 import { hiddenQuestions } from "./visibility";
@@ -159,7 +159,7 @@ const outcomeNextStep = (brief: DecisionBrief, answer: DecisionAnswer, m: Messag
   if (flow !== undefined) return m.outcomeSwitch(flow.name);
   if (demoVerdict(answer) !== "continue") return m.outcomeComment;
   const next = brief.outcome?.next;
-  return next === undefined ? m.outcomeFinal : m.outcomeNext(next);
+  return next === undefined ? m.outcomeFinal : m.outcomeNext(stageNameOf(brief, next));
 };
 
 /** Заголовок реплики на Демонстрацию — по её исходу. */

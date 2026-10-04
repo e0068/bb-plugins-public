@@ -1318,7 +1318,7 @@ const DEMO_ROW = "grid grid-cols-[repeat(auto-fit,minmax(10rem,1fr))]";
 
 /**
  * Кнопки Демонстрации — отдельным рядом с отступом от карточки, чтобы не нажать случайно.
- * Пустой комментарий — одна «Продолжить» («Завершить» у финальной); написанный — одна «Отправить»: Демонстрация не принимается, агент отвечает на комментарий.
+ * Пустой комментарий — одна «Продолжить» («Завершить» у финальной); написанный или свой ответ в строке вопроса — одна «Отправить»: Демонстрация не принимается, агент отвечает.
  * Агент рекомендовал flow — первой в ряду стоит его ячейка, и «Отправить» уводит работу в выбранный flow, пока владелец не выбрал «Не переходить».
  */
 function DemoActions(props: { brief: DecisionBrief; draft: Draft; setDraft: (update: (draft: Draft) => Draft) => void; sending: boolean; failed: boolean; complete: boolean; place: DispatchPlace; route: DispatchRoute; onSubmit: (draft: Draft) => void }) {
@@ -1327,7 +1327,8 @@ function DemoActions(props: { brief: DecisionBrief; draft: Draft; setDraft: (upd
   const recommended = props.brief.outcome?.nextFlow;
   const flows = useOwnerFlows(props.brief.threadId, recommended !== undefined);
   const flow = recommended === undefined ? null : chosenFlow(props.draft, recommended, flows);
-  const commented = (props.draft.outcomeNote ?? "").trim() !== "";
+  // Комментарий или свой ответ в строке вопроса — Демонстрация не принимается: ровно то, что уйдёт ответом.
+  const commented = toAnswer(props.brief, props.draft).outcome?.accepted === false;
   const button = "h-auto min-h-10 min-w-0 rounded-lg px-4 text-[13px] font-semibold";
   // Вопросы того же брифа должны быть решены до исхода: неполный ответ иначе отбил бы только сервер.
   const blocked = props.sending || !props.complete;

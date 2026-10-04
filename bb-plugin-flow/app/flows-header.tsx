@@ -10,7 +10,7 @@ import { useBbNavigate, type PluginNavPanelProps } from "@get-bb/plugin-sdk/app"
 import { addFlow, flowById, newFlow } from "../core/flows";
 import { Icon } from "../components/ui/icon";
 import { cn } from "../lib/utils";
-import { FLOWS_PANEL_PATH } from "./panel-path";
+import { FLOWS_PANEL_PATH } from "../lib/panel-path";
 import { HISTORY_SUB_PATH } from "./run-history";
 import { useMessages } from "./locale-context";
 import { updateFlowSettings, useFlowSettings } from "./stage-settings-store";
