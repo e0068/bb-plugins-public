@@ -28,4 +28,10 @@ describe("сводка и своя цена", () => {
     expect(ownBudgetText({})).toBeNull();
   });
 
+  it("набранное маской и набранное со «$» до неё — одно и то же; время идёт после денег, а одно — само", () => {
+    expect(ownBudgetText({ target: "25", max: "$40" })).toBe("$25 · до $40");
+    expect(ownBudgetText({ target: "25", max: "40", minutes: "120" })).toBe("$25 · до $40, 120 мин");
+    expect(ownBudgetText({ minutes: "90" })).toBe("90 мин");
+  });
+
 });

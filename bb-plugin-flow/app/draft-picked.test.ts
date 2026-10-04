@@ -100,7 +100,7 @@ describe("смена исполнителя не оставляет ревью �
 
 describe("Принять рекомендации и своя цена", () => {
   it("Принять рекомендации снимает свою цену: бюджет снова на прогнозе", () => {
-    const own = { ...initialDraft(brief), budget: { target: "$20", max: "$40" } };
-    expect(acceptRecommendations(brief, own).budget).toEqual({ target: "", max: "" });
+    const own = { ...initialDraft(brief), budget: { minutes: "90", target: "$20", max: "$40" } };
+    expect(acceptRecommendations(brief, own).budget).toEqual({ minutes: "", target: "", max: "" });
   });
 });

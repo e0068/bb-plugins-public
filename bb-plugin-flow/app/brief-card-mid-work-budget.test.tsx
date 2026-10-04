@@ -49,35 +49,35 @@ const open = (brief: DecisionBrief) =>
     { rpc: { getBrief: () => ({ kind: "found", brief, answer: null }), answerBrief: () => ({ kind: "not_found" }) } },
   );
 
-describe("ячейка «Бюджет» в брифе посреди работы", () => {
-  it("показывает утверждённый бюджет и итог с выбранным вариантом", async () => {
+type Slot = ReturnType<typeof open>;
+const table = (slot: Slot) => slot.findByRole("group", { name: "Этапы и бюджет" });
+const total = async (slot: Slot) => (await table(slot)).querySelector("[data-total]")!.textContent ?? "";
+const lines = async (slot: Slot) => [...(await table(slot)).querySelectorAll("[data-line]")].map((row) => row.textContent ?? "");
+
+describe("бюджет в брифе посреди работы", () => {
+  it("строка утверждённого при запуске — без знака, итог — с выбранным вариантом", async () => {
     const slot = open(priced);
     fireEvent.click(within(await slot.findByRole("group", { name: "Через какой канал?" })).getByRole("button", { name: /Лента на витрине/ }));
-    const budget = slot.getByRole("button", { name: /^Бюджет/ });
-    expect(budget.textContent).toContain("$35–63 → $45–78");
-    expect(budget.textContent).toContain("235 мин");
+    expect((await lines(slot)).find((row) => row.startsWith("Утверждено при запуске"))).toContain("175 мин$35–$63");
+    expect(await total(slot)).toContain("$45–$78");
+    expect(await total(slot)).toContain("235 мин");
   });
 
   it("выбор другого варианта сразу меняет итог", async () => {
     const slot = open(priced);
     fireEvent.click(within(await slot.findByRole("group", { name: "Через какой канал?" })).getByRole("button", { name: /Ретранслятор/ }));
-    expect(slot.getByRole("button", { name: /^Бюджет/ }).textContent).toContain("$35–63 → $55–93");
+    expect(await total(slot)).toContain("$55–$93");
   });
 
-  it("разбивка — строка утверждённого при запуске и строка выбранного варианта с его ценой", async () => {
+  it("выбранный вариант — своей строкой с ценой по курсу прогона", async () => {
     const slot = open(priced);
     fireEvent.click(within(await slot.findByRole("group", { name: "Через какой канал?" })).getByRole("button", { name: /Лента на витрине/ }));
-    fireEvent.click(slot.getByRole("button", { name: /^Бюджет/ }));
-    const rows = within(slot.getByRole("group", { name: "Прогноз бюджета" })).getAllByRole("row").map((row) => row.textContent ?? "");
-    expect(rows.find((row) => row.startsWith("Утверждено при запуске"))).toContain("$35$63");
-    expect(rows.find((row) => row.startsWith("Вопрос 1"))).toContain("Лента на витрине");
-    expect(rows.find((row) => row.startsWith("Вопрос 1"))).toContain("+$10+$15");
+    const option = (await lines(slot)).find((row) => row.startsWith("Вопрос 1"));
+    expect(option).toContain("Лента на витрине");
+    expect(option).toContain("+$10–+$15");
   });
 
-  it("бриф без цен у вариантов показывает утверждённый бюджет без изменений", async () => {
-    const slot = open(free);
-    const budget = await slot.findByRole("button", { name: /^Бюджет/ });
-    expect(budget.textContent).toContain("$35–63");
-    expect(budget.textContent).not.toContain("→");
+  it("бриф без цен у вариантов — итог равен утверждённому", async () => {
+    expect(await total(open(free))).toContain("$35–$63");
   });
 });

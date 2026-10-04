@@ -35,16 +35,16 @@ const open = () =>
 
 type Slot = ReturnType<typeof open>;
 const stageCell = async (slot: Slot, id: string) => {
-  await slot.findByRole("button", { name: /^Бюджет/ });
+  await slot.findByRole("group", { name: "Этапы и бюджет" });
   return slot.container.querySelector<HTMLElement>(`[data-stage="${id}"]`)!;
 };
 
 describe("цена этапа и база следуют за объёмом", () => {
-  it("кнопка этапа показывает долю объёма, снятие пункта её уменьшает", async () => {
+  it("строка этапа показывает долю объёма, снятие пункта её уменьшает", async () => {
     const slot = open();
-    expect((await stageCell(slot, "spec")).textContent).toContain("+$5–8");
+    expect((await stageCell(slot, "spec")).textContent).toContain("+$5–+$8");
     fireEvent.click(slot.getByRole("button", { name: "Пункт 1 не нужен" }));
-    expect((await stageCell(slot, "spec")).textContent).toContain("+$2–3");
+    expect((await stageCell(slot, "spec")).textContent).toContain("+$2–+$3");
   });
 
   it("у заголовка «Готово, когда» — база: сумма оставленных пунктов", async () => {
@@ -55,8 +55,8 @@ describe("цена этапа и база следуют за объёмом", (
     expect(criteria.textContent).toContain("+$4–6");
   });
 
-  it("кнопка бюджета — сумма долей этапов от объёма", async () => {
+  it("итог — сумма долей этапов от объёма", async () => {
     const slot = open();
-    expect((await slot.findByRole("button", { name: /^Бюджет/ })).textContent).toContain("$16 · до $25.6");
+    expect((await slot.findByRole("group", { name: "Этапы и бюджет" })).querySelector("[data-total]")!.textContent).toContain("$16–$25.6");
   });
 });

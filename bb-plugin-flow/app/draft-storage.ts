@@ -1,6 +1,7 @@
 // Черновик брифа в localStorage окна по id брифа: виджет размонтируется при
 // переходе в другой тред или плагин, а выбор и набранный текст должны его
 // пережить. Разбор не доверяет записи: чужой или битый формат — нет черновика.
+import { ownDollars } from "../core/budget";
 import { ROUTE_BRANCHES, ROUTE_TREES } from "../core/places";
 import type { DispatchPlace, DispatchRoute } from "../shared/contract";
 import { emptyBudget, emptyCriteria, type CriteriaDraft, type Draft, type OutcomeFlow } from "./draft";
@@ -55,7 +56,13 @@ export const decodeDraft = (raw: string): Draft | null => {
   if (!Object.values(value.entries).every(isEntry)) return null;
   const criteria = readCriteria(value.criteria);
   // Черновик, записанный до своей цены, читается с прогнозом.
-  const budget = value.budget === undefined ? emptyBudget() : isRecord(value.budget) && typeof value.budget.target === "string" && typeof value.budget.max === "string" ? { target: value.budget.target, max: value.budget.max } : null;
+  // Черновик, сохранённый до поля своего времени, читается с пустым временем.
+  const budget =
+    value.budget === undefined
+      ? emptyBudget()
+      : isRecord(value.budget) && typeof value.budget.target === "string" && typeof value.budget.max === "string"
+        ? { minutes: typeof value.budget.minutes === "string" ? value.budget.minutes : "", target: ownDollars(value.budget.target), max: ownDollars(value.budget.max) }
+        : null;
   // Черновик, записанный до этапов, читается без выбора по этапам; чужая форма этапов — нет черновика.
   const stages = value.stages === undefined ? {} : isRecord(value.stages) && Object.values(value.stages).every(isRecord) ? (value.stages as Draft["stages"]) : null;
   return criteria === null || budget === null || stages === null ? null : { entries: value.entries as Draft["entries"], note: value.note, criteria, budget, stages, ...readChoices(value) };

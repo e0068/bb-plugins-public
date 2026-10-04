@@ -2,7 +2,7 @@
 import fc from "fast-check";
 import { describe, expect, it } from "vitest";
 
-import { SELF, executorAdd, stageAdd } from "./stages";
+import { SELF, stageAdd } from "./stages";
 import { add, planner, report, stage } from "./stages-fixtures";
 
 const plan = stage("plan", { name: "План", executors: [planner] });
@@ -42,21 +42,5 @@ describe("цена этапа — доля объёма", () => {
         expect(two.target).toBeCloseTo(one.target * 2, 1);
       }),
     );
-  });
-});
-
-describe("разница исполнителя в раскрытом списке", () => {
-  it("у доли — цена с исполнителем минус цена самим агентом; экономия — меньшая граница первой, как у присланной цены", () => {
-    expect(executorAdd(item(100, 0.8), planner.id, scope)).toEqual({ target: -4, max: -2, risk: 1, minutes: -12 });
-    expect(executorAdd(item(100, 1.5), planner.id, scope)).toEqual({ target: 5, max: 10, risk: 1, minutes: 30 });
-  });
-
-  it("у самого агента разницы нет", () => {
-    expect(executorAdd(item(100, 0.8), SELF, scope)).toBeUndefined();
-  });
-
-  it("у старого этапа — присланная разница в долларах", () => {
-    const old = { stage: plan, report: report("plan", { add: add(4, 7, -1, 15), adds: { [planner.id]: add(2, 4, -1, 10) } }) };
-    expect(executorAdd(old, planner.id, scope)).toEqual(add(2, 4, -1, 10));
   });
 });

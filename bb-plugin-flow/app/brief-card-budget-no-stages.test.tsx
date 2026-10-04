@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { cleanup } from "@testing-library/react";
+import { cleanup, within } from "@testing-library/react";
 import type { PluginMessageDirectiveProps } from "@get-bb/plugin-sdk/app";
 import { loadPluginApp, renderSlot } from "@get-bb/plugin-sdk/testing/app";
 import { afterEach, describe, expect, it } from "vitest";
@@ -10,7 +10,7 @@ const app = await loadPluginApp(() => import("../app"));
 
 afterEach(cleanup);
 
-/** Бриф без этапов: в ряду кнопок одна кнопка бюджета. */
+/** Бриф без этапов: из нижнего блока у него только бюджет. */
 const brief: DecisionBrief = {
   id: "dec_lone",
   threadId: "thr_1",
@@ -29,14 +29,12 @@ const open = () =>
     { rpc: { getBrief: () => ({ kind: "found", brief, answer: null }), answerBrief: () => ({ kind: "not_found" }) } },
   );
 
-describe("кнопка, одна в своём ряду", () => {
-  it("кнопка бюджета без соседей растягивается на всю ширину ряда, а не встаёт в клетку сетки", async () => {
+describe("бриф без этапов", () => {
+  it("бюджет — таблица, раскрытая сразу, без кнопки «Бюджет»", async () => {
     const slot = open();
-    const button = await slot.findByRole("button", { name: /^Бюджет/ });
-    const cell = button.parentElement!;
-    const row = cell.parentElement!;
-    expect(row.className).toContain("flex-wrap");
-    expect(row.className).not.toMatch(/grid-cols/);
-    expect(cell.style.flexGrow).toBe("1");
+    const table = within(await slot.findByRole("group", { name: "Этапы и бюджет" }));
+    expect(slot.queryByRole("button", { name: /^Бюджет/ })).toBeNull();
+    expect(table.getByText("Итого")).toBeTruthy();
+    expect(table.getByRole("textbox", { name: "Своя цель" })).toBeTruthy();
   });
 });

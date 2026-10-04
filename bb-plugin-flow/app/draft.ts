@@ -5,7 +5,7 @@
 import { isMulti, isQuestionAnswered, openQuestions } from "../core/answer-message";
 import { requiredOf } from "../core/required";
 import { REVIEW_NONE, REVIEW_ROWS, SETUP_ROW, checkerAllowed, rowsOf } from "../core/rows";
-import { criterionEditable } from "../core/budget";
+import { criterionEditable, ownDollars } from "../core/budget";
 import { carriedFor } from "../core/carry";
 import { initialStageChoice, stageItems, stagePhase, type StageChoice, type StageItem } from "../core/stages";
 import { runCascade } from "../core/sub-stages";
@@ -25,12 +25,12 @@ export type CriteriaDraft = { removed: readonly number[]; edited: Readonly<Recor
  */
 export type StageDraft = { run?: boolean; executor?: string };
 
-/** `budget` — своя цена владельца; пустые цель и потолок значат «прогноз». `place` — где исполнять работу. */
+/** `budget` — своя цена владельца: время в минутах, цель и потолок в долларах; пустое поле значит «прогноз». `place` — где исполнять работу. */
 export type Draft = {
   entries: Readonly<Record<string, Entry>>;
   note: string;
   criteria: CriteriaDraft;
-  budget: { target: string; max: string };
+  budget: { minutes: string; target: string; max: string };
   stages: Readonly<Record<string, StageDraft>>;
   place?: DispatchPlace;
   /** Дерево и ветка нового треда — выбор владельца поверх последнего в проекте. */
@@ -48,7 +48,7 @@ export type OutcomeFlow = { id: string; name: string };
 
 export const emptyCriteria = (): CriteriaDraft => ({ removed: [], edited: {}, added: [] });
 
-export const emptyBudget = (): Draft["budget"] => ({ target: "", max: "" });
+export const emptyBudget = (): Draft["budget"] => ({ minutes: "", target: "", max: "" });
 
 export const emptyDraft = (): Draft => ({ entries: {}, note: "", criteria: emptyCriteria(), budget: emptyBudget(), stages: {} });
 
@@ -198,7 +198,7 @@ export const setOwn = (draft: Draft, question: DecisionQuestion, text: string): 
 
 export const setNote = (draft: Draft, text: string): Draft => ({ ...draft, note: text });
 
-export const setOwnBudget = (draft: Draft, field: "target" | "max", text: string): Draft => ({ ...draft, budget: { ...draft.budget, [field]: text } });
+export const setOwnBudget = (draft: Draft, field: keyof Draft["budget"], text: string): Draft => ({ ...draft, budget: { ...draft.budget, [field]: text } });
 
 const withCriteria = (draft: Draft, patch: Partial<CriteriaDraft>): Draft => ({ ...draft, criteria: { ...draft.criteria, ...patch } });
 
@@ -263,8 +263,8 @@ export const toAnswer = (brief: DecisionBrief, draft: Draft): DecisionAnswer => 
     return [{ questionId: question.id, optionIds: [...entry.optionIds], ...own, ...(picked.length === 0 ? {} : { picked: [...picked] }) }];
   });
   const items = brief.setup?.criteria;
-  const { target, max } = draft.budget;
-  const own = target.trim() === "" && max.trim() === "" ? {} : { budget: { ...(target.trim() === "" ? {} : { target }), ...(max.trim() === "" ? {} : { max }) } };
+  const filled = Object.entries(draft.budget).filter(([, text]) => text.trim() !== "");
+  const own = filled.length === 0 ? {} : { budget: Object.fromEntries(filled) };
   return {
     briefId: brief.id,
     answers,
@@ -312,7 +312,7 @@ export const isDecided = (question: DecisionQuestion, draft: Draft): boolean => 
 export const fromAnswer = (answer: DecisionAnswer): Draft => ({
   entries: Object.fromEntries(answer.answers.map((a) => [a.questionId, { optionIds: a.optionIds, own: a.own ?? "", ...(a.picked === undefined ? {} : { picked: a.picked }) }])),
   note: answer.note ?? "",
-  budget: { target: answer.budget?.target ?? "", max: answer.budget?.max ?? "" },
+  budget: { minutes: answer.budget?.minutes ?? "", target: ownDollars(answer.budget?.target ?? ""), max: ownDollars(answer.budget?.max ?? "") },
   stages: Object.fromEntries(
     (answer.stages ?? []).map((s) => [
       s.id,
