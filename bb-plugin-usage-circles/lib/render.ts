@@ -1,24 +1,25 @@
 // Layer 2 — rendering. Turns one usage-window model into DOM, in two forms
-// off the same data: buildRingIcon (the two-concentric-ring SVG for the
-// sidebar strip) and buildWindowRow (the two stacked bars for the expanded
-// panel). Pure DOM construction, no plugin/SDK imports — testable with jsdom
-// alone.
+// off the same data: buildRingIcon (the two-concentric-ring SVG of a footer
+// item) and buildWindowRow (the two stacked bars of the item's window), plus
+// buildProviderDetails, the window's whole content for one provider. Pure DOM
+// construction, no plugin/SDK imports — testable with jsdom alone.
 //
-// Colors are plain inline styles, not Tailwind utility classes: `bb plugin
-// build` only extracts Tailwind classes referenced from .tsx source (the
-// app's JSX entry and its imported components), never from plain .ts files —
-// this plugin has no JSX at all, so classes like "stroke-blue-500" used here
-// previously compiled to nothing and the widget rendered invisible.
-import { segmentFillFractions, type ProviderTint, type UsageWindowModel } from "./usage-model";
+// Colors are plain inline styles, not Tailwind utility classes: BB renders the
+// footer icon and the window frame outside the plugin root, where the plugin's
+// own stylesheet does not apply.
+import {
+  buildUsageWindowModel,
+  segmentFillFractions,
+  statusLabel,
+  type Coloring,
+  type ProviderStateWire,
+  type ProviderTint,
+  type UsageWindowModel,
+  type UsageWindowInput,
+} from "./usage-model";
+import { ringRadii, type RingStyle } from "./ring-style";
 
 const SVG_NS = "http://www.w3.org/2000/svg";
-const SIZE = 20;
-const CENTER = SIZE / 2;
-const OUTER_RADIUS = 8.5;
-const INNER_RADIUS = 5.5;
-const OUTER_WIDTH = 2.4;
-const INNER_WIDTH = 1.6;
-const SEGMENT_GAP_RATIO = 0.16;
 
 const TRACK_COLOR = "var(--border)";
 const TIME_ELAPSED_COLOR = "var(--muted-foreground)";
@@ -41,7 +42,8 @@ const TIER_COLOR: Record<UsageWindowModel["tier"], string> = {
 // takes the provider's declared brand tint through light-dark(), which follows
 // the document's color-scheme, or the surrounding text color when there is none.
 
-export function buildProviderLogo(provider: { title: string; logoUrl: string; tint: ProviderTint | null }, sizePx: number): HTMLSpanElement {
+/** `"fill"` — as big as the box the caller puts the logo in. */
+export function buildProviderLogo(provider: { title: string; logoUrl: string; tint: ProviderTint | null }, size: number | "fill"): HTMLSpanElement {
   const logo = document.createElement("span");
   logo.className = "usage-circles__logo";
   logo.setAttribute("role", "img");
@@ -50,7 +52,8 @@ export function buildProviderLogo(provider: { title: string; logoUrl: string; ti
   const mask = `url("${provider.logoUrl}") center / contain no-repeat`;
   const color = provider.tint === null ? "currentColor" : `light-dark(${provider.tint.light}, ${provider.tint.dark})`;
   if (provider.tint !== null) logo.dataset.tint = color;
-  Object.assign(logo.style, { display: "inline-block", flexShrink: "0", width: `${sizePx}px`, height: `${sizePx}px` });
+  const side = size === "fill" ? "100%" : `${size}px`;
+  Object.assign(logo.style, { display: "inline-block", flexShrink: "0", width: side, height: side });
   // Set as raw properties: mask shorthands and light-dark() are newer than
   // CSSStyleDeclaration's typed fields.
   logo.style.setProperty("mask", mask);
@@ -59,16 +62,22 @@ export function buildProviderLogo(provider: { title: string; logoUrl: string; ti
   return logo;
 }
 
-function circle(radius: number, strokeWidth: number, className: string, color: string, rotateDeg = -90): SVGCircleElement {
+interface Stroke {
+  readonly center: number;
+  readonly radius: number;
+  readonly width: number;
+}
+
+function circle({ center, radius, width }: Stroke, className: string, color: string, rotateDeg = -90): SVGCircleElement {
   const el = document.createElementNS(SVG_NS, "circle");
-  el.setAttribute("cx", String(CENTER));
-  el.setAttribute("cy", String(CENTER));
+  el.setAttribute("cx", String(center));
+  el.setAttribute("cy", String(center));
   el.setAttribute("r", String(radius));
   el.setAttribute("fill", "none");
-  el.setAttribute("stroke-width", String(strokeWidth));
+  el.setAttribute("stroke-width", String(width));
   el.setAttribute("stroke", color);
   el.setAttribute("class", className);
-  el.setAttribute("transform", `rotate(${rotateDeg} ${CENTER} ${CENTER})`);
+  el.setAttribute("transform", `rotate(${rotateDeg} ${center} ${center})`);
   return el;
 }
 
@@ -88,64 +97,70 @@ function applyArcFraction(el: SVGCircleElement, radius: number, fraction: number
  * tracks (`count === segmentCount`) but only the elapsed slice of arcs
  * (`count === segmentsElapsed`), without building and discarding the rest.
  */
-function buildSegmentSlots(radius: number, strokeWidth: number, segmentCount: number, count: number, className: string, color: string): SVGCircleElement[] {
-  const circumference = 2 * Math.PI * radius;
+function buildSegmentSlots(stroke: Stroke, gapRatio: number, segmentCount: number, count: number, className: string, color: string): SVGCircleElement[] {
+  const circumference = 2 * Math.PI * stroke.radius;
   const segmentAngle = 360 / segmentCount;
-  const segmentArc = circumference / segmentCount;
-  const gap = segmentArc * SEGMENT_GAP_RATIO;
-  const fillArc = segmentArc - gap;
-  const slots: SVGCircleElement[] = [];
-  for (let i = 0; i < count; i++) {
-    const el = circle(radius, strokeWidth, className, color, -90 + i * segmentAngle);
+  const fillArc = (circumference / segmentCount) * (1 - gapRatio);
+  return Array.from({ length: count }, (_, i) => {
+    const el = circle(stroke, className, color, -90 + i * segmentAngle);
     el.setAttribute("stroke-dasharray", `${fillArc} ${circumference - fillArc}`);
-    slots.push(el);
-  }
-  return slots;
+    return el;
+  });
 }
 
-export function buildRingIcon(model: UsageWindowModel): SVGSVGElement {
+/**
+ * The footer ring of one window, drawn in a `style.dims.size` box. With the
+ * provider's logo in the center there is no room for the unknown-pace
+ * question mark: the time ring stays empty instead.
+ */
+export function buildRingIcon(model: UsageWindowModel, { logo, dims }: RingStyle): SVGSVGElement {
   const svg = document.createElementNS(SVG_NS, "svg");
-  svg.setAttribute("viewBox", `0 0 ${SIZE} ${SIZE}`);
-  svg.setAttribute("width", String(SIZE));
-  svg.setAttribute("height", String(SIZE));
+  svg.setAttribute("viewBox", `0 0 ${dims.size} ${dims.size}`);
+  svg.setAttribute("width", String(dims.size));
+  svg.setAttribute("height", String(dims.size));
   svg.setAttribute("aria-hidden", "true");
   svg.setAttribute("focusable", "false");
   svg.setAttribute("class", "usage-circles__ring");
   svg.dataset.tier = model.tier;
 
-  const outerTrack = circle(OUTER_RADIUS, OUTER_WIDTH, "usage-circles__ring-track", TRACK_COLOR);
-  const outerArc = circle(OUTER_RADIUS, OUTER_WIDTH, "usage-circles__ring-usage", TIER_COLOR[model.tier]);
-  applyArcFraction(outerArc, OUTER_RADIUS, model.usedPercent / 100);
-  svg.append(outerTrack, outerArc);
+  const radii = ringRadii(dims);
+  const track = `color-mix(in oklab, var(--border) ${dims.track}%, transparent)`;
+  const outer: Stroke = { center: radii.center, radius: radii.outer, width: dims.outer };
+  const outerArc = circle(outer, "usage-circles__ring-usage", TIER_COLOR[model.tier]);
+  applyArcFraction(outerArc, outer.radius, model.usedPercent / 100);
+  svg.append(circle(outer, "usage-circles__ring-track", track), outerArc);
 
-  if (model.tier === "unknown") {
+  if (model.tier === "unknown" && logo === "corner") {
     // No pace to show yet: the time ring gives way to a question mark.
     const mark = document.createElementNS(SVG_NS, "text");
-    mark.setAttribute("x", String(CENTER));
-    mark.setAttribute("y", String(CENTER));
+    mark.setAttribute("x", String(radii.center));
+    mark.setAttribute("y", String(radii.center));
     mark.setAttribute("text-anchor", "middle");
     mark.setAttribute("dominant-baseline", "central");
-    mark.setAttribute("font-size", "9");
+    mark.setAttribute("font-size", String(dims.size * 0.45));
     mark.setAttribute("font-weight", "700");
     mark.setAttribute("fill", TIER_COLOR.unknown);
     mark.setAttribute("class", "usage-circles__ring-unknown");
     mark.textContent = "?";
     svg.append(mark);
-  } else if (model.segmentCount === 1) {
-    const innerTrack = circle(INNER_RADIUS, INNER_WIDTH, "usage-circles__ring-time-track", TRACK_COLOR);
-    const innerArc = circle(INNER_RADIUS, INNER_WIDTH, "usage-circles__ring-time", TIME_ELAPSED_COLOR);
-    applyArcFraction(innerArc, INNER_RADIUS, model.elapsedFraction ?? 0);
-    svg.append(innerTrack, innerArc);
-  } else {
-    const trackSlots = buildSegmentSlots(INNER_RADIUS, INNER_WIDTH, model.segmentCount, model.segmentCount, "usage-circles__ring-time-track", TRACK_COLOR);
-    svg.append(...trackSlots);
-    const elapsedCount = model.segmentsElapsed ?? 0;
-    if (elapsedCount > 0) {
-      const elapsedSlots = buildSegmentSlots(INNER_RADIUS, INNER_WIDTH, model.segmentCount, elapsedCount, "usage-circles__ring-time", TIME_ELAPSED_COLOR);
-      svg.append(...elapsedSlots);
-    }
+    return svg;
   }
-
+  if (radii.inner === null) return svg;
+  const inner: Stroke = { center: radii.center, radius: radii.inner, width: dims.inner };
+  const known = model.tier !== "unknown";
+  if (model.segmentCount === 1) {
+    svg.append(circle(inner, "usage-circles__ring-time-track", track));
+    if (known) {
+      const innerArc = circle(inner, "usage-circles__ring-time", TIME_ELAPSED_COLOR);
+      applyArcFraction(innerArc, inner.radius, model.elapsedFraction ?? 0);
+      svg.append(innerArc);
+    }
+    return svg;
+  }
+  const gapRatio = dims.segmentGap / 100;
+  svg.append(...buildSegmentSlots(inner, gapRatio, model.segmentCount, model.segmentCount, "usage-circles__ring-time-track", track));
+  const elapsedCount = known ? (model.segmentsElapsed ?? 0) : 0;
+  svg.append(...buildSegmentSlots(inner, gapRatio, model.segmentCount, elapsedCount, "usage-circles__ring-time", TIME_ELAPSED_COLOR));
   return svg;
 }
 
@@ -235,4 +250,44 @@ export function buildWindowRow(model: UsageWindowModel): HTMLDivElement {
 
   row.append(heading, buildUsageBar(model), buildTimeBar(model), reset);
   return row;
+}
+
+const HEADER_LOGO_PX = 16;
+const DETAILS_SIDE_PX = 6;
+
+/** The marked row of a footer item's own limit: the sidebar's hover background. */
+function markRow(row: HTMLDivElement): HTMLDivElement {
+  row.dataset.highlighted = "true";
+  Object.assign(row.style, { backgroundColor: "var(--sidebar-accent)", boxShadow: "inset 2px 0 0 var(--sidebar-foreground)" });
+  return row;
+}
+
+/**
+ * A footer item's window: the provider's logo and name, why it has no data, or
+ * a row per limit window — the row of `marked`, the window the item's ring shows, stands out.
+ */
+export function buildProviderDetails(provider: ProviderStateWire, coloring: Coloring, nowMs: number, marked?: UsageWindowInput): HTMLDivElement {
+  const details = div({ display: "flex", flexDirection: "column", gap: "12px", padding: `10px ${DETAILS_SIDE_PX}px 6px` }, "usage-circles__details");
+  const header = div(
+    { display: "flex", alignItems: "center", gap: "8px", fontSize: "13px", fontWeight: "600", color: "var(--foreground)" },
+    "usage-circles__panel-header",
+  );
+  const title = document.createElement("span");
+  title.textContent = `${provider.title} Limits`;
+  header.append(buildProviderLogo(provider, HEADER_LOGO_PX), title);
+  details.append(header);
+  if (provider.usage.status === "ok") {
+    provider.usage.windows.forEach((window) => {
+      const row = buildWindowRow(buildUsageWindowModel(window, nowMs, coloring));
+      // As wide as the details' side padding, so the marked row's background
+      // reaches its edges without overflowing the window.
+      Object.assign(row.style, { padding: `6px ${DETAILS_SIDE_PX}px`, margin: `0 -${DETAILS_SIDE_PX}px`, borderRadius: "6px" });
+      details.append(window === marked ? markRow(row) : row);
+    });
+    return details;
+  }
+  const status = div({ fontSize: "12px", color: "var(--muted-foreground)" }, "usage-circles__status");
+  status.textContent = statusLabel(provider.usage.status, provider.usage.status === "error" ? provider.usage.message : undefined);
+  details.append(status);
+  return details;
 }

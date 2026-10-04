@@ -1,0 +1,16 @@
+{
+  "name": "@bb-plugins/layer-guard",
+  "version": "0.1.1",
+  "type": "module",
+  "private": true,
+  "main": "./index.ts",
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^5.7.0",
+    "vitest": "^3.2.7"
+  },
+  "scripts": {
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  }
+}

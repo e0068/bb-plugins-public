@@ -1,14 +1,9 @@
 {
-  "extends": "../packages/plugin-base/tsconfig.base.json",
+  "extends": "./packages/plugin-base/tsconfig.base.json",
   "compilerOptions": {
-    "types": [
-      "node"
-    ]
+    "jsx": "react-jsx",
+    "types": ["node"],
+    "paths": { "@bb-plugins/*": ["./packages/*"] }
   },
-  "include": [
-    "server.ts",
-    "server.test.ts",
-    "app.ts",
-    "lib"
-  ]
+  "include": ["server.ts", "server.test.ts", "app.tsx", "app.test.tsx", "lib"]
 }

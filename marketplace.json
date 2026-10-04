@@ -153,7 +153,7 @@
     {
       "id": "usage-circles",
       "displayName": "Usage Circles",
-      "description": "Claude Code and Codex usage-limit rings in the footer of BB's left sidebar.",
+      "description": "Claude Code and Codex usage-limit rings as sidebar footer items — place each one in Customize footer.",
       "icon": {
         "url": "bb-plugin-usage-circles/assets/icon.svg"
       },
