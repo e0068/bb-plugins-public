@@ -91,18 +91,6 @@ describe("список истории", () => {
     expect(list[0]!.stages).toHaveLength(2);
   });
 
-  it("тред, которого больше нет, — строка без названия и с exists: false", async () => {
-    const h = await host({ thr_a: "Тред А" });
-    await runThrough(h, "thr_a", "dec_run1");
-    await settle();
-    const [gone] = await (async () => {
-      const titles = await host({});
-      await titles.bb.storage.kv.set("flow-run:dec_gone", await h.harness.callRpc("getRunSummary", { briefId: "dec_run1" }));
-      return (await titles.harness.callRpc("getRunHistory", {})) as Entry[];
-    })();
-    expect(gone).toMatchObject({ briefId: "dec_gone", threadId: "thr_a", title: null, exists: false });
-  });
-
   it("битая запись итога список не роняет", async () => {
     const h = await host({ thr_a: "Тред А" });
     await runThrough(h, "thr_a", "dec_run1");

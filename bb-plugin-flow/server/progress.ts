@@ -259,6 +259,27 @@ export type ThreadState = { environmentId: string | null; active: boolean; provi
 
 const NO_THREAD: ThreadState = { environmentId: null, active: false, providerId: null };
 
+/** Тред строки истории: прочитан, bb ответил «не найден» или чтение не удалось. */
+type ThreadTitle = { kind: "read"; title: string | null; project: string | null } | { kind: "gone" } | { kind: "unread" };
+
+/** Сколько тредов история читает одновременно: ~200 чтений разом bb часть отбивает. */
+const THREAD_READS_AT_ONCE = 8;
+
+/** Ответ bb «не найден»: SDK бросает ошибку со `status` и текстом `HTTP 404: …`. */
+const isNotFound = (error: unknown): boolean =>
+  error instanceof Error && ((error as { status?: unknown }).status === 404 || error.message.startsWith("HTTP 404"));
+
+const historyTitle = (run: FrozenRun, thread: ThreadTitle): Pick<RunHistoryEntry, "title" | "project" | "exists"> => {
+  switch (thread.kind) {
+    case "read":
+      return { title: thread.title, project: thread.project, exists: true };
+    case "gone":
+      return { title: null, project: null, exists: false };
+    case "unread":
+      return { title: run.title ?? null, project: null, exists: true };
+  }
+};
+
 const INSTRUCTIONS = `Mark the stages of the thread's flow as you go, so the owner sees the progress above the composer.
 - Call ${FLOW_STAGE_TOOL} with state "started" when you begin a skill stage of the run, before its first action.
 - Call it with state "done" and results — links to what the stage produced, [{ label, target }] with the file name or task key as label — when you finish the stage.
@@ -476,6 +497,7 @@ export const registerProgress = (
         ...(flowName === undefined ? {} : { flowName }),
         ...(flowId === undefined ? {} : { flowId }),
         environmentId: thread.environmentId,
+        ...(thread.title ? { title: thread.title } : {}),
       })
       .catch(() => undefined);
   };
@@ -495,13 +517,20 @@ export const registerProgress = (
     await freeze(record, found.carrier, stages, thread);
   };
 
-  /** Названия треда и его проекта для строки истории: одно чтение на тред; не прочитался — треда больше нет. */
-  const titled = async (threadId: string, projectNames: Promise<ReadonlyMap<string, string>>): Promise<Pick<RunHistoryEntry, "title" | "project" | "exists">> => {
-    if (deps.thread === undefined) return { title: null, project: null, exists: true };
-    const thread = await deps.thread(threadId).catch(() => null);
-    if (thread === null) return { title: null, project: null, exists: false };
+  /**
+   * Названия треда и его проекта для строки истории. Удалённым тред считается только по ответу bb «не найден»: прочий
+   * сбой — один повтор, затем `unread`, и строка берёт название, сохранённое при заморозке.
+   */
+  const titled = async (threadId: string, projectNames: Promise<ReadonlyMap<string, string>>): Promise<ThreadTitle> => {
+    if (deps.thread === undefined) return { kind: "unread" };
+    const read = deps.thread;
+    const attempt = () => read(threadId).then((thread) => ({ thread }), (error: unknown) => ({ error }));
+    let result = await attempt();
+    if ("error" in result && !isNotFound(result.error)) result = await attempt();
+    if ("error" in result) return isNotFound(result.error) ? { kind: "gone" } : { kind: "unread" };
+    const { thread } = result;
     const project = thread.projectId === undefined ? undefined : (await projectNames).get(thread.projectId);
-    return { title: thread.title ?? null, project: project ?? null, exists: true };
+    return { kind: "read", title: thread.title ?? null, project: project ?? null };
   };
 
   /** Имена проектов по id; список не прочитался — у строк просто нет проекта. */
@@ -565,13 +594,17 @@ export const registerProgress = (
     async getRunHistory() {
       const runs = await progress.frozenRuns();
       const projectNames = readProjectNames();
-      const threads = new Map<string, Promise<Pick<RunHistoryEntry, "title" | "project" | "exists">>>();
-      const threadOf = (threadId: string) => threads.get(threadId) ?? threads.set(threadId, titled(threadId, projectNames)).get(threadId)!;
+      const titles = new Map<string, ThreadTitle>();
+      const ids = [...new Set(runs.map(({ run }) => run.threadId))];
+      for (let i = 0; i < ids.length; i += THREAD_READS_AT_ONCE) {
+        const batch = ids.slice(i, i + THREAD_READS_AT_ONCE);
+        (await Promise.all(batch.map((id) => titled(id, projectNames)))).forEach((title, j) => titles.set(batch[j]!, title));
+      }
       const withLiveFlow = ({ flowId: stored, ...run }: FrozenRun) => {
         const flowId = deps.liveFlowId?.(stored, run.flowName);
         return flowId === undefined ? run : { ...run, flowId };
       };
-      return historyOrder(await Promise.all(runs.map(async ({ briefId, run }) => ({ ...(await withJournal(withLiveFlow(run))), briefId, ...(await threadOf(run.threadId)) }))));
+      return historyOrder(await Promise.all(runs.map(async ({ briefId, run }) => ({ ...(await withJournal(withLiveFlow(run))), briefId, ...historyTitle(run, titles.get(run.threadId)!) }))));
     },
   });
 
