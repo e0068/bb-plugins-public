@@ -84,7 +84,7 @@ Another new brief only if something in the answer is really unclear: an item con
 
 ## What you understood — `scope`
 
-Every brief before the work is launched starts with `scope`: the minimal set of work you understood, as a nested list (`"- item\n  - detail"`). The widget shows it first, above the questions, with the base price next to it. Its items are the first items of `criteria`.
+Every brief before the work is launched starts with `scope`: the minimal set of work you understood — every fork at its simplest answer — as a nested list (`"- item\n  - detail"`). The widget shows it first, above the questions, with the base price next to it. Its items are the first items of `criteria`.
 
 ## First part — `setup`
 
@@ -95,6 +95,8 @@ Every brief before the work is launched starts with `scope`: the minimal set of 
 | `artifacts`, `executor`, `checker`, `testing`, `budgetTarget`, `budgetMax` | Fields of old briefs | Do not send: stages replaced documents, executor, review and testing, and the "Budget" button sums the forecast itself |
 
 **The price is counted from the scope.** An item's `add` is `{ "target", "max", "risk", "minutes" }`: what one agent on the current model and effort spends on that item, in dollars as target and ceiling and in whole minutes — both above zero. The kept items are the base; an item the owner strikes leaves it. An option's `add` is what it adds to the scope on top of the base, from zero: doing nothing adds 0, a minus is never sent; its risk may go either way. Scope = base + chosen options.
+
+**A fork is priced from its simplest answer.** Before the work is launched, every fork with prices has an option that costs 0 — the simplest answer, whose work is already in `setup.criteria`. Every other option's `add` is the price of its own `criteria`, counted from zero: an answer that builds on the simple one costs only what it adds, an answer that replaces it costs its whole work and lists the replaced items of the simple answer in `removes` — the plugin subtracts their price itself, so the option never subtracts it again. The recommended answer is not the anchor: when you recommend a richer answer, it is priced above zero like any other. A minus means a richer answer sits in the base, and the tool refuses it. Example: the base item "the chart filter also narrows the table" costs `{ "target": 1, "max": 2 }` and is the simple answer, "Shared filter" costs 0; "Own table filter" costs its whole work `{ "target": 2, "max": 4 }` with the item "the table has its own filter" and `removes` of the base item, so choosing it moves the scope by +$1–2. In a brief in the middle of the work the base is the approved scope, so both answers of a fork may add to it.
 
 **A stage is a part of the scope.** `share.percent` is how much of the scope the stage costs: the stage that does the work itself is 100, a spec around 15, a review around 20, a task or a demo around 5. An executor in `factors` multiplies the stage's part: a subagent on a cheaper model below 1, a workflow with extra checks above 1 — always above zero; you yourself are 1. The plugin counts dollars and minutes: a stage in the run costs scope × percent × factor. A flow without a stage of the work itself (no 100 — a thread without a flow, or a flow of built-in stages only) counts the scope once and adds its stages on top. The total never drops to zero while the base is there, and the tool refuses a brief before launch without `scope`, with an unpriced item, with a `todo` skill stage without `share`, or with a $0 / 0 min forecast.
 
@@ -119,7 +121,7 @@ The widget draws the labels. Your recommendation is preselected on the stage but
 
 | `kind` | When | What is required |
 | --- | --- | --- |
-| `fork` | A fork: two or more ways, the choice changes the outcome, one answer | Every option has a `description` — a paragraph about what happens and the risks in prose — and an `add`. The old `cost` (up to 40 characters) and `risk` `XS`…`XXL` pair is accepted only on an option without `add` |
+| `fork` | A fork: two or more ways, the choice changes the outcome, one answer | Every option has a `description` — a paragraph about what happens and the risks in prose — and an `add`; before launch one option is the simplest at 0. The old `cost` (up to 40 characters) and `risk` `XS`…`XXL` pair is accepted only on an option without `add` |
 | `pick` | Several answers from a set: which edits to make, what to do after approval | Every option has a `description`; `add` — if the option changes the budget or risk |
 | `confirm` | "Did I get this right" about one reading the `scope` leaves open | Exactly one "Yes" option; `context` says how you read that point — the `scope` above already says what you understood, so the question does not retell it. The owner writes disagreement as their own answer |
 | `yesno` | Only in a `clarify` brief: a clarification you can continue without | Exactly two options, "Yes" and "No"; a clarification has no `setup` |

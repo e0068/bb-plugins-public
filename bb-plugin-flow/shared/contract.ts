@@ -452,6 +452,9 @@ const briefFields = {
   questions: z.array(decisionQuestionSchema).default([]),
 };
 
+/** Цена варианта, как её видят проверки брифа: риск им не нужен. */
+type OptionPrice = { target: number; max: number; minutes?: number | undefined };
+
 type BriefShape = {
   kind: "brief" | "clarify";
   outcome?: unknown;
@@ -471,7 +474,7 @@ type BriefShape = {
   questions: ReadonlyArray<{
     id: string;
     kind: string;
-    options: ReadonlyArray<{ risk?: string | undefined; cost?: string | undefined; add?: { target: number; max: number; minutes?: number | undefined } | undefined; hides?: readonly string[] | undefined; removes?: readonly number[] | undefined }>;
+    options: ReadonlyArray<{ risk?: string | undefined; cost?: string | undefined; add?: OptionPrice | undefined; hides?: readonly string[] | undefined; removes?: readonly number[] | undefined }>;
   }>;
 };
 
@@ -517,6 +520,13 @@ const labelNamesFile = (label: string, target: string): boolean => {
   return label === base || label === base.replace(/\.[^.]+$/, "");
 };
 
+/** Цена варианта (BBPL-531): цена его собственных пунктов от нуля, а вычитание — только removes, его делает плагин. */
+export const OPTION_PRICE_RULE =
+  "an option's add is the price of its own criteria, counted from zero, never negative; base items it replaces go in removes, and the plugin subtracts their price itself";
+
+/** Правило развилки до запуска (BBPL-531): ноль — самый простой ответ, его работа в базе; его называют отказы инструмента. */
+export const FORK_ZERO_RULE = "before launch a fork's simplest option costs 0 and its work is in setup.criteria";
+
 /** Потолок цены варианта: длиннее — уже пояснение, а не оценка, и в строке «Цена · Риск» оно не помещается. */
 export const COST_MAX_LENGTH = 40;
 
@@ -552,9 +562,10 @@ const checkNewBrief = (brief: BriefShape, ctx: z.RefinementCtx) => {
     ctx.addIssue({ code: "custom", message: "a stage has no dollars: send share { percent, risk } — its part of the scope, implementation by you is 100", path: ["setup", "stages"] });
   if (stages.some((st) => st.adds !== undefined))
     ctx.addIssue({ code: "custom", message: "an executor has no dollar difference: send factors { <executor id>: { factor, risk } } — a multiplier above zero on the stage share", path: ["setup", "stages"] });
-  const negative = (a: { target: number; max: number; minutes?: number | undefined } | undefined) => a !== undefined && (a.target < 0 || a.max < 0 || (a.minutes ?? 0) < 0);
+  // Минус значит, что в базе лежит не самый простой ответ, а рекомендованный: остальные вышли разницей с ним.
+  const negative = (a: OptionPrice | undefined) => a !== undefined && (a.target < 0 || a.max < 0 || (a.minutes ?? 0) < 0);
   if (brief.questions.some((q) => q.options.some((o) => negative(o.add))))
-    issue("an option adds its own price on top of the scope, from zero: target, max and minutes are never negative; doing nothing adds 0");
+    issue(`a minus means a richer answer sits in the base: ${OPTION_PRICE_RULE}; ${FORK_ZERO_RULE}`);
   if (brief.kind === "brief" && brief.questions.some((q) => q.kind !== "fork" && q.kind !== "pick" && q.kind !== "confirm"))
     issue("brief questions are fork, pick or confirm; artifacts, executor, checker and testing go into setup");
   if (brief.questions.some((q) => q.kind === "fork" && q.options.some((o) => o.risk === undefined && o.add === undefined)))
