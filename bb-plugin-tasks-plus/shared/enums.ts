@@ -140,6 +140,10 @@ export type TableSortDirection = (typeof TABLE_SORT_DIRECTIONS)[number];
 /** Bounds of a dragged table column width, px. */
 export const TABLE_COLUMN_WIDTH = { min: 64, max: 640 } as const;
 
+/** How a table column of dates reads: day and time, the day alone, or the distance from now. */
+export const DATE_FORMATS = ["dateTime", "date", "relative"] as const;
+export type DateFormat = (typeof DATE_FORMATS)[number];
+
 export const ROW_FIELDS = [
   "parent",
   "title",

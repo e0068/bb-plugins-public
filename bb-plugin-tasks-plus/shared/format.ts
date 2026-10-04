@@ -1,10 +1,11 @@
 /** Presentation formatters shared by the app: pure, no clock of their own. */
+import { formatPlanDate, planMomentOf } from "./plan-date.js";
 
 const MINUTE_MS = 60_000;
 
 /**
- * "just now" / "4m ago" / "3h ago" / "2d ago"; a calendar date once the
- * moment is 30 days or older. Timestamps in the future read as "just now".
+ * "just now" / "4m ago" / "3h ago" / "2d ago"; the date with its hours and
+ * minutes once the moment is 30 days or older. Timestamps in the future read as "just now".
  * Unparseable input renders as an empty string.
  */
 export function formatRelativeTime(iso: string, nowMs: number): string {
@@ -17,7 +18,7 @@ export function formatRelativeTime(iso: string, nowMs: number): string {
   if (hours < 24) return `${hours}h ago`;
   const days = Math.round(hours / 24);
   if (days < 30) return `${days}d ago`;
-  return new Date(then).toLocaleDateString();
+  return formatPlanDate(planMomentOf(new Date(then)), new Date(nowMs));
 }
 
 /** "512 B" / "204 KB" / "2.5 MB" — the attachment size cadence. */

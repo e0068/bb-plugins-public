@@ -4,9 +4,10 @@ import { useMemo, useSyncExternalStore } from "react";
 // list-preference.ts use for the types they store.
 import type { TableSettings } from "../../shared/contract.js";
 import { viewSortColumn, type ViewSort } from "../../shared/task-fields.js";
-import { BOARD_GROUP_BYS, ROW_FIELDS, SORT_FIELDS, TABLE_SORT_DIRECTIONS, type RowField } from "../../shared/enums.js";
+import { BOARD_GROUP_BYS, DATE_FORMATS, ROW_FIELDS, SORT_FIELDS, TABLE_SORT_DIRECTIONS, type RowField } from "../../shared/enums.js";
 import { loadListPreference, type ListPreferenceScope } from "../common/list-preference.js";
 import { clampColumnWidth, type ColumnSort } from "./columns.js";
+import type { ColumnDisplay, ColumnDisplays } from "./column-display.js";
 
 /**
  * Client-local table layout — sort, grouping, column widths, pinned columns
@@ -66,6 +67,26 @@ function sanitizeWidths(raw: unknown): TableSettings["widths"] {
   ) as TableSettings["widths"];
 }
 
+const DATE_FORMAT_SET = new Set<string>(DATE_FORMATS);
+
+/** One column's stored display choices, keeping only the valid ones. */
+function sanitizeColumnDisplay(raw: unknown): ColumnDisplay {
+  if (!isRecord(raw)) return {};
+  const { format, icon } = raw;
+  return {
+    ...(typeof format === "string" && DATE_FORMAT_SET.has(format) ? { format: format as ColumnDisplay["format"] } : {}),
+    ...(typeof icon === "boolean" ? { icon } : {}),
+  };
+}
+
+function sanitizeColumnDisplays(raw: Record<string, unknown>): ColumnDisplays {
+  return Object.fromEntries(
+    Object.entries(raw).flatMap(([column, display]) =>
+      COLUMN_SET.has(column) ? [[column, sanitizeColumnDisplay(display)]] : [],
+    ),
+  ) as ColumnDisplays;
+}
+
 /** The valid, distinct column names of a stored list, in the order they were written. */
 function sanitizeColumns(raw: unknown, fallback: readonly TableColumnValue[]): TableColumnValue[] {
   if (!Array.isArray(raw)) return [...fallback];
@@ -100,6 +121,9 @@ function sanitizeTableSettings(raw: unknown): TableSettings {
     widths: sanitizeWidths(raw.widths),
     pinned: sanitizeColumns(raw.pinned, DEFAULT_TABLE_SETTINGS.pinned as TableColumnValue[]),
     collapsedGroups: sanitizeGroupNames(raw.collapsedGroups),
+    // Written only once a header menu has chosen something: settings stored
+    // before the choice existed read back exactly as they were written.
+    ...(isRecord(raw.columns) ? { columns: sanitizeColumnDisplays(raw.columns) } : {}),
   };
 }
 

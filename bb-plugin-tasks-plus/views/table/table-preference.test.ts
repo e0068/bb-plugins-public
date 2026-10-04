@@ -41,6 +41,15 @@ describe("table settings of a screen", () => {
     expect(third.loadTableSettings("project:P1")).toEqual({ ...SETTINGS, groupBy: "none" });
   });
 
+  it("a column's format and icon are read back after a reload, a broken choice dropped", async () => {
+    const first = await reload();
+    first.setTableSettings("project:P1", {
+      columns: { createdAt: { format: "relative", icon: true }, dueDate: { format: "weekday", icon: "yes" } } as never,
+    });
+    const second = await reload();
+    expect(second.loadTableSettings("project:P1").columns).toEqual({ createdAt: { format: "relative", icon: true }, dueDate: {} });
+  });
+
   it("screens do not share table settings", async () => {
     const { setTableSettings, loadTableSettings, DEFAULT_TABLE_SETTINGS } = await reload();
     setTableSettings("all", { groupBy: "none" });

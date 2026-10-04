@@ -65,3 +65,17 @@ export function formatPlanDate(value: string, today: Date = new Date(), locale: 
   const time = `${String(Math.floor(parts.minutes / 60)).padStart(2, "0")}:${String(parts.minutes % 60).padStart(2, "0")}`;
   return `${label}, ${time}`;
 }
+
+const pad2 = (value: number): string => String(value).padStart(2, "0");
+
+/** A local moment's day as a plan date, YYYY-MM-DD. */
+export const planDayOf = (date: Date): string =>
+  `${date.getFullYear()}-${pad2(date.getMonth() + 1)}-${pad2(date.getDate())}`;
+
+/** A local moment as a plan date with its time, YYYY-MM-DDTHH:mm — seconds dropped. */
+export const planMomentOf = (date: Date): string => `${planDayOf(date)}T${pad2(date.getHours())}:${pad2(date.getMinutes())}`;
+
+/** The day `days` calendar days after `today`'s, as a plan date. */
+export function planDayFrom(today: Date, days: number): string {
+  return planDayOf(new Date(today.getFullYear(), today.getMonth(), today.getDate() + days));
+}

@@ -51,6 +51,8 @@ const state = (column: RowField, patch: Partial<HeaderColumnState> = {}): Header
   sort: null,
   sortable: true,
   widthChanged: false,
+  dateFormat: null,
+  icon: null,
   ...patch,
 });
 
@@ -68,6 +70,7 @@ function renderHeader(columns: HeaderColumnState[] = COLUMNS) {
     onHide: vi.fn(),
     onMove: vi.fn(),
     onResize: vi.fn(),
+    onDisplay: vi.fn(),
   };
   const slot = renderSlot({ component: () => <TableHeader columns={columns} actions={actions} /> }, {}, {});
   return { slot, actions };

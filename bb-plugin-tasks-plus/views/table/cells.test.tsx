@@ -105,6 +105,8 @@ const context = (patch: Partial<CellContext> = {}): CellContext => ({
   subtasks: { done: 0, total: 0 },
   showEmpty: false,
   onEdit: () => {},
+  displays: undefined,
+  now: new Date(2026, 9, 4, 12, 0),
   ...patch,
 });
 
@@ -148,6 +150,30 @@ describe("a cell reads as text with an icon", () => {
     expect(text("description", full)).toBe("First paragraph.");
     expect(text("subtasks", full, context({ subtasks: { done: 1, total: 3 } }))).toContain("1 / 3");
     expect(text("active", full, context({ activeThreads: 1 }))).toContain("Active");
+  });
+
+  it("created and edited read with hours and minutes", () => {
+    const at = { ...full, createdAt: new Date(2026, 8, 20, 9, 5).toISOString(), updatedAt: new Date(2026, 8, 26, 17, 40).toISOString() } as Task;
+    expect(text("createdAt", at)).toBe("Sep 20, 09:05");
+    expect(text("updatedAt", at)).toBe("Sep 26, 17:40");
+  });
+
+  it("a date column reads in the format its menu chose", () => {
+    const at = { ...full, createdAt: new Date(2026, 9, 4, 9, 0).toISOString(), dueDate: "2026-10-05T15:30" } as Task;
+    const chosen = context({ displays: { createdAt: { format: "relative" }, dueDate: { format: "date" } } });
+    expect(text("createdAt", at, chosen)).toBe("3h ago");
+    expect(text("dueDate", at, chosen)).toBe("Oct 5");
+  });
+
+  it("a column's icon shows or hides as its menu chose", () => {
+    const iconOf = (column: RowField, ctx: CellContext) => {
+      const found = cell(column, full, ctx).container.querySelector("svg") !== null;
+      cleanup();
+      return found;
+    };
+    expect(iconOf("dueDate", context())).toBe(false);
+    expect(iconOf("dueDate", context({ displays: { dueDate: { icon: true } } }))).toBe(true);
+    expect(iconOf("type", context({ displays: { type: { icon: false } } }))).toBe(false);
   });
 
   it("the slug column shows the task's slug", () => {

@@ -1,4 +1,4 @@
-import { formatPlanDate } from "../../shared/plan-date.js";
+import { formatPlanDate, planMomentOf } from "../../shared/plan-date.js";
 import {
   TASK_STATUSES,
   type TaskPriority,
@@ -156,37 +156,16 @@ export function formatDueDate(dueDate: string, today = new Date()): string {
   return formatPlanDate(dueDate, today);
 }
 
-function isSameCalendarDay(a: Date, b: Date): boolean {
-  return (
-    a.getFullYear() === b.getFullYear() &&
-    a.getMonth() === b.getMonth() &&
-    a.getDate() === b.getDate()
-  );
-}
-
 /**
- * ISO timestamp (createdAt/updatedAt) → "14:34" for today, otherwise
- * "Jul 18" with the year appended when it isn't this year. Parses the full
- * datetime; `formatDueDate` handles the date-only due field, which must not
- * shift across timezones.
+ * ISO timestamp (createdAt/updatedAt) → "Jul 18, 14:34" on the viewer's
+ * clock, the year added outside `today`'s: a moment always shows its hours
+ * and minutes. Parses the full datetime; `formatDueDate` handles the plan
+ * dates, which carry no zone and must not shift across one.
  */
 export function formatTimestamp(iso: string, today = new Date()): string {
   const date = new Date(iso);
   if (Number.isNaN(date.valueOf())) return "";
-  if (isSameCalendarDay(date, today)) {
-    return date.toLocaleTimeString("en-US", {
-      hour: "numeric",
-      minute: "2-digit",
-      hour12: false,
-    });
-  }
-  return date.toLocaleDateString("en-US", {
-    month: "short",
-    day: "numeric",
-    ...(date.getFullYear() === today.getFullYear()
-      ? {}
-      : { year: "numeric" }),
-  });
+  return formatPlanDate(planMomentOf(date), today);
 }
 
 /**

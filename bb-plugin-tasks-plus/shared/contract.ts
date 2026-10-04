@@ -30,6 +30,7 @@ import {
   CHART_UNITS,
   TABLE_SORT_DIRECTIONS,
   TABLE_COLUMN_WIDTH,
+  DATE_FORMATS,
   TASK_LAYOUTS,
   VALUE_FILTER_FIELDS,
   TEXT_FIELDS,
@@ -742,6 +743,15 @@ export const tableSettingsSchema = z
     pinned: z.array(rowFieldSchema),
     /** Names of collapsed groups, when the table is grouped. */
     collapsedGroups: z.array(z.string()),
+    /** How a column draws its values, chosen in its header menu; absent
+     * columns — and tables saved before the menu had the choice — draw their
+     * default. */
+    columns: z
+      .partialRecord(
+        rowFieldSchema,
+        z.object({ format: z.enum(DATE_FORMATS).optional(), icon: z.boolean().optional() }).strict(),
+      )
+      .optional(),
   })
   .strict();
 export type TableSettings = z.infer<typeof tableSettingsSchema>;

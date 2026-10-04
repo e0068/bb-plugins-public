@@ -14,10 +14,9 @@ describe("formatRelativeTime", () => {
     expect(formatRelativeTime(at(29 * 86_400_000), NOW)).toBe("29d ago");
   });
 
-  it("switches to a calendar date from 30 days on", () => {
-    const thirtyDaysAgo = at(30 * 86_400_000);
-    expect(formatRelativeTime(thirtyDaysAgo, NOW)).toBe(new Date(thirtyDaysAgo).toLocaleDateString());
-    expect(formatRelativeTime(at(400 * 86_400_000), NOW)).not.toMatch(/ago$/);
+  it("switches to the date with 24-hour hours and minutes from 30 days on, the year outside now's", () => {
+    expect(formatRelativeTime(new Date(2026, 5, 1, 14, 34).toISOString(), NOW)).toBe("Jun 1, 14:34");
+    expect(formatRelativeTime(new Date(2025, 8, 4, 9, 5).toISOString(), NOW)).toBe("Sep 4, 2025, 09:05");
   });
 
   it("treats a timestamp in the future as just now", () => {
