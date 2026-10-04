@@ -1,19 +1,19 @@
 {
   "name": "bb-plugin-usage-circles",
-  "version": "0.2.2",
+  "version": "0.2.4",
   "type": "module",
   "engines": {
-    "bb": ">=0.39",
-    "bbPluginSdk": ">=0.4.47"
+    "bb": ">=0.45",
+    "bbPluginSdk": ">=0.4.87"
   },
   "bb": {
     "name": "Usage Circles",
-    "description": "Claude Code and Codex usage-limit rings in the footer of BB's left sidebar.",
+    "description": "Claude Code and Codex usage-limit rings as sidebar footer items — place each one in Customize footer.",
     "branding": {
       "icon": "./assets/icon.svg"
     },
     "server": "./server.ts",
-    "app": "./app.ts"
+    "app": "./app.tsx"
   },
   "bbMarketplace": {
     "tags": [
@@ -29,14 +29,24 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@radix-ui/react-collapsible": "^1.1.20",
+    "@radix-ui/react-slider": "^1.4.7",
+    "@radix-ui/react-slot": "^1.3.3",
+    "class-variance-authority": "^0.7.1",
+    "clsx": "^2.1.1",
+    "tailwind-merge": "^3.7.0",
     "zod": "^4.3.6"
   },
   "devDependencies": {
-    "@get-bb/plugin-sdk": "0.4.47",
+    "@get-bb/plugin-sdk": "0.4.87",
+    "@testing-library/react": "^16.3.3",
     "@types/better-sqlite3": "^7.6.12",
     "@types/node": "^22.0.0",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
     "better-sqlite3": "^12.0.0",
     "cron-parser": "^5.10.0",
+    "fast-check": "^4.10.2",
     "hono": "^4.11.9",
     "jsdom": "^30.0.1",
     "typescript": "^5.7.0",

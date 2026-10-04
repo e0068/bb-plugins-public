@@ -1,10 +1,11 @@
 // Layer 1 — pure logic. No DOM, no SDK calls: turns one provider's usage
 // window from bb.sdk.system.usageLimits() into a display-ready model.
-// See memory/decisions/usage-rings-window-duration.md for why duration is
+// See docs/decisions/usage-rings-window-duration.md for why duration is
 // inferred from the label instead of window position — and its 2026-08-21
 // correction: live data labels the 5-hour window "Current session", not
 // "5-hour limit", so an explicit hour count in the label is a fallback, not
 // the primary signal.
+import type { RingStyle } from "./ring-style";
 
 /** "unknown" only in pace mode: too little of the window has passed to judge the pace. */
 export type UsageTier = "blue" | "yellow" | "red" | "unknown";
@@ -42,7 +43,7 @@ export interface UsageWindowModel {
 // Ring color. Two modes, each read against its own yellow/red pair:
 // "usage" by the share of the limit burned, "pace" by how many times faster
 // the limit burns than the window's time runs out. See
-// memory/specs/BBPL-302-usage-circles-codex-limits.md.
+// docs/specs/BBPL-302-usage-circles-codex-limits.md.
 
 export interface Thresholds {
   readonly yellow: number;
@@ -259,19 +260,11 @@ export interface ProviderTint {
   readonly dark: string;
 }
 
-/** Footer ring switches of one provider; `fable` only where the provider has that window. */
-export interface ProviderToggles {
-  readonly session: boolean;
-  readonly weekly: boolean;
-  readonly fable?: boolean;
-}
-
 export interface ProviderStateWire {
   id: string;
   title: string;
   logoUrl: string;
   tint: ProviderTint | null;
-  toggles: ProviderToggles;
   usage: UsageResultWire;
 }
 
@@ -279,6 +272,7 @@ export interface StateWire {
   openOnHover: boolean;
   coloring: Coloring;
   providers: ProviderStateWire[];
+  ring: RingStyle;
 }
 
 // bb.sdk.system.usageLimits() returns a dictionary keyed by providerId, where
@@ -319,4 +313,37 @@ export function normalizeUsage(
     return { status: "error", message: provider.message ?? "Failed to fetch data" };
   }
   return { status: provider.status };
+}
+
+// One footer item per limit window. The live data labels the 5-hour window
+// "Current session" rather than "5-hour limit", so both signals mark it; a
+// Fable-labelled window is the Fable weekly one; anything else is the plain
+// weekly window.
+export type WindowKind = "session" | "weekly" | "fable";
+
+export function windowKindOf(label: string): WindowKind {
+  if (SESSION_LABEL_PATTERN.test(label) || HOUR_LABEL_PATTERN.test(label)) return "session";
+  return /fable/i.test(label) ? "fable" : "weekly";
+}
+
+export interface FooterRing {
+  /** Footer item id, unique within the plugin. */
+  readonly id: string;
+  readonly providerId: string;
+  readonly kind: WindowKind;
+  /** The item's name in Customize footer and its tooltip. */
+  readonly label: string;
+}
+
+export const FOOTER_RINGS: readonly FooterRing[] = [
+  { id: "claude-session", providerId: "claude-code", kind: "session", label: "Claude Code — 5-hour limit" },
+  { id: "claude-weekly", providerId: "claude-code", kind: "weekly", label: "Claude Code — weekly limit" },
+  { id: "claude-fable", providerId: "claude-code", kind: "fable", label: "Claude Code — Fable weekly limit" },
+  { id: "codex-session", providerId: "codex", kind: "session", label: "Codex — 5-hour limit" },
+  { id: "codex-weekly", providerId: "codex", kind: "weekly", label: "Codex — weekly limit" },
+];
+
+/** The window a ring shows; none while the provider reports no usage or lacks that window. */
+export function ringWindow(provider: ProviderStateWire, kind: WindowKind): UsageWindowInput | undefined {
+  return provider.usage.status === "ok" ? provider.usage.windows.find((window) => windowKindOf(window.label) === kind) : undefined;
 }

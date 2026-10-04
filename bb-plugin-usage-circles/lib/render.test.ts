@@ -1,7 +1,10 @@
 // @vitest-environment jsdom
 import { describe, expect, it } from "vitest";
 import { buildUsageWindowModel, formatAbsoluteReset, type UsageWindowModel } from "./usage-model";
-import { buildProviderLogo, buildRingIcon, buildWindowRow } from "./render";
+import { buildProviderDetails, buildProviderLogo, buildRingIcon, buildWindowRow } from "./render";
+import { DEFAULT_RING_DIMS, DEFAULT_RING_STYLE, type RingStyle } from "./ring-style";
+
+const CORNER: RingStyle = { logo: "corner", dims: DEFAULT_RING_DIMS };
 
 const now = Date.parse("2026-08-21T12:00:00Z");
 
@@ -9,7 +12,7 @@ describe("buildRingIcon", () => {
   it("draws a single continuous inner arc for an hour-cycle window", () => {
     const resetsAt = new Date(now + 2 * 60 * 60 * 1000).toISOString();
     const model = buildUsageWindowModel({ label: "5-hour limit", usedPercent: 31, resetsAt }, now);
-    const svg = buildRingIcon(model);
+    const svg = buildRingIcon(model, DEFAULT_RING_STYLE);
 
     expect(svg.querySelectorAll(".usage-circles__ring-time-track").length).toBe(1);
     expect(svg.querySelectorAll(".usage-circles__ring-time").length).toBe(1);
@@ -19,7 +22,7 @@ describe("buildRingIcon", () => {
   it("draws seven day slots for a weekly window, only the elapsed ones colored", () => {
     const resetsAt = new Date(now + 3 * 24 * 60 * 60 * 1000).toISOString(); // 4/7 elapsed
     const model = buildUsageWindowModel({ label: "Weekly limit", usedPercent: 80, resetsAt }, now);
-    const svg = buildRingIcon(model);
+    const svg = buildRingIcon(model, DEFAULT_RING_STYLE);
 
     expect(svg.querySelectorAll(".usage-circles__ring-time-track").length).toBe(7);
     expect(svg.querySelectorAll(".usage-circles__ring-time").length).toBe(4);
@@ -28,7 +31,7 @@ describe("buildRingIcon", () => {
 
   it("draws zero elapsed slots when resetsAt is unknown", () => {
     const model = buildUsageWindowModel({ label: "Weekly limit", usedPercent: 0, resetsAt: null }, now);
-    const svg = buildRingIcon(model);
+    const svg = buildRingIcon(model, DEFAULT_RING_STYLE);
 
     expect(svg.querySelectorAll(".usage-circles__ring-time-track").length).toBe(7);
     expect(svg.querySelectorAll(".usage-circles__ring-time").length).toBe(0);
@@ -36,7 +39,7 @@ describe("buildRingIcon", () => {
 
   it("sets the outer usage arc's dasharray from usedPercent", () => {
     const model = buildUsageWindowModel({ label: "5-hour limit", usedPercent: 0, resetsAt: null }, now);
-    const svg = buildRingIcon(model);
+    const svg = buildRingIcon(model, DEFAULT_RING_STYLE);
     const outerArc = svg.querySelector(".usage-circles__ring-usage");
     expect(outerArc?.getAttribute("stroke-dasharray")).toMatch(/^0 /);
   });
@@ -159,24 +162,24 @@ describe("buildProviderLogo", () => {
 });
 
 describe("buildRingIcon, unknown pace", () => {
-  it("draws a question mark instead of the time ring when the pace is unknown", () => {
+  it("with the logo in the corner, draws a question mark instead of the time ring when the pace is unknown", () => {
     for (const label of ["Current session", "Weekly limit"]) {
-      const svg = buildRingIcon(modelWithTier("unknown", label));
+      const svg = buildRingIcon(modelWithTier("unknown", label), CORNER);
       expect(svg.querySelector("text")?.textContent).toBe("?");
       expect(svg.querySelectorAll(".usage-circles__ring-time, .usage-circles__ring-time-track")).toHaveLength(0);
     }
   });
 
   it("paints an unknown usage arc in the foreground color at its usual length", () => {
-    const known = buildRingIcon(modelWithTier("blue")).querySelector(".usage-circles__ring-usage")!;
-    const unknown = buildRingIcon(modelWithTier("unknown")).querySelector(".usage-circles__ring-usage")!;
+    const known = buildRingIcon(modelWithTier("blue"), CORNER).querySelector(".usage-circles__ring-usage")!;
+    const unknown = buildRingIcon(modelWithTier("unknown"), CORNER).querySelector(".usage-circles__ring-usage")!;
     expect(unknown.getAttribute("stroke")).toBe("var(--foreground)");
     expect(unknown.getAttribute("stroke-dasharray")).toBe(known.getAttribute("stroke-dasharray"));
   });
 
   it("draws no question mark for a known tier", () => {
     for (const tier of ["blue", "yellow", "red"] as const) {
-      expect(buildRingIcon(modelWithTier(tier)).querySelector("text")).toBeNull();
+      expect(buildRingIcon(modelWithTier(tier), CORNER).querySelector("text")).toBeNull();
     }
   });
 });
@@ -186,5 +189,63 @@ describe("buildWindowRow, unknown pace", () => {
     const fill = buildWindowRow(modelWithTier("unknown")).querySelector<HTMLElement>(".usage-circles__bar-fill")!;
     expect(fill.dataset.tier).toBe("unknown");
     expect(fill.style.backgroundColor).toBe("var(--foreground)");
+  });
+});
+
+describe("buildProviderDetails", () => {
+  const coloring = { mode: "usage", usage: { yellow: 60, red: 90 }, pace: { yellow: 20, red: 50 } } as const;
+  const provider = (usage: import("./usage-model").UsageResultWire) => ({ id: "codex", title: "Codex", logoUrl: "/codex", tint: null, usage });
+
+  it("heads the provider's limits with its logo and lists every window", () => {
+    const details = buildProviderDetails(
+      provider({ status: "ok", windows: [{ label: "Current session", usedPercent: 5, resetsAt: null }, { label: "Weekly", usedPercent: 9, resetsAt: null }] }),
+      coloring,
+      now,
+    );
+    expect(details.textContent).toContain("Codex Limits");
+    expect(details.querySelector(".usage-circles__logo")?.getAttribute("aria-label")).toBe("Codex");
+    expect(details.querySelectorAll(".usage-circles__window-row").length).toBe(2);
+  });
+
+  it("says why there is nothing to show for a signed-out provider", () => {
+    const details = buildProviderDetails(provider({ status: "unauthenticated" }), coloring, now);
+    expect(details.querySelector(".usage-circles__status")?.textContent).not.toBe("");
+    expect(details.querySelectorAll(".usage-circles__window-row").length).toBe(0);
+  });
+});
+
+describe("buildRingIcon, ring style", () => {
+  const model = (label: string) => buildUsageWindowModel({ label, usedPercent: 40, resetsAt: new Date(now + 2 * 60 * 60 * 1000).toISOString() }, now);
+
+  it("draws in a box of the style's size with the outer ring touching its edge", () => {
+    const svg = buildRingIcon(model("5-hour limit"), { logo: "center", dims: { ...DEFAULT_RING_DIMS, size: 24, outer: 3 } });
+    expect(svg.getAttribute("viewBox")).toBe("0 0 24 24");
+    const usage = svg.querySelector(".usage-circles__ring-usage")!;
+    expect(usage.getAttribute("r")).toBe("10.5");
+    expect(usage.getAttribute("stroke-width")).toBe("3");
+  });
+
+  it("mixes the empty track at the style's strength", () => {
+    const svg = buildRingIcon(model("5-hour limit"), { logo: "center", dims: { ...DEFAULT_RING_DIMS, track: 30 } });
+    expect(svg.querySelector(".usage-circles__ring-track")?.getAttribute("stroke")).toBe("color-mix(in oklab, var(--border) 30%, transparent)");
+  });
+
+  it("cuts the style's gap out of every day segment", () => {
+    const svg = buildRingIcon(model("Weekly limit"), { logo: "center", dims: { ...DEFAULT_RING_DIMS, segmentGap: 50 } });
+    const day = svg.querySelector(".usage-circles__ring-time-track")!;
+    const [fill, rest] = day.getAttribute("stroke-dasharray")!.split(" ").map(Number);
+    expect(fill! / (fill! + rest!)).toBeCloseTo(1 / 14);
+  });
+
+  it("leaves the inner ring out when the style gives it no room", () => {
+    const svg = buildRingIcon(model("5-hour limit"), { logo: "center", dims: { ...DEFAULT_RING_DIMS, size: 14, outer: 5, gap: 4, inner: 4 } });
+    expect(svg.querySelectorAll(".usage-circles__ring-time, .usage-circles__ring-time-track")).toHaveLength(0);
+  });
+
+  it("with the logo in the center, keeps an empty time ring instead of a question mark when the pace is unknown", () => {
+    const svg = buildRingIcon(modelWithTier("unknown"), DEFAULT_RING_STYLE);
+    expect(svg.querySelector("text")).toBeNull();
+    expect(svg.querySelectorAll(".usage-circles__ring-time-track").length).toBeGreaterThan(0);
+    expect(svg.querySelectorAll(".usage-circles__ring-time")).toHaveLength(0);
   });
 });

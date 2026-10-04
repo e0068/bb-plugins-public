@@ -6,6 +6,7 @@ import { describe, expect, it } from "vitest";
 import { createFakePluginHost } from "@get-bb/plugin-sdk/testing";
 import plugin from "./server";
 import type { StateWire } from "./lib/usage-model";
+import { DEFAULT_RING_DIMS, type RingDims } from "./lib/ring-style";
 
 /** The live host response, 2026-09-12. */
 const LIVE_USAGE = {
@@ -51,7 +52,9 @@ async function load(options: {
   });
   await plugin(bb);
   const getState = async () => (await harness.callRpc("getState", null)) as StateWire;
-  return { harness, getState };
+  const setRingDims = async (patch: Partial<RingDims>) => (await harness.callRpc("setRingDims", patch)) as RingDims;
+  const resetRingDims = async () => (await harness.callRpc("resetRingDims", null)) as RingDims;
+  return { harness, getState, setRingDims, resetRingDims };
 }
 
 describe("getState", () => {
@@ -103,19 +106,6 @@ describe("getState", () => {
     expect(codex!.usage).toEqual({ status: "not_installed" });
   });
 
-  it("keeps the stored fiveHour, weekly and fable values as the Claude Code toggles", async () => {
-    const { getState } = await load({ settings: { fiveHour: false, weekly: true, fable: false } });
-    expect((await getState()).providers[0]!.toggles).toEqual({ session: false, weekly: true, fable: false });
-  });
-
-  it("reads the Codex toggles from their own settings", async () => {
-    const { getState } = await load({ settings: { fiveHour: true, weekly: true, codexFiveHour: true, codexWeekly: false } });
-    const codex = (await getState()).providers[1]!;
-    expect(codex.toggles.session).toBe(true);
-    expect(codex.toggles.weekly).toBe(false);
-    expect(codex.toggles.fable).toBeUndefined();
-  });
-
   it("turns the coloring settings into the coloring the widget reads", async () => {
     const { getState } = await load({
       settings: {
@@ -129,24 +119,54 @@ describe("getState", () => {
     expect((await getState()).coloring).toEqual({ mode: "pace", usage: { yellow: 50, red: 80 }, pace: { yellow: 10, red: 40 } });
   });
 
-  it("declares all eleven settings with their defaults", async () => {
+  it("declares the seven settings with their defaults, with no ring switches — the footer layout decides which rings show", async () => {
     const { harness, getState } = await load();
     const descriptors = harness.registrations.settingsDescriptors;
     expect(Object.fromEntries(Object.entries(descriptors).map(([key, d]) => [key, [d.type, d.default]]))).toEqual({
-      fiveHour: ["boolean", true],
-      weekly: ["boolean", true],
-      fable: ["boolean", true],
-      codexFiveHour: ["boolean", true],
-      codexWeekly: ["boolean", true],
       openOnHover: ["boolean", true],
       coloring: ["select", "Share of limit used"],
       usageYellowThreshold: ["number", 60],
       usageRedThreshold: ["number", 90],
       paceYellowThreshold: ["number", 20],
       paceRedThreshold: ["number", 50],
+      logo: ["select", "In the center"],
     });
     const state = await getState();
     expect(state.openOnHover).toBe(true);
     expect(state.coloring).toEqual({ mode: "usage", usage: { yellow: 60, red: 90 }, pace: { yellow: 20, red: 50 } });
+    expect(state.providers.every((provider) => !("toggles" in provider))).toBe(true);
+  });
+});
+
+describe("ring style", () => {
+  it("is the default ring with the logo in the center until anything is tuned", async () => {
+    const { getState } = await load();
+    expect((await getState()).ring).toEqual({ logo: "center", dims: DEFAULT_RING_DIMS });
+  });
+
+  it("puts the logo in the corner when the setting says so", async () => {
+    const { getState } = await load({ settings: { logo: "In the corner" } });
+    expect((await getState()).ring.logo).toBe("corner");
+  });
+
+  it("keeps tuned dimensions, pulled into their sliders' ranges, across getState calls", async () => {
+    const { getState, setRingDims } = await load();
+    const saved = await setRingDims({ size: 22, outer: 99 });
+    expect(saved).toEqual({ ...DEFAULT_RING_DIMS, size: 22, outer: 5 });
+    expect((await getState()).ring.dims).toEqual(saved);
+  });
+
+  it("keeps every tuned dimension when two windows each tune a different one", async () => {
+    const { getState, setRingDims } = await load();
+    await setRingDims({ size: 22 });
+    await setRingDims({ gap: 2 });
+    expect((await getState()).ring.dims).toEqual({ ...DEFAULT_RING_DIMS, size: 22, gap: 2 });
+  });
+
+  it("goes back to the defaults on reset", async () => {
+    const { getState, setRingDims, resetRingDims } = await load();
+    await setRingDims({ size: 22 });
+    expect(await resetRingDims()).toEqual(DEFAULT_RING_DIMS);
+    expect((await getState()).ring.dims).toEqual(DEFAULT_RING_DIMS);
   });
 });
