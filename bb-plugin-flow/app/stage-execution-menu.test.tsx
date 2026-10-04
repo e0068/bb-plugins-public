@@ -78,35 +78,15 @@ const groupItems = (menu: ReturnType<typeof within>, group: string) =>
   [...menu.getByRole("group", { name: group }).querySelectorAll('[role^="menuitem"]')].map((item) => item.textContent);
 
 describe("строка этапа", () => {
-  it("виджет — тег вида с крестом, без надписи охвата", async () => {
-    const slot = open();
-    const first = await row(slot, 1);
-    expect(first.getByRole("button", { name: "Убрать Вопросы" })).toBeTruthy();
-    expect(first.queryByText(/этапы \d/)).toBeNull();
-  });
 
   it("у Action перед шагами — метка «Кнопкой владельца», у этапа со шагами Flow её нет", async () => {
     const slot = open();
     expect((await row(slot, 5)).getByText("Кнопкой владельца")).toBeTruthy();
     expect((await row(slot, 4)).queryByText("Кнопкой владельца")).toBeNull();
   });
-
-  it("у автоматизации Automations плюса исполнения нет", async () => {
-    const slot = open();
-    expect((await row(slot, 6)).queryByRole("button", { name: "Исполнение этапа" })).toBeNull();
-  });
 });
 
 describe("меню исполнения", () => {
-  it("у агентского этапа сегменты Субагент, Workflow, Виджет; у виджета меню открывается на «Виджете»", async () => {
-    const slot = open();
-    const agents = await openMenu(slot, 3);
-    expect(agents.getAllByRole("tab").map((tab) => tab.textContent)).toEqual(["Субагент", "Workflow", "Виджет"]);
-    expect(agents.getByRole("tab", { name: "Субагент" }).getAttribute("aria-selected")).toBe("true");
-    fireEvent.click((await row(slot, 3)).getByRole("button", { name: "Исполнение этапа" }));
-    const widget = await openMenu(slot, 1);
-    expect(widget.getByRole("tab", { name: "Виджет" }).getAttribute("aria-selected")).toBe("true");
-  });
 
   it("в меню агентского этапа нет шагов скрипта и запуска", async () => {
     const menu = await openMenu(open(), 2);
@@ -144,16 +124,6 @@ describe("меню исполнения", () => {
     fireEvent.click(codex);
     await vi.waitFor(() => expect(savedStage(slot, 3)?.executors.map((e) => e.id)).toEqual(["agent:reviewer", "agent:codex/reviewer"]));
   });
-
-  it("агент на виджете делает этап навыком вида с этим агентом и видимым названием", async () => {
-    const slot = open();
-    const menu = await openMenu(slot, 1);
-    pickTab(menu, "Субагент");
-    fireEvent.click(menu.getByRole("menuitemcheckbox", { name: /scout/ }));
-    await vi.waitFor(() =>
-      expect(savedStage(slot, 1)).toEqual({ id: "questions", kind: "skill", skill: "flow-questions", name: "Вопросы", executors: [{ ...catalog.executors[1] }] }),
-    );
-  });
 });
 
 describe("меню скрипта", () => {
@@ -173,19 +143,6 @@ describe("меню скрипта", () => {
     expect(groupItems(menu, "Виджеты").map((text) => text?.replace(/flow-.*/, ""))).toEqual(["Вопросы", "Критерии", "Выбор этапов", "Демонстрация"]);
     fireEvent.click(menu.getByRole("menuitemradio", { name: /Критерии/ }));
     await vi.waitFor(() => expect(savedStage(slot, 3)).toEqual({ id: "review", kind: "criteria", skill: "code-review", name: "Review", executors: [] }));
-  });
-
-  it("у виджета переключателя запуска нет, его вид отмечен", async () => {
-    const slot = open();
-    const menu = await openMenu(slot, 1);
-    expect(menu.queryByRole("tablist", { name: "Запуск" })).toBeNull();
-    expect(menu.getByRole("menuitemradio", { name: /Вопросы/ }).getAttribute("aria-checked")).toBe("true");
-  });
-
-  it("крест виджета оставляет этап навыком его вида с видимым названием", async () => {
-    const slot = open();
-    fireEvent.click((await row(slot, 1)).getByRole("button", { name: "Убрать Вопросы" }));
-    await vi.waitFor(() => expect(savedStage(slot, 1)).toEqual({ id: "questions", kind: "skill", skill: "flow-questions", name: "Вопросы", executors: [] }));
   });
 
   it("пока PR никто не открывает, шаги по PR выбрать нельзя; за этапом, открывающим PR, — можно", async () => {
@@ -326,12 +283,12 @@ describe("под таблицей", () => {
 });
 
 describe("по-английски", () => {
-  it("страница, меню агентского этапа и меню скрипта без кириллицы — в тексте и в атрибутах", async () => {
+  it("страница, меню агентского этапа с вкладкой Skill и меню скрипта без кириллицы — в тексте и в атрибутах", async () => {
     const slot = open(settings(), { language: "English" });
     const second = within(await slot.findByRole("row", { name: "Stage 2" }));
     fireEvent.click(second.getByRole("button", { name: "Stage execution" }));
     const menu = within(await slot.findByRole("menu", { name: "Execution" }));
-    expect(menu.getAllByRole("tab").map((tab) => tab.textContent)).toEqual(["Subagent", "Workflow", "Widget"]);
+    expect(menu.getAllByRole("tab").map((tab) => tab.textContent)).toEqual(["Skill", "Subagent", "Workflow", "Widget"]);
     expect(slot.getByRole("button", { name: "Add script" })).toBeTruthy();
     fireEvent.click(second.getByRole("button", { name: "Stage execution" }));
     fireEvent.click(within(await slot.findByRole("row", { name: "Stage 4" })).getByRole("button", { name: "Stage execution" }));

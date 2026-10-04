@@ -2,10 +2,11 @@
 // Этапы двух видов: агентские — их ведут Main Agent, субагенты, workflow или виджет, — и скрипты — шаги, которые
 // исполняет Flow. Строка любого этапа — ручка перетаскивания поверх номера, название с иконкой
 // вида в поле, исполнение — теги того, что стоит у этапа: Main Agent и
-// исполнители через «или», шаги скрипта через шеврон, — и за ними плюс с меню своего вида: у агентского этапа
-// «Субагент · Workflow · Виджет», у скрипта — запуск и шаги; навык со списком навыков и кнопкой «открыть файл навыка»
-// (у скрипта навыка нет) и крест. Под таблицей — «Добавить этап» и «Добавить скрипт» (AddStage).
-// Каждая правка сохраняется: переключатели — сразу, название — через 400 мс после набора, навык и ширина — при уходе фокуса.
+// исполнители через «или», шаги скрипта через шеврон, навык чипом «Навык: имя», — и за ними плюс с меню своего вида: у агентского этапа
+// «Навык · Субагент · Workflow · Виджет», у автоматизации Automations — только навыки, у скрипта — запуск и шаги; и крест.
+// Чип с файлом — навык, виджет, агент, workflow, свой скрипт — по клику открывает файл в правой панели bb.
+// Под таблицей — «Добавить этап» и «Добавить скрипт» (AddStage).
+// Каждая правка сохраняется: переключатели и навык — сразу, название — через 400 мс после набора, ширина — при уходе фокуса.
 import { createContext, Fragment, useContext, useEffect, useRef, useState, type ReactNode } from "react";
 import { useBbNavigate, useRpc } from "@get-bb/plugin-sdk/app";
 
@@ -13,21 +14,21 @@ import { retryPolicyOf } from "../core/automation-run";
 import { executorGroups, skillGroups, skillShortName, type ExecutorGroup } from "../core/catalog";
 import { setFlowStages } from "../core/flows";
 import { stageLabel } from "../core/stages";
-import { executionOf, hasMainAgent, withExecutor, withMainAgent, withoutMainAgent, withoutWidget } from "../core/stage-execution";
+import { executionOf, hasMainAgent, withExecutor, withMainAgent, withoutMainAgent } from "../core/stage-execution";
 import { dropStage, ownerOf, removeStage, stageApart, stageNumbers, type DropZone } from "../core/sub-stages";
 import { isTemplateSaved, removeTemplate, saveTemplate, stagesFromTemplate, templatesOfKind } from "../core/stage-templates";
 import { FieldOverlay, overlayItem, useFieldOverlay } from "../components/ui/field-overlay";
 import { Button } from "../components/ui/button";
 import { Icon } from "../components/ui/icon";
 import { Input } from "../components/ui/input";
-import { BUILTIN_SKILLS, clearedSkill, isNewStageName, RETRY_LIMITS, stageKindOf, stageSkillOf, STAGE_BUTTON_WIDTH as WIDTH, type BuiltinKind } from "../lib/stage-constants";
+import { clearedSkill, isNewStageName, RETRY_LIMITS, stageSkillOf, STAGE_BUTTON_WIDTH as WIDTH, type BuiltinKind } from "../lib/stage-constants";
 import { cn } from "../lib/utils";
-import type { flowSettingsRpcContract, SkillOrigin, StageCatalog, StageExecutor, WorkStage } from "../shared/contract";
-import { type AutomationSets, AutomationStepTags, ManualMark, ScriptOptions, WidgetOptions } from "./automation-stage";
+import type { AutomationScript, flowSettingsRpcContract, SkillFile, SkillOrigin, StageCatalog, StageExecutor, WorkStage } from "../shared/contract";
+import { type AutomationSets, AutomationStepTags, ManualMark, ScriptOptions, TagOpen, WidgetOptions } from "./automation-stage";
 import { useMessages } from "./locale-context";
 import { ExecutorMark } from "./provider-logos";
 import { Segmented } from "./segmented";
-import { KIND_ICONS, stageIcon } from "./stage-icons";
+import { SKILL_ICON, stageIcon } from "./stage-icons";
 import { StageGlyph } from "./stage-glyph";
 import { StageIconPicker } from "./stage-icon-picker";
 import { updateFlowSettings, useAutomationSets, useFlowSettings, useStageTemplates } from "./stage-settings-store";
@@ -102,8 +103,8 @@ const executorGroupTitle = (t: Messages, group: ExecutorGroup): string => {
 
 const groupTitle = "px-2 pb-0.5 pt-1.5 text-[11px] text-muted-foreground";
 
-/** Навыки списка выбора группами по источнику с заголовком; в строке навыка плагина провайдера — имя без префикса плагина. */
-function SkillOptions({ catalog, query, current, onPick }: { catalog: StageCatalog; query: string; current: string | null; onPick: (name: string) => void }) {
+/** Навыки вкладки «Навык» группами по источнику с заголовком; в строке навыка плагина провайдера — имя без префикса плагина. */
+function SkillOptions({ catalog, query, current, onPick }: { catalog: StageCatalog; query: string; current: string; onPick: (name: string) => void }) {
   const t = useMessages();
   const q = query.trim().toLowerCase();
   const found = catalog.skills.filter((s) => q === "" || s.name.toLowerCase().includes(q) || (s.description ?? "").toLowerCase().includes(q));
@@ -120,15 +121,16 @@ function SkillOptions({ catalog, query, current, onPick }: { catalog: StageCatal
               <button
                 key={skill.name}
                 type="button"
-                role="option"
-                aria-selected={skill.name === current}
+                role="menuitemradio"
+                aria-checked={skill.name === current}
                 onClick={() => onPick(skill.name)}
-                className={cn(overlayItem, skill.name === current && "bg-state-active")}
+                className={overlayItem}
               >
-                <span className="flex min-w-0 flex-col leading-tight">
+                <span className="flex min-w-0 flex-1 flex-col leading-tight">
                   <span className="font-mono text-xs">{skillShortName(skill)}</span>
                   {skill.description !== undefined && <span className="line-clamp-1 text-[11px] text-muted-foreground">{skill.description}</span>}
                 </span>
+                <MenuCheck on={skill.name === current} />
               </button>
             ))}
           </div>
@@ -138,127 +140,86 @@ function SkillOptions({ catalog, query, current, onPick }: { catalog: StageCatal
   );
 }
 
-/** Файл навыка открывается просмотрщиком bb; путь находит сервер по имени навыка. `missing` — файла у навыка не нашлось. */
-function useSkillFile(skill: string) {
+/** Откуда чип берёт свой файл. */
+type ChipFiles = { skill: (name: string) => void; executor: (id: string) => void; script: (script: AutomationScript) => void; missing: boolean };
+
+/**
+ * Файл чипа открывается в правой панели bb; путь находит сервер — по имени навыка, id исполнителя или тексту скрипта.
+ * `missing` — файла последнего клика не нашлось: под чипами встаёт надпись, превью не открывается. Ответ на клик,
+ * за которым уже был следующий, не считается; правка этапа (`stage`) убирает надпись — чипы уже другие.
+ */
+function useChipFiles(stage: WorkStage): ChipFiles {
   const rpc = useRpc<typeof flowSettingsRpcContract>();
   const navigate = useBbNavigate();
   const [missing, setMissing] = useState(false);
-  const failed = () => setMissing(true);
-  useEffect(() => setMissing(false), [skill]);
-  const open = () =>
-    void rpc.call("getSkillFile", { name: skill }).then((file) => {
-      if (file === null) failed();
-      else navigate.experimental_openFilePreview({ target: { kind: "host", hostId: file.hostId, path: file.path }, location: null });
-    }, failed);
-  return { open, missing };
+  const latest = useRef(0);
+  useEffect(() => setMissing(false), [stage]);
+  const open = (find: () => Promise<SkillFile>) => {
+    const click = ++latest.current;
+    const current = () => click === latest.current;
+    setMissing(false);
+    void find().then(
+      (file) => {
+        if (!current()) return;
+        if (file === null) setMissing(true);
+        else navigate.experimental_openFilePreview({ target: { kind: "host", hostId: file.hostId, path: file.path }, location: null });
+      },
+      () => current() && setMissing(true),
+    );
+  };
+  return {
+    skill: (name) => open(() => rpc.call("getSkillFile", { name })),
+    executor: (id) => open(() => rpc.call("getExecutorFile", { id })),
+    script: (script) => open(() => rpc.call("getScriptFile", script)),
+    missing,
+  };
 }
 
-const fieldButton = "flex size-5 items-center justify-center rounded text-muted-foreground hover:bg-state-hover hover:text-foreground";
+/**
+ * Навык чипом. Навыка нет среди прочитанных — файла у него нет, и чипа нет; каталог не прочитан — судить не по чему,
+ * имя остаётся. У скрипта навыка нет, у встроенного этапа чипов нет вовсе — на их месте описание (`WidgetAbout`).
+ */
+const chipSkill = (stage: WorkStage, catalog: StageCatalog): string => {
+  const named = stageSkillOf(stage);
+  return named !== "" && (catalog.skills.length === 0 || catalog.skills.some((s) => s.name === named)) ? named : "";
+};
 
-function SkillField({ stage, index, catalog }: { stage: WorkStage; index: number; catalog: StageCatalog }) {
+/**
+ * Вкладка «Навык»: поиск и навыки по группам; выбор ставит навык этапу и закрывает меню. Свой навык по имени — Enter в поиске.
+ * У автоматизации Automations название — снимок того плагина, и навык его не трогает. Этап навыка без своего названия
+ * берёт имя навыка.
+ */
+function SkillMenuOptions({ stage, catalog, onDone }: { stage: WorkStage; catalog: StageCatalog; onDone: () => void }) {
   const t = useMessages();
   const setStage = useSetStage();
-  const [query, setQuery] = useState<string | null>(null);
-  const open = query !== null;
-  const close = () => setQuery(null);
-  const { root, compact } = useFieldOverlay(open, close);
-  const kind = stageKindOf(stage);
-  const named = stageSkillOf(stage);
-  // Навыка нет среди прочитанных — файла у него нет, и поле пустое, без имени и без кнопок файла. Каталог не прочитан — судить не по чему,
-  // имя остаётся. Сбой списка навыков одного проекта сервер глотает, и навык того проекта тогда тоже выглядит пустым.
-  const current = catalog.skills.length === 0 || catalog.skills.some((s) => s.name === named) ? named : "";
-  // Встроенный этап хранит навык вида пустым полем и не берёт имя навыка в название; у автоматизации Automations
-  // название — снимок того плагина, и навык его не трогает. Этап навыка без своего названия берёт имя навыка.
-  const namesStage = kind === "skill" && executionOf(stage).kind !== "external";
+  const [query, setQuery] = useState("");
+  const namesStage = executionOf(stage).kind !== "external";
   const pick = (skill: string) => {
-    const stored = kind === "skill" || kind === "action" || skill !== BUILTIN_SKILLS[kind] ? skill : "";
-    setStage(stage.id, (s) => (namesStage ? { ...s, skill, name: s.name.trim() === "" || s.name === s.skill || isNewStageName(s.name) ? skill : s.name } : { ...s, skill: stored }));
-    close();
+    setStage(stage.id, (s) => (namesStage ? { ...s, skill, name: s.name.trim() === "" || s.name === s.skill || isNewStageName(s.name) ? skill : s.name } : { ...s, skill }));
+    onDone();
   };
-  const clear = () => {
-    setStage(stage.id, (s) => ({ ...s, skill: clearedSkill(s) }));
-    close();
-  };
-  const listId = `stage-skills-${stage.id}`;
-  const file = useSkillFile(current);
   return (
-    <div ref={root} className="relative min-w-0">
-      {compact ? (
-        // На телефоне поле — кнопка: тап поднимает штору, а набор живёт в ней.
-        // Поле, открывающее список фокусом, выехавшей клавиатурой закрыло бы
-        // список собой в тот же момент, когда его открыло.
-        <button
-          type="button"
-          role="combobox"
-          aria-label={t.settings.stageSkill(index + 1)}
-          aria-expanded={open}
-          aria-controls={listId}
-          onClick={() => setQuery("")}
-          className={cn(field, "flex items-center pr-14 text-left font-mono text-xs")}
-        >
-          <span className="min-w-0 truncate">{current}</span>
-        </button>
-      ) : (
-        <Input
-          role="combobox"
-          aria-label={t.settings.stageSkill(index + 1)}
-          aria-expanded={open}
-          aria-controls={listId}
-          value={query ?? current}
-          placeholder={current}
-          onFocus={() => setQuery("")}
-          onChange={(e) => setQuery(e.target.value)}
-          onBlur={(e) => {
-            // Уход фокуса в список — это выбор, а не набор своего навыка.
-            if (root.current?.contains(e.relatedTarget as Node | null)) return;
-            if (query !== null && query.trim() !== "") pick(query.trim());
-            else close();
-          }}
-          className={cn(field, "pr-14 font-mono text-xs")}
-        />
-      )}
-      {current !== "" && (
-        // Справа в поле: стрелка открывает файл навыка, крестик у самого края очищает поле.
-        <span className="absolute right-1 top-1 flex">
-          <button type="button" aria-label={t.settings.openSkill(current)} title={t.settings.openSkill(current)} onClick={file.open} className={fieldButton}>
-            <Icon name="ArrowUpRight" aria-hidden="true" className="size-3.5" />
-          </button>
-          <button type="button" aria-label={t.settings.clearSkill} title={t.settings.clearSkill} onClick={clear} className={fieldButton}>
-            <Icon name="X" aria-hidden="true" className="size-3.5" />
-          </button>
-        </span>
-      )}
-      {file.missing && (
-        <span role="status" className="mt-1 block text-[11px] text-muted-foreground">
-          {t.settings.skillFileMissing}
-        </span>
-      )}
-      <FieldOverlay open={open} onClose={close} role="listbox" label={t.settings.skills} id={listId}>
-        {compact && (
-          <Input
-            aria-label={t.settings.findSkill}
-            value={query ?? ""}
-            placeholder={current}
-            onChange={(e) => setQuery(e.target.value)}
-            onKeyDown={(e) => {
-              // В шторе фокус не уходит наружу, поэтому свой навык подтверждает Enter, а не уход фокуса.
-              if (e.key === "Enter" && (query ?? "").trim() !== "") pick((query ?? "").trim());
-            }}
-            className={cn(field, "mb-1 font-mono text-xs")}
-          />
-        )}
-        <SkillOptions catalog={catalog} query={query ?? ""} current={current} onPick={pick} />
-      </FieldOverlay>
-    </div>
+    <>
+      <Input
+        aria-label={t.settings.findSkill}
+        value={query}
+        placeholder={t.settings.findSkill}
+        onChange={(e) => setQuery(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" && query.trim() !== "") pick(query.trim());
+        }}
+        className={cn(field, "mb-1 font-mono text-xs")}
+      />
+      <SkillOptions catalog={catalog} query={query} current={stageSkillOf(stage)} onPick={pick} />
+    </>
   );
 }
 
-type Segment = "agent" | "workflow" | "widget";
+type Segment = "skill" | "agent" | "workflow" | "widget";
 
-/** Сегмент меню агентского этапа, на котором меню открывается: виджет — на «Виджете», этап с одними workflow — на «Workflow». */
+/** Сегмент меню агентского этапа, на котором меню открывается: этап с одними workflow — на «Workflow». У виджета меню нет. */
 const segmentOf = (stage: WorkStage): Segment => {
   const execution = executionOf(stage);
-  if (execution.kind === "widget") return "widget";
   return execution.kind === "executors" && execution.executors.length > 0 && execution.executors.every((e) => e.kind === "workflow") ? "workflow" : "agent";
 };
 
@@ -344,7 +305,7 @@ function MainAgentOption({ stage }: { stage: WorkStage }) {
   );
 }
 
-/** Меню исполнения: у скрипта — запуск и шаги, у агентского этапа — сегменты «Субагент · Workflow · Виджет». */
+/** Меню исполнения: у скрипта — запуск и шаги, у автоматизации Automations — навыки, у агентского этапа — сегменты «Навык · Субагент · Workflow · Виджет». */
 function ExecutionMenu({ stage, stages, catalog, open, onClose }: { stage: WorkStage; stages: readonly WorkStage[]; catalog: StageCatalog; open: boolean; onClose: () => void }) {
   const t = useMessages();
   const setStage = useSetStage();
@@ -353,6 +314,9 @@ function ExecutionMenu({ stage, stages, catalog, open, onClose }: { stage: WorkS
     <FieldOverlay open={open} onClose={onClose} role="menu" label={t.settings.executionMenu} className="w-[20rem]">
       {executionOf(stage).kind === "script" ? (
         <ScriptOptions stage={stage} stages={stages} sets={sets} onChange={(change) => setStage(stage.id, change)} onDone={onClose} />
+      ) : executionOf(stage).kind === "external" ? (
+        // Шаги автоматизации Automations правятся в том плагине; здесь у неё правится только навык.
+        <SkillMenuOptions stage={stage} catalog={catalog} onDone={onClose} />
       ) : (
         <AgentOptions stage={stage} catalog={catalog} open={open} onClose={onClose} />
       )}
@@ -360,7 +324,7 @@ function ExecutionMenu({ stage, stages, catalog, open, onClose }: { stage: WorkS
   );
 }
 
-/** Меню агентского этапа: наверху сегмент-контрол «Субагент · Workflow · Виджет», под ним список выбранного сегмента. */
+/** Меню агентского этапа: наверху сегмент-контрол «Навык · Субагент · Workflow · Виджет», под ним список выбранного сегмента. */
 function AgentOptions({ stage, catalog, open, onClose }: { stage: WorkStage; catalog: StageCatalog; open: boolean; onClose: () => void }) {
   const t = useMessages();
   const setStage = useSetStage();
@@ -379,13 +343,16 @@ function AgentOptions({ stage, catalog, open, onClose }: { stage: WorkStage; cat
           value={segment}
           onChange={setSegment}
           options={[
+            { value: "skill", label: t.settings.segmentSkill },
             { value: "agent", label: t.settings.segmentAgent },
             { value: "workflow", label: t.settings.segmentWorkflow },
             { value: "widget", label: t.settings.segmentWidget },
           ]}
         />
       </div>
-      {segment === "widget" ? (
+      {segment === "skill" ? (
+        <SkillMenuOptions stage={stage} catalog={catalog} onDone={onClose} />
+      ) : segment === "widget" ? (
         <WidgetOptions stage={stage} onChange={(change) => setStage(stage.id, change)} onDone={onClose} />
       ) : (
         <ExecutorOptions stage={stage} catalog={catalog} kind={segment} />
@@ -397,16 +364,36 @@ function AgentOptions({ stage, catalog, open, onClose }: { stage: WorkStage; cat
 const tag = "inline-flex h-7 max-w-full items-center gap-1.5 rounded-md bg-card text-xs";
 const tagCross = "flex size-6 shrink-0 items-center justify-center rounded text-muted-foreground hover:bg-state-hover hover:text-foreground";
 
-/** Исполнитель тегом с крестом. */
-function ExecutorTag({ stage, executor }: { stage: WorkStage; executor: StageExecutor }) {
+/** Навык тегом «Навык: имя» с крестом; крест снимает навык. */
+function SkillTag({ stage, skill, files }: { stage: WorkStage; skill: string; files: ChipFiles }) {
+  const t = useMessages();
+  const setStage = useSetStage();
+  const remove = () => setStage(stage.id, (s) => ({ ...s, skill: clearedSkill(s) }));
+  return (
+    <span className={cn(tag, "pr-0.5")}>
+      <TagOpen onOpen={() => files.skill(skill)}>
+        <Icon name={SKILL_ICON} aria-hidden="true" className="size-3.5 shrink-0 text-muted-foreground" />
+        <span className="min-w-0 truncate">{t.settings.skillChip(skill)}</span>
+      </TagOpen>
+      <button type="button" aria-label={t.settings.removeSkill(skill)} onClick={remove} className={tagCross}>
+        <Icon name="X" aria-hidden="true" className="size-3" />
+      </button>
+    </span>
+  );
+}
+
+/** Исполнитель тегом с крестом; подпись открывает файл агента или workflow. */
+function ExecutorTag({ stage, executor, files }: { stage: WorkStage; executor: StageExecutor; files: ChipFiles }) {
   const t = useMessages();
   const setStage = useSetStage();
   const shown = stageLabel(stage, t.stages);
   return (
-    <span className={cn(tag, "pl-2 pr-0.5")}>
-      <ExecutorIcon executor={executor} />
-      <span className="min-w-0 truncate">{executor.name}</span>
-      {executor.model !== undefined && <span className="shrink-0 text-[11px] text-muted-foreground">{executor.model}</span>}
+    <span className={cn(tag, "pr-0.5")}>
+      <TagOpen onOpen={() => files.executor(executor.id)}>
+        <ExecutorIcon executor={executor} />
+        <span className="min-w-0 truncate">{executor.name}</span>
+        {executor.model !== undefined && <span className="shrink-0 text-[11px] text-muted-foreground">{executor.model}</span>}
+      </TagOpen>
       <button type="button" aria-label={t.settings.remove(executor.name)} onClick={() => setStage(stage.id, (s) => withExecutor(s, executor, shown))} className={tagCross}>
         <Icon name="X" aria-hidden="true" className="size-3" />
       </button>
@@ -439,10 +426,10 @@ function OrMark() {
 }
 
 /** Исполнители этапа тегами через «или»: Main Agent, если не снят, потом агенты и workflow. */
-function ExecutorTags({ stage, executors }: { stage: WorkStage; executors: readonly StageExecutor[] }) {
+function ExecutorTags({ stage, executors, files }: { stage: WorkStage; executors: readonly StageExecutor[]; files: ChipFiles }) {
   const tags = [
     ...(hasMainAgent(stage) ? [<MainAgentTag key="self" stage={stage} />] : []),
-    ...executors.map((executor) => <ExecutorTag key={executor.id} stage={stage} executor={executor} />),
+    ...executors.map((executor) => <ExecutorTag key={executor.id} stage={stage} executor={executor} files={files} />),
   ];
   return tags.map((node, i) => (
     <Fragment key={node.key}>
@@ -452,24 +439,27 @@ function ExecutorTags({ stage, executors }: { stage: WorkStage; executors: reado
   ));
 }
 
-/** Виджет тегом с иконкой своего вида и крестом, как шаги скрипта. Крест оставляет этап навыком без исполнителей. */
-function WidgetTag({ stage, widget }: { stage: WorkStage; widget: BuiltinKind }) {
+/**
+ * Встроенный этап вместо тегов и плюса показывает, что он делает: исполняет его виджет Flow по своему навыку, и выбирать
+ * тут нечего. Описание открывает навык этапа — свой или навык вида; этап без навыка открывать нечему.
+ */
+function WidgetAbout({ stage, widget, files }: { stage: WorkStage; widget: BuiltinKind; files: ChipFiles }) {
   const t = useMessages();
-  const setStage = useSetStage();
-  return (
-    <span className={cn(tag, "pl-2 pr-0.5")}>
-      <Icon name={KIND_ICONS[widget]} aria-hidden="true" className="size-3.5 shrink-0 text-muted-foreground" />
-      <span className="min-w-0 truncate">{t.stages[widget]}</span>
-      <button type="button" aria-label={t.settings.remove(t.stages[widget])} onClick={() => setStage(stage.id, (s) => withoutWidget(s, stageLabel(s, t.stages)))} className={tagCross}>
-        <Icon name="X" aria-hidden="true" className="size-3" />
-      </button>
-    </span>
+  const skill = stageSkillOf(stage);
+  const about = t.settings.widgetAbout[widget];
+  const text = "flex h-7 min-w-0 items-center text-left text-xs text-muted-foreground";
+  return skill === "" ? (
+    <span className={text}>{about}</span>
+  ) : (
+    <button type="button" title={t.settings.openFile} onClick={() => files.skill(skill)} className={cn(text, "hover:text-foreground hover:underline hover:underline-offset-2")}>
+      {about}
+    </button>
   );
 }
 
 /**
- * Исполнение: то, что стоит у этапа, — исполнители, виджет или шаги скрипта тегами, — и за последним тегом плюс с меню.
- * У автоматизации Automations плюса нет: её шаги правятся в том плагине.
+ * Исполнение: то, что стоит у этапа, — навык, исполнители или шаги скрипта тегами, — и за последним тегом плюс с меню;
+ * у встроенного этапа — описание без плюса. Чип с файлом открывает его в правой панели; файла не нашлось — надпись под тегами.
  */
 function ExecutionCell({ stage, stages, catalog }: { stage: WorkStage; stages: readonly WorkStage[]; catalog: StageCatalog }) {
   const t = useMessages();
@@ -477,20 +467,28 @@ function ExecutionCell({ stage, stages, catalog }: { stage: WorkStage; stages: r
   const [open, setOpen] = useState(false);
   const close = () => setOpen(false);
   const { root } = useFieldOverlay(open, close);
+  const files = useChipFiles(stage);
   const execution = executionOf(stage);
+  const skill = execution.kind === "executors" || execution.kind === "external" ? chipSkill(stage, catalog) : "";
   return (
     <span role="cell" className={cellWide}>
       <div ref={root} className="relative flex min-w-0 flex-wrap items-center gap-1">
-        {execution.kind === "executors" && <ExecutorTags stage={stage} executors={execution.executors} />}
-        {execution.kind === "widget" && <WidgetTag stage={stage} widget={execution.widget} />}
+        {skill !== "" && <SkillTag stage={stage} skill={skill} files={files} />}
+        {execution.kind === "executors" && <ExecutorTags stage={stage} executors={execution.executors} files={files} />}
+        {execution.kind === "widget" && <WidgetAbout stage={stage} widget={execution.widget} files={files} />}
         {execution.kind === "script" && execution.manual && <ManualMark />}
-        {(execution.kind === "script" || execution.kind === "external") && <AutomationStepTags stage={stage} onChange={(change) => setStage(stage.id, change)} />}
-        {execution.kind !== "external" && (
+        {(execution.kind === "script" || execution.kind === "external") && <AutomationStepTags stage={stage} onChange={(change) => setStage(stage.id, change)} onOpenScript={files.script} />}
+        {execution.kind !== "widget" && (
           <button type="button" aria-label={t.settings.addExecution} title={t.settings.addExecution} aria-expanded={open} onClick={() => setOpen(!open)} className={cn(square, "bg-card text-muted-foreground hover:bg-state-hover hover:text-foreground")}>
             <Icon name="Plus" aria-hidden="true" className="size-3.5" />
           </button>
         )}
-        {execution.kind !== "external" && <ExecutionMenu stage={stage} stages={stages} catalog={catalog} open={open} onClose={close} />}
+        {execution.kind !== "widget" && <ExecutionMenu stage={stage} stages={stages} catalog={catalog} open={open} onClose={close} />}
+        {files.missing && (
+          <span role="status" className="basis-full text-[11px] text-muted-foreground">
+            {t.settings.fileMissing}
+          </span>
+        )}
       </div>
     </span>
   );
@@ -506,16 +504,15 @@ const rowGrid = "grid grid-cols-[28px_minmax(0,1fr)_28px] items-start gap-2 @[44
 const stageGap = "mt-[3px] rounded-t-lg";
 
 /**
- * Средние ячейки — название, исполнение, навык. Стоят в ряд, пока каждой хватает её основы, и переносятся
- * сами, когда перестаёт хватать: сначала навык уходит под название и исполнение, потом исполнение под название. Перенос считает
- * flex-wrap по основе ячейки, а не ширина страницы, поэтому поля не встают в столбик раньше времени.
+ * Средние ячейки — название и исполнение. Стоят в ряд, пока каждой хватает её основы, и переносятся
+ * сами, когда перестаёт хватать: исполнение уходит под название. Перенос считает flex-wrap по основе ячейки,
+ * а не ширина страницы, поэтому поля не встают в столбик раньше времени.
  */
 const cellGroup = "flex min-w-0 flex-wrap items-start gap-2";
 
 /**
- * Основа названия и навыка — 133px: уже них поля не читаются, и ряд переносится. Основы и доли роста выбраны так, что
- * поля на любой ширине в полтора раза уже, чем были при основах 200px и исполнении с долей 2.2, а сумма основ — те же
- * 600px, поэтому ряд переносится на прежней ширине.
+ * Основа названия — 133px: уже поле не читается, и ряд переносится. Навык стоит чипом в исполнении, поэтому
+ * его прежняя клетка отдана исполнению и названию.
  */
 const cell = "min-w-0 grow basis-[133px]";
 
@@ -709,9 +706,10 @@ function StageRow({ stage, index, stages, catalog, place, dragging, onGrab }: Ro
         ) : (
         <span role="cell" className={cn(cell, "relative")}>
           <NameIcon stage={stage} />
-          {execution.kind === "external" ? (
-            <span title={stage.name} className="flex h-7 min-w-0 items-center truncate pl-8 pr-2 text-[13px]">
-              {stage.name}
+          {execution.kind === "external" || execution.kind === "widget" ? (
+            // Имя автоматизации Automations — снимок того плагина, имя встроенного этапа зафиксировано: оба не правятся.
+            <span title={stageLabel(stage, t.stages)} className="flex h-7 min-w-0 items-center truncate pl-8 pr-2 text-[13px]">
+              {stageLabel(stage, t.stages)}
             </span>
           ) : (
             <Input aria-label={t.settings.stageName(index + 1)} placeholder={t.settings.namePlaceholder} value={name} onChange={(e) => change(e.target.value)} onBlur={flush} className={cn(field, "pl-8")} />
@@ -719,14 +717,6 @@ function StageRow({ stage, index, stages, catalog, place, dragging, onGrab }: Ro
         </span>
         )}
         <ExecutionCell stage={stage} stages={stages} catalog={catalog} />
-        {execution.kind === "script" ? (
-          // Скрипт исполняет Flow, навыка у него нет: на широкой таблице клетка стоит пустой, чтобы колонки не съехали.
-          <span role="cell" className={cn(cell, "hidden @[44rem]:block")} />
-        ) : (
-          <span role="cell" className={cell}>
-            <SkillField stage={stage} index={index} catalog={catalog} />
-          </span>
-        )}
       </StageCells>
     </RowShell>
   );
@@ -941,9 +931,6 @@ function WorkStages({ flowId }: { flowId: string }) {
             </span>
             <span role="columnheader" className={cellWide}>
               {t.settings.colExecution}
-            </span>
-            <span role="columnheader" className={cell}>
-              {t.settings.colSkill}
             </span>
           </StageCells>
           <span role="columnheader">

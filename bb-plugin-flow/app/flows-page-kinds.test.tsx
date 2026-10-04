@@ -55,19 +55,6 @@ describe("таблица этапов выбранного flow", () => {
     expect(slot.queryByLabelText("Review by User")).toBeNull();
   });
 
-  it("строка своего этапа: навык, название, плюс исполнителя и теги", async () => {
-    const slot = open();
-    const plan = await row(slot, 4);
-    expect((plan.getByRole("combobox", { name: "Навык этапа 4" }) as HTMLInputElement).value).toBe("plan");
-    expect(plan.getByText("planner")).toBeTruthy();
-  });
-
-  it("название встроенного вида правится и сохраняется", async () => {
-    const slot = open();
-    fireEvent.change((await row(slot, 2)).getByRole("textbox", { name: "Название этапа 2" }), { target: { value: "Что делаем" } });
-    await vi.waitFor(() => expect(flowOf(lastSaved(slot), "default")?.stages[1]?.name).toBe("Что делаем"), { timeout: 2000 });
-  });
-
   it("строка, перетащенная за ручку вниз, встаёт в конец и порядок сохраняется на отпускании", async () => {
     const slot = open();
     const handle = (await row(slot, 1)).getByRole("button", { name: "Перетащить этап Вопросы" });

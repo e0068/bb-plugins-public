@@ -37,7 +37,7 @@ import { createFlowSettings } from "./server/flow-settings";
 import { registerFlowTools } from "./server/flow-tools";
 import { createLegacyHeal } from "./server/legacy-heal";
 import { registerFlowSettingsApi } from "./server/settings-api";
-import { hostCatalogSources, hostSkillFileSources, readSkillFile, readStageCatalog } from "./server/stage-catalog";
+import { hostCatalogSources, hostSkillFileSources, readExecutorFile, readSkillFile, readStageCatalog, writeScriptFile } from "./server/stage-catalog";
 import { revealInFinderHere } from "@bb-plugins/reveal-in-finder/index";
 import { createStore } from "./server/store";
 import { createThreadFlows } from "./server/thread-flows";
@@ -272,6 +272,8 @@ export default async function plugin(bb: BbPluginApi): Promise<void> {
     if (!heal.done()) await catalog();
   },
     skillFile: (name) => readSkillFile(hostSkillFileSources(bb), name),
+    executorFile: (id) => readExecutorFile({ ...hostCatalogSources(bb), primaryHostId: hostSkillFileSources(bb).primaryHostId }, id),
+    scriptFile: (script) => writeScriptFile(script, hostSkillFileSources(bb).primaryHostId),
     reveal: revealInFinderHere,
   });
   registerFlowPickerApi(bb, flows, threads);

@@ -9,19 +9,11 @@ import { useComposerView, useRpc } from "@get-bb/plugin-sdk/app";
 
 import { AUTO_FLOW, NO_FLOW } from "../core/flows";
 import { Button } from "../components/ui/button";
+import { FlowMark } from "../components/ui/flow-mark";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuLabel, DropdownMenuRadioGroup, DropdownMenuRadioItem, DropdownMenuTrigger } from "../components/ui/dropdown-menu";
 import type { flowPickerRpcContract } from "../shared/contract";
 import { LocaleProvider } from "./locale";
 import { useMessages } from "./locale-context";
-
-/** Знак плагина из assets/icon.svg, но цветом текста: в композере он рисуется svg, а не маской. Перечёркнутый — «без flow». */
-const FlowMark = ({ crossed }: { crossed: boolean }) => (
-  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.75} strokeLinecap="round" strokeLinejoin="round" aria-hidden className="size-4 shrink-0">
-    <path d="M6 2.25h7.25a4.25 4.25 0 0 1 0 8.5h-2.5a4.25 4.25 0 0 0 0 8.5H17" />
-    <path d="M14 16.25l3 3-3 3" />
-    {crossed && <path d="M3 3l18 18" />}
-  </svg>
-);
 
 /** Классы кнопки выбора модели и effort из бандла bb. */
 const PICKER_LOOK = "h-8 w-fit min-w-0 items-center justify-start gap-1.5 px-2 text-xs leading-tight border-none bg-transparent shadow-none transition-none text-muted-foreground hover:text-muted-foreground font-normal";
@@ -99,13 +91,20 @@ function ProjectPicker({ projectId }: { projectId: string }) {
       <DropdownMenuContent align="end">
         <DropdownMenuLabel>{t.flows.pickerTitle}</DropdownMenuLabel>
         <DropdownMenuRadioGroup value={choice.selected} onValueChange={pick}>
-          <DropdownMenuRadioItem value={AUTO_FLOW}>{t.flows.pickerAuto}</DropdownMenuRadioItem>
+          <DropdownMenuRadioItem value={AUTO_FLOW}>
+            <FlowMark crossed={false} />
+            {t.flows.pickerAuto}
+          </DropdownMenuRadioItem>
           {choice.flows.map((flow) => (
             <DropdownMenuRadioItem key={flow.id} value={flow.id}>
+              <FlowMark crossed={false} />
               {flow.name}
             </DropdownMenuRadioItem>
           ))}
-          <DropdownMenuRadioItem value={NO_FLOW}>{t.flows.pickerNone}</DropdownMenuRadioItem>
+          <DropdownMenuRadioItem value={NO_FLOW}>
+            <FlowMark crossed />
+            {t.flows.pickerNone}
+          </DropdownMenuRadioItem>
         </DropdownMenuRadioGroup>
       </DropdownMenuContent>
     </DropdownMenu>

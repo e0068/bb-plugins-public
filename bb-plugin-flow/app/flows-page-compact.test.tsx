@@ -54,40 +54,23 @@ describe("списки таблицы этапов на узком экране"
     compact = true;
   });
 
-  it("поле навыка открывает нижнюю штору со списком навыков", async () => {
-    const slot = open();
-    fireEvent.click(await slot.findByRole("combobox", { name: "Навык этапа 1" }));
-    expect(inSheet(await slot.findByRole("listbox", { name: "Навыки" }))).toBe(true);
-  });
-
-  it("выбранный в шторе навык сохраняется, и штора закрывается", async () => {
-    const slot = open();
-    fireEvent.click(await slot.findByRole("combobox", { name: "Навык этапа 1" }));
-    fireEvent.click(await slot.findByRole("option", { name: /spec/ }));
-    await vi.waitFor(() => expect(lastSaved(slot)?.flows[0]?.stages[0]).toMatchObject({ skill: "spec" }));
-    await vi.waitFor(() => expect(slot.queryByRole("dialog")).toBeNull());
-  });
-
-  it("меню исполнения поднимается нижней шторой с сегментами и ставит агента", async () => {
+  it("меню исполнения поднимается нижней шторой с вкладками Навык, Субагент, Workflow, Виджет и ставит агента", async () => {
     const slot = open();
     fireEvent.click(await slot.findByRole("button", { name: "Исполнение этапа" }));
     const menu = await slot.findByRole("menu", { name: "Исполнение" });
     expect(inSheet(menu)).toBe(true);
-    expect(within(menu).getAllByRole("tab").map((tab) => tab.textContent)).toEqual(["Субагент", "Workflow", "Виджет"]);
+    expect(within(menu).getAllByRole("tab").map((tab) => tab.textContent)).toEqual(["Навык", "Субагент", "Workflow", "Виджет"]);
     fireEvent.click(within(menu).getByRole("menuitemcheckbox", { name: /Имплементер/ }));
     await vi.waitFor(() => expect(lastSaved(slot)?.flows[0]?.stages[0]?.executors.map((e) => e.id)).toEqual(["agent:implementer"]));
   });
-});
 
-describe("те же списки на широком экране", () => {
-  beforeEach(() => {
-    compact = false;
-  });
-
-  it("остаются прижатыми к полю, без шторы", async () => {
+  it("навык, выбранный в шторе на вкладке «Навык», сохраняется, и штора закрывается", async () => {
     const slot = open();
-    fireEvent.focus(await slot.findByRole("combobox", { name: "Навык этапа 1" }));
-    expect(await slot.findByRole("listbox", { name: "Навыки" })).toBeTruthy();
-    expect(slot.queryByRole("dialog")).toBeNull();
+    fireEvent.click(await slot.findByRole("button", { name: "Исполнение этапа" }));
+    const menu = within(await slot.findByRole("menu", { name: "Исполнение" }));
+    fireEvent.mouseDown(menu.getByRole("tab", { name: "Навык" }), { button: 0 });
+    fireEvent.click(await menu.findByRole("menuitemradio", { name: /spec/ }));
+    await vi.waitFor(() => expect(lastSaved(slot)?.flows[0]?.stages[0]).toMatchObject({ skill: "spec" }));
+    await vi.waitFor(() => expect(slot.queryByRole("dialog")).toBeNull());
   });
 });

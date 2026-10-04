@@ -50,7 +50,7 @@ const lastSaved = (slot: Slot) => ([...slot.rpcCalls].reverse().find((c) => c.me
 const builtin = (steps: NonNullable<Extract<WorkStage["automation"], { source: "flow" }>>["steps"]): WorkStage => ({ id: "flow-automation", kind: "skill", skill: "", name: "Опубликовать", executors: [], automation: { source: "flow", steps } });
 
 describe("Автоматизация Automations в таблице этапов", () => {
-  it("у автоматизации из Automations теги шагов без креста, название целиком по наведению, поле навыка как у всех этапов", async () => {
+  it("у автоматизации из Automations теги шагов без креста, название целиком по наведению", async () => {
     stubAutomations(() => new Response(JSON.stringify(AUTOMATIONS), { status: 200 }));
     const long = "Pull Request, Merge then Archive — очень длинное название автоматизации";
     const slot = open(settings([{ ...automationStage({ id: "click-pr", name: long }), automation: { id: "click-pr", name: long, steps: ["Открыть PR", "Смёрджить PR"] } }]));
@@ -58,7 +58,6 @@ describe("Автоматизация Automations в таблице этапов"
     expect(row.getByTitle(long)).toBeTruthy();
     expect(row.getAllByRole("listitem").map((t) => t.textContent)).toEqual(["Открыть PR", "Смёрджить PR"]);
     expect(row.queryByRole("button", { name: /Убрать шаг/ })).toBeNull();
-    expect(row.getByRole("combobox", { name: "Навык этапа 3" })).toBeTruthy();
     expect(row.getByRole("button", { name: `Удалить этап ${long}` })).toBeTruthy();
   });
 });

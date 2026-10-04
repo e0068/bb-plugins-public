@@ -52,7 +52,7 @@ describe("RPC файла навыка", () => {
     const settings = await createFlowSettings(bb.storage.kv);
     registerFlowSettingsApi(bb, settings, {
       catalog: async () => ({ skills: [], executors: [] }),
-      skillFile: async (name) => (name === "spec" ? { hostId: "h", path: "/s/SKILL.md" } : null),
+      skillFile: async (name) => (name === "spec" ? { hostId: "h", path: "/s/SKILL.md" } : null), executorFile: async () => null, scriptFile: async () => null,
       reveal: async (path) => {
         revealed.push(path);
         return { revealed: true, error: null };

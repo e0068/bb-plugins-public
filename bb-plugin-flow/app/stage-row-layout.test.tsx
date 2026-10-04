@@ -47,15 +47,22 @@ const savedStage = (slot: Slot, n: number) =>
 
 describe("иконка этапа в поле названия", () => {
   it.each([
-    [1, KIND_ICONS.questions],
     [2, SKILL_ICON],
     [4, AUTOMATION_ICON],
-  ])("в строке %i иконка стоит в клетке названия, а в клетке номера её нет", async (n, icon) => {
+  ])("в строке %i иконка стоит в поле названия, а в клетке номера её нет", async (n, icon) => {
     const row = await rowOf(open(), n);
     const [number, name] = cellsOf(row);
     expect(number!.querySelector(`[data-icon="${icon}"]`)).toBeNull();
     expect(name!.querySelector("input")).not.toBeNull();
     expect(name!.querySelector(`[data-icon="${icon}"]`)).not.toBeNull();
+  });
+
+  it("у встроенного этапа иконка вида стоит в клетке названия рядом с зафиксированным именем, без поля ввода", async () => {
+    const row = await rowOf(open(), 1);
+    const [number, name] = cellsOf(row);
+    expect(number!.querySelector(`[data-icon="${KIND_ICONS.questions}"]`)).toBeNull();
+    expect(name!.querySelector("input")).toBeNull();
+    expect(name!.querySelector(`[data-icon="${KIND_ICONS.questions}"]`)).not.toBeNull();
   });
 
   it("иконка в поле названия по-прежнему открывает выбор иконки", async () => {
@@ -74,34 +81,7 @@ describe("иконка этапа в поле названия", () => {
   });
 });
 
-describe("исполнение перед навыком", () => {
-  it("колонки идут по порядку: название, исполнение, навык, шаблон, удалить", async () => {
-    const slot = open();
-    await rowOf(slot, 1);
-    expect(slot.getAllByRole("columnheader").map((h) => h.textContent)).toEqual(["№", "Название", "Исполнение", "Навык", "Шаблон", "Удалить"]);
-  });
-
-  it("клетки строки идут: название, исполнение, навык", async () => {
-    const row = await rowOf(open(), 2);
-    const [, name, execution, skill] = cellsOf(row);
-    expect(within(name!).getByRole("textbox", { name: "Название этапа 2" })).toBeTruthy();
-    expect(within(execution!).getByRole("button", { name: "Исполнение этапа" })).toBeTruthy();
-    expect(within(skill!).getByRole("combobox", { name: "Навык этапа 2" })).toBeTruthy();
-  });
-
-  it("в поле навыка стрелка открытия файла стоит перед крестиком очистки", async () => {
-    const row = within(await rowOf(open(), 2));
-    const arrow = row.getByRole("button", { name: "Открыть навык spec" });
-    const cross = row.getByRole("button", { name: "Очистить навык" });
-    expect(arrow.compareDocumentPosition(cross) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-  });
-});
-
 describe("скрипт", () => {
-  it("у этапа-скрипта нет поля навыка", async () => {
-    const row = within(await rowOf(open(), 4));
-    expect(row.queryByRole("combobox", { name: "Навык этапа 4" })).toBeNull();
-  });
 
   it("между шагами скрипта стоит шеврон вправо — по одному между соседними", async () => {
     const row = await rowOf(open(), 4);

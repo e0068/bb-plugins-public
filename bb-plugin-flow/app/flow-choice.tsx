@@ -1,12 +1,13 @@
 // Строка выбора flow в контейнере состояния Flow над композером треда без
 // прогона и после завершённого — на месте бара и его видом. Свёрнутая говорит, какой flow выбран; раскрывается на месте, как бар,
-// списком «Автоматически», flow владельца и «Flow не выбран» с галочкой у
-// выбранного. Выбор только запоминается: flow достаётся треду с сообщением
+// списком «Автоматически», flow владельца и «Без flow» с галочкой у
+// выбранного; у каждого пункта знак flow из композера, у «Без flow» перечёркнутый. Выбор только запоминается: flow достаётся треду с сообщением
 // владельца, и тогда строку сменяет бар. Пока сервер не ответил, строки нет.
 import { useEffect, useRef, useState } from "react";
 import { useRpc } from "@get-bb/plugin-sdk/app";
 
 import { AUTO_FLOW, NO_FLOW } from "../core/flows";
+import { FlowMark } from "../components/ui/flow-mark";
 import { Icon } from "../components/ui/icon";
 import { cn } from "../lib/utils";
 import type { flowChoiceRpcContract } from "../shared/contract";
@@ -67,9 +68,10 @@ export function FlowChoice({ threadId }: { threadId: string }) {
                 pick(option.id);
                 setOpen(false);
               }}
-              className={cn("grid min-h-7 grid-cols-[14px_minmax(0,1fr)_auto] items-center gap-2.5 px-3 py-1 text-left hover:bg-state-hover", option.id === choice.selected && "font-medium")}
+              className={cn("grid min-h-7 grid-cols-[14px_14px_minmax(0,1fr)_auto] items-center gap-2.5 px-3 py-1 text-left hover:bg-state-hover", option.id === choice.selected && "font-medium")}
             >
               <span aria-hidden="true" className="flex">{option.id === choice.selected && <Icon name="Check" className="size-3.5" />}</span>
+              <FlowMark crossed={option.id === NO_FLOW} className="size-3.5 text-muted-foreground" />
               <span className="truncate">{option.name}</span>
               {option.stages !== null && <span className="text-[11px] tabular-nums text-muted-foreground">{t.flowChoice.stages(option.stages)}</span>}
             </button>
@@ -82,7 +84,7 @@ export function FlowChoice({ threadId }: { threadId: string }) {
         onClick={() => setOpen((value) => !value)}
         className="grid min-h-[34px] w-full grid-cols-[16px_minmax(0,1fr)_20px] items-center gap-2.5 px-3 py-1.5 text-left hover:bg-state-hover"
       >
-        <Icon name={none ? "CircleSlash" : "Workflow"} aria-hidden="true" className="size-3.5 text-muted-foreground" />
+        <FlowMark crossed={none} className="size-3.5 text-muted-foreground" />
         <span className={cn("truncate", none && "text-muted-foreground")}>{none || selectedName === undefined ? t.flowChoice.none : t.flows.picker(selectedName)}</span>
         <Icon name="ChevronDown" aria-hidden="true" className={cn("size-3.5 text-muted-foreground", open && "rotate-180")} />
       </button>
