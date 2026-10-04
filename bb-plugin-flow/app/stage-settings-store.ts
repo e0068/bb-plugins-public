@@ -6,6 +6,7 @@ import { useEffect, useSyncExternalStore } from "react";
 import { useRpc } from "@get-bb/plugin-sdk/app";
 
 import { stepOrderProblem, type StepOrderProblem } from "../core/automation-order";
+import { withExpandedStages } from "../core/flows";
 import type { FlowSettings, StageCatalog, flowSettingsRpcContract } from "../shared/contract";
 
 type Rpc = ReturnType<typeof useRpc<typeof flowSettingsRpcContract>>;
@@ -70,7 +71,7 @@ export const commitFlowSettings = (): void => {
   // Порядок шагов проверяется здесь же, до отправки: тем же правилом, каким
   // отказывает сервер, — но на экране остаётся сообщение на языке страницы, а
   // не текст серверной ошибки, довезённый транспортом RPC.
-  const problem = stepOrderProblem(settings.flows);
+  const problem = stepOrderProblem(withExpandedStages(settings.flows));
   if (problem !== null) {
     publish({ ...snapshot, saveProblem: problem, saveError: null });
     return;

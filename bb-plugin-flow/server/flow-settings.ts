@@ -5,7 +5,7 @@ import type { PluginKvStorage } from "@get-bb/plugin-sdk";
 
 import { STEP_LABELS } from "@bb-plugins/automation-steps/catalog";
 import { stepOrderMessage, stepOrderProblem } from "../core/automation-order";
-import { fromLegacy, migrateFlows } from "../core/flows";
+import { flowCycle, fromLegacy, migrateFlows, withExpandedStages } from "../core/flows";
 import { flowSettingsSchema, stageSettingsSchema, type FlowSettings } from "../shared/contract";
 
 export const FLOW_SETTINGS_KEY = "settings:flows";
@@ -43,10 +43,16 @@ export const createFlowSettings = async (kv: PluginKvStorage): Promise<FlowSetti
     async save(settings) {
       // Сохранённое — уже коллекция на видах: без версии следующее чтение перенесло бы её снова и вернуло удалённые этапы.
       const valid = { ...flowSettingsSchema.parse(settings), version: 2 as const };
+      // Flow, включивший сам себя, развёртывался бы бесконечно: отказ здесь один на всех — через эту запись идут и страница, и save_flow.
+      const cycle = flowCycle(valid.flows);
+      if (cycle.length > 0) {
+        const names = cycle.map((id) => valid.flows.find((f) => f.id === id)?.name ?? id);
+        throw new Error(`flow "${names[0]}" includes itself: ${names.join(" → ")}`);
+      }
       // Цепочка, где бамп или мёрдж стоит раньше открытия PR, падает на первом
-      // же прогоне любого треда. Отказ здесь один на всех: через эту запись
-      // идут и страница, и инструмент save_flow.
-      const problem = stepOrderProblem(valid.flows);
+      // же прогоне любого треда. Порядок читается по развёрнутым этапам: PR мог
+      // открыть вложенный flow. Отказ тоже один на всех.
+      const problem = stepOrderProblem(withExpandedStages(valid.flows));
       if (problem !== null) {
         throw new Error(stepOrderMessage(problem, STEP_LABELS[problem.step].en, STEP_LABELS["git.create-pr"].en));
       }

@@ -1,6 +1,6 @@
 {
   "name": "bb-plugin-flow",
-  "version": "0.6.102",
+  "version": "0.6.103",
   "type": "module",
   "engines": {
     "bb": ">=0.42",

@@ -7,7 +7,7 @@
 // владельца снимаются.
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 
-import { AGENT_NO_FLOW, AUTO_FLOW, NO_FLOW, flowById, flowOrNone } from "../core/flows";
+import { AGENT_NO_FLOW, AUTO_FLOW, NO_FLOW, flowById, flowOrNone, withExpandedStages } from "../core/flows";
 import { flowChoiceRpcContract } from "../shared/contract";
 import type { FlowSettingsStore } from "./flow-settings";
 import type { ProgressStore } from "./progress";
@@ -56,7 +56,7 @@ export const registerFlowChoice = (
 
   bb.rpc.register(flowChoiceRpcContract, {
     threadFlowChoice: async ({ threadId }) => ({
-      flows: deps.flows.current().flows.map(({ id, name, stages }) => ({ id, name, stages: stages.length })),
+      flows: withExpandedStages(deps.flows.current().flows).map(({ id, name, stages }) => ({ id, name, stages: stages.length })),
       selected: deps.threads.pickedOf(threadId) ?? (await shown(threadId)),
     }),
 

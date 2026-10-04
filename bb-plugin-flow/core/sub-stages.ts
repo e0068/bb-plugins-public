@@ -83,6 +83,8 @@ export const dropStage = (stages: readonly WorkStage[], dragId: string, targetId
   const moving = dragged.parent === undefined ? stages.filter((stage) => stage.id === dragId || stage.parent === dragId) : [dragged];
   const place = placeOf(stages, target, zone);
   if (place.parent !== null && moving.length > 1) return null;
+  // Строка «Flow» не бывает ни под-этапом, ни владельцем: при развёртывании связка разорвалась бы, а схема отклонила бы сохранение.
+  if (place.parent !== null && (dragged.flowId !== undefined || stages.find((stage) => stage.id === place.parent)?.flowId !== undefined)) return null;
   const placed = moving.map((stage) => (stage.id !== dragId ? stage : place.parent === null ? withoutParent(stage) : { ...stage, parent: place.parent }));
   const rest = stages.filter((stage) => !moving.includes(stage));
   const anchor = rest.findIndex((stage) => stage.id === place.anchor);

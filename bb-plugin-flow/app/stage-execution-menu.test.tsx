@@ -246,9 +246,10 @@ describe("под таблицей", () => {
     for (const name of ["Добавить этап Навык", "Добавить этап Вопросы", "Добавить этап Action", "Автоматизация"]) expect(slot.queryByRole("button", { name })).toBeNull();
   });
 
-  it("«Добавить этап» дописывает «Новый этап» без навыка и исполнителей", async () => {
+  it("«Добавить этап» при других flow открывает меню, и «Пустой этап» дописывает «Новый этап» без навыка и исполнителей", async () => {
     const slot = open();
     fireEvent.click(await slot.findByRole("button", { name: "Добавить этап" }));
+    fireEvent.click(within(await slot.findByRole("menu", { name: "Добавить этап" })).getByRole("menuitem", { name: "Пустой этап" }));
     await vi.waitFor(() => expect(lastSaved(slot)?.flows[0]?.stages.at(-1)).toMatchObject({ kind: "skill", skill: "", name: "Новый этап", executors: [] }));
     expect(lastSaved(slot)?.flows[0]?.stages.at(-1)?.automation).toBeUndefined();
   });
@@ -262,9 +263,10 @@ describe("под таблицей", () => {
     expect(menu.getByRole("menuitem", { name: "Commit" })).toBeTruthy();
   });
 
-  it("виджет на новом этапе подписывает его своим видом", async () => {
+  it("виджет на новом этапе, добавленном пустым, подписывает его своим видом", async () => {
     const slot = open(settings([]));
     fireEvent.click(await slot.findByRole("button", { name: "Добавить этап" }));
+    fireEvent.click(within(await slot.findByRole("menu", { name: "Добавить этап" })).getByRole("menuitem", { name: "Пустой этап" }));
     const menu = await openMenu(slot, 1);
     pickTab(menu, "Виджет");
     fireEvent.click(menu.getByRole("menuitemradio", { name: /Демонстрация/ }));
