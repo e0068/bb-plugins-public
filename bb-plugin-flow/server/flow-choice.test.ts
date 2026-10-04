@@ -35,6 +35,16 @@ describe("строка выбора flow над композером", () => {
     expect(answer.selected).toBe("flow-bug");
   });
 
+  it("строка «Flow» считается этапами вложенного flow, а удалённый вложенный flow — нулём", async () => {
+    const { flows, call } = await host();
+    const base = flows.current();
+    const nested = { id: "nested-flow", kind: "skill" as const, skill: "", name: "Bug", executors: [], flowId: "flow-bug" };
+    const gone = { ...nested, id: "gone", flowId: "missing" };
+    await flows.save({ ...base, flows: [...base.flows, { id: "flow-outer", name: "Outer", stages: [nested, gone] }] });
+    const answer = (await call("threadFlowChoice", {})) as { flows: Array<{ id: string; stages: number }> };
+    expect(answer.flows.find((f) => f.id === "flow-outer")?.stages).toBe(2);
+  });
+
   it("тред, оставленный агентом без flow, показан как «Flow не выбран»", async () => {
     const { threads, call } = await host();
     await threads.assign(THREAD, AGENT_NO_FLOW);

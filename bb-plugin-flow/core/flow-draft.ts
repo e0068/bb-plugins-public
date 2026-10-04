@@ -26,6 +26,7 @@ const orphanScripts = (automation: NonNullable<StageDraft["automation"]>): strin
 /** Id этапа: заданный, а без него — свободный по виду, навыку или автоматизации. */
 const stageId = (draft: StageDraft, taken: readonly string[]): string => {
   if (draft.id !== undefined) return draft.id;
+  if (draft.flowId !== undefined) return freeId("nested-flow", taken);
   if (draft.kind === "action") return actionStage(taken).id;
   if (draft.kind !== "skill") return builtinStage(draft.kind, taken).id;
   if (draft.automation === undefined) return freeId(draft.skill ?? "stage", taken);
@@ -33,6 +34,7 @@ const stageId = (draft: StageDraft, taken: readonly string[]): string => {
 };
 
 const defaultName = (draft: StageDraft): string => {
+  if (draft.flowId !== undefined) return draft.flowId;
   if (draft.kind === "action") return actionStage([]).name;
   if (draft.kind !== "skill") return builtinStage(draft.kind, []).name;
   if (draft.automation === undefined) return draft.skill ?? draft.kind;
@@ -60,7 +62,9 @@ const resolveStage = (draft: StageDraft, n: number, taken: readonly string[], { 
   const executors = executorIds.map((e) => byId.get(e)).filter((e): e is StageExecutor => e !== undefined);
   const problems = [
     ...(draft.id !== undefined && taken.includes(draft.id) ? [`${at}: the stage id "${draft.id}" repeats an earlier stage`] : []),
-    ...(draft.kind === "skill" && draft.automation === undefined && skill === "" && !owners.has(id) ? [`${at}: a skill stage needs a skill or an automation`] : []),
+    ...(draft.flowId !== undefined && draft.kind !== "skill" ? [`${at}: flowId belongs to a stage of kind skill, not ${draft.kind}`] : []),
+    ...(draft.flowId !== undefined && (skill !== "" || executorIds.length > 0 || draft.automation !== undefined || draft.parent !== undefined) ? [`${at}: a flow stage takes no skill, executor, automation or parent — it only names the flow whose stages stand in its place`] : []),
+    ...(draft.kind === "skill" && draft.automation === undefined && draft.flowId === undefined && skill === "" && !owners.has(id) ? [`${at}: a skill stage needs a skill or an automation`] : []),
     ...(draft.kind !== "skill" && draft.kind !== "action" && draft.automation !== undefined ? [`${at}: an automation belongs to a stage of kind skill or action, not ${draft.kind}`] : []),
     ...(draft.kind === "action" && draft.automation === undefined ? [`${at}: an action stage needs steps`] : []),
     ...(draft.automation !== undefined && executorIds.length > 0 ? [`${at}: an automation stage takes no executor — Flow runs it itself`] : []),
@@ -76,6 +80,7 @@ const resolveStage = (draft: StageDraft, n: number, taken: readonly string[], { 
     executors,
     ...(draft.automation === undefined ? {} : { automation: draft.automation }),
     ...(draft.parent === undefined ? {} : { parent: draft.parent }),
+    ...(draft.flowId === undefined ? {} : { flowId: draft.flowId }),
     ...(icon === undefined ? {} : { icon }),
     ...(mainAgentOff && executors.length > 0 ? { mainAgent: false as const } : {}),
   };

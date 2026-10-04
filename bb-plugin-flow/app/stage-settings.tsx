@@ -12,7 +12,7 @@ import { useBbNavigate, useRpc } from "@get-bb/plugin-sdk/app";
 
 import { retryPolicyOf } from "../core/automation-run";
 import { executorGroups, skillGroups, skillShortName, type ExecutorGroup } from "../core/catalog";
-import { setFlowStages } from "../core/flows";
+import { expandStages, flowStage, nestableFlows, setFlowStages } from "../core/flows";
 import { stageLabel } from "../core/stages";
 import { executionOf, hasMainAgent, withExecutor, withMainAgent, withoutMainAgent } from "../core/stage-execution";
 import { dropStage, ownerOf, removeStage, stageApart, stageNumbers, type DropZone } from "../core/sub-stages";
@@ -23,7 +23,7 @@ import { Icon } from "../components/ui/icon";
 import { Input } from "../components/ui/input";
 import { clearedSkill, isNewStageName, RETRY_LIMITS, stageSkillOf, STAGE_BUTTON_WIDTH as WIDTH, type BuiltinKind } from "../lib/stage-constants";
 import { cn } from "../lib/utils";
-import type { AutomationScript, flowSettingsRpcContract, SkillFile, SkillOrigin, StageCatalog, StageExecutor, WorkStage } from "../shared/contract";
+import type { AutomationScript, Flow, flowSettingsRpcContract, SkillFile, SkillOrigin, StageCatalog, StageExecutor, WorkStage } from "../shared/contract";
 import { type AutomationSets, AutomationStepTags, ManualMark, ScriptOptions, TagOpen, WidgetOptions } from "./automation-stage";
 import { useMessages } from "./locale-context";
 import { ExecutorMark } from "./provider-logos";
@@ -310,10 +310,15 @@ function ExecutionMenu({ stage, stages, catalog, open, onClose }: { stage: WorkS
   const t = useMessages();
   const setStage = useSetStage();
   const sets = useSets();
+  // Открыт ли PR раньше этапа, читается по этапам прогона: PR мог открыть вложенный flow.
+  const own = useContext(FlowIdContext);
+  const { settings } = useFlowSettings();
+  const flow = settings?.flows.find((f) => f.id === own);
+  const read = flow === undefined || settings === null ? stages : expandStages(settings.flows, flow);
   return (
     <FieldOverlay open={open} onClose={onClose} role="menu" label={t.settings.executionMenu} className="w-[20rem]">
       {executionOf(stage).kind === "script" ? (
-        <ScriptOptions stage={stage} stages={stages} sets={sets} onChange={(change) => setStage(stage.id, change)} onDone={onClose} />
+        <ScriptOptions stage={stage} stages={read} sets={sets} onChange={(change) => setStage(stage.id, change)} onDone={onClose} />
       ) : executionOf(stage).kind === "external" ? (
         // Шаги автоматизации Automations правятся в том плагине; здесь у неё правится только навык.
         <SkillMenuOptions stage={stage} catalog={catalog} onDone={onClose} />
@@ -495,6 +500,50 @@ function ExecutionCell({ stage, stages, catalog }: { stage: WorkStage; stages: r
 }
 
 /**
+ * Исполнение строки «Flow»: подпись «Flow: название · N этапов» по живой коллекции — переименование и правка вложенного flow видны сразу —
+ * или «flow удалён»; плюс открывает список, из которого flow заменяется. Цикл замкнуть список не даёт.
+ */
+function FlowStageCell({ stage, flowId }: { stage: WorkStage; flowId: string }) {
+  const t = useMessages();
+  const own = useContext(FlowIdContext);
+  const { settings } = useFlowSettings();
+  const setStage = useSetStage();
+  const [open, setOpen] = useState(false);
+  const close = () => setOpen(false);
+  const { root } = useFieldOverlay(open, close);
+  const flows = settings?.flows ?? [];
+  const target = flows.find((flow) => flow.id === flowId);
+  const choices = nestableFlows(flows, own);
+  const pick = (id: string, name: string) => {
+    setStage(stage.id, (s) => ({ ...s, flowId: id, name: s.name === target?.name ? name : s.name }));
+    close();
+  };
+  return (
+    <span role="cell" className={cellWide}>
+      <div ref={root} className="relative flex min-w-0 flex-wrap items-center gap-1">
+        <span className={cn(tag, "px-2", target === undefined && "text-muted-foreground")}>
+          {target === undefined ? t.settings.nestedFlowGone : t.settings.nestedFlow(target.name, t.flowChoice.stages(expandStages(flows, target).length))}
+        </span>
+        {choices.length > 0 && (
+          <>
+            <button type="button" aria-label={t.settings.replaceFlow} title={t.settings.replaceFlow} aria-expanded={open} onClick={() => setOpen(!open)} className={cn(square, "bg-card text-muted-foreground hover:bg-state-hover hover:text-foreground")}>
+              <Icon name="Plus" aria-hidden="true" className="size-3.5" />
+            </button>
+            <FieldOverlay open={open} onClose={close} role="menu" label={t.settings.replaceFlow} className="w-[18rem]">
+              {choices.map((flow) => (
+                <button key={flow.id} type="button" role="menuitem" title={flow.name} onClick={() => pick(flow.id, flow.name)} className={cn(overlayItem, "min-w-0")}>
+                  <span className="min-w-0 truncate">{flow.name}</span>
+                </button>
+              ))}
+            </FieldOverlay>
+          </>
+        )}
+      </div>
+    </span>
+  );
+}
+
+/**
  * Сетка строки: номер с ручкой, средние ячейки одной группой, закладка шаблона и крест. Широкая строка — закладка
  * левее креста; узкая — закладка под крестом, а средние ячейки занимают обе строки сетки, чтобы она встала вплотную.
  * Первая колонка — 28px, ровно под номер: иконка этапа стоит в поле названия.
@@ -626,7 +675,7 @@ function RowShell({ stage, index, stages, place, dragging, onGrab, children }: P
     >
       <StageLead stage={stage} place={place} dragging={dragging} onGrab={onGrab} />
       {children}
-      {place.owner === null ? <SaveTemplate stage={stage} stages={stages} /> : <span role="cell" className={templateCell} />}
+      {place.owner === null && stage.flowId === undefined ? <SaveTemplate stage={stage} stages={stages} /> : <span role="cell" className={templateCell} />}
       <DeleteStage stage={stage} />
       <DropHighlight place={place} />
     </div>
@@ -716,7 +765,7 @@ function StageRow({ stage, index, stages, catalog, place, dragging, onGrab }: Ro
           )}
         </span>
         )}
-        <ExecutionCell stage={stage} stages={stages} catalog={catalog} />
+        {stage.flowId === undefined ? <ExecutionCell stage={stage} stages={stages} catalog={catalog} /> : <FlowStageCell stage={stage} flowId={stage.flowId} />}
       </StageCells>
     </RowShell>
   );
@@ -751,6 +800,11 @@ function AddStageButton({ script }: { script: boolean }) {
   const t = useMessages();
   const update = useStagesUpdate();
   const templates = templatesOfKind(useStageTemplates(), script);
+  const own = useContext(FlowIdContext);
+  const { settings } = useFlowSettings();
+  // Строка «Flow» — агентский этап: у скрипта группы «Flow» нет.
+  const nestable = script ? [] : nestableFlows(settings?.flows ?? [], own);
+  const menu = templates.length > 0 || nestable.length > 0;
   const label = script ? t.settings.addScriptStage : t.settings.addStage;
   const [open, setOpen] = useState(false);
   const close = () => setOpen(false);
@@ -761,9 +815,13 @@ function AddStageButton({ script }: { script: boolean }) {
     const owner = added.find((stage) => stage.parent === undefined);
     if (owner !== undefined) focusName(owner.id);
   };
-  // Убран последний шаблон своего вида — меню не из чего собирать: оно закрывается, и кнопка снова сразу добавляет пустой этап.
+  const addNested = (flow: Flow) => {
+    update((stages) => [...stages, flowStage(flow, stages.map((stage) => stage.id))]);
+    close();
+  };
+  // Убран последний шаблон своего вида, а других flow нет — меню не из чего собирать: оно закрывается, и кнопка снова сразу добавляет пустой этап.
   const remove = (index: number) => {
-    if (templates.length === 1) close();
+    if (templates.length === 1 && nestable.length === 0) close();
     updateFlowSettings((s) => ({ ...s, stageTemplates: [...removeTemplate(s.stageTemplates ?? [], index)] }));
   };
   const empty = () => {
@@ -772,7 +830,7 @@ function AddStageButton({ script }: { script: boolean }) {
   };
   return (
     <div ref={root} className="relative">
-      <Button variant="secondary" size="sm" aria-expanded={templates.length > 0 ? open : undefined} onClick={() => (templates.length === 0 ? empty() : setOpen(!open))}>
+      <Button variant="secondary" size="sm" aria-expanded={menu ? open : undefined} onClick={() => (menu ? setOpen(!open) : empty())}>
         <Icon name="Plus" aria-hidden="true" />
         {label}
       </Button>
@@ -781,28 +839,40 @@ function AddStageButton({ script }: { script: boolean }) {
           <Icon name="Plus" aria-hidden="true" className="size-3.5 shrink-0 text-muted-foreground" />
           {script ? t.settings.emptyScript : t.settings.emptyStage}
         </button>
-        <div role="group" aria-label={t.settings.templates}>
-          <div className={groupTitle}>{t.settings.templates}</div>
-          {templates.map(({ template, index }) => {
-            const name = template.name;
-            return (
-              <div key={`${index}-${name}`} className="flex items-center gap-0.5">
-                <button type="button" role="menuitem" title={name} onClick={() => add(stagesFromTemplate(template, newStageId, () => crypto.randomUUID()))} className={cn(overlayItem, "min-w-0 flex-1")}>
-                  <StageGlyph icon={template.icon} fallback={stageIcon({ id: "", ...template })} className="size-3.5 shrink-0 text-muted-foreground" />
-                  <span className="min-w-0 truncate">{name}</span>
-                </button>
-                <button
-                  type="button"
-                  aria-label={t.settings.removeTemplate(name)}
-                  onClick={() => remove(index)}
-                  className="flex size-6 shrink-0 items-center justify-center rounded text-muted-foreground hover:bg-state-hover hover:text-foreground"
-                >
-                  <Icon name="X" aria-hidden="true" className="size-3" />
-                </button>
-              </div>
-            );
-          })}
-        </div>
+        {nestable.length > 0 && (
+          <div role="group" aria-label={t.settings.flowGroup}>
+            <div className={groupTitle}>{t.settings.flowGroup}</div>
+            {nestable.map((flow) => (
+              <button key={flow.id} type="button" role="menuitem" title={flow.name} onClick={() => addNested(flow)} className={cn(overlayItem, "min-w-0")}>
+                <span className="min-w-0 truncate">{flow.name}</span>
+              </button>
+            ))}
+          </div>
+        )}
+        {templates.length > 0 && (
+          <div role="group" aria-label={t.settings.templates}>
+            <div className={groupTitle}>{t.settings.templates}</div>
+            {templates.map(({ template, index }) => {
+              const name = template.name;
+              return (
+                <div key={`${index}-${name}`} className="flex items-center gap-0.5">
+                  <button type="button" role="menuitem" title={name} onClick={() => add(stagesFromTemplate(template, newStageId, () => crypto.randomUUID()))} className={cn(overlayItem, "min-w-0 flex-1")}>
+                    <StageGlyph icon={template.icon} fallback={stageIcon({ id: "", ...template })} className="size-3.5 shrink-0 text-muted-foreground" />
+                    <span className="min-w-0 truncate">{name}</span>
+                  </button>
+                  <button
+                    type="button"
+                    aria-label={t.settings.removeTemplate(name)}
+                    onClick={() => remove(index)}
+                    className="flex size-6 shrink-0 items-center justify-center rounded text-muted-foreground hover:bg-state-hover hover:text-foreground"
+                  >
+                    <Icon name="X" aria-hidden="true" className="size-3" />
+                  </button>
+                </div>
+              );
+            })}
+          </div>
+        )}
       </FieldOverlay>
     </div>
   );

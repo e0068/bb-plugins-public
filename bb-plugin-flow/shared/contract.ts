@@ -205,6 +205,18 @@ export const stageAutomationSchema = z.union([
   z.object({ id: text, name: text, steps: z.array(text).optional() }),
 ]);
 
+/** Этап «Flow» ссылается на flow целиком: навыка, исполнителей, автоматизации и владельца у него нет, иначе строка читалась бы двумя способами. */
+const FLOW_STAGE_ISSUE = "a flow stage is a stage of kind skill with no skill, executor, automation, parent or main-agent switch: it only names the flow whose stages stand in its place";
+
+const isFlowStageShape = (s: { kind?: string | undefined; skill: string; executors: readonly unknown[]; automation?: unknown; parent?: string | undefined; mainAgent?: false | undefined }): boolean =>
+  (s.kind === undefined || s.kind === "skill") && s.skill === "" && s.executors.length === 0 && s.automation === undefined && s.parent === undefined && s.mainAgent === undefined;
+
+/** Под-этап строки «Flow» не бывает: при развёртывании связка разорвалась бы. */
+const FLOW_STAGE_OWNER_ISSUE = "a flow stage cannot own sub-stages";
+
+const noSubStageOfFlowStage = (stages: ReadonlyArray<{ id: string; flowId?: string | undefined; parent?: string | undefined }>): boolean =>
+  stages.every((stage) => stage.parent === undefined || stages.find((owner) => owner.id === stage.parent)?.flowId === undefined);
+
 /**
  * Этап работ в настройках: вид, навык, название и кто может исполнять кроме самого агента.
  * `kind` нет у записей до видов — вид тогда выводит `stageKindOf`; `review` — флаг прежних снимков брифа, новые этапы его не пишут.
@@ -225,9 +237,12 @@ export const workStageSchema = z
     icon: text.optional(),
     /** Владелец снял Main Agent — агента треда — с исполнителей этапа; нет поля — агент треда исполнять может. */
     mainAgent: z.literal(false).optional(),
+    /** Этап «Flow»: id другого flow коллекции, чьи этапы встают на место строки; вид остаётся `skill`, как у этапа-автоматизации. */
+    flowId: text.optional(),
   })
   .superRefine((s, ctx) => {
     if (!uniqueIds(s.executors)) ctx.addIssue({ code: "custom", message: "executor ids must be unique within a stage", path: ["executors"] });
+    if (s.flowId !== undefined && !isFlowStageShape(s)) ctx.addIssue({ code: "custom", message: FLOW_STAGE_ISSUE, path: ["flowId"] });
   });
 
 const stageTemplateFields = z.object({
@@ -238,6 +253,7 @@ const stageTemplateFields = z.object({
   executors: z.array(stageExecutorSchema),
   mainAgent: z.literal(false).optional(),
   automation: stageAutomationSchema.optional(),
+  flowId: text.optional(),
 });
 
 /**
@@ -262,6 +278,7 @@ export const flowSchema = z
   .superRefine((f, ctx) => {
     if (!uniqueIds(f.stages)) ctx.addIssue({ code: "custom", message: "stage ids must be unique within a flow", path: ["stages"] });
     if (!linkedSubStages(f.stages)) ctx.addIssue({ code: "custom", message: SUB_STAGE_ISSUE, path: ["stages"] });
+    if (!noSubStageOfFlowStage(f.stages)) ctx.addIssue({ code: "custom", message: FLOW_STAGE_OWNER_ISSUE, path: ["stages"] });
   });
 
 /**
@@ -295,6 +312,8 @@ export const stageDraftSchema = z.object({
   automation: stageAutomationSchema.optional(),
   /** Под-этап: id этапа-владельца в том же черновике. */
   parent: text.optional(),
+  /** Этап «Flow»: id другого flow коллекции; вид `skill`, без навыка, исполнителей, автоматизации и владельца. */
+  flowId: text.optional(),
 });
 
 /** Параметры `save_flow`: flow без `id` — новый; `position` — место в списке с нуля, первый flow — flow по умолчанию. */
