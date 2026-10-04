@@ -39,6 +39,7 @@ import {
 } from "../views/manage/index.js";
 import { Button } from "@/components/ui/button";
 import { Icon } from "@/components/ui/icon";
+import { OverlayContainerRoot } from "@/components/ui/overlay-container";
 import { useIsCompactViewport } from "@/components/ui/hooks/use-compact-viewport";
 import { visibleColumns } from "./columns.js";
 import { TasksRefreshProvider } from "../client/refresh.js";
@@ -428,9 +429,11 @@ export function TasksAppShell(props: PluginNavPanelProps) {
   // thread is bb's navigation, handed down because components/ knows no router.
   return (
     <TasksRefreshProvider>
-      <TakenRefusalProvider onOpenThread={(threadId) => navigate.toThread(threadId)}>
-        <TasksAppShellContent {...props} />
-      </TakenRefusalProvider>
+      <OverlayContainerRoot>
+        <TakenRefusalProvider onOpenThread={(threadId) => navigate.toThread(threadId)}>
+          <TasksAppShellContent {...props} />
+        </TakenRefusalProvider>
+      </OverlayContainerRoot>
     </TasksRefreshProvider>
   );
 }

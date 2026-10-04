@@ -235,7 +235,10 @@ function TableRowLine({
         onOpen();
       }}
       className="group grid h-[34px] cursor-pointer items-stretch border-b border-border-hairline text-sm hover:bg-state-hover"
-      style={{ gridTemplateColumns: gridTemplate }}
+      // Off the screen the browser skips the row's styling and layout: a long
+      // table restyled whole on every change of the page took over half a
+      // second each time — the toolbar's menus opened seconds late.
+      style={{ gridTemplateColumns: gridTemplate, contentVisibility: "auto", containIntrinsicSize: "auto 34px" }}
     >
       {columns.map((column) => {
         const pinned = pinnedSet.has(column);
