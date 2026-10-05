@@ -62,10 +62,7 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
-const leave = () => {
-  fireEvent.mouseMove(away());
-  act(() => void vi.advanceTimersByTime(HOVER_LEAVE_MS));
-};
+const leave = () => fireEvent.mouseMove(away());
 
 describe("hover", () => {
   it("opens the window of an item whose plugin opens on hover", () => {
@@ -79,17 +76,46 @@ describe("hover", () => {
     expect(c.calls).toEqual([]);
   });
 
-  it("closes the hovered window once the pointer stays away from the item and the window", () => {
-    fireEvent.mouseOver(button("A"));
-    leave();
-    expect(a.calls).toEqual(["open", "close"]);
-  });
-
   it("keeps the hovered window while the pointer is inside it", () => {
     fireEvent.mouseOver(button("A"));
     fireEvent.mouseMove(document.getElementById("mount")!);
     act(() => void vi.advanceTimersByTime(HOVER_LEAVE_MS * 2));
     expect(a.calls).toEqual(["open"]);
+  });
+
+  it("closes the hovered window at once when the pointer moves past the footer", () => {
+    fireEvent.mouseOver(button("A"));
+    fireEvent.mouseMove(away());
+    expect(a.calls).toEqual(["open", "close"]);
+  });
+
+  it("closes the hovered window at once when the pointer leaves the app", () => {
+    fireEvent.mouseOver(button("A"));
+    fireEvent.mouseOut(button("A"), { relatedTarget: null });
+    expect(a.calls).toEqual(["open", "close"]);
+  });
+
+  it("gives the pointer a grace period in the footer's gaps between the item and its window", () => {
+    fireEvent.mouseOver(button("A"));
+    fireEvent.mouseMove(document.querySelector('[data-sidebar="footer"]')!);
+    expect(a.calls).toEqual(["open"]);
+    act(() => void vi.advanceTimersByTime(HOVER_LEAVE_MS));
+    expect(a.calls).toEqual(["open", "close"]);
+  });
+
+  it("gives the pointer a grace period inside an open overflow menu", () => {
+    document.body.insertAdjacentHTML("beforeend", `<div role="menu"><div id="gap"></div></div>`);
+    fireEvent.mouseOver(button("A"));
+    fireEvent.mouseMove(document.getElementById("gap")!);
+    expect(a.calls).toEqual(["open"]);
+  });
+
+  it("brings the pinned window back at once when the pointer moves past the footer from a hovered one", () => {
+    fireEvent.mouseOver(button("A"));
+    fireEvent.click(button("A"));
+    fireEvent.mouseOver(button("C"));
+    fireEvent.mouseMove(away());
+    expect(a.calls).toEqual(["open", "open"]);
   });
 
   it("opens from the item's row in the overflow menu", () => {
@@ -127,13 +153,6 @@ describe("pin", () => {
     leave();
     expect(c.calls).toEqual(["open"]);
     expect(a.calls).toEqual(["open", "open"]);
-  });
-
-  it("a pointer that leaves the app straight from a hovered window closes it", () => {
-    fireEvent.mouseOver(button("A"));
-    fireEvent.mouseOut(button("A"), { relatedTarget: null });
-    act(() => void vi.advanceTimersByTime(HOVER_LEAVE_MS));
-    expect(a.calls).toEqual(["open", "close"]);
   });
 
   it("a click inside a hovered window pins it, so leaving keeps it open", () => {
