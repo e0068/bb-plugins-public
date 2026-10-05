@@ -31,6 +31,7 @@ import { ProviderLogosProvider } from "./provider-logos-source";
 import { ProviderMark } from "./provider-logos";
 import { useMessages } from "./locale-context";
 import { AUTOMATION_ICON, KIND_ICONS } from "./stage-icons";
+import { StageCheckbox } from "./stage-checkbox";
 import { hasOwnIcon, StageGlyph } from "./stage-glyph";
 
 /** Тон заливки занятого окна: те же семантические токены, что у остальных состояний баннера. */
@@ -469,7 +470,8 @@ export function Row({ stage, roots, onToggle, expanded = false, onExpand, subOf 
           <StageCheckbox
             inRun={stage.state === "todo"}
             label={subOf === undefined ? t.flowChoice.inRun(stageLabel(stage, t.stages)) : t.subStages.inRun(stageLabel(stage, t.stages), stageLabel(subOf, t.stages))}
-            onToggle={onToggle}
+            // Под-этап включается и выключается только вместе с владельцем: его чекбокс показывает, но не нажимается.
+            onToggle={subOf === undefined ? onToggle : null}
           />
         ) : stage.state === "skip" ? (
           <span aria-hidden="true" className="h-px w-2.5 bg-muted-foreground" />
@@ -559,17 +561,6 @@ export function StageList({ stages, roots, threadId, toggleOf }: { stages: reado
       {stages.filter((stage) => stage.parent === undefined).map((stage) => item(stage, false))}
       {stages.some((stage) => stage.state === "done") && <TotalRow stages={stages} />}
     </>
-  );
-}
-
-/** Чекбокс этапа впереди: в прогоне — контрастный квадрат с галочкой, убранный — серый пустой. */
-function StageCheckbox({ inRun, label, onToggle }: { inRun: boolean; label: string; onToggle: (run: boolean) => void }) {
-  return (
-    <button type="button" role="checkbox" aria-checked={inRun} aria-label={label} onClick={() => onToggle(!inRun)} className="flex size-5 items-center justify-center rounded hover:bg-state-hover">
-      <span aria-hidden="true" className={cn("flex size-3.5 items-center justify-center rounded-[3px]", inRun ? "bg-foreground text-background" : "border border-border bg-state-active")}>
-        {inRun && <Icon name="Check" className="size-2.5" />}
-      </span>
-    </button>
   );
 }
 

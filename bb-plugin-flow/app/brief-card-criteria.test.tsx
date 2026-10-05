@@ -48,13 +48,13 @@ const open = (answer: AnswerRecord | null = null) =>
     },
   );
 
-const criteria = async (slot: ReturnType<typeof open>) => within(await slot.findByRole("group", { name: "Готово, когда" }));
+const criteria = async (slot: ReturnType<typeof open>) => within(await slot.findByRole("group", { name: "Definition of Done" }));
 
 describe("раскладка брифа", () => {
   it("сначала вопросы, потом «Готово, когда», потом артефакты; шапки «Бриф» нет", async () => {
     const slot = open();
     const question = await slot.findByRole("group", { name: "Так?" });
-    const done = slot.getByRole("group", { name: "Готово, когда" });
+    const done = slot.getByRole("group", { name: "Definition of Done" });
     const artifacts = slot.getByRole("group", { name: "Артефакты" });
     expect(question.compareDocumentPosition(done) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(done.compareDocumentPosition(artifacts) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();

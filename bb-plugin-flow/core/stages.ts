@@ -4,7 +4,7 @@
 // серверу, и виджету, поэтому из контракта берутся только типы.
 import type { Locale } from "../lib/i18n";
 import { messages } from "../lib/messages";
-import { isDefaultName, SELF_EXECUTOR, stageKindOf, stageSkillOf, type BuiltinKind } from "../lib/stage-constants";
+import { currentName, isDefaultName, SELF_EXECUTOR, stageKindOf, stageSkillOf, type BuiltinKind } from "../lib/stage-constants";
 import { ACTION_TAIL, AUTOMATION_TAIL } from "./automation-run";
 import { hasMainAgent } from "./stage-execution";
 import { isHeadingStage, stageNumbers } from "./sub-stages";
@@ -30,7 +30,7 @@ const ASKED: readonly BuiltinKind[] = ["questions", "criteria", "select"];
 /** Этап, который бриф спрашивает у владельца до работы: flow без таких этапов запуска не ждёт. */
 export const isAskedStage = (stage: Pick<WorkStage, "id" | "kind">): boolean => (ASKED as readonly string[]).includes(stageKindOf(stage));
 
-/** Этапы, на которые бриф отвечает сам: ведущий ряд несделанных Вопросов, Критериев и Выбора этапов в отчёте. */
+/** Этапы, на которые бриф отвечает сам: ведущий ряд несделанных Вопросов, Definition of Done и Выбора этапов в отчёте. */
 export const askedStageIds = (brief: DecisionBrief): string[] => {
   const list = brief.stages?.list ?? [];
   const todo = (brief.setup?.stages ?? []).filter((r) => r.state === "todo");
@@ -198,7 +198,7 @@ const BUILTIN_ANSWERS: Record<BuiltinKind, string> = {
 
 /** Правило треда с flow: владелец видит работу этапами, а не прозой. */
 export const FLOW_RULE =
-  "This thread runs a flow: talk to the owner only through its stages — a brief for questions, criteria and stage selection (consecutive ones go into one brief), a brief with outcome for a demo. For anything the stages do not cover, ask a clarify brief. Around a brief's directive line write at most one sentence — do not retell the brief.";
+  "This thread runs a flow: talk to the owner only through its stages — a brief for questions, Definition of Done and stage selection (consecutive ones go into one brief), a brief with outcome for a demo. For anything the stages do not cover, ask a clarify brief. Around a brief's directive line write at most one sentence — do not retell the brief.";
 
 /**
  * Исполнитель «Сам» для агента: этап ведётся в его сессии, без помощников.
@@ -231,9 +231,9 @@ export const stageLabel = (stage: Pick<WorkStage, "id" | "name" | "kind">, names
  * место и общая галочка.
  */
 const stageHead = (stages: readonly WorkStage[], s: WorkStage, numbers: ReadonlyMap<string, number | null>): string => {
-  if (s.parent === undefined) return `${numbers.get(s.id)}. ${s.id} "${s.name}"`;
+  if (s.parent === undefined) return `${numbers.get(s.id)}. ${s.id} "${currentName(s)}"`;
   const before = stages.indexOf(s) < stages.findIndex((owner) => owner.id === s.parent);
-  return `   - ${s.id} "${s.name}" — sub-stage of ${s.parent}, runs ${before ? "before" : "after"} it, switched on and off together with it`;
+  return `   - ${s.id} "${currentName(s)}" — sub-stage of ${s.parent}, runs ${before ? "before" : "after"} it, switched on and off together with it`;
 };
 
 /** Этапы настроек строкой для инструкций агенту: номер — у этапов верхнего уровня, под-этап помечен владельцем; без этапов — `null`. */

@@ -29,7 +29,7 @@ describe("черновик flow", () => {
         name: "General",
         stages: [
           { id: "questions", kind: "questions", skill: "", name: "Questions", executors: [] },
-          { id: "criteria", kind: "criteria", skill: "", name: "Criteria", executors: [] },
+          { id: "criteria", kind: "criteria", skill: "", name: "Definition of Done", executors: [] },
           { id: "task-flow", kind: "skill", skill: "task-flow", name: "task-flow", executors: [] },
           { id: "practice", kind: "skill", skill: "practice", name: "Execution", executors: [tester] },
           { id: "demo", kind: "demo", skill: "", name: "Demonstration", executors: [] },

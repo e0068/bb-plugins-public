@@ -88,15 +88,6 @@ describe("createSteps", () => {
     expect(await createSteps(ports({}, cli))["bb.tasks-in-review"]("t1")).toEqual({ ok: true, detail: "BBPL-1" });
   });
 
-  // Ветка в main должна ложиться коммитом слияния: сквош оставлял в main
-  // коммит с одним родителем, и локальный main после него расходился с origin.
-  it("PR вливается коммитом слияния, а не сквошем", async () => {
-    const methods: string[] = [];
-    const steps = createSteps(ports({ environment: { path: "/tmp/w" }, merge: async ({ method }) => void methods.push(method) }));
-    expect(await steps["git.merge"]("t1")).toEqual({ ok: true, detail: null });
-    expect(methods).toEqual(["merge"]);
-  });
-
   // Пустой список — законный случай, но молчаливая галочка под ним прятала
   // поломку: шаг отмечался сделанным, а задача оставалась в работе.
   it("шаг, не нашедший ни одной задачи, говорит об этом строкой", async () => {

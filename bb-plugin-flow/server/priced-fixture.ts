@@ -16,7 +16,7 @@ const sharedStage = ({ add, adds, ...report }: Loose): Loose => ({
   ...(adds === undefined ? {} : { factors: Object.fromEntries(Object.keys(adds as Loose).map((id) => [id, { factor: 1, risk: 0 }])) }),
 });
 
-/** Вариант с ценой несёт свой пункт «Готово, когда»: без него бриф до запуска не принимается. */
+/** Вариант с ценой несёт свой пункт Definition of Done: без него бриф до запуска не принимается. */
 const optionWithItem = (option: Loose): Loose =>
   ((option.add as { target?: number } | undefined)?.target ?? 0) > 0 && option.criteria === undefined ? { ...option, criteria: [`${String(option.action)} сделано`] } : option;
 

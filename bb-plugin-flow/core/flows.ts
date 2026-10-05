@@ -11,7 +11,7 @@ const withBuiltins = (plan: ReadonlyArray<WorkStage | BuiltinKind>): WorkStage[]
   plan.reduce<WorkStage[]>((stages, item) => [...stages, typeof item === "string" ? builtin(item, stages) : item], []);
 
 /**
- * Этапы нового flow: Вопросы, Критерии, Выбор этапов и Демонстрация — только встроенные виды, чьи навыки плагин везёт в `skills/`.
+ * Этапы нового flow: Вопросы, Definition of Done, Выбор этапов и Демонстрация — только встроенные виды, чьи навыки плагин везёт в `skills/`.
  * Этап-навык сослался бы на навык, которого у поставившего плагин нет. Названия — данные владельца; начальные — английские, языка сервер не знает.
  */
 export const DEFAULT_STAGES: readonly WorkStage[] = withBuiltins(["questions", "criteria", "select", "demo"]);
@@ -25,7 +25,7 @@ export const newFlow = (id: string, name: string): Flow => ({ id, name, stages: 
 const withKind = ({ review: _review, ...stage }: WorkStage): WorkStage => ({ ...stage, kind: stageKindOf(stage) });
 
 /**
- * Этапы flow до видов — в этапы с видами. Выбор этапов встаёт за ведущими Вопросами и Критериями, если его нет;
+ * Этапы flow до видов — в этапы с видами. Выбор этапов встаёт за ведущими Вопросами и Definition of Done, если его нет;
  * за этапом с Review by User — Демонстрация, если следующий этап не она: остановка на показ сохраняется этапом.
  */
 const migrateStages = (stages: readonly WorkStage[]): WorkStage[] => {

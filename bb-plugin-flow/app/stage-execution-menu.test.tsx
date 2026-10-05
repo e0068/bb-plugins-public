@@ -140,8 +140,8 @@ describe("меню скрипта", () => {
     const slot = open();
     const menu = await openMenu(slot, 3);
     pickTab(menu, "Виджет");
-    expect(groupItems(menu, "Виджеты").map((text) => text?.replace(/flow-.*/, ""))).toEqual(["Вопросы", "Критерии", "Выбор этапов", "Демонстрация"]);
-    fireEvent.click(menu.getByRole("menuitemradio", { name: /Критерии/ }));
+    expect(groupItems(menu, "Виджеты").map((text) => text?.replace(/flow-.*/, ""))).toEqual(["Вопросы", "Definition of Done", "Выбор этапов", "Демонстрация"]);
+    fireEvent.click(menu.getByRole("menuitemradio", { name: /Definition of Done/ }));
     await vi.waitFor(() => expect(savedStage(slot, 3)).toEqual({ id: "review", kind: "criteria", skill: "code-review", name: "Review", executors: [] }));
   });
 

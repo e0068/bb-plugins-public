@@ -131,7 +131,7 @@ describe("микрофон в полях брифа", () => {
   it("микрофон пункта «Готово, когда» дописывает надиктованное к этому пункту", async () => {
     installMicrophone();
     const slot = open();
-    const criteria = await slot.findByRole("group", { name: "Готово, когда" });
+    const criteria = await slot.findByRole("group", { name: "Definition of Done" });
     fireEvent.click(within(criteria).getByRole("button", { name: "Голосовой ввод: Пункт 2" }));
     const stop = await within(criteria).findByRole("button", { name: "Остановить и распознать" });
     second();

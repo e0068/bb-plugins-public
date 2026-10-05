@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { cleanup, within } from "@testing-library/react";
+import { cleanup, fireEvent, within } from "@testing-library/react";
 import type { PluginMessageDirectiveProps } from "@get-bb/plugin-sdk/app";
 import { loadPluginApp, renderSlot } from "@get-bb/plugin-sdk/testing/app";
 import { afterEach, describe, expect, it } from "vitest";
@@ -30,11 +30,12 @@ const open = () =>
   );
 
 describe("бриф без этапов", () => {
-  it("бюджет — таблица, раскрытая сразу, без кнопки «Бюджет»", async () => {
+  it("бюджет — таблица, раскрытая сразу, без кнопки «Бюджет»; своя цена — карандашом в «Итого»", async () => {
     const slot = open();
     const table = within(await slot.findByRole("group", { name: "Этапы и бюджет" }));
     expect(slot.queryByRole("button", { name: /^Бюджет/ })).toBeNull();
     expect(table.getByText("Итого")).toBeTruthy();
+    fireEvent.click(table.getByRole("button", { name: "Править цену" }));
     expect(table.getByRole("textbox", { name: "Своя цель" })).toBeTruthy();
   });
 });

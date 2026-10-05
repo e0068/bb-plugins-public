@@ -45,9 +45,9 @@ const sentStages = async (slot: Slot): Promise<StageAnswer[]> => {
 };
 
 describe("исполнитель в строке этапа", () => {
-  it("стоит только у этапа, где во Flow есть выбор кроме Main Agent", async () => {
+  it("стоит только у этапа, где во Flow есть выбор кроме Main Agent, — сразу за названием", async () => {
     const slot = open(fresh);
-    expect((await row(slot, "plan")).textContent).toContain("Main Agent");
+    expect((await row(slot, "plan")).textContent).toMatch(/^План\s*Main Agent/);
     expect((await row(slot, "task")).textContent).not.toContain("Main Agent");
     expect(within(await row(slot, "task")).queryByRole("button", { expanded: false })).toBeNull();
   });
@@ -57,7 +57,7 @@ describe("исполнитель в строке этапа", () => {
     fireEvent.click(within(await row(slot, "plan")).getByRole("button", { name: "План: исполнитель" }));
     const list = within(slot.getByRole("group", { name: "План: исполнитель" }));
     const pickPlanner = list.getByRole("button", { name: /planner · opus/ });
-    expect(pickPlanner.closest("[class*='grid']")!.textContent).toContain("+$6–+$11");
+    expect(pickPlanner.textContent).toContain("+$6–+$11");
     fireEvent.click(pickPlanner);
     expect(slot.queryByRole("group", { name: "План: исполнитель" })).toBeNull();
     expect((await row(slot, "plan")).textContent).toContain("planner · opus");
@@ -66,7 +66,7 @@ describe("исполнитель в строке этапа", () => {
 
   it("снятый этап гасит исполнителя: его не видно и строка не раскрывается", async () => {
     const slot = open(fresh);
-    fireEvent.click(within(await row(slot, "plan")).getByRole("button", { name: "План: в ближайший прогон" }));
+    fireEvent.click(within(await row(slot, "plan")).getByRole("checkbox", { name: "План: в ближайший прогон" }));
     const plan = await row(slot, "plan");
     expect(plan.textContent).not.toContain("Main Agent");
     expect(within(plan).queryByRole("button", { name: "План: исполнитель" })).toBeNull();
@@ -74,24 +74,23 @@ describe("исполнитель в строке этапа", () => {
 });
 
 describe("колонка галочек", () => {
-  it("этап в прогоне — белая ячейка с галочкой, снятый — без заливки; нажатие переключает", async () => {
+  it("этап в прогоне — отмеченный чекбокс, как в прогресс-баре, снятый — пустой; нажатие переключает", async () => {
     const slot = open(fresh);
-    const task = within(await row(slot, "task")).getByRole("button", { name: "Задача: в ближайший прогон" });
-    const spec = within(await row(slot, "spec")).getByRole("button", { name: "Спецификация: в ближайший прогон" });
-    expect(task.getAttribute("aria-pressed")).toBe("true");
-    expect(task.className).toContain("bg-white");
-    expect(spec.getAttribute("aria-pressed")).toBe("false");
-    expect(spec.className).not.toContain("bg-white");
+    const task = within(await row(slot, "task")).getByRole("checkbox", { name: "Задача: в ближайший прогон" });
+    const spec = within(await row(slot, "spec")).getByRole("checkbox", { name: "Спецификация: в ближайший прогон" });
+    expect(task.getAttribute("aria-checked")).toBe("true");
+    expect(spec.getAttribute("aria-checked")).toBe("false");
     fireEvent.click(spec);
-    expect(spec.getAttribute("aria-pressed")).toBe("true");
+    expect(spec.getAttribute("aria-checked")).toBe("true");
     expect((await sentStages(slot)).find((s) => s.id === "spec")).toMatchObject({ run: true });
   });
 
-  it("этап вне прогона показывает бледно, сколько добавит галочка, и в итог не входит", async () => {
+  it("снятый этап зачёркнут без риска, времени, цели и потолка и в итог не входит", async () => {
     const slot = open(fresh);
     const spec = await row(slot, "spec");
-    expect(spec.textContent).toContain("+$5–+$9");
-    expect(spec.querySelector(".opacity-40")).toBeTruthy();
+    expect(spec.textContent).not.toContain("$");
+    expect(spec.textContent).not.toContain("r");
+    expect(spec.querySelector(".line-through")).toBeTruthy();
     const total = (await slot.findByRole("group", { name: "Этапы и бюджет" })).querySelector("[data-total]")!.textContent;
     expect(total).toContain("$5–$9");
   });
@@ -100,17 +99,17 @@ describe("колонка галочек", () => {
     const automation = CODE_FLOW.find((s) => s.automation !== undefined)!;
     const slot = open(stagedBrief([report(automation.id, { recommended: true })], { stages: { list: [automation], minButtonWidth: 170 } }));
     const line = await row(slot, automation.id);
-    expect(within(line).getByRole("button", { name: /в ближайший прогон/ }).getAttribute("aria-pressed")).toBe("true");
+    expect(within(line).getByRole("checkbox", { name: /в ближайший прогон/ }).getAttribute("aria-checked")).toBe("true");
     expect(line.textContent).not.toContain("$");
   });
 });
 
 describe("пройденный этап", () => {
-  it("две галочки вместо чекбокса и ссылка на первый результат", async () => {
+  it("галочка без чекбокса и ссылка на первый результат", async () => {
     const slot = open(done);
     const task = within(await row(slot, "task"));
     expect(task.getByLabelText("Этап сделан")).toBeTruthy();
-    expect(task.queryByRole("button", { name: /в ближайший прогон/ })).toBeNull();
+    expect(task.queryByRole("checkbox", { name: /в ближайший прогон/ })).toBeNull();
     expect(task.getByRole("link", { name: /BBPL-1/ })).toBeTruthy();
   });
 
@@ -140,7 +139,7 @@ describe("под-этап", () => {
     const demo = stage("demo", { name: "Показ", parent: "plan" });
     const slot = open(stagedBrief([report("plan", { recommended: true }), report("demo", { recommended: true })], { stages: { list: [...STAGES, demo], minButtonWidth: 170 } }));
     const line = await row(slot, "demo");
-    expect(within(line).getByRole("button", { name: "Под-этап Показ этапа План в прогоне" }).getAttribute("aria-pressed")).toBe("true");
+    expect(within(line).getByRole("checkbox", { name: "Под-этап Показ этапа План в прогоне" }).getAttribute("aria-checked")).toBe("true");
     expect(line.querySelector(".pl-4")).toBeTruthy();
   });
 });

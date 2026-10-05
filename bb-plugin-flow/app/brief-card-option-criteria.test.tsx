@@ -37,7 +37,7 @@ const open = () =>
 describe("пункты варианта в «Готово, когда»", () => {
   it("выбор варианта добавляет его пункты в список, смена выбора убирает их", async () => {
     const slot = open();
-    const done = within(await slot.findByRole("group", { name: "Готово, когда" }));
+    const done = within(await slot.findByRole("group", { name: "Definition of Done" }));
     expect(done.queryByText("README описывает витрину")).toBeNull();
     const question = within(slot.getByRole("group", { name: "Документация?" }));
     fireEvent.click(question.getByRole("button", { name: /README/ }));
@@ -49,7 +49,7 @@ describe("пункты варианта в «Готово, когда»", () => 
 
   it("вариант, снимающий пункты, зачёркивает их сам, а смена выбора возвращает", async () => {
     const slot = open();
-    const done = within(await slot.findByRole("group", { name: "Готово, когда" }));
+    const done = within(await slot.findByRole("group", { name: "Definition of Done" }));
     const question = within(slot.getByRole("group", { name: "Документация?" }));
     fireEvent.click(question.getByRole("button", { name: /Сначала посмотреть/ }));
     expect(done.queryByRole("button", { name: "Пункт 1 не нужен" })).toBeNull();
@@ -63,7 +63,7 @@ describe("пункты варианта в «Готово, когда»", () => 
 describe("строка пункта варианта в «Готово, когда»", () => {
   it("несёт только метку и текст пункта: название варианта остаётся в секции вопросов", async () => {
     const slot = open();
-    const done = within(await slot.findByRole("group", { name: "Готово, когда" }));
+    const done = within(await slot.findByRole("group", { name: "Definition of Done" }));
     fireEvent.click(within(slot.getByRole("group", { name: "Документация?" })).getByRole("button", { name: /Сайт/ }));
     const row = done.getByText("Страница на сайте").closest("[data-item-row]");
     expect(row?.textContent).toBe("↳Страница на сайте");
@@ -83,7 +83,7 @@ describe("список «Готово, когда» только из пункт
   it("без пунктов брифа поля «Дополнить» нет: такой пункт агенту не уйдёт", async () => {
     const slot = openBare();
     fireEvent.click(within(await slot.findByRole("group", { name: "Документация?" })).getByRole("button", { name: /README/ }));
-    const done = within(slot.getByRole("group", { name: "Готово, когда" }));
+    const done = within(slot.getByRole("group", { name: "Definition of Done" }));
     expect(done.getByText("README описывает витрину")).toBeTruthy();
     expect(done.queryByRole("textbox", { name: "Дополнить" })).toBeNull();
   });
@@ -105,7 +105,7 @@ describe("заголовок «Готово, когда» в брифе с эт�
 
   it("сумма долей пунктов не выглядит добавкой к бюджету", async () => {
     const slot = openStaged();
-    const done = await slot.findByRole("group", { name: "Готово, когда" });
+    const done = await slot.findByRole("group", { name: "Definition of Done" });
     expect(done.firstElementChild?.textContent).not.toContain("+$5–9");
   });
 });
@@ -125,7 +125,7 @@ describe("вариант, снятый владельцем, оставляет 
 
   it("ответ мимо рекомендации зачёркивает её пункт и оставляет целым пункт выбранного варианта", async () => {
     const slot = openWith(null);
-    const done = within(await slot.findByRole("group", { name: "Готово, когда" }));
+    const done = within(await slot.findByRole("group", { name: "Definition of Done" }));
     expect(done.queryByText("README описывает витрину")).toBeNull();
     fireEvent.click(within(slot.getByRole("group", { name: "Документация?" })).getByRole("button", { name: /Сайт/ }));
     expect(done.getByText("README описывает витрину").className).toContain("line-through");
@@ -134,7 +134,7 @@ describe("вариант, снятый владельцем, оставляет 
 
   it("владелец взял рекомендацию — её пункт цел, а чужие в списке не появляются", async () => {
     const slot = openWith(null);
-    const done = within(await slot.findByRole("group", { name: "Готово, когда" }));
+    const done = within(await slot.findByRole("group", { name: "Definition of Done" }));
     fireEvent.click(within(slot.getByRole("group", { name: "Документация?" })).getByRole("button", { name: /README/ }));
     expect(done.getByText("README описывает витрину").className).not.toContain("line-through");
     expect(done.queryByText("Страница на сайте")).toBeNull();
@@ -142,7 +142,7 @@ describe("вариант, снятый владельцем, оставляет 
 
   it("смена выбора зачёркивает пункт прежнего варианта и распрямляет пункт нового", async () => {
     const slot = openWith(null);
-    const done = within(await slot.findByRole("group", { name: "Готово, когда" }));
+    const done = within(await slot.findByRole("group", { name: "Definition of Done" }));
     const question = within(slot.getByRole("group", { name: "Документация?" }));
     fireEvent.click(question.getByRole("button", { name: /README/ }));
     expect(done.getByText("README описывает витрину").className).not.toContain("line-through");
@@ -153,7 +153,7 @@ describe("вариант, снятый владельцем, оставляет 
 
   it("зачёркивание не сдвигает нумерацию пунктов брифа и не теряет правку владельца", async () => {
     const slot = openWith(null);
-    const done = within(await slot.findByRole("group", { name: "Готово, когда" }));
+    const done = within(await slot.findByRole("group", { name: "Definition of Done" }));
     fireEvent.change(done.getByRole("textbox", { name: "Пункт 1" }), { target: { value: "Тесты зелёные и быстрые" } });
     fireEvent.click(within(slot.getByRole("group", { name: "Документация?" })).getByRole("button", { name: /Сайт/ }));
     expect(done.getByText("README описывает витрину").className).toContain("line-through");
@@ -168,7 +168,7 @@ describe("вариант, снятый владельцем, оставляет 
       answeredAt: "2026-09-15T10:00:00.000Z",
     };
     const slot = openWith(record);
-    const done = within(await slot.findByRole("group", { name: "Готово, когда" }));
+    const done = within(await slot.findByRole("group", { name: "Definition of Done" }));
     expect(done.getByText("Страница на сайте")).toBeTruthy();
     expect(done.queryByText("README описывает витрину")).toBeNull();
   });

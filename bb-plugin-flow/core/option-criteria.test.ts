@@ -45,7 +45,7 @@ describe("пункты «Готово, когда» у вариантов", () =
 
   it("бриф без своих пунктов, но с пунктами выбранного варианта, называет их агенту", () => {
     const bare = { ...brief, setup: undefined };
-    expect(answerMessageText(bare, answer([{ questionId: "docs", optionIds: ["readme"] }]))).toContain("Готово, когда — пункты выбранных вариантов: «README описывает витрину»");
+    expect(answerMessageText(bare, answer([{ questionId: "docs", optionIds: ["readme"] }]))).toContain("Definition of Done — пункты выбранных вариантов: «README описывает витрину»");
   });
 
   it("выбранный вариант снимает свои пункты брифа, не выбранный возвращает их", () => {

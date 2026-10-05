@@ -12,7 +12,7 @@ describe("инструкции встроенного этапа называю�
   it("встроенный этап без своего навыка называет навык вида и поле брифа, в котором он отвечает", () => {
     const [, questions, criteria, select, demo] = lines(stageInstructions([builtinStage("questions", []), builtinStage("criteria", []), builtinStage("select", []), builtinStage("demo", [])]));
     expect(questions).toMatch(/^1\. questions "Questions" — skill flow-questions\b.*ask_decision/);
-    expect(criteria).toMatch(/^2\. criteria "Criteria" — skill flow-criteria\b.*setup\.criteria/);
+    expect(criteria).toMatch(/^2\. criteria "Definition of Done" — skill flow-criteria\b.*setup\.criteria/);
     expect(select).toMatch(/^3\. select "Stage selection" — skill flow-stage-selection\b.*setup\.stages/);
     expect(demo).toMatch(/^4\. demo "Demonstration" — skill flow-demo\b.*outcome\.stage — this id/);
   });

@@ -1,4 +1,4 @@
-// Слой 1 — чисто. Пункты «Готово, когда», которые приносят и снимают варианты
+// Слой 1 — чисто. Пункты Definition of Done, которые приносят и снимают варианты
 // ответов: выбранный вариант добавляет свои пункты и снимает пункты брифа из
 // `removes`, а вариант, снятый рукой владельца, оставляет свои пункты в списке
 // зачёркнутыми — отказ виден там же, где сделан, и уходит агенту словами.
@@ -57,7 +57,7 @@ const finalText = (item: Criterion, edited: string | undefined): string => {
   return typeof item !== "string" && "before" in item ? `${title} — ${edited}` : edited;
 };
 
-/** Утверждённое ответом «Готово, когда»: оставленные пункты брифа с правками, дописанные владельцем, живые пункты выбранных вариантов. */
+/** Утверждённое ответом Definition of Done: оставленные пункты брифа с правками, дописанные владельцем, живые пункты выбранных вариантов. */
 export const finalCriteria = (brief: DecisionBrief, answer: Pick<DecisionAnswer, "answers" | "criteria">): string[] => {
   const removed = removedCriteria(brief, answer);
   const edits = new Map((answer.criteria?.edited ?? []).map((e) => [e.index, e.text]));

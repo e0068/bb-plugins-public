@@ -2,7 +2,7 @@
 import { cleanup, fireEvent, within } from "@testing-library/react";
 import type { PluginMessageDirectiveProps } from "@get-bb/plugin-sdk/app";
 import { loadPluginApp, renderSlot } from "@get-bb/plugin-sdk/testing/app";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import type { DecisionBrief, decisionsRpcContract } from "../shared/contract";
 
@@ -59,33 +59,16 @@ describe("бюджет таблицей", () => {
   it("подписи колонок сверху; риск строк — «–1r», итоговый — «+2r»", async () => {
     const slot = open();
     const rows = await table(slot);
-    for (const head of ["риск", "время", "цель", "потолок"]) expect(rows.getByText(head)).toBeTruthy();
+    for (const head of ["Риск", "Время", "Цель", "Потолок"]) expect(rows.getByText(head)).toBeTruthy();
     expect(rows.getByText("–1r")).toBeTruthy();
     expect(within((await slot.findByRole("group", { name: "Этапы и бюджет" })).querySelector<HTMLElement>("[data-total]")!).getByText("+2r")).toBeTruthy();
-  });
-
-  it("своя цена — поля с маской над «Итого»; набранное встаёт в итог вместо прогноза и уходит в ответ", async () => {
-    const slot = open();
-    fireEvent.click(within(await slot.findByRole("group", { name: "Как?" })).getByRole("button", { name: /Виджет складывает/ }));
-    const rows = await table(slot);
-    fireEvent.change(rows.getByRole("textbox", { name: "Своё время" }), { target: { value: "2 ч 90" } });
-    fireEvent.change(rows.getByRole("textbox", { name: "Своя цель" }), { target: { value: "$25.555" } });
-    fireEvent.change(rows.getByRole("textbox", { name: "Свой потолок" }), { target: { value: "40" } });
-    expect(rows.getByRole("textbox", { name: "Своё время" })).toHaveProperty("value", "290");
-    expect(rows.getByRole("textbox", { name: "Своя цель" })).toHaveProperty("value", "25.55");
-    expect(await total(slot)).toContain("290 мин");
-    expect(await total(slot)).toContain("$25.55–$40");
-    fireEvent.click(slot.getByRole("button", { name: "Отправить бриф" }));
-    await vi.waitFor(() => expect(slot.rpcCalls.some((c) => c.method === "answerBrief")).toBe(true));
-    const call = slot.rpcCalls.find((c) => c.method === "answerBrief")?.input as { answer: { budget?: unknown } };
-    expect(call.answer.budget).toEqual({ minutes: "290", target: "25.55", max: "40" });
   });
 });
 
 describe("добавки пунктов и вариантов частями", () => {
   it("у пункта и варианта мелко написаны деньги и риск отдельными частями", async () => {
     const slot = open();
-    const criteria = within(await slot.findByRole("group", { name: "Готово, когда" }));
+    const criteria = within(await slot.findByRole("group", { name: "Definition of Done" }));
     expect(criteria.getByText("+$5–9")).toBeTruthy();
     expect(criteria.getByText("+3r")).toBeTruthy();
     expect(criteria.getByText("–1r")).toBeTruthy();

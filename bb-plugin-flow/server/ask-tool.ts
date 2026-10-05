@@ -27,7 +27,7 @@ A brief has two parts.
 scope — what you understood: the minimal work, each fork at its simplest answer, as a nested list; every brief before launch starts with it.
 
 setup — the first part: no questions; show what there is and mark what you recommend.
-- criteria — "Done when", one checkable statement per item: { text, add } or { text, before, after, add }, scope items first. add { target, max, risk, minutes } — what one agent on the current model and effort spends, target and minutes > 0; kept items are the base.
+- criteria — Definition of Done, one checkable statement per item: { text, add } or { text, before, after, add }, scope items first. add { target, max, risk, minutes } — what one agent on the current model and effort spends, target and minutes > 0; kept items are the base.
 - stages (setup.stages) — all stages of the flow, in order (Flow instructions): { id, state (todo, done), results, recommended, executor, share, factors }. A done skill stage needs results [{ label, target }], label = file name or task key. recommended: true — into the run. executor — self or the stage's agent:…/workflow:…. share { percent, risk } on every todo skill stage — its part of the scope (the work itself 100, a spec ~15); factors { <executor id>: { factor, risk } } — multiplier > 0, you are 1. No add or adds on stages.
 
 The budget forecast: scope = base + chosen options; a run stage costs scope × percent × factor; without a 100 stage the scope counts once, stages on top. Risk: integer, 1r ≈ 10% chance a blocking defect reaches the owner; implementation raises it, spec, plan, prototype, review and testing lower it (scale: flow skill). Refused before launch: no scope, unpriced item, skill stage without share, fork without 0, $0 forecast.
@@ -42,7 +42,7 @@ The owner may answer any question in own words.
 
 outcome — a demo of running work instead of setup: { stage (a demo stage id), final, next (only when not final), done ([text] — closed since the previous demo), pending ([{ text, why }]), notes, tasks ([{ key, done, note }]), results (at least one: { label, target } — a file, path or URL; { label, command } — a command run in one click), documentsOnly (only documents changed since the previous demo) }. Unless documentsOnly, results hold a live one: an http(s) URL or a command.
 
-After launch (an answered brief with a stage in the run), setup.stages is accepted only while a stage selection or criteria stage is todo, setup.criteria only while a criteria stage is todo.
+After launch (an answered brief with a stage in the run), setup.stages is accepted only while a stage selection or Definition of Done stage is todo, setup.criteria only while the latter is.
 
 The owner also chooses where the work runs; a new thread takes the answer over and this thread stops.
 
@@ -88,7 +88,7 @@ const carriedInto = (setup: AskDecisionParams["setup"], carried: Carried): Recor
 
 /**
  * Первая часть брифа после запуска работы — и виды этапов, пока несделанный из которых её ещё можно прислать:
- * этапы — при втором Выборе этапов или Критериях посреди flow (критерий сдаётся вместе с отчётом), критерий — при Критериях.
+ * этапы — при втором Выборе этапов или Definition of Done посреди flow (критерий сдаётся вместе с отчётом), критерий — при Definition of Done.
  */
 const LAUNCHED_SETUP = [
   ["stages", ["select", "criteria"]],
@@ -102,11 +102,11 @@ const launchedIssues = (setup: AskDecisionParams["setup"], stages: StageSettings
   return sent.length === 0
     ? []
     : [
-        `setup.${sent.join(", setup.")} are not accepted here: the work in this thread is already launched — send them only while a todo stage selection or criteria stage stands in setup.stages; otherwise ask only questions, or send a demo outcome`,
+        `setup.${sent.join(", setup.")} are not accepted here: the work in this thread is already launched — send them only while a todo stage selection or Definition of Done stage stands in setup.stages; otherwise ask only questions, or send a demo outcome`,
       ];
 };
 
-/** Итог — про запущенную работу и про этап Демонстрации из flow треда; flow без Вопросов, Критериев и Выбора этапов запуска не ждёт. */
+/** Итог — про запущенную работу и про этап Демонстрации из flow треда; flow без Вопросов, Definition of Done и Выбора этапов запуска не ждёт. */
 const outcomeIssues = (outcome: AskDecisionParams["outcome"], launched: boolean, stages: StageSettings["stages"], flowIds: readonly string[]): string[] => {
   if (outcome === undefined) return [];
   if (!launched && stages.some(isAskedStage)) return ["an outcome reports a stage of running work, and the work in this thread has not started yet: send a brief with setup.stages first"];
@@ -130,13 +130,13 @@ const missingStagesIssues = (params: AskDecisionParams, launched: boolean, stage
     : ["setup.stages is missing: the thread's flow has a stage selection and the work is not launched yet, so this brief carries every stage of the flow — the budget is summed from them"];
 };
 
-/** Цена пункта «Готово, когда» — деньги и минуты одного агента; без неё база брифа нулевая. */
+/** Цена пункта Definition of Done — деньги и минуты одного агента; без неё база брифа нулевая. */
 const pricedItem = (item: Criterion): boolean => typeof item !== "string" && item.add !== undefined && item.add.target > 0 && (item.add.minutes ?? 0) > 0;
 
 /** Бюджет считается у незапущенного брифа, в котором решается работа; уточнение, итог Демонстрации и вопрос посреди работы его не считают. */
 const decidesBudget = (params: Pick<AskDecisionParams, "kind" | "outcome">, launched: boolean): boolean => params.kind === "brief" && !launched && params.outcome === undefined;
 
-/** База бюджета: «Что я понял», цена у каждого пункта «Готово, когда», пункты у варианта с ценой, доля у несделанного этапа-навыка. Ошибки идут в общий отказ брифа. */
+/** База бюджета: «Что я понял», цена у каждого пункта Definition of Done, пункты у варианта с ценой, доля у несделанного этапа-навыка. Ошибки идут в общий отказ брифа. */
 const baseIssues = (params: AskDecisionParams, launched: boolean, stages: StageSettings["stages"]): string[] => {
   if (!decidesBudget(params, launched)) return [];
   const criteria = params.setup?.criteria ?? [];
@@ -147,7 +147,7 @@ const baseIssues = (params: AskDecisionParams, launched: boolean, stages: StageS
   return [
     ...(params.scope === undefined ? ["scope is missing: start the brief with what you understood — the minimal set of work as a nested list; its items are setup.criteria"] : []),
     ...(criteria.length === 0
-      ? ["setup.criteria is missing: the done-when items are the base of the budget, each with add { target, max, risk, minutes } — what one agent on the current model and effort spends on it"]
+      ? ["setup.criteria is missing: the Definition of Done items are the base of the budget, each with add { target, max, risk, minutes } — what one agent on the current model and effort spends on it"]
       : []),
     ...(unpriced.length === 0 ? [] : [`setup.criteria items ${unpriced.join(", ")} have no price: each item needs add with target and minutes above zero — what one agent on the current model and effort spends on it`]),
     ...(unshared.length === 0 ? [] : [`stages ${unshared.join(", ")} have no share: a todo skill stage sends share { percent, risk } — implementation by you is 100`]),
@@ -157,7 +157,7 @@ const baseIssues = (params: AskDecisionParams, launched: boolean, stages: StageS
 };
 
 /**
- * Вариант с ценой — работа, которую принимают, значит у него свои пункты «Готово, когда».
+ * Вариант с ценой — работа, которую принимают, значит у него свои пункты Definition of Done.
  * Без них пункт, зависящий от ответа, оседает в общем списке, и отметка варианта список не меняет.
  */
 const bareOptionIssues = (questions: AskDecisionParams["questions"]): string[] => {
@@ -165,7 +165,7 @@ const bareOptionIssues = (questions: AskDecisionParams["questions"]): string[] =
   return bare.length === 0
     ? []
     : [
-        `options ${bare.join(", ")} add work without done-when items: an option priced above zero sends criteria — the items it adds while chosen; move the items that depend on this answer from setup.criteria onto the option`,
+        `options ${bare.join(", ")} add work without Definition of Done items: an option priced above zero sends criteria — the items it adds while chosen; move the items that depend on this answer from setup.criteria onto the option`,
       ];
 };
 
@@ -231,7 +231,7 @@ export const registerAskTool = (
   bb.agents.registerTool({
     name: ASK_TOOL_NAME,
     description:
-      "Ask the owner: a brief rendered as a widget in the thread. It opens with scope — what you understood; first part (setup) shows the work stages of the thread's flow — done ones with links and ones to run with executor, share and factors — plus done-when criteria priced by one agent and a budget button counted from them with time, recommendations preselected; second part holds questions: forks with description and add, multi-answer picks and confirmations. " +
+      "Ask the owner: a brief rendered as a widget in the thread. It opens with scope — what you understood; first part (setup) shows the work stages of the thread's flow — done ones with links and ones to run with executor, share and factors — plus Definition of Done items priced by one agent and a budget button counted from them with time, recommendations preselected; second part holds questions: forks with description and add, multi-answer picks and confirmations. " +
       'Every text field takes markdown links [text](target) — a path from the tree root (path:12 for a line), an absolute path or a URL: anything that lives in a file is named as a link to it, a fragment as one link "fragment (what it is) — file". ' +
       RETURNED_RULE,
     instructions: ASK_INSTRUCTIONS,

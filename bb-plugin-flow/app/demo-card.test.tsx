@@ -93,7 +93,8 @@ describe("карточка Демонстрации", () => {
     expect(within(wrap).getByRole("textbox", { name: "Комментарий к демонстрации" })).toBeTruthy();
     expect(within(wrap).queryByRole("button", { name: /Продолжить|Исполнять/ })).toBeNull();
     expect(slot.getByRole("button", { name: "Продолжить" })).toBeTruthy();
-    expect(slot.queryByRole("button", { name: /Бюджет|в ближайший прогон/ })).toBeNull();
+    expect(slot.queryByRole("button", { name: /Бюджет/ })).toBeNull();
+    expect(slot.queryByRole("checkbox", { name: /в ближайший прогон/ })).toBeNull();
   });
 
   it("пустой комментарий — одна кнопка «Продолжить», она отправляет продолжение", async () => {

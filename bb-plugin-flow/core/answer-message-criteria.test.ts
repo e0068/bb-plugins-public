@@ -19,8 +19,8 @@ const answer = (criteria?: DecisionAnswer["criteria"]): DecisionAnswer => ({ bri
 
 describe("реплика агенту о критерии", () => {
   it("без правок — одна строка, что пункты оставлены", () => {
-    expect(answerMessageText(brief, answer({ removed: [], edited: [], added: [] }))).toContain("Готово, когда — без правок, пунктов: 3");
-    expect(answerMessageText(brief, answer())).toContain("Готово, когда — без правок, пунктов: 3");
+    expect(answerMessageText(brief, answer({ removed: [], edited: [], added: [] }))).toContain("Definition of Done — без правок, пунктов: 3");
+    expect(answerMessageText(brief, answer())).toContain("Definition of Done — без правок, пунктов: 3");
   });
 
   it("снятый, переписанный и добавленный пункт названы номером и текстом", () => {
@@ -31,7 +31,7 @@ describe("реплика агенту о критерии", () => {
   });
 
   it("у брифа без критерия строки нет", () => {
-    expect(answerMessageText({ ...brief, setup: undefined }, answer())).not.toContain("Готово, когда");
+    expect(answerMessageText({ ...brief, setup: undefined }, answer())).not.toContain("Definition of Done");
   });
 });
 

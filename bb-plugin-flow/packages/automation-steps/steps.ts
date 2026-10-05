@@ -15,6 +15,7 @@ import { bumpOutcome, reinstallOutcome, stepFailure, type StepOutcome } from "./
 import { bbCliClient } from "./wiring/bb-cli-client";
 import type { CliPorts } from "./wiring/bb-cli-run";
 import type { CatchUpOutcome, ParentDeliveryOutcome } from "./wiring/catch-up";
+import type { RefreshOutcome } from "./wiring/create-pr";
 import { findLinkedTask } from "./wiring/linked-task";
 import { markLinkedTasksStatus, splitTaskStatusResults } from "./wiring/mark-task-status";
 import type { PluginsPort } from "./wiring/plugin-reinstall";
@@ -33,6 +34,7 @@ import {
   mergeWithVerdict,
   parentDeliveryOf,
   pluginImportsOf,
+  refreshOpenPr,
   reinstallAfterMerge,
   resolveToken,
   settleVersionsForMerge,
@@ -63,6 +65,12 @@ export interface StepPorts {
    * Без порта родитель не узнаёт — как было до него.
    */
   tell?: (threadId: string, text: string) => Promise<void>;
+  /**
+   * Догнать ветку открытого PR до ветки треда — первое, что делает «Смёрджить
+   * PR». По умолчанию — настоящий GitHub; в тестах подменяется, чтобы мёрдж
+   * проверялся без сети.
+   */
+  refreshPr?: (threadId: string) => Promise<RefreshOutcome | "no-open-pr">;
 }
 
 /**
@@ -76,6 +84,12 @@ export interface StepPorts {
 export const SELF_UPDATE_PENDING_PREFIX = "self-update-pending:";
 
 export const selfUpdatePendingKey = (threadId: string): string => `${SELF_UPDATE_PENDING_PREFIX}${threadId}`;
+
+/** Ключ kv с разрядом последнего бампа PR окружения: по нему «Смёрджить PR» поднимает версию заново после догоняния PR. */
+export const lastBumpKey = (environmentId: string): string => `last-bump-level:${environmentId}`;
+
+/** Деталь мёрджа, перед которым PR догнан до ветки треда: владелец видит, что коммиты после «Открыть PR» доехали. */
+export const MERGE_REFRESHED = "PR branch brought up to the thread's branch";
 
 export type Steps = Readonly<Record<StepId, (threadId: string) => Promise<StepOutcome>>>;
 
@@ -162,6 +176,7 @@ const guarded =
 export function createSteps(ports: StepPorts): Steps {
   const { sdk, kv, settings } = ports;
   const cli = () => ports.cli ?? bbCliClient();
+  const refreshPr = ports.refreshPr ?? (async (threadId: string) => refreshOpenPr(sdk, kv, await resolveToken(settings), threadId));
 
   const environmentOf = async (threadId: string): Promise<string> => {
     const environmentId = await environmentIdOf(sdk, threadId);
@@ -233,7 +248,10 @@ export function createSteps(ports: StepPorts): Steps {
     guarded(
       orIntoParent(notNeeded, async (threadId: string) => {
         const environmentId = await environmentOf(threadId);
-        return bumpOutcome(await settleVersionsForMerge(await githubPullOf(sdk, settings, environmentId), level));
+        const outcome = bumpOutcome(await settleVersionsForMerge(await githubPullOf(sdk, settings, environmentId), level));
+        // Разряд запоминается: «Смёрджить PR», догнав PR до ветки треда, выбрасывает коммит бампа и кладёт его заново.
+        if (outcome.ok) await kv.set(lastBumpKey(environmentId), level);
+        return outcome;
       }),
     );
 
@@ -272,15 +290,27 @@ export function createSteps(ports: StepPorts): Steps {
     "files.bump-patch": bumpStep("patch"),
     // Состояние PR спрашивается у GitHub до мёрджа и после упавшего: уже
     // влитый PR — успех шага, закрытый — названный отказ, конфликт — названный
-    // конфликт, а не «HTTP 409» (shell/pr-helpers.ts).
+    // конфликт, а не «HTTP 409» (shell/pr-helpers.ts). Перед мёрджем ветка
+    // PR догоняется до ветки треда: PR собран через API без пуша, и коммиты
+    // после «Открыть PR» иначе в main не попадают; грязное дерево — отказ.
+    // Догнанный PR теряет коммит бампа (wiring/create-pr.ts), поэтому версия
+    // поднимается заново тем разрядом, что запомнил шаг бампа; не поднялась —
+    // мёрджа нет: влить плагин на старой версии шаг бампа и не даёт.
     "git.merge": guarded(
       orIntoParent(deliverAndTell, async (threadId) => {
+        const refreshed = await refreshPr(threadId);
         const environmentId = await environmentOf(threadId);
         const gh = await githubPullOf(sdk, settings, environmentId);
+        const level = refreshed === "updated" ? await kv.get<BumpLevel>(lastBumpKey(environmentId)) : undefined;
+        const rebump = level === undefined ? null : bumpOutcome(await settleVersionsForMerge(gh, level));
+        if (rebump !== null && !rebump.ok) return rebump;
         await markAwaiting(sdk, environmentId, "merge");
         const outcome = await mergeWithVerdict(gh, async () => void (await sdk.environments.mergePullRequest({ environmentId, method: MERGE_METHOD })));
+        if (outcome.ok) await kv.delete(lastBumpKey(environmentId));
+        const before = refreshed === "updated" ? [MERGE_REFRESHED, ...(rebump?.ok === true && rebump.detail !== null ? [`versions raised again: ${rebump.detail}`] : [])] : [];
+        const told = outcome.ok ? { ...outcome, detail: [...before, ...(outcome.detail === null ? [] : [outcome.detail])].join("; ") || null } : outcome;
         // Ссылка мёрджа — на сам PR: номер знает только GitHub, без него ссылки нет.
-        return withLinks(outcome, mergedPullLinks(gh.ok ? gh : null));
+        return withLinks(told, mergedPullLinks(gh.ok ? gh : null));
       }),
     ),
     "git.pull-main": guarded(

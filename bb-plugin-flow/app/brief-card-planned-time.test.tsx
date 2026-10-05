@@ -38,10 +38,10 @@ describe("время в таблице бюджета", () => {
     expect(within(total as HTMLElement).getByText("45 мин")).toBeTruthy();
   });
 
-  it("планирование — первой строкой с пометкой «уже потрачено»", async () => {
+  it("планирование — первой строкой без пометки «уже потрачено»: потраченное говорят часы и галочка", async () => {
     const first = (await table(open())).querySelector<HTMLElement>("[data-line]")!;
     expect(first.textContent).toContain("Планирование в треде");
-    expect(first.textContent).toContain("уже потрачено");
+    expect(first.textContent).not.toContain("уже потрачено");
     expect(first.textContent).toContain("42 мин");
   });
 

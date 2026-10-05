@@ -55,7 +55,7 @@ export const decisionOptionSchema = z.object({
   add: addSchema.optional(),
   /** Вопросы того же брифа, которые при этом выборе теряют смысл: владелец их не видит, агент их не получает. */
   hides: z.array(text).optional(),
-  /** Пункты «Готово, когда», которые вариант приносит: они в списке, пока вариант выбран. */
+  /** Пункты Definition of Done, которые вариант приносит: они в списке, пока вариант выбран. */
   criteria: z.array(text).min(1).optional(),
   /** Номера пунктов `setup.criteria` с нуля, которые вариант снимает, пока выбран. */
   removes: z.array(z.number().int().nonnegative()).min(1).optional(),
@@ -384,7 +384,7 @@ export const routeBranchSchema = z.enum(["current", "from-current", "from-origin
 export const dispatchRouteSchema = z.object({ tree: routeTreeSchema, branch: routeBranchSchema, projectId: text.optional() });
 
 /**
- * Итог этапа: что из «Готово, когда» сделано, что нет и почему, что ещё важно знать и какие задачи закрыты.
+ * Итог этапа: что из Definition of Done сделано, что нет и почему, что ещё важно знать и какие задачи закрыты.
  * Промежуточный итог называет следующий этап, финальному называть нечего.
  */
 export const stageOutcomeSchema = z
@@ -414,7 +414,7 @@ export const stageOutcomeSchema = z
     if (o.final && o.next !== undefined) ctx.addIssue({ code: "custom", message: "a final outcome has no next stage", path: ["next"] });
   });
 
-/** Пункт «Готово, когда»: строка или объект с добавкой; пункт-изменение несёт и «было», и «стало». */
+/** Пункт Definition of Done: строка или объект с добавкой; пункт-изменение несёт и «было», и «стало». */
 export const criterionSchema = z.union([
   text,
   z.object({ text, before: text, after: text, add: addSchema.optional() }).strict(),
@@ -431,7 +431,7 @@ export const briefSetupSchema = z
     testing: checkerSchema.optional(),
     budgetTarget: scaleSchema.optional(),
     budgetMax: scaleSchema.optional(),
-    /** «Готово, когда» — по проверяемому утверждению на пункт; владелец снимает, правит и дописывает пункты. */
+    /** Definition of Done — по проверяемому утверждению на пункт; владелец снимает, правит и дописывает пункты. */
     criteria: z.array(criterionSchema).min(1).optional(),
     /** Этапы работ из настроек плагина — по отчёту на этап. */
     stages: z.array(stageReportSchema).min(1).optional(),
@@ -517,7 +517,7 @@ const checkBrief = (brief: BriefShape, ctx: z.RefinementCtx) => {
   const issue = (message: string) => ctx.addIssue({ code: "custom", message, path: ["questions"] });
   if (brief.questions.length === 0 && !setupHasRows(brief) && brief.outcome === undefined)
     issue("a brief needs something to decide: a setup row, a question or a stage outcome");
-  // Итог этапа — про уже идущую работу: этапы и «Готово, когда» в таком брифе больше не решаются.
+  // Итог этапа — про уже идущую работу: этапы и Definition of Done в таком брифе больше не решаются.
   if (brief.outcome !== undefined && (brief.setup?.stages !== undefined || brief.setup?.criteria !== undefined))
     ctx.addIssue({ code: "custom", message: "a brief with an outcome sends no setup.stages and no setup.criteria", path: ["outcome"] });
   if (!uniqueIds(brief.questions)) issue("question ids must be unique within a brief");
@@ -607,7 +607,7 @@ export const carriedSchema = z.record(z.string(), z.array(z.string()));
 export const BRIEF_DRAFT_MAX = 64 * 1024;
 export const briefDraftSchema = z.string().max(BRIEF_DRAFT_MAX);
 
-/** Черновик возвращённого брифа и тексты его пунктов «Готово, когда»: правки пунктов ложатся на новый бриф по тексту, а не по номеру. */
+/** Черновик возвращённого брифа и тексты его пунктов Definition of Done: правки пунктов ложатся на новый бриф по тексту, а не по номеру. */
 export const restoredDraftSchema = z.object({ draft: briefDraftSchema, criteria: z.array(z.string()).optional() });
 
 /** Итог прогона: минуты, цель и потолок в долларах; `null` у минут — времени в прогнозе нет. */
@@ -622,7 +622,7 @@ export const decisionBriefSchema = z
     revocable: z.boolean().optional(),
     /** Ставит сервер брифу запущенной работы: итог бюджета в нём — утверждённый бюджет прогона плюс выбранные варианты, без него итога нет. */
     launched: z.literal(true).optional(),
-    /** Ставит сервер брифу запущенной работы: утверждённое «Готово, когда» треда — итог последнего ответа с пунктами. */
+    /** Ставит сервер брифу запущенной работы: утверждённое Definition of Done треда — итог последнего ответа с пунктами. */
     approved: z.array(text).min(1).optional(),
     /** Ставит сервер брифу запущенной работы: утверждённый объём треда — база и варианты последнего ответа; без своих пунктов бриф считает от него. */
     approvedScope: addSchema.optional(),
@@ -652,7 +652,7 @@ export const questionAnswerSchema = z.object({
 
 const criterionIndex = z.number().int().nonnegative();
 
-/** Правки «Готово, когда» по номерам пунктов брифа, считая с нуля; нетронутые пункты не перечисляются. */
+/** Правки Definition of Done по номерам пунктов брифа, считая с нуля; нетронутые пункты не перечисляются. */
 export const criteriaAnswerSchema = z.object({
   removed: z.array(criterionIndex),
   edited: z.array(z.object({ index: criterionIndex, text })),
@@ -709,6 +709,8 @@ export const forecastSnapshotSchema = z.object({
       base: z.literal(true).optional(),
       /** Id этапа, чья это цена: таблица отвеченного брифа ставит её в строку этапа. Нет у снимков, записанных раньше. */
       stage: z.string().optional(),
+      /** Номер пункта Definition of Done с нуля, чья это цена: таблица ставит её в строку пункта под Definition of Done. Нет у снимков, записанных раньше. */
+      criterion: z.number().int().nonnegative().optional(),
     }),
   ),
   minutes: z.number().nullable(),

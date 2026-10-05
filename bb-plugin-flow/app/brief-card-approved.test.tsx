@@ -44,7 +44,7 @@ const open = () =>
 describe("бриф посреди работы", () => {
   it("утверждённые пункты свёрнуты строкой со счётом и разворачиваются целиком", async () => {
     const slot = open();
-    const criteria = await slot.findByRole("group", { name: "Готово, когда" });
+    const criteria = await slot.findByRole("group", { name: "Definition of Done" });
     expect(criteria.textContent).not.toContain("Все тесты зелёные");
     fireEvent.click(within(criteria).getByRole("button", { name: "Утверждённые пункты · 2" }));
     expect(criteria.textContent).toContain("Все тесты зелёные");
@@ -56,7 +56,7 @@ describe("бриф посреди работы", () => {
   it("пункт выбранного варианта стоит рядом с утверждёнными", async () => {
     const slot = open();
     fireEvent.click(within(await slot.findByRole("group", { name: "Как рисовать?" })).getByRole("button", { name: /Панелью/ }));
-    const criteria = slot.getByRole("group", { name: "Готово, когда" });
+    const criteria = slot.getByRole("group", { name: "Definition of Done" });
     expect(criteria.textContent).toContain("Панель не перекрывает ленту");
     expect(within(criteria).getByRole("button", { name: "Утверждённые пункты · 2" })).toBeTruthy();
   });
