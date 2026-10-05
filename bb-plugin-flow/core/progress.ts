@@ -6,7 +6,7 @@ import type { DecisionAnswer, DecisionBrief, FlowProgress, Planned, ProgressView
 import { automationView, executorKind, executorProvider, idleMinutes, isFailed, stageLiveIcon } from "./automation-run";
 import { stagePlans } from "./budget";
 import { demoVerdict } from "./outcome";
-import { askedStageIds } from "./stages";
+import { askedStageIds, isAutomationStage } from "./stages";
 import { runCascade } from "./sub-stages";
 
 export const EMPTY_PROGRESS: FlowProgress = { stages: {}, waiting: [] };
@@ -175,6 +175,12 @@ const cleared = (track: Track): Track => {
   };
 };
 
+/** След этапа, который снова в прогоне, что бы ни выбрал ответ: вычеркнутость снимается. */
+const rerun = (track: Track): Track => {
+  const { skipped: _skipped, ...kept } = cleared(track);
+  return kept;
+};
+
 /** Этап тронут прогоном — начат, закрыт или шёл шагами; доработка сбрасывает именно такие этапы после начатого заново. */
 export const touched = (track: Track | undefined): boolean => track !== undefined && (track.startedAt !== undefined || track.finishedAt !== undefined || track.run !== undefined);
 
@@ -209,19 +215,19 @@ export const setStageInRun = (progress: FlowProgress, id: string, run: boolean):
 /**
  * Доработка: закрытый этап `id` начинают снова — он открывается со своими ссылками и возвращается в прогон, а все тронутые этапы после него теряют
  * готовность и ждут своего прохода, иначе автоматизация за ними не наступила бы и правки доработки остались бы
- * незакоммиченными. Траты сброшенных проходов копятся в `earlier`. Старт незакрытого этапа ничего не меняет: нетронутые
- * этапы раньше закрытых — обычный прогон, а не доработка.
+ * незакоммиченными. Тронутая автоматизация возвращается в прогон, даже если ответ после её прохода её не брал: она уже
+ * вынесла работу наружу — коммит, PR, мёрж, — и без нового прохода правки доработки туда не дойдут. Этап навыка, снятый
+ * ответом, остаётся снятым: это выбор владельца на новый проход. Траты сброшенных проходов копятся в `earlier`.
+ * Старт незакрытого этапа ничего не меняет: нетронутые этапы раньше закрытых — обычный прогон, а не доработка.
  */
 export const reopen = (progress: FlowProgress, stages: readonly WorkStage[], id: string): FlowProgress => {
   const index = stages.findIndex((stage) => stage.id === id);
   if (index < 0 || progress.stages[id]?.finishedAt === undefined) return progress;
   const later = stages.slice(index + 1).map((stage) => stage.id).filter((after) => touched(progress.stages[after]));
   // Сам этап агент снова делает — он в прогоне, даже если владелец его не брал: иначе автоматизация за ним наступила бы на «started».
-  const own = patch(progress, id, (track) => {
-    const { skipped: _skipped, ...kept } = cleared(track);
-    return { ...kept, ...(track.results === undefined ? {} : { results: track.results }) };
-  });
-  const reset = later.reduce((p, after) => patch(p, after, cleared), own);
+  const own = patch(progress, id, (track) => ({ ...rerun(track), ...(track.results === undefined ? {} : { results: track.results }) }));
+  const automations = new Set(stages.filter(isAutomationStage).map((stage) => stage.id));
+  const reset = later.reduce((p, after) => patch(p, after, automations.has(after) ? rerun : cleared), own);
   return { ...reset, waiting: reset.waiting.filter((waiting) => !later.includes(waiting)) };
 };
 
