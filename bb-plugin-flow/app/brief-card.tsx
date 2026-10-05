@@ -42,6 +42,7 @@ import {
   toggleCriterion,
   type Draft,
   setCompact,
+  compactIn,
   setPlace,
   placeIn,
   setRoute,
@@ -1087,15 +1088,15 @@ function useProjects(threadId: string, needed: boolean): { state: ProjectsState;
 
 /**
  * «Исполнять» у любой отправки: ячейка встаёт слева в ряд кнопок, раскрытые списки — строкой под рядом.
- * Место и маршрут берутся из черновика, а без выбора владельца — запомненные в проекте.
+ * Место и маршрут берутся из черновика, а без выбора владельца — запомненные в проекте; компактация без выбора владельца — предвыбор по зоне контекста.
  */
-export function useDispatchPicker(props: { threadId: string; draft: Draft; setDraft: (update: (draft: Draft) => Draft) => void; place: DispatchPlace; route: DispatchRoute; disabled: boolean; gap?: string; inRow?: boolean }): { cell: ReactNode; lists: ReactNode } {
+export function useDispatchPicker(props: { threadId: string; draft: Draft; setDraft: (update: (draft: Draft) => Draft) => void; place: DispatchPlace; route: DispatchRoute; compact: boolean; disabled: boolean; gap?: string; inRow?: boolean }): { cell: ReactNode; lists: ReactNode } {
   const [open, setOpen] = useState(false);
   const place = placeIn(props.draft, props.place);
   // Место берётся из черновика, а маршрут может прийти из памяти проекта: пара сводится здесь,
   // иначе показанное в колонках разошлось бы с тем, что уедет в ответе.
   const route = withPlace(routeIn(props.draft, props.route), place);
-  const compact = place === "here" && props.draft.compact === true;
+  const compact = place === "here" && compactIn(props.draft, props.compact);
   const projects = useProjects(props.threadId, open || place === "other");
   const first = firstProject(projects.state);
   /**
@@ -1141,11 +1142,12 @@ function BriefAnswer(props: {
   complete: boolean;
   place: DispatchPlace;
   route: DispatchRoute;
+  compact: boolean;
   onSubmit: () => void;
 }) {
   const { sending } = props;
   const t = useMessages();
-  const picker = useDispatchPicker({ threadId: props.brief.threadId, draft: props.draft, setDraft: props.setDraft, place: props.place, route: props.route, disabled: sending });
+  const picker = useDispatchPicker({ threadId: props.brief.threadId, draft: props.draft, setDraft: props.setDraft, place: props.place, route: props.route, compact: props.compact, disabled: sending });
 
   const footer = (
     <>
@@ -1187,9 +1189,9 @@ const DEMO_ROW = "grid grid-cols-[repeat(auto-fit,minmax(10rem,1fr))]";
  * Пустой комментарий — одна «Продолжить» («Завершить» у финальной); написанный или свой ответ в строке вопроса — одна «Отправить»: Демонстрация не принимается, агент отвечает.
  * Агент рекомендовал flow — первой в ряду стоит его ячейка, и «Отправить» уводит работу в выбранный flow, пока владелец не выбрал «Не переходить».
  */
-function DemoActions(props: { brief: DecisionBrief; draft: Draft; setDraft: (update: (draft: Draft) => Draft) => void; sending: boolean; failed: boolean; complete: boolean; place: DispatchPlace; route: DispatchRoute; onSubmit: (draft: Draft) => void }) {
+function DemoActions(props: { brief: DecisionBrief; draft: Draft; setDraft: (update: (draft: Draft) => Draft) => void; sending: boolean; failed: boolean; complete: boolean; place: DispatchPlace; route: DispatchRoute; compact: boolean; onSubmit: (draft: Draft) => void }) {
   const t = useMessages();
-  const picker = useDispatchPicker({ threadId: props.brief.threadId, draft: props.draft, setDraft: props.setDraft, place: props.place, route: props.route, disabled: props.sending, gap: DEMO_GAP, inRow: true });
+  const picker = useDispatchPicker({ threadId: props.brief.threadId, draft: props.draft, setDraft: props.setDraft, place: props.place, route: props.route, compact: props.compact, disabled: props.sending, gap: DEMO_GAP, inRow: true });
   const recommended = props.brief.outcome?.nextFlow;
   const flows = useOwnerFlows(props.brief.threadId, recommended !== undefined);
   const flow = recommended === undefined ? null : chosenFlow(props.draft, recommended, flows);
@@ -1259,7 +1261,7 @@ function Body({ brief, view }: { brief: DecisionBrief; view: View }) {
   );
 }
 
-export function BriefCard({ brief, send, onResult, roots, place = "here", route = DEFAULT_ROUTE }: FormProps & { roots: FileRoots | null; place?: DispatchPlace; route?: DispatchRoute }) {
+export function BriefCard({ brief, send, onResult, roots, place = "here", route = DEFAULT_ROUTE, compact = false }: FormProps & { roots: FileRoots | null; place?: DispatchPlace; route?: DispatchRoute; compact?: boolean }) {
   // Бриф, присланный взамен возвращённого, открывается с выбором владельца из возвращённого.
   const [draft, setDraft] = useStoredDraft(brief.id, () => withRestored(brief, initialDraft(brief)), useDraftSender(brief.id));
   const [expanded, setExpanded] = useState<string | null>(null);
@@ -1296,7 +1298,7 @@ export function BriefCard({ brief, send, onResult, roots, place = "here", route 
   };
   const trySubmit = () => {
     // Место уходит в ответ всегда: запомненное, которого владелец не трогал, иначе осталось бы только на экране.
-    if (complete && !sending) void submit(settleDispatch(draft, place, route));
+    if (complete && !sending) void submit(settleDispatch(draft, place, route, compact));
   };
 
   return (
@@ -1315,13 +1317,13 @@ export function BriefCard({ brief, send, onResult, roots, place = "here", route 
         <>
           <DemoCard brief={brief} roots={roots} view={{ draft, sending, change: setDraft }} />
           <Body brief={brief} view={view} />
-          <DemoActions brief={brief} draft={draft} setDraft={setDraft} sending={sending} failed={failed} complete={complete} place={place} route={route} onSubmit={(next) => void submit(settleDispatch(next, place, route))} />
+          <DemoActions brief={brief} draft={draft} setDraft={setDraft} sending={sending} failed={failed} complete={complete} place={place} route={route} compact={compact} onSubmit={(next) => void submit(settleDispatch(next, place, route, compact))} />
         </>
       ) : (
         <>
           <Body brief={brief} view={view} />
           {stageItems(brief).length > 0 && <SectionTag kind="select" extra={brief.stages?.flowName} className="-mb-3" />}
-          <BriefAnswer brief={brief} view={view} roots={roots} draft={draft} setDraft={setDraft} sending={sending} status={failed ? t.common.sendFailed : counter} complete={complete} place={place} route={route} onSubmit={trySubmit} />
+          <BriefAnswer brief={brief} view={view} roots={roots} draft={draft} setDraft={setDraft} sending={sending} status={failed ? t.common.sendFailed : counter} complete={complete} place={place} route={route} compact={compact} onSubmit={trySubmit} />
         </>
       )}
     </Plain>

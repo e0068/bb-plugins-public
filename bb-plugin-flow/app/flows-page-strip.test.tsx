@@ -54,10 +54,6 @@ const verticalScrollers = (root: HTMLElement): HTMLElement[] =>
   [...root.querySelectorAll<HTMLElement>("*")].filter((el) => /(^|\s)(max-h-\S+|overflow-(auto|scroll|y-auto|y-scroll))(\s|$)/.test(el.getAttribute("class") ?? ""));
 
 describe("лента flow в теле страницы", () => {
-  it("шапки панели у Flow больше нет — титул-бар хоста остаётся пустым", () => {
-    expect(panel().headerContent).toBeUndefined();
-  });
-
   it("страница flow начинается лентой, выбранный flow помечен текущим", async () => {
     const tabs = within(await strip(openPage("quick")));
     expect(tabs.getByRole("button", { name: "Quick" }).getAttribute("aria-current")).toBe("page");

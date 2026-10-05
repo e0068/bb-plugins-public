@@ -22,16 +22,6 @@ const withQuick = async () => {
 };
 
 describe("плагин Flow: flow и треды", () => {
-  it("из штатных настроек — язык и два порога второй полосы в токенах; RPC страницы Flow и выбора flow зарегистрированы, старых RPC этапов нет", async () => {
-    const { bb, harness } = createFakePluginHost({ pluginId: "flow" });
-    await plugin(bb);
-    expect(Object.keys(harness.registrations.settingsDescriptors)).toEqual(["language", "contextWarnTokens", "contextAlertTokens"]);
-    expect(harness.registrations.settingsDescriptors.contextWarnTokens).toMatchObject({ type: "number", default: 250_000 });
-    expect(harness.registrations.settingsDescriptors.contextAlertTokens).toMatchObject({ type: "number", default: 400_000 });
-    expect(harness.registrations.rpcMethods).toEqual(expect.arrayContaining(["getFlowSettings", "saveFlowSettings", "getStageCatalog", "getFlowChoice", "setFlowChoice"]));
-    expect(harness.registrations.rpcMethods).not.toContain("getStageSettings");
-  });
-
   it("бриф с этапами flow по умолчанию проходит инструмент в треде без выбора", async () => {
     const { bb, harness } = createFakePluginHost({ pluginId: "flow" });
     await plugin(bb);

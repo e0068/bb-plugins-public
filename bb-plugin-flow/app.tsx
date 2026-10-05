@@ -9,9 +9,10 @@ import { definePluginApp } from "@get-bb/plugin-sdk/app";
 import { CommandDirective } from "./app/command";
 import { FlowPicker } from "./app/flow-picker";
 import { FlowsPage } from "./app/flows-page";
+import { FlowsSettingsButton } from "./app/flows-settings-button";
 import { FLOWS_PANEL_PATH } from "./lib/panel-path";
 import { JournalDirsSection } from "./app/journal-settings";
-import { AutomationRetrySection, StageButtonsSection } from "./app/flow-settings-sections";
+import { AutomationRetrySection } from "./app/flow-settings-sections";
 import { ProgressBanner } from "./app/progress-banner";
 import { registerAwaitingStatus } from "./app/row-status";
 import { systemLanguages } from "./app/locale-context";
@@ -27,12 +28,12 @@ export default definePluginApp((app) => {
   app.slots.messageDirective({ id: "command", component: CommandDirective });
   // Заголовок секции регистрируется один раз, до настроек плагина, поэтому идёт за языком браузера.
   const t = messages(resolveLocale(undefined, systemLanguages())).settings;
-  app.slots.navPanel({ id: "flows", title: "Flow", icon: "Workflow", path: FLOWS_PANEL_PATH, component: FlowsPage });
+  // Шестерёнка в титул-баре, левее крестика хоста, открывает настройки плагина.
+  app.slots.navPanel({ id: "flows", title: "Flow", icon: "Workflow", path: FLOWS_PANEL_PATH, component: FlowsPage, headerContent: FlowsSettingsButton });
   app.composer.customize({ id: "flow", scopes: ["new-thread"], actions: [{ id: "flow-picker", component: FlowPicker }] });
   // Контейнер состояния Flow: пока прогон идёт — полоса этапов, без прогона и после завершённого — выбор flow.
   app.composer.customize({ id: "flow-progress", scopes: ["thread"], banners: [{ id: "progress", chrome: "bare", component: ProgressBanner }] });
   registerAwaitingStatus(app);
   app.slots.settingsSection({ id: "journal-dirs", title: t.journalTitle, description: t.journalDescription, component: JournalDirsSection });
-  app.slots.settingsSection({ id: "stage-buttons", title: t.buttonsTitle, description: t.buttonsDescription, component: StageButtonsSection });
   app.slots.settingsSection({ id: "automation-retry", title: t.retryTitle, description: t.retryDescription, component: AutomationRetrySection });
 });

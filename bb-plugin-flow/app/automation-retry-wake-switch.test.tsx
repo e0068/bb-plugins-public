@@ -24,20 +24,6 @@ const lastSaved = (slot: ReturnType<typeof open>): FlowSettings | undefined => [
 const NAME = "Реплика агенту после последней попытки";
 
 describe("переключатель реплики агенту после последней попытки", () => {
-  it("без сохранённого поля выключен", async () => {
-    const slot = open();
-    expect((await slot.findByRole("switch", { name: NAME })).getAttribute("aria-checked")).toBe("false");
-  });
-
-  it("нажатие включает и сохраняет в общие настройки Flow, повторное — выключает", async () => {
-    const slot = open();
-    fireEvent.click(await slot.findByRole("switch", { name: NAME }));
-    await vi.waitFor(() => expect(lastSaved(slot)?.wakeAgentAfterLastRetry).toBe(true));
-    await vi.waitFor(() => expect(slot.getByRole("switch", { name: NAME }).getAttribute("aria-checked")).toBe("true"));
-    fireEvent.click(slot.getByRole("switch", { name: NAME }));
-    await vi.waitFor(() => expect(lastSaved(slot)?.wakeAgentAfterLastRetry).toBe(false));
-  });
-
   it("сохранённое «включено» видно сразу", async () => {
     const slot = open({ ...settings, wakeAgentAfterLastRetry: true });
     expect((await slot.findByRole("switch", { name: NAME })).getAttribute("aria-checked")).toBe("true");

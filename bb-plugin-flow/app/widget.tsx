@@ -134,19 +134,22 @@ function BriefCopy({ id, source, messageId, threadId }: { id: string; source: st
   );
 }
 
-/** Место исполнения по проекту треда: виджет открывается на последнем выборе владельца, сбой RPC — на «в этом треде». */
-function useDispatchPlace(threadId: string): { place: DispatchPlace; route: DispatchRoute } {
+/**
+ * Место исполнения по проекту треда: виджет открывается на последнем выборе владельца, сбой RPC — на «в этом треде».
+ * `compact` — окно треда дошло до зоны предвыбора компактации; сбой RPC — без неё.
+ */
+function useDispatchPlace(threadId: string): { place: DispatchPlace; route: DispatchRoute; compact: boolean } {
   const rpc = useRpc<typeof dispatchRpcContract>();
   const rpcRef = useRef(rpc);
   rpcRef.current = rpc;
-  const [place, setPlace] = useState<{ place: DispatchPlace; route: DispatchRoute }>({ place: "here", route: DEFAULT_ROUTE });
+  const [place, setPlace] = useState<{ place: DispatchPlace; route: DispatchRoute; compact: boolean }>({ place: "here", route: DEFAULT_ROUTE, compact: false });
   useEffect(() => {
     let alive = true;
     void rpcRef.current
       .call("getDispatchPlace", { threadId })
       .then((result) => {
         // Маршрута нет — место записано до трёх списков: старый новый worktree встаёт новым деревом.
-        if (alive) setPlace({ place: offeredPlace(result.place), route: result.route ?? legacyRoute(result.place) });
+        if (alive) setPlace({ place: offeredPlace(result.place), route: result.route ?? legacyRoute(result.place), compact: result.compact === true });
       })
       .catch(() => undefined);
     return () => {
@@ -209,9 +212,9 @@ function BriefLoader({ id, source, messageId, threadId }: { id: string; source: 
             {state.brief.kind === "clarify" ? (
               <ClarifyCard brief={state.brief} send={send} onResult={onAccepted} />
             ) : legacy ? (
-              <BriefForm brief={state.brief} send={send} onResult={onAccepted} place={place.place} route={place.route} />
+              <BriefForm brief={state.brief} send={send} onResult={onAccepted} place={place.place} route={place.route} compact={place.compact} />
             ) : (
-              <BriefCard brief={state.brief} send={send} onResult={onAccepted} roots={roots} place={place.place} route={place.route} />
+              <BriefCard brief={state.brief} send={send} onResult={onAccepted} roots={roots} place={place.place} route={place.route} compact={place.compact} />
             )}
           </VoiceProvider>
         );
@@ -511,7 +514,7 @@ function ForkSection(props: QuestionProps & { index: number; missing: boolean })
 
 // ——— формы брифа прежнего вида ———
 
-function BriefForm({ brief, send, onResult, place, route }: FormProps & { place: DispatchPlace; route: DispatchRoute }) {
+function BriefForm({ brief, send, onResult, place, route, compact: compactPreselected }: FormProps & { place: DispatchPlace; route: DispatchRoute; compact: boolean }) {
   const t = useMessages();
   const [draft, setDraft] = useStoredDraft(brief.id);
   const { sending, failed, missing, touch, submit } = useSubmit({ send, onResult });
@@ -539,9 +542,9 @@ function BriefForm({ brief, send, onResult, place, route }: FormProps & { place:
   });
 
   const trySubmit = () => {
-    if (complete && !sending) void submit(settleDispatch(draft, place, route));
+    if (complete && !sending) void submit(settleDispatch(draft, place, route, compactPreselected));
   };
-  const picker = useDispatchPicker({ threadId: brief.threadId, draft, setDraft, place, route, disabled: sending, inRow: true });
+  const picker = useDispatchPicker({ threadId: brief.threadId, draft, setDraft, place, route, compact: compactPreselected, disabled: sending, inRow: true });
 
   return (
     <Frame
