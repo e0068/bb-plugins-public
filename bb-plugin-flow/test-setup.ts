@@ -46,4 +46,7 @@ import { join } from "node:path";
 
 const home = mkdtempSync(join(tmpdir(), "flow-home-"));
 process.env.HOME = home;
+// Плагин, поднятый тестом целиком, без своей папки синхронизации не пишет в общий дом тестов: иначе следующий запуск в том же файле
+// «встретил» бы папку предыдущего и взял flow оттуда. Тесты синхронизации задают папку сами.
+process.env.BB_FLOW_SYNC_DIR = "";
 afterAll(() => rmSync(home, { recursive: true, force: true }));

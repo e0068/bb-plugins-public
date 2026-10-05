@@ -5,7 +5,9 @@ import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import { flowSettingsRpcContract, type AutomationScript, type SkillFile, type StageCatalog } from "../shared/contract";
 import type { FlowSettingsStore } from "./flow-settings";
 
-export const STAGE_SETTINGS_CHANNEL = "decisions:stage-settings";
+import { STAGE_SETTINGS_CHANNEL } from "../lib/channels";
+
+export { STAGE_SETTINGS_CHANNEL };
 
 export const registerFlowSettingsApi = (
   bb: Pick<BbPluginApi, "rpc" | "realtime">,

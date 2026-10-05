@@ -3,10 +3,11 @@
 // затёрло правку другой. Пока страница не смонтирована, хранилище пустое и при
 // следующем показе читает сервер заново.
 import { useEffect, useSyncExternalStore } from "react";
-import { useRpc } from "@get-bb/plugin-sdk/app";
+import { useRealtime, useRpc } from "@get-bb/plugin-sdk/app";
 
 import { stepOrderProblem, type StepOrderProblem } from "../core/automation-order";
 import { withExpandedStages } from "../core/flows";
+import { STAGE_SETTINGS_CHANNEL } from "../lib/channels";
 import type { FlowSettings, StageCatalog, flowSettingsRpcContract } from "../shared/contract";
 
 type Rpc = ReturnType<typeof useRpc<typeof flowSettingsRpcContract>>;
@@ -54,12 +55,38 @@ const load = async (client: Rpc) => {
   }
 };
 
+/** Правка на экране, ещё не ушедшая на сервер: перечитывание её не затирает. */
+let unsaved = false;
+/** Сохранения в очереди: пока они идут, экран новее сервера. */
+let pendingSaves = 0;
+
+/** Сервер сообщил о смене, пока своё сохранение было в пути: перечитать, когда очередь опустеет. */
+let reloadAfterSaves: Rpc | null = null;
+
+/**
+ * Коллекция поменялась на сервере — из папки синхронизации или от агента: перечитывается после своих сохранений в очереди.
+ * Каталог навыков от этого не меняется и не перечитывается.
+ */
+const reload = (client: Rpc) => {
+  // Пока своё сохранение в пути, перечитывание откладывается: ответ на середине очереди вернул бы экран назад.
+  if (pendingSaves > 0) {
+    reloadAfterSaves = client;
+    return;
+  }
+  if (unsaved) return;
+  void client.call("getFlowSettings", {}).then(
+    (settings) => pendingSaves === 0 && !unsaved && publish({ ...snapshot, settings }),
+    () => undefined,
+  );
+};
+
 /** Правка коллекции: сразу на экране; `save` — ещё и на сервер, по очереди за прежними сохранениями. Правка без изменений ничего не пишет. */
 export const updateFlowSettings = (change: (settings: FlowSettings) => FlowSettings, save = true): void => {
   if (snapshot.settings === null) return;
   const next = change(snapshot.settings);
   if (next === snapshot.settings) return;
   publish({ ...snapshot, settings: next });
+  unsaved = !save;
   if (save) commitFlowSettings();
 };
 
@@ -68,20 +95,31 @@ export const commitFlowSettings = (): void => {
   const client = rpc;
   const settings = snapshot.settings;
   if (client === null || settings === null) return;
+  unsaved = false;
   // Порядок шагов проверяется здесь же, до отправки: тем же правилом, каким
   // отказывает сервер, — но на экране остаётся сообщение на языке страницы, а
   // не текст серверной ошибки, довезённый транспортом RPC.
   const problem = stepOrderProblem(withExpandedStages(settings.flows));
   if (problem !== null) {
+    unsaved = true;
     publish({ ...snapshot, saveProblem: problem, saveError: null });
     return;
   }
+  pendingSaves += 1;
   saving = saving
     .then(() => client.call("saveFlowSettings", settings))
     .then(() => (snapshot.failed || snapshot.saveError !== null || snapshot.saveProblem !== null) && publish({ ...snapshot, failed: false, saveError: null, saveProblem: null }))
     // Сервер отказал по существу — причина едет на экран целиком: на ней
     // написано, какой шаг какого этапа переставить.
-    .catch((error: unknown) => publish({ ...snapshot, saveError: error instanceof Error ? error.message : String(error) }));
+    .catch((error: unknown) => publish({ ...snapshot, saveError: error instanceof Error ? error.message : String(error) }))
+    .finally(() => {
+      pendingSaves -= 1;
+      const deferred = reloadAfterSaves;
+      if (pendingSaves === 0 && deferred !== null) {
+        reloadAfterSaves = null;
+        reload(deferred);
+      }
+    });
 };
 
 export function useFlowSettings(): FlowSettingsSnapshot {
@@ -110,6 +148,15 @@ export function useFlowSettings(): FlowSettingsSnapshot {
     // eslint-disable-next-line react-hooks/exhaustive-deps -- загрузка — на первое монтирование, а не на новый объект клиента
   }, []);
   return useSyncExternalStore(subscribe, () => snapshot, () => snapshot);
+}
+
+/**
+ * Коллекция, поменявшаяся на сервере, — на экран. Подписка одна на корень страницы или секции настроек, а не на каждого
+ * читателя хранилища: иначе строка таблицы перечитывала бы коллекцию сама.
+ */
+export function useFlowSettingsLive(): void {
+  const client = useRpc<typeof flowSettingsRpcContract>();
+  useRealtime(STAGE_SETTINGS_CHANNEL, () => reload(client));
 }
 
 /** Сохранённые наборы автоматизаций — из той же коллекции; строкам таблицы не нужно монтировать загрузку. */

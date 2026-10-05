@@ -114,6 +114,11 @@ describe("карточка доигранного этапа", () => {
     expect(card.lines[1]).toEqual([{ kind: "text", text: "Task → done — no linked tasks" }]);
   });
 
+  it("ключи, выданные шагом «Выдать ключи задачам», кликаются", () => {
+    const card = noticeCard(done({ steps: [{ id: "bb.tasks-issue-keys", label: "Issue task keys", detail: "BBPL-533, BBPL-534" }] }), WORDS);
+    expect(card.lines[1]?.filter((s) => s.kind === "task").map((s) => (s.kind === "task" ? s.address : null))).toEqual(["BBPL-533", "BBPL-534"]);
+  });
+
   it("с PR — кнопка GitHub и «к треду», без PR — только «к треду»", () => {
     expect(noticeCard(done({ pr: { number: 541, url: PR_URL } }), WORDS).actions).toEqual([
       { kind: "url", url: PR_URL },

@@ -36,7 +36,8 @@ import { createOwnSends } from "./server/own-sends";
 import { createFlowSettings } from "./server/flow-settings";
 import { registerFlowTools } from "./server/flow-tools";
 import { createLegacyHeal } from "./server/legacy-heal";
-import { registerFlowSettingsApi } from "./server/settings-api";
+import { registerFlowSettingsApi, STAGE_SETTINGS_CHANNEL } from "./server/settings-api";
+import { createFlowSync, defaultSyncDir, FLOW_SYNC_CHANNEL, registerFlowSyncApi, SYNC_POLL_MS } from "./server/flow-sync";
 import { hostCatalogSources, hostSkillFileSources, readExecutorFile, readSkillFile, readStageCatalog, writeScriptFile } from "./server/stage-catalog";
 import { revealInFinderHere } from "@bb-plugins/reveal-in-finder/index";
 import { createStore } from "./server/store";
@@ -280,6 +281,20 @@ export default async function plugin(bb: BbPluginApi): Promise<void> {
     reveal: revealInFinderHere,
   });
   registerFlowPickerApi(bb, flows, threads);
+  // Папка синхронизации flow: каждое сохранение уходит в неё, а приехавшее из неё Syncthing'ом сверяется опросом.
+  const sync = await createFlowSync({
+    kv: bb.storage.kv,
+    defaultDir: defaultSyncDir(process.env),
+    flows,
+    home: homedir(),
+    now: () => new Date(),
+    published: (change) => bb.realtime.publish(change === "flows" ? STAGE_SETTINGS_CHANNEL : FLOW_SYNC_CHANNEL, {}),
+  });
+  registerFlowSyncApi(bb, sync);
+  void sync.tick();
+  const poll = setInterval(() => void sync.tick(), SYNC_POLL_MS);
+  poll.unref();
+  bb.onDispose(() => clearInterval(poll));
   // Flow треда над композером: выбор до отправки и «Отменить flow».
   /** Прогон треда завершён — по этапам треда, который его ведёт. */
   const runFinished = async (threadId: string) => {

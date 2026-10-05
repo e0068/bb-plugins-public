@@ -5,6 +5,7 @@ import type { PluginKvStorage } from "@get-bb/plugin-sdk";
 
 import { STEP_LABELS } from "@bb-plugins/automation-steps/catalog";
 import { stepOrderMessage, stepOrderProblem } from "../core/automation-order";
+import { duplicateFlowName, withUniqueNames } from "../core/flow-files";
 import { flowCycle, fromLegacy, migrateFlows, withExpandedStages } from "../core/flows";
 import { flowSettingsSchema, stageSettingsSchema, type FlowSettings } from "../shared/contract";
 
@@ -17,6 +18,8 @@ export type FlowSettingsStore = {
   /** Последняя прочитанная или сохранённая коллекция. */
   current(): FlowSettings;
   save(settings: FlowSettings): Promise<FlowSettings>;
+  /** Слушатель каждого удавшегося сохранения — так синхронизация узнаёт о правках со страницы, из save_flow и из своего импорта. */
+  onSaved(listener: (saved: FlowSettings) => void): void;
 };
 
 const readOrMigrate = async (kv: PluginKvStorage): Promise<FlowSettings> => {
@@ -26,7 +29,8 @@ const readOrMigrate = async (kv: PluginKvStorage): Promise<FlowSettings> => {
     const stored = flowSettingsSchema.safeParse(raw);
     if (!stored.success) return fromLegacy(undefined);
     // Коллекция до видов этапов переносится и пишется сразу: иначе перенос повторялся бы и возвращал этапы, которые владелец удалил.
-    const migrated = migrateFlows(stored.data);
+    // Повтор имён — из времени до папки синхронизации, где имя стало именем файла: номера ставятся тогда же и пишутся.
+    const migrated = withUniqueNames(migrateFlows(stored.data));
     if (migrated !== stored.data) await kv.set(FLOW_SETTINGS_KEY, migrated);
     return migrated;
   }
@@ -38,8 +42,10 @@ const readOrMigrate = async (kv: PluginKvStorage): Promise<FlowSettings> => {
 
 export const createFlowSettings = async (kv: PluginKvStorage): Promise<FlowSettingsStore> => {
   let current = await readOrMigrate(kv);
+  const listeners: Array<(saved: FlowSettings) => void> = [];
   return {
     current: () => current,
+    onSaved: (listener) => void listeners.push(listener),
     async save(settings) {
       // Сохранённое — уже коллекция на видах: без версии следующее чтение перенесло бы её снова и вернуло удалённые этапы.
       const valid = { ...flowSettingsSchema.parse(settings), version: 2 as const };
@@ -56,8 +62,12 @@ export const createFlowSettings = async (kv: PluginKvStorage): Promise<FlowSetti
       if (problem !== null) {
         throw new Error(stepOrderMessage(problem, STEP_LABELS[problem.step].en, STEP_LABELS["git.create-pr"].en));
       }
+      // Имя flow — имя его файла в папке синхронизации: два одинаковых имени легли бы в один файл.
+      const duplicate = duplicateFlowName(valid.flows);
+      if (duplicate !== null) throw new Error(`flow name "${duplicate}" is taken: flow names are unique, ignoring case`);
       await kv.set(FLOW_SETTINGS_KEY, valid);
       current = valid;
+      listeners.forEach((listener) => listener(valid));
       return valid;
     },
   };

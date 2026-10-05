@@ -11,12 +11,15 @@
  * занять соседний PR. Шаг обновления плагинов идёт после мёрджа: он
  * переводит плагины на смёрдженный код. Переименование треда стоит первым:
  * ему нужна только задача, привязанная к треду, и тред получает её название
- * раньше, чем владелец начнёт искать его в списке.
+ * раньше, чем владелец начнёт искать его в списке. Выдача ключей задачам
+ * стоит сразу за догоняющим main: номера считаются от только что
+ * подтянутого main, и выданное успевает в PR.
  */
 export const STEP_IDS = [
   "bb.rename-thread",
   "git.commit",
   "git.fast-forward",
+  "bb.tasks-issue-keys",
   "git.create-pr",
   "bb.tasks-in-review",
   "files.bump-major",
@@ -35,6 +38,7 @@ export const STEP_LABELS: Readonly<Record<StepId, { readonly en: string; readonl
   "bb.rename-thread": { en: "Rename the thread", ru: "Переименовать тред" },
   "git.commit": { en: "Commit", ru: "Commit" },
   "git.fast-forward": { en: "FF Branch ← Main", ru: "FF Branch ← Main" },
+  "bb.tasks-issue-keys": { en: "Issue task keys", ru: "Выдать ключи задачам" },
   "git.create-pr": { en: "Open a PR", ru: "Открыть PR" },
   "bb.tasks-in-review": { en: "Task → in_review", ru: "Задача → in_review" },
   "files.bump-major": { en: "Bump major", ru: "Bump major" },

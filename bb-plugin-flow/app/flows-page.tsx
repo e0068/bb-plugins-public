@@ -1,10 +1,10 @@
 // Страница Flow в левом меню bb: выбранный flow — имя и описание «когда
 // выбирать» правятся на месте, таблица его этапов, а под ней одной строкой —
-// «Добавить этап» слева и «Удалить flow» справа. Сам
-// выбор и создание — лентой в начале страницы (./flows-header); общее на все
-// flow — ширина кнопки и выбор flow агентом — в настройках плагина
-// (./flow-settings-sections). Страницу листает её корень целиком, вместе с
-// лентой: рамок со своей прокруткой внутри нет.
+// «Добавить этап» слева и «Удалить flow» справа. Сам выбор и создание — деревом
+// слева (./flows-tree), там же папка синхронизации; на узкой панели дерево
+// встаёт над содержимым. Общее на все flow — ширина кнопки и выбор flow
+// агентом — в настройках плагина (./flow-settings-sections). Страницу листает
+// её корень целиком, вместе с деревом: рамок со своей прокруткой внутри нет.
 // Выбранный flow живёт в адресе страницы, чтобы ссылка открывала его; адрес
 // `history` вместо flow открывает историю прогонов (./run-history). Своей
 // ширины содержимое не держит: таблица этапов сама перестраивается по ширине
@@ -21,10 +21,10 @@ import type { Flow } from "../shared/contract";
 import { LocaleProvider } from "./locale";
 import { ProviderLogosProvider } from "./provider-logos-source";
 import { useMessages } from "./locale-context";
-import { updateFlowSettings, useFlowSettings } from "./stage-settings-store";
+import { updateFlowSettings, useFlowSettings, useFlowSettingsLive } from "./stage-settings-store";
 import { AddStage, WorkStagesTable } from "./stage-settings";
 import { HISTORY_SUB_PATH, RunHistory } from "./run-history";
-import { FlowsHeader } from "./flows-header";
+import { FlowsTree } from "./flows-tree";
 
 export function FlowsPage(props: PluginNavPanelProps) {
   return (
@@ -100,11 +100,12 @@ function DeleteFlow({ flow }: { flow: Flow }) {
 }
 
 function Flows({ subPath }: PluginNavPanelProps) {
+  useFlowSettingsLive();
   return (
-    <div className="h-full overflow-y-auto">
-      <div className="flex min-w-0 flex-col gap-4 p-6">
-        <FlowsHeader subPath={subPath} />
-        {subPath === HISTORY_SUB_PATH ? <RunHistory /> : <FlowEditor subPath={subPath} />}
+    <div className="@container h-full overflow-y-auto">
+      <div className="flex min-w-0 flex-col gap-4 p-6 @3xl:flex-row @3xl:items-start @3xl:gap-6">
+        <FlowsTree subPath={subPath} className="@3xl:w-56 @3xl:shrink-0" />
+        <div className="flex min-w-0 flex-1 flex-col gap-4">{subPath === HISTORY_SUB_PATH ? <RunHistory /> : <FlowEditor subPath={subPath} />}</div>
       </div>
     </div>
   );

@@ -11,6 +11,11 @@ export function markTaskStatusArgs(key: string, status: LinkedTaskStatus): strin
   return ["tasks", "update", key, "--status", status, "--json"];
 }
 
+/** `bb tasks keys issue`: names the unnamed tasks of the calling thread's tree. */
+export function issueKeysArgs(): string[] {
+  return ["tasks", "keys", "issue", "--json"];
+}
+
 /**
  * The environment a `bb tasks` call needs, on top of the caller's own.
  *
@@ -24,6 +29,37 @@ export function markTaskStatusArgs(key: string, status: LinkedTaskStatus): strin
  */
 export function linkedTaskEnv(threadId: string): Record<string, string> {
   return { BB_THREAD_ID: threadId };
+}
+
+/**
+ * What `keys issue` names a board by when no `--project` is given: the
+ * calling thread's BB project. The CLI reads it from BB_PROJECT_ID only —
+ * BB_THREAD_ID alone leaves the command without a board.
+ */
+export function issueKeysEnv(threadId: string, projectId: string): Record<string, string> {
+  return { ...linkedTaskEnv(threadId), BB_PROJECT_ID: projectId };
+}
+
+/** What `bb tasks keys issue --json` answered: the keys it gave out, or text that is not its answer. */
+export type IssuedKeysAnswer = { readonly kind: "read"; readonly keys: readonly string[] } | { readonly kind: "unreadable"; readonly text: string };
+
+/**
+ * The keys `bb tasks keys issue --json` gave out (`{"issued": [{"slug", "key"}]}`).
+ * Anything else is unreadable, not "nothing issued": the command may have
+ * written keys, and the step must not report an empty list over them.
+ */
+export function parseIssuedKeys(stdout: string): IssuedKeysAnswer {
+  const unreadable: IssuedKeysAnswer = { kind: "unreadable", text: stdout.trim() };
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(stdout);
+  } catch {
+    return unreadable;
+  }
+  const issued = (parsed as { issued?: unknown } | null)?.issued;
+  if (!Array.isArray(issued)) return unreadable;
+  const keys = issued.flatMap((entry: { key?: unknown } | null) => (typeof entry?.key === "string" ? [entry.key] : []));
+  return keys.length === issued.length ? { kind: "read", keys } : unreadable;
 }
 
 export interface LinkedTask {

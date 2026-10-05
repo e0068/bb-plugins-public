@@ -12,8 +12,9 @@ import { classifyFailure, RETRY_DELAYS_MS } from "./core/retry";
 import { threadTitleOf } from "./core/thread-title";
 import { mergedPullLinks, openedPullOutcome, taskLink, withLinks } from "./core/step-links";
 import { bumpOutcome, reinstallOutcome, stepFailure, type StepOutcome } from "./core/step-outcomes";
+import { issueKeysArgs, issueKeysEnv, parseIssuedKeys } from "./core/bb-tasks-commands";
 import { bbCliClient } from "./wiring/bb-cli-client";
-import type { CliPorts } from "./wiring/bb-cli-run";
+import { cliRunMessage, type CliPorts } from "./wiring/bb-cli-run";
 import type { CatchUpOutcome, ParentDeliveryOutcome } from "./wiring/catch-up";
 import type { RefreshOutcome } from "./wiring/create-pr";
 import { findLinkedTask } from "./wiring/linked-task";
@@ -255,24 +256,45 @@ export function createSteps(ports: StepPorts): Steps {
       }),
     );
 
+  // Чистое дерево — не провал: коммитить нечего, цепочка идёт дальше.
+  const commitTree = async (threadId: string): Promise<StepOutcome> => {
+    const environmentId = await environmentOf(threadId);
+    const status = await sdk.environments.status({ environmentId });
+    // Окружение без папки называется своим id: другого адреса у него нет.
+    if (status.outcome === "not_applicable") return failed(notARepository((await sdk.environments.get({ environmentId })).path ?? environmentId));
+    if (status.outcome === "unavailable") {
+      const { code, workspacePath, message } = status.failure;
+      return failed(code === "not_git_repo" ? notARepository(workspacePath) : `Git status of the thread's environment is unavailable (${workspacePath}): ${message}`);
+    }
+    if (!status.workspace.workingTree.hasUncommittedChanges) return done("nothing to commit");
+    return done((await sdk.environments.commit({ environmentId })).commitSubject);
+  };
+
+  // Задача, рождённая в ветке, живёт без ключа, а правка из дерева треда его
+  // не выдаёт. Команда Tasks+ выдаёт ключи в дереве треда, номерами после
+  // наибольшего в main, который ветка только что догнала, и выданное
+  // уезжает коммитом в PR. Коммитится только выданное: пустой ответ дерево
+  // не трогает, а нечитаемый — провал, а не «выдавать нечего».
+  const issueKeys = async (threadId: string): Promise<StepOutcome> => {
+    const { projectId } = await sdk.threads.get({ threadId });
+    const ran = await cli().run(issueKeysArgs(), issueKeysEnv(threadId, projectId));
+    if (ran.kind === "unavailable" || ran.code !== 0) return failed(`Task keys were not issued: ${cliRunMessage(ran)}`);
+    const answer = parseIssuedKeys(ran.stdout);
+    if (answer.kind === "unreadable") return failed(`Task keys were not issued: unreadable answer: ${answer.text}`);
+    if (answer.keys.length === 0) return done("no unnamed tasks");
+    const committed = await commitTree(threadId);
+    return committed.ok ? done(answer.keys.join(", ")) : committed;
+  };
+
   const steps: Steps = {
     "bb.rename-thread": guarded(renameThread),
-    // Чистое дерево — не провал: коммитить нечего, цепочка идёт дальше.
-    "git.commit": guarded(async (threadId) => {
-      const environmentId = await environmentOf(threadId);
-      const status = await sdk.environments.status({ environmentId });
-      // Окружение без папки называется своим id: другого адреса у него нет.
-      if (status.outcome === "not_applicable") return failed(notARepository((await sdk.environments.get({ environmentId })).path ?? environmentId));
-      if (status.outcome === "unavailable") {
-        const { code, workspacePath, message } = status.failure;
-        return failed(code === "not_git_repo" ? notARepository(workspacePath) : `Git status of the thread's environment is unavailable (${workspacePath}): ${message}`);
-      }
-      if (!status.workspace.workingTree.hasUncommittedChanges) return done("nothing to commit");
-      return done((await sdk.environments.commit({ environmentId })).commitSubject);
-    }),
+    "git.commit": guarded(commitTree),
     "git.fast-forward": guarded(async (threadId) => {
       return done(CATCH_UP_DETAIL[await catchUpBranch(sdk, kv, threadId)]);
     }),
+    // Ветку дочернего треда ключами наделит шаг родителя, догнавший main:
+    // своё дерево и main не видят соседних волн, и номера бы совпали.
+    "bb.tasks-issue-keys": guarded(orIntoParent(notNeeded, issueKeys)),
     // Открытый PR ветки — итог этого шага, а не отказ: повтор после потерянного
     // ответа GitHub не открывает второй PR и говорит, что нашёл первый. Ветку
     // найденного PR шаг догоняет до ветки треда и говорит, сдвинул ли её.
