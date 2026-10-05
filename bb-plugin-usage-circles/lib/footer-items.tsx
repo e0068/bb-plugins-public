@@ -5,7 +5,8 @@
 // context, so the usage and the ring style reach them through module stores
 // the app's overlay and settings section publish to, not through a hook.
 import { useLayoutEffect, useRef, useSyncExternalStore, type ComponentType, type CSSProperties } from "react";
-import { buildProviderDetails, buildProviderLogo, buildRingIcon } from "./render";
+import { FooterWindow } from "@bb-plugins/footer-window";
+import { buildProviderDetails, buildProviderLogo, buildRingIcon, HEADER_LOGO_PX } from "./render";
 import { DEFAULT_RING_STYLE, type RingDims, type RingStyle } from "./ring-style";
 import { buildUsageWindowModel, DEFAULT_COLORING, ringWindow, type FooterRing, type ProviderStateWire, type StateWire, type WindowKind } from "./usage-model";
 
@@ -119,8 +120,21 @@ export function ringIcon(ring: FooterRing): ComponentType<{ className?: string }
   return RingIcon;
 }
 
-/** The window of a footer item: every limit of the item's provider, the item's own one marked. */
-export function providerPanel(providerId: string, kind: WindowKind): ComponentType<{ dismiss(): void }> {
+/** The provider's logo before the window's title. */
+function HeaderLogo({ provider }: { provider: ProviderStateWire }) {
+  const root = useRef<HTMLSpanElement>(null);
+  useLayoutEffect(() => {
+    root.current?.replaceChildren(buildProviderLogo(provider, HEADER_LOGO_PX));
+  }, [provider]);
+  return <span ref={root} style={{ display: "inline-flex" }} />;
+}
+
+/**
+ * The window of a footer item: the shared window's header — the provider's
+ * logo and "<provider> Limits", drawn at once — over every limit of the
+ * provider, the item's own one marked. `title` heads it until the usage arrives.
+ */
+export function providerPanel(providerId: string, kind: WindowKind, title = providerId): ComponentType<{ dismiss(): void }> {
   function ProviderPanel() {
     const state = useUsage();
     const root = useRef<HTMLDivElement>(null);
@@ -128,7 +142,11 @@ export function providerPanel(providerId: string, kind: WindowKind): ComponentTy
     useLayoutEffect(() => {
       root.current?.replaceChildren(...(state && provider ? [buildProviderDetails(provider, state.coloring, Date.now(), ringWindow(provider, kind))] : []));
     }, [state, provider]);
-    return <div ref={root} />;
+    return (
+      <FooterWindow icon={provider ? <HeaderLogo provider={provider} /> : undefined} title={provider ? `${provider.title} Limits` : title}>
+        <div ref={root} />
+      </FooterWindow>
+    );
   }
   ProviderPanel.displayName = `ProviderPanel(${providerId}:${kind})`;
   return ProviderPanel;

@@ -1,7 +1,7 @@
 // Layer 2 — rendering. Turns one usage-window model into DOM, in two forms
 // off the same data: buildRingIcon (the two-concentric-ring SVG of a footer
 // item) and buildWindowRow (the two stacked bars of the item's window), plus
-// buildProviderDetails, the window's whole content for one provider. Pure DOM
+// buildProviderDetails, the window's content under its header for one provider. Pure DOM
 // construction, no plugin/SDK imports — testable with jsdom alone.
 //
 // Colors are plain inline styles, not Tailwind utility classes: BB renders the
@@ -252,7 +252,8 @@ export function buildWindowRow(model: UsageWindowModel): HTMLDivElement {
   return row;
 }
 
-const HEADER_LOGO_PX = 16;
+/** The provider's logo in the window's header. */
+export const HEADER_LOGO_PX = 16;
 const DETAILS_SIDE_PX = 6;
 
 /** The marked row of a footer item's own limit: the sidebar's hover background. */
@@ -267,15 +268,8 @@ function markRow(row: HTMLDivElement): HTMLDivElement {
  * a row per limit window — the row of `marked`, the window the item's ring shows, stands out.
  */
 export function buildProviderDetails(provider: ProviderStateWire, coloring: Coloring, nowMs: number, marked?: UsageWindowInput): HTMLDivElement {
-  const details = div({ display: "flex", flexDirection: "column", gap: "12px", padding: `10px ${DETAILS_SIDE_PX}px 6px` }, "usage-circles__details");
-  const header = div(
-    { display: "flex", alignItems: "center", gap: "8px", fontSize: "13px", fontWeight: "600", color: "var(--foreground)" },
-    "usage-circles__panel-header",
-  );
-  const title = document.createElement("span");
-  title.textContent = `${provider.title} Limits`;
-  header.append(buildProviderLogo(provider, HEADER_LOGO_PX), title);
-  details.append(header);
+  // The logo and "<provider> Limits" head the shared footer window, so the details start with the limits.
+  const details = div({ display: "flex", flexDirection: "column", gap: "12px", padding: `2px ${DETAILS_SIDE_PX}px 6px` }, "usage-circles__details");
   if (provider.usage.status === "ok") {
     provider.usage.windows.forEach((window) => {
       const row = buildWindowRow(buildUsageWindowModel(window, nowMs, coloring));
