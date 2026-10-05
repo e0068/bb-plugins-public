@@ -246,6 +246,8 @@ export const en: Messages = {
     retryInSeconds: "Retry in, seconds",
     secondsUnit: "s",
     retryAttempts: "Attempts",
+    wakeAfterLastRetry: "Message the agent after the last attempt",
+    wakeAfterLastRetryHint: "When the last attempt fails and the step waits for you, Flow tells the thread's agent what failed, and the agent tells you. Off — the step waits silently, with only the toast and the banner.",
     retryHint: "0 seconds — no retry: the step waits for you right away. 0 attempts — retry until it passes. Action stage steps are retried only by you. New values apply from the next failure.",
     skillNotFound: "No skill found",
     skillChip: (name) => `Skill: ${name}`,

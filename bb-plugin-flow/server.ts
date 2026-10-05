@@ -5,7 +5,7 @@ import { homedir } from "node:os";
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 
 import { createSteps } from "@bb-plugins/automation-steps/index";
-import { retryPolicyOf } from "./core/automation-run";
+import { retryPolicyOf, wakesAgentAfterLastRetry } from "./core/automation-run";
 import { OWN_PLUGIN_ID } from "./core/plugin-id";
 import { ANSWERED_CHANNEL, registerApi } from "./server/api";
 import { returnAwaitingBrief } from "./server/brief-return";
@@ -137,6 +137,7 @@ export default async function plugin(bb: BbPluginApi): Promise<void> {
     plugins: bb.sdk.plugins,
     now,
     retry: () => retryPolicyOf(flows.current()),
+    wakeOnFailure: () => wakesAgentAfterLastRetry(flows.current()),
     // Итог этапа-автоматизации — записью центру, тост показывает он: название треда, flow и PR дописывает публикатор.
     notify: createNoticePublisher({
       progress,

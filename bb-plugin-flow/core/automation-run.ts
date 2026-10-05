@@ -155,6 +155,9 @@ export const retryPolicyOf = (settings: Pick<FlowSettings, "retryInSeconds" | "r
   attempts: settings.retryAttempts ?? DEFAULT_RETRY.attempts,
 });
 
+/** Будить ли агента треда, когда последняя попытка шага упала; поля нет — не будить. */
+export const wakesAgentAfterLastRetry = (settings: Pick<FlowSettings, "wakeAgentAfterLastRetry">): boolean => settings.wakeAgentAfterLastRetry ?? false;
+
 /** Через сколько мс повторить упавший шаг сам; `null` — автоповтор выключен или попытки этого шага кончились, шаг ждёт владельца. */
 export const retryDelay = (policy: RetryPolicy, track: StageTrack | undefined): number | null => {
   if (policy.seconds <= 0 || track?.run?.skipQueued === true) return null;
@@ -303,6 +306,13 @@ export const wakeText = (kind: "automation" | "action", idle: ReadonlyArray<{ na
 /** Реплика агенту: шаг этапа упал на конфликте слияния — какие файлы, что сделать и что Flow сделает сам. */
 export const conflictWakeText = (stage: WorkStage, files: readonly string[], base = "the base branch"): string =>
   `Flow: a step of stage ${stage.id} "${stage.name}" hit merge conflicts with ${base} in:\n${files.map((file) => `- ${file}`).join("\n")}\n\nMerge ${base} into the branch, resolve every conflict keeping the work of both sides, run the tests of what you touched, commit the merge, and end your turn: Flow retries the step by itself when your turn ends. Do not reset or rebase the branch.`;
+
+/** Реплика агенту после последней неудачной попытки шага: шаг ждёт владельца, и агент говорит ему об этом; несёт простой по этапам, как `wakeText`. */
+export const failureWakeText = (stage: WorkStage, step: string, error: string, idle: ReadonlyArray<{ name: string; minutes: number }>): string => {
+  const head = `Flow: step ${step} of stage ${stage.id} "${stage.name}" failed after the last attempt: ${error}\n\nThe step waits for the owner's Retry or Skip above the composer. Tell the owner what failed and end your turn: Flow carries on once the owner retries or skips it.`;
+  const note = idleNote(idle);
+  return note === "" ? head : `${head}\n\n${note}`;
+};
 
 /** Этап с упавшим шагом: не закрыт, а у прогона есть ошибка. */
 export const isFailed = (track: StageTrack): boolean => track.finishedAt === undefined && typeof track.run?.error === "string";
