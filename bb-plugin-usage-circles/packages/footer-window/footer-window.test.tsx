@@ -7,9 +7,12 @@ import {
   registerFooterWindow,
   resetFooterWindowsForTests,
   setOpenOnHover,
+  togglePin,
+  useHoldHeight,
   withFooterWindow,
   type DisclosureController,
 } from "./footer-window";
+import { FooterWindow } from "./window-view";
 
 /** BB's sidebar footer: two items of plugin `p`, one of plugin `q`, and the open window of `p/a`. */
 function mountFooter(): void {
@@ -63,6 +66,11 @@ afterEach(() => {
 });
 
 const leave = () => fireEvent.mouseMove(away());
+/** Hover A, then press the pin in its window's header. */
+const pinA = () => {
+  fireEvent.mouseOver(button("A"));
+  togglePin({ pluginId: "p", itemId: "a" });
+};
 
 describe("hover", () => {
   it("opens the window of an item whose plugin opens on hover", () => {
@@ -111,8 +119,7 @@ describe("hover", () => {
   });
 
   it("brings the pinned window back at once when the pointer moves past the footer from a hovered one", () => {
-    fireEvent.mouseOver(button("A"));
-    fireEvent.click(button("A"));
+    pinA();
     fireEvent.mouseOver(button("C"));
     fireEvent.mouseMove(away());
     expect(a.calls).toEqual(["open", "open"]);
@@ -126,60 +133,57 @@ describe("hover", () => {
 });
 
 describe("pin", () => {
-  it("a click on a window opened by hover pins it without letting bb toggle it shut", () => {
+  it("a click on a window opened by hover keeps it open without pinning it, and bb never sees the click", () => {
     const host = vi.fn();
     button("A").addEventListener("click", host);
     fireEvent.mouseOver(button("A"));
     fireEvent.click(button("A"));
-    leave();
     expect(host).not.toHaveBeenCalled();
-    expect(a.calls).toEqual(["open"]);
+    leave();
+    expect(a.calls).toEqual(["open", "close"]);
   });
 
-  it("a click on a closed item reaches bb, which opens it pinned", () => {
+  it("a click on a closed item reaches bb, which opens it unpinned, so leaving closes it", () => {
     setOpenOnHover("p", false);
     const host = vi.fn();
     button("A").addEventListener("click", host);
     fireEvent.click(button("A"));
-    leave();
     expect(host).toHaveBeenCalledOnce();
-    expect(a.calls).toEqual([]);
+    leave();
+    expect(a.calls).toEqual(["close"]);
   });
 
   it("hovering another item shows its window, leaving brings the pinned one back", () => {
-    fireEvent.mouseOver(button("A"));
-    fireEvent.click(button("A"));
+    pinA();
     fireEvent.mouseOver(button("C"));
     leave();
     expect(c.calls).toEqual(["open"]);
     expect(a.calls).toEqual(["open", "open"]);
   });
 
-  it("a click inside a hovered window pins it, so leaving keeps it open", () => {
+  it("a click inside a hovered window leaves it unpinned: only the pin in its header pins it", () => {
     const content = vi.fn();
     document.getElementById("mount")!.addEventListener("click", content);
     fireEvent.mouseOver(button("A"));
     fireEvent.click(document.getElementById("mount")!);
     leave();
     expect(content).toHaveBeenCalledOnce();
-    expect(a.calls).toEqual(["open"]);
+    expect(a.calls).toEqual(["open", "close"]);
   });
 
-  it("a click on another item pins that one, so leaving neither closes it nor brings the old one back", () => {
-    fireEvent.mouseOver(button("A"));
-    fireEvent.click(button("A"));
+  it("a click on another item over the pinned one keeps the pin, so leaving brings the pinned one back", () => {
+    pinA();
     fireEvent.mouseOver(button("C"));
     fireEvent.click(button("C"));
     leave();
     expect(c.calls).toEqual(["open"]);
-    expect(a.calls).toEqual(["open"]);
+    expect(a.calls).toEqual(["open", "open"]);
   });
 
   it("a click on the pinned item reaches bb, which closes it, and the pin is gone", () => {
     const host = vi.fn();
     button("A").addEventListener("click", host);
-    fireEvent.mouseOver(button("A"));
-    fireEvent.click(button("A"));
+    pinA();
     fireEvent.click(button("A"));
     expect(host).toHaveBeenCalledOnce();
     fireEvent.mouseOver(button("B"));
@@ -189,8 +193,7 @@ describe("pin", () => {
   });
 
   it("Escape forgets the pinned window", () => {
-    fireEvent.mouseOver(button("A"));
-    fireEvent.click(button("A"));
+    pinA();
     fireEvent.keyDown(document, { key: "Escape" });
     fireEvent.mouseOver(button("B"));
     leave();
@@ -212,10 +215,7 @@ describe("withFooterWindow", () => {
     dismissed = vi.fn();
   });
   const handle = () => section().querySelector<HTMLElement>("[data-footer-window-handle]")!;
-  const pin = () => {
-    fireEvent.mouseOver(button("A"));
-    fireEvent.click(button("A"));
-  };
+  const pin = pinA;
 
   it("draws a thin line on top instead of BB's frame and lifts the 320 px ceiling", () => {
     show();
@@ -243,11 +243,41 @@ describe("withFooterWindow", () => {
     expect(window.localStorage.getItem("bb-plugins.footer-window.height:p/a")).toBe("260");
   });
 
-  it("a remembered height comes back when the item is pinned again", () => {
+  it("pinning fixes the window at the height it shows at that moment, not at one remembered before", () => {
     window.localStorage.setItem("bb-plugins.footer-window.height:p/a", "300");
+    vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockReturnValue({ height: 180 } as DOMRect);
     show();
     act(pin);
-    expect(frame().style.height).toBe("300px");
+    expect(frame().style.height).toBe("180px");
+  });
+
+  it("a held window keeps the height it shows, stays unpinned and closes when the pointer leaves", () => {
+    vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockReturnValue({ height: 150 } as DOMRect);
+    let hold = () => undefined as void;
+    const Holding = withFooterWindow(
+      () => {
+        hold = useHoldHeight();
+        return null;
+      },
+      { pluginId: "p", itemId: "a" },
+    );
+    fireEvent.mouseOver(button("A"));
+    render(<Holding dismiss={dismissed} />, { container: document.getElementById("mount")! });
+    act(() => hold());
+    expect(frame().style.height).toBe("150px");
+    expect(handle().style.display).toBe("none");
+    leave();
+    expect(a.calls).toEqual(["open", "close"]);
+  });
+
+  it("holding outside a footer window does nothing", () => {
+    let hold = () => undefined as void;
+    const Plain = () => {
+      hold = useHoldHeight();
+      return null;
+    };
+    render(<Plain />);
+    expect(() => hold()).not.toThrow();
   });
 
   it("a double click on the handle makes the window hug its content again", () => {
@@ -294,7 +324,7 @@ describe("withFooterWindow", () => {
     expect(a.calls).toEqual(["open", "open"]);
   });
 
-  it("pinning from the overflow menu row survives bb's toggle closing the window under the click", () => {
+  it("a click on the overflow menu row brings back the window bb's toggle shut under the click, unpinned", () => {
     // BB: one window at a time, mounted while open; the row's click toggles it.
     let view: ReturnType<typeof show> | null = null;
     const mount = () => {
@@ -321,11 +351,10 @@ describe("withFooterWindow", () => {
     act(() => void fireEvent.click(row));
     act(() => void vi.advanceTimersByTime(0));
     expect(menu).toHaveBeenCalledOnce();
-    expect(handle().style.display).toBe("block");
+    expect(handle().style.display).toBe("none");
 
-    act(() => void fireEvent.mouseOver(button("C")));
     act(leave);
-    expect(handle().style.display).toBe("block");
+    expect(view).toBeNull();
   });
 
   it("gives BB's frame back when the window unmounts", () => {
@@ -334,5 +363,91 @@ describe("withFooterWindow", () => {
     expect(section().style.borderTop).toBe("");
     expect(frame().style.maxHeight).toBe("");
     expect(handle()).toBeNull();
+  });
+});
+
+describe("window header", () => {
+  const Window = withFooterWindow(
+    () => (
+      <FooterWindow title="Alpha" count={3}>
+        <p>body</p>
+      </FooterWindow>
+    ),
+    { pluginId: "p", itemId: "a" },
+  );
+  const show = () => render(<Window dismiss={() => undefined} />, { container: document.getElementById("mount")! });
+
+  it("shows the title, the count and the way to the plugin's settings", () => {
+    const view = show();
+    expect(view.getByRole("heading").textContent).toBe("Alpha");
+    expect(view.getByText("3")).toBeTruthy();
+    expect(view.getByRole("link", { name: "Settings" }).getAttribute("href")).toBe("/settings/plugins/p");
+  });
+
+  it("the pin pins a hovered window, so leaving keeps it, and a second press unpins it", () => {
+    fireEvent.mouseOver(button("A"));
+    const view = show();
+    fireEvent.click(view.getByRole("button", { name: "Pin" }));
+    leave();
+    expect(a.calls).toEqual(["open"]);
+    fireEvent.click(view.getByRole("button", { name: "Unpin" }));
+    leave();
+    expect(a.calls).toEqual(["open", "close"]);
+  });
+});
+
+describe("unpinning", () => {
+  const Window = withFooterWindow(() => <FooterWindow title="Alpha" />, { pluginId: "p", itemId: "a" });
+
+  it("keeps the window at the height it shows, so its header stays under the pointer, and leaving then closes it", () => {
+    vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockReturnValue({ height: 180 } as DOMRect);
+    fireEvent.mouseOver(button("A"));
+    const view = render(<Window dismiss={() => undefined} />, { container: document.getElementById("mount")! });
+    fireEvent.click(view.getByRole("button", { name: "Pin" }));
+    fireEvent.click(view.getByRole("button", { name: "Unpin" }));
+    expect(frame().style.height).toBe("180px");
+    leave();
+    expect(a.calls).toEqual(["open", "close"]);
+  });
+});
+
+describe("header buttons", () => {
+  const actions = [
+    { id: "read", label: "Read all", icon: null, onClick: () => undefined },
+    { id: "show", label: "Show read", icon: null, onClick: () => undefined, pressed: false },
+  ];
+  const Window = withFooterWindow(() => <FooterWindow title="Alpha" actions={actions} />, { pluginId: "p", itemId: "a" });
+
+  it("an action is announced as a plain button; a toggle and the pin keep their pressed state", () => {
+    fireEvent.mouseOver(button("A"));
+    const view = render(<Window dismiss={() => undefined} />, { container: document.getElementById("mount")! });
+    expect(view.getByRole("button", { name: "Read all" }).hasAttribute("aria-pressed")).toBe(false);
+    expect(view.getByRole("button", { name: "Show read" }).getAttribute("aria-pressed")).toBe("false");
+    expect(view.getByRole("button", { name: "Pin" }).getAttribute("aria-pressed")).toBe("false");
+  });
+});
+
+describe("unpinning a window held before", () => {
+  it("keeps the height it shows at the moment of unpinning, not the one held before it was pinned", () => {
+    const rect = vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockReturnValue({ height: 150 } as DOMRect);
+    let hold = () => undefined as void;
+    const Holding = withFooterWindow(
+      () => {
+        hold = useHoldHeight();
+        return <FooterWindow title="Alpha" />;
+      },
+      { pluginId: "p", itemId: "a" },
+    );
+    fireEvent.mouseOver(button("A"));
+    const view = render(<Holding dismiss={() => undefined} />, { container: document.getElementById("mount")! });
+    act(() => hold());
+    fireEvent.click(view.getByRole("button", { name: "Pin" }));
+    const grip = section().querySelector<HTMLElement>("[data-footer-window-handle]")!;
+    fireEvent.pointerDown(grip, { clientY: 500, pointerId: 1 });
+    fireEvent.pointerMove(grip, { clientY: 250, pointerId: 1 });
+    fireEvent.pointerUp(grip, { clientY: 250, pointerId: 1 });
+    rect.mockReturnValue({ height: 400 } as DOMRect);
+    fireEvent.click(view.getByRole("button", { name: "Unpin" }));
+    expect(frame().style.height).toBe("400px");
   });
 });

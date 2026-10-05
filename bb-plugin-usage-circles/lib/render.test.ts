@@ -196,14 +196,14 @@ describe("buildProviderDetails", () => {
   const coloring = { mode: "usage", usage: { yellow: 60, red: 90 }, pace: { yellow: 20, red: 50 } } as const;
   const provider = (usage: import("./usage-model").UsageResultWire) => ({ id: "codex", title: "Codex", logoUrl: "/codex", tint: null, usage });
 
-  it("heads the provider's limits with its logo and lists every window", () => {
+  it("lists every window and leaves the heading to the window's header", () => {
     const details = buildProviderDetails(
       provider({ status: "ok", windows: [{ label: "Current session", usedPercent: 5, resetsAt: null }, { label: "Weekly", usedPercent: 9, resetsAt: null }] }),
       coloring,
       now,
     );
-    expect(details.textContent).toContain("Codex Limits");
-    expect(details.querySelector(".usage-circles__logo")?.getAttribute("aria-label")).toBe("Codex");
+    expect(details.textContent).not.toContain("Codex Limits");
+    expect(details.querySelector(".usage-circles__logo")).toBeNull();
     expect(details.querySelectorAll(".usage-circles__window-row").length).toBe(2);
   });
 

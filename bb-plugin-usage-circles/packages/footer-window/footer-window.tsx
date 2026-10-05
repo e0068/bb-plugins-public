@@ -7,7 +7,7 @@
 // first plugin to register installs the listeners, the rest join the registry.
 // BB draws the footer and the window frame outside any plugin root, so every
 // style here is inline, on BB's theme tokens.
-import { useCallback, useEffect, useLayoutEffect, useRef, type ComponentType } from "react";
+import { createContext, useCallback, useContext, useEffect, useLayoutEffect, useRef, useSyncExternalStore, type ComponentType } from "react";
 
 import {
   CLOSED,
@@ -16,7 +16,6 @@ import {
   heightFromStorage,
   heightToStorage,
   step,
-  windowHeight,
   type Command,
   type ItemKey,
   type WindowEvent,
@@ -37,8 +36,8 @@ const TOP_GAP_PX = 8;
 const FALLBACK_LIST_TOP_PX = 160;
 const HANDLE_HEIGHT_PX = 6;
 const STORAGE_PREFIX = "bb-plugins.footer-window.height:";
-/** The same line BB draws between the top menu and the thread list (`border-sidebar-border/25`). */
-const SEPARATOR = "1px solid color-mix(in oklab, var(--sidebar-border) 25%, transparent)";
+/** The line between the thread list and the window: BB's sidebar border at full strength, so the edge reads at a glance. */
+const SEPARATOR = "1px solid var(--sidebar-border)";
 
 /** BB's controller of a `kind: "disclosure"` footer item. */
 export interface DisclosureController {
@@ -65,18 +64,20 @@ interface Registry {
   readonly entries: Map<ItemKey, Entry>;
   readonly openOnHover: Map<string, boolean>;
   readonly listeners: Set<() => void>;
+  /** Per mounted window: keep the height it shows now, unpinned, until it closes. */
+  holds: Map<ItemKey, () => void>;
   state: WindowState;
   removeListeners: (() => void) | null;
-  /** The pinned window's height as last drawn; a registry made by an older copy has none. */
-  pinnedPx?: number | null;
 }
 
 const REGISTRY = Symbol.for("bb-plugins.footer-window.v1");
 
 function registry(): Registry {
   const scope = globalThis as typeof globalThis & { [REGISTRY]?: Registry };
-  scope[REGISTRY] ??= { entries: new Map(), openOnHover: new Map(), listeners: new Set(), state: CLOSED, removeListeners: null };
-  return scope[REGISTRY];
+  const r = (scope[REGISTRY] ??= { entries: new Map(), openOnHover: new Map(), listeners: new Set(), holds: new Map(), state: CLOSED, removeListeners: null });
+  // A plugin with an older copy of this module may have made the registry first.
+  r.holds ??= new Map();
+  return r;
 }
 
 const keyOf = ({ pluginId, itemId }: FooterItem): ItemKey => `${pluginId}/${itemId}`;
@@ -94,9 +95,8 @@ function dispatch(event: WindowEvent): boolean {
   const r = registry();
   const next = step(r.state, event);
   r.state = next.state;
-  // Listeners first: the pinned window measures itself while it is still on screen.
-  r.listeners.forEach((listener) => listener());
   run(next.command);
+  r.listeners.forEach((listener) => listener());
   return next.swallowClick;
 }
 
@@ -190,24 +190,15 @@ function installListeners(): () => void {
   const onOut = (event: MouseEvent) => {
     if (event.relatedTarget === null) pointerAt(null);
   };
-  // A click inside the shown window pins it: only its item closes it.
-  const clickInside = (target: EventTarget | null) => {
-    const { shown } = registry().state;
-    if (shown !== null && target instanceof Node && sectionOf(shown)?.contains(target)) dispatch({ kind: "clickInside", key: shown });
-  };
   const onClick = (event: MouseEvent) => {
     const key = itemKeyAt(event.target);
-    if (key === null) return clickInside(event.target);
+    if (key === null) return;
     cancelLeave();
     if (!dispatch({ kind: "click", key })) return;
     if (buttonKey(event.target) === null) {
       // A menu row's click also closes the menu, so it goes through; BB's
-      // toggle then shuts the window, which forgets the pin on unmount. Right
-      // after, the core opens it again and pins it.
-      setTimeout(() => {
-        dispatch({ kind: "hover", key });
-        dispatch({ kind: "click", key });
-      }, 0);
+      // toggle then shuts the window. Right after, the core opens it again.
+      setTimeout(() => dispatch({ kind: "hover", key }), 0);
       return;
     }
     event.preventDefault();
@@ -242,7 +233,8 @@ function installListeners(): () => void {
 }
 
 /**
- * Put one footer item under the shared window: hover opens it, a click pins it.
+ * Put one footer item under the shared window: hover opens it, the pin in its
+ * header pins it.
  * Call it in the plugin's setup with the controller `experimental_sidebarFooter.register`
  * returned. Returns the unregistration.
  */
@@ -266,6 +258,56 @@ export function useOpenOnHover(pluginId: string, enabled: boolean): void {
   useEffect(() => setOpenOnHover(pluginId, enabled), [pluginId, enabled]);
 }
 
+/** The item whose window a component renders in — set by `withFooterWindow`. */
+const ItemContext = createContext<FooterItem | null>(null);
+
+export const useFooterItem = (): FooterItem | null => useContext(ItemContext);
+
+const subscribe = (listener: () => void) => {
+  const listeners = registry().listeners;
+  listeners.add(listener);
+  return () => void listeners.delete(listener);
+};
+
+/** Whether the item's window is pinned; follows the pin and closing. */
+export function usePinned(item: FooterItem | null): boolean {
+  const key = item ? keyOf(item) : null;
+  const read = () => key !== null && registry().state.pinned === key;
+  return useSyncExternalStore(subscribe, read, read);
+}
+
+/** The window's frame — the box whose height the user sees. */
+const frameOf = (key: ItemKey): HTMLElement | null => {
+  const frame = sectionOf(key)?.firstElementChild;
+  return frame instanceof HTMLElement ? frame : null;
+};
+
+/**
+ * The pin in the window's header: pins the shown window at the height it shows now, or unpins it and holds that
+ * height, so the header stays under the pointer until it leaves.
+ */
+export function togglePin(item: FooterItem): void {
+  const key = keyOf(item);
+  const r = registry();
+  const { pinned, shown } = r.state;
+  const px = frameOf(key)?.getBoundingClientRect().height ?? 0;
+  if (pinned !== key && shown === key && px > 0) writeHeight(key, { kind: "fixed", px: Math.round(px) });
+  if (pinned === key) r.holds.get(key)?.();
+  dispatch({ kind: "pin", key });
+}
+
+/**
+ * Keep the window at the height it shows now until it closes, without pinning it:
+ * for content that swaps in place, so the window neither jumps nor grows over the
+ * thread list. Outside a footer window it does nothing.
+ */
+export function useHoldHeight(): () => void {
+  const item = useFooterItem();
+  return useCallback(() => {
+    if (item) registry().holds.get(keyOf(item))?.();
+  }, [item]);
+}
+
 /** Drop every registration and listener — between tests. */
 export function resetFooterWindowsForTests(): void {
   const r = registry();
@@ -274,8 +316,8 @@ export function resetFooterWindowsForTests(): void {
   r.entries.clear();
   r.openOnHover.clear();
   r.listeners.clear();
+  r.holds.clear();
   r.state = CLOSED;
-  r.pinnedPx = null;
 }
 
 // localStorage throws where storage is disabled; the window then simply hugs.
@@ -318,8 +360,9 @@ function setStyles(element: HTMLElement, styles: Readonly<Record<string, string>
  * Restyle BB's window frame for one item while its component is mounted: a
  * line on top instead of the rounded frame, no 320 px ceiling, no opening
  * animation — the window is there at once, its content fills in as it loads —,
- * the remembered height while pinned, the pinned one's height while shown over
- * it, and a handle on the top edge to drag it. Returns the restoration.
+ * the height it had when pinned (or was dragged to) while pinned, a held height
+ * while unpinned, and a handle on the top edge to drag it.
+ * Returns the restoration.
  */
 function attachFrame(node: HTMLElement, key: ItemKey): () => void {
   const section = node.closest("section");
@@ -339,6 +382,7 @@ function attachFrame(node: HTMLElement, key: ItemKey): () => void {
   ];
 
   let dragged: WindowHeight | null = null;
+  let held: WindowHeight = HUG;
   const apply = (height: WindowHeight) => {
     const room = roomAbove(section);
     const px = height.kind === "fixed" ? `${Math.min(height.px, room)}px` : "";
@@ -359,11 +403,15 @@ function attachFrame(node: HTMLElement, key: ItemKey): () => void {
     touchAction: "none",
   });
   const fit = () => {
-    const r = registry();
-    const pinned = r.state.pinned === key;
+    const pinned = registry().state.pinned === key;
     handle.style.display = pinned ? "block" : "none";
-    apply(windowHeight(key, r.state, dragged ?? readHeight(key), r.pinnedPx ?? null));
-    if (pinned) r.pinnedPx = Math.round(frame.getBoundingClientRect().height) || null;
+    apply(pinned ? (dragged ?? readHeight(key)) : held);
+  };
+  // An unpinned window keeps the first height it was held at; a pinned one being let go keeps the height it shows now.
+  const hold = () => {
+    const px = Math.round(frame.getBoundingClientRect().height);
+    if ((held.kind === "hug" || registry().state.pinned === key) && px > 0) held = { kind: "fixed", px };
+    fit();
   };
 
   handle.addEventListener("pointerdown", (down) => {
@@ -391,12 +439,14 @@ function attachFrame(node: HTMLElement, key: ItemKey): () => void {
   });
 
   section.append(handle);
-  const listeners = registry().listeners;
+  const { listeners, holds } = registry();
   listeners.add(fit);
+  holds.set(key, hold);
   window.addEventListener("resize", fit);
   fit();
   return () => {
     listeners.delete(fit);
+    if (holds.get(key) === hold) holds.delete(key);
     window.removeEventListener("resize", fit);
     handle.remove();
     saved.forEach(([element, name, value]) => element.style.setProperty(name, value));
@@ -427,9 +477,11 @@ export function withFooterWindow<P extends { dismiss(): void }>(Component: Compo
       dismiss();
     }, [dismiss]);
     return (
-      <div ref={anchor} style={{ display: "contents" }}>
-        <Component {...props} dismiss={close} />
-      </div>
+      <ItemContext.Provider value={item}>
+        <div ref={anchor} style={{ display: "contents" }}>
+          <Component {...props} dismiss={close} />
+        </div>
+      </ItemContext.Provider>
     );
   }
   FooterWindow.displayName = `FooterWindow(${Component.displayName ?? Component.name})`;

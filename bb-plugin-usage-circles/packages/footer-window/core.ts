@@ -1,5 +1,5 @@
 // Layer 1 — pure: how the one window above BB's sidebar footer row reacts to
-// hover, leave, a click on an item or inside its window, and how tall it is.
+// hover, leave, a click on an item, the pin in its header, and how tall it is.
 // BB shows a single disclosure at a time, so "a window over the pinned one"
 // means showing it in the pinned one's place and bringing the pinned one back
 // when the pointer leaves.
@@ -8,7 +8,7 @@
 export type ItemKey = string;
 
 export interface WindowState {
-  /** The window a click fixed in place. */
+  /** The window the pin in its header fixed in place. */
   readonly pinned: ItemKey | null;
   /** The window BB is showing now. */
   readonly shown: ItemKey | null;
@@ -25,8 +25,8 @@ export type WindowEvent =
   | { readonly kind: "click"; readonly key: ItemKey }
   /** BB or the window itself closed it (Escape, dismiss). */
   | { readonly kind: "closed"; readonly key: ItemKey }
-  /** A click inside the item's window: the window stays until its item is clicked. */
-  | { readonly kind: "clickInside"; readonly key: ItemKey };
+  /** The pin in the item's window header: pins the shown window, or unpins it and leaves it shown until the pointer leaves. */
+  | { readonly kind: "pin"; readonly key: ItemKey };
 
 /** What to ask BB's disclosure controllers to do. */
 export type Command = { readonly kind: "none" } | { readonly kind: "open"; readonly key: ItemKey } | { readonly kind: "close"; readonly key: ItemKey };
@@ -53,16 +53,16 @@ export function step(state: WindowState, event: WindowEvent): Step {
         ? { state: CLOSED, command: { kind: "close", key: state.shown }, swallowClick: false }
         : { state: { ...state, shown: state.pinned }, command: { kind: "open", key: state.pinned }, swallowClick: false };
     case "click":
-      // BB's own toggle closes the pinned window and opens a closed one.
-      if (state.shown !== event.key) return stay({ pinned: event.key, shown: event.key });
-      return state.pinned === event.key
-        ? stay(CLOSED)
-        : { state: { pinned: event.key, shown: event.key }, command: NONE, swallowClick: true };
+      // Only the pin pins. BB's own toggle opens a closed window, shown like a
+      // hovered one, and closes the pinned one; a hovered one stays as it is.
+      if (state.shown !== event.key) return stay({ ...state, shown: event.key });
+      return state.pinned === event.key ? stay(CLOSED) : { state, command: NONE, swallowClick: true };
     case "closed":
       if (state.shown === event.key) return stay(CLOSED);
       return state.pinned === event.key ? stay({ ...state, pinned: null }) : stay(state);
-    case "clickInside":
-      return state.shown === event.key ? stay({ pinned: event.key, shown: event.key }) : stay(state);
+    case "pin":
+      if (state.shown !== event.key) return stay(state);
+      return stay({ pinned: state.pinned === event.key ? null : event.key, shown: event.key });
   }
 }
 
@@ -71,18 +71,8 @@ export type WindowHeight = { readonly kind: "hug" } | { readonly kind: "fixed"; 
 
 export const HUG: WindowHeight = { kind: "hug" };
 
-/**
- * The height a window shows at: the pinned one keeps its own; while one is
- * pinned, a window shown in its place takes the pinned one's height, so moving
- * between items does not jump; with nothing pinned a window hugs its content.
- */
-export const windowHeight = (key: ItemKey, state: WindowState, own: WindowHeight, pinnedPx: number | null): WindowHeight => {
-  if (state.pinned === key) return own;
-  return state.pinned !== null && pinnedPx !== null ? { kind: "fixed", px: pinnedPx } : HUG;
-};
-
 /** BB's page of a plugin in Tools, where its settings sections render. */
-export const pluginSettingsPath = (pluginId: string): string => `/extensions/plugins/${encodeURIComponent(pluginId)}`;
+export const pluginSettingsPath = (pluginId: string): string => `/settings/plugins/${encodeURIComponent(pluginId)}`;
 
 export interface Drag {
   readonly startPx: number;

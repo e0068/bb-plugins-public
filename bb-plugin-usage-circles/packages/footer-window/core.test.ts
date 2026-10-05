@@ -1,7 +1,7 @@
 import fc from "fast-check";
 import { describe, expect, it } from "vitest";
 
-import { CLOSED, HUG, dragHeight, heightFromStorage, heightToStorage, step, windowHeight, type WindowEvent, type WindowState } from "./core";
+import { CLOSED, HUG, dragHeight, heightFromStorage, heightToStorage, step, type WindowEvent, type WindowState } from "./core";
 
 const keys = fc.constantFrom("a/1", "a/2", "b/1");
 const event: fc.Arbitrary<WindowEvent> = fc.oneof(
@@ -9,9 +9,13 @@ const event: fc.Arbitrary<WindowEvent> = fc.oneof(
   fc.constant({ kind: "leave" } as const),
   keys.map((key) => ({ kind: "click", key }) as const),
   keys.map((key) => ({ kind: "closed", key }) as const),
-  keys.map((key) => ({ kind: "clickInside", key }) as const),
+  keys.map((key) => ({ kind: "pin", key }) as const),
 );
 const run = (events: readonly WindowEvent[]): WindowState => events.reduce((state, e) => step(state, e).state, CLOSED);
+const PIN_A: readonly WindowEvent[] = [
+  { kind: "hover", key: "a/1" },
+  { kind: "pin", key: "a/1" },
+];
 
 describe("step", () => {
   it("hovering an item shows its window", () => {
@@ -27,30 +31,33 @@ describe("step", () => {
     expect(step(shown, { kind: "leave" })).toEqual({ state: CLOSED, command: { kind: "close", key: "a/1" }, swallowClick: false });
   });
 
-  it("a click on a window opened by hover pins it and keeps bb from toggling it shut", () => {
+  it("a click on a window opened by hover neither pins it nor lets bb toggle it shut", () => {
     const shown = run([{ kind: "hover", key: "a/1" }]);
-    expect(step(shown, { kind: "click", key: "a/1" })).toEqual({
-      state: { pinned: "a/1", shown: "a/1" },
-      command: { kind: "none" },
-      swallowClick: true,
-    });
+    expect(step(shown, { kind: "click", key: "a/1" })).toEqual({ state: shown, command: { kind: "none" }, swallowClick: true });
   });
 
-  it("a click on a closed item lets bb open it and pins it", () => {
+  it("a click on a closed item lets bb open it, shown like a hovered one and not pinned", () => {
     expect(step(CLOSED, { kind: "click", key: "a/1" })).toEqual({
-      state: { pinned: "a/1", shown: "a/1" },
+      state: { pinned: null, shown: "a/1" },
       command: { kind: "none" },
       swallowClick: false,
     });
   });
 
-  it("a second click on the pinned item lets bb close it and unpins", () => {
-    const pinned = run([{ kind: "click", key: "a/1" }]);
-    expect(step(pinned, { kind: "click", key: "a/1" })).toEqual({ state: CLOSED, command: { kind: "none" }, swallowClick: false });
+  it("a click on the pinned item lets bb close it and unpins", () => {
+    expect(step(run(PIN_A), { kind: "click", key: "a/1" })).toEqual({ state: CLOSED, command: { kind: "none" }, swallowClick: false });
+  });
+
+  it("no click on an item ever pins it", () => {
+    fc.assert(
+      fc.property(fc.array(event.filter((e) => e.kind !== "pin")), (events) => {
+        expect(run(events).pinned).toBeNull();
+      }),
+    );
   });
 
   it("hovering another item over a pinned window shows it, leaving brings the pinned one back", () => {
-    const over = run([{ kind: "click", key: "a/1" }, { kind: "hover", key: "b/1" }]);
+    const over = run([...PIN_A, { kind: "hover", key: "b/1" }]);
     expect(over).toEqual({ pinned: "a/1", shown: "b/1" });
     expect(step(over, { kind: "leave" })).toEqual({
       state: { pinned: "a/1", shown: "a/1" },
@@ -59,34 +66,41 @@ describe("step", () => {
     });
   });
 
-  it("clicking a hovered item over a pinned one pins the hovered instead", () => {
-    const over = run([{ kind: "click", key: "a/1" }, { kind: "hover", key: "b/1" }]);
-    expect(step(over, { kind: "click", key: "b/1" }).state).toEqual({ pinned: "b/1", shown: "b/1" });
+  it("clicking a hovered item over a pinned one keeps the pin where it was", () => {
+    const over = run([...PIN_A, { kind: "hover", key: "b/1" }]);
+    expect(step(over, { kind: "click", key: "b/1" }).state).toEqual({ pinned: "a/1", shown: "b/1" });
   });
 
-  it("a click inside the hovered window pins it and leaves the click to the content", () => {
+  it("the pin in the hovered window's header pins it", () => {
     const shown = run([{ kind: "hover", key: "a/1" }]);
-    expect(step(shown, { kind: "clickInside", key: "a/1" })).toEqual({
+    expect(step(shown, { kind: "pin", key: "a/1" })).toEqual({
       state: { pinned: "a/1", shown: "a/1" },
       command: { kind: "none" },
       swallowClick: false,
     });
   });
 
-  it("a click inside a window that is not the shown one changes nothing", () => {
+  it("the pin of the pinned window unpins it and leaves it shown until the pointer leaves", () => {
+    const pinned = run(PIN_A);
+    const unpinned = step(pinned, { kind: "pin", key: "a/1" }).state;
+    expect(unpinned).toEqual({ pinned: null, shown: "a/1" });
+    expect(step(unpinned, { kind: "leave" }).state).toEqual(CLOSED);
+  });
+
+  it("the pin of a window that is not shown changes nothing", () => {
     const shown = run([{ kind: "hover", key: "a/1" }]);
-    expect(step(shown, { kind: "clickInside", key: "b/1" })).toEqual({ state: shown, command: { kind: "none" }, swallowClick: false });
+    expect(step(shown, { kind: "pin", key: "b/1" })).toEqual({ state: shown, command: { kind: "none" }, swallowClick: false });
   });
 
   it("bb closing the pinned window unpins it", () => {
-    const pinned = run([{ kind: "click", key: "a/1" }]);
+    const pinned = run(PIN_A);
     expect(step(pinned, { kind: "closed", key: "a/1" }).state).toEqual(CLOSED);
   });
 
   it("hovering the shown item again and leaving the pinned one change nothing", () => {
     const shown = run([{ kind: "hover", key: "a/1" }]);
     expect(step(shown, { kind: "hover", key: "a/1" })).toEqual({ state: shown, command: { kind: "none" }, swallowClick: false });
-    const pinned = run([{ kind: "click", key: "a/1" }]);
+    const pinned = run(PIN_A);
     expect(step(pinned, { kind: "leave" })).toEqual({ state: pinned, command: { kind: "none" }, swallowClick: false });
   });
 
@@ -126,24 +140,6 @@ describe("dragHeight", () => {
 
   it("a ceiling below the floor yields the floor", () => {
     expect(dragHeight({ startPx: 300, startY: 0, y: 0 }, { min: 80, max: 40 })).toBe(80);
-  });
-});
-
-describe("windowHeight", () => {
-  const own = { kind: "fixed", px: 300 } as const;
-
-  it("the pinned window keeps its own height", () => {
-    expect(windowHeight("a/1", { pinned: "a/1", shown: "a/1" }, own, 420)).toEqual(own);
-    expect(windowHeight("a/1", { pinned: "a/1", shown: "a/1" }, HUG, 420)).toEqual(HUG);
-  });
-
-  it("a window shown over a pinned one takes the pinned one's height", () => {
-    expect(windowHeight("b/1", { pinned: "a/1", shown: "b/1" }, own, 420)).toEqual({ kind: "fixed", px: 420 });
-  });
-
-  it("with nothing pinned, or the pinned height not yet measured, a window hugs", () => {
-    expect(windowHeight("b/1", { pinned: null, shown: "b/1" }, own, 420)).toEqual(HUG);
-    expect(windowHeight("b/1", { pinned: "a/1", shown: "b/1" }, own, null)).toEqual(HUG);
   });
 });
 

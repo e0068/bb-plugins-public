@@ -6,10 +6,9 @@
 // hands the answer — usage and ring style — to the icons, which BB renders
 // outside any plugin context. The plugin's settings get a Ring section with a
 // slider per ring dimension.
-import { useEffect, useRef, type ComponentType } from "react";
+import { useEffect, useRef } from "react";
 import { definePluginApp, useRpc, useSettings } from "@get-bb/plugin-sdk/app";
-import { pluginSettingsPath, registerFooterWindow, useOpenOnHover, withFooterWindow } from "@bb-plugins/footer-window";
-import { Button } from "./components/ui/button";
+import { registerFooterWindow, useOpenOnHover, withFooterWindow } from "@bb-plugins/footer-window";
 import { providerPanel, publishRingStyle, publishUsage, ringIcon } from "./lib/footer-items";
 import { RingSettings } from "./lib/ring-settings";
 import { FOOTER_RINGS, type StateWire } from "./lib/usage-model";
@@ -48,27 +47,6 @@ function UsageFeed() {
   return null;
 }
 
-type WindowProps = { dismiss(): void };
-
-/** A ring's window: a header with the ring's name and the way to settings, drawn at once, over the provider's limits. */
-function withHeader(title: string, Panel: ComponentType<WindowProps>): ComponentType<WindowProps> {
-  function UsageWindow(props: WindowProps) {
-    return (
-      <div className="flex flex-col">
-        <div className="flex h-9 shrink-0 items-center gap-1 pr-1 pl-3">
-          <h2 className="truncate text-sm font-semibold text-foreground">{title}</h2>
-          <Button asChild variant="ghost" size="sm" className="ml-auto h-7 px-2 text-muted-foreground">
-            <a href={pluginSettingsPath(PLUGIN_ID)}>Settings</a>
-          </Button>
-        </div>
-        <Panel {...props} />
-      </div>
-    );
-  }
-  UsageWindow.displayName = `UsageWindow(${title})`;
-  return UsageWindow;
-}
-
 function RingSection() {
   const rpc = useRpc<typeof rpcContract>();
   return <RingSettings save={(dims) => rpc.call("setRingDims", dims)} reset={() => rpc.call("resetRingDims", null)} />;
@@ -91,7 +69,7 @@ export default definePluginApp((app) => {
       id: ring.id,
       label: ring.label,
       icon,
-      component: withFooterWindow(withHeader(ring.label, providerPanel(ring.providerId, ring.kind)), item),
+      component: withFooterWindow(providerPanel(ring.providerId, ring.kind, `${ring.label.split(" — ")[0]} Limits`), item),
     });
     registerFooterWindow({ ...item, label: ring.label }, controller);
   }
