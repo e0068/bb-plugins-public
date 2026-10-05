@@ -1,7 +1,7 @@
 import fc from "fast-check";
 import { describe, expect, it } from "vitest";
 
-import { CLOSED, HUG, dragHeight, heightFromStorage, heightToStorage, step, type WindowEvent, type WindowState } from "./core";
+import { CLOSED, HUG, dragHeight, heightFromStorage, heightToStorage, step, windowHeight, type WindowEvent, type WindowState } from "./core";
 
 const keys = fc.constantFrom("a/1", "a/2", "b/1");
 const event: fc.Arbitrary<WindowEvent> = fc.oneof(
@@ -126,6 +126,24 @@ describe("dragHeight", () => {
 
   it("a ceiling below the floor yields the floor", () => {
     expect(dragHeight({ startPx: 300, startY: 0, y: 0 }, { min: 80, max: 40 })).toBe(80);
+  });
+});
+
+describe("windowHeight", () => {
+  const own = { kind: "fixed", px: 300 } as const;
+
+  it("the pinned window keeps its own height", () => {
+    expect(windowHeight("a/1", { pinned: "a/1", shown: "a/1" }, own, 420)).toEqual(own);
+    expect(windowHeight("a/1", { pinned: "a/1", shown: "a/1" }, HUG, 420)).toEqual(HUG);
+  });
+
+  it("a window shown over a pinned one takes the pinned one's height", () => {
+    expect(windowHeight("b/1", { pinned: "a/1", shown: "b/1" }, own, 420)).toEqual({ kind: "fixed", px: 420 });
+  });
+
+  it("with nothing pinned, or the pinned height not yet measured, a window hugs", () => {
+    expect(windowHeight("b/1", { pinned: null, shown: "b/1" }, own, 420)).toEqual(HUG);
+    expect(windowHeight("b/1", { pinned: "a/1", shown: "b/1" }, own, null)).toEqual(HUG);
   });
 });
 

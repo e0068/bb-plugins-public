@@ -71,6 +71,19 @@ export type WindowHeight = { readonly kind: "hug" } | { readonly kind: "fixed"; 
 
 export const HUG: WindowHeight = { kind: "hug" };
 
+/**
+ * The height a window shows at: the pinned one keeps its own; while one is
+ * pinned, a window shown in its place takes the pinned one's height, so moving
+ * between items does not jump; with nothing pinned a window hugs its content.
+ */
+export const windowHeight = (key: ItemKey, state: WindowState, own: WindowHeight, pinnedPx: number | null): WindowHeight => {
+  if (state.pinned === key) return own;
+  return state.pinned !== null && pinnedPx !== null ? { kind: "fixed", px: pinnedPx } : HUG;
+};
+
+/** BB's page of a plugin in Tools, where its settings sections render. */
+export const pluginSettingsPath = (pluginId: string): string => `/extensions/plugins/${encodeURIComponent(pluginId)}`;
+
 export interface Drag {
   readonly startPx: number;
   readonly startY: number;

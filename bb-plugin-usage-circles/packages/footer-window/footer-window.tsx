@@ -16,6 +16,7 @@ import {
   heightFromStorage,
   heightToStorage,
   step,
+  windowHeight,
   type Command,
   type ItemKey,
   type WindowEvent,
@@ -23,7 +24,7 @@ import {
   type WindowState,
 } from "./core";
 
-/** How long the pointer may stay off a hovered window before it closes. */
+/** How long the pointer may stay in the footer's gaps, off a hovered window, before it closes. */
 export const HOVER_LEAVE_MS = 400;
 /** A pointer that cannot hover (a finger) never opens a window by hovering. */
 const HOVER_QUERY = "(hover: hover)";
@@ -66,6 +67,8 @@ interface Registry {
   readonly listeners: Set<() => void>;
   state: WindowState;
   removeListeners: (() => void) | null;
+  /** The pinned window's height as last drawn; a registry made by an older copy has none. */
+  pinnedPx?: number | null;
 }
 
 const REGISTRY = Symbol.for("bb-plugins.footer-window.v1");
@@ -91,8 +94,9 @@ function dispatch(event: WindowEvent): boolean {
   const r = registry();
   const next = step(r.state, event);
   r.state = next.state;
-  run(next.command);
+  // Listeners first: the pinned window measures itself while it is still on screen.
   r.listeners.forEach((listener) => listener());
+  run(next.command);
   return next.swallowClick;
 }
 
@@ -128,6 +132,14 @@ const isOver = (target: EventTarget | null, key: ItemKey): boolean =>
   itemKeyAt(target) === key || (target instanceof Node && !!sectionOf(key)?.contains(target));
 
 /**
+ * The footer's gaps between an item and its window, and an open overflow menu:
+ * the pointer crosses them on its way to the window, so leaving waits there.
+ * Anywhere else the hovered window closes at once.
+ */
+const inGrace = (target: EventTarget | null): boolean =>
+  target instanceof Element && target.closest('[data-sidebar="footer"], [role="menu"]') !== null;
+
+/**
  * Closing a window, BB hands focus to its item's button. A window that closed
  * because the pointer left must not pull focus out of the field the user types
  * in: the first focus move after the close goes back where focus was.
@@ -160,15 +172,17 @@ function installListeners(): () => void {
     cancelLeave();
     dispatch({ kind: "hover", key });
   };
+  const leave = () => {
+    cancelLeave();
+    keepFocusWhereItWas();
+    dispatch({ kind: "leave" });
+  };
   /** The pointer is at `target`; `null` — it left the app. */
   const pointerAt = (target: EventTarget | null) => {
     const { shown, pinned } = registry().state;
     if (shown === null || shown === pinned || (target !== null && isOver(target, shown))) return cancelLeave();
-    leaveTimer ??= setTimeout(() => {
-      leaveTimer = null;
-      keepFocusWhereItWas();
-      dispatch({ kind: "leave" });
-    }, HOVER_LEAVE_MS);
+    if (!inGrace(target)) return leave();
+    leaveTimer ??= setTimeout(leave, HOVER_LEAVE_MS);
   };
   const onMove = (event: MouseEvent) => pointerAt(event.target);
   // The sidebar sits at the window's edge: a pointer leaving the app from the
@@ -261,6 +275,7 @@ export function resetFooterWindowsForTests(): void {
   r.openOnHover.clear();
   r.listeners.clear();
   r.state = CLOSED;
+  r.pinnedPx = null;
 }
 
 // localStorage throws where storage is disabled; the window then simply hugs.
@@ -301,9 +316,10 @@ function setStyles(element: HTMLElement, styles: Readonly<Record<string, string>
 
 /**
  * Restyle BB's window frame for one item while its component is mounted: a
- * line on top instead of the rounded frame, no 320 px ceiling, no height
- * animation, the remembered height while pinned and a handle on the top edge
- * to drag it. Returns the restoration.
+ * line on top instead of the rounded frame, no 320 px ceiling, no opening
+ * animation — the window is there at once, its content fills in as it loads —,
+ * the remembered height while pinned, the pinned one's height while shown over
+ * it, and a handle on the top edge to drag it. Returns the restoration.
  */
 function attachFrame(node: HTMLElement, key: ItemKey): () => void {
   const section = node.closest("section");
@@ -317,8 +333,9 @@ function attachFrame(node: HTMLElement, key: ItemKey): () => void {
       "border-radius": "0",
       background: "transparent",
       transition: "none",
+      animation: "none",
     }),
-    ...setStyles(frame, { height: "", "max-height": "" }),
+    ...setStyles(frame, { height: "", "max-height": "", transition: "none", animation: "none" }),
   ];
 
   let dragged: WindowHeight | null = null;
@@ -342,9 +359,11 @@ function attachFrame(node: HTMLElement, key: ItemKey): () => void {
     touchAction: "none",
   });
   const fit = () => {
-    const pinned = registry().state.pinned === key;
+    const r = registry();
+    const pinned = r.state.pinned === key;
     handle.style.display = pinned ? "block" : "none";
-    apply(pinned ? (dragged ?? readHeight(key)) : HUG);
+    apply(windowHeight(key, r.state, dragged ?? readHeight(key), r.pinnedPx ?? null));
+    if (pinned) r.pinnedPx = Math.round(frame.getBoundingClientRect().height) || null;
   };
 
   handle.addEventListener("pointerdown", (down) => {
