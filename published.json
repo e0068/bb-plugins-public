@@ -38,10 +38,5 @@
     "version": "0.2.4",
     "commit": "1de8790b6447217f2f4efc6afe94314ad0ef6e80",
     "publishedAt": "2026-10-04T18:25:09.700Z"
-  },
-  "bb-plugin-zz-pull-request": {
-    "version": "0.1.29",
-    "commit": "0e99a018f865128aea398c6500943c70ca1efa4c",
-    "publishedAt": "2026-09-16T12:11:36.283Z"
   }
 }
