@@ -41,10 +41,17 @@ describe("файл исполнителя по id", () => {
     ["agent:reviewer", "/home/owner/.claude/agents/team/reviewer.md"],
     ["agent:scout", "/work/bb-plugins/.claude/agents/scout.md"],
     ["agent:cm:critic", "/cache/cm/1.0/agents/critic.md"],
-    ["agent:codex/coder", "/home/owner/.codex/agents/coder.toml"],
-    ["workflow:DEV2", "/home/owner/.claude/workflows/dev2.js"],
   ])("%s — его файл на хосте сервера", async (id, path) => {
     expect(await readExecutorFile(sources(), id)).toEqual({ hostId: "host_local", path });
+  });
+
+  it.each([
+    ["agent:codex/coder", /coder\.toml\.md$/, '```toml\nname = "coder"\n```\n'],
+    ["workflow:DEV2", /dev2\.js\.md$/, '```js\nexport const meta = { name: "DEV2" }\n```\n'],
+  ])("%s — не markdown, поэтому правая панель получает его текст снимком в блоке кода markdown", async (id, path, text) => {
+    const file = await readExecutorFile(sources(), id);
+    expect(file).toEqual({ hostId: "host_local", path: expect.stringMatching(path) });
+    expect(await readFile(file!.path, "utf8")).toBe(text);
   });
 
   it("неизвестный исполнитель или нет хоста — null", async () => {
@@ -53,22 +60,27 @@ describe("файл исполнителя по id", () => {
   });
 });
 
-describe("файл своего скрипта", () => {
-  it("текст скрипта ложится файлом с его именем, путь — на хосте сервера", async () => {
+describe("файл своего скрипта открывается просмотрщиком markdown", () => {
+  it("снимок — .md рядом с именем скрипта на хосте сервера, текст скрипта целиком в блоке кода с языком по расширению", async () => {
     const file = await writeScriptFile({ id: "s-1", name: "deploy.sh", content: "#!/bin/sh\necho hi\n" }, async () => "host_local");
-    expect(file).toEqual({ hostId: "host_local", path: expect.stringMatching(/s-1\/deploy\.sh$/) });
-    expect(await readFile(file!.path, "utf8")).toBe("#!/bin/sh\necho hi\n");
+    expect(file).toEqual({ hostId: "host_local", path: expect.stringMatching(/s-1\/deploy\.sh\.md$/) });
+    expect(await readFile(file!.path, "utf8")).toBe("```sh\n#!/bin/sh\necho hi\n```\n");
   });
 
-  it("имя и id не выводят файл из своей папки", async () => {
+  it("обратные кавычки внутри скрипта не закрывают блок кода раньше конца скрипта", async () => {
+    const file = await writeScriptFile({ id: "s-2", name: "notes.mjs", content: "const md = `\n````\n`;" }, async () => "h");
+    expect(await readFile(file!.path, "utf8")).toBe("`````mjs\nconst md = `\n````\n`;\n`````\n");
+  });
+
+  it("имя и id не выводят снимок из своей папки", async () => {
     const file = await writeScriptFile({ id: "../../x", name: "../../evil.sh", content: "" }, async () => "h");
-    expect(file!.path).toMatch(/bb-flow-scripts\/[^/]+\/evil\.sh$/);
+    expect(file!.path).toMatch(/bb-flow-scripts\/[^/]+\/evil\.sh\.md$/);
   });
 
-  it("id и имя из одних точек не поднимаются из папки снимков и не пишут в каталог", async () => {
+  it("id и имя из одних точек не поднимаются из папки снимков, блок кода — без языка", async () => {
     const file = await writeScriptFile({ id: "..", name: "..", content: "x" }, async () => "h");
-    expect(file!.path).toMatch(/bb-flow-scripts\/script\/script$/);
-    expect(await readFile(file!.path, "utf8")).toBe("x");
+    expect(file!.path).toMatch(/bb-flow-scripts\/script\/script\.md$/);
+    expect(await readFile(file!.path, "utf8")).toBe("```\nx\n```\n");
   });
 });
 
