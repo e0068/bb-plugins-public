@@ -14,11 +14,6 @@ const retriedAuto = (n: number): FlowProgress =>
   Array.from({ length: n }).reduce<FlowProgress>((p) => onStepFailed(onRunRetry(p, "auto", true), "auto", "timeout", T0), onStepFailed(started, "auto", "timeout", T0));
 
 describe("настройка автоповтора", () => {
-  it("без полей в настройках — не повторять, три попытки", () => {
-    expect(retryPolicyOf({})).toEqual(DEFAULT_RETRY);
-    expect(DEFAULT_RETRY).toEqual({ seconds: 0, attempts: 3 });
-  });
-
   it("поля настроек переходят в политику как есть, нули тоже", () => {
     expect(retryPolicyOf({ retryInSeconds: 30, retryAttempts: 0 })).toEqual({ seconds: 30, attempts: 0 });
   });

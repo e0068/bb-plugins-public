@@ -785,10 +785,10 @@ export const briefDraftRpcContract = defineRpcContract({
  * бы дописывать его в каждый тест брифа.
  */
 export const dispatchRpcContract = defineRpcContract({
-  /** Последний выбор места в проекте треда: с него виджет открывает бриф. */
+  /** Последний выбор места в проекте треда: с него виджет открывает бриф; `compact` — окно треда дошло до зоны предвыбора компактации. */
   getDispatchPlace: {
     input: z.object({ threadId: text }),
-    output: z.object({ place: dispatchPlaceSchema, route: dispatchRouteSchema.optional() }),
+    output: z.object({ place: dispatchPlaceSchema, route: dispatchRouteSchema.optional(), compact: z.boolean().optional() }),
   },
   /** Проекты bb, кроме проекта треда: третья колонка выбора места. Список — удобство, поэтому сбой возвращается отказом, а не ошибкой. */
   listProjects: {

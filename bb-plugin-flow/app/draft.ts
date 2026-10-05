@@ -35,7 +35,7 @@ export type Draft = {
   place?: DispatchPlace;
   /** Дерево и ветка нового треда — выбор владельца поверх последнего в проекте. */
   route?: DispatchRoute;
-  /** Сперва компактировать тред — только при «в этом треде»; каждый бриф открывается без неё. */
+  /** Сперва компактировать тред — только при «в этом треде»; без касания владельца — предвыбор по зоне контекста. */
   compact?: boolean;
   /** Комментарий к Демонстрации; пустой — «Продолжить», написанный — «Отправить». */
   outcomeNote?: string;
@@ -91,17 +91,21 @@ export const routeIn = (draft: Draft, fallback: DispatchRoute): DispatchRoute =>
 
 export const setCompact = (draft: Draft, compact: boolean): Draft => ({ ...draft, compact });
 
+/** Компактация — выбор владельца поверх предвыбора по зоне контекста треда. */
+export const compactIn = (draft: Draft, fallback: boolean): boolean => draft.compact ?? fallback;
+
 /**
  * Место и маршрут на отправку: маршрут едет только с новым тредом — в этом треде
- * дерева и ветки не выбирают, а компактация — только с этим тредом. Место живёт в
+ * дерева и ветки не выбирают, а компактация — только с этим тредом: выбор владельца
+ * или, без него, предвыбор по зоне контекста. Место живёт в
  * черновике, а маршрут может прийти из памяти проекта, поэтому пара сводится
  * `withPlace`: уезжает ровно то, что показано.
  */
-export const settleDispatch = (draft: Draft, place: DispatchPlace, route: DispatchRoute): Draft => {
-  const { route: _route, compact, ...rest } = draft;
+export const settleDispatch = (draft: Draft, place: DispatchPlace, route: DispatchRoute, compact: boolean): Draft => {
+  const { route: _route, compact: _compact, ...rest } = draft;
   const settled = placeIn(draft, place);
   return settled === "here"
-    ? { ...rest, place: settled, ...(compact === true ? { compact } : {}) }
+    ? { ...rest, place: settled, ...(compactIn(draft, compact) ? { compact: true } : {}) }
     : { ...rest, place: settled, route: withPlace(routeIn(draft, route), settled) };
 };
 

@@ -6,7 +6,7 @@
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import { z } from "zod";
 
-import { DEFAULT_ALERT_TOKENS, DEFAULT_WARN_TOKENS, contextShare, isOrderedPair, thresholdsOrDefault } from "../core/context";
+import { COMPACT_PRESELECT_LABELS, DEFAULT_ALERT_TOKENS, DEFAULT_COMPACT_PRESELECT, DEFAULT_WARN_TOKENS, compactPreselectOf, contextShare, contextTone, isOrderedPair, preselectsCompact, thresholdsOrDefault } from "../core/context";
 import type { ContextFillView } from "../shared/contract";
 
 export type ContextSource = { threads: { events: Pick<BbPluginApi["sdk"]["threads"]["events"], "list"> } };
@@ -44,11 +44,11 @@ export const readContextFill = async (source: ContextSource, threadId: string): 
 };
 
 /**
- * Что отдают настройки плагина: обе ручки свободные и могут быть пусты.
+ * Что отдают настройки плагина: пороги и предвыбор компактации свободные и могут быть пусты.
  * Пороги прошлой версии в процентах лежали под другими ключами и не читаются:
  * без окна треда перевести их в токены нечем, поэтому действуют умолчания.
  */
-export type ContextSettingValues = { contextWarnTokens?: unknown; contextAlertTokens?: unknown };
+export type ContextSettingValues = { contextWarnTokens?: unknown; contextAlertTokens?: unknown; compactPreselect?: unknown };
 export type ContextSettings = () => Promise<ContextSettingValues>;
 
 const tokens = z.number().int().nonnegative();
@@ -102,4 +102,30 @@ export const contextFillOf = async (source: ContextSource, settings: ContextSett
   if (fill === null) return null;
   const values: ContextSettingValues = await settings().catch(() => ({}));
   return { ...fill, ...thresholdsOrDefault(values.contextWarnTokens, values.contextAlertTokens) };
+};
+
+/** Предвыбор компактации — выбор из трёх подписей; по умолчанию — с жёлтой зоны. */
+export const compactPreselectSetting = {
+  compactPreselect: {
+    type: "select" as const,
+    label: "Preselect thread compaction",
+    description: "When a brief opens, «Compact the thread first» is already chosen once the context window reaches this zone of the second bar. The yellow zone includes the red one.",
+    options: [COMPACT_PRESELECT_LABELS.never, COMPACT_PRESELECT_LABELS.warn, COMPACT_PRESELECT_LABELS.alert],
+    default: COMPACT_PRESELECT_LABELS[DEFAULT_COMPACT_PRESELECT],
+  },
+};
+
+/**
+ * Открывается ли бриф треда с выбранной компактацией: окно дошло до зоны,
+ * выбранной в настройке. При «не выбирать» журнал треда не читается. Настройки
+ * не прочитались или числа нет — не предвыбираем: лишняя компактация стоит
+ * владельцу контекста, а забытая — только клика.
+ */
+export const compactPreselectedOf = async (source: ContextSource, settings: ContextSettings, threadId: string): Promise<boolean> => {
+  const values: ContextSettingValues | null = await settings().catch(() => null);
+  if (values === null) return false;
+  const preselect = compactPreselectOf(values.compactPreselect);
+  if (preselect === "never") return false;
+  const fill = await readContextFill(source, threadId);
+  return fill !== null && preselectsCompact(preselect, contextTone(fill.usedTokens, thresholdsOrDefault(values.contextWarnTokens, values.contextAlertTokens)));
 };

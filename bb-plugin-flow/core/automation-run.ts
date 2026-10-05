@@ -147,7 +147,7 @@ const idle = ({ busy: _busy, retryAt: _retryAt, ...run }: NonNullable<StageTrack
 /** Автоповтор упавшего шага: через сколько секунд и сколько раз подряд; 0 секунд — не повторять, 0 попыток — без ограничения. */
 export type RetryPolicy = { seconds: number; attempts: number };
 
-export const DEFAULT_RETRY: RetryPolicy = { seconds: 0, attempts: 3 };
+export const DEFAULT_RETRY: RetryPolicy = { seconds: 30, attempts: 10 };
 
 /** Автоповтор из настроек Flow; поля нет — значение по умолчанию. */
 export const retryPolicyOf = (settings: Pick<FlowSettings, "retryInSeconds" | "retryAttempts">): RetryPolicy => ({
@@ -155,8 +155,8 @@ export const retryPolicyOf = (settings: Pick<FlowSettings, "retryInSeconds" | "r
   attempts: settings.retryAttempts ?? DEFAULT_RETRY.attempts,
 });
 
-/** Будить ли агента треда, когда последняя попытка шага упала; поля нет — не будить. */
-export const wakesAgentAfterLastRetry = (settings: Pick<FlowSettings, "wakeAgentAfterLastRetry">): boolean => settings.wakeAgentAfterLastRetry ?? false;
+/** Будить ли агента треда, когда последняя попытка шага упала; поля нет — будить. */
+export const wakesAgentAfterLastRetry = (settings: Pick<FlowSettings, "wakeAgentAfterLastRetry">): boolean => settings.wakeAgentAfterLastRetry ?? true;
 
 /** Через сколько мс повторить упавший шаг сам; `null` — автоповтор выключен или попытки этого шага кончились, шаг ждёт владельца. */
 export const retryDelay = (policy: RetryPolicy, track: StageTrack | undefined): number | null => {

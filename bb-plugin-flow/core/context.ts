@@ -96,3 +96,35 @@ export const shortTokens = (tokens: number): string => {
   if (value < 1_000_000) return `${Math.round(value / 1_000)}k`;
   return `${Number((value / 1_000_000).toFixed(1))}M`;
 };
+
+/**
+ * Когда бриф открывается с уже выбранной компактацией треда: никогда, с жёлтой
+ * зоны второй полосы или только в красной. Зоны — те же пороги, что красят полосу.
+ */
+export type CompactPreselect = "never" | "warn" | "alert";
+
+/** Подписи вариантов в настройке: хост показывает и хранит именно их, поэтому вариант читается обратно по подписи. */
+export const COMPACT_PRESELECT_LABELS: Readonly<Record<CompactPreselect, string>> = {
+  never: "Never",
+  warn: "In the yellow zone",
+  alert: "In the red zone",
+};
+
+/** Умолчание — с жёлтой зоны: компактировать стоит раньше, чем окно подойдёт к концу. */
+export const DEFAULT_COMPACT_PRESELECT: CompactPreselect = "warn";
+
+/** Вариант по значению настройки; непонятное значение — умолчание. */
+export const compactPreselectOf = (value: unknown): CompactPreselect =>
+  (Object.keys(COMPACT_PRESELECT_LABELS) as CompactPreselect[]).find((preselect) => COMPACT_PRESELECT_LABELS[preselect] === value) ?? DEFAULT_COMPACT_PRESELECT;
+
+/** Предвыбрана ли компактация при таком тоне полосы: жёлтая зона включает и красную. */
+export function preselectsCompact(preselect: CompactPreselect, tone: ContextTone): boolean {
+  switch (preselect) {
+    case "never":
+      return false;
+    case "warn":
+      return tone !== "normal";
+    case "alert":
+      return tone === "alert";
+  }
+}

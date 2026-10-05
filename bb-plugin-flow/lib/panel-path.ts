@@ -3,3 +3,6 @@ export const FLOWS_PANEL_PATH = "flows";
 
 /** Адрес страницы flow в bb: панель живёт на `/plugins/<id плагина>/<путь панели>/*`, хвост — id flow. */
 export const flowRoute = (flowId: string): string => `/plugins/flow/${FLOWS_PANEL_PATH}/${encodeURIComponent(flowId)}`;
+
+/** Страница настроек плагина в bb — её открывает и «Settings» в Tools: язык, пороги контекста и разделы Flow. */
+export const SETTINGS_ROUTE = "/settings/plugins/flow";
