@@ -5,7 +5,7 @@
 // часть каталога — секция настроек остаётся рабочей и без подсказок.
 import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
-import { basename, join } from "node:path";
+import { basename, extname, join } from "node:path";
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 
 import { installedPluginDirs, parseAgentFile, parseCodexAgentFile, parseWorkflowFile, skillOrigin } from "../core/catalog";
@@ -111,31 +111,45 @@ export const readStageCatalog = async (sources: CatalogSources): Promise<StageCa
 
 export type ExecutorFileSources = CatalogSources & { primaryHostId: () => Promise<string | null> };
 
-/** Файл агента или workflow по id исполнителя и хост сервера; исполнитель не нашёлся или хоста нет — `null`. */
-export const readExecutorFile = async (sources: ExecutorFileSources, id: string): Promise<SkillFile> => {
-  const [entries, hostId] = await Promise.all([readExecutorEntries(sources), settled(sources.primaryHostId, null)]);
-  const found = entries.find((entry) => entry.executor.id === id);
-  return hostId === null || found === undefined ? null : { hostId, path: found.path };
-};
-
 /** Имя без разделителей пути: id и имя скрипта приходят от страницы и не должны вывести файл из своей папки; «.» и «..» — тоже путь. */
 const safeName = (name: string): string => {
   const safe = basename(name).replace(/[^\w.-]/g, "_");
   return /^\.*$/.test(safe) ? "script" : safe;
 };
 
+/** Текст в блоке кода markdown с языком по расширению имени; ограда длиннее любой серии обратных кавычек текста. */
+const codeBlock = (name: string, content: string): string => {
+  const fence = "`".repeat(Math.max(3, ...(content.match(/`+/g) ?? []).map((run) => run.length + 1)));
+  return `${fence}${extname(name).slice(1)}\n${content}${content.endsWith("\n") ? "" : "\n"}${fence}\n`;
+};
+
 /**
- * Свой скрипт живёт текстом в настройках flow, файла у него нет; чтобы показать его в правой панели, текст ложится
- * файлом во временную папку сервера — снимком для чтения, правка снимка скрипт не меняет.
+ * Снимок текста для правой панели — markdown во временной папке сервера, только для чтения: правка снимка источник
+ * не меняет. Его открывает bb-plugin-md-opener: файл кода bb открыл бы своим monaco-editor, а тот не читает файл
+ * хоста без окружения, и панель осталась бы пустой.
  */
+const writeSnapshot = async (key: string, name: string, content: string): Promise<string> => {
+  const safe = safeName(name);
+  const dir = join(tmpdir(), "bb-flow-scripts", safeName(key));
+  const path = join(dir, `${safe}.md`);
+  await mkdir(dir, { recursive: true });
+  await writeFile(path, codeBlock(safe, content), "utf8");
+  return path;
+};
+
+/** Свой скрипт живёт текстом в настройках flow, файла у него нет — правая панель получает его снимком. */
 export const writeScriptFile = async (script: Pick<AutomationScript, "id" | "name" | "content">, primaryHostId: () => Promise<string | null>): Promise<SkillFile> => {
   const hostId = await settled(primaryHostId, null);
-  if (hostId === null) return null;
-  const dir = join(tmpdir(), "bb-flow-scripts", safeName(script.id));
-  const path = join(dir, safeName(script.name));
-  await mkdir(dir, { recursive: true });
-  await writeFile(path, script.content, "utf8");
-  return { hostId, path };
+  return hostId === null ? null : { hostId, path: await writeSnapshot(script.id, script.name, script.content) };
+};
+
+/** Файл агента или workflow по id исполнителя и хост сервера: markdown — сам файл, остальное — снимок; исполнитель не нашёлся, файл не прочитался или хоста нет — `null`. */
+export const readExecutorFile = async (sources: ExecutorFileSources, id: string): Promise<SkillFile> => {
+  const [entries, hostId] = await Promise.all([readExecutorEntries(sources), settled(sources.primaryHostId, null)]);
+  const found = entries.find((entry) => entry.executor.id === id);
+  if (hostId === null || found === undefined) return null;
+  if (extname(found.path) === ".md") return { hostId, path: found.path };
+  return settled(async () => ({ hostId, path: await writeSnapshot(id, basename(found.path), await sources.readFile(found.path)) }), null);
 };
 
 export type SkillFileSources = {

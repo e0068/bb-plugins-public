@@ -64,8 +64,8 @@ const OVERLAY = "absolute inset-0 enabled:hover:bg-state-hover disabled:cursor-d
 /** Левая часть строки: на узкой карточке занимает обе линии до чекбокса, на широкой — две первые колонки, до чисел. */
 const LEFT = "col-start-1 col-end-7 row-start-1 row-end-3 flex min-w-0 items-center gap-2.5 py-2.5 pl-3 pr-2.5 text-left @[34rem]:col-end-3 @[34rem]:row-end-2 @[34rem]:py-1.5";
 
-/** Числа: вторая линия на узкой карточке, первая — на широкой; риск на узкой прижат влево, под начало подписи. */
-const NUM = "row-start-2 pt-2 pb-2.5 pr-2.5 text-right tabular-nums leading-5 @[34rem]:row-start-1 @[34rem]:py-1.5 pointer-events-none relative";
+/** Числа: вторая линия на узкой карточке, первая — на широкой, где по вертикали стоят по центру строки, как чекбокс; риск на узкой прижат влево, под начало подписи. */
+const NUM = "row-start-2 pt-2 pb-2.5 pr-2.5 text-right tabular-nums leading-5 @[34rem]:row-start-1 @[34rem]:self-center @[34rem]:py-1.5 pointer-events-none relative";
 const CELLS = {
   risk: "col-start-2 text-left @[34rem]:col-start-3 @[34rem]:text-right",
   minutes: "col-start-3 @[34rem]:col-start-4",
@@ -349,7 +349,7 @@ function CriterionRows({ view, lines, priced }: { view: StagesTableView; lines: 
       <div key={`criterion-${i}`} data-criterion={i} className={ROW}>
         <div className={LEFT}>
           <Label icon={null} numbers={line !== undefined}>
-            <span className={cn("line-clamp-2 min-w-0", !kept && "text-muted-foreground line-through opacity-40")}>
+            <span className={cn("min-w-0", !kept && "text-muted-foreground line-through opacity-40")}>
               <LinkedText text={criterionTitle(item)} />
             </span>
           </Label>
