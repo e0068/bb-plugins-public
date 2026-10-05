@@ -8,7 +8,7 @@ import { awaitingKind } from "../core/awaiting";
 import { liveIssues, nextFlowIssues } from "../core/outcome";
 import { DECISION_ID_PREFIX, directiveLine } from "../core/directive";
 import { criterionEditable, money, plannedMinutes, recommendedForecast } from "../core/budget";
-import { FLOW_RULE, SELF_ONLY_RULE, isAutomationStage, isStageCarryKey, reportIssues, stageInstructions, withStepResults } from "../core/stages";
+import { FLOW_RULE, SELF_ONLY_RULE, isAskedStage, isAutomationStage, isStageCarryKey, reportIssues, stageInstructions, withStepResults } from "../core/stages";
 import { isHeadingStage } from "../core/sub-stages";
 import { stageKindOf, type BuiltinKind } from "../lib/stage-constants";
 import { FORK_ZERO_RULE, OPTION_PRICE_RULE, askDecisionParamsSchema, type AskDecisionParams, type Criterion, type DecisionBrief, type Planning, type RestoredDraft, type StageSettings } from "../shared/contract";
@@ -106,10 +106,10 @@ const launchedIssues = (setup: AskDecisionParams["setup"], stages: StageSettings
       ];
 };
 
-/** Итог — про запущенную работу и про этап Демонстрации из flow треда. */
+/** Итог — про запущенную работу и про этап Демонстрации из flow треда; flow без Вопросов, Критериев и Выбора этапов запуска не ждёт. */
 const outcomeIssues = (outcome: AskDecisionParams["outcome"], launched: boolean, stages: StageSettings["stages"], flowIds: readonly string[]): string[] => {
   if (outcome === undefined) return [];
-  if (!launched) return ["an outcome reports a stage of running work, and the work in this thread has not started yet: send a brief with setup.stages first"];
+  if (!launched && stages.some(isAskedStage)) return ["an outcome reports a stage of running work, and the work in this thread has not started yet: send a brief with setup.stages first"];
   const demos = stages.filter((stage) => stageKindOf(stage) === "demo").map((s) => s.id);
   return [
     ...(demos.includes(outcome.stage) ? [] : [`outcome.stage ${outcome.stage} is not a demo stage of the thread's flow: ${demos.length === 0 ? "the flow has none" : demos.join(", ")}`]),
