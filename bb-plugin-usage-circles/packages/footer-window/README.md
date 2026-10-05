@@ -1,17 +1,27 @@
 # footer-window
 
-One window for every plugin item in BB's sidebar footer: hover opens an item's window, a click on the item or inside the window pins it, only a click on its item closes it again, a click on another item pins that one instead, a pinned window resizes by its top edge, and hovering another item while one is pinned shows that item's window in its place, at the pinned window's height, until the pointer leaves; with nothing pinned a hovered window hugs its content. The window opens at once, with no animation: each plugin draws its header right away and fills the content in as it loads. A hovered window closes the moment the pointer moves past the footer; only in the footer's own gaps and in an open overflow menu does it wait a moment, so the pointer can cross from the item to the window. BB's rounded frame around the window becomes the thin line BB draws under the top menu.
+One window for every plugin item in BB's sidebar footer: hover opens an item's window, only the pin in the window's header pins it — at the height the window shows at that moment — and the pin again unpins it — a click on the item never pins: it opens a closed window like hover does, leaves a hovered one as it is and closes the pinned one, a pinned window resizes by its top edge, and hovering another item while one is pinned shows that item's window in its place, at its own height, until the pointer leaves. The window opens at once, with no animation: its header is drawn right away and the content fills in as it loads. A hovered window closes the moment the pointer moves past the footer; only in the footer's own gaps and in an open overflow menu does it wait a moment, so the pointer can cross from the item to the window. BB's rounded frame around the window becomes a line in BB's sidebar border colour.
 
-- [core.ts](core.ts) — pure: `step(state, event)` — what hover, leave, click, a click inside the window and close do to the one pinned and the one shown window, and which disclosure to open or close; `windowHeight` — the pinned window's own height, the pinned one's height for a window shown over it, hugging otherwise; `dragHeight` and the stored-height codec; `pluginSettingsPath` — the plugin's page in Tools, for the settings action in a window's header.
+- [core.ts](core.ts) — pure: `step(state, event)` — what hover, leave, a click, the pin and close do to the one pinned and the one shown window, and which disclosure to open or close; `dragHeight` and the stored-height codec; `pluginSettingsPath` — the plugin's page in BB's settings, where its settings sections render.
 - [footer-window.tsx](footer-window.tsx) — the DOM and React shell:
   - `registerFooterWindow({ pluginId, itemId, label }, controller)` — call in the plugin's setup with the controller `experimental_sidebarFooter.register({ kind: "disclosure" })` returned;
   - `withFooterWindow(Component, { pluginId, itemId })` — wrap the item's disclosure component: the frame restyle, the height (remembered per item in `localStorage`, hugging the content until dragged) and the resize handle on a pinned window;
+  - `usePinned` and `togglePin` — the pin's state and press, for the header;
+  - `useHoldHeight()` — for content that swaps in place (Notifications' Show read): keeps the window at the height it shows now, unpinned, until it closes, so it neither jumps nor grows over the thread list;
   - `useOpenOnHover(pluginId, enabled)` — from an invisible overlay that reads the plugin's "Open on hover" setting.
 
 ```tsx
 const item = { pluginId: "archived-sidebar", itemId: "archived" };
 const controller = app.experimental_sidebarFooter.register({ kind: "disclosure", id: item.itemId, label: "Archived", icon: "Archive", component: withFooterWindow(Panel, item) });
 registerFooterWindow({ ...item, label: "Archived" }, controller);
+```
+
+- [window-view.tsx](window-view.tsx) — `FooterWindow`, the one window every plugin draws in: `FooterWindowHeader` — an optional leading icon (a provider's logo in Usage Circles), the title, a count, the plugin's actions, the way to its settings and the pin — over the plugin's content.
+
+```tsx
+<FooterWindow icon={logo} title="Notifications" count={3} actions={[{ id: "read-all", label: "Mark all read", icon, onClick }]}>
+  {list}
+</FooterWindow>
 ```
 
 Every plugin bundle carries its own copy of this package, while the window is one per app: the state, the controllers and the document listeners live in a registry on `globalThis` under `Symbol.for("bb-plugins.footer-window.v1")`, and the first plugin to register installs the listeners. BB draws the footer and the window frame outside any plugin root, so the styles here are inline, on BB's theme tokens.
