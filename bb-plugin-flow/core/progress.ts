@@ -207,7 +207,7 @@ export const setStageInRun = (progress: FlowProgress, id: string, run: boolean):
 };
 
 /**
- * Доработка: закрытый этап `id` начинают снова — он открывается со своими ссылками, а все тронутые этапы после него теряют
+ * Доработка: закрытый этап `id` начинают снова — он открывается со своими ссылками и возвращается в прогон, а все тронутые этапы после него теряют
  * готовность и ждут своего прохода, иначе автоматизация за ними не наступила бы и правки доработки остались бы
  * незакоммиченными. Траты сброшенных проходов копятся в `earlier`. Старт незакрытого этапа ничего не меняет: нетронутые
  * этапы раньше закрытых — обычный прогон, а не доработка.
@@ -216,7 +216,11 @@ export const reopen = (progress: FlowProgress, stages: readonly WorkStage[], id:
   const index = stages.findIndex((stage) => stage.id === id);
   if (index < 0 || progress.stages[id]?.finishedAt === undefined) return progress;
   const later = stages.slice(index + 1).map((stage) => stage.id).filter((after) => touched(progress.stages[after]));
-  const own = patch(progress, id, (track) => ({ ...cleared(track), ...(track.results === undefined ? {} : { results: track.results }) }));
+  // Сам этап агент снова делает — он в прогоне, даже если владелец его не брал: иначе автоматизация за ним наступила бы на «started».
+  const own = patch(progress, id, (track) => {
+    const { skipped: _skipped, ...kept } = cleared(track);
+    return { ...kept, ...(track.results === undefined ? {} : { results: track.results }) };
+  });
   const reset = later.reduce((p, after) => patch(p, after, cleared), own);
   return { ...reset, waiting: reset.waiting.filter((waiting) => !later.includes(waiting)) };
 };

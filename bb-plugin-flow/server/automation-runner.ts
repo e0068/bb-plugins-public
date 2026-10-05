@@ -40,6 +40,7 @@ import {
   type RetryPolicy,
   type RunStep,
   conflictWakeText,
+  failureWakeText,
   onAgentWoken,
 } from "../core/automation-run";
 import { automationRpcContract, type AutomationScript, type FlowProgress, type AgentLogo, type RunningIcon, type RunningThread, type StageSettings, type StepAnswer, type WorkStage } from "../shared/contract";
@@ -80,6 +81,8 @@ export interface AutomationRunnerDeps {
   now: () => string;
   /** Автоповтор упавшего шага — читается в момент падения и в момент повтора; нет — не повторять. */
   retry?: () => RetryPolicy;
+  /** Будить ли агента, когда последняя попытка шага упала и шаг ждёт владельца — читается в момент падения; нет — не будить. */
+  wakeOnFailure?: () => boolean;
   /** Таймер автоповтора; ответ снимает его. Нет — таймер процесса. */
   schedule?: (run: () => void, ms: number) => () => void;
   /** Итог этапа-автоматизации — владельцу тостом; этапы Action не сообщают: их шаги жмёт сам владелец. Нет — молчать. */
@@ -247,6 +250,15 @@ export const createAutomationRunner = (deps: AutomationRunnerDeps): AutomationRu
     }
   };
 
+  /** Шаг автоматизации ждёт владельца: тост о падении, а при включённой настройке — реплика агенту треда. */
+  const ownerWaits = async (threadId: string, stage: WorkStage, stepId: string, error: string): Promise<void> => {
+    notify({ kind: "failed", threadId, stage, stepId, error });
+    if (isActionStage(stage) || deps.wakeOnFailure?.() !== true) return;
+    const record = await deps.progress.get(threadId);
+    const idle = record === null ? [] : idleStages(record, deps.stages(threadId).stages);
+    await deps.wake?.(threadId, failureWakeText(stage, stepId, error, idle)).catch(deps.onError);
+  };
+
   const execute = (stage: WorkStage, step: RunStep, threadId: string): Promise<StepOutcome> => {
     const automation = stage.automation;
     if (automation !== undefined && !("source" in automation)) return deps.external(automation.id, threadId);
@@ -291,7 +303,7 @@ export const createAutomationRunner = (deps: AutomationRunnerDeps): AutomationRu
         if (stale()) return false;
         await deps.store.putAwaiting(threadId, { briefId: awaitingId(stage.id), kind: "automation" });
         // Пока впереди автоповтор, падение видно только в баннере: тост — когда шаг ждёт владельца.
-        if (delay === null) notify({ kind: "failed", threadId, stage, stepId: step.id, error: outcome.error });
+        if (delay === null) await ownerWaits(threadId, stage, step.id, outcome.error);
         else if (!stale()) arm(threadId, stage.id, delay);
         return false;
       }
@@ -475,7 +487,7 @@ export const createAutomationRunner = (deps: AutomationRunnerDeps): AutomationRu
     await deps.progress.annotate(threadId, (p) => onRetryDropped(p, stageId));
     const failed = await failedRun(threadId, stageId);
     const step = failed?.run.steps[failed.run.at];
-    if (failed !== null && step !== undefined) notify({ kind: "failed", threadId, stage: failed.stage, stepId: step.id, error: failed.run.error ?? "" });
+    if (failed !== null && step !== undefined) await ownerWaits(threadId, failed.stage, step.id, failed.run.error ?? "");
   };
 
   /**

@@ -291,6 +291,8 @@ export const flowSettingsSchema = z
     /** Автоповтор упавшего шага автоматизации: через сколько секунд (0 или нет поля — не повторять) и сколько раз подряд (0 — без ограничения). */
     retryInSeconds: z.number().int().min(0).max(RETRY_LIMITS.seconds).optional(),
     retryAttempts: z.number().int().min(0).max(RETRY_LIMITS.attempts).optional(),
+    /** Реплика агенту треда, когда последняя попытка шага автоматизации упала и шаг ждёт владельца; нет поля — не слать. */
+    wakeAgentAfterLastRetry: z.boolean().optional(),
     automationSets: z.array(automationSetSchema).optional(),
     stageTemplates: z.array(stageTemplateSchema).optional(),
     version: z.literal(2).optional(),

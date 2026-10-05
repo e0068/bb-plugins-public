@@ -10,7 +10,7 @@
 import { createContext, Fragment, useContext, useEffect, useRef, useState, type ReactNode } from "react";
 import { useBbNavigate, useRpc } from "@get-bb/plugin-sdk/app";
 
-import { retryPolicyOf } from "../core/automation-run";
+import { retryPolicyOf, wakesAgentAfterLastRetry } from "../core/automation-run";
 import { executorGroups, skillGroups, skillShortName, type ExecutorGroup } from "../core/catalog";
 import { expandStages, flowStage, nestableFlows, setFlowStages } from "../core/flows";
 import { stageLabel } from "../core/stages";
@@ -21,6 +21,7 @@ import { FieldOverlay, overlayItem, useFieldOverlay } from "../components/ui/fie
 import { Button } from "../components/ui/button";
 import { Icon } from "../components/ui/icon";
 import { Input } from "../components/ui/input";
+import { Switch } from "../components/ui/switch";
 import { clearedSkill, isNewStageName, RETRY_LIMITS, stageSkillOf, STAGE_BUTTON_WIDTH as WIDTH, type BuiltinKind } from "../lib/stage-constants";
 import { cn } from "../lib/utils";
 import type { AutomationScript, Flow, flowSettingsRpcContract, SkillFile, SkillOrigin, StageCatalog, StageExecutor, WorkStage } from "../shared/contract";
@@ -1018,6 +1019,16 @@ function WorkStages({ flowId }: { flowId: string }) {
   );
 }
 
+/** Настройка-переключатель строкой, как числовая; пока настройки не прочитаны — недоступна. */
+function SwitchSetting(props: { label: string; checked: boolean | undefined; onChange: (checked: boolean) => void }) {
+  return (
+    <label className="flex min-h-11 items-center gap-3 rounded-lg bg-surface-recessed-solid px-3 py-2 text-[13px]">
+      <span className="flex-1">{props.label}</span>
+      <Switch aria-label={props.label} checked={props.checked === true} disabled={props.checked === undefined} onCheckedChange={props.onChange} />
+    </label>
+  );
+}
+
 /** Числовая настройка строкой: набранное сохраняется по уходу фокуса, зажатое в пределы; нечисло не сохраняется. */
 function NumberSetting(props: { label: string; ariaLabel: string; unit?: string; min: number; max: number; step: number; value: number | undefined; onSave: (value: number) => void }) {
   const [typed, setTyped] = useState<string | null>(null);
@@ -1097,6 +1108,12 @@ export function AutomationRetry() {
           onSave={(retryAttempts) => updateFlowSettings((s) => ({ ...s, retryAttempts }))}
         />
         <p className="text-xs text-muted-foreground">{t.settings.retryHint}</p>
+        <SwitchSetting
+          label={t.settings.wakeAfterLastRetry}
+          checked={settings === null ? undefined : wakesAgentAfterLastRetry(settings)}
+          onChange={(wakeAgentAfterLastRetry) => updateFlowSettings((s) => ({ ...s, wakeAgentAfterLastRetry }))}
+        />
+        <p className="text-xs text-muted-foreground">{t.settings.wakeAfterLastRetryHint}</p>
       </div>
     </Loading>
   );
