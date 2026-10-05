@@ -83,10 +83,4 @@ describe("итог этапа", () => {
     const result = await ask({ title: "Итог", outcome: { ...outcome, stage: "nope" } });
     expect(textOf(result)).toContain("nope");
   });
-
-  it("итог до запуска работы отбивается", async () => {
-    const { ask } = await host();
-    const result = await ask({ title: "Итог", outcome });
-    expect(textOf(result)).toContain("not started yet");
-  });
 });

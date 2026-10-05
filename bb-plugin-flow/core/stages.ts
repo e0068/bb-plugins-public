@@ -27,13 +27,16 @@ export type StageChoice = { run: boolean; executor: string };
 /** Встроенные виды, которые бриф спрашивает у владельца до работы. */
 const ASKED: readonly BuiltinKind[] = ["questions", "criteria", "select"];
 
+/** Этап, который бриф спрашивает у владельца до работы: flow без таких этапов запуска не ждёт. */
+export const isAskedStage = (stage: Pick<WorkStage, "id" | "kind">): boolean => (ASKED as readonly string[]).includes(stageKindOf(stage));
+
 /** Этапы, на которые бриф отвечает сам: ведущий ряд несделанных Вопросов, Критериев и Выбора этапов в отчёте. */
 export const askedStageIds = (brief: DecisionBrief): string[] => {
   const list = brief.stages?.list ?? [];
   const todo = (brief.setup?.stages ?? []).filter((r) => r.state === "todo");
   const asked = (id: string) => {
     const stage = list.find((s) => s.id === id);
-    return stage !== undefined && (ASKED as readonly string[]).includes(stageKindOf(stage));
+    return stage !== undefined && isAskedStage(stage);
   };
   const firstOther = todo.findIndex((r) => !asked(r.id));
   return (firstOther === -1 ? todo : todo.slice(0, firstOther)).map((r) => r.id);
