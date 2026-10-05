@@ -109,12 +109,41 @@ export async function liveAheadOf(path: string | null, base: ResolvedBase): Prom
  */
 export type PrBranchOutcome = "opened" | RefreshOutcome;
 
+/**
+ * Ветка открытого PR догоняется до ветки треда, а PR не открывается: так
+ * «Смёрджить PR» перед мёрджем доносит коммиты, сделанные после «Открыть PR»,
+ * — PR собран через API без пуша, и иначе они на GitHub не попадают.
+ * `"no-open-pr"` — открытого PR нет: доносить некуда, решает сам мёрдж.
+ */
+export async function refreshOpenPr(sdk: Sdk, kv: PluginKvStorage, token: string, threadId: string): Promise<RefreshOutcome | "no-open-pr"> {
+  const found = await openPrOf(sdk, kv, token, threadId);
+  return found.open === null ? "no-open-pr" : (await found.refresh()).branch;
+}
+
 export async function gatherAndCreate(
   sdk: Sdk,
   kv: PluginKvStorage,
   token: string,
   threadId: string,
 ): Promise<{ url: string; number: number; branch: PrBranchOutcome }> {
+  const found = await openPrOf(sdk, kv, token, threadId);
+  return found.open === null ? found.create() : found.refresh();
+}
+
+/**
+ * Открытый PR ветки треда и два пути от него: догнать его ветку до ветки
+ * треда или, если его нет, открыть новый. Одно чтение треда, окружения и
+ * статуса на оба пути — «Открыть PR» и «Смёрджить PR» не расходятся.
+ */
+async function openPrOf(
+  sdk: Sdk,
+  kv: PluginKvStorage,
+  token: string,
+  threadId: string,
+): Promise<
+  | { open: null; create: () => Promise<{ url: string; number: number; branch: PrBranchOutcome }> }
+  | { open: { url: string; number: number }; refresh: () => Promise<{ url: string; number: number; branch: RefreshOutcome }> }
+> {
   // The whole thread, not just its environment id: its name is one of the
   // sources the PR is named from (see choosePrTitle below).
   const thread = await sdk.threads.get({ threadId });
@@ -147,7 +176,7 @@ export async function gatherAndCreate(
   // Ветку открытого PR шаг догоняет до ветки треда: PR собран через API, без
   // пуша, и закоммиченное после открытия иначе на GitHub не попадает.
   const open = alreadyOpenPr(pr, await askLiveOpenPrForEnv(sdk, () => Promise.resolve(token), env, base));
-  if (open !== null) {
+  const refresh = async (found: { url: string; number: number }) => {
     // bb ещё держит прошлый PR — значку нужно время, чтобы увидеть этот.
     if (pr.presence !== "open") await markAwaiting(sdk, environmentId, "publish");
     // Содержимое берётся с диска: незакоммиченное ушло бы в PR кодом, которого
@@ -155,21 +184,24 @@ export async function gatherAndCreate(
     // переставленный на неё PR стал бы пустым.
     const gate = decideVisibility({ ...visibilityWorkspace(status.workspace, await liveAheadOf(env.path, base)), pr: "absent" });
     if (gate.reason === "dirty") throw new Error("Can't update the open PR right now (dirty) — commit the changes first.");
-    return { ...open, branch: gate.visible ? await runRefreshPr(github, await content()) : "unchanged" };
-  }
-  const liveAhead = await liveAheadOf(env.path, base);
-  const decision = await resolveVisibility(
-    visibilityPorts(kv, environmentId, env.path, base),
-    { workspace: visibilityWorkspace(status.workspace, liveAhead), pr: pr.presence },
-  );
-  if (!decision.visible) {
-    throw new Error(`Can't open a PR right now (${decision.reason}).`);
-  }
-  const payload = await content();
+    return { ...found, branch: gate.visible ? await runRefreshPr(github, await content()) : ("unchanged" as const) };
+  };
+  const create = async () => {
+    const liveAhead = await liveAheadOf(env.path, base);
+    const decision = await resolveVisibility(
+      visibilityPorts(kv, environmentId, env.path, base),
+      { workspace: visibilityWorkspace(status.workspace, liveAhead), pr: pr.presence },
+    );
+    if (!decision.visible) {
+      throw new Error(`Can't open a PR right now (${decision.reason}).`);
+    }
+    const payload = await content();
 
-  await markAwaiting(sdk, environmentId, "publish");
-  const created = await runCreatePr(github, { ...payload, baseBranch: base.githubBase });
-  return { ...created, branch: "opened" };
+    await markAwaiting(sdk, environmentId, "publish");
+    const created = await runCreatePr(github, { ...payload, baseBranch: base.githubBase });
+    return { ...created, branch: "opened" as const };
+  };
+  return open === null ? { open, create } : { open, refresh: () => refresh(open) };
 }
 
 /**

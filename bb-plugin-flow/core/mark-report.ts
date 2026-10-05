@@ -1,6 +1,7 @@
 // Слой 2 — чисто. Что наступает за этапом, который агент отметил сделанным, факт старта по записи прогресса и
 // строка ответа flow_stage об этом. «Started» ответ говорит только по записанному старту: обещание запуска,
 // которого не было, агент пересказывает владельцу. Ожидание записи — у server/progress.ts.
+import { currentName } from "../lib/stage-constants";
 import type { FlowProgress, StageTrack, WorkStage } from "../shared/contract";
 import { isActionStage, isAgentStage, isDue, isFailed, nextInRun, stoppedBy } from "./automation-run";
 
@@ -60,7 +61,7 @@ export const startFact = (stages: readonly WorkStage[], progress: FlowProgress, 
   return running === undefined ? null : { kind: "busy", stage: running.id };
 };
 
-const label = (stage: WorkStage): string => `${stage.id} "${stage.name}"`;
+const label = (stage: WorkStage): string => `${stage.id} "${currentName(stage)}"`;
 
 /** Следующий этап прогона за отмеченным владелец вернул чекбоксом после выбора этапов — агент знает прогон по брифу и иначе прошёл бы мимо. */
 export const returnedNote = (stages: readonly WorkStage[], progress: FlowProgress, markedId: string): string => {

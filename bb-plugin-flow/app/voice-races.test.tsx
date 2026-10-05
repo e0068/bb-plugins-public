@@ -60,7 +60,7 @@ const startIn = async (scope: ReturnType<typeof within>, name: string) => {
   return stop;
 };
 
-const criteria = async (slot: Slot) => within(await slot.findByRole("group", { name: "Готово, когда" }));
+const criteria = async (slot: Slot) => within(await slot.findByRole("group", { name: "Definition of Done" }));
 
 beforeEach(() => {
   vi.useFakeTimers({ toFake: ["Date"] });
@@ -163,10 +163,11 @@ describe("сбой записи не глушит голосовой ввод", 
 });
 
 describe("денежные поля без микрофона", () => {
-  it("у полей своей цены в таблице бюджета микрофона нет", async () => {
+  it("у полей своей цены в «Итого» микрофона нет", async () => {
     installMicrophone();
     const slot = open();
     const panel = within(await slot.findByRole("group", { name: "Этапы и бюджет" }));
+    fireEvent.click(panel.getByRole("button", { name: "Править цену" }));
     expect(panel.getByRole("textbox", { name: "Своя цель" })).toBeTruthy();
     expect(panel.queryAllByRole("button", { name: MIC })).toHaveLength(0);
   });

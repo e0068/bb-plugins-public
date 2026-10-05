@@ -76,7 +76,7 @@ export type DecisionStore = {
   putThreadCarry(threadId: string, carried: Carried): Promise<void>;
   /** Перенос треда; нет записи или она чужая — пустой перенос. */
   getThreadCarry(threadId: string): Promise<Carried>;
-  /** Утверждённое «Готово, когда» треда — итог последнего ответа с пунктами; пустой список запись снимает. */
+  /** Утверждённое Definition of Done треда — итог последнего ответа с пунктами; пустой список запись снимает. */
   putThreadCriteria(threadId: string, items: readonly string[]): Promise<void>;
   getThreadCriteria(threadId: string): Promise<string[]>;
   /** Утверждённый объём треда — цена, от которой считает бриф без своих пунктов. */

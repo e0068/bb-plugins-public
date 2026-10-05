@@ -128,3 +128,10 @@ describe("новый бриф с переносом", () => {
     expect(icon!.getAttribute("class")).toContain("shrink-0");
   });
 });
+
+describe("своя цена отвеченного брифа", () => {
+  it("в «Итого» отвеченного брифа карандаша нет", async () => {
+    const table = within(await render(brief, recordOf(answers(true), snapshot)).findByRole("group", { name: "Этапы и бюджет" }));
+    expect(table.queryByRole("button", { name: "Править цену" })).toBeNull();
+  });
+});

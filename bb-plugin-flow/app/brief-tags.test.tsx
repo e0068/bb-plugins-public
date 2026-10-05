@@ -41,7 +41,7 @@ describe("бирки частей брифа", () => {
   it("над вопросами, критерием и этапами — бирки вида; заголовка и подзаголовка агента в форме нет", async () => {
     const slot = open(brief);
     await slot.findByRole("group", { name: "Ответ на бриф" });
-    expect(tags(slot)).toEqual(["Вопросы", "Критерии · оставлено 2 из 2", "Выбор этапов"]);
+    expect(tags(slot)).toEqual(["Вопросы", "Definition of Done · оставлено 2 из 2", "Выбор этапов"]);
     expect(slot.queryByText("Заголовок агента")).toBeNull();
     expect(slot.queryByText("Подзаголовок агента")).toBeNull();
     expect(slot.getByRole("group", { name: "Заголовок агента" })).toBeTruthy();

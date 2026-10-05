@@ -67,9 +67,16 @@ describe("markAwaiting", () => {
 });
 
 describe("шаг git.merge", () => {
-  it("после попытки мёрджа на ветке стоит отметка merge", async () => {
+  it("после попытки мёрджа, догнавшего PR, на ветке стоит отметка merge", async () => {
     const path = repo();
-    const ports: StepPorts = { sdk: sdk(path), kv: { get: async () => undefined, set: async () => {}, delete: async () => {}, list: async () => [] } as never, settings: { get: async () => ({ githubToken: "token" }) }, plugins, ownPluginId: "flow" };
+    const ports: StepPorts = {
+      sdk: sdk(path),
+      kv: { get: async () => undefined, set: async () => {}, delete: async () => {}, list: async () => [] } as never,
+      settings: { get: async () => ({ githubToken: "token" }) },
+      plugins,
+      ownPluginId: "flow",
+      refreshPr: async () => "unchanged",
+    };
     await createSteps(ports)["git.merge"]("t1");
     expect(await readMark(gitClient(path), BRANCH)).toMatchObject({ kind: "merge" });
   });

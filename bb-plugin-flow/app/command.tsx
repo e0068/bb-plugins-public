@@ -14,6 +14,7 @@ import { useFlash } from "./flash";
 import { RESULT_ROW } from "./cells";
 import { LocaleProvider } from "./locale";
 import { useMessages } from "./locale-context";
+import { NoMath } from "./no-math";
 
 type Loaded = { kind: "loading" } | { kind: "error" } | { kind: "not_found" } | { kind: "found"; command: CommandRecord };
 
@@ -159,9 +160,11 @@ function CommandLoader({ id, source }: { id: string; source: string }) {
 
 export function CommandDirective(props: PluginMessageDirectiveProps) {
   return (
-    <LocaleProvider>
-      <Command {...props} />
-    </LocaleProvider>
+    <NoMath>
+      <LocaleProvider>
+        <Command {...props} />
+      </LocaleProvider>
+    </NoMath>
   );
 }
 

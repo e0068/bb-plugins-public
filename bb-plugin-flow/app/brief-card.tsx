@@ -1,5 +1,5 @@
 // Бриф нового вида — без рамки, шапки и подложек секций, во всю ширину ленты.
-// Сверху вопросы: что непонятно, решается первым. Под ними «Готово, когда»
+// Сверху вопросы: что непонятно, решается первым. Под ними Definition of Done
 // пунктами, которые владелец снимает, правит и дописывает. Ниже — один блок
 // стык в стык: артефакты, кнопки исполнителя, ревью, тестирования и бюджета,
 // раскрытый выбор, поле «Добавить своё» и строка с отправкой. В ячейках блока
@@ -400,7 +400,7 @@ function AnswerBlock({ brief, view, roots, footer, below }: { brief: DecisionBri
   );
 }
 
-// ——— «Готово, когда» ———
+// ——— Definition of Done ———
 
 const itemText = "min-w-0 flex-1 whitespace-pre-wrap break-words py-2 text-sm leading-relaxed";
 /**
@@ -617,7 +617,7 @@ function AddedRow({ view, index, text, removable }: { view: View; index: number;
   );
 }
 
-/** Утверждённое «Готово, когда» брифа посреди работы — свёрнуто строкой со счётом: владелец разворачивает, чтобы видеть весь список, к которому добавляется пункт варианта. */
+/** Утверждённое Definition of Done брифа посреди работы — свёрнуто строкой со счётом: владелец разворачивает, чтобы видеть весь список, к которому добавляется пункт варианта. */
 function ApprovedRows({ items }: { items: readonly string[] }) {
   const t = useMessages();
   const [open, setOpen] = useState(false);
@@ -822,7 +822,7 @@ function ConfirmRow({ question, view, ownLabel, onEnter }: { question: DecisionQ
   );
 }
 
-/** «Что я понял» — минимальный набор работы над вопросами; справа — база: сумма цен оставленных пунктов «Готово, когда». */
+/** «Что я понял» — минимальный набор работы над вопросами; справа — база: сумма цен оставленных пунктов Definition of Done. */
 function ScopeBlock({ brief, view, scope }: { brief: DecisionBrief; view: View; scope: string }) {
   const t = useMessages();
   const base = criteriaSum(brief, removedCriteria(brief, toAnswer(brief, view.draft)));

@@ -47,6 +47,7 @@ import { useLocale, useMessages } from "./locale-context";
 import { useFileRoots } from "./file-roots";
 import { FileRootsContext } from "./linked-text";
 import { VoiceErrorLine, VoiceProvider, useVoiceField } from "./voice";
+import { NoMath } from "./no-math";
 
 /** Канал `ANSWERED_CHANNEL` бэкенда; строкой, потому что `app` не берёт значений из `server`. */
 const ANSWERED_CHANNEL = "decisions:answered";
@@ -96,11 +97,13 @@ function useBrief(id: string) {
 
 export function DecisionDirective(props: PluginMessageDirectiveProps) {
   return (
-    <LocaleProvider>
-      <ProviderLogosProvider>
-        <Directive {...props} />
-      </ProviderLogosProvider>
-    </LocaleProvider>
+    <NoMath>
+      <LocaleProvider>
+        <ProviderLogosProvider>
+          <Directive {...props} />
+        </ProviderLogosProvider>
+      </LocaleProvider>
+    </NoMath>
   );
 }
 

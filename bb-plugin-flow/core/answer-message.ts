@@ -3,6 +3,7 @@
 // виджету, поэтому из контракта берутся только типы.
 import type { Locale } from "../lib/i18n";
 import { messages, type Messages } from "../lib/messages";
+import { currentName } from "../lib/stage-constants";
 import type { CriteriaAnswer, DecisionAnswer, DecisionBrief, DecisionQuestion, QuestionAnswer } from "../shared/contract";
 import { budgetLine, changeOf, criterionTitle, hasForecast, hasOwnBudget } from "./budget";
 import { carriedFor } from "./carry";
@@ -116,14 +117,15 @@ const stageDiffers = (brief: DecisionBrief, answer: DecisionAnswer, item: StageI
 /** Этап строки прогона: исполнитель назван, только когда этап исполняет не сам агент — у автоматизации его нет. */
 const runWords = (brief: DecisionBrief, answer: DecisionAnswer, item: StageItem, m: Messages["answer"], locale: Locale | undefined): string => {
   const executor = answeredStageChoice(brief, answer, item).executor;
-  return executor === SELF ? item.stage.name : m.runStage(item.stage.name, executorLabel(item.stage, executor, locale));
+  const name = currentName(item.stage);
+  return executor === SELF ? name : m.runStage(name, executorLabel(item.stage, executor, locale));
 };
 
 /** Расхождение по несделанному этапу словами: снят, добавлен или другой исполнитель; этап вне прогона с обеих сторон молчит. */
 const offWords = (brief: DecisionBrief, answer: DecisionAnswer, item: StageItem, m: Messages["answer"], locale: Locale | undefined): string[] => {
   const chosen = answeredStageChoice(brief, answer, item);
   const recommended = recommendedStageChoice(item);
-  const name = item.stage.name;
+  const name = currentName(item.stage);
   if (recommended.run && !chosen.run) return [m.dropped(name)];
   if (chosen.run && !recommended.run) return [m.added(name)];
   if (!chosen.run) return [];

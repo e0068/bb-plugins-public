@@ -200,6 +200,18 @@ export const setNote = (draft: Draft, text: string): Draft => ({ ...draft, note:
 
 export const setOwnBudget = (draft: Draft, field: keyof Draft["budget"], text: string): Draft => ({ ...draft, budget: { ...draft.budget, [field]: text } });
 
+export const restoreOwnBudget = (draft: Draft, budget: Draft["budget"]): Draft => ({ ...draft, budget });
+
+/** Поля правки цены в «Итого»: своё набранное, а где его нет — число прогноза. */
+export const seedOwnBudget = (own: Draft["budget"], forecast: Draft["budget"]): Draft["budget"] => ({
+  minutes: own.minutes.trim() === "" ? forecast.minutes : own.minutes,
+  target: own.target.trim() === "" ? forecast.target : own.target,
+  max: own.max.trim() === "" ? forecast.max : own.max,
+});
+
+/** Набранное в поле «Итого» своей ценой: число, совпавшее с прогнозом, своей ценой не считается. */
+export const typedOwnPrice = (text: string, forecast: string): string => (text === forecast ? "" : text);
+
 const withCriteria = (draft: Draft, patch: Partial<CriteriaDraft>): Draft => ({ ...draft, criteria: { ...draft.criteria, ...patch } });
 
 /** Крест снимает пункт, «Вернуть» — повторный вызов — возвращает его с прежней правкой. */

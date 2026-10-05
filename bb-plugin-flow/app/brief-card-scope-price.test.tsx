@@ -49,7 +49,7 @@ describe("цена этапа и база следуют за объёмом", (
 
   it("у заголовка «Готово, когда» — база: сумма оставленных пунктов", async () => {
     const slot = open();
-    const criteria = await slot.findByRole("group", { name: "Готово, когда" });
+    const criteria = await slot.findByRole("group", { name: "Definition of Done" });
     expect(criteria.textContent).toContain("+$10–16");
     fireEvent.click(within(criteria).getByRole("button", { name: "Пункт 1 не нужен" }));
     expect(criteria.textContent).toContain("+$4–6");

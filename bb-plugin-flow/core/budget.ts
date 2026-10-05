@@ -1,5 +1,5 @@
 // Прогноз бюджета, риска и времени брифа. Объём работы — цены оставленных
-// пунктов «Готово, когда» (база) плюс цены выбранных вариантов; этап — доля
+// пунктов Definition of Done (база) плюс цены выбранных вариантов; этап — доля
 // объёма с множителем исполнителя, итог — сумма долей этапов в прогоне, а у
 // брифа без этапов — сам объём. Бриф-уточнение запущенной работы — утверждённый
 // бюджет прогона плюс выбранные варианты по цене прогона. Брифы, записанные раньше, считаются как были:
@@ -17,8 +17,9 @@ import { answeredStageChoice, executorLabel, stageAdd, stageItems, stagePhase } 
 /**
  * Строка разбивки; `null` — величина неизвестна: у планирования без цены модели нет денег, у добавок без `minutes` — времени.
  * `base` — строка не добавка, а основа итога: утверждённый бюджет прогона. `stage` — id этапа, чья это цена: таблица брифа ставит её в строку этапа.
+ * `criterion` — номер пункта Definition of Done с нуля: таблица ставит цену в строку пункта.
  */
-export type ForecastLine = { label: string; note: string; minutes: number | null; risk: number; target: number | null; max: number | null; base?: true; stage?: string };
+export type ForecastLine = { label: string; note: string; minutes: number | null; risk: number; target: number | null; max: number | null; base?: true; stage?: string; criterion?: number };
 
 /** Итог складывает известное; время `null`, если ни у одной строки его нет; риск не ниже нуля; `spent` — сколько первых строк уже потрачено. */
 export type Forecast = { lines: readonly ForecastLine[]; minutes: number | null; risk: number; target: number; max: number; spent?: number };
@@ -81,6 +82,10 @@ const line = (label: string, note: string, adds: ReadonlyArray<Add | undefined>)
   return sum === undefined ? [] : [{ label, note, minutes: sum.minutes ?? null, risk: sum.risk, target: sum.target, max: sum.max }];
 };
 
+/** Цена пункта Definition of Done строкой с его номером. */
+const criterionLine = (item: Criterion, index: number, locale?: Locale): ForecastLine[] =>
+  line(messages(locale).budget.item(index + 1), criterionTitle(item), [addOf(item)]).map((l) => ({ ...l, criterion: index }));
+
 const chosen = (answer: DecisionAnswer, rowId: string): readonly string[] =>
   answer.answers.find((a) => a.questionId === rowId)?.optionIds ?? [];
 
@@ -131,7 +136,7 @@ const chosenOptions = (brief: DecisionBrief, answer: DecisionAnswer) =>
   });
 
 /**
- * Объём работы: база — цены оставленных пунктов «Готово, когда», а у брифа без своих пунктов посреди работы — утверждённый
+ * Объём работы: база — цены оставленных пунктов Definition of Done, а у брифа без своих пунктов посреди работы — утверждённый
  * объём треда, — плюс цены выбранных вариантов; `undefined`, если цен нет.
  */
 export const scopeOf = (brief: DecisionBrief, answer: DecisionAnswer): Add | undefined => {
@@ -150,7 +155,7 @@ const optionRiskLines = (brief: DecisionBrief, answer: DecisionAnswer, locale?: 
 /** Пункты базы и выбранные варианты строками — объём, когда его не несёт этап работы. */
 const scopeLines = (brief: DecisionBrief, answer: DecisionAnswer, locale?: Locale): ForecastLine[] => {
   const removed = removedCriteria(brief, answer);
-  const items = (brief.setup?.criteria ?? []).flatMap((item, i) => (removed.includes(i) ? [] : line(messages(locale).budget.item(i + 1), criterionTitle(item), [addOf(item)])));
+  const items = (brief.setup?.criteria ?? []).flatMap((item, i) => (removed.includes(i) ? [] : criterionLine(item, i, locale)));
   return [...items, ...questionLines(brief, answer, locale)];
 };
 
@@ -203,9 +208,7 @@ const setupLines = (brief: DecisionBrief, answer: DecisionAnswer, locale?: Local
     const stages = stageLines(brief, answer, undefined, locale);
     return [...stages, ...removedShareLines(brief, removed, stages, locale)];
   }
-  const criteria = (setup.criteria ?? []).flatMap((item, i) =>
-    removed.includes(i) ? [] : line(m.item(i + 1), criterionTitle(item), [addOf(item)]),
-  );
+  const criteria = (setup.criteria ?? []).flatMap((item, i) => (removed.includes(i) ? [] : criterionLine(item, i, locale)));
   // Утверждённый и оставленный артефакт работы не добавляет.
   const artifactIds = chosen(answer, SETUP_ROW.artifacts);
   const artifacts = (setup.artifacts ?? []).filter((a) => a.state !== "approved" && artifactIds.includes(a.id));
@@ -331,7 +334,7 @@ export const ownBudgetText = (budget: OwnBudget, locale?: Locale): string | null
   return time === "" ? price : `${price}, ${time}`;
 };
 
-/** Сумма добавок оставленных пунктов «Готово, когда»; `null`, если добавок нет. */
+/** Сумма добавок оставленных пунктов Definition of Done; `null`, если добавок нет. */
 export const criteriaSum = (brief: DecisionBrief, removed: readonly number[]): Add | null => {
   const adds = (brief.setup?.criteria ?? []).flatMap((item, i) => {
     const add = removed.includes(i) ? undefined : addOf(item);
@@ -343,7 +346,7 @@ export const criteriaSum = (brief: DecisionBrief, removed: readonly number[]): A
   return { target: sum("target"), max: sum("max"), risk: sum("risk"), ...(minutes === null ? {} : { minutes }) };
 };
 
-/** Подпись у заголовка «Готово, когда» строкой; `null`, если добавок нет или они ничего не меняют. */
+/** Подпись у заголовка Definition of Done строкой; `null`, если добавок нет или они ничего не меняют. */
 export const criteriaSummary = (brief: DecisionBrief, removed: readonly number[], locale?: Locale): string | null => {
   const sum = criteriaSum(brief, removed);
   const text = sum === null ? "" : addText(sum, locale);

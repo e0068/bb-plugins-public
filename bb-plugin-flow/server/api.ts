@@ -142,7 +142,7 @@ export const registerApi = (
       if (brief.kind === "brief" && launchesWork(brief, answer)) await quietly(store.markLaunched(brief.threadId));
       // Выбор владельца уходит в следующий бриф треда; уточнение первой части не несёт и перенос не трогает. Переход начинает работу с чистого листа.
       if (brief.kind === "brief" && switched === undefined) await store.putThreadCarry(brief.threadId, carryOf(brief, answer));
-      // Утверждённое «Готово, когда» и объём ждут брифа посреди работы — в этом треде и в новом, куда ушла работа.
+      // Утверждённое Definition of Done и объём ждут брифа посреди работы — в этом треде и в новом, куда ушла работа.
       // Бриф без своих пунктов дописывает пункты выбранного варианта к уже утверждённым.
       if (brief.kind === "brief" && brief.outcome === undefined) {
         const answered = finalCriteria(brief, answer);

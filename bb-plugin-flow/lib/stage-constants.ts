@@ -11,7 +11,7 @@ export const STAGE_BUTTON_WIDTH = { min: 100, max: 400, initial: 170 } as const;
 export const RETRY_LIMITS = { seconds: 3600, attempts: 100 } as const;
 
 /**
- * Вид этапа: навык, встроенный — Вопросы, Критерии, Выбор этапов, Демонстрация — или Action.
+ * Вид этапа: навык, встроенный — Вопросы, Definition of Done, Выбор этапов, Демонстрация — или Action.
  * Встроенные ставятся в flow сколько угодно раз. Action — шаги автоматизации, которые запускает владелец кнопкой.
  */
 export const STAGE_KINDS = ["skill", "questions", "criteria", "select", "demo", "action"] as const;
@@ -25,7 +25,7 @@ export type BuiltinKind = (typeof BUILTIN_KINDS)[number];
 /** Id встроенных этапов до видов: записи без поля `kind` узнаются по ним. */
 const LEGACY_KINDS: Readonly<Record<string, BuiltinKind>> = { clarify: "questions", criteria: "criteria" };
 
-/** Вид этапа; у записи без поля — по прежнему id Уточнения и Критериев, остальное — навык. */
+/** Вид этапа; у записи без поля — по прежнему id Уточнения и Definition of Done, остальное — навык. */
 export const stageKindOf = (stage: { id: string; kind?: StageKind | undefined }): StageKind => stage.kind ?? LEGACY_KINDS[stage.id] ?? "skill";
 
 /** Навык, по которому агент проводит встроенный этап, пока владелец не поставил свой. Плагин везёт их в `skills/`; одноимённый навык владельца в `~/.claude/skills` или `.claude/skills` репозитория важнее. */
@@ -60,10 +60,10 @@ export const clearedSkill = (stage: { id: string; kind?: StageKind | undefined }
 };
 
 /** Название в хранилище — английское: сервер языка не знает, по языку подписывает фронт. */
-const BUILTIN_NAMES: Record<BuiltinKind, string> = { questions: "Questions", criteria: "Criteria", select: "Stage selection", demo: "Demonstration" };
+const BUILTIN_NAMES: Readonly<Record<BuiltinKind, string>> = { questions: "Questions", criteria: "Definition of Done", select: "Stage selection", demo: "Demonstration" };
 
-/** Прежние английские имена Уточнения и Критериев — тоже имена по умолчанию. */
-const LEGACY_NAMES: readonly string[] = ["Clarification"];
+/** Прежние английские имена Уточнения и Definition of Done — тоже имена по умолчанию, каждое своему виду. */
+const LEGACY_NAMES: Readonly<Partial<Record<BuiltinKind, string>>> = { questions: "Clarification", criteria: "Criteria" };
 
 /** Имя этапа Action в хранилище, пока владелец не назвал его своим. */
 const ACTION_NAME = "Action";
@@ -81,7 +81,13 @@ export const isDefaultName = (stage: { id: string; kind?: StageKind | undefined;
   const kind = stageKindOf(stage);
   if (kind === "skill") return false;
   if (kind === "action") return stage.name === ACTION_NAME;
-  return stage.name === BUILTIN_NAMES[kind] || LEGACY_NAMES.includes(stage.name);
+  return stage.name === BUILTIN_NAMES[kind] || stage.name === LEGACY_NAMES[kind];
+};
+
+/** Имя этапа для агента: встроенный с именем по умолчанию — нынешнее английское имя вида, хоть flow и сохранён под прежним. */
+export const currentName = (stage: { id: string; kind?: StageKind | undefined; name: string }): string => {
+  const kind = stageKindOf(stage);
+  return kind === "skill" || kind === "action" || !isDefaultName(stage) ? stage.name : BUILTIN_NAMES[kind];
 };
 
 /** Свободный id по основе: сама основа, а занятая — с номером со второго. */

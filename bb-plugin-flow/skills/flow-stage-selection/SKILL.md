@@ -49,7 +49,7 @@ The subject of the work does not set the method. "This is logic programming, so 
 
 ## How to ask
 
-**In bb.** Stages go into `setup.stages` of the same `ask_decision` brief as Questions and Criteria: `id`, `state`, `results` on a done skill stage, `recommended`, `executor`, `share: { percent, risk }` — the stage's part of the scope (the work itself is 100, a spec around 15), `factors` — a multiplier above zero for each agent or workflow among the stage's executors (you are 1): cheaper below 1, dearer above. No dollars on stages — the widget counts them from the scope. The format is in the Flow plugin instructions and the tool description.
+**In bb.** Stages go into `setup.stages` of the same `ask_decision` brief as Questions and Definition of Done: `id`, `state`, `results` on a done skill stage, `recommended`, `executor`, `share: { percent, risk }` — the stage's part of the scope (the work itself is 100, a spec around 15), `factors` — a multiplier above zero for each agent or workflow among the stage's executors (you are 1): cheaper below 1, dearer above. No dollars on stages — the widget counts them from the scope. The format is in the Flow plugin instructions and the tool description.
 
 **In Claude Code.** Done stages as a line in the reply with links. Then a `multiSelect: true` question "Which stages to take into the run?": recommended stages first with "(Recommended)", cost and minutes in the description; the total of the recommended set in the question text. More than four options — group stages in order: "Spec and plan", "Implementation and review". Where a stage has a choice of executor — a second question "Who executes <stage>?" with the cost difference for each option.
 

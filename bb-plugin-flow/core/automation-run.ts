@@ -4,7 +4,7 @@
 // запись в kv — у server/automation-runner.ts.
 import { isStepId, STEP_LABELS } from "@bb-plugins/automation-steps/catalog";
 import type { StepLink } from "@bb-plugins/automation-steps/index";
-import { freeId, stageKindOf } from "../lib/stage-constants";
+import { currentName, freeId, stageKindOf } from "../lib/stage-constants";
 import { scriptOf } from "./automation-scripts";
 import type { BuiltinAutomation, FlowProgress, FlowSettings, ProgressView, RunningIcon, StageTrack, WorkStage } from "../shared/contract";
 
@@ -298,7 +298,7 @@ export const idleNote = (idle: ReadonlyArray<{ name: string; minutes: number }>)
 
 /** Реплика агенту после прогона Flow: продолжение работы с этапа `next` и простой по этапам, который агент относит в отчёт. */
 export const wakeText = (kind: "automation" | "action", idle: ReadonlyArray<{ name: string; minutes: number }>, next?: WorkStage): string => {
-  const head = next === undefined ? CARRY_ON[kind] : `${CARRY_ON[kind]}\nNext stage: ${next.id} "${next.name}".`;
+  const head = next === undefined ? CARRY_ON[kind] : `${CARRY_ON[kind]}\nNext stage: ${next.id} "${currentName(next)}".`;
   const note = idleNote(idle);
   return note === "" ? head : `${head}\n\n${note}`;
 };

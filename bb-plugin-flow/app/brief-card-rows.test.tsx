@@ -50,7 +50,7 @@ const rowOf = (field: HTMLElement): HTMLElement => field.closest("[data-item-row
 
 describe("строки «Готово, когда»", () => {
   it("строка пункта выравнивает номер, микрофон и крест по центру", async () => {
-    const criteria = within(await open().findByRole("group", { name: "Готово, когда" }));
+    const criteria = within(await open().findByRole("group", { name: "Definition of Done" }));
     const row = rowOf(criteria.getByRole("textbox", { name: "Пункт 2" }));
     expect(row.className).toContain("items-center");
     expect(row.className).not.toContain("items-start");
@@ -58,7 +58,7 @@ describe("строки «Готово, когда»", () => {
   });
 
   it("микрофон и крест — одна группа с равным зазором до края", async () => {
-    const criteria = within(await open().findByRole("group", { name: "Готово, когда" }));
+    const criteria = within(await open().findByRole("group", { name: "Definition of Done" }));
     const cross = criteria.getByRole("button", { name: "Пункт 1 не нужен" });
     const mic = criteria.getByRole("button", { name: "Голосовой ввод: Пункт 1" });
     const group = cross.parentElement!;
@@ -71,7 +71,7 @@ describe("строки «Готово, когда»", () => {
 
   it("то же у добавленного пункта и поля Дополнить", async () => {
     storeDraft(brief.id, setAddedCriterion(initialDraft(brief), 0, "Свой пункт"));
-    const criteria = within(await open().findByRole("group", { name: "Готово, когда" }));
+    const criteria = within(await open().findByRole("group", { name: "Definition of Done" }));
     const cross = criteria.getByRole("button", { name: "Убрать добавленный пункт 1" });
     const mic = criteria.getByRole("button", { name: "Голосовой ввод: Добавленный пункт 1" });
     expect(mic.parentElement).toBe(cross.parentElement);

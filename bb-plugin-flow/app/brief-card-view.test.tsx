@@ -71,7 +71,7 @@ describe("загрузка брифа", () => {
 describe("пункт-изменение", () => {
   it("было и стало через стрелку, без заголовков «Было» и «Стало»; правится «стало»", async () => {
     const { slot } = open();
-    const criteria = within(await slot.findByRole("group", { name: "Готово, когда" }));
+    const criteria = within(await slot.findByRole("group", { name: "Definition of Done" }));
     expect(criteria.queryByText("Было")).toBeNull();
     expect(criteria.queryByText("Стало")).toBeNull();
     expect(criteria.getByText("Рамка с шапкой")).toBeTruthy();

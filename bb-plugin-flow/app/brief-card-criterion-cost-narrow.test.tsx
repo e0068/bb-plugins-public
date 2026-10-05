@@ -44,7 +44,7 @@ const headOf = (cost: HTMLElement) => cost.parentElement!.parentElement!;
 describe("стоимость пункта «Готово, когда» в узком брифе", () => {
   it("у обычного пункта и у пункта-изменения стоимость в узком брифе над текстом, в широком — справа", async () => {
     const slot = open();
-    const done = within(await slot.findByRole("group", { name: "Готово, когда" }));
+    const done = within(await slot.findByRole("group", { name: "Definition of Done" }));
     for (const money of [done.getByText("+$4–8"), done.getByText("+$1.5–3")]) {
       const classes = headOf(money).className.split(" ");
       expect(classes).toContain("flex-col-reverse");
