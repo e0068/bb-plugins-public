@@ -63,6 +63,8 @@ export interface HranaFake {
   readonly fetch: typeof fetch;
   /** A new empty database at `<host>` that accepts `token`. */
   addDatabase(host: string, token: string): FakeDatabase;
+  /** A token the database at `host` stops accepting, as when it is revoked in the Turso dashboard. */
+  revokeToken(host: string, token: string): void;
   /** One more token the database at `host` accepts. */
   allowToken(host: string, token: string): void;
   /** While true every request fails the way a dropped network does: `fetch` rejects. */
@@ -250,6 +252,9 @@ export function createHranaFake(): HranaFake {
     },
     allowToken(host, token) {
       databases.get(host)?.tokens.add(token);
+    },
+    revokeToken(host, token) {
+      databases.get(host)?.tokens.delete(token);
     },
     setOffline(value) {
       offline = value;

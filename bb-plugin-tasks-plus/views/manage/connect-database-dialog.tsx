@@ -1,5 +1,5 @@
 import { useEffect, useId, useState, type ReactNode } from "react";
-import { useRpc } from "@get-bb/plugin-sdk/app";
+import { UrlLink, useRpc } from "@get-bb/plugin-sdk/app";
 import type {
   BoardRow,
   ConnectDatabaseInput,
@@ -63,9 +63,9 @@ function GenerateRefusalHint({ refusal }: { refusal: GenerateRefusal }) {
   return (
     <p role="alert" className="text-xs text-muted-foreground">
       {refusalAdvice(refusal)}{" "}
-      <a href={TURSO_DASHBOARD_URL} target="_blank" rel="noreferrer" className="underline">
+      <UrlLink href={TURSO_DASHBOARD_URL} className="underline">
         Turso dashboard → Settings → API Tokens
-      </a>
+      </UrlLink>
     </p>
   );
 }
@@ -491,7 +491,13 @@ export function ConnectDatabaseDialog({ open, onOpenChange, onConnected }: Conne
               className="h-8"
               onChange={(event) => change({ token: event.target.value })}
             />
-            <Hint>Not needed for a Turso database: Create database or picking one gets a token by itself. Type one only for your own libSQL server.</Hint>
+            <Hint>
+              Empty is fine when the database comes from Create database or the list: those get a token by themselves. A database typed
+              by address — or one whose token stopped working — needs its token here, made in the dashboard:{" "}
+              <UrlLink href={TURSO_DASHBOARD_URL} className="underline">
+                Open app.turso.tech
+              </UrlLink>
+            </Hint>
           </LabelledField>
           <LabelledField label="Board name" htmlFor={ids.board}>
             <Input

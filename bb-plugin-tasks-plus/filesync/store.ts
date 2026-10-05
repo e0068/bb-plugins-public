@@ -32,7 +32,7 @@ import {
 } from "./board-config.js";
 import { createBoardRepos } from "./board-repos.js";
 import { retryOnConflict } from "./write-retry.js";
-import { DatabaseAuthFailed, DatabaseUnreachable, type RepoFile, type TaskRepo } from "./task-repo.js";
+import { outOfReach, unlessOutOfReach, type RepoFile, type TaskRepo } from "./task-repo.js";
 import { loadKvCollection, createKvCollection } from "./kv-collection.js";
 import { migrateSavedView } from "./saved-view-migrate.js";
 import { applyPatch } from "./patch.js";
@@ -360,15 +360,25 @@ export function createFileTasksStore(
    *  lifecycle's thread scan and the CLI must keep working on the others.
    *  Reading that board alone still reports the failure. */
   async function loadAllBoards(): Promise<BoardTask[]> {
-    const perBoard = await Promise.all(
-      boardConfigs.map((board) =>
-        loadBoard(board).catch((error: unknown) => {
-          if (error instanceof DatabaseUnreachable || error instanceof DatabaseAuthFailed) return [];
-          throw error;
-        }),
-      ),
-    );
+    const perBoard = await Promise.all(boardConfigs.map((board) => unlessOutOfReach(loadBoard(board), [])));
     return perBoard.flat();
+  }
+
+  /** The first task of any board that `pick` finds something on, with what it found. A board that
+   *  cannot be read is passed over; when nothing was found, its failure is the answer — the item may
+   *  well live there — a broken board's ahead of one out of reach. */
+  async function findAcrossBoards<T>(pick: (task: BoardTask) => T | undefined): Promise<{ task: BoardTask; found: T } | undefined> {
+    const reads = await Promise.allSettled(boardConfigs.map(loadBoard));
+    for (const read of reads) {
+      if (read.status !== "fulfilled") continue;
+      for (const task of read.value) {
+        const found = pick(task);
+        if (found !== undefined) return { task, found };
+      }
+    }
+    const failures = reads.flatMap((read) => (read.status === "rejected" ? [read.reason as unknown] : []));
+    if (failures.length > 0) throw failures.find((failure) => !outOfReach(failure)) ?? failures[0];
+    return undefined;
   }
 
   async function findAssembled(taskId: string): Promise<BoardTask | undefined> {
@@ -885,7 +895,7 @@ export function createFileTasksStore(
     id: input.name, projectId: input.projectId, name: input.name, color: input.color,
   });
   async function getLabel(id: string): Promise<Label | undefined> {
-    const perBoard = await Promise.all(boardConfigs.map((b) => boardLabels(b.id)));
+    const perBoard = await Promise.all(boardConfigs.map((b) => unlessOutOfReach(boardLabels(b.id), [])));
     return perBoard.flat().find((l) => l.id === id);
   }
   const listLabels = (projectId: string): Promise<Label[]> => boardLabels(projectId);
@@ -898,12 +908,10 @@ export function createFileTasksStore(
    *  label is deleted by removing its name from every task that carries it. */
   async function deleteLabel(id: string): Promise<boolean> {
     let removed = false;
-    for (const board of boardConfigs) {
-      for (const assembled of await loadBoard(board)) {
-        if (assembled.task.labelIds.includes(id)) {
-          await removeTaskLabel(assembled.task.id, id);
-          removed = true;
-        }
+    for (const assembled of await loadAllBoards()) {
+      if (assembled.task.labelIds.includes(id)) {
+        await removeTaskLabel(assembled.task.id, id);
+        removed = true;
       }
     }
     return removed;
@@ -941,13 +949,9 @@ export function createFileTasksStore(
 
   // --------------------------------------------------------------- Comments
   async function requireComment(id: string): Promise<{ task: AssembledTask; comment: Comment }> {
-    for (const board of boardConfigs) {
-      for (const t of await loadBoard(board)) {
-        const comment = t.comments.find((c) => c.id === id);
-        if (comment) return { task: t, comment };
-      }
-    }
-    throw new Error(`Comment not found: ${id}`);
+    const owner = await findAcrossBoards((t) => t.comments.find((c) => c.id === id));
+    if (!owner) throw new Error(`Comment not found: ${id}`);
+    return { task: owner.task, comment: owner.found };
   }
   async function getComment(id: string): Promise<Comment | undefined> {
     try {
@@ -1007,13 +1011,9 @@ export function createFileTasksStore(
 
   // ------------------------------------------------------------ Attachments
   async function requireAttachmentOwner(id: string): Promise<{ task: AssembledTask; attachment: Attachment }> {
-    for (const board of boardConfigs) {
-      for (const t of await loadBoard(board)) {
-        const attachment = t.attachments.find((a) => a.id === id);
-        if (attachment) return { task: t, attachment };
-      }
-    }
-    throw new Error(`Attachment not found: ${id}`);
+    const owner = await findAcrossBoards((t) => t.attachments.find((a) => a.id === id));
+    if (!owner) throw new Error(`Attachment not found: ${id}`);
+    return { task: owner.task, attachment: owner.found };
   }
   async function getAttachment(id: string): Promise<Attachment | undefined> {
     try {
@@ -1051,8 +1051,7 @@ export function createFileTasksStore(
   }
   const listAttachmentsForTask = async (taskId: string) => (await findAssembled(taskId))?.attachments ?? [];
   const listAttachmentsForComment = async (commentId: string) => {
-    const perBoard = await Promise.all(boardConfigs.map((b) => loadBoard(b)));
-    return perBoard.flat().flatMap((t) => t.attachments).filter((a) => a.commentId === commentId);
+    return (await loadAllBoards()).flatMap((t) => t.attachments).filter((a) => a.commentId === commentId);
   };
   const updateAttachment = (id: string, input: UpdateAttachmentInput): Promise<Attachment> => retrying(() => updateAttachmentFromRead(id, input));
   async function updateAttachmentFromRead(id: string, input: UpdateAttachmentInput): Promise<Attachment> {
@@ -1070,13 +1069,9 @@ export function createFileTasksStore(
 
   // ---------------------------------------------------------------- Threads
   async function requireThreadOwner(id: string): Promise<{ task: BoardTask; thread: TaskThread }> {
-    for (const board of boardConfigs) {
-      for (const t of await loadBoard(board)) {
-        const thread = t.threads.find((th) => th.id === id);
-        if (thread) return { task: t, thread };
-      }
-    }
-    throw new Error(`Task thread not found: ${id}`);
+    const owner = await findAcrossBoards((t) => t.threads.find((th) => th.id === id));
+    if (!owner) throw new Error(`Task thread not found: ${id}`);
+    return { task: owner.task, thread: owner.found };
   }
   /** Which threads are attached to the task — the fact, not their state.
    *  Written when somebody attaches or detaches a thread and at no other
@@ -1138,7 +1133,7 @@ export function createFileTasksStore(
   async function taskCardMeta(taskIds: readonly string[]): Promise<TaskCardMeta[]> {
     const boardIds = [...new Set(taskIds.map((id) => id.split(":")[0]))];
     const loaded = await Promise.all(
-      boardConfigs.filter((b) => boardIds.includes(b.id)).map(loadBoard),
+      boardConfigs.filter((b) => boardIds.includes(b.id)).map((b) => unlessOutOfReach(loadBoard(b), [])),
     );
     const byId = new Map(loaded.flat().map((t) => [t.task.id, t]));
     return taskIds.flatMap((taskId) => {

@@ -93,10 +93,16 @@ export function useTreeTasks(projectId: string | null, narrowed: boolean) {
 export function useLabels(projectIds: readonly string[]) {
   return useTasksQuery<Label[]>(
     async (rpc) => {
+      // One project's failure — its database out of reach — drops only its own labels.
       const results = await Promise.all(
-        projectIds.map((projectId) => rpc.call("listLabels", { projectId })),
+        projectIds.map((projectId) =>
+          rpc.call("listLabels", { projectId }).then(
+            (result) => result.labels,
+            () => [] as Label[],
+          ),
+        ),
       );
-      return results.flatMap((result) => result.labels);
+      return results.flat();
     },
     ["projects:changed"],
     [projectIds.join()],

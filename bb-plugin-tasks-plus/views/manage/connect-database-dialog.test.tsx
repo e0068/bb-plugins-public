@@ -485,3 +485,11 @@ describe("Connect database — copying before a folder is picked", () => {
     expect(screen.queryByRole("button", { name: "Copy board" })?.hasAttribute("disabled")).toBe(true);
   });
 });
+
+describe("Connect database — the Turso dashboard is a click away", () => {
+  it("links the dashboard from the token field before anything fails, to open in the browser", async () => {
+    renderDialog();
+    const link = await screen.findByRole("link", { name: /Open app\.turso\.tech/ });
+    expect(link.getAttribute("href")).toMatch(/^https:\/\/app\.turso\.tech/);
+  });
+});

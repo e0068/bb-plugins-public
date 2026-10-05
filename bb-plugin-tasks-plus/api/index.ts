@@ -14,7 +14,7 @@ import {
   type FileTasksStore,
 } from "../filesync/store.js";
 import { describeTakenBy } from "../shared/task-claim.js";
-import { DatabaseAuthFailed, DatabaseUnreachable } from "../filesync/task-repo.js";
+import { DatabaseAuthFailed, DatabaseUnreachable, unlessOutOfReach } from "../filesync/task-repo.js";
 import { TaskWriteConflict } from "../filesync/write-retry.js";
 import { currentCallerEnvironment } from "../filesync/caller-scope.js";
 import type { CallerEnvironmentCache } from "../filesync/caller-cache.js";
@@ -23,6 +23,7 @@ import { nextTaskNumber, type BoardConfig } from "../filesync/board-config.js";
 import type {
   Attachment as StoredAttachment,
   Comment as StoredComment,
+  TaskThread,
 } from "../db/types.js";
 import { createTransitionLog, type TransitionLog } from "../db/transition-log.js";
 import { snapshotOf } from "../analytics/aggregate.js";
@@ -111,6 +112,37 @@ async function readMachineName(bb: BbPluginApi): Promise<string> {
   }
 }
 
+/** Each board's count of top-level tasks and of agents working on them, for the sidebar. */
+export function sidebarSummary(tasks: FileTasksStore): Promise<SidebarProjectSummary[]> {
+  return Promise.all(
+    [...tasks.listProjects()]
+      .sort(byNameThenId)
+      .map(async (project) => {
+        // One board read for all of the project's tasks and threads —
+        // listTaskThreads per task would re-read the whole board once per
+        // task (see decisions/tasks-plus-board-roots-blocks-rpc.md).
+        // A board whose database is out of reach counts as empty.
+        const [topLevel, threadsByTask] = await Promise.all([
+          unlessOutOfReach(tasks.listTasks({ projectId: project.id, parentTaskId: null }), []),
+          unlessOutOfReach(tasks.threadsByTaskId(project.id), new Map<string, TaskThread[]>()),
+        ]);
+        const activeThreadIds = new Set<string>();
+        for (const task of topLevel) {
+          for (const thread of threadsByTask.get(task.id) ?? []) {
+            if (thread.liveStatus === "starting" || thread.liveStatus === "working") {
+              activeThreadIds.add(thread.threadId);
+            }
+          }
+        }
+        return {
+          projectId: project.id,
+          taskCount: topLevel.length,
+          activeAgentCount: activeThreadIds.size,
+        };
+      }),
+  );
+}
+
 export async function createStore(bb: BbPluginApi): Promise<TasksApiStore> {
   const tasks = await loadFileTasksStore(
     bb.storage.kv,
@@ -145,34 +177,7 @@ export async function createStore(bb: BbPluginApi): Promise<TasksApiStore> {
         .filter((task) => isOpenStatus(task.status))
         .length;
     },
-    async sidebarSummary(): Promise<SidebarProjectSummary[]> {
-      return Promise.all(
-        [...tasks.listProjects()]
-          .sort(byNameThenId)
-          .map(async (project) => {
-            // One board read for all of the project's tasks and threads —
-            // listTaskThreads per task would re-read the whole board once per
-            // task (see decisions/tasks-plus-board-roots-blocks-rpc.md).
-            const [topLevel, threadsByTask] = await Promise.all([
-              tasks.listTasks({ projectId: project.id, parentTaskId: null }),
-              tasks.threadsByTaskId(project.id),
-            ]);
-            const activeThreadIds = new Set<string>();
-            for (const task of topLevel) {
-              for (const thread of threadsByTask.get(task.id) ?? []) {
-                if (thread.liveStatus === "starting" || thread.liveStatus === "working") {
-                  activeThreadIds.add(thread.threadId);
-                }
-              }
-            }
-            return {
-              projectId: project.id,
-              taskCount: topLevel.length,
-              activeAgentCount: activeThreadIds.size,
-            };
-          }),
-      );
-    },
+    sidebarSummary: () => sidebarSummary(tasks),
   };
 }
 
@@ -308,11 +313,13 @@ function apiTasks(_store: TasksApiStore, tasks: StoredTask[]): Task[] {
  * `nextTaskNumber` isn't stored on a board (see filesync/board-config.ts —
  * there's nothing to keep in sync when a file is added by hand), but the
  * API contract still exposes it, so it's computed here from the board's
- * current files each time a Project crosses the wire.
+ * current files each time a Project crosses the wire. A board whose
+ * database is out of reach still crosses it, numbered as if empty: one such
+ * board must not take every other board out of the list.
  */
 async function apiProject(store: TasksApiStore, board: BoardConfig): Promise<Project> {
-  const keys = (await store.tasks.listTasks({ projectId: board.id })).map((task) => task.key);
-  return { ...board, nextTaskNumber: nextTaskNumber(keys, board.prefix) };
+  const tasks = await unlessOutOfReach(store.tasks.listTasks({ projectId: board.id }), []);
+  return { ...board, nextTaskNumber: nextTaskNumber(tasks.map((task) => task.key), board.prefix) };
 }
 
 async function validateTaskParent(
@@ -737,7 +744,7 @@ function readsCardMeta(tile: Tile): boolean {
 
 /** What a tile's fields read beyond the task: names of projects, labels and tasks, the sub-task counts, and the card meta when the tile needs it. */
 async function tileFacts(store: TasksApiStore, tile: Tile, tasks: readonly Task[], projects: readonly { id: string; name: string }[]): Promise<TaskFacts> {
-  const labels = (await Promise.all(projects.map((project) => store.tasks.listLabels(project.id)))).flat();
+  const labels = (await Promise.all(projects.map((project) => unlessOutOfReach(store.tasks.listLabels(project.id), [])))).flat();
   const cards = readsCardMeta(tile) ? await store.tasks.taskCardMeta(tasks.map((task) => task.id)) : [];
   return factsOf({
     projectNames: new Map(projects.map((project) => [project.id, project.name])),

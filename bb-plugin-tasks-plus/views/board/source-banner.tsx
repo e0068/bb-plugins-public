@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useRealtime, useRpc } from "@get-bb/plugin-sdk/app";
-import type { FoldersRpcContract, SyncedFolder, SyncedSource } from "../../folders/contract.js";
+import { TOKEN_REFUSED_TEXT, type FoldersRpcContract, type SyncedFolder, type SyncedSource } from "../../folders/contract.js";
 import { databaseHost } from "../../folders/database-address.js";
 import { Button } from "@/components/ui/button";
 
@@ -65,7 +65,7 @@ export function SourceBanner({ projectIds }: { projectIds: readonly string[] }) 
           className="flex shrink-0 items-center gap-2 border-b border-border-hairline bg-warning/10 px-4 py-1.5 text-xs text-muted-foreground"
         >
           <span className="min-w-0 flex-1 truncate">
-            {databaseHost(source.url)} · {lastSyncText(source)} · Taking and editing is paused
+            {databaseHost(source.url)} · {source.state === "refused" ? TOKEN_REFUSED_TEXT : `${lastSyncText(source)} · Taking and editing is paused`}
           </span>
           <Button size="sm" variant="outline" className="h-6 shrink-0" onClick={() => retry(boardId)}>
             Retry

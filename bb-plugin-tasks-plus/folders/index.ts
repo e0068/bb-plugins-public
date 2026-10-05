@@ -7,7 +7,7 @@ import type { BoardConfig } from "../filesync/board-config.js";
 import { createDbRepo, failureOf, peekBoard, type DbRepo } from "../filesync/db-repo.js";
 import { resolveMainRoot } from "../filesync/resolve-roots.js";
 import { defaultSourcePath } from "../filesync/resolve-roots.js";
-import { DatabaseAuthFailed, DatabaseUnreachable, diskRepo } from "../filesync/task-repo.js";
+import { DatabaseAuthFailed, DatabaseUnreachable, diskRepo, outOfReach } from "../filesync/task-repo.js";
 import { createUlid } from "../filesync/validators.js";
 import { createHranaClient, unreachableSentence, type HranaClient, type UnreachableCause } from "../remote/hrana.js";
 import { createTursoApi, databaseBaseName, type TursoApi, type TursoError, type TursoResult } from "../remote/turso.js";
@@ -286,7 +286,7 @@ export function registerFolders(bb: BbPluginApi, store: TasksApiStore): void {
     try {
       await repo.sync();
     } catch (error) {
-      if (error instanceof DatabaseUnreachable || error instanceof DatabaseAuthFailed) return;
+      if (outOfReach(error)) return;
       bb.log.warn(`tasks-plus: syncing a board database failed: ${error instanceof Error ? error.message : String(error)}`);
     }
   }
@@ -319,8 +319,14 @@ export function registerFolders(bb: BbPluginApi, store: TasksApiStore): void {
     return fromTurso(await api.mintToken(org, found.name), origin);
   }
 
+  /** The token saved for the address — none when a board is connected to it: that board's token is
+   *  the one being replaced, and handing it back would only be refused again. */
+  async function savedTokenFor(url: string): Promise<string | null> {
+    return store.tasks.listProjects().some((board) => board.database?.url === url) ? null : secrets.databaseToken(url);
+  }
+
   async function tokenFor(input: { token?: string; tursoApiToken?: string }, address: { url: string; token: string | null }): Promise<Step<string>> {
-    const source = tokenSource(input, address, await secrets.databaseToken(address.url));
+    const source = tokenSource(input, address, await savedTokenFor(address.url));
     return source.kind === "given" ? proceed(source.token) : mintDatabaseToken(address.url, input.tursoApiToken);
   }
 
@@ -404,7 +410,8 @@ export function registerFolders(bb: BbPluginApi, store: TasksApiStore): void {
   /**
    * What in the store stands in the way of a new board at this address and
    * prefix. A copy shares its prefix with the folder board it came from: the
-   * keys of the copied tasks carry it.
+   * keys of the copied tasks carry it. A connected address gets here only to
+   * be copied into; otherwise it takes the token instead (`replaceToken`).
    */
   function collision(plan: ConnectPlan, url: string): string | null {
     if (plan.kind === "refuse") return null;
@@ -421,7 +428,7 @@ export function registerFolders(bb: BbPluginApi, store: TasksApiStore): void {
   async function inspect(input: { url: string; token?: string; tursoApiToken?: string }): Promise<InspectDatabaseResult> {
     const address = parseDatabaseAddress(input.url);
     if (!address.ok) return { ok: false, error: { code: "folder_connect_failed", message: address.message } };
-    const source = tokenSource(input, address, await secrets.databaseToken(address.url));
+    const source = tokenSource(input, address, await savedTokenFor(address.url));
     const token = source.kind === "given" ? proceed(source.token) : await mintDatabaseToken(address.url, input.tursoApiToken);
     if (!token.ok) return token;
     const peeked = await peekBoard(createHranaClient({ url: address.url, token: token.value }));
@@ -433,11 +440,33 @@ export function registerFolders(bb: BbPluginApi, store: TasksApiStore): void {
     return { ok: true, board: peeked.value };
   }
 
+  /**
+   * A board already connected to the address takes the token in place of its
+   * own — the way back from a token revoked or expired. The board keeps its
+   * id, and with it its history; a token the database refuses changes nothing.
+   */
+  async function replaceToken(board: DatabaseBoard, token: string): Promise<Step<null>> {
+    const repo = openRepo(board.id, board.database.url, createHranaClient({ url: board.database.url, token }));
+    try {
+      await repo.sync();
+    } catch (error) {
+      return { ok: false, error: databaseFailure(error) };
+    }
+    await secrets.saveDatabaseToken(board.database.url, token);
+    detachRepo(board.id);
+    attachRepo(board.id, repo);
+    publishProjectsChanged(bb, board.id);
+    publishProjectTasksChanged(bb, board.id);
+    return proceed(null);
+  }
+
   async function connect(input: ConnectDatabaseInput): Promise<Step<null>> {
     const address = parseDatabaseAddress(input.url);
     if (!address.ok) return refusal(address.message);
     const token = await tokenFor(input, address);
     if (!token.ok) return token;
+    const connected = store.tasks.listProjects().filter(isDatabaseBoard).find((board) => board.database.url === address.url);
+    if (connected !== undefined && input.copyFromBoardId === undefined) return replaceToken(connected, token.value);
     const copyFrom = folderBoardToCopy(input.copyFromBoardId);
     if (!copyFrom.ok) return copyFrom;
 
