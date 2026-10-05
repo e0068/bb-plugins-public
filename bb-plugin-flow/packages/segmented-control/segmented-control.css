@@ -54,6 +54,13 @@
   box-shadow: var(--shadow-xs, 0 1px 2px 0 rgb(0 0 0 / 0.05));
 }
 
+/* The option's count: quieter than its label, digits of one width so the
+   segment does not jitter as the number changes. */
+.sgc-count {
+  color: var(--muted-foreground);
+  font-variant-numeric: tabular-nums;
+}
+
 .sgc-segment:disabled {
   pointer-events: none;
   opacity: 0.5;

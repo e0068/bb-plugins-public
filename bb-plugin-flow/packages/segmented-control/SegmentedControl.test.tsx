@@ -55,4 +55,20 @@ describe("SegmentedControl", () => {
 
     expect(screen.getByRole("tablist", { name: "Режим файла" })).toBeInTheDocument();
   });
+
+  it("shows an option's count inside its segment, and no number where none was given", () => {
+    render(
+      <SegmentedControl
+        value="new"
+        onChange={vi.fn()}
+        options={[
+          { value: "new", label: "Новые", count: 61 },
+          { value: "read", label: "Прочитанные" },
+        ]}
+      />,
+    );
+
+    expect(screen.getByRole("tab", { name: /^Новые\s*61$/ })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "Прочитанные" })).toBeInTheDocument();
+  });
 });
