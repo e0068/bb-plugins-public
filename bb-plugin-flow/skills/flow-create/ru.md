@@ -43,6 +43,7 @@ Flow — таблица этапов: тред, идущий по flow, полу
 | `bb.rename-thread` | Назвать тред по его задаче (название без ключа); падает, пока задача не привязана |
 | `git.commit` | Commit |
 | `git.fast-forward` | Перемотать ветку треда на main |
+| `bb.tasks-issue-keys` | Выдать бесключевым задачам ветки ключи доски, номерами после main, и закоммитить |
 | `git.create-pr` | Открыть PR через API GitHub, без push |
 | `bb.tasks-in-review` | Задачи треда → in_review |
 | `files.bump-major`, `files.bump-minor`, `files.bump-patch` | Поднять версию в `package.json` |

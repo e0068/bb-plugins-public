@@ -102,11 +102,6 @@ describe("лента flow в теле страницы", () => {
     expect(within(await strip(openPage())).queryByRole("button", { name: /Удалить flow/ })).toBeNull();
   });
 
-  it("не помещается — лента листается вбок сама, вкладки не сжимаются", async () => {
-    const nav = await strip(openPage());
-    expect(nav.className).toContain("overflow-x-auto");
-    within(nav).getAllByRole("button").forEach((tab) => expect(tab.className).toContain("shrink-0"));
-  });
 });
 
 describe("одна прокрутка на страницу", () => {

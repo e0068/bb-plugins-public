@@ -860,6 +860,39 @@ export const stageCatalogSchema = z.object({
 /** Где лежит файл навыка: хост и абсолютный путь; нет навыка или хоста — `null`. */
 export const skillFileSchema = z.object({ hostId: z.string(), path: z.string() }).nullable();
 
+/**
+ * Файл flow в папке синхронизации — `<Имя>.flow.json`: ссылка строки «Flow» — `flow` с именем. Этапы здесь читаются
+ * лишь до id и ссылки: целиком их проверяет схема коллекции после сборки.
+ */
+export const flowFileSchema = z.object({
+  name: text,
+  description: z.string().optional(),
+  stages: z.array(z.looseObject({ id: text, flow: text.optional() })),
+});
+
+/** `settings.json` папки синхронизации: порядок flow по именам и общее на коллекцию; шаблоны этапов ссылаются по имени. */
+export const collectionFileSchema = z.looseObject({
+  order: z.array(text),
+  stageTemplates: z.array(z.looseObject({ flow: text.optional() })).optional(),
+});
+
+/** Чем кончилась последняя сверка папки: выключено, ещё не сверялась, совпадает с коллекцией, или папка не прочлась — локальные flow не тронуты. */
+export const flowSyncStatusSchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("off") }),
+  z.object({ kind: z.literal("pending") }),
+  z.object({ kind: z.literal("synced"), at: z.string() }),
+  z.object({ kind: z.literal("error"), message: z.string(), at: z.string() }),
+]);
+
+/** Папка синхронизации этого компа, как её ввёл владелец (`~` не раскрыт; пусто — выключено), и итог сверки. */
+export const flowSyncStateSchema = z.object({ dir: z.string(), status: flowSyncStatusSchema });
+
+/** Папка синхронизации на странице Flow. */
+export const flowSyncRpcContract = defineRpcContract({
+  getFlowSync: { input: z.object({}), output: flowSyncStateSchema },
+  setFlowSyncDir: { input: z.object({ dir: z.string() }), output: flowSyncStateSchema },
+});
+
 /** Страница Flow — своим контрактом: брифу он не нужен. */
 export const flowSettingsRpcContract = defineRpcContract({
   getFlowSettings: { input: z.object({}), output: flowSettingsSchema },
@@ -1270,3 +1303,5 @@ export type RunHistoryEntry = z.output<typeof runHistoryEntrySchema>;
 export type Planned = z.output<typeof plannedSchema>;
 export type ContextFillView = z.output<typeof contextFillSchema>;
 export type AwaitingKind = z.output<typeof awaitingEntrySchema>["kind"];
+export type FlowSyncStatus = z.output<typeof flowSyncStatusSchema>;
+export type FlowSyncState = z.output<typeof flowSyncStateSchema>;
