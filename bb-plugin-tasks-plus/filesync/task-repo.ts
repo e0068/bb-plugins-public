@@ -32,7 +32,9 @@ export interface RepoWrite {
 export type RepoState =
   | { kind: "live" }
   | { kind: "reconnecting"; since: string }
-  | { kind: "offline"; since: string; lastSyncAt: string | null };
+  | { kind: "offline"; since: string; lastSyncAt: string | null }
+  /** The database answers, but not to this token: nothing is read until a new one is given. */
+  | { kind: "refused"; since: string; lastSyncAt: string | null };
 
 export interface TaskRepo {
   list(): Promise<RepoFile[]>;
@@ -70,6 +72,21 @@ export class DatabaseAuthFailed extends Error {
     super("the database refused the token");
     this.name = "DatabaseAuthFailed";
   }
+}
+
+/** The database is out of reach right now — no link, or the token refused:
+ *  that board's business, not a failure of whatever reads across boards. */
+export function outOfReach(error: unknown): error is DatabaseUnreachable | DatabaseAuthFailed {
+  return error instanceof DatabaseUnreachable || error instanceof DatabaseAuthFailed;
+}
+
+/** One board's read inside a read across boards: `fallback` when its
+ *  database is out of reach, so that board alone drops out. */
+export function unlessOutOfReach<T>(read: Promise<T>, fallback: T): Promise<T> {
+  return read.catch((error: unknown) => {
+    if (outOfReach(error)) return fallback;
+    throw error;
+  });
 }
 
 const LIVE: RepoState = { kind: "live" };
