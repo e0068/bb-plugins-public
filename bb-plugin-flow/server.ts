@@ -26,7 +26,7 @@ import { registerJournalSettingsApi } from "./server/journal-settings-api";
 import { createJournalIndex } from "./server/journal-index";
 import { writeDecision } from "./server/journal-writer";
 import { acrossThreads, readClaudeTranscript, readPlanning, readWindowCost, readWindowMinutes, withDescendants } from "./server/planning";
-import { type ContextSettingValues, contextFillOf, contextSettings } from "./server/context";
+import { type ContextSettingValues, compactPreselectSetting, compactPreselectedOf, contextFillOf, contextSettings } from "./server/context";
 import { createProgress, registerProgress } from "./server/progress";
 import { registerFlowPickerApi } from "./server/flow-picker-api";
 import { registerOwnerTurn } from "./server/owner-turn";
@@ -66,6 +66,7 @@ export default async function plugin(bb: BbPluginApi): Promise<void> {
   const settings = bb.settings.define({
     [LANGUAGE_SETTING]: { type: "select", label: "Language", description: "Language of the brief, the settings page and the answer sent to the thread. System follows the browser language.", options: [...LANGUAGE_OPTIONS], default: LANGUAGE_SYSTEM },
     ...contextSettings(() => storedContext),
+    ...compactPreselectSetting,
   });
   storedContext = await settings.get();
   settings.onChange((next) => { storedContext = next; });
@@ -215,6 +216,7 @@ export default async function plugin(bb: BbPluginApi): Promise<void> {
     ownSend: own.mark,
     carryFlow,
     flowIds: () => flows.current().flows.map((flow) => flow.id),
+    compactPreselected: (threadId) => compactPreselectedOf(bb.sdk, () => settings.get(), threadId),
     // Смена flow треда живёт в ./server/flow-choice.ts; ответы приходят после запуска плагина, когда `choice` уже есть.
     switchFlow: (threadId, flowId) => choice.switchTo(threadId, flowId),
     releaseFlow: (threadId) => choice.release(threadId),

@@ -38,6 +38,8 @@ export const registerApi = (
     ownSend?: (threadId: string, text: string) => void;
     /** Новый тред передачи получает flow исходного; обычно его уже дало первое сообщение (./thread-start.ts), здесь — страховка. */
     carryFlow?: (fromThreadId: string, toThreadId: string) => Promise<void>;
+    /** Дошло ли окно треда до зоны предвыбора компактации (./context.ts); нет зависимости или сбой — бриф открывается без компактации. */
+    compactPreselected?: (threadId: string) => Promise<boolean>;
     /** Id flow владельца: переход принимается только в один из них. */
     flowIds?: () => readonly string[];
     /** Переводит тред на flow, выбранный в Демонстрации: прежний прогон и работа снимаются, заводится пустой прогон нового (./flow-choice.ts). */
@@ -219,15 +221,17 @@ export const registerApi = (
     },
 
     // Каждый бриф открывается «в этом треде»: новый тред создаёт только выбор в самом ответе.
+    // Окно треда в зоне предвыбора — «в этом треде» открывается и с компактацией.
     async getDispatchPlace({ threadId }) {
-      try {
-        const thread = await bb.sdk.threads.get({ threadId });
-        const route = await store.getRoute(thread.projectId);
-        return route === null ? { place: "here" as const } : { place: "here" as const, route };
-      } catch {
-        // Проект неизвестен — виджет открывается на «в этом треде»: это безопасное значение.
-        return { place: "here" as const };
-      }
+      // Журнал треда читается параллельно с проектом; сбой предвыбора ловится на своём обещании и место не трогает.
+      const preselected = deps.compactPreselected?.(threadId).catch(() => false);
+      const route = await bb.sdk.threads
+        .get({ threadId })
+        .then((thread) => store.getRoute(thread.projectId))
+        // Проект неизвестен — виджет открывается на «в этом треде» без маршрута: это безопасное значение.
+        .catch(() => null);
+      const base = { place: "here" as const, ...((await preselected) === true ? { compact: true } : {}) };
+      return route === null ? base : { ...base, route };
     },
   });
 

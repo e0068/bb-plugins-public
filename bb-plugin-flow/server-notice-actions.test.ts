@@ -37,7 +37,8 @@ const bootFailed = async (answers: Array<{ executed: string[]; skipped: null; er
   await plugin(bb);
   const current = await harness.callRpc<FlowSettings>("getFlowSettings", {});
   const stages = [stage("implement"), stage("merge", { skill: "", name: "Merge", automation: { id: "a1", name: "Merge" } })];
-  await harness.callRpc("saveFlowSettings", addFlow(current, { ...newFlow("with-automation", "With automation"), stages }));
+  // Автоповтор выключен: упавший шаг сразу ждёт владельца.
+  await harness.callRpc("saveFlowSettings", addFlow({ ...current, retryInSeconds: 0 }, { ...newFlow("with-automation", "With automation"), stages }));
   await harness.callRpc("setFlowChoice", { projectId: "proj_auto", flowId: "with-automation" });
   await harness.emitThreadEvent("thread.created", { thread: makeThreadResponse({ id: "thr_auto", projectId: "proj_auto", parentThreadId: null }) });
   await harness.callAgentTool(FLOW_STAGE_TOOL, { stage: "implement", state: "started" }, { threadId: "thr_auto" });

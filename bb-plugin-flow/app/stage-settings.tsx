@@ -22,7 +22,7 @@ import { Button } from "../components/ui/button";
 import { Icon } from "../components/ui/icon";
 import { Input } from "../components/ui/input";
 import { Switch } from "../components/ui/switch";
-import { clearedSkill, isNewStageName, RETRY_LIMITS, stageSkillOf, STAGE_BUTTON_WIDTH as WIDTH, type BuiltinKind } from "../lib/stage-constants";
+import { clearedSkill, isNewStageName, RETRY_LIMITS, stageSkillOf, type BuiltinKind } from "../lib/stage-constants";
 import { cn } from "../lib/utils";
 import type { AutomationScript, Flow, flowSettingsRpcContract, SkillFile, SkillOrigin, StageCatalog, StageExecutor, WorkStage } from "../shared/contract";
 import { type AutomationSets, AutomationStepTags, ManualMark, ScriptOptions, TagOpen, WidgetOptions } from "./automation-stage";
@@ -1057,26 +1057,6 @@ function NumberSetting(props: { label: string; ariaLabel: string; unit?: string;
       />
       {props.unit !== undefined && <span className="text-muted-foreground">{props.unit}</span>}
     </label>
-  );
-}
-
-/** Минимальная ширина кнопки этапа в брифе — общая на все flow. */
-export function StageButtonWidth() {
-  const t = useMessages();
-  const { settings, failed } = useFlowSettings();
-  return (
-    <Loading failed={failed}>
-      <NumberSetting
-        label={t.settings.minWidth}
-        ariaLabel={t.settings.minWidthPx}
-        unit="px"
-        min={WIDTH.min}
-        max={WIDTH.max}
-        step={10}
-        value={settings?.minButtonWidth}
-        onSave={(minButtonWidth) => updateFlowSettings((s) => ({ ...s, minButtonWidth }))}
-      />
-    </Loading>
   );
 }
 

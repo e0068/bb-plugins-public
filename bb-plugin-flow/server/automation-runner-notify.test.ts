@@ -45,7 +45,8 @@ const setup = (
   steps: Steps,
   notify: (event: RunnerNotice) => void,
   onError: (error: unknown) => void = rethrow,
-  retry: ReturnType<typeof manualRetry>["deps"] | Record<string, never> = {},
+  // Без своего расписания автоповтор выключен: упавший шаг сразу ждёт владельца, как и проверяют тесты без таймеров.
+  retry: Partial<ReturnType<typeof manualRetry>["deps"]> = { retry: () => ({ seconds: 0, attempts: 3 }) },
 ) => {
   const settings: StageSettings = { stages, minButtonWidth: 170 };
   const { bb, harness } = createFakePluginHost({ pluginId: "flow" });

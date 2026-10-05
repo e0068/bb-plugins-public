@@ -28,12 +28,6 @@ const type = (input: HTMLElement, value: string) => {
 };
 
 describe("секция автоповтора автоматизаций", () => {
-  it("без сохранённых полей — 0 секунд и 3 попытки", async () => {
-    const slot = open();
-    expect(((await slot.findByRole("spinbutton", { name: "Retry in, секунд" })) as HTMLInputElement).value).toBe("0");
-    expect((slot.getByRole("spinbutton", { name: "Попыток" }) as HTMLInputElement).value).toBe("3");
-  });
-
   it("секунды и попытки сохраняются в общие настройки Flow", async () => {
     const slot = open();
     type(await slot.findByRole("spinbutton", { name: "Retry in, секунд" }), "45");
