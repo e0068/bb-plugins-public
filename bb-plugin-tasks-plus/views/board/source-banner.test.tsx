@@ -13,7 +13,7 @@ const { SourceBanner } = await planned<typeof import("./source-banner.js")>(() =
 afterEach(cleanup);
 
 const URL_ = "libsql://board-me.turso.io";
-function databaseRow(state: "live" | "reconnecting" | "offline") {
+function databaseRow(state: "live" | "reconnecting" | "offline" | "refused") {
   return {
     projectId: PROJECT_ID,
     projectName: "Tasks Plugin",
@@ -55,6 +55,12 @@ describe("the banner of a board that lost its database", () => {
     expect(slot.container.textContent).toMatch(/last sync/i);
     fireEvent.click(slot.getByRole("button", { name: "Retry" }));
     await waitFor(() => expect(retryDatabase).toHaveBeenCalledWith(expect.objectContaining({ boardId: PROJECT_ID })));
+  });
+
+  it("names the refused token, not a lost link, when the database refused it", async () => {
+    const { slot } = renderBanner([databaseRow("refused")]);
+    await waitFor(() => expect(slot.queryByText(/Token refused · enter a new one in Connect database/)).not.toBeNull());
+    expect(slot.container.textContent).not.toContain("Taking and editing is paused");
   });
 
   it("shows while the board is reconnecting too", async () => {

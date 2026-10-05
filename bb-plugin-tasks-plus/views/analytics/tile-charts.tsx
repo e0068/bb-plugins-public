@@ -669,7 +669,10 @@ export function hasContent(tile: Tile, answer: TileAnswer): boolean {
 }
 
 export function TileChart(props: TileChartProps) {
-  if (!hasContent(props.tile, props.answer)) return <Empty>No tasks match this chart's filter.</Empty>;
+  // An empty tile without a filter is an empty period, not a filter that left nothing.
+  if (!hasContent(props.tile, props.answer)) {
+    return <Empty>{props.tile.conditions.length > 0 ? "No tasks match this chart's filter." : "Nothing happened in this period."}</Empty>;
+  }
   const Draw = DRAW[props.tile.type];
   return <Draw {...props} />;
 }

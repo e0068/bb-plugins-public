@@ -86,6 +86,12 @@ const OFFLINE_AFTER = 3;
 
 export const INITIAL_LINK: LinkState = { state: { kind: "live" }, failures: 0, lastSyncAt: null };
 
+/** The link after the database refused the token: refused from the first such answer on, until a success. */
+export function refusedLink(link: LinkState, at: string): LinkState {
+  const since = link.state.kind === "refused" ? link.state.since : at;
+  return { ...link, failures: 0, state: { kind: "refused", since, lastSyncAt: link.lastSyncAt } };
+}
+
 /** The link after one attempt: the first failure is reconnecting, the third in
  *  a row is offline, the first success is live again. */
 export function nextLink(link: LinkState, event: { ok: boolean; at: string }): LinkState {

@@ -19,7 +19,7 @@ export const syncedSourceSchema = z.discriminatedUnion("kind", [
     .object({
       kind: z.literal("database"),
       url: z.string(),
-      state: z.enum(["live", "reconnecting", "offline"]),
+      state: z.enum(["live", "reconnecting", "offline", "refused"]),
       lastSyncAt: z.string().nullable(),
     })
     .strict(),
@@ -137,6 +137,9 @@ const connectDatabaseResultSchema = z.discriminatedUnion("ok", [
   z.object({ ok: z.literal(true) }).strict(),
   z.object({ ok: z.literal(false), error: folderDomainErrorSchema }).strict(),
 ]);
+
+/** What a board whose database refused its token says, in Folders and above the board alike. */
+export const TOKEN_REFUSED_TEXT = "Token refused · enter a new one in Connect database";
 
 export const foldersRpcContract = defineRpcContract({
   listSyncedFolders: {

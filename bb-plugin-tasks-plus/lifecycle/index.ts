@@ -2,6 +2,7 @@ import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import type { TasksApiStore } from "../api";
 import type { TaskThread } from "../db";
 import { publishThreadsChanged } from "../delegate";
+import { unlessOutOfReach } from "../filesync/task-repo.js";
 import {
   patchLiveState,
   sameLiveState,
@@ -23,11 +24,13 @@ function isTerminal(liveStatus: TaskThread["liveStatus"]): boolean {
 
 /** Привязанные треды всех досок — по одному чтению каталога на доску.
  *  Поштучный `listTaskThreads` перечитывал бы каталог по разу на задачу, а
- *  этот обход идёт на каждое наблюдение за тредом и раз в тик сверки. */
+ *  этот обход идёт на каждое наблюдение за тредом и раз в тик сверки.
+ *  Доска, чья база сейчас недоступна, выпадает из обхода: обход ждёт старт
+ *  плагина, и одна такая доска иначе не дала бы запуститься остальным. */
 async function trackedThreads(store: TasksApiStore, threadId?: string): Promise<TaskThread[]> {
   const boards = store.tasks.listProjects();
   const perBoard = await Promise.all(
-    boards.map((board) => store.tasks.threadsByTaskId(board.id)),
+    boards.map((board) => unlessOutOfReach(store.tasks.threadsByTaskId(board.id), new Map<string, TaskThread[]>())),
   );
   return perBoard
     .flatMap((byTask) => [...byTask.values()].flat())

@@ -83,8 +83,13 @@ describe("TileChart — other types", () => {
     expect(screen.getByText("25% of budget")).toBeTruthy();
   });
 
-  it("says so when the filter leaves nothing", () => {
-    draw(newTile("t"), answer({ values: [[0, 0], [0, 0], [0, 0]] }));
+  it("blames the filter when a filtered tile comes out empty", () => {
+    draw(newTile("t", { conditions: [{ field: "status", op: "eq", value: "done" }] }), answer({ values: [[0, 0], [0, 0], [0, 0]] }));
     expect(screen.getByText("No tasks match this chart's filter.")).toBeTruthy();
+  });
+
+  it("names the period, not a filter, when a tile without one comes out empty", () => {
+    draw(newTile("t"), answer({ values: [[0, 0], [0, 0], [0, 0]] }));
+    expect(screen.getByText("Nothing happened in this period.")).toBeTruthy();
   });
 });

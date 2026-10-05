@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import type { TasksApiStore } from "../api";
 import { createFileTasksStore } from "../filesync/store.js";
+import { DatabaseAuthFailed, DatabaseUnreachable } from "../filesync/task-repo.js";
 import type { BoardConfig, KvStore } from "../filesync/board-config.js";
 import { registerLifecycle } from "./index.js";
 
@@ -200,5 +201,24 @@ describe("thread lifecycle", () => {
     await registerLifecycle(fakeBb(), restarted);
 
     expect((await restarted.tasks.listTaskThreads(task.id))[0]?.liveStatus).toBe("working");
+  });
+
+  it.each([
+    ["отвергает токен", new DatabaseAuthFailed()],
+    ["не отвечает", new DatabaseUnreachable()],
+  ])("старт не падает, когда база одной доски %s, — треды остальных досок сверяются", async (_, failure) => {
+    const store = makeStore();
+    const task = await taskWithThread(store);
+    sdkThreads.set("thr_x", { id: "thr_x", status: "idle", archivedAt: null, deletedAt: null });
+    const tasks = {
+      ...store.tasks,
+      listProjects: () => [...store.tasks.listProjects(), { ...board, id: "b2" }],
+      threadsByTaskId: (projectId: string) =>
+        projectId === "b2" ? Promise.reject(failure) : store.tasks.threadsByTaskId(projectId),
+    };
+
+    await registerLifecycle(fakeBb(), { ...store, tasks } as TasksApiStore);
+
+    expect((await store.tasks.listTaskThreads(task.id))[0]?.liveStatus).toBe("idle");
   });
 });
