@@ -1,7 +1,6 @@
 // Строки `::decision{id="…"}` и `::command{id="…"}` собираются на бэкенде и
 // разбираются на фронте — здесь, в одном месте, чтобы стороны не разошлись в
-// кавычках и префиксе. `::task{key="…"}` — формат Tasks+: Flow его только
-// собирает, разбирает и рисует карточку сам Tasks+.
+// кавычках и префиксе.
 
 export const DECISION_ID_PREFIX = "dec_";
 
@@ -12,9 +11,6 @@ export const readDecisionId = (attributes: Readonly<Record<string, string>>) => 
 export const COMMAND_ID_PREFIX = "cmd_";
 
 export const commandDirectiveLine = (id: string): string => `::command{id="${id}"}`;
-
-/** Директива карточки задачи Tasks+. Ключ с пробелом или кавычкой директиву бы сломал, такой строки нет. */
-export const taskDirectiveLine = (key: string): string | null => (/^[^\s"]+$/.test(key) ? `::task{key="${key}"}` : null);
 
 const readPrefixed = (attributes: Readonly<Record<string, string>>, prefix: string): { kind: "ok"; id: string } | { kind: "invalid" } => {
   const id = attributes.id ?? "";

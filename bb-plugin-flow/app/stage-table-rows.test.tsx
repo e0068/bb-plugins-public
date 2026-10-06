@@ -122,13 +122,6 @@ describe("шаблоны этапов", () => {
     await vi.waitFor(() => expect(savedStages(slot)?.at(-1)).toMatchObject({ executors: [], automation: { source: "flow", steps: [] } }));
   });
 
-  it("без шаблонов своего вида кнопка сразу добавляет этап, без меню", async () => {
-    const slot = open(settings({ stageTemplates: [deploy] }));
-    fireEvent.click(await slot.findByRole("button", { name: "Добавить этап" }));
-    expect(slot.queryByRole("menu")).toBeNull();
-    await vi.waitFor(() => expect(savedStages(slot)?.at(-1)).toMatchObject({ name: "Новый этап", executors: [] }));
-  });
-
   it("крест у шаблона скрипта убирает именно его", async () => {
     const slot = open(twoKinds());
     fireEvent.click(await slot.findByRole("button", { name: "Добавить скрипт" }));

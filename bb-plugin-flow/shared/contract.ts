@@ -8,7 +8,7 @@ import { z } from "zod";
 
 import { STEP_IDS } from "@bb-plugins/automation-steps/catalog";
 import { MAX_SCRIPT_CHARS } from "../lib/script-limit";
-import { linkedSubStages, RETRY_LIMITS, SELF_EXECUTOR, STAGE_BUTTON_WIDTH, STAGE_KINDS, SUB_STAGE_ISSUE } from "../lib/stage-constants";
+import { linkedSubStages, MAX_WAKE_INSTRUCTION_CHARS, RETRY_LIMITS, SELF_EXECUTOR, STAGE_BUTTON_WIDTH, STAGE_KINDS, SUB_STAGE_ISSUE } from "../lib/stage-constants";
 
 export { RETRY_LIMITS, SELF_EXECUTOR, STAGE_BUTTON_WIDTH };
 
@@ -293,6 +293,8 @@ export const flowSettingsSchema = z
     retryAttempts: z.number().int().min(0).max(RETRY_LIMITS.attempts).optional(),
     /** Реплика агенту треда, когда последняя попытка шага автоматизации упала и шаг ждёт владельца; нет поля — не слать. */
     wakeAgentAfterLastRetry: z.boolean().optional(),
+    /** Наказ агенту в той реплике — что делать с упавшим шагом; факты падения Flow ставит сам. Нет поля или пусто — наказ по умолчанию. */
+    wakeAgentInstruction: z.string().max(MAX_WAKE_INSTRUCTION_CHARS).optional(),
     automationSets: z.array(automationSetSchema).optional(),
     stageTemplates: z.array(stageTemplateSchema).optional(),
     version: z.literal(2).optional(),

@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-// Этап «Flow» на странице Flow: группа «Flow» в меню «Добавить этап», подпись строки, замена flow и удалённый flow.
+// Этап «Flow» на странице Flow: группа «Flow» в меню «Добавить этап» и удалённый flow. Строки этапа — stage-settings-nested-flow-rows.test.tsx.
 import { cleanup, fireEvent, waitFor, within } from "@testing-library/react";
 import type { PluginNavPanelProps } from "@get-bb/plugin-sdk/app";
 import { loadPluginApp, renderSlot } from "@get-bb/plugin-sdk/testing/app";
@@ -58,16 +58,6 @@ describe("этап «Flow» на странице Flow", () => {
     expect(savedPlugin(slot)).toHaveLength(2);
   });
 
-  it("строка подписана живым названием вложенного flow и числом его этапов", async () => {
-    const slot = open([PLUGIN([ref("nested", "answer")]), ANSWER]);
-    expect(await slot.findByText("Flow: Answer · 2 этапа")).toBeTruthy();
-  });
-
-  it("подпись следует за переименованием вложенного flow", async () => {
-    const slot = open([PLUGIN([ref("nested", "answer")]), { ...ANSWER, name: "Ответ v2" }]);
-    expect(await slot.findByText("Flow: Ответ v2 · 2 этапа")).toBeTruthy();
-  });
-
   it("удалённый вложенный flow — подпись «flow удалён», таблица открывается", async () => {
     const slot = open([PLUGIN([stage("task"), ref("nested", "missing")]), ANSWER]);
     expect(await slot.findByText("flow удалён")).toBeTruthy();
@@ -82,27 +72,11 @@ describe("этап «Flow» на странице Flow", () => {
     expect(within(group).getAllByRole("menuitem").map((item) => item.textContent)).toEqual(["Answer"]);
   });
 
-  it("плюс у строки заменяет вложенный flow на выбранный", async () => {
-    const code = flow("code", "Code", [stage("implement")]);
-    const slot = open([PLUGIN([ref("nested", "answer")]), ANSWER, code]);
-    fireEvent.click(await slot.findByRole("button", { name: "Заменить flow" }));
-    const menu = await slot.findByRole("menu", { name: "Заменить flow" });
-    fireEvent.click(within(menu).getByRole("menuitem", { name: "Code" }));
-    await waitFor(() => expect(savedPlugin(slot)).toEqual([expect.objectContaining({ id: "nested", flowId: "code" })]));
-  });
-
   it("у строки «Flow» нет закладки шаблона, у обычного этапа — есть", async () => {
     const slot = open([PLUGIN([stage("task"), ref("nested", "answer")]), ANSWER]);
     const task = within(await slot.findByRole("row", { name: "Этап 1" }));
     const nested = within(await slot.findByRole("row", { name: "Этап 2" }));
     expect(task.getByRole("button", { name: "Сохранить этап шаблоном" })).toBeTruthy();
     expect(nested.queryByRole("button", { name: "Сохранить этап шаблоном" })).toBeNull();
-  });
-
-  it("flow без соседей: «Добавить этап» по-прежнему сразу добавляет пустой этап", async () => {
-    const slot = open([PLUGIN([stage("task")])]);
-    fireEvent.click(await slot.findByRole("button", { name: "Добавить этап" }));
-    await waitFor(() => expect(savedPlugin(slot)).toHaveLength(2));
-    expect(slot.queryByRole("menu")).toBeNull();
   });
 });
