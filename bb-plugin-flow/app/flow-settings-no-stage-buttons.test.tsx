@@ -7,8 +7,12 @@ import { describe, expect, it } from "vitest";
 const app = await loadPluginApp(() => import("../app"));
 
 describe("разделы страницы настроек Flow", () => {
-  it("раздела «Кнопки этапов в брифе» нет, остальные на месте", () => {
-    expect(app.settingsSections.map((s) => s.id)).toEqual(["journal-dirs", "automation-retry"]);
+  it("раздела «Кнопки этапов в брифе» нет", () => {
+    expect(app.settingsSections.map((s) => s.id)).not.toContain("stage-buttons");
+  });
+
+  it("журнал и автоповтор — разделы настроек плагина", () => {
+    expect(app.settingsSections.map((s) => s.id)).toEqual(expect.arrayContaining(["journal-dirs", "automation-retry"]));
   });
 
   it("Flow — пункт левого меню", () => {

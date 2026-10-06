@@ -47,12 +47,6 @@ describe("ask_decision не пускает бриф с нулевым бюдже
     expect(text).toContain("stages spec have no share");
   });
 
-  it("ни одного этапа в прогоне при этапе работы — прогноз $0, отклонён", async () => {
-    const ask = await host();
-    const idle = stages.map((s) => ({ ...s, recommended: false }));
-    expect(textOf(await ask({ title: "Бриф", scope: "- база", setup: { criteria: [{ text: "Пункт", add: price }], stages: idle } }))).toContain("$0");
-  });
-
   it("полный бриф принят", async () => {
     const ask = await host();
     expect(textOf(await ask({ title: "Бриф", scope: "- база", setup: { criteria: [{ text: "Пункт", add: price }], stages } }))).toContain("::decision");

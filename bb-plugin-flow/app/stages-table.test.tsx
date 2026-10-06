@@ -57,7 +57,7 @@ describe("исполнитель в строке этапа", () => {
     fireEvent.click(within(await row(slot, "plan")).getByRole("button", { name: "План: исполнитель" }));
     const list = within(slot.getByRole("group", { name: "План: исполнитель" }));
     const pickPlanner = list.getByRole("button", { name: /planner · opus/ });
-    expect(pickPlanner.textContent).toContain("+$6–+$11");
+    expect(pickPlanner.textContent).toContain("$6–$11");
     fireEvent.click(pickPlanner);
     expect(slot.queryByRole("group", { name: "План: исполнитель" })).toBeNull();
     expect((await row(slot, "plan")).textContent).toContain("planner · opus");
@@ -154,14 +154,14 @@ describe("снимок отвеченного брифа", () => {
 
   it("строка с меткой этапа встаёт в его строку, остальное — своими строками", async () => {
     const slot = open(fresh, answered([{ label: "План", note: "Сам", minutes: 15, risk: 0, target: 4.5, max: 7.5, stage: "plan" }, { label: "Вопрос 1", note: "вариант", minutes: null, risk: 1, target: 0, max: 0 }]));
-    expect((await row(slot, "plan")).textContent).toContain("+$4.5–+$7.5");
+    expect((await row(slot, "plan")).textContent).toContain("$4.5–$7.5");
     const lines = [...(await slot.findByRole("group", { name: "Этапы и бюджет" })).querySelectorAll("[data-line]")].map((l) => l.textContent);
     expect(lines).toEqual([expect.stringContaining("Вопрос 1")]);
   });
 
   it("снимок, записанный до меток, узнаёт строку этапа по названию", async () => {
     const slot = open(fresh, answered([{ label: "План", note: "Сам", minutes: 15, risk: 0, target: 4.5, max: 7.5 }]));
-    expect((await row(slot, "plan")).textContent).toContain("+$4.5–+$7.5");
+    expect((await row(slot, "plan")).textContent).toContain("$4.5–$7.5");
     expect((await slot.findByRole("group", { name: "Этапы и бюджет" })).querySelectorAll("[data-line]")).toHaveLength(0);
   });
 });

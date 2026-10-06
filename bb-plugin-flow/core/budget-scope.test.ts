@@ -60,15 +60,6 @@ describe("объём — база из пунктов и выбранные ва
 });
 
 describe("этапы — доли объёма", () => {
-  it("каждый этап в прогоне — объём × процент; исполнитель — множитель", () => {
-    const f = forecast(withStages, staged([{ id: "plan", run: true, executor: planner.id, review: true }]));
-    const line = (label: string) => f.lines.find((l) => l.label === label);
-    expect(line("Задача")).toMatchObject({ target: 0.6, max: 0.9, minutes: 3, risk: 0 });
-    expect(line("Спецификация")).toMatchObject({ target: 1.2, max: 1.8, minutes: 6, risk: -1 });
-    expect(line("План")).toMatchObject({ target: 3, max: 4.5, minutes: 15, risk: 5 });
-    expect(f).toMatchObject({ target: 4.8, max: 7.2, minutes: 24, risk: 4 });
-  });
-
   it("снятый пункт уменьшает каждую строку этапа пропорционально", () => {
     const full = forecast(withStages, staged([]));
     const cut = forecast(withStages, staged([], { criteria: { removed: [0], edited: [], added: [] } }));

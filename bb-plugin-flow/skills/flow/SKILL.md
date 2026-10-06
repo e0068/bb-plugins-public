@@ -98,13 +98,13 @@ Every brief before the work is launched starts with `scope`: the minimal set of 
 
 **A fork is priced from its simplest answer.** Before the work is launched, every fork with prices has an option that costs 0 — the simplest answer, whose work is already in `setup.criteria`. Every other option's `add` is the price of its own `criteria`, counted from zero: an answer that builds on the simple one costs only what it adds, an answer that replaces it costs its whole work and lists the replaced items of the simple answer in `removes` — the plugin subtracts their price itself, so the option never subtracts it again. The recommended answer is not the anchor: when you recommend a richer answer, it is priced above zero like any other. A minus means a richer answer sits in the base, and the tool refuses it. Example: the base item "the chart filter also narrows the table" costs `{ "target": 1, "max": 2 }` and is the simple answer, "Shared filter" costs 0; "Own table filter" costs its whole work `{ "target": 2, "max": 4 }` with the item "the table has its own filter" and `removes` of the base item, so choosing it moves the scope by +$1–2. In a brief in the middle of the work the base is the approved scope, so both answers of a fork may add to it.
 
-**A stage is a part of the scope.** `share.percent` is how much of the scope the stage costs: the stage that does the work itself is 100, a spec around 15, a review around 20, a task or a demo around 5. An executor in `factors` multiplies the stage's part: a subagent on a cheaper model below 1, a workflow with extra checks above 1 — always above zero; you yourself are 1. The plugin counts dollars and minutes: a stage in the run costs scope × percent × factor. A flow without a stage of the work itself (no 100 — a thread without a flow, or a flow of built-in stages only) counts the scope once and adds its stages on top. The total never drops to zero while the base is there, and the tool refuses a brief before launch without `scope`, with an unpriced item, with a `todo` skill stage without `share`, or with a $0 / 0 min forecast.
+**A stage is a part of the scope.** `share.percent` is how much of the scope the stage costs: the stage that does the work itself is 100, a spec around 15, a review around 20, a task or a demo around 5. An executor in `factors` multiplies the stage's part: a subagent on a cheaper model below 1, a workflow with extra checks above 1 — always above zero; you yourself are 1. The plugin counts dollars and minutes: the scope — the Definition of Done items — counts once, and a stage in the run adds scope × percent × factor on top. The stage of the work itself is that scope: by you it adds nothing, by another executor only (factor − 1) × scope. The total never drops to zero while the base is there, and the tool refuses a brief before launch without `scope`, with an unpriced item, with a `todo` skill stage without `share`, or with a $0 / 0 min forecast.
 
-**The risk of a stage** is how the stage changes the risk of the whole work, not how much can break inside the stage itself. 1r ≈ 10% chance that a blocking defect reaches the owner. Only implementation raises it; spec, plan, prototype, review and testing lower it; questions, Definition of Done, stage selection, demos, automations and action stages are 0. A check with a plus makes skipping checks look safer — never send one. The scale:
+**The risk of a stage** is how the stage changes the risk of the whole work, not how much can break inside the stage itself. 1r ≈ 10% chance that a blocking defect reaches the owner. Only implementation raises it, and its risk goes on the Definition of Done items, spread across them — the stage of the work itself sends `share.risk` 0, the plugin does not count it; spec, plan, prototype, review and testing lower it; questions, Definition of Done, stage selection, demos, automations and action stages are 0. A check with a plus makes skipping checks look safer — never send one. The scale:
 
 | Stage | Risk | What the number rests on |
 | --- | --- | --- |
-| Implementation | xs +1, s +3, m +5, l +6 | Measured: the first review found blocking defects in 43 of 83 done tasks with a verdict — s 3 of 10, m 17 of 33, l 22 of 37. xs has no reviewed tasks, +1 is an estimate |
+| Implementation, summed over the items | xs +1, s +3, m +5, l +6 | Measured: the first review found blocking defects in 43 of 83 done tasks with a verdict — s 3 of 10, m 17 of 33, l 22 of 37. xs has no reviewed tasks, +1 is an estimate |
 | Review by another agent | About minus what implementation added (m −5, l −6) | Measured as the same numbers: those defects were caught by the review, not by the owner. Review yourself is half of it — not measured |
 | Testing, tests before code | −1 to −2 | Estimate, not measured |
 | Spec | −1 | Estimate, not measured: tasks with a spec failed the first review in 7 of 15, without one in 36 of 68 — the gap is within noise. A spec mostly saves a wrong direction, which the review verdict does not count |
@@ -150,15 +150,15 @@ The owner can answer any question in their own words. A question id does not sta
       { "id": "demo", "state": "done" },
       { "id": "spec", "state": "todo", "recommended": true, "share": { "percent": 15, "risk": -1 } },
       { "id": "plan", "state": "todo", "recommended": true, "executor": "agent:planner", "share": { "percent": 10, "risk": -1 }, "factors": { "agent:planner": { "factor": 0.8, "risk": 0 } } },
-      { "id": "implement", "state": "todo", "recommended": true, "share": { "percent": 100, "risk": 5 } },
+      { "id": "implement", "state": "todo", "recommended": true, "share": { "percent": 100, "risk": 0 } },
       { "id": "review", "state": "todo", "recommended": true, "executor": "agent:reviewer", "share": { "percent": 20, "risk": -2 }, "factors": { "agent:reviewer": { "factor": 1.2, "risk": -3 } } },
       { "id": "testing", "state": "todo", "recommended": true, "share": { "percent": 15, "risk": -2 } },
       { "id": "demo-2", "state": "todo", "recommended": true }
     ],
     "criteria": [
-      { "text": "The DevShell tree is built from the inheritanceStates of the CEL-114 spec", "add": { "target": 4, "max": 7, "risk": 0, "minutes": 30 } },
-      { "text": "A tree row shows depth and object", "before": "A row is only the object name", "after": "Indent by depth and the object name", "add": { "target": 2, "max": 3, "risk": 0, "minutes": 15 } },
-      { "text": "Tree layout tests are green", "add": { "target": 1, "max": 2, "risk": 0, "minutes": 10 } }
+      { "text": "The DevShell tree is built from the inheritanceStates of the CEL-114 spec", "add": { "target": 4, "max": 7, "risk": 3, "minutes": 30 } },
+      { "text": "A tree row shows depth and object", "before": "A row is only the object name", "after": "Indent by depth and the object name", "add": { "target": 2, "max": 3, "risk": 1, "minutes": 15 } },
+      { "text": "Tree layout tests are green", "add": { "target": 1, "max": 2, "risk": 1, "minutes": 10 } }
     ]
   },
   "questions": [

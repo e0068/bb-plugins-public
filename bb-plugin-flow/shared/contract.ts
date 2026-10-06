@@ -400,6 +400,7 @@ export const stageOutcomeSchema = z
     notes: text.optional(),
     /** Дополнительные секции Демонстрации: заголовок и текст абзацами через пустую строку. */
     sections: z.array(z.object({ title: text, text })).min(1).optional(),
+    /** Задачи итога: `done` — итог задачи показан, она в In Review и станет done, когда владелец примет шаг; иначе — только заведена в треде. `note` виджет не показывает. */
     tasks: z.array(z.object({ key: text, done: z.boolean(), note: text.optional() })).min(1).optional(),
     /** Ссылка — файл, путь или адрес страницы; команда — запуск результата одной кнопкой в терминале треда. */
     results: z.array(z.union([z.object({ label: text, target: text }).strict(), z.object({ label: text, command: text.max(COMMAND_MAX_LENGTH) }).strict()])).min(1),
@@ -705,8 +706,6 @@ export const forecastSnapshotSchema = z.object({
       risk: z.number(),
       target: z.number().nullable(),
       max: z.number().nullable(),
-      /** Строка — основа итога, а не добавка: утверждённый бюджет прогона в брифе-уточнении. */
-      base: z.literal(true).optional(),
       /** Id этапа, чья это цена: таблица отвеченного брифа ставит её в строку этапа. Нет у снимков, записанных раньше. */
       stage: z.string().optional(),
       /** Номер пункта Definition of Done с нуля, чья это цена: таблица ставит её в строку пункта под Definition of Done. Нет у снимков, записанных раньше. */
@@ -884,10 +883,10 @@ export const flowSyncStatusSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("error"), message: z.string(), at: z.string() }),
 ]);
 
-/** Папка синхронизации этого компа, как её ввёл владелец (`~` не раскрыт; пусто — выключено), и итог сверки. */
+/** Папка flow этого компа, как её ввёл владелец (`~` не раскрыт; пусто — выключено), и итог сверки. */
 export const flowSyncStateSchema = z.object({ dir: z.string(), status: flowSyncStatusSchema });
 
-/** Папка синхронизации на странице Flow. */
+/** Папка flow — секция настроек плагина. */
 export const flowSyncRpcContract = defineRpcContract({
   getFlowSync: { input: z.object({}), output: flowSyncStateSchema },
   setFlowSyncDir: { input: z.object({ dir: z.string() }), output: flowSyncStateSchema },

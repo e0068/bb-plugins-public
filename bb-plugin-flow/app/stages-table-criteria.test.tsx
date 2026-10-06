@@ -41,13 +41,24 @@ const table = async (slot: Slot) => slot.findByRole("group", { name: "Этапы
 const criterionRow = (root: HTMLElement, index: number) => root.querySelector<HTMLElement>(`[data-criterion="${index}"]`)!;
 
 describe("пункты «Готово, когда» в таблице этапов", () => {
+  it("время и деньги пункта стоят числом без плюса, риск — со знаком, а экономия — с минусом", async () => {
+    const root = await table(open(brief));
+    const text = criterionRow(root, 0).textContent!;
+    expect(text).toContain("8 мин");
+    expect(text).toContain("+1r");
+    expect(text).not.toMatch(/\+\$|\+\d+ мин/);
+    const saving = await table(open({ ...brief, setup: { ...brief.setup, criteria: [{ text: "Экономия", add: add(-2, -1, 0, -20) }] } }));
+    expect(criterionRow(saving, 0).textContent).toContain("–20 мин");
+    expect(criterionRow(saving, 0).textContent).toContain("–$1");
+  });
+
   it("стоят сразу под строкой «Критерии», названы своим текстом, с ценой в колонках", async () => {
     const root = await table(open(brief));
     const criteria = root.querySelector<HTMLElement>('[data-stage="criteria"]')!;
     expect(criteria.nextElementSibling).toBe(criterionRow(root, 0));
     expect(criterionRow(root, 0).nextElementSibling).toBe(criterionRow(root, 1));
     expect(criterionRow(root, 0).textContent).toContain("Чекбоксы в таблице этапов");
-    expect(criterionRow(root, 0).textContent).toContain("+$1");
+    expect(criterionRow(root, 0).textContent).toContain("$1");
     expect(root.textContent).not.toContain("Пункт 1");
   });
 
@@ -89,7 +100,7 @@ describe("строка Definition of Done сворачивает свои пун
       },
     });
     const row = criterionRow(await table(open(withWork)), 0);
-    expect(row.textContent).toContain("+$1");
-    expect(row.textContent).toContain("+8 мин");
+    expect(row.textContent).toContain("$1");
+    expect(row.textContent).toContain("8 мин");
   });
 });

@@ -1,10 +1,9 @@
 // @vitest-environment jsdom
 // Дерево flow слева на странице Flow: вложенные flow — под тем, кто на них
-// ссылается, как и в папке синхронизации; под деревом — папка и итог сверки.
-// Коллекция, поменявшаяся на сервере, — из папки или от агента, — видна
+// ссылается, как и в папке flow. Коллекция, поменявшаяся на сервере, — из папки или от агента, — видна
 // открытой странице без перезагрузки.
 import type { ComponentType } from "react";
-import { cleanup, fireEvent, waitFor, within } from "@testing-library/react";
+import { cleanup, fireEvent, within } from "@testing-library/react";
 import type { PluginNavPanelProps } from "@get-bb/plugin-sdk/app";
 import { loadPluginApp, renderSlot } from "@get-bb/plugin-sdk/testing/app";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -60,42 +59,6 @@ describe("дерево flow", () => {
     await vi.waitFor(() => expect(slot.rpcCalls.some((c) => c.method === "saveFlowSettings")).toBe(true));
     const saved = [...slot.rpcCalls].reverse().find((c) => c.method === "saveFlowSettings")!.input as FlowSettings;
     expect(saved.flows.at(-1)!.name).toBe("Новый flow 2");
-  });
-});
-
-describe("папка синхронизации под деревом", () => {
-  it("показывает папку и итог сверки", async () => {
-    const slot = openPage();
-    const field = (await slot.findByRole("textbox", { name: "Папка синхронизации" })) as HTMLInputElement;
-    expect(field.value).toBe("~/.claude/BB Flows");
-    expect(await slot.findByText("Синхронизировано")).toBeTruthy();
-  });
-
-  it("ошибка чтения папки видна текстом, локальные flow на месте", async () => {
-    const slot = openPage("", { dir: "~/.claude/BB Flows", status: { kind: "error", message: "Code.flow.json: not valid JSON", at: "2026-10-05T12:00:00.000Z" } });
-    expect(await slot.findByText(/Code\.flow\.json: not valid JSON/)).toBeTruthy();
-    expect(within(await tree(slot)).getByRole("button", { name: "Code" })).toBeTruthy();
-  });
-
-  it("новая папка сохраняется по уходу фокуса, пустая — выключает синхронизацию", async () => {
-    const slot = openPage();
-    const field = (await slot.findByRole("textbox", { name: "Папка синхронизации" })) as HTMLInputElement;
-    fireEvent.change(field, { target: { value: "" } });
-    fireEvent.blur(field);
-    await waitFor(() => expect(slot.rpcCalls).toContainEqual(expect.objectContaining({ method: "setFlowSyncDir", input: { dir: "" } })));
-    expect(await slot.findByText("Синхронизация выключена")).toBeTruthy();
-  });
-
-  it("итог сверки обновляется по каналу синхронизации", async () => {
-    let state: FlowSyncState = { dir: "~/F", status: { kind: "pending" } };
-    const slot = renderSlot<PluginNavPanelProps, never>({ component: panel().component as ComponentType<PluginNavPanelProps> }, { subPath: "" }, {
-      rpc: { getFlowSettings: () => settings, saveFlowSettings: (i: unknown) => i, getStageCatalog: () => ({ skills: [], executors: [] }), getFlowSync: () => state } as never,
-      settings: { language: "Русский" },
-    });
-    await slot.findByRole("textbox", { name: "Папка синхронизации" });
-    state = { dir: "~/F", status: { kind: "error", message: "Review.flow.json: missing", at: "2026-10-05T12:00:00.000Z" } };
-    await slot.emitRealtime("flow:sync", {});
-    expect(await slot.findByText(/Review\.flow\.json: missing/)).toBeTruthy();
   });
 });
 
