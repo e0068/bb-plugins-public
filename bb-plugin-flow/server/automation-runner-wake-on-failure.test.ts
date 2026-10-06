@@ -20,7 +20,7 @@ const flowStage = (id: string, steps: StepId[]): WorkStage => ({ id, kind: "skil
 const failingMerge = (): Steps =>
   Object.fromEntries(STEP_IDS.map((id) => [id, async (): Promise<StepOutcome> => (id === "git.merge" ? { ok: false, error: "timed out after 75 seconds" } : { ok: true, detail: null })])) as unknown as Steps;
 
-const setup = (policy: RetryPolicy, wakeOnFailure: boolean) => {
+const setup = (policy: RetryPolicy, wakeOnFailure: boolean, instruction?: string) => {
   const settings: StageSettings = { stages: [stage("review"), flowStage("land", ["git.merge", "bb.archive"]), stage("demo")], minButtonWidth: 170 };
   const { bb, harness } = createFakePluginHost({ pluginId: "flow" });
   const store = createStore(bb.storage.kv);
@@ -33,6 +33,7 @@ const setup = (policy: RetryPolicy, wakeOnFailure: boolean) => {
   const runner = createAutomationRunner({
     progress, store, stages: () => settings, steps: failingMerge(), external: async () => ({ ok: true as const, detail: null }), thread, providers: async () => [], kv: bb.storage.kv, plugins,
     now: () => T0, retry: () => policy, wakeOnFailure: () => wakeOnFailure,
+    ...(instruction === undefined ? {} : { failureInstruction: () => instruction }),
     schedule: (run) => { timers.push(run); return () => undefined; },
     wake: async (_threadId, text) => void woken.push(text),
     onError: (error: unknown) => { throw error; },
@@ -70,5 +71,13 @@ describe("реплика агенту после последней попытк
     await vi.waitFor(async () => expect(await failed()).not.toBeNull());
     await vi.waitFor(async () => expect(await store.listAwaiting()).toHaveLength(1));
     expect(woken).toEqual([]);
+  });
+
+  it("реплика несёт наказ владельца из настроек вместо наказа по умолчанию", async () => {
+    const { woken, start } = setup({ seconds: 0, attempts: 3 }, true, "Почини сам, если понятно, что делать.");
+    await start();
+    await vi.waitFor(() => expect(woken).toHaveLength(1));
+    expect(woken[0]).toContain("Почини сам, если понятно, что делать.");
+    expect(woken[0]).toContain("timed out after 75 seconds");
   });
 });

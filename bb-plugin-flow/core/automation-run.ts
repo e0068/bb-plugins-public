@@ -4,7 +4,7 @@
 // запись в kv — у server/automation-runner.ts.
 import { isStepId, STEP_LABELS } from "@bb-plugins/automation-steps/catalog";
 import type { StepLink } from "@bb-plugins/automation-steps/index";
-import { currentName, freeId, stageKindOf } from "../lib/stage-constants";
+import { currentName, freeId, MAX_WAKE_INSTRUCTION_CHARS, stageKindOf } from "../lib/stage-constants";
 import { scriptOf } from "./automation-scripts";
 import type { BuiltinAutomation, FlowProgress, FlowSettings, ProgressView, RunningIcon, StageTrack, WorkStage } from "../shared/contract";
 
@@ -307,9 +307,25 @@ export const wakeText = (kind: "automation" | "action", idle: ReadonlyArray<{ na
 export const conflictWakeText = (stage: WorkStage, files: readonly string[], base = "the base branch"): string =>
   `Flow: a step of stage ${stage.id} "${stage.name}" hit merge conflicts with ${base} in:\n${files.map((file) => `- ${file}`).join("\n")}\n\nMerge ${base} into the branch, resolve every conflict keeping the work of both sides, run the tests of what you touched, commit the merge, and end your turn: Flow retries the step by itself when your turn ends. Do not reset or rebase the branch.`;
 
-/** Реплика агенту после последней неудачной попытки шага: шаг ждёт владельца, и агент говорит ему об этом; несёт простой по этапам, как `wakeText`. */
-export const failureWakeText = (stage: WorkStage, step: string, error: string, idle: ReadonlyArray<{ name: string; minutes: number }>): string => {
-  const head = `Flow: step ${step} of stage ${stage.id} "${stage.name}" failed after the last attempt: ${error}\n\nThe step waits for the owner's Retry or Skip above the composer. Tell the owner what failed and end your turn: Flow carries on once the owner retries or skips it.`;
+/** Наказ агенту после последней неудачной попытки, пока владелец не написал свой в настройках. */
+export const DEFAULT_FAILURE_INSTRUCTION = "Tell the owner what failed and end your turn: Flow carries on once the owner retries or skips it.";
+
+/** Наказ агенту из настроек Flow; поля нет или в нём одни пробелы — наказ по умолчанию. */
+export const failureInstructionOf = (settings: Pick<FlowSettings, "wakeAgentInstruction">): string => settings.wakeAgentInstruction?.trim() || DEFAULT_FAILURE_INSTRUCTION;
+
+/** Настройки со своим наказом `text`, не длиннее предела схемы; пустой или совпавший с наказом по умолчанию — поле снимается. */
+export const withFailureInstruction = <S extends Pick<FlowSettings, "wakeAgentInstruction">>(settings: S, text: string): S => {
+  const { wakeAgentInstruction: _, ...rest } = settings;
+  const own = text.trim().slice(0, MAX_WAKE_INSTRUCTION_CHARS);
+  return (own === "" || own === DEFAULT_FAILURE_INSTRUCTION ? rest : { ...rest, wakeAgentInstruction: own }) as S;
+};
+
+/**
+ * Реплика агенту после последней неудачной попытки шага: факты падения — шаг, этап, ошибка, — что шаг ждёт владельца, и наказ
+ * владельца, что агенту делать; несёт простой по этапам, как `wakeText`.
+ */
+export const failureWakeText = (stage: WorkStage, step: string, error: string, idle: ReadonlyArray<{ name: string; minutes: number }>, instruction = DEFAULT_FAILURE_INSTRUCTION): string => {
+  const head = `Flow: step ${step} of stage ${stage.id} "${stage.name}" failed after the last attempt: ${error}\n\nThe step waits for the owner's Retry or Skip above the composer. ${instruction}`;
   const note = idleNote(idle);
   return note === "" ? head : `${head}\n\n${note}`;
 };

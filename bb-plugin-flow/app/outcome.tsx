@@ -1,12 +1,12 @@
 // Демонстрация — одна карточка на подложке: что сделано с прошлой демонстрации,
 // что нет и почему, что важно знать абзацами, секции, задачи и результаты
 // строками под палец. Комментарий прикреплён к карточке снизу, кнопки исхода
-// стоят отдельно в форме брифа — чтобы не нажать их случайно. Задача — карточка
-// Tasks+: Markdown хоста рисует её директиву, и карточка открывает задачу сбоку
-// в треде — чужую вкладку панели виджет Flow открыть не может.
-import { Markdown, useRpc } from "@get-bb/plugin-sdk/app";
+// стоят отдельно в форме брифа — чтобы не нажать их случайно. Задача — копия
+// карточки Tasks+ (./task-card.tsx): директиву `::task` Markdown для плагинов не
+// рисует, а карточка открывает задачу сбоку во вкладке Flow.
+import { useRpc } from "@get-bb/plugin-sdk/app";
 
-import { taskDirectiveLine } from "../core/directive";
+import { isTaskAddress } from "../core/task-lookup";
 import { outcomeItems, paragraphs } from "../core/outcome";
 import { Icon } from "../components/ui/icon";
 import { cn } from "../lib/utils";
@@ -19,6 +19,7 @@ import { setOutcomeNote, type Draft } from "./draft";
 import { useMessages } from "./locale-context";
 import { SectionTag } from "./section-tag";
 import { ResultRow } from "./result-row";
+import { TaskCard } from "./task-card";
 
 export type OutcomeView = {
   draft: Draft;
@@ -73,23 +74,20 @@ function Items({ outcome, done }: { outcome: StageOutcome; done: boolean }) {
 
 /**
  * Задачи группой: «Review» — чей итог показан (`done`), они станут done, когда владелец примет шаг; «Created» — только
- * заведённые. Статус видно в самой карточке, подписей нет. Свои поля сверху и снизу у карточки Tasks+ сняты: расстояния
- * задаёт группа, как у пунктов.
+ * заведённые. Статус видно в самой карточке, подписей нет. Задача ищется в рабочем дереве треда брифа; ключ, который
+ * задачу не адресует, — текстом.
  */
-function Tasks({ outcome, done }: { outcome: StageOutcome; done: boolean }) {
+function Tasks({ outcome, done, threadId }: { outcome: StageOutcome; done: boolean; threadId: string }) {
   const t = useMessages();
   const tasks = (outcome.tasks ?? []).filter((task) => task.done === done);
   if (tasks.length === 0) return null;
   return (
     <Group title={done ? t.outcome.tasksReview : t.outcome.tasksCreated}>
-      {tasks.map((task) => {
-        const card = taskDirectiveLine(task.key);
-        return (
-          <div key={task.key} data-demo-task className={card === null ? "font-mono text-xs" : "-my-3"}>
-            {card === null ? task.key : <Markdown content={card} />}
-          </div>
-        );
-      })}
+      {tasks.map((task) => (
+        <div key={task.key} data-demo-task className={isTaskAddress(task.key) ? undefined : "font-mono text-xs"}>
+          {isTaskAddress(task.key) ? <TaskCard taskKey={task.key} threadId={threadId} /> : task.key}
+        </div>
+      ))}
     </Group>
   );
 }
@@ -124,8 +122,8 @@ export function DemoCard({ brief, roots, view }: { brief: DecisionBrief; roots: 
             <Paragraphs text={section.text} />
           </Group>
         ))}
-        <Tasks outcome={outcome} done />
-        <Tasks outcome={outcome} done={false} />
+        <Tasks outcome={outcome} done threadId={brief.threadId} />
+        <Tasks outcome={outcome} done={false} threadId={brief.threadId} />
         <Group title={t.outcome.results}>
           <div className="flex flex-col gap-px overflow-hidden rounded-md">
             {outcome.results.map((result, index) =>
