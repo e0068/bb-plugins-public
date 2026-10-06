@@ -18,6 +18,7 @@ import { ProgressBanner } from "./app/progress-banner";
 import { registerAwaitingStatus } from "./app/row-status";
 import { systemLanguages } from "./app/locale-context";
 import { lockAutoZoom } from "./app/viewport";
+import { TaskPanel, TASK_PANEL_ACTION } from "./app/task-card";
 import { DecisionDirective } from "./app/widget";
 import { resolveLocale } from "./lib/i18n";
 import { messages } from "./lib/messages";
@@ -27,6 +28,8 @@ export default definePluginApp((app) => {
   lockAutoZoom(document);
   app.slots.messageDirective({ id: "decision", component: DecisionDirective });
   app.slots.messageDirective({ id: "command", component: CommandDirective });
+  // Задача из Демонстрации открывается сбоку своей вкладкой: чужую вкладку Tasks+ плагин открыть не может.
+  app.slots.threadPanelAction({ id: TASK_PANEL_ACTION, title: "Task", icon: "ListTodo", component: TaskPanel });
   // Заголовок секции регистрируется один раз, до настроек плагина, поэтому идёт за языком браузера.
   const t = messages(resolveLocale(undefined, systemLanguages())).settings;
   // Шестерёнка в титул-баре, левее крестика хоста, открывает настройки плагина.

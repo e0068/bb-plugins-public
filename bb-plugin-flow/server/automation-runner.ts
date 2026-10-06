@@ -83,6 +83,8 @@ export interface AutomationRunnerDeps {
   retry?: () => RetryPolicy;
   /** Будить ли агента, когда последняя попытка шага упала и шаг ждёт владельца — читается в момент падения; нет — не будить. */
   wakeOnFailure?: () => boolean;
+  /** Наказ агенту в той реплике — читается в момент падения; нет — наказ по умолчанию. */
+  failureInstruction?: () => string;
   /** Таймер автоповтора; ответ снимает его. Нет — таймер процесса. */
   schedule?: (run: () => void, ms: number) => () => void;
   /** Итог этапа-автоматизации — владельцу тостом; этапы Action не сообщают: их шаги жмёт сам владелец. Нет — молчать. */
@@ -256,7 +258,7 @@ export const createAutomationRunner = (deps: AutomationRunnerDeps): AutomationRu
     if (isActionStage(stage) || deps.wakeOnFailure?.() !== true) return;
     const record = await deps.progress.get(threadId);
     const idle = record === null ? [] : idleStages(record, deps.stages(threadId).stages);
-    await deps.wake?.(threadId, failureWakeText(stage, stepId, error, idle)).catch(deps.onError);
+    await deps.wake?.(threadId, failureWakeText(stage, stepId, error, idle, deps.failureInstruction?.())).catch(deps.onError);
   };
 
   const execute = (stage: WorkStage, step: RunStep, threadId: string): Promise<StepOutcome> => {

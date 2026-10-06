@@ -34,7 +34,7 @@ type ScriptFile = { name: string; content: string };
 /** Сохранённые наборы и их правка — от таблицы этапов: этот модуль не тянет SDK, его импортируют до загрузки приложения. */
 export type AutomationSets = { sets: readonly AutomationSet[]; update: (change: (sets: readonly AutomationSet[]) => readonly AutomationSet[]) => void };
 
-type StageChange = (change: (stage: WorkStage) => WorkStage) => void;
+export type StageChange = (change: (stage: WorkStage) => WorkStage) => void;
 
 /** Подпись шага автоматизации: шаг Flow — по языку интерфейса, скрипт — именем файла. */
 const useStepLabel = () => {
@@ -252,20 +252,7 @@ export function AutomationStepTags({ stage, onChange, onOpenScript }: { stage: W
   const label = useStepLabel();
   const current = executionOf(stage);
 
-  if (current.kind === "external") {
-    return (
-      <ul title={t.settings.stepsReadOnly} className="contents">
-        {(current.automation.steps ?? []).map((label, i) => (
-          <Fragment key={`${i}-${label}`}>
-            {i > 0 && <StepChevron />}
-            <li className={cn(tag, "px-2")}>
-              <span className="min-w-0 truncate">{label}</span>
-            </li>
-          </Fragment>
-        ))}
-      </ul>
-    );
-  }
+  if (current.kind === "external") return <ReadOnlyStepTags stage={stage} onOpenScript={onOpenScript} title={t.settings.stepsReadOnly} />;
   if (current.kind !== "script") return null;
 
   const automation = current.automation;
@@ -305,6 +292,33 @@ export function AutomationStepTags({ stage, onChange, onOpenScript }: { stage: W
         ))}
       </ul>
     </>
+  );
+}
+
+/**
+ * Шаги тегами через шеврон только для чтения: у автоматизации Automations — подписи того плагина, у скрипта — его шаги;
+ * свой скрипт по клику открывает файл. Так стоят шаги этапа вложенного flow — он правится на своей странице.
+ */
+export function ReadOnlyStepTags({ stage, onOpenScript, title }: { stage: WorkStage; onOpenScript: (script: AutomationScript) => void; title?: string }) {
+  const label = useStepLabel();
+  const current = executionOf(stage);
+  const steps =
+    current.kind === "external"
+      ? (current.automation.steps ?? []).map((text) => ({ text, script: null }))
+      : current.kind === "script"
+        ? current.automation.steps.map((id) => ({ text: label(current.automation, id), script: scriptOf(current.automation, id) }))
+        : [];
+  return (
+    <ul title={title} className="contents">
+      {steps.map(({ text, script }, i) => (
+        <Fragment key={`${i}-${text}`}>
+          {i > 0 && <StepChevron />}
+          <li className={cn(tag, script === null ? "px-2" : "pr-2")}>
+            <StepLabel script={script} label={text} onOpen={onOpenScript} />
+          </li>
+        </Fragment>
+      ))}
+    </ul>
   );
 }
 
