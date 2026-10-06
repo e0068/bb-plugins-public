@@ -7,7 +7,6 @@ import type {
   Task,
 } from "../../shared/contract.js";
 import {
-  BOARD_COLUMN_WIDTH,
   TASK_ESTIMATES,
   TASK_PRIORITIES,
   TASK_STATUSES,
@@ -17,6 +16,7 @@ import {
   type BoardGroupProperty,
   type TaskStatus,
 } from "../../shared/enums.js";
+import { clampToBounds, type ColumnWidthBounds } from "../../shared/board-column-width.js";
 import { sortTasks } from "../../shared/sort.js";
 import {
   EMPTY_FACTS,
@@ -318,20 +318,17 @@ function withSettings(
   };
 }
 
-/** A dragged width held inside the allowed range, in whole pixels. */
-export const clampWidth = (width: number) =>
-  Math.round(Math.min(BOARD_COLUMN_WIDTH.max, Math.max(BOARD_COLUMN_WIDTH.min, width)));
-
-export function columnWidth(grouping: BoardGrouping, key: string): number {
+/** A column's width: what was dragged, held inside the bounds, or the bounds' default for one never touched. */
+export function columnWidth(grouping: BoardGrouping, key: string, bounds: ColumnWidthBounds): number {
   const property = grouping.groupBy;
-  if (property === "none") return BOARD_COLUMN_WIDTH.initial;
-  return grouping.columns[property]?.widths[key] ?? BOARD_COLUMN_WIDTH.initial;
+  const dragged = property === "none" ? undefined : grouping.columns[property]?.widths[key];
+  return dragged === undefined ? bounds.initial : clampToBounds(bounds, dragged);
 }
 
-export const withColumnWidth = (grouping: BoardGrouping, key: string, width: number) =>
+export const withColumnWidth = (grouping: BoardGrouping, key: string, width: number, bounds: ColumnWidthBounds) =>
   withSettings(grouping, (settings) => ({
     ...settings,
-    widths: { ...settings.widths, [key]: clampWidth(width) },
+    widths: { ...settings.widths, [key]: clampToBounds(bounds, width) },
   }));
 
 export const withHiddenToggled = (grouping: BoardGrouping, key: string) =>

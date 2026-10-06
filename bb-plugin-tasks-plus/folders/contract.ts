@@ -138,9 +138,6 @@ const connectDatabaseResultSchema = z.discriminatedUnion("ok", [
   z.object({ ok: z.literal(false), error: folderDomainErrorSchema }).strict(),
 ]);
 
-/** What a board whose database refused its token says, in Folders and above the board alike. */
-export const TOKEN_REFUSED_TEXT = "Token refused · enter a new one in Connect database";
-
 export const foldersRpcContract = defineRpcContract({
   listSyncedFolders: {
     input: z.null(),

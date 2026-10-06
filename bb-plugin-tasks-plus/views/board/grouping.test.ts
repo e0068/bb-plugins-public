@@ -1,3 +1,4 @@
+import { DEFAULT_COLUMN_WIDTH_BOUNDS } from "../../shared/board-column-width";
 import fc from "fast-check";
 import { describe, expect, it } from "vitest";
 import {
@@ -338,8 +339,8 @@ describe("column settings", () => {
   it("clamps a dragged width into the allowed range and reads it back", () => {
     fc.assert(
       fc.property(fc.integer({ min: -1000, max: 3000 }), (width) => {
-        const next = withColumnWidth(grouping("priority"), "high", width);
-        const read = columnWidth(next, "high");
+        const next = withColumnWidth(grouping("priority"), "high", width, DEFAULT_COLUMN_WIDTH_BOUNDS);
+        const read = columnWidth(next, "high", DEFAULT_COLUMN_WIDTH_BOUNDS);
         expect(read).toBeGreaterThanOrEqual(200);
         expect(read).toBeLessThanOrEqual(480);
       }),
@@ -347,12 +348,12 @@ describe("column settings", () => {
   });
 
   it("gives an untouched column the default width", () => {
-    expect(columnWidth(grouping("status"), "todo")).toBe(230);
+    expect(columnWidth(grouping("status"), "todo", DEFAULT_COLUMN_WIDTH_BOUNDS)).toBe(230);
   });
 
   it("keeps widths apart per property", () => {
-    const next = withColumnWidth(grouping("priority"), "high", 300);
-    expect(columnWidth({ ...next, groupBy: "status" }, "high")).toBe(230);
+    const next = withColumnWidth(grouping("priority"), "high", 300, DEFAULT_COLUMN_WIDTH_BOUNDS);
+    expect(columnWidth({ ...next, groupBy: "status" }, "high", DEFAULT_COLUMN_WIDTH_BOUNDS)).toBe(230);
   });
 
   it("hides and shows a column again", () => {
@@ -368,7 +369,7 @@ describe("column settings", () => {
 
   it("does not store settings when nothing groups the board", () => {
     const flat = grouping("none");
-    expect(withColumnWidth(flat, "all", 300)).toEqual(flat);
+    expect(withColumnWidth(flat, "all", 300, DEFAULT_COLUMN_WIDTH_BOUNDS)).toEqual(flat);
     expect(withHiddenToggled(flat, "all")).toEqual(flat);
     expect(withColumnOrder(flat, ["all"])).toEqual(flat);
   });

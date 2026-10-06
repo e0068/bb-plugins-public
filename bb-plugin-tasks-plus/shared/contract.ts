@@ -7,6 +7,7 @@ import {
   TASKS_PAGE_MAX_LIMIT,
   TASK_CARD_META_MAX_IDS,
 } from "./pagination.js";
+import { COLUMN_WIDTH_LIMITS } from "./board-column-width.js";
 import { isPlanDate } from "./plan-date.js";
 import { REDUCED_PROJECTS } from "./reduced-projects.js";
 import {
@@ -21,7 +22,6 @@ import {
   LIST_SORTS,
   BOARD_GROUP_BYS,
   BOARD_GROUP_PROPERTIES,
-  BOARD_COLUMN_WIDTH,
   BOARD_GRID_COLUMN_COUNTS,
   SUBTASK_SCOPES,
   TASK_OPENINGS,
@@ -689,10 +689,18 @@ const columnSortSchema = z
 /** A view's sort: a field and a direction, or one of the list sorts as views stored it before (shared/task-fields.ts). */
 const savedViewSortSchema = z.union([z.enum(LIST_SORTS), columnSortSchema]);
 
+/** The shape of the owner's column width bounds; which numbers are fit to save is checkColumnWidthBounds' call. */
+const columnWidthBoundsSchema = z
+  .object({ min: z.number().int(), max: z.number().int(), initial: z.number().int() })
+  .strict();
+
 /**
  * How one property lays out its columns on a board: which go first, which
  * are hidden, and how wide each one was dragged. Keys are column keys — the
  * property's value, a label or folder name, or "none" for the empty value.
+ * A width is held to the hard limits only: the owner's bounds live in the
+ * settings and clamp it when it is read, so narrowing them never makes a
+ * saved view unreadable.
  */
 const boardColumnSettingsSchema = z
   .object({
@@ -700,7 +708,7 @@ const boardColumnSettingsSchema = z
     hidden: z.array(z.string()),
     widths: z.record(
       z.string(),
-      z.number().int().min(BOARD_COLUMN_WIDTH.min).max(BOARD_COLUMN_WIDTH.max),
+      z.number().int().min(COLUMN_WIDTH_LIMITS.floor).max(COLUMN_WIDTH_LIMITS.ceiling),
     ),
   })
   .strict();
@@ -1233,6 +1241,12 @@ export const tasksRpcContract = defineRpcContract({
       })
       .strict(),
   },
+  /** `bb tasks keys issue`: the board's unnamed tasks, as the caller sees
+   *  them, get the board's next numbers (filesync/key-issue.ts). */
+  issueKeys: {
+    input: withCallerThread(z.object({ projectId: idSchema }).strict()),
+    output: z.object({ issued: z.array(z.object({ slug: z.string(), key: z.string() }).strict()) }).strict(),
+  },
   /** Assignees already in use on the board — the folders its tasks sit in.
    *  A new value needs no call: it is created by assigning it. */
   listPlacements: {
@@ -1581,6 +1595,15 @@ export const tasksRpcContract = defineRpcContract({
   },
   saveReducedProjects: {
     input: z.object({ value: z.enum(REDUCED_PROJECTS) }).strict(),
+    output: z.object({ ok: z.literal(true) }),
+  },
+  // How wide a board column may be dragged and is drawn untouched (shared/board-column-width.ts).
+  loadColumnWidthBounds: {
+    input: z.object({}).strict(),
+    output: columnWidthBoundsSchema,
+  },
+  saveColumnWidthBounds: {
+    input: columnWidthBoundsSchema,
     output: z.object({ ok: z.literal(true) }),
   },
 });

@@ -49,6 +49,7 @@ import { readdir, readFile, rm, rmdir } from "node:fs/promises";
 import { join } from "node:path";
 import { assembleBoardTasks, parseTaskKey, taskSlug, type AssembledTask } from "./assemble.js";
 import { rekeyBoard, rewriteMentions } from "./prefix-rename.js";
+import { issueKeys } from "./key-issue.js";
 import {
   serializeAttachedThread,
   withLiveState,
@@ -876,6 +877,38 @@ export function createFileTasksStore(
     return migrated;
   }
 
+  /** `bb tasks keys issue`: names the board's unnamed tasks as the caller
+   *  sees them (filesync/key-issue.ts) — from a thread, the tasks of its
+   *  tree, which a write there never names (see issuedKey). Numbers held in
+   *  the main checkout — tasks made on the board, not committed yet — are
+   *  skipped too. Each file stays where it is; a child of a task named here
+   *  is written again so its `parent:` names the new key. A database board
+   *  names every task at birth: nothing to issue. Under the board's queue:
+   *  numbers are read and written as one step. */
+  function issueBoardKeys(projectId: string): Promise<{ slug: string; key: string }[]> {
+    return retrying(() =>
+      serialByBoard(projectId, async () => {
+        const board = requireBoard(projectId);
+        if (board.database) return [];
+        const onBoard = await loadBoard(board);
+        // From the main checkout itself the caller already sees main: nothing more to read.
+        const fromTree = callerWorktreeRoot(board, readCallerEnvironment()) !== null;
+        const inMain = fromTree ? await readBoard(board, roots.get(board.id) ?? []) : [];
+        const issued = issueKeys(onBoard.map(({ task }) => task), board.prefix, inMain.map(({ task }) => task.key));
+        const named = new Map(issued.map((label) => [label.id, label]));
+        const rewritten = onBoard.filter(({ task }) => !named.has(task.id) && task.parentTaskId !== null && named.has(task.parentTaskId));
+        const byId = new Map(onBoard.map((entry) => [entry.task.id, entry]));
+        // Parents first (the plan's order), so each child reads its parent's new key.
+        for (const { task, comments } of [...issued.map(({ id }) => byId.get(id)!), ...rewritten]) {
+          const label = named.get(task.id);
+          const { data } = await readOwnFile(task);
+          await writeNamedTask(board, label === undefined ? task : { ...task, key: label.key, number: label.number }, comments, rootOfTask(board, task), data, {});
+        }
+        return issued.map(({ id, key }) => ({ slug: taskSlug(byId.get(id)!.task), key }));
+      }),
+    );
+  }
+
   /** Assignees in use: the folders the board's tasks sit in,
    *  sorted by name. A folder with no task in it is not a value. */
   async function listPlacements(projectId: string): Promise<{ assignees: string[] }> {
@@ -1210,7 +1243,7 @@ export function createFileTasksStore(
     setBoardRepo, removeBoardRepo,
     createFolder, getFolder, listFolders, updateFolder, deleteFolder,
     createProject, getProject, listProjects, updateProject, renameBoardPrefix, deleteProject,
-    createTask, getTask, getTaskByKey, listTasksPage, listTasks, listSubtasks, getSubtaskDoneCounts, updateTask, deleteTask, placeTask, threadsByTaskId, listPlacements, migrateEpics,
+    createTask, getTask, getTaskByKey, listTasksPage, listTasks, listSubtasks, getSubtaskDoneCounts, updateTask, deleteTask, placeTask, threadsByTaskId, listPlacements, migrateEpics, issueBoardKeys,
     createLabel, getLabel, listLabels, updateLabel, deleteLabel, addTaskLabel, removeTaskLabel, listTaskLabels, listLabelsForTask,
     createComment, getComment, listComments, getLatestAgentComment, updateComment, deleteComment,
     createAttachment, getAttachment, listAttachmentsForTask, listAttachmentsForComment, updateAttachment, deleteAttachment,

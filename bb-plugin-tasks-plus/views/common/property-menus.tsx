@@ -138,7 +138,7 @@ function PickerOption({
 }
 
 const TRIGGER_CLASS =
-  "relative z-10 inline-flex size-5 shrink-0 items-center justify-center rounded-sm hover:bg-state-active focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring data-[state=open]:bg-state-active max-md:pointer-coarse:size-8";
+  "inline-flex size-5 shrink-0 items-center justify-center rounded-sm hover:bg-state-active focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring data-[state=open]:bg-state-active max-md:pointer-coarse:size-8";
 
 /** Inline status picker: the row's status glyph, click/S to open the menu. */
 export function StatusEditor({

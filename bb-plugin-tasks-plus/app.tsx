@@ -3,6 +3,7 @@ import { ReducedColorsSection } from "@bb-plugins/reduced-colors";
 import { useTasksRpc } from "./shell/data.js";
 import { TasksAppShell } from "./shell/app-shell.js";
 import { TasksSidebarAccessory } from "./shell/sidebar-accessory.js";
+import { BoardColumnWidthSetting } from "./shell/board-column-width-setting.js";
 import { ReducedProjectsSetting } from "./shell/reduced-projects-setting.js";
 import { TaskDirectiveCard, TaskEmbedPanel, TaskSidePanelTab } from "./views/embed/index.js";
 import { TASK_TAB } from "./client/task-opening.js";
@@ -46,5 +47,11 @@ export default definePluginApp((app) => {
     title: "Reduced Colors",
     description: "Analytics charts use a gradient of two colours instead of the palette.",
     component: ReducedColorsSettings,
+  });
+  app.slots.settingsSection({
+    id: "board-columns",
+    title: "Board columns",
+    description: "The narrowest and widest a board column may be, and how wide it starts.",
+    component: BoardColumnWidthSetting,
   });
 });

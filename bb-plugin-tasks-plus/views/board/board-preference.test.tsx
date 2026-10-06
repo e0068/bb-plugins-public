@@ -60,7 +60,7 @@ describe("board layout storage", () => {
     expect(loadBoardLayout(boardKey(PROJECT_ID, null))).toEqual(DEFAULT_BOARD_LAYOUT);
   });
 
-  it("drops values it does not know and keeps the rest", () => {
+  it("drops values it does not know, holds a width inside the hard limits and keeps the rest", () => {
     window.localStorage.setItem(
       BOARD_PREFERENCE_STORAGE_KEY,
       JSON.stringify({
@@ -71,7 +71,9 @@ describe("board layout storage", () => {
             sort: "sideways",
             grouping: {
               groupBy: "color",
-              columns: { type: { order: ["bugfix", 3], hidden: "x", widths: { bugfix: 9000, ui: "wide" } } },
+              columns: {
+                type: { order: ["bugfix", 3], hidden: "x", widths: { bugfix: 9000, ui: "wide", docs: 700, tiny: 3 } },
+              },
               hideEmpty: "yes",
             },
           },
@@ -83,7 +85,11 @@ describe("board layout storage", () => {
     expect(read.sort).toBe("manual");
     expect(read.grouping.groupBy).toBe("status");
     expect(read.grouping.hideEmpty).toBe(false);
-    expect(read.grouping.columns.type).toEqual({ order: ["bugfix"], hidden: [], widths: { bugfix: 480 } });
+    expect(read.grouping.columns.type).toEqual({
+      order: ["bugfix"],
+      hidden: [],
+      widths: { bugfix: 2000, docs: 700, tiny: 80 },
+    });
   });
 
   it("does not overwrite a document written by a newer client", () => {
