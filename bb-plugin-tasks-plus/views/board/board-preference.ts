@@ -21,7 +21,8 @@ import {
   loadFieldDisplay,
   type FieldDisplayConfig,
 } from "../common/row-field-preference.js";
-import { clampWidth, type BoardLayout } from "./grouping.js";
+import { clampToLimits } from "../../shared/board-column-width.js";
+import type { BoardLayout } from "./grouping.js";
 import { isRecord } from "./per-board-store.js";
 import { scopeProjectId } from "./scope-data.js";
 
@@ -68,7 +69,7 @@ function sanitizeWidths(raw: unknown): Record<string, number> {
   if (!isRecord(raw)) return {};
   return Object.fromEntries(
     Object.entries(raw).flatMap(([key, width]) =>
-      typeof width === "number" && Number.isFinite(width) ? [[key, clampWidth(width)]] : [],
+      typeof width === "number" && Number.isFinite(width) ? [[key, clampToLimits(width)]] : [],
     ),
   );
 }

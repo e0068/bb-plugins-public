@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { useRealtime, useRpc } from "@get-bb/plugin-sdk/app";
-import { TOKEN_REFUSED_TEXT, type FoldersRpcContract, type SyncedFolder, type SyncedSource } from "../../folders/contract.js";
+import type { FoldersRpcContract, SyncedFolder, SyncedSource } from "../../folders/contract.js";
+import { TOKEN_REFUSED_TEXT } from "../../folders/token-refused.js";
 import { Button } from "@/components/ui/button";
 import { Icon } from "@/components/ui/icon";
 import { databaseHost } from "../../folders/database-address.js";

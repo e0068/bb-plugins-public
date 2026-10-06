@@ -73,6 +73,7 @@ Commands:
   comment                        Add a task comment
   label create|list|delete
   epics migrate                  Turn the board's epic folders into epic tasks
+  keys issue                     Give the board's unnamed tasks their keys
   attachment add|get|list|remove
   preset list|show|create|update|delete
   dispatch                       Dispatch a task to a new agent thread
@@ -1639,6 +1640,39 @@ async function runEpics(domain: TasksDomain, ctx: PluginCliContext, argv: string
     .join("");
 }
 
+const KEYS_HELP = `Usage: bb tasks keys issue [--project <prefix-or-id>] [--json]
+A task born in a branch has no key. This names every unnamed task the caller sees
+with the board's next numbers, parents first, and writes each where its file is.
+Without --project: every board linked to the calling thread's BB project.`;
+
+/** The boards `keys issue` names tasks on: the one asked for, else every
+ *  board of the calling thread's project. A step of Flow runs the command
+ *  from any thread, and a project with no board has nothing to name — an
+ *  answer, not an error. */
+async function keyBoards(domain: TasksDomain, ctx: PluginCliContext, address: string | undefined): Promise<Project[]> {
+  if (address) return [await resolveProject(domain, address)];
+  if (!ctx.projectId) throw new CliError("missing --project and no BB project context is available");
+  return (await listProjects(domain)).filter((project) => project.linkedBbProjectId === ctx.projectId);
+}
+
+async function runKeys(domain: TasksDomain, ctx: PluginCliContext, argv: string[]): Promise<string> {
+  const [action, ...rest] = argv;
+  if (!action || action === "--help") return KEYS_HELP;
+  if (action !== "issue") throw new CliError(`unknown keys subcommand: ${action}`);
+  const args = parseArgs(rest);
+  if (args.flags.has("help")) return KEYS_HELP;
+  assertAllowed(args, ["project"], ["json"]);
+  const issued: { slug: string; key: string }[] = [];
+  for (const board of await keyBoards(domain, ctx, option(args, "project"))) {
+    issued.push(
+      ...tasksRpcContract.issueKeys.output.parse(await domain.issueKeys(tasksRpcContract.issueKeys.input.parse({ projectId: board.id }))).issued,
+    );
+  }
+  if (args.flags.has("json")) return json({ issued });
+  if (issued.length === 0) return "no unnamed tasks\n";
+  return issued.map(({ key, slug }) => `${key} ${slug}\n`).join("");
+}
+
 async function runLabel(domain: TasksDomain, argv: string[]): Promise<string> {
   const [action, ...rest] = argv;
   if (!action || action === "--help") return LABEL_HELP;
@@ -2261,6 +2295,11 @@ export function registerTasksCli(
         usage: LABEL_HELP,
       },
       {
+        name: "keys",
+        summary: "Give the board's unnamed tasks their keys",
+        usage: KEYS_HELP,
+      },
+      {
         name: "attachment",
         summary: "Add, download, list, or remove task attachments",
         usage: ATTACHMENT_HELP,
@@ -2367,6 +2406,9 @@ export function registerTasksCli(
           break;
         case "epics":
           stdout = await runEpics(domain, ctx, rest);
+          break;
+        case "keys":
+          stdout = await runKeys(domain, ctx, rest);
           break;
         case "attachment":
           stdout = await runAttachment(bb, store, domain, ctx, rest);

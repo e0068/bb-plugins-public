@@ -71,17 +71,6 @@ describe("boardGroupingSchema", () => {
     ).toBe(true);
   });
 
-  it("keeps column widths between 200 and 480 px", () => {
-    const withWidth = (width: number) => ({
-      ...grouping,
-      columns: { priority: { order: [], hidden: [], widths: { high: width } } },
-    });
-    expect(boardGroupingSchema.safeParse(withWidth(200)).success).toBe(true);
-    expect(boardGroupingSchema.safeParse(withWidth(480)).success).toBe(true);
-    expect(boardGroupingSchema.safeParse(withWidth(199)).success).toBe(false);
-    expect(boardGroupingSchema.safeParse(withWidth(481)).success).toBe(false);
-  });
-
   it("rejects an unknown property to group by", () => {
     expect(boardGroupingSchema.safeParse({ ...grouping, groupBy: "color" }).success).toBe(false);
   });

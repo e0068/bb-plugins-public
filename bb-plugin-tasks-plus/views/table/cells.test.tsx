@@ -208,6 +208,15 @@ describe("editing and folding from a cell", () => {
     await waitFor(() => expect(onEdit).toHaveBeenCalledWith(empty, { priority: "urgent" }));
   });
 
+  // A button that lifts itself with a z-index of its own can climb over what
+  // sticks above the rows: the status icon of a scrolled row showed over the header.
+  it("the status and priority buttons raise themselves above nothing", () => {
+    for (const column of ["status", "priority"] as const) {
+      const button = cell(column, full, context()).getAllByRole("button")[0];
+      expect(button?.className).not.toMatch(/(^|\s)-?z-/);
+    }
+  });
+
   it("the title cell of a parent toggles its children", () => {
     const onToggle = vi.fn();
     const slot = renderSlot(

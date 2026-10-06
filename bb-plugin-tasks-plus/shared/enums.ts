@@ -104,9 +104,6 @@ export const BOARD_GROUP_PROPERTIES = [
 
 export const BOARD_GROUP_BYS = [...BOARD_GROUP_PROPERTIES, "none"] as const;
 
-/** Bounds of a dragged column width, px; the board draws 230 by default. */
-export const BOARD_COLUMN_WIDTH = { min: 200, max: 480, initial: 230 } as const;
-
 /**
  * How many columns an ungrouped board lays its cards out in: a fixed count,
  * or "auto" — as many 15rem columns as fit.

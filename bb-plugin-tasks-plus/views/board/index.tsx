@@ -43,6 +43,7 @@ import {
   type TasksRpc,
 } from "../../client/data.js";
 import { useOpenTask } from "../../client/task-opening.js";
+import { useColumnWidthBounds } from "./column-width-bounds.js";
 import { NewTaskDialog } from "../manage/index.js";
 import {
   BOARD_STATUSES,
@@ -790,6 +791,7 @@ export function BoardView({ scope, viewId }: BoardViewProps) {
   );
   const openTaskByKey = useOpenTask(taskOpeningOf(fieldConfig));
   const layout = useBoardLayout(key);
+  const widthBounds = useColumnWidthBounds();
   const layoutRef = useRef(layout);
   layoutRef.current = layout;
   const board = useTasksQuery(
@@ -1086,9 +1088,13 @@ export function BoardView({ scope, viewId }: BoardViewProps) {
     event.preventDefault();
     event.stopPropagation();
     const startX = event.clientX;
-    const startWidth = columnWidth(layoutRef.current.grouping, columnKey);
+    const startWidth = columnWidth(layoutRef.current.grouping, columnKey, widthBounds);
     const widthAt = (clientX: number) =>
-      columnWidth(withColumnWidth(layoutRef.current.grouping, columnKey, startWidth + clientX - startX), columnKey);
+      columnWidth(
+        withColumnWidth(layoutRef.current.grouping, columnKey, startWidth + clientX - startX, widthBounds),
+        columnKey,
+        widthBounds,
+      );
     const onMove = (moveEvent: PointerEvent) =>
       setResize({ key: columnKey, width: widthAt(moveEvent.clientX) });
     const onUp = (upEvent: PointerEvent) => {
@@ -1097,7 +1103,7 @@ export function BoardView({ scope, viewId }: BoardViewProps) {
       const current = layoutRef.current;
       setBoardLayout(key, {
         ...current,
-        grouping: withColumnWidth(current.grouping, columnKey, widthAt(upEvent.clientX)),
+        grouping: withColumnWidth(current.grouping, columnKey, widthAt(upEvent.clientX), widthBounds),
       });
       setResize(null);
     };
@@ -1277,7 +1283,7 @@ export function BoardView({ scope, viewId }: BoardViewProps) {
       children.push(card(task, column.key, true));
     }
     if (indicatorBeforeTaskId === null) children.push(indicator);
-    const width = resize?.key === column.key ? resize.width : columnWidth(layout.grouping, column.key);
+    const width = resize?.key === column.key ? resize.width : columnWidth(layout.grouping, column.key, widthBounds);
 
     return (
       <div

@@ -4,6 +4,7 @@ import { burndownEnds, forecastMs, openSeriesOf } from "../analytics/burndown.js
 import { ganttRowsOf } from "../analytics/gantt.js";
 import { segmentTasks, tileAnswer } from "../analytics/tile.js";
 import { isWorkingThread } from "../shared/thread-activity.js";
+import { checkColumnWidthBounds, COLUMN_WIDTH_BOUNDS_KV_KEY, parseColumnWidthBounds } from "../shared/board-column-width.js";
 import { parseReducedProjects, REDUCED_PROJECTS_KV_KEY } from "../shared/reduced-projects.js";
 import { factsOf, type TaskFacts } from "../shared/task-fields.js";
 import { descendantsOf } from "../shared/subtree.js";
@@ -1137,6 +1138,11 @@ export function registerHandlers(
       if (!input.dryRun && epics.length > 0) publishProjectTasksChanged(bb, input.projectId);
       return { epics };
     },
+    async issueKeys(input) {
+      const issued = await store.transaction(() => store.tasks.issueBoardKeys(input.projectId));
+      if (issued.length > 0) publishProjectTasksChanged(bb, input.projectId);
+      return { issued };
+    },
     async listPlacements(input) {
       return store.tasks.listPlacements(input.projectId);
     },
@@ -1490,6 +1496,15 @@ export function registerHandlers(
     },
     async saveReducedProjects({ value }) {
       await bb.storage.kv.set(REDUCED_PROJECTS_KV_KEY, value);
+      return { ok: true as const };
+    },
+    async loadColumnWidthBounds() {
+      return parseColumnWidthBounds(await bb.storage.kv.get<unknown>(COLUMN_WIDTH_BOUNDS_KV_KEY));
+    },
+    async saveColumnWidthBounds(input) {
+      const checked = checkColumnWidthBounds(input);
+      if (!checked.ok) throw new Error(checked.reason);
+      await bb.storage.kv.set(COLUMN_WIDTH_BOUNDS_KV_KEY, checked.bounds);
       return { ok: true as const };
     },
   };
