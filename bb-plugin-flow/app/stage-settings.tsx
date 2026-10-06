@@ -5,31 +5,34 @@
 // исполнители через «или», шаги скрипта через шеврон, навык чипом «Навык: имя», — и за ними плюс с меню своего вида: у агентского этапа
 // «Навык · Субагент · Workflow · Виджет», у автоматизации Automations — только навыки, у скрипта — запуск и шаги; и крест.
 // Чип с файлом — навык, виджет, агент, workflow, свой скрипт — по клику открывает файл в правой панели bb.
-// Под таблицей — «Добавить этап» и «Добавить скрипт» (AddStage).
+// Этап «Flow» — связка строк по этапам вложенного flow, только для чтения: имя flow текстом, чипы без крестиков и плюсов.
+// Под таблицей — «Добавить этап» (пустой этап, виджеты, другие flow, шаблоны) и «Добавить скрипт» (AddStage).
 // Каждая правка сохраняется: переключатели и навык — сразу, название — через 400 мс после набора, ширина — при уходе фокуса.
 import { createContext, Fragment, useContext, useEffect, useRef, useState, type ReactNode } from "react";
 import { useBbNavigate, useRpc } from "@get-bb/plugin-sdk/app";
 
-import { retryPolicyOf, wakesAgentAfterLastRetry } from "../core/automation-run";
+import { DEFAULT_FAILURE_INSTRUCTION, retryPolicyOf, wakesAgentAfterLastRetry, withFailureInstruction } from "../core/automation-run";
 import { executorGroups, skillGroups, skillShortName, type ExecutorGroup } from "../core/catalog";
 import { expandStages, flowStage, nestableFlows, setFlowStages } from "../core/flows";
 import { stageLabel } from "../core/stages";
-import { executionOf, hasMainAgent, withExecutor, withMainAgent, withoutMainAgent } from "../core/stage-execution";
-import { dropStage, ownerOf, removeStage, stageApart, stageNumbers, type DropZone } from "../core/sub-stages";
+import { executionOf, hasMainAgent, withExecutor, withMainAgent, withoutMainAgent, withWidget } from "../core/stage-execution";
+import { hoverAt, type Hover, type RowBox } from "../core/row-hover";
+import { dropStage, ownerOf, removeStage, stageApart, stageNumbers } from "../core/sub-stages";
 import { isTemplateSaved, removeTemplate, saveTemplate, stagesFromTemplate, templatesOfKind } from "../core/stage-templates";
 import { FieldOverlay, overlayItem, useFieldOverlay } from "../components/ui/field-overlay";
 import { Button } from "../components/ui/button";
 import { Icon } from "../components/ui/icon";
 import { Input } from "../components/ui/input";
 import { Switch } from "../components/ui/switch";
-import { clearedSkill, isNewStageName, RETRY_LIMITS, stageSkillOf, type BuiltinKind } from "../lib/stage-constants";
+import { Textarea } from "../components/ui/textarea";
+import { BUILTIN_KINDS, clearedSkill, isNewStageName, MAX_WAKE_INSTRUCTION_CHARS, RETRY_LIMITS, stageSkillOf, type BuiltinKind } from "../lib/stage-constants";
 import { cn } from "../lib/utils";
 import type { AutomationScript, Flow, flowSettingsRpcContract, SkillFile, SkillOrigin, StageCatalog, StageExecutor, WorkStage } from "../shared/contract";
-import { type AutomationSets, AutomationStepTags, ManualMark, ScriptOptions, TagOpen, WidgetOptions } from "./automation-stage";
+import { type AutomationSets, AutomationStepTags, ManualMark, ReadOnlyStepTags, ScriptOptions, type StageChange, TagOpen, WidgetOptions } from "./automation-stage";
 import { useMessages } from "./locale-context";
 import { ExecutorMark } from "./provider-logos";
 import { Segmented } from "./segmented";
-import { SKILL_ICON, stageIcon } from "./stage-icons";
+import { KIND_ICONS, SKILL_ICON, stageIcon } from "./stage-icons";
 import { StageGlyph } from "./stage-glyph";
 import { StageIconPicker } from "./stage-icon-picker";
 import { updateFlowSettings, useAutomationSets, useFlowSettings, useStageTemplates } from "./stage-settings-store";
@@ -370,57 +373,57 @@ function AgentOptions({ stage, catalog, open, onClose }: { stage: WorkStage; cat
 const tag = "inline-flex h-7 max-w-full items-center gap-1.5 rounded-md bg-card text-xs";
 const tagCross = "flex size-6 shrink-0 items-center justify-center rounded text-muted-foreground hover:bg-state-hover hover:text-foreground";
 
-/** Навык тегом «Навык: имя» с крестом; крест снимает навык. */
-function SkillTag({ stage, skill, files }: { stage: WorkStage; skill: string; files: ChipFiles }) {
+/** Правка этапа строки; `null` — строка только для чтения: этап вложенного flow правится на его собственной странице. */
+type ChipChange = StageChange | null;
+
+/** Крест чипа подписью `label`; без действия креста нет. */
+function TagCross({ label, onRemove }: { label: string; onRemove: (() => void) | null }) {
+  return onRemove === null ? null : (
+    <button type="button" aria-label={label} onClick={onRemove} className={tagCross}>
+      <Icon name="X" aria-hidden="true" className="size-3" />
+    </button>
+  );
+}
+
+/** Навык тегом «Навык: имя»; крест снимает навык, у строки только для чтения креста нет. */
+function SkillTag({ skill, files, change }: { skill: string; files: ChipFiles; change: ChipChange }) {
   const t = useMessages();
-  const setStage = useSetStage();
-  const remove = () => setStage(stage.id, (s) => ({ ...s, skill: clearedSkill(s) }));
   return (
-    <span className={cn(tag, "pr-0.5")}>
+    <span className={cn(tag, change === null ? "pr-2" : "pr-0.5")}>
       <TagOpen onOpen={() => files.skill(skill)}>
         <Icon name={SKILL_ICON} aria-hidden="true" className="size-3.5 shrink-0 text-muted-foreground" />
         <span className="min-w-0 truncate">{t.settings.skillChip(skill)}</span>
       </TagOpen>
-      <button type="button" aria-label={t.settings.removeSkill(skill)} onClick={remove} className={tagCross}>
-        <Icon name="X" aria-hidden="true" className="size-3" />
-      </button>
+      <TagCross label={t.settings.removeSkill(skill)} onRemove={change && (() => change((s) => ({ ...s, skill: clearedSkill(s) })))} />
     </span>
   );
 }
 
-/** Исполнитель тегом с крестом; подпись открывает файл агента или workflow. */
-function ExecutorTag({ stage, executor, files }: { stage: WorkStage; executor: StageExecutor; files: ChipFiles }) {
+/** Исполнитель тегом; подпись открывает файл агента или workflow, крест снимает исполнителя. */
+function ExecutorTag({ stage, executor, files, change }: { stage: WorkStage; executor: StageExecutor; files: ChipFiles; change: ChipChange }) {
   const t = useMessages();
-  const setStage = useSetStage();
   const shown = stageLabel(stage, t.stages);
   return (
-    <span className={cn(tag, "pr-0.5")}>
+    <span className={cn(tag, change === null ? "pr-2" : "pr-0.5")}>
       <TagOpen onOpen={() => files.executor(executor.id)}>
         <ExecutorIcon executor={executor} />
         <span className="min-w-0 truncate">{executor.name}</span>
         {executor.model !== undefined && <span className="shrink-0 text-[11px] text-muted-foreground">{executor.model}</span>}
       </TagOpen>
-      <button type="button" aria-label={t.settings.remove(executor.name)} onClick={() => setStage(stage.id, (s) => withExecutor(s, executor, shown))} className={tagCross}>
-        <Icon name="X" aria-hidden="true" className="size-3" />
-      </button>
+      <TagCross label={t.settings.remove(executor.name)} onRemove={change && (() => change((s) => withExecutor(s, executor, shown)))} />
     </span>
   );
 }
 
-/** Main Agent тегом; крест — только когда у этапа есть другой исполнитель. */
-function MainAgentTag({ stage }: { stage: WorkStage }) {
+/** Main Agent тегом; крест — только когда у этапа есть другой исполнитель и строка правится. */
+function MainAgentTag({ stage, change }: { stage: WorkStage; change: ChipChange }) {
   const t = useMessages();
-  const setStage = useSetStage();
-  const removable = stage.executors.length > 0;
+  const removable = change !== null && stage.executors.length > 0;
   return (
     <span title={t.settings.mainAgentHint} className={cn(tag, removable ? "pl-2 pr-0.5" : "px-2")}>
       <Icon name="Bot" aria-hidden="true" className="size-3.5 shrink-0 text-muted-foreground" />
       <span className="min-w-0 truncate">{t.settings.mainAgent}</span>
-      {removable && (
-        <button type="button" aria-label={t.settings.remove(t.settings.mainAgent)} onClick={() => setStage(stage.id, withoutMainAgent)} className={tagCross}>
-          <Icon name="X" aria-hidden="true" className="size-3" />
-        </button>
-      )}
+      <TagCross label={t.settings.remove(t.settings.mainAgent)} onRemove={removable ? () => change(withoutMainAgent) : null} />
     </span>
   );
 }
@@ -432,10 +435,10 @@ function OrMark() {
 }
 
 /** Исполнители этапа тегами через «или»: Main Agent, если не снят, потом агенты и workflow. */
-function ExecutorTags({ stage, executors, files }: { stage: WorkStage; executors: readonly StageExecutor[]; files: ChipFiles }) {
+function ExecutorTags({ stage, executors, files, change }: { stage: WorkStage; executors: readonly StageExecutor[]; files: ChipFiles; change: ChipChange }) {
   const tags = [
-    ...(hasMainAgent(stage) ? [<MainAgentTag key="self" stage={stage} />] : []),
-    ...executors.map((executor) => <ExecutorTag key={executor.id} stage={stage} executor={executor} files={files} />),
+    ...(hasMainAgent(stage) ? [<MainAgentTag key="self" stage={stage} change={change} />] : []),
+    ...executors.map((executor) => <ExecutorTag key={executor.id} stage={stage} executor={executor} files={files} change={change} />),
   ];
   return tags.map((node, i) => (
     <Fragment key={node.key}>
@@ -464,8 +467,40 @@ function WidgetAbout({ stage, widget, files }: { stage: WorkStage; widget: Built
 }
 
 /**
- * Исполнение: то, что стоит у этапа, — навык, исполнители или шаги скрипта тегами, — и за последним тегом плюс с меню;
- * у встроенного этапа — описание без плюса. Чип с файлом открывает его в правой панели; файла не нашлось — надпись под тегами.
+ * Чипы исполнения этапа: навык, исполнители через «или», описание виджета, ручной запуск и шаги скрипта. С правкой этапа
+ * (`change`) у чипов кресты, а шаги скрипта перетаскиваются; без неё — только чтение: так стоят этапы вложенного flow.
+ * Чип с файлом открывает его в правой панели в обоих случаях.
+ */
+function ExecutionChips({ stage, catalog, files, change }: { stage: WorkStage; catalog: StageCatalog; files: ChipFiles; change: ChipChange }) {
+  const execution = executionOf(stage);
+  const skill = execution.kind === "executors" || execution.kind === "external" ? chipSkill(stage, catalog) : "";
+  return (
+    <>
+      {skill !== "" && <SkillTag skill={skill} files={files} change={change} />}
+      {execution.kind === "executors" && <ExecutorTags stage={stage} executors={execution.executors} files={files} change={change} />}
+      {execution.kind === "widget" && <WidgetAbout stage={stage} widget={execution.widget} files={files} />}
+      {execution.kind === "script" && execution.manual && <ManualMark />}
+      {(execution.kind === "script" || execution.kind === "external") &&
+        (change === null ? <ReadOnlyStepTags stage={stage} onOpenScript={files.script} /> : <AutomationStepTags stage={stage} onChange={change} onOpenScript={files.script} />)}
+    </>
+  );
+}
+
+/** Надпись под чипами: файла последнего кликнутого чипа не нашлось. */
+function MissingFile({ files }: { files: ChipFiles }) {
+  const t = useMessages();
+  return files.missing ? (
+    <span role="status" className="basis-full text-[11px] text-muted-foreground">
+      {t.settings.fileMissing}
+    </span>
+  ) : null;
+}
+
+/** Ячейка исполнения: чипы в ряд с переносом. */
+const chipRow = "flex min-w-0 flex-wrap items-center gap-1";
+
+/**
+ * Исполнение: чипы этапа (`ExecutionChips`) и за последним плюс с меню; у встроенного этапа — описание без плюса.
  */
 function ExecutionCell({ stage, stages, catalog }: { stage: WorkStage; stages: readonly WorkStage[]; catalog: StageCatalog }) {
   const t = useMessages();
@@ -474,72 +509,42 @@ function ExecutionCell({ stage, stages, catalog }: { stage: WorkStage; stages: r
   const close = () => setOpen(false);
   const { root } = useFieldOverlay(open, close);
   const files = useChipFiles(stage);
-  const execution = executionOf(stage);
-  const skill = execution.kind === "executors" || execution.kind === "external" ? chipSkill(stage, catalog) : "";
+  const widget = executionOf(stage).kind === "widget";
   return (
     <span role="cell" className={cellWide}>
-      <div ref={root} className="relative flex min-w-0 flex-wrap items-center gap-1">
-        {skill !== "" && <SkillTag stage={stage} skill={skill} files={files} />}
-        {execution.kind === "executors" && <ExecutorTags stage={stage} executors={execution.executors} files={files} />}
-        {execution.kind === "widget" && <WidgetAbout stage={stage} widget={execution.widget} files={files} />}
-        {execution.kind === "script" && execution.manual && <ManualMark />}
-        {(execution.kind === "script" || execution.kind === "external") && <AutomationStepTags stage={stage} onChange={(change) => setStage(stage.id, change)} onOpenScript={files.script} />}
-        {execution.kind !== "widget" && (
+      <div ref={root} className={cn(chipRow, "relative")}>
+        <ExecutionChips stage={stage} catalog={catalog} files={files} change={(next) => setStage(stage.id, next)} />
+        {!widget && (
           <button type="button" aria-label={t.settings.addExecution} title={t.settings.addExecution} aria-expanded={open} onClick={() => setOpen(!open)} className={cn(square, "bg-card text-muted-foreground hover:bg-state-hover hover:text-foreground")}>
             <Icon name="Plus" aria-hidden="true" className="size-3.5" />
           </button>
         )}
-        {execution.kind !== "widget" && <ExecutionMenu stage={stage} stages={stages} catalog={catalog} open={open} onClose={close} />}
-        {files.missing && (
-          <span role="status" className="basis-full text-[11px] text-muted-foreground">
-            {t.settings.fileMissing}
-          </span>
-        )}
+        {!widget && <ExecutionMenu stage={stage} stages={stages} catalog={catalog} open={open} onClose={close} />}
+        <MissingFile files={files} />
       </div>
     </span>
   );
 }
 
-/**
- * Исполнение строки «Flow»: подпись «Flow: название · N этапов» по живой коллекции — переименование и правка вложенного flow видны сразу —
- * или «flow удалён»; плюс открывает список, из которого flow заменяется. Цикл замкнуть список не даёт.
- */
-function FlowStageCell({ stage, flowId }: { stage: WorkStage; flowId: string }) {
-  const t = useMessages();
-  const own = useContext(FlowIdContext);
-  const { settings } = useFlowSettings();
-  const setStage = useSetStage();
-  const [open, setOpen] = useState(false);
-  const close = () => setOpen(false);
-  const { root } = useFieldOverlay(open, close);
-  const flows = settings?.flows ?? [];
-  const target = flows.find((flow) => flow.id === flowId);
-  const choices = nestableFlows(flows, own);
-  const pick = (id: string, name: string) => {
-    setStage(stage.id, (s) => ({ ...s, flowId: id, name: s.name === target?.name ? name : s.name }));
-    close();
-  };
+/** Исполнение этапа вложенного flow только для чтения: те же чипы, что у своего этапа, без крестиков и без плюса — он правится на странице своего flow. */
+function ReadOnlyExecution({ stage, catalog }: { stage: WorkStage; catalog: StageCatalog }) {
+  const files = useChipFiles(stage);
   return (
     <span role="cell" className={cellWide}>
-      <div ref={root} className="relative flex min-w-0 flex-wrap items-center gap-1">
-        <span className={cn(tag, "px-2", target === undefined && "text-muted-foreground")}>
-          {target === undefined ? t.settings.nestedFlowGone : t.settings.nestedFlow(target.name, t.flowChoice.stages(expandStages(flows, target).length))}
-        </span>
-        {choices.length > 0 && (
-          <>
-            <button type="button" aria-label={t.settings.replaceFlow} title={t.settings.replaceFlow} aria-expanded={open} onClick={() => setOpen(!open)} className={cn(square, "bg-card text-muted-foreground hover:bg-state-hover hover:text-foreground")}>
-              <Icon name="Plus" aria-hidden="true" className="size-3.5" />
-            </button>
-            <FieldOverlay open={open} onClose={close} role="menu" label={t.settings.replaceFlow} className="w-[18rem]">
-              {choices.map((flow) => (
-                <button key={flow.id} type="button" role="menuitem" title={flow.name} onClick={() => pick(flow.id, flow.name)} className={cn(overlayItem, "min-w-0")}>
-                  <span className="min-w-0 truncate">{flow.name}</span>
-                </button>
-              ))}
-            </FieldOverlay>
-          </>
-        )}
+      <div className={chipRow}>
+        <ExecutionChips stage={stage} catalog={catalog} files={files} change={null} />
+        <MissingFile files={files} />
       </div>
+    </span>
+  );
+}
+
+/** Вложенный flow удалён: вместо его этапов — надпись. */
+function NestedFlowGone() {
+  const t = useMessages();
+  return (
+    <span role="cell" className={cellWide}>
+      <span className={cn(tag, "px-2 text-muted-foreground")}>{t.settings.nestedFlowGone}</span>
     </span>
   );
 }
@@ -667,17 +672,29 @@ function DropHighlight({ place }: { place: RowPlace }) {
 function RowShell({ stage, index, stages, place, dragging, onGrab, children }: Pick<RowProps, "stage" | "index" | "stages" | "place" | "dragging" | "onGrab"> & { children: ReactNode }) {
   const t = useMessages();
   return (
-    <div
-      role="row"
-      aria-label={t.settings.stage(index + 1)}
-      data-stage-row={stage.id}
-      {...(place.drop === null ? {} : { "data-drop": place.drop })}
-      className={cn("group relative", rowGrid, "bg-surface-recessed-solid py-2 pl-1 pr-2", place.apart && stageGap, place.edge && "rounded-b-lg", dragging && "opacity-40")}
-    >
+    <RowFrame label={t.settings.stage(index + 1)} stageId={stage.id} place={place} dragging={dragging}>
       <StageLead stage={stage} place={place} dragging={dragging} onGrab={onGrab} />
       {children}
       {place.owner === null && stage.flowId === undefined ? <SaveTemplate stage={stage} stages={stages} /> : <span role="cell" className={templateCell} />}
       <DeleteStage stage={stage} />
+    </RowFrame>
+  );
+}
+
+/**
+ * Рамка строки таблицы: сетка, фон, отступ и скругление на краю этапа верхнего уровня, тусклость под перетаскиванием и
+ * подсветка места. `stageId` — этап, за которым строка числится при перетаскивании.
+ */
+function RowFrame({ label, stageId, place, dragging, children }: { label: string; stageId: string; place: RowPlace; dragging: boolean; children: ReactNode }) {
+  return (
+    <div
+      role="row"
+      aria-label={label}
+      data-stage-row={stageId}
+      {...(place.drop === null ? {} : { "data-drop": place.drop })}
+      className={cn("group relative", rowGrid, "bg-surface-recessed-solid py-2 pl-1 pr-2", place.apart && stageGap, place.edge && "rounded-b-lg", dragging && "opacity-40")}
+    >
+      {children}
       <DropHighlight place={place} />
     </div>
   );
@@ -715,7 +732,7 @@ function DeleteStage({ stage }: { stage: WorkStage }) {
   const t = useMessages();
   const update = useStagesUpdate();
   return (
-    <span role="cell" className="col-start-3 row-start-1 @[44rem]:col-start-auto @[44rem]:row-start-auto">
+    <span role="cell" className={deleteCell}>
       <button
         type="button"
         aria-label={t.settings.deleteStage(stageLabel(stage, t.stages))}
@@ -766,9 +783,58 @@ function StageRow({ stage, index, stages, catalog, place, dragging, onGrab }: Ro
           )}
         </span>
         )}
-        {stage.flowId === undefined ? <ExecutionCell stage={stage} stages={stages} catalog={catalog} /> : <FlowStageCell stage={stage} flowId={stage.flowId} />}
+        <ExecutionCell stage={stage} stages={stages} catalog={catalog} />
       </StageCells>
     </RowShell>
+  );
+}
+
+/** Клетка креста: на узкой строке — над закладкой, на широкой — последней. */
+const deleteCell = "col-start-3 row-start-1 @[44rem]:col-start-auto @[44rem]:row-start-auto";
+
+/**
+ * Этап «Flow» связкой строк, как этап с под-этапами: в первой строке — имя вложенного flow текстом (оно живое: переименование
+ * flow видно сразу) и первый его этап, ниже — по строке на каждый следующий. Этапы вложенного flow — только для чтения.
+ * Строки связки отвечают за перетаскивание одним этапом: все несут `data-stage-row` этапа-flow.
+ */
+function NestedFlowRows({ flowId, ...row }: RowProps & { flowId: string }) {
+  const t = useMessages();
+  const { settings } = useFlowSettings();
+  const flows = settings?.flows ?? [];
+  const target = flows.find((flow) => flow.id === flowId);
+  const [first, ...rest] = target === undefined ? [] : expandStages(flows, target);
+  const { stage, place, catalog } = row;
+  const name = target?.name ?? stage.name;
+  const alone = rest.length === 0;
+  return (
+    <>
+      <RowShell {...row} place={{ ...place, edge: alone && place.edge, drop: !alone && place.drop === "bottom" ? null : place.drop }}>
+        <StageCells>
+          <span role="cell" className={cn(cell, "relative")}>
+            <NameIcon stage={stage} />
+            <span title={name} className="flex h-7 min-w-0 items-center truncate pl-8 pr-2 text-[13px]">
+              {name}
+            </span>
+          </span>
+          {target === undefined ? <NestedFlowGone /> : first === undefined ? <span role="cell" className={cellWide} /> : <ReadOnlyExecution stage={first} catalog={catalog} />}
+        </StageCells>
+      </RowShell>
+      {rest.map((inner, at) => {
+        const last = at === rest.length - 1;
+        const drop = place.drop === "whole" || (last && place.drop === "bottom") ? place.drop : null;
+        return (
+          <RowFrame key={inner.id} label={stageLabel(inner, t.stages)} stageId={stage.id} place={{ ...place, apart: false, edge: last && place.edge, drop, dropLabel: null }} dragging={row.dragging}>
+            <span role="cell" />
+            <StageCells>
+              <span role="cell" className={cn(cell, "hidden @[44rem]:block")} />
+              <ReadOnlyExecution stage={inner} catalog={catalog} />
+            </StageCells>
+            <span role="cell" className={templateCell} />
+            <span role="cell" className={deleteCell} />
+          </RowFrame>
+        );
+      })}
+    </>
   );
 }
 
@@ -793,8 +859,9 @@ const focusName = (id: string) =>
   });
 
 /**
- * «Добавить этап» (`script` — «Добавить скрипт»): без шаблонов своего вида — сразу пустой этап в конец таблицы; с ними —
- * меню из пустого этапа и шаблонов своего вида, у каждого крест. Этап из шаблона встаёт в конец таким, каким его сохранили, — вместе с под-этапами.
+ * «Добавить этап» открывает меню: пустой этап, встроенные этапы-виджеты, другие flow и шаблоны агентских этапов, у шаблона
+ * крест. «Добавить скрипт» без шаблонов скриптов сразу ставит пустой скрипт в конец таблицы, с ними — меню из пустого скрипта
+ * и шаблонов. Этап из шаблона встаёт в конец таким, каким его сохранили, — вместе с под-этапами.
  * Пустой скрипт — с пустым списком шагов: он скрипт с первой минуты, и плюс в строке открывает меню скрипта.
  */
 function AddStageButton({ script }: { script: boolean }) {
@@ -803,9 +870,11 @@ function AddStageButton({ script }: { script: boolean }) {
   const templates = templatesOfKind(useStageTemplates(), script);
   const own = useContext(FlowIdContext);
   const { settings } = useFlowSettings();
-  // Строка «Flow» — агентский этап: у скрипта группы «Flow» нет.
+  // Строка «Flow» и виджеты — агентские этапы: у скрипта этих групп нет.
   const nestable = script ? [] : nestableFlows(settings?.flows ?? [], own);
-  const menu = templates.length > 0 || nestable.length > 0;
+  const widgets = script ? [] : BUILTIN_KINDS;
+  // У «Добавить этап» меню всегда — в нём виджеты; у «Добавить скрипт» — только когда есть шаблоны скриптов.
+  const menu = !script || templates.length > 0;
   const label = script ? t.settings.addScriptStage : t.settings.addStage;
   const [open, setOpen] = useState(false);
   const close = () => setOpen(false);
@@ -820,14 +889,15 @@ function AddStageButton({ script }: { script: boolean }) {
     update((stages) => [...stages, flowStage(flow, stages.map((stage) => stage.id))]);
     close();
   };
-  // Убран последний шаблон своего вида, а других flow нет — меню не из чего собирать: оно закрывается, и кнопка снова сразу добавляет пустой этап.
+  // Убран последний шаблон скрипта — меню «Добавить скрипт» не из чего собирать: оно закрывается, и кнопка снова сразу добавляет пустой скрипт.
   const remove = (index: number) => {
-    if (templates.length === 1 && nestable.length === 0) close();
+    if (script && templates.length === 1) close();
     updateFlowSettings((s) => ({ ...s, stageTemplates: [...removeTemplate(s.stageTemplates ?? [], index)] }));
   };
+  const blank = (): WorkStage => ({ id: newStageId(), kind: "skill", skill: "", name: t.settings.newStage, executors: [] });
   const empty = () => {
-    const blank: WorkStage = { id: newStageId(), kind: "skill", skill: "", name: t.settings.newStage, executors: [] };
-    add([script ? { ...blank, automation: { source: "flow", steps: [] } } : blank]);
+    const stage = blank();
+    add([script ? { ...stage, automation: { source: "flow", steps: [] } } : stage]);
   };
   return (
     <div ref={root} className="relative">
@@ -840,6 +910,17 @@ function AddStageButton({ script }: { script: boolean }) {
           <Icon name="Plus" aria-hidden="true" className="size-3.5 shrink-0 text-muted-foreground" />
           {script ? t.settings.emptyScript : t.settings.emptyStage}
         </button>
+        {widgets.length > 0 && (
+          <div role="group" aria-label={t.settings.widgets}>
+            <div className={groupTitle}>{t.settings.widgets}</div>
+            {widgets.map((kind) => (
+              <button key={kind} type="button" role="menuitem" onClick={() => add([withWidget(blank(), kind)])} className={overlayItem}>
+                <Icon name={KIND_ICONS[kind]} aria-hidden="true" className="size-3.5 shrink-0 text-muted-foreground" />
+                {t.stages[kind]}
+              </button>
+            ))}
+          </div>
+        )}
         {nestable.length > 0 && (
           <div role="group" aria-label={t.settings.flowGroup}>
             <div className={groupTitle}>{t.settings.flowGroup}</div>
@@ -884,21 +965,6 @@ function Loading({ failed, children }: { failed: boolean; children: ReactNode })
   return failed ? <div className="text-xs text-destructive">{t.settings.loadFailed}</div> : <>{children}</>;
 }
 
-/** Строка под указателем и четверть её высоты. Выше таблицы — верх первой строки, ниже — низ последней; строк нет — `null`. */
-type Hover = { target: string; zone: DropZone };
-
-const hoverAt = (table: HTMLElement | null, y: number): Hover | null => {
-  const rows = [...(table?.querySelectorAll<HTMLElement>("[data-stage-row]") ?? [])].map((el) => ({ id: el.dataset.stageRow!, box: el.getBoundingClientRect() }));
-  const first = rows[0];
-  const last = rows[rows.length - 1];
-  if (first === undefined || last === undefined) return null;
-  if (y < first.box.top) return { target: first.id, zone: 1 };
-  if (y >= last.box.bottom) return { target: last.id, zone: 4 };
-  // Зазор между строками принадлежит верхней четверти следующей строки.
-  const row = rows.find(({ box }) => y < box.bottom) ?? last;
-  return { target: row.id, zone: Math.min(4, Math.max(1, Math.floor(((y - row.box.top) / row.box.height) * 4) + 1)) as DropZone };
-};
-
 /** Подсветка места: четверть 1 — низ строки выше и верх целевой, 2 и 3 — вся целевая, 4 — низ целевой и верх строки ниже. */
 const dropMarks = (stages: readonly WorkStage[], hover: Hover): Record<string, DropMark> => {
   const at = stages.findIndex((stage) => stage.id === hover.target);
@@ -915,6 +981,13 @@ const dropMarks = (stages: readonly WorkStage[], hover: Hover): Record<string, D
  * Перетаскивание за ручку: строка стоит на месте, под указателем подсвечивается, куда она встанет по четверти целевой
  * строки (`dropStage`); на отпускании таблица сохраняется, если место есть.
  */
+/** Рамки строк таблицы сверху вниз — для `hoverAt`. */
+const rowBoxes = (table: HTMLElement | null): RowBox[] =>
+  [...(table?.querySelectorAll<HTMLElement>("[data-stage-row]") ?? [])].map((el) => {
+    const { top, bottom } = el.getBoundingClientRect();
+    return { id: el.dataset.stageRow!, top, bottom };
+  });
+
 function useRowDrag(table: React.RefObject<HTMLDivElement | null>, stages: readonly WorkStage[]) {
   const update = useStagesUpdate();
   const [dragged, setDragged] = useState<string | null>(null);
@@ -925,7 +998,7 @@ function useRowDrag(table: React.RefObject<HTMLDivElement | null>, stages: reado
     if (dragged === null) return;
     let last: Hover | null = null;
     const onMove = (event: PointerEvent) => {
-      last = hoverAt(table.current, event.clientY);
+      last = hoverAt(rowBoxes(table.current), event.clientY);
       setHover(last);
     };
     const onUp = () => {
@@ -1011,9 +1084,10 @@ function WorkStages({ flowId }: { flowId: string }) {
             <span className="sr-only">{t.settings.colDelete}</span>
           </span>
         </div>
-        {stages.map((stage, index) => (
-          <StageRow key={stage.id} stage={stage} index={index} stages={stages} catalog={catalog} place={places[index]!} dragging={dragged === stage.id} onGrab={() => grab(stage.id)} />
-        ))}
+        {stages.map((stage, index) => {
+          const row: RowProps = { stage, index, stages, catalog, place: places[index]!, dragging: dragged === stage.id, onGrab: () => grab(stage.id) };
+          return stage.flowId === undefined ? <StageRow key={stage.id} {...row} /> : <NestedFlowRows key={stage.id} flowId={stage.flowId} {...row} />;
+        })}
       </div>
     </Loading>
   );
@@ -1060,6 +1134,31 @@ function NumberSetting(props: { label: string; ariaLabel: string; unit?: string;
   );
 }
 
+/**
+ * Наказ агенту в реплике после последней попытки: свой наказ владельца, а пока его нет — пустое поле с наказом по умолчанию
+ * подсказкой. Набранное сохраняется по уходу фокуса, не длиннее предела схемы; реплика выключена — поле недоступно.
+ */
+function WakeInstruction({ saved, enabled }: { saved: string | undefined; enabled: boolean }) {
+  const t = useMessages();
+  const [typed, setTyped] = useState<string | null>(null);
+  const save = () => {
+    if (typed !== null && typed.trim() !== (saved ?? "")) updateFlowSettings((s) => withFailureInstruction(s, typed));
+    setTyped(null);
+  };
+  return (
+    <Textarea
+      aria-label={t.settings.wakeInstruction}
+      disabled={!enabled}
+      value={typed ?? saved ?? ""}
+      placeholder={DEFAULT_FAILURE_INSTRUCTION}
+      maxLength={MAX_WAKE_INSTRUCTION_CHARS}
+      onChange={(e) => setTyped(e.target.value)}
+      onBlur={save}
+      className="min-h-0 resize-none [field-sizing:content] rounded-lg border-0 bg-surface-recessed-solid px-3 py-2 text-[13px] shadow-none focus-visible:ring-1 focus-visible:ring-inset"
+    />
+  );
+}
+
 /** Автоповтор упавшего шага автоматизации — общий на все flow: через сколько секунд и сколько раз. */
 export function AutomationRetry() {
   const t = useMessages();
@@ -1093,6 +1192,7 @@ export function AutomationRetry() {
           checked={settings === null ? undefined : wakesAgentAfterLastRetry(settings)}
           onChange={(wakeAgentAfterLastRetry) => updateFlowSettings((s) => ({ ...s, wakeAgentAfterLastRetry }))}
         />
+        <WakeInstruction saved={settings === null ? undefined : (settings.wakeAgentInstruction ?? "")} enabled={settings !== null && wakesAgentAfterLastRetry(settings)} />
         <p className="text-xs text-muted-foreground">{t.settings.wakeAfterLastRetryHint}</p>
       </div>
     </Loading>

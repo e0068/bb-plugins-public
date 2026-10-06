@@ -10,6 +10,9 @@ export const STAGE_BUTTON_WIDTH = { min: 100, max: 400, initial: 170 } as const;
 /** Верхние пределы автоповтора упавшего шага: секунды до повтора и число попыток подряд. */
 export const RETRY_LIMITS = { seconds: 3600, attempts: 100 } as const;
 
+/** Предел длины наказа агенту после последней попытки, символов. */
+export const MAX_WAKE_INSTRUCTION_CHARS = 4000;
+
 /**
  * Вид этапа: навык, встроенный — Вопросы, Definition of Done, Выбор этапов, Демонстрация — или Action.
  * Встроенные ставятся в flow сколько угодно раз. Action — шаги автоматизации, которые запускает владелец кнопкой.
