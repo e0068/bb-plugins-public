@@ -12,9 +12,9 @@
 // колонки чекбоксов.
 import { Fragment, useState, type ReactNode } from "react";
 
-import { SELF, executorLabel, stageAdd, stageExecutorIds, stageItems, stageLabel, stagePhase, type StageItem } from "../core/stages";
-import { criterionTitle, forecast, minutesText, money, ownDollars, plannedMinutes, scopeOf, spentLines, type Forecast, type ForecastLine } from "../core/budget";
-import { optionRemoved, removedCriteria } from "../core/option-criteria";
+import { SELF, executorLabel, stageExecutorIds, stageSurcharge, stageItems, stageLabel, stagePhase, type StageItem } from "../core/stages";
+import { criterionTitle, forecast, minutesText, money, optionLines, ownDollars, plannedMinutes, scopeOf, spentLines, type Forecast, type ForecastLine } from "../core/budget";
+import { optionCriteria, optionRemoved, placedOptionCriteria, removedCriteria, type PlacedCriterion } from "../core/option-criteria";
 import type { FileRoots } from "../core/result-link";
 import { Icon } from "../components/ui/icon";
 import type { Locale } from "../lib/i18n";
@@ -50,10 +50,18 @@ export const stageKey = (stageId: string): string => `stage:${stageId}`;
 
 /**
  * Колонки: этап (значок с отступом и подпись), риск, время, цель, тире, потолок, галочка 40 px.
- * Узкая карточка — числа второй линией под подписью, начиная с колонки подписи.
+ * Широкая таблица — одна сетка на все строки: числовые колонки по ширине содержимого (hug), самого широкого числа или заголовка,
+ * а строки берут её подсеткой, чтобы цифры разных строк стояли в одном столбце.
+ * Узкая карточка — у каждой строки своя сетка, числа второй линией под подписью, начиная с колонки подписи.
  */
+const TABLE_COLUMNS = "@[34rem]:grid-cols-[38px_minmax(0,1fr)_auto_auto_auto_10px_auto_40px]";
+
+/** Блок строк на всю ширину широкой сетки; у блока из строк-сеток — ещё и её колонки подсеткой. */
+const SPAN = "@[34rem]:col-span-full";
+const SUBGRID = `${SPAN} @[34rem]:grid @[34rem]:[grid-template-columns:subgrid] @[34rem]:gap-x-0`;
+
 // Лишняя высота двустрочной подписи уходит в первую линию: числа второй линии не наезжают на подпись.
-const GRID = "grid grid-cols-[38px_minmax(0,.8fr)_minmax(0,1fr)_minmax(0,1fr)_10px_minmax(0,1fr)_40px] grid-rows-[1fr_auto] @[34rem]:grid-cols-[38px_minmax(0,1fr)_3rem_4.75rem_4.75rem_10px_4.75rem_40px] @[34rem]:grid-rows-[auto]";
+const GRID = `grid grid-cols-[38px_minmax(0,.8fr)_minmax(0,1fr)_minmax(0,1fr)_10px_minmax(0,1fr)_40px] grid-rows-[1fr_auto] ${SPAN} @[34rem]:[grid-template-columns:subgrid] @[34rem]:grid-rows-[auto]`;
 
 /** Строка таблицы: строки разделены не линиями, а тёмными разрывами между ними — как кнопки под таблицей. */
 const ROW = `${GRID} bg-surface-recessed-solid`;
@@ -81,14 +89,14 @@ const RULE = "col-start-2 col-end-7 row-start-2 self-start border-t border-borde
 /** Колонка чекбоксов: на узкой карточке во всю высоту двух линий. */
 const BOX = "col-start-7 row-start-1 row-end-3 flex items-center justify-center @[34rem]:col-start-8 @[34rem]:row-end-2";
 
-const sign = (n: number): string => (n < 0 ? "–" : "+");
+/** Минус у экономии: добавка времени и денег без плюса, а числа без знака — потраченное и основа итога — читаются так же. */
+const minus = (n: number): string => (n < 0 ? "–" : "");
 
-/** Время строки: уже потраченное и основа итога — без знака, добавка — со знаком. */
-const minutesCell = (minutes: number | null | undefined, plain: boolean, locale: Locale): string =>
-  minutes === null || minutes === undefined ? "" : plain ? minutesText(minutes, locale) : `${sign(minutes)}${minutesText(Math.abs(minutes), locale)}`;
+const minutesCell = (minutes: number | null | undefined, locale: Locale): string =>
+  minutes === null || minutes === undefined ? "" : `${minus(minutes)}${minutesText(Math.abs(minutes), locale)}`;
 
-/** Деньги строки: основа — без знака, добавка — со знаком; неизвестные — прочерк. */
-const moneyCell = (n: number | null, plain: boolean): string => (n === null ? "—" : plain ? money(n) : `${sign(n)}${money(Math.abs(n))}`);
+/** Деньги строки; неизвестные — прочерк. */
+const moneyCell = (n: number | null): string => (n === null ? "—" : `${minus(n)}${money(Math.abs(n))}`);
 
 type Budget = Draft["budget"];
 
@@ -98,7 +106,7 @@ type PriceEdit = { before: Budget; shown: Budget };
 type Price = { minutes?: number | null | undefined; risk: number; target: number | null; max: number | null };
 
 /** Четыре числа строки и тире между целью и потолком. */
-function Numbers({ price, plain }: { price: Price; plain: boolean }) {
+function Numbers({ price }: { price: Price }) {
   const locale = useLocale();
   return (
     <>
@@ -106,12 +114,12 @@ function Numbers({ price, plain }: { price: Price; plain: boolean }) {
       <span className={cn(NUM, CELLS.risk)}>
         <RiskText risk={price.risk} />
       </span>
-      <span className={cn(NUM, CELLS.minutes)}>{minutesCell(price.minutes, plain, locale)}</span>
-      <span className={cn(NUM, CELLS.target)}>{moneyCell(price.target, plain)}</span>
+      <span className={cn(NUM, CELLS.minutes)}>{minutesCell(price.minutes, locale)}</span>
+      <span className={cn(NUM, CELLS.target)}>{moneyCell(price.target)}</span>
       <span aria-hidden="true" className={cn(NUM, CELLS.dash)}>
         –
       </span>
-      <span className={cn(NUM, CELLS.max)}>{moneyCell(price.max, plain)}</span>
+      <span className={cn(NUM, CELLS.max)}>{moneyCell(price.max)}</span>
     </>
   );
 }
@@ -212,7 +220,7 @@ function StageRows({ item, view, scope, priced, line, roots, fold }: { item: Sta
           </span>
         </div>
         {open && (
-          <div role="group" aria-label={t.stages.results(name)} className="flex flex-col gap-px">
+          <div role="group" aria-label={t.stages.results(name)} className={cn("flex flex-col gap-px", SPAN)}>
             {results.map((result) => (
               <ResultRow key={result.target} result={result} roots={roots} />
             ))}
@@ -261,7 +269,7 @@ function StageRows({ item, view, scope, priced, line, roots, fold }: { item: Sta
           fold !== undefined && <FoldButton fold={fold} name={name} />
         )}
         <div className={cn(LEFT, "pointer-events-none relative")}>{label}</div>
-        {price !== undefined && <Numbers price={price} plain={false} />}
+        {price !== undefined && <Numbers price={price} />}
         <span className={cn(BOX, "relative")}>
           <StageCheckbox
             inRun={choice.run}
@@ -286,13 +294,13 @@ function ExecutorRows({ item, view, scope, priced, chosen }: { item: StageItem; 
   const nameOf = useExecutorName();
   const recommended = item.report?.executor ?? SELF;
   return (
-    <div role="group" aria-label={t.stages.executorGroup(stageLabel(item.stage, t.stages))} className="flex flex-col gap-px">
+    <div role="group" aria-label={t.stages.executorGroup(stageLabel(item.stage, t.stages))} className={cn("flex flex-col gap-px", SUBGRID)}>
       {stageExecutorIds(item.stage).map((id) => {
         const executor = item.stage.executors.find((e) => e.id === id);
-        const price = priced ? stageAdd(item, id, scope) : undefined;
+        const price = priced ? stageSurcharge(item, id, scope) : undefined;
         const on = id === chosen;
         return (
-          <div key={id} className="bg-surface-recessed-solid">
+          <div key={id} className={cn("bg-surface-recessed-solid", SUBGRID)}>
           <button
             type="button"
             aria-pressed={on}
@@ -321,7 +329,7 @@ function ExecutorRows({ item, view, scope, priced, chosen }: { item: StageItem; 
                 </span>
               </Label>
             </span>
-            {price !== undefined && <Numbers price={price} plain={false} />}
+            {price !== undefined && <Numbers price={price} />}
             <span className={BOX}>{on && <Check />}</span>
           </button>
           </div>
@@ -334,33 +342,70 @@ function ExecutorRows({ item, view, scope, priced, chosen }: { item: StageItem; 
 /**
  * Пункты Definition of Done под его строкой, без лишнего отступа: название — текст пункта, цена — его строка прогноза,
  * а у брифа с этапом самой работы, где строки пункта нет, — цена самого пункта. Чекбокс снимает и возвращает пункт так же,
- * как крестик в секции Definition of Done; пункт, снятый выбранным вариантом, вернуть можно только сменой выбора.
+ * как крестик в секции Definition of Done; пункт, снятый вариантом, вернуть можно только сменой выбора.
+ * Пункты выбранных вариантов стоят под тем пунктом брифа, который вариант снял, — альтернатива рядом со своей основой, —
+ * остальные в хвосте; цена варианта — на первом из его пунктов, у зачёркнутого цены нет. Чекбокс есть только там, где его можно
+ * нажать: у пункта, снятого вариантом, и у пунктов отвеченного брифа его нет — зачёркивание и так показывает судьбу пункта.
  */
 function CriterionRows({ view, lines, priced }: { view: StagesTableView; lines: ReadonlyMap<number, ForecastLine>; priced: boolean }) {
   const t = useMessages();
   const answer = toAnswer(view.brief, view.draft);
   const removed = removedCriteria(view.brief, answer);
   const byOption = optionRemoved(view.brief, answer);
-  return (view.brief.setup?.criteria ?? []).map((item, i) => {
-    const kept = !removed.includes(i);
-    const own = typeof item === "string" ? undefined : item.add;
-    const line: Price | undefined = priced && kept ? (lines.get(i) ?? own) : undefined;
-    return (
-      <div key={`criterion-${i}`} data-criterion={i} className={ROW}>
-        <div className={LEFT}>
-          <Label icon={null} numbers={line !== undefined}>
-            <span className={cn("min-w-0", !kept && "text-muted-foreground line-through opacity-40")}>
-              <LinkedText text={criterionTitle(item)} />
-            </span>
-          </Label>
-        </div>
-        {line !== undefined && <Numbers price={line} plain={false} />}
-        <span className={BOX}>
-          <StageCheckbox inRun={kept} label={t.brief.item(i + 1)} disabled={view.sending} onToggle={view.answered || byOption.includes(i) ? null : () => view.change((d) => toggleCriterion(d, i))} />
-        </span>
-      </div>
-    );
-  });
+  // Зачёркнутый пункт — обратная связь на отказ, пока бриф открыт; в отвеченном остаются только живые, как в секции Definition of Done.
+  const fromOptions = placedOptionCriteria(view.brief, answer).filter((c) => !view.answered || c.state === "live");
+  // Цена варианта стоит на первом его пункте, как на строке пункта брифа: пункты одного варианта в списке идут подряд.
+  const priceOf = (c: PlacedCriterion, i: number): Price | undefined => {
+    const prev = fromOptions[i - 1];
+    const first = prev === undefined || prev.optionId !== c.optionId || prev.questionId !== c.questionId;
+    return priced && c.state === "live" && first ? view.brief.questions.find((q) => q.id === c.questionId)?.options.find((o) => o.id === c.optionId)?.add : undefined;
+  };
+  const optionRows = (under: number | null) =>
+    fromOptions.flatMap((c, i) => {
+      if (c.under !== under) return [];
+      const price = priceOf(c, i);
+      return [
+        <div key={`option-${c.questionId}-${c.optionId}-${i}`} data-option-criterion className={ROW}>
+          <div className={LEFT}>
+            <Label icon="↳" numbers={price !== undefined}>
+              <span className={cn("min-w-0", c.state === "struck" && "text-muted-foreground line-through opacity-40")}>
+                <LinkedText text={c.text} />
+              </span>
+            </Label>
+          </div>
+          {price !== undefined && <Numbers price={price} />}
+          <span className={BOX} />
+        </div>,
+      ];
+    });
+  return (
+    <>
+      {(view.brief.setup?.criteria ?? []).map((item, i) => {
+        const kept = !removed.includes(i);
+        const own = typeof item === "string" ? undefined : item.add;
+        const line: Price | undefined = priced && kept ? (lines.get(i) ?? own) : undefined;
+        return (
+          <Fragment key={`criterion-${i}`}>
+            <div data-criterion={i} className={ROW}>
+              <div className={LEFT}>
+                <Label icon={null} numbers={line !== undefined}>
+                  <span className={cn("min-w-0", !kept && "text-muted-foreground line-through opacity-40")}>
+                    <LinkedText text={criterionTitle(item)} />
+                  </span>
+                </Label>
+              </div>
+              {line !== undefined && <Numbers price={line} />}
+              <span className={BOX}>
+                {!view.answered && !byOption.includes(i) && <StageCheckbox inRun={kept} label={t.brief.item(i + 1)} disabled={view.sending} onToggle={() => view.change((d) => toggleCriterion(d, i))} />}
+              </span>
+            </div>
+            {optionRows(i)}
+          </Fragment>
+        );
+      })}
+      {optionRows(null)}
+    </>
+  );
 }
 
 /** Строки прогноза по номерам пунктов; снимок, записанный до меток, узнаёт строку пункта по подписи «Пункт N». */
@@ -374,7 +419,7 @@ const criterionLinesIn = (f: Forecast, count: number, snapshot: boolean, locale:
 };
 
 /** Строка прогноза без своего этапа: уже потраченное, вариант вопроса, утверждённый бюджет прогона. */
-function LineRow({ line, plain, done }: { line: ForecastLine; plain: boolean; done: boolean }) {
+function LineRow({ line, done }: { line: ForecastLine; done: boolean }) {
   // У потраченного пометки нет: что оно потрачено, говорят часы и галочка, а минуты и так стоят в колонке времени.
   const note = done ? "" : line.note;
   return (
@@ -385,7 +430,7 @@ function LineRow({ line, plain, done }: { line: ForecastLine; plain: boolean; do
           {note !== "" && <span className="min-w-0 text-[11px] text-muted-foreground">{note}</span>}
         </Label>
       </div>
-      <Numbers price={line} plain={plain} />
+      <Numbers price={line} />
       <span className={BOX}>{done && <Check />}</span>
     </div>
   );
@@ -393,9 +438,10 @@ function LineRow({ line, plain, done }: { line: ForecastLine; plain: boolean; do
 
 /**
  * Поле своей цены с маской: деньги — «$» перед числом, до двух знаков после точки; время — целые минуты с «мин» после.
- * Цифры стоят там же, где числа итога без правки: поле выступает в отступ ячейки и не растит строку.
+ * Поле лежит поверх ячейки, а ширину колонки держит число итога без правки, поэтому набор не двигает колонки; цифры стоят там же,
+ * где числа итога: `edge` — правое смещение поля, равное отступу ячейки минус выступ поля в этот отступ.
  */
-function MaskField({ kind, value, label, disabled, onChange }: { kind: "money" | "minutes"; value: string; label: string; disabled: boolean; onChange: (text: string) => void }) {
+function MaskField({ kind, value, label, disabled, edge, onChange }: { kind: "money" | "minutes"; value: string; label: string; disabled: boolean; edge: string; onChange: (text: string) => void }) {
   const t = useMessages();
   const clean = (text: string): string => {
     if (kind === "minutes") return text.replace(/\D/g, "");
@@ -404,7 +450,7 @@ function MaskField({ kind, value, label, disabled, onChange }: { kind: "money" |
   };
   const fix = cn("shrink-0", value === "" ? "text-muted-foreground" : "text-foreground");
   return (
-    <label className="-my-1 -mr-1.5 flex h-7 cursor-text items-center justify-end rounded-md bg-card px-1.5 font-normal focus-within:ring-1 focus-within:ring-border">
+    <label className={cn("absolute top-1/2 flex h-7 -translate-y-1/2 cursor-text items-center justify-end rounded-md bg-card px-1.5 font-normal focus-within:ring-1 focus-within:ring-border", edge)}>
       {kind === "money" && <span className={fix}>$</span>}
       <input
         aria-label={label}
@@ -447,11 +493,13 @@ export function StagesTable({ view, roots, snapshot, priced }: { view: StagesTab
   // Пункты Definition of Done встают под его строку и сворачиваются ею; без такого этапа их цены идут отдельными строками, как раньше.
   const criteriaStage = items.find((item) => stageKindOf(item.stage) === "criteria")?.stage.id;
   const criterionLines = criteriaStage === undefined ? new Map<number, ForecastLine>() : criterionLinesIn(total, view.brief.setup?.criteria?.length ?? 0, snapshot !== undefined, locale);
-  const taken = new Set([...stageLines.values(), ...criterionLines.values()]);
   const [criteriaOpen, setCriteriaOpen] = useState(true);
   const criteriaFold: Fold = { open: criteriaOpen, toggle: () => setCriteriaOpen((was) => !was) };
+  // Цена варианта с пунктами стоит на его строке под Definition of Done, а не отдельной строкой; свёрнутый список строк не показывает — цена остаётся строкой.
+  const optionTaken = criteriaStage !== undefined && criteriaOpen ? optionLines(view.brief, answer, total.lines.slice(spent)) : [];
+  const taken = new Set([...stageLines.values(), ...criterionLines.values(), ...optionTaken]);
   // Свёртка нужна, только когда есть что сворачивать.
-  const foldable = (view.brief.setup?.criteria?.length ?? 0) > 0;
+  const foldable = (view.brief.setup?.criteria?.length ?? 0) > 0 || optionCriteria(view.brief, answer).length > 0;
   const others = total.lines.slice(spent).filter((l) => !taken.has(l));
   const own = view.draft.budget;
   const planned = plannedMinutes(total);
@@ -470,68 +518,77 @@ export function StagesTable({ view, roots, snapshot, priced }: { view: StagesTab
   };
   // Клавиши ловит вся строка: Esc срабатывает и тогда, когда фокус остался на галочке.
   const onKey = (key: string) => (!editing ? undefined : key === "Enter" ? setEdit(null) : key === "Escape" ? cancel() : undefined);
-  const priceCell = (field: keyof Budget, kind: "money" | "minutes", label: string, shown: string) =>
-    editing ? <MaskField kind={kind} value={edit.shown[field]} label={label} disabled={view.sending} onChange={(text) => type(field, text)} /> : shown;
+  const priceCell = (field: keyof Budget, kind: "money" | "minutes", label: string, shown: string, edge: string) =>
+    editing ? (
+      <>
+        <span className="invisible">{shown}</span>
+        <MaskField kind={kind} value={edit.shown[field]} label={label} disabled={view.sending} edge={edge} onChange={(text) => type(field, text)} />
+      </>
+    ) : (
+      shown
+    );
   const head = "row-start-1 py-1.5 pr-2.5 text-right text-[11px] font-normal text-muted-foreground";
   return (
-    <div role="group" aria-label={t.brief.stagesTable} className="@container flex flex-col gap-px text-xs">
-      <div className={ROW}>
-        <span className="col-start-1 col-end-3 row-start-1 hidden py-1.5 pl-3 text-[11px] text-muted-foreground @[34rem]:block">{t.brief.stage}</span>
-        {priced && (
-          <>
-            <span className={cn(head, CELLS.risk)}>{t.brief.risk}</span>
-            <span className={cn(head, CELLS.minutes)}>{t.brief.time}</span>
-            <span className={cn(head, CELLS.target)}>{t.brief.target}</span>
-            <span className={cn(head, CELLS.max)}>{t.brief.max}</span>
-          </>
-        )}
-        <span className={cn(BOX, "row-end-2")} />
-      </div>
-      {total.lines.slice(0, spent).map((line, i) => (
-        <LineRow key={`spent-${i}`} line={line} plain done />
-      ))}
-      {items.map((item) => (
-        <Fragment key={item.stage.id}>
-          <StageRows item={item} view={view} scope={scope} priced={priced} line={stageLines.get(item.stage.id)} roots={roots} fold={item.stage.id === criteriaStage && foldable ? criteriaFold : undefined} />
-          {item.stage.id === criteriaStage && criteriaFold.open && <CriterionRows view={view} lines={criterionLines} priced={priced} />}
-        </Fragment>
-      ))}
-      {priced &&
-        others.map((line, i) => (
-          <LineRow key={`line-${i}`} line={line} plain={line.base === true} done={false} />
-        ))}
-      {priced && (
-        <div data-total onKeyDown={(e) => onKey(e.key)} className={cn(ROW, "font-semibold")}>
-          <div className={LEFT}>
-            <Label icon={null} numbers>
-              <span>{t.brief.total}</span>
-            </Label>
-          </div>
-          <span aria-hidden="true" className={RULE} />
-          <span className={cn(NUM, CELLS.risk)}>
-            <RiskText risk={total.risk} />
-          </span>
-          <span className={cn(NUM, CELLS.minutes, editing && "pointer-events-auto")}>{priceCell("minutes", "minutes", t.brief.ownMinutes, ownCell(own.minutes, "minutes", planned === null ? "" : minutesText(planned, locale)))}</span>
-          <span className={cn(NUM, CELLS.target, editing && "pointer-events-auto")}>{priceCell("target", "money", t.brief.ownTarget, ownCell(own.target, "money", money(total.target)))}</span>
-          <span aria-hidden="true" className={cn(NUM, CELLS.dash)}>
-            –
-          </span>
-          <span className={cn(NUM, CELLS.max, editing && "pointer-events-auto")}>{priceCell("max", "money", t.brief.ownMax, ownCell(own.max, "money", money(total.max)))}</span>
-          <span className={BOX}>
-            {!view.answered && (
-              <button
-                type="button"
-                aria-label={editing ? t.brief.applyPrice : t.brief.editPrice}
-                disabled={view.sending}
-                onClick={() => setEdit(editing ? null : { before: own, shown: seedOwnBudget(own, forecastPrice) })}
-                className="flex size-6 items-center justify-center rounded-md text-muted-foreground enabled:hover:bg-state-hover enabled:hover:text-foreground"
-              >
-                <Icon name={editing ? "Check" : "Edit"} aria-hidden="true" className="size-3.5" />
-              </button>
-            )}
-          </span>
+    <div className="@container text-xs">
+      <div role="group" aria-label={t.brief.stagesTable} className={cn("flex flex-col gap-px @[34rem]:grid @[34rem]:gap-x-0", TABLE_COLUMNS)}>
+        <div className={ROW}>
+          <span className="col-start-1 col-end-3 row-start-1 hidden py-1.5 pl-3 text-[11px] text-muted-foreground @[34rem]:block">{t.brief.stage}</span>
+          {priced && (
+            <>
+              <span className={cn(head, CELLS.risk)}>{t.brief.risk}</span>
+              <span className={cn(head, CELLS.minutes)}>{t.brief.time}</span>
+              <span className={cn(head, CELLS.target)}>{t.brief.target}</span>
+              <span className={cn(head, CELLS.max)}>{t.brief.max}</span>
+            </>
+          )}
+          <span className={cn(BOX, "row-end-2")} />
         </div>
-      )}
+        {total.lines.slice(0, spent).map((line, i) => (
+          <LineRow key={`spent-${i}`} line={line} done />
+        ))}
+        {items.map((item) => (
+          <Fragment key={item.stage.id}>
+            <StageRows item={item} view={view} scope={scope} priced={priced} line={stageLines.get(item.stage.id)} roots={roots} fold={item.stage.id === criteriaStage && foldable ? criteriaFold : undefined} />
+            {item.stage.id === criteriaStage && criteriaFold.open && <CriterionRows view={view} lines={criterionLines} priced={priced} />}
+          </Fragment>
+        ))}
+        {priced &&
+          others.map((line, i) => (
+            <LineRow key={`line-${i}`} line={line} done={false} />
+          ))}
+        {priced && (
+          <div data-total onKeyDown={(e) => onKey(e.key)} className={cn(ROW, "font-semibold")}>
+            <div className={LEFT}>
+              <Label icon={null} numbers>
+                <span>{t.brief.total}</span>
+              </Label>
+            </div>
+            <span aria-hidden="true" className={RULE} />
+            <span className={cn(NUM, CELLS.risk)}>
+              <RiskText risk={total.risk} />
+            </span>
+            <span className={cn(NUM, CELLS.minutes, editing && "pointer-events-auto")}>{priceCell("minutes", "minutes", t.brief.ownMinutes, ownCell(own.minutes, "minutes", planned === null ? "" : minutesText(planned, locale)), "right-1")}</span>
+            <span className={cn(NUM, CELLS.target, editing && "pointer-events-auto")}>{priceCell("target", "money", t.brief.ownTarget, ownCell(own.target, "money", money(total.target)), "right-0")}</span>
+            <span aria-hidden="true" className={cn(NUM, CELLS.dash)}>
+              –
+            </span>
+            <span className={cn(NUM, CELLS.max, editing && "pointer-events-auto")}>{priceCell("max", "money", t.brief.ownMax, ownCell(own.max, "money", money(total.max)), "-right-1.5")}</span>
+            <span className={BOX}>
+              {!view.answered && (
+                <button
+                  type="button"
+                  aria-label={editing ? t.brief.applyPrice : t.brief.editPrice}
+                  disabled={view.sending}
+                  onClick={() => setEdit(editing ? null : { before: own, shown: seedOwnBudget(own, forecastPrice) })}
+                  className="flex size-6 items-center justify-center rounded-md text-muted-foreground enabled:hover:bg-state-hover enabled:hover:text-foreground"
+                >
+                  <Icon name={editing ? "Check" : "Edit"} aria-hidden="true" className="size-3.5" />
+                </button>
+              )}
+            </span>
+          </div>
+        )}
+      </div>
     </div>
   );
 }

@@ -1,9 +1,12 @@
 // Демонстрация — одна карточка на подложке: что сделано с прошлой демонстрации,
 // что нет и почему, что важно знать абзацами, секции, задачи и результаты
 // строками под палец. Комментарий прикреплён к карточке снизу, кнопки исхода
-// стоят отдельно в форме брифа — чтобы не нажать их случайно.
-import { useRpc } from "@get-bb/plugin-sdk/app";
+// стоят отдельно в форме брифа — чтобы не нажать их случайно. Задача — карточка
+// Tasks+: Markdown хоста рисует её директиву, и карточка открывает задачу сбоку
+// в треде — чужую вкладку панели виджет Flow открыть не может.
+import { Markdown, useRpc } from "@get-bb/plugin-sdk/app";
 
+import { taskDirectiveLine } from "../core/directive";
 import { outcomeItems, paragraphs } from "../core/outcome";
 import { Icon } from "../components/ui/icon";
 import { cn } from "../lib/utils";
@@ -11,7 +14,6 @@ import type { DecisionBrief, StageOutcome, outcomeRpcContract } from "../shared/
 import { CommandResultRow } from "./command";
 import { AddRow } from "./add-row";
 import { LinkedText } from "./linked-text";
-import { TaskLink } from "./cells";
 import type { FileRoots } from "../core/result-link";
 import { setOutcomeNote, type Draft } from "./draft";
 import { useMessages } from "./locale-context";
@@ -69,6 +71,29 @@ function Items({ outcome, done }: { outcome: StageOutcome; done: boolean }) {
   );
 }
 
+/**
+ * Задачи группой: «Review» — чей итог показан (`done`), они станут done, когда владелец примет шаг; «Created» — только
+ * заведённые. Статус видно в самой карточке, подписей нет. Свои поля сверху и снизу у карточки Tasks+ сняты: расстояния
+ * задаёт группа, как у пунктов.
+ */
+function Tasks({ outcome, done }: { outcome: StageOutcome; done: boolean }) {
+  const t = useMessages();
+  const tasks = (outcome.tasks ?? []).filter((task) => task.done === done);
+  if (tasks.length === 0) return null;
+  return (
+    <Group title={done ? t.outcome.tasksReview : t.outcome.tasksCreated}>
+      {tasks.map((task) => {
+        const card = taskDirectiveLine(task.key);
+        return (
+          <div key={task.key} data-demo-task className={card === null ? "font-mono text-xs" : "-my-3"}>
+            {card === null ? task.key : <Markdown content={card} />}
+          </div>
+        );
+      })}
+    </Group>
+  );
+}
+
 /** Результат-команда: запуск — из сохранённого брифа по индексу результата. */
 function LaunchRow({ briefId, index, label, command }: { briefId: string; index: number; label: string; command: string }) {
   const rpc = useRpc<typeof outcomeRpcContract>();
@@ -83,7 +108,6 @@ export function DemoCard({ brief, roots, view }: { brief: DecisionBrief; roots: 
   const t = useMessages();
   const outcome = brief.outcome;
   if (outcome === undefined) return null;
-  const tasks = outcome.tasks ?? [];
   return (
     <div role="group" aria-label={t.outcome.title} className="flex flex-col gap-px overflow-hidden rounded-lg">
       <div className="flex flex-col gap-4 bg-surface-recessed-solid px-4 pb-4 pt-3.5">
@@ -100,26 +124,8 @@ export function DemoCard({ brief, roots, view }: { brief: DecisionBrief; roots: 
             <Paragraphs text={section.text} />
           </Group>
         ))}
-        {tasks.length > 0 && (
-          <Group title={t.outcome.tasks}>
-            <div className="flex flex-wrap gap-1.5">
-              {tasks.map((task) => (
-                <span key={task.key} className={cn("flex items-center gap-1.5 rounded-full bg-card px-2.5 py-1 text-xs", !task.done && "text-muted-foreground")}>
-                  <Icon name={task.done ? "Check" : "X"} className="size-3" />
-                  <TaskLink address={task.key} className="underline underline-offset-2 hover:text-primary">
-                    {task.key}
-                  </TaskLink>
-                  {task.note !== undefined && (
-                    <span>
-                      {"— "}
-                      <LinkedText text={task.note} />
-                    </span>
-                  )}
-                </span>
-              ))}
-            </div>
-          </Group>
-        )}
+        <Tasks outcome={outcome} done />
+        <Tasks outcome={outcome} done={false} />
         <Group title={t.outcome.results}>
           <div className="flex flex-col gap-px overflow-hidden rounded-md">
             {outcome.results.map((result, index) =>

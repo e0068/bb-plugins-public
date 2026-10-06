@@ -79,12 +79,11 @@ describe("карточка Демонстрации", () => {
     expect(c.getByText("Тесты плагина зелёные.").tagName).toBe("P");
   });
 
-  it("результаты — отдельными строками, файл — ссылкой bb, задачи — ключами", async () => {
+  it("каждый результат — своя строка, файл в ней — ссылка bb", async () => {
     const slot = open();
     const c = await card(slot);
     expect(slot.container.querySelectorAll("[data-result-row]")).toHaveLength(2);
     expect(await c.findByRole("link", { name: /^screenshots/ })).toBeTruthy();
-    expect(c.getByText("BBPL-1")).toBeTruthy();
   });
 
   it("поле комментария прикреплено к карточке, кнопки — вне её, бюджета и этапов нет", async () => {

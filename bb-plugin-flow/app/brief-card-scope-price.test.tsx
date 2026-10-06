@@ -42,9 +42,9 @@ const stageCell = async (slot: Slot, id: string) => {
 describe("цена этапа и база следуют за объёмом", () => {
   it("строка этапа показывает долю объёма, снятие пункта её уменьшает", async () => {
     const slot = open();
-    expect((await stageCell(slot, "spec")).textContent).toContain("+$5–+$8");
+    expect((await stageCell(slot, "spec")).textContent).toContain("$5–$8");
     fireEvent.click(slot.getByRole("button", { name: "Пункт 1 не нужен" }));
-    expect((await stageCell(slot, "spec")).textContent).toContain("+$2–+$3");
+    expect((await stageCell(slot, "spec")).textContent).toContain("$2–$3");
   });
 
   it("у заголовка «Готово, когда» — база: сумма оставленных пунктов", async () => {

@@ -7,13 +7,13 @@
 // владелец; ✦ рекомендации — только в раскрытом списке.
 // Отвеченный бриф рисуется теми же частями, без переключателей и полей: контрастно
 // то, что владелец выбрал сам, а бюджет раскрывает снимок прогноза на момент отправки.
-import { useEffect, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
+import { Fragment, useEffect, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 import { useRpc } from "@get-bb/plugin-sdk/app";
 
 import { deviationTotal, deviations } from "../core/answer-message";
 import { requiredOf } from "../core/required";
 import { changeOf, criteriaSum, legacyPricing, criterionEditable, criterionTitle, hasForecast } from "../core/budget";
-import { optionCriteria, optionRemoved, removedCriteria } from "../core/option-criteria";
+import { optionRemoved, placedOptionCriteria, removedCriteria } from "../core/option-criteria";
 import { DEFAULT_ROUTE, offeredPlace, placeColumns, withBranch, withPlace, withProject, withTree } from "../core/places";
 import { stageItems } from "../core/stages";
 import type { FileRoots } from "../core/result-link";
@@ -647,7 +647,7 @@ function CriteriaSection({ brief, view }: { brief: DecisionBrief; view: View }) 
   const t = useMessages();
   const answer = toAnswer(brief, view.draft);
   // Зачёркнутый пункт — обратная связь на отказ, пока бриф открыт; в отвеченной карточке остаются только живые.
-  const fromOptions = optionCriteria(brief, answer).filter((c) => !view.answered || c.state === "live");
+  const fromOptions = placedOptionCriteria(brief, answer).filter((c) => !view.answered || c.state === "live");
   const items = brief.setup?.criteria ?? (fromOptions.length === 0 && brief.approved === undefined ? undefined : []);
   if (items === undefined) return null;
   const { added } = view.draft.criteria;
@@ -660,6 +660,17 @@ function CriteriaSection({ brief, view }: { brief: DecisionBrief; view: View }) 
   // Без пунктов брифа ответ не несёт правок критерия, поэтому и дописать пункт негде.
   const ownItems = brief.setup?.criteria !== undefined;
   const tail = view.answered || !ownItems ? [] : [""];
+  // Строка пункта — только метка и текст: что выбор между вариантами значит, говорит секция вопросов. Вариант, снявший пункт брифа, стоит под ним.
+  const optionRows = (under: number | null) =>
+    fromOptions.flatMap((c, i) =>
+      c.under !== under
+        ? []
+        : [
+            <ItemRow key={`option-${c.questionId}-${c.optionId}-${i}`} mark="↳">
+              <span className={cn(itemText, c.state === "struck" && "text-muted-foreground line-through")}>{c.text}</span>
+            </ItemRow>,
+          ],
+    );
   return (
     <div role="group" aria-label={t.brief.doneWhen} className="flex flex-col gap-2">
       <div className="flex flex-wrap items-center gap-x-2">
@@ -669,15 +680,13 @@ function CriteriaSection({ brief, view }: { brief: DecisionBrief; view: View }) 
       <Missing view={view} id={SETUP_ROW.criteria} />
       <div className="flex flex-col gap-px overflow-hidden rounded-lg">
         {items.map((item, i) => (
-          <CriterionRow key={`item-${i}`} item={item} index={i} view={view} byOption={byOption.includes(i)} />
+          <Fragment key={`item-${i}`}>
+            <CriterionRow item={item} index={i} view={view} byOption={byOption.includes(i)} />
+            {optionRows(i)}
+          </Fragment>
         ))}
         {brief.approved !== undefined && <ApprovedRows items={brief.approved} />}
-        {/* Строка пункта — только метка и текст: что выбор между вариантами значит, говорит секция вопросов. */}
-        {fromOptions.map((c, i) => (
-          <ItemRow key={`option-${c.questionId}-${c.optionId}-${i}`} mark="↳">
-            <span className={cn(itemText, c.state === "struck" && "text-muted-foreground line-through")}>{c.text}</span>
-          </ItemRow>
-        ))}
+        {optionRows(null)}
         {[...(ownItems ? added : []), ...tail].map((text, i) =>
           view.answered ? (
             <ItemRow key={`added-${i}`} mark="+">

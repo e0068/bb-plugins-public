@@ -123,6 +123,23 @@ export const stageAdd = (item: StageItem, executor: string, scope?: Add): Add | 
   return sumAdds([item.report?.add, executor === SELF ? undefined : item.report?.adds?.[executor]]);
 };
 
+/** Доля этапа самой работы — весь объём. */
+const WORK_PERCENT = 100;
+
+const isWorkStage = (item: StageItem): boolean => (item.report?.share?.percent ?? 0) >= WORK_PERCENT;
+
+const minus = (a: Add, b: Add): Add => ({ target: cents(a.target - b.target), max: cents(a.max - b.max), risk: a.risk - b.risk, ...(a.minutes === undefined ? {} : { minutes: a.minutes - (b.minutes ?? 0) }) });
+
+/**
+ * Надбавка этапа к итогу брифа. Этап самой работы у Main Agent — база, её уже называют пункты Definition of Done:
+ * он не прибавляет ничего, другой исполнитель — только разницу против Main Agent. Остальные этапы прибавляют свою цену.
+ */
+export const stageSurcharge = (item: StageItem, executor: string, scope?: Add): Add | undefined => {
+  const price = stageAdd(item, executor, scope);
+  const base = isWorkStage(item) ? stageAdd(item, SELF, scope) : undefined;
+  return price === undefined || base === undefined ? price : minus(price, base);
+};
+
 /**
  * Что из выбора по этапу уходит в следующий бриф треда: исполнитель, которого владелец менял сам,
  * и перенесённый из прошлого брифа, если владелец его оставил, — иначе выбор жил бы ровно один бриф.

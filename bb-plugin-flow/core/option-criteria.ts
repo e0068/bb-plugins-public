@@ -36,11 +36,25 @@ const placedOptions = (brief: DecisionBrief, answer: Pick<DecisionAnswer, "answe
     });
 };
 
+/** Пункт варианта с местом в списке: `under` — номер пункта брифа, под которым он стоит, `null` — в хвосте списка. */
+export type PlacedCriterion = OptionCriterion & { under: number | null };
+
+/**
+ * Пункты вариантов в порядке брифа: у выбранных — живые, у снятых владельцем — зачёркнутые. Вариант, который снимает пункты
+ * брифа, — их альтернатива и встаёт под последним снятым, а остальные — в хвост; номер за краем списка тоже уходит в хвост.
+ */
+export const placedOptionCriteria = (brief: DecisionBrief, answer: Pick<DecisionAnswer, "answers">): PlacedCriterion[] => {
+  const count = brief.setup?.criteria?.length ?? 0;
+  return placedOptions(brief, answer).flatMap(({ question, option, state }) => {
+    const last = Math.max(-1, ...(option.removes ?? []));
+    const under = last >= 0 && last < count ? last : null;
+    return state === null ? [] : (option.criteria ?? []).map((text) => ({ questionId: question.id, optionId: option.id, text, state, under }));
+  });
+};
+
 /** Пункты вариантов в порядке брифа: у выбранных — живые, у снятых владельцем — зачёркнутые. */
 export const optionCriteria = (brief: DecisionBrief, answer: Pick<DecisionAnswer, "answers">): OptionCriterion[] =>
-  placedOptions(brief, answer).flatMap(({ question, option, state }) =>
-    state === null ? [] : (option.criteria ?? []).map((text) => ({ questionId: question.id, optionId: option.id, text, state })),
-  );
+  placedOptionCriteria(brief, answer).map(({ under: _under, ...c }) => c);
 
 /** Номера пунктов брифа, которые снимают выбранные варианты, по возрастанию и без повторов. */
 export const optionRemoved = (brief: DecisionBrief, answer: Pick<DecisionAnswer, "answers">): number[] =>

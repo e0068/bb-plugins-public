@@ -173,3 +173,30 @@ describe("вариант, снятый владельцем, оставляет 
     expect(done.queryByText("README описывает витрину")).toBeNull();
   });
 });
+
+describe("место пункта варианта в «Готово, когда»", () => {
+  const placed: DecisionBrief = {
+    ...brief,
+    id: "dec_placed",
+    setup: { criteria: ["Первый", "Второй"] },
+    questions: [{ ...brief.questions[0]!, options: brief.questions[0]!.options.map((o) => (o.id === "look" ? { ...o, criteria: ["Замена первому"], removes: [0] } : o)) }],
+  };
+  const openPlaced = () =>
+    renderSlot<PluginMessageDirectiveProps, typeof decisionsRpcContract>(
+      app.messageDirectives[0]!,
+      { attributes: { id: placed.id }, source: `::decision{id="${placed.id}"}`, message: { id: "msg_1", threadId: "thr_1", turnId: "turn_1", projectId: null }, openWorkspaceFile: () => true },
+      { rpc: { getBrief: () => ({ kind: "found", brief: placed, answer: null }), answerBrief: () => ({ kind: "not_found" }) } },
+    );
+
+  it("вариант, снявший пункт, стоит прямо под ним, а ничего не снявший — в хвосте", async () => {
+    const slot = openPlaced();
+    const done = within(await slot.findByRole("group", { name: "Definition of Done" }));
+    const question = within(slot.getByRole("group", { name: "Документация?" }));
+    fireEvent.click(question.getByRole("button", { name: /Сначала посмотреть/ }));
+    const rows = [...done.getByText("Замена первому").closest("[data-item-row]")!.parentElement!.querySelectorAll("[data-item-row]")].map((r) => r.textContent);
+    expect(rows.slice(0, 3)).toEqual(["1Первый", "↳Замена первому", "2Второй"]);
+    fireEvent.click(question.getByRole("button", { name: /Сайт/ }));
+    const tail = [...done.getByText("Страница на сайте").closest("[data-item-row]")!.parentElement!.querySelectorAll("[data-item-row]")].map((r) => r.textContent);
+    expect(tail.slice(0, 3)).toEqual(["1Первый", "2Второй", "↳Страница на сайте"]);
+  });
+});

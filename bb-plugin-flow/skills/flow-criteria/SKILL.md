@@ -14,6 +14,7 @@ If the owner writes in Russian, read [ru.md](ru.md) in this folder instead — i
 - One item — one checkable statement. A checker must decide "yes" or "no" without asking the author.
 - A change is written as a "before / after" pair, and "before" is measured before the first edit: "the screen opens in 4 s → under 1 s", not "the screen opens fast".
 - An item speaks of the result, not the method: "old flows open unchanged", not "added a fallback to the parser".
+- An item is written in the owner's language: what they will see, be able to do or stop putting up with — "the restore step no longer fails red, no need to press Retry", not "npm ci installs dev packages". Packages, flags, file and test names stay out of the item — they belong in the report. Check before sending: would someone who never read the code understand the item?
 - A signal is not a Definition of Done item. "The graph nodes are green" shows that something was done but not what exactly got better.
 - Invariants of any task are not written into the Definition of Done unless the owner asks: the test base is green before and after, promise tests are written before the code and were red, the review was done by someone other than the author, docs are edited in the same diff when the design changes, the code branch is published as a PR, the task is in done with a report. They are always checked; the Definition of Done speaks of what is special about this work.
 - For a research task the Definition of Done is the question to answer: "yes", "no" or a choice of option.

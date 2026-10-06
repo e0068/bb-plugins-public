@@ -3,7 +3,7 @@
 // Flow в левом меню правит flow и их этапы — выбор и создание живут в шапке
 // той же панели, — а кнопка в композере нового треда
 // выбирает, по какому flow пойдёт тред, а баннер над композером треда показывает
-// прогресс flow; секция настроек плагина задаёт путь журнала решений.
+// прогресс flow; секции настроек плагина задают путь журнала решений и папку flow.
 import { definePluginApp } from "@get-bb/plugin-sdk/app";
 
 import { CommandDirective } from "./app/command";
@@ -13,6 +13,7 @@ import { FlowsSettingsButton } from "./app/flows-settings-button";
 import { FLOWS_PANEL_PATH } from "./lib/panel-path";
 import { JournalDirsSection } from "./app/journal-settings";
 import { AutomationRetrySection } from "./app/flow-settings-sections";
+import { FlowsFolderSection } from "./app/flows-folder-settings";
 import { ProgressBanner } from "./app/progress-banner";
 import { registerAwaitingStatus } from "./app/row-status";
 import { systemLanguages } from "./app/locale-context";
@@ -36,4 +37,5 @@ export default definePluginApp((app) => {
   registerAwaitingStatus(app);
   app.slots.settingsSection({ id: "journal-dirs", title: t.journalTitle, description: t.journalDescription, component: JournalDirsSection });
   app.slots.settingsSection({ id: "automation-retry", title: t.retryTitle, description: t.retryDescription, component: AutomationRetrySection });
+  app.slots.settingsSection({ id: "flows-folder", title: t.folderTitle, description: t.folderDescription, component: FlowsFolderSection });
 });

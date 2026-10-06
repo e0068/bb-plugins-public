@@ -1,20 +1,15 @@
 // Дерево flow слева на странице Flow: «История», за ней flow верхнего уровня
 // по порядку коллекции, под каждым — flow, на которые он ссылается строкой
-// «Flow», — та же раскладка, что в папке синхронизации, — и «+» в конце. Клик
-// пишет flow в `subPath` панели, страница читает тот же адрес обратно; подсветка
-// идёт за `flowById`, как и содержимое. Под деревом — папка синхронизации этого
-// компа и итог последней сверки.
-import { useEffect, useState } from "react";
-import { useBbNavigate, useRealtime, useRpc, type PluginNavPanelProps } from "@get-bb/plugin-sdk/app";
+// «Flow», — та же раскладка, что в папке flow, — и «+» в конце. Клик пишет flow
+// в `subPath` панели, страница читает тот же адрес обратно; подсветка идёт за
+// `flowById`, как и содержимое. Саму папку задаёт секция настроек плагина.
+import { useBbNavigate, type PluginNavPanelProps } from "@get-bb/plugin-sdk/app";
 
 import { flowOutline, freeFlowName } from "../core/flow-files";
 import { addFlow, flowById, newFlow } from "../core/flows";
 import { Icon } from "../components/ui/icon";
-import { Input } from "../components/ui/input";
-import { FLOW_SYNC_CHANNEL } from "../lib/channels";
 import { cn } from "../lib/utils";
 import { FLOWS_PANEL_PATH } from "../lib/panel-path";
-import type { FlowSyncState, flowSyncRpcContract } from "../shared/contract";
 import { HISTORY_SUB_PATH } from "./run-history";
 import { useMessages } from "./locale-context";
 import { updateFlowSettings, useFlowSettings } from "./stage-settings-store";
@@ -28,9 +23,8 @@ const newFlowId = (): string => `flow-${Date.now().toString(36)}${Math.random().
 
 export function FlowsTree({ subPath, className }: Pick<PluginNavPanelProps, "subPath"> & { className?: string }) {
   return (
-    <aside className={cn("flex min-w-0 flex-col gap-4", className)}>
+    <aside className={cn("flex min-w-0 flex-col", className)}>
       <FlowsNav subPath={subPath} />
-      <SyncFolder />
     </aside>
   );
 }
@@ -77,57 +71,5 @@ function FlowsNav({ subPath }: Pick<PluginNavPanelProps, "subPath">) {
         <Icon name="Plus" aria-hidden="true" className="size-4" />
       </button>
     </nav>
-  );
-}
-
-type Rpc = ReturnType<typeof useRpc<typeof flowSyncRpcContract>>;
-
-/** Папка синхронизации: сохраняется по уходу фокуса; итог сверки приходит с сервера и обновляется по своему каналу. */
-function SyncFolder() {
-  const t = useMessages().flows;
-  const rpc: Rpc = useRpc<typeof flowSyncRpcContract>();
-  const [state, setState] = useState<FlowSyncState | null>(null);
-  const [draft, setDraft] = useState<string | null>(null);
-  const [failed, setFailed] = useState(false);
-  const load = () => void rpc.call("getFlowSync", {}).then(setState, () => undefined);
-  // eslint-disable-next-line react-hooks/exhaustive-deps -- чтение — на монтирование, а не на новый объект клиента
-  useEffect(load, []);
-  useRealtime(FLOW_SYNC_CHANNEL, load);
-  if (state === null) return null;
-  const save = async () => {
-    if (draft === null || draft.trim() === state.dir) return setDraft(null);
-    try {
-      setState(await rpc.call("setFlowSyncDir", { dir: draft }));
-      setFailed(false);
-      setDraft(null);
-    } catch {
-      // Набранный путь остаётся в поле: владелец видит, что не сохранилось, и жмёт ещё раз, не перепечатывая.
-      setFailed(true);
-    }
-  };
-  const status = state.status;
-  return (
-    <div className="flex flex-col gap-1">
-      <label className="text-xs text-muted-foreground" htmlFor="flow-sync-dir">
-        {t.syncDir}
-      </label>
-      <Input
-        id="flow-sync-dir"
-        aria-label={t.syncDir}
-        placeholder={t.syncDirPlaceholder}
-        value={draft ?? state.dir}
-        onChange={(e) => setDraft(e.target.value)}
-        onBlur={save}
-        onKeyDown={(e) => e.key === "Enter" && e.currentTarget.blur()}
-        className={cn("h-8 font-mono text-xs", (failed || status.kind === "error") && "border-destructive")}
-      />
-      {failed ? (
-        <span className="text-xs text-destructive">{t.syncSaveFailed}</span>
-      ) : status.kind === "error" ? (
-        <span className="text-xs break-words text-destructive">{t.syncError(status.message)}</span>
-      ) : (
-        <span className="text-xs text-muted-foreground">{status.kind === "off" ? t.syncOff : status.kind === "pending" ? t.syncPending : t.synced}</span>
-      )}
-    </div>
   );
 }

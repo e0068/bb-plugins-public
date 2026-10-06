@@ -1,7 +1,7 @@
 // Прогноз бюджета, риска и времени брифа. Объём работы — цены оставленных
 // пунктов Definition of Done (база) плюс цены выбранных вариантов; этап — доля
-// объёма с множителем исполнителя, итог — сумма долей этапов в прогоне, а у
-// брифа без этапов — сам объём. Бриф-уточнение запущенной работы — утверждённый
+// объёма с множителем исполнителя, итог — объём плюс доли этапов в прогоне, а
+// этап самой работы у Main Agent и есть объём. Бриф-уточнение запущенной работы — утверждённый
 // бюджет прогона плюс выбранные варианты по цене прогона. Брифы, записанные раньше, считаются как были:
 // этапы в долларах с долей пунктов внутри них, а совсем старые — пункты,
 // артефакты, исполнитель, ревью и тестирование. Считается по брифу и ответу,
@@ -12,14 +12,14 @@ import type { Add, Checker, Criterion, DecisionAnswer, DecisionBrief, Planned, S
 import { SETUP_ROW, rowsOf } from "./rows";
 import { sumAdds } from "./adds";
 import { removedCriteria } from "./option-criteria";
-import { answeredStageChoice, executorLabel, stageAdd, stageItems, stagePhase } from "./stages";
+import { answeredStageChoice, executorLabel, stageAdd, stageItems, stagePhase, stageSurcharge } from "./stages";
 
 /**
  * Строка разбивки; `null` — величина неизвестна: у планирования без цены модели нет денег, у добавок без `minutes` — времени.
- * `base` — строка не добавка, а основа итога: утверждённый бюджет прогона. `stage` — id этапа, чья это цена: таблица брифа ставит её в строку этапа.
+ * `stage` — id этапа, чья это цена: таблица брифа ставит её в строку этапа.
  * `criterion` — номер пункта Definition of Done с нуля: таблица ставит цену в строку пункта.
  */
-export type ForecastLine = { label: string; note: string; minutes: number | null; risk: number; target: number | null; max: number | null; base?: true; stage?: string; criterion?: number };
+export type ForecastLine = { label: string; note: string; minutes: number | null; risk: number; target: number | null; max: number | null; stage?: string; criterion?: number };
 
 /** Итог складывает известное; время `null`, если ни у одной строки его нет; риск не ниже нуля; `spent` — сколько первых строк уже потрачено. */
 export type Forecast = { lines: readonly ForecastLine[]; minutes: number | null; risk: number; target: number; max: number; spent?: number };
@@ -109,11 +109,11 @@ export const plannedMinutes = (f: Pick<Forecast, "lines" | "spent">): number | n
   return sum === null ? null : Math.max(0, sum);
 };
 
-/** Этап в прогоне, ещё не сделанный, — строка «название · исполнитель» с ценой от объёма; сделанный работы не добавляет. */
+/** Этап в прогоне, ещё не сделанный, — строка «название · исполнитель» со своей надбавкой; сделанный работы не добавляет. */
 const stageLines = (brief: DecisionBrief, answer: DecisionAnswer, scope: Add | undefined, locale?: Locale): ForecastLine[] =>
   stageItems(brief).flatMap((item) => {
     const choice = answeredStageChoice(brief, answer, item);
-    return stagePhase(item) !== "todo" || !choice.run ? [] : line(item.stage.name, executorLabel(item.stage, choice.executor, locale), [stageAdd(item, choice.executor, scope)]).map((l) => ({ ...l, stage: item.stage.id }));
+    return stagePhase(item) !== "todo" || !choice.run ? [] : line(item.stage.name, executorLabel(item.stage, choice.executor, locale), [stageSurcharge(item, choice.executor, scope)]).map((l) => ({ ...l, stage: item.stage.id }));
   });
 
 /** Бриф, записанный до цены от объёма: этапы в долларах или строки исполнителя, ревью и документов вместо этапов. */
@@ -121,12 +121,6 @@ export const legacyPricing = (brief: DecisionBrief): boolean => {
   const s = brief.setup;
   return (s?.stages ?? []).some((r) => r.add !== undefined || r.adds !== undefined) || [s?.artifacts, s?.executor, s?.checker, s?.testing].some((row) => row !== undefined);
 };
-
-/** Доля этапа самой работы — весь объём: такой этап и несёт базу. */
-export const WORK_PERCENT = 100;
-
-/** Есть ли в брифе этап самой работы; без него — тред без flow или flow из одних встроенных этапов — объём считается сам. */
-const hasWorkStage = (brief: DecisionBrief): boolean => (brief.setup?.stages ?? []).some((r) => (r.share?.percent ?? 0) >= WORK_PERCENT);
 
 /** Выбранные варианты вопросов по порядку брифа, с номером вопроса. */
 const chosenOptions = (brief: DecisionBrief, answer: DecisionAnswer) =>
@@ -136,38 +130,40 @@ const chosenOptions = (brief: DecisionBrief, answer: DecisionAnswer) =>
   });
 
 /**
- * Объём работы: база — цены оставленных пунктов Definition of Done, а у брифа без своих пунктов посреди работы — утверждённый
- * объём треда, — плюс цены выбранных вариантов; `undefined`, если цен нет.
+ * Строки прогноза выбранных вариантов с пунктами: их цену показывает строка пункта варианта, отдельной строкой она не нужна.
+ * Строка узнаётся по пометке — названию варианта: подпись «Вопрос N» снимок хранит на языке ответа, а название от языка не зависит.
+ * Название, которое носит и выбранный вариант без пунктов, строку не отдаёт: её цена нигде больше не показана.
  */
-export const scopeOf = (brief: DecisionBrief, answer: DecisionAnswer): Add | undefined => {
-  const removed = removedCriteria(brief, answer);
-  const criteria = brief.setup?.criteria;
-  const base = criteria === undefined ? [brief.approvedScope] : criteria.map((item, i) => (removed.includes(i) ? undefined : addOf(item)));
-  return sumAdds([...base, ...chosenOptions(brief, answer).map((c) => c.option.add)]);
+export const optionLines = (brief: DecisionBrief, answer: DecisionAnswer, lines: readonly ForecastLine[]): ForecastLine[] => {
+  const options = chosenOptions(brief, answer).map((c) => c.option);
+  const bare = new Set(options.filter((o) => (o.criteria ?? []).length === 0).map((o) => o.action));
+  const shown = new Set(options.filter((o) => (o.criteria ?? []).length > 0 && !bare.has(o.action)).map((o) => o.action));
+  return lines.filter((l) => l.stage === undefined && l.criterion === undefined && shown.has(l.note));
 };
 
-/** Цена варианта уже внутри объёма, а значит и внутри этапов; отдельной строкой идёт только его риск. */
-const optionRiskLines = (brief: DecisionBrief, answer: DecisionAnswer, locale?: Locale): ForecastLine[] =>
-  chosenOptions(brief, answer).flatMap(({ number, option }) =>
-    option.add === undefined || option.add.risk === 0 ? [] : [{ label: messages(locale).budget.question(number), note: option.action, minutes: null, risk: option.add.risk, target: 0, max: 0 }],
-  );
-
-/** Пункты базы и выбранные варианты строками — объём, когда его не несёт этап работы. */
+/** Пункты базы и выбранные варианты строками — объём работы; у брифа без своих пунктов посреди работы база — утверждённый объём треда. */
 const scopeLines = (brief: DecisionBrief, answer: DecisionAnswer, locale?: Locale): ForecastLine[] => {
   const removed = removedCriteria(brief, answer);
-  const items = (brief.setup?.criteria ?? []).flatMap((item, i) => (removed.includes(i) ? [] : criterionLine(item, i, locale)));
+  const criteria = brief.setup?.criteria;
+  const items =
+    criteria === undefined
+      ? line(messages(locale).budget.approved, "", [brief.approvedScope])
+      : criteria.flatMap((item, i) => (removed.includes(i) ? [] : criterionLine(item, i, locale)));
   return [...items, ...questionLines(brief, answer, locale)];
 };
 
+/** Объём работы — сумма строк объёма; `undefined`, если цен нет. */
+export const scopeOf = (brief: DecisionBrief, answer: DecisionAnswer): Add | undefined =>
+  sumAdds(scopeLines(brief, answer).map((l) => ({ target: l.target ?? 0, max: l.max ?? 0, risk: l.risk, ...(l.minutes === null ? {} : { minutes: l.minutes }) })));
+
 /**
- * Цена от объёма. Этап работы (доля 100%) несёт базу сам: снят из прогона — работы в прогоне нет. Без такого этапа объём —
- * отдельные строки пунктов и вариантов, а этапы — надбавки сверху. Цена варианта уже внутри объёма, поэтому при этапе работы
- * вариант даёт строкой только свой риск.
+ * Цена от объёма: база — строки пунктов Definition of Done и выбранных вариантов, этапы — надбавки сверху.
+ * Этап самой работы у Main Agent и есть база, поэтому сверху ничего не кладёт.
  */
-const scopePricedLines = (brief: DecisionBrief, answer: DecisionAnswer, locale?: Locale): ForecastLine[] => {
-  const stages = stageLines(brief, answer, scopeOf(brief, answer), locale);
-  return hasWorkStage(brief) ? [...stages, ...optionRiskLines(brief, answer, locale)] : [...scopeLines(brief, answer, locale), ...stages];
-};
+const scopePricedLines = (brief: DecisionBrief, answer: DecisionAnswer, locale?: Locale): ForecastLine[] => [
+  ...scopeLines(brief, answer, locale),
+  ...stageLines(brief, answer, scopeOf(brief, answer), locale),
+];
 
 /** План этапов, взятых ответом в прогон: минуты и доллары цены этапа с исполнителем — от объёма работы; этап без цены плана не получает. */
 export const stagePlans = (brief: DecisionBrief, answer: DecisionAnswer): Record<string, StagePlan> => {
@@ -249,7 +245,7 @@ const midWorkLines = (brief: DecisionBrief, answer: DecisionAnswer, approved: Pl
   const m = messages(locale).budget;
   const scope = brief.approvedScope;
   const factor = { target: runFactor(approved.target, scope?.target), max: runFactor(approved.max, scope?.max) };
-  const base: ForecastLine = { label: m.approved, note: "", minutes: approved.minutes, risk: 0, target: approved.target, max: approved.max, base: true };
+  const base: ForecastLine = { label: m.approved, note: "", minutes: approved.minutes, risk: 0, target: approved.target, max: approved.max };
   const options = chosenOptions(brief, answer).flatMap(({ number, option }) => {
     const add = option.add;
     if (add === undefined) return [];

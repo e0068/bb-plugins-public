@@ -1,7 +1,7 @@
 // @vitest-environment node
 import { describe, expect, it } from "vitest";
 
-import { forecastSnapshotSchema, type DecisionAnswer, type DecisionBrief } from "../shared/contract";
+import type { DecisionAnswer, DecisionBrief } from "../shared/contract";
 import { budgetLine, forecast, hasForecast } from "./budget";
 import { add } from "./stages-fixtures";
 
@@ -56,9 +56,9 @@ describe("бюджет брифа посреди работы", () => {
 
   it("разбивка начинается утверждённым бюджетом, за ним — выбранный вариант со своей долей прогона", () => {
     const f = forecast(midWork, chose(midWork, "feed"));
-    expect(f.lines.map((l) => [l.label, l.note, l.target, l.max, l.minutes, l.base === true])).toEqual([
-      ["Утверждено при запуске", "", 35, 63, 175, true],
-      ["Вопрос 1", "Лента на витрине", 10, 15, 60, false],
+    expect(f.lines.map((l) => [l.label, l.note, l.target, l.max, l.minutes])).toEqual([
+      ["Утверждено при запуске", "", 35, 63, 175],
+      ["Вопрос 1", "Лента на витрине", 10, 15, 60],
     ]);
   });
 
@@ -76,11 +76,6 @@ describe("бюджет брифа посреди работы", () => {
   it("вариант без времени оставляет время итога утверждённым", () => {
     const untimed = { ...midWork, questions: [{ ...midWork.questions[0]!, options: [{ id: "feed", action: "Лента", recommended: true, add: { target: 2, max: 3, risk: 1 } }] }] };
     expect(forecast(untimed, chose(untimed, "feed")).minutes).toBe(175);
-  });
-
-  it("снимок прогноза в ответе помнит, какая строка — утверждённый бюджет", () => {
-    const snapshot = forecastSnapshotSchema.parse(forecast(midWork, chose(midWork, "feed")));
-    expect(snapshot.lines.map((l) => l.base === true)).toEqual([true, false]);
   });
 
   it("строка «Бюджет» ответа агенту несёт новый итог", () => {

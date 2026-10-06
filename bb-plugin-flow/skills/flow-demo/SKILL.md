@@ -24,7 +24,7 @@ The owner sees what was done and decides what next. A demo is a stop: after it t
 **In bb.** An `ask_decision` brief with `outcome` instead of setup:
 
 - `stage` — this stage's id from the turn instructions; `final` — whether it is the last demo; `next` — the next stage, only when it is not the last.
-- `done` — what closed since the previous demo; `pending` — what did not, with `why`; `sections` — report sections `{ title, text }`; `notes` — the important in one line: bug check steps, caveats; `tasks` — tasks with a mark; the widget makes every key a link to the task card in Tasks+.
+- `done` — what closed since the previous demo; `pending` — what did not, with `why`; `sections` — report sections `{ title, text }`; `notes` — the important in one line: bug check steps, caveats; `tasks` — tasks without `note`: `done: true` — this demo shows the task's final result; before the call, set its status to In Review with `bb tasks update <key> --status in_review`, and it becomes done when the owner accepts the step; `done: false` — a task only created in this thread. The widget shows them under "Review" and "Created", each as its Tasks+ card that opens the task in the thread's side panel.
 - The plugin changed — a section "Changelog" in `sections` with the text of the changelog entry as it is in the file `bb-plugin-<name>/changelog/<slug>.md`, Russian and English: the owner sees what users will read before the merge.
 - `results` — at least one: `{ label, target }` — a file, path or address; `{ label, command }` — a command the owner runs with a button. Unless `documentsOnly: true`, the results hold a live one: an `http(s)` page or a command.
 - A local server page is shared via `bb connect expose <port>`; without Connect — `http://localhost:<port>`.
@@ -37,5 +37,5 @@ No AskUserQuestion — the same report ending with "continue or write a comment"
 
 ## After the answer
 
-- Continue — go to the next stage.
+- Continue — go to the next stage. The tasks under "Review" go to done: the automation step "Task → done" moves every task linked to the thread; one not linked to it, or a flow without that step, — set it done yourself: `bb tasks update <key> --status done`.
 - A comment — the demo is not accepted and stays open: do not move on along the flow. Answer the comment. If it asks for a change, return the work to the stage where the change is made — in bb mark that stage started with flow_stage: Flow drops the done state of every stage after it — and go through those stages again in order, reviews and automations included, up to this demo: otherwise the change skips the review and the commit after it. A comment without a change — send the demo of this stage again.

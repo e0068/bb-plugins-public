@@ -74,7 +74,7 @@ describe("бюджет в брифе посреди работы", () => {
     fireEvent.click(within(await slot.findByRole("group", { name: "Через какой канал?" })).getByRole("button", { name: /Лента на витрине/ }));
     const option = (await lines(slot)).find((row) => row.startsWith("Вопрос 1"));
     expect(option).toContain("Лента на витрине");
-    expect(option).toContain("+$10–+$15");
+    expect(option).toContain("$10–$15");
   });
 
   it("бриф без цен у вариантов — итог равен утверждённому", async () => {
