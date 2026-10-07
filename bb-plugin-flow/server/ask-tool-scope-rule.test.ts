@@ -25,8 +25,8 @@ describe("агент знает цену от объёма", () => {
   });
 
   it("навыки flow, Критерии и Выбор этапов учат той же модели", () => {
-    expect(read("../skills/flow/SKILL.md")).toContain('"share": {');
-    expect(read("../skills/flow/SKILL.md")).toContain('"scope":');
+    expect(read("../skills/flow-stage-selection/SKILL.md")).toContain('"share": {');
+    expect(read("../skills/flow-criteria/SKILL.md")).toContain('"scope":');
     for (const path of ["../skills/flow-criteria/SKILL.md", "../skills/flow-criteria/ru.md"]) expect(read(path)).not.toMatch(/share inside the stages|доля пункта в цене этапов/);
     for (const path of ["../skills/flow-stage-selection/SKILL.md", "../skills/flow-stage-selection/ru.md"]) expect(read(path)).toContain("factors");
   });

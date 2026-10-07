@@ -72,13 +72,13 @@ describe("у развилки до запуска самый простой от
 });
 
 describe("правило цены развилки названо агенту", () => {
-  const skill = readFileSync(new URL("../skills/flow/SKILL.md", import.meta.url), "utf8");
+  const read = (file: string) => readFileSync(new URL(`../skills/${file}`, import.meta.url), "utf8");
 
   it("описание инструмента и навык кладут в scope самый простой ответ развилки и ставят ему 0", () => {
     expect(ASK_INSTRUCTIONS).toContain("each fork at its simplest answer");
     expect(ASK_INSTRUCTIONS).toContain("The simplest option costs 0");
-    expect(skill).toContain("every fork at its simplest answer");
-    expect(skill).toContain("A fork is priced from its simplest answer");
+    expect(read("flow-criteria/SKILL.md")).toContain("every fork at its simplest answer");
+    expect(read("flow-questions/SKILL.md")).toContain("A fork is priced from its simplest answer");
   });
 });
 
