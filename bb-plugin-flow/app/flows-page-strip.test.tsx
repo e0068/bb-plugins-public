@@ -8,7 +8,7 @@ import type { PluginMessageDirectiveProps, PluginNavPanelProps } from "@get-bb/p
 import { loadPluginApp, renderSlot } from "@get-bb/plugin-sdk/testing/app";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { builtinStage, stageKindOf } from "../lib/stage-constants";
+import { builtinStage } from "../lib/stage-constants";
 import type { DecisionBrief, FlowSettings } from "../shared/contract";
 
 const app = await loadPluginApp(() => import("../app"));
@@ -58,34 +58,6 @@ describe("лента flow в теле страницы", () => {
     const tabs = within(await strip(openPage("quick")));
     expect(tabs.getByRole("button", { name: "Quick" }).getAttribute("aria-current")).toBe("page");
     expect(tabs.getByRole("button", { name: "Default" }).getAttribute("aria-current")).toBeNull();
-  });
-
-  it("на истории лента тоже есть: первой стоит «История», и она текущая", async () => {
-    const tabs = within(await strip(openPage("history")));
-    const buttons = tabs.getAllByRole("button");
-    expect(buttons[0]!.textContent).toContain("История");
-    expect(buttons[0]!.getAttribute("aria-current")).toBe("page");
-    expect(tabs.getByRole("button", { name: "Default" }).getAttribute("aria-current")).toBeNull();
-  });
-
-  it("выбор flow и истории — адрес панели", async () => {
-    const slot = openPage();
-    const tabs = within(await strip(slot));
-    fireEvent.click(tabs.getByRole("button", { name: "Quick" }));
-    fireEvent.click(tabs.getByRole("button", { name: "История" }));
-    expect(slot.navigateCalls).toContainEqual({ method: "toPluginPanel", path: "flows", options: { subPath: "quick" } });
-    expect(slot.navigateCalls).toContainEqual({ method: "toPluginPanel", path: "flows", options: { subPath: "history" } });
-  });
-
-  it("плюс в конце ленты создаёт flow с Вопросами, Критериями и Выбором этапов впереди и открывает его", async () => {
-    const slot = openPage();
-    const add = within(await strip(slot)).getByRole("button", { name: "Новый flow" });
-    expect(add.textContent).toBe("");
-    fireEvent.click(add);
-    await vi.waitFor(() => expect(lastSaved(slot)?.flows).toHaveLength(3));
-    const created = lastSaved(slot)!.flows[2]!;
-    expect(created.stages.slice(0, 3).map(stageKindOf)).toEqual(["questions", "criteria", "select"]);
-    expect(slot.navigateCalls).toContainEqual({ method: "toPluginPanel", path: "flows", options: { subPath: created.id } });
   });
 
   it("созданный flow страница открывает из той же коллекции, не перечитывая сервер", async () => {

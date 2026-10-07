@@ -13,7 +13,7 @@ export const registerFlowPickerApi = (bb: Pick<BbPluginApi, "rpc">, settings: Fl
     getFlowChoice: async ({ projectId }) => {
       const current = settings.current();
       const choice = threads.choiceOf(projectId);
-      return { flows: current.flows.map(({ id, name }) => ({ id, name })), selected: choice === AUTO_FLOW ? AUTO_FLOW : (flowOrNone(current, choice)?.id ?? NO_FLOW) };
+      return { flows: current.flows.map(({ id, name, icon }) => ({ id, name, ...(icon === undefined ? {} : { icon }) })), selected: choice === AUTO_FLOW ? AUTO_FLOW : (flowOrNone(current, choice)?.id ?? NO_FLOW) };
     },
     async setFlowChoice({ projectId, flowId }) {
       if (flowId !== NO_FLOW && flowId !== AUTO_FLOW && !settings.current().flows.some((flow) => flow.id === flowId)) throw new Error(`flow ${flowId} not found`);

@@ -371,6 +371,8 @@ export const ru = {
     title: "Flow",
     list: "Flow",
     add: "Новый flow",
+    usedIn: (holders: string) => `Используется в: ${holders}`,
+    back: "Назад",
     settings: "Настройки Flow",
     newName: "Новый flow",
     name: "Название flow",

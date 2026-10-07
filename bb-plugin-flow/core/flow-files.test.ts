@@ -9,7 +9,6 @@ import {
   SETTINGS_FILE,
   duplicateFlowName,
   flowFileName,
-  flowOutline,
   freeFlowName,
   fromFlowFiles,
   planWrite,
@@ -48,18 +47,6 @@ const lint = flow("flow-lint", "Lint");
 describe("раскладка коллекции по файлам", () => {
   it("flow без ссылок на него — файл в корне, общее — settings.json", () => {
     expect(paths(collection([flow("a", "General"), flow("b", "Bug")]))).toEqual([SETTINGS_FILE, "General.flow.json", "Bug.flow.json"]);
-  });
-
-  it("flow, на который ссылаются, — папкой со своим именем рядом с файлом того, кто ссылается", () => {
-    expect(paths(collection([code, review, lint]))).toEqual([SETTINGS_FILE, "Code.flow.json", "Review/Review.flow.json", "Review/Lint/Lint.flow.json"]);
-  });
-
-  it("на flow ссылаются двое на разных уровнях — у каждого своя копия, и копии одинаковы", () => {
-    const top = flow("flow-top", "Top", [nested("lint-too", "flow-lint")]);
-    const files = toFlowFiles(collection([code, top, review, lint]));
-    const copies = files.filter((f) => f.path.endsWith("Lint.flow.json"));
-    expect(copies.map((f) => f.path)).toEqual(["Review/Lint/Lint.flow.json", "Lint/Lint.flow.json"]);
-    expect(new Set(copies.map((f) => f.text)).size).toBe(1);
   });
 
   it("ссылка в файле — по имени, id flow в файл не пишутся", () => {
@@ -130,14 +117,6 @@ describe("сборка коллекции из файлов", () => {
     if (result.kind === "error") expect(result.message).toContain("Lint");
   });
 
-  it("копии одного flow разошлись — ошибка с путями копий", () => {
-    const top = flow("flow-top", "Top", [nested("lint-too", "flow-lint")]);
-    const { flows, collection: c } = read(collection([code, top, review, lint]));
-    const changed = flows.map((f) => (f.path === "Lint/Lint.flow.json" ? { ...f, flow: { ...f.flow, description: "другая" } } : f));
-    const result = fromFlowFiles(changed, c, collection([lint]));
-    expect(result).toEqual({ kind: "error", message: expect.stringContaining("Lint/Lint.flow.json") });
-  });
-
   it("без settings.json порядок — по путям, общее — местное", () => {
     const { flows } = read(collection([flow("b", "Bug"), flow("a", "Answer")]));
     const result = fromFlowFiles(flows, null, collection([flow("z", "Z")], { retryInSeconds: 5 }));
@@ -198,24 +177,6 @@ describe("имена flow", () => {
     expect(fixed.flows.map((f) => f.name)).toEqual(["Code", "code 2", "Bug"]);
     const clean = collection([flow("a", "A")]);
     expect(withUniqueNames(clean)).toBe(clean);
-  });
-});
-
-describe("дерево flow для страницы", () => {
-  it("повторяет раскладку папки: flow верхнего уровня по порядку, вложенные — под тем, кто ссылается, глубже на уровень", () => {
-    const bug = flow("flow-bug", "Bug");
-    expect(flowOutline(collection([code, bug, review, lint]))).toEqual([
-      { id: "flow-code", name: "Code", depth: 0 },
-      { id: "flow-review", name: "Review", depth: 1 },
-      { id: "flow-lint", name: "Lint", depth: 2 },
-      { id: "flow-bug", name: "Bug", depth: 0 },
-    ]);
-  });
-
-  it("цикл не вешает дерево, и каждый flow в нём есть", () => {
-    const a = flow("a", "A", [nested("to-b", "b")]);
-    const b = flow("b", "B", [nested("to-a", "a")]);
-    expect(new Set(flowOutline(collection([a, b])).map((row) => row.id))).toEqual(new Set(["a", "b"]));
   });
 });
 

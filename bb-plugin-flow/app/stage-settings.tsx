@@ -30,6 +30,7 @@ import { cn } from "../lib/utils";
 import type { AutomationScript, Flow, flowSettingsRpcContract, SkillFile, SkillOrigin, StageCatalog, StageExecutor, WorkStage } from "../shared/contract";
 import { type AutomationSets, AutomationStepTags, ManualMark, ReadOnlyStepTags, ScriptOptions, type StageChange, TagOpen, WidgetOptions } from "./automation-stage";
 import { useMessages } from "./locale-context";
+import { FlowGlyph } from "./flow-glyph";
 import { ExecutorMark } from "./provider-logos";
 import { Segmented } from "./segmented";
 import { KIND_ICONS, SKILL_ICON, stageIcon } from "./stage-icons";
@@ -37,7 +38,7 @@ import { StageGlyph } from "./stage-glyph";
 import { StageIconPicker } from "./stage-icon-picker";
 import { updateFlowSettings, useAutomationSets, useFlowSettings, useStageTemplates } from "./stage-settings-store";
 
-const field = "h-7 min-h-7 w-full min-w-0 rounded-md border-0 bg-card px-2 py-0 text-[13px] shadow-none focus-visible:ring-1";
+const field = "h-7 min-h-7 max-md:pointer-coarse:h-9 max-md:pointer-coarse:text-sm w-full min-w-0 rounded-md border-0 bg-card px-2 py-0 text-[13px] shadow-none focus-visible:ring-1";
 const square = "flex size-7 shrink-0 items-center justify-center rounded-md";
 
 const newStageId = (): string => `stage-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
@@ -105,6 +106,8 @@ const executorGroupTitle = (t: Messages, group: ExecutorGroup): string => {
   }
 };
 
+/** Линия между группами меню «Добавить этап» — та же, что в меню этапа-автоматизации. */
+const menuSeparator = <div role="separator" className="my-1 h-px bg-border" />;
 const groupTitle = "px-2 pb-0.5 pt-1.5 text-[11px] text-muted-foreground";
 
 /** Навыки вкладки «Навык» группами по источнику с заголовком; в строке навыка плагина провайдера — имя без префикса плагина. */
@@ -636,7 +639,7 @@ function NameIcon({ stage }: { stage: WorkStage }) {
   const t = useMessages();
   const setStage = useSetStage();
   return (
-    <span className="absolute left-0.5 top-0.5">
+    <span className="absolute inset-y-0 left-0.5 flex items-center">
       <StageIconPicker icon={stage.icon} fallback={stageIcon(stage)} name={stageLabel(stage, t.stages)} onPick={(icon) => setStage(stage.id, ({ icon: _, ...s }) => (icon === undefined ? s : { ...s, icon }))} />
     </span>
   );
@@ -812,7 +815,10 @@ function NestedFlowRows({ flowId, ...row }: RowProps & { flowId: string }) {
       <RowShell {...row} place={{ ...place, edge: alone && place.edge, drop: !alone && place.drop === "bottom" ? null : place.drop }}>
         <StageCells>
           <span role="cell" className={cn(cell, "relative")}>
-            <NameIcon stage={stage} />
+            {/* Иконка целевого flow, а не этапа: у строки-flow своей иконки этапа нет. */}
+            <span aria-hidden="true" className="pointer-events-none absolute inset-y-0 left-0.5 flex w-6 items-center justify-center">
+              <FlowGlyph icon={target?.icon} className="size-3.5 text-muted-foreground" />
+            </span>
             <FixedName text={target?.name ?? stage.name} />
           </span>
           {target === undefined && <NestedFlowGone />}
@@ -910,49 +916,59 @@ function AddStageButton({ script }: { script: boolean }) {
           {script ? t.settings.emptyScript : t.settings.emptyStage}
         </button>
         {widgets.length > 0 && (
-          <div role="group" aria-label={t.settings.widgets}>
-            <div className={groupTitle}>{t.settings.widgets}</div>
-            {widgets.map((kind) => (
-              <button key={kind} type="button" role="menuitem" onClick={() => add([withWidget(blank(), kind)])} className={overlayItem}>
-                <Icon name={KIND_ICONS[kind]} aria-hidden="true" className="size-3.5 shrink-0 text-muted-foreground" />
-                {t.stages[kind]}
-              </button>
-            ))}
-          </div>
+          <>
+            {menuSeparator}
+            <div role="group" aria-label={t.settings.widgets}>
+              <div className={groupTitle}>{t.settings.widgets}</div>
+              {widgets.map((kind) => (
+                <button key={kind} type="button" role="menuitem" onClick={() => add([withWidget(blank(), kind)])} className={overlayItem}>
+                  <Icon name={KIND_ICONS[kind]} aria-hidden="true" className="size-3.5 shrink-0 text-muted-foreground" />
+                  {t.stages[kind]}
+                </button>
+              ))}
+            </div>
+          </>
         )}
         {nestable.length > 0 && (
-          <div role="group" aria-label={t.settings.flowGroup}>
-            <div className={groupTitle}>{t.settings.flowGroup}</div>
-            {nestable.map((flow) => (
-              <button key={flow.id} type="button" role="menuitem" title={flow.name} onClick={() => addNested(flow)} className={cn(overlayItem, "min-w-0")}>
-                <span className="min-w-0 truncate">{flow.name}</span>
-              </button>
-            ))}
-          </div>
+          <>
+            {menuSeparator}
+            <div role="group" aria-label={t.settings.flowGroup}>
+              <div className={groupTitle}>{t.settings.flowGroup}</div>
+              {nestable.map((flow) => (
+                <button key={flow.id} type="button" role="menuitem" title={flow.name} onClick={() => addNested(flow)} className={cn(overlayItem, "min-w-0")}>
+                  <FlowGlyph icon={flow.icon} className="size-3.5 shrink-0 text-muted-foreground" />
+                  <span className="min-w-0 truncate">{flow.name}</span>
+                </button>
+              ))}
+            </div>
+          </>
         )}
         {templates.length > 0 && (
-          <div role="group" aria-label={t.settings.templates}>
-            <div className={groupTitle}>{t.settings.templates}</div>
-            {templates.map(({ template, index }) => {
-              const name = template.name;
-              return (
-                <div key={`${index}-${name}`} className="flex items-center gap-0.5">
-                  <button type="button" role="menuitem" title={name} onClick={() => add(stagesFromTemplate(template, newStageId, () => crypto.randomUUID()))} className={cn(overlayItem, "min-w-0 flex-1")}>
-                    <StageGlyph icon={template.icon} fallback={stageIcon({ id: "", ...template })} className="size-3.5 shrink-0 text-muted-foreground" />
-                    <span className="min-w-0 truncate">{name}</span>
-                  </button>
-                  <button
-                    type="button"
-                    aria-label={t.settings.removeTemplate(name)}
-                    onClick={() => remove(index)}
-                    className="flex size-6 shrink-0 items-center justify-center rounded text-muted-foreground hover:bg-state-hover hover:text-foreground"
-                  >
-                    <Icon name="X" aria-hidden="true" className="size-3" />
-                  </button>
-                </div>
-              );
-            })}
-          </div>
+          <>
+            {menuSeparator}
+            <div role="group" aria-label={t.settings.templates}>
+              <div className={groupTitle}>{t.settings.templates}</div>
+              {templates.map(({ template, index }) => {
+                const name = template.name;
+                return (
+                  <div key={`${index}-${name}`} className="flex items-center gap-0.5">
+                    <button type="button" role="menuitem" title={name} onClick={() => add(stagesFromTemplate(template, newStageId, () => crypto.randomUUID()))} className={cn(overlayItem, "min-w-0 flex-1")}>
+                      <StageGlyph icon={template.icon} fallback={stageIcon({ id: "", ...template })} className="size-3.5 shrink-0 text-muted-foreground" />
+                      <span className="min-w-0 truncate">{name}</span>
+                    </button>
+                    <button
+                      type="button"
+                      aria-label={t.settings.removeTemplate(name)}
+                      onClick={() => remove(index)}
+                      className="flex size-6 shrink-0 items-center justify-center rounded text-muted-foreground hover:bg-state-hover hover:text-foreground"
+                    >
+                      <Icon name="X" aria-hidden="true" className="size-3" />
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+          </>
         )}
       </FieldOverlay>
     </div>

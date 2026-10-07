@@ -1,7 +1,7 @@
-// Коллекция flow ⇄ файлы папки синхронизации. Flow — файл `<Имя>.flow.json`;
-// flow, на который ссылается строка «Flow», лежит папкой `<Имя>/` рядом с
-// файлом того, кто ссылается, — раскладка дерево, и цикл в ней не выразить.
-// Ссылки в файлах — по имени: id flow у каждого компа свои. Общее на коллекцию
+// Коллекция flow ⇄ файлы папки синхронизации. Flow — файл `<Имя>.flow.json`
+// в корне папки, подпапок нет: вложенность живёт в ссылках строк «Flow», а не
+// в путях. Старая раскладка папками при чтении принимается, а следующая запись
+// её подпапки убирает. Ссылки в файлах — по имени: id flow у каждого компа свои. Общее на коллекцию
 // — `settings.json` в корне. Сборка обратно отдаёт кандидата, а не коллекцию:
 // схему коллекции проверяет оболочка. Из контракта — только типы.
 import type { Flow, FlowSettings, StageTemplate, WorkStage } from "../shared/contract";
@@ -11,7 +11,7 @@ export const FLOW_FILE_SUFFIX = ".flow.json";
 
 /** Этап в файле: ссылка `flow` — имя flow вместо его id. */
 export type FileStage = { id: string; flow?: string; [field: string]: unknown };
-export type FlowFile = { name: string; description?: string; stages: FileStage[]; limitSkills?: true; limitAgents?: true };
+export type FlowFile = { name: string; description?: string; stages: FileStage[]; limitSkills?: true; limitAgents?: true; icon?: string };
 
 /** Переключатели ограничений flow — как есть у flow: включённый — `true`, выключенного поля нет. */
 const limitsOf = ({ limitSkills, limitAgents }: Pick<Flow, "limitSkills" | "limitAgents">) => ({
@@ -73,6 +73,7 @@ const flowToFile = (flow: Flow, byId: ReadonlyMap<string, Flow>): FlowFile => ({
   ...(flow.description === undefined ? {} : { description: flow.description }),
   stages: flow.stages.map(refByName<WorkStage>(byId)),
   ...limitsOf(flow),
+  ...(flow.icon === undefined ? {} : { icon: flow.icon }),
 });
 
 const collectionToFile = ({ flows, version: _version, stageTemplates, ...rest }: FlowSettings, byId: ReadonlyMap<string, Flow>): CollectionFile => ({
@@ -81,37 +82,11 @@ const collectionToFile = ({ flows, version: _version, stageTemplates, ...rest }:
   ...(stageTemplates === undefined ? {} : { stageTemplates: stageTemplates.map(refByName<StageTemplate>(byId)) }),
 });
 
-/** Id flow, на которые ссылаются строки flow, без повторов и без удалённых. */
-const refsOf = (flow: Flow, byId: ReadonlyMap<string, Flow>): string[] => [
-  ...new Set(flow.stages.flatMap((stage) => (stage.flowId !== undefined && byId.has(stage.flowId) ? [stage.flowId] : []))),
-];
-
-/** Flow в порядке обхода раскладки: верхний уровень по порядку коллекции, под каждым — вложенные; путь — id от верхнего. */
-const walkLayout = (settings: FlowSettings): Array<{ flow: Flow; chain: string[] }> => {
-  const byId = new Map(settings.flows.map((flow) => [flow.id, flow]));
-  const referenced = new Set(settings.flows.flatMap((flow) => refsOf(flow, byId)));
-  const walk = (flow: Flow, chain: string[]): Array<{ flow: Flow; chain: string[] }> => [
-    { flow, chain },
-    ...refsOf(flow, byId).filter((id) => !chain.includes(id)).flatMap((id) => walk(byId.get(id)!, [...chain, id])),
-  ];
-  const tops = settings.flows.filter((flow) => !referenced.has(flow.id)).flatMap((flow) => walk(flow, [flow.id]));
-  const placed = new Set(tops.map((row) => row.flow.id));
-  return [...tops, ...settings.flows.filter((flow) => !placed.has(flow.id)).flatMap((flow) => walk(flow, [flow.id]))];
-};
-
-/** Дерево flow для страницы — та же раскладка, что в папке синхронизации; глубина — уровень вложенности. */
-export const flowOutline = (settings: FlowSettings): Array<{ id: string; name: string; depth: number }> =>
-  walkLayout(settings).map(({ flow, chain }) => ({ id: flow.id, name: flow.name, depth: chain.length - 1 }));
-
-/**
- * Файлы папки: `settings.json`, затем flow верхнего уровня в порядке коллекции, каждый со своими вложенными.
- * Flow, до которого не дойти сверху, — только при цикле — встаёт в корень: в папку попадает каждый.
- */
+/** Файлы папки: `settings.json`, затем каждый flow файлом в корне, в порядке коллекции. */
 export const toFlowFiles = (settings: FlowSettings): FolderFile[] => {
   const byId = new Map(settings.flows.map((flow) => [flow.id, flow]));
-  const byIdName = (id: string) => flowFileName(byId.get(id)!.name);
-  const flowFiles = walkLayout(settings)
-    .map(({ flow, chain }) => ({ path: `${chain.slice(1).map((id) => `${byIdName(id)}/`).join("")}${flowFileName(flow.name)}${FLOW_FILE_SUFFIX}`, text: serialize(flowToFile(flow, byId)) }))
+  const flowFiles = settings.flows
+    .map((flow) => ({ path: `${flowFileName(flow.name)}${FLOW_FILE_SUFFIX}`, text: serialize(flowToFile(flow, byId)) }))
     .filter((file, i, all) => all.findIndex((other) => other.path === file.path) === i);
   return [{ path: SETTINGS_FILE, text: serialize(collectionToFile(settings, byId)) }, ...flowFiles];
 };
@@ -175,7 +150,7 @@ export const fromFlowFiles = (files: readonly FolderFlow[], collection: Collecti
     if (acc.kind === "error") return acc;
     const stages = resolveAll(flow.stages, resolveRef(ids, `Flow "${flow.name}"`));
     if (stages.kind === "error") return stages;
-    const next = { id: ids.get(nameKey(flow.name))!, name: flow.name, ...(flow.description === undefined ? {} : { description: flow.description }), stages: stages.values as unknown as WorkStage[], ...limitsOf(flow) };
+    const next = { id: ids.get(nameKey(flow.name))!, name: flow.name, ...(flow.description === undefined ? {} : { description: flow.description }), stages: stages.values as unknown as WorkStage[], ...limitsOf(flow), ...(flow.icon === undefined ? {} : { icon: flow.icon }) };
     return { kind: "ok", values: [...acc.values, next] };
   }, { kind: "ok", values: [] });
   if (built.kind === "error") return built;

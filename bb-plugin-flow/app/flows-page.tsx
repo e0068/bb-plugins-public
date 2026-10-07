@@ -1,23 +1,26 @@
 // Страница Flow в левом меню bb: выбранный flow — имя и описание «когда
 // выбирать» правятся на месте, таблица его этапов, под ней одной строкой —
-// «Добавить этап» слева и «Удалить flow» справа, а ниже — переключатели ограничений навыков и агентов. Сам выбор и создание — деревом
-// слева (./flows-tree), там же папка синхронизации; на узкой панели дерево
-// встаёт над содержимым. Общее на все flow — ширина кнопки и выбор flow
+// «Добавить этап» слева и «Удалить flow» справа, а ниже — переключатели ограничений навыков и агентов. Слева от названия — выбор
+// иконки flow. Сам выбор и создание — плоским списком слева (./flows-list); на узкой панели страница в два уровня: без
+// выбранного flow виден только список, с выбранным — только он и «Назад» над ним. Общее на все flow — ширина кнопки и выбор flow
 // агентом — в настройках плагина (./flow-settings-sections). Страницу листает
-// её корень целиком, вместе с деревом: рамок со своей прокруткой внутри нет.
+// её корень целиком, вместе со списком: рамок со своей прокруткой внутри нет.
 // Выбранный flow живёт в адресе страницы, чтобы ссылка открывала его; адрес
 // `history` вместо flow открывает историю прогонов (./run-history). Своей
 // ширины содержимое не держит: таблица этапов сама перестраивается по ширине
 // контейнера и на телефоне встаёт в колонку — держать её широкой раскладке
 // 46rem значило бы листать страницу вбок там, где листать некуда.
 import { useState } from "react";
-import type { PluginNavPanelProps } from "@get-bb/plugin-sdk/app";
+import { useBbNavigate, type PluginNavPanelProps } from "@get-bb/plugin-sdk/app";
 
-import { describeFlow, flowById, limitFlow, removeFlow, renameFlow } from "../core/flows";
+import { describeFlow, flowById, limitFlow, removeFlow, renameFlow, setFlowIcon } from "../core/flows";
 import { Button } from "../components/ui/button";
+import { Icon } from "../components/ui/icon";
 import { Input } from "../components/ui/input";
 import { Textarea } from "../components/ui/textarea";
 import type { Flow } from "../shared/contract";
+import { cn } from "../lib/utils";
+import { FLOWS_PANEL_PATH } from "../lib/panel-path";
 import { LocaleProvider } from "./locale";
 import { ProviderLogosProvider } from "./provider-logos-source";
 import { useMessages } from "./locale-context";
@@ -25,7 +28,9 @@ import { updateFlowSettings, useFlowSettings, useFlowSettingsLive } from "./stag
 import { AddStage, SwitchSetting, WorkStagesTable } from "./stage-settings";
 import { SKILL_ICON } from "./stage-icons";
 import { HISTORY_SUB_PATH, RunHistory } from "./run-history";
-import { FlowsTree } from "./flows-tree";
+import { FlowsList } from "./flows-list";
+import { FlowGlyph } from "./flow-glyph";
+import { StageIconPicker } from "./stage-icon-picker";
 
 export function FlowsPage(props: PluginNavPanelProps) {
   return (
@@ -52,7 +57,7 @@ function FlowName({ flow }: { flow: Flow }) {
       onChange={(e) => setName(e.target.value)}
       onBlur={save}
       onKeyDown={(e) => e.key === "Enter" && e.currentTarget.blur()}
-      className="h-9 min-h-9 w-full min-w-0 rounded-md border-0 bg-card px-2.5 py-0 text-lg font-semibold shadow-none focus-visible:ring-1 focus-visible:ring-inset"
+      className="h-9 min-h-9 max-md:pointer-coarse:h-9 w-full min-w-0 rounded-md border-0 bg-card pl-1.5 pr-2.5 py-0 text-lg font-semibold shadow-none focus-visible:ring-1 focus-visible:ring-inset"
     />
   );
 }
@@ -72,7 +77,7 @@ function FlowDescription({ flow }: { flow: Flow }) {
       value={description ?? flow.description ?? ""}
       onChange={(e) => setDescription(e.target.value)}
       onBlur={save}
-      className="min-h-0 resize-none [field-sizing:content] rounded-md border-0 bg-card px-2.5 py-1.5 text-[13px] shadow-none focus-visible:ring-1 focus-visible:ring-inset"
+      className="min-h-0 max-md:pointer-coarse:text-[13px] resize-none [field-sizing:content] rounded-md border-0 bg-card px-2.5 py-1.5 text-[13px] shadow-none focus-visible:ring-1 focus-visible:ring-inset"
     />
   );
 }
@@ -84,12 +89,12 @@ function FlowDescription({ flow }: { flow: Flow }) {
 function FlowLimits({ flow }: { flow: Flow }) {
   const t = useMessages();
   return (
-    <div className="flex flex-col gap-1">
+    <div className="flex flex-col gap-2">
       <div className="grid grid-cols-1 gap-1 @lg:grid-cols-2">
         <SwitchSetting label={t.flows.limitSkills} icon={SKILL_ICON} checked={flow.limitSkills === true} onChange={(limitSkills) => updateFlowSettings((s) => limitFlow(s, flow.id, { limitSkills }))} />
         <SwitchSetting label={t.flows.limitAgents} icon="Bot" checked={flow.limitAgents === true} onChange={(limitAgents) => updateFlowSettings((s) => limitFlow(s, flow.id, { limitAgents }))} />
       </div>
-      <p className="text-xs text-muted-foreground">{t.flows.limitsHint}</p>
+      <p className="text-xs text-subtle-foreground">{t.flows.limitsHint}</p>
     </div>
   );
 }
@@ -117,13 +122,30 @@ function DeleteFlow({ flow }: { flow: Flow }) {
   );
 }
 
+/** «Назад» со второго уровня на узкой панели: слева сверху над правой колонкой, на широкой не нужен — список рядом. */
+function BackToList() {
+  const t = useMessages();
+  const navigate = useBbNavigate();
+  return (
+    <Button variant="ghost" size="sm" onClick={() => navigate.toPluginPanel(FLOWS_PANEL_PATH, { subPath: "" })} className="self-start text-muted-foreground @3xl:hidden">
+      <Icon name="ChevronLeft" aria-hidden="true" className="size-4" />
+      {t.flows.back}
+    </Button>
+  );
+}
+
 function Flows({ subPath }: PluginNavPanelProps) {
   useFlowSettingsLive();
+  // Второй уровень узкой панели: адрес с выбранным flow (или историей) открывает правую колонку, пустой — список.
+  const second = subPath !== "";
   return (
     <div className="@container h-full overflow-y-auto">
       <div className="flex min-w-0 flex-col gap-4 p-6 @3xl:flex-row @3xl:items-start @3xl:gap-6">
-        <FlowsTree subPath={subPath} className="@3xl:w-56 @3xl:shrink-0" />
-        <div className="flex min-w-0 flex-1 flex-col gap-4">{subPath === HISTORY_SUB_PATH ? <RunHistory /> : <FlowEditor subPath={subPath} />}</div>
+        <FlowsList subPath={subPath} className={cn("@3xl:w-56 @3xl:shrink-0", second && "@max-3xl:hidden")} />
+        <div className={cn("flex min-w-0 flex-1 flex-col gap-4", !second && "@max-3xl:hidden")}>
+          <BackToList />
+          {subPath === HISTORY_SUB_PATH ? <RunHistory /> : <FlowEditor subPath={subPath} />}
+        </div>
       </div>
     </div>
   );
@@ -139,7 +161,10 @@ function FlowEditor({ subPath }: { subPath: string }) {
   return (
     <section className="flex min-w-0 flex-col gap-4">
       <div key={flow.id} className="flex flex-col gap-1">
-        <FlowName flow={flow} />
+        <div className="flex items-center">
+          <StageIconPicker large icon={flow.icon} fallback="Workflow" fallbackGlyph={(className) => <FlowGlyph className={className} />} name={flow.name} onPick={(icon) => updateFlowSettings((s) => setFlowIcon(s, flow.id, icon))} />
+          <FlowName flow={flow} />
+        </div>
         <FlowDescription flow={flow} />
       </div>
       <div className="flex flex-col gap-2">

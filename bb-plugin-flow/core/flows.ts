@@ -87,6 +87,17 @@ export const limitFlow = (settings: FlowSettings, id: string, limits: FlowLimits
     }, flow),
   );
 
+/** Иконка flow из подборки этапов; `undefined` снимает поле целиком — flow без иконки рисуется знаком плагина. */
+export const setFlowIcon = (settings: FlowSettings, id: string, icon: string | undefined): FlowSettings =>
+  mapFlow(settings, id, (flow) => {
+    const { icon: _, ...rest } = flow;
+    return icon === undefined ? rest : { ...rest, icon };
+  });
+
+/** Flow, у которых хотя бы одна строка «Flow» ссылается на `id`: по порядку коллекции, без повторов и без самого `id`. */
+export const flowHolders = (flows: readonly Flow[], id: string): Flow[] =>
+  flows.filter((flow) => flow.id !== id && flow.stages.some((stage) => stage.flowId === id));
+
 /** Последний flow не удаляется: треду нужен хоть какой-то. */
 export const removeFlow = (settings: FlowSettings, id: string): FlowSettings =>
   settings.flows.length <= 1 ? settings : { ...settings, flows: settings.flows.filter((flow) => flow.id !== id) };
