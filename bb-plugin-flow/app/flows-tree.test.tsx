@@ -1,6 +1,5 @@
 // @vitest-environment jsdom
-// Дерево flow слева на странице Flow: вложенные flow — под тем, кто на них
-// ссылается, как и в папке flow. Коллекция, поменявшаяся на сервере, — из папки или от агента, — видна
+// Список flow слева на странице Flow. Коллекция, поменявшаяся на сервере, — из папки или от агента, — видна
 // открытой странице без перезагрузки.
 import type { ComponentType } from "react";
 import { cleanup, fireEvent, within } from "@testing-library/react";
@@ -40,19 +39,8 @@ const openPage = (subPath = "", sync: FlowSyncState = { dir: "~/.claude/BB Flows
 
 type Slot = ReturnType<typeof openPage>;
 const tree = (slot: Slot) => slot.findByRole("navigation", { name: "Flow" });
-const level = (button: HTMLElement) => Number(button.closest("[data-tree-level]")!.getAttribute("data-tree-level"));
 
 describe("дерево flow", () => {
-  it("вложенный flow стоит под тем, кто на него ссылается, на уровень глубже", async () => {
-    const nav = within(await tree(openPage("review")));
-    const names = nav.getAllByRole("button").map((b) => b.textContent);
-    expect(names).toEqual(["История", "Code", "Review", "Lint", "Bug", ""]);
-    expect(level(nav.getByRole("button", { name: "Code" }))).toBe(0);
-    expect(level(nav.getByRole("button", { name: "Review" }))).toBe(1);
-    expect(level(nav.getByRole("button", { name: "Lint" }))).toBe(2);
-    expect(nav.getByRole("button", { name: "Review" }).getAttribute("aria-current")).toBe("page");
-  });
-
   it("плюс даёт новому flow свободное имя, а не повтор", async () => {
     const slot = openPage("", undefined, () => ({ ...settings, flows: [...settings.flows, flow("new", "новый flow")] }));
     fireEvent.click(within(await tree(slot)).getByRole("button", { name: "Новый flow" }));

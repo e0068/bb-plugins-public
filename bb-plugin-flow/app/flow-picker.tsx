@@ -9,16 +9,16 @@ import { useComposerView, useRpc } from "@get-bb/plugin-sdk/app";
 
 import { AUTO_FLOW, NO_FLOW } from "../core/flows";
 import { Button } from "../components/ui/button";
-import { FlowMark } from "../components/ui/flow-mark";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuLabel, DropdownMenuRadioGroup, DropdownMenuRadioItem, DropdownMenuTrigger } from "../components/ui/dropdown-menu";
 import type { flowPickerRpcContract } from "../shared/contract";
+import { FlowGlyph } from "./flow-glyph";
 import { LocaleProvider } from "./locale";
 import { useMessages } from "./locale-context";
 
 /** Классы кнопки выбора модели и effort из бандла bb. */
 const PICKER_LOOK = "h-8 w-fit min-w-0 items-center justify-start gap-1.5 px-2 text-xs leading-tight border-none bg-transparent shadow-none transition-none text-muted-foreground hover:text-muted-foreground font-normal";
 
-type Choice = { flows: { id: string; name: string }[]; selected: string };
+type Choice = { flows: { id: string; name: string; icon?: string }[]; selected: string };
 
 /**
  * Что кнопка показывала — по проекту и последнее вообще. bb монтирует её заново
@@ -73,7 +73,8 @@ function ProjectPicker({ projectId }: { projectId: string }) {
   if (choice === null) return null;
   const none = choice.selected === NO_FLOW;
   const auto = choice.selected === AUTO_FLOW;
-  const name = choice.flows.find((f) => f.id === choice.selected)?.name ?? choice.selected;
+  const selectedFlow = choice.flows.find((f) => f.id === choice.selected);
+  const name = selectedFlow?.name ?? choice.selected;
   const label = none ? t.flows.pickerNone : auto ? t.flows.pickerAuto : t.flows.picker(name);
   const pick = (flowId: string) => {
     show({ ...choice, selected: flowId });
@@ -83,7 +84,7 @@ function ProjectPicker({ projectId }: { projectId: string }) {
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
         <Button type="button" variant="ghost" size="sm" className={PICKER_LOOK} aria-label={label} aria-description={t.flows.pickerTitle}>
-          <FlowMark crossed={none} />
+          <FlowGlyph icon={selectedFlow?.icon} crossed={none} />
           {!none && !auto && <span className="truncate max-md:hidden">{label}</span>}
           {!none && !auto && <span className="truncate md:hidden">{name}</span>}
         </Button>
@@ -92,17 +93,17 @@ function ProjectPicker({ projectId }: { projectId: string }) {
         <DropdownMenuLabel>{t.flows.pickerTitle}</DropdownMenuLabel>
         <DropdownMenuRadioGroup value={choice.selected} onValueChange={pick}>
           <DropdownMenuRadioItem value={AUTO_FLOW}>
-            <FlowMark crossed={false} />
+            <FlowGlyph crossed={false} />
             {t.flows.pickerAuto}
           </DropdownMenuRadioItem>
           {choice.flows.map((flow) => (
             <DropdownMenuRadioItem key={flow.id} value={flow.id}>
-              <FlowMark crossed={false} />
+              <FlowGlyph icon={flow.icon} crossed={false} />
               {flow.name}
             </DropdownMenuRadioItem>
           ))}
           <DropdownMenuRadioItem value={NO_FLOW}>
-            <FlowMark crossed />
+            <FlowGlyph crossed />
             {t.flows.pickerNone}
           </DropdownMenuRadioItem>
         </DropdownMenuRadioGroup>

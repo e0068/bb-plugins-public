@@ -364,6 +364,8 @@ export const en: Messages = {
     title: "Flow",
     list: "Flow",
     add: "New flow",
+    usedIn: (holders: string) => `Used in: ${holders}`,
+    back: "Back",
     settings: "Flow settings",
     newName: "New flow",
     name: "Flow name",

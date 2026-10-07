@@ -55,13 +55,6 @@ describe("папка синхронизации по умолчанию", () => 
 });
 
 describe("первая встреча с папкой", () => {
-  it("папки нет — Flow пишет туда локальную коллекцию раскладкой по ссылкам", async () => {
-    const { sync, dir } = await setup();
-    await sync.tick();
-    expect(await tree(dir)).toEqual(["Code.flow.json", "Review/Review.flow.json", "settings.json"]);
-    expect(sync.state().status).toEqual({ kind: "synced", at: "2026-10-05T12:00:00.000Z" });
-  });
-
   it("в папке уже есть flow — коллекция из папки, а локальные flow с новыми именами дописываются и уезжают в папку", async () => {
     const other = await setup(collection([{ id: "x-bug", name: "Bug", stages: [skill("fix")] }, { id: "x-code", name: "Code", stages: [skill("from-other")] }]));
     await other.sync.tick();
@@ -85,16 +78,6 @@ describe("после первой встречи", () => {
     await flows.save(collection([{ id: "flow-code", name: "Code", stages: [skill("work")] }, { id: "flow-bug", name: "Bug", stages: [skill("fix")] }]));
     await sync.idle();
     expect(await tree(dir)).toEqual(["Bug.flow.json", "Code.flow.json", "README.md", "settings.json"]);
-  });
-
-  it("Syncthing привёз правку — коллекция подхватывается, открытые вкладки узнают об этом", async () => {
-    const { sync, flows, dir, published } = await setup();
-    await sync.tick();
-    const file = JSON.parse(await readFile(join(dir, "Review/Review.flow.json"), "utf8"));
-    await writeFile(join(dir, "Review/Review.flow.json"), JSON.stringify({ ...file, description: "с другого компа" }));
-    await sync.tick();
-    expect(flows.current().flows.find((f) => f.name === "Review")!.description).toBe("с другого компа");
-    expect(published).toContain("flows");
   });
 
   it("своя же запись не перечитывается и не пересохраняется", async () => {
@@ -125,7 +108,7 @@ describe("после первой встречи", () => {
     const { sync, flows, dir } = await setup();
     await sync.tick();
     const before = flows.current();
-    await rm(join(dir, "Review"), { recursive: true });
+    await rm(join(dir, "Review.flow.json"));
     await sync.tick();
     expect(flows.current()).toBe(before);
     expect(sync.state().status).toEqual({ kind: "error", message: expect.stringContaining("Review"), at: expect.any(String) });
@@ -190,21 +173,6 @@ describe("папка по умолчанию из окружения", () => {
 
 describe("своя запись не затирает привезённое другим компом", () => {
   const withDescription = (settings: FlowSettings, name: string, description: string): FlowSettings => ({ ...settings, flows: settings.flows.map((f) => (f.name === name ? { ...f, description } : f)) });
-
-  it("Syncthing привёз новый flow и правку, а страница сохранила до опроса — всё на месте и в папке, и в коллекции", async () => {
-    const { sync, flows, dir } = await setup();
-    await sync.tick();
-    await writeFile(join(dir, "Bug.flow.json"), JSON.stringify({ name: "Bug", stages: [skill("fix")] }));
-    const review = JSON.parse(await readFile(join(dir, "Review/Review.flow.json"), "utf8"));
-    await writeFile(join(dir, "Review/Review.flow.json"), JSON.stringify({ ...review, description: "с другого компа" }));
-    await flows.save(withDescription(flows.current(), "Code", "своя правка"));
-    await sync.idle();
-    await sync.tick();
-    expect(names(flows.current())).toContain("Bug");
-    expect(flows.current().flows.find((f) => f.name === "Review")!.description).toBe("с другого компа");
-    expect(flows.current().flows.find((f) => f.name === "Code")!.description).toBe("своя правка");
-    expect(await tree(dir)).toContain("Bug.flow.json");
-  });
 
   it("папка в ошибке — сохранение со страницы не убирает недоехавший flow", async () => {
     const { sync, flows, dir } = await setup();

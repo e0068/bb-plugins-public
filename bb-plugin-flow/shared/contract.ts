@@ -283,6 +283,8 @@ export const flowSchema = z
     limitSkills: z.literal(true).optional(),
     /** Агенту треда доступны только агенты-исполнители открытых этапов; нет поля — все агенты. */
     limitAgents: z.literal(true).optional(),
+    /** Иконка flow из подборки этапов; нет — знак плагина. */
+    icon: text.optional(),
   })
   .superRefine((f, ctx) => {
     if (!uniqueIds(f.stages)) ctx.addIssue({ code: "custom", message: "stage ids must be unique within a flow", path: ["stages"] });
@@ -878,6 +880,7 @@ export const flowFileSchema = z.object({
   name: text,
   description: z.string().optional(),
   stages: z.array(z.looseObject({ id: text, flow: text.optional() })),
+  icon: text.optional(),
   limitSkills: z.literal(true).optional(),
   limitAgents: z.literal(true).optional(),
 });
@@ -1210,7 +1213,7 @@ export const flowChoiceRpcContract = defineRpcContract({
   /** `selected` — выбор, ждущий отправки, а без него — flow треда; тред, оставленный агентом без flow, — `NO_FLOW`, тред с завершённым прогоном — `AUTO_FLOW`. */
   threadFlowChoice: {
     input: z.object({ threadId: text }),
-    output: z.object({ flows: z.array(z.object({ id: text, name: text, stages: z.number().int().nonnegative() })), selected: text }),
+    output: z.object({ flows: z.array(z.object({ id: text, name: text, stages: z.number().int().nonnegative(), icon: text.optional() })), selected: text }),
   },
   pickThreadFlow: {
     input: z.object({ threadId: text, flowId: text }),
@@ -1226,7 +1229,7 @@ export const flowChoiceRpcContract = defineRpcContract({
 export const flowPickerRpcContract = defineRpcContract({
   getFlowChoice: {
     input: z.object({ projectId: text }),
-    output: z.object({ flows: z.array(z.object({ id: text, name: text })), selected: text }),
+    output: z.object({ flows: z.array(z.object({ id: text, name: text, icon: text.optional() })), selected: text }),
   },
   setFlowChoice: { input: z.object({ projectId: text, flowId: text }), output: z.object({ selected: text }) },
 });

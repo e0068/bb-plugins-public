@@ -56,7 +56,7 @@ export const registerFlowChoice = (
 
   bb.rpc.register(flowChoiceRpcContract, {
     threadFlowChoice: async ({ threadId }) => ({
-      flows: withExpandedStages(deps.flows.current().flows).map(({ id, name, stages }) => ({ id, name, stages: stages.length })),
+      flows: withExpandedStages(deps.flows.current().flows).map(({ id, name, stages, icon }) => ({ id, name, stages: stages.length, ...(icon === undefined ? {} : { icon }) })),
       selected: deps.threads.pickedOf(threadId) ?? (await shown(threadId)),
     }),
 
