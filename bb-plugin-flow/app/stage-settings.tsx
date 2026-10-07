@@ -25,7 +25,7 @@ import { Icon } from "../components/ui/icon";
 import { Input } from "../components/ui/input";
 import { Switch } from "../components/ui/switch";
 import { Textarea } from "../components/ui/textarea";
-import { BUILTIN_KINDS, clearedSkill, isNewStageName, MAX_WAKE_INSTRUCTION_CHARS, RETRY_LIMITS, stageSkillOf, type BuiltinKind } from "../lib/stage-constants";
+import { BUILTIN_KINDS, clearedSkill, isNewStageName, MAX_WAKE_INSTRUCTION_CHARS, RETRY_LIMITS, stageSkillOf } from "../lib/stage-constants";
 import { cn } from "../lib/utils";
 import type { AutomationScript, Flow, flowSettingsRpcContract, SkillFile, SkillOrigin, StageCatalog, StageExecutor, WorkStage } from "../shared/contract";
 import { type AutomationSets, AutomationStepTags, ManualMark, ReadOnlyStepTags, ScriptOptions, type StageChange, TagOpen, WidgetOptions } from "./automation-stage";
@@ -181,7 +181,7 @@ function useChipFiles(stage: WorkStage): ChipFiles {
 
 /**
  * Навык чипом. Навыка нет среди прочитанных — файла у него нет, и чипа нет; каталог не прочитан — судить не по чему,
- * имя остаётся. У скрипта навыка нет, у встроенного этапа чипов нет вовсе — на их месте описание (`WidgetAbout`).
+ * имя остаётся. У скрипта навыка нет; у встроенного этапа — навык вида или свой, чипом без креста.
  */
 const chipSkill = (stage: WorkStage, catalog: StageCatalog): string => {
   const named = stageSkillOf(stage);
@@ -449,36 +449,18 @@ function ExecutorTags({ stage, executors, files, change }: { stage: WorkStage; e
 }
 
 /**
- * Встроенный этап вместо тегов и плюса показывает, что он делает: исполняет его виджет Flow по своему навыку, и выбирать
- * тут нечего. Описание открывает навык этапа — свой или навык вида; этап без навыка открывать нечему.
- */
-function WidgetAbout({ stage, widget, files }: { stage: WorkStage; widget: BuiltinKind; files: ChipFiles }) {
-  const t = useMessages();
-  const skill = stageSkillOf(stage);
-  const about = t.settings.widgetAbout[widget];
-  const text = "flex h-7 min-w-0 items-center text-left text-xs text-muted-foreground";
-  return skill === "" ? (
-    <span className={text}>{about}</span>
-  ) : (
-    <button type="button" title={t.settings.openFile} onClick={() => files.skill(skill)} className={cn(text, "hover:text-foreground hover:underline hover:underline-offset-2")}>
-      {about}
-    </button>
-  );
-}
-
-/**
- * Чипы исполнения этапа: навык, исполнители через «или», описание виджета, ручной запуск и шаги скрипта. С правкой этапа
- * (`change`) у чипов кресты, а шаги скрипта перетаскиваются; без неё — только чтение: так стоят этапы вложенного flow.
+ * Чипы исполнения этапа: навык, исполнители через «или», ручной запуск и шаги скрипта. С правкой этапа (`change`) у чипов
+ * кресты, а шаги скрипта перетаскиваются; без неё — только чтение: так стоят этапы вложенного flow. Навык встроенного этапа
+ * не снимается и тут: этап исполняет виджет Flow по этому навыку.
  * Чип с файлом открывает его в правой панели в обоих случаях.
  */
 function ExecutionChips({ stage, catalog, files, change }: { stage: WorkStage; catalog: StageCatalog; files: ChipFiles; change: ChipChange }) {
   const execution = executionOf(stage);
-  const skill = execution.kind === "executors" || execution.kind === "external" ? chipSkill(stage, catalog) : "";
+  const skill = execution.kind === "script" ? "" : chipSkill(stage, catalog);
   return (
     <>
-      {skill !== "" && <SkillTag skill={skill} files={files} change={change} />}
+      {skill !== "" && <SkillTag skill={skill} files={files} change={execution.kind === "widget" ? null : change} />}
       {execution.kind === "executors" && <ExecutorTags stage={stage} executors={execution.executors} files={files} change={change} />}
-      {execution.kind === "widget" && <WidgetAbout stage={stage} widget={execution.widget} files={files} />}
       {execution.kind === "script" && execution.manual && <ManualMark />}
       {(execution.kind === "script" || execution.kind === "external") &&
         (change === null ? <ReadOnlyStepTags stage={stage} onOpenScript={files.script} /> : <AutomationStepTags stage={stage} onChange={change} onOpenScript={files.script} />)}
@@ -500,7 +482,7 @@ function MissingFile({ files }: { files: ChipFiles }) {
 const chipRow = "flex min-w-0 flex-wrap items-center gap-1";
 
 /**
- * Исполнение: чипы этапа (`ExecutionChips`) и за последним плюс с меню; у встроенного этапа — описание без плюса.
+ * Исполнение: чипы этапа (`ExecutionChips`) и за последним плюс с меню; у встроенного этапа — тег навыка без плюса.
  */
 function ExecutionCell({ stage, stages, catalog }: { stage: WorkStage; stages: readonly WorkStage[]; catalog: StageCatalog }) {
   const t = useMessages();
@@ -611,6 +593,15 @@ function useStageName(stage: WorkStage) {
     setName(text);
   };
   return { name, change, flush: () => flush.current() };
+}
+
+/** Название текстом, без правки — у встроенного этапа, автоматизации Automations, этапа-flow и этапов вложенного flow. */
+function FixedName({ text }: { text: string }) {
+  return (
+    <span title={text} className="flex h-7 min-w-0 items-center truncate pl-8 pr-2 text-[13px]">
+      {text}
+    </span>
+  );
 }
 
 /** Номер этапа, у под-этапа — пусто; под наведением — ручка перетаскивания. */
@@ -775,9 +766,7 @@ function StageRow({ stage, index, stages, catalog, place, dragging, onGrab }: Ro
           <NameIcon stage={stage} />
           {execution.kind === "external" || execution.kind === "widget" ? (
             // Имя автоматизации Automations — снимок того плагина, имя встроенного этапа зафиксировано: оба не правятся.
-            <span title={stageLabel(stage, t.stages)} className="flex h-7 min-w-0 items-center truncate pl-8 pr-2 text-[13px]">
-              {stageLabel(stage, t.stages)}
-            </span>
+            <FixedName text={stageLabel(stage, t.stages)} />
           ) : (
             <Input aria-label={t.settings.stageName(index + 1)} placeholder={t.settings.namePlaceholder} value={name} onChange={(e) => change(e.target.value)} onBlur={flush} className={cn(field, "pl-8")} />
           )}
@@ -792,42 +781,52 @@ function StageRow({ stage, index, stages, catalog, place, dragging, onGrab }: Ro
 /** Клетка креста: на узкой строке — над закладкой, на широкой — последней. */
 const deleteCell = "col-start-3 row-start-1 @[44rem]:col-start-auto @[44rem]:row-start-auto";
 
+/** Название этапа вложенного flow: иконка без выбора и имя текстом — этап правится на странице своего flow. */
+function NestedStageName({ stage }: { stage: WorkStage }) {
+  const t = useMessages();
+  return (
+    <span role="cell" className={cn(cell, "relative")}>
+      <span className="absolute left-0.5 top-0.5 flex size-6 items-center justify-center text-muted-foreground">
+        <StageGlyph icon={stage.icon} fallback={stageIcon(stage)} className="size-3.5" />
+      </span>
+      <FixedName text={stageLabel(stage, t.stages)} />
+    </span>
+  );
+}
+
 /**
- * Этап «Flow» связкой строк, как этап с под-этапами: в первой строке — имя вложенного flow текстом (оно живое: переименование
- * flow видно сразу) и первый его этап, ниже — по строке на каждый следующий. Этапы вложенного flow — только для чтения.
- * Строки связки отвечают за перетаскивание одним этапом: все несут `data-stage-row` этапа-flow.
+ * Этап «Flow» связкой строк, как этап с под-этапами: в первой строке — только имя вложенного flow текстом (оно живое:
+ * переименование flow видно сразу), ниже — по полной строке на каждый его этап, под-этапы тоже: название и чипы, только
+ * для чтения. Строки связки отвечают за перетаскивание одним этапом: все несут `data-stage-row` этапа-flow.
  */
 function NestedFlowRows({ flowId, ...row }: RowProps & { flowId: string }) {
   const t = useMessages();
   const { settings } = useFlowSettings();
   const flows = settings?.flows ?? [];
   const target = flows.find((flow) => flow.id === flowId);
-  const [first, ...rest] = target === undefined ? [] : expandStages(flows, target);
+  const inner = target === undefined ? [] : expandStages(flows, target);
   const { stage, place, catalog } = row;
-  const name = target?.name ?? stage.name;
-  const alone = rest.length === 0;
+  const alone = inner.length === 0;
   return (
     <>
       <RowShell {...row} place={{ ...place, edge: alone && place.edge, drop: !alone && place.drop === "bottom" ? null : place.drop }}>
         <StageCells>
           <span role="cell" className={cn(cell, "relative")}>
             <NameIcon stage={stage} />
-            <span title={name} className="flex h-7 min-w-0 items-center truncate pl-8 pr-2 text-[13px]">
-              {name}
-            </span>
+            <FixedName text={target?.name ?? stage.name} />
           </span>
-          {target === undefined ? <NestedFlowGone /> : first === undefined ? <span role="cell" className={cellWide} /> : <ReadOnlyExecution stage={first} catalog={catalog} />}
+          {target === undefined && <NestedFlowGone />}
         </StageCells>
       </RowShell>
-      {rest.map((inner, at) => {
-        const last = at === rest.length - 1;
+      {inner.map((innerStage, at) => {
+        const last = at === inner.length - 1;
         const drop = place.drop === "whole" || (last && place.drop === "bottom") ? place.drop : null;
         return (
-          <RowFrame key={inner.id} label={stageLabel(inner, t.stages)} stageId={stage.id} place={{ ...place, apart: false, edge: last && place.edge, drop, dropLabel: null }} dragging={row.dragging}>
+          <RowFrame key={innerStage.id} label={stageLabel(innerStage, t.stages)} stageId={stage.id} place={{ ...place, apart: false, edge: last && place.edge, drop, dropLabel: null }} dragging={row.dragging}>
             <span role="cell" />
             <StageCells>
-              <span role="cell" className={cn(cell, "hidden @[44rem]:block")} />
-              <ReadOnlyExecution stage={inner} catalog={catalog} />
+              <NestedStageName stage={innerStage} />
+              <ReadOnlyExecution stage={innerStage} catalog={catalog} />
             </StageCells>
             <span role="cell" className={templateCell} />
             <span role="cell" className={deleteCell} />
