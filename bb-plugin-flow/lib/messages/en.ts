@@ -288,12 +288,6 @@ export const en: Messages = {
     executionMenu: "Execution",
     executionKind: "What runs the stage",
     segmentSkill: "Skill",
-    widgetAbout: {
-      questions: "Asks the owner about forks and open points in one brief",
-      criteria: "Agrees the Definition of Done with the owner before work starts",
-      select: "Shows the stages, executors and budget — the owner picks the run",
-      demo: "Shows the owner what was done and a live result",
-    },
     segmentAgent: "Subagent",
     segmentWorkflow: "Workflow",
     segmentWidget: "Widget",

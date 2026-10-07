@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 // Встроенный этап (Вопросы, Критерии, Выбор этапов, Демонстрация) в таблице выглядит иначе остальных: имя
-// зафиксировано, а на месте тегов и плюса исполнения — краткое описание того, что этап делает; описание открывает его навык.
+// зафиксировано, а в исполнении — только тег его навыка, без креста и без плюса; тег открывает навык.
 import { cleanup, fireEvent, within } from "@testing-library/react";
 import type { PluginNavPanelProps } from "@get-bb/plugin-sdk/app";
 import { loadPluginApp, renderSlot } from "@get-bb/plugin-sdk/testing/app";
@@ -53,35 +53,30 @@ describe("встроенный этап в таблице", () => {
     expect((await row(slot, 5)).getByRole("textbox", { name: "Название этапа 5" })).toBeTruthy();
   });
 
-  it("вместо тегов и плюса исполнения — краткое описание этапа", async () => {
+  it("в исполнении — тег навыка «Навык: имя» без креста и без плюса, описания нет", async () => {
     const slot = open();
-    const descriptions = [
-      "Спрашивает владельца о развилках и неясном одним брифом",
-      "Согласует с владельцем Definition of Done до начала работы",
-      "Показывает этапы, исполнителей и бюджет — владелец выбирает прогон",
-      "Показывает владельцу сделанное и живой результат",
-    ];
-    for (const [i, text] of descriptions.entries()) {
-      const r = await row(slot, i + 1);
-      expect(r.getByRole("button", { name: text })).toBeTruthy();
+    for (const [n, skill] of [[1, "flow-questions"], [4, "my-demo"]] as const) {
+      const r = await row(slot, n);
+      expect(r.getByRole("button", { name: `Навык: ${skill}` })).toBeTruthy();
       expect(r.queryByRole("button", { name: "Исполнение этапа" })).toBeNull();
       expect(r.queryByRole("button", { name: /^Убрать/ })).toBeNull();
     }
+    expect(slot.queryByText(/^Спрашивает владельца/)).toBeNull();
     expect((await row(slot, 5)).getByRole("button", { name: "Исполнение этапа" })).toBeTruthy();
   });
 
-  it("описание открывает навык этапа в правой панели — навык вида или свой", async () => {
+  it("тег навыка открывает навык этапа в правой панели — навык вида или свой", async () => {
     const slot = open();
-    fireEvent.click((await row(slot, 1)).getByRole("button", { name: /^Спрашивает владельца/ }));
+    fireEvent.click((await row(slot, 1)).getByRole("button", { name: "Навык: flow-questions" }));
     await vi.waitFor(() => expect(previews(slot).at(-1)).toMatchObject({ options: { target: { path: "/skills/flow-questions/SKILL.md" } } }));
-    fireEvent.click((await row(slot, 4)).getByRole("button", { name: /^Показывает владельцу/ }));
+    fireEvent.click((await row(slot, 4)).getByRole("button", { name: "Навык: my-demo" }));
     await vi.waitFor(() => expect(previews(slot).at(-1)).toMatchObject({ options: { target: { path: "/skills/my-demo/SKILL.md" } } }));
   });
 
-  it("по-английски имя и описание английские", async () => {
+  it("по-английски имя английское, тег — «Skill: имя»", async () => {
     const slot = open("English");
     const first = within(await slot.findByRole("row", { name: "Stage 1" }));
     expect(first.getByText("Questions")).toBeTruthy();
-    expect(first.getByRole("button", { name: "Asks the owner about forks and open points in one brief" })).toBeTruthy();
+    expect(first.getByRole("button", { name: "Skill: flow-questions" })).toBeTruthy();
   });
 });

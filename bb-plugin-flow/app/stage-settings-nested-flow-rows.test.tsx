@@ -1,11 +1,12 @@
 // @vitest-environment jsdom
-// Этап «Flow» строками, как этап с под-этапами: имя вложенного flow текстом в первой строке, под ним по строке
-// на каждый его этап с чипами только для чтения — без крестиков и без плюсов.
+// Этап «Flow» строками, как этап с под-этапами: в первой строке только имя вложенного flow текстом, под ней по полной строке
+// на каждый его этап — название текстом и чипы только для чтения, без крестиков и без плюсов.
 import { cleanup, within } from "@testing-library/react";
 import type { PluginNavPanelProps } from "@get-bb/plugin-sdk/app";
 import { loadPluginApp, renderSlot } from "@get-bb/plugin-sdk/testing/app";
 import { afterEach, describe, expect, it } from "vitest";
 
+import { builtinStage } from "../lib/stage-constants";
 import type { Flow, FlowSettings, flowSettingsRpcContract, StageCatalog, WorkStage } from "../shared/contract";
 
 const app = await loadPluginApp(() => import("../app"));
@@ -42,16 +43,18 @@ const bodyRows = async (slot: Slot) => {
 };
 
 describe("этап «Flow» строками вложенного flow", () => {
-  it("этап-flow занимает по строке на каждый этап вложенного flow", async () => {
+  it("первая строка — только имя вложенного flow, под ней по строке на каждый его этап", async () => {
     const slot = open([PLUGIN([ref("nested", "answer")]), ANSWER]);
-    expect(await bodyRows(slot)).toHaveLength(3);
+    expect(await bodyRows(slot)).toHaveLength(4);
   });
 
-  it("первая строка подписана именем вложенного flow текстом, а не полем ввода", async () => {
+  it("первая строка подписана именем вложенного flow текстом, а не полем ввода, и чипов в ней нет", async () => {
     const slot = open([PLUGIN([ref("nested", "answer")]), ANSWER]);
     const first = within(await slot.findByRole("row", { name: "Этап 1" }));
     expect(first.getByText("Answer")).toBeTruthy();
     expect(first.queryByRole("textbox")).toBeNull();
+    expect(first.queryByText(/^Навык:/)).toBeNull();
+    expect(first.queryByText("code-reviewer")).toBeNull();
   });
 
   it("имя в первой строке следует за переименованием вложенного flow", async () => {
@@ -59,13 +62,29 @@ describe("этап «Flow» строками вложенного flow", () => {
     expect(within(await slot.findByRole("row", { name: "Этап 1" })).getByText("Ответ v2")).toBeTruthy();
   });
 
-  it("строки показывают чипы этапов вложенного flow: навык, исполнителей и шаги", async () => {
+  it("у каждого этапа вложенного flow — своё название текстом, без поля ввода", async () => {
+    const named = flow("answer", "Answer", [stage("project", { name: "Проект" }), builtinStage("questions", []), stage("land", { name: "Посадка", skill: "", automation: { source: "flow", steps: ["git.commit"] } })]);
+    const slot = open([PLUGIN([ref("nested", "answer")]), named]);
+    const [, ...inner] = (await bodyRows(slot)).map((row) => within(row));
+    expect(inner.map((row) => row.queryByRole("textbox"))).toEqual([null, null, null]);
+    expect(inner[0]!.getByText("Проект")).toBeTruthy();
+    expect(inner[1]!.getByText("Вопросы")).toBeTruthy();
+    expect(inner[2]!.getByText("Посадка")).toBeTruthy();
+  });
+
+  it("строки этапов показывают их чипы: навык, исполнителей и шаги", async () => {
     const slot = open([PLUGIN([ref("nested", "answer")]), ANSWER]);
-    const [first, second, third] = (await bodyRows(slot)).map((row) => within(row));
-    expect(first!.getByText("Навык: project")).toBeTruthy();
-    expect(first!.getByText("code-reviewer")).toBeTruthy();
-    expect(second!.getByText("Commit")).toBeTruthy();
-    expect(third!.getByText("Навык: demo")).toBeTruthy();
+    const [, project, land, demo] = (await bodyRows(slot)).map((row) => within(row));
+    expect(project!.getByText("Навык: project")).toBeTruthy();
+    expect(project!.getByText("code-reviewer")).toBeTruthy();
+    expect(land!.getByText("Commit")).toBeTruthy();
+    expect(demo!.getByText("Навык: demo")).toBeTruthy();
+  });
+
+  it("виджет вложенного flow показывает тег своего навыка", async () => {
+    const slot = open([PLUGIN([ref("nested", "answer")]), flow("answer", "Answer", [builtinStage("questions", [])])]);
+    const [, questions] = (await bodyRows(slot)).map((row) => within(row));
+    expect(questions!.getByText("Навык: flow-questions")).toBeTruthy();
   });
 
   it("на чипах нет крестиков, в строках нет плюсов и замены flow", async () => {
@@ -77,15 +96,15 @@ describe("этап «Flow» строками вложенного flow", () => {
     }
   });
 
-  it("крест удаления этапа — только у первой строки", async () => {
+  it("крест удаления этапа — только у строки с именем flow", async () => {
     const slot = open([PLUGIN([ref("nested", "answer")]), ANSWER]);
     const crosses = (await bodyRows(slot)).map((row) => within(row).queryAllByRole("button", { name: /^Удалить этап/ }).length);
-    expect(crosses).toEqual([1, 0, 0]);
+    expect(crosses).toEqual([1, 0, 0, 0]);
   });
 
   it("обычный этап рядом с этапом-flow остаётся своей строкой с полем названия", async () => {
     const slot = open([PLUGIN([stage("task"), ref("nested", "answer")]), ANSWER]);
-    expect(await bodyRows(slot)).toHaveLength(4);
+    expect(await bodyRows(slot)).toHaveLength(5);
     expect(within(await slot.findByRole("row", { name: "Этап 1" })).getByRole("textbox", { name: "Название этапа 1" })).toBeTruthy();
   });
 });

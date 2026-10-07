@@ -295,12 +295,6 @@ export const ru = {
     executionMenu: "Исполнение",
     executionKind: "Чем исполняется этап",
     segmentSkill: "Навык",
-    widgetAbout: {
-      questions: "Спрашивает владельца о развилках и неясном одним брифом",
-      criteria: "Согласует с владельцем Definition of Done до начала работы",
-      select: "Показывает этапы, исполнителей и бюджет — владелец выбирает прогон",
-      demo: "Показывает владельцу сделанное и живой результат",
-    },
     segmentAgent: "Субагент",
     segmentWorkflow: "Workflow",
     segmentWidget: "Виджет",
