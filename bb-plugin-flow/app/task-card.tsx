@@ -1,9 +1,11 @@
 // Задача Tasks+ в окне Демонстрации — копия карточки директивы `::task` из Tasks+ (views/embed/index.tsx): строка со
 // значком статуса, ключом, заголовком и приоритетом. Своя, потому что Markdown для плагинов чужих директив не рисует.
-// Клик открывает задачу во вкладке Flow сбоку: SDK даёт плагину открыть только свою вкладку панели треда.
+// Клик просит Tasks+ открыть задачу его полной вкладкой в панели треда (packages/task-bridge): SDK даёт плагину открыть
+// только свою вкладку. Tasks+ не взялся — открывается своя вкладка Flow на чтение.
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Markdown, useBbNavigate } from "@get-bb/plugin-sdk/app";
 import type { PluginThreadPanelProps } from "@get-bb/plugin-sdk";
+import { onTasksChanged, requestOpenTask } from "@bb-plugins/task-bridge";
 
 import { isTaskAddress, readTaskLookup, taskLookupRequest, type TaskLookup, type TaskPriority, type TaskStatus } from "../core/task-lookup";
 import { Button } from "../components/ui/button";
@@ -15,22 +17,37 @@ import { useMessages } from "./locale-context";
 /** Вкладка задачи в панели треда — id действия Flow. */
 export const TASK_PANEL_ACTION = "task";
 
-/** Задача у Tasks+ по ключу и треду брифа; повтор — заново. */
+/**
+ * Задача у Tasks+ по ключу и треду брифа. Переспрашивается, когда Tasks+ сообщил о смене задач (packages/task-bridge) и
+ * когда владелец вернулся в окно, — статус следует за доской, и облачной тоже; повтор после ошибки — заново.
+ */
 function useTaskLookup(taskKey: string, threadId: string): { state: TaskLookup; retry: () => void } {
   const [state, setState] = useState<TaskLookup>({ kind: "loading" });
   const seq = useRef(0);
-  const load = useCallback(() => {
+  const refresh = useCallback(() => {
     const mine = ++seq.current;
-    setState({ kind: "loading" });
     const { url, body } = taskLookupRequest(taskKey, threadId);
     fetch(url, { method: "POST", headers: { "content-type": "application/json" }, body })
       .then(async (response) => readTaskLookup(response.status, await response.json().catch(() => null)))
       .catch((): TaskLookup => ({ kind: "error" }))
+      // Сбой переспроса не стирает показанную задачу: следующий сигнал или фокус спросят снова.
       .then((next) => {
-        if (mine === seq.current) setState(next);
+        if (mine === seq.current) setState((shown) => (next.kind === "error" && shown.kind === "found" ? shown : next));
       });
   }, [taskKey, threadId]);
+  const load = useCallback(() => {
+    setState({ kind: "loading" });
+    refresh();
+  }, [refresh]);
   useEffect(load, [load]);
+  useEffect(() => {
+    const offChanged = onTasksChanged(window, refresh);
+    window.addEventListener("focus", refresh);
+    return () => {
+      offChanged();
+      window.removeEventListener("focus", refresh);
+    };
+  }, [refresh]);
   return { state, retry: load };
 }
 
@@ -164,7 +181,11 @@ export function TaskCard({ taskKey, threadId }: { taskKey: string; threadId: str
         type="button"
         className="flex min-w-0 flex-1 items-center gap-2 rounded-md px-1 py-1 text-left focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
         aria-label={t.taskOpen(task.key, task.title)}
-        onClick={() => navigate.openThreadPanel({ actionId: TASK_PANEL_ACTION, title: task.key, params: { taskKey: task.key, threadId } })}
+        onClick={() => {
+          if (!requestOpenTask(window, { taskKey: task.key, threadId })) {
+            navigate.openThreadPanel({ actionId: TASK_PANEL_ACTION, title: task.key, params: { taskKey: task.key, threadId } });
+          }
+        }}
       >
         <StatusIcon status={task.status} />
         <Key text={task.key} />
@@ -182,7 +203,7 @@ const readPanelParams = (params: PluginThreadPanelProps["params"], fallbackThrea
   return { taskKey: taskKey.trim(), threadId: typeof threadId === "string" && threadId !== "" ? threadId : fallbackThreadId };
 };
 
-/** Вкладка задачи сбоку: задача на чтение — статус, ключ, приоритет, заголовок, описание. Править — в Tasks+. */
+/** Запасная вкладка задачи сбоку, когда Tasks+ не открыл свою: задача на чтение — статус, ключ, приоритет, заголовок, описание. */
 export function TaskPanel({ params, threadId }: PluginThreadPanelProps) {
   const t = useMessages().outcome;
   const target = readPanelParams(params, threadId);
