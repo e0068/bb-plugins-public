@@ -77,6 +77,7 @@ export function sourceOf(url: string, state: RepoState, now: string): Extract<Sy
       return { kind: "database", url, state: "reconnecting", lastSyncAt: state.since };
     case "offline":
     case "refused":
+    case "no-token":
       return { kind: "database", url, state: state.kind, lastSyncAt: state.lastSyncAt };
   }
 }

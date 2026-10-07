@@ -6,8 +6,10 @@
  *
  * Every failure is a value: `unreachable` with why (no answer in time, a
  * dropped network, an HTTP status, a reply that does not read), `auth`
- * (401, 403) or `sql` (a statement the database rejected, with its code). The
- * token goes into one header and into no report.
+ * (401, 403) or `sql` (a statement the database rejected, with its code).
+ * `no-token` is never sent by this client: it is what a caller with no token
+ * to send answers in its place. The token goes into one header and into no
+ * report.
  */
 
 export type HranaValue = string | number | null;
@@ -46,6 +48,7 @@ export type UnreachableCause =
 export type HranaError =
   | { kind: "unreachable"; why: UnreachableCause }
   | { kind: "auth" }
+  | { kind: "no-token" }
   | { kind: "sql"; code: string; message: string };
 
 export type HranaResult<T> = { ok: true; value: T } | { ok: false; error: HranaError };

@@ -6,7 +6,7 @@ import { TasksSidebarAccessory } from "./shell/sidebar-accessory.js";
 import { BoardColumnWidthSetting } from "./shell/board-column-width-setting.js";
 import { ReducedProjectsSetting } from "./shell/reduced-projects-setting.js";
 import { TaskDirectiveCard, TaskEmbedPanel, TaskSidePanelTab } from "./views/embed/index.js";
-import { TASK_TAB } from "./client/task-opening.js";
+import { TASK_PANEL_ACTION, TASK_TAB } from "./client/task-opening.js";
 import { CurrentTaskHeaderAction } from "./views/header/current-task.js";
 
 /** The settings page's Reduced Colors block for the analytics charts — bb's declared settings have no colour field — and whether it repaints the projects. */
@@ -31,7 +31,7 @@ export default definePluginApp((app) => {
     fixedTabs: [{ ...TASK_TAB, title: "Task", icon: "ListTodo", component: TaskSidePanelTab, layout: "padded" }],
   });
   app.slots.threadPanelAction({
-    id: "task",
+    id: TASK_PANEL_ACTION,
     title: "Task",
     icon: "ListTodo",
     component: TaskEmbedPanel,

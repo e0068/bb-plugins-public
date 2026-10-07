@@ -1,10 +1,11 @@
 import type { HranaClient, HranaError, HranaResult, HranaRow, HranaStep, HranaStepResult, HranaValue, UnreachableCause } from "../remote/hrana.js";
 import type { TaskStatus } from "../db/types.js";
-import { applyRows, INITIAL_LINK, nextLink, refusedLink, taskFilePath, type LinkState, type Mirror, type TaskRow } from "./db-mirror.js";
+import { applyRows, INITIAL_LINK, nextLink, refusedLink, taskFilePath, tokenlessLink, type LinkState, type Mirror, type TaskRow } from "./db-mirror.js";
 import { parseTaskFile } from "./task-file.js";
 import type { TaskPlacement } from "./placement.js";
 import {
   DatabaseAuthFailed,
+  DatabaseTokenMissing,
   DatabaseUnreachable,
   outOfReach,
   WriteConflict,
@@ -289,6 +290,8 @@ export function failureOf(error: HranaError): Error {
       return new DatabaseUnreachable(error.why);
     case "auth":
       return new DatabaseAuthFailed();
+    case "no-token":
+      return new DatabaseTokenMissing();
     case "sql":
       return new Error(`database error ${error.code}: ${error.message}`);
   }
@@ -373,7 +376,8 @@ export function createDbRepo(client: HranaClient, options: DbRepoOptions): DbRep
 
   /** The value, or the failure as the error the port promises; a lost link is counted.
    *  A network that does not answer moves the link toward offline, a refused
-   *  token makes it refused; a refused statement is the database answering. */
+   *  token makes it refused, no token to send makes it tokenless; a refused
+   *  statement is the database answering. */
   function unwrap<T>(result: HranaResult<T>): T {
     if (result.ok) return result.value;
     const { error } = result;
@@ -385,6 +389,7 @@ export function createDbRepo(client: HranaClient, options: DbRepoOptions): DbRep
       touch(false);
     }
     if (error.kind === "auth") move(refusedLink(link, now().toISOString()));
+    if (error.kind === "no-token") move(tokenlessLink(link, now().toISOString()));
     throw failureOf(error);
   }
 
@@ -418,6 +423,7 @@ export function createDbRepo(client: HranaClient, options: DbRepoOptions): DbRep
   /** A write needs a link that is not known to be down, and a mirror to write against. */
   async function ready(): Promise<void> {
     if (link.state.kind === "refused") throw new DatabaseAuthFailed();
+    if (link.state.kind === "no-token") throw new DatabaseTokenMissing();
     if (link.state.kind === "offline") throw new DatabaseUnreachable();
     if (!loaded && link.state.kind !== "live") throw new DatabaseUnreachable();
     if (!loaded) await pull();
@@ -449,6 +455,7 @@ export function createDbRepo(client: HranaClient, options: DbRepoOptions): DbRep
   async function loadedMirror(): Promise<void> {
     if (loaded) return;
     if (link.state.kind === "refused") throw new DatabaseAuthFailed();
+    if (link.state.kind === "no-token") throw new DatabaseTokenMissing();
     if (link.state.kind !== "live") throw new DatabaseUnreachable();
     await sync();
   }
@@ -534,7 +541,7 @@ export function createDbRepo(client: HranaClient, options: DbRepoOptions): DbRep
         polling = true;
         void sync()
           .catch((error: unknown) => {
-            // Lost network and a refused token are the link's business; anything else is a broken database.
+            // Lost network, a refused token or no token are the link's business; anything else is a broken database.
             if (!outOfReach(error)) console.warn("tasks-plus: polling the board database failed", error);
           })
           .finally(() => {

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useRealtime, useRpc } from "@get-bb/plugin-sdk/app";
 import type { FoldersRpcContract, SyncedFolder, SyncedSource } from "../../folders/contract.js";
-import { TOKEN_REFUSED_TEXT } from "../../folders/token-refused.js";
+import { TOKEN_MISSING_TEXT, TOKEN_REFUSED_TEXT } from "../../folders/token-refused.js";
 import { databaseHost } from "../../folders/database-address.js";
 import { Button } from "@/components/ui/button";
 
@@ -26,6 +26,13 @@ const formatMoment = (iso: string): string => new Date(iso).toLocaleString([], {
 
 const lastSyncText = (source: DatabaseSource): string =>
   source.lastSyncAt === null ? "not synced yet" : `last sync ${formatMoment(source.lastSyncAt)}`;
+
+/** The words after the address: a token problem names its way out, a lost link its last sync. */
+function pausedText(source: DatabaseSource): string {
+  if (source.state === "refused") return TOKEN_REFUSED_TEXT;
+  if (source.state === "no-token") return TOKEN_MISSING_TEXT;
+  return `${lastSyncText(source)} · Taking and editing is paused`;
+}
 
 /**
  * Above the columns of a board whose database is unreachable or reconnecting:
@@ -66,7 +73,7 @@ export function SourceBanner({ projectIds }: { projectIds: readonly string[] }) 
           className="flex shrink-0 items-center gap-2 border-b border-border-hairline bg-warning/10 px-4 py-1.5 text-xs text-muted-foreground"
         >
           <span className="min-w-0 flex-1 truncate">
-            {databaseHost(source.url)} · {source.state === "refused" ? TOKEN_REFUSED_TEXT : `${lastSyncText(source)} · Taking and editing is paused`}
+            {databaseHost(source.url)} · {pausedText(source)}
           </span>
           <Button size="sm" variant="outline" className="h-6 shrink-0" onClick={() => retry(boardId)}>
             Retry

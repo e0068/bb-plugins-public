@@ -4,3 +4,6 @@
  * contract would drag the SDK — absent on a marketplace install — into its bundle.
  */
 export const TOKEN_REFUSED_TEXT = "Token refused · enter a new one in Connect database";
+
+/** What a board says when this machine holds no token for its database — nothing was refused. */
+export const TOKEN_MISSING_TEXT = "No token on this machine · enter one in Connect database";

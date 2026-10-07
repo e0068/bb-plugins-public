@@ -15,6 +15,7 @@ import { CallerThreadProvider } from "../../client/caller-thread.js";
 import { PANEL_PATH, tasksRouteToSubPath } from "../../client/routes.js";
 import { STATUS_LABELS } from "../../components/task-meta.js";
 import { StatusIcon } from "../common/icons.js";
+import { useTaskBridge } from "./task-bridge.js";
 
 // Matches the native thread-header buttons rather than the plugin default
 // (see docs/decisions/bb-header-button-style-tokens): outline/sm gives h-8/border-input,
@@ -68,6 +69,7 @@ function statusLabel(task: Task): string {
  * link an agent reads through `bb tasks current`, surfaced for a human.
  */
 export function CurrentTaskHeaderAction(props: PluginThreadHeaderActionProps) {
+  useTaskBridge(props.threadId);
   // Кнопка принадлежит треду и спрашивает о задачах его рабочего дерева —
   // задача ветки на доске ещё не видна (client/caller-thread.tsx).
   return (

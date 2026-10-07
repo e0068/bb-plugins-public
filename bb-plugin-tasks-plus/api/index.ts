@@ -15,7 +15,7 @@ import {
   type FileTasksStore,
 } from "../filesync/store.js";
 import { describeTakenBy } from "../shared/task-claim.js";
-import { DatabaseAuthFailed, DatabaseUnreachable, unlessOutOfReach } from "../filesync/task-repo.js";
+import { DatabaseAuthFailed, DatabaseTokenMissing, DatabaseUnreachable, unlessOutOfReach } from "../filesync/task-repo.js";
 import { TaskWriteConflict } from "../filesync/write-retry.js";
 import { currentCallerEnvironment } from "../filesync/caller-scope.js";
 import type { CallerEnvironmentCache } from "../filesync/caller-cache.js";
@@ -204,9 +204,11 @@ function databaseFailure(error: unknown) {
       ? { code: "database_unreachable" as const, message: "The board's database cannot be reached — the task was not changed." }
       : error instanceof DatabaseAuthFailed
         ? { code: "database_auth_failed" as const, message: "The board's database refused its token — the task was not changed." }
-        : error instanceof TaskWriteConflict
-          ? { code: "task_write_conflict" as const, message: "Another machine kept changing the task — the edit was not saved, try again." }
-          : null;
+        : error instanceof DatabaseTokenMissing
+          ? { code: "database_token_missing" as const, message: "No token for the board's database is saved on this machine — the task was not changed." }
+          : error instanceof TaskWriteConflict
+            ? { code: "task_write_conflict" as const, message: "Another machine kept changing the task — the edit was not saved, try again." }
+            : null;
   return detail === null ? null : { ok: false as const, error: detail };
 }
 
