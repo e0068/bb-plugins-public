@@ -33,19 +33,27 @@ export const registerOwnerTurn = (
     ownerTurn: (threadId: string) => Promise<void>;
     /** Владелец пишет в чат — в начале хода или посреди него: ждущий бриф возвращается агенту (./brief-return.ts). */
     ownerMessage?: (threadId: string) => Promise<unknown>;
+    /** Начинается любой ход: настройки Claude Code дерева треда ложатся до старта сессии (./skill-scope.ts). */
+    turnStart?: (threadId: string) => Promise<void>;
   },
 ): void => {
+  // Ход сперва применяет выбранный flow и возвращает бриф, а настройки дерева сверяет последним — уже по flow этого хода.
+  const decide = async (context: DispatchContext): Promise<void> => {
+    if (deps.ownSend(context.thread.id, context.input.text)) return;
+    const turn = { attempt: context.attempt, initiator: initiatorOf(context), retry: context.queuedMessage?.payload.kind === "retry" };
+    // Хук, который бросает, запирает тред: сбой применения выбора пропускает сообщение.
+    if (appliesPickedFlow(turn)) await deps.ownerTurn(context.thread.id).catch(() => undefined);
+    if (returnsBrief(turn)) await deps.ownerMessage?.(context.thread.id).catch(() => undefined);
+  };
   bb.experimental_hooks.on("message.dispatch", async (context) => {
     // Хук, который бросает, запирает тред: сбой привязки пропускает сообщение.
     if (deps.firstMessage !== undefined && context.thread.status === "pending") {
       const { id, projectId, parentThreadId } = context.thread;
       await deps.firstMessage({ thread: { id, projectId, parentThreadId }, byFlow: context.thread.originPluginId === bb.pluginId, mentioned: mentionedThreads(context) }).catch(() => undefined);
     }
-    if (deps.ownSend(context.thread.id, context.input.text)) return { action: "proceed" };
-    const turn = { attempt: context.attempt, initiator: initiatorOf(context), retry: context.queuedMessage?.payload.kind === "retry" };
-    // Хук, который бросает, запирает тред: сбой применения выбора пропускает сообщение.
-    if (appliesPickedFlow(turn)) await deps.ownerTurn(context.thread.id).catch(() => undefined);
-    if (returnsBrief(turn)) await deps.ownerMessage?.(context.thread.id).catch(() => undefined);
+    await decide(context);
+    // Хук, который бросает, запирает тред: сбой сверки настроек пропускает сообщение.
+    if (context.attempt === "start-turn") await deps.turnStart?.(context.thread.id).catch(() => undefined);
     return { action: "proceed" };
   });
 };

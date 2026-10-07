@@ -8,7 +8,8 @@ import { homedir, tmpdir } from "node:os";
 import { basename, extname, join } from "node:path";
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 
-import { installedPluginDirs, parseAgentFile, parseCodexAgentFile, parseWorkflowFile, skillOrigin } from "../core/catalog";
+import { installedPlugins, parseAgentFile, parseCodexAgentFile, parseWorkflowFile, skillOrigin } from "../core/catalog";
+import type { ClaudePlugin } from "../core/skill-scope";
 import type { AutomationScript, ExecutorOrigin, SkillFile, SkillOrigin, StageCatalog, StageExecutor } from "../shared/contract";
 
 export type CatalogSources = {
@@ -72,14 +73,19 @@ const readProjectAgents = async (sources: CatalogSources): Promise<ExecutorEntry
 };
 
 /** Агенты включённых плагинов Claude Code — с префиксом плагина, как их зовёт сам Claude Code. */
-const readPluginAgents = async (sources: CatalogSources): Promise<ExecutorEntry[]> => {
+/** Включённые плагины Claude Code из installed_plugins.json и enabledPlugins настроек. */
+const readInstalledPlugins = async (sources: CatalogSources): Promise<Array<{ key: string; plugin: string; dir: string }>> => {
   const claude = join(sources.home, ".claude");
   const [installed, settings] = await Promise.all([
     settled(() => sources.readFile(join(claude, "plugins", "installed_plugins.json")), ""),
     settled<string | null>(() => sources.readFile(join(claude, "settings.json")), null),
   ]);
+  return installedPlugins(installed, settings);
+};
+
+const readPluginAgents = async (sources: CatalogSources): Promise<ExecutorEntry[]> => {
   const lists = await Promise.all(
-    installedPluginDirs(installed, settings).map(async ({ plugin, dir }) =>
+    (await readInstalledPlugins(sources)).map(async ({ plugin, dir }) =>
       (await readAgentTree(sources, join(dir, "agents"), { kind: "plugin", plugin })).map(({ executor, path }) => ({
         executor: { ...executor, id: `agent:${plugin}:${executor.name}`, name: `${plugin}:${executor.name}` },
         path,
@@ -107,6 +113,17 @@ const readExecutorEntries = async (sources: CatalogSources): Promise<ExecutorEnt
 export const readStageCatalog = async (sources: CatalogSources): Promise<StageCatalog> => {
   const [skills, entries] = await Promise.all([readSkills(sources), readExecutorEntries(sources)]);
   return { skills, executors: entries.map((entry) => entry.executor) };
+};
+
+/** Включённые плагины Claude Code с ключом `enabledPlugins`: по ним Flow выключает в дереве треда ненужные flow. */
+export const readClaudePlugins = async (sources: CatalogSources): Promise<ClaudePlugin[]> =>
+  (await readInstalledPlugins(sources)).map(({ key, plugin }) => ({ key, name: plugin }));
+
+/** Тексты скриптов workflow каталога по id исполнителя; непрочитанный скрипт пропускается. */
+export const readWorkflowScripts = async (sources: CatalogSources): Promise<Array<{ id: string; text: string }>> => {
+  const workflows = (await readExecutorEntries(sources)).filter((entry) => entry.executor.kind === "workflow");
+  const texts = await Promise.all(workflows.map((entry) => settled<string | null>(() => sources.readFile(entry.path), null)));
+  return workflows.flatMap((entry, i) => (texts[i] == null ? [] : [{ id: entry.executor.id, text: texts[i]! }]));
 };
 
 export type ExecutorFileSources = CatalogSources & { primaryHostId: () => Promise<string | null> };

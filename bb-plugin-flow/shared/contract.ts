@@ -274,7 +274,16 @@ export const stageSettingsSchema = z
 /** Flow — именованная таблица этапов. Тред идёт по одному flow: из него инструкции агенту и проверка брифа. */
 export const flowSchema = z
   // `description` — когда выбирать этот flow: по описаниям агент выбирает flow треду, где в композере выбрано «Автоматически».
-  .object({ id: text, name: text, description: z.string().optional(), stages: z.array(workStageSchema) })
+  .object({
+    id: text,
+    name: text,
+    description: z.string().optional(),
+    stages: z.array(workStageSchema),
+    /** Агенту треда грузятся только навыки открытых этапов; нет поля — все навыки, как раньше. */
+    limitSkills: z.literal(true).optional(),
+    /** Агенту треда доступны только агенты-исполнители открытых этапов; нет поля — все агенты. */
+    limitAgents: z.literal(true).optional(),
+  })
   .superRefine((f, ctx) => {
     if (!uniqueIds(f.stages)) ctx.addIssue({ code: "custom", message: "stage ids must be unique within a flow", path: ["stages"] });
     if (!linkedSubStages(f.stages)) ctx.addIssue({ code: "custom", message: SUB_STAGE_ISSUE, path: ["stages"] });
@@ -869,6 +878,8 @@ export const flowFileSchema = z.object({
   name: text,
   description: z.string().optional(),
   stages: z.array(z.looseObject({ id: text, flow: text.optional() })),
+  limitSkills: z.literal(true).optional(),
+  limitAgents: z.literal(true).optional(),
 });
 
 /** `settings.json` папки синхронизации: порядок flow по именам и общее на коллекцию; шаблоны этапов ссылаются по имени. */

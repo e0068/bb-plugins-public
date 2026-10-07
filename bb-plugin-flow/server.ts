@@ -38,7 +38,8 @@ import { registerFlowTools } from "./server/flow-tools";
 import { createLegacyHeal } from "./server/legacy-heal";
 import { registerFlowSettingsApi, STAGE_SETTINGS_CHANNEL } from "./server/settings-api";
 import { createFlowSync, defaultSyncDir, FLOW_SYNC_CHANNEL, registerFlowSyncApi, SYNC_POLL_MS } from "./server/flow-sync";
-import { hostCatalogSources, hostSkillFileSources, readExecutorFile, readSkillFile, readStageCatalog, writeScriptFile } from "./server/stage-catalog";
+import { hostCatalogSources, hostSkillFileSources, readClaudePlugins, readExecutorFile, readSkillFile, readStageCatalog, readWorkflowScripts, writeScriptFile } from "./server/stage-catalog";
+import { createSkillScope } from "./server/skill-scope";
 import { revealInFinderHere } from "@bb-plugins/reveal-in-finder/index";
 import { createStore } from "./server/store";
 import { createThreadFlows } from "./server/thread-flows";
@@ -56,6 +57,9 @@ import { DEFAULT_JOURNAL_DIR } from "./lib/journal-dir";
 /** Время в base36 спереди — идентификаторы сортируются по созданию. */
 const newId = (): string => `${Date.now().toString(36)}${randomBytes(6).toString("hex")}`;
 const now = (): string => new Date().toISOString();
+
+/** Сколько начало хода ждёт сверки настроек Claude Code дерева треда. */
+const TURN_START_SYNC_MS = 2_000;
 
 export default async function plugin(bb: BbPluginApi): Promise<void> {
   // Язык читает фронт: System идёт за языком браузера, который знает только он.
@@ -110,9 +114,28 @@ export default async function plugin(bb: BbPluginApi): Promise<void> {
   // Тред, переданный до указателей прогонов, находит свой прогон по ответу на бриф, которым работу передали.
   // Свои отправки Flow — ответ на бриф и побудка: ход владельца по ним выбор flow не применяет.
   const own = createOwnSends();
+  // Навыки и агенты, которые Claude Code грузит агенту треда, — по открытым этапам его flow (./server/skill-scope.ts).
+  const catalogSources = hostCatalogSources(bb);
+  const scope = createSkillScope({
+    kv: bb.storage.kv,
+    worktree: async (threadId) => {
+      const { environmentId } = await bb.sdk.threads.get({ threadId });
+      const environment = environmentId === null ? null : await bb.sdk.environments.get({ environmentId });
+      return environment?.isWorktree === true && environment.path ? environment.path : null;
+    },
+    flow: flowOf,
+    stages: (threadId) => stagesOf(threadId).stages,
+    progress: (threadId) => progress.get(threadId),
+    catalog: () => readStageCatalog(catalogSources),
+    plugins: () => readClaudePlugins(catalogSources),
+    workflowScripts: () => readWorkflowScripts(catalogSources),
+    warn: (message) => bb.log.warn(message),
+  });
+  bb.events.on("thread.active", ({ thread }) => void scope.sync(thread.id));
   const progress = createProgress(bb.storage.kv, {
     onChange: (threadId) => {
       advance(threadId);
+      void scope.sync(threadId);
       void freezeFinished(threadId).catch(() => undefined);
     },
     handedTo: async (briefId) => (await store.getAnswer(briefId))?.handoffThreadId });
@@ -272,7 +295,16 @@ export default async function plugin(bb: BbPluginApi): Promise<void> {
   void catalog();
   registerFlowTools(bb, flows, { catalog, newId });
   // Пустой прогон выбранного flow — сразу: контейнер состояния Flow показывает этапы, не дожидаясь первого брифа.
-  registerChooseFlow(bb, { flows, threads, instructions: (threadId) => flowTurnInstructions(stagesOf(threadId).stages), started: (threadId) => progress.annotate(threadId, (p) => p) });
+  registerChooseFlow(bb, {
+    flows,
+    threads,
+    instructions: (threadId) => flowTurnInstructions(stagesOf(threadId).stages),
+    // Тред с «Автоматически» получил flow: лишнее прячется сразу, до начала работы.
+    started: async (threadId) => {
+      await progress.annotate(threadId, (p) => p);
+      await scope.sync(threadId);
+    },
+  });
   registerFlowSettingsApi(bb, flows, { catalog, ready: async () => {
     if (!heal.done()) await catalog();
   },
@@ -310,6 +342,8 @@ export default async function plugin(bb: BbPluginApi): Promise<void> {
     ownerTurn: choice.ownerTurn,
     ownerMessage: (threadId) => returnAwaitingBrief({ store, publish: (id) => bb.realtime.publish(ANSWERED_CHANNEL, { id }) }, threadId),
     firstMessage: startThread({ threads, progress, hasFlow: (threadId) => flowOf(threadId) !== null, handoffFlow: takeHandoffFlow }),
+    // Хук ждёт решения не дольше 10 с и запирает тред на просрочке: сверка, которая затянулась, доходит в фоне.
+    turnStart: (threadId) => Promise.race([scope.sync(threadId), new Promise<void>((resolve) => setTimeout(resolve, TURN_START_SYNC_MS).unref())]),
   });
   // Ушедшая своя отправка забывается — тем же текстом, что хук видит в `input.text`: текстовые блоки через перевод строки.
   bb.events.on("message.dispatched", ({ entry }) =>

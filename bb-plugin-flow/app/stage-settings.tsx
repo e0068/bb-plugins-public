@@ -21,7 +21,7 @@ import { dropStage, ownerOf, removeStage, stageApart, stageNumbers } from "../co
 import { isTemplateSaved, removeTemplate, saveTemplate, stagesFromTemplate, templatesOfKind } from "../core/stage-templates";
 import { FieldOverlay, overlayItem, useFieldOverlay } from "../components/ui/field-overlay";
 import { Button } from "../components/ui/button";
-import { Icon } from "../components/ui/icon";
+import { Icon, type IconName } from "../components/ui/icon";
 import { Input } from "../components/ui/input";
 import { Switch } from "../components/ui/switch";
 import { Textarea } from "../components/ui/textarea";
@@ -1093,9 +1093,10 @@ function WorkStages({ flowId }: { flowId: string }) {
 }
 
 /** Настройка-переключатель строкой, как числовая; пока настройки не прочитаны — недоступна. */
-function SwitchSetting(props: { label: string; checked: boolean | undefined; onChange: (checked: boolean) => void }) {
+export function SwitchSetting(props: { label: string; icon?: IconName; checked: boolean | undefined; onChange: (checked: boolean) => void }) {
   return (
     <label className="flex min-h-11 items-center gap-3 rounded-lg bg-surface-recessed-solid px-3 py-2 text-[13px]">
+      {props.icon !== undefined && <Icon name={props.icon} aria-hidden="true" className="size-4 shrink-0 text-muted-foreground" />}
       <span className="flex-1">{props.label}</span>
       <Switch aria-label={props.label} checked={props.checked === true} disabled={props.checked === undefined} onCheckedChange={props.onChange} />
     </label>

@@ -75,6 +75,18 @@ export const withDescription = (flow: Flow, description: string): Flow => {
 
 export const describeFlow = (settings: FlowSettings, id: string, description: string): FlowSettings => mapFlow(settings, id, (flow) => withDescription(flow, description));
 
+type FlowLimits = { limitSkills?: boolean; limitAgents?: boolean };
+
+/** Переключатели ограничений flow: включённый — поле `true`, выключенный снимает поле; не названный не меняется. */
+export const limitFlow = (settings: FlowSettings, id: string, limits: FlowLimits): FlowSettings =>
+  mapFlow(settings, id, (flow) =>
+    (Object.entries(limits) as Array<[keyof FlowLimits, boolean | undefined]>).reduce<Flow>((acc, [key, on]) => {
+      if (on === undefined) return acc;
+      const { [key]: _, ...rest } = acc;
+      return on ? { ...rest, [key]: true } : rest;
+    }, flow),
+  );
+
 /** Последний flow не удаляется: треду нужен хоть какой-то. */
 export const removeFlow = (settings: FlowSettings, id: string): FlowSettings =>
   settings.flows.length <= 1 ? settings : { ...settings, flows: settings.flows.filter((flow) => flow.id !== id) };

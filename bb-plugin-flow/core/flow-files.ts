@@ -11,7 +11,13 @@ export const FLOW_FILE_SUFFIX = ".flow.json";
 
 /** Этап в файле: ссылка `flow` — имя flow вместо его id. */
 export type FileStage = { id: string; flow?: string; [field: string]: unknown };
-export type FlowFile = { name: string; description?: string; stages: FileStage[] };
+export type FlowFile = { name: string; description?: string; stages: FileStage[]; limitSkills?: true; limitAgents?: true };
+
+/** Переключатели ограничений flow — как есть у flow: включённый — `true`, выключенного поля нет. */
+const limitsOf = ({ limitSkills, limitAgents }: Pick<Flow, "limitSkills" | "limitAgents">) => ({
+  ...(limitSkills === undefined ? {} : { limitSkills }),
+  ...(limitAgents === undefined ? {} : { limitAgents }),
+});
 /** `settings.json`: порядок flow по именам и общее на коллекцию; шаблоны этапов ссылаются по имени. */
 export type CollectionFile = { order: string[]; stageTemplates?: Array<{ flow?: string; [field: string]: unknown }>; [field: string]: unknown };
 export type FolderFlow = { path: string; flow: FlowFile };
@@ -66,6 +72,7 @@ const flowToFile = (flow: Flow, byId: ReadonlyMap<string, Flow>): FlowFile => ({
   name: flow.name,
   ...(flow.description === undefined ? {} : { description: flow.description }),
   stages: flow.stages.map(refByName<WorkStage>(byId)),
+  ...limitsOf(flow),
 });
 
 const collectionToFile = ({ flows, version: _version, stageTemplates, ...rest }: FlowSettings, byId: ReadonlyMap<string, Flow>): CollectionFile => ({
@@ -168,7 +175,7 @@ export const fromFlowFiles = (files: readonly FolderFlow[], collection: Collecti
     if (acc.kind === "error") return acc;
     const stages = resolveAll(flow.stages, resolveRef(ids, `Flow "${flow.name}"`));
     if (stages.kind === "error") return stages;
-    const next = { id: ids.get(nameKey(flow.name))!, name: flow.name, ...(flow.description === undefined ? {} : { description: flow.description }), stages: stages.values as unknown as WorkStage[] };
+    const next = { id: ids.get(nameKey(flow.name))!, name: flow.name, ...(flow.description === undefined ? {} : { description: flow.description }), stages: stages.values as unknown as WorkStage[], ...limitsOf(flow) };
     return { kind: "ok", values: [...acc.values, next] };
   }, { kind: "ok", values: [] });
   if (built.kind === "error") return built;

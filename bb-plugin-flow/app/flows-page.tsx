@@ -1,6 +1,6 @@
 // Страница Flow в левом меню bb: выбранный flow — имя и описание «когда
-// выбирать» правятся на месте, таблица его этапов, а под ней одной строкой —
-// «Добавить этап» слева и «Удалить flow» справа. Сам выбор и создание — деревом
+// выбирать» правятся на месте, таблица его этапов, под ней одной строкой —
+// «Добавить этап» слева и «Удалить flow» справа, а ниже — переключатели ограничений навыков и агентов. Сам выбор и создание — деревом
 // слева (./flows-tree), там же папка синхронизации; на узкой панели дерево
 // встаёт над содержимым. Общее на все flow — ширина кнопки и выбор flow
 // агентом — в настройках плагина (./flow-settings-sections). Страницу листает
@@ -13,7 +13,7 @@
 import { useState } from "react";
 import type { PluginNavPanelProps } from "@get-bb/plugin-sdk/app";
 
-import { describeFlow, flowById, removeFlow, renameFlow } from "../core/flows";
+import { describeFlow, flowById, limitFlow, removeFlow, renameFlow } from "../core/flows";
 import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
 import { Textarea } from "../components/ui/textarea";
@@ -22,7 +22,8 @@ import { LocaleProvider } from "./locale";
 import { ProviderLogosProvider } from "./provider-logos-source";
 import { useMessages } from "./locale-context";
 import { updateFlowSettings, useFlowSettings, useFlowSettingsLive } from "./stage-settings-store";
-import { AddStage, WorkStagesTable } from "./stage-settings";
+import { AddStage, SwitchSetting, WorkStagesTable } from "./stage-settings";
+import { SKILL_ICON } from "./stage-icons";
 import { HISTORY_SUB_PATH, RunHistory } from "./run-history";
 import { FlowsTree } from "./flows-tree";
 
@@ -73,6 +74,23 @@ function FlowDescription({ flow }: { flow: Flow }) {
       onBlur={save}
       className="min-h-0 resize-none [field-sizing:content] rounded-md border-0 bg-card px-2.5 py-1.5 text-[13px] shadow-none focus-visible:ring-1 focus-visible:ring-inset"
     />
+  );
+}
+
+/**
+ * Переключатели под кнопками этапов, рядом друг с другом, а на узкой панели — один под другим: какие навыки и агенты
+ * Claude Code грузит агенту треда этого flow (../server/skill-scope.ts). Иконки те же, что у навыка и агента в таблице этапов.
+ */
+function FlowLimits({ flow }: { flow: Flow }) {
+  const t = useMessages();
+  return (
+    <div className="flex flex-col gap-1">
+      <div className="grid grid-cols-1 gap-1 @lg:grid-cols-2">
+        <SwitchSetting label={t.flows.limitSkills} icon={SKILL_ICON} checked={flow.limitSkills === true} onChange={(limitSkills) => updateFlowSettings((s) => limitFlow(s, flow.id, { limitSkills }))} />
+        <SwitchSetting label={t.flows.limitAgents} icon="Bot" checked={flow.limitAgents === true} onChange={(limitAgents) => updateFlowSettings((s) => limitFlow(s, flow.id, { limitAgents }))} />
+      </div>
+      <p className="text-xs text-muted-foreground">{t.flows.limitsHint}</p>
+    </div>
   );
 }
 
@@ -131,6 +149,7 @@ function FlowEditor({ subPath }: { subPath: string }) {
           {settings.flows.length > 1 && <DeleteFlow key={flow.id} flow={flow} />}
         </div>
       </div>
+      <FlowLimits flow={flow} />
     </section>
   );
 }
