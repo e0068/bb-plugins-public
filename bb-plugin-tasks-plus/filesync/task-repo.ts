@@ -34,7 +34,9 @@ export type RepoState =
   | { kind: "reconnecting"; since: string }
   | { kind: "offline"; since: string; lastSyncAt: string | null }
   /** The database answers, but not to this token: nothing is read until a new one is given. */
-  | { kind: "refused"; since: string; lastSyncAt: string | null };
+  | { kind: "refused"; since: string; lastSyncAt: string | null }
+  /** This machine holds no token for the database: nothing is asked of it until one is given. */
+  | { kind: "no-token"; since: string; lastSyncAt: string | null };
 
 export interface TaskRepo {
   list(): Promise<RepoFile[]>;
@@ -74,10 +76,18 @@ export class DatabaseAuthFailed extends Error {
   }
 }
 
-/** The database is out of reach right now — no link, or the token refused:
+/** No token for the board's database is saved on this machine — not the database's refusal: nothing was sent. */
+export class DatabaseTokenMissing extends Error {
+  constructor() {
+    super("no token for the database is saved on this machine");
+    this.name = "DatabaseTokenMissing";
+  }
+}
+
+/** The database is out of reach right now — no link, the token refused, or no token:
  *  that board's business, not a failure of whatever reads across boards. */
-export function outOfReach(error: unknown): error is DatabaseUnreachable | DatabaseAuthFailed {
-  return error instanceof DatabaseUnreachable || error instanceof DatabaseAuthFailed;
+export function outOfReach(error: unknown): error is DatabaseUnreachable | DatabaseAuthFailed | DatabaseTokenMissing {
+  return error instanceof DatabaseUnreachable || error instanceof DatabaseAuthFailed || error instanceof DatabaseTokenMissing;
 }
 
 /** One board's read inside a read across boards: `fallback` when its

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { useRealtime, useRpc } from "@get-bb/plugin-sdk/app";
 import type { FoldersRpcContract, SyncedFolder, SyncedSource } from "../../folders/contract.js";
-import { TOKEN_REFUSED_TEXT } from "../../folders/token-refused.js";
+import { TOKEN_MISSING_TEXT, TOKEN_REFUSED_TEXT } from "../../folders/token-refused.js";
 import { Button } from "@/components/ui/button";
 import { Icon } from "@/components/ui/icon";
 import { databaseHost } from "../../folders/database-address.js";
@@ -22,6 +22,7 @@ const LINK_DOT: Record<DatabaseSource["state"], string> = {
   reconnecting: "bg-warning",
   offline: "bg-destructive",
   refused: "bg-destructive",
+  "no-token": "bg-destructive",
 };
 
 const LINK_TEXT: Record<DatabaseSource["state"], string> = {
@@ -29,6 +30,7 @@ const LINK_TEXT: Record<DatabaseSource["state"], string> = {
   reconnecting: "text-warning",
   offline: "text-destructive",
   refused: "text-destructive",
+  "no-token": "text-destructive",
 };
 
 const formatMoment = (iso: string): string => new Date(iso).toLocaleString([], { dateStyle: "medium", timeStyle: "short" });
@@ -44,6 +46,8 @@ function linkText(source: DatabaseSource): string {
       return source.lastSyncAt === null ? "Unreachable · not synced yet" : `Unreachable · last sync ${formatMoment(source.lastSyncAt)}`;
     case "refused":
       return TOKEN_REFUSED_TEXT;
+    case "no-token":
+      return TOKEN_MISSING_TEXT;
   }
 }
 

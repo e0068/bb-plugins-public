@@ -15,6 +15,9 @@ const isTaskTabTarget = (value: JsonValue): value is TaskTabTarget =>
   !Array.isArray(value) &&
   typeof value.taskKey === "string";
 
+/** The thread side panel's Task tab — the `threadPanelAction` id that opens a task beside the chat. */
+export const TASK_PANEL_ACTION = "task";
+
 /** The Task tab of the Tasks+ page's right panel; its target is the task to show. */
 export const TASK_TAB: ExperimentalPluginFixedTabReference<TaskTabTarget> = {
   panelId: "tasks",

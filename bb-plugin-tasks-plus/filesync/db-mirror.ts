@@ -92,6 +92,12 @@ export function refusedLink(link: LinkState, at: string): LinkState {
   return { ...link, failures: 0, state: { kind: "refused", since, lastSyncAt: link.lastSyncAt } };
 }
 
+/** The link with no token to send: without one from the first such answer on, until a success. */
+export function tokenlessLink(link: LinkState, at: string): LinkState {
+  const since = link.state.kind === "no-token" ? link.state.since : at;
+  return { ...link, failures: 0, state: { kind: "no-token", since, lastSyncAt: link.lastSyncAt } };
+}
+
 /** The link after one attempt: the first failure is reconnecting, the third in
  *  a row is offline, the first success is live again. */
 export function nextLink(link: LinkState, event: { ok: boolean; at: string }): LinkState {

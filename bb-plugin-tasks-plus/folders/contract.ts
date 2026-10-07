@@ -9,7 +9,8 @@ const bbProjectIdSchema = z.string().startsWith("proj_");
 /**
  * Where a connected board keeps its tasks. A folder is read fresh on every
  * request (see decisions/tasks-files-are-the-store.md), so it has no link to
- * report. A database has one: `live`, `reconnecting` or `offline`. Never a
+ * report. A database has one: `live`, `reconnecting`, `offline`, `refused`
+ * (the database turned the token down) or `no-token` (none saved here). Never a
  * token — the address is all a row says of how to reach the database; the
  * token leaves the service only in an invite, asked for by `databaseInvite`.
  */
@@ -19,7 +20,7 @@ export const syncedSourceSchema = z.discriminatedUnion("kind", [
     .object({
       kind: z.literal("database"),
       url: z.string(),
-      state: z.enum(["live", "reconnecting", "offline", "refused"]),
+      state: z.enum(["live", "reconnecting", "offline", "refused", "no-token"]),
       lastSyncAt: z.string().nullable(),
     })
     .strict(),
@@ -75,6 +76,7 @@ export const folderDomainErrorSchema = z
       "folder_connect_failed",
       "database_unreachable",
       "database_auth_failed",
+      "database_token_missing",
       "database_not_empty",
       "turso_token_required",
       "turso_token_refused",

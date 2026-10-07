@@ -833,6 +833,7 @@ export const tasksDomainErrorSchema = z
       "task_already_taken",
       "database_unreachable",
       "database_auth_failed",
+      "database_token_missing",
       "task_write_conflict",
     ]),
     message: z.string(),

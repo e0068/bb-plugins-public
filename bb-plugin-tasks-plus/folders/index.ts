@@ -7,7 +7,7 @@ import type { BoardConfig } from "../filesync/board-config.js";
 import { createDbRepo, failureOf, peekBoard, type DbRepo } from "../filesync/db-repo.js";
 import { resolveMainRoot } from "../filesync/resolve-roots.js";
 import { defaultSourcePath } from "../filesync/resolve-roots.js";
-import { DatabaseAuthFailed, DatabaseUnreachable, diskRepo, outOfReach } from "../filesync/task-repo.js";
+import { DatabaseAuthFailed, DatabaseTokenMissing, DatabaseUnreachable, diskRepo, outOfReach } from "../filesync/task-repo.js";
 import { createUlid } from "../filesync/validators.js";
 import { createHranaClient, unreachableSentence, type HranaClient, type UnreachableCause } from "../remote/hrana.js";
 import { createTursoApi, databaseBaseName, type TursoApi, type TursoError, type TursoResult } from "../remote/turso.js";
@@ -80,6 +80,7 @@ function fromTurso<T>(result: TursoResult<T>, origin: TokenOrigin): Step<T> {
 function databaseFailure(error: unknown): FolderDomainError {
   if (error instanceof DatabaseUnreachable) return { code: "database_unreachable", message: error.message };
   if (error instanceof DatabaseAuthFailed) return { code: "database_auth_failed", message: "The database refused the token." };
+  if (error instanceof DatabaseTokenMissing) return { code: "database_token_missing", message: "No token for this database is saved on this machine." };
   return { code: "folder_connect_failed", message: error instanceof Error ? error.message : String(error) };
 }
 
@@ -173,7 +174,7 @@ export function registerFolders(bb: BbPluginApi, store: TasksApiStore): void {
       linkedBbProjectId: null,
       linkedBbProjectName: null,
       repoPath: null,
-      // A board whose repository could not be opened (no saved token) is unreachable, and says so.
+      // A board with no repository open yet is unreachable, and says so.
       source: sourceOf(board.database.url, repo?.state() ?? { kind: "offline", since: at, lastSyncAt: null }, at),
     };
   }
@@ -229,7 +230,8 @@ export function registerFolders(bb: BbPluginApi, store: TasksApiStore): void {
    * it is asynchronous, and a board must have its repository the moment the
    * plugin has loaded — the lifecycle reads every board right then — so the
    * repository is made at once and the token comes when the first request
-   * needs it. No saved token is a refused one.
+   * needs it. No saved token is no token, not a refusal: nothing is sent,
+   * and the next request reads the saved ones again.
    */
   function savedTokenClient(url: string): HranaClient {
     let opened: HranaClient | null = null;
@@ -239,11 +241,11 @@ export function registerFolders(bb: BbPluginApi, store: TasksApiStore): void {
       opened = token === null ? null : createHranaClient({ url, token });
       return opened;
     };
-    const refused = { ok: false, error: { kind: "auth" } } as const;
+    const tokenless = { ok: false, error: { kind: "no-token" } } as const;
     return {
       url,
-      execute: async (sql, args) => (await client())?.execute(sql, args) ?? refused,
-      batch: async (steps) => (await client())?.batch(steps) ?? refused,
+      execute: async (sql, args) => (await client())?.execute(sql, args) ?? tokenless,
+      batch: async (steps) => (await client())?.batch(steps) ?? tokenless,
     };
   }
 
