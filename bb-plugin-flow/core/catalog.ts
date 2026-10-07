@@ -79,12 +79,16 @@ const record = (value: unknown): Record<string, unknown> | null => (typeof value
  * Папки установленных плагинов Claude Code из `~/.claude/plugins/installed_plugins.json` с именем плагина до `@`;
  * плагин, выключенный в `enabledPlugins` настроек, не берётся. Битый список — ни одного плагина, битые настройки — все.
  */
-export const installedPluginDirs = (installed: string, settings: string | null): Array<{ plugin: string; dir: string }> => {
+export const installedPluginDirs = (installed: string, settings: string | null): Array<{ plugin: string; dir: string }> =>
+  installedPlugins(installed, settings).map(({ plugin, dir }) => ({ plugin, dir }));
+
+/** То же с ключом `плагин@маркетплейс`, под которым плагин стоит в `enabledPlugins`. */
+export const installedPlugins = (installed: string, settings: string | null): Array<{ key: string; plugin: string; dir: string }> => {
   const plugins = record(record(parseJson(installed))?.plugins) ?? {};
   const enabled = record(record(parseJson(settings))?.enabledPlugins) ?? {};
   return Object.entries(plugins).flatMap(([key, installs]) => {
     const dir = Array.isArray(installs) ? record(installs[0])?.installPath : undefined;
-    return typeof dir === "string" && enabled[key] !== false ? [{ plugin: key.split("@")[0]!, dir }] : [];
+    return typeof dir === "string" && enabled[key] !== false ? [{ key, plugin: key.split("@")[0]!, dir }] : [];
   });
 };
 
