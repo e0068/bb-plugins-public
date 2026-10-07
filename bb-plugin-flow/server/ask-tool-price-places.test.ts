@@ -4,7 +4,7 @@ import { describe, expect, it } from "vitest";
 
 import { ASK_INSTRUCTIONS } from "./ask-tool";
 
-const skill = readFileSync(new URL("../skills/flow/SKILL.md", import.meta.url), "utf8");
+const skill = readFileSync(new URL("../skills/flow-questions/SKILL.md", import.meta.url), "utf8");
 
 describe("у цены работы одно место", () => {
   it("инструкции не велят класть цену на этапы, пункты и варианты сразу", () => {

@@ -4,7 +4,7 @@ import { describe, expect, it } from "vitest";
 
 import { ASK_INSTRUCTIONS } from "./ask-tool";
 
-const skill = readFileSync(new URL("../skills/flow/SKILL.md", import.meta.url), "utf8");
+const read = (file: string) => readFileSync(new URL(`../skills/${file}`, import.meta.url), "utf8");
 
 describe("агент знает про добавки, пункт-изменение и прогноз бюджета", () => {
   it("инструкции называют add с целью, потолком и риском числом, где его ставить и что бюджет — прогноз", () => {
@@ -17,7 +17,7 @@ describe("агент знает про добавки, пункт-изменен
   });
 
   it("навык показывает add в примере и объясняет строку «Budget» в ответе", () => {
-    expect(skill).toContain('"add": {');
-    expect(skill).toContain("Budget — forecast");
+    expect(read("flow-criteria/SKILL.md")).toContain('"add": {');
+    expect(read("flow-stage-selection/SKILL.md")).toContain("Budget — forecast");
   });
 });

@@ -24,12 +24,31 @@ The owner sees what was done and decides what next. A demo is a stop: after it t
 **In bb.** An `ask_decision` brief with `outcome` instead of setup:
 
 - `stage` — this stage's id from the turn instructions; `final` — whether it is the last demo; `next` — the next stage, only when it is not the last.
-- `done` — what closed since the previous demo; `pending` — what did not, with `why`; `sections` — report sections `{ title, text }`; `notes` — the important in one line: bug check steps, caveats; `tasks` — tasks without `note`: `done: true` — this demo shows the task's final result; before the call, set its status to In Review with `bb tasks update <key> --status in_review`, and it becomes done when the owner accepts the step; `done: false` — a task only created in this thread. The widget shows them under "Review" and "Created", each as its Tasks+ card that opens the task in the thread's side panel.
+- `done` — what closed since the previous demo; `pending` — what did not, with `why`; `sections` — report sections `{ title, text }`; `notes` — what else the owner should know, paragraphs split by a blank line: bug check steps, caveats, idle time; `tasks` — tasks without `note`: `done: true` — this demo shows the task's final result; before the call, set its status to In Review with `bb tasks update <key> --status in_review`, and it becomes done when the owner accepts the step; `done: false` — a task only created in this thread. The widget shows them under "Review" and "Created", each as its Tasks+ card that opens the task in the thread's side panel.
 - The plugin changed — a section "Changelog" in `sections` with the text of the changelog entry as it is in the file `bb-plugin-<name>/changelog/<slug>.md`, Russian and English: the owner sees what users will read before the merge.
 - `results` — at least one: `{ label, target }` — a file, path or address; `{ label, command }` — a command the owner runs with a button. Unless `documentsOnly: true`, the results hold a live one: an `http(s)` page or a command.
 - A local server page is shared via `bb connect expose <port>`; without Connect — `http://localhost:<port>`.
+- `documentsOnly: true` — only documents changed since the previous demo: a spec, a plan, a task, a prototype file with nothing to run; the card says there is no live link. When code changed, the tool rejects a demo without a live result.
+- Idle time: the stages that stood waiting for the owner — a failed automation step, an action stage between presses — go into `notes` a line per stage with its minutes, as `flow_stage` and Flow's wake-up message named them.
 
-The format is in the Flow plugin instructions and the tool description. After the call, paste the directive line as a standalone line and end the turn. On getting the answer, stop what you brought up and remove the share: `bb connect unexpose <port>`.
+**The live result.** The owner judges the work by seeing it run, not by reading about it. Web — start the dev server or a preview in the background, run `bb connect status --json`: when paired, `bb connect expose <port>` prints the share URL — give that; otherwise give `http://localhost:<port>` and say so in `notes`; link straight to the page where the change is visible, with the query or route that puts it in the right state. Desktop — build the app from this working tree and give `{ label, command }` that starts that build; one click on "Run in terminal" has to be enough. Before sending, request every page URL and send the demo only when it answers 200; a command you have run once yourself.
+
+```json
+{
+  "title": "Demo — prototype",
+  "outcome": {
+    "stage": "demo", "final": false, "next": "Spec",
+    "done": ["The dispatch cell sits left of Send", "The prototype switches every open fork"],
+    "pending": [{ "text": "The outcome section", "why": "doing it next" }],
+    "sections": [{ "title": "Changelog", "text": "- ru: Ячейка отправки слева от «Отправить»\n  en: The dispatch cell sits left of Send" }],
+    "notes": "Segments clip the label on a narrow feed.\n\nThe light theme is checked on screenshots only.",
+    "tasks": [{ "key": "BBPL-1", "done": true }, { "key": "BBPL-2", "done": false }],
+    "results": [{ "label": "localhost:5173", "target": "http://localhost:5173/settings" }, { "label": "Desktop app", "command": "cd app && npm run tauri dev" }, { "label": "prototype.html", "target": "docs/assets/x/prototype.html" }]
+  }
+}
+```
+
+After the call, paste the directive line as a standalone line and end the turn. On getting the answer, stop what you brought up and remove the share: `bb connect unexpose <port>`. The demo you send again after a comment starts them again.
 
 **In Claude Code.** A reply in sections: "Done", "Not done", "How to check". Every file, folder and address as a markdown link. The live result — the `http://localhost:<port>` address of the running server or exactly one launch command in a bash block. Then AskUserQuestion "What next?": "Continue" (Recommended), and the owner writes a comment in "Other". On getting the answer, stop what you brought up.
 
