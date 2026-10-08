@@ -207,6 +207,18 @@ describe("a screen of tasks as a table", () => {
     expect(todo.querySelector('[data-status-icon="todo"]')).not.toBeNull();
   });
 
+  it("a group header leads with a chevron that shows whether the group is folded", async () => {
+    const slot = renderTable();
+    await waitFor(() => expect(rowKeys(slot.container)).toHaveLength(TASKS.length));
+    const todo = slot.container.querySelector('[data-table-group="todo"]') as HTMLElement;
+    const toggle = within(todo).getByRole("button", { name: /Todo/ });
+    expect(toggle.firstElementChild?.getAttribute("data-group-chevron")).toBe("expanded");
+    expect(toggle.getAttribute("aria-expanded")).toBe("true");
+    fireEvent.click(toggle);
+    await waitFor(() => expect(toggle.firstElementChild?.getAttribute("data-group-chevron")).toBe("collapsed"));
+    expect(toggle.getAttribute("aria-expanded")).toBe("false");
+  });
+
   it("an empty screen shows the empty state", async () => {
     const slot = renderTable([]);
     await waitFor(() => expect(slot.getByText(/No tasks/)).toBeDefined());

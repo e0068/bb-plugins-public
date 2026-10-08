@@ -28,6 +28,8 @@ export interface TableGroup {
   label: string | null;
   /** Every row that belongs to the group, whether or not it is folded away. */
   count: number;
+  /** Folded by the viewer: its rows are left out, its header still shows. */
+  collapsed: boolean;
   rows: TableRow[];
 }
 
@@ -145,6 +147,7 @@ export function tableRows(tasks: readonly Task[], input: RowsInput): TableGroup[
         key: ALL_KEY,
         label: null,
         count,
+        collapsed,
         rows: collapsed ? [] : forest.flatMap((node) => flatten(node, collapsedTasks)),
       },
     ];
@@ -177,6 +180,7 @@ export function tableRows(tasks: readonly Task[], input: RowsInput): TableGroup[
         key: group.key,
         label: group.label,
         count,
+        collapsed,
         rows: collapsed ? [] : nodes.flatMap((node) => flatten(node, collapsedTasks)),
       },
     ];
