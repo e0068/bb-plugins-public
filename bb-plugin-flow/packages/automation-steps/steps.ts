@@ -199,15 +199,16 @@ export function createSteps(ports: StepPorts): Steps {
     return status === "done" ? withLinks(outcome, moved) : outcome;
   };
 
-  // Тред получает название своей задачи. Задачи нет — шаг падает, а не
-  // проходит молча: владелец привязывает задачу и жмёт «Повторить».
+  // Тред получает название своей задачи. Задачи нет или её не прочесть —
+  // шаг пропускается: имя треда остаётся, цепочка идёт дальше, а причина
+  // стоит в пометке шага.
   const renameThread = async (threadId: string): Promise<StepOutcome> => {
     const lookup = await findLinkedTask(cli(), threadId);
     switch (lookup.kind) {
       case "unavailable":
-        return failed(`The thread's task could not be read: ${lookup.reason}`);
+        return done(`skipped: the thread's task could not be read: ${lookup.reason}`);
       case "none":
-        return failed("No task is linked to the thread. Link a task, then retry.");
+        return done("skipped: no task is linked to the thread");
       case "found": {
         const title = threadTitleOf(lookup.task);
         if (title === null) return failed(`Task ${lookup.task.key} has no title to name the thread with.`);

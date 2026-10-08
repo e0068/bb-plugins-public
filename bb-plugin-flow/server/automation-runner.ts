@@ -12,7 +12,6 @@ import { scriptIdOf, scriptOf } from "../core/automation-scripts";
 import { waitsForAnswer } from "../core/awaiting";
 import {
   DEFAULT_RETRY,
-  idleStages,
   isActionStage,
   isAgentStage,
   onIdleClose,
@@ -256,9 +255,7 @@ export const createAutomationRunner = (deps: AutomationRunnerDeps): AutomationRu
   const ownerWaits = async (threadId: string, stage: WorkStage, stepId: string, error: string): Promise<void> => {
     notify({ kind: "failed", threadId, stage, stepId, error });
     if (isActionStage(stage) || deps.wakeOnFailure?.() !== true) return;
-    const record = await deps.progress.get(threadId);
-    const idle = record === null ? [] : idleStages(record, deps.stages(threadId).stages);
-    await deps.wake?.(threadId, failureWakeText(stage, stepId, error, idle, deps.failureInstruction?.())).catch(deps.onError);
+    await deps.wake?.(threadId, failureWakeText(stage, stepId, error, deps.failureInstruction?.())).catch(deps.onError);
   };
 
   const execute = (stage: WorkStage, step: RunStep, threadId: string): Promise<StepOutcome> => {
@@ -521,7 +518,6 @@ export const createAutomationRunner = (deps: AutomationRunnerDeps): AutomationRu
   /**
    * Этап за последним доигранным этапом `last` ведёт агент — его надо разбудить; автоматизацию и этап Action Flow тянет сам.
    * Смотрится этап прогона за `last`, а не первый незакрытый во flow: нетронутые этапы в начале flow работой за автоматизацией не являются.
-   * Реплика несёт простой по этапам.
    */
   const wakeIfAgentNext = async (threadId: string, kind: "automation" | "action", last: WorkStage): Promise<void> => {
     const record = await deps.progress.get(threadId);
@@ -532,7 +528,7 @@ export const createAutomationRunner = (deps: AutomationRunnerDeps): AutomationRu
     // Бриф этого этапа уже у владельца — Демонстрация ждёт кнопки: реплика
     // разбудила бы агента там, где его работа сделана и решает владелец.
     if (await holdsOwner(threadId)) return;
-    await deps.wake?.(threadId, wakeText(kind, idleStages(record, stages), next));
+    await deps.wake?.(threadId, wakeText(kind, next));
   };
 
   /** Цепочка и реплика за ней: агент будится, только когда Flow действительно доиграл автоматизацию. */

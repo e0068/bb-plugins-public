@@ -19,7 +19,7 @@ describe("этап критериев — Definition of Done", () => {
   });
 
   it("реплика агенту о следующем этапе называет сохранённый под прежним именем этап Definition of Done", () => {
-    expect(wakeText("automation", [], saved)).toContain('Next stage: criteria "Definition of Done".');
+    expect(wakeText("automation", saved)).toContain('Next stage: criteria "Definition of Done".');
   });
 
   it("сохранённый под прежним именем этап подписан строками интерфейса на обоих языках", () => {

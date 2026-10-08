@@ -53,7 +53,7 @@ describe("несколько этапов со шагами открыты ср�
 
 describe("реплика агенту после доигранной автоматизации", () => {
   it("называет этап, с которого продолжать", () => {
-    const text = wakeText("automation", [], stage("demo-2", { name: "Demonstration" }));
+    const text = wakeText("automation", stage("demo-2", { name: "Demonstration" }));
     expect(text.split("\n")[0]).toBe("Flow: the automation stage is done — carry on with the next stage of the flow.");
     expect(text).toContain('Next stage: demo-2 "Demonstration".');
   });

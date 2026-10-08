@@ -72,7 +72,7 @@ Load the skill of a stage when the run reaches it: the format of its part, its e
 
 An answer that leaves no agent stage in the run does not reach you at all — the work is over, the stages close and the automations behind them run without you; a comment or an image in the answer reaches you as usual.
 
-**Idle time.** Flow measures the time a stage stood waiting for the owner — a failed automation step until the owner retries or skips it, an action stage between presses — and names it in the answer of `flow_stage` and in the reply it wakes you with. Carry it into the demo `notes` and the task report: a line per stage that stood, with its minutes. Stage minutes never include it.
+**Idle time.** Flow measures the time a stage stood waiting for the owner — a failed automation step until the owner retries or skips it, an action stage between presses — and shows it to the owner in the run summary. Stage minutes never include it. It helps the owner decide nothing, so it is not yours to report: not in the demo `notes`, not in the task report.
 
 ## Where the work runs
 

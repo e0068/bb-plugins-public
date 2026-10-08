@@ -279,29 +279,18 @@ export const onIdleClose = (progress: FlowProgress, stageId: string, at: string)
 /** Целые минуты простоя этапа. Открытый интервал в число не идёт: он закрывается раньше, чем закрывается этап. */
 export const idleMinutes = (track: StageTrack): number => Math.round((track.idleMs ?? 0) / 60_000);
 
-/** Этапы flow, которые простояли хотя бы минуту, в порядке flow: имя и минуты. Этап записи вне flow не в счёт. */
-export const idleStages = (progress: FlowProgress, stages: readonly WorkStage[]): Array<{ name: string; minutes: number }> =>
-  stages.flatMap((stage) => {
-    const minutes = idleMinutes(progress.stages[stage.id] ?? {});
-    return minutes > 0 ? [{ name: stage.name, minutes }] : [];
-  });
-
 /** Первая строка реплики агенту: чем кончился прогон Flow. Язык реплики — английский, её читает агент. */
 const CARRY_ON: Record<"automation" | "action", string> = {
   automation: "Flow: the automation stage is done — carry on with the next stage of the flow.",
   action: "Flow: the action stage is done — carry on with the next stage of the flow.",
 };
 
-/** Строка простоя для агента: какие этапы сколько простояли и куда это отнести. Простоя не было — пустая строка. */
-export const idleNote = (idle: ReadonlyArray<{ name: string; minutes: number }>): string =>
-  idle.length === 0 ? "" : `Idle waiting for the owner:\n${idle.map((s) => `- ${s.name} — ${s.minutes} m`).join("\n")}\nName it in the flow report and in the task report.`;
-
-/** Реплика агенту после прогона Flow: продолжение работы с этапа `next` и простой по этапам, который агент относит в отчёт. */
-export const wakeText = (kind: "automation" | "action", idle: ReadonlyArray<{ name: string; minutes: number }>, next?: WorkStage): string => {
-  const head = next === undefined ? CARRY_ON[kind] : `${CARRY_ON[kind]}\nNext stage: ${next.id} "${currentName(next)}".`;
-  const note = idleNote(idle);
-  return note === "" ? head : `${head}\n\n${note}`;
-};
+/**
+ * Реплика агенту после прогона Flow: продолжение работы с этапа `next`. Простоя этапов в ней нет: решений владельцу он не
+ * подсказывает, а агент, получив его, нёс его в «Важно знать». Простой виден владельцу в итоге прогона.
+ */
+export const wakeText = (kind: "automation" | "action", next?: WorkStage): string =>
+  next === undefined ? CARRY_ON[kind] : `${CARRY_ON[kind]}\nNext stage: ${next.id} "${currentName(next)}".`;
 
 /** Реплика агенту: шаг этапа упал на конфликте слияния — какие файлы, что сделать и что Flow сделает сам. */
 export const conflictWakeText = (stage: WorkStage, files: readonly string[], base = "the base branch"): string =>
@@ -322,13 +311,10 @@ export const withFailureInstruction = <S extends Pick<FlowSettings, "wakeAgentIn
 
 /**
  * Реплика агенту после последней неудачной попытки шага: факты падения — шаг, этап, ошибка, — что шаг ждёт владельца, и наказ
- * владельца, что агенту делать; несёт простой по этапам, как `wakeText`.
+ * владельца, что агенту делать; простоя в ней нет, как и в `wakeText`.
  */
-export const failureWakeText = (stage: WorkStage, step: string, error: string, idle: ReadonlyArray<{ name: string; minutes: number }>, instruction = DEFAULT_FAILURE_INSTRUCTION): string => {
-  const head = `Flow: step ${step} of stage ${stage.id} "${stage.name}" failed after the last attempt: ${error}\n\nThe step waits for the owner's Retry or Skip above the composer. ${instruction}`;
-  const note = idleNote(idle);
-  return note === "" ? head : `${head}\n\n${note}`;
-};
+export const failureWakeText = (stage: WorkStage, step: string, error: string, instruction = DEFAULT_FAILURE_INSTRUCTION): string =>
+  `Flow: step ${step} of stage ${stage.id} "${stage.name}" failed after the last attempt: ${error}\n\nThe step waits for the owner's Retry or Skip above the composer. ${instruction}`;
 
 /** Этап с упавшим шагом: не закрыт, а у прогона есть ошибка. */
 export const isFailed = (track: StageTrack): boolean => track.finishedAt === undefined && typeof track.run?.error === "string";

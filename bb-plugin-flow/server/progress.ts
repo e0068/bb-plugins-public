@@ -6,7 +6,7 @@ import type { BbPluginApi, PluginKvStorage } from "@get-bb/plugin-sdk";
 import { z } from "zod";
 
 import { stageGlyph } from "../components/ui/stage-glyphs";
-import { idleNote, idleStages, isActionStage } from "../core/automation-run";
+import { isActionStage } from "../core/automation-run";
 import { undoDue } from "../core/automation-undo";
 import { afterMark, markReply, returnedNote, startFact, stopFailure, waitedReply, type StartFact } from "../core/mark-report";
 import { carriedBy, carrierOf, EMPTY_PROGRESS, forHandoff, onAnswer, onBrief, onMark, pendingActive, progressView, recounted, reopen, isAhead, recountWindows, toggleStageInRun, touchesProgress, answerMovesProgress, withActive } from "../core/progress";
@@ -289,7 +289,6 @@ const INSTRUCTIONS = `Mark the stages of the thread's flow as you go, so the own
 - Automation stages are run and marked by Flow itself: when the next stage is an automation, mark the current stage done and wait for the answer — the call waits until Flow has run it. When the answer hands you Flow's message, act on it in the same turn; when it says to end your turn, end it — Flow sends you a message when your next stage is due. The answer says whether Flow started it, and if it did not, why and what to do. Never tell the owner an automation runs unless the answer says it started — relay what the answer says.
 - Action stages are run by the owner, step by step, with a button above the composer: when the next stage is an action, mark the current stage done and end your turn — Flow marks the action stage itself.
 - A stage sent back for rework is started again: marking a done stage started drops the done state of every stage after it, so the run goes through them again in order and the automations behind them run again. The undo steps of the done automations it reopens run before the answer, which names their outcome — relay a failed one to the owner.
-- Flow measures the time a stage stood waiting for the owner: a failed automation step until the owner retries or skips it, an action stage between presses. When this tool's answer or a reply from Flow names that idle time, carry it into the flow report and the task report — which stages stood and for how long.
 The stage ids are in the Flow instructions for the turn.`;
 
 type Result = NonNullable<FlowProgress["stages"][string]["results"]>[number];
@@ -437,11 +436,8 @@ export const registerProgress = (
         const waits = hold !== undefined && verdict.kind === "due" && !isActionStage(verdict.stage) && (fact?.kind === "started" || fact?.kind === "busy");
         const waited = waits ? await waitFor(ctx.threadId, stages, verdict.stage, hold, ctx.signal) : null;
         const ahead = `${waited?.text ?? markReply(stage, verdict, fact)}${state === "done" ? returnedNote(stages, marked, stage) : ""}`;
-        // Простой прогона — в ответе отметки: отчёт агент пишет до автоматизаций, и другого места узнать числа у него нет.
-        // Реплика Flow, отданная в ответ, уже несёт простой — вместе с простоем самих автоматизаций.
-        const idle = state === "done" && waited?.replied !== true ? idleNote(idleStages(marked, stages)) : "";
         const undoNote = undoLines.length === 0 ? "" : ` ${undoLines.join(" ")}`;
-        return `Stage ${stage} marked ${state}.${ahead}${idle === "" ? "" : ` ${idle}`}${undoNote}`;
+        return `Stage ${stage} marked ${state}.${ahead}${undoNote}`;
       } finally {
         hold?.release();
       }

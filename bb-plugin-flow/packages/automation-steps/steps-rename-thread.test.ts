@@ -31,9 +31,9 @@ const harness = (cli: CliPorts, update: (args: { threadId: string; title: string
   return { rename: createSteps(ports)["bb.rename-thread"], renames };
 };
 
-describe("шаг «Переименовать тред»", () => {
-  it("подписан «Переименовать тред» и «Rename the thread»", () => {
-    expect(STEP_LABELS["bb.rename-thread"]).toEqual({ en: "Rename the thread", ru: "Переименовать тред" });
+describe("шаг «Переименовать тред согласно задаче»", () => {
+  it("подписан «Переименовать тред согласно задаче» и «Rename the thread after its task»", () => {
+    expect(STEP_LABELS["bb.rename-thread"]).toEqual({ en: "Rename the thread after its task", ru: "Переименовать тред согласно задаче" });
   });
 
   it("называет тред названием привязанной задачи, без ключа", async () => {
@@ -48,25 +48,25 @@ describe("шаг «Переименовать тред»", () => {
     expect(renames).toEqual([{ threadId: "t1", title: "Flow — шаг" }]);
   });
 
-  it("без привязанной задачи падает и не трогает имя треда", async () => {
+  it("без привязанной задачи пропускается, не трогая имя треда, и цепочка идёт дальше", async () => {
     const { rename, renames } = harness(cliReplying(linked([])));
-    expect(await rename("t1")).toEqual({ ok: false, error: expect.stringContaining("No task is linked to the thread") });
+    expect(await rename("t1")).toEqual({ ok: true, detail: "skipped: no task is linked to the thread" });
     expect(renames).toEqual([]);
   });
 
-  it("доска, отказавшая в списке задач, называет свой отказ, а не «задачи нет»", async () => {
+  it("доска, отказавшая в списке задач, пропускает шаг и называет свой отказ, а не «задачи нет»", async () => {
     const { rename, renames } = harness(cliReplying({ kind: "ran", code: 1, stdout: "", stderr: "unknown command: tasks" }));
     const outcome = await rename("t1");
-    expect(outcome).toEqual({ ok: false, error: expect.stringContaining("unknown command: tasks") });
-    expect(outcome).not.toMatchObject({ error: expect.stringContaining("No task is linked") });
+    expect(outcome).toEqual({ ok: true, detail: expect.stringMatching(/^skipped: .*unknown command: tasks/) });
+    expect(outcome).not.toMatchObject({ detail: expect.stringContaining("no task is linked") });
     expect(renames).toEqual([]);
   });
 
-  it("недоступный bb называет причину, а не «задачи нет»", async () => {
+  it("недоступный bb пропускает шаг и называет причину, а не «задачи нет»", async () => {
     const { rename, renames } = harness(cliReplying({ kind: "unavailable", reason: "bb not found" }));
     const outcome = await rename("t1");
-    expect(outcome).toEqual({ ok: false, error: expect.stringContaining("bb not found") });
-    expect(outcome).not.toMatchObject({ error: expect.stringContaining("No task is linked") });
+    expect(outcome).toEqual({ ok: true, detail: expect.stringMatching(/^skipped: .*bb not found/) });
+    expect(outcome).not.toMatchObject({ detail: expect.stringContaining("no task is linked") });
     expect(renames).toEqual([]);
   });
 
