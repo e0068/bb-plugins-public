@@ -153,6 +153,15 @@ const workMinutes = (track: Track): number | null => {
 /** Минуты прохода закрытого этапа — те же, что в его строке баннера: у этапа с шагами работа шагов, у этапа навыка активные, а без них стенные. */
 const passMinutes = (track: Track): number | null => (track.run !== undefined ? workMinutes(track) : (track.activeMinutes ?? minutesBetween(track)));
 
+/**
+ * Начало и конец прошлых проходов вместе с нынешним: незакрытый нынешний кончается моментом сброса `at` — этап шёл до
+ * него. Проход без отметки о старте времени не оставляет, записи до поля — тоже.
+ */
+const passesSoFar = (track: Track, at: string): Pick<Track, "passes"> => {
+  const passes = [...(track.passes ?? []), ...(track.startedAt === undefined ? [] : [{ from: track.startedAt, to: track.finishedAt ?? at }])];
+  return passes.length === 0 ? {} : { passes };
+};
+
 /** Прошлые проходы этапа вместе с нынешним, если он закрыт: незакрытый проход ещё ничего не стоит. */
 const spentSoFar = (track: Track): Track["earlier"] =>
   track.finishedAt === undefined
@@ -164,20 +173,21 @@ const spentSoFar = (track: Track): Track["earlier"] =>
         from: track.earlier?.from ?? track.startedAt ?? track.finishedAt,
       };
 
-/** След этапа, который проходится заново: остаются исполнитель, вычеркнутость — выбранные ответом для нового прохода, если он был, — и траты прошлых проходов. */
-const cleared = (track: Track): Track => {
+/** След этапа, который проходится заново с момента `at`: остаются исполнитель, вычеркнутость — выбранные ответом для нового прохода, если он был, — траты и время прошлых проходов. */
+const cleared = (at: string) => (track: Track): Track => {
   const earlier = spentSoFar(track);
   const { executor, skipped } = track.nextPass ?? track;
   return {
     ...(executor === undefined ? {} : { executor }),
     ...(skipped === undefined ? {} : { skipped }),
     ...(earlier === undefined ? {} : { earlier }),
+    ...passesSoFar(track, at),
   };
 };
 
 /** След этапа, который снова в прогоне, что бы ни выбрал ответ: вычеркнутость снимается. */
-const rerun = (track: Track): Track => {
-  const { skipped: _skipped, ...kept } = cleared(track);
+const rerun = (at: string) => (track: Track): Track => {
+  const { skipped: _skipped, ...kept } = cleared(at)(track);
   return kept;
 };
 
@@ -220,14 +230,14 @@ export const setStageInRun = (progress: FlowProgress, id: string, run: boolean):
  * ответом, остаётся снятым: это выбор владельца на новый проход. Траты сброшенных проходов копятся в `earlier`.
  * Старт незакрытого этапа ничего не меняет: нетронутые этапы раньше закрытых — обычный прогон, а не доработка.
  */
-export const reopen = (progress: FlowProgress, stages: readonly WorkStage[], id: string): FlowProgress => {
+export const reopen = (progress: FlowProgress, stages: readonly WorkStage[], id: string, at: string): FlowProgress => {
   const index = stages.findIndex((stage) => stage.id === id);
   if (index < 0 || progress.stages[id]?.finishedAt === undefined) return progress;
   const later = stages.slice(index + 1).map((stage) => stage.id).filter((after) => touched(progress.stages[after]));
   // Сам этап агент снова делает — он в прогоне, даже если владелец его не брал: иначе автоматизация за ним наступила бы на «started».
-  const own = patch(progress, id, (track) => ({ ...rerun(track), ...(track.results === undefined ? {} : { results: track.results }) }));
+  const own = patch(progress, id, (track) => ({ ...rerun(at)(track), ...(track.results === undefined ? {} : { results: track.results }) }));
   const automations = new Set(stages.filter(isAutomationStage).map((stage) => stage.id));
-  const reset = later.reduce((p, after) => patch(p, after, automations.has(after) ? rerun : cleared), own);
+  const reset = later.reduce((p, after) => patch(p, after, automations.has(after) ? rerun(at) : cleared(at)), own);
   return { ...reset, waiting: reset.waiting.filter((waiting) => !later.includes(waiting)) };
 };
 

@@ -18,7 +18,7 @@ const publish: WorkStage = { ...builtinAutomationStage([]), id: "publish", name:
 const preview: WorkStage = { ...builtinAutomationStage([]), id: "preview", name: "Plugin Preview", automation: { source: "flow", steps: ["bb.reinstall"] } };
 const STAGES: WorkStage[] = [stage("practice"), stage("review"), publish, preview, builtinStage("demo", [])];
 
-const start = (progress: FlowProgress, id: string, at: string): FlowProgress => onMark(reopen(progress, STAGES, id), id, "started", at);
+const start = (progress: FlowProgress, id: string, at: string): FlowProgress => onMark(reopen(progress, STAGES, id, at), id, "started", at);
 const done = (progress: FlowProgress, id: string, at: string): FlowProgress => onMark(progress, id, "done", at);
 
 const brief: DecisionBrief = {

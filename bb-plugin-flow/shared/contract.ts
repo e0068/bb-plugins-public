@@ -968,6 +968,11 @@ export const stageTrackSchema = z.object({
    */
   earlier: z.object({ cost: z.number().nonnegative(), minutes: z.number().int().nonnegative(), wall: z.number().int().nonnegative(), from: z.string() }).optional(),
   /**
+   * Начало и конец прошлых проходов этапа, сброшенных доработкой, по порядку: незакрытый проход кончается моментом сброса.
+   * Отдельно от `earlier`, чтобы время проходов не трогало траты баннера; у записи до поля его нет — время тех проходов не сохранилось.
+   */
+  passes: z.array(z.object({ from: z.string(), to: z.string() })).optional(),
+  /**
    * Прогон этапа: шаги снимком, номер текущего шага, ошибка упавшего (`null` —
    * не падал), `busy` — шаг Action сейчас исполняется, и `failures` — история
    * падений. История не чистится ни повтором, ни пропуском: `error` говорит,
@@ -1154,8 +1159,22 @@ export const runHistoryEntrySchema = frozenRunSchema.extend({
   exists: z.boolean(),
 });
 
+/** Рисунок значка Hugeicons: пары «тег — атрибуты», как их рисует HugeiconsIcon; сериализуется в JSON как есть. */
+const glyphSchema = z.array(z.tuple([z.string(), z.record(z.string(), z.union([z.string(), z.number()])).readonly()]).readonly()).readonly();
+
+/** Этап треда на шкале времени для других плагинов: название, рисунок значка и проходы — начало и конец, `to: null` — проход идёт. */
+export const timelineStageSchema = z.object({
+  id: text,
+  name: text,
+  glyph: glyphSchema,
+  passes: z.array(z.object({ from: text, to: z.string().nullable() })),
+});
+export type TimelineStage = z.output<typeof timelineStageSchema>;
+
 export const progressRpcContract = defineRpcContract({
   getFlowProgress: { input: z.object({ threadId: text }), output: progressViewSchema.nullable() },
+  /** Этапы прогона треда с проходами по порядку flow — для шкал других плагинов; прогона нет — пустой список. */
+  getStageTimeline: { input: z.object({ threadId: text }), output: z.array(timelineStageSchema) },
   /** Итог прогона, замороженный под этим брифом; `null` — прогона под ним не завершалось. */
   getRunSummary: { input: z.object({ briefId: text }), output: frozenRunSchema.nullable() },
   /** Все завершённые прогоны всех тредов, свежие сверху. */

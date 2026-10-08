@@ -5,6 +5,7 @@ import { randomBytes } from "node:crypto";
 import type { BbPluginApi, PluginKvStorage } from "@get-bb/plugin-sdk";
 import { z } from "zod";
 
+import { stageGlyph } from "../components/ui/stage-glyphs";
 import { idleNote, idleStages, isActionStage } from "../core/automation-run";
 import { undoDue } from "../core/automation-undo";
 import { afterMark, markReply, returnedNote, startFact, stopFailure, waitedReply, type StartFact } from "../core/mark-report";
@@ -12,6 +13,7 @@ import { carriedBy, carrierOf, EMPTY_PROGRESS, forHandoff, onAnswer, onBrief, on
 import { historyOrder } from "../core/run-history";
 import { isRunFinished, runSummary } from "../core/run-summary";
 import { isTaskFile, taskTitle } from "../core/run-tasks";
+import { stageTimeline } from "../core/stage-timeline";
 import { stampFlow, type TaskFlow } from "../core/task-flow";
 import { flowProgressSchema, flowStageParamsSchema, frozenRunSchema, progressRpcContract, type ContextFillView, type DecisionAnswer, type DecisionBrief, type FlowProgress, type FrozenRun, type Planned, type RunHistoryEntry, type StageSettings, type WorkStage } from "../shared/contract";
 import type { AgentRelay, RelayHold } from "./agent-relay";
@@ -422,7 +424,7 @@ export const registerProgress = (
         // Снова начатый этап — доработка: этапы за ним теряют готовность, и автоматизации за ним пройдут заново.
         await progress.update(ctx.threadId, (p) => {
           if (state === "started") undone = undoDue(p, stages, stage);
-          return (marked = onMark(state === "started" ? reopen(p, stages, stage) : p, stage, state, at, titled, cost, minutes));
+          return (marked = onMark(state === "started" ? reopen(p, stages, stage, at) : p, stage, state, at, titled, cost, minutes));
         });
         // Агент зовёт навык этапа сразу после ответа: к нему файл настроек уже открывает этот навык.
         await deps.settled?.(ctx.threadId).catch(() => undefined);
@@ -551,6 +553,13 @@ export const registerProgress = (
   };
 
   bb.rpc.register(progressRpcContract, {
+    async getStageTimeline({ threadId }) {
+      const stored = await progress.get(threadId);
+      if (stored === null) return [];
+      // Этапы — того flow, по которому идёт тред-носитель прогона, как у баннера.
+      const stages = deps.stages(await progress.carrier(threadId)).stages;
+      return stageTimeline(stored, stages).map(({ icon, fallbackIcon, ...stage }) => ({ ...stage, glyph: stageGlyph({ icon, fallbackIcon }) }));
+    },
     async getFlowProgress({ threadId }) {
       const stored = await progress.get(threadId);
       if (stored === null) return null;

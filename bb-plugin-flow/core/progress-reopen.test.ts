@@ -18,7 +18,7 @@ const publish: WorkStage = { ...builtinAutomationStage([]), id: "publish", name:
 const STAGES: WorkStage[] = [stage("task"), stage("spec"), stage("implement"), stage("review"), publish, builtinStage("demo", []), stage("docs")];
 
 /** Отметка начала так, как её пишет flow_stage: сперва сброс следующих, потом старт. */
-const start = (progress: FlowProgress, id: string, at: string): FlowProgress => onMark(reopen(progress, STAGES, id), id, "started", at);
+const start = (progress: FlowProgress, id: string, at: string): FlowProgress => onMark(reopen(progress, STAGES, id, at), id, "started", at);
 const pass = (progress: FlowProgress, id: string, from: string, to: string, cost?: number, minutes?: number): FlowProgress =>
   onMark(start(progress, id, from), id, "done", to, [{ label: `${id}.md`, target: `docs/${id}.md` }], cost, minutes);
 const runThrough = (progress: FlowProgress): FlowProgress => stepsOf(publish).reduce((p) => onStepDone(p, publish.id, T1), onRunStart(progress, publish.id, stepsOf(publish), T0));
@@ -42,7 +42,7 @@ describe("доработка: снова начатый этап снимает 
     const withExecutor = committed();
     const progress = start({ ...withExecutor, stages: { ...withExecutor.stages, review: { ...withExecutor.stages.review, executor: "agent:code-reviewer" } } }, "implement", T2);
     expect(progress.waiting).toEqual([]);
-    expect(progress.stages.review).toEqual({ executor: "agent:code-reviewer", earlier: { cost: 2, minutes: 10, wall: 10, from: T0 } });
+    expect(progress.stages.review).toEqual({ executor: "agent:code-reviewer", earlier: { cost: 2, minutes: 10, wall: 10, from: T0 }, passes: [{ from: T0, to: T1 }] });
   });
 
   it("автоматизация коммита наступает снова, когда этапы перед ней закрыты повторно", () => {
@@ -70,14 +70,14 @@ describe("доработка: снова начатый этап снимает 
     fc.assert(
       fc.property(fc.constantFrom(...STAGES.map((s) => s.id)), (id) => {
         const before = skip(EMPTY_PROGRESS, "docs");
-        expect(reopen(before, STAGES, id)).toEqual(before);
+        expect(reopen(before, STAGES, id, T3)).toEqual(before);
       }),
     );
   });
 
   it("старт этапа, который ещё не закрывался, не трогает закрытые этапы после него", () => {
     const later = pass(skip(EMPTY_PROGRESS, "docs"), "review", T0, T1);
-    expect(reopen(later, STAGES, "implement")).toEqual(later);
+    expect(reopen(later, STAGES, "implement", T3)).toEqual(later);
   });
 
   it("повторная отметка начала у идущего этапа ничего не сбрасывает", () => {
@@ -87,6 +87,6 @@ describe("доработка: снова начатый этап снимает 
 
   it("этап вне flow ничего не сбрасывает", () => {
     const progress = committed();
-    expect(reopen(progress, STAGES, "ghost")).toEqual(progress);
+    expect(reopen(progress, STAGES, "ghost", T3)).toEqual(progress);
   });
 });
