@@ -5,9 +5,10 @@ import { existsSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { createTokensRunner, defaultScriptPath, resolvePluginRoot } from "../tokens-runner";
 import type { ProcessRunner, ProcessRunResult } from "../process-runner";
+import { EXPECTED_SCHEMA_VERSION } from "../../core/types";
 
 const VALID_STDOUT = JSON.stringify({
-  schemaVersion: 2,
+  schemaVersion: EXPECTED_SCHEMA_VERSION,
   by: "session",
   buckets: [],
   totals: {

@@ -27,7 +27,7 @@ const VALID_STDOUT = JSON.stringify({
 });
 
 /** One thread entry as threads_timeline.py --json prints it — pre-enrichment, no BB fields yet. */
-function rawThread(session: string): Omit<ThreadEntry, "bbProjectId" | "bbProjectName" | "threadId" | "bbThreadTitle" | "isAlive" | "isWorking"> {
+function rawThread(session: string): Omit<ThreadEntry, "bbProjectId" | "bbProjectName" | "threadId" | "bbThreadTitle" | "isAlive" | "isWorking" | "flowStages"> {
   return {
     session,
     project: `-Users-e0068-Documents-Projects-${session}`,
@@ -466,6 +466,71 @@ describe("createThreadsTimelineService: BB project enrichment", () => {
     expect(threadsListStub).toHaveBeenCalledWith(expect.objectContaining({ includeHidden: true }));
   });
 
+  it("every Claude Code session a thread ran on is tagged with that thread, not just its first one", async () => {
+    const { bb, harness } = createFakePluginHost();
+    harness.sdk.stub("threads.list", async () => [{ id: "thread-1", projectId: "proj-1", title: "Design review" }]);
+    harness.sdk.stub("threads.events.list", async () => [
+      { ...identityEvent("thread-1", "sess-first"), seq: 1 },
+      { ...identityEvent("thread-1", "sess-current"), seq: 2 },
+    ]);
+    harness.sdk.stub("projects.list", async () => [{ id: "proj-1", name: "bb-plugins" }]);
+    const { runner } = fakeRunner(() => ({ ok: true, stdout: stdoutWithThreads("sess-first", "sess-current"), stderr: "", code: 0 }));
+    const service = createThreadsTimelineService(bb, { processRunner: runner });
+
+    const result = await service.query({ unit: 300 });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.data.threads.map((t) => [t.session, t.threadId, t.bbProjectName])).toEqual([
+      ["sess-first", "thread-1", "bb-plugins"],
+      ["sess-current", "thread-1", "bb-plugins"],
+    ]);
+  });
+
+  it("a failed lookup for one thread leaves every other session matched", async () => {
+    const { bb, harness } = createFakePluginHost();
+    harness.sdk.stub("threads.list", async () => [
+      { id: "thread-1", projectId: "proj-1", title: "Works" },
+      { id: "thread-2", projectId: "proj-1", title: "Connection reset" },
+    ]);
+    harness.sdk.stub("threads.events.list", async ({ threadId }: { threadId: string }) => {
+      if (threadId === "thread-2") throw new Error("fetch failed: ECONNRESET");
+      return [identityEvent("thread-1", "sess-1")];
+    });
+    harness.sdk.stub("projects.list", async () => [{ id: "proj-1", name: "bb-plugins" }]);
+    const { runner } = fakeRunner(() => ({ ok: true, stdout: stdoutWithThreads("sess-1"), stderr: "", code: 0 }));
+    const service = createThreadsTimelineService(bb, { processRunner: runner });
+
+    const result = await service.query({ unit: 300 });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.data.threads).toEqual([expect.objectContaining({ session: "sess-1", threadId: "thread-1", bbProjectName: "bb-plugins" })]);
+  });
+
+  it("the scan keeps only a few thread lookups in flight at once instead of one per thread", async () => {
+    const { bb, harness } = createFakePluginHost();
+    const threads = Array.from({ length: 60 }, (_, i) => ({ id: `thread-${i}`, projectId: "proj-1", title: `T${i}` }));
+    harness.sdk.stub("threads.list", async () => threads);
+    let inFlight = 0;
+    let peak = 0;
+    harness.sdk.stub("threads.events.list", async ({ threadId }: { threadId: string }) => {
+      inFlight++;
+      peak = Math.max(peak, inFlight);
+      await new Promise((resolve) => setTimeout(resolve, 1));
+      inFlight--;
+      return [identityEvent(threadId, `sess-${threadId}`)];
+    });
+    harness.sdk.stub("projects.list", async () => [{ id: "proj-1", name: "bb-plugins" }]);
+    const { runner } = fakeRunner(() => ({ ok: true, stdout: stdoutWithThreads("sess-thread-59"), stderr: "", code: 0 }));
+    const service = createThreadsTimelineService(bb, { processRunner: runner });
+
+    const result = await service.query({ unit: 300 });
+
+    expect(result.ok && result.data.threads[0]?.threadId).toBe("thread-59");
+    expect(peak).toBeLessThanOrEqual(8);
+  });
+
   it("derives isAlive from archivedAt and isWorking from recent activity (`end`) or background work", async () => {
     const NOW = Date.parse("2026-08-25T10:00:00.000Z");
     const recentEnd = "2026-08-25T09:59:00.000Z"; // 60s before NOW → within the 2-min window
@@ -686,20 +751,72 @@ describe("createThreadsTimelineService: BB project enrichment", () => {
     expect(threadsListStub).not.toHaveBeenCalled();
   });
 
-  it("reuses the resolver's identity cache across two queries instead of re-resolving the same thread", async () => {
+  it("reuses the resolver's identity cache across two queries for a thread that hasn't changed since", async () => {
     const { bb, harness } = createFakePluginHost();
-    harness.sdk.stub("threads.list", async () => [{ id: "thread-1", projectId: "proj-1" }]);
+    harness.sdk.stub("threads.list", async () => [{ id: "thread-1", projectId: "proj-1", status: "idle", updatedAt: 500 }]);
     harness.sdk.stub("threads.events.list", async () => [identityEvent("thread-1", "sess-1")]);
     harness.sdk.stub("projects.list", async () => [{ id: "proj-1", name: "bb-plugins" }]);
-    let now = 0;
+    let now = 1000;
     const { runner } = fakeRunner(() => ({ ok: true, stdout: stdoutWithThreads("sess-1"), stderr: "", code: 0 }));
     const service = createThreadsTimelineService(bb, { processRunner: runner, cacheTtlMs: 1000, now: () => now });
 
     await service.query({ unit: 300 });
-    now = 2000; // past the TTL, forces a second uncached run + enrichment pass
+    now = 3000; // past the TTL, forces a second uncached run + enrichment pass
     await service.query({ unit: 300 });
 
     expect(harness.sdk.callsTo("threads.events.list")).toHaveLength(1);
+  });
+
+  it("re-reads a running thread every scan — bb writes a new session inside a run without touching updatedAt", async () => {
+    const { bb, harness } = createFakePluginHost();
+    harness.sdk.stub("threads.list", async () => [{ id: "thread-1", projectId: "proj-1", status: "active", updatedAt: 500 }]);
+    harness.sdk.stub("threads.events.list", async () => [identityEvent("thread-1", "sess-1")]);
+    harness.sdk.stub("projects.list", async () => [{ id: "proj-1", name: "bb-plugins" }]);
+    let now = 1000;
+    const { runner } = fakeRunner(() => ({ ok: true, stdout: stdoutWithThreads("sess-1"), stderr: "", code: 0 }));
+    const service = createThreadsTimelineService(bb, { processRunner: runner, cacheTtlMs: 1000, now: () => now });
+
+    await service.query({ unit: 300 });
+    now = 3000;
+    await service.query({ unit: 300 });
+
+    expect(harness.sdk.callsTo("threads.events.list")).toHaveLength(2);
+  });
+
+  it("a second scan over more than 500 unchanged threads at rest sends no lookups at all", async () => {
+    const { bb, harness } = createFakePluginHost();
+    const threads = Array.from({ length: 700 }, (_, i) => ({ id: `thread-${i}`, projectId: "proj-1", status: "idle", updatedAt: 500 }));
+    harness.sdk.stub("threads.list", async () => threads);
+    harness.sdk.stub("threads.events.list", async ({ threadId }: { threadId: string }) => [identityEvent(threadId, `sess-${threadId}`)]);
+    harness.sdk.stub("projects.list", async () => [{ id: "proj-1", name: "bb-plugins" }]);
+    let now = 1000;
+    const { runner } = fakeRunner(() => ({ ok: true, stdout: stdoutWithThreads("sess-thread-0"), stderr: "", code: 0 }));
+    const service = createThreadsTimelineService(bb, { processRunner: runner, cacheTtlMs: 1000, now: () => now });
+
+    await service.query({ unit: 300 });
+    expect(harness.sdk.callsTo("threads.events.list")).toHaveLength(700);
+    now = 3000;
+    await service.query({ unit: 300 });
+
+    expect(harness.sdk.callsTo("threads.events.list")).toHaveLength(700);
+  });
+
+  it("re-reads a thread's sessions once the thread changed after its last check", async () => {
+    const { bb, harness } = createFakePluginHost();
+    let updatedAt = 500;
+    harness.sdk.stub("threads.list", async () => [{ id: "thread-1", projectId: "proj-1", status: "idle", updatedAt }]);
+    harness.sdk.stub("threads.events.list", async () => [identityEvent("thread-1", "sess-1")]);
+    harness.sdk.stub("projects.list", async () => [{ id: "proj-1", name: "bb-plugins" }]);
+    let now = 1000;
+    const { runner } = fakeRunner(() => ({ ok: true, stdout: stdoutWithThreads("sess-1"), stderr: "", code: 0 }));
+    const service = createThreadsTimelineService(bb, { processRunner: runner, cacheTtlMs: 1000, now: () => now });
+
+    await service.query({ unit: 300 });
+    updatedAt = 2000;
+    now = 3000;
+    await service.query({ unit: 300 });
+
+    expect(harness.sdk.callsTo("threads.events.list")).toHaveLength(2);
   });
 });
 

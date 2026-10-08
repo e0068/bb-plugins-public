@@ -449,33 +449,37 @@ class CostPartsTest(unittest.TestCase):
         self.assertEqual(parts, {"input": 0.0, "cacheWrite": 0.0, "cacheRead": 0.0, "output": 0.0, "thinking": 0.0})
 
 
+def run_tokens_json(testcase, argv_tail, root=None):
+    """Runs tokens.main() on a stand-in ~/.claude/projects and returns its stdout."""
+    import contextlib
+    import io
+
+    if root is None:
+        tmp = tempfile.TemporaryDirectory()
+        testcase.addCleanup(tmp.cleanup)
+        root = tmp.name
+
+    old_root, old_argv = tokens.ROOT, sys.argv
+    tokens.ROOT = root
+    sys.argv = ["tokens.py", *argv_tail]
+    buf = io.StringIO()
+    try:
+        with contextlib.redirect_stdout(buf):
+            try:
+                tokens.main()
+            except SystemExit:
+                pass
+    finally:
+        tokens.ROOT, sys.argv = old_root, old_argv
+    return buf.getvalue()
+
+
 class JsonReportSchemaVersionTest(unittest.TestCase):
     """The --json report carries a schema version number — src/core/parse.ts
-    in the plugin checks it first thing. See memory/decisions/token-usage-json-schema-version.md."""
+    in the plugin checks it first thing. See docs/decisions/token-usage-json-schema-version.md."""
 
     def _run_json(self, argv_tail, root=None):
-        import contextlib
-        import io
-
-        tmp = None
-        if root is None:
-            tmp = tempfile.TemporaryDirectory()
-            self.addCleanup(tmp.cleanup)
-            root = tmp.name
-
-        old_root, old_argv = tokens.ROOT, sys.argv
-        tokens.ROOT = root
-        sys.argv = ["tokens.py", *argv_tail]
-        buf = io.StringIO()
-        try:
-            with contextlib.redirect_stdout(buf):
-                try:
-                    tokens.main()
-                except SystemExit:
-                    pass
-        finally:
-            tokens.ROOT, sys.argv = old_root, old_argv
-        return buf.getvalue()
+        return run_tokens_json(self, argv_tail, root)
 
     def test_json_report_carries_expected_schema_version(self):
         out = json.loads(self._run_json(["--json", "--by", "agent"]))
@@ -588,6 +592,62 @@ class DedupTest(unittest.TestCase):
         _write_raw(b, [_assistant("msg-1", "req-1", 9)])
         self.assertEqual([r["session"] for r in tokens.walk([a, b])],
                          [r["session"] for r in tokens.walk([b, a])])
+
+
+class BucketVariantsTest(unittest.TestCase):
+    """Bucket.variants: the same usage split by exact model id, effort and
+    fast mode — what the agent caption names instead of tiers with usage.
+    See docs/decisions/token-usage-caption-model-effort-fast.md."""
+
+    def test_variants_split_by_model_effort_and_speed_desc_by_usage(self):
+        b = tokens.Bucket()
+        b.add({"input_tokens": 10, "output_tokens": 5, "speed": "fast"}, "claude-opus-4-8", None, "high")
+        b.add({"input_tokens": 100, "output_tokens": 0, "speed": "standard"}, "claude-opus-4-8", None, "high")
+        b.add({"input_tokens": 1, "output_tokens": 1}, "claude-opus-4-8", None, "high")
+        b.add({"input_tokens": 30, "output_tokens": 0}, "claude-sonnet-5", None, "low")
+        d = tokens.bucket_json("k", b, None, None, None)
+        self.assertEqual(
+            d["variants"],
+            [
+                {"model": "claude-opus-4-8", "effort": "high", "fast": False, "total": 102},
+                {"model": "claude-sonnet-5", "effort": "low", "fast": False, "total": 30},
+                {"model": "claude-opus-4-8", "effort": "high", "fast": True, "total": 15},
+            ],
+        )
+
+    def test_record_without_effort_gives_a_variant_with_null_effort(self):
+        b = tokens.Bucket()
+        b.add({"input_tokens": 3, "output_tokens": 0}, "claude-opus-4-7", None)
+        self.assertEqual(
+            tokens.bucket_json("k", b, None, None, None)["variants"],
+            [{"model": "claude-opus-4-7", "effort": None, "fast": False, "total": 3}],
+        )
+
+    def test_variant_without_usage_is_left_out(self):
+        # Claude Code writes <synthetic> assistant records with all-zero usage.
+        b = tokens.Bucket()
+        b.add({"input_tokens": 0, "output_tokens": 0}, "<synthetic>", None)
+        b.add({"input_tokens": 4, "output_tokens": 0}, "claude-haiku-4-5-20251001", None, "medium")
+        self.assertEqual(
+            [v["model"] for v in tokens.bucket_json("k", b, None, None, None)["variants"]],
+            ["claude-haiku-4-5-20251001"],
+        )
+
+    def test_json_report_reads_effort_and_speed_from_the_transcript(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        record = {
+            "type": "assistant", "requestId": "r1", "effort": "xhigh",
+            "timestamp": "2026-09-27T10:00:00Z",
+            "message": {"id": "m1", "model": "claude-opus-5-5",
+                        "usage": {"input_tokens": 7, "output_tokens": 3, "speed": "fast"}},
+        }
+        touch(os.path.join(tmp.name, "proj", "sess.jsonl"), json.dumps(record) + "\n")
+        out = json.loads(run_tokens_json(self, ["--json", "--by", "agent"], root=tmp.name))
+        self.assertEqual(
+            out["buckets"][0]["variants"],
+            [{"model": "claude-opus-5-5", "effort": "xhigh", "fast": True, "total": 10}],
+        )
 
 
 if __name__ == "__main__":

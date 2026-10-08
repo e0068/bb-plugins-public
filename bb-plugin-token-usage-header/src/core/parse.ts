@@ -7,6 +7,7 @@
 // caller must handle explicitly.
 import type {
   BucketModelUsage,
+  BucketVariantUsage,
   TokensAgentInfo,
   TokensBucket,
   TokensBy,
@@ -66,6 +67,24 @@ function validateModels(v: unknown, path: string): BucketModelUsage[] | string {
   return out;
 }
 
+/**
+ * Parses the per-variant breakdown: exact model, effort and fast mode with
+ * usage, as returned by tools/tokens.py. An empty array is legal.
+ */
+function validateVariants(v: unknown, path: string): BucketVariantUsage[] | string {
+  if (!Array.isArray(v)) return `${path} must be an array`;
+  const out: BucketVariantUsage[] = [];
+  for (const [i, item] of v.entries()) {
+    if (!isRecord(item)) return `${path}[${i}] must be an object`;
+    if (typeof item.model !== "string") return `${path}[${i}].model must be a string`;
+    if (!isStringOrNull(item.effort)) return `${path}[${i}].effort must be a string or null`;
+    if (typeof item.fast !== "boolean") return `${path}[${i}].fast must be a boolean`;
+    if (!isNumber(item.total)) return `${path}[${i}].total must be a number`;
+    out.push({ model: item.model, effort: item.effort, fast: item.fast, total: item.total });
+  }
+  return out;
+}
+
 function fail(reason: ParseFailureReason, message: string): ParseFailure {
   return { ok: false, reason, message };
 }
@@ -109,6 +128,8 @@ function validateBucket(v: unknown, index: number): TokensBucket | string {
   if (!isStringOrNull(v.lastAt)) return `${path}.lastAt must be a string or null`;
   const models = validateModels(v.models, `${path}.models`);
   if (typeof models === "string") return models;
+  const variants = validateVariants(v.variants, `${path}.variants`);
+  if (typeof variants === "string") return variants;
 
   for (const field of NUMERIC_BUCKET_FIELDS) {
     if (!isNumber(v[field])) return `${path}.${field} must be a number`;
@@ -132,6 +153,7 @@ function validateBucket(v: unknown, index: number): TokensBucket | string {
     messages: v.messages as number,
     cost: v.cost as number,
     models,
+    variants,
     firstAt: v.firstAt,
     lastAt: v.lastAt,
   };
@@ -210,7 +232,7 @@ export function parseTokensOutput(raw: string): ParseResult {
   // means the built plugin and tools/tokens.py on disk speak different
   // dialects of the format, and the failure must name that instead of the
   // first data field the parser happens to reach. See the decision in
-  // memory/decisions/token-usage-json-schema-version.md.
+  // docs/decisions/token-usage-json-schema-version.md.
   if (json.schemaVersion !== EXPECTED_SCHEMA_VERSION) {
     const got =
       json.schemaVersion === undefined

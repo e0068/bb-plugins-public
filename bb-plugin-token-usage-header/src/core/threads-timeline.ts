@@ -7,6 +7,7 @@
 // contract for tools/tokens.py, but a separate schema/version — a different
 // script, a different JSON shape.
 import { z } from "zod";
+import type { FlowStage } from "./flow-stages";
 import { gitEventSchema } from "./git-events";
 
 /**
@@ -157,6 +158,13 @@ export type ThreadEntry = z.infer<typeof RawThreadEntrySchema> & {
    * Always false for an unmatched session. Drives the feed's blinking dot.
    */
   isWorking: boolean;
+  /**
+   * Stages of the matched BB thread's Flow run, with their passes — from Flow's
+   * own `getStageTimeline` RPC, attached by the service layer. Empty for a
+   * session with no BB thread, a thread without a Flow run, or when Flow isn't
+   * installed — the chart then shows no stage lane at all.
+   */
+  flowStages: FlowStage[];
 };
 
 export type ThreadsTimeline = Omit<z.infer<typeof RawThreadsTimelineSchema>, "threads"> & {
@@ -231,7 +239,7 @@ export function parseThreadsTimeline(raw: string): ThreadsTimelineParseResult {
   // the built plugin and tools/threads_timeline.py on disk speak different
   // dialects of the format, and the failure must name that instead of the
   // first data field the parser happens to reach (see
-  // memory/decisions/token-usage-json-schema-version.md for the same
+  // docs/decisions/token-usage-json-schema-version.md for the same
   // approach on the neighboring contract).
   if (json.schemaVersion !== EXPECTED_THREADS_TIMELINE_SCHEMA_VERSION) {
     const got =
@@ -268,6 +276,7 @@ export function parseThreadsTimeline(raw: string): ThreadsTimelineParseResult {
       bbThreadTitle: null,
       isAlive: false,
       isWorking: false,
+      flowStages: [],
     })),
   };
 
@@ -306,7 +315,7 @@ export function binTotal(bin: TimelineBin): number {
  * exactly what {@link deriveThreadLiveness} needs. The service (imperative
  * shell) reads these off `bb.sdk.threads.list`'s response and hands them here;
  * this module never imports the SDK, so the mapping stays testable in
- * isolation — see memory/decisions/thread-liveness-signals.md.
+ * isolation — see docs/decisions/thread-liveness-signals.md.
  */
 export interface ThreadLivenessInput {
   /** Epoch ms the BB thread was archived at, or null while it's still live. */

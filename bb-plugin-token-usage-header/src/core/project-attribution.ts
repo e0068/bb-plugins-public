@@ -109,7 +109,7 @@ export function guessedProjectLabel(cwd: string | null, rawProjectSlug: string):
  * down — none of enrichBbProjects' three tiers matched, and (see {@link
  * fallbackProjectName}) its cwd-guessed name doesn't match any registered
  * project either. One bucket rather than one pseudo-project per guessed
- * directory name: see memory/decisions/usage-analytics-unlinked-merge-by-exact-name.md
+ * directory name: see docs/decisions/usage-analytics-unlinked-merge-by-exact-name.md
  * for why a dozen one-off directory names cluttered the project picker more
  * than a single catch-all costs.
  */
@@ -123,7 +123,7 @@ export const UNKNOWN_PROJECT_LABEL = "Unknown Project";
  * folding an unrelated same-ish-named checkout's spend into the wrong
  * project's budget); otherwise the thread lands in the shared {@link
  * UNKNOWN_PROJECT_LABEL} bucket instead of minting its own pseudo-project.
- * See memory/decisions/usage-analytics-unlinked-merge-by-exact-name.md.
+ * See docs/decisions/usage-analytics-unlinked-merge-by-exact-name.md.
  */
 export function fallbackProjectName(cwd: string | null, rawProjectSlug: string, knownProjectNames: ReadonlySet<string>): string {
   const guessed = guessedProjectLabel(cwd, rawProjectSlug);

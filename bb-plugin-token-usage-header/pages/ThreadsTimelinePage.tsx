@@ -15,7 +15,7 @@
 // width) used to live behind this page's own gear popover, persisted in
 // bb.storage.kv. It now lives on the plugin's native Settings page (Tools →
 // plugin detail, via bb.settings.define — see src/core/gear-settings.ts and
-// memory/decisions/token-usage-gear-to-native-settings.md) and is read here
+// docs/decisions/token-usage-gear-to-native-settings.md) and is read here
 // live via `useSettings()`; this page no longer writes those fields at all.
 // Only per-agent legend colours (agentColors, a dynamic agent-id → hex map
 // that can't be a declared setting) remain in this page's own small popover,
@@ -30,6 +30,7 @@
 // then can't fetch real data for such a link without one.
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useBbNavigate, useRpc, useSettings, type PluginNavPanelProps } from "@get-bb/plugin-sdk/app";
+import { useSeriesPainting } from "@bb-plugins/reduced-colors";
 import type { rpcContract } from "../server";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -42,7 +43,7 @@ import {
   parseGearSettings,
   type ThreadEntry,
 } from "../src/core";
-import { DEFAULT_PALETTE, ThreadRow, computeDisplayBins } from "./thread-chart";
+import { ThreadRow, computeDisplayBins, useSeriesColorFor } from "./thread-chart";
 import { THREADS_TIMELINE_PANEL_PATH, buildAgentDetailSubPath } from "./AgentTimelinePage";
 import { UsageProjectsSummary } from "./UsageProjectsSummary";
 
@@ -223,20 +224,15 @@ export function ThreadsTimelinePage(_props: PluginNavPanelProps) {
     });
   }, [threads]);
   const [agentColors, setAgentColors] = useState<Record<string, string>>({});
-  function colorFor(agentKey: string): string {
-    const existing = agentColors[agentKey];
-    if (existing) return existing;
-    const index = agentKeys.indexOf(agentKey);
-    return DEFAULT_PALETTE[(index < 0 ? 0 : index) % DEFAULT_PALETTE.length];
-  }
+  const colorFor = useSeriesColorFor(agentKeys, (agentKey) => agentColors[agentKey] || undefined);
   /** Display-only name for an agentId — colour/click/agentColors keys stay the raw id, only the shown text changes. */
   function labelFor(agentKey: string): string {
     return agentLabels[agentKey] ?? agentKey;
   }
 
   // --- Remaining viz-settings persistence (bb.storage.kv via
-  // loadVizSettings/saveVizSettings — see memory/decisions/
-  // token-usage-viz-settings-persist-kv.md and memory/decisions/
+  // loadVizSettings/saveVizSettings — see docs/decisions/
+  // token-usage-viz-settings-persist-kv.md and docs/decisions/
   // token-usage-gear-to-native-settings.md). This page owns only the
   // `threads` section's agentColors/sortMode/searchQuery/projectFilter/
   // costMin/costMax — everything else that USED to live here (geometry,
@@ -516,6 +512,8 @@ function AgentColorsPopover({
   labelFor: (agentKey: string) => string;
   onAgentColorChange: (agentKey: string, hex: string) => void;
 }) {
+  // Under the ramp a pick would be stored yet stay unseen — the pickers wait until the mode is off.
+  const locked = useSeriesPainting().kind === "ramp";
   return (
     <Popover>
       <PopoverTrigger asChild>
@@ -536,6 +534,7 @@ function AgentColorsPopover({
       </PopoverTrigger>
       <PopoverContent align="end" className="max-h-[70vh] w-64 space-y-1.5 overflow-y-auto p-3">
         <div className="text-xs font-medium text-muted-foreground">Agent colors</div>
+        {locked && <p className="text-xs text-subtle-foreground">Reduced Colors is on — own colours return when it is off.</p>}
         {agentKeys.length === 0 ? (
           <p className="text-xs text-subtle-foreground">No agent data yet.</p>
         ) : (
@@ -547,6 +546,7 @@ function AgentColorsPopover({
                 <input
                   type="color"
                   value={colorFor(key)}
+                  disabled={locked}
                   onChange={(e) => onAgentColorChange(key, e.target.value)}
                   className="h-6 w-8 shrink-0 cursor-pointer rounded-sm border border-border bg-transparent p-0"
                   aria-label={`${labelFor(key)} color`}

@@ -5,7 +5,7 @@
 // Pure and total, like the rest of src/core: no I/O, no clock. "Now" and the
 // window boundary arrive as numbers from the page — that's what keeps the
 // laws below testable without freezing time (see
-// memory/decisions/usage-pie-rolling-windows.md).
+// docs/decisions/usage-pie-rolling-windows.md).
 import { binTotal, type ThreadEntry } from "./threads-timeline";
 
 // The D/W/M cuts and their rolling lengths, plus windowStartMs, now live in the
@@ -13,13 +13,13 @@ import { binTotal, type ThreadEntry } from "./threads-timeline";
 // out of here. Re-exported under the plugin's long-standing names so callers
 // don't churn (BBPL-261). Binning stays local: hourly-burn.ts keeps its own
 // grid-strict edge policy, which the generalised bucketByTime deliberately does
-// not share (see memory/decisions/analytics-viz-binning-conserves-over-grid-align.md).
+// not share (see docs/decisions/analytics-viz-binning-conserves-over-grid-align.md).
 export {
   WINDOWS as COST_WINDOWS,
   WINDOW_MS as COST_WINDOW_MS,
   windowStartMs,
-} from "../../packages/analytics-viz/core/time-window";
-export type { Window as CostWindow } from "../../packages/analytics-viz/core/time-window";
+} from "@bb-plugins/analytics-viz/core/time-window";
+export type { Window as CostWindow } from "@bb-plugins/analytics-viz/core/time-window";
 
 /** How many of the window's threads the row list can show at once. */
 export const ROW_LIMIT_OPTIONS = [5, 10, 15, 25, 50, 100] as const;
@@ -103,7 +103,7 @@ function projectLabel(key: string | null): string {
 /**
  * The thread's spend that falls inside `[fromMs, ∞)`, prorated by the share
  * of its tokens whose bins start inside the window — see
- * memory/decisions/usage-pie-cost-prorated-by-bins.md for why attributing a
+ * docs/decisions/usage-pie-cost-prorated-by-bins.md for why attributing a
  * session to a single date was rejected.
  *
  * Total on every input: a thread whose bins carry no tokens at all (a slice

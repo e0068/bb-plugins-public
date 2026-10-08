@@ -5,21 +5,29 @@
 // other — ThreadsTimelinePage already depends on AgentTimelinePage
 // (buildAgentDetailSubPath), and a back-edge would make the two page modules
 // circular. This module depends only on core + the SDK.
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type * as React from "react";
 import { createPortal } from "react-dom";
+import { HugeiconsIcon } from "@hugeicons/react";
+import { useSeriesColors } from "@bb-plugins/reduced-colors";
+import { useViewportClamp } from "@bb-plugins/viewport-clamp";
 import { Icon, type IconName } from "@/components/ui/icon";
 import { usePortalScopeProps } from "@/lib/portal-scope";
 import {
   binTotal,
+  flowLaneChips,
+  flowStageMarks,
   formatCost,
   formatPercent,
   formatTokenCount,
   gitEventLabel,
   gitEventLinkUrl,
+  placeFlowMarks,
   threadDisplayLabel,
   type AgentBin,
   type ChartSettings,
+  type FlowLaneChip,
+  type FlowStageMark,
   type GitEvent,
   type ThreadEntry,
   type TimelineBin,
@@ -37,13 +45,24 @@ const CARD_FRAME_PX = 12 * 2 + 1 * 2;
 const MIN_HUG_CARD_WIDTH_PX = 96;
 /** Fade-out duration of the column tooltip: on leave it eases to transparent over this long, then unmounts (no fully-visible hold). */
 const TOOLTIP_FADE_MS = 200;
-/** Minimum gap (px) kept between the column tooltip and the viewport edge when clamping its position — see the tooltip's useLayoutEffect below. */
-const TOOLTIP_VIEWPORT_MARGIN_PX = 8;
+/** Floor for a Flow stage tag's width — a pass shorter than one narrow column still holds its icon. */
+const FLOW_CHIP_MIN_WIDTH_PX = 16;
 /** Default chart height (px) for the single-session card, mirroring the feed's own BASE_CHART_HEIGHT — scaled by settings.heightScale, same as the feed. */
 const SESSION_CARD_CHART_HEIGHT = 72;
 
 /** Cycled by first-seen order (main first, then by total spend) — a free choice: agent colour is chart data, not UI chrome. */
 export const DEFAULT_PALETTE = ["#3b82f6", "#22c55e", "#f59e0b", "#ef4444", "#a855f7", "#06b6d4", "#eab308", "#14b8a6", "#ec4899", "#84cc16"];
+
+/**
+ * Colour of each series key, keys in legend order: its own colour if it has
+ * one, else its palette slot — then through Reduced Colors, which paints the
+ * whole list as ramp steps while it is on (packages/reduced-colors). A key
+ * outside `keys` gets the first series' colour, as the palette lookup did.
+ */
+export function useSeriesColorFor<K>(keys: readonly K[], ownColor: (key: K) => string | undefined = () => undefined): (key: K) => string {
+  const colors = useSeriesColors(keys.map((key, index) => ownColor(key) ?? DEFAULT_PALETTE[index % DEFAULT_PALETTE.length]!));
+  return (key) => colors[Math.max(keys.indexOf(key), 0)] ?? DEFAULT_PALETTE[0]!;
+}
 
 /** Opacity applied to a segment belonging to an agent OTHER than activeAgentKey — see ThreadRow's activeAgentKey prop. */
 export const FADED_SEGMENT_OPACITY = "opacity-40";
@@ -171,6 +190,25 @@ export function bucketGitEventsByBin(displayBins: readonly DisplayBin[], events:
   });
 }
 
+/** What a ThreadRow tooltip describes: one data column or one Flow stage tag, by its key — the tooltip stays on the same tag when the data refreshes. */
+type TipTarget = { kind: "bin"; binIndex: number } | { kind: "stage"; chipKey: string };
+
+/** Key of a stage tag, stable across refreshes: stage id and pass number of the pass leading it. */
+const chipKey = (chip: FlowLaneChip): string => `${chip.marks[0].mark.stageId}:${chip.marks[0].mark.pass}`;
+
+/** Accessible name of a stage tag: its leading pass, and how many more start in the same column. */
+function chipLabel({ marks: [{ mark }, ...rest] }: FlowLaneChip): string {
+  const lead = mark.of > 1 ? `Flow stage ${mark.name}, pass ${mark.pass} of ${mark.of}` : `Flow stage ${mark.name}`;
+  return rest.length > 0 ? `${lead} and ${rest.length} more` : lead;
+}
+
+/** Start time, end time and duration of a stage pass, as the tooltip shows them; a running pass is measured up to `nowMs`. */
+function describePass(mark: FlowStageMark, nowMs: number) {
+  const fromMs = Date.parse(mark.from);
+  const toMs = mark.to === null ? nowMs : Date.parse(mark.to);
+  return { started: fmtClock(mark.from), finished: mark.to === null ? null : fmtClock(mark.to), duration: fmtDuration(Math.max(toMs - fromMs, 0) / 1000) };
+}
+
 export function ThreadRow({
   thread,
   unit,
@@ -269,13 +307,27 @@ export function ThreadRow({
   // displayBins — rendered as a lane below the bars and folded into the same
   // hover tooltip (see the "Git" section below).
   const eventsByBin = useMemo(() => bucketGitEventsByBin(displayBins, thread.events, unit), [displayBins, thread.events, unit]);
+  // Flow stage passes placed on the same displayed columns — the stage lane
+  // below the git lane; empty for a session without a Flow run, and then the
+  // lane isn't rendered at all.
+  const flowChips = useMemo(
+    () => flowLaneChips(placeFlowMarks(displayBins, flowStageMarks(thread.flowStages), { unit, live: thread.isWorking })),
+    [displayBins, thread.flowStages, unit, thread.isWorking],
+  );
   // Same width/gap every column, independent of which bin it is — computed
   // once here instead of per-iteration, and shared by BOTH the bars row and
   // the marker lane below so their columns line up pixel-for-pixel.
   const colClassName = "relative h-full min-w-[2px] shrink-0";
-  const colStyle: React.CSSProperties = fillWidth
-    ? { width: `calc((100% - ${Math.max(maxBinCount - 1, 0) * colGap}px) / ${maxBinCount})`, flexShrink: 0 }
-    : { width: colWidthPx, flexShrink: 0 };
+  // Width of `cols` adjacent columns with their inner gaps, as CSS — the
+  // stage lane positions its tags in the same column grid as the bars,
+  // whichever width mode is on; one column is colStyle itself.
+  const columnsWidth = (cols: number): string =>
+    fillWidth
+      ? `calc(${cols} * ((100% - ${Math.max(maxBinCount - 1, 0) * colGap}px) / ${maxBinCount}) + ${Math.max(cols - 1, 0) * colGap}px)`
+      : `${cols * colWidthPx + Math.max(cols - 1, 0) * colGap}px`;
+  const columnLeft = (index: number): string => (index === 0 ? "0px" : `calc(${columnsWidth(index)} + ${colGap}px)`);
+
+  const colStyle: React.CSSProperties = { width: columnsWidth(1), flexShrink: 0 };
   const graphWidthPx = fillWidth
     ? undefined
     : Math.max(binCount * colWidthPx + Math.max(binCount - 1, 0) * colGap, MIN_GRAPH_WIDTH_PX);
@@ -309,7 +361,9 @@ export function ThreadRow({
   // `title` attribute, which the browser delays ~1s before showing) so the
   // per-agent legend appears immediately, and portaled to document.body so
   // the graph's own overflow-hidden/overflow-x-auto never clips it.
-  const [tip, setTip] = useState<{ binIndex: number; x: number; y: number } | null>(null);
+  // A tooltip is about one data column or one Flow stage tag — the same
+  // portal, fade and viewport clamp serve both.
+  const [tip, setTip] = useState<{ target: TipTarget; x: number; y: number } | null>(null);
   // Whole-card hover, only tracked (and only visible) when the card is
   // clickable — drives the lift-tint bump on the whole frame, including its
   // empty area.
@@ -320,38 +374,21 @@ export function ThreadRow({
   // chart never blinks it off and on.
   const [tipClosing, setTipClosing] = useState(false);
   const portalScope = usePortalScopeProps();
-  const tipBin = tip ? displayBins[tip.binIndex]?.bin ?? null : null;
 
   // Keeps the tooltip on-screen: it's anchored at the cursor (tip.x/y + 12px),
   // which overflows the viewport's right/bottom edge for a column near the
-  // chart's own edge (the popover itself is a fairly narrow, fixed-position
-  // panel). Measured after mount/update (getBoundingClientRect gives its real
-  // width/height regardless of any prior shift already applied — only
-  // position is translated, not size), then nudged back inside by however
-  // much it would otherwise overflow. useLayoutEffect (not useEffect) so the
-  // correction lands before the browser paints — no visible jump.
-  const tipRef = useRef<HTMLDivElement>(null);
-  const [tipShift, setTipShift] = useState({ x: 0, y: 0 });
-  useLayoutEffect(() => {
-    if (!tip || !tipRef.current) return;
-    const rect = tipRef.current.getBoundingClientRect();
-    const naturalLeft = tip.x + 12;
-    const naturalTop = tip.y + 12;
-    const maxLeft = Math.max(TOOLTIP_VIEWPORT_MARGIN_PX, window.innerWidth - rect.width - TOOLTIP_VIEWPORT_MARGIN_PX);
-    const maxTop = Math.max(TOOLTIP_VIEWPORT_MARGIN_PX, window.innerHeight - rect.height - TOOLTIP_VIEWPORT_MARGIN_PX);
-    const clampedLeft = Math.min(Math.max(naturalLeft, TOOLTIP_VIEWPORT_MARGIN_PX), maxLeft);
-    const clampedTop = Math.min(Math.max(naturalTop, TOOLTIP_VIEWPORT_MARGIN_PX), maxTop);
-    setTipShift({ x: clampedLeft - naturalLeft, y: clampedTop - naturalTop });
-  }, [tip]);
+  // chart's own edge; the shared clamp measures it and moves it back inside
+  // before the browser paints.
+  const { ref: tipRef, position: tipPosition } = useViewportClamp<HTMLDivElement>(tip ? { x: tip.x + 12, y: tip.y + 12 } : null);
 
   const fadeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  function showTip(binIndex: number, x: number, y: number) {
+  function showTip(target: TipTarget, x: number, y: number) {
     if (fadeTimerRef.current !== null) {
       clearTimeout(fadeTimerRef.current);
       fadeTimerRef.current = null;
     }
     setTipClosing(false);
-    setTip({ binIndex, x, y });
+    setTip({ target, x, y });
   }
   function startTipFade() {
     if (fadeTimerRef.current !== null) clearTimeout(fadeTimerRef.current);
@@ -368,6 +405,86 @@ export function ThreadRow({
     },
     [],
   );
+
+  // Tooltip body for a data column: its time window, per-agent legend and git events.
+  function binTipContent(binIndex: number): React.ReactNode {
+    const tipDisplayBin = displayBins[binIndex];
+    if (!tipDisplayBin) return null;
+    const binData = tipDisplayBin.bin ? describeBin(tipDisplayBin.bin) : null;
+    const timeLabel = binData ? binData.timeLabel : fmtClock(tipDisplayBin.t);
+    const tipEvents = eventsByBin[binIndex] ?? [];
+    return (
+      <>
+        <div className="font-medium tabular-nums">{timeLabel}</div>
+        {binData && (
+          <ul className="mt-1.5 space-y-1">
+            {binData.ordered.map((a) => (
+              <li key={a.key} className="flex w-full items-center gap-3">
+                <span className="inline-block size-2.5 shrink-0 rounded-sm" style={{ backgroundColor: colorFor(a.key) }} />
+                <span className="whitespace-nowrap">{labelFor(a.key)}</span>
+                <span className="ml-auto shrink-0 tabular-nums text-muted-foreground">
+                  {formatTokenCount(a.total)} · {formatPercent(a.total, binData.total)}
+                </span>
+              </li>
+            ))}
+          </ul>
+        )}
+        {tipEvents.length > 0 && (
+          <ul className={`space-y-1 ${binData ? "mt-2 border-t border-border pt-2" : "mt-1.5"}`}>
+            {tipEvents.map((event, i) => {
+              const url = gitEventLinkUrl(event);
+              return (
+                <li key={i} className="flex w-full items-center gap-2">
+                  <Icon name={GIT_EVENT_ICON[event.type]} className="size-2.5 shrink-0 text-muted-foreground" aria-hidden="true" />
+                  {url ? (
+                    <a href={url} target="_blank" rel="noreferrer" className="truncate text-primary underline underline-offset-2 hover:no-underline">
+                      {gitEventLabel(event)}
+                    </a>
+                  ) : (
+                    <span className="truncate text-popover-foreground">{gitEventLabel(event)}</span>
+                  )}
+                </li>
+              );
+            })}
+          </ul>
+        )}
+      </>
+    );
+  }
+
+  // Tooltip body for a Flow stage tag: every pass starting in its column, in
+  // order — glyph and name, which pass it is when the stage ran more than
+  // once, start–end on one line and the duration under it, no labels.
+  function stageTipContent(key: string): React.ReactNode {
+    const chip = flowChips.find((c) => chipKey(c) === key);
+    if (!chip) return null;
+    const nowMs = Date.now();
+    return (
+      <ul className="space-y-2.5">
+        {chip.marks.map(({ mark }) => {
+          const pass = describePass(mark, nowMs);
+          return (
+            <li key={`${mark.stageId}:${mark.pass}`}>
+              <div className="flex items-center gap-1.5 font-medium">
+                <HugeiconsIcon icon={mark.glyph} size={12} strokeWidth={1.8} aria-hidden="true" className="shrink-0" />
+                <span>{mark.name}</span>
+                {mark.of > 1 && <span className="ml-auto pl-3 font-normal text-muted-foreground">{`pass ${mark.pass} of ${mark.of}`}</span>}
+              </div>
+              <div className="mt-1 tabular-nums">{`${pass.started}–${pass.finished ?? "running"}`}</div>
+              <div className="tabular-nums text-muted-foreground">{pass.duration}</div>
+            </li>
+          );
+        })}
+      </ul>
+    );
+  }
+
+  // The stage tag under the cursor — the columns its passes ran in light up in
+  // the bars, up to where the last of them ended, for as long as its tooltip
+  // is showing.
+  const hoveredKey = tip?.target.kind === "stage" && !tipClosing ? tip.target.chipKey : undefined;
+  const hoveredChip = hoveredKey === undefined ? undefined : flowChips.find((chip) => chipKey(chip) === hoveredKey);
+  const inHoveredChip = (binIndex: number) => hoveredChip !== undefined && binIndex >= hoveredChip.start && binIndex <= hoveredChip.reach;
 
   const cardActive = Boolean(onOpenCard) && cardHovered;
   // Card-level interaction exists only in the feed (onOpenCard set); on the
@@ -471,7 +588,7 @@ export function ThreadRow({
               return (
                 <div
                   key={binIndex}
-                  className={colClassName}
+                  className={`${colClassName} rounded-sm ${inHoveredChip(binIndex) ? "bg-state-hover" : ""}`}
                   style={colStyle}
                   title={`${fmtClock(displayBin.t)}\n${fmtDuration(gapUnits * unit)} break`}
                 >
@@ -485,13 +602,13 @@ export function ThreadRow({
 
             // While the tooltip is showing this column, highlight the column
             // itself so it's clear which one the tooltip refers to.
-            const columnActive = tip?.binIndex === binIndex && !tipClosing;
+            const columnActive = ((tip?.target.kind === "bin" && tip.target.binIndex === binIndex) && !tipClosing) || inHoveredChip(binIndex);
             return (
               <div
                 key={binIndex}
                 className={`${colClassName} rounded-sm transition-colors ${columnActive ? "bg-state-hover" : ""}`}
                 style={colStyle}
-                onMouseMove={(e) => showTip(binIndex, e.clientX, e.clientY)}
+                onMouseMove={(e) => showTip({ kind: "bin", binIndex }, e.clientX, e.clientY)}
                 onMouseLeave={startTipFade}
               >
                 <div
@@ -545,7 +662,7 @@ export function ThreadRow({
                 // show — an empty column here (no git events) leaves the bar
                 // row's own hover (native title on a gap column, or the
                 // custom tooltip on a data column) as the only trigger.
-                onMouseMove={binEvents.length > 0 ? (e) => showTip(binIndex, e.clientX, e.clientY) : undefined}
+                onMouseMove={binEvents.length > 0 ? (e) => showTip({ kind: "bin", binIndex }, e.clientX, e.clientY) : undefined}
                 onMouseLeave={binEvents.length > 0 ? startTipFade : undefined}
               >
                 {binEvents.slice(0, 3).map((event, i) => (
@@ -555,69 +672,68 @@ export function ThreadRow({
             );
           })}
         </div>
+
+        {/* Flow stage lane — one tag per column a stage pass starts in,
+            laid on the same column grid as the bars (columnLeft/columnsWidth)
+            and stretched over the pass, its icon pinned to the left. Passes
+            starting in one column share its tag: one icon, every pass in the
+            tooltip. Hovering a tag lights its columns up in the bars. No Flow
+            run — no lane, not even its height. */}
+        {flowChips.length > 0 && (
+          <div data-testid="flow-stage-lane" className="relative mt-1 h-4" style={{ width: fillWidth ? "100%" : graphWidthPx }}>
+            {flowChips.map((chip) => {
+              const key = chipKey(chip);
+              const lead = chip.marks[0].mark;
+              const running = chip.marks.some(({ mark }) => mark.to === null);
+              return (
+                <span
+                  key={key}
+                  role="img"
+                  aria-label={chipLabel(chip)}
+                  tabIndex={0}
+                  className={`absolute top-0 flex h-4 items-center overflow-hidden rounded-sm border border-background px-0.5 transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring ${
+                    hoveredChip === chip ? "bg-state-hover text-foreground" : "bg-muted text-foreground/80"
+                  }`}
+                  style={{ left: columnLeft(chip.start), width: columnsWidth(chip.end - chip.start + 1), minWidth: FLOW_CHIP_MIN_WIDTH_PX }}
+                  onMouseMove={(e) => showTip({ kind: "stage", chipKey: key }, e.clientX, e.clientY)}
+                  onMouseLeave={startTipFade}
+                  onFocus={(e) => {
+                    const box = e.currentTarget.getBoundingClientRect();
+                    showTip({ kind: "stage", chipKey: key }, box.right, box.bottom);
+                  }}
+                  onBlur={startTipFade}
+                >
+                  <HugeiconsIcon icon={lead.glyph} size={11} strokeWidth={1.8} aria-hidden="true" className={`shrink-0 ${running ? "animate-pulse" : ""}`} />
+                </span>
+              );
+            })}
+          </div>
+        )}
       </div>
 
       {tip
-        ? (() => {
-            const tipDisplayBin = displayBins[tip.binIndex];
-            if (!tipDisplayBin) return null;
-            const binData = tipBin ? describeBin(tipBin) : null;
-            const timeLabel = binData ? binData.timeLabel : fmtClock(tipDisplayBin.t);
-            const tipEvents = eventsByBin[tip.binIndex] ?? [];
-            return createPortal(
-              <div
-                ref={tipRef}
-                {...portalScope}
-                // Interactive (not pointer-events-none, unlike before this
-                // feature): a git event's link needs to be reachable by the
-                // cursor. onMouseEnter/onMouseLeave below keep it open while
-                // the cursor is over it (instead of fading the instant it
-                // leaves the narrow column), the same "hoverable tooltip"
-                // pattern any clickable-content popover needs.
-                className={`fixed z-50 w-max max-w-[min(90vw,32rem)] rounded-md border border-border bg-popover px-2.5 py-2 text-xs text-popover-foreground shadow-md transition-opacity duration-200 ease-in ${
-                  tipClosing ? "opacity-0" : "opacity-100"
-                }`}
-                style={{ left: tip.x + 12 + tipShift.x, top: tip.y + 12 + tipShift.y }}
-                onMouseEnter={() => showTip(tip.binIndex, tip.x, tip.y)}
-                onMouseLeave={startTipFade}
-              >
-                <div className="font-medium tabular-nums">{timeLabel}</div>
-                {binData && (
-                  <ul className="mt-1.5 space-y-1">
-                    {binData.ordered.map((a) => (
-                      <li key={a.key} className="flex w-full items-center gap-3">
-                        <span className="inline-block size-2.5 shrink-0 rounded-sm" style={{ backgroundColor: colorFor(a.key) }} />
-                        <span className="whitespace-nowrap">{labelFor(a.key)}</span>
-                        <span className="ml-auto shrink-0 tabular-nums text-muted-foreground">
-                          {formatTokenCount(a.total)} · {formatPercent(a.total, binData.total)}
-                        </span>
-                      </li>
-                    ))}
-                  </ul>
-                )}
-                {tipEvents.length > 0 && (
-                  <ul className={`space-y-1 ${binData ? "mt-2 border-t border-border pt-2" : "mt-1.5"}`}>
-                    {tipEvents.map((event, i) => {
-                      const url = gitEventLinkUrl(event);
-                      return (
-                        <li key={i} className="flex w-full items-center gap-2">
-                          <Icon name={GIT_EVENT_ICON[event.type]} className="size-2.5 shrink-0 text-muted-foreground" aria-hidden="true" />
-                          {url ? (
-                            <a href={url} target="_blank" rel="noreferrer" className="truncate text-primary underline underline-offset-2 hover:no-underline">
-                              {gitEventLabel(event)}
-                            </a>
-                          ) : (
-                            <span className="truncate text-popover-foreground">{gitEventLabel(event)}</span>
-                          )}
-                        </li>
-                      );
-                    })}
-                  </ul>
-                )}
-              </div>,
-              document.body,
-            );
-          })()
+        ? createPortal(
+            <div
+              ref={tipRef}
+              role="tooltip"
+              {...portalScope}
+              // Interactive (not pointer-events-none, unlike before this
+              // feature): a git event's link needs to be reachable by the
+              // cursor. onMouseEnter/onMouseLeave below keep it open while
+              // the cursor is over it (instead of fading the instant it
+              // leaves the narrow column), the same "hoverable tooltip"
+              // pattern any clickable-content popover needs.
+              className={`fixed z-50 w-max max-w-[min(90vw,32rem)] rounded-md border border-border bg-popover px-2.5 py-2 text-xs text-popover-foreground shadow-md transition-opacity duration-200 ease-in ${
+                tipClosing ? "opacity-0" : "opacity-100"
+              }`}
+              style={{ left: tipPosition?.x, top: tipPosition?.y }}
+              onMouseEnter={() => showTip(tip.target, tip.x, tip.y)}
+              onMouseLeave={startTipFade}
+            >
+              {tip.target.kind === "bin" ? binTipContent(tip.target.binIndex) : stageTipContent(tip.target.chipKey)}
+            </div>,
+            document.body,
+          )
         : null}
     </div>
   );
@@ -682,8 +798,7 @@ export function SessionChartCard({
     [thread.bins, settings.collapseEmpty, settings.unit, settings.collapseToZeroBelowMin],
   );
 
-  const colorFor = (key: string) =>
-    settings.agentColors[key] ?? DEFAULT_PALETTE[Math.max(agentKeys.indexOf(key), 0) % DEFAULT_PALETTE.length];
+  const colorFor = useSeriesColorFor(agentKeys, (key) => settings.agentColors[key]);
   const labelFor = (key: string) => {
     const name = agentLabels[key] ?? key;
     return key.startsWith(WORKFLOW_KEY_PREFIX) ? `Workflow: ${name}` : name;

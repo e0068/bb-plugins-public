@@ -1,7 +1,7 @@
 // Pure, deterministic formatting helpers for the UI. No I/O, no locale
 // lookups that could vary between renders — same input always produces the
 // same string.
-import type { BucketModelUsage, TokensBucket } from "./types";
+import type { BucketVariantUsage, TokensBucket } from "./types";
 
 /**
  * Human-readable token count: 1.4M / 30.1k / 512. Mirrors tools/tokens.py's
@@ -72,21 +72,43 @@ export interface BucketDisplay {
   caption: string | null;
 }
 
+const MODEL_FAMILIES = "fable|opus|sonnet|haiku";
+// "claude-opus-4-8", "claude-haiku-4-5-20251001" — family first, then version.
+const FAMILY_FIRST = new RegExp(`^claude-(${MODEL_FAMILIES})-(\\d+(?:-\\d{1,2})*)(?:-\\d{8})?$`);
+// "claude-3-5-sonnet-20241022" — the older naming, version first.
+const VERSION_FIRST = new RegExp(`^claude-(\\d+(?:-\\d{1,2})*)-(${MODEL_FAMILIES})(?:-\\d{8})?$`);
+
+/** "claude-opus-4-8" -> "opus 4.8"; a name of any other shape is returned as is. */
+function formatModelName(model: string): string {
+  const familyFirst = FAMILY_FIRST.exec(model);
+  if (familyFirst) return `${familyFirst[1]} ${familyFirst[2].replaceAll("-", ".")}`;
+  const versionFirst = VERSION_FIRST.exec(model);
+  if (versionFirst) return `${versionFirst[2]} ${versionFirst[1].replaceAll("-", ".")}`;
+  return model;
+}
+
+/** One variant as the caption names it: "opus 4.8 · high ↯". */
+function formatVariant({ model, effort, fast }: BucketVariantUsage): string {
+  const name = [formatModelName(model), effort].filter((v): v is string => Boolean(v)).join(" · ");
+  return fast ? `${name} ↯` : name;
+}
+
 /**
- * The bucket's models with usage for each one: "opus 5.7M, sonnet 52.0M, haiku 607".
- * The order (descending by usage) comes from the counter script — see the
- * discussion in memory/decisions/token-usage-one-caption-source.md.
+ * What the bucket ran on: "opus 5.5 · high ↯, sonnet 5 · medium". No token
+ * counts — the row already shows its usage next to the cost. The order
+ * (descending by usage) comes from the counter script — see
+ * docs/decisions/token-usage-caption-model-effort-fast.md.
  */
-function formatBucketModels(models: BucketModelUsage[]): string | null {
-  if (models.length === 0) return null;
-  return models.map(({ tier, total }) => `${tier} ${formatTokenCount(total)}`).join(", ");
+function formatBucketVariants(variants: BucketVariantUsage[]): string | null {
+  if (variants.length === 0) return null;
+  return variants.map(formatVariant).join(", ");
 }
 
 /**
  * How to display one report bucket for any cut (session, project, agent,
  * workflow, model, day) — the single place on the server where this is
  * computed; the client renders the finished result and doesn't derive the
- * name again (see memory/decisions/token-usage-one-caption-source.md).
+ * name again (see docs/decisions/token-usage-one-caption-source.md).
  *
  * A bucket with agent data (and the "main" bucket under `--by agent`) gets
  * the agent's name and caption; for the other cuts the bucket key is already
@@ -94,16 +116,16 @@ function formatBucketModels(models: BucketModelUsage[]): string | null {
  * date), so it's used as-is and has no caption.
  */
 export function formatBucketDisplay(bucket: TokensBucket, maxLength = 40): BucketDisplay {
-  const models = formatBucketModels(bucket.models);
+  const ranOn = formatBucketVariants(bucket.variants);
 
   const isMain = bucket.key === "main";
   if (isMain || bucket.agent) {
     const agentType = bucket.agent?.agentType ?? null;
     const raw = isMain ? "Main agent" : (bucket.agent?.description ?? agentType ?? "Subagent");
     const name = truncateLabel(raw, maxLength);
-    // Agent type and models with usage go side by side: "general-purpose · sonnet 172M".
+    // Agent type and what it ran on go side by side: "general-purpose · opus 4.8 · high".
     // The type is always shown when present, not as a replacement for the name.
-    const parts = [isMain ? null : agentType, models].filter((v): v is string => Boolean(v));
+    const parts = [isMain ? null : agentType, ranOn].filter((v): v is string => Boolean(v));
     return { name, caption: parts.length > 0 ? parts.join(" · ") : null };
   }
 

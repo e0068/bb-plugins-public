@@ -94,6 +94,7 @@ const THREADS_READY = {
       bbProjectName: "Token Usage Header",
       threadId: "thread-aaa",
       bbThreadTitle: "Thread A",
+      flowStages: [],
     },
     {
       session: THREAD_B_SESSION,
@@ -115,6 +116,7 @@ const THREADS_READY = {
       bbProjectName: null,
       threadId: null,
       bbThreadTitle: null,
+      flowStages: [],
     },
   ],
   // "main" gets a real label; "code-reviewer" is left unmapped on purpose —
@@ -155,6 +157,7 @@ const THREADS_WITH_GAPS = {
       bbProjectName: "Token Usage Header",
       threadId: "thread-collapse",
       bbThreadTitle: "Thread with a pause",
+      flowStages: [],
     },
   ],
   agentLabels: { main: "Main agent" },
@@ -544,6 +547,7 @@ describe("threads-timeline nav panel", () => {
             bbProjectName: "Workflow Composer",
             threadId: null,
             bbThreadTitle: null,
+            flowStages: [],
           },
         ],
       }),
@@ -928,6 +932,7 @@ describe("threads-timeline nav panel — liveness indicators", () => {
         bbThreadTitle: "Live, in progress",
         isAlive: true,
         isWorking: true,
+        flowStages: [],
       },
       {
         session: "sess_idle1",
@@ -949,6 +954,7 @@ describe("threads-timeline nav panel — liveness indicators", () => {
         bbThreadTitle: "Live, idle",
         isAlive: true,
         isWorking: false,
+        flowStages: [],
       },
       {
         session: "sess_dead1",
@@ -970,6 +976,7 @@ describe("threads-timeline nav panel — liveness indicators", () => {
         bbThreadTitle: "Archived",
         isAlive: false,
         isWorking: false,
+        flowStages: [],
       },
     ],
     agentLabels: { main: "Main agent" },
@@ -1043,6 +1050,7 @@ describe("cost summary block (UsageProjectsSummary)", () => {
     bbProjectName: "Alpha",
     threadId: "thread-alpha",
     bbThreadTitle: "Alpha session",
+    flowStages: [],
   };
 
   // Outside the day (24h) and week (7d) windows, inside the month (30d) one
@@ -1069,6 +1077,7 @@ describe("cost summary block (UsageProjectsSummary)", () => {
     bbProjectName: "Beta",
     threadId: "thread-beta",
     bbThreadTitle: "Beta session",
+    flowStages: [],
   };
 
   // Dispatches on `limit`: the summary's own two calls (the fast 100-session
@@ -1294,6 +1303,7 @@ describe("cost summary block (UsageProjectsSummary)", () => {
       session: `sess_many_${i + 1}`,
       threadId: `thread-many-${i + 1}`,
       bbThreadTitle: `Session ${i + 1}`,
+      flowStages: [],
       totalCost: count - i,
     }));
   }

@@ -18,12 +18,12 @@ import git_events  # noqa: E402
 
 # Version of the --json report format. Bump on ANY breaking format change —
 # src/core/agent-timeline.ts checks it first, the same way parse.ts does for
-# tools/tokens.py (see memory/decisions/token-usage-json-schema-version.md,
+# tools/tokens.py (see docs/decisions/token-usage-json-schema-version.md,
 # the same approach applied here for the new script).
 #
 # 1 -> 2: assistant messages carry tokens/cost (owner's decision: cost is
 # accounted per model call, not per tool-use line) — see
-# memory/decisions/token-usage-cost-on-messages.md.
+# docs/decisions/token-usage-cost-on-messages.md.
 #
 # 2 -> 3: agent carries requestFull/requestFullTruncated/responseFull/
 # responseFullTruncated — the untruncated (up to FULL_TEXT_MAX) text of the

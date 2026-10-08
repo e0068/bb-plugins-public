@@ -1,5 +1,5 @@
 {
-  "extends": "../packages/plugin-base/tsconfig.base.json",
+  "extends": "./packages/plugin-base/tsconfig.base.json",
   "compilerOptions": {
     "jsx": "react-jsx",
     "types": [
@@ -8,6 +8,9 @@
     "paths": {
       "@/*": [
         "./*"
+      ],
+      "@bb-plugins/*": [
+        "./packages/*"
       ]
     },
     "skipLibCheck": false

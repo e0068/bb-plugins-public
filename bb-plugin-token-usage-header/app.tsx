@@ -4,7 +4,7 @@
 // token spend, with a popover for the full breakdown. Mounted once per
 // visible thread (twice in a split view) — all state lives in the
 // component, never at module scope.
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   definePluginApp,
   useBbNavigate,
@@ -14,6 +14,7 @@ import {
   type PluginRpcResult,
   type PluginThreadHeaderActionProps,
 } from "@get-bb/plugin-sdk/app";
+import { ReducedColorsProvider, ReducedColorsSection } from "@bb-plugins/reduced-colors";
 import type { rpcContract } from "./server";
 import { Button } from "@/components/ui/button";
 import { Icon } from "@/components/ui/icon";
@@ -59,7 +60,29 @@ const TOKEN_PHASES: ReadonlyArray<{
   { key: "output", label: "Output" },
 ];
 
-function TokenUsageHeaderAction({ threadId, isCompactViewport }: PluginThreadHeaderActionProps) {
+/** Reduced Colors for every chart under one mount — loaded once, not per chart (packages/reduced-colors). */
+function WithReducedColors({ children }: { children: ReactNode }) {
+  const rpc = useRpc<typeof rpcContract>();
+  return <ReducedColorsProvider load={() => rpc.call("loadReducedColors", {})}>{children}</ReducedColorsProvider>;
+}
+
+/** The settings page's own Reduced Colors block — bb's declared settings have no colour field. */
+function ReducedColorsSettings() {
+  const rpc = useRpc<typeof rpcContract>();
+  return (
+    <ReducedColorsSection load={() => rpc.call("loadReducedColors", {})} save={(value) => rpc.call("saveReducedColors", value)} />
+  );
+}
+
+function TokenUsageHeaderAction(props: PluginThreadHeaderActionProps) {
+  return (
+    <WithReducedColors>
+      <TokenUsageHeaderButton {...props} />
+    </WithReducedColors>
+  );
+}
+
+function TokenUsageHeaderButton({ threadId, isCompactViewport }: PluginThreadHeaderActionProps) {
   const rpc = useRpc<typeof rpcContract>();
   const navigate = useBbNavigate();
   const [state, setState] = useState<LoadState>({ kind: "loading" });
@@ -309,7 +332,7 @@ function UsageDetails({
           <ul className="space-y-0.5">
             {/* Name and caption aren't recomputed here — they already arrive
                 ready from the server (formatBucketDisplay), see
-                memory/decisions/token-usage-one-caption-source.md.
+                docs/decisions/token-usage-one-caption-source.md.
                 Whole row is the click target (no separate "Details" button)
                 — same row treatment as the "Agents" list in
                 pages/AgentTimelinePage.tsx's LeftPanel. */}
@@ -328,7 +351,11 @@ function UsageDetails({
                     <div className="truncate text-foreground" title={agent.name}>
                       {agent.name}
                     </div>
-                    {agent.caption && <div className="truncate text-muted-foreground/70">{agent.caption}</div>}
+                    {agent.caption && (
+                      <div className="truncate text-muted-foreground/70" title={agent.caption}>
+                        {agent.caption}
+                      </div>
+                    )}
                   </div>
                   <span className="shrink-0 tabular-nums text-muted-foreground">
                     {formatTokenCount(agent.total)} · {formatCost(agent.cost)}
@@ -354,8 +381,11 @@ function UsageDetails({
  * with a subPath — never from the left menu directly.
  */
 function ThreadsTimelinePanel({ subPath }: PluginNavPanelProps) {
-  if (subPath === "") return <ThreadsTimelinePage subPath={subPath} />;
-  return <AgentTimelinePage subPath={subPath} />;
+  return (
+    <WithReducedColors>
+      {subPath === "" ? <ThreadsTimelinePage subPath={subPath} /> : <AgentTimelinePage subPath={subPath} />}
+    </WithReducedColors>
+  );
 }
 
 export default definePluginApp((app) => {
@@ -371,5 +401,12 @@ export default definePluginApp((app) => {
     icon: "ChartColumn",
     path: THREADS_TIMELINE_PANEL_PATH,
     component: ThreadsTimelinePanel,
+  });
+
+  app.slots.settingsSection({
+    id: "reduced-colors",
+    title: "Reduced Colors",
+    description: "Charts use a gradient of two colours instead of the palette.",
+    component: ReducedColorsSettings,
   });
 });

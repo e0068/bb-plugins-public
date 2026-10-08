@@ -5,9 +5,9 @@
 // reading/writing `bb.storage.kv`, this module only owns the shape and how
 // to make a raw blob safe to use.
 //
-// See memory/decisions/token-usage-viz-settings-persist-kv.md for the
+// See docs/decisions/token-usage-viz-settings-persist-kv.md for the
 // original kv-vs-settings.define call, and
-// memory/decisions/token-usage-gear-to-native-settings.md for why the
+// docs/decisions/token-usage-gear-to-native-settings.md for why the
 // former gear popover's 14 geometry/behaviour fields later moved OUT of
 // this blob into src/core/gear-settings.ts's `bb.settings.define`
 // descriptors, leaving only what genuinely can't be declared ahead of time

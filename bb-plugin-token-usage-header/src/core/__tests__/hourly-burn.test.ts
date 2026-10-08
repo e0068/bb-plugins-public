@@ -36,6 +36,7 @@ function thread(bins: TimelineBin[]): ThreadEntry {
     bbThreadTitle: null,
     isAlive: false,
     isWorking: false,
+    flowStages: [],
     bins,
   };
 }
