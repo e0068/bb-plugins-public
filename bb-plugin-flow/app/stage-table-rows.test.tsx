@@ -5,6 +5,7 @@ import { loadPluginApp, renderSlot } from "@get-bb/plugin-sdk/testing/app";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { builtinStage } from "../lib/stage-constants";
+import { openRowMenu } from "./row-menu-fixture";
 import type { FlowSettings, flowSettingsRpcContract, StageTemplate, WorkStage } from "../shared/contract";
 
 const app = await loadPluginApp(() => import("../app"));
@@ -74,10 +75,10 @@ describe("строки таблицы этапов", () => {
 });
 
 describe("шаблоны этапов", () => {
-  it("сохранённый этап — закладка недоступна", async () => {
+  it("сохранённый этап — пункт «Сохранить этап шаблоном» в меню «⋯» недоступен", async () => {
     const slot = open(settings({ stageTemplates: [{ kind: "skill", skill: "code-review", name: "Ревью", executors: [] }] }));
-    const row = within(await slot.findByRole("row", { name: "Этап 3" }));
-    expect(row.getByRole("button", { name: "Сохранить этап шаблоном" }).hasAttribute("disabled")).toBe(true);
+    const menu = await openRowMenu(await slot.findByRole("row", { name: "Этап 3" }));
+    expect(menu.getByRole("menuitem", { name: "Сохранить этап шаблоном" }).getAttribute("aria-disabled")).toBe("true");
   });
 
   it("«Добавить этап» с шаблонами — меню: шаблон встаёт в конец таблицы таким, каким его сохранили", async () => {
