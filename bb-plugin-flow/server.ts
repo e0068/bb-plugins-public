@@ -196,7 +196,7 @@ export default async function plugin(bb: BbPluginApi): Promise<void> {
     thread,
     flowThreads: () => threads.withFlow(),
     providers,
-    // Доигранный прогон Flow пускает работу дальше. Текст собирает исполнитель — в нём простой по этапам. Агент, чей
+    // Доигранный прогон Flow пускает работу дальше. Текст собирает исполнитель. Агент, чей
     // вызов flow_stage ждёт автоматизацию, получает реплику ответом инструмента, и в тред она не идёт.
     wake: (threadId, text) => relay.deliver(threadId, text),
     kv: bb.storage.kv,

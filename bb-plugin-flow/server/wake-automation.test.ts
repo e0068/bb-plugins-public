@@ -117,7 +117,7 @@ describe("простой сломанной автоматизации", () => {
     return { steps: fakeSteps(() => (refuse ? { ok: false, error: "no token" } : { ok: true, detail: null })), fix: () => void (refuse = false) };
   };
 
-  it("ожидание владельца не идёт в минуты этапа и названо в реплике агенту", async () => {
+  it("ожидание владельца не идёт в минуты этапа и не попадает в реплику агенту", async () => {
     const { steps, fix } = flaky();
     const { mark, rowOf, sent, tick, harness } = setup([code, flowStage("publish", "Commit, FF to Main, PR", ["git.create-pr"]), demo], steps);
     await mark("code", "done");
@@ -128,7 +128,8 @@ describe("простой сломанной автоматизации", () => {
     await vi.waitFor(async () => expect((await rowOf("publish"))?.state).toBe("done"), { timeout: 5000 });
     expect(await rowOf("publish")).toMatchObject({ minutes: 0, idleMinutes: 616 });
     await vi.waitFor(() => expect(sent).toHaveLength(1), { timeout: 5000 });
-    expect(sent[0]).toContain("Commit, FF to Main, PR — 616 m");
+    expect(sent[0]).not.toContain("616");
+    expect(sent[0]).not.toContain("Idle");
   });
 
   it("ожидание нажатия на этапе Action не идёт в минуты этапа", async () => {
@@ -141,7 +142,7 @@ describe("простой сломанной автоматизации", () => {
     expect(await rowOf("press")).toMatchObject({ minutes: 0, idleMinutes: 40 });
   });
 
-  it("простой назван и в ответе инструмента отметки этапа — оттуда он уходит в отчёт", async () => {
+  it("простой не попадает и в ответ инструмента отметки этапа — агенту нечего нести в отчёт", async () => {
     const { steps, fix } = flaky();
     const { mark, rowOf, tick, harness } = setup([code, flowStage("publish", "Commit, FF to Main, PR", ["git.create-pr"]), stage("report", { name: "Отчёт" })], steps);
     await mark("code", "done");
@@ -152,14 +153,7 @@ describe("простой сломанной автоматизации", () => {
     await vi.waitFor(async () => expect((await rowOf("publish"))?.state).toBe("done"), { timeout: 5000 });
     await mark("report", "started");
     const answer = textOf(await mark("report", "done"));
-    expect(answer).toContain("Commit, FF to Main, PR — 616 m");
-    expect(answer).toContain("flow report");
-  });
-
-  it("прогон без простоя ничего лишнего в ответ инструмента не пишет", async () => {
-    const { mark, rowOf } = setup([code, flowStage("publish", "PR", ["git.create-pr"]), stage("report", { name: "Отчёт" })], fakeSteps());
-    await mark("code", "done");
-    await vi.waitFor(async () => expect((await rowOf("publish"))?.state).toBe("done"), { timeout: 5000 });
-    expect(textOf(await mark("report", "done"))).not.toContain("Idle");
+    expect(answer).not.toContain("616");
+    expect(answer).not.toContain("flow report");
   });
 });

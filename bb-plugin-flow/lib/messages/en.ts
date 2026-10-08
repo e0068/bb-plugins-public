@@ -216,7 +216,7 @@ export const en: Messages = {
     automation: "Automation",
   },
   steps: {
-    "bb.rename-thread": "Rename the thread",
+    "bb.rename-thread": "Rename the thread after its task",
     "git.commit": "Commit",
     "git.fast-forward": "FF Branch ← Main",
     "bb.tasks-issue-keys": "Issue task keys",

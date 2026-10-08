@@ -10,7 +10,7 @@ const land = stage("land");
 describe("наказ агенту после последней попытки", () => {
   it("наказа в настройках нет — реплика несёт наказ по умолчанию", () => {
     expect(failureInstructionOf({})).toBe(DEFAULT_FAILURE_INSTRUCTION);
-    expect(failureWakeText(land, "git.merge", "timed out", [])).toContain(DEFAULT_FAILURE_INSTRUCTION);
+    expect(failureWakeText(land, "git.merge", "timed out")).toContain(DEFAULT_FAILURE_INSTRUCTION);
   });
 
   it("пустой или из одних пробелов наказ — снова по умолчанию", () => {
@@ -23,18 +23,12 @@ describe("наказ агенту после последней попытки",
   });
 
   it("свой наказ заменяет наказ по умолчанию, а шаг, этап и ошибка остаются в реплике", () => {
-    const text = failureWakeText(land, "git.merge", "timed out after 75 seconds", [], "Пойми, в чём проблема, и сообщи мне.");
+    const text = failureWakeText(land, "git.merge", "timed out after 75 seconds", "Пойми, в чём проблема, и сообщи мне.");
     expect(text).toContain("Пойми, в чём проблема, и сообщи мне.");
     expect(text).not.toContain(DEFAULT_FAILURE_INSTRUCTION);
     expect(text).toContain("git.merge");
     expect(text).toContain('"land"');
     expect(text).toContain("timed out after 75 seconds");
-  });
-
-  it("простой по этапам идёт после наказа", () => {
-    const text = failureWakeText(land, "git.merge", "boom", [{ name: "Commit", minutes: 4 }], "Сообщи мне.");
-    expect(text).toContain("Сообщи мне.");
-    expect(text.indexOf("Сообщи мне.")).toBeLessThan(text.indexOf("Commit — 4 m"));
   });
 
   it("наказ длиннее предела схемы обрезается до предела — настройки с ним сохраняются", () => {

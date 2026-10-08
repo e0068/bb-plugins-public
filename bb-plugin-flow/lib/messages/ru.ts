@@ -223,7 +223,7 @@ export const ru = {
     automation: "Автоматизация",
   },
   steps: {
-    "bb.rename-thread": "Переименовать тред",
+    "bb.rename-thread": "Переименовать тред согласно задаче",
     "git.commit": "Commit",
     "git.fast-forward": "FF Branch ← Main",
     "bb.tasks-issue-keys": "Выдать ключи задачам",

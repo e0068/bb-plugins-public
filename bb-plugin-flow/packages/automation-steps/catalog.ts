@@ -35,7 +35,7 @@ export const STEP_IDS = [
 export type StepId = (typeof STEP_IDS)[number];
 
 export const STEP_LABELS: Readonly<Record<StepId, { readonly en: string; readonly ru: string }>> = {
-  "bb.rename-thread": { en: "Rename the thread", ru: "Переименовать тред" },
+  "bb.rename-thread": { en: "Rename the thread after its task", ru: "Переименовать тред согласно задаче" },
   "git.commit": { en: "Commit", ru: "Commit" },
   "git.fast-forward": { en: "FF Branch ← Main", ru: "FF Branch ← Main" },
   "bb.tasks-issue-keys": { en: "Issue task keys", ru: "Выдать ключи задачам" },

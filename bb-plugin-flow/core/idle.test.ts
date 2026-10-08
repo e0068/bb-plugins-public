@@ -2,17 +2,13 @@
 import fc from "fast-check";
 import { describe, expect, it } from "vitest";
 
-import { actionStage } from "../lib/stage-constants";
 import type { FlowProgress, WorkStage } from "../shared/contract";
-import { builtinAutomationStage, idleMinutes, idleStages, onIdleClose, onIdleOpen, onRunStart, stepsOf, wakeText } from "./automation-run";
+import { builtinAutomationStage, idleMinutes, onIdleClose, onIdleOpen, onRunStart, stepsOf, wakeText } from "./automation-run";
 import { EMPTY_PROGRESS } from "./progress";
-import { stage } from "./stages-fixtures";
 
 const at = (minutes: number): string => new Date(Date.parse("2026-09-18T10:00:00.000Z") + minutes * 60_000).toISOString();
 
 const publish: WorkStage = { ...builtinAutomationStage([]), id: "publish", name: "Commit, FF to Main, PR", automation: { source: "flow", steps: ["git.commit", "git.create-pr"] } };
-const press: WorkStage = { ...actionStage([]), id: "press", name: "Publish" };
-const code = stage("code", { name: "Реализация" });
 
 const track = (progress: FlowProgress, id: string) => progress.stages[id] ?? {};
 
@@ -71,45 +67,13 @@ describe("метки простоя этапа", () => {
   });
 });
 
-describe("простой по этапам", () => {
-  const stages = [code, publish, press];
-  const withIdle = (progress: FlowProgress, id: string, minutes: number) => onIdleClose(onIdleOpen(progress, id, at(0)), id, at(minutes));
-
-  it("в список попадают только этапы с простоем, в порядке flow", () => {
-    const progress = withIdle(withIdle(EMPTY_PROGRESS, "press", 12), "publish", 616);
-    expect(idleStages(progress, stages)).toEqual([
-      { name: "Commit, FF to Main, PR", minutes: 616 },
-      { name: "Publish", minutes: 12 },
-    ]);
-  });
-
-  it("простоя нигде не было — список пуст", () => {
-    expect(idleStages(EMPTY_PROGRESS, stages)).toEqual([]);
-  });
-
-  it("этап записи, которого нет во flow, в список не попадает", () => {
-    expect(idleStages(withIdle(EMPTY_PROGRESS, "gone", 30), stages)).toEqual([]);
-  });
-});
-
 describe("текст реплики агенту", () => {
   it("автоматизация без простоя — одна строка продолжения", () => {
-    const text = wakeText("automation", []);
+    const text = wakeText("automation");
     expect(text).toBe("Flow: the automation stage is done — carry on with the next stage of the flow.");
   });
 
   it("этап Action без простоя — своя строка продолжения", () => {
-    expect(wakeText("action", [])).toBe("Flow: the action stage is done — carry on with the next stage of the flow.");
-  });
-
-  it("простой назван по этапам и с указанием отнести его в отчёт", () => {
-    const text = wakeText("automation", [
-      { name: "Commit, FF to Main, PR", minutes: 616 },
-      { name: "Publish", minutes: 12 },
-    ]);
-    expect(text).toContain("Commit, FF to Main, PR — 616 m");
-    expect(text).toContain("Publish — 12 m");
-    expect(text).toContain("flow report");
-    expect(text.split("\n")[0]).toBe("Flow: the automation stage is done — carry on with the next stage of the flow.");
+    expect(wakeText("action")).toBe("Flow: the action stage is done — carry on with the next stage of the flow.");
   });
 });
