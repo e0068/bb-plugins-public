@@ -66,20 +66,26 @@ const isMissing = (error: Error | null): boolean =>
 const wasKilled = (error: Error | null): boolean =>
   error !== null && "killed" in error && (error as { killed?: unknown }).killed === true;
 
-/** The first words of a refusal, without the `Error:` the CLI prefixes. */
-const refusal = (stderr: string): string => lines(stderr)[0]?.replace(/^Error:\s*/, "") ?? MINT_FAILED;
+/** The first words of a refusal, without the `Error:` the CLI prefixes;
+ *  stderr first, then stdout — some refusals of the CLI go to stdout. */
+const refusal = (run: CliRun): string =>
+  [...lines(run.stderr), ...lines(run.stdout)][0]?.replace(/^Error:\s*/, "") ?? MINT_FAILED;
 
-/** A token is one word on the last printed line; anything else is not one. */
-function printedToken(stdout: string): MintRunReading {
-  const last = lines(stdout).at(-1);
-  return last !== undefined && !/\s/.test(last) ? { kind: "ok", token: last } : { kind: "failed", message: MINT_FAILED };
+/** The CLI prints its "not logged in" to stderr or, as v1.0.33 does, to stdout
+ *  exiting 0 — so this check comes before the split by exit code. */
+const isNotLoggedIn = (run: CliRun): boolean => /not logged in/i.test(`${run.stderr}\n${run.stdout}`);
+
+/** A token is one word on the last printed line; anything else is a refusal. */
+function printedToken(run: CliRun): MintRunReading {
+  const last = lines(run.stdout).at(-1);
+  return last !== undefined && !/\s/.test(last) ? { kind: "ok", token: last } : { kind: "failed", message: refusal(run) };
 }
 
 export function readMintRun(run: CliRun): MintRunReading {
   if (isMissing(run.error)) return { kind: "missing" };
   if (wasKilled(run.error)) return { kind: "failed", message: `The turso CLI did not answer in ${RUN_TIMEOUT_MS / 1000} s.` };
-  if (/not logged in/i.test(run.stderr)) return { kind: "not_logged_in" };
-  return run.error === null ? printedToken(run.stdout) : { kind: "failed", message: refusal(run.stderr) };
+  if (isNotLoggedIn(run)) return { kind: "not_logged_in" };
+  return run.error === null ? printedToken(run) : { kind: "failed", message: refusal(run) };
 }
 
 const runMint = (execFile: CliExecFile, file: string, name: string): Promise<CliRun> =>

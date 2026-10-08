@@ -520,9 +520,17 @@ export function TableView({ scope }: TableViewProps) {
                 {/* Stays at the leading edge while the table scrolls sideways. */}
                 <button
                   type="button"
+                  aria-expanded={!group.collapsed}
                   onClick={() => toggleGroupCollapsed(group.key)}
                   className="sticky left-0 flex items-center gap-2 px-3 py-1.5"
                 >
+                  <span
+                    aria-hidden
+                    data-group-chevron={group.collapsed ? "collapsed" : "expanded"}
+                    className="flex shrink-0 text-subtle-foreground"
+                  >
+                    <Icon name={group.collapsed ? "ChevronRight" : "ChevronDown"} className="size-3.5" />
+                  </span>
                   <GroupIcon groupBy={settings.groupBy} groupKey={group.key} labels={labels.data ?? []} />
                   {group.label}
                   <span className="text-xs font-normal tabular-nums text-subtle-foreground">

@@ -50,6 +50,24 @@ describe("what one run of turso auth api-tokens mint says", () => {
     expect(readMintRun({ error: exited, stdout: "", stderr })).toEqual({ kind: "not_logged_in" });
   });
 
+  it("no login printed to stdout is told apart too, whatever the exit", () => {
+    const stdout = "You are not logged in, please login with turso auth login before running other commands.\n";
+    expect(readMintRun({ error: null, stdout, stderr: "" })).toEqual({ kind: "not_logged_in" });
+    expect(readMintRun({ error: exited, stdout, stderr: "" })).toEqual({ kind: "not_logged_in" });
+  });
+
+  it("a refusal printed only to stdout carries its first line", () => {
+    const stdout = "\u001b[31mError:\u001b[0m organization acme not found\nsecond line\n";
+    expect(readMintRun({ error: exited, stdout, stderr: "" })).toEqual({ kind: "failed", message: "organization acme not found" });
+  });
+
+  it("a refusal printed to stdout with exit 0 carries its first line too", () => {
+    expect(readMintRun({ error: null, stdout: "Error: organization acme not found\n", stderr: "" })).toEqual({
+      kind: "failed",
+      message: "organization acme not found",
+    });
+  });
+
   it("any other refusal carries its first line, without colours and the Error: prefix", () => {
     const stderr = "\n\u001b[31mError:\u001b[0m organization acme not found\nsecond line\n";
     expect(readMintRun({ error: exited, stdout: "", stderr })).toEqual({ kind: "failed", message: "organization acme not found" });
