@@ -1,19 +1,27 @@
-// Что агенту треда видно по flow: навыки и агенты открытых этапов — пройденных и текущего, — а остальное прячется
-// настройками Claude Code в .claude/settings.local.json дерева треда. Свой навык прячет `skillOverrides` «off», свой
-// агент — `Agent(<тип>)` в `permissions.deny`; навыки плагинов `skillOverrides` не трогает, поэтому плагин, ничего не
-// дающий flow, выключается целиком в `enabledPlugins`. Здесь только решение; файл пишет ../server/skill-scope.ts.
+// Что агенту треда видно по flow: навыки и агенты открытых этапов — пройденных, текущего и следующего, — а остальное прячется
+// настройками Claude Code в .claude/settings.local.json дерева треда. `skillOverrides` «off» прячет свой навык, навык
+// аккаунта claude.ai и свой workflow, `disableBundledSkills` — встроенные навыки Claude Code, `Agent(<тип>)` в
+// `permissions.deny` — агента. Навыки плагинов `skillOverrides` не трогает, а запрет `Skill(<имя>)` из списка их не
+// убирает, поэтому плагин, ничего не дающий flow, выключается целиком в `enabledPlugins` — и синхронизированный с
+// claude.ai, и тот, где одни команды. Здесь только решение; файл пишет ../server/skill-scope.ts.
 import type { Flow, FlowProgress, StageCatalog, WorkStage } from "../shared/contract";
 
-/** Имена навыков и типы агентов — так, как их называет Claude Code. */
-export type Scope = { skills: readonly string[]; agents: readonly string[] };
-/** Что Flow прячет: имена своих навыков, типы агентов и ключи плагинов `плагин@маркетплейс`. */
-export type Hidden = { skills: readonly string[]; agents: readonly string[]; plugins: readonly string[] };
+/** Имена навыков, типы агентов и имена workflow — так, как их называет Claude Code. */
+export type Scope = { skills: readonly string[]; agents: readonly string[]; workflows?: readonly string[] };
+/**
+ * Что Flow прячет: имена навыков и workflow для `skillOverrides`, типы агентов, ключи плагинов `плагин@маркетплейс`
+ * и встроенные навыки Claude Code разом.
+ */
+export type Hidden = { skills: readonly string[]; agents: readonly string[]; plugins: readonly string[]; bundled?: boolean };
 export type Limits = { skills: boolean; agents: boolean };
-/** Плагин Claude Code: ключ в `enabledPlugins` и имя, которым он префиксует свои навыки и агентов. */
-export type ClaudePlugin = { key: string; name: string };
+/**
+ * Плагин Claude Code: ключ в `enabledPlugins`, имя, которым он префиксует свои навыки и агентов, и навыки с командами
+ * `плагин:имя`, прочитанные из его папки, — их нет в каталоге bb у плагинов, синхронизированных с claude.ai, и у команд.
+ */
+export type ClaudePlugin = { key: string; name: string; skills?: readonly string[] };
 
-export const EMPTY_SCOPE: Scope = { skills: [], agents: [] };
-export const NOTHING_HIDDEN: Hidden = { skills: [], agents: [], plugins: [] };
+export const EMPTY_SCOPE: Scope = { skills: [], agents: [], workflows: [] };
+export const NOTHING_HIDDEN: Hidden = { skills: [], agents: [], plugins: [], bundled: false };
 /** Встроенные агенты Claude Code: в каталоге их нет, файлов у них нет. */
 export const BUILTIN_AGENTS: readonly string[] = ["general-purpose", "Explore", "Plan", "statusline-setup"];
 
@@ -27,17 +35,31 @@ const outside = (names: readonly string[], kept: readonly string[]): string[] =>
 
 export const limitsOf = (flow: Pick<Flow, "limitSkills" | "limitAgents">): Limits => ({ skills: flow.limitSkills === true, agents: flow.limitAgents === true });
 
+/** Тред, которому flow ещё выберет агент: прячется то, что прячет хоть один flow, — выбор потом только откроет. */
+export const limitsOfAny = (flows: ReadonlyArray<Pick<Flow, "limitSkills" | "limitAgents">>): Limits =>
+  flows.map(limitsOf).reduce((a, b) => ({ skills: a.skills || b.skills, agents: a.agents || b.agents }), { skills: false, agents: false });
+
 const finished = (track: FlowProgress["stages"][string] | undefined): boolean => track?.finishedAt !== undefined || track?.skipped === true;
 
-/** Этапы верхнего уровня по порядку до первого незавершённого включительно — с их подэтапами; без прогона — первый. */
+/** Этап, которому есть что открыть: навык или исполнители у него самого или у его подэтапов. */
+const working = (stages: readonly WorkStage[], top: WorkStage): boolean =>
+  stages.some((stage) => (stage.parent ?? stage.id) === top.id && (stage.skill !== "" || stage.executors.length > 0));
+
+/**
+ * Этапы верхнего уровня по порядку до первого незавершённого включительно и дальше до следующего рабочего этапа — с их
+ * подэтапами; без прогона текущий — первый. Следующий открыт заранее: Claude Code замечает файл настроек не сразу, а
+ * агент зовёт навык этапа сразу после отметки. Автоматизация и демонстрация навыка не несут и следующим не считаются.
+ */
 export const openStages = (stages: readonly WorkStage[], progress: FlowProgress | null): WorkStage[] => {
   const tops = stages.filter((stage) => stage.parent === undefined);
   const current = tops.findIndex((stage) => !finished(progress?.stages[stage.id]));
-  const open = new Set(tops.slice(0, current === -1 ? tops.length : current + 1).map((stage) => stage.id));
+  const ahead = current === -1 ? -1 : tops.findIndex((stage, index) => index > current && working(stages, stage));
+  const last = current === -1 || ahead === -1 ? tops.length : ahead + 1;
+  const open = new Set(tops.slice(0, last).map((stage) => stage.id));
   return stages.filter((stage) => open.has(stage.parent ?? stage.id));
 };
 
-/** Навыки и агенты этапов; агенты workflow — те, что названы в его скрипте. */
+/** Навыки, агенты и workflow этапов; агенты workflow — те, что названы в его скрипте. */
 export const scopeOf = (stages: readonly WorkStage[], workflowAgents: (workflowId: string) => readonly string[]): Scope => {
   const executors = stages.flatMap((stage) => stage.executors.map((executor) => executor.id));
   return {
@@ -45,10 +67,15 @@ export const scopeOf = (stages: readonly WorkStage[], workflowAgents: (workflowI
     agents: distinct(
       executors.flatMap((id) => (id.startsWith(WORKFLOW_PREFIX) ? workflowAgents(id) : id.startsWith(AGENT_PREFIX) ? [id.slice(AGENT_PREFIX.length)] : [])),
     ),
+    workflows: distinct(executors.flatMap((id) => (id.startsWith(WORKFLOW_PREFIX) ? [id.slice(WORKFLOW_PREFIX.length)] : []))),
   };
 };
 
-export const unite = (a: Scope, b: Scope): Scope => ({ skills: distinct([...a.skills, ...b.skills]), agents: distinct([...a.agents, ...b.agents]) });
+export const unite = (a: Scope, b: Scope): Scope => ({
+  skills: distinct([...a.skills, ...b.skills]),
+  agents: distinct([...a.agents, ...b.agents]),
+  workflows: distinct([...(a.workflows ?? []), ...(b.workflows ?? [])]),
+});
 
 const escape = (text: string): string => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
@@ -70,15 +97,34 @@ const claudeAgents = (catalog: StageCatalog): Array<{ type: string; plugin: stri
       : [],
   );
 
+/** Workflow каталога по имени — Claude Code показывает их агенту в одном списке с навыками. */
+const workflowNames = (catalog: StageCatalog): string[] =>
+  catalog.executors.flatMap((executor) => (executor.kind === "workflow" ? [executor.id.slice(WORKFLOW_PREFIX.length)] : []));
+
 /**
  * Что спрятать. `opened` — открытое по этапам, `needed` — всё, что нужно flow целиком: плагин включается или
  * выключается только в начале сессии, поэтому решается на весь flow сразу. Плагин выключается, когда всё, что он
- * даёт, — под включёнными переключателями и ничего из этого flow не нужно; плагин без навыков и агентов не трогается.
+ * даёт, — под включёнными переключателями и ничего из этого flow не нужно; плагин без навыков, команд и агентов —
+ * только с MCP или хуками — не трогается. `accountSkills` — навыки аккаунта claude.ai, которых нет в каталоге bb.
  */
-export const hiddenOf = ({ catalog, plugins, limits, opened, needed }: { catalog: StageCatalog; plugins: readonly ClaudePlugin[]; limits: Limits; opened: Scope; needed: Scope }): Hidden => {
+export const hiddenOf = ({
+  catalog,
+  plugins,
+  limits,
+  opened,
+  needed,
+  accountSkills = [],
+}: {
+  catalog: StageCatalog;
+  plugins: readonly ClaudePlugin[];
+  limits: Limits;
+  opened: Scope;
+  needed: Scope;
+  accountSkills?: readonly string[];
+}): Hidden => {
   const agents = claudeAgents(catalog);
   const offPlugin = (plugin: ClaudePlugin): boolean => {
-    const skills = catalog.skills.filter((skill) => pluginOfSkill(skill) === plugin.name).map((skill) => skill.name);
+    const skills = distinct([...catalog.skills.filter((skill) => pluginOfSkill(skill) === plugin.name).map((skill) => skill.name), ...(plugin.skills ?? [])]);
     const types = agents.filter((agent) => agent.plugin === plugin.name).map((agent) => agent.type);
     const limited = (skills.length === 0 || limits.skills) && (types.length === 0 || limits.agents);
     const used = skills.some((name) => needed.skills.includes(name)) || types.some((type) => needed.agents.includes(type));
@@ -87,10 +133,12 @@ export const hiddenOf = ({ catalog, plugins, limits, opened, needed }: { catalog
   const off = plugins.filter(offPlugin);
   // Агенты выключенного плагина уходят вместе с ним; агенты включённого прячутся по одному, как свои.
   const shown = agents.filter((agent) => !off.some((plugin) => plugin.name === agent.plugin)).map((agent) => agent.type);
+  const ownSkills = [...catalog.skills.filter(isOwnSkill).map((skill) => skill.name), ...accountSkills, ...workflowNames(catalog)];
   return {
-    skills: limits.skills ? outside(catalog.skills.filter(isOwnSkill).map((skill) => skill.name), opened.skills) : [],
+    skills: limits.skills ? outside(ownSkills, [...opened.skills, ...(opened.workflows ?? [])]) : [],
     agents: limits.agents ? outside([...BUILTIN_AGENTS, ...shown], opened.agents) : [],
     plugins: off.map((plugin) => plugin.key),
+    bundled: limits.skills,
   };
 };
 
@@ -99,6 +147,8 @@ type Json = Record<string, unknown>;
 const record = (value: unknown): Json => (typeof value === "object" && value !== null && !Array.isArray(value) ? (value as Json) : {});
 const strings = (value: unknown): string[] => (Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : []);
 const denyRule = (type: string): string => `Agent(${type})`;
+/** Ключ Claude Code, который убирает встроенные навыки и workflow разом. */
+const BUNDLED_KEY = "disableBundledSkills";
 
 /** Раздел без записей не остаётся пустым объектом или списком: файл владельца после снятия ограничений — как был. */
 const withSection = (json: Json, key: string, value: Json | readonly string[]): Json => {
@@ -138,7 +188,15 @@ export const withoutOwnerKeys = (current: Json, previous: Hidden, wanted: Hidden
     skills: wanted.skills.filter((name) => !ownerHas(overrides, previous.skills)(name)),
     agents: wanted.agents.filter((type) => !ownerHas(rules, previous.agents.map(denyRule))(denyRule(type))),
     plugins: wanted.plugins.filter((key) => !ownerHas(plugins, previous.plugins)(key)),
+    ...(wanted.bundled === undefined ? {} : { bundled: wanted.bundled && !(BUNDLED_KEY in current && previous.bundled !== true) }),
   };
+};
+
+/** Ключ встроенных навыков: Flow ставит свой, снимает только свой. */
+const withBundled = (json: Json, previous: boolean, next: boolean): Json => {
+  if (next) return { ...json, [BUNDLED_KEY]: true };
+  const { [BUNDLED_KEY]: _, ...rest } = json;
+  return previous ? rest : json;
 };
 
 /** Новый JSON .claude/settings.local.json: записи прошлой записи Flow сняты, новые положены, ключи владельца не тронуты. */
@@ -147,4 +205,5 @@ export const mergeLocalSettings = (current: Json, previous: Hidden, next: Hidden
     (json: Json) => withSection(json, "skillOverrides", overridesOf(json.skillOverrides, previous.skills, next.skills)),
     (json: Json) => withSection(json, "permissions", permissionsOf(json.permissions, previous.agents, next.agents)),
     (json: Json) => withSection(json, "enabledPlugins", pluginsOf(json.enabledPlugins, previous.plugins, next.plugins)),
+    (json: Json) => withBundled(json, previous.bundled === true, next.bundled === true),
   ].reduce((json, step) => step(json), current);

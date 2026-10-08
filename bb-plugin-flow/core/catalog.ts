@@ -82,6 +82,16 @@ const record = (value: unknown): Record<string, unknown> | null => (typeof value
 export const installedPluginDirs = (installed: string, settings: string | null): Array<{ plugin: string; dir: string }> =>
   installedPlugins(installed, settings).map(({ plugin, dir }) => ({ plugin, dir }));
 
+/** Ключи `плагин@маркетплейс`, которые владелец выключил в `enabledPlugins` настроек; битые настройки — ни одного. */
+export const disabledPluginKeys = (settings: string | null): Set<string> =>
+  new Set(Object.entries(record(record(parseJson(settings))?.enabledPlugins) ?? {}).flatMap(([key, on]) => (on === false ? [key] : [])));
+
+/** Имя плагина, синхронизированного с claude.ai: из его plugin.json, иначе по папке до «~» — `design~g2` это `design`. */
+export const syncedPluginName = (manifest: string | null, dirName: string): string => {
+  const name = record(parseJson(manifest))?.name;
+  return typeof name === "string" && name !== "" ? name : dirName.split("~")[0]!;
+};
+
 /** То же с ключом `плагин@маркетплейс`, под которым плагин стоит в `enabledPlugins`. */
 export const installedPlugins = (installed: string, settings: string | null): Array<{ key: string; plugin: string; dir: string }> => {
   const plugins = record(record(parseJson(installed))?.plugins) ?? {};

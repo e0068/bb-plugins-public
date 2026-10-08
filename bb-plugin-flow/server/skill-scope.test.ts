@@ -54,11 +54,11 @@ const setup = async (options: { flow?: Flow | null; worktree?: boolean } = {}) =
 };
 
 describe("настройки Claude Code в дереве треда", () => {
-  it("на первом этапе спрятано всё, кроме его навыка, и агенты вне исполнителей", async () => {
+  it("на первом этапе открыт его навык и навык следующего, остальное спрятано, агенты вне исполнителей тоже", async () => {
     const { scope, read } = await setup();
     await scope.sync("thr");
     const json = await read();
-    expect(json.skillOverrides).toEqual({ spec: "off", "code-review": "off", plan: "off" });
+    expect(json.skillOverrides).toEqual({ "code-review": "off", plan: "off" });
     expect(json.permissions).toEqual({ deny: expect.arrayContaining(["Agent(scout)", "Agent(code-reviewer)", "Agent(Explore)"]) });
   });
 
@@ -78,7 +78,7 @@ describe("настройки Claude Code в дереве треда", () => {
     await scope.sync("thr");
     mark({ brief: { startedAt: at } });
     await scope.sync("thr");
-    expect((await read()).skillOverrides).toEqual({ "code-review": "off", plan: "off" });
+    expect((await read()).skillOverrides).toEqual({ plan: "off" });
   });
 
   it("ключи владельца остаются, а выключенные переключатели возвращают файл как был", async () => {

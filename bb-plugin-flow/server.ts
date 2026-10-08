@@ -9,7 +9,7 @@ import { failureInstructionOf, retryPolicyOf, wakesAgentAfterLastRetry } from ".
 import { OWN_PLUGIN_ID } from "./core/plugin-id";
 import { ANSWERED_CHANNEL, registerApi } from "./server/api";
 import { returnAwaitingBrief } from "./server/brief-return";
-import { flowTurnInstructions, registerAskTool } from "./server/ask-tool";
+import { ASK_TOOL_NAME, flowTurnInstructions, registerAskTool } from "./server/ask-tool";
 import { registerChooseFlow } from "./server/choose-flow";
 import { scriptStep } from "./server/script-step";
 import { readTaskFile, writeTaskFile } from "./server/task-file";
@@ -20,26 +20,29 @@ import { automationsBridge } from "./server/automations";
 import { centerBridge, registerNoticeActions } from "./server/center";
 import { automationEntry, turnEndEntry } from "./core/center-notice";
 import { waitsForAnswer } from "./core/awaiting";
-import { registerCommands } from "./server/command";
+import { COMMAND_TOOL_NAME, registerCommands } from "./server/command";
 import { createJournalDirStore } from "./server/dir-settings";
 import { registerJournalSettingsApi } from "./server/journal-settings-api";
 import { createJournalIndex } from "./server/journal-index";
 import { writeDecision } from "./server/journal-writer";
 import { acrossThreads, readClaudeTranscript, readPlanning, readWindowCost, readWindowMinutes, withDescendants } from "./server/planning";
 import { type ContextSettingValues, compactPreselectSetting, compactPreselectedOf, contextFillOf, contextSettings } from "./server/context";
-import { createProgress, registerProgress } from "./server/progress";
+import { createProgress, FLOW_STAGE_TOOL, registerProgress } from "./server/progress";
 import { registerFlowPickerApi } from "./server/flow-picker-api";
 import { registerOwnerTurn } from "./server/owner-turn";
 import { startThread } from "./server/thread-start";
 import { registerFlowChoice } from "./server/flow-choice";
 import { createOwnSends } from "./server/own-sends";
 import { createFlowSettings } from "./server/flow-settings";
-import { registerFlowTools } from "./server/flow-tools";
+import { READ_FLOWS_TOOL_NAME, registerFlowTools, SAVE_FLOW_TOOL_NAME } from "./server/flow-tools";
 import { createLegacyHeal } from "./server/legacy-heal";
 import { registerFlowSettingsApi, STAGE_SETTINGS_CHANNEL } from "./server/settings-api";
 import { createFlowSync, defaultSyncDir, FLOW_SYNC_CHANNEL, registerFlowSyncApi, SYNC_POLL_MS } from "./server/flow-sync";
-import { hostCatalogSources, hostSkillFileSources, readClaudePlugins, readExecutorFile, readSkillFile, readStageCatalog, readWorkflowScripts, writeScriptFile } from "./server/stage-catalog";
+import { hostCatalogSources, hostSkillFileSources, readAccountSkills, readClaudePlugins, readExecutorFile, readSkillFile, readStageCatalog, readWorkflowScripts, writeScriptFile } from "./server/stage-catalog";
 import { createSkillScope } from "./server/skill-scope";
+import { createFreshSession, type MessageBlocks } from "./server/fresh-session";
+import { registerSessionConfig } from "./server/session-config";
+import { limitsOfAny } from "./core/skill-scope";
 import { revealInFinderHere } from "@bb-plugins/reveal-in-finder/index";
 import { createStore } from "./server/store";
 import { createThreadFlows } from "./server/thread-flows";
@@ -116,22 +119,34 @@ export default async function plugin(bb: BbPluginApi): Promise<void> {
   const own = createOwnSends();
   // Навыки и агенты, которые Claude Code грузит агенту треда, — по открытым этапам его flow (./server/skill-scope.ts).
   const catalogSources = hostCatalogSources(bb);
+  const worktreeOf = async (threadId: string) => {
+    const { environmentId } = await bb.sdk.threads.get({ threadId });
+    const environment = environmentId === null ? null : await bb.sdk.environments.get({ environmentId });
+    return environment?.isWorktree === true && environment.path ? environment.path : null;
+  };
   const scope = createSkillScope({
     kv: bb.storage.kv,
-    worktree: async (threadId) => {
-      const { environmentId } = await bb.sdk.threads.get({ threadId });
-      const environment = environmentId === null ? null : await bb.sdk.environments.get({ environmentId });
-      return environment?.isWorktree === true && environment.path ? environment.path : null;
-    },
+    worktree: worktreeOf,
+    // Окружения ещё нет — первое сообщение нового треда: дерево появится к старту сессии.
+    pending: async (threadId) => (await bb.sdk.threads.get({ threadId })).environmentId === null,
     flow: flowOf,
+    // До выбора flow агентом прячется то, что прячет хоть один flow: первая сессия видит только навыки плагинов bb.
+    choosing: (threadId) => (threads.flowOf(threadId) === AUTO_FLOW ? limitsOfAny(flows.current().flows) : null),
     stages: (threadId) => stagesOf(threadId).stages,
     progress: (threadId) => progress.get(threadId),
     catalog: () => readStageCatalog(catalogSources),
     plugins: () => readClaudePlugins(catalogSources),
+    accountSkills: () => readAccountSkills(catalogSources),
     workflowScripts: () => readWorkflowScripts(catalogSources),
     warn: (message) => bb.log.warn(message),
   });
   bb.events.on("thread.active", ({ thread }) => void scope.sync(thread.id));
+  // Первая сессия треда стартует уже с ограничением: решение сверки ложится в дерево прямо перед стартом Claude Code.
+  registerSessionConfig(bb, {
+    tools: [ASK_TOOL_NAME, FLOW_STAGE_TOOL, READ_FLOWS_TOOL_NAME, SAVE_FLOW_TOOL_NAME, COMMAND_TOOL_NAME, CHOOSE_FLOW_TOOL],
+    prestart: (threadId, root) => void scope.prestart(threadId, root),
+    warn: (message) => bb.log.warn(message),
+  });
   const progress = createProgress(bb.storage.kv, {
     onChange: (threadId) => {
       advance(threadId);
@@ -144,6 +159,32 @@ export default async function plugin(bb: BbPluginApi): Promise<void> {
     own.mark(threadId, text);
     await bb.sdk.threads.send({ threadId, mode: "queue-if-active", input: [{ type: "text", text, mentions: [] }] });
   };
+  // Тред с «Автоматически», чьей сессии выбор меняет навыки, начинает работу заново в новой сессии (./server/fresh-session.ts).
+  const textOf = (blocks: MessageBlocks) => blocks.flatMap((block) => (block.type === "text" && typeof block.text === "string" ? [block.text] : [])).join("\n");
+  const fresh = createFreshSession({
+    kv: bb.storage.kv,
+    agentChooses: (threadId) => threads.flowOf(threadId) === AUTO_FLOW || threads.flowOf(threadId) === AGENT_NO_FLOW,
+    // Выбор меняет навыки, когда flow их ограничивает или сессия стартовала с ограничением до выбора.
+    needed: async (threadId) =>
+      (flowOf(threadId)?.limitSkills === true || (await scope.limitedBeforeChoice(threadId))) && (await thread(threadId)).providerId === "claude-code" && (await worktreeOf(threadId)) !== null,
+    sync: (threadId) => scope.sync(threadId),
+    clear: (threadId) => bb.sdk.threads.clearContext({ threadId }),
+    send: async (threadId, blocks) => {
+      // Видна ли пометка агенту в тексте, который увидит хук, — неизвестно: своей отмечаются оба варианта.
+      own.mark(threadId, textOf(blocks));
+      own.mark(threadId, textOf(blocks.slice(1)));
+      await bb.sdk.threads.send({ threadId, mode: "queue-if-active", input: blocks as Parameters<typeof bb.sdk.threads.send>[0]["input"] });
+    },
+    note: (threadId) => {
+      const name = flowNameOf(threadId);
+      return name === undefined
+        ? `You already left this thread without a flow — do not call ${CHOOSE_FLOW_TOOL}. Below is the thread's first message: Flow sent it again in a fresh session so that all skills are loaded. Work on it as usual.`
+        : `Flow «${name}» is already chosen for this thread — do not call ${CHOOSE_FLOW_TOOL}. Below is the thread's first message: Flow sent it again in a fresh session so that only the skills of the flow are loaded. Work on it by the flow.`;
+    },
+    warn: (message) => bb.log.warn(message),
+  });
+  bb.events.on("thread.idle", ({ thread: row }) => void fresh.idle(row.id));
+  bb.events.on("thread.deleted", ({ thread: row }) => void fresh.forget(row.id));
   const runner = createAutomationRunner({
     progress,
     store,
@@ -269,6 +310,8 @@ export default async function plugin(bb: BbPluginApi): Promise<void> {
     // Доработка откатывает закрытые автоматизации за начатым заново этапом тем же исполнителем шагов.
     undo: (threadId, stages) => runner.undo(threadId, stages),
     relay,
+    // Правка прогресса уже поставила сверку треда в очередь: ответ ждёт её, а не запускает вторую.
+    settled: (threadId) => scope.settled(threadId),
     readTaskFile: (threadId, target) => readTaskFile(bb.sdk, threadId, target),
     writeTaskFile: (threadId, target, text) => writeTaskFile(bb.sdk, threadId, target, text),
     flow: (threadId) => {
@@ -304,6 +347,8 @@ export default async function plugin(bb: BbPluginApi): Promise<void> {
       await progress.annotate(threadId, (p) => p);
       await scope.sync(threadId);
     },
+    fresh: (threadId) => fresh.request(threadId),
+    refused: (threadId) => scope.sync(threadId),
   });
   registerFlowSettingsApi(bb, flows, { catalog, ready: async () => {
     if (!heal.done()) await catalog();
@@ -342,6 +387,7 @@ export default async function plugin(bb: BbPluginApi): Promise<void> {
     ownerTurn: choice.ownerTurn,
     ownerMessage: (threadId) => returnAwaitingBrief({ store, publish: (id) => bb.realtime.publish(ANSWERED_CHANNEL, { id }) }, threadId),
     firstMessage: startThread({ threads, progress, hasFlow: (threadId) => flowOf(threadId) !== null, handoffFlow: takeHandoffFlow }),
+    firstInput: (threadId, blocks) => fresh.remember(threadId, blocks),
     // Хук ждёт решения не дольше 10 с и запирает тред на просрочке: сверка, которая затянулась, доходит в фоне.
     turnStart: (threadId) => Promise.race([scope.sync(threadId), new Promise<void>((resolve) => setTimeout(resolve, TURN_START_SYNC_MS).unref())]),
   });

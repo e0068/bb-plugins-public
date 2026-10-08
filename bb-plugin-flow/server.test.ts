@@ -4,9 +4,11 @@ import { describe, expect, it } from "vitest";
 
 import plugin from "./server";
 import { priced } from "./server/priced-fixture";
+import { FLOW_SKILLS } from "./server/session-config";
 
 const loaded = async () => {
-  const { bb, harness } = createFakePluginHost({ pluginId: "decisions" });
+  // Навыки манифеста bb знает сам; тестовому хосту их называют, иначе выбор сессии с навыками Flow он отвергнет.
+  const { bb, harness } = createFakePluginHost({ pluginId: "decisions", agentSkillIds: FLOW_SKILLS });
   await plugin(bb);
   return harness;
 };
@@ -22,7 +24,7 @@ describe("плагин Decisions", () => {
     expect(harness.registrations.agentTools.map((t) => t.name)).toContain("ask_decision");
   });
 
-  it("инструмент попадает в набор треда без вызова configure", async () => {
+  it("инструмент попадает в набор треда", async () => {
     const harness = await loaded();
     const { tools } = await harness.resolveAgentConfiguration(makePluginAgentConfigurationContext());
     expect(tools.map((t) => t.name)).toContain("ask_decision");
