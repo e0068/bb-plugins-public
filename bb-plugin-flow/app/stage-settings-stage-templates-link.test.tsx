@@ -4,6 +4,7 @@ import type { PluginNavPanelProps } from "@get-bb/plugin-sdk/app";
 import { loadPluginApp, renderSlot } from "@get-bb/plugin-sdk/testing/app";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { openRowMenu } from "./row-menu-fixture";
 import type { FlowSettings, flowSettingsRpcContract, StageCatalog, StageTemplate, WorkStage } from "../shared/contract";
 
 const app = await loadPluginApp(() => import("../app"));
@@ -24,7 +25,9 @@ const open = (stages: WorkStage[], stageTemplates?: StageTemplate[]) => {
 type Slot = ReturnType<typeof open>;
 const lastSaved = (slot: Slot) => [...slot.rpcCalls].reverse().find((c) => c.method === "saveFlowSettings")?.input as FlowSettings | undefined;
 const row = (slot: Slot, n: number) => slot.getByRole("row", { name: `Этап ${n}` });
+const MENU = { name: /^Действия с этапом/ };
 const SAVE = { name: "Сохранить этап шаблоном" };
+
 
 describe("отступы между этапами в таблице", () => {
   it("каждый этап верхнего уровня отходит от строки выше на 4 px, под-этапы стоят вплотную к владельцу", async () => {
@@ -36,16 +39,16 @@ describe("отступы между этапами в таблице", () => {
 });
 
 describe("шаблон этапа с под-этапами", () => {
-  it("закладка есть только у строк этапов верхнего уровня", async () => {
+  it("меню «⋯» есть только у строк этапов верхнего уровня", async () => {
     const slot = open(LINKED);
     await slot.findByRole("row", { name: "Этап 6" });
-    const has = [1, 2, 3, 4, 5, 6].map((n) => within(row(slot, n)).queryByRole("button", SAVE) !== null);
+    const has = [1, 2, 3, 4, 5, 6].map((n) => within(row(slot, n)).queryByRole("button", MENU) !== null);
     expect(has).toEqual([true, false, true, false, true, true]);
   });
 
-  it("закладка главного этапа сохраняет его целиком с под-этапами до и после", async () => {
+  it("«Сохранить этап шаблоном» у главного этапа сохраняет его целиком с под-этапами до и после", async () => {
     const slot = open(LINKED);
-    fireEvent.click(within(await slot.findByRole("row", { name: "Этап 3" })).getByRole("button", SAVE));
+    fireEvent.click((await openRowMenu(await slot.findByRole("row", { name: "Этап 3" }))).getByRole("menuitem", SAVE));
     await vi.waitFor(() =>
       expect(lastSaved(slot)?.stageTemplates).toEqual([
         { kind: "skill", skill: "demo", name: "demo", executors: [], subStages: [{ kind: "skill", skill: "preview", name: "preview", executors: [], before: true }, { kind: "skill", skill: "restore", name: "restore", executors: [] }] },

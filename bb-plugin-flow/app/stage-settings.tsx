@@ -13,7 +13,8 @@ import { useBbNavigate, useRpc } from "@get-bb/plugin-sdk/app";
 
 import { DEFAULT_FAILURE_INSTRUCTION, retryPolicyOf, wakesAgentAfterLastRetry, withFailureInstruction } from "../core/automation-run";
 import { executorGroups, skillGroups, skillShortName, type ExecutorGroup } from "../core/catalog";
-import { expandStages, flowStage, nestableFlows, setFlowStages } from "../core/flows";
+import { expandStages, flowStage, nestableFlows, setFlowStages, stageToFlow, stageToFlowProblem } from "../core/flows";
+import { freeFlowName } from "../core/flow-files";
 import { stageLabel } from "../core/stages";
 import { executionOf, hasMainAgent, withExecutor, withMainAgent, withoutMainAgent, withWidget } from "../core/stage-execution";
 import { hoverAt, type Hover, type RowBox } from "../core/row-hover";
@@ -21,6 +22,7 @@ import { dropStage, ownerOf, removeStage, stageApart, stageNumbers } from "../co
 import { isTemplateSaved, removeTemplate, saveTemplate, stagesFromTemplate, templatesOfKind } from "../core/stage-templates";
 import { FieldOverlay, overlayItem, useFieldOverlay } from "../components/ui/field-overlay";
 import { Button } from "../components/ui/button";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "../components/ui/dropdown-menu";
 import { Icon, type IconName } from "../components/ui/icon";
 import { Input } from "../components/ui/input";
 import { Switch } from "../components/ui/switch";
@@ -31,6 +33,7 @@ import type { AutomationScript, Flow, flowSettingsRpcContract, SkillFile, SkillO
 import { type AutomationSets, AutomationStepTags, ManualMark, ReadOnlyStepTags, ScriptOptions, type StageChange, TagOpen, WidgetOptions } from "./automation-stage";
 import { useMessages } from "./locale-context";
 import { FlowGlyph } from "./flow-glyph";
+import { newFlowId } from "./flows-list";
 import { ExecutorMark } from "./provider-logos";
 import { Segmented } from "./segmented";
 import { KIND_ICONS, SKILL_ICON, stageIcon } from "./stage-icons";
@@ -660,7 +663,7 @@ function DropHighlight({ place }: { place: RowPlace }) {
 }
 
 /**
- * Строка таблицы: номер с ручкой, средние ячейки строки, закладка, крест; поверх — подсветка перетаскивания. На краю этапа
+ * Строка таблицы: номер с ручкой, средние ячейки строки, «⋯», крест; поверх — подсветка перетаскивания. На краю этапа
  * верхнего уровня — отдельного или связки — строка отходит от соседней на 4 px и скругляет угол.
  */
 function RowShell({ stage, index, stages, place, dragging, onGrab, children }: Pick<RowProps, "stage" | "index" | "stages" | "place" | "dragging" | "onGrab"> & { children: ReactNode }) {
@@ -669,7 +672,7 @@ function RowShell({ stage, index, stages, place, dragging, onGrab, children }: P
     <RowFrame label={t.settings.stage(index + 1)} stageId={stage.id} place={place} dragging={dragging}>
       <StageLead stage={stage} place={place} dragging={dragging} onGrab={onGrab} />
       {children}
-      {place.owner === null && stage.flowId === undefined ? <SaveTemplate stage={stage} stages={stages} /> : <span role="cell" className={templateCell} />}
+      {place.owner === null && stage.flowId === undefined ? <StageMenu stage={stage} stages={stages} /> : <span role="cell" className={templateCell} />}
       <DeleteStage stage={stage} />
     </RowFrame>
   );
@@ -694,31 +697,55 @@ function RowFrame({ label, stageId, place, dragging, children }: { label: string
   );
 }
 
-/** Клетка закладки: на узкой строке — под крестом, на широкой — левее него. */
+/** Клетка меню «⋯»: на узкой строке — под крестом, на широкой — левее него. */
 const templateCell = "col-start-3 row-start-2 @[44rem]:col-start-auto @[44rem]:row-start-auto";
 
 /**
- * Закладка строки этапа верхнего уровня: этап целиком, с под-этапами, — шаблоном в меню «Добавить этап»; у под-этапа
- * закладки нет. Сохранённый — закладка закрашена и недоступна.
+ * «⋯» строки этапа верхнего уровня; у под-этапа и строки «Flow» меню нет. «Сохранить этап шаблоном» кладёт этап целиком, с
+ * под-этапами, шаблоном в меню «Добавить этап». «Преобразовать во Flow» уносит связку в новый flow с именем этапа, а на её место
+ * ставит строку «Flow» нового flow; страница остаётся на текущем flow. Недоступный пункт — у сохранённого этапа и у этапа, чей
+ * вынос сломал бы порядок шагов PR, — несёт причину строкой под собой: подсказку при наведении меню на нём не показывает.
  */
-function SaveTemplate({ stage, stages }: { stage: WorkStage; stages: readonly WorkStage[] }) {
+function StageMenu({ stage, stages }: { stage: WorkStage; stages: readonly WorkStage[] }) {
   const t = useMessages();
-  const templates = useStageTemplates();
-  const saved = isTemplateSaved(templates, stages, stage);
+  const flowId = useContext(FlowIdContext);
+  const { settings } = useFlowSettings();
+  const saved = isTemplateSaved(useStageTemplates(), stages, stage);
+  const blocked = settings !== null && stageToFlowProblem(settings, flowId, stage.id) !== null;
+  const name = stageLabel(stage, t.stages);
+  const save = () => updateFlowSettings((s) => ({ ...s, stageTemplates: [...saveTemplate(s.stageTemplates ?? [], stages, stage)] }));
+  const toFlow = () => updateFlowSettings((s) => stageToFlow(s, flowId, stage.id, { id: newFlowId(), name: freeFlowName(s.flows, name) }));
   return (
     <span role="cell" className={templateCell}>
-      <button
-        type="button"
-        aria-label={t.settings.saveTemplate}
-        aria-description={saved ? t.settings.templateSaved : undefined}
-        title={saved ? t.settings.templateSaved : t.settings.saveTemplate}
-        disabled={saved}
-        onClick={() => updateFlowSettings((s) => ({ ...s, stageTemplates: [...saveTemplate(s.stageTemplates ?? [], stages, stage)] }))}
-        className={cn(square, "text-muted-foreground hover:bg-state-hover hover:text-foreground disabled:cursor-default disabled:text-foreground disabled:hover:bg-transparent")}
-      >
-        <Icon name="Bookmark" aria-hidden="true" className={cn("size-3.5", saved && "fill-current")} />
-      </button>
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <button type="button" aria-label={t.settings.stageMenu(name)} className={cn(square, "text-muted-foreground hover:bg-state-hover hover:text-foreground")}>
+            <Icon name="MoreHorizontal" aria-hidden="true" className="size-3.5" />
+          </button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end" collisionPadding={8}>
+          <StageMenuItem label={t.settings.saveTemplate} reason={saved ? t.settings.templateSaved : null} onSelect={save} icon={<Icon name="Bookmark" aria-hidden="true" className={cn("size-3.5", saved && "fill-current")} />} />
+          <StageMenuItem label={t.settings.toFlow} reason={blocked ? t.settings.toFlowBlocked : null} onSelect={toFlow} icon={<FlowGlyph className="size-3.5" />} />
+        </DropdownMenuContent>
+      </DropdownMenu>
     </span>
+  );
+}
+
+/** Пункт меню строки этапа; с причиной `reason` он недоступен, и причина стоит мелкой строкой под названием. */
+function StageMenuItem({ label, reason, icon, onSelect }: { label: string; reason: string | null; icon: ReactNode; onSelect: () => void }) {
+  return (
+    <DropdownMenuItem disabled={reason !== null} aria-description={reason ?? undefined} onSelect={onSelect}>
+      {icon}
+      <span className="flex min-w-0 flex-col leading-tight">
+        <span>{label}</span>
+        {reason !== null && (
+          <span aria-hidden="true" className="max-w-[16rem] text-[11px] text-muted-foreground">
+            {reason}
+          </span>
+        )}
+      </span>
+    </DropdownMenuItem>
   );
 }
 

@@ -72,11 +72,11 @@ describe("этап «Flow» на странице Flow", () => {
     expect(within(group).getAllByRole("menuitem").map((item) => item.textContent)).toEqual(["Answer"]);
   });
 
-  it("у строки «Flow» нет закладки шаблона, у обычного этапа — есть", async () => {
+  it("у строки «Flow» нет меню «⋯», у обычного этапа — есть", async () => {
     const slot = open([PLUGIN([stage("task"), ref("nested", "answer")]), ANSWER]);
     const task = within(await slot.findByRole("row", { name: "Этап 1" }));
     const nested = within(await slot.findByRole("row", { name: "Этап 2" }));
-    expect(task.getByRole("button", { name: "Сохранить этап шаблоном" })).toBeTruthy();
-    expect(nested.queryByRole("button", { name: "Сохранить этап шаблоном" })).toBeNull();
+    expect(task.getByRole("button", { name: /^Действия с этапом/ })).toBeTruthy();
+    expect(nested.queryByRole("button", { name: /^Действия с этапом/ })).toBeNull();
   });
 });

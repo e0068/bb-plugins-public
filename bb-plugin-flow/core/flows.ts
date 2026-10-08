@@ -3,6 +3,7 @@
 // контракта берутся только типы.
 import { builtinStage, freeId, STAGE_BUTTON_WIDTH, stageKindOf, type BuiltinKind } from "../lib/stage-constants";
 import type { Flow, FlowSettings, StageSettings, WorkStage } from "../shared/contract";
+import { flowStepOrderProblem, type StepOrderProblem } from "./automation-order";
 
 /** Встроенный этап вида в ряду уже собранных — с id, свободным среди них. */
 const builtin = (kind: BuiltinKind, before: readonly WorkStage[]): WorkStage => builtinStage(kind, before.map((s) => s.id));
@@ -197,6 +198,32 @@ export const flowStage = (flow: Pick<Flow, "id" | "name">, taken: readonly strin
   executors: [],
   flowId: flow.id,
 });
+
+/**
+ * «Преобразовать во Flow»: этап `stageId` flow `flowId` вместе с под-этапами уезжает в новый flow `made` в конце списка, а на
+ * месте связки встаёт строка «Flow» нового flow — прогон проходит те же этапы в том же порядке. Под-этап, строка «Flow»,
+ * неизвестный этап или flow оставляют коллекцию как есть.
+ */
+export const stageToFlow = (settings: FlowSettings, flowId: string, stageId: string, made: Pick<Flow, "id" | "name">): FlowSettings => {
+  const flow = settings.flows.find((f) => f.id === flowId);
+  const stage = flow?.stages.find((s) => s.id === stageId);
+  if (flow === undefined || stage === undefined || stage.parent !== undefined || stage.flowId !== undefined) return settings;
+  const inUnit = (s: WorkStage) => s.id === stageId || s.parent === stageId;
+  const at = flow.stages.findIndex(inUnit);
+  const rest = flow.stages.filter((s) => !inUnit(s));
+  const stages = [...rest.slice(0, at), flowStage(made, rest.map((s) => s.id)), ...rest.slice(at)];
+  return addFlow(mapFlow(settings, flowId, (f) => ({ ...f, stages })), { ...made, stages: flow.stages.filter(inUnit) });
+};
+
+/**
+ * Шаг, который в вынесенном flow встал бы раньше «Открыть PR»: такой этап во Flow не преобразуется — коллекцию с этим порядком
+ * не сохранить. Исходный flow после выноса проходит те же шаги, поэтому смотрится только новый; невыносимый этап проблемы не даёт.
+ */
+export const stageToFlowProblem = (settings: FlowSettings, flowId: string, stageId: string): StepOrderProblem | null => {
+  const after = stageToFlow(settings, flowId, stageId, { id: "", name: "" });
+  const made = after.flows.at(-1);
+  return after === settings || made === undefined ? null : flowStepOrderProblem({ ...made, stages: expandStages(after.flows, made) });
+};
 
 /** Этапы flow, с развёрнутыми строками «Flow», и общая ширина кнопки — форма, которую проверяет бриф и видят инструкции. */
 export const stageSettingsOf = (settings: FlowSettings, flow: Flow): StageSettings => ({ stages: expandStages(settings.flows, flow), minButtonWidth: settings.minButtonWidth });

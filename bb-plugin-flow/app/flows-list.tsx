@@ -19,7 +19,7 @@ import { updateFlowSettings, useFlowSettings } from "./stage-settings-store";
 const ROW = "flex h-7 w-full min-w-0 items-center gap-1.5 rounded-md px-2.5 text-left text-[13px] text-muted-foreground hover:bg-state-hover hover:text-foreground";
 const ACTIVE_ROW = "bg-state-active font-medium text-foreground";
 
-const newFlowId = (): string => `flow-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
+export const newFlowId = (): string => `flow-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
 
 export function FlowsList({ subPath, className }: Pick<PluginNavPanelProps, "subPath"> & { className?: string }) {
   return (
