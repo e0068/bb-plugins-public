@@ -10,7 +10,6 @@ import {
   Alert02Icon,
   AlertCircleIcon,
   Archive03Icon,
-  ArrangeIcon,
   ArrowDown01Icon,
   ArrowDown02Icon,
   ArrowLeft01Icon,
@@ -18,13 +17,11 @@ import {
   ArrowUp02Icon,
   BookOpen01Icon,
   Bookmark02Icon,
-  BotIcon,
   BubbleChatAddIcon,
   BubbleChatIcon,
   Bug01Icon,
   Cancel01Icon,
   CancelCircleIcon,
-  CheckListIcon,
   CheckmarkCircle02Icon,
   CircleIcon,
   ClaudeIcon,
@@ -32,7 +29,6 @@ import {
   Copy01Icon,
   DashedLineCircleIcon,
   Delete02Icon,
-  DiamondIcon,
   Download01Icon,
   Edit02Icon,
   FolderAddIcon,
@@ -46,10 +42,8 @@ import {
   HelpCircleIcon,
   InformationCircleIcon,
   Loading03Icon,
-  MessageQuestionIcon,
   MoreHorizontalIcon,
   NextIcon,
-  PresentationBarChart01Icon,
   Refresh01Icon,
   Search01Icon,
   Settings01Icon,
@@ -62,11 +56,11 @@ import {
   ToolboxIcon,
   ToolCaseIcon,
   UserAdd01Icon,
-  WorkflowCircle03Icon,
   ZapIcon,
 } from "@hugeicons/core-free-icons";
 import { useSyncExternalStore } from "react";
 import { cn } from "../../lib/utils";
+import { KIND_GLYPHS } from "./stage-glyphs";
 import {
   EXTENDED_ICON_NAMES,
   getAppIcon,
@@ -119,19 +113,16 @@ const SectionAddStrokeRoundedIcon: IconSvgElement = [
   ],
 ];
 
-/** Workflow пунктиром — значок этапа Выбор этапов: тот же рисунок, линия штрихом. */
-const WorkflowDashedIcon: IconSvgElement = WorkflowCircle03Icon.map(([tag, attrs]) => [tag, { ...attrs, strokeDasharray: "2.5 2.5" }]) as IconSvgElement;
-
 const CORE_ICON_MAP = {
+  // Значки этапов по виду — из одной карты с сервером, который отдаёт их рисунок другим плагинам.
+  ...KIND_GLYPHS,
   AlertCircle: AlertCircleIcon,
   AlertTriangle: Alert02Icon,
   Archive: Archive03Icon,
-  Arrange: ArrangeIcon,
   ArrowDown: ArrowDown02Icon,
   ArrowUp: ArrowUp02Icon,
   BookOpen: BookOpen01Icon,
   Bookmark: Bookmark02Icon,
-  Bot: BotIcon,
   Bug: Bug01Icon,
   Check: Tick02Icon,
   ChevronDown: ArrowDown01Icon,
@@ -147,7 +138,6 @@ const CORE_ICON_MAP = {
   Code: SourceCodeIcon,
   ComputerTerminal01: ComputerTerminal01Icon,
   Copy: Copy01Icon,
-  Diamond: DiamondIcon,
   Download: Download01Icon,
   Edit: Edit02Icon,
   Folder: FolderIcon,
@@ -159,9 +149,7 @@ const CORE_ICON_MAP = {
   Github: GithubIcon,
   Folder02: Folder02Icon,
   Info: InformationCircleIcon,
-  ListTodo: CheckListIcon,
   Loading: Loading03Icon,
-  MessageQuestion: MessageQuestionIcon,
   MessageCirclePlus: BubbleChatAddIcon,
   MessageSquarePlus: BubbleChatAddIcon,
   MessageSquare: BubbleChatIcon,
@@ -169,7 +157,6 @@ const CORE_ICON_MAP = {
   Next: NextIcon,
   PanelLeft: SidebarLeftIcon,
   PanelRight: SidebarRightIcon,
-  Presentation: PresentationBarChart01Icon,
   Refresh: Refresh01Icon,
   Search: Search01Icon,
   SectionAdd: SectionAddStrokeRoundedIcon,
@@ -182,8 +169,6 @@ const CORE_ICON_MAP = {
   ToolCase: ToolCaseIcon,
   Trash2: Delete02Icon,
   UserRoundPlus: UserAdd01Icon,
-  Workflow: WorkflowCircle03Icon,
-  WorkflowDashed: WorkflowDashedIcon,
   X: Cancel01Icon,
   Zap: ZapIcon,
 } as const satisfies Record<string, IconSvgElement>;

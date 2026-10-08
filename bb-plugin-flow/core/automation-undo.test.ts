@@ -88,7 +88,7 @@ describe("undoDue и сброшенные доработкой автомати�
     fc.assert(
       fc.property(fc.subarray(flowIds), fc.subarray(["publish", "merge"]), fc.constantFrom(...flowIds), (closed, broken, id) => {
         const before = broken.filter((b) => !closed.includes(b)).reduce(failed, done(EMPTY_PROGRESS, ...closed));
-        const after = reopen(before, FLOW, id);
+        const after = reopen(before, FLOW, id, "2026-10-08T10:00:00.000Z");
         const reset = FLOW.filter((s) => s.id !== id && JSON.stringify(before.stages[s.id]) !== JSON.stringify(after.stages[s.id]));
         const expected = reset.filter((s) => s.automation !== undefined && "source" in s.automation && (s.automation.undo?.length ?? 0) > 0);
         expect(ids(undoDue(before, FLOW, id))).toEqual(ids(expected).reverse());

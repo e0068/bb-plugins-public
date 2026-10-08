@@ -17,7 +17,7 @@ const preview: WorkStage = { ...builtinAutomationStage([]), id: "preview", name:
 const STAGES: WorkStage[] = [stage("practice"), stage("review"), publish, preview, builtinStage("demo", []), stage("docs")];
 
 /** Отметки так, как их пишет flow_stage: «started» сперва сбрасывает этапы за доработкой. */
-const start = (progress: FlowProgress, id: string, at: string): FlowProgress => onMark(reopen(progress, STAGES, id), id, "started", at);
+const start = (progress: FlowProgress, id: string, at: string): FlowProgress => onMark(reopen(progress, STAGES, id, at), id, "started", at);
 const done = (progress: FlowProgress, id: string, at: string): FlowProgress => onMark(progress, id, "done", at);
 const runThrough = (progress: FlowProgress, automation: WorkStage): FlowProgress =>
   stepsOf(automation).reduce((p) => onStepDone(p, automation.id, T1), onRunStart(progress, automation.id, stepsOf(automation), T0));

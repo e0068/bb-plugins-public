@@ -30,7 +30,8 @@ import { LocaleProvider } from "./locale";
 import { ProviderLogosProvider } from "./provider-logos-source";
 import { ProviderMark } from "./provider-logos";
 import { useMessages } from "./locale-context";
-import { AUTOMATION_ICON, KIND_ICONS } from "./stage-icons";
+import { KIND_ICONS } from "./stage-icons";
+import { stageIconName } from "../lib/stage-icon-names";
 import { StageCheckbox } from "./stage-checkbox";
 import { hasOwnIcon, StageGlyph } from "./stage-glyph";
 
@@ -70,11 +71,7 @@ const POLL_MS = 5000;
 /** Кривая доводки списка после отпускания пальца — та же, что у шторок кита. */
 const SETTLE_EASING = "cubic-bezier(0.32, 0.72, 0, 1)";
 
-/** Иконки исполнителя этапа навыка без логотипа провайдера: ромб — сам, агент, workflow. */
-const EXECUTOR_ICONS = { self: "Diamond", agent: "Bot", workflow: "Workflow" } as const;
-
-const iconOf = (stage: ProgressStage): string =>
-  stage.kind === "action" ? KIND_ICONS.action : stage.automation !== undefined ? AUTOMATION_ICON : stage.kind === "skill" ? EXECUTOR_ICONS[stage.executor] : KIND_ICONS[stage.kind];
+const iconOf = (stage: ProgressStage): string => stageIconName({ kind: stage.kind, executor: stage.executor, automation: stage.automation !== undefined });
 
 /** У этапа навыка, который ведёт сам агент или субагент, — логотип провайдера исполнителя. */
 const byProvider = (stage: ProgressStage): boolean => stage.automation === undefined && stage.kind === "skill" && stage.executor !== "workflow";

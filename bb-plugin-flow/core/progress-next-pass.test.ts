@@ -52,7 +52,7 @@ describe("выбор этапов на пройденном прогоне", () 
   });
 
   it("новый проход: этапы, снятые ответом, — вне прогона, взятые — впереди с выбранным исполнителем", () => {
-    const progress = onMark(reopen(answered(), STAGES, "task"), "task", "started", T3);
+    const progress = onMark(reopen(answered(), STAGES, "task", T3), "task", "started", T3);
     expect(states(progress)).toEqual({ task: "now", prototype: "skip", demo: "skip", spec: "todo", review: "todo" });
     expect(progress.stages.review?.executor).toBe("agent:code-reviewer");
   });
