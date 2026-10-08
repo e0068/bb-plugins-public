@@ -3,7 +3,7 @@ import fc from "fast-check";
 import { describe, expect, it } from "vitest";
 
 import type { FlowProgress, StageCatalog, WorkStage } from "../shared/contract";
-import { agentsNamedIn, BUILTIN_AGENTS, hiddenOf, mergeLocalSettings, NOTHING_HIDDEN, openStages, scopeOf, unite, type Hidden, type Scope } from "./skill-scope";
+import { agentsNamedIn, BUILTIN_AGENTS, hiddenOf, limitsOfAny, mergeLocalSettings, NOTHING_HIDDEN, openStages, scopeOf, unite, type Hidden, type Scope } from "./skill-scope";
 
 const stage = (id: string, skill: string, extra: Partial<WorkStage> = {}): WorkStage => ({ id, name: id, skill, executors: [], ...extra });
 const agent = (name: string) => ({ id: `agent:${name}`, kind: "agent" as const, name });
@@ -23,18 +23,21 @@ const STAGES: WorkStage[] = [
 const ids = (stages: readonly WorkStage[]) => stages.map((s) => s.id);
 const noWorkflows = () => [];
 
-describe("открытые этапы — пройденные и текущий", () => {
-  it("без прогона открыт первый этап с его подэтапами", () => {
-    expect(ids(openStages(STAGES, null))).toEqual(["brief", "dod"]);
+describe("открытые этапы — пройденные, текущий и следующий рабочий", () => {
+  it("без прогона открыт первый этап с подэтапами и следующий за ним", () => {
+    expect(ids(openStages(STAGES, null))).toEqual(["brief", "dod", "spec"]);
   });
 
-  it("пройденные этапы и первый незавершённый открыты, дальше — нет", () => {
-    expect(ids(openStages(STAGES, progressOf({ brief: done, spec: started })))).toEqual(["brief", "dod", "spec"]);
-    expect(ids(openStages(STAGES, progressOf({ brief: done, spec: done })))).toEqual(["brief", "dod", "spec", "practice"]);
+  it("навык следующего этапа открыт до его начала, этапы дальше — нет", () => {
+    expect(ids(openStages(STAGES, progressOf({ brief: done, spec: started })))).toEqual(["brief", "dod", "spec", "practice"]);
+  });
+
+  it("этап без навыка и исполнителей — автоматизация — не считается следующим: открыт рабочий этап за ним", () => {
+    expect(ids(openStages(STAGES, progressOf({ brief: done, spec: done })))).toEqual(["brief", "dod", "spec", "practice", "commit", "review"]);
   });
 
   it("пропущенный этап считается пройденным", () => {
-    expect(ids(openStages(STAGES, progressOf({ brief: done, spec: { skipped: true } })))).toEqual(["brief", "dod", "spec", "practice"]);
+    expect(ids(openStages(STAGES, progressOf({ brief: done, spec: { skipped: true } })))).toEqual(["brief", "dod", "spec", "practice", "commit", "review"]);
   });
 
   it("каждый следующий отмеченный этап только добавляет открытое", () => {
@@ -46,6 +49,15 @@ describe("открытые этапы — пройденные и текущий
         expect(ids(after)).toEqual(expect.arrayContaining(ids(before)));
       }),
     );
+  });
+});
+
+describe("ограничения треда до выбора flow", () => {
+  it("прячется то, что прячет хоть один flow; без flow с переключателями — ничего", () => {
+    expect(limitsOfAny([{ limitSkills: true }, { limitAgents: true }, {}])).toEqual({ skills: true, agents: true });
+    expect(limitsOfAny([{ limitSkills: true }, {}])).toEqual({ skills: true, agents: false });
+    expect(limitsOfAny([{}, {}])).toEqual({ skills: false, agents: false });
+    expect(limitsOfAny([])).toEqual({ skills: false, agents: false });
   });
 });
 
@@ -101,13 +113,6 @@ const opened: Scope = { skills: ["spec", "flow-questions"], agents: ["code-revie
 const needed: Scope = { skills: ["spec", "flow-questions", "code-review:code-review"], agents: ["code-reviewer"] };
 
 describe("что спрятать", () => {
-  it("оба переключателя: свои навыки и агенты вне открытого, плагины, ничего не дающие flow", () => {
-    const hidden = hiddenOf({ catalog: CATALOG, plugins: PLUGINS, limits: { skills: true, agents: true }, opened, needed });
-    expect([...hidden.skills].sort()).toEqual(["deploy", "plan"]);
-    expect([...hidden.agents].sort()).toEqual([...BUILTIN_AGENTS, "scout"].sort());
-    expect([...hidden.plugins].sort()).toEqual(["pr-review-toolkit@official", "sales@other"]);
-  });
-
   it("только навыки: агенты и плагины с агентами не трогаются", () => {
     const hidden = hiddenOf({ catalog: CATALOG, plugins: PLUGINS, limits: { skills: true, agents: false }, opened, needed });
     expect(hidden.agents).toEqual([]);

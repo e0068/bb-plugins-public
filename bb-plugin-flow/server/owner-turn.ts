@@ -27,6 +27,8 @@ export const registerOwnerTurn = (
   deps: {
     /** Первое сообщение треда — тред ещё `pending`: flow и прогон нового треда. */
     firstMessage?: (message: FirstMessage) => Promise<void>;
+    /** Блоки первого сообщения — уже после привязки flow: Flow отправит их заново в новой сессии (./fresh-session.ts). */
+    firstInput?: (threadId: string, blocks: readonly unknown[]) => Promise<void>;
     /** Своя отправка Flow — ответ на бриф и побудка — выбор не применяет (./own-sends.ts). */
     ownSend: (threadId: string, text: string) => boolean;
     /** Владелец начинает ход: выбранный flow достаётся треду (./flow-choice.ts). */
@@ -50,6 +52,7 @@ export const registerOwnerTurn = (
     if (deps.firstMessage !== undefined && context.thread.status === "pending") {
       const { id, projectId, parentThreadId } = context.thread;
       await deps.firstMessage({ thread: { id, projectId, parentThreadId }, byFlow: context.thread.originPluginId === bb.pluginId, mentioned: mentionedThreads(context) }).catch(() => undefined);
+      await deps.firstInput?.(id, context.input.blocks).catch(() => undefined);
     }
     await decide(context);
     // Хук, который бросает, запирает тред: сбой сверки настроек пропускает сообщение.

@@ -8,7 +8,7 @@ import { homedir, tmpdir } from "node:os";
 import { basename, extname, join } from "node:path";
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 
-import { installedPlugins, parseAgentFile, parseCodexAgentFile, parseWorkflowFile, skillOrigin } from "../core/catalog";
+import { disabledPluginKeys, installedPlugins, parseAgentFile, parseCodexAgentFile, parseWorkflowFile, skillOrigin, syncedPluginName } from "../core/catalog";
 import type { ClaudePlugin } from "../core/skill-scope";
 import type { AutomationScript, ExecutorOrigin, SkillFile, SkillOrigin, StageCatalog, StageExecutor } from "../shared/contract";
 
@@ -115,9 +115,58 @@ export const readStageCatalog = async (sources: CatalogSources): Promise<StageCa
   return { skills, executors: entries.map((entry) => entry.executor) };
 };
 
-/** Включённые плагины Claude Code с ключом `enabledPlugins`: по ним Flow выключает в дереве треда ненужные flow. */
-export const readClaudePlugins = async (sources: CatalogSources): Promise<ClaudePlugin[]> =>
-  (await readInstalledPlugins(sources)).map(({ key, plugin }) => ({ key, name: plugin }));
+/** Записи папки без точки в имени — подпапки; не прочиталась — ни одной. */
+const subdirs = async (sources: CatalogSources, dir: string): Promise<string[]> => (await settled(() => sources.listDir(dir), [])).filter((entry) => !entry.includes("."));
+
+/** Навыки и команды плагина так, как их зовёт Claude Code: `плагин:навык` из skills/ и `плагин:команда` из commands/. */
+const readPluginSkills = async (sources: CatalogSources, plugin: string, dir: string): Promise<string[]> => {
+  const [skills, commands] = await Promise.all([subdirs(sources, join(dir, "skills")), settled(() => sources.listDir(join(dir, "commands")), [])]);
+  return [...skills, ...commands.filter((entry) => entry.endsWith(".md")).map((entry) => entry.slice(0, -".md".length))].map((name) => `${plugin}:${name}`);
+};
+
+/** Маркетплейс, под которым Claude Code держит плагины, синхронизированные с аккаунтом claude.ai. */
+const SYNCED_MARKETPLACE = "synced";
+
+/**
+ * Плагины, синхронизированные с аккаунтом claude.ai: `~/.claude/plugins/synced/<аккаунт>/<папка>`, ключ `имя@synced`.
+ * Их нет ни в installed_plugins.json, ни в каталоге bb; плагин, выключенный владельцем, не берётся.
+ */
+const readSyncedPlugins = async (sources: CatalogSources, disabled: ReadonlySet<string>): Promise<ClaudePlugin[]> => {
+  const root = join(sources.home, ".claude", "plugins", "synced");
+  const dirs = (await Promise.all((await subdirs(sources, root)).map(async (account) => (await subdirs(sources, join(root, account))).map((entry) => join(root, account, entry))))).flat();
+  const plugins = await Promise.all(
+    dirs.map(async (dir) => {
+      const name = syncedPluginName(await settled<string | null>(() => sources.readFile(join(dir, ".claude-plugin", "plugin.json")), null), basename(dir));
+      return { key: `${name}@${SYNCED_MARKETPLACE}`, name, skills: await readPluginSkills(sources, name, dir) };
+    }),
+  );
+  // Одно имя в двух поколениях папки — `figma` и `figma~g3` — один плагин с навыками обоих.
+  const byKey = plugins.reduce((acc, plugin) => acc.set(plugin.key, { ...plugin, skills: [...new Set([...(acc.get(plugin.key)?.skills ?? []), ...plugin.skills])] }), new Map<string, ClaudePlugin & { skills: string[] }>());
+  return [...byKey.values()].filter((plugin) => !disabled.has(plugin.key));
+};
+
+/**
+ * Включённые плагины Claude Code с ключом `enabledPlugins` и их навыками с командами: установленные и
+ * синхронизированные с claude.ai. По ним Flow выключает в дереве треда плагины, ненужные flow.
+ */
+export const readClaudePlugins = async (sources: CatalogSources): Promise<ClaudePlugin[]> => {
+  const settings = await settled<string | null>(() => sources.readFile(join(sources.home, ".claude", "settings.json")), null);
+  const [installed, synced] = await Promise.all([
+    readInstalledPlugins(sources).then((plugins) => Promise.all(plugins.map(async ({ key, plugin, dir }) => ({ key, name: plugin, skills: await readPluginSkills(sources, plugin, dir) })))),
+    readSyncedPlugins(sources, disabledPluginKeys(settings)),
+  ]);
+  return [...installed, ...synced];
+};
+
+/** Плагин, под именем которого Claude Code показывает навыки аккаунта claude.ai. */
+const ACCOUNT_SKILLS_PLUGIN = "anthropic-skills";
+
+/** Навыки аккаунта claude.ai — `~/.claude/skills/synced/<аккаунт>/<навык>`, по имени `anthropic-skills:<навык>`. */
+export const readAccountSkills = async (sources: CatalogSources): Promise<string[]> => {
+  const root = join(sources.home, ".claude", "skills", "synced");
+  const names = (await Promise.all((await subdirs(sources, root)).map((account) => subdirs(sources, join(root, account))))).flat();
+  return [...new Set(names)].sort().map((name) => `${ACCOUNT_SKILLS_PLUGIN}:${name}`);
+};
 
 /** Тексты скриптов workflow каталога по id исполнителя; непрочитанный скрипт пропускается. */
 export const readWorkflowScripts = async (sources: CatalogSources): Promise<Array<{ id: string; text: string }>> => {

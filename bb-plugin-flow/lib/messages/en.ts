@@ -378,7 +378,7 @@ export const en: Messages = {
     removeNo: "Cancel",
     limitSkills: "Limit skills to the flow",
     limitAgents: "Limit agents to the flow",
-    limitsHint: "The thread's agent loads only the skills and agents of the passed and current stages; Claude Code plugins the flow does not need are turned off in the thread. Works in Claude Code, in a thread with its own worktree.",
+    limitsHint: "The thread's agent loads only the skills and agents of the passed, current and next stages — from the thread's first session. Hidden are your own and project skills, claude.ai account skills, skills built into Claude Code and workflows that execute no stage; Claude Code plugins, including ones synced from claude.ai, that the flow does not need are turned off in the thread. A thread on “Automatic” sees only the skills of bb plugins until it chooses a flow, then restarts the work in a fresh session with the skills of that flow. Skills of bb plugins always stay visible. Works in Claude Code, in a thread with its own worktree.",
     pickerTitle: "Flow of the new thread",
     picker: (name) => `Flow: ${name}`,
     pickerNone: "No flow",

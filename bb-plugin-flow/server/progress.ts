@@ -350,6 +350,8 @@ export const registerProgress = (
     relay?: Pick<AgentRelay, "hold">;
     /** Сколько мс отметка ждёт автоматизацию; нет — 10 минут. */
     relayWaitMs?: number;
+    /** Сверка настроек Claude Code дерева треда с новым прогрессом: ответ отметки ждёт её; нет — не ждёт. */
+    settled?: (threadId: string) => Promise<void>;
   },
 ): { freezeFinished: (threadId: string) => Promise<void> } => {
   /**
@@ -422,6 +424,8 @@ export const registerProgress = (
           if (state === "started") undone = undoDue(p, stages, stage);
           return (marked = onMark(state === "started" ? reopen(p, stages, stage) : p, stage, state, at, titled, cost, minutes));
         });
+        // Агент зовёт навык этапа сразу после ответа: к нему файл настроек уже открывает этот навык.
+        await deps.settled?.(ctx.threadId).catch(() => undefined);
         // Откат закрытых автоматизаций идёт до ответа: агент берётся за правки, когда их эффект уже отменён.
         const undoLines = undone.length === 0 || deps.undo === undefined ? [] : await deps.undo(ctx.threadId, undone).catch((error: unknown) => [`Undo failed: ${error instanceof Error ? error.message : String(error)}`]);
         // Что за отмеченным этапом — по записи этой отметки; о старте ответ говорит только по записанному старту.
