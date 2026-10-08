@@ -26,6 +26,7 @@ function makeBucket(overrides: Partial<TokensBucket> = {}): TokensBucket {
     messages: 0,
     cost: 0,
     models: [],
+    variants: [],
     firstAt: null,
     lastAt: null,
     ...overrides,
@@ -121,43 +122,68 @@ describe("formatBucketDisplay", () => {
     });
   });
 
-  it("for a bucket with agent data, the name is the launch description and the caption is the type plus models with usage", () => {
+  it("for a bucket with agent data, the name is the launch description and the caption is the type plus model, version and effort", () => {
     const bucket = makeBucket({
       key: "agent-abc",
-      models: [{ tier: "sonnet", total: 172_000 }],
-      agent: { id: "abc", description: "H1: test", agentType: "general-purpose", model: "sonnet", workflowRunId: null },
+      models: [{ tier: "opus", total: 12_500_000 }],
+      variants: [{ model: "claude-opus-4-8", effort: "high", fast: false, total: 12_500_000 }],
+      agent: { id: "abc", description: "Write red tests", agentType: "general-purpose", model: "opus", workflowRunId: null },
     });
     expect(formatBucketDisplay(bucket)).toEqual({
-      name: "H1: test",
-      caption: "general-purpose · sonnet 172.0k",
+      name: "Write red tests",
+      caption: "general-purpose · opus 4.8 · high",
     });
   });
 
-  it("caption shows the type and models even when the name is already descriptive", () => {
-    // This is exactly what distinguishes display from the former single
-    // label: the type and models don't hide away just because the agent has
-    // a launch description.
-    const bucket = makeBucket({
-      key: "agent-abc",
-      models: [{ tier: "opus", total: 900 }],
-      agent: { id: "abc", description: "Fix", agentType: "code-reviewer", model: "opus", workflowRunId: null },
-    });
-    expect(formatBucketDisplay(bucket).caption).toBe("code-reviewer · opus 900");
-  });
-
-  it("lists all of the bucket's models with usage, in descending order", () => {
-    // The real case this was reworked for: the main agent worked across
-    // three models, but the caption showed only one — and alphabetically
-    // that turned out to be haiku, the cheapest of the three.
+  it("marks a fast-mode variant with ↯ after the effort", () => {
     const bucket = makeBucket({
       key: "main",
-      models: [
-        { tier: "opus", total: 5_660_729 },
-        { tier: "sonnet", total: 52_037 },
-        { tier: "haiku", total: 607 },
+      variants: [{ model: "claude-opus-5-5", effort: "xhigh", fast: true, total: 10 }],
+    });
+    expect(formatBucketDisplay(bucket).caption).toBe("opus 5.5 · xhigh ↯");
+  });
+
+  it("a variant without effort (old transcripts) shows only the model with its version", () => {
+    const bucket = makeBucket({
+      key: "main",
+      variants: [{ model: "claude-opus-4-7", effort: null, fast: false, total: 10 }],
+    });
+    expect(formatBucketDisplay(bucket).caption).toBe("opus 4.7");
+  });
+
+  it("lists every variant in the order the counter gives — by usage, largest first", () => {
+    const bucket = makeBucket({
+      key: "main",
+      variants: [
+        { model: "claude-opus-5-5", effort: "high", fast: true, total: 900 },
+        { model: "claude-sonnet-5", effort: "medium", fast: false, total: 50 },
+        { model: "claude-haiku-4-5-20251001", effort: null, fast: false, total: 7 },
       ],
     });
-    expect(formatBucketDisplay(bucket).caption).toBe("opus 5.7M, sonnet 52.0k, haiku 607");
+    expect(formatBucketDisplay(bucket).caption).toBe("opus 5.5 · high ↯, sonnet 5 · medium, haiku 4.5");
+  });
+
+  it("names model ids of every known shape by family and dotted version", () => {
+    const caption = (model: string) =>
+      formatBucketDisplay(makeBucket({ key: "main", variants: [{ model, effort: null, fast: false, total: 1 }] })).caption;
+    expect(caption("claude-fable-5-1")).toBe("fable 5.1");
+    expect(caption("claude-sonnet-4-20250514")).toBe("sonnet 4");
+    expect(caption("claude-3-5-sonnet-20241022")).toBe("sonnet 3.5");
+  });
+
+  it("an unfamiliar model name is shown as is", () => {
+    const bucket = makeBucket({ key: "main", variants: [{ model: "gpt-5-codex", effort: "high", fast: false, total: 1 }] });
+    expect(formatBucketDisplay(bucket).caption).toBe("gpt-5-codex · high");
+  });
+
+  it("the caption carries no token counts — usage is shown once, next to the cost", () => {
+    const bucket = makeBucket({
+      key: "agent-abc",
+      models: [{ tier: "opus", total: 3_600_000 }],
+      variants: [{ model: "claude-opus-4-8", effort: "high", fast: false, total: 3_600_000 }],
+      agent: { id: "abc", description: "Review", agentType: "code-reviewer", model: "opus", workflowRunId: null },
+    });
+    expect(formatBucketDisplay(bucket).caption).not.toMatch(/\d(\.\d)?[kM]\b/);
   });
 
   it("subagent with a known type but no models at all — caption without the « · » separator", () => {

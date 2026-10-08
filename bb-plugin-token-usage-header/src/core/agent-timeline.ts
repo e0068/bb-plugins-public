@@ -11,10 +11,10 @@ import type { GitEvent } from "./git-events";
  * SCHEMA_VERSION in tools/agent_timeline.py — the counter script is read
  * from disk on every call, while this file lives in the built bundle and
  * only gets updated on rebuild. Same approach as EXPECTED_SCHEMA_VERSION in
- * src/core/types.ts — see memory/decisions/token-usage-json-schema-version.md.
+ * src/core/types.ts — see docs/decisions/token-usage-json-schema-version.md.
  *
  * 1 -> 2: assistant messages carry optional tokens/cost — see
- * memory/decisions/token-usage-cost-on-messages.md.
+ * docs/decisions/token-usage-cost-on-messages.md.
  *
  * 2 -> 3: agent carries requestFull/requestFullTruncated/responseFull/
  * responseFullTruncated — the untruncated (within FULL_TEXT_MAX in
@@ -189,7 +189,7 @@ const agentTimelineSchema = z
  * (bbProjectId/…). Only ever non-empty here — this type is exclusively
  * consumed by the session page (AgentTimelinePage); the feed and header
  * popup never call the `agentTimeline` RPC at all, by design (see
- * memory/decisions/merge-marker-session-page-only.md) — not just an unused field.
+ * docs/decisions/merge-marker-session-page-only.md) — not just an unused field.
  */
 export type AgentTimeline = z.infer<typeof agentTimelineSchema> & { mergeEvents: GitEvent[] };
 
@@ -298,7 +298,7 @@ function truncate(raw: string, maxLength: number): string {
  * type-word (standing in for an icon in the text) plus a human-readable
  * target. The client renders the finished string and doesn't assemble it
  * again — the same approach as formatBucketDisplay in src/core/format.ts
- * (see memory/decisions/token-usage-one-caption-source.md).
+ * (see docs/decisions/token-usage-one-caption-source.md).
  */
 export function formatEventLabel(event: AgentTimelineEvent, maxLength = 80): string {
   switch (event.kind) {

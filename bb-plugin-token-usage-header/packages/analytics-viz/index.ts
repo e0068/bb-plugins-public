@@ -1,5 +1,7 @@
 export { WINDOW_MS, WINDOWS, windowStartMs } from "./core/time-window";
 export type { Window } from "./core/time-window";
+export { mondayOf, weekBreaks, weekEdgesSince } from "./core/weeks";
+export type { WeekBreak } from "./core/weeks";
 export { bucketByTime } from "./core/binning";
 export type { BucketSpec, TimeBin } from "./core/binning";
 

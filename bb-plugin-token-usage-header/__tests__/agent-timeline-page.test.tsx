@@ -70,7 +70,7 @@ const READY_TIMELINE = {
   },
   agents: [
     { key: "main", name: "Main agent", caption: "opus 700", total: 700, cost: 0.2 },
-    { key: "agent-a11", name: "code-reviewer", caption: "code-reviewer · opus 300", total: 300, cost: 0.1 },
+    { key: "agent-a11", name: "code-reviewer", caption: "code-reviewer · opus 4.8 · high", total: 300, cost: 0.1 },
   ],
   agent: {
     key: "main",
@@ -152,7 +152,7 @@ describe("threads-timeline panel — agent-detail sub-view", () => {
     });
   });
 
-  it("with a session id, fetches the agent's timeline (session-wide totals/agents included in the same ready response), matching the rpc contract", async () => {
+  it("with a session id, fetches the agent's timeline in one round trip besides the page's own settings and chart loads, matching the rpc contract", async () => {
     const subPath = buildAgentDetailSubPath({ session: "sess_abc123", agent: "main" });
     const slot = await renderAgentDetail(subPath, {
       agentTimeline: async (input) => {
@@ -163,19 +163,14 @@ describe("threads-timeline panel — agent-detail sub-view", () => {
 
     await screen.findByText("Total tokens");
     await screen.findByText("Check the simplification of the distort function.");
-    // Both events tied to the "main" agent and the left panel's own row for it show up.
     expect(screen.getAllByText("Main agent").length).toBeGreaterThan(0);
 
-    expect(slot.rpcCalls.length).toBeGreaterThan(0);
     // The left panel's breakdown is fed from the agentTimeline response (no
     // second sessionTokenUsage round trip); the only other calls are the
-    // mount-time viz-settings load and the top session chart's threadsTimeline
-    // slice.
-    expect(
-      slot.rpcCalls.every(
-        (call) => call.method === "agentTimeline" || call.method === "loadVizSettings" || call.method === "threadsTimeline",
-      ),
-    ).toBe(true);
+    // mount-time viz-settings and Reduced Colors loads and the top session
+    // chart's threadsTimeline slice.
+    const allowed = new Set(["agentTimeline", "loadVizSettings", "loadReducedColors", "threadsTimeline"]);
+    expect(slot.rpcCalls.filter((call) => !allowed.has(call.method))).toEqual([]);
     expect(slot.rpcCalls.some((call) => call.method === "agentTimeline")).toBe(true);
     for (const call of slot.rpcCalls) {
       assertMatchesContract(call.method as keyof typeof rpcContract, call.input);
@@ -218,6 +213,7 @@ describe("threads-timeline panel — agent-detail sub-view", () => {
               bbProjectName: null,
               threadId: null,
               bbThreadTitle: null,
+              flowStages: [],
             },
           ],
           agentLabels: { main: "Main agent", "workflow:wf_1": "arch-review" },
@@ -309,6 +305,7 @@ describe("threads-timeline panel — agent-detail sub-view", () => {
           bbProjectName: null,
           threadId: null,
           bbThreadTitle: null,
+          flowStages: [],
         },
       ],
       agentLabels: { main: "Main agent", "agent-a11": "code-reviewer" },
@@ -380,6 +377,7 @@ describe("threads-timeline panel — agent-detail sub-view", () => {
           bbProjectName: null,
           threadId: null,
           bbThreadTitle: null,
+          flowStages: [],
         },
       ],
       agentLabels: { main: "Main agent", "workflow:wf_1": "arch-review" },
@@ -1077,6 +1075,7 @@ describe("token usage header row", () => {
                 bbThreadTitle: null,
                 isAlive: false,
                 isWorking: false,
+                flowStages: [],
               },
             ],
             agentLabels: { main: "Main agent" },
@@ -1094,5 +1093,16 @@ describe("token usage header row", () => {
       expect(columns.length).toBe(3);
     });
     expect(scrollBody.querySelector('[title*="2 min 0 s break"]')).not.toBeNull();
+  });
+});
+
+describe("agent-detail sub-view — Agents list caption", () => {
+  it("the caption carries its full text as a tooltip, since a long one is truncated with an ellipsis", async () => {
+    await renderAgentDetail(buildAgentDetailSubPath({ session: "sess_abc123", agent: "main" }), {
+      agentTimeline: async () => READY_TIMELINE,
+    });
+
+    const caption = await screen.findByText("code-reviewer · opus 4.8 · high");
+    expect(caption.getAttribute("title")).toBe("code-reviewer · opus 4.8 · high");
   });
 });

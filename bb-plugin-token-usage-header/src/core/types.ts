@@ -10,10 +10,10 @@
  * every call, while this file lives in the built bundle and only gets
  * updated on rebuild; on a mismatch, parse.ts must report the version
  * instead of guessing from the fields. See
- * memory/decisions/token-usage-json-schema-version.md and
+ * docs/decisions/token-usage-json-schema-version.md and
  * __tests__/contract-sync.test.tsx for a similar guard.
  */
-export const EXPECTED_SCHEMA_VERSION = 2;
+export const EXPECTED_SCHEMA_VERSION = 3;
 
 /** Available cuts (`--by`). */
 export type TokensBy = "session" | "project" | "agent" | "workflow" | "model" | "day";
@@ -41,6 +41,20 @@ export interface BucketModelUsage {
   total: number;
 }
 
+/**
+ * How many of a bucket's tokens fall on one exact model id with one effort
+ * and speed — what the agent actually ran on, as opposed to the price tier.
+ */
+export interface BucketVariantUsage {
+  /** Model id as the transcript records it, e.g. "claude-opus-4-8". */
+  model: string;
+  /** Effort level of the records, e.g. "high"; null in transcripts older than the field. */
+  effort: string | null;
+  /** True for calls made in fast mode (usage.speed === "fast"). */
+  fast: boolean;
+  total: number;
+}
+
 /** One row of the report: a single bucket for the chosen `--by` cut. */
 export interface TokensBucket {
   /** Stable bucket identifier. For `--by agent`: "agent-<hash>" or "main". */
@@ -63,12 +77,13 @@ export interface TokensBucket {
   /** Estimated cost in USD, rounded to cents. */
   cost: number;
   /**
-   * Usage per model tier encountered in the bucket, in descending order.
-   * A bucket is almost never homogeneous: over the course of a session the
-   * main agent can end up working across several models, and a single name
-   * would pick a winner arbitrarily.
+   * Usage per price tier encountered in the bucket, in descending order —
+   * the tiers `cost` was priced at. Kept in the report; the UI doesn't read
+   * it, the caption names `variants` instead.
    */
   models: BucketModelUsage[];
+  /** Usage per exact model, effort and fast mode, in descending order — what the agent caption names. */
+  variants: BucketVariantUsage[];
   /** ISO 8601 UTC timestamp of the earliest record in the bucket, or null. */
   firstAt: string | null;
   /** ISO 8601 UTC timestamp of the latest record in the bucket, or null. */

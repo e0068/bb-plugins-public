@@ -13,8 +13,8 @@ ROOT = os.path.expanduser("~/.claude/projects")
 # Version of the --json report format. Bump on ANY breaking format change
 # (a new required field, a changed type/name of an existing one) — src/core/parse.ts
 # checks it first and on mismatch tells the user to rebuild the plugin instead
-# of complaining about a data field. See memory/decisions/token-usage-json-schema-version.md.
-SCHEMA_VERSION = 2
+# of complaining about a data field. See docs/decisions/token-usage-json-schema-version.md.
+SCHEMA_VERSION = 3
 
 # A bare calendar date without time, as accepted by --since/--until.
 _DATE_ONLY_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
@@ -85,6 +85,22 @@ def models_json(models):
     ]
 
 
+def variants_json(variants):
+    """Usage by exact model, effort and fast mode — what the agent caption names.
+
+    Descending by usage like models_json; a variant without usage (Claude
+    Code's <synthetic> records) is left out, it would name a model that
+    did no work. See docs/decisions/token-usage-caption-model-effort-fast.md.
+    """
+    return [
+        {"model": model, "effort": effort, "fast": fast, "total": c.total}
+        for (model, effort, fast), c in sorted(
+            variants.items(), key=lambda kv: (-kv[1].total, kv[0][0], kv[0][1] or "", kv[0][2])
+        )
+        if c.total > 0
+    ]
+
+
 class Bucket:
     def __init__(self):
         self.inp = self.cw5 = self.cw1h = self.cr = self.out = self.think = 0
@@ -93,9 +109,12 @@ class Bucket:
         # homogeneous: the main agent gets to work with several models within
         # a session, and a single name in the label would pick a winner arbitrarily.
         self.models = defaultdict(ModelCounts)
+        # The same usage by (exact model id, effort, fast mode) — tiers price
+        # the tokens, variants name what the agent actually ran on.
+        self.variants = defaultdict(ModelCounts)
         self.t0 = self.t1 = None
 
-    def add(self, u, model, ts):
+    def add(self, u, model, ts, effort=None):
         cc = u.get("cache_creation") or {}
         inp   = u.get("input_tokens", 0)
         cw5   = cc.get("ephemeral_5m_input_tokens", 0)
@@ -115,6 +134,8 @@ class Bucket:
         self.msgs  += 1
 
         self.models[tier(model)].add(inp, cw5, cw1h, cr, out, think)
+        if model:
+            self.variants[(model, effort, u.get("speed") == "fast")].add(inp, cw5, cw1h, cr, out, think)
 
         if ts:
             self.t0 = min(self.t0, ts) if self.t0 else ts
@@ -395,6 +416,7 @@ def walk(paths, since=None, until=None):
                 records[(msg.get("id"), d.get("requestId"))] = {
                     "usage": u,
                     "model": msg.get("model"),
+                    "effort": d.get("effort"),
                     "ts": d.get("timestamp"),
                 }
 
@@ -415,6 +437,7 @@ def walk(paths, since=None, until=None):
                 "meta": meta,
                 "usage": rec["usage"],
                 "model": rec["model"],
+                "effort": rec["effort"],
                 "ts": ts,
             }
 
@@ -455,6 +478,7 @@ def bucket_json(key, b, session_id, project, agent):
         "messages": b.msgs,
         "cost": round(b.cost, 2),
         "models": models_json(b.models),
+        "variants": variants_json(b.variants),
     }
     d["firstAt"] = iso(b.t0)
     d["lastAt"] = iso(b.t1)
@@ -545,7 +569,7 @@ def main():
             key = (ts or "")[:10]
             label = key
 
-        buckets[key].add(rec["usage"], model, ts)
+        buckets[key].add(rec["usage"], model, ts, rec["effort"])
         bucket_sessions[key].add(session)
         bucket_projects[key].add(project)
         bucket_label[key] = label

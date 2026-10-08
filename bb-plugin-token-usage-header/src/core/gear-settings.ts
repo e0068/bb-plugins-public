@@ -1,7 +1,7 @@
 // Chart geometry/behaviour settings — the former "gear popover" fields.
 // Declared via `bb.settings.define` in server.ts and rendered by bb's own
 // Settings page (Tools → plugin detail), not a custom in-app popover — see
-// memory/decisions/token-usage-gear-to-native-settings.md for why these 14
+// docs/decisions/token-usage-gear-to-native-settings.md for why these 14
 // fields moved out of the bb.storage.kv blob in viz-settings.ts while
 // agentColors stayed behind.
 //

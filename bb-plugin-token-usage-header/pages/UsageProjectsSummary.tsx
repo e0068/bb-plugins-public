@@ -8,9 +8,10 @@
 // Runs its own threadsTimeline call at a fixed limit instead of reading the
 // feed's `threads` state below: the feed's slice grows as the user scrolls,
 // which would make this block's numbers change on their own mid-scroll — see
-// memory/decisions/usage-pie-own-100-slice.md.
+// docs/decisions/usage-pie-own-100-slice.md.
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useRpc } from "@get-bb/plugin-sdk/app";
+import { useSeriesPainting } from "@bb-plugins/reduced-colors";
 import type { rpcContract } from "../server";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -33,7 +34,7 @@ import {
   type RowLimit,
   type ThreadEntry,
 } from "../src/core";
-import { DEFAULT_PALETTE } from "./thread-chart";
+import { useSeriesColorFor } from "./thread-chart";
 import { HourlyBurnChart } from "./hourly-burn-chart";
 
 // The fast, default slice — fetched on mount so "day" (the initial period)
@@ -167,11 +168,13 @@ export function UsageProjectsSummary({ onOpenSession }: { onOpenSession: (sessio
   // is usually still complete even when the slice as a whole was cut off.
   const incomplete = windowMayBeIncomplete(threads, fromMs, sliceTruncated);
 
-  function colorFor(key: string | null): string {
-    // Every key passed here comes from `slices` or `rows`, both derived from
-    // `threads` — always present in `projectOrder`, so no "not found" guard.
-    return DEFAULT_PALETTE[projectOrder.indexOf(key) % DEFAULT_PALETTE.length];
-  }
+  // Every key passed here comes from `slices` or `rows`, both derived from
+  // `threads`. Under Reduced Colors the ramp runs down the legend — the
+  // window's slices, low to high — so a project's step moves with D/W/M;
+  // with the palette the order above keeps its colour fixed instead.
+  const ramp = useSeriesPainting().kind === "ramp";
+  const legendOrder = useMemo(() => slices.map((slice) => slice.key), [slices]);
+  const colorFor = useSeriesColorFor(ramp ? legendOrder : projectOrder);
 
   function isActive(key: string | null): boolean {
     return activeSelection.kind === "all" || activeSelection.key === key;

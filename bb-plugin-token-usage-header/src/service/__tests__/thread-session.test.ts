@@ -2,7 +2,71 @@ import { describe, expect, it } from "vitest";
 import { createFakePluginHost } from "@get-bb/plugin-sdk/testing";
 import { createThreadSessionResolver } from "../thread-session";
 
+/** One thread's identity log as bb keeps it: events in seq order, filtered by afterSeq like the real threads.events.list. */
+function identityLog(sessions: string[]) {
+  const rows = () =>
+    sessions.map((providerThreadId, i) => ({
+      id: `evt-${i + 1}`,
+      scope: { kind: "thread" as const },
+      threadId: "thread-1",
+      seq: i + 1,
+      createdAt: Date.now(),
+      type: "thread/identity" as const,
+      data: { providerThreadId },
+    }));
+  return async ({ afterSeq }: { afterSeq?: string }) => rows().filter((row) => afterSeq === undefined || row.seq > Number(afterSeq));
+}
+
 describe("createThreadSessionResolver", () => {
+  it("a thread that moved to a new Claude Code session resolves to the latest one, not the first", async () => {
+    const { bb, harness } = createFakePluginHost();
+    harness.sdk.stub("threads.events.list", identityLog(["sess-first", "sess-current"]));
+
+    expect(await createThreadSessionResolver(bb).resolve("thread-1")).toBe("sess-current");
+  });
+
+  it("a session change after the first lookup is picked up, reading only the events after the last one seen", async () => {
+    const { bb, harness } = createFakePluginHost();
+    const sessions = ["sess-first"];
+    harness.sdk.stub("threads.events.list", identityLog(sessions));
+    const resolver = createThreadSessionResolver(bb);
+
+    expect(await resolver.resolve("thread-1")).toBe("sess-first");
+    sessions.push("sess-current");
+    expect(await resolver.resolve("thread-1")).toBe("sess-current");
+    expect(harness.sdk.callsTo("threads.events.list").at(-1)?.[0]).toMatchObject({ afterSeq: "1" });
+  });
+
+  it("sessionsOf lists every session of the thread once, oldest first", async () => {
+    const { bb, harness } = createFakePluginHost();
+    harness.sdk.stub("threads.events.list", identityLog(["sess-a", "sess-b", "sess-a"]));
+
+    expect(await createThreadSessionResolver(bb).sessionsOf("thread-1")).toEqual(["sess-a", "sess-b"]);
+  });
+
+  it("the thread returning to an earlier session makes that session current again", async () => {
+    const { bb, harness } = createFakePluginHost();
+    harness.sdk.stub("threads.events.list", identityLog(["sess-a", "sess-b", "sess-a"]));
+
+    expect(await createThreadSessionResolver(bb).resolve("thread-1")).toBe("sess-a");
+  });
+
+  it("sessionsOf skips the lookup while the thread hasn't changed since the last check", async () => {
+    const { bb, harness } = createFakePluginHost();
+    harness.sdk.stub("threads.events.list", identityLog(["sess-a"]));
+    let clock = 1_000;
+    const resolver = createThreadSessionResolver(bb, { now: () => clock });
+
+    await resolver.sessionsOf("thread-1", 500);
+    clock = 2_000;
+    await resolver.sessionsOf("thread-1", 500);
+    expect(harness.sdk.callsTo("threads.events.list")).toHaveLength(1);
+
+    await resolver.sessionsOf("thread-1", 1_500);
+    expect(harness.sdk.callsTo("threads.events.list")).toHaveLength(2);
+  });
+
+
   it("resolves the providerThreadId from a thread/identity event", async () => {
     const { bb, harness } = createFakePluginHost();
     harness.sdk.stub("threads.events.list", async ({ threadId }: { threadId: string }) => [
@@ -33,33 +97,7 @@ describe("createThreadSessionResolver", () => {
     expect(sessionId).toBeNull();
   });
 
-  it("caches the result and doesn't call the SDK again for the same thread", async () => {
-    const { bb, harness } = createFakePluginHost();
-    let calls = 0;
-    harness.sdk.stub("threads.events.list", async ({ threadId }: { threadId: string }) => {
-      calls++;
-      return [
-        {
-          id: "evt-1",
-          scope: { kind: "thread" },
-          threadId,
-          seq: 1,
-          createdAt: Date.now(),
-          type: "thread/identity",
-          data: { providerThreadId: "sess-abc" },
-        },
-      ];
-    });
-
-    const resolver = createThreadSessionResolver(bb);
-    await resolver.resolve("thread-1");
-    await resolver.resolve("thread-1");
-
-    expect(calls).toBe(1);
-    expect(harness.sdk.callsTo("threads.events.list")).toHaveLength(1);
-  });
-
-  it("does not cache a null result, so a thread that just got its first turn is picked up on the next call", async () => {
+  it("resolve() re-reads a thread with no session yet, so its first turn is picked up on the next call", async () => {
     // Regression for the bug where a thread opened before its first turn
     // cached `null` forever: once the user sends a message and the
     // transcript appears, the header must stop saying "no session yet".
@@ -89,7 +127,7 @@ describe("createThreadSessionResolver", () => {
     expect(harness.sdk.callsTo("threads.events.list")).toHaveLength(2);
   });
 
-  it("bounds the positive-result cache so it doesn't grow forever across every thread ever viewed", async () => {
+  it("bounds the cache so it doesn't grow forever across every thread ever viewed", async () => {
     const { bb, harness } = createFakePluginHost();
     harness.sdk.stub("threads.events.list", async ({ threadId }: { threadId: string }) => [
       {
@@ -104,11 +142,11 @@ describe("createThreadSessionResolver", () => {
     ]);
 
     const resolver = createThreadSessionResolver(bb, { maxCacheEntries: 2 });
-    await resolver.resolve("t1");
-    await resolver.resolve("t2");
-    await resolver.resolve("t3"); // pushes the cache past its limit, evicting t1
+    await resolver.sessionsOf("t1", 0);
+    await resolver.sessionsOf("t2", 0);
+    await resolver.sessionsOf("t3", 0); // pushes the cache past its limit, evicting t1
 
-    await resolver.resolve("t1"); // must hit the SDK again, not serve a stale/evicted slot
+    await resolver.sessionsOf("t1", 0); // must hit the SDK again, not serve a stale/evicted slot
 
     expect(harness.sdk.callsTo("threads.events.list")).toHaveLength(4);
   });
@@ -128,9 +166,9 @@ describe("createThreadSessionResolver", () => {
     ]);
 
     const resolver = createThreadSessionResolver(bb);
-    await resolver.resolve("thread-1");
+    await resolver.sessionsOf("thread-1", 0);
     resolver.clearCache();
-    await resolver.resolve("thread-1");
+    await resolver.sessionsOf("thread-1", 0);
 
     expect(harness.sdk.callsTo("threads.events.list")).toHaveLength(2);
   });

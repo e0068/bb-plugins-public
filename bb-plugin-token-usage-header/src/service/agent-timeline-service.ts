@@ -175,7 +175,7 @@ const DEFAULT_CACHE_TTL_MS = 30_000;
 // --- Merge status (live `gh pr view`) --------------------------------
 //
 // The session page's own enrichment — see
-// memory/decisions/merge-marker-session-page-only.md for why this call
+// docs/decisions/merge-marker-session-page-only.md for why this call
 // only ever happens here (one PR at a time, on-demand), never for the
 // feed/popup's threadsTimeline slice.
 

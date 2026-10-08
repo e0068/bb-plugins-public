@@ -51,6 +51,7 @@ function thread(overrides: Partial<ThreadEntry> = {}): ThreadEntry {
     bbThreadTitle: null,
     isAlive: false,
     isWorking: false,
+    flowStages: [],
     ...overrides,
     bins,
   };

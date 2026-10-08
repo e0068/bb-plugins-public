@@ -9,6 +9,7 @@ import { existsSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
+import { z } from "zod";
 import {
   deriveThreadLiveness,
   parseThreadsTimeline,
@@ -16,6 +17,7 @@ import {
   type ThreadsTimeline,
 } from "../core/threads-timeline";
 import { bbManagedEnvironmentId, fallbackProjectName, projectIdForCwd, UNKNOWN_PROJECT_LABEL, type ProjectPath } from "../core/project-attribution";
+import { flowStageSchema, type FlowStage } from "../core/flow-stages";
 import { githubRepoSlugFromRemoteUrl, type CommitEvent, type GitEvent, type PrEvent } from "../core/git-events";
 import {
   DEFAULT_MAX_OUTPUT_BYTES,
@@ -324,20 +326,54 @@ function livenessFactsOf(thread: {
 }
 
 /**
+ * How many thread lookups the scan keeps in flight at once. One request per
+ * scanned thread all at once (up to THREADS_SCAN_LIMIT) made the bb server
+ * reset connections (ECONNRESET), and the scan lost every match with them.
+ */
+const THREAD_LOOKUP_CONCURRENCY = 8;
+
+/**
+ * A thread no run is going on in. bb writes a thread's `thread/identity`
+ * events inside a run without touching its `updatedAt`; the run's closing
+ * transition (to idle or error) moves `updatedAt` past them — so only a
+ * thread at rest can be skipped by its `updatedAt`.
+ */
+function isAtRest(thread: { status?: string }): boolean {
+  return thread.status === "idle" || thread.status === "error";
+}
+
+/** `fn` over every item with at most `limit` calls running at once; results in item order. */
+async function mapWithLimit<T, R>(items: readonly T[], limit: number, fn: (item: T) => Promise<R>): Promise<R[]> {
+  const results: R[] = new Array(items.length);
+  let next = 0;
+  const worker = async (): Promise<void> => {
+    while (next < items.length) {
+      const index = next++;
+      results[index] = await fn(items[index]!);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
+  return results;
+}
+
+/**
  * Scans up to THREADS_SCAN_LIMIT of BB's most recent threads and resolves
- * each one's Claude Code session id (via `resolver`, i.e.
- * createThreadSessionResolver — cached across calls so repeat threads are
- * free after their first resolution), building a session -> {threadId,
- * projectId, title} map.
+ * every Claude Code session each one ran on (via `resolver`, i.e.
+ * createThreadSessionResolver — cached across calls; a thread at rest whose
+ * `updatedAt` hasn't moved since its last check costs no request at all,
+ * a running one is re-read every scan),
+ * building a session -> {threadId, projectId, title} map. A thread can own
+ * several sessions — the provider started a new one — and each of them maps
+ * to it.
  *
  * Neither `ThreadResponse` (bb.sdk.threads.list's item shape) nor any other
  * SDK method carries a session/providerThreadId field directly or supports
  * a reverse (session -> thread) lookup — see bundled-types/bb-plugin-sdk.d.ts.
- * The only way to learn a thread's session is a `thread/identity` event
- * lookup per thread, which is exactly what the resolver already does for
- * sessionTokenUsage. This is therefore the one place that pays the O(threads
- * scanned) cost; every other consumer of the resolver pays O(1) per thread
- * once it's cached.
+ * The only way to learn a thread's sessions is its `thread/identity` events,
+ * which is exactly what the resolver reads for sessionTokenUsage. Lookups run
+ * THREAD_LOOKUP_CONCURRENCY at a time, and a thread whose lookup fails is
+ * just left out of the map — the other threads keep their matches; the
+ * failures are logged once per scan.
  */
 async function buildSessionToBbThreadMap(
   bb: BbPluginApi,
@@ -350,31 +386,38 @@ async function buildSessionToBbThreadMap(
   // account's spend over a week/month (measured: 17 active + 311 archived
   // threads visible without it, 484 + 466 with it — the majority were hidden).
   const threads = await bb.sdk.threads.list({ limit: THREADS_SCAN_LIMIT, includeHidden: true });
-  const map = new Map<string, SessionBbThread>();
-  await Promise.all(
-    threads.map(async (thread) => {
-      const sessionId = await resolver.resolve(thread.id);
-      if (sessionId !== null) {
-        map.set(sessionId, {
-          threadId: thread.id,
-          projectId: thread.projectId,
-          // Raw liveness facts off the same list item; the working flag also
-          // needs the python thread's `end`, so the derivation happens in
-          // enrichBbProjects — see memory/decisions/thread-liveness-signals.md.
-          ...livenessFactsOf(thread),
-          // `title` is BB's user-set (or auto-generated on first message)
-          // thread name; `titleFallback` is BB's own derived fallback for a
-          // thread that never got one (see bb-plugin-sdk.d.ts's
-          // threadListResponseSchema). Preferring title mirrors how BB's own
-          // UI picks a thread's display name; null only when neither is set
-          // (e.g. a thread with no messages yet), in which case the page
-          // falls back to a short session id instead.
-          title: thread.title ?? thread.titleFallback ?? null,
-        });
-      }
+  const lookups = await mapWithLimit(threads, THREAD_LOOKUP_CONCURRENCY, async (thread) => {
+    try {
+      return { thread, sessions: await resolver.sessionsOf(thread.id, isAtRest(thread) ? thread.updatedAt : undefined) };
+    } catch (error) {
+      return { thread, sessions: [] as readonly string[], error };
+    }
+  });
+  const failed = lookups.filter((lookup) => "error" in lookup);
+  if (failed.length > 0) {
+    console.error(`[token-usage-header] session lookup failed for ${failed.length} of ${threads.length} threads; they stay unmatched this time:`, failed[0]!.error);
+  }
+  return new Map(
+    lookups.flatMap(({ thread, sessions }) => {
+      const match: SessionBbThread = {
+        threadId: thread.id,
+        projectId: thread.projectId,
+        // Raw liveness facts off the same list item; the working flag also
+        // needs the python thread's `end`, so the derivation happens in
+        // enrichBbProjects — see docs/decisions/thread-liveness-signals.md.
+        ...livenessFactsOf(thread),
+        // `title` is BB's user-set (or auto-generated on first message)
+        // thread name; `titleFallback` is BB's own derived fallback for a
+        // thread that never got one (see bb-plugin-sdk.d.ts's
+        // threadListResponseSchema). Preferring title mirrors how BB's own
+        // UI picks a thread's display name; null only when neither is set
+        // (e.g. a thread with no messages yet), in which case the page
+        // falls back to a short session id instead.
+        title: thread.title ?? thread.titleFallback ?? null,
+      };
+      return sessions.map((sessionId) => [sessionId, match] as const);
     }),
   );
-  return map;
 }
 
 /** Every BB project's id -> display name, plus its own checkout root(s) — for {@link projectIdForCwd}'s path fallback. Includes the personal project — a session may well belong to it. */
@@ -424,16 +467,15 @@ async function resolveEnvironmentProjects(bb: BbPluginApi, environmentIds: reado
  *
  * Three tiers, tried in order, each catching what the one before it misses:
  *
- * 1. **Session identity** (buildSessionToBbThreadMap): a thread whose latest
- *    `thread/identity` event still points at this exact session. The
- *    precise, thread-level match — carries threadId/title/liveness, not
- *    just a project.
+ * 1. **Session identity** (buildSessionToBbThreadMap): a thread one of whose
+ *    `thread/identity` events names this exact session — its current one or
+ *    an earlier one it moved on from. The precise, thread-level match —
+ *    carries threadId/title/liveness, not just a project.
  * 2. **Managed environment** (bbManagedEnvironmentId + environments.get): a
  *    session that ran inside a `.bb/worktrees/`/`.bb/personal-workspaces/`
  *    copy whose environment record still names a project, even when its
- *    owning thread fell outside THREADS_SCAN_LIMIT, switched to a different
- *    provider session mid-life (a compaction/resume the identity event
- *    never re-fired for), or was deleted outright — the environment record
+ *    owning thread fell outside THREADS_SCAN_LIMIT, its lookup failed this
+ *    scan, or the thread was deleted outright — the environment record
  *    outlives all three. Project-level only: threadId stays null.
  * 3. **Checkout path** (projectIdForCwd): a session that ran directly in a
  *    project's own primary checkout — an "unmanaged" environment, never
@@ -647,6 +689,40 @@ async function enrichCommits(timeline: ThreadsTimeline, processRunner: ProcessRu
   return { ...timeline, threads };
 }
 
+/** Flow's plugin id and the RPC that answers a thread's stages with their passes (bb-plugin-flow/shared/contract.ts). */
+const FLOW_PLUGIN_ID = "flow";
+const FLOW_STAGE_TIMELINE_METHOD = "getStageTimeline";
+const flowStagesSchema = z.array(flowStageSchema);
+
+/** One BB thread's Flow stages, or the reason Flow didn't answer: not installed, disabled, or too old to know the method. */
+async function flowStagesOf(bb: BbPluginApi, threadId: string): Promise<{ ok: true; stages: FlowStage[] } | { ok: false; error: unknown }> {
+  try {
+    return { ok: true, stages: await bb.sdk.plugins.callRpc({ pluginId: FLOW_PLUGIN_ID, method: FLOW_STAGE_TIMELINE_METHOD, input: { threadId }, outputSchema: flowStagesSchema }) };
+  } catch (error) {
+    return { ok: false, error };
+  }
+}
+
+/**
+ * Attaches the Flow run's stages to every session matched to a BB thread, in
+ * parallel; an unmatched session keeps its [] and costs no call. Runs after
+ * enrichBbProjects, the only step that knows a session's threadId. A thread
+ * Flow didn't answer for keeps [] too, and the failures are logged once per
+ * query — with Flow missing every thread fails the same way.
+ */
+async function enrichFlowStages(bb: BbPluginApi, timeline: ThreadsTimeline): Promise<ThreadsTimeline> {
+  const answers = await Promise.all(timeline.threads.map((thread) => (thread.threadId === null ? null : flowStagesOf(bb, thread.threadId))));
+  const failures = answers.flatMap((answer) => (answer !== null && !answer.ok ? [answer.error] : []));
+  if (failures.length > 0) {
+    console.error(`[threads-timeline-service] Flow stages unavailable for ${failures.length} thread(s), leaving their charts without the stage lane:`, failures[0]);
+  }
+  const threads = timeline.threads.map((thread, i) => {
+    const answer = answers[i];
+    return answer?.ok ? { ...thread, flowStages: answer.stages } : thread;
+  });
+  return { ...timeline, threads };
+}
+
 /**
  * `bb` powers BB-project enrichment (see enrichBbProjects above): each
  * query's result is tagged with the BB project/thread its Claude Code
@@ -661,10 +737,12 @@ export function createThreadsTimelineService(
   options: ThreadsTimelineServiceOptions = {},
 ): ThreadsTimelineService {
   const runner = createThreadsTimelineRunner(options);
-  const resolver = createThreadSessionResolver(bb);
   const processRunner = options.processRunner ?? runProcess;
   const ttlMs = options.cacheTtlMs ?? DEFAULT_CACHE_TTL_MS;
   const now = options.now ?? Date.now;
+  // Holds every scanned thread: a smaller cache would evict each thread
+  // before the next scan comes back to it and re-read all of them every time.
+  const resolver = createThreadSessionResolver(bb, { now, maxCacheEntries: THREADS_SCAN_LIMIT });
 
   const entries = new Map<string, { expiresAt: number; promise: Promise<ThreadsTimelineRunResult> }>();
 
@@ -684,7 +762,8 @@ export function createThreadsTimelineService(
         if (!result.ok) return result;
         const withProjects = await enrichBbProjects(bb, resolver, result.data, now());
         const withCommits = await enrichCommits(withProjects, processRunner);
-        return { ok: true, data: withCommits };
+        const withStages = await enrichFlowStages(bb, withCommits);
+        return { ok: true, data: withStages };
       });
       const entry = { expiresAt: now() + ttlMs, promise };
       entries.set(key, entry);

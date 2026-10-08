@@ -357,7 +357,7 @@ export function AgentTimelinePage({ subPath }: PluginNavPanelProps) {
     [gear, threadsSettings.agentColors],
   );
   // Merge markers are resolved ONLY by the agentTimeline RPC (a live `gh pr
-  // view` per PR — see memory/decisions/merge-marker-session-page-only.md),
+  // view` per PR — see docs/decisions/merge-marker-session-page-only.md),
   // never by threadsTimeline itself — sessionChart's own thread.events never
   // carries them. Spliced in here, client-side, so this page's chart is the
   // only place they ever appear.
@@ -402,8 +402,8 @@ export function AgentTimelinePage({ subPath }: PluginNavPanelProps) {
   const [groupedByTurn, setGroupedByTurn] = useState(DEFAULT_VIZ_SETTINGS.agentDetail.groupedByTurn);
 
   // --- Viz-settings persistence (bb.storage.kv via loadVizSettings/
-  // saveVizSettings — see memory/decisions/token-usage-viz-settings-persist-kv.md
-  // and memory/decisions/token-usage-gear-to-native-settings.md). This page
+  // saveVizSettings — see docs/decisions/token-usage-viz-settings-persist-kv.md
+  // and docs/decisions/token-usage-gear-to-native-settings.md). This page
   // owns and edits only the `agentDetail` section (showHooks/relativeTime/
   // groupedByTurn); the sibling `threads` section (now just agentColors +
   // toolbar sort/search/filter state, geometry having moved to
@@ -718,7 +718,11 @@ function LeftPanel({
                           <span className={cn("block truncate", active ? "text-foreground" : "text-foreground/90")} title={agent.name}>
                             {agent.name}
                           </span>
-                          {agent.caption && <span className="block truncate text-subtle-foreground">{agent.caption}</span>}
+                          {agent.caption && (
+                            <span className="block truncate text-subtle-foreground" title={agent.caption}>
+                              {agent.caption}
+                            </span>
+                          )}
                         </span>
                         <span className="shrink-0 tabular-nums text-muted-foreground">
                           {formatTokenCount(agent.total)} · {formatCost(agent.cost)}

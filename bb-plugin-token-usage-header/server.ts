@@ -6,10 +6,12 @@
 // every subagent call), sorted by spend.
 import { defineRpcContract, type BbPluginApi, type PluginKvStorage } from "@get-bb/plugin-sdk";
 import { z } from "zod";
+import { parseReducedColors, REDUCED_COLORS_KV_KEY, type ReducedColors } from "@bb-plugins/reduced-colors/core/settings";
 import {
   agentTimelineEventSchema,
   cacheWriteTotal,
   formatBucketDisplay,
+  flowStageSchema,
   gitEventSchema,
   parseVizSettings,
   vizSettingsSchema,
@@ -148,6 +150,10 @@ const threadsTimelineEntrySchema = z
     // dot). Both false for an unmatched session. See ThreadEntry's doc.
     isAlive: z.boolean(),
     isWorking: z.boolean(),
+    // Stages of the matched thread's Flow run, from Flow's getStageTimeline —
+    // attached by threads-timeline-service.ts's enrichFlowStages, [] when the
+    // session has no thread, no run, or Flow isn't there.
+    flowStages: z.array(flowStageSchema),
   })
   .strict() satisfies z.ZodType<ThreadEntry>;
 
@@ -211,7 +217,7 @@ export const rpcContract = defineRpcContract({
         events: z.array(agentTimelineEventSchema),
         // Every PR referenced by the session that turned out to be merged —
         // resolved live (`gh pr view`) by agent-timeline-service.ts, only
-        // for this one RPC (see memory/decisions/merge-marker-session-page-only.md).
+        // for this one RPC (see docs/decisions/merge-marker-session-page-only.md).
         // The session page splices these into its chart's own thread.events
         // (from threadsTimeline, which never carries them) before rendering.
         mergeEvents: z.array(gitEventSchema),
@@ -256,8 +262,8 @@ export const rpcContract = defineRpcContract({
       z.object({ status: z.literal("error"), message: z.string() }),
     ]),
   },
-  // See memory/decisions/token-usage-viz-settings-persist-kv.md and
-  // memory/decisions/token-usage-gear-to-native-settings.md: what's LEFT of
+  // See docs/decisions/token-usage-viz-settings-persist-kv.md and
+  // docs/decisions/token-usage-gear-to-native-settings.md: what's LEFT of
   // the two pages' visualization state (agent colours, sort, filters, detail
   // toggles — everything that can't be a declared bb.settings.define field)
   // persists across sessions in bb.storage.kv, not localStorage — kv is only
@@ -277,6 +283,18 @@ export const rpcContract = defineRpcContract({
     input: vizSettingsSchema,
     output: z.object({ ok: z.literal(true) }),
   },
+  // Reduced Colors (packages/reduced-colors): the settings page's own section
+  // writes it, every chart root reads it. The shape is owned by the package's
+  // total parse rather than a zod mirror of it — both ends run the value
+  // through parseReducedColors, so a custom schema only has to let it through.
+  loadReducedColors: {
+    input: z.object({}).strict().default({}),
+    output: z.custom<ReducedColors>(),
+  },
+  saveReducedColors: {
+    input: z.custom<ReducedColors>(),
+    output: z.object({ ok: z.literal(true) }),
+  },
 });
 
 /**
@@ -289,7 +307,7 @@ export const rpcContract = defineRpcContract({
  * truncated to --top) — re-sorting here would only ever reproduce that same
  * order, so the report's order is trusted as-is. The caption is computed only
  * by formatBucketDisplay — don't reassemble it here, see
- * memory/decisions/token-usage-one-caption-source.md.
+ * docs/decisions/token-usage-one-caption-source.md.
  */
 function mapSessionTotals(report: TokensReport) {
   const { totals } = report;
@@ -470,7 +488,7 @@ export interface PluginDeps {
  * The former gear popover's 14 geometry/behaviour fields, declared here so
  * bb renders them on the plugin's own Settings page (Tools → plugin detail)
  * instead of a custom in-app popover — see
- * memory/decisions/token-usage-gear-to-native-settings.md. The frontend
+ * docs/decisions/token-usage-gear-to-native-settings.md. The frontend
  * reads them live via `useSettings()` + `parseGearSettings` (src/core/
  * gear-settings.ts); nothing here reads `.get()` — no server-side logic
  * depends on these values, only the pages that render charts do.
@@ -606,5 +624,10 @@ export default function plugin(bb: BbPluginApi, deps: PluginDeps = {}) {
     threadsTimeline: (params) => loadThreadsTimeline(threadsTimelineService, params),
     loadVizSettings: () => loadVizSettings(kv),
     saveVizSettings: (value) => saveVizSettings(kv, value),
+    loadReducedColors: async () => parseReducedColors(await kv.get<unknown>(REDUCED_COLORS_KV_KEY)),
+    saveReducedColors: async (value) => {
+      await kv.set(REDUCED_COLORS_KV_KEY, parseReducedColors(value));
+      return { ok: true as const };
+    },
   });
 }

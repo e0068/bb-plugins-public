@@ -1,0 +1,8 @@
+{
+  "extends": "../plugin-base/tsconfig.base.json",
+  "compilerOptions": {
+    "jsx": "react-jsx",
+    "types": ["node"]
+  },
+  "include": ["index.ts", "core.ts", "react.ts", "*.test.ts", "*.test.tsx"]
+}

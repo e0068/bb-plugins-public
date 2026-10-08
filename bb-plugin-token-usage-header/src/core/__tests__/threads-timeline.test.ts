@@ -321,6 +321,7 @@ function thread(durationSec: number, session = `s-${durationSec}`): ThreadEntry 
     bbThreadTitle: null,
     isAlive: false,
     isWorking: false,
+    flowStages: [],
   };
 }
 
