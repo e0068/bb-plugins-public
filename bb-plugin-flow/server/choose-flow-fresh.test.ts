@@ -18,7 +18,7 @@ const setup = (fresh: boolean) => {
   const refused: string[] = [];
   registerChooseFlow(bb, {
     flows: { current: () => ({ flows: [{ id: "plugin", name: "Plugin", stages: [], limitSkills: true }] }) as unknown as FlowSettings } as FlowSettingsStore,
-    threads: { flowOf: (threadId) => flows.get(threadId), assign: async (threadId, flowId) => void flows.set(threadId, flowId) },
+    threads: { flowOf: (threadId) => flows.get(threadId), assign: async (threadId, flowId) => void flows.set(threadId, flowId), takePicked: async () => undefined },
     instructions: () => "1. brief",
     started: async () => undefined,
     fresh: async () => fresh,

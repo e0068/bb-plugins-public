@@ -3,16 +3,21 @@
 // заново — по тумблеру очистки после выбора flow или всегда, если сессия стартовала урезанной до выбора, — ответ
 // вместо этапов просит закончить ход: работа начнётся заново в новой сессии (./fresh-session.ts).
 // Свой отказ от flow агент может пересмотреть, когда владелец просит работать через flow; отказ владельца — нет.
+// Выбор, который владелец успел сделать над композером, пока агент решал, выигрывает у выбора агента.
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import { z } from "zod";
 
-import { AGENT_NO_FLOW, AUTO_FLOW, NO_FLOW } from "../core/flows";
+import { AGENT_NO_FLOW, AUTO_FLOW, flowById, NO_FLOW } from "../core/flows";
 import { CHOOSE_FLOW_TOOL } from "../lib/stage-constants";
 import type { FlowSettingsStore } from "./flow-settings";
 import type { ThreadFlows } from "./thread-flows";
 
 const toolText = (text: string) => ({ content: [{ type: "text" as const, text }] });
 const toolError = (text: string) => ({ isError: true as const, content: [{ type: "text" as const, text }] });
+
+/** Выбор владельца над композером, сделанный, пока агент решал: `null` — «Без flow». */
+const ownerPickNote = (name: string | null) =>
+  `The owner picked ${name === null ? "no flow" : `flow "${name}"`} for this thread above the composer while you were choosing, and the owner's pick wins over yours.`;
 
 /** Ответ агенту, которому Flow начнёт новую сессию: в этом ходе работы больше нет. */
 export const FRESH_SESSION_REPLY =
@@ -25,7 +30,7 @@ export const registerChooseFlow = (
   bb: Pick<BbPluginApi, "agents">,
   deps: {
     flows: FlowSettingsStore;
-    threads: Pick<ThreadFlows, "flowOf" | "assign">;
+    threads: Pick<ThreadFlows, "flowOf" | "assign" | "takePicked">;
     /** Вклад Flow в ход треда — после назначения уже с этапами выбранного flow. */
     instructions: (threadId: string) => string;
     /** Заводит треду пустой прогон назначенного flow. */
@@ -45,18 +50,21 @@ export const registerChooseFlow = (
       const settings = deps.flows.current();
       // Flow треда выбирает владелец; агенту — только тред с «Автоматически» или его собственным отказом.
       if (!agentChooses(deps.threads.flowOf(ctx.threadId))) return toolError("This thread already has a flow or none; only the owner changes it.");
+      // «Автоматически» над композером — тот же выбор агенту; любой другой выбор владельца ставится вместо выбора агента.
+      const picked = await deps.threads.takePicked(ctx.threadId);
+      const owners = picked === AUTO_FLOW ? undefined : picked;
+      if (owners === undefined && flowId !== NO_FLOW && !settings.flows.some((flow) => flow.id === flowId))
+        return toolError(`Unknown flow "${flowId}". Flows: ${settings.flows.map((flow) => flow.id).join(", ")}.`);
       // Ни один flow не подошёл: тред идёт без flow, но отказ помечен агентским — по просьбе владельца flow назначится.
-      if (flowId === NO_FLOW) {
-        await deps.threads.assign(ctx.threadId, AGENT_NO_FLOW);
-        await deps.refused?.(ctx.threadId);
-        if (await (deps.fresh?.(ctx.threadId) ?? false)) return toolText(FRESH_SESSION_REPLY);
-        return toolText("The thread stays without a flow; work as usual.");
-      }
-      if (!settings.flows.some((flow) => flow.id === flowId)) return toolError(`Unknown flow "${flowId}". Flows: ${settings.flows.map((flow) => flow.id).join(", ")}.`);
-      await deps.threads.assign(ctx.threadId, flowId);
-      await deps.started(ctx.threadId);
+      const chosen = owners ?? (flowId === NO_FLOW ? AGENT_NO_FLOW : flowId);
+      const none = chosen === NO_FLOW || chosen === AGENT_NO_FLOW;
+      await deps.threads.assign(ctx.threadId, chosen);
+      await (none ? deps.refused?.(ctx.threadId) : deps.started(ctx.threadId));
       if (await (deps.fresh?.(ctx.threadId) ?? false)) return toolText(FRESH_SESSION_REPLY);
-      return toolText(deps.instructions(ctx.threadId));
+      const reply = none ? "The thread stays without a flow; work as usual." : deps.instructions(ctx.threadId);
+      // Выбор владельца, не совпавший с выбором агента, называется: агент работает не по тому, что выбрал сам.
+      if (owners === undefined || owners === flowId) return toolText(reply);
+      return toolText(`${ownerPickNote(none ? null : flowById(settings, owners).name)}\n\n${reply}`);
     },
   });
 };

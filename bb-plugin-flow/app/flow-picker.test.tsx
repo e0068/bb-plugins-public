@@ -73,6 +73,25 @@ describe("кнопка flow в композере", () => {
     expect(trigger.textContent).toBe("");
     expect(trigger.querySelector("svg")).toBeTruthy();
   });
+
+  // Своя иконка flow из Hugeicons без размера рисовалась 24 px рядом со знаком flow в 16 px и прилипала к названию.
+  it("своя иконка flow в меню и на кнопке того же размера, что знак flow, и отделена от названия", async () => {
+    const slot = renderSlot<object, typeof flowPickerRpcContract>(customization().actions![0]!, {}, {
+      rpc: { getFlowChoice: () => ({ flows: [...choice.flows, { id: "bug", name: "Bug", icon: "Album01" }], selected: "bug" }), setFlowChoice: () => ({ selected: "bug" }) } as never,
+      composer: { scope: { kind: "new-thread", projectId: "proj_a" } },
+      settings: { language: "Русский" },
+    });
+    const trigger = await slot.findByRole("button", { name: "Flow: Bug" });
+    expect(trigger.querySelector("svg[data-icon='Album01']")?.getAttribute("class")).toContain("size-4");
+    fireEvent.pointerDown(trigger, { button: 0, ctrlKey: false });
+    fireEvent.click(trigger);
+    const items = await slot.findAllByRole("menuitemradio");
+    expect(items.map((item) => item.textContent)).toEqual(["Автоматически", "Default", "Quick", "Bug", "Без flow"]);
+    for (const item of items) {
+      expect(item.className).toContain("gap-2");
+      expect(item.querySelector(":scope > svg")?.getAttribute("class")).toContain("size-4");
+    }
+  });
 });
 
 // bb монтирует кнопку заново на каждой смене проекта в композере Home. Пустая до
