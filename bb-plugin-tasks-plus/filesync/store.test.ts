@@ -798,3 +798,58 @@ describe("исполнитель и эпик", () => {
     expect(await store.listPlacements("b1")).toEqual({ assignees: ["Claude", "Sergey"] });
   });
 });
+
+describe("listTasksPage по нескольким доскам", () => {
+  let otherRoot: string;
+
+  beforeEach(() => {
+    otherRoot = mkdtempSync(join(tmpdir(), "store-other-"));
+  });
+  afterEach(() => rmSync(otherRoot, { recursive: true, force: true }));
+
+  /** Two boards; the first is longer than a page — as bb-plugins outgrew 500 before Shapeshift's tasks. */
+  async function twoBoards() {
+    const other: BoardConfig = { ...board, id: "b2", name: "Other", prefix: "OTH" };
+    const both = createFileTasksStore(kv, [board, other], [], [], [], () => {});
+    both.setBoardRoots("b1", [{ absPath: root, origin: { kind: "main" } }]);
+    both.setBoardRoots("b2", [{ absPath: otherRoot, origin: { kind: "main" } }]);
+    for (const title of ["A1", "A2", "A3"]) await both.createTask({ projectId: "b1", title, status: "done" });
+    await both.createTask({ projectId: "b2", title: "B epic", status: "todo" });
+    return both;
+  }
+
+  async function everyPage(both: Awaited<ReturnType<typeof twoBoards>>, limit: number) {
+    const pages: string[][] = [];
+    let cursor: string | undefined;
+    do {
+      const page = await both.listTasksPage({ limit, ...(cursor === undefined ? {} : { cursor }) });
+      pages.push(page.tasks.map((t) => t.title));
+      cursor = page.nextCursor ?? undefined;
+    } while (cursor !== undefined);
+    return pages;
+  }
+
+  it("листает дальше первой доски, пока задачи не кончились", async () => {
+    const pages = await everyPage(await twoBoards(), 2);
+    expect(pages.flat().sort()).toEqual(["A1", "A2", "A3", "B epic"]);
+  });
+
+  it("задачи в работе второй доски идут раньше закрытых первой", async () => {
+    const page = await (await twoBoards()).listTasksPage({ limit: 2 });
+    expect(page.tasks[0]?.title).toBe("B epic");
+    expect(page.nextCursor).not.toBeNull();
+  });
+
+  it("страница одного проекта держит его ручной порядок, а не порядок по статусу", async () => {
+    const both = await twoBoards();
+    const live = await both.createTask({ projectId: "b1", title: "A live", status: "todo" });
+    const [first, second] = await both.listTasks({ projectId: "b1", statuses: ["done"] });
+    await both.placeTask(live.id, { beforeTaskId: first!.id, afterTaskId: second!.id });
+    const page = await both.listTasksPage({ projectId: "b1" });
+    expect(page.tasks.map((t) => t.title)).toEqual([first!.title, "A live", second!.title, expect.any(String)]);
+  });
+
+  it("чужой курсор отвергается, а не читается как первая страница", async () => {
+    await expect((await twoBoards()).listTasksPage({ cursor: "garbage" })).rejects.toThrow(/cursor/i);
+  });
+});

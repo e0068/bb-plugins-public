@@ -25,7 +25,7 @@ export interface TaskListQuery {
   sort?: TaskSort;
 }
 
-/** Traverse stable keyset pages while preserving the UI's complete-list views. */
+/** Every page of the list, followed by its offset cursor, for the UI's complete-list views. */
 export async function listAllTasks(
   rpc: TasksRpc,
   input: TaskListQuery = {},

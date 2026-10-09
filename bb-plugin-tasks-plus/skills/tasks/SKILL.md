@@ -36,9 +36,12 @@ not already exist. Dispatch requires an existing preset.
    `bb tasks show ABC-12 --json` when the result will drive commands or code.
 
    For project-wide discovery, `bb tasks list` returns at most 100 rows by
-   default. Pass `--limit 1-500`; in JSON, continue with `nextCursor` via the
-   same filters/sort and `--cursor <value>`. A task-list mutation makes an old
-   cursor stale, so restart without it.
+   default. Pass `--limit 1-2000`; in JSON, continue with `nextCursor` via the
+   same filters/sort and `--cursor <value>`. The cursor is an offset: a list
+   changed between pages may skip or repeat a task, so restart without it when
+   completeness matters. Without `--project`, pages carry todo, in_progress and
+   in_review first, then backlog, then done and canceled; a project's list
+   keeps its manual order.
 
 2. Fetch every relevant attachment before making assumptions about it:
 

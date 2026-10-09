@@ -1159,9 +1159,11 @@ export const tasksRpcContract = defineRpcContract({
       .strict(),
   },
   /**
-   * Stable keyset page in the requested database sort. `nextCursor` is opaque
-   * and bound to the filters, sort, and task-list revision; any list-affecting
-   * mutation makes it stale so callers restart instead of mixing snapshots.
+   * A page of the filtered list: a project's in its manual order, every
+   * project's with todo, in_progress and in_review first, then backlog, then
+   * done and canceled. `nextCursor` is the offset of the next page, null once
+   * the list ends; a list changed between pages may skip or repeat a task, so
+   * re-read from the start when completeness matters.
    */
   listTasks: {
     input: withCallerThread(z

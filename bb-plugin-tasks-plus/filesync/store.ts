@@ -61,14 +61,11 @@ import { parseFrontmatter } from "./frontmatter.js";
 import { AMOUNT_FIELDS } from "../shared/amounts.js";
 import { filterTasks } from "./query.js";
 import { uniqueSlug, validateSlug } from "./slug.js";
+import { byLiveStatusFirst, parseTaskCursor, taskPage, type TaskPage } from "./task-page.js";
+import { TASKS_PAGE_DEFAULT_LIMIT } from "../shared/pagination.js";
 import { createOrValidateUlid, requireNonEmpty, validateDueDate,
   validateStartDate, validateDollars, validateMinutes, validateThreadId } from "./validators.js";
 
-
-interface FileListTasksPage {
-  tasks: Task[];
-  nextCursor: string | null;
-}
 
 /** A thread whose agent is currently starting or working — the Active view. */
 function isActiveThread(thread: TaskThread): boolean {
@@ -568,9 +565,13 @@ export function createFileTasksStore(
     const assembled = await loadBoard(requireBoard(projectId));
     return new Map(assembled.map((t) => [t.task.id, t.threads]));
   }
-  async function listTasksPage(filters: ListTasksFilters = {}): Promise<FileListTasksPage> {
-    const limit = filters.limit ?? 100;
-    return { tasks: (await listTasks(filters)).slice(0, limit), nextCursor: null };
+  /** A page of the list — a project's in its manual order, every project's live statuses first (task-page.ts); a cursor this store did not give out is refused. */
+  async function listTasksPage(filters: ListTasksFilters = {}): Promise<TaskPage> {
+    const offset = filters.cursor === undefined ? 0 : parseTaskCursor(filters.cursor);
+    if (offset === undefined) throw new Error(`Invalid task list cursor: ${filters.cursor}`);
+    const tasks = await listTasks(filters);
+    const ordered = filters.projectId ? tasks : byLiveStatusFirst(tasks);
+    return taskPage(ordered, filters.limit ?? TASKS_PAGE_DEFAULT_LIMIT, offset);
   }
   async function listSubtasks(parentTaskId: string): Promise<Task[]> {
     return listTasks({ parentTaskId });
