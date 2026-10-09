@@ -109,6 +109,16 @@ export const settleDispatch = (draft: Draft, place: DispatchPlace, route: Dispat
     : { ...rest, place: settled, route: withPlace(routeIn(draft, route), settled) };
 };
 
+/**
+ * «Завершить» финальной Демонстрации — без комментария и без перехода в другой flow:
+ * прогон закрывается, агенту отвечать нечего, поэтому предвыбор компактации по зоне
+ * контекста на этой кнопке не действует. Явный выбор владельца в ячейке места — действует.
+ */
+export const finishes = (brief: DecisionBrief, draft: Draft): boolean =>
+  brief.outcome?.final === true &&
+  toAnswer(brief, draft).outcome?.accepted !== false &&
+  (brief.outcome.nextFlow === undefined || draft.outcomeFlow === null);
+
 export const setOutcomeNote = (draft: Draft, note: string): Draft => ({ ...draft, outcomeNote: note });
 
 export const setOutcomeFlow = (draft: Draft, flow: OutcomeFlow | null): Draft => ({ ...draft, outcomeFlow: flow });
