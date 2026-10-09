@@ -42,7 +42,7 @@ import { hostCatalogSources, hostSkillFileSources, readAccountSkills, readClaude
 import { createSkillScope } from "./server/skill-scope";
 import { createFreshSession, type MessageBlocks } from "./server/fresh-session";
 import { registerSessionConfig } from "./server/session-config";
-import { limitsOfAny } from "./core/skill-scope";
+import { clearsContextAfterAutoChoice, limitsBeforeChoice, restartsAfterChoice } from "./core/skill-scope";
 import { revealInFinderHere } from "@bb-plugins/reveal-in-finder/index";
 import { createStore } from "./server/store";
 import { createThreadFlows } from "./server/thread-flows";
@@ -131,7 +131,8 @@ export default async function plugin(bb: BbPluginApi): Promise<void> {
     pending: async (threadId) => (await bb.sdk.threads.get({ threadId })).environmentId === null,
     flow: flowOf,
     // До выбора flow агентом прячется то, что прячет хоть один flow: первая сессия видит только навыки плагинов bb.
-    choosing: (threadId) => (threads.flowOf(threadId) === AUTO_FLOW ? limitsOfAny(flows.current().flows) : null),
+    // Тумблер очистки после выбора выключен — не прячется ничего: новой сессии, которая вернула бы навыки, не будет.
+    choosing: (threadId) => (threads.flowOf(threadId) === AUTO_FLOW ? limitsBeforeChoice(flows.current()) : null),
     stages: (threadId) => stagesOf(threadId).stages,
     progress: (threadId) => progress.get(threadId),
     catalog: () => readStageCatalog(catalogSources),
@@ -159,14 +160,16 @@ export default async function plugin(bb: BbPluginApi): Promise<void> {
     own.mark(threadId, text);
     await bb.sdk.threads.send({ threadId, mode: "queue-if-active", input: [{ type: "text", text, mentions: [] }] });
   };
-  // Тред с «Автоматически», чьей сессии выбор меняет навыки, начинает работу заново в новой сессии (./server/fresh-session.ts).
+  // Тред с «Автоматически» после выбора начинает работу заново в новой сессии — по тумблеру очистки или когда сессия стартовала урезанной (./server/fresh-session.ts).
   const textOf = (blocks: MessageBlocks) => blocks.flatMap((block) => (block.type === "text" && typeof block.text === "string" ? [block.text] : [])).join("\n");
   const fresh = createFreshSession({
     kv: bb.storage.kv,
     agentChooses: (threadId) => threads.flowOf(threadId) === AUTO_FLOW || threads.flowOf(threadId) === AGENT_NO_FLOW,
-    // Выбор меняет навыки, когда flow их ограничивает или сессия стартовала с ограничением до выбора.
+    // По тумблеру очистки — после выбора flow; всегда — когда сессия стартовала с ограничением до выбора.
     needed: async (threadId) =>
-      (flowOf(threadId)?.limitSkills === true || (await scope.limitedBeforeChoice(threadId))) && (await thread(threadId)).providerId === "claude-code" && (await worktreeOf(threadId)) !== null,
+      restartsAfterChoice({ clears: clearsContextAfterAutoChoice(flows.current()), chosen: flowOf(threadId) !== null, limitedBeforeChoice: await scope.limitedBeforeChoice(threadId) }) &&
+      (await thread(threadId)).providerId === "claude-code" &&
+      (await worktreeOf(threadId)) !== null,
     sync: (threadId) => scope.sync(threadId),
     clear: (threadId) => bb.sdk.threads.clearContext({ threadId }),
     send: async (threadId, blocks) => {
@@ -179,7 +182,7 @@ export default async function plugin(bb: BbPluginApi): Promise<void> {
       const name = flowNameOf(threadId);
       return name === undefined
         ? `You already left this thread without a flow — do not call ${CHOOSE_FLOW_TOOL}. Below is the thread's first message: Flow sent it again in a fresh session so that all skills are loaded. Work on it as usual.`
-        : `Flow «${name}» is already chosen for this thread — do not call ${CHOOSE_FLOW_TOOL}. Below is the thread's first message: Flow sent it again in a fresh session so that only the skills of the flow are loaded. Work on it by the flow.`;
+        : `Flow «${name}» is already chosen for this thread — do not call ${CHOOSE_FLOW_TOOL}. Below is the thread's first message: Flow sent it again in a fresh session started after the choice, with the skills of the flow. Work on it by the flow.`;
     },
     warn: (message) => bb.log.warn(message),
   });
