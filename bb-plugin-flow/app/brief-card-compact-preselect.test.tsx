@@ -103,3 +103,35 @@ describe("предвыбор компактации по зоне контекс
     expect(await sendWith(slot, sent, /^Продолжить/)).toMatchObject({ place: "here", compact: true });
   });
 });
+
+describe("«Завершить» финальной Демонстрации не компактирует тред по предвыбору", () => {
+  const final: DecisionBrief = { ...demo, id: "dec_finalpreselect", outcome: { ...demo.outcome!, final: true } };
+  const comment = (slot: Slot, text: string) => fireEvent.change(slot.getByRole("textbox", { name: "Комментарий к демонстрации" }), { target: { value: text } });
+
+  it("без комментария ячейка не обещает компактацию, и «Завершить» уходит без неё", async () => {
+    const sent: DecisionAnswer[] = [];
+    const slot = open(final, { place: "here", compact: true }, sent);
+    await waitFor(async () => expect((await placeCell(slot)).textContent).toContain("В этом треде"));
+    expect((await placeCell(slot)).textContent).not.toContain("компактировать");
+    expect((await sendWith(slot, sent, /^Завершить/)).compact).toBeUndefined();
+  });
+
+  it("написан комментарий — предвыбор возвращается, и «Отправить» компактирует", async () => {
+    const sent: DecisionAnswer[] = [];
+    const slot = open(final, { place: "here", compact: true }, sent);
+    await placeCell(slot);
+    comment(slot, "Поправь подпись");
+    await waitFor(async () => expect((await placeCell(slot)).textContent).toContain("компактировать"));
+    expect(await sendWith(slot, sent, /^Отправить/)).toMatchObject({ place: "here", compact: true });
+  });
+
+  it("компактацию, выбранную владельцем явно, «Завершить» уважает", async () => {
+    const sent: DecisionAnswer[] = [];
+    const slot = open(final, { place: "here", compact: true }, sent);
+    fireEvent.click(await placeCell(slot));
+    const context = within(await slot.findByRole("group", { name: "Контекст" }));
+    expect(context.getByRole("button", { name: "Как есть" }).getAttribute("aria-pressed")).toBe("true");
+    fireEvent.click(context.getByRole("button", { name: "Сперва компактировать тред" }));
+    expect(await sendWith(slot, sent, /^Завершить/)).toMatchObject({ place: "here", compact: true });
+  });
+});

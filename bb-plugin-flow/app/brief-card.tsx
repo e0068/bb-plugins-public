@@ -47,6 +47,7 @@ import {
   placeIn,
   setRoute,
   routeIn,
+  finishes,
   settleDispatch,
 } from "./draft";
 import { withRestored } from "./draft-restore";
@@ -1226,7 +1227,7 @@ function DemoActions(props: { brief: DecisionBrief; draft: Draft; setDraft: (upd
         <div data-demo-action className="flex min-w-0 overflow-hidden rounded-lg">{picker.cell}</div>
         <Button type="button" disabled={blocked} onClick={() => props.onSubmit(recommended === undefined ? props.draft : setOutcomeFlow(props.draft, flow))} className={button}>
           {props.sending && <Icon name="Spinner" className="size-3.5 animate-spin" />}
-          {commented || flow !== null ? t.outcome.send : props.brief.outcome?.final === true ? t.outcome.finish : t.outcome.continue}
+          {finishes(props.brief, props.draft) ? t.outcome.finish : commented || flow !== null ? t.outcome.send : t.outcome.continue}
         </Button>
       </div>
       {picker.lists}
@@ -1305,9 +1306,10 @@ export function BriefCard({ brief, send, onResult, roots, place = "here", route 
     },
     brief,
   };
+  const preselected = compact && !finishes(brief, draft);
   const trySubmit = () => {
     // Место уходит в ответ всегда: запомненное, которого владелец не трогал, иначе осталось бы только на экране.
-    if (complete && !sending) void submit(settleDispatch(draft, place, route, compact));
+    if (complete && !sending) void submit(settleDispatch(draft, place, route, preselected));
   };
 
   return (
@@ -1326,13 +1328,13 @@ export function BriefCard({ brief, send, onResult, roots, place = "here", route 
         <>
           <DemoCard brief={brief} roots={roots} view={{ draft, sending, change: setDraft }} />
           <Body brief={brief} view={view} />
-          <DemoActions brief={brief} draft={draft} setDraft={setDraft} sending={sending} failed={failed} complete={complete} place={place} route={route} compact={compact} onSubmit={(next) => void submit(settleDispatch(next, place, route, compact))} />
+          <DemoActions brief={brief} draft={draft} setDraft={setDraft} sending={sending} failed={failed} complete={complete} place={place} route={route} compact={preselected} onSubmit={(next) => void submit(settleDispatch(next, place, route, preselected))} />
         </>
       ) : (
         <>
           <Body brief={brief} view={view} />
           {stageItems(brief).length > 0 && <SectionTag kind="select" extra={brief.stages?.flowName} className="-mb-3" />}
-          <BriefAnswer brief={brief} view={view} roots={roots} draft={draft} setDraft={setDraft} sending={sending} status={failed ? t.common.sendFailed : counter} complete={complete} place={place} route={route} compact={compact} onSubmit={trySubmit} />
+          <BriefAnswer brief={brief} view={view} roots={roots} draft={draft} setDraft={setDraft} sending={sending} status={failed ? t.common.sendFailed : counter} complete={complete} place={place} route={route} compact={preselected} onSubmit={trySubmit} />
         </>
       )}
     </Plain>
