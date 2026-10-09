@@ -12,6 +12,7 @@ import { scriptIdOf, scriptOf } from "../core/automation-scripts";
 import { waitsForAnswer } from "../core/awaiting";
 import {
   DEFAULT_RETRY,
+  archivesThread,
   isActionStage,
   isAgentStage,
   onIdleClose,
@@ -71,6 +72,8 @@ export interface AutomationRunnerDeps {
   flowThreads?: () => readonly string[];
   /** Провайдеры хоста с логотипами. */
   providers: () => Promise<readonly HostProvider[]>;
+  /** Освобождает процесс простаивающего агента треда перед шагами, за которыми архивация. Нет — процесс остаётся. */
+  releaseAgent?: (threadId: string) => Promise<void>;
   /** Реплика агенту готовым текстом: доигранный прогон Flow пускает работу дальше. Нет — тред просто стоит на следующем этапе. */
   wake?: (threadId: string, text: string) => Promise<void>;
   /** kv прогона: шаг `bb.reinstall` кладёт сюда отложенное самообновление, цепочка его снимает. */
@@ -270,11 +273,25 @@ export const createAutomationRunner = (deps: AutomationRunnerDeps): AutomationRu
     return isStepId(step.id) ? deps.steps[step.id](threadId) : Promise.resolve({ ok: false, error: `Unknown step ${step.id}.` });
   };
 
+  /**
+   * Впереди архивация — процесс простаивающего агента освобождается перед шагом: иначе шаг, гасящий его фоновый сервер,
+   * будит агента уведомлением провайдера уже в архивном треде, мимо хука отправки сообщений. Проверка — перед каждым
+   * шагом: агент, ещё отвечавший на принятое демо, к шагу остановки серверов уже простаивает. Агента в ходе не трогаем,
+   * не прочли тред — тоже; остановка без загруженного процесса — успех без действия. Между чтением и остановкой
+   * остаётся щель: ход, начатый в неё, остановка прервёт — условной остановки в SDK нет.
+   */
+  const releaseBeforeArchive = async (threadId: string, steps: readonly RunStep[]): Promise<void> => {
+    if (deps.releaseAgent === undefined || !archivesThread(steps)) return;
+    const { active } = await deps.thread(threadId).catch(() => ({ active: true }));
+    if (!active) await deps.releaseAgent(threadId).catch(deps.onError);
+  };
+
   /** Шаги этапа с места `from`; `false` — шаг упал, цепочка стоит. */
   const runSteps = async (threadId: string, stage: WorkStage, steps: readonly RunStep[], from: number): Promise<boolean> => {
     const epoch = epochOf(threadId);
     const stale = () => epochOf(threadId) !== epoch;
-    for (const step of steps.slice(from)) {
+    for (const [offset, step] of steps.slice(from).entries()) {
+      await releaseBeforeArchive(threadId, steps.slice(from + offset));
       const outcome = await execute(stage, step, threadId);
       if (stale()) return false;
       if (!outcome.ok) {
@@ -564,7 +581,8 @@ export const createAutomationRunner = (deps: AutomationRunnerDeps): AutomationRu
         active.delete(threadId);
         return false;
       }
-      const step = (record?.stages[stageId]?.run?.steps ?? stepsOf(stage))[at];
+      const steps = record?.stages[stageId]?.run?.steps ?? stepsOf(stage);
+      const step = steps[at];
       if (step === undefined) {
         active.delete(threadId);
         return false;
@@ -572,6 +590,7 @@ export const createAutomationRunner = (deps: AutomationRunnerDeps): AutomationRu
       const work = async () => {
         // Нажатие закрывает простой ожидания: с этой минуты этап работает.
         await deps.progress.update(threadId, (p) => onStepStarted(onIdleClose(p, stageId, deps.now()), stageId));
+        await releaseBeforeArchive(threadId, steps.slice(at));
         const outcome = await execute(stage, step, threadId);
         if (!outcome.ok) return void (await deps.progress.update(threadId, (p) => onIdleOpen(onStepFailed(p, stageId, outcome.error, deps.now()), stageId, deps.now())));
         await deps.progress.update(threadId, (p) => onStepDone(p, stageId, deps.now(), outcome.detail, outcome.links));

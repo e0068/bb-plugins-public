@@ -197,6 +197,12 @@ export default async function plugin(bb: BbPluginApi): Promise<void> {
     external: externalStep(automations.run),
     script: scriptStep(bb.sdk),
     thread,
+    // Остановка простаивающего агента только выгружает его процесс: ход не прерывается, лента и история целы.
+    releaseAgent: (threadId) =>
+      bb.sdk.threads.stop({ threadId }).then(
+        () => undefined,
+        (error: unknown) => bb.log.warn(`automations: the agent was not released before archiving (${error instanceof Error ? error.message : String(error)})`),
+      ),
     flowThreads: () => threads.withFlow(),
     providers,
     // Доигранный прогон Flow пускает работу дальше. Текст собирает исполнитель. Агент, чей

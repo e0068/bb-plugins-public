@@ -13,6 +13,9 @@ export type RunStep = { id: string; label: string; detail?: string };
 
 type StepView = NonNullable<ProgressView["stages"][number]["automation"]>["steps"][number];
 
+/** Среди шагов есть архивация треда — встроенный шаг `bb.archive`, а не скрипт. */
+export const archivesThread = (steps: readonly RunStep[]): boolean => steps.some((step) => step.id === "bb.archive");
+
 /** Вид исполнителя по его id: `agent:…`, `workflow:…` или сам агент. */
 export const executorKind = (id: string | undefined): "self" | "agent" | "workflow" => (id?.startsWith("agent:") ? "agent" : id?.startsWith("workflow:") ? "workflow" : "self");
 
