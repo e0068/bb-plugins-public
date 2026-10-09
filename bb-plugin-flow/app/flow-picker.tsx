@@ -16,6 +16,10 @@ import { LocaleProvider } from "./locale";
 import { useMessages } from "./locale-context";
 
 /** Классы кнопки выбора модели и effort из бандла bb. */
+// Иконка flow — 16 px, как у пунктов остальных меню плагина: своя иконка из Hugeicons без размера рисуется 24 px.
+// Пункт-радио сам не задаёт ни размер svg, ни отступ до названия.
+const GLYPH = "size-4";
+const ITEM = "gap-2";
 const PICKER_LOOK = "h-8 w-fit min-w-0 items-center justify-start gap-1.5 px-2 text-xs leading-tight border-none bg-transparent shadow-none transition-none text-muted-foreground hover:text-muted-foreground font-normal";
 
 type Choice = { flows: { id: string; name: string; icon?: string }[]; selected: string };
@@ -84,7 +88,7 @@ function ProjectPicker({ projectId }: { projectId: string }) {
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
         <Button type="button" variant="ghost" size="sm" className={PICKER_LOOK} aria-label={label} aria-description={t.flows.pickerTitle}>
-          <FlowGlyph icon={selectedFlow?.icon} crossed={none} />
+          <FlowGlyph icon={selectedFlow?.icon} crossed={none} className={GLYPH} />
           {!none && !auto && <span className="truncate max-md:hidden">{label}</span>}
           {!none && !auto && <span className="truncate md:hidden">{name}</span>}
         </Button>
@@ -92,18 +96,18 @@ function ProjectPicker({ projectId }: { projectId: string }) {
       <DropdownMenuContent align="end">
         <DropdownMenuLabel>{t.flows.pickerTitle}</DropdownMenuLabel>
         <DropdownMenuRadioGroup value={choice.selected} onValueChange={pick}>
-          <DropdownMenuRadioItem value={AUTO_FLOW}>
-            <FlowGlyph crossed={false} />
+          <DropdownMenuRadioItem value={AUTO_FLOW} className={ITEM}>
+            <FlowGlyph crossed={false} className={GLYPH} />
             {t.flows.pickerAuto}
           </DropdownMenuRadioItem>
           {choice.flows.map((flow) => (
-            <DropdownMenuRadioItem key={flow.id} value={flow.id}>
-              <FlowGlyph icon={flow.icon} crossed={false} />
+            <DropdownMenuRadioItem key={flow.id} value={flow.id} className={ITEM}>
+              <FlowGlyph icon={flow.icon} crossed={false} className={GLYPH} />
               {flow.name}
             </DropdownMenuRadioItem>
           ))}
-          <DropdownMenuRadioItem value={NO_FLOW}>
-            <FlowGlyph crossed />
+          <DropdownMenuRadioItem value={NO_FLOW} className={ITEM}>
+            <FlowGlyph crossed className={GLYPH} />
             {t.flows.pickerNone}
           </DropdownMenuRadioItem>
         </DropdownMenuRadioGroup>
