@@ -1,10 +1,9 @@
 import type { Task, TaskPriority, TaskStatus } from "../shared/contract.js";
 
 /** In-memory filters over a fully-read task list — the file-backed
- *  replacement for the SQL store's `WHERE` clauses. There is no keyset
- *  pagination here: reading every file is cheap enough (see
- *  decisions/tasks-files-are-the-store.md) that the whole filtered,
- *  sorted list is always returned. */
+ *  replacement for the SQL store's `WHERE` clauses. Reading every file is
+ *  cheap enough (see decisions/tasks-files-are-the-store.md) that the whole
+ *  filtered list is built each time; task-page.ts only slices it. */
 export interface TaskFilters {
   statuses?: readonly TaskStatus[];
   priorities?: readonly TaskPriority[];
