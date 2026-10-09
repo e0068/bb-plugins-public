@@ -12,7 +12,7 @@ import { FlowsPage } from "./app/flows-page";
 import { FlowsSettingsButton } from "./app/flows-settings-button";
 import { FLOWS_PANEL_PATH } from "./lib/panel-path";
 import { JournalDirsSection } from "./app/journal-settings";
-import { AutomationRetrySection } from "./app/flow-settings-sections";
+import { AutoChoiceSection, AutomationRetrySection } from "./app/flow-settings-sections";
 import { FlowsFolderSection } from "./app/flows-folder-settings";
 import { ProgressBanner } from "./app/progress-banner";
 import { registerAwaitingStatus } from "./app/row-status";
@@ -40,5 +40,6 @@ export default definePluginApp((app) => {
   registerAwaitingStatus(app);
   app.slots.settingsSection({ id: "journal-dirs", title: t.journalTitle, description: t.journalDescription, component: JournalDirsSection });
   app.slots.settingsSection({ id: "automation-retry", title: t.retryTitle, description: t.retryDescription, component: AutomationRetrySection });
+  app.slots.settingsSection({ id: "auto-choice", title: t.autoChoiceTitle, description: t.autoChoiceDescription, component: AutoChoiceSection });
   app.slots.settingsSection({ id: "flows-folder", title: t.folderTitle, description: t.folderDescription, component: FlowsFolderSection });
 });

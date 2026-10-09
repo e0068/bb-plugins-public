@@ -1,5 +1,5 @@
 // @vitest-environment node
-// Новая сессия после выбора flow: тред, который сам выбрал flow с ограничением навыков, на конце первого хода
+// Новая сессия после выбора flow: тред, которому новая сессия нужна (./fresh-session.ts, needed), на конце первого хода
 // получает сверку настроек, чистый контекст и своё первое сообщение заново — с пометкой, видной только агенту.
 import { createFakePluginHost } from "@get-bb/plugin-sdk/testing";
 import { describe, expect, it } from "vitest";
@@ -58,7 +58,7 @@ describe("новая сессия после выбора flow", () => {
     expect(calls).toEqual([]);
   });
 
-  it("flow без ограничения навыков или тред не в Claude Code — работа идёт в той же сессии", async () => {
+  it("новая сессия не нужна — тумблер очистки выключен, тред не в Claude Code или без дерева: работа идёт в той же сессии", async () => {
     const { fresh, calls } = setup({ needed: false });
     await fresh.remember("thr", FIRST);
     expect(await fresh.request("thr")).toBe(false);

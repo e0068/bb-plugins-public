@@ -4,7 +4,7 @@
 // `permissions.deny` — агента. Навыки плагинов `skillOverrides` не трогает, а запрет `Skill(<имя>)` из списка их не
 // убирает, поэтому плагин, ничего не дающий flow, выключается целиком в `enabledPlugins` — и синхронизированный с
 // claude.ai, и тот, где одни команды. Здесь только решение; файл пишет ../server/skill-scope.ts.
-import type { Flow, FlowProgress, StageCatalog, WorkStage } from "../shared/contract";
+import type { Flow, FlowProgress, FlowSettings, StageCatalog, WorkStage } from "../shared/contract";
 
 /** Имена навыков, типы агентов и имена workflow — так, как их называет Claude Code. */
 export type Scope = { skills: readonly string[]; agents: readonly string[]; workflows?: readonly string[] };
@@ -35,9 +35,25 @@ const outside = (names: readonly string[], kept: readonly string[]): string[] =>
 
 export const limitsOf = (flow: Pick<Flow, "limitSkills" | "limitAgents">): Limits => ({ skills: flow.limitSkills === true, agents: flow.limitAgents === true });
 
+const NO_LIMITS: Limits = { skills: false, agents: false };
+
 /** Тред, которому flow ещё выберет агент: прячется то, что прячет хоть один flow, — выбор потом только откроет. */
 export const limitsOfAny = (flows: ReadonlyArray<Pick<Flow, "limitSkills" | "limitAgents">>): Limits =>
-  flows.map(limitsOf).reduce((a, b) => ({ skills: a.skills || b.skills, agents: a.agents || b.agents }), { skills: false, agents: false });
+  flows.map(limitsOf).reduce((a, b) => ({ skills: a.skills || b.skills, agents: a.agents || b.agents }), NO_LIMITS);
+
+/** Тумблер «Очищать контекст после автоматического выбора flow»: нет поля — включён. */
+export const clearsContextAfterAutoChoice = (settings: Pick<FlowSettings, "clearContextAfterAutoChoice">): boolean => settings.clearContextAfterAutoChoice ?? true;
+
+/** Что прятать до выбора flow агентом. Без очистки после выбора не прячется ничего: урезанная сессия так и осталась бы урезанной. */
+export const limitsBeforeChoice = (settings: Pick<FlowSettings, "clearContextAfterAutoChoice"> & { flows: ReadonlyArray<Pick<Flow, "limitSkills" | "limitAgents">> }): Limits =>
+  clearsContextAfterAutoChoice(settings) ? limitsOfAny(settings.flows) : NO_LIMITS;
+
+/**
+ * Начинать ли тред заново после выбора агентом: по тумблеру — когда flow выбран, и всегда, когда сессия стартовала
+ * урезанной, — иначе навыки не вернутся.
+ */
+export const restartsAfterChoice = (choice: { clears: boolean; chosen: boolean; limitedBeforeChoice: boolean }): boolean =>
+  choice.limitedBeforeChoice || (choice.clears && choice.chosen);
 
 const finished = (track: FlowProgress["stages"][string] | undefined): boolean => track?.finishedAt !== undefined || track?.skipped === true;
 

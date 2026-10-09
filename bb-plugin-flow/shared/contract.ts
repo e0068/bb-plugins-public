@@ -306,6 +306,8 @@ export const flowSettingsSchema = z
     wakeAgentAfterLastRetry: z.boolean().optional(),
     /** Наказ агенту в той реплике — что делать с упавшим шагом; факты падения Flow ставит сам. Нет поля или пусто — наказ по умолчанию. */
     wakeAgentInstruction: z.string().max(MAX_WAKE_INSTRUCTION_CHARS).optional(),
+    /** Тред с «Автоматически» после выбора flow начинается новой сессией; нет поля — да. */
+    clearContextAfterAutoChoice: z.boolean().optional(),
     automationSets: z.array(automationSetSchema).optional(),
     stageTemplates: z.array(stageTemplateSchema).optional(),
     version: z.literal(2).optional(),

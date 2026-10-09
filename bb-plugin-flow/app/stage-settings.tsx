@@ -12,6 +12,7 @@ import { createContext, Fragment, useContext, useEffect, useRef, useState, type 
 import { useBbNavigate, useRpc } from "@get-bb/plugin-sdk/app";
 
 import { DEFAULT_FAILURE_INSTRUCTION, retryPolicyOf, wakesAgentAfterLastRetry, withFailureInstruction } from "../core/automation-run";
+import { clearsContextAfterAutoChoice } from "../core/skill-scope";
 import { executorGroups, skillGroups, skillShortName, type ExecutorGroup } from "../core/catalog";
 import { expandStages, flowStage, nestableFlows, setFlowStages, stageToFlow, stageToFlowProblem } from "../core/flows";
 import { freeFlowName } from "../core/flow-files";
@@ -1237,6 +1238,24 @@ export function AutomationRetry() {
         />
         <WakeInstruction saved={settings === null ? undefined : (settings.wakeAgentInstruction ?? "")} enabled={settings !== null && wakesAgentAfterLastRetry(settings)} />
         <p className="text-xs text-muted-foreground">{t.settings.wakeAfterLastRetryHint}</p>
+      </div>
+    </Loading>
+  );
+}
+
+/** Тумблер очистки контекста после автоматического выбора flow — общий на все flow. */
+export function AutoChoiceClear() {
+  const t = useMessages();
+  const { settings, failed } = useFlowSettings();
+  return (
+    <Loading failed={failed}>
+      <div className="flex flex-col gap-2">
+        <SwitchSetting
+          label={t.settings.clearAfterAutoChoice}
+          checked={settings === null ? undefined : clearsContextAfterAutoChoice(settings)}
+          onChange={(clearContextAfterAutoChoice) => updateFlowSettings((s) => ({ ...s, clearContextAfterAutoChoice }))}
+        />
+        <p className="text-xs text-muted-foreground">{t.settings.clearAfterAutoChoiceHint}</p>
       </div>
     </Loading>
   );
