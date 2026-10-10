@@ -20,4 +20,5 @@ bb plugin install <id>@e0068
 - **Threads Overview** (`threads-overview`) — A home-screen section listing threads that need you: any thread where no work is going on and that you have not postponed. Postpone a thread to snooze it; it returns on its own once work resumes.
 - **Token Usage Analytics** (`token-usage-header`) — Tracks Claude Code token usage and cost — a live counter in the thread header plus session and project analytics.
 - **Usage Limits** (`usage-circles`) — Claude Code and Codex usage-limit rings in the sidebar footer — a ring per limit or one for all, the limits as a list or cards.
+- **Window Chrome** (`window-chrome`) — Compact desktop window: the title row is gone, its buttons sit in the island's corners on one line, a 4 px frame around the island on a black backdrop.
 - **Pull Request** (`zz-pull-request`) — Thread-header buttons that open and merge a GitHub Pull Request via the API without a push, and wake a thread whose environment got stuck retiring.

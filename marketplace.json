@@ -177,6 +177,23 @@
       }
     },
     {
+      "id": "window-chrome",
+      "displayName": "Window Chrome",
+      "description": "Compact desktop window: the title row is gone, its buttons sit in the island's corners on one line, a 4 px frame around the island on a black backdrop.",
+      "icon": "AppWindow",
+      "author": {
+        "name": "e0068",
+        "github": "e0068"
+      },
+      "source": {
+        "git": {
+          "url": "https://github.com/e0068/bb-plugins-public.git",
+          "subdir": "bb-plugin-window-chrome",
+          "ref": "main"
+        }
+      }
+    },
+    {
       "id": "zz-pull-request",
       "displayName": "Pull Request",
       "description": "Thread-header buttons that open and merge a GitHub Pull Request via the API without a push, and wake a thread whose environment got stuck retiring.",
