@@ -394,6 +394,10 @@ export const en: Messages = {
     pickerNone: "No flow",
     pickerAuto: "Automatic",
   },
+  mentions: {
+    skills: "Skills and commands",
+    files: "Files and folders",
+  },
   voice: {
     busyElsewhere: "Already recording in another field",
     input: (label) => `Voice input: ${label}`,

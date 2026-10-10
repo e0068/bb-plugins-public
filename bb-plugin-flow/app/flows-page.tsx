@@ -25,6 +25,7 @@ import { FLOWS_PANEL_PATH } from "../lib/panel-path";
 import { LocaleProvider } from "./locale";
 import { ProviderLogosProvider } from "./provider-logos-source";
 import { useMessages } from "./locale-context";
+import { MentionsProvider, useMentions } from "./mentions";
 import { updateFlowSettings, useFlowSettings, useFlowSettingsLive } from "./stage-settings-store";
 import { AddStage, SwitchSetting, WorkStagesTable } from "./stage-settings";
 import { SKILL_ICON } from "./stage-icons";
@@ -37,7 +38,9 @@ export function FlowsPage(props: PluginNavPanelProps) {
   return (
     <LocaleProvider>
       <ProviderLogosProvider>
-        <Flows {...props} />
+        <MentionsProvider>
+          <Flows {...props} />
+        </MentionsProvider>
       </ProviderLogosProvider>
     </LocaleProvider>
   );
@@ -66,19 +69,24 @@ function FlowName({ flow }: { flow: Flow }) {
 /** Поле описания под названием: черновик живёт до ухода фокуса, тогда уходит в `onSave`. */
 function DescriptionField({ label, placeholder, saved, onSave }: { label: string; placeholder: string; saved: string | undefined; onSave: (text: string) => void }) {
   const [description, setDescription] = useState<string | null>(null);
+  const value = description ?? saved ?? "";
+  const mentions = useMentions({ value, onText: setDescription });
   const save = () => {
     if (description !== null) onSave(description);
     setDescription(null);
   };
   return (
-    <Textarea
-      aria-label={label}
-      placeholder={placeholder}
-      value={description ?? saved ?? ""}
-      onChange={(e) => setDescription(e.target.value)}
-      onBlur={save}
-      className="min-h-0 max-md:pointer-coarse:text-[13px] resize-none [field-sizing:content] rounded-md border-0 bg-card px-2.5 py-1.5 text-[13px] shadow-none focus-visible:ring-1 focus-visible:ring-inset"
-    />
+    <>
+      <Textarea
+        {...mentions.field<HTMLTextAreaElement>({ onBlur: save })}
+        aria-label={label}
+        placeholder={placeholder}
+        value={value}
+        onChange={(e) => setDescription(e.target.value)}
+        className="min-h-0 max-md:pointer-coarse:text-[13px] resize-none [field-sizing:content] rounded-md border-0 bg-card px-2.5 py-1.5 text-[13px] shadow-none focus-visible:ring-1 focus-visible:ring-inset"
+      />
+      {mentions.list}
+    </>
   );
 }
 

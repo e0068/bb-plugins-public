@@ -827,6 +827,25 @@ export const filesRpcContract = defineRpcContract({
   },
 });
 
+/** Строка списка по `/` или `@`: что показать и что встаёт в текст после знака. */
+export const mentionItemSchema = z.object({
+  kind: z.enum(["skill", "command", "file", "directory"]),
+  name: text,
+  insert: text,
+  description: z.string().optional(),
+});
+
+/**
+ * Список полей Flow по `/` и `@`. С тредом — то же, что композер этого треда: навыки и команды его агента, файлы и папки
+ * его рабочей копии; без треда — навыки каталога Flow, файлов нет. Список — удобство, поэтому сбой — отказ, а не ошибка.
+ */
+export const mentionsRpcContract = defineRpcContract({
+  mentions: {
+    input: z.object({ threadId: text.optional(), trigger: z.enum(["/", "@"]), query: z.string().max(200) }),
+    output: z.discriminatedUnion("kind", [z.object({ kind: z.literal("found"), items: z.array(mentionItemSchema) }), z.object({ kind: z.literal("unavailable") })]),
+  },
+});
+
 /** Команда, которую агент отдаёт владельцу инструментом `share_command`; предел — чтобы запись уместилась в kv с запасом. */
 export const shareCommandParamsSchema = z.object({
   command: text.max(COMMAND_MAX_LENGTH),
@@ -1327,6 +1346,7 @@ export type FlowSettings = z.output<typeof flowSettingsSchema>;
 export type StageReport = z.output<typeof stageReportSchema>;
 export type StageAnswer = z.output<typeof stageAnswerSchema>;
 export type StageCatalog = z.output<typeof stageCatalogSchema>;
+export type MentionItem = z.output<typeof mentionItemSchema>;
 export type SkillOrigin = z.output<typeof skillOriginSchema>;
 export type ExecutorOrigin = z.output<typeof executorOriginSchema>;
 export type StageDraft = z.output<typeof stageDraftSchema>;

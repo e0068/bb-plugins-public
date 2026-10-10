@@ -10,6 +10,7 @@ import { splitMarkers, type MarkedPart } from "../core/image-markers";
 import { cn } from "../lib/utils";
 import { AttachButton, FieldImages, imageTag, usePasteImages } from "./attachments";
 import { useMessages } from "./locale-context";
+import { useMentions } from "./mentions";
 import { useVoiceField } from "./voice";
 
 /** Текст строки — шрифт сообщения в треде: 13 px, интерлиньяж 1.625, и отступы пункта критерия. */
@@ -69,9 +70,18 @@ export function AddRow(props: {
   const target = { value: props.value, onText: props.onText };
   const paste = usePasteImages(target);
   const parts = useMarkedParts(props.value);
+  const mentions = useMentions({ value: props.value, onText: props.onText, disabled: props.disabled });
   const field = (
     <textarea
-      ref={voice.ref}
+      {...mentions.field<HTMLTextAreaElement>({
+        ref: voice.ref,
+        onBlur: props.onBlur,
+        onKeyDown: (event) => {
+          if (props.onEnter === undefined || event.key !== "Enter" || event.shiftKey || props.value.trim() === "") return;
+          event.preventDefault();
+          props.onEnter();
+        },
+      })}
       aria-label={props.label}
       placeholder={props.placeholder ?? props.label}
       rows={1}
@@ -79,12 +89,6 @@ export function AddRow(props: {
       disabled={props.disabled}
       onChange={voice.onChange}
       onPaste={paste}
-      onBlur={props.onBlur}
-      onKeyDown={(event) => {
-        if (props.onEnter === undefined || event.key !== "Enter" || event.shiftKey || props.value.trim() === "") return;
-        event.preventDefault();
-        props.onEnter();
-      }}
       className={cn(
         addRowText,
         "resize-none bg-transparent outline-none [field-sizing:content] [grid-area:1/1] placeholder:text-muted-foreground",
@@ -112,6 +116,8 @@ export function AddRow(props: {
           </span>
         </>
       )}
+      {/* Список по `/` и `@` — с новой строки рамки, под текстом, с отступом колонки «+». */}
+      {mentions.list !== null && <div className="basis-full pb-2 pl-[26px]">{mentions.list}</div>}
       {/* Ряд миниатюр — с новой строки рамки, под текстом, с отступом колонки «+». */}
       <FieldImages target={target} className="basis-full pb-2 pl-[26px]" />
     </div>

@@ -60,6 +60,7 @@ import { answeredAt, useStoredDraft, useSubmit, type FormProps } from "./parts";
 import type { Messages } from "../lib/messages";
 import { useLocale, useMessages } from "./locale-context";
 import { useScrollAnchor } from "./scroll-anchor";
+import { useMentions } from "./mentions";
 import { DemoCard } from "./outcome";
 import { FlowCell, chosenFlow, useOwnerFlows } from "./demo-flow";
 import { SectionTag } from "./section-tag";
@@ -138,6 +139,7 @@ function OwnField(props: { view: View; value: string; label: string; onChange: (
   const target = { value: props.value, onText: props.onChange };
   const paste = usePasteImages(target);
   const parts = useMarkedParts(props.value);
+  const mentions = useMentions({ value: props.value, onText: props.onChange, disabled: props.view.sending });
   if (props.view.answered)
     return (
       <span className={cn(props.className, "inline-flex items-center", blank(props.value) && "text-muted-foreground/60")}>
@@ -153,7 +155,14 @@ function OwnField(props: { view: View; value: string; label: string; onChange: (
         <span className="grid min-w-0">
           {parts !== null && <MarkedCopy parts={parts} className={text} />}
           <textarea
-            ref={voice.ref}
+            {...mentions.field<HTMLTextAreaElement>({
+              ref: voice.ref,
+              onKeyDown: (event) => {
+                if (props.onEnter === undefined || event.key !== "Enter" || event.shiftKey || blank(props.value)) return;
+                event.preventDefault();
+                props.onEnter();
+              },
+            })}
             aria-label={props.label}
             placeholder={props.label}
             rows={1}
@@ -161,13 +170,9 @@ function OwnField(props: { view: View; value: string; label: string; onChange: (
             disabled={props.view.sending}
             onChange={voice.onChange}
             onPaste={paste}
-            onKeyDown={(event) => {
-              if (props.onEnter === undefined || event.key !== "Enter" || event.shiftKey || blank(props.value)) return;
-              event.preventDefault();
-              props.onEnter();
-            }}
             className={cn(text, "resize-none bg-transparent outline-none [field-sizing:content] [grid-area:1/1] placeholder:text-muted-foreground", parts !== null && overCopy)}
           />
+          {mentions.list !== null && <span className="px-2 pb-2">{mentions.list}</span>}
         </span>
         <FieldImages target={target} className="justify-center px-2 pb-2.5" />
       </span>
@@ -440,6 +445,7 @@ type FieldVoice = Pick<ReturnType<typeof useVoiceField>, "ref" | "onChange">;
 function ItemField(props: { view: View; label: string; value: string; className?: string; voice: FieldVoice; onText: (text: string) => void; onBlur?: () => void }) {
   const paste = usePasteImages({ value: props.value, onText: props.onText });
   const parts = useMarkedParts(props.value);
+  const mentions = useMentions({ value: props.value, onText: props.onText, disabled: props.view.sending });
   const field = useRef<HTMLTextAreaElement | null>(null);
   const [editing, setEditing] = useState(false);
   const linked = !editing && hasMarkup(props.value);
@@ -458,10 +464,16 @@ function ItemField(props: { view: View; label: string; value: string; className?
       <span className={cn("grid min-w-0", linked ? "contents" : "flex-1")}>
         {parts !== null && !linked && <MarkedCopy parts={parts} className={cn(itemText, props.className)} />}
         <textarea
-          ref={(el) => {
-            field.current = el;
-            props.voice.ref(el);
-          }}
+          {...mentions.field<HTMLTextAreaElement>({
+            ref: (el) => {
+              field.current = el;
+              props.voice.ref(el);
+            },
+            onBlur: () => {
+              setEditing(false);
+              props.onBlur?.();
+            },
+          })}
           aria-label={props.label}
           placeholder={props.label}
           rows={1}
@@ -470,10 +482,6 @@ function ItemField(props: { view: View; label: string; value: string; className?
           onChange={props.voice.onChange}
           onPaste={paste}
           onFocus={() => setEditing(true)}
-          onBlur={() => {
-            setEditing(false);
-            props.onBlur?.();
-          }}
           className={cn(
             itemText,
             "resize-none bg-transparent outline-none [field-sizing:content] [grid-area:1/1] placeholder:text-muted-foreground",
@@ -482,6 +490,7 @@ function ItemField(props: { view: View; label: string; value: string; className?
             linked && "sr-only",
           )}
         />
+        {mentions.list !== null && <span className="pb-2">{mentions.list}</span>}
       </span>
     </>
   );

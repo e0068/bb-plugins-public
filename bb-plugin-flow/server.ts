@@ -30,6 +30,7 @@ import { acrossThreads, readClaudeTranscript, readPlanning, readWindowCost, read
 import { type ContextSettingValues, compactPreselectSetting, compactPreselectedOf, contextFillOf, contextSettings } from "./server/context";
 import { createProgress, FLOW_STAGE_TOOL, registerProgress } from "./server/progress";
 import { registerFlowPickerApi } from "./server/flow-picker-api";
+import { registerMentionsApi } from "./server/mentions";
 import { registerOwnerTurn } from "./server/owner-turn";
 import { startThread } from "./server/thread-start";
 import { registerFlowChoice } from "./server/flow-choice";
@@ -371,6 +372,7 @@ export default async function plugin(bb: BbPluginApi): Promise<void> {
     reveal: revealInFinderHere,
   });
   registerFlowPickerApi(bb, flows, threads);
+  registerMentionsApi(bb, { catalog });
   // Папка синхронизации flow: каждое сохранение уходит в неё, а приехавшее из неё Syncthing'ом сверяется опросом.
   const sync = await createFlowSync({
     kv: bb.storage.kv,
