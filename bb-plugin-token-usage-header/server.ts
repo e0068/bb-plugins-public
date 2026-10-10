@@ -7,6 +7,7 @@
 import { defineRpcContract, type BbPluginApi, type PluginKvStorage } from "@get-bb/plugin-sdk";
 import { z } from "zod";
 import { parseReducedColors, REDUCED_COLORS_KV_KEY, type ReducedColors } from "@bb-plugins/reduced-colors/core/settings";
+import { railCollapseSetting, selectedThreadSetting } from "@bb-plugins/rail-collapse/setting";
 import {
   agentTimelineEventSchema,
   cacheWriteTotal,
@@ -165,6 +166,19 @@ const threadsTimelineEntrySchema = z
 const threadsTimelineAgentLabelsSchema = z.record(z.string(), z.string()) satisfies z.ZodType<
   ThreadsTimeline["agentLabels"]
 >;
+
+/**
+ * The Claude Code session of a BB thread, alone — for the Usage Analytics page
+ * that opens on the selected thread's session; null when the thread has none
+ * yet or resolving it fails. A contract of its own, so the page's lookup runs
+ * no token aggregation.
+ */
+export const threadSessionRpcContract = defineRpcContract({
+  threadSession: {
+    input: z.object({ threadId: z.string().min(1) }),
+    output: z.object({ sessionId: z.string().nullable() }),
+  },
+});
 
 export const rpcContract = defineRpcContract({
   sessionTokenUsage: {
@@ -607,6 +621,8 @@ function defineGearSettings(bb: BbPluginApi) {
       description: "E.g. #e3e3dd.",
       default: DEFAULT_GEAR_SETTINGS.frameLiftColor,
     },
+    ...railCollapseSetting,
+    ...selectedThreadSetting("the token usage"),
   });
 }
 
@@ -617,6 +633,14 @@ export default function plugin(bb: BbPluginApi, deps: PluginDeps = {}) {
   const kv = deps.kv ?? bb.storage.kv;
 
   defineGearSettings(bb);
+
+  bb.rpc.register(threadSessionRpcContract, {
+    threadSession: ({ threadId }) =>
+      service.resolveSessionId(threadId).then(
+        (sessionId) => ({ sessionId }),
+        () => ({ sessionId: null }),
+      ),
+  });
 
   bb.rpc.register(rpcContract, {
     sessionTokenUsage: ({ threadId }) => loadSessionTokenUsage(service, threadId),

@@ -15,7 +15,9 @@ import {
   type PluginThreadHeaderActionProps,
 } from "@get-bb/plugin-sdk/app";
 import { ReducedColorsProvider, ReducedColorsSection } from "@bb-plugins/reduced-colors";
-import type { rpcContract } from "./server";
+import { registerRailCollapse, registerSelectedThread, useFollowSelectedThread } from "@bb-plugins/rail-collapse";
+import { USAGE_PLUGIN_ID } from "@/lib/plugin-id";
+import type { rpcContract, threadSessionRpcContract } from "./server";
 import { Button } from "@/components/ui/button";
 import { Icon } from "@/components/ui/icon";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
@@ -381,6 +383,23 @@ function UsageDetails({
  * with a subPath — never from the left menu directly.
  */
 function ThreadsTimelinePanel({ subPath }: PluginNavPanelProps) {
+  const rpc = useRpc<typeof threadSessionRpcContract>();
+  const navigate = useBbNavigate();
+  // With "Show the selected thread" on, the feed gives way to the session page
+  // of the thread the owner came from or picked in the threads panel.
+  useFollowSelectedThread(useSettings, subPath === "", {
+    resolve: (threadId) =>
+      rpc.call("threadSession", { threadId }).then(({ sessionId }) =>
+        sessionId === null
+          ? null
+          : () =>
+              navigate.toPluginPanel(THREADS_TIMELINE_PANEL_PATH, {
+                subPath: buildAgentDetailSubPath({ agent: "main", session: sessionId }),
+                replace: true,
+              }),
+      ),
+    openThread: (threadId) => navigate.toThread(threadId),
+  });
   return (
     <WithReducedColors>
       {subPath === "" ? <ThreadsTimelinePage subPath={subPath} /> : <AgentTimelinePage subPath={subPath} />}
@@ -402,6 +421,11 @@ export default definePluginApp((app) => {
     path: THREADS_TIMELINE_PANEL_PATH,
     component: ThreadsTimelinePanel,
   });
+
+  // A click on the Usage Analytics icon in the left rail collapses the
+  // threads panel when the owner turned it on.
+  registerRailCollapse(app, USAGE_PLUGIN_ID, useSettings);
+  registerSelectedThread(app, USAGE_PLUGIN_ID, useSettings);
 
   app.slots.settingsSection({
     id: "reduced-colors",

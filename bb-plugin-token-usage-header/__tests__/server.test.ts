@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { RAIL_COLLAPSE_SETTING, SELECTED_THREAD_SETTING } from "@bb-plugins/rail-collapse/setting";
 import { createFakePluginHost } from "@get-bb/plugin-sdk/testing";
 import {
   DEFAULT_GEAR_SETTINGS,
@@ -147,6 +148,22 @@ function validVizSettings(overrides: Partial<VizSettings["threads"]> = {}): VizS
 }
 
 describe("server.ts sessionTokenUsage", () => {
+  it("threadSession answers the thread's session alone, without running the token aggregation", async () => {
+    const service = fakeService({ resolveSessionId: vi.fn(async () => "sess-1") });
+    const harness = await loadPlugin(service);
+
+    expect(await harness.callRpc("threadSession", { threadId: "thread-1" })).toEqual({ sessionId: "sess-1" });
+    expect(service.query).not.toHaveBeenCalled();
+  });
+
+  it("threadSession answers null for a thread without a session, and when resolving fails", async () => {
+    const none = await loadPlugin(fakeService({ resolveSessionId: vi.fn(async () => null) }));
+    const broken = await loadPlugin(fakeService({ resolveSessionId: vi.fn(async () => Promise.reject(new Error("daemon down"))) }));
+
+    expect(await none.callRpc("threadSession", { threadId: "thread-1" })).toEqual({ sessionId: null });
+    expect(await broken.callRpc("threadSession", { threadId: "thread-1" })).toEqual({ sessionId: null });
+  });
+
   it("returns no-session when the thread has no resolved session yet", async () => {
     const service = fakeService({ resolveSessionId: vi.fn(async () => null) });
     const harness = await loadPlugin(service);
@@ -952,7 +969,8 @@ describe("server.ts gear settings (bb.settings.define)", () => {
     const { harness } = await loadPluginFull();
     const descriptors = harness.inspection.registrations.settingsDescriptors;
 
-    expect(Object.keys(descriptors).sort()).toEqual(
+    const sharedSwitches: string[] = [RAIL_COLLAPSE_SETTING, SELECTED_THREAD_SETTING];
+    expect(Object.keys(descriptors).filter((key) => !sharedSwitches.includes(key)).sort()).toEqual(
       [
         "unit",
         "fillWidthFeed",
@@ -978,6 +996,22 @@ describe("server.ts gear settings (bb.settings.define)", () => {
       const expected = typeof defaultValue === "boolean" ? defaultValue : String(defaultValue);
       expect(descriptors[key].default).toEqual(expected);
     }
+  });
+
+  it("declares the rail-collapse switch, off by default", async () => {
+    const { harness } = await loadPluginFull();
+    expect(harness.inspection.registrations.settingsDescriptors[RAIL_COLLAPSE_SETTING]).toMatchObject({
+      type: "boolean",
+      default: false,
+    });
+  });
+
+  it("declares the selected-thread switch, off by default", async () => {
+    const { harness } = await loadPluginFull();
+    expect(harness.inspection.registrations.settingsDescriptors[SELECTED_THREAD_SETTING]).toMatchObject({
+      type: "boolean",
+      default: false,
+    });
   });
 
   it("declares unit/heightMode as select descriptors whose options list matches GEAR_UNIT_OPTIONS/GEAR_HEIGHT_MODE_OPTIONS", async () => {
