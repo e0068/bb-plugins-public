@@ -27,11 +27,15 @@ const setup = async () => {
 };
 
 describe("тред, оставленный агентом без flow", () => {
-  it("получает в ход одну строку: какие flow есть и когда звать инструмент", async () => {
-    const { instructions } = await setup();
-    expect(instructions("thr_auto")).toContain(CHOOSE_FLOW_TOOL);
-    expect(instructions("thr_auto")).toContain("`quick`");
-    expect(instructions("thr_auto")).not.toContain("\n");
+  it("каждый ход получает весь выбор с описаниями: «Без flow» первым, flow за ним", async () => {
+    const { harness, instructions } = await setup();
+    const current = await harness.callRpc<FlowSettings>("getFlowSettings", {});
+    await harness.callRpc("saveFlowSettings", { ...current, noFlowDescription: "Вопросы без правок" });
+    const rule = instructions("thr_auto");
+    expect(rule).toContain(CHOOSE_FLOW_TOOL);
+    expect(rule).toContain("Мелкие правки");
+    expect(rule.indexOf("Вопросы без правок")).toBeGreaterThan(-1);
+    expect(rule.indexOf("Вопросы без правок")).toBeLessThan(rule.indexOf("`quick`"));
   });
 
   it("по просьбе владельца получает flow, и этапы приходят в ответе и дальше в инструкциях", async () => {

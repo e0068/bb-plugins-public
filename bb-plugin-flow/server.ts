@@ -181,7 +181,7 @@ export default async function plugin(bb: BbPluginApi): Promise<void> {
     note: (threadId) => {
       const name = flowNameOf(threadId);
       return name === undefined
-        ? `You already left this thread without a flow — do not call ${CHOOSE_FLOW_TOOL}. Below is the thread's first message: Flow sent it again in a fresh session so that all skills are loaded. Work on it as usual.`
+        ? `You already left this thread without a flow for the message below — do not call ${CHOOSE_FLOW_TOOL} for it. Below is the thread's first message: Flow sent it again in a fresh session so that all skills are loaded. Work on it as usual.`
         : `Flow «${name}» is already chosen for this thread — do not call ${CHOOSE_FLOW_TOOL}. Below is the thread's first message: Flow sent it again in a fresh session started after the choice, with the skills of the flow. Work on it by the flow.`;
     },
     warn: (message) => bb.log.warn(message),
@@ -250,11 +250,11 @@ export default async function plugin(bb: BbPluginApi): Promise<void> {
       }),
     () => undefined,
   );
-  // Выбор агентом — треду с «Автоматически»: полный список с описаниями до выбора, одна строка после собственного отказа агента.
+  // Выбор агентом — треду с «Автоматически» до выбора и после собственного отказа агента: «Без flow» и flow с описаниями каждый ход.
   const chooseFlow = (threadId: string) => {
     const flowId = threads.flowOf(threadId);
-    if (flowId === AUTO_FLOW) return CHOOSE_FLOW_RULE(flows.current().flows, CHOOSE_FLOW_TOOL, NO_FLOW);
-    return flowId === AGENT_NO_FLOW ? CHOOSE_FLOW_AGAIN_RULE(flows.current().flows, CHOOSE_FLOW_TOOL) : null;
+    if (flowId === AUTO_FLOW) return CHOOSE_FLOW_RULE(flows.current(), CHOOSE_FLOW_TOOL, NO_FLOW);
+    return flowId === AGENT_NO_FLOW ? CHOOSE_FLOW_AGAIN_RULE(flows.current(), CHOOSE_FLOW_TOOL) : null;
   };
   registerAskTool(bb, store, { newId, now, stages: stagesOf, flowIds: () => flows.current().flows.map((flow) => flow.id), flowName: flowNameOf, hasFlow: (threadId) => flowOf(threadId) !== null, chooseFlow, emit, planning: (threadId) => readPlanning(bb.sdk, threadId, Date.now(), readClaudeTranscript()), progress });
   const journalDirs = createJournalDirStore(bb.storage.kv);

@@ -1,5 +1,5 @@
-// Страница Flow в левом меню bb: выбранный flow — имя и описание «когда
-// выбирать» правятся на месте, таблица его этапов, под ней одной строкой —
+// Страница Flow в левом меню bb: адрес `none` открывает «Без flow» — только описание «когда flow не нужен»; выбранный flow —
+// имя и описание «когда выбирать» правятся на месте, таблица его этапов, под ней одной строкой —
 // «Добавить этап» слева и «Удалить flow» справа, а ниже — переключатели ограничений навыков и агентов. Слева от названия — выбор
 // иконки flow. Сам выбор и создание — плоским списком слева (./flows-list); на узкой панели страница в два уровня: без
 // выбранного flow виден только список, с выбранным — только он и «Назад» над ним. Общее на все flow — ширина кнопки и выбор flow
@@ -13,7 +13,7 @@
 import { useState } from "react";
 import { useBbNavigate, type PluginNavPanelProps } from "@get-bb/plugin-sdk/app";
 
-import { describeFlow, flowById, limitFlow, removeFlow, renameFlow, setFlowIcon } from "../core/flows";
+import { describeFlow, describeNoFlow, flowById, limitFlow, NO_FLOW, removeFlow, renameFlow, setFlowIcon } from "../core/flows";
 import { Button } from "../components/ui/button";
 import { Icon } from "../components/ui/icon";
 import { Input } from "../components/ui/input";
@@ -62,23 +62,48 @@ function FlowName({ flow }: { flow: Flow }) {
   );
 }
 
-/** Описание «когда выбирать» под названием: сохраняется по уходу фокуса и уходит в правило выбора flow, по которому агент выбирает flow треду с «Автоматически». */
-function FlowDescription({ flow }: { flow: Flow }) {
-  const t = useMessages();
+/** Поле описания под названием: черновик живёт до ухода фокуса, тогда уходит в `onSave`. */
+function DescriptionField({ label, placeholder, saved, onSave }: { label: string; placeholder: string; saved: string | undefined; onSave: (text: string) => void }) {
   const [description, setDescription] = useState<string | null>(null);
   const save = () => {
-    if (description !== null) updateFlowSettings((s) => describeFlow(s, flow.id, description));
+    if (description !== null) onSave(description);
     setDescription(null);
   };
   return (
     <Textarea
-      aria-label={t.flows.description}
-      placeholder={t.flows.descriptionPlaceholder}
-      value={description ?? flow.description ?? ""}
+      aria-label={label}
+      placeholder={placeholder}
+      value={description ?? saved ?? ""}
       onChange={(e) => setDescription(e.target.value)}
       onBlur={save}
       className="min-h-0 max-md:pointer-coarse:text-[13px] resize-none [field-sizing:content] rounded-md border-0 bg-card px-2.5 py-1.5 text-[13px] shadow-none focus-visible:ring-1 focus-visible:ring-inset"
     />
+  );
+}
+
+/** Описание «когда выбирать» под названием: уходит в правило выбора flow, по которому агент выбирает flow треду с «Автоматически». */
+function FlowDescription({ flow }: { flow: Flow }) {
+  const t = useMessages();
+  return <DescriptionField label={t.flows.description} placeholder={t.flows.descriptionPlaceholder} saved={flow.description} onSave={(text) => updateFlowSettings((s) => describeFlow(s, flow.id, text))} />;
+}
+
+/**
+ * «Без flow»: имя и знак встроенные, правится только описание — агент читает его первым пунктом выбора flow, раньше описаний
+ * flow.
+ */
+function NoFlowEditor({ saved }: { saved: string | undefined }) {
+  const t = useMessages();
+  return (
+    <section className="flex min-w-0 flex-col gap-1">
+      <div className="flex h-9 items-center">
+        <span className="flex size-9 shrink-0 items-center justify-center text-muted-foreground">
+          <FlowGlyph crossed className="size-7" />
+        </span>
+        <h2 className="truncate pl-1.5 text-lg font-semibold">{t.flows.pickerNone}</h2>
+      </div>
+      <DescriptionField label={t.flows.noFlowDescription} placeholder={t.flows.noFlowDescriptionPlaceholder} saved={saved} onSave={(text) => updateFlowSettings((s) => describeNoFlow(s, text))} />
+      <p className="px-2.5 pt-1 text-xs text-subtle-foreground">{t.flows.noFlowHint}</p>
+    </section>
   );
 }
 
@@ -155,6 +180,7 @@ function FlowEditor({ subPath }: { subPath: string }) {
   const t = useMessages();
   const { settings } = useFlowSettings();
   if (settings === null) return <div aria-busy="true" />;
+  if (subPath === NO_FLOW) return <NoFlowEditor saved={settings.noFlowDescription} />;
   // Выбранный flow приходит адресом панели: его пишет лента в начале страницы, а кнопки
   // «назад» и «вперёд» браузера ходят по той же истории.
   const flow = flowById(settings, subPath);

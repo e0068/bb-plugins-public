@@ -308,6 +308,8 @@ export const flowSettingsSchema = z
     wakeAgentInstruction: z.string().max(MAX_WAKE_INSTRUCTION_CHARS).optional(),
     /** Тред с «Автоматически» после выбора flow начинается новой сессией; нет поля — да. */
     clearContextAfterAutoChoice: z.boolean().optional(),
+    /** Когда flow не нужен: агент, выбирая flow, читает это первым пунктом, раньше описаний flow. Нет поля — описания нет. */
+    noFlowDescription: z.string().optional(),
     automationSets: z.array(automationSetSchema).optional(),
     stageTemplates: z.array(stageTemplateSchema).optional(),
     version: z.literal(2).optional(),
@@ -1229,7 +1231,7 @@ export const automationRpcContract = defineRpcContract({
  * Выбор ждёт сообщения владельца — его применяет ход владельца в хуке `message.dispatch`.
  */
 export const flowChoiceRpcContract = defineRpcContract({
-  /** `selected` — выбор, ждущий отправки, а без него — flow треда; тред, оставленный агентом без flow, — `NO_FLOW`, тред с завершённым прогоном — `AUTO_FLOW`. */
+  /** `selected` — выбор, ждущий отправки, а без него — flow треда; тред, оставленный агентом без flow, и тред с завершённым прогоном — `AUTO_FLOW`: flow им ещё выберет агент. */
   threadFlowChoice: {
     input: z.object({ threadId: text }),
     output: z.object({ flows: z.array(z.object({ id: text, name: text, stages: z.number().int().nonnegative(), icon: text.optional() })), selected: text }),

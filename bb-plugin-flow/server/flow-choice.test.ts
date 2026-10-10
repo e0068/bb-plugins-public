@@ -45,10 +45,17 @@ describe("строка выбора flow над композером", () => {
     expect(answer.flows.find((f) => f.id === "flow-outer")?.stages).toBe(2);
   });
 
-  it("тред, оставленный агентом без flow, показан как «Flow не выбран»", async () => {
+  it("тред, оставленный агентом без flow, показан как «Автоматически»: агент ещё может выбрать flow", async () => {
     const { threads, call } = await host();
     await threads.assign(THREAD, AGENT_NO_FLOW);
-    expect(await call("threadFlowChoice", {})).toMatchObject({ selected: NO_FLOW });
+    expect(await call("threadFlowChoice", {})).toMatchObject({ selected: AUTO_FLOW });
+  });
+
+  it("«Без flow» владельца в треде, оставленном агентом без flow, запоминается как запрет", async () => {
+    const { threads, call } = await host();
+    await threads.assign(THREAD, AGENT_NO_FLOW);
+    await call("pickThreadFlow", { flowId: NO_FLOW });
+    expect(threads.pickedOf(THREAD)).toBe(NO_FLOW);
   });
 
   it("тред без привязки идёт по flow по умолчанию — он и выбран", async () => {

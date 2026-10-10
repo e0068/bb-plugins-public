@@ -36,11 +36,11 @@ export const registerFlowChoice = (
     finished?: (threadId: string) => Promise<boolean>;
   },
 ): FlowChoice => {
-  /** Flow треда так, как его видит строка выбора: отказ агента — тот же «Без flow», тред без привязки — flow по умолчанию. */
+  /** Flow треда так, как его видит строка выбора: отказ агента — ещё «Автоматически», flow выберет агент; тред без привязки — flow по умолчанию. */
   const current = (threadId: string): string => {
     const flowId = deps.threads.flowOf(threadId);
-    if (flowId === NO_FLOW || flowId === AGENT_NO_FLOW) return NO_FLOW;
-    return flowId === AUTO_FLOW ? AUTO_FLOW : flowById(deps.flows.current(), flowId).id;
+    if (flowId === NO_FLOW) return NO_FLOW;
+    return flowId === AUTO_FLOW || flowId === AGENT_NO_FLOW ? AUTO_FLOW : flowById(deps.flows.current(), flowId).id;
   };
   const finished = async (threadId: string) => (await deps.finished?.(threadId).catch(() => false)) ?? false;
   /** Что строка показывает выбранным без выбора владельца: после завершённого прогона — «Автоматически», с ним начнётся следующий. */

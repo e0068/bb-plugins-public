@@ -2,7 +2,7 @@
 // по описаниям flow из инструкций хода. Ответ несёт этапы flow — по ним работа идёт уже в этом ходе. Когда тред начинается
 // заново — по тумблеру очистки после выбора flow или всегда, если сессия стартовала урезанной до выбора, — ответ
 // вместо этапов просит закончить ход: работа начнётся заново в новой сессии (./fresh-session.ts).
-// Свой отказ от flow агент может пересмотреть, когда владелец просит работать через flow; отказ владельца — нет.
+// Свой отказ от flow агент пересматривает сам, когда разговор дошёл до работы; отказ владельца — нет.
 // Выбор, который владелец успел сделать над композером, пока агент решал, выигрывает у выбора агента.
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import { z } from "zod";
@@ -43,9 +43,9 @@ export const registerChooseFlow = (
 ): void => {
   bb.agents.registerTool({
     name: CHOOSE_FLOW_TOOL,
-    description: "Give this thread, which has no flow yet, the owner's flow that fits the request, or a flow the owner asks for in a thread you left without one. The turn instructions list the flows and when to choose each. The answer lists the stages of the chosen flow.",
+    description: "Give this thread, which has no flow yet, the owner's flow that fits the request, or, in a thread you left without one, the flow that fits once the conversation comes to work. The turn instructions list when no flow is needed and the flows with when to choose each. The answer lists the stages of the chosen flow.",
     presentation: { label: { pending: "Choosing the flow", completed: "Flow chosen" } },
-    parameters: z.object({ flowId: z.string().describe(`Id of the chosen flow from the turn instructions, or "${NO_FLOW}" when no flow fits`) }),
+    parameters: z.object({ flowId: z.string().describe(`Id of the chosen flow from the turn instructions, or "${NO_FLOW}" when no flow is needed or none of them fits`) }),
     async execute({ flowId }, ctx) {
       const settings = deps.flows.current();
       // Flow треда выбирает владелец; агенту — только тред с «Автоматически» или его собственным отказом.
@@ -55,7 +55,7 @@ export const registerChooseFlow = (
       const owners = picked === AUTO_FLOW ? undefined : picked;
       if (owners === undefined && flowId !== NO_FLOW && !settings.flows.some((flow) => flow.id === flowId))
         return toolError(`Unknown flow "${flowId}". Flows: ${settings.flows.map((flow) => flow.id).join(", ")}.`);
-      // Ни один flow не подошёл: тред идёт без flow, но отказ помечен агентским — по просьбе владельца flow назначится.
+      // Flow не нужен или ни один не подошёл: тред идёт без flow, но отказ помечен агентским — дойдёт до работы, агент назначит flow сам.
       const chosen = owners ?? (flowId === NO_FLOW ? AGENT_NO_FLOW : flowId);
       const none = chosen === NO_FLOW || chosen === AGENT_NO_FLOW;
       await deps.threads.assign(ctx.threadId, chosen);

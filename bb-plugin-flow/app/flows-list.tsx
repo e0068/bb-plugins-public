@@ -1,12 +1,12 @@
-// Список flow слева на странице Flow: плоский, каждый flow ровно один раз в порядке коллекции, — без «Истории» (она в шапке
-// страницы) и без отступов вложенности. Строка — значок flow, имя и справа число flow, в которых он стоит строкой «Flow»; с их
+// Список flow слева на странице Flow: первой строкой — «Без flow», встроенная и неудаляемая, за ней плоско каждый flow ровно
+// один раз в порядке коллекции, — без «Истории» (она в шапке страницы) и без отступов вложенности. Строка — значок flow, имя и справа число flow, в которых он стоит строкой «Flow»; с их
 // именами в подсказке, при нуле числа нет. «Новый flow» — кнопка во всю ширину колонки под списком. Клик пишет flow в `subPath`
 // панели, страница читает тот же адрес обратно; подсветка идёт за `flowById`, как и содержимое. Саму папку задаёт секция
 // настроек плагина.
 import { useBbNavigate, type PluginNavPanelProps } from "@get-bb/plugin-sdk/app";
 
 import { freeFlowName } from "../core/flow-files";
-import { addFlow, flowById, flowHolders, newFlow } from "../core/flows";
+import { addFlow, flowById, flowHolders, newFlow, NO_FLOW } from "../core/flows";
 import { Button } from "../components/ui/button";
 import { Icon } from "../components/ui/icon";
 import { cn } from "../lib/utils";
@@ -34,8 +34,8 @@ function FlowsNav({ subPath }: Pick<PluginNavPanelProps, "subPath">) {
   const navigate = useBbNavigate();
   const { settings } = useFlowSettings();
   if (settings === null) return null;
-  // На истории ни один flow не выбран: `flowById` вернул бы первый, а подсвечивать его нельзя.
-  const current = subPath === HISTORY_SUB_PATH ? null : flowById(settings, subPath);
+  // На истории и на «Без flow» ни один flow не выбран: `flowById` вернул бы первый, а подсвечивать его нельзя.
+  const current = subPath === HISTORY_SUB_PATH || subPath === NO_FLOW ? null : flowById(settings, subPath);
   const open = (id: string) => navigate.toPluginPanel(FLOWS_PANEL_PATH, { subPath: id });
   const create = () => {
     const id = newFlowId();
@@ -44,6 +44,10 @@ function FlowsNav({ subPath }: Pick<PluginNavPanelProps, "subPath">) {
   };
   return (
     <nav aria-label={t.flows.list} className="flex flex-col gap-0.5">
+      <button type="button" aria-current={subPath === NO_FLOW ? "page" : undefined} onClick={() => open(NO_FLOW)} title={t.flows.pickerNone} className={cn(ROW, subPath === NO_FLOW && ACTIVE_ROW)}>
+        <FlowGlyph crossed className="size-3.5 shrink-0" />
+        <span className="truncate">{t.flows.pickerNone}</span>
+      </button>
       {settings.flows.map((flow) => {
         const holders = flowHolders(settings.flows, flow.id);
         return (
