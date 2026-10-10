@@ -1148,6 +1148,8 @@ export const progressViewSchema = z.object({
   context: contextFillSchema.optional(),
   /** Тред, который ведёт прогон, когда это не сам тред баннера: работа передана, и баннер её только показывает. */
   carrier: z.object({ threadId: text, title: z.string().nullable() }).optional(),
+  /** Утверждённые пункты Definition of Done треда: их раскрывает строка этапа Definition of Done; нет — строка не раскрывается. */
+  criteria: z.array(text).optional(),
 });
 
 /** Баннер прогресса — своим контрактом: брифу он не нужен. */
@@ -1215,7 +1217,7 @@ export const flowStageParamsSchema = z.object({
 
 /** Треды, ждущие владельца на брифе Flow, с видом ожидания — для значка в левой панели. */
 /** Вид ожидания: встроенный этап брифа или упавшая автоматизация — у неё `briefId` вида `automation:<этап>`. */
-export const awaitingEntrySchema = z.object({ briefId: text, kind: z.enum(["questions", "criteria", "select", "demo", "automation", "action"]) });
+export const awaitingEntrySchema = z.object({ briefId: text, kind: z.enum(["questions", "criteria", "select", "demo", "approve", "automation", "action"]) });
 
 export const awaitingRpcContract = defineRpcContract({
   awaitingThreads: { input: z.object({}), output: z.array(z.object({ threadId: text, kind: awaitingEntrySchema.shape.kind })) },

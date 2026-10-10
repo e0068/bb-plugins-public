@@ -14,14 +14,14 @@ export const RETRY_LIMITS = { seconds: 3600, attempts: 100 } as const;
 export const MAX_WAKE_INSTRUCTION_CHARS = 4000;
 
 /**
- * Вид этапа: навык, встроенный — Вопросы, Definition of Done, Выбор этапов, Демонстрация — или Action.
+ * Вид этапа: навык, встроенный — Вопросы, Definition of Done, Выбор этапов, Демонстрация, Утверждение — или Action.
  * Встроенные ставятся в flow сколько угодно раз. Action — шаги автоматизации, которые запускает владелец кнопкой.
  */
-export const STAGE_KINDS = ["skill", "questions", "criteria", "select", "demo", "action"] as const;
+export const STAGE_KINDS = ["skill", "questions", "criteria", "select", "demo", "approve", "action"] as const;
 
 export type StageKind = (typeof STAGE_KINDS)[number];
 
-export const BUILTIN_KINDS = ["questions", "criteria", "select", "demo"] as const;
+export const BUILTIN_KINDS = ["questions", "criteria", "select", "demo", "approve"] as const;
 
 export type BuiltinKind = (typeof BUILTIN_KINDS)[number];
 
@@ -32,7 +32,7 @@ const LEGACY_KINDS: Readonly<Record<string, BuiltinKind>> = { clarify: "question
 export const stageKindOf = (stage: { id: string; kind?: StageKind | undefined }): StageKind => stage.kind ?? LEGACY_KINDS[stage.id] ?? "skill";
 
 /** Навык, по которому агент проводит встроенный этап, пока владелец не поставил свой. Плагин везёт их в `skills/`; одноимённый навык владельца в `~/.claude/skills` или `.claude/skills` репозитория важнее. */
-export const BUILTIN_SKILLS: Record<BuiltinKind, string> = { questions: "flow-questions", criteria: "flow-criteria", select: "flow-stage-selection", demo: "flow-demo" };
+export const BUILTIN_SKILLS: Record<BuiltinKind, string> = { questions: "flow-questions", criteria: "flow-criteria", select: "flow-stage-selection", demo: "flow-demo", approve: "flow-approve" };
 
 /** Навык, по которому агент собирает flow инструментами read_flows и save_flow; плагин везёт его в `skills/`. */
 export const FLOW_CREATE_SKILL = "flow-create";
@@ -63,7 +63,7 @@ export const clearedSkill = (stage: { id: string; kind?: StageKind | undefined }
 };
 
 /** Название в хранилище — английское: сервер языка не знает, по языку подписывает фронт. */
-const BUILTIN_NAMES: Readonly<Record<BuiltinKind, string>> = { questions: "Questions", criteria: "Definition of Done", select: "Stage selection", demo: "Demonstration" };
+const BUILTIN_NAMES: Readonly<Record<BuiltinKind, string>> = { questions: "Questions", criteria: "Definition of Done", select: "Stage selection", demo: "Demonstration", approve: "Approval" };
 
 /** Прежние английские имена Уточнения и Definition of Done — тоже имена по умолчанию, каждое своему виду. */
 const LEGACY_NAMES: Readonly<Partial<Record<BuiltinKind, string>>> = { questions: "Clarification", criteria: "Criteria" };

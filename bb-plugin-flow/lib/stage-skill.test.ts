@@ -5,7 +5,7 @@ import { BUILTIN_SKILLS, builtinStage, ROOT_SKILL, stageSkillOf } from "./stage-
 
 describe("навык этапа", () => {
   it("у каждого встроенного вида свой навык, корневой навык — flow", () => {
-    expect(BUILTIN_SKILLS).toEqual({ questions: "flow-questions", criteria: "flow-criteria", select: "flow-stage-selection", demo: "flow-demo" });
+    expect(BUILTIN_SKILLS).toEqual({ questions: "flow-questions", criteria: "flow-criteria", select: "flow-stage-selection", demo: "flow-demo", approve: "flow-approve" });
     expect(ROOT_SKILL).toBe("flow");
   });
 

@@ -1,6 +1,6 @@
 // @vitest-environment node
 // Новая сессия после выбора flow: тред, которому новая сессия нужна (./fresh-session.ts, needed), на конце первого хода
-// получает сверку настроек, чистый контекст и своё первое сообщение заново — с пометкой, видной только агенту.
+// получает сверку настроек, чистый контекст и своё первое сообщение заново — с пометкой; повтор виден только агенту.
 import { createFakePluginHost } from "@get-bb/plugin-sdk/testing";
 import { describe, expect, it } from "vitest";
 
@@ -32,13 +32,13 @@ const setup = (options: { chooses?: boolean; needed?: boolean; clearFails?: bool
 };
 
 describe("новая сессия после выбора flow", () => {
-  it("выбор в первом ходе: на конце хода сверка, очистка и первое сообщение заново за пометкой агенту", async () => {
+  it("выбор в первом ходе: на конце хода сверка, очистка и первое сообщение заново за пометкой — всё видно только агенту, у владельца сообщение одно", async () => {
     const { fresh, calls, sent } = setup();
     await fresh.remember("thr", FIRST);
     expect(await fresh.request("thr")).toBe(true);
     await fresh.idle("thr");
     expect(calls).toEqual(["sync", "clear", "send"]);
-    expect(sent).toEqual([[{ type: "text", text: "flow chosen", mentions: [], visibility: "agent-only" }, ...FIRST]]);
+    expect(sent).toEqual([[{ type: "text", text: "flow chosen", mentions: [], visibility: "agent-only" }, ...FIRST.map((block) => ({ ...block, visibility: "agent-only" }))]]);
   });
 
   it("перезапуск один: следующий конец хода ничего не повторяет", async () => {

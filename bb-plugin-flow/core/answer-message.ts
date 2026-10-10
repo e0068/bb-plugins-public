@@ -8,7 +8,7 @@ import type { CriteriaAnswer, DecisionAnswer, DecisionBrief, DecisionQuestion, Q
 import { budgetLine, changeOf, criterionTitle, hasForecast, hasOwnBudget } from "./budget";
 import { carriedFor } from "./carry";
 import { optionCriteria, removedCriteria, type OptionCriterion } from "./option-criteria";
-import { OUTCOME_ROW, demoVerdict, isOutcomeBrief, outcomeAnswered, outcomeStageName, stageNameOf, type DemoVerdict } from "./outcome";
+import { OUTCOME_ROW, demoVerdict, isOutcomeBrief, outcomeAnswered, outcomeKind, outcomeStageName, stageNameOf, type DemoVerdict } from "./outcome";
 import { requiredOf } from "./required";
 import { REVIEW_ROWS, SETUP_ROW, checkerAllowed, rowsOf } from "./rows";
 import { hiddenQuestions } from "./visibility";
@@ -153,13 +153,13 @@ const outcomeLines = (brief: DecisionBrief, answer: DecisionAnswer, locale: Loca
   !isOutcomeBrief(brief) || blank(answer.outcome?.note) ? [] : [messages(locale).answer.outcomeNote(answer.outcome?.note ?? "")];
 
 /**
- * Дальше после Демонстрации: продолжить — следующий этап или конец работы; комментарий — ответить и прислать её снова;
- * переход — начать выбранный flow с первого этапа.
+ * Дальше после Демонстрации: продолжить — следующий этап или конец работы; комментарий — ответить и прислать её снова,
+ * а к Утверждению — переделать этап перед ним; переход — начать выбранный flow с первого этапа.
  */
 const outcomeNextStep = (brief: DecisionBrief, answer: DecisionAnswer, m: Messages["answer"]): string => {
   const flow = answer.outcome?.flow;
   if (flow !== undefined) return m.outcomeSwitch(flow.name);
-  if (demoVerdict(answer) !== "continue") return m.outcomeComment;
+  if (demoVerdict(answer) !== "continue") return outcomeKind(brief) === "approve" ? m.approveComment : m.outcomeComment;
   const next = brief.outcome?.next;
   return next === undefined ? m.outcomeFinal : m.outcomeNext(stageNameOf(brief, next));
 };
@@ -169,9 +169,10 @@ const outcomeHeading = (brief: DecisionBrief, answer: DecisionAnswer, verdict: D
   switch (verdict) {
     case "switch":
       return m.outcomeSwitchHeading(brief.title, answer.outcome?.flow?.name ?? "");
-    case "comment":
     case "continue":
-      return m.outcomeHeading(brief.title, verdict === "comment", outcomeStageName(brief));
+      return outcomeKind(brief) === "approve" ? m.approvedHeading(brief.title) : m.outcomeHeading(brief.title, false, outcomeStageName(brief));
+    case "comment":
+      return m.outcomeHeading(brief.title, true, outcomeStageName(brief));
   }
 };
 
@@ -270,8 +271,10 @@ export const answerMessageText = (brief: DecisionBrief, answer: DecisionAnswer, 
     const line = `${head}${reading.chosen}${reading.carried ? m.carried : reading.deviation}${question.id === SETUP_ROW.artifacts ? revokedLine(brief, answer, m) : ""}`;
     return reading.own === null ? line : `${line}\n${ownQuote(i + 1, reading.own)}`;
   });
+  // Комментарий ко всему брифу работу не держит: держит только Утверждение, а оно приходит своим итогом. Сам комментарий — последним, сразу за шагом агента.
+  const hint = blank(answer.note) ? [] : [m.noteGoesOn];
   const note = blank(answer.note) ? [] : [m.note(answer.note ?? "")];
-  return [heading, ...body, ...outcomeLines(brief, answer, locale), ...stagesLines(brief, answer, locale), ...budgetLine(brief, answer, locale), ...criteriaLine(brief, answer, m), ...nextStepLine(brief, answer, m), ...note].join("\n");
+  return [heading, ...body, ...outcomeLines(brief, answer, locale), ...stagesLines(brief, answer, locale), ...budgetLine(brief, answer, locale), ...criteriaLine(brief, answer, m), ...hint, ...nextStepLine(brief, answer, m), ...note].join("\n");
 };
 
 /** Шаг агента после ответа: после Демонстрации — следующий, у брифа без этапов — только остановки на утверждение. */

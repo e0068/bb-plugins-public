@@ -2,12 +2,14 @@
 // собрал список навыков, — а посреди сессии этот список не обновляется, и переключатель навыков первый ход не держит.
 // Поэтому Flow помнит первое сообщение такого треда до конца первого хода, а когда агент в этом ходе выбрал flow и
 // включён тумблер очистки в настройках Flow — или сессия стартовала урезанной до выбора, — на конце хода очищает контекст
-// треда и отправляет сообщение заново: следующий ход начинается новой сессией, и та собирает список уже по настройкам
+// треда и отправляет сообщение заново, видимым только агенту: следующий ход начинается новой сессией, и та собирает список уже по настройкам
 // дерева (./skill-scope.ts). Очистка, а не перезапуск: продолжение сессии потянуло бы старый список из истории. Сбой глотается: тред не должен встать из-за перезапуска.
 import type { PluginKvStorage } from "@get-bb/plugin-sdk";
 import { z } from "zod";
 
 const keyOf = (threadId: string): string => `fresh-session:${threadId}`;
+
+const AGENT_ONLY = "agent-only";
 
 /** Блоки первого сообщения как их отдаёт хук отправки и принимает отправка — Flow их не разбирает. */
 const blocksSchema = z.array(z.record(z.string(), z.unknown()));
@@ -70,8 +72,9 @@ export const createFreshSession = (deps: FreshSessionDeps) => {
         deps.warn(`fresh session: thread ${threadId} not cleared (${error instanceof Error ? error.message : String(error)})`);
       }
       // Очистка не вышла — сообщение всё равно уходит: тред продолжает работу в прежней сессии, а не стоит.
-      const note = { type: "text", text: deps.note(threadId), mentions: [], visibility: "agent-only" };
-      await deps.send(threadId, [note, ...state.blocks]).catch((error: unknown) =>
+      // Повтор — для новой сессии агента: у владельца сообщение уже стоит в ленте, второй его пузырь ему не нужен.
+      const note = { type: "text", text: deps.note(threadId), mentions: [], visibility: AGENT_ONLY };
+      await deps.send(threadId, [note, ...state.blocks.map((block) => ({ ...block, visibility: AGENT_ONLY }))]).catch((error: unknown) =>
         deps.warn(`fresh session: thread ${threadId} not resumed (${error instanceof Error ? error.message : String(error)})`),
       );
     },

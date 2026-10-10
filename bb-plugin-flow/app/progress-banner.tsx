@@ -467,9 +467,30 @@ export function Row({ stage, roots, onToggle, expanded = false, onExpand, subOf 
   );
 }
 
-/** Есть ли строке что развернуть: результаты сверх первого или шаги автоматизации, до которой прогон дошёл. */
-const expandable = (stage: ProgressStage): boolean =>
-  stage.state !== "todo" && stage.state !== "skip" && (stage.results.length > 1 || (stage.automation?.steps.length ?? 0) > 0);
+/** Есть ли строке что развернуть: результаты сверх первого, шаги автоматизации, до которой прогон дошёл, или утверждённые пункты у Definition of Done. */
+const expandable = (stage: ProgressStage, criteria: readonly string[]): boolean =>
+  stage.state !== "todo" && stage.state !== "skip" && (stage.results.length > 1 || (stage.automation?.steps.length ?? 0) > 0 || showsCriteria(stage, criteria));
+
+/** Строка Definition of Done раскрывает утверждённые пункты треда. */
+const showsCriteria = (stage: ProgressStage, criteria: readonly string[]): boolean => stage.kind === "criteria" && criteria.length > 0;
+
+/** Утверждённые пункты Definition of Done — нумерованным списком под серединой строки этапа. */
+function CriteriaItems({ criteria }: { criteria: readonly string[] }) {
+  return (
+    <div data-progress-criteria className={cn(COLUMNS, "px-3 pb-1")}>
+      <span />
+      <span />
+      <ol className="flex min-w-0 list-decimal flex-col gap-0.5 pl-4 text-[13px] leading-5">
+        {criteria.map((item, i) => (
+          <li key={i} className="break-words">{item}</li>
+        ))}
+      </ol>
+      <span />
+      <span />
+      <span />
+    </div>
+  );
+}
 
 /** Развёрнута ли строка, пока владелец её не трогал: идущая и упавшая автоматизация — да, её шаги и кнопки нужны сейчас. */
 const openByDefault = (stage: ProgressStage): boolean => stage.automation !== undefined && (stage.state === "now" || stage.state === "fail");
@@ -513,15 +534,15 @@ function TotalRow({ stages }: { stages: readonly ProgressStage[] }) {
 /**
  * Этапы прогона строками-аккордеонами и итог потраченного под ними — общий для бара над композером и итога в ленте.
  * `threadId` — тред, который ведёт прогон: из него нажимаются шаги автоматизаций; `null` — шаги только видны.
- * `toggleOf` — чекбокс «в прогоне» у этапа; нет — у этапа чекбокса нет.
+ * `toggleOf` — чекбокс «в прогоне» у этапа; нет — у этапа чекбокса нет. `criteria` — утверждённые пункты Definition of Done для его строки.
  */
-export function StageList({ stages, roots, threadId, toggleOf }: { stages: readonly ProgressStage[]; roots: FileRoots | null; threadId: string | null; toggleOf?: (stage: ProgressStage, at: number) => ((run: boolean) => void) | undefined }) {
+export function StageList({ stages, roots, threadId, toggleOf, criteria = [] }: { stages: readonly ProgressStage[]; roots: FileRoots | null; threadId: string | null; toggleOf?: (stage: ProgressStage, at: number) => ((run: boolean) => void) | undefined; criteria?: readonly string[] }) {
   const [touched, setTouched] = useState<Readonly<Record<string, boolean>>>({});
   // Под-этапы свёрнуты под строкой владельца: она раскрывается и ради них, а идущий или упавший под-этап раскрывает её сам.
   const subsOf = (id: string) => stages.filter((stage) => stage.parent === id);
   const item = (stage: ProgressStage, nested: boolean): ReactNode => {
     const subs = subsOf(stage.id);
-    const canOpen = expandable(stage) || subs.length > 0;
+    const canOpen = expandable(stage, criteria) || subs.length > 0;
     const open = canOpen && (touched[stage.id] ?? (openByDefault(stage) || subs.some((sub) => sub.state === "now" || sub.state === "fail")));
     const toggle = toggleOf?.(stage, stages.indexOf(stage));
     return (
@@ -535,6 +556,7 @@ export function StageList({ stages, roots, threadId, toggleOf }: { stages: reado
           {...(canOpen ? { onExpand: () => setTouched((current) => ({ ...current, [stage.id]: !open })) } : {})}
         />
         {open && stage.results.length > 1 && <MoreResults stage={stage} roots={roots} />}
+        {open && showsCriteria(stage, criteria) && <CriteriaItems criteria={criteria} />}
         {open && stage.automation !== undefined && <AutomationSteps stage={stage} threadId={threadId} />}
         {open && subs.length > 0 && <div className="ml-6 flex flex-col border-l border-border">{subs.map((sub) => item(sub, true))}</div>}
       </div>
@@ -701,7 +723,7 @@ function Progress({ view, threadId, open, toggle, onCancelled }: { view: Progres
               {driver !== null && <FlowMenu threadId={driver} onCancelled={onCancelled} />}
             </div>
           )}
-          <StageList stages={stages} roots={roots} threadId={driver} toggleOf={(stage, at) => (driver === null || at <= reached ? undefined : (run) => toggleStage(stage.id, run))} />
+          <StageList stages={stages} roots={roots} threadId={driver} criteria={view.criteria} toggleOf={(stage, at) => (driver === null || at <= reached ? undefined : (run) => toggleStage(stage.id, run))} />
         </div>
       )}
       {view.carrier !== undefined && (
