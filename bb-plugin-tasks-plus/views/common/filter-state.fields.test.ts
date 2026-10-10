@@ -1,7 +1,8 @@
 import fc from "fast-check";
 import { describe, expect, it } from "vitest";
 import { DATE_FIELDS, NUMBER_FIELDS, QUERY_FIELDS, TEXT_FIELDS, VALUE_FILTER_FIELDS } from "../../shared/enums.js";
-import { EMPTY_FILTERS, activeFilterFields, hasActiveFilters, withFieldFilter } from "./filter-state.js";
+import { activeFilterFields } from "../../shared/task-fields.js";
+import { EMPTY_FILTERS, hasActiveFilters, withFieldFilter } from "./filter-state.js";
 import { sanitizeListPreference } from "./list-preference.js";
 
 const valueFieldArb = fc.constantFrom(...VALUE_FILTER_FIELDS);

@@ -28,8 +28,13 @@ Element.prototype.releasePointerCapture ??= () => {};
 window.PointerEvent ??= class extends MouseEvent {} as unknown as typeof PointerEvent;
 
 const app = await loadPluginApp(() => import("../../app"));
+const { setAnalyticsFilter } = await import("./page-filter");
+const { DEFAULT_FILTER } = await import("./default-dashboard");
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  setAnalyticsFilter(() => DEFAULT_FILTER);
+});
 
 const DAY = 86_400_000;
 const PROJECT = { id: "01HZZZZZZZZZZZZZZZZZZZZZP1", name: "Plugins" };
@@ -152,6 +157,43 @@ describe("the analytics screen", () => {
     const [dashboard] = saved(asked);
     expect(dashboard.tiles.some((entry: { id: string }) => entry.id === "aging")).toBe(false);
     expect(dashboard.rows.flatMap((row: { cells: { id: string }[] }) => row.cells.map((cell) => cell.id))).not.toContain("aging");
+  });
+
+  it("picks the period on a segmented control: the picked segment takes the page's background", async () => {
+    const slot = renderAnalytics([]);
+    const period = await waitFor(() => slot.getByRole("group", { name: "Period" }));
+    expect(period.className).toContain("bg-muted");
+    const month = within(period).getByRole("button", { name: "Month" });
+    expect(month.className).not.toContain("bg-background");
+    fireEvent.click(month);
+    expect(month.getAttribute("aria-pressed")).toBe("true");
+    expect(month.className).toContain("bg-background");
+    expect(within(period).getByRole("button", { name: "Week" }).className).not.toContain("bg-background");
+  });
+
+  it("keeps the page's title, filters and period in the topbar, left of Refresh — no header on the page", async () => {
+    const slot = renderAnalytics([]);
+    const period = await waitFor(() => slot.getByRole("group", { name: "Period" }));
+    const bar = period.closest("header")!;
+    expect(within(bar).getByText("Analytics")).toBeTruthy();
+    const order = [within(bar).getByRole("button", { name: "Filter" }), period, within(bar).getByRole("button", { name: "Refresh tasks" })];
+    order.slice(1).forEach((after, index) => expect(order[index]!.compareDocumentPosition(after) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy());
+    expect(slot.queryByRole("heading", { name: "Analytics" })).toBeNull();
+    expect(slot.queryByRole("group", { name: "Projects" })).toBeNull();
+  });
+
+  it("asks every tile over the filters picked in the topbar", async () => {
+    const asked: Asked = [];
+    renderAnalytics(asked);
+    await waitFor(() => expect(asked.some((entry) => entry.rpc === "analyticsTile")).toBe(true));
+    const filters = { ...DEFAULT_FILTER.filters, statuses: ["done" as const], values: { project: [PROJECT.id] } };
+    asked.length = 0;
+    setAnalyticsFilter((current) => ({ ...current, filters }));
+    await waitFor(() => {
+      const tiles = asked.filter((entry) => entry.rpc === "analyticsTile");
+      expect(tiles.length).toBeGreaterThan(0);
+      tiles.forEach((entry) => expect(entry.input).toMatchObject({ filters, projectIds: [PROJECT.id] }));
+    });
   });
 
   it("opens all time at the first task's week", async () => {

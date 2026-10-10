@@ -5,8 +5,6 @@ import type {
   TaskStatus,
   TaskType,
 } from "../../shared/contract.js";
-import type { ListFilterState } from "./filter-state.js";
-import { EMPTY_FACTS, matchesFieldFilters, type TaskFacts } from "../../shared/task-fields.js";
 
 /**
  * The subset of task fields carried by an optimistic override. Every key is
@@ -92,46 +90,6 @@ export function editedTasks(
 ): Task[] {
   if (entries.size === 0) return [...serverTasks];
   return serverTasks.map((task) => applyEdit(task, entries.get(task.id)?.edit));
-}
-
-/**
- * Re-applies the active filters that an inline edit can invalidate — status,
- * priority, and labels. Labels use the server's any-of semantics (a task
- * matches if it carries at least one selected label id), so an optimistically
- * changed row that no longer matches drops out immediately instead of lingering
- * until the server refetch removes it.
- */
-/**
- * Whether a task survives the filter bar. Takes the filter state whole: the
- * six positional lists this used to accept were all arrays of strings, and
- * two more (assignees, parents) would have made a wrong argument order a
- * defect types could not catch. Label ids and the tasks under the picked
- * parents stay separate — they arrive already resolved, the ids from the
- * names the state stores, the tasks from the tree (`idsUnder`); with no
- * parent picked, nothing needs to lie under one. Every other field's filter
- * reads what the task alone does not carry — agents, counts, names — from
- * `facts`, which the surface builds from its own meta.
- */
-export function matchesFilters(
-  task: Task,
-  filters: ListFilterState,
-  labelIds: readonly string[],
-  underParents: ReadonlySet<string> = new Set(),
-  facts: TaskFacts = EMPTY_FACTS,
-): boolean {
-  const inList = <T,>(list: readonly T[], value: T | null | undefined) =>
-    list.length === 0 || (value != null && list.includes(value));
-  return (
-    inList(filters.statuses, task.status) &&
-    inList(filters.priorities, task.priority) &&
-    (labelIds.length === 0 ||
-      task.labelIds.some((id) => labelIds.includes(id))) &&
-    inList(filters.types, task.type) &&
-    inList(filters.estimates, task.estimate) &&
-    inList(filters.assignees, task.assignee) &&
-    (filters.parents.length === 0 || underParents.has(task.id)) &&
-    matchesFieldFilters(task, filters, facts)
-  );
 }
 
 function makeEntry(prev: TaskEntry | undefined): {

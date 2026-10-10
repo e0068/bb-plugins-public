@@ -76,11 +76,24 @@ describe("TileChart — other types", () => {
     expect(container.querySelectorAll("[data-line]")).toHaveLength(2);
   });
 
+  it("says under each sum how many closed tasks carry it, and sets the cost against the budget of the same tasks", () => {
+    draw(
+      newTile("t", { type: "big", figures: ["budget", "cost", "actual"] }),
+      answer({
+        figures: { closed: 4, budget: 50, cost: 12.5, actual: 30 },
+        sums: { carriers: { planned: 4, actual: 1, budget: 4, cost: 1, limit: 4 }, paired: { cost: 12.5, budget: 25 } },
+      }),
+    );
+    expect(screen.getByText("4 of 4 closed")).toBeTruthy();
+    expect(screen.getByText("1 of 4 closed · 50% of their budget")).toBeTruthy();
+    expect(screen.getByText("1 of 4 closed")).toBeTruthy();
+  });
+
   it("prints the picked figures as the strip did", () => {
     draw(newTile("t", { type: "big", figures: ["open", "cost"] }), answer({ figures: { open: 7, cost: 12.5, budget: 50 }, total: 9 }));
     expect(screen.getByText("7")).toBeTruthy();
     expect(screen.getByText("of 9")).toBeTruthy();
-    expect(screen.getByText("25% of budget")).toBeTruthy();
+    expect(screen.queryByText(/of budget/)).toBeNull();
   });
 
   it("blames the filter when a filtered tile comes out empty", () => {

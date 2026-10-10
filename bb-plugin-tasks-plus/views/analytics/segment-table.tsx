@@ -18,6 +18,7 @@ import { ROW_FIELD_LABELS } from "../common/row-field-preference.js";
 import { useListTaskEdits } from "../common/use-task-edits.js";
 import { TableCell, type CellContext } from "../table/cells.js";
 import { defaultColumnWidth } from "../table/columns.js";
+import type { TileScope } from "./default-dashboard";
 import type { SegmentPick } from "./tile-charts";
 
 type TableSort = TileTable["sort"];
@@ -45,7 +46,8 @@ export interface SegmentTableProps {
   edges: readonly number[];
   /** When the chart's answer was asked: a new answer — the tile set otherwise, a task changed — asks the table again. */
   asked: number;
-  projectIds: readonly string[];
+  /** The page's projects and filters, as the chart was asked over. */
+  scope: TileScope;
   /** The switch value picked on the tile; null — all of them. */
   picked: string | null;
   pick: SegmentPick | null;
@@ -57,7 +59,7 @@ export interface SegmentTableProps {
   style?: CSSProperties;
 }
 
-export function SegmentTable({ tile, edges, asked, projectIds, picked, pick, heading, onSort, onOpenTask, style }: SegmentTableProps) {
+export function SegmentTable({ tile, edges, asked, scope, picked, pick, heading, onSort, onOpenTask, style }: SegmentTableProps) {
   const table = tileTable(tile);
   // Rows shown: the setting's at first, more on each «Show more»; a new pick, sort or setting starts over.
   const reset = JSON.stringify([tile.id, pick, table.sort, table.rows, picked]);
@@ -70,7 +72,7 @@ export function SegmentTable({ tile, edges, asked, projectIds, picked, pick, hea
       rpc.call("analyticsTileTasks", {
         tile,
         edges: [...edges],
-        projectIds: [...projectIds],
+        ...scope,
         picked,
         pick: gridPick,
         sort: table.sort,

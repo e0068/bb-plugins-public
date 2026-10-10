@@ -1,5 +1,5 @@
-// The analytics screen: header with the project filter and the D/W/M/All
-// cut, then rows of tiles. Every tile is a setting of one model
+// The analytics screen: rows of tiles over the cut and the filters set in
+// the topbar (page-controls.tsx). Every tile is a setting of one model
 // (shared/analytics-tile.ts) answered by one RPC (analyticsTile); the set of
 // tiles and their rows are kept in the plugin's KV, the same on every device.
 // The owner edits a tile in the side panel — the tile on the screen is drawn
@@ -7,10 +7,8 @@
 // and adds new ones from the empty tile at the end. This file is the shell:
 // it asks the server and keeps the state; every pure piece lives in the
 // modules it imports.
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-import { Button } from "../../components/ui/button";
-import { DropdownMenu, DropdownMenuCheckboxItem, DropdownMenuContent, DropdownMenuTrigger } from "../../components/ui/dropdown-menu";
 import { Icon } from "../../components/ui/icon";
 import type { Dashboard, Tile, TileAnswer } from "../../shared/contract.js";
 import { useTasksQuery, useTasksRpc } from "../../client/data";
@@ -19,26 +17,25 @@ import { cn } from "../../lib/utils";
 import { isSuggested } from "../../shared/tile-conditions.js";
 import { tileTable, type TileTable } from "../../shared/analytics-tile.js";
 import { DEFAULT_REDUCED_PROJECTS } from "../../shared/reduced-projects.js";
-import { Swatch } from "./bars";
 import { useSuggestionScope } from "./suggestion-scope";
-import { ChartColorsScope, useChartColors, type ChartBoard } from "./chart-colors";
+import { ChartColorsScope, type ChartBoard } from "./chart-colors";
 import { hourEdges } from "./closed-model";
 import {
-  ANALYTICS_WINDOWS,
-  type AnalyticsFilter,
   type AnalyticsWindow,
   columnUnit,
   copyTitle,
-  DEFAULT_FILTER,
   defaultDashboard,
   newTile,
   tileEdges,
+  tileScope,
+  type TileScope,
 } from "./default-dashboard";
+import { useAnalyticsFilter } from "./page-filter";
 import { RowBoard } from "./row-board";
 import { ClaimClicks, PANEL, PickScope } from "./pick-scope";
 import { SegmentTable } from "./segment-table";
 import { insertCell, insertRow, keepCells, removeCell, type RowLayout } from "./row-layout";
-import { fitting, TileCard } from "./tile-card";
+import { TileCard } from "./tile-card";
 import { TilePanel } from "./tile-panel";
 
 /** Below this width the rows stack into one column. */
@@ -83,92 +80,6 @@ function useClock(countsMinutes: boolean): { hour: number; minute: number } {
 
 const countsMinutes = (tile: Tile): boolean => tile.window !== "page" && tile.window.unit === "minute";
 
-const WINDOW_TITLE: Record<AnalyticsWindow, string> = { day: "Day", week: "Week", month: "Month", all: "All time" };
-
-/** A project chip's swatch — the project's colour on the charts, Reduced Colors applied. */
-function ProjectSwatch({ id }: { id: string }) {
-  return <Swatch color={useChartColors().project(id)} />;
-}
-
-export interface ProjectChipsProps {
-  projects: readonly { id: string; name: string }[];
-  /** The projects picked; none — all of them. */
-  picked: readonly string[];
-  onAll: () => void;
-  onToggle: (projectId: string) => void;
-}
-
-/**
- * The project filter in one row: All projects and the projects that fit,
- * the rest under «+N» with a check on the picked ones. A hidden ruler holds
- * every chip, each with the gap after it, so the row knows how many fit.
- */
-export function ProjectChips({ projects, picked, onAll, onToggle }: ProjectChipsProps) {
-  const rowRef = useRef<HTMLDivElement | null>(null);
-  const rulerRef = useRef<HTMLDivElement | null>(null);
-  const [shown, setShown] = useState(projects.length + 1);
-  const measure = useCallback(() => {
-    const row = rowRef.current;
-    const ruler = rulerRef.current;
-    if (row === null || ruler === null) return;
-    setShown(fitting((Array.from(ruler.children) as HTMLElement[]).map((chip) => chip.offsetWidth), row.offsetWidth));
-  }, []);
-  const signature = projects.map((project) => project.name).join("|");
-  useLayoutEffect(() => {
-    measure();
-    const row = rowRef.current;
-    if (row === null) return;
-    const observer = new ResizeObserver(measure);
-    observer.observe(row);
-    return () => observer.disconnect();
-  }, [measure, signature]);
-
-  const all = (
-    <Button type="button" size="sm" variant={picked.length === 0 ? "default" : "outline"} aria-pressed={picked.length === 0} onClick={onAll}>
-      All projects
-    </Button>
-  );
-  const chip = (project: { id: string; name: string }) => (
-    <Button key={project.id} type="button" size="sm" variant={picked.includes(project.id) ? "default" : "outline"} aria-pressed={picked.includes(project.id)} onClick={() => onToggle(project.id)}>
-      <ProjectSwatch id={project.id} />
-      {project.name}
-    </Button>
-  );
-  const chips = projects.slice(0, Math.max(0, shown - 1));
-  const folded = projects.slice(chips.length);
-  return (
-    <div ref={rowRef} data-chips-row role="group" aria-label="Projects" className="relative flex min-w-0 flex-1 basis-40 items-center gap-2">
-      {/* Clipped to the row: the ruler is as wide as every chip, and unclipped it would widen the page. */}
-      <div aria-hidden className="pointer-events-none invisible absolute inset-x-0 top-0 h-0 overflow-hidden">
-        <div ref={rulerRef} className="flex w-max">
-          {[all, ...projects.map(chip)].map((entry, index) => (
-            <span key={index} data-chip className="shrink-0 pr-2">
-              {entry}
-            </span>
-          ))}
-        </div>
-      </div>
-      {all}
-      {chips.map(chip)}
-      {folded.length === 0 ? null : (
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <Button type="button" size="sm" variant={folded.some((project) => picked.includes(project.id)) ? "default" : "outline"}>{`+${folded.length}`}</Button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="start" collisionPadding={8} mobileTitle="Projects">
-            {folded.map((project) => (
-              <DropdownMenuCheckboxItem key={project.id} checked={picked.includes(project.id)} onCheckedChange={() => onToggle(project.id)}>
-                <ProjectSwatch id={project.id} />
-                {project.name}
-              </DropdownMenuCheckboxItem>
-            ))}
-          </DropdownMenuContent>
-        </DropdownMenu>
-      )}
-    </div>
-  );
-}
-
 /** The tile being edited: its draft, and whether Save adds it rather than replaces it. */
 interface Editing {
   id: string;
@@ -188,7 +99,8 @@ const freshId = (dashboard: Dashboard) => {
 
 interface TileSlotProps {
   tile: Tile;
-  filter: AnalyticsFilter;
+  window: AnalyticsWindow;
+  scope: TileScope;
   /** When the asked projects' history starts — where all time opens. */
   firstMs: number;
   hour: number;
@@ -206,18 +118,18 @@ interface TileSlotProps {
   onTableSort: (sort: TileTable["sort"]) => void;
 }
 
-/** One tile and its own answer, asked again when its settings, the page's cut or the hour change. */
-function TileSlot({ tile, filter, firstMs, hour, minute, picked, onTableSort, ...card }: TileSlotProps) {
+/** One tile and its own answer, asked again when its settings, the page's cut and filters or the hour change. */
+function TileSlot({ tile, window, scope, firstMs, hour, minute, picked, onTableSort, ...card }: TileSlotProps) {
   const query = useTasksQuery<{ answer: TileAnswer; edges: number[]; nowMs: number }>(
     async (rpc) => {
       const nowMs = Date.now();
-      const edges = tileEdges(tile.window, filter.window, nowMs, firstMs);
-      const answer = await rpc.call("analyticsTile", { tile, edges, projectIds: [...filter.projectIds], picked });
+      const edges = tileEdges(tile.window, window, nowMs, firstMs);
+      const answer = await rpc.call("analyticsTile", { tile, edges, ...scope, picked });
       return { answer, edges, nowMs };
     },
     ["tasks:changed"],
     // The answer reads neither the title nor the look, so typing a title or toggling the legend asks nothing again.
-    [{ ...tile, title: "", display: null }, filter.window, filter.projectIds, firstMs, countsMinutes(tile) ? minute : hour, picked],
+    [{ ...tile, title: "", display: null }, window, scope, firstMs, countsMinutes(tile) ? minute : hour, picked],
   );
   const data = query.data;
   return (
@@ -227,7 +139,7 @@ function TileSlot({ tile, filter, firstMs, hour, minute, picked, onTableSort, ..
       answer={data?.answer}
       error={query.error}
       edges={data?.edges ?? []}
-      unit={columnUnit(tile.window, filter.window)}
+      unit={columnUnit(tile.window, window)}
       nowMs={data?.nowMs ?? Date.now()}
       picked={picked}
       contents={({ pick, heading, style }) => (
@@ -235,7 +147,7 @@ function TileSlot({ tile, filter, firstMs, hour, minute, picked, onTableSort, ..
           tile={tile}
           edges={data?.edges ?? []}
           asked={data?.nowMs ?? 0}
-          projectIds={filter.projectIds}
+          scope={scope}
           picked={picked}
           pick={pick}
           heading={heading}
@@ -249,7 +161,8 @@ function TileSlot({ tile, filter, firstMs, hour, minute, picked, onTableSort, ..
 }
 
 export function AnalyticsDashboard() {
-  const [filter, setFilter] = useState<AnalyticsFilter>(DEFAULT_FILTER);
+  const filter = useAnalyticsFilter();
+  const asked = useMemo(() => tileScope(filter), [filter]);
   const [pageRef, pageWidth] = useMeasuredWidth();
   const navigation = useTasksNavigation();
   const rpc = useTasksRpc();
@@ -273,9 +186,9 @@ export function AnalyticsDashboard() {
   const board = useMemo<ChartBoard>(() => ({ projects, reducedProjects }), [boardSignature]);
 
   const span = useTasksQuery(
-    async (client) => (filter.window === "all" ? ((await client.call("analyticsSpan", { projectIds: [...filter.projectIds] })).firstCreatedMs ?? Date.now()) : Date.now()),
+    async (client) => (filter.window === "all" ? ((await client.call("analyticsSpan", { projectIds: asked.projectIds })).firstCreatedMs ?? Date.now()) : Date.now()),
     ["tasks:changed"],
-    [filter.window, filter.projectIds],
+    [filter.window, asked.projectIds.join()],
   );
   const firstMs = filter.window === "all" ? (span.data ?? null) : hour;
 
@@ -302,14 +215,6 @@ export function AnalyticsDashboard() {
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [editing]);
-
-  const toggleProject = (projectId: string) =>
-    setFilter((current) => ({
-      ...current,
-      projectIds: current.projectIds.includes(projectId)
-        ? current.projectIds.filter((id) => id !== projectId)
-        : [...current.projectIds, projectId],
-    }));
 
   /** The dashboard as drawn: a new tile being added stands in its own row at the bottom until it is saved or dropped. */
   const shown: Dashboard | null =
@@ -372,30 +277,6 @@ export function AnalyticsDashboard() {
         <div className="relative flex h-full min-h-0">
           <div ref={pageRef} className="h-full min-w-0 flex-1 overflow-x-hidden overflow-y-auto">
             <div className="flex min-h-full flex-col gap-6 px-6 py-8">
-              <header className="space-y-1">
-                <h1 className="text-lg font-semibold text-foreground">Analytics</h1>
-                <p className="text-sm text-muted-foreground">Tasks across your boards — how statuses move, what is left and what got closed</p>
-              </header>
-
-              {/* One row: the projects fold under +N; only a page too narrow for All projects, +N and the period puts the period under them. */}
-              <section className="flex flex-wrap items-center gap-x-4 gap-y-2 border-b border-border pb-4">
-                <ProjectChips projects={projects} picked={filter.projectIds} onAll={() => setFilter((current) => ({ ...current, projectIds: [] }))} onToggle={toggleProject} />
-                <div className="ml-auto flex shrink-0 gap-1" role="group" aria-label="Period">
-                  {ANALYTICS_WINDOWS.map((window) => (
-                    <Button
-                      key={window}
-                      type="button"
-                      size="sm"
-                      variant={filter.window === window ? "default" : "outline"}
-                      aria-pressed={filter.window === window}
-                      onClick={() => setFilter((current) => ({ ...current, window }))}
-                    >
-                      {WINDOW_TITLE[window]}
-                    </Button>
-                  ))}
-                </div>
-              </section>
-
               {stored.error ? <p className="text-xs text-destructive">{stored.error}</p> : null}
               {saveError ? <p className="text-xs text-destructive">{saveError}</p> : null}
 
@@ -412,7 +293,8 @@ export function AnalyticsDashboard() {
                       return tile === undefined ? null : (
                         <TileSlot
                           tile={tile}
-                          filter={filter}
+                          window={filter.window}
+                          scope={asked}
                           firstMs={firstMs}
                           hour={hour}
                           minute={minute}

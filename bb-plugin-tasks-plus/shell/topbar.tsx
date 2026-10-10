@@ -13,6 +13,7 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { ViewToolbar } from "../views/board/toolbar.js";
+import { AnalyticsPageControls } from "../views/analytics/page-controls.js";
 import type { ViewTarget } from "../views/common/view-state.js";
 import { useIsCompactViewport } from "@/components/ui/hooks/use-compact-viewport";
 import { useTasksRefresh } from "../client/refresh.js";
@@ -223,6 +224,10 @@ export function TasksTopbar({
         return (
           <span className="whitespace-nowrap font-semibold">All tasks</span>
         );
+      case "analytics":
+        return (
+          <span className="whitespace-nowrap font-semibold">Analytics</span>
+        );
       case "active":
         return (
           <span className="flex items-center gap-2">
@@ -342,10 +347,11 @@ export function TasksTopbar({
       ) : null}
       {/* With view controls the free width goes to the filter chips, and the
           title keeps only what it needs. */}
-      <div className={cn("min-w-0 overflow-hidden", target ? "shrink" : "flex-1")}>{breadcrumb}</div>
+      <div className={cn("min-w-0 overflow-hidden", target || route.kind === "analytics" ? "shrink" : "flex-1")}>{breadcrumb}</div>
       {target ? (
         <ViewToolbar target={target} compact={compact} displayOpen={displayOpen} onToggleDisplay={onToggleDisplay} />
       ) : null}
+      {route.kind === "analytics" ? <AnalyticsPageControls compact={compact} /> : null}
       {route.kind === "task" &&
       (pagerScope !== null || projects !== undefined) ? (
         <TaskPager

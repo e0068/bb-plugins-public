@@ -603,9 +603,21 @@ function figureValue(figure: Figure, value: number | null | undefined): string {
   }
 }
 
+/** How many of the closed tasks carry a sum — a sum over few of them is no total of the period. */
+function carriedNote(figure: Figure, answer: TileAnswer): string | null {
+  const closed = answer.figures.closed ?? 0;
+  const carriers = answer.sums?.carriers[figure];
+  return carriers === undefined || closed === 0 ? null : `${carriers} of ${closed} closed`;
+}
+
+/** The cost against the budget of the tasks that recorded both — never against budgets with no cost beside them. */
+function spentNote(answer: TileAnswer): string | null {
+  const paired = answer.sums?.paired;
+  return paired === undefined || paired.budget <= 0 ? null : `${Math.round((paired.cost / paired.budget) * 100)}% of their budget`;
+}
+
 /** The line under a figure, as the strip had it. */
 function figureNote(figure: Figure, answer: TileAnswer): string | null {
-  const { figures } = answer;
   switch (figure) {
     case "open":
       return `of ${answer.total}`;
@@ -614,8 +626,15 @@ function figureNote(figure: Figure, answer: TileAnswer): string | null {
       return "this period";
     case "cycle":
       return "in progress → done";
-    case "cost":
-      return (figures.budget ?? 0) > 0 ? `${Math.round(((figures.cost ?? 0) / figures.budget!) * 100)}% of budget` : null;
+    case "planned":
+    case "actual":
+    case "budget":
+    case "limit":
+      return carriedNote(figure, answer);
+    case "cost": {
+      const notes = [carriedNote(figure, answer), spentNote(answer)].filter((note) => note !== null);
+      return notes.length === 0 ? null : notes.join(" · ");
+    }
     default:
       return null;
   }

@@ -6,7 +6,7 @@ import { useOpenTask } from "../../client/task-opening.js";
 import { NewTaskDialog } from "../manage/index.js";
 import { DetailToasts, useDetailToasts } from "../detail/toast.js";
 import { idsUnder, openCountsOf } from "../../shared/subtree.js";
-import type { TaskFacts } from "../../shared/task-fields.js";
+import { matchesFilters, type TaskFacts } from "../../shared/task-fields.js";
 import { Button } from "@/components/ui/button";
 import { Icon } from "@/components/ui/icon";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -20,7 +20,7 @@ import {
   useTreeTasks,
 } from "../common/data.js";
 import { useListTaskEdits } from "../common/use-task-edits.js";
-import { editedTasks, matchesFilters } from "../common/optimistic.js";
+import { editedTasks } from "../common/optimistic.js";
 import { labelFilterOptions, selectedLabelIds } from "../common/lib.js";
 import {
   useListPreference,

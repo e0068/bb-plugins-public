@@ -65,14 +65,17 @@ async function readStatusDir(
     names.map((name) => {
       const slug = name.slice(0, -".md".length);
       const filePath = join(statusDir, name);
-      return cache.read(filePath, (content, times): RepoTaskFile => ({
-        ...parseTaskFile(content, status, slug),
-        ...taskTimestamps(times),
-        ...placement,
-        filePath,
-        status,
-        slug,
-      }));
+      return cache.read(filePath, (content, times): RepoTaskFile => {
+        const parsed = parseTaskFile(content, status, slug);
+        return {
+          ...parsed,
+          ...taskTimestamps(times, parsed.frontmatter.created),
+          ...placement,
+          filePath,
+          status,
+          slug,
+        };
+      });
     }),
   );
   return results.filter((file): file is RepoTaskFile => file !== null);

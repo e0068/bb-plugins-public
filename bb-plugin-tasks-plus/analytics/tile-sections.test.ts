@@ -78,11 +78,11 @@ describe("the default tiles give the old sections' numbers", () => {
     expect(stuck.rows.map((row) => row.key)).toEqual(["TSK-2", "TSK-4", "TSK-5"]);
   });
 
-  it("Figures — the strip's numbers over the filtered tasks and the window", () => {
+  it("Figures — what came into each status, was made and closed in the window", () => {
     expect(answer({ type: "big", figures: ["open", "done", "created", "closed", "cost", "cycle"] }).figures).toMatchObject({
-      open: 3,
+      open: 5,
       done: 2,
-      in_progress: 1,
+      in_progress: 4,
       in_review: 1,
       created: 5,
       closed: 2,

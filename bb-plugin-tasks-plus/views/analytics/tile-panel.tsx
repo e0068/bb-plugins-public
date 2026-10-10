@@ -10,6 +10,7 @@ import { Button } from "../../components/ui/button";
 import { Checkbox } from "../../components/ui/checkbox";
 import { Icon, type IconName } from "../../components/ui/icon";
 import { Input } from "../../components/ui/input";
+import { Segments } from "../../components/ui/segments";
 import { Select, SelectContent, SelectGroup, SelectItem, SelectLabel, SelectTrigger, SelectValue } from "../../components/ui/select";
 import { CONTENTS_SHARE, FIGURES, FIELD_METRICS, TILE_TABLE_FIELDS, TILE_TABLE_ROWS, TILE_TITLE_MAX, readsSetting, tileTable, type TileTable, type Figure, type TileSetting, type TileType, type TileWindow, type WindowUnit, type YMetric, WINDOW_COUNT_MAX, WINDOW_UNITS } from "../../shared/analytics-tile.js";
 import type { Tile } from "../../shared/contract.js";
@@ -70,18 +71,18 @@ const fieldLabel = (field: QueryField) => ROW_FIELD_LABELS[field];
 
 /** What each figure counts, in words that leave no doubt — the tile prints the short name. */
 const FIGURE_OPTIONS: Record<Figure, { label: string; hint: string }> = {
-  open: { label: "Open tasks", hint: "Backlog, to do, in progress and in review now" },
-  in_progress: { label: "In progress now", hint: "Tasks standing in progress at this moment" },
-  in_review: { label: "In review now", hint: "Tasks standing in review at this moment" },
-  done: { label: "Done", hint: "Tasks in done, whenever they were closed" },
+  open: { label: "Open tasks", hint: "Tasks made or reopened within the chart's period" },
+  in_progress: { label: "Taken into progress", hint: "Tasks moved to in progress within the chart's period" },
+  in_review: { label: "Sent to review", hint: "Tasks moved to in review within the chart's period" },
+  done: { label: "Done", hint: "Tasks moved to done within the chart's period" },
   created: { label: "Created in the period", hint: "Tasks made within the chart's period" },
   closed: { label: "Closed in the period", hint: "Tasks moved to done within the chart's period" },
   cycle: { label: "Median cycle", hint: "Typical time from in progress to done, for tasks closed in the period" },
-  planned: { label: "Planned time", hint: "Planned time summed over the tasks" },
-  actual: { label: "Actual time", hint: "Actual time summed over the tasks" },
-  budget: { label: "Budget", hint: "Budgets summed over the tasks" },
-  cost: { label: "Cost", hint: "Costs summed over the tasks" },
-  limit: { label: "Limit", hint: "Budget limits summed over the tasks" },
+  planned: { label: "Planned time", hint: "Planned time of the tasks closed within the chart's period" },
+  actual: { label: "Actual time", hint: "Actual time of the tasks closed within the chart's period" },
+  budget: { label: "Budget", hint: "Budgets of the tasks closed within the chart's period" },
+  cost: { label: "Cost", hint: "Costs of the tasks closed within the chart's period" },
+  limit: { label: "Limit", hint: "Budget limits of the tasks closed within the chart's period" },
 };
 
 /** Every field of the board's filter, grouped by kind. */
@@ -120,28 +121,6 @@ function Row({ label, children }: { label: string; children: ReactNode }) {
     <div className="flex min-h-8 items-center gap-2 px-1.5">
       <span className="w-24 shrink-0 text-sm">{label}</span>
       <div className="flex min-w-0 flex-1 items-center gap-1">{children}</div>
-    </div>
-  );
-}
-
-/** A segmented control, as Display's Table/Board switch. */
-function Segments<T extends string>({ label, value, options, onChange }: { label: string; value: T; options: readonly { value: T; label: string }[]; onChange: (value: T) => void }) {
-  return (
-    <div role="group" aria-label={label} className="flex min-w-0 flex-1 rounded-md bg-muted p-0.5">
-      {options.map((option) => (
-        <button
-          key={option.value}
-          type="button"
-          aria-pressed={value === option.value}
-          onClick={() => onChange(option.value)}
-          className={cn(
-            "flex h-6 flex-1 items-center justify-center rounded-sm px-1.5 text-xs whitespace-nowrap",
-            value === option.value ? "bg-background text-foreground shadow-2xs" : "text-muted-foreground hover:text-foreground",
-          )}
-        >
-          {option.label}
-        </button>
-      ))}
     </div>
   );
 }
@@ -273,6 +252,7 @@ function TableSettings({ table, onChange, onShowFilter }: { table: TileTable; on
         {table.sort === null ? null : (
           <div className="w-24 shrink-0">
             <Segments
+              className="flex-1"
               label="Table sort direction"
               value={table.sort.direction}
               options={[
@@ -290,6 +270,7 @@ function TableSettings({ table, onChange, onShowFilter }: { table: TileTable; on
       </Row>
       <Row label="Row height">
         <Segments
+          className="flex-1"
           label="Row height"
           value={table.rowHeight}
           options={[
@@ -376,6 +357,7 @@ export function TilePanel({ draft, isNew, scope, onChange, onSave, onCancel }: T
           {uses("bars") ? (
             <Row label="Bar length">
               <Segments
+                className="flex-1"
                 label="Bar length"
                 value={draft.bars.length}
                 options={[
@@ -389,6 +371,7 @@ export function TilePanel({ draft, isNew, scope, onChange, onSave, onCancel }: T
           {ganttish ? (
             <Row label="Shows">
               <Segments
+                className="flex-1"
                 label="Gantt shows"
                 value={draft.bars.gantt}
                 options={[
@@ -496,6 +479,7 @@ export function TilePanel({ draft, isNew, scope, onChange, onSave, onCancel }: T
               {draft.sort === null ? null : (
                 <div className="w-24 shrink-0">
                   <Segments
+                    className="flex-1"
                     label="Sort direction"
                     value={draft.sort.direction}
                     options={[
@@ -528,6 +512,7 @@ export function TilePanel({ draft, isNew, scope, onChange, onSave, onCancel }: T
             {uses("legend") ? (
               <Row label="Legend">
                 <Segments
+                  className="flex-1"
                   label="Legend"
                   value={draft.display.legend}
                   options={[

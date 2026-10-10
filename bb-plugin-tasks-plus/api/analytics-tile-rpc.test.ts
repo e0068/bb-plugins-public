@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -113,6 +113,55 @@ describe("analyticsTile RPC", () => {
     })) as { values: number[][]; cells: string[][][] };
     expect(answer.values).toEqual([[1]]);
     expect(answer.cells[0]![0]).toEqual([a.key]);
+  });
+});
+
+describe("analyticsTile RPC — the page's filters and the big numbers", () => {
+  it("counts only the tasks the page's filters keep", async () => {
+    const { harness } = setup();
+    const a = await tasks.createTask({ projectId: BOARD.id, title: "A" });
+    await tasks.createTask({ projectId: BOARD.id, title: "B" });
+    await harness.callRpc("boardMove", { taskId: a.id, status: "in_progress", authorName: "Me" });
+    const filters = { statuses: ["in_progress"], priorities: [], types: [], estimates: [], labelNames: [], assignees: [], parents: [] };
+
+    const answer = (await harness.callRpc("analyticsTile", { tile: tile(), edges: EDGES, projectIds: [], filters, picked: null })) as { columns: { key: string }[]; total: number };
+    expect(answer.columns.map((column) => column.key)).toEqual(["in_progress"]);
+    expect(answer.total).toBe(1);
+  });
+
+  it("reads the tasks' attachments when the page filters by them, on a tile that never names them", async () => {
+    const { harness } = setup();
+    mkdirSync(join(root, "tasks", "todo"), { recursive: true });
+    writeFileSync(join(root, "tasks", "todo", "shot.md"), "---\ntitle: Shot\nslug: shot\nattachments:\n  - id: a1\n    fileName: shot.png\n---\n\n## Comments\n");
+    writeFileSync(join(root, "tasks", "todo", "bare.md"), "---\ntitle: Bare\nslug: bare\n---\n\n## Comments\n");
+    const filters = { statuses: [], priorities: [], types: [], estimates: [], labelNames: [], assignees: [], parents: [], numbers: { attachments: { from: 1, to: null, empty: false } } };
+
+    const answer = (await harness.callRpc("analyticsTile", { tile: tile(), edges: EDGES, projectIds: [], filters, picked: null })) as { total: number };
+    expect(answer.total).toBe(1);
+  });
+
+  it("tells what a big tile's sums are made of, wire-valid", async () => {
+    const { harness } = setup();
+    const a = await tasks.createTask({ projectId: BOARD.id, title: "A", budget: 10, cost: 4 });
+    const b = await tasks.createTask({ projectId: BOARD.id, title: "B", budget: 20 });
+    await harness.callRpc("boardMove", { taskId: a.id, status: "done", authorName: "Me" });
+    await harness.callRpc("boardMove", { taskId: b.id, status: "done", authorName: "Me" });
+
+    const answer = (await harness.callRpc("analyticsTile", {
+      tile: tile({ type: "big", x: "time", switch: null, figures: ["budget", "cost"] }),
+      edges: EDGES,
+      projectIds: [],
+      picked: null,
+    })) as { figures: Record<string, number>; sums: unknown };
+    expect(answer.figures).toMatchObject({ closed: 2, budget: 30, cost: 4 });
+    expect(answer.sums).toEqual({ carriers: { planned: 0, actual: 0, budget: 2, cost: 1, limit: 0 }, paired: { cost: 4, budget: 10 } });
+  });
+
+  it("dates a task by the `created:` its file declares, not by when git last wrote the file", async () => {
+    mkdirSync(join(root, "tasks", "done"), { recursive: true });
+    writeFileSync(join(root, "tasks", "done", "old.md"), "---\ntitle: Old\nslug: old\ncreated: 2025-12-01T09:00:00.000Z\n---\n\n## Comments\n");
+    const [task] = await tasks.listTasks({});
+    expect(task?.createdAt).toBe("2025-12-01T09:00:00.000Z");
   });
 });
 

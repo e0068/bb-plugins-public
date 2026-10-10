@@ -10,7 +10,7 @@ import {
 } from "../../shared/enums.js";
 import type { ListFilterState } from "./filter-state.js";
 import { EMPTY_SEED, labelIdsByName, newTaskSeed } from "./new-task-seed.js";
-import { matchesFilters } from "./optimistic.js";
+import { matchesFilters } from "../../shared/task-fields.js";
 
 const PROJECT = "01HZZZZZZZZZZZZZZZZZZZZZP1";
 const OTHER = "01HZZZZZZZZZZZZZZZZZZZZZP2";

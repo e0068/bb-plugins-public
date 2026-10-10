@@ -96,8 +96,7 @@ export function assembleBoardTasks(
         startDate: file.task.startDate ?? null,
         parentTaskId: null, // resolved below, once every task has an id
         position: 0,
-        // From the filesystem, not from `created:`/`updated:` — almost no
-        // file carries those, every file has the times.
+        // The file's declared `created:` or its filesystem times (timestamps.ts).
         createdAt: file.createdAt,
         updatedAt: file.updatedAt,
         labelIds: [...(file.task.labels ?? [])],

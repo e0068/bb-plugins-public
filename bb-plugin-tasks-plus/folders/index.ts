@@ -65,6 +65,8 @@ function tursoFailure(error: TursoError, origin: TokenOrigin): FolderDomainError
       return { code: "turso_token_refused", message: REFUSED_TOKEN[origin] };
     case "unreachable":
       return { code: "turso_api_failed", message: "Turso cannot be reached." };
+    case "timeout":
+      return { code: "turso_api_failed", message: `Turso did not answer in ${Math.round(error.ms / 1000)} s — try again. If it made the database meanwhile, pick it from the list.` };
     case "name_taken":
       return { code: "turso_api_failed", message: "Turso has no free name for this database." };
     case "api":

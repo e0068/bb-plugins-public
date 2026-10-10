@@ -96,6 +96,24 @@ describe("Turso failures are values", () => {
     expect(await api.organization()).toEqual({ ok: false, error: { kind: "unreachable" } });
   });
 
+  it("a request Turso leaves unanswered gives up in the time given, as a timeout", async () => {
+    const silent = ((_url: string, init?: RequestInit) =>
+      new Promise((_, reject) => init?.signal?.addEventListener("abort", () => reject(init.signal!.reason)))) as typeof fetch;
+    const api = createTursoApi({ token: "t", fetch: silent, timeoutMs: 20 });
+    expect(await api.organization()).toEqual({ ok: false, error: { kind: "timeout", ms: 20 } });
+  });
+
+  it("a body Turso stops sending halfway gives up the same way", async () => {
+    const stalled = ((_url: string, init?: RequestInit) =>
+      Promise.resolve({
+        ok: true,
+        status: 200,
+        text: () => new Promise((_, reject) => init?.signal?.addEventListener("abort", () => reject(init.signal!.reason))),
+      })) as unknown as typeof fetch;
+    const api = createTursoApi({ token: "t", fetch: stalled, timeoutMs: 20 });
+    expect(await api.organization()).toEqual({ ok: false, error: { kind: "timeout", ms: 20 } });
+  });
+
   it("any other refusal is an api error with the text of the answer", async () => {
     const { api } = setup();
     const result = await api.createDatabase("me", "bb-tasks-tsk", "no-such-group");

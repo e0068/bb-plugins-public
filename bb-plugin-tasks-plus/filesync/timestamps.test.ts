@@ -43,3 +43,21 @@ describe("taskTimestamps", () => {
     }
   });
 });
+
+describe("taskTimestamps — the creation the file declares", () => {
+  const DECLARED = Date.UTC(2025, 11, 1, 9, 0, 0);
+
+  it("takes `created:` over a birth time that git rewrote on checkout", () => {
+    expect(taskTimestamps({ birthtimeMs: BORN, mtimeMs: CHANGED }, "2025-12-01T09:00:00.000Z").createdAt).toBe(new Date(DECLARED).toISOString());
+  });
+
+  it("reads a `created:` the YAML parser turned into a date", () => {
+    expect(taskTimestamps({ birthtimeMs: BORN, mtimeMs: CHANGED }, new Date(DECLARED)).createdAt).toBe(new Date(DECLARED).toISOString());
+  });
+
+  it("ignores a `created:` that is no date, or later than the last change", () => {
+    for (const declared of ["soon", 42, null, undefined, new Date(CHANGED + 1000).toISOString()]) {
+      expect(taskTimestamps({ birthtimeMs: BORN, mtimeMs: CHANGED }, declared).createdAt).toBe("2026-01-02T03:04:05.000Z");
+    }
+  });
+});

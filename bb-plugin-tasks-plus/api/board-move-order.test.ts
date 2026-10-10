@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync, utimesSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -60,13 +60,15 @@ async function setup() {
   return { tasks, harness };
 }
 
-/** Tasks A, B, C created a second apart, so unordered they list C, B, A. */
+/** Tasks A, B, C created a second apart — the `created:` each file declares — so unordered they list C, B, A. */
 async function seed(tasks: Awaited<ReturnType<typeof setup>>["tasks"]) {
   const made = [];
   for (const [index, title] of ["A", "B", "C"].entries()) {
     const task = await tasks.createTask({ projectId: BOARD.id, title, status: "todo" });
     const at = new Date(Date.UTC(2026, 8, 1, 0, 0, index));
-    utimesSync(task.source!.filePath, at, at);
+    const file = task.source!.filePath;
+    writeFileSync(file, readFileSync(file, "utf8").replace(/^created: .*$/m, `created: ${at.toISOString()}`));
+    utimesSync(file, at, at);
     made.push(task);
   }
   return made as [(typeof made)[0], (typeof made)[0], (typeof made)[0]];
