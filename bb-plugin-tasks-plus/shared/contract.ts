@@ -668,6 +668,17 @@ export const tileAnswerSchema = z
     total: z.number(),
     rows: z.array(tileRowSchema),
     figures: z.partialRecord(z.enum(FIGURES), z.number().nullable()),
+    /**
+     * On a «Big numbers» tile, what its sums are made of: how many closed
+     * tasks carry each sum, and the cost and budget of those carrying both.
+     */
+    sums: z
+      .object({
+        carriers: z.partialRecord(z.enum(FIGURES), z.number().int().nonnegative()),
+        paired: z.object({ cost: z.number(), budget: z.number() }).strict(),
+      })
+      .strict()
+      .optional(),
     projects: z.array(z.object({ id: z.string(), name: z.string() }).strict()),
     logStartMs: z.number().nullable(),
   })
@@ -1553,7 +1564,7 @@ export const tasksRpcContract = defineRpcContract({
   // One tile of the analytics screen over the client's column edges.
   analyticsTile: {
     input: z
-      .object({ tile: tileSchema, edges: columnEdgesSchema, projectIds: projectIdsSchema, picked: z.string().nullable() })
+      .object({ tile: tileSchema, edges: columnEdgesSchema, projectIds: projectIdsSchema, filters: savedViewFiltersSchema.optional(), picked: z.string().nullable() })
       .strict(),
     output: tileAnswerSchema,
   },
@@ -1565,6 +1576,7 @@ export const tasksRpcContract = defineRpcContract({
         tile: tileSchema,
         edges: columnEdgesSchema,
         projectIds: projectIdsSchema,
+        filters: savedViewFiltersSchema.optional(),
         picked: z.string().nullable(),
         pick: z.object({ column: z.number().int().min(0), series: z.string().nullable() }).strict().nullable(),
         sort: z.object({ column: queryFieldSchema, direction: z.enum(TABLE_SORT_DIRECTIONS) }).strict().nullable(),

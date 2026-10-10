@@ -17,7 +17,7 @@ import {
   type TextField,
   type ValueFilterField,
 } from "../../shared/enums.js";
-import { filterTarget, viewSortColumn, worktreeOf, type ColumnSort, type Range } from "../../shared/task-fields.js";
+import { activeFilterFields, filterTarget, viewSortColumn, worktreeOf, type ColumnSort, type Range } from "../../shared/task-fields.js";
 import { listAllTasks, useProjects, useSavedViews, useTasksQuery, useTasksRpc, type TasksRpc } from "../../client/data.js";
 import { useTasksNavigation } from "../../client/routes.js";
 import {
@@ -44,7 +44,7 @@ import {
 } from "../../components/task-meta.js";
 import { parentFilterOptions } from "../common/lib.js";
 import { slugOf } from "../../shared/format.js";
-import { activeFilterFields, EMPTY_FILTERS, hasActiveFilters, withFieldFilter } from "../common/filter-state.js";
+import { EMPTY_FILTERS, hasActiveFilters, withFieldFilter } from "../common/filter-state.js";
 import { storeListPreference, useListPreference } from "../common/list-preference.js";
 import { COARSE_POINTER_CHECK_SLOT_CLASS } from "@/components/ui/coarse-pointer-sizing";
 import { defaultConfig, normalizeFieldDisplay, ROW_FIELD_LABELS, SORT_FIELD_LABELS, useFieldDisplay } from "../common/row-field-preference.js";
@@ -865,7 +865,10 @@ export interface ViewToolbarProps {
   onToggleDisplay: () => void;
 }
 
-function ToolbarRow({ controls, compact, displayOpen, onToggleDisplay }: Omit<ViewToolbarProps, "target"> & { controls: ViewControls }) {
+/** A row's own props: a page without a Display panel passes no toggle and gets no Display button. */
+type RowProps = Pick<ViewToolbarProps, "compact"> & Partial<Pick<ViewToolbarProps, "displayOpen" | "onToggleDisplay">>;
+
+function ToolbarRow({ controls, compact, displayOpen, onToggleDisplay }: RowProps & { controls: ViewControls }) {
   const { projectId, filters, setFilters, sortChip, sortMenu, changes } = controls;
   // The chip whose value menu is open.
   const [openFacet, setOpenFacet] = useState<Facet | null>(null);
@@ -929,19 +932,30 @@ function ToolbarRow({ controls, compact, displayOpen, onToggleDisplay }: Omit<Vi
           setFilters(EMPTY_FILTERS);
         }}
       />
-      <Button
-        type="button"
-        variant="ghost"
-        size="icon"
-        aria-label="Display"
-        aria-pressed={displayOpen}
-        className={ICON_BUTTON_CLASS}
-        onClick={onToggleDisplay}
-      >
-        <Icon name="SlidersHorizontal" className="size-3.5" />
-      </Button>
+      {onToggleDisplay === undefined ? null : (
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon"
+          aria-label="Display"
+          aria-pressed={displayOpen}
+          className={ICON_BUTTON_CLASS}
+          onClick={onToggleDisplay}
+        >
+          <Icon name="SlidersHorizontal" className="size-3.5" />
+        </Button>
+      )}
     </>
   );
+}
+
+/**
+ * The filters of a page that is no list — Analytics: the same chips and the
+ * same Filter menu over every project's tasks, without Sort, Display or a
+ * view to save.
+ */
+export function PageFilters({ filters, onChange, compact }: { filters: SavedViewFilters; onChange: (filters: SavedViewFilters) => void; compact: boolean }) {
+  return <ToolbarRow compact={compact} controls={{ projectId: null, filters, setFilters: onChange, sortChip: null, sortMenu: null, changes: null }} />;
 }
 
 /** Which way a sort runs: up ascending, down descending. */

@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import type { Task } from "../../shared/contract.js";
 import { parentFilterOptions } from "./lib.js";
 import { idsUnder } from "../../shared/subtree.js";
-import { matchesFilters } from "./optimistic.js";
+import { matchesFilters } from "../../shared/task-fields.js";
 import { uniqueStrings, sanitizeListPreference } from "./list-preference.js";
 import { EMPTY_FILTERS, hasActiveFilters } from "./filter-state.js";
 

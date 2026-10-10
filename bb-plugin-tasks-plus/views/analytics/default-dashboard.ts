@@ -7,7 +7,9 @@ import { WINDOWS, type Window } from "@bb-plugins/analytics-viz/core/time-window
 import { weekBreaks, weekEdgesSince, type WeekBreak } from "@bb-plugins/analytics-viz/core/weeks";
 import { TILE_TITLE_MAX, type TileWindow } from "../../shared/analytics-tile.js";
 import type { Dashboard, Tile } from "../../shared/contract.js";
+import type { SavedViewFilters } from "../../shared/contract.js";
 import type { TileCondition } from "../../shared/tile-conditions.js";
+import { EMPTY_FILTERS } from "../common/filter-state.js";
 import { OPEN_STATUSES, type TaskStatus } from "../../shared/enums.js";
 import { dayEdges, hourEdges, unitEdges } from "./closed-model";
 
@@ -15,13 +17,21 @@ import { dayEdges, hourEdges, unitEdges } from "./closed-model";
 export const ANALYTICS_WINDOWS = [...WINDOWS, "all"] as const;
 export type AnalyticsWindow = (typeof ANALYTICS_WINDOWS)[number];
 
-/** What the screen is narrowed to: a cut and the projects picked in the header (none picked — all). */
+/** What the screen is narrowed to: a cut and the filters of the topbar, the same as a list's. */
 export interface AnalyticsFilter {
   window: AnalyticsWindow;
-  projectIds: readonly string[];
+  filters: SavedViewFilters;
 }
 
-export const DEFAULT_FILTER: AnalyticsFilter = { window: "week", projectIds: [] };
+export const DEFAULT_FILTER: AnalyticsFilter = { window: "week", filters: EMPTY_FILTERS };
+
+/** What a tile is asked over: the projects the Project filter picks — none, all — and every filter of the bar. */
+export interface TileScope {
+  projectIds: string[];
+  filters: SavedViewFilters;
+}
+
+export const tileScope = (filter: AnalyticsFilter): TileScope => ({ projectIds: [...(filter.filters.values?.project ?? [])], filters: filter.filters });
 
 const WEEK_DAYS = 7;
 

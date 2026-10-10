@@ -8,7 +8,9 @@ import type { SavedViewFilters, Task } from "./contract.js";
 import {
   ACTIVITY_VALUES,
   FIELD_FILTER_KINDS,
+  LISTED_FILTER_KEYS,
   MAIN_CHECKOUT,
+  QUERY_FIELDS,
   TASK_ESTIMATES,
   TASK_PRIORITIES,
   TASK_STATUSES,
@@ -25,6 +27,7 @@ import {
 } from "./enums.js";
 import { firstParagraph } from "./first-paragraph.js";
 import { slugOf } from "./format.js";
+import { idsUnder } from "./subtree.js";
 
 /** How a field is filtered — every field has a kind (FIELD_FILTER_KINDS). */
 export const fieldKind = (field: QueryField): FilterKind => FIELD_FILTER_KINDS[field];
@@ -307,7 +310,7 @@ const entries = <K extends string, V>(record: Partial<Record<K, V>>) =>
 
 /**
  * Whether a task passes the filters added after the first seven (statuses …
- * parents — see views/common/optimistic.ts): picked values, text, day and
+ * parents — see matchesFilters below): picked values, text, day and
  * number ranges. Every filter must hold; an empty one holds for any task.
  */
 export function matchesFieldFilters(task: Task, filters: SavedViewFilters, facts: TaskFacts): boolean {
@@ -325,3 +328,74 @@ export function matchesFieldFilters(task: Task, filters: SavedViewFilters, facts
     entries(filters.numbers ?? {}).every(([field, range]) => range === undefined || inRange(numberValue(field, task, facts), range))
   );
 }
+
+/**
+ * Whether a task survives the filter bar. Labels use the server's any-of
+ * semantics: a task matches if it carries at least one selected label id. Takes the filter state whole: the
+ * six positional lists this used to accept were all arrays of strings, and
+ * two more (assignees, parents) would have made a wrong argument order a
+ * defect types could not catch. Label ids and the tasks under the picked
+ * parents stay separate — they arrive already resolved, the ids from the
+ * names the state stores, the tasks from the tree (`idsUnder`); with no
+ * parent picked, nothing needs to lie under one. Every other field's filter
+ * reads what the task alone does not carry — agents, counts, names — from
+ * `facts`, which the surface builds from its own meta.
+ */
+export function matchesFilters(
+  task: Task,
+  filters: SavedViewFilters,
+  labelIds: readonly string[],
+  underParents: ReadonlySet<string> = new Set(),
+  facts: TaskFacts = EMPTY_FACTS,
+): boolean {
+  const inList = <T,>(list: readonly T[], value: T | null | undefined) =>
+    list.length === 0 || (value != null && list.includes(value));
+  return (
+    inList(filters.statuses, task.status) &&
+    inList(filters.priorities, task.priority) &&
+    (labelIds.length === 0 ||
+      task.labelIds.some((id) => labelIds.includes(id))) &&
+    inList(filters.types, task.type) &&
+    inList(filters.estimates, task.estimate) &&
+    inList(filters.assignees, task.assignee) &&
+    (filters.parents.length === 0 || underParents.has(task.id)) &&
+    matchesFieldFilters(task, filters, facts)
+  );
+}
+
+/**
+ * The tasks a filter bar keeps, resolved from the tasks alone: label names
+ * through `facts`, the picked parents through the tree of `tasks`. A label
+ * filter naming no known label keeps nothing, as on a board.
+ */
+export function tasksPassing(tasks: readonly Task[], filters: SavedViewFilters, facts: TaskFacts): Task[] {
+  const labelIds = [...facts.labelNames].filter(([, name]) => filters.labelNames.includes(name)).map(([id]) => id);
+  if (filters.labelNames.length > 0 && labelIds.length === 0) return [];
+  const underParents = idsUnder(tasks, filters.parents);
+  return tasks.filter((task) => matchesFilters(task, filters, labelIds, underParents, facts));
+}
+
+/** Whether the filter on one field narrows anything. */
+function fieldActive(filters: SavedViewFilters, field: QueryField): boolean {
+  const target = filterTarget(field);
+  switch (target.kind) {
+    case "listed":
+      return filters[LISTED_FILTER_KEYS[target.field]].length > 0;
+    case "values":
+      return (filters.values?.[target.field]?.length ?? 0) > 0;
+    case "text":
+      return (filters.texts?.[target.field] ?? "").trim() !== "";
+    case "date": {
+      const range = filters.dates?.[target.field];
+      return range !== undefined && rangeActive(range);
+    }
+    case "number": {
+      const range = filters.numbers?.[target.field];
+      return range !== undefined && rangeActive(range);
+    }
+  }
+}
+
+/** The fields a filter narrows, in the canonical field order — one chip each. */
+export const activeFilterFields = (filters: SavedViewFilters): QueryField[] =>
+  QUERY_FIELDS.filter((field) => fieldActive(filters, field));

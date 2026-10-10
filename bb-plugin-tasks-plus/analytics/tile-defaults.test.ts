@@ -65,7 +65,7 @@ describe("the default tiles on the small board", () => {
   });
 
   it("the figure tiles", () => {
-    expect(answer("work").figures).toMatchObject({ open: 3, in_progress: 1, in_review: 1, done: 2 });
+    expect(answer("work").figures).toMatchObject({ open: 5, in_progress: 4, in_review: 1, done: 2 });
     expect(answer("period").figures).toMatchObject({ created: 5, closed: 2, cycle: 3 * DAY });
     expect(answer("money").figures).toMatchObject({ cost: 14 });
   });

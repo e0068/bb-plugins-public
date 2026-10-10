@@ -1,6 +1,7 @@
 import fc from "fast-check";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
+import { EMPTY_FILTERS } from "../common/filter-state.js";
 import { dayEdges, hourEdges } from "./closed-model";
 import {
   ANALYTICS_WINDOWS,
@@ -39,7 +40,7 @@ describe("windowEdges — the columns each D/W/M cut is drawn in", () => {
 
 describe("defaultAnalyticsRows", () => {
   it("opens on the week cut across every project", () => {
-    expect(DEFAULT_FILTER).toEqual({ window: "week", projectIds: [] });
+    expect(DEFAULT_FILTER).toEqual({ window: "week", filters: EMPTY_FILTERS });
   });
 });
 

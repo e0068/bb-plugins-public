@@ -10,6 +10,7 @@ import { z } from "zod";
 export type TursoError =
   | { kind: "auth" }
   | { kind: "unreachable" }
+  | { kind: "timeout"; ms: number }
   | { kind: "name_taken" }
   | { kind: "api"; message: string };
 
@@ -34,6 +35,8 @@ const DEFAULT_GROUP = "default";
 const NAME_PREFIX = "bb-tasks-";
 const LAST_SUFFIX = 9;
 const HTTP_CONFLICT = 409;
+/** How long one request waits for Turso before it gives up. */
+export const TURSO_TIMEOUT_MS = 20_000;
 
 const organizationsSchema = z.array(z.object({ slug: z.string(), type: z.string() }));
 const groupsSchema = z.object({ groups: z.array(z.object({ name: z.string() })) });
@@ -94,13 +97,15 @@ function chain<A, B>(first: TursoResult<A>, next: (value: A) => Promise<TursoRes
   return first.ok ? next(first.value) : Promise.resolve(fail(first.error));
 }
 
-export function createTursoApi(options: { token: string; fetch?: typeof fetch }): TursoApi {
+export function createTursoApi(options: { token: string; fetch?: typeof fetch; timeoutMs?: number }): TursoApi {
+  const ms = options.timeoutMs ?? TURSO_TIMEOUT_MS;
   const send = async (url: string, init: RequestInit): Promise<Sent> => {
     const doFetch = options.fetch ?? globalThis.fetch;
+    const signal = AbortSignal.timeout(ms);
     try {
-      return await readJson(await doFetch(url, init));
+      return await readJson(await doFetch(url, { ...init, signal }));
     } catch {
-      return { ok: false, error: { kind: "unreachable" }, status: null };
+      return { ok: false, error: signal.aborted ? { kind: "timeout", ms } : { kind: "unreachable" }, status: null };
     }
   };
 

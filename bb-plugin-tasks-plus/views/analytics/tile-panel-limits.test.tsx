@@ -52,7 +52,8 @@ describe("TilePanel — what it lets through", () => {
   it("says what each figure counts", () => {
     panel(newTile("t", { type: "big", figures: [] }));
     expect(screen.getByRole("checkbox", { name: "Open tasks" })).toBeTruthy();
-    expect(screen.getByText("Backlog, to do, in progress and in review now")).toBeTruthy();
+    expect(screen.getByText("Tasks made or reopened within the chart's period")).toBeTruthy();
+    expect(screen.getByText("Costs of the tasks closed within the chart's period")).toBeTruthy();
     expect(screen.getByRole("checkbox", { name: "Closed in the period" })).toBeTruthy();
   });
 

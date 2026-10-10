@@ -20,19 +20,18 @@ import { clampToBounds, type ColumnWidthBounds } from "../../shared/board-column
 import { sortTasks } from "../../shared/sort.js";
 import {
   EMPTY_FACTS,
+  tasksPassing,
   viewSortColumn,
   type TaskFacts,
   type ViewSort,
 } from "../../shared/task-fields.js";
 import { moveInOrder } from "../../shared/manual-order.js";
-import { idsUnder } from "../../shared/subtree.js";
 import {
   ESTIMATE_LABELS,
   PRIORITY_LABELS,
   STATUS_LABELS,
   TYPE_LABELS,
 } from "../../components/task-meta.js";
-import { matchesFilters } from "../common/optimistic.js";
 
 /**
  * The pure core of the board: which columns it draws for a grouping, which
@@ -176,13 +175,8 @@ function passingTasks(
   labels: readonly Label[],
   facts: TaskFacts,
 ): Task[] {
-  const labelIds = labels
-    .filter((label) => filters.labelNames.includes(label.name))
-    .map((label) => label.id);
-  // A label filter naming no label of this project matches nothing, not everything.
-  if (filters.labelNames.length > 0 && labelIds.length === 0) return [];
-  const underParents = idsUnder(tasks, filters.parents);
-  return tasks.filter((task) => matchesFilters(task, filters, labelIds, underParents, facts));
+  // The labels the board offers name the filter's label ids; one naming no label of this project matches nothing.
+  return tasksPassing(tasks, filters, { ...facts, labelNames: new Map(labels.map((label) => [label.id, label.name])) });
 }
 
 /**

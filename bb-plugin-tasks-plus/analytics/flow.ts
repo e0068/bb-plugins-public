@@ -41,6 +41,17 @@ export const createdMs = (task: Task) => {
   return Number.isFinite(parsed) ? parsed : Number.NEGATIVE_INFINITY;
 };
 
+/**
+ * A task dated no later than its first recorded move. A file without a
+ * `created:` takes its date from the disk, and git rewrites that date on
+ * every checkout that touches the file; a move the log kept proves the task
+ * was there before it.
+ */
+export function datedByMoves(task: Task, moves: readonly StatusTransition[] | undefined): Task {
+  const first = moves?.[0]?.atMs;
+  return first !== undefined && first < createdMs(task) ? { ...task, createdAt: new Date(first).toISOString() } : task;
+}
+
 /** Middle of an ascending non-empty list; the mean of the two middles when even. */
 export const median = (sorted: readonly number[]) => {
   const middle = Math.floor(sorted.length / 2);

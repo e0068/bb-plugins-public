@@ -1,6 +1,7 @@
 import type { TaskStatus } from "../db/types.js";
 import type { RepoFile, RepoState } from "./task-repo.js";
 import { statusFromFolder } from "./map.js";
+import { createdFrom } from "./timestamps.js";
 import { parseTaskFile } from "./task-file.js";
 
 /**
@@ -39,14 +40,16 @@ export function taskFilePath(
 export function rowToRepoFile(url: string, row: TaskRow): RepoFile | null {
   const status = statusFromFolder(row.status);
   if (status === null) return null;
+  const parsed = parseTaskFile(row.content, status, row.slug);
   return {
-    ...parseTaskFile(row.content, status, row.slug),
+    ...parsed,
     assignee: row.assignee,
     epic: row.epic,
     filePath: taskFilePath(url, { status, slug: row.slug, assignee: row.assignee, epic: row.epic }),
     status,
     slug: row.slug,
-    createdAt: row.created_at,
+    // A board moved into the database got rows dated by the move; the text keeps when each task was made.
+    createdAt: createdFrom(parsed.frontmatter.created, row.created_at, Date.parse(row.updated_at)),
     updatedAt: row.updated_at,
     revision: row.version,
   };

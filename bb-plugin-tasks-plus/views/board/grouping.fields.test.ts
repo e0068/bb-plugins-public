@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import type { BoardGrouping, SavedViewFilters, Task } from "../../shared/contract.js";
 import { LIST_SORTS, QUERY_FIELDS } from "../../shared/enums.js";
 import { compareByField, factsOf, viewSortColumn, type ViewSort } from "../../shared/task-fields.js";
-import { matchesFilters } from "../common/optimistic.js";
+import { matchesFilters } from "../../shared/task-fields.js";
 import { boardColumns, canReorder } from "./grouping.js";
 
 const NO_FILTERS: SavedViewFilters = {

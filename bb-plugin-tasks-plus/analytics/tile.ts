@@ -14,16 +14,16 @@ import { TASK_ESTIMATES, TASK_PRIORITIES, TASK_STATUSES, TASK_TYPES } from "../d
 import type { TaskStatus } from "../db/types.js";
 import type { StatusTransition } from "../db/transition-log.js";
 import { CELL_KEYS_MAX, NONE_KEY, OTHER_KEY, SERIES_LIMIT, type Figure, type YMetric } from "../shared/analytics-tile.js";
-import type { Task, Tile, TileAnswer } from "../shared/contract.js";
+import type { SavedViewFilters, Task, Tile, TileAnswer } from "../shared/contract.js";
 import { ACTIVITY_VALUES, FIELD_FILTER_KINDS, MAIN_CHECKOUT, OPEN_STATUSES, type NumberField, type QueryField } from "../shared/enums.js";
 import { firstParagraph } from "../shared/first-paragraph.js";
 import { slugOf } from "../shared/format.js";
 import { planDateMs } from "../shared/plan-date.js";
-import { compareByField, numberValue, worktreeOf, type ColumnSort, type TaskFacts } from "../shared/task-fields.js";
+import { compareByField, numberValue, tasksPassing, worktreeOf, type ColumnSort, type TaskFacts } from "../shared/task-fields.js";
 import { matchesConditions } from "../shared/tile-conditions.js";
 import { snapshotOf } from "./aggregate.js";
 import { closedInBins, strictlyIncreasing, type ClosedEntry } from "./closed.js";
-import { ascending, columnEnds, columnOf, createdMs, cycleMs, inProjects, median, movesByTask, p90, planFact, sinceOf, statusBefore } from "./flow.js";
+import { ascending, columnEnds, columnOf, createdMs, cycleMs, datedByMoves, inProjects, median, movesByTask, p90, planFact, sinceOf, statusBefore } from "./flow.js";
 import { ganttRowsOf, type GanttRow } from "./gantt.js";
 
 export interface TileInput {
@@ -34,6 +34,8 @@ export interface TileInput {
   edges: readonly number[];
   /** Projects picked on the page; empty keeps every project. */
   projectIds: readonly string[];
+  /** The page's filter bar; none — every task. */
+  filters?: SavedViewFilters;
   /** The switch value picked on the tile; null — all of them. */
   picked: string | null;
   nowMs: number;
@@ -235,11 +237,14 @@ function canonicalRank(field: QueryField, input: TileInput): (key: string) => nu
   }
 }
 
+/** Whether a moment falls inside the window `[edges[0], edges[last])`; never, without columns. */
+const inWindowOf = (edges: readonly number[]) => (atMs: number) => edges.length >= 2 && columnOf(edges, atMs) >= 0;
+
 /** The events a measure reads, before any filter. */
 function eventsOf(input: TileInput, tasks: readonly Task[], moves: Map<string, StatusTransition[]>, edges: readonly number[]): TileEvent[] {
   const { tile } = input;
   const byId = new Map(tasks.map((task) => [task.id, task]));
-  const inWindow = (atMs: number) => edges.length >= 2 && columnOf(edges, atMs) >= 0;
+  const inWindow = inWindowOf(edges);
   const event = (task: Task, patch: Partial<TileEvent> = {}): TileEvent => ({ task, status: task.status, column: null, closing: null, tag: null, ...patch });
   const closings = () =>
     closedInBins(input.transitions, edges).flatMap((closing) => {
@@ -387,27 +392,51 @@ function rowsOf(input: TileInput, tasks: readonly Task[], moves: Map<string, Sta
   });
 }
 
-/** The figures of a «Big numbers» tile over its tasks and its window. */
-function figuresOf(input: TileInput, tasks: readonly Task[], moves: Map<string, StatusTransition[]>, edges: readonly number[]): Partial<Record<Figure, number | null>> {
-  if (input.tile.type !== "big") return {};
-  const snapshot = snapshotOf(tasks);
+/** The sums a «Big numbers» tile adds up, by the task field each reads. */
+const SUMMED = { planned: "plannedMinutes", actual: "actualMinutes", budget: "budget", cost: "cost", limit: "budgetLimit" } as const;
+
+/**
+ * The figures of a «Big numbers» tile over its tasks and its window: the
+ * statuses count the tasks that came into them inside the window — Open those
+ * made or reopened there — and time and money sum the tasks closed there.
+ * With them, what the sums are made of: how many closed tasks carry each one,
+ * and the cost and budget of the closed tasks carrying both — a cost set
+ * against the budget of tasks that never recorded one reads as a saving.
+ */
+function figuresOf(input: TileInput, tasks: readonly Task[], moves: Map<string, StatusTransition[]>, edges: readonly number[]): Pick<TileCore, "figures" | "sums"> {
+  if (input.tile.type !== "big") return { figures: {} };
+  const inWindow = inWindowOf(edges);
   const ids = new Set(tasks.map((task) => task.id));
-  const closings = closedInBins(input.transitions.filter((move) => ids.has(move.taskId)), edges);
+  const windowMoves = input.transitions.filter((move) => ids.has(move.taskId) && inWindow(move.atMs));
+  /** Tasks moved into one of `statuses` from outside them. */
+  const cameInto = (statuses: readonly string[]) =>
+    windowMoves.filter((move) => statuses.includes(move.toStatus) && !statuses.includes(move.fromStatus ?? "")).map((move) => move.taskId);
+  const created = tasks.filter((task) => inWindow(createdMs(task))).map((task) => task.id);
+  const closings = closedInBins(windowMoves, edges);
+  const closedIds = new Set(closings.map((closing) => closing.taskId));
+  const closedTasks = tasks.filter((task) => closedIds.has(task.id));
+  const closed = snapshotOf(closedTasks);
+  const paired = snapshotOf(closedTasks.filter((task) => task.cost !== null && (task.budget ?? 0) > 0));
   const spans = ascending(closings.flatMap((closing) => cycleMs(closing, moves.get(closing.taskId) ?? []) ?? []));
-  const window = edges.length >= 2 ? edges : [];
   return {
-    open: OPEN_STATUSES.reduce((total, status) => total + snapshot.byStatus[status], 0),
-    in_progress: snapshot.byStatus.in_progress,
-    in_review: snapshot.byStatus.in_review,
-    done: snapshot.byStatus.done,
-    created: tasks.filter((task) => window.length >= 2 && columnOf(window, createdMs(task)) >= 0).length,
-    closed: closings.length,
-    cycle: spans.length === 0 ? null : median(spans),
-    planned: snapshot.plannedMinutes,
-    actual: snapshot.actualMinutes,
-    budget: snapshot.budget,
-    cost: snapshot.cost,
-    limit: snapshot.budgetLimit,
+    figures: {
+      open: new Set([...created, ...cameInto(OPEN_STATUSES)]).size,
+      in_progress: new Set(cameInto(["in_progress"])).size,
+      in_review: new Set(cameInto(["in_review"])).size,
+      done: new Set(cameInto(["done"])).size,
+      created: created.length,
+      closed: closings.length,
+      cycle: spans.length === 0 ? null : median(spans),
+      planned: closed.plannedMinutes,
+      actual: closed.actualMinutes,
+      budget: closed.budget,
+      cost: closed.cost,
+      limit: closed.budgetLimit,
+    },
+    sums: {
+      carriers: Object.fromEntries(Object.entries(SUMMED).map(([figure, field]) => [figure, closedTasks.filter((task) => task[field] !== null).length])),
+      paired: { cost: paired.cost, budget: paired.budget },
+    },
   };
 }
 
@@ -425,8 +454,10 @@ export interface GridPick {
 function tileGrid(input: TileInput) {
   const { tile, facts } = input;
   const edges = input.edges.length >= 2 && strictlyIncreasing(input.edges) ? input.edges : [];
-  const tasks = input.tasks.filter((task) => inProjects(input.projectIds, task.projectId));
   const moves = movesByTask(input.transitions.filter((move) => inProjects(input.projectIds, move.projectId)));
+  // Dated first, so a filter on Created reads the same creation the figures count.
+  const dated = input.tasks.filter((task) => inProjects(input.projectIds, task.projectId)).map((task) => datedByMoves(task, moves.get(task.id)));
+  const tasks = input.filters === undefined ? dated : tasksPassing(dated, input.filters, facts);
   const kept = eventsOf({ ...input, tasks }, tasks, moves, edges).filter((entry) =>
     matchesConditions({ ...entry.task, status: entry.status }, tile.conditions, facts),
   );
@@ -526,7 +557,7 @@ export function tileAnswer(input: TileInput): TileCore {
     switchValues,
     total: shownTasks.length,
     rows: rowsOf(input, currentTasks, moves, edges),
-    figures: figuresOf(input, currentTasks, moves, edges),
+    ...figuresOf(input, currentTasks, moves, edges),
   };
 }
 

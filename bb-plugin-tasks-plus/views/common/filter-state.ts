@@ -2,14 +2,13 @@
 import type { SavedViewFilters } from "../../shared/contract.js";
 import {
   LISTED_FILTER_KEYS,
-  QUERY_FIELDS,
   type DateField,
   type NumberField,
   type QueryField,
   type TextField,
   type ValueFilterField,
 } from "../../shared/enums.js";
-import { filterTarget, rangeActive, type Range } from "../../shared/task-fields.js";
+import { activeFilterFields, filterTarget, rangeActive, type Range } from "../../shared/task-fields.js";
 
 /**
  * The filter bar's state: the first seven filters by their own keys, every
@@ -28,31 +27,6 @@ export const EMPTY_FILTERS: ListFilterState = {
   assignees: [],
   parents: [],
 };
-
-/** Whether the filter on one field narrows anything. */
-function fieldActive(filters: ListFilterState, field: QueryField): boolean {
-  const target = filterTarget(field);
-  switch (target.kind) {
-    case "listed":
-      return filters[LISTED_FILTER_KEYS[target.field]].length > 0;
-    case "values":
-      return (filters.values?.[target.field]?.length ?? 0) > 0;
-    case "text":
-      return (filters.texts?.[target.field] ?? "").trim() !== "";
-    case "date": {
-      const range = filters.dates?.[target.field];
-      return range !== undefined && rangeActive(range);
-    }
-    case "number": {
-      const range = filters.numbers?.[target.field];
-      return range !== undefined && rangeActive(range);
-    }
-  }
-}
-
-/** The fields a filter narrows, in the canonical field order — one chip each. */
-export const activeFilterFields = (filters: ListFilterState): QueryField[] =>
-  QUERY_FIELDS.filter((field) => fieldActive(filters, field));
 
 export const hasActiveFilters = (filters: ListFilterState): boolean => activeFilterFields(filters).length > 0;
 

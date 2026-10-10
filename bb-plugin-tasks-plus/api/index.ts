@@ -6,7 +6,7 @@ import { segmentTasks, tileAnswer } from "../analytics/tile.js";
 import { isWorkingThread } from "../shared/thread-activity.js";
 import { checkColumnWidthBounds, COLUMN_WIDTH_BOUNDS_KV_KEY, parseColumnWidthBounds } from "../shared/board-column-width.js";
 import { parseReducedProjects, REDUCED_PROJECTS_KV_KEY } from "../shared/reduced-projects.js";
-import { factsOf, type TaskFacts } from "../shared/task-fields.js";
+import { activeFilterFields, factsOf, type TaskFacts } from "../shared/task-fields.js";
 import { descendantsOf } from "../shared/subtree.js";
 import { hostname } from "node:os";
 import {
@@ -45,6 +45,7 @@ import {
   ALL_TIME,
   parseDashboard,
   tasksRpcContract,
+  type SavedViewFilters,
   type Tile,
   type Attachment as AttachmentMetadata,
   type Project,
@@ -739,16 +740,23 @@ export const ANALYTICS_DASHBOARD_KV_KEY = "analytics:dashboard";
 /** Fields whose values live outside the task: agents on it and its attachments, read from the card meta. */
 const CARD_META_FIELDS: ReadonlySet<string> = new Set(["active", "attachments"]);
 
-/** Whether a tile reads a field only the card meta knows — the meta is read only then. */
-function readsCardMeta(tile: Tile): boolean {
-  const named = [tile.x, tile.breakdown, tile.switch, tile.sort?.by, tile.y.field, ...tile.conditions.map((condition) => condition.field)];
+/** Whether a tile, or the page's filters over it, read a field only the card meta knows — the meta is read only then. */
+function readsCardMeta(tile: Tile, filters: SavedViewFilters | undefined): boolean {
+  const filtered = filters === undefined ? [] : activeFilterFields(filters);
+  const named = [tile.x, tile.breakdown, tile.switch, tile.sort?.by, tile.y.field, ...tile.conditions.map((condition) => condition.field), ...filtered];
   return named.some((field) => field != null && CARD_META_FIELDS.has(field));
 }
 
 /** What a tile's fields read beyond the task: names of projects, labels and tasks, the sub-task counts, and the card meta when the tile needs it. */
-async function tileFacts(store: TasksApiStore, tile: Tile, tasks: readonly Task[], projects: readonly { id: string; name: string }[]): Promise<TaskFacts> {
+async function tileFacts(
+  store: TasksApiStore,
+  tile: Tile,
+  filters: SavedViewFilters | undefined,
+  tasks: readonly Task[],
+  projects: readonly { id: string; name: string }[],
+): Promise<TaskFacts> {
   const labels = (await Promise.all(projects.map((project) => unlessOutOfReach(store.tasks.listLabels(project.id), [])))).flat();
-  const cards = readsCardMeta(tile) ? await store.tasks.taskCardMeta(tasks.map((task) => task.id)) : [];
+  const cards = readsCardMeta(tile, filters) ? await store.tasks.taskCardMeta(tasks.map((task) => task.id)) : [];
   return factsOf({
     projectNames: new Map(projects.map((project) => [project.id, project.name])),
     taskKeys: new Map(tasks.map((task) => [task.id, task.key])),
@@ -1452,9 +1460,10 @@ export function registerHandlers(
           transitions: store.transitions.range(Number.MIN_SAFE_INTEGER, nowMs + 1),
           edges: input.edges,
           projectIds: input.projectIds ?? [],
+          ...(input.filters === undefined ? {} : { filters: input.filters }),
           picked: input.picked,
           nowMs,
-          facts: await tileFacts(store, input.tile, tasks, projects),
+          facts: await tileFacts(store, input.tile, input.filters, tasks, projects),
         }),
         projects,
         logStartMs: store.transitions.firstAtMs(),
@@ -1471,9 +1480,10 @@ export function registerHandlers(
           transitions: store.transitions.range(Number.MIN_SAFE_INTEGER, nowMs + 1),
           edges: input.edges,
           projectIds: input.projectIds ?? [],
+          ...(input.filters === undefined ? {} : { filters: input.filters }),
           picked: input.picked,
           nowMs,
-          facts: await tileFacts(store, input.tile, tasks, projects),
+          facts: await tileFacts(store, input.tile, input.filters, tasks, projects),
         },
         input.pick,
         input.sort,

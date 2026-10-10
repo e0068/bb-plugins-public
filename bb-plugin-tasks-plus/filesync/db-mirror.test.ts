@@ -55,6 +55,11 @@ describe("a database row read as a task file", () => {
     });
   });
 
+  it("dates the task by the `created:` its text keeps, not by when the row came into the database", () => {
+    const content = renderTaskFile({ title: "Old" }, "old", [], { created: "2026-08-01T09:00:00.000Z" });
+    expect(rowToRepoFile(URL_, row("old", { content }))?.createdAt).toBe("2026-08-01T09:00:00.000Z");
+  });
+
   it("lives at a path the store can turn back into the board's address", () => {
     const placements = [
       { assignee: null, epic: null },
