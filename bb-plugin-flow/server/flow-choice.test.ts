@@ -144,3 +144,29 @@ describe("«Отменить flow»", () => {
     expect(threads.pickedOf(THREAD)).toBeUndefined();
   });
 });
+
+describe("flow треда для страницы Flow", () => {
+  it("тред, идущий flow, отдаёт его", async () => {
+    const { threads, call } = await host();
+    await threads.assign(THREAD, "flow-bug");
+    expect(await call("threadFlow", {})).toEqual({ flowId: "flow-bug" });
+  });
+
+  it("завершённый прогон не отнимает у треда его flow", async () => {
+    const { bb, harness } = createFakePluginHost({ pluginId: "flow" });
+    const flows = await createFlowSettings(bb.storage.kv);
+    const threads = await createThreadFlows(bb.storage.kv);
+    registerFlowChoice(bb, { flows, threads, progress: createProgress(bb.storage.kv), store: createStore(bb.storage.kv), cancelRun: () => undefined, finished: async () => true });
+    const flowId = flows.current().flows[0]!.id;
+    await threads.assign(THREAD, flowId);
+    expect(await harness.callRpc("threadFlow", { threadId: THREAD })).toEqual({ flowId });
+  });
+
+  it("без своего flow — «Автоматически», отказ агента, «Без flow», удалённый flow — null", async () => {
+    const { threads, call } = await host();
+    for (const flowId of [AUTO_FLOW, AGENT_NO_FLOW, NO_FLOW, "flow-gone"]) {
+      await threads.assign(THREAD, flowId);
+      expect(await call("threadFlow", {})).toEqual({ flowId: null });
+    }
+  });
+});

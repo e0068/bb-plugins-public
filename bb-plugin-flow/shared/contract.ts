@@ -1247,6 +1247,14 @@ export const flowChoiceRpcContract = defineRpcContract({
   },
 });
 
+/** Flow, которым идёт или шёл тред, — для страницы Flow с «Show the selected thread»; завершённый прогон его не отнимает. null — своего flow нет: «Автоматически», отказ агента, «Без flow», удалённый flow. */
+export const threadFlowRpcContract = defineRpcContract({
+  threadFlow: {
+    input: z.object({ threadId: text }),
+    output: z.object({ flowId: text.nullable() }),
+  },
+});
+
 export const flowPickerRpcContract = defineRpcContract({
   getFlowChoice: {
     input: z.object({ projectId: text }),

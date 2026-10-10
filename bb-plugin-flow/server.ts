@@ -3,6 +3,7 @@
 import { randomBytes } from "node:crypto";
 import { homedir } from "node:os";
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
+import { railCollapseSetting, selectedThreadSetting } from "@bb-plugins/rail-collapse/setting";
 
 import { createSteps } from "@bb-plugins/automation-steps/index";
 import { failureInstructionOf, retryPolicyOf, wakesAgentAfterLastRetry } from "./core/automation-run";
@@ -75,6 +76,8 @@ export default async function plugin(bb: BbPluginApi): Promise<void> {
     [LANGUAGE_SETTING]: { type: "select", label: "Language", description: "Language of the brief, the settings page and the answer sent to the thread. System follows the browser language.", options: [...LANGUAGE_OPTIONS], default: LANGUAGE_SYSTEM },
     ...contextSettings(() => storedContext),
     ...compactPreselectSetting,
+    ...railCollapseSetting,
+    ...selectedThreadSetting("the flow"),
   });
   storedContext = await settings.get();
   settings.onChange((next) => { storedContext = next; });
