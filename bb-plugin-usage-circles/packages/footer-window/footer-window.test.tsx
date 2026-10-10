@@ -1,9 +1,13 @@
 // @vitest-environment jsdom
 import { act, cleanup, fireEvent, render } from "@testing-library/react";
+import { step, type WindowEvent, type WindowState } from "./core";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   HOVER_LEAVE_MS,
+  presentFooterWindow,
+  releaseFooterWindow,
+  dismissFooterWindow,
   registerFooterWindow,
   resetFooterWindowsForTests,
   setOpenOnHover,
@@ -71,6 +75,25 @@ const pinA = () => {
   fireEvent.mouseOver(button("A"));
   togglePin({ pluginId: "p", itemId: "a" });
 };
+
+describe("dismissing from outside", () => {
+  it("closes a pinned window whose item leaves the footer and forgets its pin, so it does not come back", () => {
+    pinA();
+    dismissFooterWindow({ pluginId: "p", itemId: "a" });
+    expect(a.calls).toEqual(["open", "close"]);
+    fireEvent.mouseOver(button("B"));
+    leave();
+    expect(a.calls).toEqual(["open", "close"]);
+    expect(b.calls).toEqual(["open", "close"]);
+  });
+
+  it("leaves another item's window as it is", () => {
+    pinA();
+    dismissFooterWindow({ pluginId: "p", itemId: "b" });
+    leave();
+    expect(a.calls).toEqual(["open"]);
+  });
+});
 
 describe("hover", () => {
   it("opens the window of an item whose plugin opens on hover", () => {
@@ -180,25 +203,92 @@ describe("pin", () => {
     expect(a.calls).toEqual(["open", "open"]);
   });
 
-  it("a click on the pinned item reaches bb, which closes it, and the pin is gone", () => {
+  it("a click on the pinned item never reaches bb and keeps the pin", () => {
     const host = vi.fn();
     button("A").addEventListener("click", host);
     pinA();
     fireEvent.click(button("A"));
-    expect(host).toHaveBeenCalledOnce();
+    expect(host).not.toHaveBeenCalled();
     fireEvent.mouseOver(button("B"));
     leave();
-    expect(b.calls).toEqual(["open", "close"]);
-    expect(a.calls).toEqual(["open"]);
+    expect(b.calls).toEqual(["open"]);
+    expect(a.calls).toEqual(["open", "open"]);
   });
 
-  it("Escape forgets the pinned window", () => {
+  it("Escape keeps the pin: once bb has closed the window, it comes back", () => {
     pinA();
     fireEvent.keyDown(document, { key: "Escape" });
+    section().remove();
+    act(() => void vi.advanceTimersByTime(0));
+    expect(a.calls).toEqual(["open", "open"]);
+  });
+
+  it("Escape over the pinned window brings the pinned one back once bb has closed the hovered one", () => {
+    pinA();
+    fireEvent.mouseOver(button("C"));
+    fireEvent.keyDown(document, { key: "Escape" });
+    expect(a.calls).toEqual(["open"]);
+    section().remove();
+    act(() => void vi.advanceTimersByTime(0));
+    expect(a.calls).toEqual(["open", "open"]);
+  });
+
+  it("the pinned window waits while another window of bb's footer is open, and comes back when it closes", async () => {
+    pinA();
+    fireEvent.keyDown(document, { key: "Escape" });
+    section().remove();
+    document.querySelector('[data-sidebar="footer"]')!.insertAdjacentHTML("afterbegin", `<section id="plugin-sidebar-footer-disclosure-x-y-1"></section>`);
+    act(() => void vi.advanceTimersByTime(0));
+    expect(a.calls).toEqual(["open"]);
+    document.getElementById("plugin-sidebar-footer-disclosure-x-y-1")!.remove();
+    await act(async () => undefined);
+    expect(a.calls).toEqual(["open", "open"]);
+  });
+
+  it("a pinned window waits for a footer bb draws anew", async () => {
+    pinA();
+    fireEvent.keyDown(document, { key: "Escape" });
+    const footer = document.querySelector('[data-sidebar="footer"]')!;
+    const fresh = footer.cloneNode(true) as HTMLElement;
+    footer.replaceWith(fresh);
+    act(() => void vi.advanceTimersByTime(0));
+    expect(a.calls).toEqual(["open"]);
+    fresh.querySelector("section")!.remove();
+    await act(async () => undefined);
+    expect(a.calls).toEqual(["open", "open"]);
+  });
+
+  it("a pinned window that does not come back — its plugin turned off — is forgotten, so hovering works again", () => {
+    pinA();
+    fireEvent.keyDown(document, { key: "Escape" });
+    section().remove();
+    act(() => void vi.advanceTimersByTime(0));
+    act(() => void vi.advanceTimersByTime(1000));
     fireEvent.mouseOver(button("B"));
     leave();
     expect(b.calls).toEqual(["open", "close"]);
-    expect(a.calls).toEqual(["open"]);
+  });
+
+  it("a pinned window waits out Customize footer, which hides the row, instead of being forgotten", () => {
+    pinA();
+    fireEvent.keyDown(document, { key: "Escape" });
+    section().remove();
+    document.querySelector('[data-sidebar="menu"]')!.classList.add("hidden");
+    act(() => void vi.advanceTimersByTime(0));
+    act(() => void vi.advanceTimersByTime(1000));
+    fireEvent.mouseOver(button("B"));
+    leave();
+    expect(b.calls).toEqual(["open"]);
+  });
+
+  it("a pinned window a plugin reload closed opens again through the item's new controller", () => {
+    pinA();
+    fireEvent.keyDown(document, { key: "Escape" });
+    section().remove();
+    act(() => void vi.advanceTimersByTime(0));
+    const reloaded = fakeController();
+    registerFooterWindow({ pluginId: "p", itemId: "a", label: "A" }, reloaded);
+    expect(reloaded.calls).toEqual(["open"]);
   });
 });
 
@@ -223,6 +313,19 @@ describe("withFooterWindow", () => {
     expect(section().style.borderRadius).toBe("0px");
     expect(section().style.background).toBe("transparent");
     expect(frame().style.maxHeight).not.toBe("");
+  });
+
+  it("spans the sidebar edge to edge over BB's footer padding, so the pin sits as far from the panel's edge as from the line", () => {
+    document.querySelector<HTMLElement>('[data-sidebar="footer"]')!.style.padding = "8px";
+    show();
+    expect(section().style.marginLeft).toBe("-8px");
+    expect(section().style.marginRight).toBe("-8px");
+  });
+
+  it("gives BB its margins back when the window unmounts", () => {
+    document.querySelector<HTMLElement>('[data-sidebar="footer"]')!.style.padding = "8px";
+    show().unmount();
+    expect(section().style.marginLeft).toBe("");
   });
 
   it("shows the resize handle only on a pinned window", () => {
@@ -305,14 +408,13 @@ describe("withFooterWindow", () => {
     expect(b.calls).toEqual(["open", "close"]);
   });
 
-  it("a pinned window closed by someone else is forgotten, so leaving another item does not bring it back", () => {
+  it("a pinned window closed by someone else keeps the pin and comes back once bb's footer is free", () => {
     const view = show();
     act(pin);
     view.unmount();
-    fireEvent.mouseOver(button("C"));
-    leave();
-    expect(a.calls).toEqual(["open"]);
-    expect(c.calls).toEqual(["open", "close"]);
+    section().remove();
+    act(() => void vi.advanceTimersByTime(0));
+    expect(a.calls).toEqual(["open", "open"]);
   });
 
   it("the pinned window unmounting because a hovered one replaced it keeps the pin", () => {
@@ -384,6 +486,20 @@ describe("window header", () => {
     expect(view.getByRole("link", { name: "Settings" }).getAttribute("href")).toBe("/settings/plugins/p");
   });
 
+  it("sets the title in the 12 px medium type of the sidebar's footer, not a bold heading", () => {
+    const title = show().getByRole("heading");
+    expect(title.style.fontSize).toBe("12px");
+    expect(title.style.fontWeight).toBe("500");
+  });
+
+  it("a count given as words stays whole next to a long title", () => {
+    const Worded = withFooterWindow(() => <FooterWindow title="A very long thread title that will not fit" count="3 queued" />, { pluginId: "p", itemId: "a" });
+    const view = render(<Worded dismiss={() => undefined} />, { container: document.getElementById("mount")! });
+    const count = view.getByText("3 queued");
+    expect(view.getByRole("heading").contains(count)).toBe(false);
+    expect(count.style.flexShrink).toBe("0");
+  });
+
   it("the pin pins a hovered window, so leaving keeps it, and a second press unpins it", () => {
     fireEvent.mouseOver(button("A"));
     const view = show();
@@ -393,6 +509,19 @@ describe("window header", () => {
     fireEvent.click(view.getByRole("button", { name: "Unpin" }));
     leave();
     expect(a.calls).toEqual(["open", "close"]);
+  });
+
+  it("the pinned pin is its own glyph filled in the text color, with no background under it", () => {
+    fireEvent.mouseOver(button("A"));
+    const view = show();
+    const pin = () => view.getByRole("button", { name: /^(Pin|Unpin)$/ });
+    const filled = () => Array.from(pin().querySelectorAll("path")).some((path) => path.getAttribute("fill") === "currentColor");
+    expect(filled()).toBe(false);
+    fireEvent.click(pin());
+    fireEvent.pointerLeave(pin());
+    expect(filled()).toBe(true);
+    expect(pin().style.background).toBe("transparent");
+    expect(pin().style.color).toBe("var(--foreground)");
   });
 });
 
@@ -449,5 +578,114 @@ describe("unpinning a window held before", () => {
     rect.mockReturnValue({ height: 400 } as DOMRect);
     fireEvent.click(view.getByRole("button", { name: "Unpin" }));
     expect(frame().style.height).toBe("400px");
+  });
+});
+
+describe("presenting", () => {
+  const A = { pluginId: "p", itemId: "a" } as const;
+  const Window = withFooterWindow(() => <FooterWindow title="Alpha" />, A);
+  const show = () => render(<Window dismiss={() => undefined} />, { container: document.getElementById("mount")! });
+
+  it("opens the window by itself and keeps it when the pointer moves away; release closes it", () => {
+    presentFooterWindow(A);
+    leave();
+    expect(a.calls).toEqual(["open"]);
+    releaseFooterWindow(A);
+    expect(a.calls).toEqual(["open", "close"]);
+  });
+
+  it("a window another plugin pinned comes back when reading ends", () => {
+    setOpenOnHover("q", true);
+    fireEvent.mouseOver(button("C"));
+    togglePin({ pluginId: "q", itemId: "c" });
+    presentFooterWindow(A);
+    releaseFooterWindow(A);
+    expect(a.calls).toEqual(["open"]);
+    expect(c.calls).toEqual(["open", "open"]);
+  });
+
+  it("hovering another item over it shows that one, leaving brings the presented window back", () => {
+    presentFooterWindow(A);
+    fireEvent.mouseOver(button("C"));
+    leave();
+    expect(c.calls).toEqual(["open"]);
+    expect(a.calls).toEqual(["open", "open"]);
+  });
+
+  it("the header shows it unpinned; the pin keeps it open after release", () => {
+    presentFooterWindow(A);
+    const view = show();
+    fireEvent.click(view.getByRole("button", { name: "Pin" }));
+    expect(view.getByRole("button", { name: "Unpin" })).toBeTruthy();
+    releaseFooterWindow(A);
+    leave();
+    expect(a.calls).toEqual(["open"]);
+  });
+
+  it("closed meanwhile with Escape, it stays closed at release", () => {
+    presentFooterWindow(A);
+    fireEvent.keyDown(document, { key: "Escape" });
+    releaseFooterWindow(A);
+    expect(a.calls).toEqual(["open"]);
+  });
+
+  it("closed by bb over a pinned window, it lets the pinned one come back, and release then does nothing", () => {
+    fireEvent.mouseOver(button("C"));
+    togglePin({ pluginId: "q", itemId: "c" });
+    presentFooterWindow(A);
+    fireEvent.keyDown(document, { key: "Escape" });
+    section().remove();
+    act(() => void vi.advanceTimersByTime(0));
+    expect(c.calls).toEqual(["open", "open"]);
+    releaseFooterWindow(A);
+    expect(a.calls).toEqual(["open"]);
+    expect(c.calls).toEqual(["open", "open"]);
+  });
+});
+
+describe("presenting under an older copy's listeners", () => {
+  const A = { pluginId: "p", itemId: "a" } as const;
+  const Window = withFooterWindow(() => <FooterWindow title="Alpha" />, A);
+  const show = () => render(<Window dismiss={() => undefined} />, { container: document.getElementById("mount")! });
+  /** An older copy of the package handles a document event: it steps the shared state and knows nothing of `presented`. */
+  const oldCopy = (event: WindowEvent) => {
+    const r = (globalThis as Record<symbol, { state: WindowState }>)[Symbol.for("bb-plugins.footer-window.v1")]!;
+    r.state = step(r.state, event).state;
+  };
+
+  it("a window closed by the old copy and pinned again by the user shows pinned and stays after release", () => {
+    presentFooterWindow(A);
+    oldCopy({ kind: "click", key: "p/a" });
+    oldCopy({ kind: "hover", key: "p/a" });
+    const view = show();
+    act(() => togglePin(A));
+    expect(view.getByRole("button", { name: "Unpin" })).toBeTruthy();
+    releaseFooterWindow(A);
+    expect(a.calls).toEqual(["open"]);
+  });
+});
+
+describe("presenting and focus", () => {
+  it("closing at release leaves focus in the field the user types in", () => {
+    const A = { pluginId: "p", itemId: "a" } as const;
+    const field = document.createElement("textarea");
+    away().append(field);
+    presentFooterWindow(A);
+    field.focus();
+    releaseFooterWindow(A);
+    // BB hands focus to the item's button after a close.
+    button("A").focus();
+    expect(document.activeElement).toBe(field);
+  });
+
+  it("a presented window shows no resize handle until the user pins it", () => {
+    const A = { pluginId: "p", itemId: "a" } as const;
+    const Window = withFooterWindow(() => <FooterWindow title="Alpha" />, A);
+    render(<Window dismiss={() => undefined} />, { container: document.getElementById("mount")! });
+    act(() => presentFooterWindow(A));
+    const handle = () => document.querySelector<HTMLElement>("[data-footer-window-handle]")!;
+    expect(handle().style.display).toBe("none");
+    act(() => togglePin(A));
+    expect(handle().style.display).toBe("block");
   });
 });

@@ -1,9 +1,10 @@
 // @vitest-environment jsdom
 import { act, cleanup, render } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
-import { publishRingStyle, publishUsage, providerPanel, ringIcon } from "./footer-items";
+import { presentFooterWindow, registerFooterWindow, resetFooterWindowsForTests } from "@bb-plugins/footer-window";
+import { allLimitsIcon, allLimitsPanel, FooterPlacement, publishLayout, publishLimits, publishRingStyle, publishUsage, providerPanel, ringIcon } from "./footer-items";
 import { DEFAULT_RING_DIMS, DEFAULT_RING_STYLE, type RingStyle } from "./ring-style";
-import { DEFAULT_COLORING, FOOTER_RINGS, type StateWire } from "./usage-model";
+import { DEFAULT_COLORING, DEFAULT_LIMITS, FOOTER_RINGS, moveLimit, toggleLimit, type StateWire } from "./usage-model";
 
 const ring = (id: string) => FOOTER_RINGS.find((candidate) => candidate.id === id)!;
 
@@ -27,6 +28,8 @@ const STATE: StateWire = {
     { id: "codex", title: "Codex", logoUrl: "/codex", tint: null, usage: { status: "unauthenticated" } },
   ],
   ring: DEFAULT_RING_STYLE,
+  layout: "list",
+  limits: DEFAULT_LIMITS,
 };
 
 const CORNER: RingStyle = { logo: "corner", dims: DEFAULT_RING_DIMS };
@@ -150,7 +153,7 @@ describe("provider panel", () => {
     const view = render(<Panel dismiss={() => {}} />);
     act(() => publishUsage(STATE));
     const marked = Array.from(view.container.querySelectorAll<HTMLElement>(".usage-circles__window-row")).filter((row) => row.dataset.highlighted === "true");
-    expect(marked.map((row) => row.textContent)).toEqual([expect.stringContaining("Current week")]);
+    expect(marked.map((row) => row.textContent)).toEqual([expect.stringContaining("7 days")]);
   });
 
   it("says why a signed-out provider has nothing to show", () => {
@@ -158,5 +161,113 @@ describe("provider panel", () => {
     const view = render(<Panel dismiss={() => {}} />);
     act(() => publishUsage(STATE));
     expect(view.container.querySelector(".usage-circles__status")?.textContent).not.toBe("");
+  });
+});
+
+describe("the chosen limits and layout", () => {
+  const rows = (container: HTMLElement) => Array.from(container.querySelectorAll(".usage-circles__window-row")).map((row) => row.textContent);
+
+  it("shows only the chosen limits of the provider, in the chosen order", () => {
+    const Panel = providerPanel("claude-code", "session");
+    const view = render(<Panel dismiss={() => {}} />);
+    act(() => publishUsage({ ...STATE, limits: moveLimit(DEFAULT_LIMITS, "claude-weekly", -1) }));
+    expect(rows(view.container)).toEqual([expect.stringContaining("7 days"), expect.stringContaining("5 hour")]);
+    act(() => publishLimits(toggleLimit(DEFAULT_LIMITS, "claude-weekly")));
+    expect(rows(view.container)).toEqual([expect.stringContaining("5 hour")]);
+  });
+
+  it("still shows a limit no ring stands for, after the chosen ones", () => {
+    const Panel = providerPanel("claude-code", "session");
+    const view = render(<Panel dismiss={() => {}} />);
+    const claude = STATE.providers[0]!;
+    const windows = [
+      { label: "Current session", usedPercent: 12, resetsAt: null },
+      { label: "Current week (all models)", usedPercent: 95, resetsAt: null },
+      { label: "Current week (Sonnet)", usedPercent: 40, resetsAt: null },
+    ];
+    act(() => publishUsage({ ...STATE, providers: [{ ...claude, usage: { status: "ok", windows } }], limits: toggleLimit(DEFAULT_LIMITS, "claude-weekly") }));
+    expect(rows(view.container)).toEqual([expect.stringContaining("5 hour"), expect.stringContaining("Sonnet")]);
+  });
+
+  it("hides the rings of the limits switched off, in the list and grid layouts", () => {
+    const style = render(<FooterPlacement layout="list" limits={toggleLimit(DEFAULT_LIMITS, "codex-weekly")} />).container.querySelector("style")?.textContent ?? "";
+    expect(style).toContain("plugin:usage-circles/codex-weekly");
+    expect(style).not.toContain("plugin:usage-circles/codex-session");
+  });
+
+  it("closes the window of an item the layout hides, and forgets its pin", () => {
+    const controller = { calls: [] as string[], open() { this.calls.push("open"); }, close() { this.calls.push("close"); }, toggle() {} };
+    const item = { pluginId: "usage-circles", itemId: "claude-session" };
+    registerFooterWindow({ ...item, label: "Claude Code — 5-hour limit" }, controller);
+    presentFooterWindow(item);
+    render(<FooterPlacement layout="all" limits={DEFAULT_LIMITS} />);
+    expect(controller.calls).toEqual(["open", "close"]);
+    resetFooterWindowsForTests();
+  });
+
+  it("shows the windows in a new layout at once, before the backend answers with it", () => {
+    const Panel = providerPanel("claude-code", "session");
+    const view = render(<Panel dismiss={() => {}} />);
+    act(() => publishUsage(STATE));
+    act(() => publishLayout("grid"));
+    expect(view.container.querySelectorAll(".usage-circles__card").length).toBe(2);
+  });
+
+  it("shows every chosen limit of both providers in a ring's window in the grid layout, under Usage Limits, each card with its provider's logo and the ring's own marked", () => {
+    const Panel = providerPanel("claude-code", "session");
+    const view = render(<Panel dismiss={() => {}} />);
+    const codex = { ...STATE.providers[1]!, usage: { status: "ok" as const, windows: [{ label: "Current session", usedPercent: 19, resetsAt: null }, { label: "Weekly limit", usedPercent: 4, resetsAt: null }] } };
+    act(() => publishUsage({ ...STATE, providers: [STATE.providers[0]!, codex], layout: "grid" }));
+    expect(view.getByRole("heading").textContent).toBe("Usage Limits");
+    const cards = Array.from(view.container.querySelectorAll<HTMLElement>(".usage-circles__card"));
+    expect(cards.map((card) => card.querySelector(".usage-circles__card-heading")?.textContent)).toEqual(["5 hour12%", "7 days95%", "5 hour19%", "7 days4%"]);
+    expect(cards.map((card) => card.querySelector(".usage-circles__logo")?.getAttribute("aria-label"))).toEqual(["Claude Code", "Claude Code", "Codex", "Codex"]);
+    expect(cards.map((card) => card.dataset.highlighted ?? "")).toEqual(["true", "", "", ""]);
+    expect(view.container.querySelector(".usage-circles__window-row")).toBeNull();
+  });
+
+  it("says in the grid layout why a provider has no data, so its ring's window does not just drop it", () => {
+    const Panel = providerPanel("codex", "session");
+    const view = render(<Panel dismiss={() => {}} />);
+    act(() => publishUsage({ ...STATE, layout: "grid" }));
+    expect(view.container.querySelector(".usage-circles__status")?.textContent).toBe("Not authenticated");
+    expect(view.container.querySelectorAll(".usage-circles__card").length).toBe(2);
+  });
+
+  it("keeps a limit no ring stands for in the grid layout, after the chosen ones", () => {
+    const Panel = providerPanel("claude-code", "session");
+    const view = render(<Panel dismiss={() => {}} />);
+    const claude = STATE.providers[0]!;
+    const windows = [...(claude.usage.status === "ok" ? claude.usage.windows : []), { label: "Current week (Sonnet)", usedPercent: 40, resetsAt: null }];
+    act(() => publishUsage({ ...STATE, providers: [{ ...claude, usage: { status: "ok", windows } }, STATE.providers[1]!], layout: "grid" }));
+    const headings = Array.from(view.container.querySelectorAll(".usage-circles__card-heading")).map((heading) => heading.textContent);
+    expect(headings.at(-1)).toContain("Sonnet");
+  });
+
+  it("heads the window of every limit Usage Limits and shows each chosen limit with data as a card", () => {
+    const Panel = allLimitsPanel();
+    const view = render(<Panel dismiss={() => {}} />);
+    act(() => publishUsage({ ...STATE, layout: "all" }));
+    expect(view.getByRole("heading").textContent).toBe("Usage Limits");
+    expect(Array.from(view.container.querySelectorAll(".usage-circles__card-heading")).map((heading) => heading.textContent)).toEqual(["5 hour12%", "7 days95%"]);
+  });
+
+  it("draws the ring of the first chosen limit, with no provider's logo, in the item of every limit", () => {
+    const Icon = allLimitsIcon();
+    const view = render(<Icon />);
+    act(() => publishUsage({ ...STATE, limits: moveLimit(DEFAULT_LIMITS, "claude-weekly", -1) }));
+    expect(view.container.querySelector("svg.usage-circles__ring")?.getAttribute("data-tier")).toBe("red");
+    act(() => publishUsage(STATE));
+    expect(view.container.querySelector("svg.usage-circles__ring")?.getAttribute("data-tier")).not.toBe("red");
+    expect(view.container.querySelector(".usage-circles__logo")).toBeNull();
+  });
+
+  it("never hides the item of every limit, so it shows wherever Customize footer puts it; the layout of every limit hides the five rings", () => {
+    const hidden = (layout: StateWire["layout"]) => render(<FooterPlacement layout={layout} limits={DEFAULT_LIMITS} />).container.querySelector("style")?.textContent ?? "";
+    expect(hidden("list")).toBe("");
+    expect(hidden("grid")).toBe("");
+    const rings = hidden("all");
+    expect(FOOTER_RINGS.every(({ id }) => rings.includes(`[data-footer-item="plugin:usage-circles/${id}"]`))).toBe(true);
+    expect(rings).not.toContain("usage-limits");
   });
 });

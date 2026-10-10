@@ -243,3 +243,59 @@ export function bundledImports(
       .map(({ specifier }) => ({ file: file.path, specifier })),
   );
 }
+
+/** Files a resolved path may name: as written, `.js` swapped for `.ts`/`.tsx`, or a folder's index. */
+const fileCandidates = (path: string): ReadonlyArray<string> => {
+  const bare = path.replace(/\.[cm]?jsx?$/, "");
+  return [path, `${bare}.ts`, `${bare}.tsx`, `${bare}/index.ts`, `${bare}/index.tsx`];
+};
+
+/**
+ * Value imports of packages in the files the bundler pulls in from `entry`:
+ * it walks value imports only, because `import type` is erased and the file
+ * behind it never reaches the bundle. A local specifier — relative or under an
+ * alias — that names no file under the root (a shared package next door) is
+ * not followed: a shared package is checked by its own `bundledImports`
+ * guard, where it has one.
+ */
+export function reachableImports(
+  files: ReadonlyArray<SourceFile>,
+  entry: string,
+  aliases: Readonly<Record<string, string>> = {},
+): ReadonlyArray<BundledImport> {
+  const byPath = new Map(files.map((file) => [file.path, file]));
+  const local = (specifier: string) => specifier.startsWith(".") || Object.keys(aliases).some((prefix) => specifier.startsWith(prefix));
+  const found: BundledImport[] = [];
+  const seen = new Set<string>();
+  const queue = [entry];
+  for (let path = queue.shift(); path !== undefined; path = queue.shift()) {
+    const file = byPath.get(path);
+    if (file === undefined || seen.has(path)) continue;
+    seen.add(path);
+    for (const { specifier, typeOnly } of importSpecifiers(file.source)) {
+      if (typeOnly) continue;
+      if (!local(specifier)) {
+        found.push({ file: path, specifier });
+        continue;
+      }
+      const target = resolveSpecifier(path, specifier, aliases);
+      const next = target === null ? undefined : fileCandidates(target).find((candidate) => byPath.has(candidate));
+      if (next !== undefined) queue.push(next);
+    }
+  }
+  return found;
+}
+
+/** `@scope/name/sub` → `@scope/name`, `name/sub` → `name`. */
+const packageName = (specifier: string): string => specifier.split("/").slice(0, specifier.startsWith("@") ? 2 : 1).join("/");
+
+/** Imports neither the host shims nor `installed` — the packages an install puts on disk — provides. */
+export function uninstalledImports(
+  imports: ReadonlyArray<BundledImport>,
+  installed: ReadonlyArray<string>,
+  shimmed: ReadonlyArray<string>,
+): ReadonlyArray<BundledImport> {
+  const onDisk = new Set(installed);
+  const host = new Set(shimmed);
+  return imports.filter(({ specifier }) => !host.has(specifier) && !onDisk.has(packageName(specifier)));
+}

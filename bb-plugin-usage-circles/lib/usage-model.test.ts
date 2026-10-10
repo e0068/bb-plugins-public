@@ -4,6 +4,7 @@ import {
   COLORING_OPTIONS,
   DEFAULT_COLORING,
   formatAbsoluteReset,
+  formatResetClock,
   formatRelativeReset,
   inferWindowDurationMs,
   normalizeUsage,
@@ -56,6 +57,25 @@ describe("buildUsageWindowModel", () => {
     expect(model.segmentsElapsed).toBe(4);
   });
 
+  it("names an hour-cycle window's reset by the clock alone and a weekly one's with its day", () => {
+    const resetsAt = new Date(now + 2 * 60 * 60 * 1000).toISOString();
+    expect(buildUsageWindowModel({ label: "Current session", usedPercent: 0, resetsAt }, now).resetAbsoluteLabel).toBe(formatResetClock(resetsAt));
+    expect(buildUsageWindowModel({ label: "Weekly limit", usedPercent: 0, resetsAt }, now).resetAbsoluteLabel).toBe(formatAbsoluteReset(resetsAt));
+  });
+
+  it("shortens the window's name to how long it runs, or to the model it is for", () => {
+    const name = (label: string) => buildUsageWindowModel({ label, usedPercent: 0, resetsAt: null }, now).shortLabel;
+    expect(name("Current session")).toBe("5 hour");
+    expect(name("5-hour limit")).toBe("5 hour");
+    expect(name("Weekly limit")).toBe("7 days");
+    expect(name("Weekly")).toBe("7 days");
+    expect(name("Current week")).toBe("7 days");
+    expect(name("Fable")).toBe("Fable");
+    expect(name("Current week (Fable)")).toBe("Fable");
+    expect(name("Current week (all models)")).toBe("7 days");
+    expect(name("Extra usage")).toBe("Extra usage");
+  });
+
   it("reports no elapsed fraction when resetsAt is null", () => {
     const model = buildUsageWindowModel({ label: "Weekly limit", usedPercent: 0, resetsAt: null }, now);
     expect(model.elapsedFraction).toBeNull();
@@ -103,6 +123,16 @@ describe("formatAbsoluteReset", () => {
   });
   it("falls back to a dash with no resetsAt", () => {
     expect(formatAbsoluteReset(null)).toBe("—");
+  });
+});
+
+describe("formatResetClock", () => {
+  it("renders the zero-padded local time with no weekday", () => {
+    expect(formatResetClock("2026-08-21T06:05:00Z")).toMatch(/^\d{2}:\d{2}$/);
+  });
+  it("falls back to a dash with no or an unreadable resetsAt", () => {
+    expect(formatResetClock(null)).toBe("—");
+    expect(formatResetClock("soon")).toBe("—");
   });
 });
 

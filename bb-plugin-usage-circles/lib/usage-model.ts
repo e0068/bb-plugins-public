@@ -26,6 +26,8 @@ export interface UsageWindowInput {
 
 export interface UsageWindowModel {
   label: string;
+  /** How long the window runs ("5 hour", "7 days") or the model it is for ("Fable"). */
+  shortLabel: string;
   usedPercent: number;
   tier: UsageTier;
   /** 1 for an hour-cycle window (continuous arc), 7 for a weekly one (day segments). */
@@ -36,6 +38,7 @@ export interface UsageWindowModel {
   segmentsElapsed: number | null;
   resetsAt: string | null;
   resetRelativeLabel: string;
+  /** The clock time of the reset; a weekly window's with its day. */
   resetAbsoluteLabel: string;
 }
 
@@ -172,6 +175,23 @@ export function formatAbsoluteReset(resetsAt: string | null): string {
   return `${weekday} ${pad2(date.getHours())}:${pad2(date.getMinutes())}`;
 }
 
+/** The zero-padded local time of the reset, without its day. */
+export function formatResetClock(resetsAt: string | null): string {
+  if (resetsAt === null) return "—";
+  const date = new Date(resetsAt);
+  return Number.isNaN(date.getTime()) ? "—" : `${pad2(date.getHours())}:${pad2(date.getMinutes())}`;
+}
+
+const MODEL_IN_LABEL_PATTERN = /\(([^)]+)\)/;
+const PLAIN_WEEK_LABEL_PATTERN = /^(weekly( limit)?|current week( \(all models\))?)$/i;
+
+/** "5 hour" for an hour-cycle window, "7 days" for the plain weekly one, the model's name for a model's own. */
+function shortWindowLabel(label: string, durationMs: number): string {
+  if (durationMs < WEEK_MS) return `${durationMs / HOUR_MS} hour`;
+  if (PLAIN_WEEK_LABEL_PATTERN.test(label.trim())) return "7 days";
+  return MODEL_IN_LABEL_PATTERN.exec(label)?.[1] ?? label;
+}
+
 export function formatRelativeReset(resetsAt: string | null, nowMs: number): string {
   if (resetsAt === null) return "—";
   const target = new Date(resetsAt).getTime();
@@ -207,6 +227,7 @@ export function buildUsageWindowModel(window: UsageWindowInput, nowMs: number, c
 
   return {
     label: window.label,
+    shortLabel: shortWindowLabel(window.label, durationMs),
     usedPercent,
     tier: tierForWindow(usedPercent, elapsedFraction, coloring),
     segmentCount,
@@ -214,7 +235,7 @@ export function buildUsageWindowModel(window: UsageWindowInput, nowMs: number, c
     segmentsElapsed,
     resetsAt: window.resetsAt,
     resetRelativeLabel: formatRelativeReset(window.resetsAt, nowMs),
-    resetAbsoluteLabel: formatAbsoluteReset(window.resetsAt),
+    resetAbsoluteLabel: segmentCount === 1 ? formatResetClock(window.resetsAt) : formatAbsoluteReset(window.resetsAt),
   };
 }
 
@@ -273,6 +294,8 @@ export interface StateWire {
   coloring: Coloring;
   providers: ProviderStateWire[];
   ring: RingStyle;
+  layout: Layout;
+  limits: LimitsChoice;
 }
 
 // bb.sdk.system.usageLimits() returns a dictionary keyed by providerId, where
@@ -347,3 +370,86 @@ export const FOOTER_RINGS: readonly FooterRing[] = [
 export function ringWindow(provider: ProviderStateWire, kind: WindowKind): UsageWindowInput | undefined {
   return provider.usage.status === "ok" ? provider.usage.windows.find((window) => windowKindOf(window.label) === kind) : undefined;
 }
+
+// ---------------------------------------------------------------------------
+// The window's layout and which limits it shows, in what order.
+
+/** A ring's window: a row per limit of its provider, or every chosen limit of both providers as cards; `all` keeps only the Usage Limits item in the footer. */
+export type Layout = "list" | "grid" | "all";
+
+/** The options of the Window layout setting, in the order of `Layout`. */
+export const LAYOUT_OPTIONS = ["List", "Grid", "All limits"] as const;
+
+const LAYOUTS: readonly Layout[] = ["list", "grid", "all"];
+
+export const layoutOf = (option: unknown): Layout => LAYOUTS[LAYOUT_OPTIONS.indexOf(option as (typeof LAYOUT_OPTIONS)[number])] ?? "list";
+
+/** A limit of `FOOTER_RINGS` by its id, and whether the windows show it. */
+export interface LimitChoice {
+  readonly id: string;
+  readonly shown: boolean;
+}
+
+/** Every limit of `FOOTER_RINGS` exactly once, in the order the windows show them. */
+export type LimitsChoice = readonly LimitChoice[];
+
+export const DEFAULT_LIMITS: LimitsChoice = FOOTER_RINGS.map(({ id }) => ({ id, shown: true }));
+
+const isChoice = (value: unknown): value is LimitChoice =>
+  typeof value === "object" && value !== null && typeof (value as LimitChoice).id === "string" && typeof (value as LimitChoice).shown === "boolean";
+
+/** The stored choice: known limits in their stored order, once each, and the rest shown after them. */
+export function parseLimits(raw: unknown): LimitsChoice {
+  const stored = (Array.isArray(raw) ? raw : []).filter(isChoice);
+  const known = stored.filter(({ id }, index) => FOOTER_RINGS.some((ring) => ring.id === id) && stored.findIndex((other) => other.id === id) === index);
+  const missing = DEFAULT_LIMITS.filter(({ id }) => !known.some((limit) => limit.id === id));
+  return [...known.map(({ id, shown }) => ({ id, shown })), ...missing];
+}
+
+/** The limit one place earlier (`-1`) or later (`1`); at the edge the choice stays as it is. */
+export function moveLimit(limits: LimitsChoice, id: string, step: -1 | 1): LimitsChoice {
+  const from = limits.findIndex((limit) => limit.id === id);
+  const to = from + step;
+  if (from < 0 || to < 0 || to >= limits.length) return limits;
+  return limits.map((limit, index) => (index === from ? limits[to]! : index === to ? limits[from]! : limit));
+}
+
+export const toggleLimit = (limits: LimitsChoice, id: string): LimitsChoice =>
+  limits.map((limit) => (limit.id === id ? { id, shown: !limit.shown } : limit));
+
+/** A limit the windows show: its footer ring, its provider and its window. */
+export interface ShownLimit {
+  readonly ring: FooterRing;
+  readonly provider: ProviderStateWire;
+  readonly window: UsageWindowInput;
+}
+
+/** The shown limits that have data, in the chosen order. */
+export function shownLimits(providers: readonly ProviderStateWire[], limits: LimitsChoice): ShownLimit[] {
+  return limits.flatMap(({ id, shown }) => {
+    const ring = FOOTER_RINGS.find((candidate) => candidate.id === id);
+    const provider = providers.find((candidate) => candidate.id === ring?.providerId);
+    const window = ring && provider && shown ? ringWindow(provider, ring.kind) : undefined;
+    return ring && provider && window ? [{ ring, provider, window }] : [];
+  });
+}
+
+/** A card of the grid: a limit's provider and its window. */
+export type LimitCard = Pick<ShownLimit, "provider" | "window">;
+
+/** The provider's windows no footer ring stands for, such as a model's own weekly limit. */
+export function unclaimedWindows(provider: ProviderStateWire): UsageWindowInput[] {
+  if (provider.usage.status !== "ok") return [];
+  const claimed = FOOTER_RINGS.filter((ring) => ring.providerId === provider.id).map((ring) => ringWindow(provider, ring.kind));
+  return provider.usage.windows.filter((window) => !claimed.includes(window));
+}
+
+/** The cards of the grid: the chosen limits of both providers in the chosen order, then the windows no ring stands for. */
+export const gridLimits = (providers: readonly ProviderStateWire[], limits: LimitsChoice): LimitCard[] => [
+  ...shownLimits(providers, limits),
+  ...providers.flatMap((provider) => unclaimedWindows(provider).map((window) => ({ provider, window }))),
+];
+
+/** The providers that should report usage and do not — signed out, expired, failed; one not installed is no news. */
+export const providersWithoutData = (providers: readonly ProviderStateWire[]): ProviderStateWire[] =>
+  providers.filter(({ usage }) => usage.status !== "ok" && usage.status !== "not_installed");

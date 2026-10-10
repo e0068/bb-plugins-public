@@ -35,9 +35,9 @@
     "publishedAt": "2026-10-10T11:00:21.676Z"
   },
   "bb-plugin-usage-circles": {
-    "version": "0.2.6",
-    "commit": "f28898366ba968d63498e175531fbc9197cff087",
-    "publishedAt": "2026-10-05T14:19:50.988Z"
+    "version": "0.2.7",
+    "commit": "a6ba02d395ae4ed94bab916b2e33f70d8a0d5779",
+    "publishedAt": "2026-10-10T11:13:30.428Z"
   },
   "bb-plugin-zz-pull-request": {
     "version": "0.1.29",

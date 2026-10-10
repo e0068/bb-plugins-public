@@ -5,16 +5,31 @@
 // lists the provider's limits. An invisible overlay polls the backend and
 // hands the answer — usage and ring style — to the icons, which BB renders
 // outside any plugin context. The plugin's settings get a Ring section with a
-// slider per ring dimension.
+// slider per ring dimension, and a Limits section that picks which limits the
+// windows show and in what order. The Usage Limits item shows every limit in
+// one grid, as every ring does in the Grid layout; the All limits layout keeps
+// only that item — BB registers items once, so the overlay hides the rings.
 import { useEffect, useRef } from "react";
 import { definePluginApp, useRpc, useSettings } from "@get-bb/plugin-sdk/app";
 import { registerFooterWindow, useOpenOnHover, withFooterWindow } from "@bb-plugins/footer-window";
-import { providerPanel, publishRingStyle, publishUsage, ringIcon } from "./lib/footer-items";
+import {
+  ALL_LIMITS_ITEM,
+  allLimitsIcon,
+  allLimitsPanel,
+  FooterPlacement,
+  PLUGIN_ID,
+  providerPanel,
+  publishLayout,
+  publishRingStyle,
+  publishUsage,
+  ringIcon,
+  useUsage,
+} from "./lib/footer-items";
+import { LimitsSettings } from "./lib/limits-settings";
 import { RingSettings } from "./lib/ring-settings";
-import { FOOTER_RINGS, type StateWire } from "./lib/usage-model";
+import { DEFAULT_LIMITS, FOOTER_RINGS, layoutOf, type StateWire } from "./lib/usage-model";
 import type { rpcContract } from "./server";
 
-const PLUGIN_ID = "usage-circles";
 const POLL_MS = 60_000;
 
 function UsageFeed() {
@@ -22,8 +37,9 @@ function UsageFeed() {
   const rpcRef = useRef(rpc);
   rpcRef.current = rpc;
   const settings = useSettings().values;
-  // The logo's place is a setting the backend reads: a change asks again at once.
+  // The logo's place and the layout are settings the backend reads: a change asks again at once.
   const logo = settings?.logo;
+  const layout = layoutOf(settings?.layout);
   useEffect(() => {
     let alive = true;
     // A failed poll keeps the last answer: the rings stay as they were.
@@ -42,14 +58,20 @@ function UsageFeed() {
       alive = false;
       clearInterval(timer);
     };
-  }, [logo]);
+  }, [logo, layout]);
+  useEffect(() => publishLayout(layout), [layout]);
   useOpenOnHover(PLUGIN_ID, settings?.openOnHover !== false);
-  return null;
+  return <FooterPlacement layout={layout} limits={useUsage()?.limits ?? DEFAULT_LIMITS} />;
 }
 
 function RingSection() {
   const rpc = useRpc<typeof rpcContract>();
   return <RingSettings save={(dims) => rpc.call("setRingDims", dims)} reset={() => rpc.call("resetRingDims", null)} />;
+}
+
+function LimitsSection() {
+  const rpc = useRpc<typeof rpcContract>();
+  return <LimitsSettings save={(limits) => rpc.call("setLimits", limits)} />;
 }
 
 export default definePluginApp((app) => {
@@ -59,6 +81,12 @@ export default definePluginApp((app) => {
     title: "Ring",
     description: "Sizes of the footer rings and their logo. The rings follow a slider as it moves.",
     component: RingSection,
+  });
+  app.slots.settingsSection({
+    id: "limits",
+    title: "Limits",
+    description: "Which limits the windows show, and in what order.",
+    component: LimitsSection,
   });
   for (const ring of FOOTER_RINGS) {
     const icon = `${PLUGIN_ID}-${ring.id}`;
@@ -73,4 +101,14 @@ export default definePluginApp((app) => {
     });
     registerFooterWindow({ ...item, label: ring.label }, controller);
   }
+  const allIcon = `${PLUGIN_ID}-${ALL_LIMITS_ITEM.id}`;
+  const allItem = { pluginId: PLUGIN_ID, itemId: ALL_LIMITS_ITEM.id };
+  app.experimental_icons.register({ name: allIcon, component: allLimitsIcon() });
+  const allController = app.experimental_sidebarFooter.register({
+    kind: "disclosure",
+    ...ALL_LIMITS_ITEM,
+    icon: allIcon,
+    component: withFooterWindow(allLimitsPanel(), allItem),
+  });
+  registerFooterWindow({ ...allItem, label: ALL_LIMITS_ITEM.label }, allController);
 });

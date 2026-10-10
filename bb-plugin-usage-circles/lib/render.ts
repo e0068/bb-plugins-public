@@ -1,7 +1,8 @@
 // Layer 2 — rendering. Turns one usage-window model into DOM, in two forms
 // off the same data: buildRingIcon (the two-concentric-ring SVG of a footer
 // item) and buildWindowRow (the two stacked bars of the item's window), plus
-// buildProviderDetails, the window's content under its header for one provider. Pure DOM
+// the window's content: buildProviderDetails, a row per limit of one provider,
+// and buildAllLimits, a card per limit of both providers. Pure DOM
 // construction, no plugin/SDK imports — testable with jsdom alone.
 //
 // Colors are plain inline styles, not Tailwind utility classes: BB renders the
@@ -14,6 +15,7 @@ import {
   type Coloring,
   type ProviderStateWire,
   type ProviderTint,
+  type LimitCard,
   type UsageWindowModel,
   type UsageWindowInput,
 } from "./usage-model";
@@ -200,7 +202,7 @@ function buildUsageBar(model: UsageWindowModel): HTMLDivElement {
 }
 
 function buildContinuousTimeBar(model: UsageWindowModel): HTMLDivElement {
-  const track = barTrack("usage-circles__bar-time-track", { marginTop: "4px" });
+  const track = barTrack("usage-circles__bar-time-track");
   track.append(barFill("usage-circles__bar-time-fill", TIME_ELAPSED_COLOR, `${(model.elapsedFraction ?? 0) * 100}%`));
   return track;
 }
@@ -210,7 +212,6 @@ function buildSegmentedTimeBar(model: UsageWindowModel): HTMLDivElement {
   // each segment paints its own track, and the running one is filled only as
   // far as the day has gone.
   const track = barTrack("usage-circles__bar-time-track", {
-    marginTop: "4px",
     backgroundColor: "transparent",
     borderRadius: "0",
     display: "flex",
@@ -230,58 +231,146 @@ function buildTimeBar(model: UsageWindowModel): HTMLDivElement {
   return model.segmentCount === 1 ? buildContinuousTimeBar(model) : buildSegmentedTimeBar(model);
 }
 
-export function buildWindowRow(model: UsageWindowModel): HTMLDivElement {
-  const row = div({ display: "flex", flexDirection: "column", gap: "4px" }, "usage-circles__window-row");
+// As the mockup: the name, the time to the reset and the percent on one line in the
+// window title's type, 4 px above the bars, 2 px between the bars.
+const LINE_GAP_PX = 4;
+const BAR_GAP_PX = 2;
+const TEXT: Partial<CSSStyleDeclaration> = { fontSize: "12px", fontWeight: "500", lineHeight: "normal" };
 
+function cell(tag: "span" | "strong", text: string, style: Partial<CSSStyleDeclaration>, className = ""): HTMLElement {
+  const node = document.createElement(tag);
+  if (className !== "") node.className = className;
+  Object.assign(node.style, { minWidth: "0", whiteSpace: "nowrap", ...style });
+  node.textContent = text;
+  return node;
+}
+
+export function buildWindowRow(model: UsageWindowModel): HTMLDivElement {
+  const row = div({ display: "flex", flexDirection: "column", gap: `${LINE_GAP_PX}px` }, "usage-circles__window-row");
+
+  // The middle column is centered whatever the widths of the name and the percent.
   const heading = div(
-    { display: "flex", alignItems: "baseline", justifyContent: "space-between", fontSize: "12px", color: "var(--muted-foreground)" },
+    { display: "grid", gridTemplateColumns: "1fr auto 1fr", alignItems: "baseline", columnGap: "8px", ...TEXT, color: "var(--foreground)" },
     "usage-circles__window-heading",
   );
-  const label = document.createElement("span");
-  label.textContent = model.label;
-  const percent = document.createElement("strong");
-  Object.assign(percent.style, { fontSize: "14px", fontWeight: "600", color: "var(--foreground)" });
-  percent.textContent = `${Math.round(model.usedPercent)}%`;
-  heading.append(label, percent);
+  const reset = model.resetsAt === null ? "No reset data available" : `${model.resetRelativeLabel} (${model.resetAbsoluteLabel})`;
+  heading.append(
+    cell("span", model.shortLabel, { overflow: "hidden", textOverflow: "ellipsis" }),
+    cell("span", reset, { textAlign: "center", color: "var(--muted-foreground)", opacity: "0.7" }, "usage-circles__window-reset"),
+    cell("strong", `${Math.round(model.usedPercent)}%`, { textAlign: "right", fontWeight: "500", minWidth: "auto" }),
+  );
 
-  const reset = div({ fontSize: "12px", color: "var(--muted-foreground)", opacity: "0.7" }, "usage-circles__window-reset");
-  reset.textContent =
-    model.resetsAt === null ? "No reset data available" : `Resets in ${model.resetRelativeLabel} (${model.resetAbsoluteLabel})`;
-
-  row.append(heading, buildUsageBar(model), buildTimeBar(model), reset);
+  row.append(heading, buildBars(model));
   return row;
+}
+
+/** The usage bar over the time bar. */
+function buildBars(model: UsageWindowModel): HTMLDivElement {
+  const bars = div({ display: "flex", flexDirection: "column", gap: `${BAR_GAP_PX}px` }, "usage-circles__window-bars");
+  bars.append(buildUsageBar(model), buildTimeBar(model));
+  return bars;
 }
 
 /** The provider's logo in the window's header. */
 export const HEADER_LOGO_PX = 16;
-const DETAILS_SIDE_PX = 6;
+/** The provider's logo before a card's name in the grid. */
+const CARD_LOGO_PX = 12;
+// The sidebar's thread rows: 8 px in from its edges, their text 8 px further in — with the window's title.
+const DETAILS_SIDE_PX = 8;
+const ROW_PADDING = "8px";
+const DETAILS_PADDING = `0 ${DETAILS_SIDE_PX}px ${DETAILS_SIDE_PX}px`;
+const ROWS_GAP = "2px";
 
-/** The marked row of a footer item's own limit: the sidebar's hover background. */
-function markRow(row: HTMLDivElement): HTMLDivElement {
-  row.dataset.highlighted = "true";
-  Object.assign(row.style, { backgroundColor: "var(--sidebar-accent)", boxShadow: "inset 2px 0 0 var(--sidebar-foreground)" });
-  return row;
+/**
+ * A limit as a card of the grid: the name and the percent, the two bars, and
+ * under them the time to the reset on the left and its clock time on the right.
+ */
+export function buildLimitCard(model: UsageWindowModel, logo: HTMLElement | null): HTMLDivElement {
+  const card = div({ display: "flex", flexDirection: "column", gap: `${LINE_GAP_PX}px`, minWidth: "0" }, "usage-circles__card");
+  const heading = div({ display: "flex", alignItems: "center", gap: "2px", ...TEXT, color: "var(--foreground)" }, "usage-circles__card-heading");
+  heading.append(
+    ...(logo === null ? [] : [logo]),
+    cell("span", model.shortLabel, { flex: "1", overflow: "hidden", textOverflow: "ellipsis" }),
+    cell("strong", `${Math.round(model.usedPercent)}%`, { fontWeight: "500", minWidth: "auto" }),
+  );
+  const reset = div(
+    { display: "flex", justifyContent: "space-between", gap: "4px", ...TEXT, color: "var(--muted-foreground)", opacity: "0.7" },
+    "usage-circles__card-reset",
+  );
+  const when = model.resetsAt === null ? ["No reset data"] : [model.resetRelativeLabel, model.resetAbsoluteLabel];
+  reset.append(...when.map((text) => cell("span", text, {})));
+  card.append(heading, buildBars(model), reset);
+  return card;
+}
+
+/** A row or a card of the window, inset like the sidebar's threads; the item's own one gets the background of the selected thread. */
+function placeLimit(node: HTMLDivElement, marked: boolean): HTMLDivElement {
+  Object.assign(node.style, { padding: ROW_PADDING, borderRadius: "6px" });
+  if (!marked) return node;
+  node.dataset.highlighted = "true";
+  node.style.backgroundColor = "var(--sidebar-accent)";
+  return node;
+}
+
+function listOf(rows: readonly HTMLDivElement[]): HTMLDivElement {
+  const list = div({ display: "flex", flexDirection: "column", gap: ROWS_GAP, padding: DETAILS_PADDING }, "usage-circles__details");
+  list.append(...rows);
+  return list;
+}
+
+/** Cards in two columns; an odd last card takes both. */
+function gridOf(cards: readonly HTMLDivElement[]): HTMLDivElement {
+  const grid = div({ display: "grid", gridTemplateColumns: "1fr 1fr", gap: ROWS_GAP, padding: DETAILS_PADDING }, "usage-circles__details");
+  if (cards.length % 2 === 1) cards[cards.length - 1]!.style.gridColumn = "1 / -1";
+  grid.append(...cards);
+  return grid;
+}
+
+function statusLine(text: string): HTMLDivElement {
+  const status = div({ fontSize: "12px", color: "var(--muted-foreground)", padding: ROW_PADDING }, "usage-circles__status");
+  status.textContent = text;
+  return status;
+}
+
+/** Why a provider has no data, in the user's words. */
+const whyNoData = (usage: Exclude<ProviderStateWire["usage"], { status: "ok" }>): string =>
+  statusLabel(usage.status, usage.status === "error" ? usage.message : undefined);
+
+/**
+ * A footer item's window under the provider's logo and name: why it has no data, or
+ * its limits a row each, the one of `marked`, the window the item's ring shows, standing out.
+ */
+export function buildProviderDetails(provider: ProviderStateWire, coloring: Coloring, nowMs: number, marked?: UsageWindowInput): HTMLDivElement {
+  const { usage } = provider;
+  if (usage.status !== "ok") return listOf([statusLine(whyNoData(usage))]);
+  return listOf(usage.windows.map((window) => placeLimit(buildWindowRow(buildUsageWindowModel(window, nowMs, coloring)), window === marked)));
+}
+
+/** Why a provider of the grid has no data, under its logo, across both columns. */
+function missingLine(provider: ProviderStateWire): HTMLDivElement {
+  const line = statusLine(provider.usage.status === "ok" ? "" : whyNoData(provider.usage));
+  Object.assign(line.style, { display: "flex", alignItems: "center", gap: "4px", gridColumn: "1 / -1" });
+  line.prepend(buildProviderLogo(provider, CARD_LOGO_PX));
+  return line;
 }
 
 /**
- * A footer item's window: the provider's logo and name, why it has no data, or
- * a row per limit window — the row of `marked`, the window the item's ring shows, stands out.
+ * The grid: a card per limit of both providers, in the given order, each with its provider's logo,
+ * the one of `marked` standing out; then why each of `missing` has no data.
  */
-export function buildProviderDetails(provider: ProviderStateWire, coloring: Coloring, nowMs: number, marked?: UsageWindowInput): HTMLDivElement {
-  // The logo and "<provider> Limits" head the shared footer window, so the details start with the limits.
-  const details = div({ display: "flex", flexDirection: "column", gap: "12px", padding: `2px ${DETAILS_SIDE_PX}px 6px` }, "usage-circles__details");
-  if (provider.usage.status === "ok") {
-    provider.usage.windows.forEach((window) => {
-      const row = buildWindowRow(buildUsageWindowModel(window, nowMs, coloring));
-      // As wide as the details' side padding, so the marked row's background
-      // reaches its edges without overflowing the window.
-      Object.assign(row.style, { padding: `6px ${DETAILS_SIDE_PX}px`, margin: `0 -${DETAILS_SIDE_PX}px`, borderRadius: "6px" });
-      details.append(window === marked ? markRow(row) : row);
-    });
-    return details;
-  }
-  const status = div({ fontSize: "12px", color: "var(--muted-foreground)" }, "usage-circles__status");
-  status.textContent = statusLabel(provider.usage.status, provider.usage.status === "error" ? provider.usage.message : undefined);
-  details.append(status);
-  return details;
+export function buildAllLimits(
+  limits: readonly LimitCard[],
+  coloring: Coloring,
+  nowMs: number,
+  marked?: UsageWindowInput,
+  missing: readonly ProviderStateWire[] = [],
+): HTMLDivElement {
+  if (limits.length === 0 && missing.length === 0) return listOf([statusLine("No limits to show — pick them under Limits in the plugin's settings")]);
+  const grid = gridOf(
+    limits.map(({ provider, window }) =>
+      placeLimit(buildLimitCard(buildUsageWindowModel(window, nowMs, coloring), buildProviderLogo(provider, CARD_LOGO_PX)), window === marked),
+    ),
+  );
+  grid.append(...missing.map(missingLine));
+  return grid;
 }
