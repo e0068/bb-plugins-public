@@ -14,10 +14,12 @@
 const TOP_FULLSCREEN_PX = 4;
 /** Отступ острова сверху в обычном окне, px: под ним светофор macOS. */
 const TOP_WINDOWED_PX = 48;
-/** Отступ острова справа и снизу, px. */
-const LIP_PX = 4;
-/** Фон за островом. */
-const BACKDROP = "#000000";
+/** Отступ острова справа и снизу — пока тема окна его не задала. */
+const LIP = "var(--wc-theme-lip, 4px)";
+/** Фон за островом — пока тема окна его не задала. */
+const BACKDROP = "var(--wc-theme-backdrop, #000000)";
+/** Скругление острова: у bb — rounded-xl, 0.75rem. */
+const ISLAND_RADIUS = "var(--wc-theme-island-radius, 0.75rem)";
 /** Высота нижнего ряда панели тредов bb, px: p-2 вокруг меню в 32 px. */
 const FOOTER_ROW_PX = 48;
 /** Зазор между строками тредов внутри проекта в панели тредов bb (--bb-sidebar-sticky-child-row-gap). */
@@ -38,17 +40,27 @@ const SIDEBAR_TOP_ROW = `[data-framed] [data-testid="app-sidebar-top-reserve-row
 const ANY_SIDEBAR_TOP_ROW = `[data-framed] [data-testid$="-sidebar-top-reserve-row"]`;
 const PAGE_HEADER_ROW = `[data-testid="app-page-header-content-row"]`;
 const PANEL_HEADER_ROW = `[data-framed] [data-testid="thread-secondary-panel-top-chrome"]`;
+const FULL_SCREEN_PANEL = `[data-panel-id="thread-detail-secondary-panel"][data-panel-size="100.0"]`;
+// Остров — две половины: панель тредов скруглена слева, страница справа.
+const ISLAND_SIDEBAR = `[data-framed] [data-testid="nav-rail-sidebar-body"]`;
+const ISLAND_PAGE = `[data-framed] main[data-sidebar="inset"]`;
+const ISLAND_CORNERS = [
+  ["tl", "border-top-left-radius"],
+  ["tr", "border-top-right-radius"],
+  ["bl", "border-bottom-left-radius"],
+  ["br", "border-bottom-right-radius"],
+] as const;
 const BACK_FORWARD = `${TITLE_BAR} > ${BACK_FORWARD_GROUP}`;
 
 const rule = (selector: string, declarations: readonly string[]): string =>
   `${selector} {\n${declarations.map((d) => `  ${d};`).join("\n")}\n}`;
 
-/** Вся таблица: поля острова, чёрный фон, кнопки заголовка в углах острова, одна ось у верхнего и нижнего ряда. */
+/** Вся таблица: поля острова, фон за ним, кнопки заголовка в углах острова, одна ось у верхнего и нижнего ряда, скругление острова. */
 export function windowChromeCss(): string {
   return [
     rule(ROOT, [
       `--wc-top: ${TOP_FULLSCREEN_PX}px`,
-      `--wc-lip: ${LIP_PX}px`,
+      `--wc-lip: ${LIP}`,
       // Ширина рейки слева с её рамкой в 1 px — формула bb для --sidebar-rail-width,
       // которую с полосы заголовка не прочитать: она задана на самой панели.
       `--wc-rail: calc(var(--bb-sidebar-control-size) + 24px + 1px)`,
@@ -89,6 +101,10 @@ export function windowChromeCss(): string {
       `right: auto`,
     ]),
     rule(`${COLLAPSED} ${PAGE_HEADER_ROW}`, [`padding-left: calc(3 * var(--wc-button) + 3 * var(--wc-gap))`]),
+    // Правая панель во весь экран закрывает страницу — её шапка встаёт под те же три кнопки.
+    rule(`${COLLAPSED} ${FULL_SCREEN_PANEL} [data-testid="thread-secondary-panel-top-chrome"]`, [
+      `padding-left: calc(3 * var(--wc-button) + 3 * var(--wc-gap) + var(--wc-header-pad))`,
+    ]),
     rule(`${TITLE_BAR} > :has(> [data-testid="window-right-panel-toggle"])`, [`right: calc(var(--wc-lip) + var(--wc-inset))`]),
     // Место под кнопку правой панели — в шапке страницы, пока панель закрыта, и в
     // шапке самой панели: так, чтобы до кнопки был тот же шаг, что между
@@ -109,5 +125,11 @@ export function windowChromeCss(): string {
     ]),
     // Кнопки рейки — с шагом строк тредов внутри проекта: та же высота 28 px и зазор между ними.
     rule(`[data-framed] [data-testid="app-nav-rail"] > nav > div`, [`gap: ${RAIL_GAP}`]),
+    // Скругление острова: каждый угол, который bb скругляет, берёт значение темы окна.
+    ...ISLAND_CORNERS.map(([corner, property]) =>
+      rule(`${ISLAND_SIDEBAR}.rounded-${corner}-xl,\n${ISLAND_PAGE}.rounded-${corner}-xl`, [`${property}: ${ISLAND_RADIUS}`]),
+    ),
+    // Панель тредов обрезана по своим скруглениям — обрезка идёт за ними.
+    rule(ISLAND_SIDEBAR, [`clip-path: inset(0 -6px 0 0 round ${ISLAND_RADIUS} 0 0 ${ISLAND_RADIUS})`]),
   ].join("\n");
 }

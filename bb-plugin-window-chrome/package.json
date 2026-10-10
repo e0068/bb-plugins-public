@@ -1,6 +1,6 @@
 {
   "name": "bb-plugin-window-chrome",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "type": "module",
   "engines": {
     "bb": ">=0.46",
@@ -8,7 +8,7 @@
   },
   "bb": {
     "name": "Window Chrome",
-    "description": "Compact desktop window: the title row is gone, its buttons sit in the island's corners on one line, a 4 px frame around the island on a black backdrop.",
+    "description": "Compact desktop window: the title row is gone, its buttons sit in the island's corners on one line, a 4 px frame around the island on a black backdrop. Colors, radii, spacing and sizes of bb in the settings, saved as a bb theme.",
     "branding": {
       "icon": "AppWindow"
     },
@@ -19,12 +19,18 @@
     "test": "vitest run",
     "typecheck": "tsc --noEmit"
   },
+  "dependencies": {
+    "zod": "^4.3.6"
+  },
   "devDependencies": {
     "@get-bb/plugin-sdk": "0.4.47",
     "@testing-library/react": "^16.3.2",
     "@types/node": "^22.0.0",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
+    "better-sqlite3": "^12.0.0",
+    "cron-parser": "^5.10.0",
+    "hono": "^4.11.9",
     "jsdom": "^29.0.1",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",

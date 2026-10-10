@@ -179,7 +179,7 @@
     {
       "id": "window-chrome",
       "displayName": "Window Chrome",
-      "description": "Compact desktop window: the title row is gone, its buttons sit in the island's corners on one line, a 4 px frame around the island on a black backdrop.",
+      "description": "Compact desktop window: the title row is gone, its buttons sit in the island's corners on one line, a 4 px frame around the island on a black backdrop. Colors, radii, spacing and sizes of bb in the settings, saved as a bb theme.",
       "icon": "AppWindow",
       "author": {
         "name": "e0068",
