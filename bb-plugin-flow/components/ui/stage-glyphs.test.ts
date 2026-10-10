@@ -1,19 +1,19 @@
 // @vitest-environment node
 import { describe, expect, it } from "vitest";
 
-import { AUTOMATION_ICON, EXECUTOR_ICONS, KIND_ICONS } from "../../lib/stage-icon-names";
+import { AUTOMATION_ICON, KIND_ICONS, SKILL_ICON } from "../../lib/stage-icon-names";
 import { STAGE_ICONS } from "./stage-icon-catalog";
 import { kindGlyph, stageGlyph } from "./stage-glyphs";
 
 describe("рисунок значка этапа", () => {
   it("у каждого запасного значка этапа прогона есть рисунок", () => {
-    for (const name of [...Object.values(KIND_ICONS), ...Object.values(EXECUTOR_ICONS), AUTOMATION_ICON]) {
+    for (const name of [...Object.values(KIND_ICONS), SKILL_ICON, AUTOMATION_ICON]) {
       expect(kindGlyph(name), name).toBeDefined();
     }
   });
 
   it("свой значок владельца берётся из каталога, даже если запасной другой", () => {
-    expect(stageGlyph({ icon: "Album01", fallbackIcon: EXECUTOR_ICONS.self })).toBe(STAGE_ICONS.get("Album01"));
+    expect(stageGlyph({ icon: "Album01", fallbackIcon: SKILL_ICON })).toBe(STAGE_ICONS.get("Album01"));
   });
 
   it("без своего значка — запасной по виду", () => {
@@ -21,7 +21,7 @@ describe("рисунок значка этапа", () => {
   });
 
   it("свой значок, пропавший из каталога, уступает запасному", () => {
-    expect(stageGlyph({ icon: "NoSuchIcon", fallbackIcon: EXECUTOR_ICONS.agent })).toBe(kindGlyph(EXECUTOR_ICONS.agent));
+    expect(stageGlyph({ icon: "NoSuchIcon", fallbackIcon: SKILL_ICON })).toBe(kindGlyph(SKILL_ICON));
   });
 
   it("неизвестное запасное имя — значок автоматизации, а не пустота", () => {

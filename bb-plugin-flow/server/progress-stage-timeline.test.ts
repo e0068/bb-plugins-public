@@ -30,7 +30,7 @@ describe("этапы треда для шкал других плагинов", 
     }));
     expect(await timeline()).toEqual([
       { id: "prototype", name: "Prototype", glyph: STAGE_ICONS.get("Album01"), passes: [{ from: at(0), to: at(10) }, { from: at(20), to: at(30) }] },
-      { id: "review", name: "code-review", glyph: KIND_GLYPHS.Diamond, passes: [{ from: at(31), to: null }] },
+      { id: "review", name: "code-review", glyph: KIND_GLYPHS.BookOpen, passes: [{ from: at(31), to: null }] },
     ]);
   });
 

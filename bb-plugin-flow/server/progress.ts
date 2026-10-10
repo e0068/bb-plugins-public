@@ -485,7 +485,7 @@ export const registerProgress = (
   const freeze = async (record: FlowProgress, carrier: string, stages: StageSettings["stages"], thread: ThreadState): Promise<void> => {
     const summary = isRunFinished(record, stages) ? runSummary(record, stages) : null;
     if (record.lastBriefId === undefined || summary === null) return;
-    const view = progressView(record, stages, thread.active, thread.providerId);
+    const view = progressView(record, stages, thread.active);
     const flowName = deps.flowName?.(carrier);
     const flowId = deps.flow?.(carrier)?.id;
     await progress
@@ -569,7 +569,7 @@ export const registerProgress = (
       // Завершённость и итог считаются по той же записи, что и вид: баннер снимается и блок в ленте появляются одним ответом.
       const stages = deps.stages(carrier).stages;
       const finished = isRunFinished(record, stages);
-      const view = progressView(record, stages, thread.active, thread.providerId);
+      const view = progressView(record, stages, thread.active);
       const summary = finished ? runSummary(record, stages) : null;
       await freeze(record, carrier, stages, thread);
       return {

@@ -1052,14 +1052,12 @@ export const progressStageSchema = z.object({
   state: z.enum(["done", "now", "todo", "skip", "fail"]),
   /** На этапе сейчас идёт работа — ход агента или прогон автоматизации; мерцает только живой. */
   live: z.boolean().optional(),
-  /** Провайдер исполнителя этапа навыка — треда или субагента; по нему фронт берёт логотип. */
-  provider: z.string().optional(),
   results: z.array(storedResultSchema),
   /** Место этапа среди этапов прогона, с 1; вычеркнутый и под-этап номера не получают. */
   number: z.number().int().positive().nullable().optional(),
   /** Под-этап: id этапа-владельца, под строкой которого он свёрнут. */
   parent: text.optional(),
-  /** Иконка, выбранная владельцем на странице Flow; нет — иконка по виду и исполнителю. */
+  /** Иконка, выбранная владельцем на странице Flow; нет — иконка по виду. */
   icon: text.optional(),
   /** Минуты работы на этапе: активные, а без них — от начала до конца этапа. */
   minutes: z.number().int().nonnegative().nullable(),

@@ -3,9 +3,8 @@
 import { stageKindOf } from "../lib/stage-constants";
 import { stageIconName } from "../lib/stage-icon-names";
 import type { FlowProgress, TimelineStage, WorkStage } from "../shared/contract";
-import { executorKind } from "./automation-run";
 
-/** Этап шкалы до подстановки рисунка: свой значок владельца, если выбран, и запасной — по виду, исполнителю и шагам. */
+/** Этап шкалы до подстановки рисунка: свой значок владельца, если выбран, и запасной — по виду и шагам, как на странице Flow. */
 export type TimelineStageDraft = Omit<TimelineStage, "glyph"> & { icon: string | undefined; fallbackIcon: string };
 
 type Track = FlowProgress["stages"][string];
@@ -22,6 +21,6 @@ export const stageTimeline = (progress: FlowProgress, stages: readonly WorkStage
     const track = progress.stages[stage.id] ?? {};
     const passes = passesOf(track);
     if (passes.length === 0) return [];
-    const fallbackIcon = stageIconName({ kind: stageKindOf(stage), executor: executorKind(track.executor), automation: stage.automation !== undefined });
+    const fallbackIcon = stageIconName({ kind: stageKindOf(stage), automation: stage.automation !== undefined });
     return [{ id: stage.id, name: stage.name, icon: stage.icon, fallbackIcon, passes }];
   });

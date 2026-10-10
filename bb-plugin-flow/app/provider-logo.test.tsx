@@ -41,7 +41,7 @@ const progress = {
 
 const logoOf = (el: Element) => el.querySelector<HTMLElement>("[data-provider-logo]");
 
-describe("логотип провайдера в полосе этапов", () => {
+describe("значок этапа в полосе этапов — как на странице Flow", () => {
   const rows = async () => {
     const app2 = app.composerCustomizations.find((c) => c.id === "flow-progress")!;
     const slot = renderSlot(app2.banners![0]!, {}, { rpc: { getFlowProgress: () => progress } as never, composer: { scope: { kind: "thread", threadId: "thr_1" } }, settings: { language: "Русский" }, providers });
@@ -50,28 +50,11 @@ describe("логотип провайдера в полосе этапов", () 
     return [...slot.container.querySelectorAll<HTMLElement>("[data-progress-row]")];
   };
 
-  it("этап самого агента — логотип провайдера треда вместо ромба, без квадрата", async () => {
-    const row = (await rows())[0]!;
-    expect(logoOf(row)?.getAttribute("data-provider-logo")).toBe(CODEX_LOGO);
-    expect(logoOf(row)?.hasAttribute("data-framed")).toBe(false);
-    expect(logoOf(row)?.getAttribute("aria-label")).toBe("Codex");
-    expect(row.querySelector('[data-icon="Diamond"]')).toBeNull();
-  });
-
-  it("этап субагента — маленький логотип его провайдера в квадрате вместо робота", async () => {
-    const row = (await rows())[1]!;
-    const logo = logoOf(row)!;
-    expect(logo.getAttribute("data-provider-logo")).toBe(CLAUDE_LOGO);
-    expect(logo.hasAttribute("data-framed")).toBe(true);
-    expect(row.querySelector('[data-icon="Bot"]')).toBeNull();
-  });
-
-  it("провайдер без логотипа или без провайдера — прежние ромб и робот; workflow не меняется", async () => {
-    const [, , bare, none, flow] = await rows();
-    expect(logoOf(bare!)).toBeNull();
-    expect(bare!.querySelector('[data-icon="Diamond"]')).not.toBeNull();
-    expect(none!.querySelector('[data-icon="Bot"]')).not.toBeNull();
-    expect(flow!.querySelector('[data-icon="Workflow"]')).not.toBeNull();
+  it("этап навыка — книга, а не логотип провайдера, ромб, робот или workflow, кто бы его ни вёл", async () => {
+    for (const row of await rows()) {
+      expect(logoOf(row)).toBeNull();
+      expect(row.querySelector('[data-icon="BookOpen"]')).not.toBeNull();
+    }
   });
 });
 

@@ -11,5 +11,5 @@ export function StageGlyph({ icon, fallback, className }: { icon: string | undef
   return own === undefined ? <Icon name={fallback} aria-hidden="true" className={className} /> : <HugeiconsIcon icon={own} aria-hidden="true" className={className} data-icon={icon} />;
 }
 
-/** Есть ли у этапа своя иконка из подборки: тогда она стоит вместо иконки вида и логотипа исполнителя. */
+/** Есть ли у этапа своя иконка из подборки: тогда она стоит вместо иконки вида. */
 export const hasOwnIcon = (icon: string | undefined): icon is string => icon !== undefined && STAGE_ICONS.has(icon);

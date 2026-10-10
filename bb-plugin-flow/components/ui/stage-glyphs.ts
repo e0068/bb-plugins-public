@@ -1,6 +1,7 @@
 // Рисунок значка этапа без React: сервер отдаёт его другим плагинам, которые каталога значков Flow не знают.
 import {
   ArrangeIcon,
+  BookOpen01Icon,
   BotIcon,
   CheckListIcon,
   DiamondIcon,
@@ -15,7 +16,7 @@ import { STAGE_ICONS } from "./stage-icon-catalog";
 /** Workflow пунктиром — значок этапа Выбор этапов: тот же рисунок, линия штрихом. */
 export const WorkflowDashedIcon: IconSvgElement = WorkflowCircle03Icon.map(([tag, attrs]) => [tag, { ...attrs, strokeDasharray: "2.5 2.5" }]) as IconSvgElement;
 
-/** Рисунки запасных значков этапа прогона — по именам из lib/stage-icon-names; Icon берёт их из этой же карты. */
+/** Рисунки запасных значков этапа — по именам из lib/stage-icon-names — и значков исполнителя в итоге прогона; Icon берёт их из этой же карты. */
 export const KIND_GLYPHS = {
   MessageQuestion: MessageQuestionIcon,
   ListTodo: CheckListIcon,
@@ -23,6 +24,7 @@ export const KIND_GLYPHS = {
   Presentation: PresentationBarChart01Icon,
   Play: PlayIcon,
   Arrange: ArrangeIcon,
+  BookOpen: BookOpen01Icon,
   Diamond: DiamondIcon,
   Bot: BotIcon,
   Workflow: WorkflowCircle03Icon,

@@ -27,13 +27,11 @@ import { ResultAnchor } from "./cells";
 import { useFileRoots } from "./file-roots";
 import { FlowChoice } from "./flow-choice";
 import { LocaleProvider } from "./locale";
-import { ProviderLogosProvider } from "./provider-logos-source";
-import { ProviderMark } from "./provider-logos";
 import { useMessages } from "./locale-context";
 import { KIND_ICONS } from "./stage-icons";
 import { stageIconName } from "../lib/stage-icon-names";
 import { StageCheckbox } from "./stage-checkbox";
-import { hasOwnIcon, StageGlyph } from "./stage-glyph";
+import { StageGlyph } from "./stage-glyph";
 
 /** Тон заливки занятого окна: те же семантические токены, что у остальных состояний баннера. */
 const CONTEXT_TONES = { normal: "bg-primary", warn: "bg-warning", alert: "bg-destructive" } as const;
@@ -71,25 +69,16 @@ const POLL_MS = 5000;
 /** Кривая доводки списка после отпускания пальца — та же, что у шторок кита. */
 const SETTLE_EASING = "cubic-bezier(0.32, 0.72, 0, 1)";
 
-const iconOf = (stage: ProgressStage): string => stageIconName({ kind: stage.kind, executor: stage.executor, automation: stage.automation !== undefined });
-
-/** У этапа навыка, который ведёт сам агент или субагент, — логотип провайдера исполнителя. */
-const byProvider = (stage: ProgressStage): boolean => stage.automation === undefined && stage.kind === "skill" && stage.executor !== "workflow";
+const iconOf = (stage: ProgressStage): string => stageIconName({ kind: stage.kind, automation: stage.automation !== undefined });
 
 /** Приглушённое мерцание элемента, на этапе которого идёт работа; кадры кладёт полоса. */
 export const pulse = (live: boolean | undefined) => (live === true ? { "data-pulse": "", style: { animation: mutedBlinkAnimation } } : {});
 
-/** Значок этапа: иконка, выбранная владельцем, а без неё — логотип исполнителя или иконка вида; мерцает, пока на этапе идёт работа. */
+/** Значок этапа — как на странице Flow: иконка, выбранная владельцем, а без неё — иконка вида; мерцает, пока на этапе идёт работа. */
 export function StageIcon({ stage, className }: { stage: ProgressStage; className?: string }) {
   return (
     <span data-stage-icon {...pulse(stage.live)} className={cn("flex items-center justify-center", stage.state === "fail" && "text-destructive")}>
-      {hasOwnIcon(stage.icon) ? (
-        <StageGlyph icon={stage.icon} fallback={iconOf(stage)} className={cn("size-3.5", className)} />
-      ) : byProvider(stage) ? (
-        <ProviderMark providerId={stage.provider} framed={stage.executor === "agent"} fallback={iconOf(stage)} className={cn("size-3.5", className)} />
-      ) : (
-        <Icon name={iconOf(stage)} aria-hidden="true" className={cn("size-3.5", className)} />
-      )}
+      <StageGlyph icon={stage.icon} fallback={iconOf(stage)} className={cn("size-3.5", className)} />
     </span>
   );
 }
@@ -303,9 +292,7 @@ const COLUMNS = "grid grid-cols-[16px_16px_minmax(0,1fr)_2.75rem_3.25rem_20px] i
 export function ProgressBanner() {
   return (
     <LocaleProvider>
-      <ProviderLogosProvider>
-        <Banner />
-      </ProviderLogosProvider>
+      <Banner />
     </LocaleProvider>
   );
 }
