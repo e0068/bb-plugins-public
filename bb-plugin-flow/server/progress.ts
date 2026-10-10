@@ -285,10 +285,10 @@ const historyTitle = (run: FrozenRun, thread: ThreadTitle): Pick<RunHistoryEntry
 const INSTRUCTIONS = `Mark the stages of the thread's flow as you go, so the owner sees the progress above the composer.
 - Call ${FLOW_STAGE_TOOL} with state "started" when you begin a skill stage of the run, before its first action.
 - Call it with state "done" and results — links to what the stage produced, [{ label, target }] with the file name or task key as label — when you finish the stage.
-- Built-in stages (questions, Definition of Done, stage selection, demo) are marked by the briefs themselves: do not mark them.
+- Built-in stages (questions, Definition of Done, stage selection, demo) are marked by the briefs themselves: mark one only to roll back to it.
 - Automation stages are run and marked by Flow itself: when the next stage is an automation, mark the current stage done and wait for the answer — the call waits until Flow has run it. When the answer hands you Flow's message, act on it in the same turn; when it says to end your turn, end it — Flow sends you a message when your next stage is due. The answer says whether Flow started it, and if it did not, why and what to do. Never tell the owner an automation runs unless the answer says it started — relay what the answer says.
 - Action stages are run by the owner, step by step, with a button above the composer: when the next stage is an action, mark the current stage done and end your turn — Flow marks the action stage itself.
-- A stage sent back for rework is started again: marking a done stage started drops the done state of every stage after it, so the run goes through them again in order and the automations behind them run again. The undo steps of the done automations it reopens run before the answer, which names their outcome — relay a failed one to the owner.
+- Rolling back: mark a done stage started, a built-in one too — every stage after it loses its done state, so the run goes through them again in order and the automations behind them run again. The undo steps of the done automations it reopens run before the answer, which names their outcome — relay a failed one to the owner. A demo comment asking for a change rolls back to the stage of the change; a new fork, criterion or stage choice after launch rolls back to Definition of Done.
 The stage ids are in the Flow instructions for the turn.`;
 
 type Result = NonNullable<FlowProgress["stages"][string]["results"]>[number];

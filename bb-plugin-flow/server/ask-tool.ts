@@ -11,8 +11,8 @@ import { criterionEditable, money, plannedMinutes, recommendedForecast } from ".
 import { FLOW_RULE, SELF_ONLY_RULE, isAskedStage, isAutomationStage, isStageCarryKey, reportIssues, stageInstructions, withStepResults } from "../core/stages";
 import { isHeadingStage } from "../core/sub-stages";
 import { stageKindOf, type BuiltinKind } from "../lib/stage-constants";
-import { FORK_ZERO_RULE, OPTION_PRICE_RULE, askDecisionParamsSchema, type AskDecisionParams, type Criterion, type DecisionBrief, type Planning, type RestoredDraft, type StageSettings } from "../shared/contract";
-import type { ProgressStore } from "./progress";
+import { FORK_ZERO_RULE, OPTION_PRICE_RULE, askDecisionParamsSchema, type AskDecisionParams, type Criterion, type DecisionBrief, type FlowProgress, type Planning, type RestoredDraft, type StageSettings } from "../shared/contract";
+import { FLOW_STAGE_TOOL, type ProgressStore } from "./progress";
 import { KV_VALUE_LIMIT_BYTES, type DecisionStore } from "./store";
 import type { FlowTrigger } from "./automations";
 
@@ -41,7 +41,7 @@ criteria on an option — items it adds while chosen, required if priced; an ite
 
 outcome — a demo of running work instead of setup: { stage (a demo stage id), final, next (only when not final), done ([text] — closed since the previous demo), pending ([{ text, why }]), notes, tasks ([{ key, done, note }]), results (at least one: { label, target } — a file, path or URL; { label, command } — a one-click command), documentsOnly (only documents changed since the previous demo) }. Unless documentsOnly, results hold a live one: an http(s) URL or a command.
 
-After launch (an answered brief with a stage in the run), setup.stages is accepted only while a stage selection or Definition of Done stage is todo, setup.criteria only while the latter is.
+After launch (an answered brief with a stage in the run), in a flow with a Definition of Done stage forks, criteria and stages go only into a brief after rolling back to it (flow_stage).
 
 The owner also chooses where the work runs; a new thread takes the answer over and this thread stops.
 
@@ -49,7 +49,7 @@ Brief kind: brief — you wait for the answer; clarify — one yesno question ("
 
 After the call, paste the directive line from the result into your reply as a standalone line, without quotes or backticks. For a brief, end the turn right after it. The answer arrives as "Brief … —" in the owner's language.
 
-One brief per run: go through the run stages in order; on a demo stage, stop with a brief carrying its outcome. Another brief only if it is unclear how to proceed, and only about that.`;
+One brief per run: go through the run stages in order; on a demo stage, stop with a brief carrying its outcome.`;
 
 /**
  * Сообщение владельца в чат при ждущем брифе возвращает бриф агенту (./brief-return.ts). В описании инструмента, а не в
@@ -94,15 +94,25 @@ const LAUNCHED_SETUP = [
   ["criteria", ["criteria"]],
 ] as const satisfies ReadonlyArray<readonly ["stages" | "criteria", readonly BuiltinKind[]]>;
 
-const launchedIssues = (setup: AskDecisionParams["setup"], stages: StageSettings["stages"]): string[] => {
+/**
+ * Бриф запущенной работы. Во flow с Definition of Done развилка, критерий или выбор этапов спрашиваются только после отката
+ * к нему: иначе они пройдут мимо критериев и выбора этапов, которые от них зависят. Откатанный Definition of Done стоит
+ * в брифе todo — ответ закрывает его снова. Демонстрация и уточнение да/нет — не развилка.
+ */
+const launchedIssues = (params: AskDecisionParams, stages: StageSettings["stages"], progress: FlowProgress | null): string[] => {
   const openKind = (kinds: readonly BuiltinKind[]) =>
-    (setup?.stages ?? []).some((r) => r.state === "todo" && stages.some((s) => s.id === r.id && kinds.includes(stageKindOf(s) as BuiltinKind)));
-  const sent = LAUNCHED_SETUP.filter(([key, kinds]) => setup?.[key] !== undefined && !openKind(kinds)).map(([key]) => key);
+    (params.setup?.stages ?? []).some((r) => r.state === "todo" && stages.some((s) => s.id === r.id && kinds.includes(stageKindOf(s) as BuiltinKind)));
+  const criteria = stages.find((s) => stageKindOf(s) === "criteria");
+  const asks = params.outcome === undefined && (params.questions.length > 0 || params.setup !== undefined);
+  const track = criteria === undefined ? undefined : progress?.stages[criteria.id];
+  if (criteria !== undefined && asks && track?.finishedAt !== undefined)
+    return [`the work is already launched: a new fork, criterion or stage choice goes through Definition of Done again — roll back to it with ${FLOW_STAGE_TOOL} { stage: "${criteria.id}", state: "started" }, then send this brief with ${criteria.id} and the stage selection todo in setup.stages`];
+  if (criteria !== undefined && asks && track?.startedAt !== undefined && !openKind(["criteria"]))
+    return [`the work is already launched and Definition of Done is rolled back: send this brief with ${criteria.id} and the stage selection todo in setup.stages`];
+  const sent = LAUNCHED_SETUP.filter(([key, kinds]) => params.setup?.[key] !== undefined && !openKind(kinds)).map(([key]) => key);
   return sent.length === 0
     ? []
-    : [
-        `setup.${sent.join(", setup.")} are not accepted here: the work in this thread is already launched — send them only while a todo stage selection or Definition of Done stage stands in setup.stages; otherwise ask only questions, or send a demo outcome`,
-      ];
+    : [`setup.${sent.join(", setup.")} are not accepted here: the work in this thread is already launched — send them only while a todo stage selection or Definition of Done stage stands in setup.stages`];
 };
 
 /** Итог — про запущенную работу и про этап Демонстрации из flow треда; flow без Вопросов, Definition of Done и Выбора этапов запуска не ждёт. */
@@ -240,7 +250,8 @@ export const registerAskTool = (
       const settings = deps.stages?.(ctx.threadId) ?? { stages: [], minButtonWidth: 0 };
       const launched = await store.isLaunched(ctx.threadId);
       const legacy = params.kind === "brief" ? legacyIssues(params.setup) : [];
-      const launchedSetup = params.kind === "brief" && launched ? launchedIssues(params.setup, settings.stages) : [];
+      const progress = (await deps.progress?.get(ctx.threadId)) ?? null;
+      const launchedSetup = params.kind === "brief" && launched ? launchedIssues(params, settings.stages, progress) : [];
       const outcomeProblems = outcomeIssues(params.outcome, launched, settings.stages, deps.flowIds?.() ?? []);
       const stageIssues = [...missingStagesIssues(params, launched, settings.stages), ...reportIssues(settings.stages, params.setup?.stages)];
       const base = baseIssues(params, launched, settings.stages);
@@ -258,9 +269,9 @@ export const registerAskTool = (
       const approved = midWork ? await store.getThreadCriteria(ctx.threadId) : [];
       const approvedScope = midWork ? await store.getThreadScope(ctx.threadId) : null;
       // Утверждённый бюджет нужен только уточнению: второй Выбор этапов считает прогноз заново.
-      const approvedBudget = midWork && params.setup?.stages === undefined ? ((await deps.progress?.get(ctx.threadId))?.planned ?? null) : null;
+      const approvedBudget = midWork && params.setup?.stages === undefined ? (progress?.planned ?? null) : null;
       // Ссылки сделанной автоматизации — из её шагов: агент их не присылает.
-      const stepped = withStepResults(settings.stages, params.setup?.stages, params.setup?.stages === undefined ? null : ((await deps.progress?.get(ctx.threadId)) ?? null));
+      const stepped = withStepResults(settings.stages, params.setup?.stages, params.setup?.stages === undefined ? null : progress);
       const brief: DecisionBrief = {
         ...params,
         ...(params.setup === undefined || stepped === undefined ? {} : { setup: { ...params.setup, stages: stepped } }),
