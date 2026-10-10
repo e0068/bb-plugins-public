@@ -1,5 +1,6 @@
 import { defineRpcContract, type BbPluginApi } from "@get-bb/plugin-sdk";
 import { z } from "zod";
+import { railCollapseSetting, selectedThreadSetting } from "@bb-plugins/rail-collapse/setting";
 
 import { createStore, registerTasksApi } from "./api";
 import { registerAttachments } from "./attachments";
@@ -26,6 +27,7 @@ function statusPayload() {
 
 export default async function plugin(bb: BbPluginApi) {
   bb.log.info(`${TASKS_PLUGIN_NAME} ${TASKS_PLUGIN_VERSION} loaded`);
+  bb.settings.define({ ...railCollapseSetting, ...selectedThreadSetting("the tasks") });
 
   const store = await createStore(bb);
   // Одна память об окружениях на процесс: второй экземпляр удвоил бы

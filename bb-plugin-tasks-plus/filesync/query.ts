@@ -15,6 +15,8 @@ export interface TaskFilters {
   activeTaskIds?: ReadonlySet<string>;
   /** Task IDs with at least one idle, unarchived thread. */
   waitingTaskIds?: ReadonlySet<string>;
+  /** Task IDs one thread is attached to. */
+  threadTaskIds?: ReadonlySet<string>;
 }
 
 function matchesSearch(task: Task, needle: string): boolean {
@@ -55,6 +57,9 @@ export function filterTasks(
       return false;
     }
     if (filters.waitingTaskIds && !filters.waitingTaskIds.has(task.id)) {
+      return false;
+    }
+    if (filters.threadTaskIds && !filters.threadTaskIds.has(task.id)) {
       return false;
     }
     return true;

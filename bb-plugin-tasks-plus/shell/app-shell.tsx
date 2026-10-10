@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useBbNavigate, type PluginNavPanelProps } from "@get-bb/plugin-sdk/app";
+import { useBbNavigate, useSettings, type PluginNavPanelProps } from "@get-bb/plugin-sdk/app";
+import { useFollowSelectedThread } from "@bb-plugins/rail-collapse";
 import type { TaskLayout } from "../shared/enums.js";
 import type { ViewTarget } from "../views/common/view-state.js";
 import { useProjects, useSavedViews } from "../client/data.js";
@@ -9,6 +10,8 @@ import { NewTaskSeedContext } from "../views/common/new-task-seed-context.js";
 import {
   PANEL_PATH,
   parseTasksRoute,
+  rememberedSubPath,
+  threadTasksRoute,
   useTasksNavigation,
   type ResolvedTasksRoute,
   type TasksNavigation,
@@ -24,6 +27,7 @@ import {
   useResizableWidth,
 } from "@bb-plugins/resizable-pane/react";
 import { useRememberedRoute } from "@bb-plugins/panel-state/react";
+import { ThreadNarrowing } from "./thread-narrowing.js";
 import { TableView } from "../views/table/index.js";
 import { BoardView } from "../views/board/index.js";
 import { applyBoardState, hasBoardDraft, scopeBoardKey } from "../views/board/board-preference.js";
@@ -155,7 +159,7 @@ function SavedViewOutlet({ savedViewId, target }: { savedViewId: string; target:
   );
 }
 
-function RouteOutlet({ route, target }: { route: ResolvedTasksRoute; target: ViewTarget | null }) {
+function RouteOutlet({ route, target, onShowAll }: { route: ResolvedTasksRoute; target: ViewTarget | null; onShowAll: () => void }) {
   switch (route.kind) {
     case "manage":
       return <ManagePanel />;
@@ -166,16 +170,28 @@ function RouteOutlet({ route, target }: { route: ResolvedTasksRoute; target: Vie
     case "view":
       return <SavedViewOutlet savedViewId={route.savedViewId} target={target} />;
     case "all":
+      // viewTargetOf hands back a target for every screen kind.
+      return target === null ? null : route.thread === undefined ? (
+        <ScreenView target={target} />
+      ) : (
+        <>
+          <ThreadNarrowing threadId={route.thread} onShowAll={onShowAll} />
+          <ScreenView target={target} thread={route.thread} />
+        </>
+      );
     case "active":
     case "waiting":
     case "project":
-      // viewTargetOf hands back a target for exactly these kinds.
-      return target === null ? null : target.layout === "board" ? (
-        <BoardView scope={target.scope} />
-      ) : (
-        <TableView scope={target.scope} />
-      );
+      return target === null ? null : <ScreenView target={target} />;
   }
+}
+
+function ScreenView({ target, thread }: { target: ViewTarget; thread?: string }) {
+  return target.layout === "board" ? (
+    <BoardView scope={target.scope} thread={thread} />
+  ) : (
+    <TableView scope={target.scope} thread={thread} />
+  );
 }
 
 /**
@@ -207,7 +223,7 @@ function TasksAppShellContent({ subPath }: PluginNavPanelProps) {
   // link (a task URL, a ::task card) still wins, being an explicit address.
   useRememberedRoute(
     PANEL_PATH,
-    subPath,
+    rememberedSubPath(subPath),
     // Restoring goes through the raw navigation, not the wrapper below: it's
     // putting back where the user was, not a fresh choice of view to store.
     useCallback(
@@ -216,6 +232,19 @@ function TasksAppShellContent({ subPath }: PluginNavPanelProps) {
       [tasksNavigation],
     ),
   );
+  // With "Show the selected thread" on, Tasks+ opened at its root — and every
+  // thread picked in the threads panel — shows that thread's task, or all of
+  // its tasks when it has several; a picked thread without tasks opens itself.
+  const rpc = useTasksRpc();
+  const navigate = useBbNavigate();
+  useFollowSelectedThread(useSettings, subPath === "", {
+    resolve: (threadId) =>
+      rpc.call("tasksForThread", { threadId }).then(({ tasks }) => {
+        const next = threadTasksRoute(threadId, tasks);
+        return next === null ? null : () => tasksNavigation.go(next, { replace: true });
+      }),
+    openThread: (threadId) => navigate.toThread(threadId),
+  });
   // Every explicit layout in a navigation is a user choice worth remembering
   // — the Display panel's Table/Board switch is the only source of one.
   const navigation = useMemo<TasksNavigation>(
@@ -381,7 +410,7 @@ function TasksAppShellContent({ subPath }: PluginNavPanelProps) {
             />
           ) : (
             <NewTaskSeedContext.Provider value={setListSeed}>
-              <RouteOutlet route={route} target={target} />
+              <RouteOutlet route={route} target={target} onShowAll={() => navigation.go({ kind: "all", view: null })} />
             </NewTaskSeedContext.Provider>
           )}
         </div>

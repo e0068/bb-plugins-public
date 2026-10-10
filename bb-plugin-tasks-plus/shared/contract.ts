@@ -1174,6 +1174,8 @@ export const tasksRpcContract = defineRpcContract({
         labelIds: z.array(labelIdSchema).optional(),
         activeOnly: z.boolean().default(false),
         waitingOnly: z.boolean().default(false),
+        /** Only the tasks this thread is attached to — Tasks+ opened for the selected thread. */
+        threadId: z.string().startsWith("thr_").optional(),
         parentTaskId: taskIdSchema.nullable().optional(),
         search: z.string().optional(),
         sort: taskSortSchema.default("manual"),

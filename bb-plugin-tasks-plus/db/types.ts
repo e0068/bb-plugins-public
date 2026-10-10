@@ -211,6 +211,8 @@ export interface ListTasksFilters {
   labelIds?: readonly string[];
   activeOnly?: boolean;
   waitingOnly?: boolean;
+  /** Only the tasks this thread is attached to. */
+  threadId?: string;
   parentTaskId?: string | null;
   search?: string;
   sort?: TaskSort;

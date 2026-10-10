@@ -175,6 +175,18 @@ describe("task lifecycle", () => {
     void none;
   });
 
+  it("threadId: только задачи, к которым привязан этот тред", async () => {
+    const one = await store.createTask({ projectId: "b1", title: "One" });
+    const two = await store.createTask({ projectId: "b1", title: "Two" });
+    const other = await store.createTask({ projectId: "b1", title: "Other" });
+    await store.upsertTaskThread({ taskId: one.id, threadId: "thr_mine", presetName: "P", title: "T" });
+    await store.upsertTaskThread({ taskId: two.id, threadId: "thr_mine", presetName: "P", title: "T" });
+    await store.upsertTaskThread({ taskId: other.id, threadId: "thr_other", presetName: "P", title: "T" });
+
+    const result = await store.listTasks({ threadId: "thr_mine" });
+    expect(result.map((t) => t.id).sort()).toEqual([one.id, two.id].sort());
+  });
+
   it("waitingOnly: только задачи с idle-тредом, не архивным", async () => {
     const waiting = await store.createTask({ projectId: "b1", title: "Waiting" });
     const archived = await store.createTask({ projectId: "b1", title: "Archived" });

@@ -33,6 +33,8 @@ export function useListTasks(
   projectId: string | null,
   listScope: ListScope,
   filters: ListTaskFilters,
+  /** Only the tasks this thread is attached to; undefined — every task of the scope. */
+  thread: string | undefined,
 ) {
   return useTasksQuery(
     async (rpc) =>
@@ -49,6 +51,7 @@ export function useListTasks(
           : {}),
         ...(listScope === "active" ? { activeOnly: true } : {}),
         ...(listScope === "waiting" ? { waitingOnly: true } : {}),
+        ...(thread === undefined ? {} : { threadId: thread }),
       }),
     ["tasks:changed", "threads:changed"],
     [
@@ -57,6 +60,7 @@ export function useListTasks(
       filters.statuses.join(),
       filters.priorities.join(),
       filters.labelIds === null ? "" : `active:${filters.labelIds.join()}`,
+      thread,
     ],
   );
 }

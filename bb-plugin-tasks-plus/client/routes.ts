@@ -14,7 +14,8 @@ export type TaskViewMode = TaskLayout;
  * view-preference.ts). Navigating with an explicit view pins it in the URL.
  */
 export type TasksRoute =
-  | { kind: "all"; view: TaskLayout | null }
+  /** `thread` narrows every task to the ones that thread is attached to. */
+  | { kind: "all"; view: TaskLayout | null; thread?: string }
   | { kind: "active"; view: TaskLayout | null }
   | { kind: "waiting"; view: TaskLayout | null }
   | { kind: "manage" }
@@ -27,7 +28,7 @@ export type TasksRoute =
 /** A route whose layout has been resolved; what the shell renders. */
 export type ResolvedTasksRoute =
   | Exclude<TasksRoute, { kind: "all" | "active" | "waiting" | "project" }>
-  | { kind: "all"; view: TaskLayout }
+  | { kind: "all"; view: TaskLayout; thread?: string }
   | { kind: "active"; view: TaskLayout }
   | { kind: "waiting"; view: TaskLayout }
   | { kind: "project"; projectId: string; view: TaskLayout };
@@ -36,6 +37,7 @@ export type ResolvedTasksRoute =
  * subPath grammar (the trailing route below /plugins/tasks/tasks):
  *   ""                      → all tasks (default)
  *   "all"                   → all tasks
+ *   "all?thread=<threadId>" → all tasks that thread is attached to
  *   "active"                → tasks with agents working
  *   "waiting"               → tasks with an idle, non-archived thread
  *   "manage"                → manage panel (labels, presets, folders)
@@ -52,6 +54,12 @@ function parseView(query: string): TaskLayout | null {
 
 function withView(base: string, view: TaskLayout | null): string {
   return view === null ? base : `${base}?view=${view}`;
+}
+
+/** The all-tasks route, narrowed to a thread when the address names one. */
+function allRoute(query: string): TasksRoute {
+  const thread = new URLSearchParams(query).get("thread");
+  return thread === null ? { kind: "all", view: parseView(query) } : { kind: "all", view: parseView(query), thread };
 }
 
 function decodeSegment(segment: string): string {
@@ -71,7 +79,7 @@ export function parseTasksRoute(rawSubPath: string): TasksRoute {
   const query = queryIndex === -1 ? "" : subPath.slice(queryIndex + 1);
   const segments = path.split("/").filter((segment) => segment.length > 0);
   const head = segments[0];
-  if (head === undefined || head === "all") return { kind: "all", view: parseView(query) };
+  if (head === undefined || head === "all") return allRoute(query);
   if (head === "active") return { kind: "active", view: parseView(query) };
   if (head === "waiting") return { kind: "waiting", view: parseView(query) };
   if (head === "manage") return { kind: "manage" };
@@ -97,8 +105,10 @@ export function parseTasksRoute(rawSubPath: string): TasksRoute {
 
 export function tasksRouteToSubPath(route: TasksRoute): string {
   switch (route.kind) {
-    case "all":
-      return withView("all", route.view);
+    case "all": {
+      const base = withView("all", route.view);
+      return route.thread === undefined ? base : `${base}${route.view === null ? "?" : "&"}thread=${route.thread}`;
+    }
     case "active":
       return withView("active", route.view);
     case "waiting":
@@ -114,6 +124,28 @@ export function tasksRouteToSubPath(route: TasksRoute): string {
     case "project":
       return withView(route.projectId, route.view);
   }
+}
+
+/**
+ * Where Tasks+ opens for a thread: its only task, or every task narrowed to
+ * it when it has several; null — no task, the page stays where it is.
+ */
+export function threadTasksRoute(threadId: string, tasks: readonly { readonly key: string }[]): TasksRoute | null {
+  const [only, ...rest] = tasks;
+  if (only === undefined) return null;
+  return rest.length === 0 ? { kind: "task", taskKey: only.key } : { kind: "all", view: null, thread: threadId };
+}
+
+/**
+ * The address the panel remembers for its next visit: all tasks of a thread
+ * is remembered as all tasks — the narrowing belongs to the thread the owner
+ * came from this time, not to the next visit.
+ */
+export function rememberedSubPath(subPath: string): string {
+  const route = parseTasksRoute(subPath);
+  return route.kind === "all" && route.thread !== undefined
+    ? tasksRouteToSubPath({ kind: "all", view: route.view })
+    : subPath;
 }
 
 export interface TasksNavigation {
