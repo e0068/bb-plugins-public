@@ -6,7 +6,7 @@
 // язык берётся у браузера, а рисунок и мигание подменяются стилем-маской по
 // подписи: в реестре хоста иконок видов нет.
 import type { PluginAppBuilder, PluginContentScriptContext } from "@get-bb/plugin-sdk/app";
-import { ArrangeIcon, CheckListIcon, MessageQuestionIcon, PlayIcon, PresentationBarChart01Icon, WorkflowCircle03Icon } from "@hugeicons/core-free-icons";
+import { ArrangeIcon, CheckListIcon, CheckmarkBadge01Icon, MessageQuestionIcon, PlayIcon, PresentationBarChart01Icon, WorkflowCircle03Icon } from "@hugeicons/core-free-icons";
 
 import { awaitingChanges } from "../core/awaiting";
 import { glyphCss, type SpinnerLogo } from "../core/row-glyph-css";
@@ -27,7 +27,7 @@ type RunningKind = "automation" | "action";
 type GlyphId = AwaitingKind | `running:${RunningKind}`;
 
 const RUNNING: readonly RunningKind[] = ["automation", "action"];
-const AWAITING: readonly AwaitingKind[] = ["questions", "criteria", "select", "demo", "automation", "action"];
+const AWAITING: readonly AwaitingKind[] = ["questions", "criteria", "select", "demo", "approve", "automation", "action"];
 
 const ICON_DATA: Record<BuiltinKind | RunningKind, IconData> = {
   action: PlayIcon as unknown as IconData,
@@ -35,11 +35,12 @@ const ICON_DATA: Record<BuiltinKind | RunningKind, IconData> = {
   criteria: CheckListIcon as unknown as IconData,
   select: WorkflowCircle03Icon as unknown as IconData,
   demo: PresentationBarChart01Icon as unknown as IconData,
+  approve: CheckmarkBadge01Icon as unknown as IconData,
   automation: ArrangeIcon as unknown as IconData,
 };
 
 /** Имя иконки хоста — запасной рисунок, если стиль перестанет совпадать с разметкой. */
-const FALLBACK_ICON: Record<BuiltinKind | RunningKind, string> = { action: "Play", questions: "MessageQuestion", criteria: "ListTodo", select: "Workflow", demo: "Presentation", automation: "Workflow" };
+const FALLBACK_ICON: Record<BuiltinKind | RunningKind, string> = { action: "Play", questions: "MessageQuestion", criteria: "ListTodo", select: "Workflow", demo: "Presentation", approve: "BadgeCheck", automation: "Workflow" };
 
 const kebab = (name: string): string => name.replace(/[A-Z]/g, (c) => `-${c.toLowerCase()}`);
 
@@ -83,6 +84,7 @@ export function registerAwaitingStatus(app: PluginAppBuilder): void {
         criteria: { icon: "criteria", label: `Flow — ${t.stages.criteria}`, tone: "default", blink: false },
         select: { icon: "select", label: `Flow — ${t.stages.select}`, tone: "default", blink: false },
         demo: { icon: "demo", label: `Flow — ${t.stages.demo}`, tone: "default", blink: false },
+        approve: { icon: "approve", label: `Flow — ${t.stages.approve}`, tone: "default", blink: false },
         automation: { icon: "automation", label: `Flow — ${t.rowStatus.automationFailed}`, tone: "error", blink: false },
         action: { icon: "action", label: `Flow — ${t.stages.action}`, tone: "default", blink: false },
         "running:action": { icon: "action", label: `Flow — ${t.rowStatus.running(t.stages.action)}`, tone: "default", blink: true },

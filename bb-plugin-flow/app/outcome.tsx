@@ -7,7 +7,7 @@
 import { useRpc } from "@get-bb/plugin-sdk/app";
 
 import { isTaskAddress } from "../core/task-lookup";
-import { outcomeItems, paragraphs } from "../core/outcome";
+import { outcomeItems, outcomeKind, paragraphs } from "../core/outcome";
 import { Icon } from "../components/ui/icon";
 import { cn } from "../lib/utils";
 import type { DecisionBrief, StageOutcome, outcomeRpcContract } from "../shared/contract";
@@ -106,10 +106,11 @@ export function DemoCard({ brief, roots, view }: { brief: DecisionBrief; roots: 
   const t = useMessages();
   const outcome = brief.outcome;
   if (outcome === undefined) return null;
+  const kind = outcomeKind(brief);
   return (
-    <div role="group" aria-label={t.outcome.title} className="flex flex-col gap-px overflow-hidden rounded-lg">
+    <div role="group" aria-label={kind === "approve" ? t.stages.approve : t.outcome.title} className="flex flex-col gap-px overflow-hidden rounded-lg">
       <div className="flex flex-col gap-4 bg-surface-recessed-solid px-4 pb-4 pt-3.5">
-        <SectionTag kind="demo" extra={outcome.final ? t.outcome.final : outcome.next === undefined ? undefined : t.outcome.next(outcome.next)} />
+        <SectionTag kind={kind} extra={outcome.final ? t.outcome.final : outcome.next === undefined ? undefined : t.outcome.next(outcome.next)} />
         <Items outcome={outcome} done />
         <Items outcome={outcome} done={false} />
         {outcome.notes !== undefined && (

@@ -288,7 +288,7 @@ const INSTRUCTIONS = `Mark the stages of the thread's flow as you go, so the own
 - Built-in stages (questions, Definition of Done, stage selection, demo) are marked by the briefs themselves: mark one only to roll back to it.
 - Automation stages are run and marked by Flow itself: when the next stage is an automation, mark the current stage done and wait for the answer — the call waits until Flow has run it. When the answer hands you Flow's message, act on it in the same turn; when it says to end your turn, end it — Flow sends you a message when your next stage is due. The answer says whether Flow started it, and if it did not, why and what to do. Never tell the owner an automation runs unless the answer says it started — relay what the answer says.
 - Action stages are run by the owner, step by step, with a button above the composer: when the next stage is an action, mark the current stage done and end your turn — Flow marks the action stage itself.
-- Rolling back: mark a done stage started, a built-in one too — every stage after it loses its done state, so the run goes through them again in order and the automations behind them run again. The undo steps of the done automations it reopens run before the answer, which names their outcome — relay a failed one to the owner. A demo comment asking for a change rolls back to the stage of the change; a new fork, criterion or stage choice after launch rolls back to Definition of Done.
+- Rolling back: mark a done stage started, a built-in one too — every stage after it loses its done state, so the run goes through them again in order and the automations behind them run again. The undo steps of the done automations it reopens run before the answer, which names their outcome — relay a failed one to the owner. A demo comment asking for a change rolls back to the stage of the change, an approval comment — to the stage before the approval; a new fork, criterion or stage choice after launch rolls back to Definition of Done.
 The stage ids are in the Flow instructions for the turn.`;
 
 type Result = NonNullable<FlowProgress["stages"][string]["results"]>[number];
@@ -341,6 +341,8 @@ export const registerProgress = (
     projects?: () => Promise<ReadonlyArray<{ id: string; name: string }>>;
     /** Id живого flow для строки истории по id и названию из итога; flow удалён — `undefined`. */
     liveFlowId?: (id: string | undefined, name: string | undefined) => string | undefined;
+    /** Утверждённые пункты Definition of Done треда — для строки этапа в баннере; пусто — строка не раскрывается. */
+    criteria?: (threadId: string) => Promise<readonly string[]>;
     /** Файлы журнала треда за окно прогона (core/run-journal.ts); нет — итог без журнала. */
     journal?: (threadId: string, window: { startedAt: string; finishedAt: string }) => Promise<readonly string[]>;
     /** Сколько мс ответ flow_stage ждёт записи старта этапа со шагами за отмеченным; нет — 5 000. */
@@ -566,6 +568,7 @@ export const registerProgress = (
       // Заполненность окна — самого треда баннера: она едет тем же ответом, что и прогресс, второго опроса у баннера нет.
       const context = (await deps.context?.(threadId).catch(() => null)) ?? null;
       const flowName = deps.flowName?.(carrier);
+      const criteria = (await deps.criteria?.(carrier).catch(() => [])) ?? [];
       // Завершённость и итог считаются по той же записи, что и вид: баннер снимается и блок в ленте появляются одним ответом.
       const stages = deps.stages(carrier).stages;
       const finished = isRunFinished(record, stages);
@@ -581,6 +584,7 @@ export const registerProgress = (
         summaryBriefId: record.lastBriefId ?? null,
         ...(context === null ? {} : { context }),
         ...(carrier === threadId ? {} : { carrier: { threadId: carrier, title: thread.title ?? null } }),
+        ...(criteria.length === 0 ? {} : { criteria: [...criteria] }),
       };
     },
 

@@ -32,10 +32,10 @@ const openMenu = async (slot: Slot, button: string) => {
 };
 
 describe("виджеты в меню «Добавить этап»", () => {
-  it("без шаблонов и других flow «Добавить этап» открывает меню с группой «Виджеты» из четырёх встроенных этапов", async () => {
+  it("без шаблонов и других flow «Добавить этап» открывает меню с группой «Виджеты» из пяти встроенных этапов", async () => {
     const menu = await openMenu(open(), "Добавить этап");
     const group = within(menu.getByRole("group", { name: "Виджеты" }));
-    expect(group.getAllByRole("menuitem").map((item) => item.textContent)).toEqual(["Вопросы", "Definition of Done", "Выбор этапов", "Демонстрация"]);
+    expect(group.getAllByRole("menuitem").map((item) => item.textContent)).toEqual(["Вопросы", "Definition of Done", "Выбор этапов", "Демонстрация", "Утверждение"]);
     expect(menu.getByRole("menuitem", { name: "Пустой этап" })).toBeTruthy();
   });
 

@@ -144,6 +144,8 @@ export const en: Messages = {
     commentPlaceholder: "Comment",
     continue: "Continue",
     finish: "Finish",
+    approve: "Approve",
+    approved: "Approved",
     send: "Send",
     documentsOnly: "Documents only — no live link",
     verdict: (verdict) => (verdict === "continue" ? "Continued" : "Comment"),
@@ -244,6 +246,7 @@ export const en: Messages = {
     criteria: "Definition of Done",
     select: "Stage selection",
     demo: "Demonstration",
+    approve: "Approval",
     action: "Action",
   },
   settings: {
@@ -455,6 +458,7 @@ export const en: Messages = {
     notTaken: (list) => `not taken: ${list}`,
     beyond: (list) => `beyond recommendation: ${list}`,
     note: (note) => `On the whole brief: ${note}`,
+    noteGoesOn: "The comment on the whole brief below does not hold the work: ask about what is unclear and carry on with what is clear.",
     nothing: "nothing",
     own: "own",
     yes: "Yes",
@@ -475,6 +479,8 @@ export const en: Messages = {
     outcomeNext: (name) => `Next — the ${quote(name)} stage.`,
     outcomeFinal: "Next — the work is done: finish the task and report.",
     outcomeComment: "Answer it and send the demo again.",
+    approvedHeading: (title) => `Brief ${quote(title)} — approved.`,
+    approveComment: "Not approved: rework the stage before the approval as the comment asks (roll back to it with flow_stage when it is done) and send the approval again.",
     outcomeSwitchHeading: (title, flow) => `Brief ${quote(title)} — move to the ${quote(flow)} flow.`,
     outcomeSwitch: (flow) =>
       `The thread now runs the ${quote(flow)} flow: its stages are in the turn instructions, start with the first. The scope is the findings of this demo; the owner's comment above, if any, narrows it.`,

@@ -10,7 +10,7 @@ import { DECISION_ID_PREFIX, directiveLine } from "../core/directive";
 import { criterionEditable, money, plannedMinutes, recommendedForecast } from "../core/budget";
 import { FLOW_RULE, SELF_ONLY_RULE, isAskedStage, isAutomationStage, isStageCarryKey, reportIssues, stageInstructions, withStepResults } from "../core/stages";
 import { isHeadingStage } from "../core/sub-stages";
-import { stageKindOf, type BuiltinKind } from "../lib/stage-constants";
+import { stageKindOf, type BuiltinKind, type StageKind } from "../lib/stage-constants";
 import { FORK_ZERO_RULE, OPTION_PRICE_RULE, askDecisionParamsSchema, type AskDecisionParams, type Criterion, type DecisionBrief, type FlowProgress, type Planning, type RestoredDraft, type StageSettings } from "../shared/contract";
 import { FLOW_STAGE_TOOL, type ProgressStore } from "./progress";
 import { KV_VALUE_LIMIT_BYTES, type DecisionStore } from "./store";
@@ -115,14 +115,19 @@ const launchedIssues = (params: AskDecisionParams, stages: StageSettings["stages
     : [`setup.${sent.join(", setup.")} are not accepted here: the work in this thread is already launched — send them only while a todo stage selection or Definition of Done stage stands in setup.stages`];
 };
 
-/** Итог — про запущенную работу и про этап Демонстрации из flow треда; flow без Вопросов, Definition of Done и Выбора этапов запуска не ждёт. */
+/** Этапы, о которых бриф докладывает итогом: Демонстрация и Утверждение. */
+const OUTCOME_KINDS: readonly StageKind[] = ["demo", "approve"];
+
+/** Итог — про запущенную работу и про этап Демонстрации или Утверждения из flow треда; flow без Вопросов, Definition of Done и Выбора этапов запуска не ждёт. */
 const outcomeIssues = (outcome: AskDecisionParams["outcome"], launched: boolean, stages: StageSettings["stages"], flowIds: readonly string[]): string[] => {
   if (outcome === undefined) return [];
   if (!launched && stages.some(isAskedStage)) return ["an outcome reports a stage of running work, and the work in this thread has not started yet: send a brief with setup.stages first"];
-  const demos = stages.filter((stage) => stageKindOf(stage) === "demo").map((s) => s.id);
+  const approval = stages.some((stage) => stage.id === outcome.stage && stageKindOf(stage) === "approve");
+  const reported = stages.filter((stage) => OUTCOME_KINDS.includes(stageKindOf(stage))).map((s) => s.id);
   return [
-    ...(demos.includes(outcome.stage) ? [] : [`outcome.stage ${outcome.stage} is not a demo stage of the thread's flow: ${demos.length === 0 ? "the flow has none" : demos.join(", ")}`]),
-    ...liveIssues(outcome),
+    ...(reported.includes(outcome.stage) ? [] : [`outcome.stage ${outcome.stage} is not a demo or approval stage of the thread's flow: ${reported.length === 0 ? "the flow has none" : reported.join(", ")}`]),
+    // Утверждение показывает, что утверждается, — живой результат нужен только Демонстрации.
+    ...(approval ? [] : liveIssues(outcome)),
     ...nextFlowIssues(outcome, flowIds),
   ];
 };

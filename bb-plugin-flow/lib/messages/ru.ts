@@ -151,6 +151,8 @@ export const ru = {
     commentPlaceholder: "Комментарий",
     continue: "Продолжить",
     finish: "Завершить",
+    approve: "Утвердить",
+    approved: "Утверждено",
     send: "Отправить",
     documentsOnly: "Только документы — живой ссылки нет",
     verdict: (verdict: "continue" | "comment"): string => (verdict === "continue" ? "Продолжено" : "Комментарий"),
@@ -251,6 +253,7 @@ export const ru = {
     criteria: "Definition of Done",
     select: "Выбор этапов",
     demo: "Демонстрация",
+    approve: "Утверждение",
     action: "Action",
   },
   settings: {
@@ -462,6 +465,7 @@ export const ru = {
     notTaken: (list: string) => `не взято: ${list}`,
     beyond: (list: string) => `сверх рекомендации: ${list}`,
     note: (note: string) => `Ко всему брифу: ${note}`,
+    noteGoesOn: "Комментарий ко всему брифу ниже работу не держит: о неясном спроси, понятное делай.",
     nothing: "ничего",
     own: "своё",
     yes: "Да",
@@ -483,6 +487,8 @@ export const ru = {
     outcomeNext: (name: string) => `Дальше — этап ${quote(name)}.`,
     outcomeFinal: "Дальше — работа закончена: доведи задачу до конца и отчитайся.",
     outcomeComment: "Ответь и пришли демонстрацию снова.",
+    approvedHeading: (title: string) => `Бриф ${quote(title)} — утверждено.`,
+    approveComment: "Не утверждено: переделай этап перед утверждением, как просит комментарий (закрыт — откатись к нему через flow_stage), и пришли утверждение снова.",
     outcomeSwitchHeading: (title: string, flow: string) => `Бриф ${quote(title)} — перейти в flow ${quote(flow)}.`,
     outcomeSwitch: (flow: string) =>
       `Тред переведён на flow ${quote(flow)}: его этапы — в инструкциях хода, начни с первого. Объём работы — находки этой демонстрации; комментарий владельца выше, если он есть, его сужает.`,

@@ -326,6 +326,7 @@ export default async function plugin(bb: BbPluginApi): Promise<void> {
     // Правка прогресса уже поставила сверку треда в очередь: ответ ждёт её, а не запускает вторую.
     settled: (threadId) => scope.settled(threadId),
     readTaskFile: (threadId, target) => readTaskFile(bb.sdk, threadId, target),
+    criteria: (threadId) => store.getThreadCriteria(threadId),
     writeTaskFile: (threadId, target, text) => writeTaskFile(bb.sdk, threadId, target, text),
     flow: (threadId) => {
       const flow = flowOf(threadId);

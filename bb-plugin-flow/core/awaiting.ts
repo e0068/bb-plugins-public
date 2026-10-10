@@ -2,11 +2,12 @@
 // списков ждущих тредов — какие значки поставить и какие снять.
 import type { BuiltinKind } from "../lib/stage-constants";
 import type { AwaitingKind, DecisionBrief } from "../shared/contract";
+import { outcomeKind } from "./outcome";
 
 /** Вид ожидания; `null` — бриф владельца не держит (уточнение). */
 export const awaitingKind = (brief: DecisionBrief): BuiltinKind | null => {
   if (brief.kind === "clarify") return null;
-  if (brief.outcome !== undefined) return "demo";
+  if (brief.outcome !== undefined) return outcomeKind(brief);
   if (brief.questions.length > 0) return "questions";
   if (brief.setup?.criteria !== undefined) return "criteria";
   if (brief.setup?.stages !== undefined) return "select";

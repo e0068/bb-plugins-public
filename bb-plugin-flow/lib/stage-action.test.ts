@@ -5,9 +5,9 @@ import { describe, expect, it } from "vitest";
 import { actionStage, BUILTIN_KINDS, isDefaultName, STAGE_KINDS, stageKindOf, stageSkillOf } from "./stage-constants";
 
 describe("вид этапа Action", () => {
-  it("вид этапа — навык, четыре встроенных или Action", () => {
-    expect(STAGE_KINDS).toEqual(["skill", "questions", "criteria", "select", "demo", "action"]);
-    expect(BUILTIN_KINDS).toEqual(["questions", "criteria", "select", "demo"]);
+  it("вид этапа — навык, пять встроенных или Action", () => {
+    expect(STAGE_KINDS).toEqual(["skill", "questions", "criteria", "select", "demo", "approve", "action"]);
+    expect(BUILTIN_KINDS).toEqual(["questions", "criteria", "select", "demo", "approve"]);
   });
 
   it("у этапа Action нет навыка", () => {

@@ -1,6 +1,7 @@
 // Слой 1 — чисто. Итог этапа: пункты Definition of Done одним списком, название
 // этапа из снимка настроек брифа и полнота ответа. Считается по брифу и
 // ответу, поэтому одинаково в виджете, в реплике агенту и на сервере.
+import { stageKindOf } from "../lib/stage-constants";
 import type { DecisionAnswer, DecisionBrief, OutcomeResult, StageOutcome } from "../shared/contract";
 
 /** Идентификатор строки итога в списке незакрытого: не `setup.*` — итог не первая часть. */
@@ -19,6 +20,17 @@ export const isOutcomeBrief = (brief: DecisionBrief): boolean => brief.outcome !
 
 /** Название этапа `id` — из снимка настроек брифа; этап, которого в снимке нет, зовётся как назван. */
 export const stageNameOf = (brief: DecisionBrief, id: string): string => (brief.stages?.list ?? []).find((stage) => stage.id === id)?.name ?? id;
+
+/**
+ * Вид итога: Демонстрация показывает сделанное, Утверждение держит прогон до «Утвердить» без комментария. Вид — по этапу
+ * итога в снимке настроек брифа; этапа в снимке нет — Демонстрация, как у итогов до Утверждения.
+ */
+export type OutcomeKind = "demo" | "approve";
+
+export const outcomeKind = (brief: DecisionBrief): OutcomeKind => {
+  const stage = (brief.stages?.list ?? []).find((s) => s.id === brief.outcome?.stage);
+  return stage !== undefined && stageKindOf(stage) === "approve" ? "approve" : "demo";
+};
 
 /** Название этапа Демонстрации брифа. */
 export const outcomeStageName = (brief: DecisionBrief): string => stageNameOf(brief, brief.outcome?.stage ?? "");

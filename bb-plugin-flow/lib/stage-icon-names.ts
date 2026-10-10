@@ -2,12 +2,13 @@
 // значки этапов другим плагинам. Слой нижний, потому что серверу нельзя брать из `app`.
 import type { BuiltinKind, StageKind } from "./stage-constants";
 
-/** Встроенный вид — своя иконка; Выбор этапов — Workflow пунктиром, как у Flow в меню; Action — запуск шага владельцем. */
+/** Встроенный вид — своя иконка; Выбор этапов — Workflow пунктиром, как у Flow в меню; Утверждение — галочка на значке; Action — запуск шага владельцем. */
 export const KIND_ICONS: Record<BuiltinKind | "action", string> = {
   questions: "MessageQuestion",
   criteria: "ListTodo",
   select: "WorkflowDashed",
   demo: "Presentation",
+  approve: "CheckmarkBadge",
   action: "Play",
 };
 

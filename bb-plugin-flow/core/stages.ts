@@ -211,11 +211,13 @@ const BUILTIN_ANSWERS: Record<BuiltinKind, string> = {
   criteria: "send setup.criteria through ask_decision",
   select: "send setup.stages through ask_decision",
   demo: "stop and send a brief with outcome through ask_decision (outcome.stage — this id); on a comment answer it: if it asks for a change, roll back to the stage where the change is made (flow_stage) and go through the stages again in order up to this demo; without a change, send this demo again, not going further",
+  approve:
+    "the only stage that holds the work: stop and send a brief with outcome through ask_decision (outcome.stage — this id) — right after the widgets of the stages before it, or, after a skill stage, with sections: what earlier approvals approved, what you did since the last one, what you will do next; Approve without a comment — go on to the next stage; a comment — not approved: rework the stage before this approval as the comment asks (roll back to it with flow_stage when it is done) and send this approval again",
 };
 
 /** Правило треда с flow: владелец видит работу этапами, а не прозой. */
 export const FLOW_RULE =
-  "This thread runs a flow: talk to the owner only through its stages — a brief for questions, Definition of Done and stage selection (consecutive ones go into one brief), a brief with outcome for a demo. For anything the stages do not cover, ask a clarify brief. Around a brief's directive line write at most one sentence — do not retell the brief.";
+  "This thread runs a flow: talk to the owner only through its stages — a brief for questions, Definition of Done and stage selection (consecutive ones go into one brief), a brief with outcome for a demo or an approval. Only an approval stage holds the work: a comment anywhere else does not stop you — ask about what is unclear and carry on with what is clear. For anything the stages do not cover, ask a clarify brief. Around a brief's directive line write at most one sentence — do not retell the brief.";
 
 /**
  * Исполнитель «Сам» для агента: этап ведётся в его сессии, без помощников.
