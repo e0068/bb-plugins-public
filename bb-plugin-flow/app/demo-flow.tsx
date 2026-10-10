@@ -20,7 +20,7 @@ export function useOwnerFlows(threadId: string, wanted: boolean): readonly Outco
     if (!wanted) return;
     let live = true;
     rpc.call("threadFlowChoice", { threadId }).then(
-      (choice) => live && setFlows(choice.flows.map(({ id, name }) => ({ id, name }))),
+      (choice) => live && setFlows((choice?.flows ?? []).map(({ id, name }) => ({ id, name }))),
       () => undefined,
     );
     return () => {

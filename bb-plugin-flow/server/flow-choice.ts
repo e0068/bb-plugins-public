@@ -34,6 +34,8 @@ export const registerFlowChoice = (
     cancelRun: (threadId: string) => void;
     /** Прогон треда завершён: flow у треда больше нет, и следующий выбирается заново. Нет — прогон не завершается никогда. */
     finished?: (threadId: string) => Promise<boolean>;
+    /** Тред — Side chat. Нет — Side chat не бывает. */
+    sideChat?: (threadId: string) => Promise<boolean>;
   },
 ): FlowChoice => {
   /** Flow треда так, как его видит строка выбора: отказ агента — ещё «Автоматически», flow выберет агент; тред без привязки — flow по умолчанию. */
@@ -55,10 +57,14 @@ export const registerFlowChoice = (
   };
 
   bb.rpc.register(flowChoiceRpcContract, {
-    threadFlowChoice: async ({ threadId }) => ({
-      flows: withExpandedStages(deps.flows.current().flows).map(({ id, name, stages, icon }) => ({ id, name, stages: stages.length, ...(icon === undefined ? {} : { icon }) })),
-      selected: deps.threads.pickedOf(threadId) ?? (await shown(threadId)),
-    }),
+    // Side chat выбора flow не предлагает: Flow его не ведёт.
+    threadFlowChoice: async ({ threadId }) =>
+      (await deps.sideChat?.(threadId).catch(() => false))
+        ? null
+        : {
+            flows: withExpandedStages(deps.flows.current().flows).map(({ id, name, stages, icon }) => ({ id, name, stages: stages.length, ...(icon === undefined ? {} : { icon }) })),
+            selected: deps.threads.pickedOf(threadId) ?? (await shown(threadId)),
+          },
 
     async pickThreadFlow({ threadId, flowId }) {
       if (!known(flowId)) return { kind: "failed" as const, reason: "unknown-flow" as const };

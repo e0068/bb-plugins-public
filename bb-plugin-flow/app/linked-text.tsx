@@ -4,9 +4,11 @@
 import { createContext, useContext, type MouseEvent } from "react";
 
 import { textParts } from "../core/inline-links";
+import { fencedParts } from "../core/mermaid-fences";
 import { textBlocks, type Block } from "../core/text-blocks";
 import type { FileRoots } from "../core/result-link";
 import { ResultAnchor } from "./cells";
+import { MermaidDiagram } from "./mermaid-diagram";
 
 export const FileRootsContext = createContext<FileRoots | null>(null);
 
@@ -53,8 +55,12 @@ function Blocks({ blocks }: { blocks: readonly Block[] }) {
   );
 }
 
-/** Текст агента с абзацами и многоуровневыми списками; строка без них рисуется ровно как `LinkedText`. */
-export function RichText({ text }: { text: string }) {
+function TextBlocks({ text }: { text: string }) {
   const blocks = textBlocks(text);
   return blocks.length === 1 && blocks[0]!.kind === "paragraph" && !text.includes("\n") ? <LinkedText text={text} /> : <Blocks blocks={blocks} />;
+}
+
+/** Текст агента с абзацами, многоуровневыми списками и диаграммами mermaid; строка без них рисуется ровно как `LinkedText`. */
+export function RichText({ text }: { text: string }) {
+  return fencedParts(text).map((part, i) => (part.kind === "diagram" ? <MermaidDiagram key={i} source={part.source} /> : <TextBlocks key={i} text={part.text} />));
 }

@@ -5,10 +5,10 @@
 // выбрала другой flow, получает выбранный и пустой прогон этого flow. Любой другой новый тред
 // с настоящим flow получает пустой прогон, и контейнер состояния Flow показывает этапы с первой минуты.
 import type { ProgressStore } from "./progress";
-import type { ThreadFlows } from "./thread-flows";
+import type { NewThread, ThreadFlows } from "./thread-flows";
 
 /** Первое сообщение треда: тред с его проектом и родителем, создан ли он самим Flow и какие треды упомянуты в сообщении. */
-export type FirstMessage = { thread: { id: string; projectId: string; parentThreadId: string | null }; byFlow: boolean; mentioned: readonly string[] };
+export type FirstMessage = { thread: NewThread; byFlow: boolean; mentioned: readonly string[] };
 
 export const startThread =
   (deps: {

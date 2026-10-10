@@ -1,9 +1,11 @@
 // Настройка сессии агента: перед стартом каждой сессии bb спрашивает плагин, какие его инструменты и навыки дать агенту.
 // Flow отдаёт все свои — выбор ему нужен как единственная точка, где путь к дереву треда уже есть, а Claude Code ещё не
 // запущен: здесь синхронно ложится отложенный файл ограничения навыков (./skill-scope.ts). Сбой записи сессию не трогает:
-// упавший выбор отнял бы у агента все инструменты Flow.
+// упавший выбор отнял бы у агента все инструменты Flow. Сессия Side chat не получает ничего: Flow её не ведёт, а дерево у
+// неё общее с основным тредом, и ограничение навыков в нём — основного.
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 
+import { isSideChat } from "../core/side-chat";
 import { BUILTIN_SKILLS, FLOW_CREATE_SKILL, ROOT_SKILL } from "../lib/stage-constants";
 
 /** Навыки, которые Flow везёт в `skills/`, — по имени из шапки SKILL.md. */
@@ -19,7 +21,8 @@ export const registerSessionConfig = (
     warn: (message: string) => void;
   },
 ): void => {
-  bb.agents.configure(({ thread, environment }) => {
+  bb.agents.configure(({ thread, environment, origin }) => {
+    if (isSideChat({ originPluginId: origin.pluginId })) return { tools: [], skills: [] };
     const root = environment.workspaceProvisionType === "managed-worktree" ? environment.path : null;
     try {
       deps.prestart(thread.id, root);

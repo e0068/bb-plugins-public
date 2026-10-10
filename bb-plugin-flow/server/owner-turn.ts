@@ -6,6 +6,7 @@ import type { BbPluginApi } from "@get-bb/plugin-sdk";
 
 import { returnsBrief } from "../core/awaiting";
 import { appliesPickedFlow } from "../core/picked-flow";
+import { isSideChat } from "../core/side-chat";
 import type { FirstMessage } from "./thread-start";
 
 type DispatchContext = Parameters<Parameters<BbPluginApi["experimental_hooks"]["on"]>[1]>[0];
@@ -37,6 +38,8 @@ export const registerOwnerTurn = (
     ownerMessage?: (threadId: string) => Promise<unknown>;
     /** Начинается любой ход: настройки Claude Code дерева треда ложатся до старта сессии (./skill-scope.ts). */
     turnStart?: (threadId: string) => Promise<void>;
+    /** Ход в Side chat: flow и прогон, доставшиеся ему раньше, снимаются. */
+    sideChat?: (threadId: string) => Promise<void>;
   },
 ): void => {
   // Ход сперва применяет выбранный flow и возвращает бриф, а настройки дерева сверяет последним — уже по flow этого хода.
@@ -48,6 +51,11 @@ export const registerOwnerTurn = (
     if (returnsBrief(turn)) await deps.ownerMessage?.(context.thread.id).catch(() => undefined);
   };
   bb.experimental_hooks.on("message.dispatch", async (context) => {
+    // Side chat Flow не ведёт: ни flow, ни прогона, ни выбора — и не сверяет навыки дерева, общего с основным тредом.
+    if (isSideChat(context.thread)) {
+      await deps.sideChat?.(context.thread.id).catch(() => undefined);
+      return { action: "proceed" };
+    }
     // Хук, который бросает, запирает тред: сбой привязки пропускает сообщение.
     if (deps.firstMessage !== undefined && context.thread.status === "pending") {
       const { id, projectId, parentThreadId } = context.thread;

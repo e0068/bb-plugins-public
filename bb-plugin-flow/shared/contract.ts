@@ -1255,7 +1255,8 @@ export const flowChoiceRpcContract = defineRpcContract({
   /** `selected` — выбор, ждущий отправки, а без него — flow треда; тред, оставленный агентом без flow, и тред с завершённым прогоном — `AUTO_FLOW`: flow им ещё выберет агент. */
   threadFlowChoice: {
     input: z.object({ threadId: text }),
-    output: z.object({ flows: z.array(z.object({ id: text, name: text, stages: z.number().int().nonnegative(), icon: text.optional() })), selected: text }),
+    /** `null` — тред выбора flow не предлагает: это Side chat. */
+    output: z.object({ flows: z.array(z.object({ id: text, name: text, stages: z.number().int().nonnegative(), icon: text.optional() })), selected: text }).nullable(),
   },
   pickThreadFlow: {
     input: z.object({ threadId: text, flowId: text }),
