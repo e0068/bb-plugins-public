@@ -11,6 +11,7 @@ import { readStoredDraft, storeDraft } from "./draft-storage";
 import { AttachButton, usePasteImages } from "./attachments";
 import { LinkedText } from "./linked-text";
 import { useMessages } from "./locale-context";
+import { useMentions } from "./mentions";
 import { useVoiceField } from "./voice";
 
 export function Frame(props: {
@@ -74,12 +75,13 @@ export function NoteField(props: { value: string; disabled: boolean; onChange: (
   const voice = useVoiceField({ id: "note", label: t.common.noteLabel, value: props.value, disabled: props.disabled, onChange: props.onChange });
   const target = { value: props.value, onText: props.onChange };
   const paste = usePasteImages(target);
+  const mentions = useMentions({ value: props.value, onText: props.onChange, disabled: props.disabled });
   return voice.phase !== null ? (
     <div className={cn("flex items-center", props.stripClassName)}>{voice.strip}</div>
   ) : (
     <div className="relative flex flex-col">
       <Textarea
-        ref={voice.ref}
+        {...mentions.field<HTMLTextAreaElement>({ ref: voice.ref })}
         aria-label={t.common.noteLabel}
         placeholder={t.common.notePlaceholder}
         rows={1}
@@ -93,6 +95,7 @@ export function NoteField(props: { value: string; disabled: boolean; onChange: (
         <AttachButton target={target} disabled={props.disabled} />
       </span>
       <span className="absolute right-1 top-1">{voice.mic}</span>
+      {mentions.list !== null && <div className="mt-1">{mentions.list}</div>}
     </div>
   );
 }
