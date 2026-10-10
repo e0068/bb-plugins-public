@@ -1,6 +1,6 @@
 {
-  "name": "@bb-plugins/footer-window",
-  "version": "0.1.5",
+  "name": "@bb-plugins/reduced-colors",
+  "version": "0.1.0",
   "type": "module",
   "private": true,
   "main": "./index.ts",
@@ -9,7 +9,6 @@
   },
   "devDependencies": {
     "@testing-library/react": "^16.3.2",
-    "@types/node": "^22.0.0",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
     "fast-check": "^4.9.0",

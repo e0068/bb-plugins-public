@@ -15,9 +15,14 @@ import {
   dragHeight,
   heightFromStorage,
   heightToStorage,
+  pinnedByUser,
+  present,
+  release,
   step,
   type Command,
   type ItemKey,
+  type Presented,
+  type PresentStep,
   type WindowEvent,
   type WindowHeight,
   type WindowState,
@@ -29,6 +34,8 @@ export const HOVER_LEAVE_MS = 400;
 const HOVER_QUERY = "(hover: hover)";
 /** How long to wait for BB to move focus to the item's button after a close. */
 const FOCUS_RETURN_MS = 500;
+/** How long BB may take to draw a window it was asked to open. */
+const OPEN_SETTLE_MS = 500;
 const MIN_HEIGHT_PX = 80;
 /** Gap between the window's top and the thread list. */
 const TOP_GAP_PX = 8;
@@ -67,16 +74,31 @@ interface Registry {
   /** Per mounted window: keep the height it shows now, unpinned, until it closes. */
   holds: Map<ItemKey, () => void>;
   state: WindowState;
+  /** The window a plugin opened itself until it releases it. */
+  presented: Presented | null;
   removeListeners: (() => void) | null;
+  /** Stops watching BB's footer for the moment a pinned window off screen can come back. */
+  stopWaiting: (() => void) | null;
 }
 
 const REGISTRY = Symbol.for("bb-plugins.footer-window.v1");
 
 function registry(): Registry {
   const scope = globalThis as typeof globalThis & { [REGISTRY]?: Registry };
-  const r = (scope[REGISTRY] ??= { entries: new Map(), openOnHover: new Map(), listeners: new Set(), holds: new Map(), state: CLOSED, removeListeners: null });
+  const r = (scope[REGISTRY] ??= {
+    entries: new Map(),
+    openOnHover: new Map(),
+    listeners: new Set(),
+    holds: new Map(),
+    state: CLOSED,
+    presented: null,
+    removeListeners: null,
+    stopWaiting: null,
+  });
   // A plugin with an older copy of this module may have made the registry first.
   r.holds ??= new Map();
+  r.presented ??= null;
+  r.stopWaiting ??= null;
   return r;
 }
 
@@ -90,14 +112,106 @@ function run(command: Command): void {
   else controller?.close();
 }
 
+/** Any window of BB's footer is open — a footer plugin's, or one this package does not hold. */
+const footerShowsWindow = (): boolean => document.querySelector('section[id^="plugin-sidebar-footer-disclosure-"]') !== null;
+
+/** Customize footer hides the row of items, and BB draws no window until it is done. */
+const footerRowHidden = (): boolean => document.querySelector('[data-sidebar="footer"] li[data-footer-item]')?.closest(".hidden") != null;
+
+/**
+ * The pinned window BB was asked to bring back is on screen by now; when it is not —
+ * its plugin turned off, its controller gone — the pin is forgotten, so hover works again.
+ */
+function confirmShown(key: ItemKey): void {
+  const { pinned, shown } = registry().state;
+  if (pinned === key && shown === key && sectionOf(key) === null && !footerRowHidden()) dispatch({ kind: "dismissed", key });
+}
+
+/**
+ * A pinned window BB closed waits off screen: watch the page — BB may draw
+ * the footer anew — and bring it back once no window is open in the footer.
+ * BB removes the closed one after this runs, so the first look is a tick later.
+ */
+function followFooter(): void {
+  const r = registry();
+  const waiting = r.state.pinned !== null && r.state.shown === null;
+  if (!waiting) return r.stopWaiting?.();
+  if (r.stopWaiting !== null) return;
+  const look = () => {
+    if (footerShowsWindow()) return;
+    stop();
+    dispatch({ kind: "free" });
+    const { shown } = r.state;
+    if (shown !== null) setTimeout(() => confirmShown(shown), OPEN_SETTLE_MS);
+  };
+  const observer = new MutationObserver(look);
+  observer.observe(document.body, { childList: true, subtree: true });
+  const timer = setTimeout(look, 0);
+  const stop = () => {
+    observer.disconnect();
+    clearTimeout(timer);
+    r.stopWaiting = null;
+  };
+  r.stopWaiting = stop;
+}
+
 /** Feeds one event to the core, carries out its command; true when the click must not reach BB. */
 function dispatch(event: WindowEvent): boolean {
   const r = registry();
   const next = step(r.state, event);
   r.state = next.state;
+  // Closed or unpinned meanwhile, the presented window is no longer held.
+  if (r.presented !== null && r.state.pinned !== r.presented.key) r.presented = null;
   run(next.command);
+  followFooter();
   r.listeners.forEach((listener) => listener());
   return next.swallowClick;
+}
+
+function apply(next: PresentStep): void {
+  const r = registry();
+  r.state = next.state;
+  r.presented = next.presented;
+  run(next.command);
+  followFooter();
+  r.listeners.forEach((listener) => listener());
+}
+
+/**
+ * BB closed the item's window: a presented one ends there, as at release — the
+ * window pinned before it waits to come back —, a pinned one waits itself.
+ */
+function closedByBb(key: ItemKey): void {
+  const r = registry();
+  if (r.presented?.key === key) apply(release({ ...r.state, shown: null }, r.presented, key));
+  else dispatch({ kind: "closed", key });
+}
+
+/**
+ * Open the item's window by itself — for the time something runs, Aloud's
+ * reading for one — until `releaseFooterWindow`. The pointer leaving keeps it;
+ * a window pinned before it comes back at release.
+ */
+export function presentFooterWindow(item: FooterItem): void {
+  const r = registry();
+  apply(present(r.state, r.presented, keyOf(item)));
+}
+
+/** Close the item's window and forget its pin: its item left the footer, so the window must not come back. */
+export function dismissFooterWindow(item: FooterItem): void {
+  const key = keyOf(item);
+  const shown = registry().state.shown === key;
+  dispatch({ kind: "dismissed", key });
+  if (shown) registry().entries.get(key)?.controller.close();
+}
+
+/** Close the window `presentFooterWindow` opened, unless the user pinned it meanwhile. */
+export function releaseFooterWindow(item: FooterItem): void {
+  const r = registry();
+  const next = release(r.state, r.presented, keyOf(item));
+  // Reading ends while the user may be typing: BB's focus hand-off after a close must not take the caret.
+  if (next.command.kind !== "none") keepFocusWhereItWas();
+  apply(next);
 }
 
 /** The registered item whose footer button holds `target`. */
@@ -206,7 +320,10 @@ function installListeners(): () => void {
   };
   const onKey = (event: KeyboardEvent) => {
     const { shown } = registry().state;
-    if (event.key === "Escape" && shown !== null) dispatch({ kind: "closed", key: shown });
+    if (event.key !== "Escape" || shown === null) return;
+    closedByBb(shown);
+    // The pinned window comes back: BB's focus hand-off to its button must not take the caret.
+    if (registry().state.pinned !== null) keepFocusWhereItWas();
   };
   // BB opens the item's tooltip on pointermove; with a window opening on hover
   // the tooltip is noise. Not while a button is held: that is a drag reorder.
@@ -243,6 +360,8 @@ export function registerFooterWindow(item: FooterItemEntry, controller: Disclosu
   const key = keyOf(item);
   r.entries.set(key, { ...item, controller });
   r.removeListeners ??= installListeners();
+  // Reloaded while its window was due on screen: the old controller is gone, the new one opens it.
+  if (r.state.shown === key && sectionOf(key) === null) controller.open();
   return () => {
     if (r.entries.get(key)?.controller === controller) r.entries.delete(key);
   };
@@ -272,7 +391,7 @@ const subscribe = (listener: () => void) => {
 /** Whether the item's window is pinned; follows the pin and closing. */
 export function usePinned(item: FooterItem | null): boolean {
   const key = item ? keyOf(item) : null;
-  const read = () => key !== null && registry().state.pinned === key;
+  const read = () => key !== null && pinnedByUser(registry().state, registry().presented, key);
   return useSyncExternalStore(subscribe, read, read);
 }
 
@@ -291,7 +410,17 @@ export function togglePin(item: FooterItem): void {
   const r = registry();
   const { pinned, shown } = r.state;
   const px = frameOf(key)?.getBoundingClientRect().height ?? 0;
-  if (pinned !== key && shown === key && px > 0) writeHeight(key, { kind: "fixed", px: Math.round(px) });
+  // A presented window an older copy of this package closed meanwhile leaves its record behind: a pin on a window
+  // that is not pinned now is the user's own, whatever the record says.
+  if (pinned !== key && r.presented?.key === key) r.presented = null;
+  const held = r.presented?.key === key && pinned === key;
+  if ((pinned !== key || held) && shown === key && px > 0) writeHeight(key, { kind: "fixed", px: Math.round(px) });
+  if (held) {
+    // The presented window already holds the pin's place: the user's pin only keeps it there after release.
+    r.presented = null;
+    r.listeners.forEach((listener) => listener());
+    return;
+  }
   if (pinned === key) r.holds.get(key)?.();
   dispatch({ kind: "pin", key });
 }
@@ -318,6 +447,8 @@ export function resetFooterWindowsForTests(): void {
   r.listeners.clear();
   r.holds.clear();
   r.state = CLOSED;
+  r.presented = null;
+  r.stopWaiting?.();
 }
 
 // localStorage throws where storage is disabled; the window then simply hugs.
@@ -357,8 +488,8 @@ function setStyles(element: HTMLElement, styles: Readonly<Record<string, string>
 }
 
 /**
- * Restyle BB's window frame for one item while its component is mounted: a
- * line on top instead of the rounded frame, no 320 px ceiling, no opening
+ * Restyle BB's window frame for one item while its component is mounted: the
+ * full width of the sidebar, a line on top instead of the rounded frame, no 320 px ceiling, no opening
  * animation — the window is there at once, its content fills in as it loads —,
  * the height it had when pinned (or was dragged to) while pinned, a held height
  * while unpinned, and a handle on the top edge to drag it.
@@ -368,8 +499,12 @@ function attachFrame(node: HTMLElement, key: ItemKey): () => void {
   const section = node.closest("section");
   const frame = section?.firstElementChild;
   if (!section || !(frame instanceof HTMLElement)) return () => undefined;
+  // Edge to edge over BB's footer padding: the pin then sits as far from the panel's edge as from the line above it.
+  const footer = section.closest<HTMLElement>('[data-sidebar="footer"]');
+  const pad = footer === null ? null : getComputedStyle(footer);
   const saved = [
     ...setStyles(section, {
+      ...(pad === null ? {} : { "margin-left": `-${pad.paddingLeft}`, "margin-right": `-${pad.paddingRight}` }),
       position: "relative",
       border: "0",
       "border-top": SEPARATOR,
@@ -403,14 +538,14 @@ function attachFrame(node: HTMLElement, key: ItemKey): () => void {
     touchAction: "none",
   });
   const fit = () => {
-    const pinned = registry().state.pinned === key;
+    const pinned = pinnedByUser(registry().state, registry().presented, key);
     handle.style.display = pinned ? "block" : "none";
     apply(pinned ? (dragged ?? readHeight(key)) : held);
   };
   // An unpinned window keeps the first height it was held at; a pinned one being let go keeps the height it shows now.
   const hold = () => {
     const px = Math.round(frame.getBoundingClientRect().height);
-    if ((held.kind === "hug" || registry().state.pinned === key) && px > 0) held = { kind: "fixed", px };
+    if ((held.kind === "hug" || pinnedByUser(registry().state, registry().presented, key)) && px > 0) held = { kind: "fixed", px };
     fit();
   };
 
@@ -456,7 +591,7 @@ function attachFrame(node: HTMLElement, key: ItemKey): () => void {
 /**
  * Wrap a footer item's disclosure component in the shared window: BB's frame
  * becomes a line, the window keeps its height while pinned and can be resized,
- * and `dismiss` also forgets the pin.
+ * and `dismiss` also forgets the pin — the one way besides the pin itself.
  */
 export function withFooterWindow<P extends { dismiss(): void }>(Component: ComponentType<P>, item: FooterItem): ComponentType<P> {
   const key = keyOf(item);
@@ -466,14 +601,14 @@ export function withFooterWindow<P extends { dismiss(): void }>(Component: Compo
       const detach = anchor.current ? attachFrame(anchor.current, key) : undefined;
       return () => {
         detach?.();
-        // Closed by anyone — BB, another plugin, the item hidden — rather than
-        // replaced by a hovered window: the pin must not outlive the window.
-        if (registry().state.shown === key) dispatch({ kind: "closed", key });
+        // Closed by anyone — BB, another plugin, a reload — rather than
+        // replaced by a hovered window: a pinned one waits to come back.
+        if (registry().state.shown === key) closedByBb(key);
       };
     }, []);
     const { dismiss } = props;
     const close = useCallback(() => {
-      dispatch({ kind: "closed", key });
+      dispatch({ kind: "dismissed", key });
       dismiss();
     }, [dismiss]);
     return (

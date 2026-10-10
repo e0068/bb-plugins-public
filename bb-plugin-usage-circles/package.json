@@ -1,14 +1,14 @@
 {
   "name": "bb-plugin-usage-circles",
-  "version": "0.2.6",
+  "version": "0.2.7",
   "type": "module",
   "engines": {
     "bb": ">=0.45",
     "bbPluginSdk": ">=0.4.87"
   },
   "bb": {
-    "name": "Usage Circles",
-    "description": "Claude Code and Codex usage-limit rings as sidebar footer items — place each one in Customize footer.",
+    "name": "Usage Limits",
+    "description": "Claude Code and Codex usage-limit rings in the sidebar footer — a ring per limit or one for all, the limits as a list or cards.",
     "branding": {
       "icon": "./assets/icon.svg"
     },

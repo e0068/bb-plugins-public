@@ -2,7 +2,9 @@
 // hover, leave, a click on an item, the pin in its header, and how tall it is.
 // BB shows a single disclosure at a time, so "a window over the pinned one"
 // means showing it in the pinned one's place and bringing the pinned one back
-// when the pointer leaves.
+// when the pointer leaves. Only the pin unpins: a pinned window BB closes —
+// Escape, a window of its own footer, a reload — waits off screen and comes
+// back once the footer is free.
 
 /** `<pluginId>/<itemId>` of a sidebar-footer item. */
 export type ItemKey = string;
@@ -10,7 +12,7 @@ export type ItemKey = string;
 export interface WindowState {
   /** The window the pin in its header fixed in place. */
   readonly pinned: ItemKey | null;
-  /** The window BB is showing now. */
+  /** The window BB is showing now; `null` with a pinned one — it waits for the footer to be free. */
   readonly shown: ItemKey | null;
 }
 
@@ -23,8 +25,12 @@ export type WindowEvent =
   | { readonly kind: "leave" }
   /** The item's button or its row in the overflow menu was clicked. */
   | { readonly kind: "click"; readonly key: ItemKey }
-  /** BB or the window itself closed it (Escape, dismiss). */
+  /** BB closed it (Escape, another window of its footer, a reload): a pinned window waits to come back. */
   | { readonly kind: "closed"; readonly key: ItemKey }
+  /** Its plugin closed it on purpose: the pin goes with it. */
+  | { readonly kind: "dismissed"; readonly key: ItemKey }
+  /** BB's footer shows no window. */
+  | { readonly kind: "free" }
   /** The pin in the item's window header: pins the shown window, or unpins it and leaves it shown until the pointer leaves. */
   | { readonly kind: "pin"; readonly key: ItemKey };
 
@@ -53,18 +59,70 @@ export function step(state: WindowState, event: WindowEvent): Step {
         ? { state: CLOSED, command: { kind: "close", key: state.shown }, swallowClick: false }
         : { state: { ...state, shown: state.pinned }, command: { kind: "open", key: state.pinned }, swallowClick: false };
     case "click":
-      // Only the pin pins. BB's own toggle opens a closed window, shown like a
-      // hovered one, and closes the pinned one; a hovered one stays as it is.
-      if (state.shown !== event.key) return stay({ ...state, shown: event.key });
-      return state.pinned === event.key ? stay(CLOSED) : { state, command: NONE, swallowClick: true };
+      // Only the pin pins and unpins. BB's own toggle opens a closed window,
+      // shown like a hovered one; a shown one, hovered or pinned, stays as it is.
+      return state.shown === event.key ? { state, command: NONE, swallowClick: true } : stay({ ...state, shown: event.key });
     case "closed":
+      return stay(state.shown === event.key ? { ...state, shown: null } : state);
+    case "dismissed":
       if (state.shown === event.key) return stay(CLOSED);
-      return state.pinned === event.key ? stay({ ...state, pinned: null }) : stay(state);
+      return stay(state.pinned === event.key ? { ...state, pinned: null } : state);
+    case "free":
+      return state.pinned !== null && state.shown === null
+        ? { state: { ...state, shown: state.pinned }, command: { kind: "open", key: state.pinned }, swallowClick: false }
+        : stay(state);
     case "pin":
       if (state.shown !== event.key) return stay(state);
       return stay({ pinned: state.pinned === event.key ? null : event.key, shown: event.key });
   }
 }
+
+/**
+ * A window its plugin opened for the time something runs — Aloud's player
+ * while it reads — and the window pinned before it, to bring back after. It
+ * takes the pin's place, so every copy of this package, older ones included,
+ * keeps it on screen when the pointer leaves.
+ */
+export interface Presented {
+  readonly key: ItemKey;
+  readonly restore: ItemKey | null;
+}
+
+export interface PresentStep {
+  readonly state: WindowState;
+  readonly presented: Presented | null;
+  readonly command: Command;
+}
+
+/** Show the item's window until `release`; a window the user pinned is left as it is. */
+export function present(state: WindowState, presented: Presented | null, key: ItemKey): PresentStep {
+  if (state.pinned === key) return { state, presented, command: NONE };
+  return {
+    state: { pinned: key, shown: key },
+    presented: { key, restore: state.pinned },
+    command: state.shown === key ? NONE : { kind: "open", key },
+  };
+}
+
+/**
+ * Close the window `present` opened, or bring back the one pinned before it.
+ * A window the user pinned meanwhile, or that was closed, is left as it is.
+ */
+export function release(state: WindowState, presented: Presented | null, key: ItemKey): PresentStep {
+  if (presented?.key !== key) return { state, presented, command: NONE };
+  if (state.pinned !== key) return { state, presented: null, command: NONE };
+  const { restore } = presented;
+  if (state.shown !== key) return { state: { pinned: restore, shown: state.shown }, presented: null, command: NONE };
+  return {
+    state: { pinned: restore, shown: restore },
+    presented: null,
+    command: restore === null ? { kind: "close", key } : { kind: "open", key: restore },
+  };
+}
+
+/** The item's window is pinned by the pin in its header, not held by `present`. */
+export const pinnedByUser = (state: WindowState, presented: Presented | null, key: ItemKey): boolean =>
+  state.pinned === key && presented?.key !== key;
 
 /** A window either hugs its content or keeps a height the user dragged it to. */
 export type WindowHeight = { readonly kind: "hug" } | { readonly kind: "fixed"; readonly px: number };

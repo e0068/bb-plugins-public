@@ -5,7 +5,7 @@
 import { describe, expect, it } from "vitest";
 import { createFakePluginHost } from "@get-bb/plugin-sdk/testing";
 import plugin from "./server";
-import type { StateWire } from "./lib/usage-model";
+import { DEFAULT_LIMITS, moveLimit, toggleLimit, type LimitsChoice, type StateWire } from "./lib/usage-model";
 import { DEFAULT_RING_DIMS, type RingDims } from "./lib/ring-style";
 
 /** The live host response, 2026-09-12. */
@@ -54,7 +54,8 @@ async function load(options: {
   const getState = async () => (await harness.callRpc("getState", null)) as StateWire;
   const setRingDims = async (patch: Partial<RingDims>) => (await harness.callRpc("setRingDims", patch)) as RingDims;
   const resetRingDims = async () => (await harness.callRpc("resetRingDims", null)) as RingDims;
-  return { harness, getState, setRingDims, resetRingDims };
+  const setLimits = async (limits: LimitsChoice) => (await harness.callRpc("setLimits", limits)) as LimitsChoice;
+  return { harness, getState, setRingDims, resetRingDims, setLimits };
 }
 
 describe("getState", () => {
@@ -119,7 +120,7 @@ describe("getState", () => {
     expect((await getState()).coloring).toEqual({ mode: "pace", usage: { yellow: 50, red: 80 }, pace: { yellow: 10, red: 40 } });
   });
 
-  it("declares the seven settings with their defaults, with no ring switches — the footer layout decides which rings show", async () => {
+  it("declares the eight settings with their defaults, with no ring switches — the footer layout decides which rings show", async () => {
     const { harness, getState } = await load();
     const descriptors = harness.registrations.settingsDescriptors;
     expect(Object.fromEntries(Object.entries(descriptors).map(([key, d]) => [key, [d.type, d.default]]))).toEqual({
@@ -130,6 +131,7 @@ describe("getState", () => {
       paceYellowThreshold: ["number", 20],
       paceRedThreshold: ["number", 50],
       logo: ["select", "In the center"],
+      layout: ["select", "List"],
     });
     const state = await getState();
     expect(state.openOnHover).toBe(true);
@@ -168,5 +170,25 @@ describe("ring style", () => {
     await setRingDims({ size: 22 });
     expect(await resetRingDims()).toEqual(DEFAULT_RING_DIMS);
     expect((await getState()).ring.dims).toEqual(DEFAULT_RING_DIMS);
+  });
+});
+
+describe("window layout and limits", () => {
+  it("answers the list with every limit shown until the settings say otherwise", async () => {
+    const state = await (await load()).getState();
+    expect(state.layout).toBe("list");
+    expect(state.limits).toEqual(DEFAULT_LIMITS);
+  });
+
+  it("answers the layout picked in the settings", async () => {
+    const { getState } = await load({ settings: { layout: "All limits" } });
+    expect((await getState()).layout).toBe("all");
+  });
+
+  it("keeps the limits picked and their order across getState calls", async () => {
+    const { getState, setLimits } = await load();
+    const picked = toggleLimit(moveLimit(DEFAULT_LIMITS, "codex-session", -1), "claude-fable");
+    expect(await setLimits(picked)).toEqual(picked);
+    expect((await getState()).limits).toEqual(picked);
   });
 });

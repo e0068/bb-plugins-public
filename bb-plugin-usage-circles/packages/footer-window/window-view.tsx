@@ -25,8 +25,8 @@ export interface FooterWindowProps {
   /** Before the title — a provider's logo, for one. */
   readonly icon?: ReactNode;
   readonly title: ReactNode;
-  /** Shown after the title when above zero. */
-  readonly count?: number;
+  /** Shown after the title, whole however long the title is: a number when above zero, or words ("3 queued"). */
+  readonly count?: number | string;
   readonly actions?: readonly FooterWindowAction[];
   /** The settings and pin labels, in the plugin's language. */
   readonly labels?: { readonly settings: string; readonly pin: string; readonly unpin: string };
@@ -51,12 +51,12 @@ const SETTINGS: Paths = [
 
 const LABELS = { settings: "Settings", pin: "Pin", unpin: "Unpin" } as const;
 
-/** An inlined Hugeicons glyph at the size of the header's icons. */
-function Glyph({ paths }: { paths: Paths }) {
+/** An inlined Hugeicons glyph at the size of the header's icons; `filled` paints its shapes in the text color too. */
+function Glyph({ paths, filled = false }: { paths: Paths; filled?: boolean }) {
   return (
     <svg viewBox="0 0 24 24" width={14} height={14} fill="none" aria-hidden>
       {paths.map((attributes, index) => (
-        <path key={index} {...attributes} stroke="currentColor" strokeWidth={1.5} strokeLinecap="round" strokeLinejoin="round" />
+        <path key={index} {...attributes} fill={filled ? "currentColor" : "none"} stroke="currentColor" strokeWidth={1.5} strokeLinecap="round" strokeLinejoin="round" />
       ))}
     </svg>
   );
@@ -69,17 +69,22 @@ const HEADER: CSSProperties = {
   display: "flex",
   alignItems: "center",
   gap: 6,
-  height: 36,
+  // The sidebar's thread rows reach 8 px from its edges, titles start at 16 px, icons sit 22 px from the right:
+  // the title starts with theirs and the pin, 8 px from the top and right, sits on their icons' axis.
+  height: 44,
   flexShrink: 0,
-  padding: "0 4px 0 12px",
+  padding: "8px 8px 8px 16px",
   background: "var(--sidebar)",
 };
 const ICON: CSSProperties = { display: "inline-flex", flexShrink: 0, width: 16, height: 16, alignItems: "center", justifyContent: "center", color: "var(--muted-foreground)" };
-const TITLE: CSSProperties = { minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontSize: 13, fontWeight: 600, color: "var(--foreground)" };
+const TITLE: CSSProperties = { minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontSize: 12, fontWeight: 500, color: "var(--foreground)" };
 const COUNT: CSSProperties = { flexShrink: 0, fontSize: 11, fontVariantNumeric: "tabular-nums", color: "var(--muted-foreground)" };
 const ACTIONS: CSSProperties = { display: "flex", alignItems: "center", gap: 2, marginLeft: "auto", flexShrink: 0 };
 
-function buttonStyle(hover: boolean, pressed: boolean, disabled: boolean): CSSProperties {
+/** How a header button looks: `pressed` — on, on BB's pressed background; `lit` — on, the glyph in the text color with no background. */
+type Look = "plain" | "pressed" | "lit";
+
+function buttonStyle(hover: boolean, look: Look, disabled: boolean): CSSProperties {
   return {
     display: "inline-flex",
     alignItems: "center",
@@ -91,18 +96,22 @@ function buttonStyle(hover: boolean, pressed: boolean, disabled: boolean): CSSPr
     borderRadius: 6,
     cursor: disabled ? "default" : "pointer",
     opacity: disabled ? 0.5 : 1,
-    color: pressed || (hover && !disabled) ? "var(--foreground)" : "var(--muted-foreground)",
-    background: pressed ? "var(--state-active)" : hover && !disabled ? "var(--state-hover)" : "transparent",
+    color: look !== "plain" || (hover && !disabled) ? "var(--foreground)" : "var(--muted-foreground)",
+    background: look === "pressed" ? "var(--state-active)" : hover && !disabled ? "var(--state-hover)" : "transparent",
   };
 }
 
-/** A header action: the button BB draws in its own headers — ghost, 28 px, the label as a tooltip. */
-export function FooterWindowButton({ label, icon, onClick, href, pressed, disabled = false }: Omit<FooterWindowAction, "id">) {
+/**
+ * A header action: the button BB draws in its own headers — ghost, 28 px, the label as a tooltip.
+ * `lit` shows it pressed by its glyph alone, with no background — the pin does.
+ */
+export function FooterWindowButton({ label, icon, onClick, href, pressed, disabled = false, lit = false }: Omit<FooterWindowAction, "id"> & { readonly lit?: boolean }) {
   const [hover, setHover] = useState(false);
+  const look: Look = !pressed ? "plain" : lit ? "lit" : "pressed";
   const common = {
     title: label,
     "aria-label": label,
-    style: buttonStyle(hover, pressed ?? false, disabled),
+    style: buttonStyle(hover, look, disabled),
     onPointerEnter: () => setHover(true),
     onPointerLeave: () => setHover(false),
   };
@@ -125,7 +134,7 @@ export function FooterWindowHeader({ icon, title, count = 0, actions = [], label
     <div style={HEADER} data-footer-window-header="">
       {icon !== undefined && <span style={ICON}>{icon}</span>}
       <h2 style={{ ...TITLE, margin: 0 }}>{title}</h2>
-      {count > 0 && <span style={COUNT}>{count}</span>}
+      {(typeof count === "number" ? count > 0 : count !== "") && <span style={COUNT}>{count}</span>}
       <div style={ACTIONS}>
         {actions.map(({ id, ...action }) => (
           <FooterWindowButton key={id} {...action} />
@@ -133,7 +142,7 @@ export function FooterWindowHeader({ icon, title, count = 0, actions = [], label
         {item !== null && (
           <>
             <FooterWindowButton label={labels.settings} icon={<Glyph paths={SETTINGS} />} href={pluginSettingsPath(item.pluginId)} />
-            <FooterWindowButton label={pinned ? labels.unpin : labels.pin} icon={<Glyph paths={PIN} />} pressed={pinned} onClick={() => togglePin(item)} />
+            <FooterWindowButton label={pinned ? labels.unpin : labels.pin} icon={<Glyph paths={PIN} filled={pinned} />} pressed={pinned} lit onClick={() => togglePin(item)} />
           </>
         )}
       </div>

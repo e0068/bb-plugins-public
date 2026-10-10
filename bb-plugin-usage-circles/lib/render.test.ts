@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { describe, expect, it } from "vitest";
-import { buildUsageWindowModel, formatAbsoluteReset, type UsageWindowModel } from "./usage-model";
-import { buildProviderDetails, buildProviderLogo, buildRingIcon, buildWindowRow } from "./render";
+import { buildUsageWindowModel, FOOTER_RINGS, formatAbsoluteReset, formatResetClock, type UsageWindowModel } from "./usage-model";
+import { buildAllLimits, buildProviderDetails, buildProviderLogo, buildRingIcon, buildWindowRow } from "./render";
 import { DEFAULT_RING_DIMS, DEFAULT_RING_STYLE, type RingStyle } from "./ring-style";
 
 const CORNER: RingStyle = { logo: "corner", dims: DEFAULT_RING_DIMS };
@@ -82,11 +82,26 @@ describe("buildWindowRow", () => {
     expect(row.querySelector(".usage-circles__window-reset")?.textContent).toBe("No reset data available");
   });
 
-  it("shows the relative and absolute reset time when known", () => {
+  it("puts the short name, the time left to the reset and the percent on one line, the reset in the middle", () => {
     const resetsAt = new Date(now + 61 * 60 * 1000).toISOString();
-    const model = buildUsageWindowModel({ label: "5-hour limit", usedPercent: 0, resetsAt }, now);
-    const row = buildWindowRow(model);
-    expect(row.querySelector(".usage-circles__window-reset")?.textContent).toBe(`Resets in 1h 1m (${formatAbsoluteReset(resetsAt)})`);
+    const model = buildUsageWindowModel({ label: "Current session", usedPercent: 19, resetsAt }, now);
+    const heading = buildWindowRow(model).querySelector<HTMLElement>(".usage-circles__window-heading")!;
+    expect(Array.from(heading.children).map((cell) => cell.textContent)).toEqual(["5 hour", `1h 1m (${formatResetClock(resetsAt)})`, "19%"]);
+    expect(heading.style.gridTemplateColumns).toBe("1fr auto 1fr");
+  });
+
+  it("names the day of the reset of a weekly window", () => {
+    const resetsAt = new Date(now + 43 * 60 * 60 * 1000).toISOString();
+    const model = buildUsageWindowModel({ label: "Weekly limit", usedPercent: 81, resetsAt }, now);
+    expect(buildWindowRow(model).querySelector(".usage-circles__window-reset")?.textContent).toBe(`1d 19h (${formatAbsoluteReset(resetsAt)})`);
+  });
+
+  it("sets the line in the 12 px medium type of the window's title", () => {
+    const model = buildUsageWindowModel({ label: "Weekly limit", usedPercent: 81, resetsAt: null }, now);
+    const heading = buildWindowRow(model).querySelector<HTMLElement>(".usage-circles__window-heading")!;
+    expect(heading.style.fontSize).toBe("12px");
+    expect(heading.style.fontWeight).toBe("500");
+    expect(heading.querySelector<HTMLElement>("strong")?.style.fontWeight).toBe("500");
   });
 });
 
@@ -207,6 +222,37 @@ describe("buildProviderDetails", () => {
     expect(details.querySelectorAll(".usage-circles__window-row").length).toBe(2);
   });
 
+  const twoWindows = () => {
+    const windows = [{ label: "Current session", usedPercent: 5, resetsAt: null }, { label: "Weekly", usedPercent: 9, resetsAt: null }];
+    const details = buildProviderDetails(provider({ status: "ok", windows }), coloring, now, windows[1]);
+    const [plain, marked] = Array.from(details.querySelectorAll<HTMLElement>(".usage-circles__window-row"));
+    return { details, plain, marked };
+  };
+  const px = (value: string) => Number.parseFloat(value || "0");
+
+  it("sets the item's own row off like a selected thread: a rounded background inset from the window's edges, no bar", () => {
+    const { details, marked } = twoWindows();
+    expect(marked.dataset.highlighted).toBe("true");
+    expect(marked.style.backgroundColor).toBe("var(--sidebar-accent)");
+    expect(marked.style.boxShadow).toBe("");
+    expect(px(marked.style.borderRadius)).toBeGreaterThan(0);
+    expect(px(marked.style.marginLeft)).toBe(0);
+    expect(px(details.style.paddingLeft)).toBe(8);
+    expect(px(details.style.paddingRight)).toBe(8);
+  });
+
+  it("lays a row out as the mockup: 8 px around it, 4 px from the line to the bars, 2 px between bars and between rows", () => {
+    const { details, plain, marked } = twoWindows();
+    expect(px(details.style.gap)).toBe(2);
+    expect(px(details.style.paddingBottom)).toBe(8);
+    for (const row of [plain, marked]) {
+      expect(row.style.padding).toBe("8px");
+      expect(px(row.style.gap)).toBe(4);
+      expect(px(row.querySelector<HTMLElement>(".usage-circles__window-bars")!.style.gap)).toBe(2);
+      expect(row.querySelector(".usage-circles__window-heading ~ .usage-circles__window-reset")).toBeNull();
+    }
+  });
+
   it("says why there is nothing to show for a signed-out provider", () => {
     const details = buildProviderDetails(provider({ status: "unauthenticated" }), coloring, now);
     expect(details.querySelector(".usage-circles__status")?.textContent).not.toBe("");
@@ -247,5 +293,87 @@ describe("buildRingIcon, ring style", () => {
     expect(svg.querySelector("text")).toBeNull();
     expect(svg.querySelectorAll(".usage-circles__ring-time-track").length).toBeGreaterThan(0);
     expect(svg.querySelectorAll(".usage-circles__ring-time")).toHaveLength(0);
+  });
+});
+
+describe("the grid layout", () => {
+  const coloring = { mode: "usage", usage: { yellow: 60, red: 90 }, pace: { yellow: 20, red: 50 } } as const;
+  const resetsAt = new Date(now + 2 * 60 * 60 * 1000 + 44 * 60 * 1000).toISOString();
+  const windows = [
+    { label: "Current session", usedPercent: 19, resetsAt },
+    { label: "Current week (all models)", usedPercent: 81, resetsAt: null },
+    { label: "Current week (Fable)", usedPercent: 51, resetsAt: null },
+  ];
+  const claude = { id: "claude-code", title: "Claude Code", logoUrl: "/claude", tint: null, usage: { status: "ok" as const, windows } };
+  const limits = windows.map((window) => ({ provider: claude, window }));
+  const cards = (details: HTMLElement) => Array.from(details.querySelectorAll<HTMLElement>(".usage-circles__card"));
+  const px = (value: string) => Number.parseFloat(value || "0");
+
+  it("lays the limits out as cards in two columns, the item's own card set off like a selected thread", () => {
+    const details = buildAllLimits(limits, coloring, now, windows[1]);
+    expect(details.style.display).toBe("grid");
+    expect(details.style.gridTemplateColumns).toBe("1fr 1fr");
+    expect(px(details.style.gap)).toBe(2);
+    expect(cards(details).map((card) => card.dataset.highlighted ?? "")).toEqual(["", "true", ""]);
+    expect(cards(details)[1]!.style.backgroundColor).toBe("var(--sidebar-accent)");
+  });
+
+  it("stretches an odd last card over both columns", () => {
+    const odd = cards(buildAllLimits(limits, coloring, now));
+    expect(odd.map((card) => card.style.gridColumn)).toEqual(["", "", "1 / -1"]);
+    const even = cards(buildAllLimits(limits.slice(0, 2), coloring, now));
+    expect(even.map((card) => card.style.gridColumn)).toEqual(["", ""]);
+  });
+
+  it("puts the logo, the name and the percent over the bars, and the time to the reset under them, the clock on the right", () => {
+    const [card] = cards(buildAllLimits(limits, coloring, now));
+    const heading = card!.querySelector(".usage-circles__card-heading")!;
+    expect(heading.textContent).toBe("5 hour19%");
+    expect(heading.querySelector(".usage-circles__logo")?.getAttribute("aria-label")).toBe("Claude Code");
+    expect(card!.querySelector(".usage-circles__window-bars")).not.toBeNull();
+    const reset = card!.querySelector<HTMLElement>(".usage-circles__card-reset")!;
+    expect(Array.from(reset.children).map((cell) => cell.textContent)).toEqual(["2h 44m", formatResetClock(resetsAt)]);
+    expect(reset.style.justifyContent).toBe("space-between");
+    expect(card!.style.padding).toBe("8px");
+  });
+});
+
+describe("buildAllLimits", () => {
+  const coloring = { mode: "usage", usage: { yellow: 60, red: 90 }, pace: { yellow: 20, red: 50 } } as const;
+  const claude = { id: "claude-code", title: "Claude Code", logoUrl: "/claude", tint: null, usage: { status: "ok" as const, windows: [] } };
+  const codex = { ...claude, id: "codex", title: "Codex", logoUrl: "/codex" };
+  const limits = [
+    { ring: FOOTER_RINGS[3]!, provider: codex, window: { label: "Current session", usedPercent: 3, resetsAt: null } },
+    { ring: FOOTER_RINGS[1]!, provider: claude, window: { label: "Current week (all models)", usedPercent: 81, resetsAt: null } },
+  ];
+
+  it("shows every given limit of both providers as a card in the given order, each with its provider's logo", () => {
+    const details = buildAllLimits(limits, coloring, now);
+    const cards = Array.from(details.querySelectorAll<HTMLElement>(".usage-circles__card"));
+    expect(cards.map((card) => card.querySelector(".usage-circles__card-heading")?.textContent)).toEqual(["5 hour3%", "7 days81%"]);
+    expect(cards.map((card) => card.querySelector(".usage-circles__logo")?.getAttribute("aria-label"))).toEqual(["Codex", "Claude Code"]);
+    expect(details.style.gridTemplateColumns).toBe("1fr 1fr");
+  });
+
+  it("says the limits are all switched off when there is nothing to show and every provider has data", () => {
+    const details = buildAllLimits([], coloring, now);
+    expect(details.querySelector(".usage-circles__card")).toBeNull();
+    expect(details.querySelector(".usage-circles__status")?.textContent).toContain("Limits");
+  });
+
+  it("says why a provider has no data, under its logo, after the cards, without stretching the cards", () => {
+    const offline = { ...codex, usage: { status: "unauthenticated" as const } };
+    const details = buildAllLimits(limits.slice(1), coloring, now, undefined, [offline]);
+    const status = details.querySelector<HTMLElement>(".usage-circles__status")!;
+    expect(status.textContent).toBe("Not authenticated");
+    expect(status.querySelector(".usage-circles__logo")?.getAttribute("aria-label")).toBe("Codex");
+    expect(status.style.gridColumn).toBe("1 / -1");
+    expect(details.lastElementChild).toBe(status);
+    expect(Array.from(details.querySelectorAll<HTMLElement>(".usage-circles__card")).map((card) => card.style.gridColumn)).toEqual(["1 / -1"]);
+  });
+
+  it("does not ask to pick limits when a provider simply has no data", () => {
+    const details = buildAllLimits([], coloring, now, undefined, [{ ...codex, usage: { status: "expired" as const } }]);
+    expect(Array.from(details.querySelectorAll(".usage-circles__status")).map((status) => status.textContent)).toEqual(["Authentication session expired"]);
   });
 });

@@ -2,15 +2,20 @@
 // usage limits through the BB SDK (bb.sdk.system.usageLimits), their logos and
 // brand tints from the host's provider list, and exposes them — plus the
 // coloring settings and the ring style — over getState. The ring's dimensions,
-// tuned in the plugin's settings section, are kept in the plugin's KV store.
+// tuned in the plugin's settings section, are kept in the plugin's KV store,
+// and so are the limits the windows show and their order.
 // No parsing of provider files — see docs/decisions/usage-rings-own-code.md.
 import { defineRpcContract, type BbPluginApi } from "@get-bb/plugin-sdk";
 import { z } from "zod";
 import {
   COLORING_OPTIONS,
+  LAYOUT_OPTIONS,
+  layoutOf,
   normalizeUsage,
+  parseLimits,
   parseColoring,
   selectProvider,
+  type LimitsChoice,
   type ProviderTint,
   type StateWire,
 } from "./lib/usage-model";
@@ -19,6 +24,8 @@ import { DEFAULT_RING_DIMS, LOGO_OPTIONS, logoPlacementOf, parseRingDims, type R
 
 /** KV key of the tuned ring dimensions; absent — the defaults. */
 const RING_DIMS_KEY = "ring-dims";
+/** KV key of the limits the windows show and their order; absent — every limit, in the footer's order. */
+const LIMITS_KEY = "limits";
 
 // Anthropic's account usage endpoint is tightly rate-limited; every open
 // sidebar polls this plugin independently, so without coalescing, a few open
@@ -59,6 +66,8 @@ const ringDimsSchema = z.object({
   cornerRight: z.number(),
 }) satisfies z.ZodType<RingDims>;
 
+const limitsSchema = z.array(z.object({ id: z.string(), shown: z.boolean() })).readonly();
+
 export const rpcContract = defineRpcContract({
   getState: {
     input: z.null(),
@@ -75,8 +84,12 @@ export const rpcContract = defineRpcContract({
         }),
       ),
       ring: z.object({ logo: z.enum(["center", "corner"]), dims: ringDimsSchema }),
+      layout: z.enum(["list", "grid", "all"]),
+      limits: limitsSchema,
     }),
   },
+  /** Keep the limits the windows show and their order. Returns them as kept. */
+  setLimits: { input: limitsSchema, output: limitsSchema },
   /**
    * Merge tuned dimensions into the stored ones — only the slider that moved,
    * so a window holding an older look never overwrites another one's tuning.
@@ -155,15 +168,24 @@ export default async function plugin(bb: BbPluginApi) {
       options: [...LOGO_OPTIONS],
       default: LOGO_OPTIONS[0],
     },
+    layout: {
+      type: "select",
+      label: "Window layout",
+      description:
+        "List: a line per limit. Grid: the limits as cards in two columns. All limits: one footer ring instead of one per limit, its window showing every limit of both providers. Which limits show, and in what order, is set under Limits below.",
+      options: [...LAYOUT_OPTIONS],
+      default: LAYOUT_OPTIONS[0],
+    },
   });
   const readRingDims = async (): Promise<RingDims> => parseRingDims(await bb.storage.kv.get(RING_DIMS_KEY));
+  const readLimits = async (): Promise<LimitsChoice> => parseLimits(await bb.storage.kv.get(LIMITS_KEY));
 
   const usageLimitsCache = createUsageLimitsCache(() => bb.sdk.system.usageLimits(), USAGE_CACHE_TTL_MS);
 
   bb.rpc.register(rpcContract, {
     async getState(): Promise<StateWire> {
       const values = await settings.get();
-      const [usage, brands, dims] = await Promise.all([usageLimitsCache.get(), readBrands(bb), readRingDims()]);
+      const [usage, brands, dims, limits] = await Promise.all([usageLimitsCache.get(), readBrands(bb), readRingDims(), readLimits()]);
       return {
         openOnHover: values.openOnHover,
         coloring: parseColoring({
@@ -181,12 +203,19 @@ export default async function plugin(bb: BbPluginApi) {
           usage: normalizeUsage(selectProvider(usage, id)),
         })),
         ring: { logo: logoPlacementOf(values.logo), dims },
+        layout: layoutOf(values.layout),
+        limits,
       };
     },
     async setRingDims(patch): Promise<RingDims> {
       const dims = parseRingDims({ ...(await readRingDims()), ...patch });
       await bb.storage.kv.set(RING_DIMS_KEY, dims);
       return dims;
+    },
+    async setLimits(picked): Promise<LimitsChoice> {
+      const limits = parseLimits(picked);
+      await bb.storage.kv.set(LIMITS_KEY, limits);
+      return limits;
     },
     async resetRingDims(): Promise<RingDims> {
       await bb.storage.kv.delete(RING_DIMS_KEY);

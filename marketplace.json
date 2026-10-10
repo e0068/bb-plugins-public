@@ -152,8 +152,8 @@
     },
     {
       "id": "usage-circles",
-      "displayName": "Usage Circles",
-      "description": "Claude Code and Codex usage-limit rings as sidebar footer items — place each one in Customize footer.",
+      "displayName": "Usage Limits",
+      "description": "Claude Code and Codex usage-limit rings in the sidebar footer — a ring per limit or one for all, the limits as a list or cards.",
       "icon": {
         "url": "bb-plugin-usage-circles/assets/icon.svg"
       },
