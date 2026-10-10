@@ -1,0 +1,26 @@
+{
+  "extends": "./packages/plugin-base/tsconfig.base.json",
+  "compilerOptions": {
+    "jsx": "react-jsx",
+    "types": [
+      "node"
+    ],
+    "lib": [
+      "ES2022",
+      "DOM",
+      "DOM.Iterable"
+    ],
+    "paths": {
+      "@bb-plugins/*": [
+        "./packages/*"
+      ]
+    }
+  },
+  "include": [
+    "server.ts",
+    "app.tsx",
+    "architecture.test.ts",
+    "core",
+    "app"
+  ]
+}
