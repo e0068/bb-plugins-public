@@ -210,7 +210,7 @@ const BUILTIN_ANSWERS: Record<BuiltinKind, string> = {
   questions: "ask the owner with ask_decision",
   criteria: "send setup.criteria through ask_decision",
   select: "send setup.stages through ask_decision",
-  demo: "stop and send a brief with outcome through ask_decision (outcome.stage — this id); on a comment answer it: if it asks for a change, mark the stage where the change is made started — Flow drops the done state of every stage after it — and go through those stages again in order, automations included, up to this demo; without a change, send this demo again, not going further",
+  demo: "stop and send a brief with outcome through ask_decision (outcome.stage — this id); on a comment answer it: if it asks for a change, roll back to the stage where the change is made (flow_stage) and go through the stages again in order up to this demo; without a change, send this demo again, not going further",
 };
 
 /** Правило треда с flow: владелец видит работу этапами, а не прозой. */
