@@ -165,9 +165,10 @@ function Flows({ subPath }: PluginNavPanelProps) {
   const second = subPath !== "";
   return (
     <div className="@container h-full overflow-y-auto">
-      <div className="flex min-w-0 flex-col gap-4 p-6 @3xl:flex-row @3xl:items-start @3xl:gap-6">
-        <FlowsList subPath={subPath} className={cn("@3xl:w-56 @3xl:shrink-0", second && "@max-3xl:hidden")} />
-        <div className={cn("flex min-w-0 flex-1 flex-col gap-4", !second && "@max-3xl:hidden")}>
+      {/* Список стоит в 8 px от краёв колонки, как строки тредов в левой панели bb; справа от строк до редактора те же 8 px, что и слева. */}
+      <div className="flex min-w-0 flex-col @3xl:flex-row @3xl:items-start">
+        <FlowsList subPath={subPath} className={cn("px-2 py-6 @3xl:w-60 @3xl:shrink-0", second && "@max-3xl:hidden")} />
+        <div className={cn("flex min-w-0 flex-1 flex-col gap-4 p-6 @3xl:pl-0", !second && "@max-3xl:hidden")}>
           <BackToList />
           {subPath === HISTORY_SUB_PATH ? <RunHistory /> : <FlowEditor subPath={subPath} />}
         </div>
