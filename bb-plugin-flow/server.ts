@@ -58,6 +58,7 @@ import { isRunFinished } from "./core/run-summary";
 import { liveFlowId } from "./core/run-history";
 import { runJournal } from "./core/run-journal";
 import { DEFAULT_JOURNAL_DIR } from "./lib/journal-dir";
+import { isSideChat } from "./core/side-chat";
 
 /** Время в base36 спереди — идентификаторы сортируются по созданию. */
 const newId = (): string => `${Date.now().toString(36)}${randomBytes(6).toString("hex")}`;
@@ -394,7 +395,16 @@ export default async function plugin(bb: BbPluginApi): Promise<void> {
     const found = await progress.run(threadId);
     return found !== null && isRunFinished(found.progress, stagesOf(found.carrier).stages);
   };
-  const choice = registerFlowChoice(bb, { flows, threads, progress, store, cancelRun: (threadId) => runner.cancel(threadId), finished: runFinished });
+  // Происхождение треда не меняется: ответ хоста запоминается, а сбой — нет, чтобы тред не остался навсегда «не Side chat».
+  const sideChats = new Map<string, Promise<boolean>>();
+  bb.events.on("thread.deleted", ({ thread: row }) => void sideChats.delete(row.id));
+  const sideChat = (threadId: string): Promise<boolean> => {
+    const known = sideChats.get(threadId) ?? Promise.resolve({ threadId }).then((input) => bb.sdk.threads.get(input)).then(isSideChat);
+    sideChats.set(threadId, known);
+    known.catch(() => sideChats.delete(threadId));
+    return known;
+  };
+  const choice = registerFlowChoice(bb, { flows, threads, progress, store, cancelRun: (threadId) => runner.cancel(threadId), finished: runFinished, sideChat });
   // Ход владельца применяет flow, выбранный в контейнере состояния Flow; после завершённого прогона — начинает следующий.
   // Первое сообщение нового треда даёт ему flow и прогон: тред передачи — flow исходного, остальные с flow — пустой прогон.
   registerOwnerTurn(bb, {
@@ -404,6 +414,12 @@ export default async function plugin(bb: BbPluginApi): Promise<void> {
     firstMessage: startThread({ threads, progress, hasFlow: (threadId) => flowOf(threadId) !== null, handoffFlow: takeHandoffFlow }),
     firstInput: (threadId, blocks) => fresh.remember(threadId, blocks),
     // Хук ждёт решения не дольше 10 с и запирает тред на просрочке: сверка, которая затянулась, доходит в фоне.
+    // Side chat, получивший flow до этой версии, его теряет вместе с прогоном.
+    sideChat: async (threadId) => {
+      if (threads.flowOf(threadId) === NO_FLOW) return;
+      await threads.assign(threadId, NO_FLOW);
+      await choice.release(threadId);
+    },
     turnStart: (threadId) => Promise.race([scope.sync(threadId), new Promise<void>((resolve) => setTimeout(resolve, TURN_START_SYNC_MS).unref())]),
   });
   // Ушедшая своя отправка забывается — тем же текстом, что хук видит в `input.text`: текстовые блоки через перевод строки.

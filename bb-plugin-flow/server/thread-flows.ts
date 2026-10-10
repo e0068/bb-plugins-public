@@ -1,14 +1,18 @@
 // Какой flow у треда, какой выбран над его композером до отправки и какой —
 // в композере проекта. Инструкции агенту собираются синхронно, поэтому привязки
 // живут в памяти и дописываются в kv следом. Новый тред берёт flow родителя,
-// а без родителя — выбор своего проекта.
+// а без родителя — выбор своего проекта; тред Side chat — «без flow».
 import type { PluginKvStorage } from "@get-bb/plugin-sdk";
 
 import { AGENT_NO_FLOW, NO_FLOW } from "../core/flows";
+import { isSideChat } from "../core/side-chat";
 
 const THREAD_PREFIX = "thread-flow:";
 const PROJECT_PREFIX = "project-flow:";
 const PICK_PREFIX = "thread-flow-pick:";
+
+/** Новый тред глазами привязки: проект, родитель и плагин, который его создал. */
+export type NewThread = { id: string; projectId: string; parentThreadId: string | null; originPluginId?: string | null };
 
 export type ThreadFlows = {
   flowOf(threadId: string): string | undefined;
@@ -24,9 +28,9 @@ export type ThreadFlows = {
   takePicked(threadId: string): Promise<string | undefined>;
   choiceOf(projectId: string): string | undefined;
   choose(projectId: string, flowId: string): Promise<void>;
-  /** Привязывает новый тред к flow родителя, а без родителя — к выбору проекта; уже привязанный не трогает. Зовут и событие создания, и первое сообщение: bb не обещает их порядка. */
-  bind(thread: { id: string; projectId: string; parentThreadId: string | null }): void;
-  onThreadCreated(payload: { thread: { id: string; projectId: string; parentThreadId: string | null } }): void;
+  /** Привязывает новый тред к flow родителя, а без родителя — к выбору проекта, тред Side chat — к «без flow»; уже привязанный не трогает. Зовут и событие создания, и первое сообщение: bb не обещает их порядка. */
+  bind(thread: NewThread): void;
+  onThreadCreated(payload: { thread: NewThread }): void;
   onThreadDeleted(payload: { thread: { id: string } }): void;
   /** Ждёт записи в kv, начатые привязками новых тредов. */
   settled(): Promise<void>;
@@ -49,7 +53,7 @@ export const createThreadFlows = async (kv: PluginKvStorage): Promise<ThreadFlow
   const bind: ThreadFlows["bind"] = (thread) => {
     // Уже привязанный тред — привязан первым сообщением раньше события создания, например flow исходного треда передачи.
     if (threads.has(thread.id)) return;
-    const flowId = thread.parentThreadId === null ? projects.get(thread.projectId) : threads.get(thread.parentThreadId);
+    const flowId = isSideChat(thread) ? NO_FLOW : thread.parentThreadId === null ? projects.get(thread.projectId) : threads.get(thread.parentThreadId);
     if (flowId === undefined) return;
     // Память — сразу: сборка инструкций первого хода может прийти раньше записи в kv.
     threads.set(thread.id, flowId);

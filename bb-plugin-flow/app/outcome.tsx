@@ -7,6 +7,7 @@
 import { useRpc } from "@get-bb/plugin-sdk/app";
 
 import { isTaskAddress } from "../core/task-lookup";
+import { fencedParts } from "../core/mermaid-fences";
 import { outcomeItems, outcomeKind, paragraphs } from "../core/outcome";
 import { Icon } from "../components/ui/icon";
 import { cn } from "../lib/utils";
@@ -14,6 +15,7 @@ import type { DecisionBrief, StageOutcome, outcomeRpcContract } from "../shared/
 import { CommandResultRow } from "./command";
 import { AddRow } from "./add-row";
 import { LinkedText } from "./linked-text";
+import { MermaidDiagram } from "./mermaid-diagram";
 import type { FileRoots } from "../core/result-link";
 import { setOutcomeNote, type Draft } from "./draft";
 import { useMessages } from "./locale-context";
@@ -39,11 +41,17 @@ function Group({ title, children }: { title: string; children: React.ReactNode }
 function Paragraphs({ text }: { text: string }) {
   return (
     <div className="flex flex-col gap-2">
-      {paragraphs(text).map((part, i) => (
-        <p key={i} className="m-0 whitespace-pre-wrap break-words text-sm leading-relaxed">
-          <LinkedText text={part} />
-        </p>
-      ))}
+      {fencedParts(text).flatMap((part, i) =>
+        part.kind === "diagram" ? (
+          <MermaidDiagram key={i} source={part.source} />
+        ) : (
+          paragraphs(part.text).map((paragraph, j) => (
+            <p key={`${i}:${j}`} className="m-0 whitespace-pre-wrap break-words text-sm leading-relaxed">
+              <LinkedText text={paragraph} />
+            </p>
+          ))
+        ),
+      )}
     </div>
   );
 }

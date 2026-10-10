@@ -33,6 +33,19 @@ describe("настройка сессии агента", () => {
     expect([...resolved.skills].sort()).toEqual([...shipped].sort());
   });
 
+  it("сессия Side chat не получает ни инструментов, ни навыков Flow и не трогает навыки общего дерева", async () => {
+    const calls: string[] = [];
+    const harness = setup((threadId) => void calls.push(threadId));
+    const resolved = await harness.resolveAgentConfiguration(makePluginAgentConfigurationContext({ environment: worktree, origin: { kind: "fork", pluginId: "side-chat" } }));
+    expect([resolved.tools, resolved.skills, calls]).toEqual([[], [], []]);
+  });
+
+  it("форк другого плагина получает инструменты Flow как обычно", async () => {
+    const harness = setup(() => undefined);
+    const resolved = await harness.resolveAgentConfiguration(makePluginAgentConfigurationContext({ environment: worktree, origin: { kind: "fork", pluginId: "other" } }));
+    expect(resolved.tools.map((tool) => tool.name).sort()).toEqual(["ask_decision", "flow_stage"]);
+  });
+
   it("перед стартом сессии в worktree файл ограничения ложится в дерево треда", async () => {
     const calls: Array<[string, string | null]> = [];
     const harness = setup((threadId, root) => void calls.push([threadId, root]));
