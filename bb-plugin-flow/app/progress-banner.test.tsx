@@ -60,9 +60,7 @@ describe("баннер прогресса flow", () => {
     const rows = [...slot.container.querySelectorAll<HTMLElement>("[data-progress-row]")];
     expect(rows).toHaveLength(7);
     const prototype = within(rows[3]!);
-    expect(rows[3]!.querySelector('[data-icon="Bot"]')).not.toBeNull();
-    expect(rows[2]!.querySelector('[data-icon="Diamond"]')).not.toBeNull();
-    expect(rows[4]!.querySelector('[data-icon="Workflow"]')).not.toBeNull();
+    for (const row of [rows[2]!, rows[3]!, rows[4]!]) expect(row.querySelector('[data-icon="BookOpen"]')).not.toBeNull();
     expect(prototype.getByText("34 м")).toBeTruthy();
     expect(prototype.getByText("$11.2")).toBeTruthy();
     expect(prototype.getByText("+1")).toBeTruthy();

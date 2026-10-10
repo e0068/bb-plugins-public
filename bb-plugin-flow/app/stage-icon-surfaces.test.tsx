@@ -10,7 +10,7 @@ afterEach(cleanup);
 const row = (patch: Partial<ProgressStage> = {}): ProgressStage => ({ id: "spec", kind: "skill", name: "Spec", executor: "self", state: "todo", results: [], minutes: null, cost: null, ...patch });
 
 describe("иконка этапа в полосе прогресса", () => {
-  it("выбранная владельцем иконка стоит вместо иконки вида и логотипа исполнителя", () => {
+  it("выбранная владельцем иконка стоит вместо иконки вида", () => {
     const { container } = render(<StageIcon stage={row({ icon: "Rocket", kind: "questions" })} />);
     expect(container.querySelector('[data-icon="Rocket"]')).not.toBeNull();
   });

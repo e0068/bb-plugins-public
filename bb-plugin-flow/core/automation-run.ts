@@ -365,13 +365,6 @@ export const liveIcon = (stage: WorkStage, track: StageTrack, agentActive: boole
   return icon === "automation" || icon === "action" || agentActive ? icon : null;
 };
 
-/** Провайдер исполнителя этапа навыка: сам агент — провайдер треда, субагент — свой; у workflow, автоматизации и встроенного этапа — нет. */
-export const executorProvider = (stage: WorkStage, track: StageTrack, threadProvider: string | null): string | null => {
-  if (stage.kind !== "skill" || stage.automation !== undefined) return null;
-  const kind = executorKind(track.executor);
-  return kind === "self" ? threadProvider : kind === "agent" ? (stage.executors.find((e) => e.id === track.executor)?.provider ?? null) : null;
-};
-
 /** Значок живого этапа треда: этап, ждущий владельца, не живой — работа за ним. */
 export const stageLiveIcon = (progress: FlowProgress, stage: WorkStage, agentActive: boolean): RunningIcon | null =>
   progress.waiting.includes(stage.id) ? null : liveIcon(stage, progress.stages[stage.id] ?? {}, agentActive);

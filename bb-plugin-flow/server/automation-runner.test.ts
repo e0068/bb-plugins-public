@@ -321,15 +321,6 @@ describe("провайдер идущего этапа", () => {
     await progress.update(THREAD, (p) => ({ ...p, stages: { code: { startedAt: T0, executor: coder.id } } }));
     expect(await harness.callRpc("runningThreads", {})).toEqual([]);
   });
-
-  it("карточка прогресса по-прежнему называет провайдера исполнителя: сам агент — провайдер треда, субагент — свой", async () => {
-    const { steps } = fakeSteps();
-    const { harness, progress, view } = setup([review, stage("code", { executors: [coder] })], steps, undefined, undefined, { providerId: "claude-code", providers: [CLAUDE, CODEX] });
-    await harness.callAgentTool(FLOW_STAGE_TOOL, { stage: "review", state: "started" }, { threadId: THREAD });
-    expect((await view())?.stages.find((s) => s.id === "review")).toMatchObject({ provider: "claude-code" });
-    await progress.update(THREAD, (p) => ({ ...p, stages: { code: { startedAt: T0, executor: coder.id } } }));
-    expect((await view())?.stages.find((s) => s.id === "code")).toMatchObject({ provider: "codex" });
-  });
 });
 
 describe("логотип агента вместо колёсика хода", () => {

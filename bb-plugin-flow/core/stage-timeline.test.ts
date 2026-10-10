@@ -2,7 +2,7 @@
 import { describe, expect, it } from "vitest";
 
 import { builtinStage } from "../lib/stage-constants";
-import { AUTOMATION_ICON, EXECUTOR_ICONS, KIND_ICONS } from "../lib/stage-icon-names";
+import { AUTOMATION_ICON, KIND_ICONS, SKILL_ICON } from "../lib/stage-icon-names";
 import type { FlowProgress, WorkStage } from "../shared/contract";
 import { EMPTY_PROGRESS, onMark, reopen } from "./progress";
 import { stageTimeline } from "./stage-timeline";
@@ -61,15 +61,15 @@ describe("этапы треда на шкале времени", () => {
     expect(stageTimeline(progress, STAGES).map((s) => s.id)).toEqual(["questions", "spec"]);
   });
 
-  it("значок — свой значок этапа, а запасной — по виду, исполнителю и шагам", () => {
+  it("значок — свой значок этапа, а запасной — по виду и шагам, как на странице Flow, без знака исполнителя", () => {
     const progress: FlowProgress = {
       ...EMPTY_PROGRESS,
       stages: { questions: { startedAt: at(0) }, prototype: { startedAt: at(1) }, spec: { startedAt: at(2), executor: "agent:planner" }, commit: { startedAt: at(3) } },
     };
     expect(stageTimeline(progress, STAGES).map(({ id, icon, fallbackIcon }) => ({ id, icon, fallbackIcon }))).toEqual([
       { id: "questions", icon: undefined, fallbackIcon: KIND_ICONS.questions },
-      { id: "prototype", icon: "Album01", fallbackIcon: EXECUTOR_ICONS.self },
-      { id: "spec", icon: undefined, fallbackIcon: EXECUTOR_ICONS.agent },
+      { id: "prototype", icon: "Album01", fallbackIcon: SKILL_ICON },
+      { id: "spec", icon: undefined, fallbackIcon: SKILL_ICON },
       { id: "commit", icon: undefined, fallbackIcon: AUTOMATION_ICON },
     ]);
   });

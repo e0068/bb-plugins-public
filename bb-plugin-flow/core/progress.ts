@@ -3,7 +3,7 @@
 // Нужно серверу, а вид — и тестам баннера, поэтому из контракта только типы.
 import { stageKindOf } from "../lib/stage-constants";
 import type { DecisionAnswer, DecisionBrief, FlowProgress, Planned, ProgressView, WorkStage } from "../shared/contract";
-import { automationView, executorKind, executorProvider, idleMinutes, isFailed, stageLiveIcon } from "./automation-run";
+import { automationView, executorKind, idleMinutes, isFailed, stageLiveIcon } from "./automation-run";
 import { stagePlans } from "./budget";
 import { demoVerdict } from "./outcome";
 import { askedStageIds, isAutomationStage } from "./stages";
@@ -241,12 +241,10 @@ export const reopen = (progress: FlowProgress, stages: readonly WorkStage[], id:
   return { ...reset, waiting: reset.waiting.filter((waiting) => !later.includes(waiting)) };
 };
 
-const optionalProvider = (provider: string | null) => (provider === null ? {} : { provider });
-
 const plus = (value: number | null, earlier: number | undefined): number | null => (earlier === undefined ? value : (value ?? 0) + earlier);
 
-/** Вид прогресса по этапам flow треда: этап без записи — впереди, этап записи вне flow — не показывается; счёт и номера — по этапам прогона; живой — на этапе идёт работа, ждущий владельца не живой; провайдер — у исполнителя этапа навыка. */
-export const progressView = (progress: FlowProgress, stages: readonly WorkStage[], agentActive = false, threadProvider: string | null = null): ProgressView => {
+/** Вид прогресса по этапам flow треда: этап без записи — впереди, этап записи вне flow — не показывается; счёт и номера — по этапам прогона; живой — на этапе идёт работа, ждущий владельца не живой. */
+export const progressView = (progress: FlowProgress, stages: readonly WorkStage[], agentActive = false): ProgressView => {
   const rows = stages.map((stage) => {
     const track = progress.stages[stage.id] ?? {};
     const plan = progress.plans?.[stage.id];
@@ -258,7 +256,6 @@ export const progressView = (progress: FlowProgress, stages: readonly WorkStage[
       executor: executorKind(track.executor),
       state,
       live: stageLiveIcon(progress, stage, agentActive) !== null,
-      ...optionalProvider(executorProvider(stage, track, threadProvider)),
       results: track.results ?? [],
       // Минуты этапа с шагами — работа его шагов; у этапа навыка — активные, а пока их не считали — прежние стенные часы, чтобы строка не осталась пустой.
       // Прошлые проходы, сброшенные доработкой, — в тех же минутах и долларах.
