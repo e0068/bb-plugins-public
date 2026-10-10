@@ -401,6 +401,10 @@ export const ru = {
     pickerNone: "Без flow",
     pickerAuto: "Автоматически",
   },
+  mentions: {
+    skills: "Навыки и команды",
+    files: "Файлы и папки",
+  },
   voice: {
     busyElsewhere: "Уже идёт запись в другом поле",
     input: (label: string) => `Голосовой ввод: ${label}`,

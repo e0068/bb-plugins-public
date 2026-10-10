@@ -46,6 +46,7 @@ import { ProviderLogosProvider } from "./provider-logos-source";
 import { useLocale, useMessages } from "./locale-context";
 import { useFileRoots } from "./file-roots";
 import { FileRootsContext } from "./linked-text";
+import { MentionsProvider, useMentions } from "./mentions";
 import { VoiceErrorLine, VoiceProvider, useVoiceField } from "./voice";
 import { NoMath } from "./no-math";
 
@@ -209,6 +210,7 @@ function BriefLoader({ id, source, messageId, threadId }: { id: string; source: 
         };
         return (
           <VoiceProvider transcribe={(input) => voiceRpc.call("transcribeVoice", input)}>
+            <MentionsProvider threadId={state.brief.threadId}>
             {state.brief.kind === "clarify" ? (
               <ClarifyCard brief={state.brief} send={send} onResult={onAccepted} />
             ) : legacy ? (
@@ -216,6 +218,7 @@ function BriefLoader({ id, source, messageId, threadId }: { id: string; source: 
             ) : (
               <BriefCard brief={state.brief} send={send} onResult={onAccepted} roots={roots} place={place.place} route={place.route} compact={place.compact} />
             )}
+            </MentionsProvider>
           </VoiceProvider>
         );
       }
@@ -319,12 +322,14 @@ const entryOf = (draft: Draft, question: DecisionQuestion) => draft.entries[ques
 function VoiceInput(props: Omit<ComponentProps<typeof Input>, "value" | "onChange" | "ref"> & { voiceId: string; label: string; value: string; disabled: boolean; onText: (text: string) => void; wrapperClassName: string }) {
   const { voiceId, label, value, disabled, onText, wrapperClassName, className, ...rest } = props;
   const voice = useVoiceField({ id: voiceId, label, value, disabled, onChange: onText });
+  const mentions = useMentions({ value, onText, disabled });
   return voice.phase !== null ? (
     <div className={cn("flex min-w-56 items-center rounded-md border border-input px-0.5", wrapperClassName)}>{voice.strip}</div>
   ) : (
     <div className={cn("relative", wrapperClassName)}>
-      <Input {...rest} ref={voice.ref} aria-label={label} value={value} disabled={disabled} onChange={voice.onChange} className={cn(className, "pr-8")} />
-      <span className="absolute inset-y-0 right-0 flex items-center">{voice.mic}</span>
+      <Input {...rest} {...mentions.field<HTMLInputElement>({ ref: voice.ref })} aria-label={label} value={value} disabled={disabled} onChange={voice.onChange} className={cn(className, "pr-8")} />
+      <span className="absolute right-0 top-0 flex h-7 items-center">{voice.mic}</span>
+      {mentions.list !== null && <div className="mt-1 w-max max-w-[22rem]">{mentions.list}</div>}
     </div>
   );
 }

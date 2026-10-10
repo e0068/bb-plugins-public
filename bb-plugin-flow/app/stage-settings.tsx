@@ -33,6 +33,7 @@ import { cn } from "../lib/utils";
 import type { AutomationScript, Flow, flowSettingsRpcContract, SkillFile, SkillOrigin, StageCatalog, StageExecutor, WorkStage } from "../shared/contract";
 import { type AutomationSets, AutomationStepTags, ManualMark, ReadOnlyStepTags, ScriptOptions, type StageChange, TagOpen, WidgetOptions } from "./automation-stage";
 import { useMessages } from "./locale-context";
+import { useMentions } from "./mentions";
 import { FlowGlyph } from "./flow-glyph";
 import { newFlowId } from "./flows-list";
 import { ExecutorMark } from "./provider-logos";
@@ -1185,21 +1186,26 @@ function NumberSetting(props: { label: string; ariaLabel: string; unit?: string;
 function WakeInstruction({ saved, enabled }: { saved: string | undefined; enabled: boolean }) {
   const t = useMessages();
   const [typed, setTyped] = useState<string | null>(null);
+  const value = typed ?? saved ?? "";
+  const mentions = useMentions({ value, onText: setTyped, disabled: !enabled });
   const save = () => {
     if (typed !== null && typed.trim() !== (saved ?? "")) updateFlowSettings((s) => withFailureInstruction(s, typed));
     setTyped(null);
   };
   return (
-    <Textarea
-      aria-label={t.settings.wakeInstruction}
-      disabled={!enabled}
-      value={typed ?? saved ?? ""}
-      placeholder={DEFAULT_FAILURE_INSTRUCTION}
-      maxLength={MAX_WAKE_INSTRUCTION_CHARS}
-      onChange={(e) => setTyped(e.target.value)}
-      onBlur={save}
-      className="min-h-0 resize-none [field-sizing:content] rounded-lg border-0 bg-surface-recessed-solid px-3 py-2 text-[13px] shadow-none focus-visible:ring-1 focus-visible:ring-inset"
-    />
+    <>
+      <Textarea
+        {...mentions.field<HTMLTextAreaElement>({ onBlur: save })}
+        aria-label={t.settings.wakeInstruction}
+        disabled={!enabled}
+        value={value}
+        placeholder={DEFAULT_FAILURE_INSTRUCTION}
+        maxLength={MAX_WAKE_INSTRUCTION_CHARS}
+        onChange={(e) => setTyped(e.target.value)}
+        className="min-h-0 resize-none [field-sizing:content] rounded-lg border-0 bg-surface-recessed-solid px-3 py-2 text-[13px] shadow-none focus-visible:ring-1 focus-visible:ring-inset"
+      />
+      {mentions.list}
+    </>
   );
 }
 
