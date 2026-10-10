@@ -4,7 +4,8 @@
 // той же панели, — а кнопка в композере нового треда
 // выбирает, по какому flow пойдёт тред, а баннер над композером треда показывает
 // прогресс flow; секции настроек плагина задают путь журнала решений и папку flow.
-import { definePluginApp } from "@get-bb/plugin-sdk/app";
+import { definePluginApp, useSettings } from "@get-bb/plugin-sdk/app";
+import { registerRailCollapse, registerSelectedThread } from "@bb-plugins/rail-collapse";
 
 import { CommandDirective } from "./app/command";
 import { FlowPicker } from "./app/flow-picker";
@@ -20,6 +21,7 @@ import { systemLanguages } from "./app/locale-context";
 import { lockAutoZoom } from "./app/viewport";
 import { TaskPanel, TASK_PANEL_ACTION } from "./app/task-card";
 import { DecisionDirective } from "./app/widget";
+import { OWN_PLUGIN_ID } from "./core/plugin-id";
 import { resolveLocale } from "./lib/i18n";
 import { messages } from "./lib/messages";
 
@@ -34,6 +36,10 @@ export default definePluginApp((app) => {
   const t = messages(resolveLocale(undefined, systemLanguages())).settings;
   // Шестерёнка в титул-баре, левее крестика хоста, открывает настройки плагина.
   app.slots.navPanel({ id: "flows", title: "Flow", icon: "Workflow", path: FLOWS_PANEL_PATH, component: FlowsPage, headerContent: FlowsSettingsButton });
+  // Клик по значку Flow в левом рейле сворачивает панель тредов, если владелец включил это в настройках.
+  registerRailCollapse(app, OWN_PLUGIN_ID, useSettings);
+  // Страница Flow открывает flow треда, с которого пришёл владелец, — тоже по настройке.
+  registerSelectedThread(app, OWN_PLUGIN_ID, useSettings);
   app.composer.customize({ id: "flow", scopes: ["new-thread"], actions: [{ id: "flow-picker", component: FlowPicker }] });
   // Контейнер состояния Flow: пока прогон идёт — полоса этапов, без прогона и после завершённого — выбор flow.
   app.composer.customize({ id: "flow-progress", scopes: ["thread"], banners: [{ id: "progress", chrome: "bare", component: ProgressBanner }] });

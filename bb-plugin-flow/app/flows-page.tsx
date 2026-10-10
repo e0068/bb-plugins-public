@@ -11,14 +11,15 @@
 // контейнера и на телефоне встаёт в колонку — держать её широкой раскладке
 // 46rem значило бы листать страницу вбок там, где листать некуда.
 import { useState } from "react";
-import { useBbNavigate, type PluginNavPanelProps } from "@get-bb/plugin-sdk/app";
+import { useBbNavigate, useRpc, useSettings, type PluginNavPanelProps } from "@get-bb/plugin-sdk/app";
+import { useFollowSelectedThread } from "@bb-plugins/rail-collapse";
 
 import { describeFlow, describeNoFlow, flowById, limitFlow, NO_FLOW, removeFlow, renameFlow, setFlowIcon } from "../core/flows";
 import { Button } from "../components/ui/button";
 import { Icon } from "../components/ui/icon";
 import { Input } from "../components/ui/input";
 import { Textarea } from "../components/ui/textarea";
-import type { Flow } from "../shared/contract";
+import type { Flow, threadFlowRpcContract } from "../shared/contract";
 import { cn } from "../lib/utils";
 import { FLOWS_PANEL_PATH } from "../lib/panel-path";
 import { LocaleProvider } from "./locale";
@@ -159,8 +160,22 @@ function BackToList() {
   );
 }
 
+/** С «Show the selected thread» страница открывает flow треда, с которого пришёл владелец или по которому кликнул в панели тредов. */
+function useSelectedThreadFlow(subPath: string) {
+  const rpc = useRpc<typeof threadFlowRpcContract>();
+  const navigate = useBbNavigate();
+  useFollowSelectedThread(useSettings, subPath === "", {
+    resolve: (threadId) =>
+      rpc.call("threadFlow", { threadId }).then(({ flowId }) =>
+        flowId === null ? null : () => navigate.toPluginPanel(FLOWS_PANEL_PATH, { subPath: flowId, replace: true }),
+      ),
+    openThread: (threadId) => navigate.toThread(threadId),
+  });
+}
+
 function Flows({ subPath }: PluginNavPanelProps) {
   useFlowSettingsLive();
+  useSelectedThreadFlow(subPath);
   // Второй уровень узкой панели: адрес с выбранным flow (или историей) открывает правую колонку, пустой — список.
   const second = subPath !== "";
   return (

@@ -8,7 +8,7 @@
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 
 import { AGENT_NO_FLOW, AUTO_FLOW, NO_FLOW, flowById, flowOrNone, withExpandedStages } from "../core/flows";
-import { flowChoiceRpcContract } from "../shared/contract";
+import { flowChoiceRpcContract, threadFlowRpcContract } from "../shared/contract";
 import type { FlowSettingsStore } from "./flow-settings";
 import type { ProgressStore } from "./progress";
 import type { DecisionStore } from "./store";
@@ -75,6 +75,14 @@ export const registerFlowChoice = (
       await deps.threads.assign(threadId, NO_FLOW);
       await dropRun(threadId);
       return { kind: "cancelled" as const };
+    },
+  });
+
+  bb.rpc.register(threadFlowRpcContract, {
+    threadFlow: async ({ threadId }) => {
+      const flowId = deps.threads.flowOf(threadId);
+      // flowOrNone подменяет неизвестный flow flow по умолчанию — у треда его не было, поэтому id сверяется.
+      return { flowId: flowId !== undefined && flowOrNone(deps.flows.current(), flowId)?.id === flowId ? flowId : null };
     },
   });
 
