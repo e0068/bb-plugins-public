@@ -763,6 +763,8 @@ export interface BoardViewProps {
   scope: ListPreferenceScope;
   /** A saved view opened on this board: it keeps a layout of its own. */
   viewId?: string;
+  /** Only the tasks this thread is attached to. */
+  thread?: string;
 }
 
 const NO_NEIGHBORS: BoardDropNeighbors = { beforeTaskId: null, afterTaskId: null };
@@ -775,7 +777,7 @@ const OFF_SCREEN: CardRect = {
   height: 0,
 };
 
-export function BoardView({ scope, viewId }: BoardViewProps) {
+export function BoardView({ scope, viewId, thread }: BoardViewProps) {
   const singleProjectId = scopeProjectId(scope);
   // A cross-project screen shows which project a card belongs to; a
   // project's own board never needs to, as every card is already its project.
@@ -795,9 +797,9 @@ export function BoardView({ scope, viewId }: BoardViewProps) {
   const layoutRef = useRef(layout);
   layoutRef.current = layout;
   const board = useTasksQuery(
-    (queryRpc) => fetchScopeBoard(queryRpc, scope),
+    (queryRpc) => fetchScopeBoard(queryRpc, scope, thread),
     ["tasks:changed", "projects:changed"],
-    [scope],
+    [scope, thread],
   );
   // Sorted: a drag reorders the cards, not the set of them, and must not
   // ask for the chips again.

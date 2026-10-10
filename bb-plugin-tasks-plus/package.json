@@ -1,6 +1,6 @@
 {
   "name": "bb-plugin-tasks-plus",
-  "version": "0.1.79",
+  "version": "0.1.80",
   "scripts": {
     "test": "vitest run"
   },

@@ -1,4 +1,5 @@
-import { definePluginApp } from "@get-bb/plugin-sdk/app";
+import { definePluginApp, useSettings } from "@get-bb/plugin-sdk/app";
+import { registerRailCollapse, registerSelectedThread } from "@bb-plugins/rail-collapse";
 import { ReducedColorsSection } from "@bb-plugins/reduced-colors";
 import { useTasksRpc } from "./shell/data.js";
 import { TasksAppShell } from "./shell/app-shell.js";
@@ -8,6 +9,7 @@ import { ReducedProjectsSetting } from "./shell/reduced-projects-setting.js";
 import { TaskDirectiveCard, TaskEmbedPanel, TaskSidePanelTab } from "./views/embed/index.js";
 import { TASK_PANEL_ACTION, TASK_TAB } from "./client/task-opening.js";
 import { CurrentTaskHeaderAction } from "./views/header/current-task.js";
+import { TASKS_PLUGIN_ID } from "./shared/plugin-id.js";
 
 /** The settings page's Reduced Colors block for the analytics charts — bb's declared settings have no colour field — and whether it repaints the projects. */
 function ReducedColorsSettings() {
@@ -30,6 +32,10 @@ export default definePluginApp((app) => {
     experimental_sidebarAccessory: TasksSidebarAccessory,
     fixedTabs: [{ ...TASK_TAB, title: "Task", icon: "ListTodo", component: TaskSidePanelTab, layout: "padded" }],
   });
+  // A click on the Tasks+ icon in the left rail collapses the threads panel when the owner turned it on.
+  registerRailCollapse(app, TASKS_PLUGIN_ID, useSettings);
+  // Tasks+ opened from a thread shows that thread's task when the owner turned it on.
+  registerSelectedThread(app, TASKS_PLUGIN_ID, useSettings);
   app.slots.threadPanelAction({
     id: TASK_PANEL_ACTION,
     title: "Task",

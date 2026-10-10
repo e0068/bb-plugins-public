@@ -129,6 +129,13 @@ describe("listTasks RPC filter seam", () => {
       "Still working",
     ]);
 
+    const threadPage = (await harness.callRpc("listTasks", {
+      threadId: "thr_archived",
+    })) as { tasks: { title: string }[] };
+    expect(threadPage.tasks.map((task) => task.title)).toEqual([
+      "Idle, archived",
+    ]);
+
     await harness.dispose();
   });
 });

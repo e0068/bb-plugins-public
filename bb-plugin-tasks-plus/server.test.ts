@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { createFakePluginHost } from "@get-bb/plugin-sdk/testing";
+import { RAIL_COLLAPSE_SETTING, SELECTED_THREAD_SETTING } from "@bb-plugins/rail-collapse/setting";
 import plugin, { TASKS_PLUGIN_VERSION } from "./server";
 
 describe("Tasks plugin scaffold", () => {
@@ -32,6 +33,24 @@ describe("Tasks plugin scaffold", () => {
       stderr: "",
     });
 
+    await harness.dispose();
+  });
+
+  it("declares the rail-collapse switch, off by default", async () => {
+    const { bb, harness } = createFakePluginHost({ pluginId: "tasks" });
+
+    await plugin(bb);
+
+    expect(harness.registrations.settingsDescriptors[RAIL_COLLAPSE_SETTING]).toMatchObject({ type: "boolean", default: false });
+    await harness.dispose();
+  });
+
+  it("declares the selected-thread switch, off by default", async () => {
+    const { bb, harness } = createFakePluginHost({ pluginId: "tasks" });
+
+    await plugin(bb);
+
+    expect(harness.registrations.settingsDescriptors[SELECTED_THREAD_SETTING]).toMatchObject({ type: "boolean", default: false });
     await harness.dispose();
   });
 });

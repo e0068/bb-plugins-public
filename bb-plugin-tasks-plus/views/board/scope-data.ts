@@ -66,16 +66,17 @@ function toBoardData(tasks: Task[], labels: Label[]): BoardData {
  * only learns which projects it needs from the tasks themselves, so its
  * labels wait on them.
  */
-export async function fetchScopeBoard(rpc: TasksRpc, scope: ListPreferenceScope): Promise<BoardData> {
+export async function fetchScopeBoard(rpc: TasksRpc, scope: ListPreferenceScope, thread?: string): Promise<BoardData> {
   const projectId = scopeProjectId(scope);
+  const query = thread === undefined ? scopeQuery(scope) : { ...scopeQuery(scope), threadId: thread };
   if (projectId !== null) {
     const [tasks, labels] = await Promise.all([
-      listAllTasks(rpc, scopeQuery(scope)),
+      listAllTasks(rpc, query),
       labelsOf(rpc, [projectId]),
     ]);
     return toBoardData(tasks, labels);
   }
-  const tasks = await listAllTasks(rpc, scopeQuery(scope));
+  const tasks = await listAllTasks(rpc, query);
   const labels = await labelsOf(rpc, crossScopeProjectIds(tasks));
   return toBoardData(tasks, labels);
 }

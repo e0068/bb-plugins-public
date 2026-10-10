@@ -42,6 +42,7 @@ export interface TaskListQuery {
   labelIds?: string[];
   activeOnly?: boolean;
   waitingOnly?: boolean;
+  threadId?: string;
   parentTaskId?: string | null;
   search?: string;
   sort?: TaskSort;

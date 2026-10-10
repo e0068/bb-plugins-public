@@ -552,6 +552,9 @@ export function createFileTasksStore(
         waitingTaskIds: filters.waitingOnly
           ? taskIdsWithThread(pool, isWaitingThread)
           : undefined,
+        threadTaskIds: filters.threadId === undefined
+          ? undefined
+          : taskIdsWithThread(pool, (thread) => thread.threadId === filters.threadId),
       },
     );
   }

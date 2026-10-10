@@ -1054,6 +1054,7 @@ export function registerHandlers(
         labelIds: input.labelIds,
         activeOnly: input.activeOnly,
         waitingOnly: input.waitingOnly,
+        threadId: input.threadId,
         parentTaskId: input.parentTaskId,
         search: input.search,
         sort: input.sort,

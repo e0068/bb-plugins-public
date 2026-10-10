@@ -65,6 +65,8 @@ import { dateFormatOf, hasIconChoice, iconShownOf, isDateColumn, withColumnDispl
 export interface TableViewProps {
   /** The screen this table draws — the same scope its list preference lives under. */
   scope: ListPreferenceScope;
+  /** Only the tasks this thread is attached to; the scope's preference still applies. */
+  thread?: string;
 }
 
 /** Pinned columns together may not outweigh this share of a measured, narrow container. */
@@ -293,7 +295,7 @@ function NewTaskRow({ group, onOpen }: { group: string | null; onOpen: () => voi
   );
 }
 
-export function TableView({ scope }: TableViewProps) {
+export function TableView({ scope, thread }: TableViewProps) {
   const { projectId, listScope } = surfaceOf(scope);
   const fieldScope = listFieldScope(projectId, listScope);
   const fieldConfig = useFieldDisplay(fieldScope);
@@ -320,8 +322,8 @@ export function TableView({ scope }: TableViewProps) {
     return selectedLabelIds(labelOptions, filters.labelNames);
   }, [filters.labelNames, labelOptions, labels.data]);
   const serverFilters = { statuses: filters.statuses, priorities: filters.priorities, labelIds };
-  const tasksQuery = useListTasks(projectId, listScope, serverFilters);
-  const treeQuery = useTreeTasks(projectId, narrowsOnServer(listScope, serverFilters));
+  const tasksQuery = useListTasks(projectId, listScope, serverFilters, thread);
+  const treeQuery = useTreeTasks(projectId, thread !== undefined || narrowsOnServer(listScope, serverFilters));
   const meta = useTaskListMeta(tasksQuery.data);
   const edits = useListTaskEdits(tasksQuery.data, (message) => push("error", message));
 
