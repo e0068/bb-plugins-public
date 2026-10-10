@@ -40,9 +40,9 @@
     "publishedAt": "2026-10-10T11:13:30.428Z"
   },
   "bb-plugin-window-chrome": {
-    "version": "0.1.1",
-    "commit": "d3804ff431b61cc76c834e4bd3dbe64a90b48724",
-    "publishedAt": "2026-10-10T11:58:19.698Z"
+    "version": "0.1.2",
+    "commit": "4a7476f7dcaeea8aec56bd719abe2172bc98668e",
+    "publishedAt": "2026-10-10T14:56:35.403Z"
   },
   "bb-plugin-zz-pull-request": {
     "version": "0.1.29",

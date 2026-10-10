@@ -20,7 +20,9 @@
     "server.ts",
     "app.tsx",
     "architecture.test.ts",
+    "server.test.ts",
     "core",
+    "shared",
     "app"
   ]
 }

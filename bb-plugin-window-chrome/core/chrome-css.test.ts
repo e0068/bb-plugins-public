@@ -25,13 +25,26 @@ describe("таблица стилей Window Chrome", () => {
     expect(unscoped).toEqual([]);
   });
 
-  it("остров отстоит от края окна на 4 px сверху, справа и снизу, а фон за ним чёрный", () => {
+  it("без темы окна остров отстоит от края окна на 4 px сверху, справа и снизу, а фон за ним чёрный", () => {
     const root = bodyOf(css, `[data-testid="app-layout-root"][data-framed]`);
     expect(root).toContain("--wc-top: 4px;");
-    expect(root).toContain("--wc-lip: 4px;");
+    expect(root).toContain("--wc-lip: var(--wc-theme-lip, 4px);");
     expect(root).toContain("padding-top: var(--wc-top);");
     expect(root).toContain("--bb-window-frame-lip: var(--wc-lip);");
-    expect(root).toContain("background: #000000;");
+    expect(root).toContain("background: var(--wc-theme-backdrop, #000000);");
+  });
+
+  it("скругление острова берётся из темы окна, без неё — 0.75rem, как у bb", () => {
+    const sidebar = `[data-framed] [data-testid="nav-rail-sidebar-body"]`;
+    const page = `[data-framed] main[data-sidebar="inset"]`;
+    expect(bodyOf(css, `${sidebar}.rounded-tl-xl`)).toBe("border-top-left-radius: var(--wc-theme-island-radius, 0.75rem);");
+    expect(bodyOf(css, `${page}.rounded-br-xl`)).toBe("border-bottom-right-radius: var(--wc-theme-island-radius, 0.75rem);");
+    expect(bodyOf(css, sidebar)).toContain("round var(--wc-theme-island-radius, 0.75rem) 0 0 var(--wc-theme-island-radius, 0.75rem)");
+  });
+
+  it("со скрытой панелью тредов шапка правой панели во весь экран отступает под три кнопки угла", () => {
+    const header = `[data-framed]:has(> [data-state="collapsed"]) [data-panel-id="thread-detail-secondary-panel"][data-panel-size="100.0"] [data-testid="thread-secondary-panel-top-chrome"]`;
+    expect(bodyOf(css, header)).toBe("padding-left: calc(3 * var(--wc-button) + 3 * var(--wc-gap) + var(--wc-header-pad));");
   });
 
   it("в обычном окне отступ сверху 48 px", () => {
