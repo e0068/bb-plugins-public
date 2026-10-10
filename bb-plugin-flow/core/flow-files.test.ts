@@ -82,6 +82,12 @@ describe("сборка коллекции из файлов", () => {
     expect(assemble(settings)).toEqual({ kind: "ok", settings });
   });
 
+  it("описание «Без flow» живёт в settings.json и возвращается из папки", () => {
+    const settings = collection([code, review, lint], { noFlowDescription: "Вопросы без правок" });
+    expect(read(settings).collection.noFlowDescription).toBe("Вопросы без правок");
+    expect(assemble(settings)).toEqual({ kind: "ok", settings });
+  });
+
   it("свойство: любая коллекция без циклов возвращается из своих файлов", () => {
     const arb = fc
       .uniqueArray(fc.string({ minLength: 1, maxLength: 8 }).filter((s) => s.trim() === s && s !== "" && !/[./\\:*?"<>|\u0000-\u001f]/.test(s)), { minLength: 1, maxLength: 5, selector: (s) => s.toLowerCase() })

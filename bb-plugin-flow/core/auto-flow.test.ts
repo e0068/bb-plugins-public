@@ -24,7 +24,7 @@ describe("выбор «Автоматически»", () => {
   });
 
   it("правило выбора перечисляет id, названия и описания всех flow и называет отказ от flow", () => {
-    const rule = CHOOSE_FLOW_RULE(two.flows, "choose_flow", NO_FLOW);
+    const rule = CHOOSE_FLOW_RULE(two, "choose_flow", NO_FLOW);
     expect(rule).toContain("choose_flow");
     expect(rule).toContain("`quick`");
     expect(rule).toContain("Quick");
@@ -38,8 +38,8 @@ describe("правило выбора с многострочными описа
   it("у каждого flow свой блок: разделы описания не сливаются со следующим flow", () => {
     const bug = { ...newFlow("bug", "Bug"), description: "Когда брать — баг.\n\nЭтапы:\n- reproduce — воспроизвести\n- fix — tdd" };
     const code = { ...newFlow("code", "Code"), description: "Когда брать — фича." };
-    const rule = CHOOSE_FLOW_RULE([bug, code], "choose_flow", NO_FLOW);
-    const blocks = rule.split(/\n\n(?=### )/).slice(1);
+    const rule = CHOOSE_FLOW_RULE({ flows: [bug, code] }, "choose_flow", NO_FLOW);
+    const blocks = rule.split(/\n\n(?=### )/).slice(2);
     expect(blocks).toHaveLength(2);
     expect(blocks[0]).toContain("`bug`");
     expect(blocks[0]).toContain("- fix — tdd");

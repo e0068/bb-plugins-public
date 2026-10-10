@@ -67,14 +67,24 @@ export const renameFlow = (settings: FlowSettings, id: string, name: string): Fl
   return trimmed === "" ? settings : mapFlow(settings, id, (flow) => ({ ...flow, name: trimmed }));
 };
 
+/** Текст описания без краевых пробелов; пустой — описания нет. */
+const trimmedDescription = (text: string): string | undefined => text.trim() || undefined;
+
 /** Описание flow без краевых пробелов; пустое снимает поле — flow без описания правило выбора flow так и помечает. */
 export const withDescription = (flow: Flow, description: string): Flow => {
   const { description: _, ...rest } = flow;
-  const trimmed = description.trim();
-  return trimmed === "" ? rest : { ...rest, description: trimmed };
+  const trimmed = trimmedDescription(description);
+  return trimmed === undefined ? rest : { ...rest, description: trimmed };
 };
 
 export const describeFlow = (settings: FlowSettings, id: string, description: string): FlowSettings => mapFlow(settings, id, (flow) => withDescription(flow, description));
+
+/** Описание «Без flow» без краевых пробелов; пустое снимает поле — агент видит «Без flow» без описания. */
+export const describeNoFlow = (settings: FlowSettings, description: string): FlowSettings => {
+  const { noFlowDescription: _, ...rest } = settings;
+  const trimmed = trimmedDescription(description);
+  return trimmed === undefined ? rest : { ...rest, noFlowDescription: trimmed };
+};
 
 type FlowLimits = { limitSkills?: boolean; limitAgents?: boolean };
 
@@ -134,7 +144,7 @@ export const NO_FLOW = "none";
 /** Выбор «Автоматически»: flow треду выбирает агент по описаниям flow, а пока не выбрал — у треда flow нет. */
 export const AUTO_FLOW = "auto";
 
-/** Тред, который агент оставил без flow: идёт без flow, но, в отличие от выбора владельца, агент может назначить flow позже — когда владелец попросит. */
+/** Тред, который агент оставил без flow: идёт без flow, но, в отличие от выбора владельца, агент назначит flow сам, когда разговор дойдёт до работы. */
 export const AGENT_NO_FLOW = "none-by-agent";
 
 /**
