@@ -171,12 +171,20 @@ describe("Threads Overview under the card", () => {
       finger("touchend", 200, 300);
     });
     const box = sectionBox();
-    expect([box.style.top, box.style.left, box.style.width, box.style.height]).toEqual([
-      "56px",
-      "8px",
-      "374px",
-      "600px",
-    ]);
+    expect([box.style.marginTop, box.style.marginLeft, box.style.width]).toEqual(["56px", "8px", "374px"]);
+  });
+
+  it("ends where the composer drawn under it begins, however tall that composer stands", async () => {
+    await renderOverlay();
+    drawHome(screen(), { top: 56, left: 8, width: 374, height: 600 });
+    await act(async () => {
+      finger("touchstart", 200, 300);
+      finger("touchend", 200, 300);
+    });
+    // The layer is a column: the section fills it down to the composer at its foot, with no height of its own.
+    expect([layer().style.display, layer().style.flexDirection]).toEqual(["flex", "column"]);
+    expect([sectionBox().style.flexGrow, sectionBox().style.height]).toEqual(["1", ""]);
+    expect(layer().lastElementChild!.querySelector("[data-testid=bb-new-thread-composer]")).not.toBeNull();
   });
 
   it("lays nothing over Home: the layer holds the section and the composer, and nothing dims them", async () => {

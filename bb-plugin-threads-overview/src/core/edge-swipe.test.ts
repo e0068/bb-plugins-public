@@ -4,11 +4,17 @@
 import { describe, expect, it } from "vitest";
 import {
   BB_SIDEBAR_SWIPE_FLOOR,
+  PANEL_FLICK_SHARE,
+  PANEL_FLICK_SPEED,
+  PANEL_OPEN_SHARE,
   SIDEBAR_SWIPE_EDGE_SHARE,
   bbTakesSidebarSwipe,
+  claimsPanelSwipe,
   claimsSidebarSwipe,
   edgeStrip,
   intoBbSidebarSwipe,
+  opensPanel,
+  panelProgress,
   rowAt,
 } from "./edge-swipe";
 import type { Point } from "./home-swipe";
@@ -91,5 +97,52 @@ describe("rowAt", () => {
     expect(rowAt(rows, 99)).toBeNull();
     expect(rowAt(rows, 188)).toBeNull();
     expect(rowAt([], 120)).toBeNull();
+  });
+});
+
+describe("claimsPanelSwipe", () => {
+  const from: Point = { x: 390, y: 300 };
+  const to = (dx: number, dy: number): Point => ({ x: from.x + dx, y: from.y + dy });
+
+  it("keeps a move more to the left than upright from the page, from the first pixel", () => {
+    expect(claimsPanelSwipe(from, to(-1, 0))).toBe(true);
+    expect(claimsPanelSwipe(from, to(-30, 29))).toBe(true);
+  });
+
+  it("leaves a move to the right, an upright one and no move at all to the page", () => {
+    expect(claimsPanelSwipe(from, to(10, 0))).toBe(false);
+    expect(claimsPanelSwipe(from, to(-10, -10))).toBe(false);
+    expect(claimsPanelSwipe(from, from)).toBe(false);
+  });
+});
+
+describe("panelProgress", () => {
+  const from: Point = { x: 390, y: 300 };
+
+  it("grows with the pull to the left, as a share of the width", () => {
+    expect(panelProgress(from, { x: 290, y: 300 }, 400)).toBe(0.25);
+  });
+
+  it("stays between 0 and 1", () => {
+    expect(panelProgress(from, { x: 395, y: 300 }, 400)).toBe(0);
+    expect(panelProgress(from, { x: -100, y: 300 }, 400)).toBe(1);
+    expect(panelProgress(from, { x: 0, y: 300 }, 0)).toBe(0);
+  });
+});
+
+describe("opensPanel", () => {
+  it("opens past a third of the screen, however slow", () => {
+    expect(opensPanel(PANEL_OPEN_SHARE, 0)).toBe(true);
+    expect(opensPanel(PANEL_OPEN_SHARE - 0.01, 0)).toBe(false);
+  });
+
+  it("opens a quick flick to the left from a short pull", () => {
+    expect(opensPanel(PANEL_FLICK_SHARE, -PANEL_FLICK_SPEED)).toBe(true);
+    expect(opensPanel(PANEL_FLICK_SHARE, -PANEL_FLICK_SPEED + 1)).toBe(false);
+    expect(opensPanel(PANEL_FLICK_SHARE - 0.01, -1000)).toBe(false);
+  });
+
+  it("does not open a short pull flying back to the right", () => {
+    expect(opensPanel(0.2, 1000)).toBe(false);
   });
 });

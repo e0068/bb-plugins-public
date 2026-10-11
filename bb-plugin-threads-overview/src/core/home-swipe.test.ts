@@ -2,12 +2,15 @@ import { describe, expect, it } from "vitest";
 import {
   HOME_SWIPE_DEAD_ZONE,
   HOME_SWIPE_EDGE,
+  HOME_SWIPE_HEADING_STEP,
   HOME_SWIPE_SCROLL_SLACK,
   HOME_SWIPE_REACH,
   claimsMove,
   composerBox,
+  followHeading,
   hasRoomBelow,
   reachesHome,
+  startHeading,
   startsHomeSwipe,
   swipeCard,
 } from "./home-swipe";
@@ -160,5 +163,35 @@ describe("composerBox", () => {
 
   it("sets a composer overflowing the bottom edge at zero, not below", () => {
     expect(composerBox({ left: 0, width: 390, bottom: 812 }, VIEWPORT).bottom).toBe(0);
+  });
+});
+
+describe("followHeading", () => {
+  const along = (ys: readonly number[]) => ys.reduce(followHeading, startHeading(700));
+
+  it("starts heading up, the only way the gesture starts", () => {
+    expect(startHeading(700).up).toBe(true);
+  });
+
+  it("keeps heading up while the finger climbs", () => {
+    expect(along([690, 650, 500, 400]).up).toBe(true);
+  });
+
+  it("turns down once the finger comes back by a step, though still past the reach", () => {
+    expect(along([600, 500, 400, 400 + HOME_SWIPE_HEADING_STEP]).up).toBe(false);
+  });
+
+  it("does not turn on a tremble smaller than a step", () => {
+    expect(along([600, 500, 400, 400 + HOME_SWIPE_HEADING_STEP - 1]).up).toBe(true);
+  });
+
+  it("turns a step below the very top, however small the moves that led there", () => {
+    const top = along([695, 690, 686, 684, 680]);
+    expect(followHeading(top, 680 + HOME_SWIPE_HEADING_STEP - 1).up).toBe(true);
+    expect(followHeading(top, 680 + HOME_SWIPE_HEADING_STEP).up).toBe(false);
+  });
+
+  it("turns up again once a finger that came down climbs a step", () => {
+    expect(along([500, 400, 450, 450 - HOME_SWIPE_HEADING_STEP]).up).toBe(true);
   });
 });

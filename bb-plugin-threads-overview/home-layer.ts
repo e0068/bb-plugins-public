@@ -33,7 +33,8 @@ const HANDOVER_FADE_MS = 150;
  * hidden parent. Nothing in it can be touched, focused or read aloud: it is a
  * picture of where the gesture leads, not a screen. It lies in the plugin's
  * style scope, so the section drawn in it is styled as on Home. Not yet on the
- * page — see `mountHomeLayer`.
+ * page — see `mountHomeLayer`. It is a column, the composer at its foot, so
+ * whatever stands above the composer ends where the composer begins.
  */
 export function createHomeLayer(): HTMLElement {
   const layer = document.createElement("div");
@@ -44,6 +45,8 @@ export function createHomeLayer(): HTMLElement {
   Object.assign(layer.style, {
     position: "fixed",
     inset: "0",
+    display: "flex",
+    flexDirection: "column",
     overflow: "hidden",
     pointerEvents: "none",
     backgroundColor: "var(--background)",

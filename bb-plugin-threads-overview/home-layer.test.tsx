@@ -144,7 +144,7 @@ describe("bb's composer held under the screen", () => {
     drawThread(root);
     carry(120);
     const box = layerComposer()!.parentElement!;
-    expect([box.style.left, box.style.width, box.style.bottom]).toEqual(["12px", "366px", "24px"]);
+    expect([box.style.marginLeft, box.style.width, box.style.marginBottom]).toEqual(["12px", "366px", "24px"]);
   });
 });
 

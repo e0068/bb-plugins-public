@@ -180,6 +180,60 @@ describe("swipe up from the bottom edge of a thread", () => {
     editor.remove();
   });
 
+  it("goes home from the composer of a conversation not yet scrolled to its end", async () => {
+    const slot = await renderOverlay();
+    const conversation = scroller(1200);
+    const shell = document.createElement("div");
+    shell.setAttribute("data-app-composer", "");
+    const editor = document.createElement("div");
+    editor.setAttribute("contenteditable", "true");
+    shell.append(editor);
+    conversation.append(shell);
+    drag(780, 660, { on: editor });
+    expect(slot.navigateCalls).toContainEqual({ method: "toCompose", options: undefined });
+    conversation.remove();
+  });
+
+  it("leaves a flick to a draft long enough to scroll, even on the composer", async () => {
+    const slot = await renderOverlay();
+    const shell = document.createElement("div");
+    shell.setAttribute("data-app-composer", "");
+    const draft = scroller(300);
+    shell.append(draft);
+    document.body.append(shell);
+    drag(780, 660, { on: draft });
+    expect(slot.navigateCalls).toEqual([]);
+    shell.remove();
+  });
+
+  it("stays in the thread when the finger, past the reach, comes back down before letting go", async () => {
+    const slot = await renderOverlay();
+    finger("touchstart", 200, 780, document.body);
+    finger("touchmove", 200, 600, document.body);
+    finger("touchmove", 200, 650, document.body);
+    finger("touchend", 200, 650, document.body);
+    expect(slot.navigateCalls).toEqual([]);
+  });
+
+  it("goes home when the finger, having come back down, climbs again before letting go", async () => {
+    const slot = await renderOverlay();
+    finger("touchstart", 200, 780, document.body);
+    finger("touchmove", 200, 600, document.body);
+    finger("touchmove", 200, 650, document.body);
+    finger("touchmove", 200, 620, document.body);
+    finger("touchend", 200, 620, document.body);
+    expect(slot.navigateCalls).toContainEqual({ method: "toCompose", options: undefined });
+  });
+
+  it("goes home though the finger trembles back a little at the top", async () => {
+    const slot = await renderOverlay();
+    finger("touchstart", 200, 780, document.body);
+    finger("touchmove", 200, 600, document.body);
+    finger("touchmove", 200, 603, document.body);
+    finger("touchend", 200, 603, document.body);
+    expect(slot.navigateCalls).toContainEqual({ method: "toCompose", options: undefined });
+  });
+
   it("stops listening once it is gone", async () => {
     const slot = await renderOverlay();
     slot.unmount();
