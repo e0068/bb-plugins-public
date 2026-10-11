@@ -1,6 +1,7 @@
 // Оболочка планирования: время создания треда и сессия провайдера — из SDK bb,
 // строки логов сессии — из ~/.claude/projects, как их читает Token Usage.
 // Любой сбой брифа не касается: планирования нет или есть только минуты.
+import { readNativeTranscript } from "@bb-plugins/provider-usage/shell/runtime";
 import { readdir, readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -132,5 +133,5 @@ export const readClaudeTranscript =
       const rest = await Promise.all(agents.sort().map((f) => readFile(f, "utf8").catch(() => "")));
       return [text, ...rest].flatMap((t) => t.split("\n"));
     }
-    return undefined;
+    return readNativeTranscript(sessionId);
   };

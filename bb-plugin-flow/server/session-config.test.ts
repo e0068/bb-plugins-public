@@ -69,3 +69,12 @@ describe("настройка сессии агента", () => {
     expect(resolved.tools).toHaveLength(2);
   });
 });
+
+it.each(["codex", "kimi", "acp-kimi"])("%s receives the delivered Flow skill paths", async (providerId) => {
+  const { bb, harness } = createFakePluginHost({ pluginId: "flow", agentSkillIds: shipped });
+  const calls: Array<[string, string | null]> = [];
+  registerSessionConfig(bb, { tools: [], prestart: () => undefined, warn: () => undefined, deliver: (id, root) => { calls.push([id, root]); return "spec: /tree/.agents/skills/spec/SKILL.md"; } });
+  const config = await harness.resolveAgentConfiguration(makePluginAgentConfigurationContext({ thread: { id: "t" }, environment: worktree, provider: { id: providerId } }));
+  expect(config.instructions).toContain("spec: /tree/.agents/skills/spec/SKILL.md");
+  expect(calls).toEqual([["t", "/tree"]]);
+});

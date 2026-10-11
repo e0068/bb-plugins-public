@@ -42,6 +42,7 @@ import { READ_FLOWS_TOOL_NAME, registerFlowTools, SAVE_FLOW_TOOL_NAME } from "./
 import { createLegacyHeal } from "./server/legacy-heal";
 import { registerFlowSettingsApi, STAGE_SETTINGS_CHANNEL } from "./server/settings-api";
 import { createFlowSync, defaultSyncDir, FLOW_SYNC_CHANNEL, registerFlowSyncApi, SYNC_POLL_MS } from "./server/flow-sync";
+import { createSkillDelivery } from "./server/skill-delivery";
 import { hostCatalogSources, hostSkillFileSources, readAccountSkills, readClaudePlugins, readExecutorFile, readSkillFile, readStageCatalog, readWorkflowScripts, writeScriptFile } from "./server/stage-catalog";
 import { createSkillScope } from "./server/skill-scope";
 import { createFreshSession, type MessageBlocks } from "./server/fresh-session";
@@ -153,17 +154,34 @@ export default async function plugin(bb: BbPluginApi): Promise<void> {
     workflowScripts: () => readWorkflowScripts(catalogSources),
     warn: (message) => bb.log.warn(message),
   });
-  bb.events.on("thread.active", ({ thread }) => void scope.sync(thread.id));
+  const delivery = createSkillDelivery({
+    stages: (threadId) => stagesOf(threadId).stages,
+    source: async (name) => (await readSkillFile(hostSkillFileSources(bb), name))?.path ?? null,
+    warn: (message) => bb.log.warn(message),
+  });
+  const syncSkills = async (threadId: string) => {
+    const [, hasSkills] = await Promise.all([scope.sync(threadId), delivery.sync(threadId)]);
+    if (!hasSkills) return;
+    try {
+      const row = await bb.sdk.threads.get({ threadId });
+      if (row.providerId !== "claude-code") delivery.deliver(threadId, await worktreeOf(threadId));
+    } catch (error) {
+      bb.log.warn(`skill delivery: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  };
+  bb.events.on("thread.active", ({ thread }) => void syncSkills(thread.id).catch((error) => bb.log.warn(String(error))));
+  bb.events.on("thread.deleted", ({ thread }) => void delivery.forget(thread.id));
   // Первая сессия треда стартует уже с ограничением: решение сверки ложится в дерево прямо перед стартом Claude Code.
   registerSessionConfig(bb, {
     tools: [ASK_TOOL_NAME, FLOW_STAGE_TOOL, READ_FLOWS_TOOL_NAME, SAVE_FLOW_TOOL_NAME, COMMAND_TOOL_NAME, CHOOSE_FLOW_TOOL],
     prestart: (threadId, root) => void scope.prestart(threadId, root),
+    deliver: delivery.deliver,
     warn: (message) => bb.log.warn(message),
   });
   const progress = createProgress(bb.storage.kv, {
     onChange: (threadId) => {
       advance(threadId);
-      void scope.sync(threadId);
+      void syncSkills(threadId).catch((error) => bb.log.warn(String(error)));
       void freezeFinished(threadId).catch(() => undefined);
     },
     handedTo: async (briefId) => (await store.getAnswer(briefId))?.handoffThreadId });
@@ -369,7 +387,7 @@ export default async function plugin(bb: BbPluginApi): Promise<void> {
     // Тред с «Автоматически» получил flow: лишнее прячется сразу, до начала работы.
     started: async (threadId) => {
       await progress.annotate(threadId, (p) => p);
-      await scope.sync(threadId);
+      await syncSkills(threadId);
     },
     fresh: (threadId) => fresh.request(threadId),
     refused: (threadId) => scope.sync(threadId),
@@ -429,7 +447,7 @@ export default async function plugin(bb: BbPluginApi): Promise<void> {
       await threads.assign(threadId, NO_FLOW);
       await choice.release(threadId);
     },
-    turnStart: (threadId) => Promise.race([scope.sync(threadId), new Promise<void>((resolve) => setTimeout(resolve, TURN_START_SYNC_MS).unref())]),
+    turnStart: (threadId) => Promise.race([syncSkills(threadId), new Promise<void>((resolve) => setTimeout(resolve, TURN_START_SYNC_MS).unref())]),
   });
   // Ушедшая своя отправка забывается — тем же текстом, что хук видит в `input.text`: текстовые блоки через перевод строки.
   bb.events.on("message.dispatched", ({ entry }) =>

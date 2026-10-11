@@ -130,13 +130,15 @@
     {
       "id": "token-usage-header",
       "displayName": "Token Usage Analytics",
-      "description": "Tracks Claude Code token usage and cost — a live counter in the thread header plus session and project analytics.",
+      "description": "Tracks Claude Code, Codex and Kimi token usage at API rates — a live thread counter plus session and project analytics.",
       "icon": "ChartColumn",
       "tags": [
         "tokens",
         "usage",
         "claude-code",
-        "interface"
+        "interface",
+        "codex",
+        "kimi"
       ],
       "author": {
         "name": "e0068",

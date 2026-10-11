@@ -27,8 +27,8 @@ describe("стоимость планирования по логу сессии
     expect(transcriptCost([first, last])).toBe(15);
   });
 
-  it("без разделения записи в кэш она считается пятиминутной; неизвестная модель — по цене sonnet, как в Token Usage", () => {
-    const line = assistant("m2", "r2", "some-model", { input_tokens: 0, cache_creation_input_tokens: 1_000_000, output_tokens: 0 });
+  it("без разделения записи в кэш она считается пятиминутной по тарифу модели", () => {
+    const line = assistant("m2", "r2", "claude-sonnet-5", { input_tokens: 0, cache_creation_input_tokens: 1_000_000, output_tokens: 0 });
     expect(transcriptCost([line])).toBe(3.75);
   });
 

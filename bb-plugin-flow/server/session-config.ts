@@ -19,9 +19,10 @@ export const registerSessionConfig = (
     /** Кладёт отложенное решение в дерево треда; `null` — дерева нет, решение забывается. */
     prestart: (threadId: string, root: string | null) => void;
     warn: (message: string) => void;
+    deliver?: (threadId: string, root: string | null) => string | undefined;
   },
 ): void => {
-  bb.agents.configure(({ thread, environment, origin }) => {
+  bb.agents.configure(({ thread, environment, origin, provider }) => {
     if (isSideChat({ originPluginId: origin.pluginId })) return { tools: [], skills: [] };
     const root = environment.workspaceProvisionType === "managed-worktree" ? environment.path : null;
     try {
@@ -29,6 +30,7 @@ export const registerSessionConfig = (
     } catch (error) {
       deps.warn(`skill scope: thread ${thread.id} not written before the session (${error instanceof Error ? error.message : String(error)})`);
     }
-    return { tools: [...deps.tools], skills: [...FLOW_SKILLS] };
+    const instructions = provider.id === "claude-code" ? undefined : deps.deliver?.(thread.id, root);
+    return { tools: [...deps.tools], skills: [...FLOW_SKILLS], ...(instructions === undefined ? {} : { instructions }) };
   });
 };
