@@ -33,22 +33,30 @@ export interface RepoTaskFile extends ParsedTaskFile, TaskPlacement {
 export async function readTaskFiles(
   absRoot: string,
   cache: ParseCache = createParseCache(),
+  /** Only these slugs are parsed; the folders are still walked, so a task
+   *  found wherever its status and placement put it now. */
+  wanted?: ReadonlySet<string>,
 ): Promise<RepoTaskFile[]> {
-  const files = (await readLevel(absRoot, NO_PLACEMENT, cache)).flat();
+  const files = (await readLevel(absRoot, NO_PLACEMENT, cache, wanted)).flat();
   cache.keepOnly(absRoot, new Set(files.map((file) => file.filePath)));
   return files;
 }
 
-async function readLevel(dir: string, placement: TaskPlacement, cache: ParseCache): Promise<RepoTaskFile[][]> {
+async function readLevel(
+  dir: string,
+  placement: TaskPlacement,
+  cache: ParseCache,
+  wanted: ReadonlySet<string> | undefined,
+): Promise<RepoTaskFile[][]> {
   const entries = await safeReaddir(dir);
   const perEntry = await Promise.all(
     entries.map(async (entry): Promise<RepoTaskFile[][]> => {
       const status = statusFromFolder(entry);
-      if (status !== null) return [await readStatusDir(join(dir, entry), status, placement, cache)];
+      if (status !== null) return [await readStatusDir(join(dir, entry), status, placement, cache, wanted)];
       if (entry.startsWith(".") || placement.epic !== null) return [];
       const child: TaskPlacement =
         placement.assignee === null ? { assignee: entry, epic: null } : { ...placement, epic: entry };
-      return readLevel(join(dir, entry), child, cache);
+      return readLevel(join(dir, entry), child, cache, wanted);
     }),
   );
   return perEntry.flat();
@@ -59,8 +67,11 @@ async function readStatusDir(
   status: TaskStatus,
   placement: TaskPlacement,
   cache: ParseCache,
+  wanted: ReadonlySet<string> | undefined,
 ): Promise<RepoTaskFile[]> {
-  const names = (await safeReaddir(statusDir)).filter((name) => name.endsWith(".md"));
+  const names = (await safeReaddir(statusDir)).filter(
+    (name) => name.endsWith(".md") && (wanted === undefined || wanted.has(name.slice(0, -".md".length))),
+  );
   const results = await Promise.all(
     names.map((name) => {
       const slug = name.slice(0, -".md".length);
