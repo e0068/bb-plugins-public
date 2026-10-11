@@ -24,3 +24,19 @@ describe("черновик flow поверх сохранённого", () => {
     expect(problemsOf(draft([{ id: "task", kind: "skill", skill: "spec" }]), stored)).toEqual(['stage 1: the skill "spec" is not in the catalog']);
   });
 });
+
+describe("поля flow поверх сохранённого", () => {
+  const owned: Flow = { ...stored, description: "Когда брать", icon: "Bug01", limitSkills: true, limitAgents: true };
+  const resolved = (d: FlowDraft) => {
+    const result = resolveFlowDraft(d, catalog, () => "abc", owned);
+    return result.ok ? result.flow : null;
+  };
+
+  it("иконка, ограничения и описание, выбранные владельцем, переживают правку этапов агентом", () => {
+    expect(resolved(draft([{ id: "practice", kind: "skill", skill: "practice" }]))).toMatchObject({ description: "Когда брать", icon: "Bug01", limitSkills: true, limitAgents: true });
+  });
+
+  it("описание из черновика заменяет сохранённое", () => {
+    expect(resolved(flowDraftSchema.parse({ id: "default", name: "Default", description: "Новое", stages: [{ id: "practice", kind: "skill", skill: "practice" }] }))?.description).toBe("Новое");
+  });
+});

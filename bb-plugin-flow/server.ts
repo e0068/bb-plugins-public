@@ -5,7 +5,7 @@ import { homedir } from "node:os";
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import { railCollapseSetting, selectedThreadSetting } from "@bb-plugins/rail-collapse/setting";
 
-import { createSteps } from "@bb-plugins/automation-steps/index";
+import { createSteps, type RunFigures } from "@bb-plugins/automation-steps/index";
 import { failureInstructionOf, retryPolicyOf, wakesAgentAfterLastRetry } from "./core/automation-run";
 import { OWN_PLUGIN_ID } from "./core/plugin-id";
 import { ANSWERED_CHANNEL, registerApi } from "./server/api";
@@ -22,6 +22,7 @@ import { centerBridge, registerNoticeActions } from "./server/center";
 import { automationEntry, turnEndEntry } from "./core/center-notice";
 import { waitsForAnswer } from "./core/awaiting";
 import { COMMAND_TOOL_NAME, registerCommands } from "./server/command";
+import { registerSpendBackfill } from "./server/spend-backfill";
 import { createJournalDirStore } from "./server/dir-settings";
 import { registerJournalSettingsApi } from "./server/journal-settings-api";
 import { createJournalIndex } from "./server/journal-index";
@@ -35,6 +36,7 @@ import { registerOwnerTurn } from "./server/owner-turn";
 import { startThread } from "./server/thread-start";
 import { registerFlowChoice } from "./server/flow-choice";
 import { createOwnSends } from "./server/own-sends";
+import { placeFigureStepsOnce } from "./server/figure-steps-once";
 import { createFlowSettings } from "./server/flow-settings";
 import { READ_FLOWS_TOOL_NAME, registerFlowTools, SAVE_FLOW_TOOL_NAME } from "./server/flow-tools";
 import { createLegacyHeal } from "./server/legacy-heal";
@@ -85,6 +87,9 @@ export default async function plugin(bb: BbPluginApi): Promise<void> {
   settings.onChange((next) => { storedContext = next; });
   const store = createStore(bb.storage.kv);
   const flows = await createFlowSettings(bb.storage.kv);
+  // Шаги плана и факта встают во flow при первом запуске из main; сбой — попытка на следующем запуске.
+  const ownSource = async () => (await bb.sdk.plugins.list()).plugins.find((p) => p.id === OWN_PLUGIN_ID)?.source;
+  void placeFigureStepsOnce(bb.storage.kv, flows, ownSource).catch(() => undefined);
   // Уборка за прежней версией: без неё старый корневой навык перекрывает навык flow плагина. Сбой не мешает запуску — файл уберёт следующий.
   await removeStaleRootSkill(homedir()).catch(() => undefined);
   const threads = await createThreadFlows(bb.storage.kv);
@@ -113,6 +118,8 @@ export default async function plugin(bb: BbPluginApi): Promise<void> {
   let advance: (threadId: string) => void = () => undefined;
   // Итог завершённого прогона замораживается на той же правке, что его завершила, — история не ждёт, пока тред откроют.
   let freezeFinished: (threadId: string) => Promise<void> = async () => undefined;
+  // План и факт прогона для шагов «План → задача» и «Факт → задача» знает прогресс, а он поднимается позже исполнителя.
+  let runFigures: (threadId: string) => Promise<RunFigures | null> = async () => null;
   // Ход агента идёт, пока тред в статусе active: значок этапа навыка без хода не мерцает.
   const thread = async (threadId: string) => {
     const row = await bb.sdk.threads.get({ threadId });
@@ -198,7 +205,7 @@ export default async function plugin(bb: BbPluginApi): Promise<void> {
     store,
     stages: stagesOf,
     // Своей настройки токена у Flow нет: шаги берут токен у `gh auth token` на машине bb.
-    steps: createSteps({ sdk: bb.sdk, kv: bb.storage.kv, settings: { get: async () => ({ githubToken: undefined }) }, plugins: bb.sdk.plugins, ownPluginId: OWN_PLUGIN_ID, tell: send }),
+    steps: createSteps({ sdk: bb.sdk, kv: bb.storage.kv, settings: { get: async () => ({ githubToken: undefined }) }, plugins: bb.sdk.plugins, ownPluginId: OWN_PLUGIN_ID, tell: send, runFigures: (threadId) => runFigures(threadId) }),
     external: externalStep(automations.run),
     script: scriptStep(bb.sdk),
     thread,
@@ -309,7 +316,7 @@ export default async function plugin(bb: BbPluginApi): Promise<void> {
     void progress.forget(thread.id).catch(() => undefined);
   });
   const runSessions = acrossThreads(bb.sdk, async (threadId) => withDescendants(bb.sdk, await progress.members(threadId)));
-  ({ freezeFinished } = registerProgress(bb, progress, {
+  const registered = registerProgress(bb, progress, {
     now,
     stages: stagesOf,
     flowName: flowNameOf,
@@ -340,7 +347,9 @@ export default async function plugin(bb: BbPluginApi): Promise<void> {
       const dir = entries.some(({ path }) => path === undefined) ? await journalDirOf(threadId) : DEFAULT_JOURNAL_DIR;
       return runJournal(entries, window, dir);
     },
-  }));
+  });
+  ({ freezeFinished, runFigures } = registered);
+  registerSpendBackfill(bb, registered.pastRuns);
   registerCommands(bb, { newId, now, readBrief: (id) => store.getBrief(id) });
   // Каждое чтение каталога, пока разовая чистка не прошла, сверяет с ним этапы прежнего flow по умолчанию; первое — сразу при запуске.
   // Поэтому read_flows, save_flow и страница читают каталог раньше коллекции: так они видят её уже вылеченной.

@@ -107,5 +107,8 @@ export const resolveFlowDraft = (draft: FlowDraft, catalog: StageCatalog, newId:
     ...resolved.flatMap((r) => r.problems),
     ...(linkedSubStages(resolved.map((r) => r.stage)) ? [] : [SUB_STAGE_ISSUE]),
   ];
-  return problems.length > 0 ? { ok: false, problems } : { ok: true, flow: withDescription({ id: draft.id ?? `flow-${newId()}`, name: draft.name, stages: resolved.map((r) => r.stage) }, draft.description ?? "") };
+  if (problems.length > 0) return { ok: false, problems };
+  // Поля flow, которых нет в черновике, — иконку, ограничения и всё, что появится, — агент не знает: они берутся у сохранённого flow.
+  const { id: _id, name: _name, stages: _stages, description, ...kept } = stored ?? ({} as Partial<Flow>);
+  return { ok: true, flow: withDescription({ id: draft.id ?? `flow-${newId()}`, name: draft.name, stages: resolved.map((r) => r.stage), ...kept }, draft.description ?? description ?? "") };
 };

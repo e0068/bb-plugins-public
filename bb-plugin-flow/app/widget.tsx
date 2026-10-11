@@ -39,7 +39,8 @@ import { useLatestCopy } from "./brief-copies";
 import { AnsweredBriefCard, BriefCard, ClarifyCard, useDispatchPicker } from "./brief-card";
 import { clearStoredDraft } from "./draft-storage";
 import { Frame, NoteField, RecommendedStar, Titles, answeredAt, useStoredDraft, useSubmit, type FormProps } from "./parts";
-import { briefHeightKey, useHeldHeight } from "./held-height";
+import { briefHeightKey, readHeight, summaryHeightKey, useHeldHeight } from "./held-height";
+import { useNearView } from "./near-view";
 import { RunSummaryBlock } from "./run-summary";
 import { LocaleProvider } from "./locale";
 import { ProviderLogosProvider } from "./provider-logos-source";
@@ -125,12 +126,29 @@ function BriefCopy({ id, source, messageId, threadId }: { id: string; source: st
     <>
       <span ref={anchor} hidden />
       {latest && (
-        <>
+        <WhenNear id={id}>
           <BriefLoader id={id} source={source} messageId={messageId} threadId={threadId} />
           {/* Итог завершённого прогона растёт из карточки, которую назвал сервер: своего слота в ленте у плагина нет. */}
           <RunSummaryBlock briefId={id} />
-        </>
+        </WhenNear>
       )}
+    </>
+  );
+}
+
+/**
+ * Бриф с итогом встаёт, когда прокрутка подошла к нему (см. `near-view.ts`); до того на его месте пустое поле
+ * в высоту прошлого показа: поле карточки и, если итог был, поле итога — каждое с полями `my-3`, как карточка и
+ * итог, чтобы лента не прыгала и на зазор между ними.
+ */
+function WhenNear({ id, children }: { id: string; children: ReactNode }) {
+  const { ref, near } = useNearView();
+  const [held] = useState(() => ({ brief: readHeight(briefHeightKey(id)), summary: readHeight(summaryHeightKey(id)) }));
+  if (near) return <>{children}</>;
+  return (
+    <>
+      <div ref={ref} aria-hidden="true" className="my-3" style={held.brief === null ? undefined : { minHeight: held.brief }} />
+      {held.summary !== null && <div aria-hidden="true" className="my-3" style={{ minHeight: held.summary }} />}
     </>
   );
 }

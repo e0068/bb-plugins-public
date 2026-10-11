@@ -15,7 +15,8 @@ import { isRunFinished, runSummary } from "../core/run-summary";
 import { isTaskFile, taskTitle } from "../core/run-tasks";
 import { stageTimeline } from "../core/stage-timeline";
 import { stampFlow, type TaskFlow } from "../core/task-flow";
-import { flowProgressSchema, flowStageParamsSchema, frozenRunSchema, progressRpcContract, type ContextFillView, type DecisionAnswer, type DecisionBrief, type FlowProgress, type FrozenRun, type Planned, type RunHistoryEntry, type StageSettings, type WorkStage } from "../shared/contract";
+import { flowProgressSchema, flowStageParamsSchema, frozenRunSchema, progressRpcContract, type ContextFillView, type DecisionAnswer, type DecisionBrief, type FlowProgress, type FrozenRun, type Planned, type RunHistoryEntry, type RunSummaryView, type StageSettings, type WorkStage } from "../shared/contract";
+import { runKey, type PastRun, type RunFigures, type RunSpend } from "@bb-plugins/automation-steps/index";
 import type { AgentRelay, RelayHold } from "./agent-relay";
 
 export const FLOW_STAGE_TOOL = "flow_stage";
@@ -41,7 +42,7 @@ type Rerun = ReadonlyArray<{ id: string; run: boolean; executor?: string }>;
 export type ProgressStore = {
   get(threadId: string): Promise<FlowProgress | null>;
   /** Запись прогона треда вместе с его носителем — одним чтением записи; у треда без прогона — `null`. */
-  run(threadId: string): Promise<{ progress: FlowProgress; carrier: string } | null>;
+  run(threadId: string): Promise<{ progress: FlowProgress; carrier: string; runId: string } | null>;
   update(threadId: string, change: (progress: FlowProgress) => FlowProgress): Promise<void>;
   /** Правка, которая не двигает работу: та же очередь на прогон, но исполнитель автоматизаций о ней не узнаёт. */
   annotate(threadId: string, change: (progress: FlowProgress) => FlowProgress): Promise<void>;
@@ -72,6 +73,16 @@ export interface ProgressOptions {
   /** Тред, которому передали работу ответом на бриф; нет передачи — `undefined`. Так находится прогон треда, переданного до указателей. */
   handedTo?: (briefId: string) => Promise<string | undefined>;
 }
+
+/**
+ * Итог прогона для задачи: минуты и доллары под id прогона — он не меняется, когда работу передают другому треду.
+ * Дозапись до этого id называла прогон тредом-носителем и началом первого этапа: тот ключ — псевдоним, запись под id
+ * его заменяет. Итог, замороженный без id, называется только так.
+ */
+const spendOf = (runId: string | undefined, thread: string, summary: Pick<RunSummaryView, "startedAt" | "minutes" | "cost">): RunSpend => {
+  const legacy = runKey(thread, summary.startedAt);
+  return { run: runId ?? legacy, ...(runId === undefined ? {} : { aliases: [legacy] }), minutes: summary.minutes, cost: summary.cost };
+};
 
 /** Адрес нового прогона. */
 const RUN_PREFIX = "run_";
@@ -133,7 +144,7 @@ export const createProgress = (kv: PluginKvStorage, options: ProgressOptions = {
   const run = async (threadId: string) => {
     const runId = await runOf(threadId);
     const found = runId === null ? null : await record(runId);
-    return found === null || runId === null ? null : { progress: found, carrier: carrierOf(found, runId) };
+    return found === null || runId === null ? null : { progress: found, carrier: carrierOf(found, runId), runId };
   };
   const get = async (threadId: string) => (await run(threadId))?.progress ?? null;
   const serial = <T>(work: () => Promise<T>): Promise<T> => {
@@ -356,7 +367,7 @@ export const registerProgress = (
     /** Сверка настроек Claude Code дерева треда с новым прогрессом: ответ отметки ждёт её; нет — не ждёт. */
     settled?: (threadId: string) => Promise<void>;
   },
-): { freezeFinished: (threadId: string) => Promise<void> } => {
+): { freezeFinished: (threadId: string) => Promise<void>; runFigures: (threadId: string) => Promise<RunFigures | null>; pastRuns: () => Promise<PastRun[]> } => {
   /**
    * Файл задачи из результата — тем же чтением, что даёт название, получает в шапку flow треда: по нему Tasks+ ведёт
    * из карточки на страницу flow. Штамп записывается, только когда меняет текст; сбой записи отметку не роняет.
@@ -484,7 +495,7 @@ export const registerProgress = (
    * Завершённый прогон замораживается под своим брифом: следующий прогон перепишет запись, а итог в ленте и в истории
    * останется. Уже лежащий итог `freezeRun` не переписывает.
    */
-  const freeze = async (record: FlowProgress, carrier: string, stages: StageSettings["stages"], thread: ThreadState): Promise<void> => {
+  const freeze = async (record: FlowProgress, runId: string, carrier: string, stages: StageSettings["stages"], thread: ThreadState): Promise<void> => {
     const summary = isRunFinished(record, stages) ? runSummary(record, stages) : null;
     if (record.lastBriefId === undefined || summary === null) return;
     const view = progressView(record, stages, thread.active);
@@ -493,6 +504,7 @@ export const registerProgress = (
     await progress
       .freezeRun(record.lastBriefId, {
         threadId: carrier,
+        runId,
         summary,
         stages: view.stages,
         done: view.done,
@@ -518,7 +530,47 @@ export const registerProgress = (
     if (!isRunFinished(found.progress, stages) || (await progress.frozenRun(found.progress.lastBriefId)) !== null) return;
     const record = await backfill(found.carrier, found.progress);
     const thread = (await deps.thread?.(found.carrier).catch(() => null)) ?? NO_THREAD;
-    await freeze(record, found.carrier, stages, thread);
+    await freeze(record, found.runId, found.carrier, stages, thread);
+  };
+
+  /**
+   * План и факт прогона треда для шагов «План → задача» и «Факт → задача»: id прогона, бюджет, с которым владелец
+   * отпустил прогон, и итог его закрытых этапов. Итог считается только по запросу: минуты и доллары добираются тем же
+   * `backfill`, что и у баннера, — иначе этапы, закрытые минуту назад, ушли бы в задачу без своей стоимости, — а шагу
+   * плана этот добор не нужен. Прогона нет — `null`.
+   */
+  const runFigures = async (threadId: string): Promise<RunFigures | null> => {
+    const found = await progress.run(threadId);
+    if (found === null) return null;
+    const spent = async () => {
+      const summary = runSummary(await backfill(found.carrier, found.progress), deps.stages(found.carrier).stages);
+      return summary === null ? null : spendOf(found.runId, found.carrier, summary);
+    };
+    return { planned: found.progress.planned ?? null, spent };
+  };
+
+  /**
+   * Все прогоны, что-то потратившие: идущие и завершённые, по одному на прогон. Итог прогона заморожен под каждым
+   * брифом, после которого прогон кончался, а идущий прогон ещё и лежит записью — одинаковый id прогона сводит их
+   * в один, с большим итогом.
+   */
+  const pastRuns = async (): Promise<PastRun[]> => {
+    const live = await Promise.all(
+      (await progress.threads()).map(async (thread) => {
+        const spent = await (await runFigures(thread))?.spent().catch(() => null);
+        return spent ? [{ thread, spent }] : [];
+      }),
+    );
+    const frozen = (await progress.frozenRuns()).map(({ run }) => ({ thread: run.threadId, spent: spendOf(run.runId, run.threadId, run.summary) }));
+    const byRun = new Map<string, PastRun>();
+    for (const run of [...live.flat(), ...frozen]) {
+      const seen = byRun.get(run.spent.run);
+      if (seen === undefined || run.spent.minutes + run.spent.cost > seen.spent.minutes + seen.spent.cost) byRun.set(run.spent.run, run);
+    }
+    // Итог, замороженный без id, — тот же прогон, что идёт под id с этим псевдонимом.
+    const aliased = new Set([...byRun.values()].flatMap((run) => run.spent.aliases ?? []));
+    // Прогон без минут и долларов задаче ничего не говорит: «0 мин, $0» в ней было бы неправдой.
+    return [...byRun.values()].filter((run) => !aliased.has(run.spent.run) && (run.spent.minutes > 0 || run.spent.cost > 0));
   };
 
   /**
@@ -559,11 +611,11 @@ export const registerProgress = (
       return stageTimeline(stored, stages).map(({ icon, fallbackIcon, ...stage }) => ({ ...stage, glyph: stageGlyph({ icon, fallbackIcon }) }));
     },
     async getFlowProgress({ threadId }) {
-      const stored = await progress.get(threadId);
-      if (stored === null) return null;
+      const found = await progress.run(threadId);
+      if (found === null) return null;
       // Прогон показывается глазами треда, который его ведёт: его этапы, flow, окружение для ссылок на результаты и ход агента.
-      const carrier = await progress.carrier(threadId);
-      const record = await backfill(carrier, stored);
+      const { carrier, runId } = found;
+      const record = await backfill(carrier, found.progress);
       const thread = (await deps.thread?.(carrier).catch(() => null)) ?? NO_THREAD;
       // Заполненность окна — самого треда баннера: она едет тем же ответом, что и прогресс, второго опроса у баннера нет.
       const context = (await deps.context?.(threadId).catch(() => null)) ?? null;
@@ -574,7 +626,7 @@ export const registerProgress = (
       const finished = isRunFinished(record, stages);
       const view = progressView(record, stages, thread.active);
       const summary = finished ? runSummary(record, stages) : null;
-      await freeze(record, carrier, stages, thread);
+      await freeze(record, runId, carrier, stages, thread);
       return {
         ...view,
         environmentId: thread.environmentId,
@@ -621,5 +673,5 @@ export const registerProgress = (
     },
   });
 
-  return { freezeFinished };
+  return { freezeFinished, runFigures, pastRuns };
 };

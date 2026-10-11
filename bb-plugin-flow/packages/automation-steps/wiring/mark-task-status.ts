@@ -15,7 +15,7 @@
 // update is likewise kept — the caller now knows there was a promise to
 // keep; see archiveThread/createPr in server.ts, which surface both instead
 // of reporting a plain success.
-import { currentTasksArgs, linkedTaskEnv, markTaskStatusArgs, parseLinkedTasks, type LinkedTaskStatus } from "../core/bb-tasks-commands";
+import { currentTasksArgs, linkedTaskEnv, markTaskStatusArgs, parseLinkedTasks, type LinkedTask, type LinkedTaskStatus } from "../core/bb-tasks-commands";
 import { cliRunMessage, type CliPorts } from "./bb-cli-run";
 
 /** `slug` — the moved task's file name, when the CLI named it. */
@@ -27,27 +27,43 @@ export interface TaskStatusReport {
   results: readonly TaskStatusResult[];
 }
 
-export async function markLinkedTasksStatus(
+/** One task's update: the argv, and what to keep once the task took it. */
+export interface TaskWrite {
+  readonly args: string[];
+  readonly written?: () => Promise<void>;
+}
+
+/**
+ * Lists the tasks linked to a thread and runs one `bb tasks update` per task,
+ * with the thread named for the CLI. Shared by every step that edits the
+ * thread's tasks: the status moves here, the plan and the spend in
+ * ./task-figures.ts.
+ */
+export async function updateLinkedTasks(
   ports: CliPorts,
   threadId: string,
-  status: LinkedTaskStatus,
+  writeOf: (task: LinkedTask, all: readonly LinkedTask[]) => Promise<TaskWrite>,
 ): Promise<TaskStatusReport> {
   const env = linkedTaskEnv(threadId);
   const listed = await ports.run(currentTasksArgs(threadId), env);
   if (listed.kind === "unavailable") return { unavailable: listed.reason, results: [] };
   if (listed.code !== 0) return { unavailable: null, results: [] };
 
-  const tasks = parseLinkedTasks(listed.stdout);
   const results: TaskStatusResult[] = [];
-  for (const { key, slug } of tasks) {
-    const updated = await ports.run(markTaskStatusArgs(key, status), env);
-    results.push(
-      updated.kind === "ran" && updated.code === 0
-        ? { key, ok: true, ...(slug === undefined ? {} : { slug }) }
-        : { key, ok: false, reason: cliRunMessage(updated) },
-    );
+  const tasks = parseLinkedTasks(listed.stdout);
+  for (const task of tasks) {
+    const write = await writeOf(task, tasks);
+    const updated = await ports.run(write.args, env);
+    if (updated.kind === "ran" && updated.code === 0) {
+      await write.written?.();
+      results.push({ key: task.key, ok: true, ...(task.slug === undefined ? {} : { slug: task.slug }) });
+    } else results.push({ key: task.key, ok: false, reason: cliRunMessage(updated) });
   }
   return { unavailable: null, results };
+}
+
+export function markLinkedTasksStatus(ports: CliPorts, threadId: string, status: LinkedTaskStatus): Promise<TaskStatusReport> {
+  return updateLinkedTasks(ports, threadId, async ({ key }) => ({ args: markTaskStatusArgs(key, status) }));
 }
 
 // Pure split of markLinkedTasksStatus's result into the two shapes every RPC

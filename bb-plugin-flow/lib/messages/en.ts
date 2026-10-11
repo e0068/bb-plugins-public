@@ -219,6 +219,7 @@ export const en: Messages = {
   },
   steps: {
     "bb.rename-thread": "Rename the thread after its task",
+    "bb.tasks-plan": "Plan → task",
     "git.commit": "Commit",
     "git.fast-forward": "FF Branch ← Main",
     "bb.tasks-issue-keys": "Issue task keys",
@@ -230,6 +231,7 @@ export const en: Messages = {
     "git.merge": "Merge the PR",
     "git.pull-main": "Pull Main ← Origin",
     "bb.reinstall": "Update plugins from git",
+    "bb.tasks-fact": "Spend → task",
     "bb.tasks-done": "Task → done",
     "bb.archive": "Archive the thread",
   },
