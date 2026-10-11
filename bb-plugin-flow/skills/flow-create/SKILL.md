@@ -49,6 +49,7 @@ An automation is executed by Flow itself, without an agent: as soon as the agent
 | id | What it does |
 | --- | --- |
 | `bb.rename-thread` | Name the thread after its task (title without the key); skipped when no task is linked or the task cannot be read |
+| `bb.tasks-plan` | Write the run's budget into the thread tasks: Planned Time, Budget, Limit; put it right after the stage that creates the task |
 | `git.commit` | Commit |
 | `git.fast-forward` | Fast-forward the thread branch onto main |
 | `bb.tasks-issue-keys` | Give the branch's unnamed tasks their board keys, numbered after main, and commit them |
@@ -58,6 +59,7 @@ An automation is executed by Flow itself, without an agent: as soon as the agent
 | `git.merge` | Merge the PR |
 | `git.pull-main` | Pull the local main |
 | `bb.reinstall` | Update bb plugins from git |
+| `bb.tasks-fact` | Write the run's spend into the thread tasks: Actual Time and Cost, summed over every run on the task; put it before the `git.commit` that carries the task to main, or it never gets there |
 | `bb.tasks-done` | Thread tasks → done |
 | `bb.archive` | Archive the thread |
 

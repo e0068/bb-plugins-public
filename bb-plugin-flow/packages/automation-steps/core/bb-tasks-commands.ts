@@ -68,6 +68,8 @@ export interface LinkedTask {
   title: string;
   /** The task file's name, from the id `<project>:<slug>`; absent when the CLI gives no such id. */
   slug?: string;
+  /** The task already carries an Actual Time or a Cost — written by an agent or by an earlier step. */
+  spentRecorded?: true;
 }
 
 const slugOf = (id: unknown): string | undefined => {
@@ -84,6 +86,13 @@ const slugOf = (id: unknown): string | undefined => {
  * CLI's shape changing must not break archiving or PR creation, which is
  * what this feeds.
  */
+/** The task carries an Actual Time or a Cost. */
+const isRecorded = (task: unknown): task is { key?: unknown } => {
+  if (typeof task !== "object" || task === null) return false;
+  const { actualMinutes, cost } = task as { actualMinutes?: unknown; cost?: unknown };
+  return typeof actualMinutes === "number" || typeof cost === "number";
+};
+
 export function parseLinkedTasks(stdout: string): LinkedTask[] {
   let parsed: unknown;
   try {
@@ -94,11 +103,16 @@ export function parseLinkedTasks(stdout: string): LinkedTask[] {
   if (typeof parsed !== "object" || parsed === null) return [];
   const tasks = (parsed as { tasks?: unknown }).tasks;
   if (!Array.isArray(tasks)) return [];
+  // One task can come from two sources of the board — the file in main and a database copy — under one key: it is one task.
+  const seen = new Set<string>();
+  const recordedKeys = new Set(tasks.flatMap((task) => (isRecorded(task) && typeof task.key === "string" ? [task.key] : [])));
   return tasks.flatMap((task) => {
     if (typeof task !== "object" || task === null) return [];
     const { key, title, id } = task as { key?: unknown; title?: unknown; id?: unknown };
-    if (typeof key !== "string") return [];
+    if (typeof key !== "string" || seen.has(key)) return [];
+    seen.add(key);
     const slug = slugOf(id);
-    return [{ key, title: typeof title === "string" ? title : "", ...(slug === undefined ? {} : { slug }) }];
+    const recorded = recordedKeys.has(key);
+    return [{ key, title: typeof title === "string" ? title : "", ...(slug === undefined ? {} : { slug }), ...(recorded ? { spentRecorded: true as const } : {}) }];
   });
 }

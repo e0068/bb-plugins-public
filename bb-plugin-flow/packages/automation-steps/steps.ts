@@ -18,7 +18,9 @@ import { cliRunMessage, type CliPorts } from "./wiring/bb-cli-run";
 import type { CatchUpOutcome, ParentDeliveryOutcome } from "./wiring/catch-up";
 import type { RefreshOutcome } from "./wiring/create-pr";
 import { findLinkedTask } from "./wiring/linked-task";
-import { markLinkedTasksStatus, splitTaskStatusResults } from "./wiring/mark-task-status";
+import { markLinkedTasksStatus, splitTaskStatusResults, type TaskStatusReport } from "./wiring/mark-task-status";
+import { writeTaskFact, writeTaskPlan } from "./wiring/task-figures";
+import type { PlannedFigures, RunSpend } from "./core/task-figures";
 import type { PluginsPort } from "./wiring/plugin-reinstall";
 import {
   attemptArchive,
@@ -47,6 +49,15 @@ import {
 
 export type { StepOutcome };
 
+/**
+ * План и факт прогона треда, как их знает плагин, ведущий прогон: бюджет прогона и итог его закрытых этапов под id
+ * прогона; `null` — такого числа у прогона нет. Итог считается по запросу: шагу плана он не нужен.
+ */
+export interface RunFigures {
+  readonly planned: PlannedFigures | null;
+  spent(): Promise<RunSpend | null>;
+}
+
 export interface StepPorts {
   sdk: Sdk;
   /** kv плагина-исполнителя: базовый режим окружения и кэш «уже влито» читаются из него. */
@@ -72,6 +83,12 @@ export interface StepPorts {
    * проверялся без сети.
    */
   refreshPr?: (threadId: string) => Promise<RefreshOutcome | "no-open-pr">;
+  /**
+   * План и факт прогона треда — их знает только плагин, ведущий прогон.
+   * Без порта шаги «План → задача» и «Факт → задача» ничего не пишут и
+   * проходят зелёными: писать нечего, а не что-то сломалось.
+   */
+  runFigures?: (threadId: string) => Promise<RunFigures | null>;
 }
 
 /**
@@ -185,18 +202,37 @@ export function createSteps(ports: StepPorts): Steps {
     return environmentId;
   };
 
+  /**
+   * Итог правки задач треда: CLI не запустился или хоть одна задача не приняла
+   * правку — красный с причинами; задач нет — зелёный. Пустой список законен —
+   * тред без задачи доезжает до архива, — но молчаливая галочка под ним
+   * прятала поломку разрешения дерева.
+   */
+  const tasksOutcome = (report: TaskStatusReport, unavailable: string, refused: string): StepOutcome => {
+    if (report.unavailable !== null) return failed(`${unavailable}: ${report.unavailable}`);
+    const { successKeys, failedTasks } = splitTaskStatusResults(report.results);
+    if (failedTasks.length > 0) return failed(`${refused}: ${failedTasks.map(({ key, reason }) => `${key} (${reason})`).join(", ")}`);
+    return done(successKeys.length === 0 ? "no linked tasks" : successKeys.join(", "));
+  };
+
   const moveTasks = (status: "in_review" | "done") => async (threadId: string) => {
     const report = await markLinkedTasksStatus(cli(), threadId, status);
-    if (report.unavailable !== null) return failed(`Linked tasks were not moved: ${report.unavailable}`);
-    const { successKeys, failedTasks } = splitTaskStatusResults(report.results);
-    if (failedTasks.length > 0) return failed(`Tasks not moved to ${status}: ${failedTasks.map(({ key, reason }) => `${key} (${reason})`).join(", ")}`);
-    // Пустой список законен — тред без задачи доезжает до архива, — но
-    // молчаливая галочка под ним прятала поломку разрешения дерева.
-    const outcome = done(successKeys.length === 0 ? "no linked tasks" : successKeys.join(", "));
+    const outcome = tasksOutcome(report, "Linked tasks were not moved", `Tasks not moved to ${status}`);
+    if (!outcome.ok) return outcome;
     // Ссылку на файл даёт только закрытая задача: её этап — последний, и задача
     // в его итогах — то, что владелец откроет. Без слага файла не найти — ссылки нет.
     const moved = report.results.flatMap((r) => (r.ok && r.slug !== undefined ? [taskLink({ key: r.key, slug: r.slug })] : []));
     return status === "done" ? withLinks(outcome, moved) : outcome;
+  };
+
+  const writePlan = async (threadId: string) => {
+    const planned = (await ports.runFigures?.(threadId))?.planned ?? null;
+    return planned === null ? done("no plan in the run") : tasksOutcome(await writeTaskPlan(cli(), threadId, planned), "Plan not written", "Plan not written");
+  };
+
+  const writeFact = async (threadId: string) => {
+    const spent = (await (await ports.runFigures?.(threadId))?.spent()) ?? null;
+    return spent === null ? done("no spend in the run") : tasksOutcome(await writeTaskFact(cli(), kv, threadId, spent), "Spend not written", "Spend not written");
   };
 
   // Тред получает название своей задачи. Задачи нет или её не прочесть —
@@ -289,6 +325,7 @@ export function createSteps(ports: StepPorts): Steps {
 
   const steps: Steps = {
     "bb.rename-thread": guarded(renameThread),
+    "bb.tasks-plan": guarded(writePlan),
     "git.commit": guarded(commitTree),
     "git.fast-forward": guarded(async (threadId) => {
       return done(CATCH_UP_DETAIL[await catchUpBranch(sdk, kv, threadId)]);
@@ -361,6 +398,8 @@ export function createSteps(ports: StepPorts): Steps {
         return outcome;
       }),
     ),
+    // Факт пишется до коммита Finalize: запись после него до main не доедет.
+    "bb.tasks-fact": guarded(writeFact),
     "bb.tasks-done": guarded(moveTasks("done")),
     "bb.archive": guarded(async (threadId) => {
       const failure = await attemptArchive(() => sdk.threads.archive({ threadId }));

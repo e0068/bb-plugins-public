@@ -42,7 +42,7 @@ export type NoticeWords = {
 };
 
 /** Шаги, чьи строки называют задачи: ключ или слаг в их итоге и ошибке — ссылка на карточку. */
-const TASK_STEPS: ReadonlySet<string> = new Set(["bb.tasks-in-review", "bb.tasks-done", "bb.tasks-issue-keys"]);
+const TASK_STEPS: ReadonlySet<string> = new Set(["bb.tasks-plan", "bb.tasks-in-review", "bb.tasks-fact", "bb.tasks-done", "bb.tasks-issue-keys"]);
 
 const isTaskStep = (stepId: string): boolean => TASK_STEPS.has(stepId);
 

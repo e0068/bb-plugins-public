@@ -226,6 +226,7 @@ export const ru = {
   },
   steps: {
     "bb.rename-thread": "Переименовать тред согласно задаче",
+    "bb.tasks-plan": "План → задача",
     "git.commit": "Commit",
     "git.fast-forward": "FF Branch ← Main",
     "bb.tasks-issue-keys": "Выдать ключи задачам",
@@ -237,6 +238,7 @@ export const ru = {
     "git.merge": "Смёрджить PR",
     "git.pull-main": "Pull Main ← Origin",
     "bb.reinstall": "Обновить плагины с гита",
+    "bb.tasks-fact": "Факт → задача",
     "bb.tasks-done": "Задача → done",
     "bb.archive": "Архивировать тред",
   },

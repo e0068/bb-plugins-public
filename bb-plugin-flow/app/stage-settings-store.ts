@@ -46,13 +46,16 @@ const subscribe = (listener: () => void) => {
   return () => listeners.delete(listener);
 };
 
-const load = async (client: Rpc) => {
-  try {
-    const [settings, catalog] = await Promise.all([client.call("getFlowSettings", {}), client.call("getStageCatalog", {}).catch(() => EMPTY_CATALOG)]);
-    publish({ settings, catalog, failed: false, saveError: null, saveProblem: null });
-  } catch {
-    publish({ ...snapshot, failed: true });
-  }
+/**
+ * Коллекция встаёт на экран, не дожидаясь каталога навыков: сервер собирает его с диска почти секунду, а нужен он
+ * только меню выбора навыка и исполнителя. До каталога чип показывает навык как записан.
+ */
+const load = (client: Rpc) => {
+  client.call("getFlowSettings", {}).then(
+    (settings) => publish({ ...snapshot, settings, failed: false }),
+    () => publish({ ...snapshot, failed: true }),
+  );
+  client.call("getStageCatalog", {}).then((catalog) => publish({ ...snapshot, catalog }), () => undefined);
 };
 
 /** Правка на экране, ещё не ушедшая на сервер: перечитывание её не затирает. */
@@ -134,7 +137,7 @@ export function useFlowSettings(): FlowSettingsSnapshot {
     if (mounted === 1) {
       // Сброс прошлого показа мог ещё не случиться: первый кадр — без старой коллекции.
       publish(INITIAL);
-      void load(client);
+      load(client);
     }
     return () => {
       mounted -= 1;

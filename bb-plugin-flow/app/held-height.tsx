@@ -17,7 +17,8 @@ export const briefHeightKey = (id: string): string => `decisions:height:${id}`;
 export const summaryHeightKey = (id: string): string => `decisions:summary-height:${id}`;
 
 // localStorage бывает недоступен или переполнен: высота — удобство, падать из-за неё нельзя.
-const readHeight = (key: string): number | null => {
+/** Высота прошлого показа под ключом `key`; не запомнилась — null. */
+export const readHeight = (key: string): number | null => {
   try {
     const height = Number(window.localStorage.getItem(key));
     return Number.isFinite(height) && height > 0 ? height : null;

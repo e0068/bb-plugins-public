@@ -1156,6 +1156,8 @@ export const progressViewSchema = z.object({
 /** Замороженный итог прогона: то, что рисует блок под карточкой брифа, когда сам прогон уже сменился следующим. */
 export const frozenRunSchema = z.object({
   threadId: text,
+  /** Id прогона: по нему факт прогона в задаче не считается дважды, когда работу передали другому треду. Итоги, замороженные раньше, его не несут. */
+  runId: z.string().optional(),
   summary: runSummarySchema,
   stages: z.array(progressStageSchema),
   done: z.number().int().nonnegative(),

@@ -16,3 +16,19 @@ describe("слаг связанной задачи", () => {
     ]);
   });
 });
+
+describe("задача из двух источников доски", () => {
+  it("одна задача под одним ключом — одна, а числа, записанные в любой из копий, у неё есть", () => {
+    const stdout = JSON.stringify({
+      tasks: [
+        { id: "main:threads-overview", key: "BBPL-756", title: "T", actualMinutes: null },
+        { id: "db:threads-overview", key: "BBPL-756", title: "T", actualMinutes: 44 },
+        { id: "main:other", key: "BBPL-757", title: "O" },
+      ],
+    });
+    expect(parseLinkedTasks(stdout)).toEqual([
+      { key: "BBPL-756", title: "T", slug: "threads-overview", spentRecorded: true },
+      { key: "BBPL-757", title: "O", slug: "other" },
+    ]);
+  });
+});

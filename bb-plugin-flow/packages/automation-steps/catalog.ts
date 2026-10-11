@@ -13,10 +13,15 @@
  * ему нужна только задача, привязанная к треду, и тред получает её название
  * раньше, чем владелец начнёт искать его в списке. Выдача ключей задачам
  * стоит сразу за догоняющим main: номера считаются от только что
- * подтянутого main, и выданное успевает в PR.
+ * подтянутого main, и выданное успевает в PR. План прогона пишется в задачу
+ * сразу за переименованием — задача к этому времени уже есть. Факт стоит в
+ * меню рядом с «Задача → done», но в цепочку его ставят, как и «Задача →
+ * done», до Commit этапа, который увозит задачу в main: запись после этого
+ * коммита до main не доедет.
  */
 export const STEP_IDS = [
   "bb.rename-thread",
+  "bb.tasks-plan",
   "git.commit",
   "git.fast-forward",
   "bb.tasks-issue-keys",
@@ -28,6 +33,7 @@ export const STEP_IDS = [
   "git.merge",
   "git.pull-main",
   "bb.reinstall",
+  "bb.tasks-fact",
   "bb.tasks-done",
   "bb.archive",
 ] as const;
@@ -36,6 +42,7 @@ export type StepId = (typeof STEP_IDS)[number];
 
 export const STEP_LABELS: Readonly<Record<StepId, { readonly en: string; readonly ru: string }>> = {
   "bb.rename-thread": { en: "Rename the thread after its task", ru: "Переименовать тред согласно задаче" },
+  "bb.tasks-plan": { en: "Plan → task", ru: "План → задача" },
   "git.commit": { en: "Commit", ru: "Commit" },
   "git.fast-forward": { en: "FF Branch ← Main", ru: "FF Branch ← Main" },
   "bb.tasks-issue-keys": { en: "Issue task keys", ru: "Выдать ключи задачам" },
@@ -47,6 +54,7 @@ export const STEP_LABELS: Readonly<Record<StepId, { readonly en: string; readonl
   "git.merge": { en: "Merge the PR", ru: "Смёрджить PR" },
   "git.pull-main": { en: "Pull Main ← Origin", ru: "Pull Main ← Origin" },
   "bb.reinstall": { en: "Update plugins from git", ru: "Обновить плагины с гита" },
+  "bb.tasks-fact": { en: "Spend → task", ru: "Факт → задача" },
   "bb.tasks-done": { en: "Task → done", ru: "Задача → done" },
   "bb.archive": { en: "Archive the thread", ru: "Архивировать тред" },
 };
