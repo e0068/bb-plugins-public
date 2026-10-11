@@ -8,6 +8,7 @@ import { PRIORITY_LABELS, STATUS_LABELS } from "../common/lib.js";
 import { formatDateValue, type DateValue } from "../common/date-display.js";
 import { dateFormatOf, iconShownOf, type ColumnDisplays, type DateColumn } from "./column-display.js";
 import { EstimateIcon, TYPE_ICONS, TYPE_LABELS } from "../../components/task-meta.js";
+import { WorktreeSourceMark } from "../../components/worktree-mark.js";
 import { slugOf } from "../../shared/format.js";
 
 /** Everything a cell needs beyond the task and column: cross-task lookups
@@ -273,6 +274,7 @@ export function TitleCell({
       ) : (
         <span className="min-w-0 truncate">{task.title}</span>
       )}
+      <WorktreeSourceMark task={task} />
       {childCount > 0 ? (
         <span className="shrink-0 text-2xs tabular-nums text-subtle-foreground">{childCount}</span>
       ) : null}

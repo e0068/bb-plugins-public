@@ -3,6 +3,8 @@ import type { TasksApiStore } from "../api";
 import type { TaskThread } from "../db";
 import { publishThreadsChanged } from "../delegate";
 import { unlessOutOfReach } from "../filesync/task-repo.js";
+import { hasOwnTree } from "../filesync/branch-threads.js";
+import { resolveCallerEnvironment } from "../filesync/resolve-roots.js";
 import {
   patchLiveState,
   sameLiveState,
@@ -67,6 +69,35 @@ async function observeThread(
   for (const thread of await trackedThreads(store, threadId)) {
     publishThreadsChanged(bb, thread.taskId);
   }
+  for (const taskId of store.tasks.branchTaskIds(threadId)) {
+    publishThreadsChanged(bb, taskId);
+  }
+  // Архивный или удалённый тред не попадёт ни в Active, ни в Waiting: память
+  // о нём в ветке больше не нужна и не копится от перезапуска к перезапуску.
+  if (next.archivedAt !== null || isTerminal(next.liveStatus)) {
+    store.tasks.forgetBranchThread(threadId);
+  }
+}
+
+/**
+ * Тред, впервые замеченный в своём дереве: его задачи в ветке находятся
+ * одним чтением этого дерева (filesync/branch-threads.ts). Каждый тред
+ * проверяется раз за жизнь процесса — по окружению из самого события, без
+ * обхода живых деревьев (decisions/tasks-plus-board-roots-blocks-rpc.md).
+ */
+async function noticeBranchThread(
+  bb: BbPluginApi,
+  store: TasksApiStore,
+  checked: Set<string>,
+  thread: Pick<SdkThread, "id" | "environmentId">,
+): Promise<void> {
+  if (checked.has(thread.id) || store.tasks.knowsBranchThread(thread.id)) return;
+  checked.add(thread.id);
+  const environment = await resolveCallerEnvironment(bb, thread.environmentId ?? null);
+  if (!hasOwnTree(environment)) return;
+  for (const taskId of await store.tasks.discoverBranchThread(thread.id, environment)) {
+    publishThreadsChanged(bb, taskId);
+  }
 }
 
 async function reconcileThread(
@@ -98,7 +129,7 @@ async function reconcileThread(
  *  reconciliation asks bb about. One entry per thread, however many tasks
  *  it is attached to. */
 async function reconcilableThreadIds(store: TasksApiStore): Promise<string[]> {
-  const ids = new Set<string>();
+  const ids = new Set<string>(store.tasks.branchThreadIds());
   for (const thread of await trackedThreads(store)) {
     if (!isTerminal(thread.liveStatus)) ids.add(thread.threadId);
   }
@@ -140,14 +171,17 @@ export async function registerLifecycle(
   bb: BbPluginApi,
   store: TasksApiStore,
 ): Promise<void> {
+  const checkedForBranch = new Set<string>();
   bb.events.on("thread.created", ({ thread }) => {
     void observeThread(bb, store, thread.id, threadLiveState(thread));
   });
   bb.events.on("thread.active", ({ thread }) => {
     void observeThread(bb, store, thread.id, { liveStatus: "working" });
+    void noticeBranchThread(bb, store, checkedForBranch, thread);
   });
   bb.events.on("thread.idle", ({ thread }) => {
     void observeThread(bb, store, thread.id, { liveStatus: "idle" });
+    void noticeBranchThread(bb, store, checkedForBranch, thread);
   });
   bb.events.on("thread.failed", ({ thread }) => {
     void observeThread(bb, store, thread.id, { liveStatus: "failed" });
@@ -183,5 +217,6 @@ export async function registerLifecycle(
     },
   });
 
+  await store.tasks.restoreBranchThreads();
   await reconcileTrackedThreads(bb, store);
 }

@@ -102,8 +102,8 @@ import {
   formatTimestamp,
   PRIORITY_LABELS,
 } from "../common/lib.js";
+import { WorktreeSourceMark } from "../../components/worktree-mark.js";
 import {
-  describeWorktreeOrigin,
   EstimateIcon,
   TYPE_ICONS,
   TYPE_LABELS,
@@ -223,26 +223,6 @@ interface DragState {
 interface ResizeState {
   key: string;
   width: number;
-}
-
-/** Small marker for a task whose latest content came from an active
- *  worktree rather than the linked project's main checkout — see
- *  shared/contract.ts's fileTaskOriginSchema and filesync/fs-boards.ts for when
- *  that's the case. */
-function WorktreeSourceMark({ task }: { task: Task }) {
-  if (task.source?.origin.kind !== "worktree") return null;
-  const { identity, detail } = describeWorktreeOrigin(task.source.origin);
-  return (
-    <span
-      data-worktree-mark
-      className="flex shrink-0 items-center text-muted-foreground"
-      title={`Not merged into main — synced from ${identity}${
-        detail ? ` (${detail})` : ""
-      }`}
-    >
-      <Icon name="FolderGit" className="size-3" />
-    </span>
-  );
 }
 
 function WorkingAgentsChip({ threads }: { threads: TaskThread[] }) {

@@ -29,12 +29,13 @@ function contentSha(file: RepoTaskFile): string {
 export async function readBoardTaskFiles(
   roots: readonly BoardRoot[],
   cache?: ParseCache,
+  wanted?: ReadonlySet<string>,
 ): Promise<BoardTaskFile[]> {
   // Only main checkouts keep their parses: a worktree is read by its own
   // thread's calls, and every one of dozens of worktrees would otherwise
   // hold a parsed copy of the whole folder until the plugin restarts.
   const perRoot = await Promise.all(
-    roots.map((root) => readTaskFiles(root.absPath, root.origin.kind === "main" ? cache : undefined)),
+    roots.map((root) => readTaskFiles(root.absPath, root.origin.kind === "main" ? cache : undefined, wanted)),
   );
 
   const files: BoardTaskFile[] = [];

@@ -52,10 +52,19 @@ import { rekeyBoard, rewriteMentions } from "./prefix-rename.js";
 import { issueKeys } from "./key-issue.js";
 import {
   serializeAttachedThread,
+  UNKNOWN_THREAD_LIVE_STATE,
   withLiveState,
   type AttachedThread,
   type ThreadLiveState,
 } from "../threads/live-state.js";
+import {
+  BRANCH_THREADS_KEY,
+  byEnvironment,
+  hasOwnTree,
+  parseBranchThreads,
+  withBranchSlug,
+  type BranchThread,
+} from "./branch-threads.js";
 import { AMOUNT_KEYS, renderTaskFile } from "./task-file.js";
 import { parseFrontmatter } from "./frontmatter.js";
 import { AMOUNT_FIELDS } from "../shared/amounts.js";
@@ -68,12 +77,12 @@ import { createOrValidateUlid, requireNonEmpty, validateDueDate,
 
 
 /** A thread whose agent is currently starting or working — the Active view. */
-function isActiveThread(thread: TaskThread): boolean {
+function isActiveThread(thread: ThreadLiveState): boolean {
   return thread.liveStatus === "starting" || thread.liveStatus === "working";
 }
 
 /** An idle, non-archived thread — the Waiting view (see client/data.ts). */
-function isWaitingThread(thread: TaskThread): boolean {
+function isWaitingThread(thread: ThreadLiveState): boolean {
   return thread.liveStatus === "idle" && thread.archivedAt === null;
 }
 
@@ -174,6 +183,9 @@ export function createFileTasksStore(
    *  see docs/decisions/tasks-plus-thread-state-is-not-a-file-field.md.
    *  Filled by lifecycle/index.ts from bb's own thread events. */
   const liveStates = new Map<string, ThreadLiveState>();
+  /** Треды, работающие в своих деревьях, и задачи этих деревьев, к которым
+   *  они привязаны (filesync/branch-threads.ts), по id треда. */
+  const branchThreads = new Map<string, BranchThread>();
   /** Выдача имени задаче — «прочитать номера доски и записать файл» — идёт по
    *  одной на доску: два одновременных запроса иначе прочитали бы один и тот
    *  же наибольший номер и выдали бы двум задачам один ключ. */
@@ -268,9 +280,20 @@ export function createFileTasksStore(
    *  what makes the merge of that branch into main a conflict. */
   function rootOfTask(board: BoardConfig, task: Task): BoardRoot {
     if (board.database) return databaseRoot(board);
+    refuseBranchWriteFromBoard(task);
     const source = task.source;
     if (!source) return boardMainRoot(board);
     return { absPath: rootOfTaskFile(source.filePath, placementOf(task)), origin: source.origin };
+  }
+
+  /** Задачу из ветки доска показывает (Active, Waiting), но не правит: файл
+   *  лежит в дереве работающего треда, и правка с доски испачкала бы его
+   *  дерево и спорила бы с агентом за тот же файл. Правит её сам тред. */
+  function refuseBranchWriteFromBoard(task: Task): void {
+    if (task.source?.origin.kind !== "worktree" || hasOwnTree(readCallerEnvironment())) return;
+    throw new Error(
+      `Задача ${task.key} живёт в ветке треда и до слияния в main здесь только для чтения — правьте её из этого треда`,
+    );
   }
 
   /** Where the task's file sits above its status folder, as read. */
@@ -362,6 +385,103 @@ export function createFileTasksStore(
     return perBoard.flat();
   }
 
+  function persistBranchThreads(): void {
+    kv.set(BRANCH_THREADS_KEY, [...branchThreads.values()]).catch(onError);
+  }
+
+  function rememberBranchThread(thread: BranchThread): void {
+    branchThreads.set(thread.threadId, thread);
+    persistBranchThreads();
+  }
+
+  /** Тред ушёл в архив или удалён — в Active и Waiting ему не место. */
+  function forgetBranchThread(threadId: string): void {
+    if (branchThreads.delete(threadId)) persistBranchThreads();
+  }
+
+  /** Память о тредах веток после перезапуска плагина. */
+  async function restoreBranchThreads(): Promise<void> {
+    for (const thread of parseBranchThreads(await kv.get(BRANCH_THREADS_KEY))) {
+      if (!branchThreads.has(thread.threadId)) branchThreads.set(thread.threadId, thread);
+    }
+  }
+
+  const knowsBranchThread = (threadId: string) => branchThreads.has(threadId);
+  const branchThreadIds = () => [...branchThreads.keys()];
+
+  /** Доски, у которых в этом дереве своя папка задач. */
+  function boardsInTree(environment: CallerEnvironment, projectId?: string): BoardConfig[] {
+    return boardConfigs.filter(
+      (board) => !board.database && (projectId === undefined || board.id === projectId) &&
+        callerWorktreeRoot(board, environment) !== null,
+    );
+  }
+
+  /** Задачи доски из дерева треда — только `wanted`, если слаги известны. */
+  async function readTreeTasks(
+    board: BoardConfig,
+    environment: CallerEnvironment,
+    wanted?: ReadonlySet<string>,
+  ): Promise<BoardTask[]> {
+    const root = callerWorktreeRoot(board, environment);
+    if (!root) return [];
+    const files = onePerSlug(await readBoardTaskFiles([root], undefined, wanted));
+    return assembleBoardTasks({ id: board.id }, files).tasks.map((entry) => ({
+      ...entry,
+      threads: entry.threads.map((thread) => withLiveState(thread, liveStates.get(thread.threadId))),
+    }));
+  }
+
+  /**
+   * Находит задачи дерева, к которым привязан тред, — одно полное чтение
+   * дерева за жизнь треда в памяти плагина: так находятся привязки,
+   * сделанные до того, как плагин начал их запоминать. Запоминается только
+   * тред с задачами ветки: пустые записи копились бы в KV и в сверке на
+   * загрузке. Отвечает id найденных задач.
+   */
+  async function discoverBranchThread(threadId: string, environment: CallerEnvironment): Promise<string[]> {
+    if (!hasOwnTree(environment)) return [];
+    const found = (await Promise.all(boardsInTree(environment).map((board) => readTreeTasks(board, environment))))
+      .flat()
+      .filter((entry) => entry.threads.some((thread) => thread.threadId === threadId));
+    if (found.length > 0) {
+      rememberBranchThread({ threadId, environment, slugs: found.map((entry) => taskSlug(entry.task)) });
+    }
+    return found.map((entry) => entry.task.id);
+  }
+
+  /** Id задач веток, к которым привязан тред, — чтобы сообщить о смене его статуса. */
+  function branchTaskIds(threadId: string): string[] {
+    const thread = branchThreads.get(threadId);
+    if (!thread) return [];
+    return boardsInTree(thread.environment).flatMap((board) => thread.slugs.map((slug) => `${board.id}:${slug}`));
+  }
+
+  /**
+   * Задачи из деревьев тредов, чьё состояние проходит `matches`: читается
+   * дерево только таких тредов и только запомненные за ними слаги — старые
+   * копии задач main в ветке не читаются вовсе.
+   */
+  async function branchTasks(
+    matches: (state: ThreadLiveState) => boolean,
+    projectId?: string,
+  ): Promise<BoardTask[]> {
+    const passing = [...branchThreads.values()].filter(
+      (thread) => thread.slugs.length > 0 && matches(liveStates.get(thread.threadId) ?? UNKNOWN_THREAD_LIVE_STATE),
+    );
+    const perTree = await Promise.all(
+      byEnvironment(passing).map(async (threads) => {
+        const environment = threads[0]!.environment;
+        const wanted = new Set(threads.flatMap((thread) => thread.slugs));
+        const tasks = await Promise.all(
+          boardsInTree(environment, projectId).map((board) => readTreeTasks(board, environment, wanted)),
+        );
+        return tasks.flat().filter((entry) => entry.threads.some(matches));
+      }),
+    );
+    return perTree.flat();
+  }
+
   /** The first task of any board that `pick` finds something on, with what it found. A board that
    *  cannot be read is passed over; when nothing was found, its failure is the answer — the item may
    *  well live there — a broken board's ahead of one out of reach. */
@@ -379,11 +499,25 @@ export function createFileTasksStore(
     return undefined;
   }
 
+  /** Задача из дерева треда, которую Active и Waiting показали, — чтобы её
+   *  можно было открыть с доски: ищется только среди слагов, запомненных за
+   *  тредами. Тред из своей ветки чужих деревьев не видит (BP-187). */
+  async function findInBranches(board: BoardConfig, slug: string): Promise<BoardTask | undefined> {
+    if (board.database || hasOwnTree(readCallerEnvironment())) return undefined;
+    const trees = byEnvironment([...branchThreads.values()].filter((thread) => thread.slugs.includes(slug)));
+    for (const threads of trees) {
+      const found = (await readTreeTasks(board, threads[0]!.environment, new Set([slug])))[0];
+      if (found) return found;
+    }
+    return undefined;
+  }
+
   async function findAssembled(taskId: string): Promise<BoardTask | undefined> {
     const boardId = taskId.split(":")[0];
     const board = boardConfigs.find((b) => b.id === boardId);
     if (!board) return undefined;
-    return (await loadBoard(board)).find((t) => t.task.id === taskId);
+    return (await loadBoard(board)).find((t) => t.task.id === taskId) ??
+      findInBranches(board, taskId.slice(boardId!.length + 1));
   }
 
   /** Re-reads one task's own file (not the whole board) so a mutation can
@@ -530,14 +664,33 @@ export function createFileTasksStore(
   async function getTaskByKey(keyOrSlug: string): Promise<Task | undefined> {
     const wanted = keyOrSlug.trim().toLowerCase();
     if (wanted === "") return undefined;
-    return (await loadAllBoards()).find(
+    const inRequest = (await loadAllBoards()).find(
       (t) => t.task.key.toLowerCase() === wanted || taskSlug(t.task).toLowerCase() === wanted,
     )?.task;
+    if (inRequest) return inRequest;
+    // У задачи ветки ключа нет, её адрес — слаг (BBPL-294).
+    for (const board of boardConfigs) {
+      const found = await findInBranches(board, wanted);
+      if (found) return found.task;
+    }
+    return undefined;
   }
+  /** Active и Waiting — взгляд на то, что идёт сейчас: к задачам запроса
+   *  добавляются задачи из веток тредов, которые работают или ждут ответа. */
+  async function withBranchTasks(pool: BoardTask[], filters: ListTasksFilters): Promise<BoardTask[]> {
+    const matches = filters.activeOnly ? isActiveThread : filters.waitingOnly ? isWaitingThread : null;
+    // Тред из своей ветки чужих деревьев не видит (BP-187).
+    if (matches === null || hasOwnTree(readCallerEnvironment())) return pool;
+    const seen = new Set(pool.map((entry) => entry.task.id));
+    const extra = (await branchTasks(matches, filters.projectId)).filter((entry) => !seen.has(entry.task.id));
+    return [...pool, ...extra];
+  }
+
   async function listTasks(filters: ListTasksFilters = {}): Promise<Task[]> {
-    const pool = filters.projectId
-      ? await loadBoard(requireBoard(filters.projectId))
-      : await loadAllBoards();
+    const pool = await withBranchTasks(
+      filters.projectId ? await loadBoard(requireBoard(filters.projectId)) : await loadAllBoards(),
+      filters,
+    );
     return filterTasks(
       pool.map((t) => t.task),
       {
@@ -837,6 +990,7 @@ export function createFileTasksStore(
   async function deleteTaskFromRead(id: string): Promise<boolean> {
     const current = await getTask(id);
     if (!current?.source) return false;
+    refuseBranchWriteFromBoard(current);
     const repo = boardRepos.repoFor(requireBoard(current.projectId));
     try {
       if (repo) await repo.remove(current.source.filePath, current.source.revision ?? undefined);
@@ -1160,6 +1314,10 @@ export function createFileTasksStore(
       attachedAt: existing?.attachedAt ?? new Date().toISOString(),
     };
     await writeThreads(task, existing ? task.threads.map((t) => (t.id === thread.id ? thread : t)) : [...task.threads, thread], takenBy);
+    const caller = readCallerEnvironment();
+    if (task.task.source?.origin.kind === "worktree" && hasOwnTree(caller)) {
+      rememberBranchThread(withBranchSlug(branchThreads.get(thread.threadId), thread.threadId, caller, taskSlug(task.task)));
+    }
     return withLiveState(thread, liveStates.get(thread.threadId));
   }
   const listTaskThreads = async (taskId: string) => (await findAssembled(taskId))?.threads ?? [];
@@ -1253,6 +1411,7 @@ export function createFileTasksStore(
     createAttachment, getAttachment, listAttachmentsForTask, listAttachmentsForComment, updateAttachment, deleteAttachment,
     upsertTaskThread, getTaskThread, getTaskThreadByThreadId, listTaskThreads, taskCardMeta, listTasksForThread, deleteTaskThread,
     setThreadLiveState, getThreadLiveState,
+    restoreBranchThreads, knowsBranchThread, branchThreadIds, discoverBranchThread, forgetBranchThread, branchTaskIds,
     createPreset, getPreset, listPresets, updatePreset, deletePreset,
     createSavedView, listSavedViews, updateSavedView, deleteSavedView,
   };
