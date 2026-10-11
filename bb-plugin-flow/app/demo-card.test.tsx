@@ -73,10 +73,11 @@ describe("карточка Демонстрации", () => {
 
   it("«Важно знать» и секции — отдельными абзацами", async () => {
     const c = await card(open());
-    expect(c.getByText("Сегменты обрезают подписи.").tagName).toBe("P");
-    expect(c.getByText("Светлая тема проверена скриншотом.").tagName).toBe("P");
+    // Абзац — свой элемент: точное совпадение текста находит его, только если абзацы не слиты в один.
+    expect(c.getByText("Сегменты обрезают подписи.").classList.contains("mde-body")).toBe(true);
+    expect(c.getByText("Светлая тема проверена скриншотом.").classList.contains("mde-body")).toBe(true);
     expect(c.getByText("Как проверено")).toBeTruthy();
-    expect(c.getByText("Тесты плагина зелёные.").tagName).toBe("P");
+    expect(c.getByText("Тесты плагина зелёные.")).toBeTruthy();
   });
 
   it("каждый результат — своя строка, файл в ней — ссылка bb", async () => {

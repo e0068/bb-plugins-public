@@ -14,10 +14,13 @@ const LINK = /\[([^[\]\n]+)\]\(\s*(?:<([^>\n]+)>|([^\s()]+(?:\([^\s()]*\)[^\s()]
 /** Строка в конце пути: `:12`, `:12:5` с колонкой, `#L12` и диапазон `#L12-L20` — файл открывается на первой строке. */
 const LINE = /(?:#L(\d+)(?:-L?\d+)?|:(\d+)(?::\d+)?)$/;
 
-const link = (label: string, raw: string): TextPart => {
+/** Цель ссылки без строки и строка, на которой файл откроется; у адреса строки нет. */
+export const hrefTarget = (raw: string): { target: string; line: number | null } => {
   const line = resultLink(raw).kind === "url" ? null : LINE.exec(raw);
-  return line === null ? { kind: "link", label, target: raw, line: null } : { kind: "link", label, target: raw.slice(0, line.index), line: Number(line[1] ?? line[2]) };
+  return line === null ? { target: raw, line: null } : { target: raw.slice(0, line.index), line: Number(line[1] ?? line[2]) };
 };
+
+const link = (label: string, raw: string): TextPart => ({ kind: "link", label, ...hrefTarget(raw) });
 
 const text = (value: string): TextPart[] => (value === "" ? [] : [{ kind: "text", text: value }]);
 
@@ -74,8 +77,15 @@ export const textParts = (value: string): TextPart[] => {
   return joined(marked);
 };
 
-/** Есть ли в тексте разметка — ссылка или жирное: такой текст рисуется, а не показывается полем как есть. */
-export const hasMarkup = (value: string): boolean => textParts(value).some((part) => part.kind === "link" || part.strong === true);
+/** Код, строка таблицы, заголовок, цитата, пункт списка — то, что Kasimov рисует собой, помимо ссылок и жирного. */
+const BLOCKS = /`[^`\n]+`|^\s*(?:\|.*\||#{1,6}\s|>\s|[-+*]\s|\d+[.)]\s)/m;
+
+/** Курсив `*…*` и `_…_` вплотную к словам и зачёркнутое `~~…~~`; `2 * 3` и `snake_case` — текст. */
+const EMPHASIS = /(?<![\w*])\*(?![\s*])[^*\n]*[^\s*]\*(?!\*)|(?<!\w)_(?!\s)[^_\n]*[^\s_]_(?!\w)|~~[^~\n]+~~/;
+
+/** Есть ли в тексте разметка — ссылка, выделение, код, таблица, заголовок, цитата, список: такой текст рисуется, а не показывается как есть. */
+export const hasMarkup = (value: string): boolean =>
+  BLOCKS.test(value) || EMPHASIS.test(value) || textParts(value).some((part) => part.kind === "link" || part.strong === true);
 
 /** Текст без разметки ссылок — для подписей экранного диктора: ссылка читается своим текстом. */
 export const plainText = (value: string): string => textParts(value).map((part) => (part.kind === "text" ? part.text : part.label)).join("");

@@ -54,7 +54,7 @@ describe("пункты варианта в «Готово, когда»", () => 
     fireEvent.click(question.getByRole("button", { name: /Сначала посмотреть/ }));
     expect(done.queryByRole("button", { name: "Пункт 1 не нужен" })).toBeNull();
     expect(done.queryByRole("button", { name: "Вернуть пункт 1" })).toBeNull();
-    expect(done.getByText("Тесты зелёные").className).toContain("line-through");
+    expect(done.getByText("Тесты зелёные").closest("[class*=line-through]")).not.toBeNull();
     fireEvent.click(question.getByRole("button", { name: /Сайт/ }));
     expect(done.getByRole("button", { name: "Пункт 1 не нужен" })).toBeTruthy();
   });

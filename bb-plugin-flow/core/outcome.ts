@@ -57,13 +57,6 @@ export const demoVerdict = (answer: Pick<DecisionAnswer, "outcome"> & Partial<Pi
  */
 export const ownWords = (answer: Partial<Pick<DecisionAnswer, "answers">>): boolean => (answer.answers ?? []).some(({ own }) => (own ?? "").trim().length > 0);
 
-/** Абзацы текста Демонстрации: разделены пустой строкой, пустые отброшены. */
-export const paragraphs = (text: string): string[] =>
-  text
-    .split(/\n[ \t]*\n/)
-    .map((part) => part.replace(/^\n+|\n+$/g, "").trim())
-    .filter((part) => part.length > 0);
-
 /** Демонстрация отвечена одним из двух исходов. */
 export const outcomeAnswered = (answer: Parameters<typeof demoVerdict>[0]): boolean => demoVerdict(answer) !== null;
 

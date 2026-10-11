@@ -604,11 +604,19 @@ export function kasimovCssRule(
   hostId: string,
   vars: Record<string, string>,
 ): string | null {
+  return cssVarsRule(`#${hostId} .mde-root`, vars);
+}
+
+/** The same rule under any selector — `null` if there's nothing to set. */
+export function cssVarsRule(
+  selector: string,
+  vars: Record<string, string>,
+): string | null {
   const decls = Object.entries(vars)
     .filter(([name, value]) => !UNSAFE_CSS.test(name) && !UNSAFE_CSS.test(value))
     .map(([name, value]) => `${name}: ${value};`)
     .join(" ");
-  return decls === "" ? null : `#${hostId} .mde-root { ${decls} }`;
+  return decls === "" ? null : `${selector} { ${decls} }`;
 }
 
 /**

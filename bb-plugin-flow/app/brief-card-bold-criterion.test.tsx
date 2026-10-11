@@ -31,7 +31,7 @@ const open = () =>
 describe("жирное в пункте критерия", () => {
   it("пункт с жирным без ссылок до правки показан жирным, а не звёздочками", async () => {
     const slot = open();
-    const word = await slot.findByText("Название", { selector: "[data-linked-item] strong" });
+    const word = await slot.findByText("Название", { selector: "[data-linked-item] b" });
     expect(word.closest("[data-linked-item]")?.textContent).toBe("Название стоит первым");
   });
 });

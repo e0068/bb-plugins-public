@@ -45,35 +45,29 @@ const open = (shown: DecisionBrief) =>
     { rpc: { getBrief: () => ({ kind: "found", brief: shown, answer: null }), answerBrief: () => ({ kind: "not_found" }), ...({ threadFiles } as object) } },
   );
 
-/** Глубина вложенности списков внутри элемента: список в пункте списка — уровень глубже. */
-const depth = (root: HTMLElement): number => {
-  const lists = within(root).queryAllByRole("list");
-  return lists.reduce((max, list) => {
-    let level = 1;
-    for (let up = list.parentElement; up !== null && up !== root; up = up.parentElement) if (up.getAttribute("role") === "list") level += 1;
-    return Math.max(max, level);
-  }, 0);
-};
+/** Глубина вложенности списков внутри элемента: Kasimov ставит пункту его уровень от нуля переменной `--kasi-li-depth`. */
+const depth = (root: HTMLElement): number =>
+  [...root.querySelectorAll<HTMLElement>(".mde-li")].reduce((max, li) => Math.max(max, Number(li.style.getPropertyValue("--kasi-li-depth") || 0) + 1), 0);
 
 describe("многоуровневые списки в тексте брифа", () => {
   it("пояснение вопроса рисует три уровня списком, а не строкой с дефисами", async () => {
     const slot = open(brief());
     const group = await slot.findByRole("group", { name: "Правильно понял?" });
     expect(depth(group)).toBe(3);
-    expect(within(group).getByText("деньги и минуты одного агента").closest("[role=listitem]")).not.toBeNull();
+    expect(within(group).getByText("деньги и минуты одного агента").closest(".mde-li")).not.toBeNull();
     expect(group.textContent).not.toContain("- база");
   });
 
   it("ссылка внутри пункта остаётся ссылкой", async () => {
     const slot = open(brief());
     const group = await slot.findByRole("group", { name: "Правильно понял?" });
-    expect(within(group).getByRole("link", { name: "объёма" }).closest("[role=listitem]")).not.toBeNull();
+    expect(within(group).getByRole("link", { name: "объёма" }).closest(".mde-li")).not.toBeNull();
   });
 
   it("описание варианта рисует список списком", async () => {
     const slot = open(brief());
     const option = await slot.findByRole("button", { name: /Процентом/ });
-    expect(within(option).getAllByRole("listitem").map((li) => li.textContent)).toEqual(["считает деньги", "считает минуты"]);
+    expect([...option.querySelectorAll(".mde-li")].map((li) => li.textContent)).toEqual(["считает деньги", "считает минуты"]);
   });
 
   it("блок «Что я понял» стоит первым в вопросах и рисует список", async () => {
