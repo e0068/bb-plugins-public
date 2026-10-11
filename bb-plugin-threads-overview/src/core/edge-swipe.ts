@@ -1,9 +1,10 @@
-// Pure rules for the sideways swipes that start at the edges of Home: from the
-// left edge to the right the finger asks for bb's left panel, from the right
-// edge to the left for the actions of the row under it. A finger slid in from
-// beyond the screen lands outside every row and on the project slides, so the
-// edges are decided for the whole screen, not row by row. Layer 1: depends only
-// on the shape of a point.
+// Pure rules for the sideways swipes that start at the edges of the screen:
+// from the left edge to the right the finger asks for bb's left panel, from
+// the right edge to the left for the right panel of a thread, or on Home for
+// the actions of the row under it. A finger slid in from beyond the screen
+// lands outside every row and on the project slides, so the edges are decided
+// for the whole screen, not row by row. Layer 1: depends only on the shape of
+// a point.
 import type { Point } from "./home-swipe";
 import { startsRowSwipe } from "./swipe";
 
@@ -62,4 +63,40 @@ export interface RowSpan {
 export function rowAt(rows: readonly RowSpan[], y: number): number | null {
   const index = rows.findIndex((row) => y >= row.top && y < row.bottom);
   return index === -1 ? null : index;
+}
+
+/**
+ * Whether a move of a finger from the right strip of a thread is the right
+ * panel's and is kept from the page: more to the left than up or down, from
+ * the first pixel — the mirror of `claimsSidebarSwipe`. A move to the right is
+ * the page's, an upright one the conversation's.
+ */
+export function claimsPanelSwipe(start: Point, now: Point): boolean {
+  const dx = start.x - now.x;
+  return dx > 0 && dx > Math.abs(now.y - start.y);
+}
+
+/** How far the right panel is open under a finger gone from `start` to `now`, from 0 to 1 of `width`. */
+export function panelProgress(start: Point, now: Point, width: number): number {
+  if (width <= 0) return 0;
+  return Math.min(1, Math.max(0, (start.x - now.x) / width));
+}
+
+/** The share of the screen past which letting go opens the right panel — bb's own threshold for its left one. */
+export const PANEL_OPEN_SHARE = 1 / 3;
+
+/** The share past which a quick flick opens the right panel all the same. */
+export const PANEL_FLICK_SHARE = 0.12;
+
+/** How fast a flick to the left has to be to open the panel from `PANEL_FLICK_SHARE`, in px/s. */
+export const PANEL_FLICK_SPEED = 450;
+
+/**
+ * Whether letting go opens the right panel: pulled past a third of the screen,
+ * or past `PANEL_FLICK_SHARE` while still flying to the left. `velocityX` is
+ * the finger's speed along the screen at the lift, in px/s; to the left is
+ * below zero.
+ */
+export function opensPanel(progress: number, velocityX: number): boolean {
+  return progress >= PANEL_OPEN_SHARE || (progress >= PANEL_FLICK_SHARE && -velocityX >= PANEL_FLICK_SPEED);
 }

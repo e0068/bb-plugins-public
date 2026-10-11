@@ -10,6 +10,7 @@ import { loadPluginApp, renderSlot } from "@get-bb/plugin-sdk/testing/app";
 import type { PluginProvidersState, PluginSidebarThread } from "@get-bb/plugin-sdk/app";
 import { formatWaitingSince } from "./src/core/format";
 import { MemoryStorage } from "./memory-storage.testkit";
+import { watchEdgeSwipes } from "./edge-swipe";
 
 function idleThread(over: Partial<PluginSidebarThread> = {}): PluginSidebarThread {
   return {
@@ -1565,6 +1566,17 @@ describe("on a touch screen", () => {
 
   describe("from the edges of the screen", () => {
     // The left strip of a 320 px screen ends at x 48, the right one starts at x 272.
+    // The edges are heard by the app overlay, not the section — see `EdgeSwipes` —
+    // and only on bb's page, which the body stands in for here.
+    let stopEdges: () => void = () => {};
+    beforeEach(() => {
+      document.body.setAttribute("data-sidebar", "inset");
+      stopEdges = watchEdgeSwipes(() => false);
+    });
+    afterEach(() => {
+      stopEdges();
+      document.body.removeAttribute("data-sidebar");
+    });
     const isOpen = (row: HTMLElement) =>
       within(row).queryByRole("button", { name: "Отложить" }) !== null;
 

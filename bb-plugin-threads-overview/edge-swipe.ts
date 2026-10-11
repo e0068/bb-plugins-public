@@ -1,23 +1,35 @@
-// The sideways swipes that start at the edges of Home. From the left edge to
-// the right a finger asks for bb's left panel; from the right edge to the left,
-// for the actions of the row on its line. Both have to be heard for the whole
-// screen and not row by row: a finger slid in from beyond the screen lands in
-// the margin beside the rows — on the project slides, which would turn under
-// it, or on bb's page around the section. The rules live in
+// The sideways swipes that start at the edges of the screen, on Home and in a
+// thread alike, over whatever lies there — the composer, a code block, the
+// project slides. From the left edge to the right a finger asks for bb's left
+// panel. From the right edge to the left it asks, in a thread, for the thread's
+// right panel, and on Home for the actions of the row on its line. They have to
+// be heard for the whole screen and not row by row: a finger slid in from
+// beyond the screen lands in the margin beside the rows, on the project slides
+// that would turn under it, or on the composer. The rules live in
 // `src/core/edge-swipe.ts`; this is the hand on the screen.
 //
 // bb opens its left panel on a swipe to the right by itself, following the
 // finger, but not from inside something that scrolls sideways — the slides,
-// the project pills — and not from the strip nearest the edge. So for the
-// length of the swipe whatever scrolls sideways under the finger is told not
-// to, and bb sees an ordinary swipe; a finger in the strip bb leaves alone is
-// told to bb's swipe as a touch of its own, shifted onto the floor bb listens
+// the project pills, a code block — not from a field to type in, and not from
+// the strip nearest the edge. So for the length of the swipe whatever scrolls
+// sideways under the finger is told not to, and bb sees an ordinary swipe; a
+// finger bb would still leave alone is told to bb's swipe as a touch of its
+// own, put down on bb's page itself and shifted onto the floor bb listens
 // from, so the panel follows that finger too from its first move.
 //
-// A row is handed the swipe as an `ADOPT_ROW_SWIPE` event: the row takes the
-// pointer from there, as if the finger had landed on it.
+// The right panel bb opens only with its button; it follows the finger through
+// `dragThreadPanel`. Open, it is closed by bb's own swipe, from anywhere on it;
+// the page that swipe carries is lifted over the panel to be seen. A row is
+// handed the swipe as an `ADOPT_ROW_SWIPE` event: the row takes the pointer
+// from there, as if the finger had landed on it.
+//
+// On the composer the edges reach across it: a sideways swipe from anywhere on
+// it is taken as from the edge it heads away from — to the right for the left
+// panel, to the left for the right panel of a thread — and decided on its
+// first move. What scrolls sideways there, the project pills, keeps its own.
 import {
   bbTakesSidebarSwipe,
+  claimsPanelSwipe,
   claimsSidebarSwipe,
   edgeStrip,
   intoBbSidebarSwipe,
@@ -25,6 +37,7 @@ import {
 } from "./src/core/edge-swipe";
 import type { Point } from "./src/core/home-swipe";
 import { inHomeLayer } from "./home-layer";
+import { INSET_SELECTOR, SHELF_SELECTOR, abandonPanelSettle, dragThreadPanel, liftPageOverPanel } from "./panel-swipe";
 
 /** The event a row hears when a swipe from the right edge on its line is handed to it. */
 export const ADOPT_ROW_SWIPE = "threads-overview:adopt-row-swipe";
@@ -37,20 +50,29 @@ export interface RowAdoption {
   holds: (() => boolean) | null;
 }
 
+/** Threads Overview on Home. */
+const SECTION_SELECTOR = "[data-threads-overview-section]";
+
 /** The part of a row that slides under the finger. */
 const SWIPE_ROW_SELECTOR = "[data-swipe-row]";
 
 /** An open row: a touch outside it is spent on closing it, and starts nothing. */
 const OPEN_ROW_SELECTOR = "[data-swipe-open]";
 
-/** What a finger types into or drags itself — no edge swipe starts there. */
-const OWN_GESTURE_SELECTOR = 'input, textarea, select, [contenteditable="true"], [role="slider"]';
+/** What a finger drags itself, or what bb marks as no place for a swipe — no edge swipe starts there. */
+const OWN_GESTURE_SELECTOR = 'select, [role="slider"], [data-no-sidebar-swipe], [data-vaul-no-drag]';
+
+/** bb's composer shell, where a sideways swipe from anywhere counts as from the edge. */
+const COMPOSER_SELECTOR = "[data-app-composer]";
+
+/** A field to type in: bb's own swipe for its left panel will not start there, so a finger there is told to it. */
+const FIELD_SELECTOR = 'input, textarea, [contenteditable="true"]';
+
+/** What opens over bb's page from inside it: a finger there is theirs, not an edge swipe's. */
+const OVER_PAGE_SELECTOR = '[role="dialog"], [role="alertdialog"], [role="menu"], [role="listbox"]';
 
 /** The pointer of a finger told to bb's swipe: one no real finger has, so bb hears none of the finger's own. */
 const RELAYED_POINTER_ID = 2 ** 31 - 1;
-
-/** bb's page beside its left panel: the farthest a sideways scroller under the finger is looked for. */
-const INSET_SELECTOR = '[data-sidebar="inset"]';
 
 /** A swipe under way from one of the edges. */
 interface EdgeGesture {
@@ -63,6 +85,30 @@ interface EdgeGesture {
   readonly moved: () => void;
   /** The finger is gone: lifted when `completed`, taken away or abandoned when not. */
   readonly end: (completed: boolean) => void;
+}
+
+/** Whether one of bb's panels stands open, its page pushed aside. */
+function panelOpen(): boolean {
+  const inset = document.querySelector(INSET_SELECTOR);
+  return inset?.getAttribute("data-sidebar-shelf") === "open" || rightPanelOpen();
+}
+
+/** Whether the right panel of a thread stands open over bb's page. */
+function rightPanelOpen(): boolean {
+  return document.querySelector(INSET_SELECTOR)?.getAttribute("data-panel-shelf") === "full";
+}
+
+/** Whether text is selected in what the finger landed on: a finger there drags the selection. */
+function dragsSelection(target: Element): boolean {
+  const selection = document.getSelection();
+  if (selection === null || selection.isCollapsed || selection.anchorNode === null) return false;
+  return (target.closest('[contenteditable="true"]') ?? target).contains(selection.anchorNode);
+}
+
+/** Threads Overview on Home as the screen shows it — not its copy in the layer under the card — or `null` off Home. */
+function homeSection(): HTMLElement | null {
+  const sections = Array.from(document.querySelectorAll<HTMLElement>(SECTION_SELECTOR));
+  return sections.find((section) => !inHomeLayer(section)) ?? null;
 }
 
 /**
@@ -89,8 +135,8 @@ function lockSideways(scrollers: readonly HTMLElement[]): () => void {
 }
 
 /**
- * Tell bb's own swipe of the told finger at `point`, on `to`: the press where
- * the finger is, the rest on the window, where bb hears them.
+ * Tell bb's own swipe of the told finger at `point`, on `to`: the press on
+ * bb's page, the rest on the window, where bb hears them.
  */
 function relay(type: string, point: Point, to: EventTarget): void {
   to.dispatchEvent(
@@ -123,13 +169,120 @@ function adoptRow(root: HTMLElement, pointerId: number, start: Point): (() => bo
   return adoption.holds;
 }
 
+/** A swipe from the left edge, for bb's left panel. */
+function sidebarSwipe(target: Element, pointerId: number, start: Point): EdgeGesture {
+  const scrollers = sidewaysScrollers(target);
+  const bbIgnores = !bbTakesSidebarSwipe(start.x) || target.closest(FIELD_SELECTOR) !== null;
+  // Pressed on bb's page itself, which bb's swipe never refuses — not on the field under the finger.
+  const pressOn = document.querySelector(INSET_SELECTOR) ?? target;
+  let unlock: (() => void) | null = null;
+  let relaying = false;
+  const swipe: EdgeGesture = {
+    pointerId,
+    start,
+    last: start,
+    // Locked on the first move to the right, not on the touch: a swipe to
+    // the left from the same strip still turns the slides. A finger told to
+    // bb is held to the end, wherever it wanders: bb hears no touch of it to
+    // hold the page by itself.
+    holds: () => {
+      const claims = claimsSidebarSwipe(start, swipe.last);
+      if (claims && unlock === null) unlock = lockSideways(scrollers);
+      return relaying || claims;
+    },
+    // Told to bb from the first move to the right, with the slides already
+    // locked: bb gives up a swipe that starts on something scrolling sideways.
+    moved: () => {
+      if (swipe.holds() && bbIgnores && !relaying) {
+        relaying = true;
+        relay("pointerdown", intoBbSidebarSwipe(start, start), pressOn);
+      }
+      if (relaying) relay("pointermove", intoBbSidebarSwipe(start, swipe.last), window);
+    },
+    end: (completed) => {
+      unlock?.();
+      if (relaying) relay(completed ? "pointerup" : "pointercancel", intoBbSidebarSwipe(start, swipe.last), window);
+    },
+  };
+  return swipe;
+}
+
+/** A swipe from the right edge of a thread, for its right panel; `null` when the thread has none to open. */
+function panelSwipe(pointerId: number, start: Point): EdgeGesture | null {
+  const drag = dragThreadPanel(start);
+  if (drag === null) return null;
+  const swipe: EdgeGesture = {
+    pointerId,
+    start,
+    last: start,
+    holds: () => drag.holds(swipe.last),
+    moved: () => drag.move(swipe.last),
+    end: drag.end,
+  };
+  return swipe;
+}
+
 /**
- * Hear the edge swipes over Home while `root`, the section, is on it, and
- * return what stops hearing them. A finger counts when it lands in the section
- * or in the margin around it — bb's page under the section, not its top bar or
- * its composer.
+ * A swipe from anywhere on the composer: to the right it is the left edge's,
+ * to the left the right edge's in a thread; any other way, or to the left on
+ * Home, it is nobody's. Decided on the first move and kept to the end.
  */
-export function watchEdgeSwipes(root: HTMLElement): () => void {
+function composerSwipe(target: Element, pointerId: number, start: Point, inThread: boolean): EdgeGesture {
+  let chosen: EdgeGesture | null | undefined;
+  const choose = (): EdgeGesture | null => {
+    if (chosen === undefined && (swipe.last.x !== start.x || swipe.last.y !== start.y)) {
+      if (claimsSidebarSwipe(start, swipe.last)) chosen = sidebarSwipe(target, pointerId, start);
+      else if (inThread && claimsPanelSwipe(start, swipe.last)) chosen = panelSwipe(pointerId, start);
+      else chosen = null;
+    }
+    if (chosen) chosen.last = swipe.last;
+    return chosen ?? null;
+  };
+  const swipe: EdgeGesture = {
+    pointerId,
+    start,
+    last: start,
+    holds: () => choose()?.holds() ?? false,
+    moved: () => choose()?.moved(),
+    end: (completed) => chosen?.end(completed),
+  };
+  return swipe;
+}
+
+/** A finger on the open right panel: bb's swipe closes it, carrying the page lifted over the panel. */
+function closingSwipe(pointerId: number, start: Point): EdgeGesture {
+  const lower = liftPageOverPanel();
+  return { pointerId, start, last: start, holds: () => false, moved: () => {}, end: lower };
+}
+
+/** A swipe from the right edge of Home, for the row on its line; `null` when no row takes it. */
+function rowSwipe(target: Element, pointerId: number, start: Point): EdgeGesture | null {
+  // A finger on a row is the row's own; one beside it is handed to it.
+  const section = homeSection();
+  if (section === null || target.closest(SWIPE_ROW_SELECTOR) !== null) return null;
+  const holds = adoptRow(section, pointerId, start);
+  if (holds === null) return null;
+  return { pointerId, start, last: start, holds, moved: () => void holds(), end: () => {} };
+}
+
+/**
+ * Whether a finger landing on `target` may start an edge swipe at all: on bb's
+ * page and nowhere else — not on a modal, a toast or a panel laid over it.
+ */
+function startsEdgeSwipe(target: Element): boolean {
+  if (target.closest(INSET_SELECTOR) === null || target.closest(OVER_PAGE_SELECTOR) !== null) return false;
+  if (inHomeLayer(target) || panelOpen()) return false;
+  if (target.closest(OWN_GESTURE_SELECTOR) !== null || dragsSelection(target)) return false;
+  return homeSection()?.querySelector(OPEN_ROW_SELECTOR) == null;
+}
+
+/**
+ * Hear the edge swipes over the whole screen, and return what stops hearing
+ * them. `inThread` says, at the touch, whether a thread is open: its right edge
+ * is the right panel's, Home's the rows'. A finger counts anywhere on bb's
+ * page, while none of bb's panels stands open and nothing is laid over it.
+ */
+export function watchEdgeSwipes(inThread: () => boolean): () => void {
   let gesture: EdgeGesture | null = null;
 
   const finish = (completed: boolean) => {
@@ -168,61 +321,24 @@ export function watchEdgeSwipes(root: HTMLElement): () => void {
   const onTouchEnd = () => finish(true);
   const onTouchCancel = () => finish(false);
 
-  const sidebarSwipe = (target: Element, pointerId: number, start: Point): EdgeGesture => {
-    const scrollers = sidewaysScrollers(target);
-    const bbIgnores = !bbTakesSidebarSwipe(start.x);
-    let unlock: (() => void) | null = null;
-    let relaying = false;
-    const swipe: EdgeGesture = {
-      pointerId,
-      start,
-      last: start,
-      // Locked on the first move to the right, not on the touch: a swipe to
-      // the left from the same strip still turns the slides. A finger told to
-      // bb is held to the end, wherever it wanders: bb hears no touch of it to
-      // hold the page by itself.
-      holds: () => {
-        const claims = claimsSidebarSwipe(start, swipe.last);
-        if (claims && unlock === null) unlock = lockSideways(scrollers);
-        return relaying || claims;
-      },
-      // Told to bb from the first move to the right, with the slides already
-      // locked: bb gives up a swipe that starts on something scrolling sideways.
-      moved: () => {
-        if (swipe.holds() && bbIgnores && !relaying) {
-          relaying = true;
-          relay("pointerdown", intoBbSidebarSwipe(start, start), target);
-        }
-        if (relaying) relay("pointermove", intoBbSidebarSwipe(start, swipe.last), window);
-      },
-      end: (completed) => {
-        unlock?.();
-        if (relaying) relay(completed ? "pointerup" : "pointercancel", intoBbSidebarSwipe(start, swipe.last), window);
-      },
-    };
-    return swipe;
-  };
-
   const onPointerDown = (event: PointerEvent) => {
     // The touch told to bb is bb's. Any other new finger — a second one, or
     // the next touch after a lift nobody heard — leaves the swipe before it
     // unfinished.
     if (event.pointerId === RELAYED_POINTER_ID) return;
     finish(false);
-    if (event.pointerType !== "touch" || !event.isPrimary || inHomeLayer(root)) return;
+    if (event.pointerType !== "touch" || !event.isPrimary) return;
     const target = event.target instanceof Element ? event.target : null;
-    if (target === null || !(root.contains(target) || target.contains(root))) return;
-    if (target.closest(OWN_GESTURE_SELECTOR) !== null || root.querySelector(OPEN_ROW_SELECTOR) !== null) return;
+    if (target === null) return;
     const start = { x: event.clientX, y: event.clientY };
-    const strip = edgeStrip(start.x, window.innerWidth);
-    if (strip === "sidebar") {
-      gesture = sidebarSwipe(target, event.pointerId, start);
-    } else if (strip === "row" && target.closest(SWIPE_ROW_SELECTOR) === null) {
-      // A finger on a row is the row's own; one beside it is handed to it.
-      const holds = adoptRow(root, event.pointerId, start);
-      if (holds !== null) {
-        gesture = { pointerId: event.pointerId, start, last: start, holds, moved: () => void holds(), end: () => {} };
-      }
+    if (rightPanelOpen() && target.closest(SHELF_SELECTOR) !== null) gesture = closingSwipe(event.pointerId, start);
+    else if (!startsEdgeSwipe(target)) return;
+    else if (target.closest(COMPOSER_SELECTOR) !== null && sidewaysScrollers(target).length === 0) {
+      gesture = composerSwipe(target, event.pointerId, start, inThread());
+    } else {
+      const strip = edgeStrip(start.x, window.innerWidth);
+      if (strip === "sidebar") gesture = sidebarSwipe(target, event.pointerId, start);
+      else if (strip === "row") gesture = inThread() ? panelSwipe(event.pointerId, start) : rowSwipe(target, event.pointerId, start);
     }
     if (gesture === null) return;
     // Hung before the first move: a move nobody stopped is the scroll's for good.
@@ -238,5 +354,6 @@ export function watchEdgeSwipes(root: HTMLElement): () => void {
   return () => {
     document.removeEventListener("pointerdown", onPointerDown, true);
     finish(false);
+    abandonPanelSettle();
   };
 }

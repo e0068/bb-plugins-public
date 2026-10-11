@@ -65,11 +65,13 @@ import { sidePaneSteps } from "./src/core/open";
 import {
   claimsMove,
   composerBox,
+  followHeading,
   hasRoomBelow,
-  sectionAboveComposer,
+  startHeading,
   startsHomeSwipe,
   swipeCard,
   type ComposerBox,
+  type Heading,
   type Point,
   type SwipeCard,
 } from "./src/core/home-swipe";
@@ -83,6 +85,7 @@ import {
   revealHome,
 } from "./home-layer";
 import { openRowIntoThread } from "./thread-open";
+import { RowsNearView } from "./rows-near-view";
 import { findComposer, foldByDrag, mountFoldStyle, soleFinger, standsOpen } from "./composer-fold";
 import { holdSticky, type Hold } from "./sticky-hold";
 import { ADOPT_ROW_SWIPE, watchEdgeSwipes, type RowAdoption } from "./edge-swipe";
@@ -1448,7 +1451,7 @@ function GroupedQueue({
               inert={!focused}
               className={cn(classes.list, !focused && "pointer-events-none")}
             >
-              {group.threads.map((thread) => renderRow(thread, focused))}
+              <RowsNearView items={group.threads} render={(thread) => renderRow(thread, focused)} />
             </ul>
           </div>
         );
@@ -1903,17 +1906,11 @@ function AttentionSection() {
   const rootRef = useRef<HTMLDivElement>(null);
   const onQueueKeyDown = useQueueKeys(rootRef, sidePane.current, experimental);
   useHomePaneForSidebar(rootRef, experimental && openMode === "split");
-  // The edges of Home are edge gestures' on a touch screen — see `watchEdgeSwipes`.
-  // Heard from the section itself, which is on the page only once the threads are in.
   const [rootNode, setRootNode] = useState<HTMLDivElement | null>(null);
   const attachRoot = useCallback((node: HTMLDivElement | null) => {
     rootRef.current = node;
     setRootNode(node);
   }, []);
-  useEffect(
-    () => (touch && rootNode !== null ? watchEdgeSwipes(rootNode) : undefined),
-    [touch, rootNode],
-  );
   const atScrollEnd = useCompactHomeAtEnd(rootNode);
   const [showPostponed, setShowPostponed] = useState(false);
 
@@ -2094,7 +2091,7 @@ function AttentionSection() {
             />
           ) : (
             <ul className={classes.list}>
-              {queue.map(flatRow)}
+              <RowsNearView items={queue} render={flatRow} />
             </ul>
           )}
 
@@ -2140,20 +2137,26 @@ function AttentionSection() {
  * Whether something under the finger is a list with content still below the
  * fold. A push up over such a list is a request to scroll it, and the gesture
  * keeps out — see `hasRoomBelow`. A conversation resting at its newest message
- * has nothing left to give and lets the gesture through.
+ * has nothing left to give and lets the gesture through. The walk up stops at
+ * `until`: a finger on the composer asks only whether its own draft scrolls,
+ * not the conversation it sits in.
  */
-function scrollsUnder(from: Element): boolean {
+function scrollsUnder(from: Element, until: Element | null = null): boolean {
   for (let node: Element | null = from; node !== null; node = node.parentElement) {
     const overflow = getComputedStyle(node).overflowY;
     if ((overflow === "auto" || overflow === "scroll" || overflow === "overlay") && hasRoomBelow(node)) {
       return true;
     }
+    if (node === until) break;
   }
   return false;
 }
 
 // bb's own layout root: the whole screen, which the gesture lifts as a card.
 const SWIPE_SCREEN_SELECTOR = "[data-testid=app-layout-root]";
+
+// bb's composer shell: the form and the project row under it.
+const COMPOSER_SHELL_SELECTOR = "[data-app-composer]";
 
 // How long a card let go short of home takes to settle back, in ms.
 const SWIPE_SETTLE_MS = 200;
@@ -2229,7 +2232,7 @@ function HomeSwipe() {
   const touch = useMediaQuery(TOUCH_QUERY);
   const [layer] = useState(createHomeLayer);
   const [box, setBox] = useState<ComposerBox | null>(null);
-  const [sectionBox, setSectionBox] = useState<Box | null>(null);
+  const [sectionPlace, setSectionPlace] = useState<SectionPlace | null>(null);
   // The list under the card is drawn from the moment the card first lifts
   // until the layer goes back beneath the page — the card settled back into
   // the thread, or the live Home handed the screen over; the rest of the time
@@ -2274,14 +2277,10 @@ function HomeSwipe() {
       }
       const section = shown !== null ? homeSection(shown) : null;
       if (section !== null) {
-        const { top, left, width, height } = sectionAboveComposer(
-          section.getBoundingClientRect(),
-          composer?.getBoundingClientRect().top ?? null,
-        );
-        setSectionBox((prev) =>
-          prev !== null && prev.top === top && prev.left === left && prev.width === width && prev.height === height
-            ? prev
-            : { top, left, width, height },
+        // Read field by field: a DOMRect's sides are getters, which a spread drops.
+        const { top, left, width } = section.getBoundingClientRect();
+        setSectionPlace((prev) =>
+          prev !== null && prev.top === top && prev.left === left && prev.width === width ? prev : { top, left, width },
         );
       }
     };
@@ -2296,6 +2295,8 @@ function HomeSwipe() {
     if (!touch || !inThread) return;
     let start: Point | null = null;
     let last: Point | null = null;
+    // Which way the finger is heading: only a finger still heading up when it lets go goes home.
+    let heading: Heading | null = null;
     let carried: HTMLElement | null = null;
     // The hold on bb's composer while the card is carried — see `holdSticky`.
     let hold: Hold | null = null;
@@ -2322,6 +2323,7 @@ function HomeSwipe() {
       carried = null;
       start = null;
       last = null;
+      heading = null;
       if (card === null) return;
       if (!animate) {
         layFlat(card);
@@ -2340,12 +2342,13 @@ function HomeSwipe() {
       // Cheapest question first: every touch on the screen passes here, and
       // only the few that land on the strip are worth walking the DOM for.
       if (!startsHomeSwipe(point, window.innerHeight)) return;
-      if (scrollsUnder(event.target)) return;
+      if (scrollsUnder(event.target, event.target.closest(COMPOSER_SHELL_SELECTOR))) return;
       // An open composer has the bottom of the screen: a push up there is
       // nobody's — see `holdsOpenComposer` — and never goes home.
       const composer = findComposer();
       if (composer !== null && standsOpen(composer)) return;
       start = point;
+      heading = startHeading(point.y);
     };
     const onMove = (event: TouchEvent) => {
       const from = start;
@@ -2359,6 +2362,7 @@ function HomeSwipe() {
       }
       const now = { x: finger.clientX, y: finger.clientY };
       last = now;
+      if (heading !== null) heading = followHeading(heading, now.y);
       const card = swipeCard(from, now);
       // Every upright move is kept from the page, the climb inside the dead
       // zone and a dip back into it included — see `claimsMove`.
@@ -2378,7 +2382,7 @@ function HomeSwipe() {
       hold?.fit();
     };
     const onEnd = () => {
-      const goesHome = start !== null && last !== null && swipeCard(start, last).armed;
+      const goesHome = start !== null && last !== null && heading?.up === true && swipeCard(start, last).armed;
       // Handed over before the card comes off, so the layer covers the screen
       // from the moment the thread lies flat until bb has drawn Home.
       if (goesHome) handingOver.current = handOverHome(layer, screen, () => setLive(false));
@@ -2402,7 +2406,7 @@ function HomeSwipe() {
   return touch
     ? createPortal(
         <>
-          <HomeSection box={sectionBox} live={live} />
+          <HomeSection place={sectionPlace} live={live} />
           <HomeComposer box={box} />
         </>,
         layer,
@@ -2411,7 +2415,7 @@ function HomeSwipe() {
 }
 
 // Where the section stands under the card when Home has not been seen: under
-// bb's top bar, across the screen, down to its bottom edge, in px.
+// bb's top bar, across the screen, down to the composer, in px.
 const SECTION_TOP = 56;
 
 // How far in from each side of the screen that section stands, in px.
@@ -2422,22 +2426,30 @@ function homeSection(screen: HTMLElement): Element | null {
   return screen.querySelector(`[data-testid=root-compose-compact-home] ${SECTION_SELECTOR}`);
 }
 
+/** Where the section stood on Home: its top, left edge and width, in px. Its foot is the composer's top. */
+type SectionPlace = Pick<Box, "top" | "left" | "width">;
+
 /**
  * Threads Overview under the card, standing where it stood on Home: the real
  * list while a gesture is under way — drawn the moment it starts, so Home is
  * seen as it will open — and a skeleton of it the rest of the time.
  */
-function HomeSection({ box, live }: { box: Box | null; live: boolean }) {
+function HomeSection({ place, live }: { place: SectionPlace | null; live: boolean }) {
   const layout = useQueueLayout();
-  // A measured box is the section's own, edge to edge; the fallback spans the
-  // screen and keeps the list off its edges. The list stops at the box, as
-  // Home's scroller stops it, instead of running on under the composer.
-  const place: CSSProperties =
-    box === null
-      ? { top: SECTION_TOP, left: 0, right: 0, bottom: 0, paddingInline: SECTION_INSET }
-      : { top: box.top, left: box.left, width: box.width, height: box.height };
+  // The layer is a column: the section takes all of it above the composer, so
+  // it ends where the composer drawn here begins, however tall that composer
+  // stands — as Home's scroller stops the list. A measured place is the
+  // section's own, edge to edge; the fallback spans the screen and keeps the
+  // list off its edges.
+  const at: CSSProperties =
+    place === null
+      ? { marginTop: SECTION_TOP, paddingInline: SECTION_INSET }
+      : { marginTop: place.top, marginLeft: place.left, width: place.width };
   return (
-    <div data-home-swipe-section="" style={{ position: "absolute", overflow: "hidden", ...place }}>
+    <div
+      data-home-swipe-section=""
+      style={{ position: "relative", flexGrow: 1, flexBasis: 0, minHeight: 0, overflow: "hidden", ...at }}
+    >
       {live ? <AttentionSection /> : <SectionSkeleton layout={layout} />}
     </div>
   );
@@ -2479,12 +2491,12 @@ const COMPOSER_INSET = 12;
  */
 function HomeComposer({ box }: { box: ComposerBox | null }) {
   const projectId = useComposerProject();
-  const place: CSSProperties =
+  const at: CSSProperties =
     box === null
-      ? { left: COMPOSER_INSET, right: COMPOSER_INSET, bottom: COMPOSER_INSET }
-      : { left: box.left, width: box.width, bottom: box.bottom };
+      ? { marginInline: COMPOSER_INSET, marginBottom: COMPOSER_INSET }
+      : { marginLeft: box.left, width: box.width, marginBottom: box.bottom };
   return (
-    <div style={{ position: "absolute", ...place }}>
+    <div style={{ flex: "none", ...at }}>
       <NewThreadComposer
         layout="document"
         defaultProjectId={projectId ?? undefined}
@@ -2536,6 +2548,23 @@ function ComposerFold() {
   return null;
 }
 
+/**
+ * The sideways swipes from the edges of the screen, on Home and in a thread —
+ * see `edge-swipe.ts`. They live in an app overlay because that is bb's one
+ * mount that outlives the route. Whether a thread is open is read at the
+ * touch, not at subscribing: a swipe under way survives a change of route.
+ */
+function EdgeSwipes() {
+  const { threadId } = useBbContext();
+  const touch = useMediaQuery(TOUCH_QUERY);
+  const inThread = useRef(threadId !== null);
+  useEffect(() => {
+    inThread.current = threadId !== null;
+  });
+  useEffect(() => (touch ? watchEdgeSwipes(() => inThread.current) : undefined), [touch]);
+  return null;
+}
+
 export default definePluginApp((app) => {
   app.slots.homepageSection({
     id: "needs-attention",
@@ -2546,6 +2575,7 @@ export default definePluginApp((app) => {
   if (typeof app.slots.experimental_appOverlay === "function") {
     app.slots.experimental_appOverlay({ id: "home-swipe", component: HomeSwipe });
     app.slots.experimental_appOverlay({ id: "composer-fold", component: ComposerFold });
+    app.slots.experimental_appOverlay({ id: "edge-swipes", component: EdgeSwipes });
   }
   if (typeof app.composer?.customize === "function") {
     app.composer.customize({

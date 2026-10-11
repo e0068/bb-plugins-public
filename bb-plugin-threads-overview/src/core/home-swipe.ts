@@ -1,8 +1,6 @@
 // Pure rule for the gesture that leaves a thread: a finger put down at the
 // bottom edge of the screen and pushed up takes the screen home, the way a
-// phone sends an app away. Layer 1: depends only on the box.
-
-import type { Box } from "./box";
+// phone sends an app away. Layer 1: depends on nothing.
 
 /** A point under the finger, in the screen's own coordinates. */
 export interface Point {
@@ -152,17 +150,31 @@ export function composerBox(
   return { left: rect.left, width: rect.width, bottom: Math.max(0, viewportHeight - rect.bottom) };
 }
 
+/** How far the finger has to go one way before it counts as heading that way, in px: a finger at rest trembles by less. */
+export const HOME_SWIPE_HEADING_STEP = 6;
+
+/** Which way a finger carrying the screen is heading: `up` towards home, or back down. */
+export interface Heading {
+  /** The farthest the finger has gone the way it is heading, in px down the screen. */
+  readonly anchor: number;
+  readonly up: boolean;
+}
+
+/** A finger just put down at `y` is heading up: that is the only way the gesture starts. */
+export function startHeading(y: number): Heading {
+  return { anchor: y, up: true };
+}
+
 /**
- * Where to stand the section under the card, from the box it had on Home and
- * the top of Home's composer, if one was seen. Home's list scrolls on under
- * bb's composer block, which covers it down to the bottom edge; under the
- * card that block is not drawn, so the list ends where the composer begins.
- * Read field by field: a DOMRect's sides are getters, which a spread drops.
+ * Where the finger is heading once it has moved to `y`. The anchor follows the
+ * farthest point the way the finger is heading, and the finger turns once it
+ * has come back `HOME_SWIPE_HEADING_STEP` from there — so a trembling finger
+ * lifted at the top still heads up, and one brought back down heads down even
+ * if it is still past the reach.
  */
-export function sectionAboveComposer(
-  { top, left, width, height }: Box,
-  composerTop: number | null,
-): Box {
-  const shown = composerTop === null ? height : Math.max(0, Math.min(height, composerTop - top));
-  return { top, left, width, height: shown };
+export function followHeading(heading: Heading, y: number): Heading {
+  const further = heading.up ? y < heading.anchor : y > heading.anchor;
+  if (further) return { anchor: y, up: heading.up };
+  if (Math.abs(y - heading.anchor) < HOME_SWIPE_HEADING_STEP) return heading;
+  return { anchor: y, up: !heading.up };
 }
