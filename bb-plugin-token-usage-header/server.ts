@@ -4,6 +4,7 @@
 // (app.tsx) polls for a thread's Claude Code token usage: session totals,
 // broken down by kind, plus one row per agent invocation (main agent +
 // every subagent call), sorted by spend.
+import { rates } from "@bb-plugins/provider-usage/core/pricing";
 import { defineRpcContract, type BbPluginApi, type PluginKvStorage } from "@get-bb/plugin-sdk";
 import { z } from "zod";
 import { parseReducedColors, REDUCED_COLORS_KV_KEY, type ReducedColors } from "@bb-plugins/reduced-colors/core/settings";
@@ -38,6 +39,8 @@ import {
 // A finite, non-NaN token/cost count — RPC output must be strict JSON, so
 // this closes off the two ways a raw double could sneak past `z.number()`.
 const finiteNumber = z.number().finite();
+// Reference the shared package so its Python/assets ship with marketplace builds.
+void rates;
 
 // tools/tokens.py defaults --top to 25 when it isn't passed — fine for its
 // human-readable table, but far too low for a session with many subagent
@@ -69,6 +72,7 @@ const costBreakdownSchema = z.object({
 
 const sessionTotalsSchema = tokenBreakdownSchema.extend({
   cost: finiteNumber,
+  unpricedModels: z.array(z.string()).optional(),
   costs: costBreakdownSchema,
   messages: finiteNumber,
 });
@@ -82,6 +86,7 @@ const agentUsageSchema = z.object({
   total: finiteNumber,
   /** Estimated cost of the agent's bucket in USD — the calculator prices the bucket as a whole. */
   cost: finiteNumber,
+  unpricedModels: z.array(z.string()).optional(),
 });
 
 // agent_timeline.py's --json report shape (src/core/agent-timeline.ts) doesn't
@@ -128,6 +133,7 @@ const threadsTimelineEntrySchema = z
     durationSec: finiteNumber,
     totalTokens: finiteNumber,
     totalCost: finiteNumber,
+    unpricedModels: z.array(z.string()).optional(),
     workflowCount: finiteNumber,
     bins: z.array(threadsTimelineBinSchema),
     // Working directory/branch the session ran in, and pr/push/commit
@@ -333,6 +339,7 @@ function mapSessionTotals(report: TokensReport) {
       caption: display.caption,
       total: bucket.total,
       cost: bucket.cost,
+      ...(bucket.unpricedModels ? { unpricedModels: bucket.unpricedModels } : {}),
     };
   });
 
@@ -345,6 +352,7 @@ function mapSessionTotals(report: TokensReport) {
       output: totals.output,
       thinking: totals.thinking,
       cost: totals.cost,
+      ...(totals.unpricedModels ? { unpricedModels: totals.unpricedModels } : {}),
       costs: totals.costs,
       messages: totals.messages,
     },

@@ -560,7 +560,7 @@ export function ThreadRow({
         <span className={`tabular-nums ${hug ? "w-full truncate" : "ml-auto shrink-0"}`}>
           {/* No workflows ran — omit them entirely rather than writing "0 workflows". */}
           {thread.workflowCount > 0 && `${thread.workflowCount} workflows · `}
-          {agentCount} agents · {fmtDuration(thread.durationSec)} · {formatTokenCount(thread.totalTokens)} · {formatCost(thread.totalCost)}
+          {agentCount} agents · {fmtDuration(thread.durationSec)} · {formatTokenCount(thread.totalTokens)} · {(thread.unpricedModels?.length ? "API price unavailable" : formatCost(thread.totalCost))}
         </span>
       </div>
 

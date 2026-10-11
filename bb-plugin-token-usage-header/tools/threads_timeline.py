@@ -311,6 +311,7 @@ def build_timeline(root, limit=20, unit=300, project=None, session=None, group_w
                 "durationSec": end_epoch - start_epoch,
                 "totalTokens": total_tokens,
                 "totalCost": total_cost,
+                "unpricedModels": sorted({t for agents in bin_buckets.values() for b in agents.values() for t in b.models if t.removesuffix(":long") not in tokens.RATES}),
                 "workflowCount": workflow_count,
                 "bins": bins_out,
                 "cwd": git_info["cwd"],

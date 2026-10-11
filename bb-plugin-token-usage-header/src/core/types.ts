@@ -76,6 +76,8 @@ export interface TokensBucket {
   messages: number;
   /** Estimated cost in USD, rounded to cents. */
   cost: number;
+  /** Models without a known API tariff; cost is a partial sum when nonempty. */
+  unpricedModels?: string[];
   /**
    * Usage per price tier encountered in the bucket, in descending order —
    * the tiers `cost` was priced at. Kept in the report; the UI doesn't read
@@ -115,6 +117,8 @@ export interface TokensTotals {
   thinking: number;
   messages: number;
   cost: number;
+  /** Models without a known API tariff; cost is a partial sum when nonempty. */
+  unpricedModels?: string[];
   /** Breakdown of `cost` by token kind — for the cost shown on each breakdown row. */
   costs: TokensCostBreakdown;
   models: BucketModelUsage[];

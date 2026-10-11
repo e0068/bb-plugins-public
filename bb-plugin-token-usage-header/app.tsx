@@ -197,7 +197,7 @@ function TokenUsageHeaderButton({ threadId, isCompactViewport }: PluginThreadHea
   const isError = state.kind === "error";
   const buttonText =
     state.kind === "ready"
-      ? `${formatTokenCount(state.usage.totals.total)} · ${formatCost(state.usage.totals.cost)}`
+      ? `${formatTokenCount(state.usage.totals.total)} · ${(state.usage.totals.unpricedModels?.length ? "API price unavailable" : formatCost(state.usage.totals.cost))}`
       : state.kind === "no-session"
         ? "–"
         : state.kind === "loading"
@@ -205,12 +205,12 @@ function TokenUsageHeaderButton({ threadId, isCompactViewport }: PluginThreadHea
           : "";
   const ariaLabel =
     state.kind === "ready"
-      ? `Token usage Claude Code: ${formatTokenCount(state.usage.totals.total)}, ${formatCost(state.usage.totals.cost)}`
+      ? `Token usage: ${formatTokenCount(state.usage.totals.total)}, ${(state.usage.totals.unpricedModels?.length ? "API price unavailable" : formatCost(state.usage.totals.cost))}`
       : state.kind === "no-session"
-        ? "Claude Code token usage: session not started yet"
+        ? "Token usage: session not started yet"
         : state.kind === "loading"
-          ? "Claude Code token usage: loading"
-          : `Token usage Claude Code: error — ${state.message}`;
+          ? "Token usage: loading"
+          : `Token usage: error — ${state.message}`;
 
   return (
     <Popover
@@ -316,7 +316,7 @@ function UsageDetails({
 
       <div className="flex items-center justify-between border-t border-border pt-2 text-xs text-muted-foreground">
         <span>Cost</span>
-        <span className="font-medium tabular-nums text-foreground">{formatCost(totals.cost)}</span>
+        <span className="font-medium tabular-nums text-foreground">{(totals.unpricedModels?.length ? "API price unavailable" : formatCost(totals.cost))}</span>
       </div>
       <div className="flex items-center justify-between text-xs text-muted-foreground">
         <span>Responses</span>
@@ -360,7 +360,7 @@ function UsageDetails({
                     )}
                   </div>
                   <span className="shrink-0 tabular-nums text-muted-foreground">
-                    {formatTokenCount(agent.total)} · {formatCost(agent.cost)}
+                    {formatTokenCount(agent.total)} · {(agent.unpricedModels?.length ? "API price unavailable" : formatCost(agent.cost))}
                   </span>
                 </button>
               </li>

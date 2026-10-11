@@ -13,7 +13,8 @@
         "./packages/*"
       ]
     },
-    "skipLibCheck": false
+    "skipLibCheck": false,
+    "resolveJsonModule": true
   },
   "include": [
     "server.ts",

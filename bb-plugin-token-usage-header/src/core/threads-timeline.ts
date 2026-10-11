@@ -80,6 +80,7 @@ const RawThreadEntrySchema = z
     totalTokens: z.number().finite(),
     /** Cost of the thread's entire usage in USD, at the same rate as tokens.py (Bucket.cost). */
     totalCost: z.number().finite(),
+    unpricedModels: z.array(z.string()).optional(),
     /** How many distinct workflow runs took part in the session (0 — a regular thread with no workflow). */
     workflowCount: z.number().int().nonnegative(),
     bins: z.array(TimelineBinSchema),
