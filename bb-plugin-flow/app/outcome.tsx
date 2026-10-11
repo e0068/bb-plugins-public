@@ -7,15 +7,13 @@
 import { useRpc } from "@get-bb/plugin-sdk/app";
 
 import { isTaskAddress } from "../core/task-lookup";
-import { fencedParts } from "../core/mermaid-fences";
-import { outcomeItems, outcomeKind, paragraphs } from "../core/outcome";
+import { outcomeItems, outcomeKind } from "../core/outcome";
 import { Icon } from "../components/ui/icon";
 import { cn } from "../lib/utils";
 import type { DecisionBrief, StageOutcome, outcomeRpcContract } from "../shared/contract";
 import { CommandResultRow } from "./command";
 import { AddRow } from "./add-row";
-import { LinkedText } from "./linked-text";
-import { MermaidDiagram } from "./mermaid-diagram";
+import { RichText } from "./linked-text";
 import type { FileRoots } from "../core/result-link";
 import { setOutcomeNote, type Draft } from "./draft";
 import { useMessages } from "./locale-context";
@@ -40,18 +38,8 @@ function Group({ title, children }: { title: string; children: React.ReactNode }
 
 function Paragraphs({ text }: { text: string }) {
   return (
-    <div className="flex flex-col gap-2">
-      {fencedParts(text).flatMap((part, i) =>
-        part.kind === "diagram" ? (
-          <MermaidDiagram key={i} source={part.source} />
-        ) : (
-          paragraphs(part.text).map((paragraph, j) => (
-            <p key={`${i}:${j}`} className="m-0 whitespace-pre-wrap break-words text-sm leading-relaxed">
-              <LinkedText text={paragraph} />
-            </p>
-          ))
-        ),
-      )}
+    <div className="break-words text-sm leading-relaxed">
+      <RichText text={text} />
     </div>
   );
 }
@@ -66,11 +54,11 @@ function Items({ outcome, done }: { outcome: StageOutcome; done: boolean }) {
         <div key={item.text} data-demo-item className="flex items-start gap-2 text-sm leading-relaxed">
           <Icon name={done ? "Check" : "X"} className={cn("mt-1 size-3.5 shrink-0", done ? "text-success" : "text-muted-foreground")} />
           <span className="break-words">
-            <LinkedText text={item.text} />
+            <RichText text={item.text} />
             {item.why !== undefined && (
               <span className="text-muted-foreground">
                 {" — "}
-                <LinkedText text={item.why} />
+                <RichText text={item.why} />
               </span>
             )}
           </span>

@@ -55,7 +55,7 @@ const card = async (slot: Slot) => within(await slot.findByRole("group", { name:
 describe("mermaid в Демонстрации", () => {
   it("блоки mermaid в заметках и секциях нарисованы диаграммами, абзацы вокруг — текстом", async () => {
     const c = await card(open());
-    await vi.waitFor(() => expect(document.querySelectorAll("[data-mermaid] svg")).toHaveLength(2), { timeout: 3000 });
+    await vi.waitFor(() => expect(document.querySelectorAll(".mde-mermaid-svg svg")).toHaveLength(2), { timeout: 3000 });
     c.getByText("Оба варианта ниже.");
     c.getByText("Как устроено");
     expect(c.queryByText(/```/)).toBeNull();

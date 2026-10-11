@@ -33,7 +33,7 @@ describe("жирное в тексте брифа", () => {
   it("пояснение вопроса рисует **слово** жирным и без звёздочек", async () => {
     const slot = open();
     const word = await slot.findByText("Название");
-    expect(word.tagName).toBe("STRONG");
+    expect(word.tagName).toBe("B");
     expect(slot.container.textContent).not.toContain("**");
   });
 });

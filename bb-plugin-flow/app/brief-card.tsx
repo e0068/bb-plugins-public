@@ -54,7 +54,7 @@ import { withRestored } from "./draft-restore";
 import { useDraftSender } from "./draft-sync";
 import { AddRow, addRowText, MarkedCopy, overCopy, useMarkedParts } from "./add-row";
 import { AttachmentError, AttachmentsProvider, FieldImages, usePasteImages } from "./attachments";
-import { LinkedText, RichText, onLink } from "./linked-text";
+import { RichText, onLink } from "./linked-text";
 import { AddMeta, CardText, CheckSquare, DocumentName, buttonCard, rowCellStyle } from "./cells";
 import { answeredAt, useStoredDraft, useSubmit, type FormProps } from "./parts";
 import type { Messages } from "../lib/messages";
@@ -457,7 +457,7 @@ function ItemField(props: { view: View; label: string; value: string; className?
     <>
       {linked && (
         <span data-linked-item className={cn(itemText, "cursor-text", props.className)} onClick={(event) => !onLink(event) && edit()}>
-          <LinkedText text={props.value} />
+          <RichText text={props.value} />
         </span>
       )}
       {/* Обёртка стоит всегда: появление первой метки не пересоздаёт поле и не сбрасывает в нём курсор. */}
@@ -505,7 +505,7 @@ function Delta({ before, after }: { before: string; after: ReactNode }) {
     <span className="@container block w-full pb-2">
       <span className="grid grid-cols-1 items-start gap-x-2 gap-y-1 @[31.5rem]:grid-cols-[minmax(240px,1fr)_auto_minmax(240px,1fr)]">
         <span className="min-w-0 whitespace-pre-wrap break-words text-sm leading-relaxed text-muted-foreground">
-          <LinkedText text={before} />
+          <RichText text={before} />
         </span>
         <span data-testid="delta-arrow" aria-hidden="true" className="flex h-[18px] items-center text-muted-foreground">
           <Icon name="ArrowRight" className="size-3.5 rotate-90 @[31.5rem]:rotate-0" />
@@ -543,7 +543,7 @@ function CriterionRow({ item, index, view, byOption }: { item: Criterion; index:
         <span className="flex min-w-0 flex-1 flex-col">
           <span className={criterionHead}>
             <span className={cn(itemText, removed && "text-muted-foreground line-through")}>
-              <LinkedText text={removed || change !== undefined ? title : text} />
+              <RichText text={removed || change !== undefined ? title : text} />
             </span>
             {!removed && <AddMeta add={add} className={criterionMeta} />}
           </span>
@@ -552,7 +552,7 @@ function CriterionRow({ item, index, view, byOption }: { item: Criterion; index:
               before={change.before}
               after={
                 <span className="whitespace-pre-wrap break-words text-sm leading-relaxed">
-                  <LinkedText text={text} />
+                  <RichText text={text} />
                 </span>
               }
             />
@@ -591,7 +591,7 @@ function CriterionRow({ item, index, view, byOption }: { item: Criterion; index:
               field(t.brief.item(n))
             ) : (
               <span className={itemText}>
-                <LinkedText text={title} />
+                <RichText text={title} />
               </span>
             )}
             <AddMeta add={add} className={criterionMeta} />
@@ -644,7 +644,7 @@ function ApprovedRows({ items }: { items: readonly string[] }) {
         items.map((text, i) => (
           <ItemRow key={`approved-${i}`} mark="✓">
             <span className={itemText}>
-              <LinkedText text={text} />
+              <RichText text={text} />
             </span>
           </ItemRow>
         ))}
@@ -763,7 +763,7 @@ function OptionCards({ question, view }: { question: DecisionQuestion; view: Vie
               <span className="flex flex-wrap items-start gap-x-3 gap-y-0.5">
                 <span className="min-w-[min(12rem,100%)] flex-1 text-sm font-medium leading-relaxed">
                   <Starred on={option.recommended}>
-                    <LinkedText text={option.action} />
+                    <RichText text={option.action} />
                   </Starred>
                 </span>
                 <OptionMeta option={option} />
@@ -775,7 +775,7 @@ function OptionCards({ question, view }: { question: DecisionQuestion; view: Vie
               )}
               {option.risks !== undefined && (
                 <span className="mt-1 block break-words text-sm leading-relaxed text-muted-foreground">
-                  {t.brief.risks} <LinkedText text={option.risks} />
+                  {t.brief.risks} <RichText text={option.risks} />
                 </span>
               )}
             </span>
@@ -817,7 +817,7 @@ function ConfirmRow({ question, view, ownLabel, onEnter }: { question: DecisionQ
             )}
           >
             <Starred on={option.recommended} hintAfter>
-              <LinkedText text={option.action} />
+              <RichText text={option.action} />
             </Starred>
           </Pressable>
         );
@@ -873,7 +873,7 @@ function QuestionsSection({ brief, view }: { brief: DecisionBrief; view: View })
         <div key={question.id} role="group" aria-label={plainText(question.question)}>
           <div className="break-words text-sm font-medium leading-relaxed">
             {`${i + 1}. `}
-            <LinkedText text={question.question} />
+            <RichText text={question.question} />
           </div>
           {question.context !== undefined && (
             <div className="mt-0.5 break-words text-sm leading-relaxed text-muted-foreground">
@@ -1259,11 +1259,11 @@ function Heading({ brief, subtitle }: { brief: DecisionBrief; subtitle?: string 
   return (
     <div className="flex flex-col gap-0.5">
       <div className="break-words text-sm font-medium leading-relaxed">
-        <LinkedText text={brief.title} />
+        <RichText text={brief.title} />
       </div>
       {second !== undefined && (
         <div className="break-words text-sm leading-relaxed text-muted-foreground">
-          <LinkedText text={second} />
+          <RichText text={second} />
         </div>
       )}
     </div>
@@ -1398,7 +1398,7 @@ export function ClarifyCard({ brief, send, onResult }: FormProps) {
       {brief.questions.map((question) => (
         <div key={question.id} role="group" aria-label={plainText(question.question)}>
           <div className="break-words text-sm font-medium leading-relaxed">
-            <LinkedText text={question.question} />
+            <RichText text={question.question} />
           </div>
           {question.context !== undefined && (
             <div className="mt-0.5 break-words text-sm leading-relaxed text-muted-foreground">

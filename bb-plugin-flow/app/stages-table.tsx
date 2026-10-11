@@ -24,7 +24,7 @@ import { cn } from "../lib/utils";
 import type { DecisionBrief, StageExecutor } from "../shared/contract";
 import { DocumentName, RiskText } from "./cells";
 import { pickStageExecutor, restoreOwnBudget, seedOwnBudget, setOwnBudget, stageChoiceIn, toAnswer, toggleCriterion, toggleStageRun, typedOwnPrice, type Draft } from "./draft";
-import { LinkedText } from "./linked-text";
+import { RichText } from "./linked-text";
 import { useLocale, useMessages } from "./locale-context";
 import { ExecutorMark } from "./provider-logos";
 import { ResultRow } from "./result-row";
@@ -369,7 +369,7 @@ function CriterionRows({ view, lines, priced }: { view: StagesTableView; lines: 
           <div className={LEFT}>
             <Label icon="↳" numbers={price !== undefined}>
               <span className={cn("min-w-0", c.state === "struck" && "text-muted-foreground line-through opacity-40")}>
-                <LinkedText text={c.text} />
+                <RichText text={c.text} />
               </span>
             </Label>
           </div>
@@ -390,7 +390,7 @@ function CriterionRows({ view, lines, priced }: { view: StagesTableView; lines: 
               <div className={LEFT}>
                 <Label icon={null} numbers={line !== undefined}>
                   <span className={cn("min-w-0", !kept && "text-muted-foreground line-through opacity-40")}>
-                    <LinkedText text={criterionTitle(item)} />
+                    <RichText text={criterionTitle(item)} />
                   </span>
                 </Label>
               </div>

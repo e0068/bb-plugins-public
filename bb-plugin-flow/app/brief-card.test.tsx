@@ -123,8 +123,9 @@ const decideAll = async (slot: ReturnType<typeof render>) => {
 describe("вторая часть брифа", () => {
   it("вопросы пронумерованы, полосы «Развилки» нет", async () => {
     const slot = open();
-    expect(await slot.findByText("1. Как устроена первая часть брифа?")).toBeTruthy();
-    expect(slot.getByText("3. Правильно ли я тебя понял?")).toBeTruthy();
+    const heading = (text: string) => (_: string, el: Element | null) => el?.classList.contains("font-medium") === true && el.textContent === text;
+    expect(await slot.findByText(heading("1. Как устроена первая часть брифа?"))).toBeTruthy();
+    expect(slot.getByText(heading("3. Правильно ли я тебя понял?"))).toBeTruthy();
     expect(slot.queryByText(/Развилки/)).toBeNull();
   });
 

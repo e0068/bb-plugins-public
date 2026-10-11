@@ -48,4 +48,10 @@ describe("жирный в тексте брифа", () => {
     expect(hasMarkup("[a](x.md)")).toBe(true);
     expect(hasMarkup("просто текст и glob docs/**")).toBe(false);
   });
+
+  it("разметка — и всё, что Kasimov рисует собой: код, таблица, заголовок, цитата, список", () => {
+    for (const text of ["Пункт с `кодом`", "| A | B |\n| --- | --- |", "## Разбор", "> цитата", "- пункт", "1. пункт", "текст\n  - вложенный"]) expect(hasMarkup(text)).toBe(true);
+    for (const text of ["*курсив*", "слово _курсив_ слово", "~~зачёркнуто~~"]) expect(hasMarkup(text)).toBe(true);
+    for (const text of ["5 - 3 = 2", "a > b", "#тег", "цена 10 $", "2 * 3 * 4", "snake_case_name"]) expect(hasMarkup(text)).toBe(false);
+  });
 });
