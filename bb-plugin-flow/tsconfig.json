@@ -20,7 +20,8 @@
       "@bb-plugins/*": [
         "./packages/*"
       ]
-    }
+    },
+    "resolveJsonModule": true
   },
   "include": [
     "server.ts",
