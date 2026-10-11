@@ -260,3 +260,14 @@ describe("parseTokensOutput", () => {
     expect(result.reason).toBe("invalid_json");
   });
 });
+
+it("retains unknown API price markers while keeping the token report usable", () => {
+  const report = { ...validReport, totals: { ...validReport.totals, unpricedModels: ["kimi-for-coding"] }, buckets: validReport.buckets.map((b) => ({ ...b, unpricedModels: ["future-model"] })) };
+  const result = parseTokensOutput(JSON.stringify(report));
+  expect(result.ok).toBe(true);
+  if (result.ok) {
+    expect(result.data.totals.total).toBe(validReport.totals.total);
+    expect(result.data.totals.unpricedModels).toEqual(["kimi-for-coding"]);
+    expect(result.data.buckets[0].unpricedModels).toEqual(["future-model"]);
+  }
+});

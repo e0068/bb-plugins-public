@@ -342,17 +342,19 @@ class CountingTest(unittest.TestCase):
         )
         self.assertEqual(grand.models["sonnet"].total, b2.models["sonnet"].total)
 
-    def test_tier_unknown_or_empty_model_falls_back_to_sonnet(self):
-        self.assertEqual(tokens.tier(""), "sonnet")
-        self.assertEqual(tokens.tier(None), "sonnet")
-        self.assertEqual(tokens.tier("some-unheard-of-model-xyz"), "sonnet")
+    def test_tier_unknown_or_empty_model_is_not_priced_as_claude(self):
+        self.assertEqual(tokens.tier(""), "unknown")
+        self.assertEqual(tokens.tier(None), "unknown")
+        self.assertEqual(tokens.tier("some-unheard-of-model-xyz"), "some-unheard-of-model-xyz")
 
         # a record with an unknown model isn't lost — it lands in the
-        # breakdown under "sonnet"
+        # breakdown under its recorded name, without a fabricated price
         b = tokens.Bucket()
         b.add({"input_tokens": 10, "output_tokens": 5}, "some-unheard-of-model-xyz", None)
-        self.assertEqual(set(b.models.keys()), {"sonnet"})
-        self.assertEqual(b.models["sonnet"].total, 15)
+        self.assertEqual(set(b.models.keys()), {"some-unheard-of-model-xyz"})
+        self.assertEqual(b.models["some-unheard-of-model-xyz"].total, 15)
+        self.assertEqual(b.cost, 0)
+        self.assertEqual(tokens.bucket_json("unknown", b, None, None, None)["unpricedModels"], ["some-unheard-of-model-xyz"])
 
 
 class CostPartsTest(unittest.TestCase):

@@ -8,7 +8,14 @@ import json, os, re, sys, glob, argparse
 from collections import defaultdict
 from datetime import datetime, timezone
 
-ROOT = os.path.expanduser("~/.claude/projects")
+from pathlib import Path
+# Source checkout: ../../packages; published plugin: ../packages.
+_PACKAGE = next((p / "packages" / "provider-usage" for p in Path(__file__).resolve().parents if (p / "packages" / "provider-usage" / "shell" / "store.py").is_file()), None)
+if _PACKAGE is None:
+    raise RuntimeError("provider-usage assets missing; rebuild the plugin")
+sys.path.insert(0, str(_PACKAGE / "shell"))
+from store import usage_store
+ROOT = usage_store(os.path.expanduser("~/.claude/projects"))
 
 # Version of the --json report format. Bump on ANY breaking format change
 # (a new required field, a changed type/name of an existing one) — src/core/parse.ts
@@ -20,21 +27,22 @@ SCHEMA_VERSION = 3
 _DATE_ONLY_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
 # base price per 1M tokens, USD: input / output (Anthropic API pricing)
-PRICES = {
-    "fable":  (10.00, 50.00),
-    "opus":   ( 5.00, 25.00),
-    "sonnet": ( 3.00, 15.00),
-    "haiku":  ( 1.00,  5.00),
-}
-# multipliers on the input price: 5-minute cache write, 1-hour cache write, cache read
+RATES = json.loads((_PACKAGE / "core" / "rates.json").read_text())
+LONG_RATES = json.loads((_PACKAGE / "core" / "long-rates.json").read_text())
+PRICES = {key: tuple(value[:2]) for key, value in RATES.items()}
 CACHE_5M, CACHE_1H, CACHE_READ = 1.25, 2.00, 0.10
 
 def tier(model):
-    m = (model or "").lower()
-    for k in PRICES:
-        if k in m:
-            return k
-    return "sonnet"
+    m = re.sub(r"^(openai|moonshot)/", "", (model or "").lower())
+    if m in PRICES:
+        return m
+    dated = re.sub(r"-\d{4}-\d{2}-\d{2}$", "", m)
+    if dated in PRICES:
+        return dated
+    for family in ("fable", "opus", "sonnet", "haiku"):
+        if m.startswith("claude-") and family in m:
+            return family
+    return m or "unknown"
 
 FIELDS = ("inp", "cw5", "cw1h", "cr", "out")
 
@@ -62,13 +70,13 @@ class ModelCounts:
 
     def cost_parts(self, t):
         """This model's cost by token kind, at tier `t`'s prices (thinking is part of output)."""
-        pi, po = PRICES[t]
+        pi, po, read, write5, write1h = (LONG_RATES.get(t.removesuffix(":long"), [0, 0, 0, 0, 0]) if t.endswith(":long") else RATES.get(t, [0, 0, 0, 0, 0]))
         return {
-            "input":      self.inp * pi / 1e6,
-            "cacheWrite": (self.cw5 * CACHE_5M + self.cw1h * CACHE_1H) * pi / 1e6,
-            "cacheRead":  self.cr * pi * CACHE_READ / 1e6,
-            "output":     self.out * po / 1e6,
-            "thinking":   self.think * po / 1e6,
+            "input": self.inp * pi / 1e6,
+            "cacheWrite": (self.cw5 * write5 + self.cw1h * write1h) / 1e6,
+            "cacheRead": self.cr * read / 1e6,
+            "output": self.out * po / 1e6,
+            "thinking": self.think * po / 1e6,
         }
 
 
@@ -133,7 +141,10 @@ class Bucket:
         self.think += think
         self.msgs  += 1
 
-        self.models[tier(model)].add(inp, cw5, cw1h, cr, out, think)
+        price_tier = tier(model)
+        if u.get("api_context_input_tokens", 0) > 272_000 and price_tier in LONG_RATES:
+            price_tier += ":long"
+        self.models[price_tier].add(inp, cw5, cw1h, cr, out, think)
         if model:
             self.variants[(model, effort, u.get("speed") == "fast")].add(inp, cw5, cw1h, cr, out, think)
 
@@ -477,6 +488,7 @@ def bucket_json(key, b, session_id, project, agent):
         "thinking": b.think,
         "messages": b.msgs,
         "cost": round(b.cost, 2),
+        "unpricedModels": sorted(t for t in b.models if t.removesuffix(":long") not in RATES),
         "models": models_json(b.models),
         "variants": variants_json(b.variants),
     }
@@ -621,6 +633,7 @@ def main():
                 "thinking": grand.think,
                 "messages": grand.msgs,
                 "cost": round(total_cost, 2),
+                "unpricedModels": sorted(t for t in grand.models if t.removesuffix(":long") not in RATES),
                 "costs": {phase: round(value, 2) for phase, value in total_costs.items()},
                 "models": models_json(grand.models),
                 "buckets": len(buckets),

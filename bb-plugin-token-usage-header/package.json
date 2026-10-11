@@ -1,6 +1,6 @@
 {
   "name": "bb-plugin-token-usage-header",
-  "version": "0.4.14",
+  "version": "0.4.15",
   "type": "module",
   "engines": {
     "bb": ">=0.39",
@@ -8,7 +8,7 @@
   },
   "bb": {
     "name": "Token Usage Analytics",
-    "description": "Tracks Claude Code token usage and cost — a live counter in the thread header plus session and project analytics.",
+    "description": "Tracks Claude Code, Codex and Kimi token usage at API rates \u2014 a live thread counter plus session and project analytics.",
     "branding": {
       "icon": "ChartColumn"
     },
@@ -20,7 +20,9 @@
       "tokens",
       "usage",
       "claude-code",
-      "interface"
+      "interface",
+      "codex",
+      "kimi"
     ]
   },
   "dependencies": {

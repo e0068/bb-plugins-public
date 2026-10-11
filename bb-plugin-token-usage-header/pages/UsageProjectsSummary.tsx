@@ -250,8 +250,8 @@ export function UsageProjectsSummary({ onOpenSession }: { onOpenSession: (sessio
             </g>
           </svg>
           <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center">
-            <span className="text-base font-semibold tabular-nums text-foreground" aria-label={`Total cost: ${formatCost(total)}`}>
-              {formatCost(total)}
+            <span className="text-base font-semibold tabular-nums text-foreground" aria-label={`Total cost: ${threads.some((t) => t.unpricedModels?.length) ? "partial API cost" : formatCost(total)}`}>
+              {threads.some((t) => t.unpricedModels?.length) ? `≥ ${formatCost(total)}` : formatCost(total)}
             </span>
             <span className="text-[10px] uppercase text-muted-foreground">{WINDOW_LABELS[period]}</span>
           </div>
@@ -303,7 +303,7 @@ export function UsageProjectsSummary({ onOpenSession }: { onOpenSession: (sessio
                 style={{ width: `${row.barFraction * 100}%`, backgroundColor: colorFor(row.projectKey) }}
               />
             </span>
-            <span className="w-14 shrink-0 text-right text-xs tabular-nums text-muted-foreground">{formatCost(row.cost)}</span>
+            <span className="w-14 shrink-0 text-right text-xs tabular-nums text-muted-foreground">{threads.find((t) => t.session === row.session)?.unpricedModels?.length ? "API n/a" : formatCost(row.cost)}</span>
           </button>
         ))}
         {rows.length === 0 && phase === "ready" && <p className="text-xs text-subtle-foreground">No threads in this period.</p>}
