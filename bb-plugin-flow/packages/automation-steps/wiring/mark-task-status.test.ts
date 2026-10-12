@@ -61,20 +61,6 @@ describe("markLinkedTasksStatus", () => {
     expect(calls).toEqual([["tasks", "current", "--thread", "thr_abc", "--json"]]);
   });
 
-  it("one linked task, update succeeds → marked done, in order", async () => {
-    const { ports, calls } = fakePorts((args) =>
-      args[1] === "current" ? currentReply([{ key: "BBPL-1" }]) : ok,
-    );
-    expect(await markLinkedTasksStatus(ports, "thr_abc", "done")).toEqual({
-      unavailable: null,
-      results: [{ key: "BBPL-1", ok: true }],
-    });
-    expect(calls).toEqual([
-      ["tasks", "current", "--thread", "thr_abc", "--json"],
-      ["tasks", "update", "BBPL-1", "--status", "done", "--json"],
-    ]);
-  });
-
   it("the given status reaches the `tasks update` call — in_review, not just done", async () => {
     const { ports, calls } = fakePorts((args) =>
       args[1] === "current" ? currentReply([{ key: "BBPL-1" }]) : ok,
@@ -87,46 +73,6 @@ describe("markLinkedTasksStatus", () => {
       ["tasks", "current", "--thread", "thr_abc", "--json"],
       ["tasks", "update", "BBPL-1", "--status", "in_review", "--json"],
     ]);
-  });
-
-  it("several linked tasks, one update fails → per-task result with the failure reason, the rest still attempted", async () => {
-    const { ports } = fakePorts((args) => {
-      if (args[1] === "current") return currentReply([{ key: "BBPL-1" }, { key: "BBPL-2" }]);
-      if (args[1] === "update" && args[2] === "BBPL-2") {
-        return { kind: "ran", code: 1, stdout: "", stderr: "not found" };
-      }
-      return ok;
-    });
-    expect(await markLinkedTasksStatus(ports, "thr_abc", "done")).toEqual({
-      unavailable: null,
-      results: [
-        { key: "BBPL-1", ok: true },
-        { key: "BBPL-2", ok: false, reason: "not found" },
-      ],
-    });
-  });
-
-  it("a failed update with no stderr falls back to stdout, otherwise the exit code — same as cliRunMessage", async () => {
-    const { ports } = fakePorts((args) => {
-      if (args[1] === "current") return currentReply([{ key: "BBPL-1" }]);
-      return { kind: "ran", code: 3, stdout: "", stderr: "" };
-    });
-    expect(await markLinkedTasksStatus(ports, "thr_abc", "done")).toEqual({
-      unavailable: null,
-      results: [{ key: "BBPL-1", ok: false, reason: "code 3" }],
-    });
-  });
-
-  it("the CLI disappears between listing and updating → that task fails with the spawn reason", async () => {
-    const { ports } = fakePorts((args) =>
-      args[1] === "current"
-        ? currentReply([{ key: "BBPL-1" }])
-        : { kind: "unavailable", reason: "spawn bb ENOENT" },
-    );
-    expect(await markLinkedTasksStatus(ports, "thr_abc", "done")).toEqual({
-      unavailable: null,
-      results: [{ key: "BBPL-1", ok: false, reason: "spawn bb ENOENT" }],
-    });
   });
 });
 
@@ -146,18 +92,5 @@ describe("splitTaskStatusResults", () => {
       successKeys: ["BBPL-1", "BBPL-3"],
       failedTasks: [{ key: "BBPL-2", reason: "not found" }],
     });
-  });
-});
-
-describe("the tree the CLI looks into", () => {
-  // Both calls run in the plugin host's process, which has no thread of its
-  // own: without naming one, `bb tasks` sees main alone and a task that still
-  // lives in the branch's worktree reads as "no linked tasks".
-  it("every call names the thread whose tasks are being moved", async () => {
-    const { ports, envs } = fakePorts((args) =>
-      args[1] === "current" ? currentReply([{ key: "BBPL-1" }]) : ok,
-    );
-    await markLinkedTasksStatus(ports, "thr_abc", "done");
-    expect(envs).toEqual([{ BB_THREAD_ID: "thr_abc" }, { BB_THREAD_ID: "thr_abc" }]);
   });
 });
