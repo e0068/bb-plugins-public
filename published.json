@@ -31,8 +31,8 @@
   },
   "bb-plugin-token-usage-header": {
     "version": "0.4.17",
-    "commit": "93d5171fe33b332a91e24888ae338dfe35ab5eb3",
-    "publishedAt": "2026-10-12T22:15:27.120Z"
+    "commit": "95280ffbb3d82dfdb3dea2e2f384b55b7dc444d6",
+    "publishedAt": "2026-10-12T22:24:00.512Z"
   },
   "bb-plugin-usage-circles": {
     "version": "0.2.7",
