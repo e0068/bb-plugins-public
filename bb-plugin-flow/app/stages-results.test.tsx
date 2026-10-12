@@ -38,7 +38,7 @@ const open = (openWorkspaceFile: PluginMessageDirectiveProps["openWorkspaceFile"
 type Slot = ReturnType<typeof open>;
 
 const results = async (slot: Slot) => {
-  await slot.findByRole("group", { name: "Ответ на бриф" });
+  await slot.findByRole("group", { name: "Ответы на вопросы" });
   fireEvent.click(within(slot.container.querySelector<HTMLElement>('[data-stage="spec"]')!).getByRole("button", { name: "Спецификация" }));
   return within(slot.getByRole("group", { name: "Спецификация: результаты" }));
 };

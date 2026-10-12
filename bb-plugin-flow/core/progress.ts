@@ -5,7 +5,7 @@ import { stageKindOf } from "../lib/stage-constants";
 import type { DecisionAnswer, DecisionBrief, FlowProgress, Planned, ProgressView, WorkStage } from "../shared/contract";
 import { automationView, executorKind, idleMinutes, isFailed, stageLiveIcon } from "./automation-run";
 import { stagePlans } from "./budget";
-import { demoVerdict } from "./outcome";
+import { demoVerdict, outcomeKind } from "./outcome";
 import { askedStageIds, isAutomationStage } from "./stages";
 import { runCascade } from "./sub-stages";
 
@@ -29,8 +29,11 @@ const finish = (at: string, results?: readonly Result[], cost?: number, activeMi
   ...(activeMinutes === undefined ? {} : { activeMinutes }),
 });
 
-/** Ждущие этапы брифа: Демонстрация итога или этапы, на которые бриф отвечает сам. */
-const waitingOf = (brief: DecisionBrief): string[] => (brief.outcome !== undefined ? [brief.outcome.stage] : askedStageIds(brief));
+/** Демонстрация, о которой докладывает бриф: она не ждёт ответа — закрывается самой отправкой. */
+const reportedDemo = (brief: DecisionBrief): string | null => (brief.outcome !== undefined && outcomeKind(brief) === "demo" ? brief.outcome.stage : null);
+
+/** Ждущие этапы брифа: Утверждение итога или этапы, на которые бриф отвечает сам; Демонстрация не ждёт. */
+const waitingOf = (brief: DecisionBrief): string[] => (brief.outcome !== undefined ? (reportedDemo(brief) === null ? [brief.outcome.stage] : []) : askedStageIds(brief));
 
 /** Меняет ли бриф прогресс: вопросы посреди работы без этапов и без итога его не трогают. */
 export const touchesProgress = (brief: DecisionBrief): boolean => brief.setup?.stages !== undefined || brief.outcome !== undefined;
@@ -38,11 +41,14 @@ export const touchesProgress = (brief: DecisionBrief): boolean => brief.setup?.s
 /** Меняет ли ответ прогресс: бриф с этапами или итогом — да; уточнение запущенной работы — только своим прогнозом, новым планом прогона. */
 export const answerMovesProgress = (brief: DecisionBrief, planned: Planned | undefined): boolean => touchesProgress(brief) || (brief.launched === true && planned !== undefined);
 
-/** Бриф агента: сделанные по отчёту получают конец и ссылки, ждущие — начало. */
+/** Бриф агента: сделанные по отчёту получают конец и ссылки, Демонстрация закрывается, ждущие — начало. */
 export const onBrief = (progress: FlowProgress, brief: DecisionBrief, at: string): FlowProgress => {
   if (!touchesProgress(brief)) return progress;
   const done = (brief.setup?.stages ?? []).filter((r) => r.state !== "todo");
-  const finished = done.reduce((p, r) => patch(p, r.id, (t) => (t.finishedAt === undefined ? finish(at, r.results)(t) : { ...t, ...(r.results === undefined ? {} : { results: [...r.results] }) })), progress);
+  const reported = done.reduce((p, r) => patch(p, r.id, (t) => (t.finishedAt === undefined ? finish(at, r.results)(t) : { ...t, ...(r.results === undefined ? {} : { results: [...r.results] }) })), progress);
+  // Демонстрация — отчёт, а не остановка: этап закрыт отправкой, автоматизация за ним идёт сразу.
+  const demo = reportedDemo(brief);
+  const finished = demo === null ? reported : patch(reported, demo, (t) => finish(at)(start(at)(t)));
   const waiting = waitingOf(brief);
   // Бриф запоминается записью: под его карточкой в ленте встанет итог, когда прогон закроется.
   return { ...waiting.reduce((p, id) => patch(p, id, start(at)), finished), waiting, lastBriefId: brief.id };

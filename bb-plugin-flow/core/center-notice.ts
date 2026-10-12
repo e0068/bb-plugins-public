@@ -25,7 +25,7 @@ export const turnEndEntry = ({ threadId, threadTitle, brief }: { threadId: strin
   ...SOURCE,
   ...(brief === null
     ? { kind: "turn-done", kindLabel: "Ход закончен", title: "Ход закончен", dedupeKey: null }
-    : { kind: "awaiting", kindLabel: "Ждёт ответа", title: `Ждёт ответа — бриф «${brief.title}»`, dedupeKey: `brief:${brief.id}` }),
+    : { kind: "awaiting", kindLabel: "Ждёт ответа", title: `Ждёт ответа — «${brief.title}»`, dedupeKey: `brief:${brief.id}` }),
   threadId,
   threadTitle,
   url: null,

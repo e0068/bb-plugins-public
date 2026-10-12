@@ -35,21 +35,17 @@ const keyOf = (threadId: string): string => `skill-scope:${threadId}`;
 const names = z.array(z.string());
 // workflows и bundled появились позже: запись тредов, сделанная до них, читается без них.
 const scopeSchema = z.object({ skills: names, agents: names, workflows: names.default([]) });
-/**
- * Что тред уже открыл, что нужно его flow целиком, что Flow записал в файл прошлый раз и ограничивал ли тред до выбора
- * flow агентом — тогда выбор меняет навыки сессии, и тред начинает работу заново (./fresh-session.ts).
- */
+/** Что тред уже открыл, что нужно его flow целиком и что Flow записал в файл прошлый раз. */
 const stateSchema = z.object({
   opened: scopeSchema,
   needed: scopeSchema,
   written: z.object({ skills: names, agents: names, plugins: names, bundled: z.boolean().default(false) }),
-  limitedBeforeChoice: z.boolean().default(false),
 });
 type State = z.output<typeof stateSchema>;
 
 const copy = ({ skills, agents, workflows = [] }: Scope): State["opened"] => ({ skills: [...skills], agents: [...agents], workflows: [...workflows] });
 const copyHidden = ({ skills, agents, plugins, bundled = false }: Hidden): State["written"] => ({ skills: [...skills], agents: [...agents], plugins: [...plugins], bundled });
-const FRESH: State = { opened: copy(EMPTY_SCOPE), needed: copy(EMPTY_SCOPE), written: copyHidden(NOTHING_HIDDEN), limitedBeforeChoice: false };
+const FRESH: State = { opened: copy(EMPTY_SCOPE), needed: copy(EMPTY_SCOPE), written: copyHidden(NOTHING_HIDDEN) };
 
 export type SkillScopeDeps = {
   kv: PluginKvStorage;
@@ -57,9 +53,8 @@ export type SkillScopeDeps = {
   worktree: (threadId: string) => Promise<string | null>;
   /** Дерева у треда ещё нет, но будет: окружение не создано. Решение тогда откладывается до старта сессии. Не задано — нет. */
   pending?: (threadId: string) => Promise<boolean>;
+  /** Flow треда; без flow — `null`, и тред ничего не прячет: «Автоматически» до выбора видит всё. */
   flow: (threadId: string) => Flow | null;
-  /** Тред, которому flow ещё выберет агент, — что прятать до выбора; остальные треды — `null`. Не задано — таких нет. */
-  choosing?: (threadId: string) => Limits | null;
   /** Этапы flow треда, развёрнутые: этапы «Flow» уже заменены этапами вложенного flow. */
   stages: (threadId: string) => readonly WorkStage[];
   progress: (threadId: string) => Promise<FlowProgress | null>;
@@ -109,8 +104,8 @@ const planWrite = (current: Read, written: Hidden, hidden: Hidden): Planned => {
 
 const settingsText = (json: Record<string, unknown>): string => `${JSON.stringify(json, null, 2)}\n`;
 
-/** Чем тред ограничен сейчас: этапами своего flow или выбором, который агент ещё сделает (`choosing`). */
-type Target = { limits: Limits; stages: readonly WorkStage[]; choosing: boolean };
+/** Чем тред ограничен сейчас: этапами своего flow. */
+type Target = { limits: Limits; stages: readonly WorkStage[] };
 /** Решение сверки, которой некуда было писать: дерева треда ещё нет. */
 type Deferred = { before: State; hidden: Hidden; next: State };
 
@@ -123,12 +118,10 @@ export const createSkillScope = (deps: SkillScopeDeps) => {
   /** Что прятать сейчас и с чем тред останется; выключенные переключатели прячут ничего, но открытое помнят. */
   const targetOf = (threadId: string): Target | null => {
     const flow = deps.flow(threadId);
-    if (flow !== null) return { limits: limitsOf(flow), stages: deps.stages(threadId), choosing: false };
-    const choosing = deps.choosing?.(threadId) ?? null;
-    return choosing === null ? null : { limits: choosing, stages: [], choosing: true };
+    return flow === null ? null : { limits: limitsOf(flow), stages: deps.stages(threadId) };
   };
 
-  const decide = async (threadId: string, { limits, stages, choosing }: Target, before: State): Promise<{ hidden: Hidden; next: State }> => {
+  const decide = async (threadId: string, { limits, stages }: Target, before: State): Promise<{ hidden: Hidden; next: State }> => {
     const [progress, catalog, plugins, scripts, accountSkills] = await Promise.all([
       deps.progress(threadId),
       deps.catalog(),
@@ -141,8 +134,7 @@ export const createSkillScope = (deps: SkillScopeDeps) => {
     const opened = unite(before.opened, scopeOf(openStages(stages, progress), workflowAgents));
     const needed = unite(before.needed, unite(opened, scopeOf(stages, workflowAgents)));
     const hidden = hiddenOf({ catalog, plugins, limits, opened, needed, accountSkills });
-    const limitedBeforeChoice = before.limitedBeforeChoice || (choosing && !same(copyHidden(hidden), copyHidden(NOTHING_HIDDEN)));
-    return { hidden, next: { opened: copy(opened), needed: copy(needed), written: copyHidden(hidden), limitedBeforeChoice } };
+    return { hidden, next: { opened: copy(opened), needed: copy(needed), written: copyHidden(hidden) } };
   };
 
   const deferred = new Map<string, Deferred>();
@@ -217,11 +209,6 @@ export const createSkillScope = (deps: SkillScopeDeps) => {
     sync: (threadId: string): Promise<void> => serial(threadId, () => sync(threadId)).catch(failed(threadId)),
     prestart,
     settled,
-    /** Flow ограничивал тред до выбора flow агентом: выбор меняет навыки сессии. Читается после стоящих сверок. */
-    limitedBeforeChoice: async (threadId: string): Promise<boolean> => {
-      await settled(threadId);
-      return (await state(threadId)).limitedBeforeChoice;
-    },
   };
 };
 

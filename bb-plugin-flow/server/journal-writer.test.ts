@@ -137,6 +137,6 @@ describe("writeDecision", () => {
     await dirs.set("proj_1", "docs/decisions");
     await writeDecision(bb, dirs, { ...args, locale: "en" });
     const [call] = harness.sdk.callsTo("files.write");
-    expect(call[0]).toMatchObject({ content: expect.stringContaining('Brief "Как вести работу" — answer:') });
+    expect(call[0]).toMatchObject({ content: expect.stringContaining('Answers to the questions "Как вести работу":') });
   });
 });

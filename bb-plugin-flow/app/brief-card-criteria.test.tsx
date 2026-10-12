@@ -81,8 +81,8 @@ describe("пункты «Готово, когда»", () => {
     fireEvent.change(list.getByRole("textbox", { name: "Пункт 1" }), { target: { value: "Пункты с крестом справа" } });
     fireEvent.change(list.getByRole("textbox", { name: "Дополнить" }), { target: { value: "Тесты зелёные" } });
     fireEvent.click(within(slot.getByRole("group", { name: "Так?" })).getByRole("button", { name: /Да/ }));
-    fireEvent.click(slot.getByRole("button", { name: "Отправить бриф" }));
-    await slot.findByText("Бриф отвечен");
+    fireEvent.click(slot.getByRole("button", { name: "Отправить ответы" }));
+    await slot.findByText("Ответ отправлен");
     const call = slot.rpcCalls.find((c) => c.method === "answerBrief")?.input as { answer: DecisionAnswer };
     expect(call.answer.criteria).toEqual({ removed: [2], edited: [{ index: 0, text: "Пункты с крестом справа" }], added: ["Тесты зелёные"] });
   });
@@ -128,8 +128,8 @@ describe("черновик переживает уход из треда", () =>
     const yes = within(await again.findByRole("group", { name: "Так?" })).getByRole("button", { name: /Да/ });
     expect(yes.getAttribute("aria-pressed")).toBe("true");
     expect((await criteria(again)).getByRole("button", { name: "Вернуть пункт 2" })).toBeTruthy();
-    fireEvent.click(again.getByRole("button", { name: "Отправить бриф" }));
-    await again.findByText("Бриф отвечен");
+    fireEvent.click(again.getByRole("button", { name: "Отправить ответы" }));
+    await again.findByText("Ответ отправлен");
     cleanup();
 
     const fresh = open();
@@ -147,7 +147,7 @@ describe("черновик переживает уход из треда", () =>
     expect(readStoredDraft(brief.id)).not.toBeNull();
     stored = record({ briefId: brief.id, answers: [{ questionId: "read", optionIds: ["yes"] }] });
     await slot.emitRealtime("decisions:answered", { id: brief.id });
-    await slot.findByText("Бриф отвечен");
+    await slot.findByText("Ответ отправлен");
     expect(readStoredDraft(brief.id)).toBeNull();
   });
 });

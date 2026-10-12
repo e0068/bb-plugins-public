@@ -32,7 +32,7 @@ describe("backfillFiles", () => {
     const [file] = backfillFiles([record("dec_a", "Как вести работу", "2026-09-15T12:00:00.000Z")], "ru");
     expect(file).toMatchObject({ name: "kak-vesti-rabotu.md" });
     expect(file?.content.startsWith("---\ndecided_at: 2026-09-15T12:00:00.000Z\n---\n\n")).toBe(true);
-    expect(file?.content).toContain("Бриф «Как вести работу» — ответ:");
+    expect(file?.content).toContain("Ответы на вопросы «Как вести работу»:");
   });
 
   it("одинаковые заголовки разводятся суффиксом, как при живой записи", () => {

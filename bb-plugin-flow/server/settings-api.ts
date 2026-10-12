@@ -2,7 +2,7 @@
 // исполнителей, файл навыка по имени, файл исполнителя по id, свой скрипт снимком в файл и показ его в файловой системе. Запись сообщает открытым вкладкам, что flow поменялись.
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 
-import { flowSettingsRpcContract, type AutomationScript, type SkillFile, type StageCatalog } from "../shared/contract";
+import { flowSettingsRpcContract, type AutomationScript, type Execution, type SkillFile, type StageCatalog } from "../shared/contract";
 import type { FlowSettingsStore } from "./flow-settings";
 
 import { STAGE_SETTINGS_CHANNEL } from "../lib/channels";
@@ -20,6 +20,8 @@ export const registerFlowSettingsApi = (
     executorFile: (id: string) => Promise<SkillFile>;
     scriptFile: (script: AutomationScript) => Promise<SkillFile>;
     reveal: (path: string) => Promise<{ revealed: boolean; error: string | null }>;
+    /** Модель по умолчанию с машины bb; сбой — `null`. Не задано — `null`. */
+    defaultExecution?: () => Promise<Execution | null>;
   },
 ): void => {
   bb.rpc.register(flowSettingsRpcContract, {
@@ -40,5 +42,6 @@ export const registerFlowSettingsApi = (
       const file = await deps.skillFile(name);
       return file === null ? { revealed: false, error: "skill file not found" } : deps.reveal(file.path);
     },
+    defaultExecution: async () => (await deps.defaultExecution?.().catch(() => null)) ?? null,
   });
 };

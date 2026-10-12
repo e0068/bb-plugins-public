@@ -27,8 +27,8 @@ const brief: DecisionBrief = {
       { id: "no", action: "Нет", recommended: false, description: "…" },
     ] },
   ],
-  outcome: { stage: "demo", final: true, done: ["Сделано"], pending: [], results: [{ label: "a.md", target: "a.md" }] },
-  stages: { list: [{ ...builtinStage("demo", []), name: "Демонстрация" }], minButtonWidth: 160 },
+  outcome: { stage: "approve", final: true, done: ["Сделано"], pending: [], results: [{ label: "a.md", target: "a.md" }] },
+  stages: { list: [builtinStage("approve", [])], minButtonWidth: 160 },
 };
 
 const open = () =>
@@ -38,13 +38,13 @@ const open = () =>
     { rpc: { getBrief: () => ({ kind: "found", brief, answer: null }), answerBrief: () => ({ kind: "not_found" }), getDispatchPlace: () => ({ place: "here" }), listProjects: () => ({ kind: "found" as const, projects: [] }), ...({ threadFiles } as object) } },
   );
 
-describe("Демонстрация со своим ответом в строке вопроса", () => {
-  it("кнопка — «Отправить», а не «Завершить»", async () => {
+describe("Утверждение со своим ответом в строке вопроса", () => {
+  it("кнопка — «Отправить комментарии», а не «Завершить»", async () => {
     const slot = open();
     const row = within(await slot.findByRole("group", { name: "Чинить находку?" }));
     expect(await slot.findByRole("button", { name: "Завершить" })).toBeTruthy();
     fireEvent.change(row.getByRole("textbox", { name: "Свой ответ" }), { target: { value: "Что значит собрать документом системы?" } });
-    expect(await slot.findByRole("button", { name: "Отправить" })).toBeTruthy();
+    expect(await slot.findByRole("button", { name: "Отправить комментарии" })).toBeTruthy();
     expect(slot.queryByRole("button", { name: "Завершить" })).toBeNull();
   });
 });

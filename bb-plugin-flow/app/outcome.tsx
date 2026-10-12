@@ -1,7 +1,7 @@
 // Демонстрация — одна карточка на подложке: что сделано с прошлой демонстрации,
 // что нет и почему, что важно знать абзацами, секции, задачи и результаты
 // строками под палец. Комментарий прикреплён к карточке снизу, кнопки исхода
-// стоят отдельно в форме брифа — чтобы не нажать их случайно. Задача — копия
+// стоят отдельно в форме брифа — чтобы не нажать их случайно. У Утверждения карточки нет — только поле комментария. Задача — копия
 // карточки Tasks+ (./task-card.tsx): директиву `::task` Markdown для плагинов не
 // рисует, а карточка открывает задачу сбоку во вкладке Flow.
 import { useRpc } from "@get-bb/plugin-sdk/app";
@@ -103,8 +103,15 @@ export function DemoCard({ brief, roots, view }: { brief: DecisionBrief; roots: 
   const outcome = brief.outcome;
   if (outcome === undefined) return null;
   const kind = outcomeKind(brief);
+  // Утверждение — только поле комментария: что утверждается, агент называет заголовком, карточки у него нет.
+  if (kind === "approve")
+    return view === undefined ? null : (
+      <div role="group" aria-label={t.stages.approve} className="flex flex-col overflow-hidden rounded-lg">
+        <CommentRow view={view} />
+      </div>
+    );
   return (
-    <div role="group" aria-label={kind === "approve" ? t.stages.approve : t.outcome.title} className="flex flex-col gap-px overflow-hidden rounded-lg">
+    <div role="group" aria-label={t.outcome.title} className="flex flex-col gap-px overflow-hidden rounded-lg">
       <div className="flex flex-col gap-4 bg-surface-recessed-solid px-4 pb-4 pt-3.5">
         <SectionTag kind={kind} extra={outcome.final ? t.outcome.final : outcome.next === undefined ? undefined : t.outcome.next(outcome.next)} />
         <Items outcome={outcome} done />
@@ -134,9 +141,13 @@ export function DemoCard({ brief, roots, view }: { brief: DecisionBrief; roots: 
           {outcome.documentsOnly === true && <div className="text-xs text-muted-foreground">{t.outcome.documentsOnly}</div>}
         </Group>
       </div>
-      {view !== undefined && (
-        <AddRow label={t.outcome.comment} placeholder={t.outcome.commentPlaceholder} value={view.draft.outcomeNote ?? ""} disabled={view.sending} voiceId="outcome" onText={(text) => view.change((d) => setOutcomeNote(d, text))} className="min-h-10" />
-      )}
+      {view !== undefined && <CommentRow view={view} />}
     </div>
   );
+}
+
+/** Поле комментария к итогу: под карточкой Демонстрации и единственное у Утверждения. */
+function CommentRow({ view }: { view: OutcomeView }) {
+  const t = useMessages();
+  return <AddRow label={t.outcome.comment} placeholder={t.outcome.commentPlaceholder} value={view.draft.outcomeNote ?? ""} disabled={view.sending} voiceId="outcome" onText={(text) => view.change((d) => setOutcomeNote(d, text))} className="min-h-10" />;
 }

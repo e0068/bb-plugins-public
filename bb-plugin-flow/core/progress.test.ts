@@ -58,14 +58,26 @@ describe("прогресс flow", () => {
     expect(progressView(onAnswer(EMPTY_PROGRESS, first, { ...answer, stages: [{ id: "plan", run: true, executor: "workflow:DEV2" }] }, T1), STAGES).stages[3]!.executor).toBe("workflow");
   });
 
-  it("Демонстрация ждёт ответа; «на доработку» оставляет её идущей, «продолжить» — закрывает", () => {
+  it("Демонстрация не ждёт: бриф закрывает её, комментарий её не открывает, откат агента — открывает", () => {
     const demo = brief({ outcome: { stage: "demo", final: true, done: ["Сделано"], pending: [], results: [{ label: "a", target: "a" }] } });
-    const waiting = onBrief(EMPTY_PROGRESS, demo, T1);
-    expect(progressView(waiting, STAGES).stages[4]!.state).toBe("now");
-    const rework = onAnswer(waiting, demo, { briefId: demo.id, answers: [], outcome: { accepted: false, note: "ещё" } }, T2);
-    expect(progressView(rework, STAGES).stages[4]!.state).toBe("now");
-    const accepted = onAnswer(waiting, demo, { briefId: demo.id, answers: [], outcome: { accepted: true } }, T2);
-    expect(progressView(accepted, STAGES).stages[4]!.state).toBe("done");
+    const sent = onBrief(EMPTY_PROGRESS, demo, T1);
+    expect(progressView(sent, STAGES).stages[4]!.state).toBe("done");
+    expect(sent.waiting).toEqual([]);
+    const commented = onAnswer(sent, demo, { briefId: demo.id, answers: [], outcome: { accepted: false, note: "ещё" } }, T2);
+    expect(progressView(commented, STAGES).stages[4]!.state).toBe("done");
+    expect(progressView(onMark(commented, "demo", "started", T2), STAGES).stages[4]!.state).toBe("now");
+  });
+
+  it("Утверждение ждёт ответа; комментарий оставляет его идущим, «Продолжить» — закрывает", () => {
+    const list = [...STAGES, builtinStage("approve", [])];
+    const approval = brief({ stages: { list, minButtonWidth: 170 }, outcome: { stage: "approve", final: true, done: ["Сделано"], pending: [], results: [{ label: "a", target: "a" }] } });
+    const waiting = onBrief(EMPTY_PROGRESS, approval, T1);
+    expect(progressView(waiting, list).stages[5]!.state).toBe("now");
+    expect(waiting.waiting).toEqual(["approve"]);
+    const rework = onAnswer(waiting, approval, { briefId: approval.id, answers: [], outcome: { accepted: false, note: "ещё" } }, T2);
+    expect(progressView(rework, list).stages[5]!.state).toBe("now");
+    const accepted = onAnswer(waiting, approval, { briefId: approval.id, answers: [], outcome: { accepted: true } }, T2);
+    expect(progressView(accepted, list).stages[5]!.state).toBe("done");
   });
 
   it("сделанный по отчёту брифа этап получает ссылки", () => {

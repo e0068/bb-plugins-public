@@ -166,7 +166,7 @@ describe("бриф в сообщении", () => {
 
   it("кнопка отправки заблокирована, пока решены не все", async () => {
     const slot = openBrief();
-    const send = (await slot.findByRole("button", { name: "Отправить бриф" })) as HTMLButtonElement;
+    const send = (await slot.findByRole("button", { name: "Отправить ответы" })) as HTMLButtonElement;
     expect(send.disabled).toBe(true);
     fireEvent.click(within((await slot.findByRole("group", { name: "Приоритет" }))).getByRole("button", { name: /^Скорость/ }));
     expect(send.disabled).toBe(true);
@@ -177,10 +177,10 @@ describe("бриф в сообщении", () => {
   it("отправка зовёт answerBrief один раз и передаёт ответы всех вопросов", async () => {
     const slot = openBrief();
     fireEvent.click(await slot.findByRole("button", { name: "Принять рекомендации" }));
-    const send = slot.getByRole("button", { name: "Отправить бриф" });
+    const send = slot.getByRole("button", { name: "Отправить ответы" });
     fireEvent.click(send);
     fireEvent.click(send);
-    await slot.findByText("Бриф отвечен");
+    await slot.findByText("Ответ отправлен");
     expect(answerCalls(slot)).toHaveLength(1);
     const input = answerCalls(slot)[0]?.input as { id: string; messageId: string; answer: { answers: unknown[] } };
     expect(input.id).toBe(brief.id);
@@ -191,7 +191,7 @@ describe("бриф в сообщении", () => {
   it("ответ incomplete подсвечивает названные вопросы", async () => {
     const slot = openBrief(() => ({ kind: "incomplete", questionIds: ["priority"] }));
     fireEvent.click(await slot.findByRole("button", { name: "Принять рекомендации" }));
-    fireEvent.click(slot.getByRole("button", { name: "Отправить бриф" }));
+    fireEvent.click(slot.getByRole("button", { name: "Отправить ответы" }));
     const priority = await group(slot, "Приоритет");
     expect(await priority.findByText("нужен ответ")).toBeTruthy();
     expect((await group(slot, "Артефакты")).queryByText("нужен ответ")).toBeNull();
@@ -199,7 +199,7 @@ describe("бриф в сообщении", () => {
 
   it("отвеченный бриф рисуется без кнопок и полей", async () => {
     const slot = render(brief.id, { getBrief: () => ({ kind: "found", brief, answer: acceptedRecord }), answerBrief: () => ({ kind: "not_found" }) });
-    await slot.findByText("Бриф отвечен");
+    await slot.findByText("Ответ отправлен");
     expect(slot.container.querySelectorAll("button, input, textarea")).toHaveLength(0);
     expect(slot.getByText("$25")).toBeTruthy();
     expect(slot.getAllByText(/Рекомендовал/).length).toBeGreaterThan(0);
@@ -207,7 +207,7 @@ describe("бриф в сообщении", () => {
 
   it("отвеченный бриф помечает рекомендованный вариант компактного вопроса", async () => {
     const slot = render(brief.id, { getBrief: () => ({ kind: "found", brief, answer: acceptedRecord }), answerBrief: () => ({ kind: "not_found" }) });
-    await slot.findByText("Бриф отвечен");
+    await slot.findByText("Ответ отправлен");
     const quality = slot.getByText("Качество");
     expect(within(quality).getByText("рекомендация агента")).toBeTruthy();
     expect(within(slot.getByText("Скорость")).queryByText("рекомендация агента")).toBeNull();
@@ -218,10 +218,10 @@ describe("бриф в сообщении", () => {
       throw new Error("сервер недоступен");
     });
     fireEvent.click(await slot.findByRole("button", { name: "Принять рекомендации" }));
-    fireEvent.click(slot.getByRole("button", { name: "Отправить бриф" }));
+    fireEvent.click(slot.getByRole("button", { name: "Отправить ответы" }));
     expect(await slot.findByText("Не удалось отправить — попробуй ещё раз")).toBeTruthy();
     expect(pressed((await group(slot, "Приоритет")).getByRole("button", { name: /^Качество/ }))).toBe("true");
-    expect((slot.getByRole("button", { name: "Отправить бриф" }) as HTMLButtonElement).disabled).toBe(false);
+    expect((slot.getByRole("button", { name: "Отправить ответы" }) as HTMLButtonElement).disabled).toBe(false);
   });
 
   it("событие decisions:answered с этим идентификатором перерисовывает бриф в отвеченный", async () => {
@@ -230,9 +230,9 @@ describe("бриф в сообщении", () => {
     await slot.findByRole("button", { name: "Принять рекомендации" });
     answer = acceptedRecord;
     await slot.emitRealtime("decisions:answered", { id: "dec_other" });
-    expect(slot.queryByText("Бриф отвечен")).toBeNull();
+    expect(slot.queryByText("Ответ отправлен")).toBeNull();
     await slot.emitRealtime("decisions:answered", { id: brief.id });
-    await slot.findByText("Бриф отвечен");
+    await slot.findByText("Ответ отправлен");
   });
 
   it("рекомендованный вариант несёт скрытую подпись рекомендация агента", async () => {
@@ -246,8 +246,8 @@ describe("бриф в сообщении", () => {
   it("после отправки контролы уходят из обхода Tab", async () => {
     const slot = openBrief();
     fireEvent.click(await slot.findByRole("button", { name: "Принять рекомендации" }));
-    fireEvent.click(slot.getByRole("button", { name: "Отправить бриф" }));
-    await slot.findByText("Бриф отвечен");
+    fireEvent.click(slot.getByRole("button", { name: "Отправить ответы" }));
+    await slot.findByText("Ответ отправлен");
     const focusable = slot.container.querySelectorAll("button, input, textarea, [tabindex]:not([tabindex='-1'])");
     expect(focusable).toHaveLength(0);
   });
@@ -297,7 +297,7 @@ describe("директива без брифа", () => {
   it("бриф не найден рисуется пунктирной рамкой с исходным текстом директивы", async () => {
     const slot = render("dec_gone", { getBrief: () => ({ kind: "not_found" }), answerBrief: () => ({ kind: "not_found" }) });
     expect(await slot.findByText('::decision{id="dec_gone"}')).toBeTruthy();
-    expect(slot.getByText(/бриф не найден/)).toBeTruthy();
+    expect(slot.getByText(/виджет не найден/)).toBeTruthy();
   });
 
   it("кривой идентификатор не рушит сообщение и не зовёт RPC", async () => {
@@ -315,7 +315,7 @@ describe("директива без брифа", () => {
       },
       answerBrief: () => ({ kind: "not_found" }),
     });
-    expect(await slot.findByText("Не удалось загрузить бриф")).toBeTruthy();
+    expect(await slot.findByText("Не удалось загрузить виджет")).toBeTruthy();
     fail = false;
     fireEvent.click(slot.getByRole("button", { name: "Повторить" }));
     expect(await slot.findByText(brief.title)).toBeTruthy();

@@ -2,7 +2,7 @@
 // единственного списка этапов. Нужна серверу и странице Flow, поэтому из
 // контракта берутся только типы.
 import { builtinStage, freeId, STAGE_BUTTON_WIDTH, stageKindOf, type BuiltinKind } from "../lib/stage-constants";
-import type { Flow, FlowSettings, StageSettings, WorkStage } from "../shared/contract";
+import type { AgentSettings, Flow, FlowSettings, StageSettings, WorkStage } from "../shared/contract";
 import { flowStepOrderProblem, type StepOrderProblem } from "./automation-order";
 
 /** Встроенный этап вида в ряду уже собранных — с id, свободным среди них. */
@@ -97,6 +97,31 @@ export const limitFlow = (settings: FlowSettings, id: string, limits: FlowLimits
       return on ? { ...rest, [key]: true } : rest;
     }, flow),
   );
+
+/**
+ * Настройки агента без пустого: сообщение без краевых пробелов, пустое снимает `start`; без модели и сообщения — `undefined`,
+ * поле снимается целиком.
+ */
+export const settledAgent = (agent: AgentSettings | undefined): AgentSettings | undefined => {
+  const start = agent?.start?.trim();
+  const settled = { ...(agent?.execution === undefined ? {} : { execution: agent.execution }), ...(start === undefined || start === "" ? {} : { start }) };
+  return Object.keys(settled).length === 0 ? undefined : settled;
+};
+
+/** Настройки агента flow; пустые снимают поле. */
+export const setFlowAgent = (settings: FlowSettings, id: string, agent: AgentSettings | undefined): FlowSettings =>
+  mapFlow(settings, id, (flow) => {
+    const { agent: _, ...rest } = flow;
+    const settled = settledAgent(agent);
+    return settled === undefined ? rest : { ...rest, agent: settled };
+  });
+
+/** Настройки агента строки «Автоматически»; пустые снимают поле. */
+export const setAutoAgent = (settings: FlowSettings, agent: AgentSettings | undefined): FlowSettings => {
+  const { autoAgent: _, ...rest } = settings;
+  const settled = settledAgent(agent);
+  return settled === undefined ? rest : { ...rest, autoAgent: settled };
+};
 
 /** Иконка flow из подборки этапов; `undefined` снимает поле целиком — flow без иконки рисуется знаком плагина. */
 export const setFlowIcon = (settings: FlowSettings, id: string, icon: string | undefined): FlowSettings =>

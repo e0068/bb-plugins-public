@@ -80,7 +80,7 @@ describe("карточка брифа, смонтированная заново
   it("строка ошибки загрузки не ниже прошлого показа", async () => {
     window.localStorage.setItem(HEIGHT_KEY, "900");
     const slot = mount(() => Promise.reject(new Error("offline")));
-    const line = (await slot.findByText("Не удалось загрузить бриф")).parentElement!;
+    const line = (await slot.findByText("Не удалось загрузить виджет")).parentElement!;
     expect(line.style.minHeight).toBe("900px");
   });
 

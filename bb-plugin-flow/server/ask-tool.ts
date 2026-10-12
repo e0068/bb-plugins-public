@@ -5,7 +5,7 @@ import type { BbPluginApi } from "@get-bb/plugin-sdk";
 
 import type { Carried } from "../core/carry";
 import { awaitingKind } from "../core/awaiting";
-import { liveIssues, nextFlowIssues } from "../core/outcome";
+import { liveIssues, nextFlowIssues, outcomeKind } from "../core/outcome";
 import { DECISION_ID_PREFIX, directiveLine } from "../core/directive";
 import { criterionEditable, money, plannedMinutes, recommendedForecast } from "../core/budget";
 import { FLOW_RULE, SELF_ONLY_RULE, isAskedStage, isAutomationStage, isStageCarryKey, reportIssues, stageInstructions, withStepResults } from "../core/stages";
@@ -47,23 +47,31 @@ The owner also chooses where the work runs; a new thread takes the answer over a
 
 Brief kind: brief — you wait for the answer; clarify — one yesno question ("Yes"/"No"), no setup; you continue on your own reading.
 
-After the call, paste the directive line from the result into your reply as a standalone line, without quotes or backticks. For a brief, end the turn right after it. The answer arrives as "Brief … —" in the owner's language.
+After the call, paste the directive line from the result into your reply as a standalone line, without quotes or backticks. For a brief except a demo, end the turn right after it. The answer arrives as a heading with the title, in the owner's language.
 
-One brief per run: go through the run stages in order; on a demo stage, stop with a brief carrying its outcome.`;
+One brief per run: go through the run stages in order; a demo stage: send its outcome and go on; only an approval stops.`;
 
 /**
  * Сообщение владельца в чат при ждущем брифе возвращает бриф агенту (./brief-return.ts). В описании инструмента, а не в
  * инструкциях: те уже упираются в 4096 символов.
  */
 export const RETURNED_RULE =
-  "A chat message from the owner while your brief waits returns that brief to you: the message outranks the brief — it means the plan changed. Take the message in, its text and attachments, then send the brief again, revised; the owner's choices in the returned brief stay preselected where question and option ids match. A stage closes only when the owner sends a brief with its button.";
+  "A chat message from the owner while your brief waits returns that brief to you: the message outranks the brief — it means the plan changed. Take the message in, its text and attachments, then send the brief again, revised; the owner's choices in the returned brief stay preselected where question and option ids match. An approval stage closes only when the owner sends it with its button; a demo stage closes when you send it.";
+
+/** Что агенту делать после брифа: ждать ответа, а у Демонстрации и уточнения — работать дальше. */
+const nextStep = (brief: DecisionBrief): string => {
+  if (brief.kind !== "brief") return " Keep working; the answer arrives along the way.";
+  if (brief.outcome !== undefined && outcomeKind(brief) === "demo")
+    return " Then go on to the next stage of the run without waiting: the demo stage is closed by this call. A comment on the demo may arrive later — then roll back to the stage it asks to change.";
+  return " Then end the turn and wait for the answer.";
+};
 
 const briefResult = (brief: DecisionBrief): string =>
   `${directiveLine(brief.id)}
 
-Paste the line above into your reply as a standalone line — the owner sees the brief in its place.${
-    brief.kind === "brief" ? " Then end the turn and wait for the answer." : " Keep working; the answer arrives along the way."
-  }${brief.restored === undefined ? "" : " The owner's choices from the returned brief are preselected where question and option ids match."}`;
+Paste the line above into your reply as a standalone line — the owner sees the brief in its place.${nextStep(brief)}${
+    brief.restored === undefined ? "" : " The owner's choices from the returned brief are preselected where question and option ids match."
+  }`;
 
 /**
  * Черновик брифа, который владелец вернул сообщением в чат, — для нового брифа треда, вместе с пунктами возвращённого:
@@ -249,7 +257,7 @@ export const registerAskTool = (
       'Every text field takes markdown links [text](target) — a path from the tree root (path:12 for a line), an absolute path or a URL: anything that lives in a file is named as a link to it, a fragment as one link "fragment (what it is) — file". ' +
       RETURNED_RULE,
     instructions: ASK_INSTRUCTIONS,
-    presentation: { label: { pending: "Preparing a brief", completed: "Brief in the thread" } },
+    presentation: { label: { pending: "Preparing a widget", completed: "Widget in the thread" } },
     parameters: askDecisionParamsSchema,
     async execute(params, ctx) {
       const settings = deps.stages?.(ctx.threadId) ?? { stages: [], minButtonWidth: 0 };

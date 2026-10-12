@@ -29,8 +29,8 @@ const demo: DecisionBrief = {
   ...bare,
   id: "dec_demopreselect",
   launched: true,
-  outcome: { stage: "demo", final: false, done: ["Сделано"], pending: [], results: [{ label: "x", target: "x.md" }] },
-  stages: { list: [{ ...builtinStage("demo", []), name: "Демонстрация" }], minButtonWidth: 160 },
+  outcome: { stage: "approve", final: false, done: ["Сделано"], pending: [], results: [{ label: "x", target: "x.md" }] },
+  stages: { list: [builtinStage("approve", [])], minButtonWidth: 160 },
 };
 
 const open = (shown: DecisionBrief, place: { place: DispatchPlace; compact?: boolean }, sent: DecisionAnswer[]) =>
@@ -96,7 +96,7 @@ describe("предвыбор компактации по зоне контекс
     expect(answer.compact).toBeUndefined();
   });
 
-  it("Демонстрация тоже открывается с предвыбранной компактацией", async () => {
+  it("Утверждение тоже открывается с предвыбранной компактацией", async () => {
     const sent: DecisionAnswer[] = [];
     const slot = open(demo, { place: "here", compact: true }, sent);
     await waitFor(async () => expect((await placeCell(slot)).textContent).toContain("компактировать"));
@@ -104,7 +104,7 @@ describe("предвыбор компактации по зоне контекс
   });
 });
 
-describe("«Завершить» финальной Демонстрации не компактирует тред по предвыбору", () => {
+describe("«Завершить» финального Утверждения не компактирует тред по предвыбору", () => {
   const final: DecisionBrief = { ...demo, id: "dec_finalpreselect", outcome: { ...demo.outcome!, final: true } };
   const comment = (slot: Slot, text: string) => fireEvent.change(slot.getByRole("textbox", { name: "Комментарий к демонстрации" }), { target: { value: text } });
 
@@ -116,13 +116,13 @@ describe("«Завершить» финальной Демонстрации н�
     expect((await sendWith(slot, sent, /^Завершить/)).compact).toBeUndefined();
   });
 
-  it("написан комментарий — предвыбор возвращается, и «Отправить» компактирует", async () => {
+  it("написан комментарий — предвыбор возвращается, и «Отправить комментарии» компактирует", async () => {
     const sent: DecisionAnswer[] = [];
     const slot = open(final, { place: "here", compact: true }, sent);
     await placeCell(slot);
     comment(slot, "Поправь подпись");
     await waitFor(async () => expect((await placeCell(slot)).textContent).toContain("компактировать"));
-    expect(await sendWith(slot, sent, /^Отправить/)).toMatchObject({ place: "here", compact: true });
+    expect(await sendWith(slot, sent, /^Отправить комментарии/)).toMatchObject({ place: "here", compact: true });
   });
 
   it("компактацию, выбранную владельцем явно, «Завершить» уважает", async () => {

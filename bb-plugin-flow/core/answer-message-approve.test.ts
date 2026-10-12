@@ -45,7 +45,7 @@ describe("вид итога", () => {
 
 describe("ответ агенту на Утверждение", () => {
   it("«Утвердить» без комментария — утверждено, дальше следующий этап", () => {
-    expect(answerMessageText(approval, answer({ accepted: true }))).toBe(["Бриф «Утверждение — Definition of Done» — утверждено.", "Дальше — этап «Execution»."].join("\n"));
+    expect(answerMessageText(approval, answer({ accepted: true }))).toBe(["Утверждение «Утверждение — Definition of Done» — утверждено.", "Дальше — этап «Execution»."].join("\n"));
   });
 
   it("комментарий — не утверждено: переделать этап перед утверждением и прислать его снова", () => {
@@ -55,8 +55,8 @@ describe("ответ агенту на Утверждение", () => {
     expect(text).not.toContain("демонстрацию");
   });
 
-  it("комментарий к Демонстрации по-прежнему просит прислать её снова", () => {
-    expect(answerMessageText(demo, answer({ accepted: false, note: "кнопка мелкая" }))).toContain("Ответь и пришли демонстрацию снова.");
+  it("комментарий к Демонстрации велит откатиться к этапу правки, если просит правку", () => {
+    expect(answerMessageText(demo, answer({ accepted: false, note: "кнопка мелкая" }))).toContain("Просит правку — откатись через flow_stage к этапу правки");
   });
 });
 
@@ -64,7 +64,7 @@ describe("комментарий ко всему брифу без Утверж�
   it("не держит работу: агент спрашивает о неясном и делает понятное", () => {
     const plain: DecisionBrief = { ...approval, outcome: undefined, setup: { criteria: ["Тесты зелёные"] } };
     const text = answerMessageText(plain, { briefId: "dec_1", answers: [], note: "перепиши короче" });
-    expect(text).toContain("Комментарий ко всему брифу ниже работу не держит: о неясном спроси, понятное делай.");
-    expect(text.split("\n").at(-1)).toBe("Ко всему брифу: перепиши короче");
+    expect(text).toContain("Комментарий ко всем вопросам ниже работу не держит: о неясном спроси, понятное делай.");
+    expect(text.split("\n").at(-1)).toBe("Ко всем вопросам: перепиши короче");
   });
 });

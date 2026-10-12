@@ -8,6 +8,7 @@ const LIST: WorkStage[] = [
   stage("practice", { name: "Работа" }),
   stage("land", { name: "Commit, PR", automation: { source: "flow", steps: [] } }),
   stage("demo", { kind: "demo", skill: "", name: "Демонстрация" }),
+  stage("approve", { kind: "approve", skill: "", name: "Утверждение" }),
   stage("act", { kind: "action", skill: "", name: "Action", automation: { source: "flow", steps: [] } }),
   stage("finish", { name: "Merge", automation: { source: "flow", steps: [] } }),
 ];
@@ -26,7 +27,7 @@ const demoBrief = (patch: Partial<DecisionBrief> = {}): DecisionBrief => ({
   createdAt: T,
   kind: "brief",
   stages: { list: LIST, minButtonWidth: 170 },
-  outcome: { stage: "demo", final: true, done: ["Сделано"], pending: [], results: [{ label: "a.md", target: "a.md" }] },
+  outcome: { stage: "approve", final: true, done: ["Сделано"], pending: [], results: [{ label: "a.md", target: "a.md" }] },
   questions: [],
   ...patch,
 });
@@ -35,35 +36,35 @@ const accepted = (note?: string): DecisionAnswer => ({ briefId: "dec_demo", answ
 
 describe("нужна ли агенту реплика об ответе", () => {
   it("не нужна, когда впереди остались только автоматизации и Action", () => {
-    expect(needsAgentReply(demoBrief(), accepted(), progress(["practice", "land", "demo"]))).toBe(false);
+    expect(needsAgentReply(demoBrief(), accepted(), progress(["practice", "land", "demo", "approve"]))).toBe(false);
   });
 
   it("нужна, когда впереди остался этап агента", () => {
     const brief = demoBrief({ stages: { list: [...LIST, stage("report", { name: "Отчёт" })], minButtonWidth: 170 } });
-    expect(needsAgentReply(brief, accepted(), progress(["practice", "land", "demo"]))).toBe(true);
+    expect(needsAgentReply(brief, accepted(), progress(["practice", "land", "demo", "approve"]))).toBe(true);
   });
 
   it("не нужна, когда оставшийся этап агента вычеркнут из прогона", () => {
     const brief = demoBrief({ stages: { list: [...LIST, stage("report", { name: "Отчёт" })], minButtonWidth: 170 } });
-    expect(needsAgentReply(brief, accepted(), progress(["practice", "land", "demo"], ["report"]))).toBe(false);
+    expect(needsAgentReply(brief, accepted(), progress(["practice", "land", "demo", "approve"], ["report"]))).toBe(false);
   });
 
   it("нужна, когда владелец написал комментарий к демонстрации", () => {
-    expect(needsAgentReply(demoBrief(), accepted("поправь заголовок"), progress(["practice", "land", "demo"]))).toBe(true);
+    expect(needsAgentReply(demoBrief(), accepted("поправь заголовок"), progress(["practice", "land", "demo", "approve"]))).toBe(true);
   });
 
   it("нужна, когда владелец приложил картинку", () => {
-    expect(needsAgentReply(demoBrief(), accepted(), progress(["practice", "land", "demo"]), 1)).toBe(true);
+    expect(needsAgentReply(demoBrief(), accepted(), progress(["practice", "land", "demo", "approve"]), 1)).toBe(true);
   });
 
   it("нужна, когда владелец написал своё ко всему брифу", () => {
     const answer: DecisionAnswer = { ...accepted(), note: "и обнови README" };
-    expect(needsAgentReply(demoBrief(), answer, progress(["practice", "land", "demo"]))).toBe(true);
+    expect(needsAgentReply(demoBrief(), answer, progress(["practice", "land", "demo", "approve"]))).toBe(true);
   });
 
   it("уточнение уходит агенту всегда: он ждёт ответа посреди хода", () => {
     const brief = demoBrief({ kind: "clarify", outcome: undefined, questions: [] });
-    expect(needsAgentReply(brief, { briefId: "dec_demo", answers: [] }, progress(["practice", "land", "demo"]))).toBe(true);
+    expect(needsAgentReply(brief, { briefId: "dec_demo", answers: [] }, progress(["practice", "land", "demo", "approve"]))).toBe(true);
   });
 
   it("нужна, когда прогресса треда нет: о работе впереди ничего не известно", () => {
@@ -71,10 +72,16 @@ describe("нужна ли агенту реплика об ответе", () => 
   });
 
   it("нужна, когда у брифа нет снимка этапов: тред идёт без flow", () => {
-    expect(needsAgentReply(demoBrief({ stages: undefined }), accepted(), progress(["practice", "land", "demo"]))).toBe(true);
+    expect(needsAgentReply(demoBrief({ stages: undefined }), accepted(), progress(["practice", "land", "demo", "approve"]))).toBe(true);
+  });
+
+  it("пустой ответ на Демонстрацию не нужен даже с этапом агента впереди: она агента не держала; комментарий — нужен", () => {
+    const brief = demoBrief({ stages: { list: [...LIST, stage("report", { name: "Отчёт" })], minButtonWidth: 170 }, outcome: { stage: "demo", final: false, next: "report", done: ["Сделано"], pending: [], results: [{ label: "a.md", target: "a.md" }] } });
+    expect(needsAgentReply(brief, accepted(), progress(["practice", "land", "demo"]))).toBe(false);
+    expect(needsAgentReply(brief, accepted("поправь"), progress(["practice", "land", "demo"]))).toBe(true);
   });
 
   it("не нужна, когда ни один этап не взят в прогон", () => {
-    expect(needsAgentReply(demoBrief({ outcome: undefined }), { briefId: "dec_demo", answers: [] }, progress([], ["practice", "land", "demo", "act", "finish"]))).toBe(false);
+    expect(needsAgentReply(demoBrief({ outcome: undefined }), { briefId: "dec_demo", answers: [] }, progress([], ["practice", "land", "demo", "approve", "act", "finish"]))).toBe(false);
   });
 });

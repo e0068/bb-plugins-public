@@ -3,7 +3,8 @@
 // Тред, который Flow создал передачей работы, — его первое сообщение упоминает исходный тред, — получает flow исходного;
 // прогон исходного ему передаёт ответ на бриф (./api.ts), поэтому своего он не заводит. Передача, которой Демонстрация
 // выбрала другой flow, получает выбранный и пустой прогон этого flow. Любой другой новый тред
-// с настоящим flow получает пустой прогон, и контейнер состояния Flow показывает этапы с первой минуты.
+// с настоящим flow получает пустой прогон, и контейнер состояния Flow показывает этапы с первой минуты, и модель с effort
+// своего flow, если провайдер тот же; тред с «Автоматически» — модель строки «Автоматически».
 import type { ProgressStore } from "./progress";
 import type { NewThread, ThreadFlows } from "./thread-flows";
 
@@ -18,6 +19,8 @@ export const startThread =
     hasFlow: (threadId: string) => boolean;
     /** Flow, выбранный в Демонстрации исходного треда для его передачи; забирается один раз. */
     handoffFlow?: (sourceThreadId: string) => string | undefined;
+    /** Ставит треду модель и effort его flow; сбой не держит сообщение. Не задано — ничего. */
+    applyAgent?: (threadId: string) => Promise<void>;
   }) =>
   async ({ thread, byFlow, mentioned }: FirstMessage): Promise<void> => {
     const threadId = thread.id;
@@ -38,4 +41,6 @@ export const startThread =
     // Событие создания может прийти позже первого сообщения: тред привязывается здесь же тем же правилом.
     deps.threads.bind(thread);
     if (deps.hasFlow(threadId) && (await deps.progress.run(threadId)) === null) await deps.progress.annotate(threadId, (progress) => progress);
+    // Модель flow — треду, которого создал не Flow: передаче работы модель задаёт сам ответ виджета.
+    await deps.applyAgent?.(threadId).catch(() => undefined);
   };

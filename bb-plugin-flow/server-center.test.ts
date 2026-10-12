@@ -51,7 +51,7 @@ describe("Flow → Центр уведомлений", () => {
     await harness.callAgentTool("ask_decision", priced({ title: "Плагин", setup: { stages: STAGES }, questions: [{ id: "q", question: "Да?", kind: "confirm", options: [{ id: "yes", action: "Yes" }] }] }), { threadId: "thr_1" });
     await idle("thr_1");
     await vi.waitFor(() => expect(pushed.some((p) => (p as { kind: string }).kind === "awaiting")).toBe(true));
-    expect(pushed.find((p) => (p as { kind: string }).kind === "awaiting")).toMatchObject({ title: "Ждёт ответа — бриф «Плагин»", threadId: "thr_1" });
+    expect(pushed.find((p) => (p as { kind: string }).kind === "awaiting")).toMatchObject({ title: "Ждёт ответа — «Плагин»", threadId: "thr_1" });
   });
 
   it("тред без flow в центр не пишет", async () => {

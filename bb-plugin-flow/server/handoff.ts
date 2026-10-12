@@ -11,12 +11,13 @@ import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import { messages } from "../lib/messages";
 import type { Locale } from "../lib/i18n";
 import { legacyRoute, projectHost, routeEnvironment } from "../core/places";
-import type { DecisionBrief, DispatchPlace, DispatchRoute } from "../shared/contract";
+import type { DecisionBrief, DispatchPlace, DispatchRoute, Execution } from "../shared/contract";
 
 export type HandoffResult = { kind: "created"; threadId: string } | { kind: "failed"; error: string };
 
 /** `route` — дерево и ветка нового треда; без него место читается по-старому. `images` — пути вложений проекта исходного треда. */
-type HandoffArgs = { brief: DecisionBrief; place: Exclude<DispatchPlace, "here">; route?: DispatchRoute; text: string; images?: readonly string[]; locale?: Locale };
+/** `execution` — провайдер, модель, effort и скорость нового треда из ряда виджета; нет — как у bb по умолчанию. */
+type HandoffArgs = { brief: DecisionBrief; place: Exclude<DispatchPlace, "here">; route?: DispatchRoute; text: string; images?: readonly string[]; locale?: Locale; execution?: Execution };
 
 const errorText = (error: unknown): string => (error instanceof Error ? error.message : String(error));
 
@@ -36,7 +37,7 @@ const targetEnvironment = async (sdk: BbPluginApi["sdk"], { place, route, enviro
   return { kind: "ready", environment: routeEnvironment(place, route, { environmentId, hostId: environment.hostId, branchName: environment.branchName, path: environment.path }) };
 };
 
-export const handoff = async (bb: Pick<BbPluginApi, "sdk">, { brief, place, route, text, images = [], locale }: HandoffArgs): Promise<HandoffResult> => {
+export const handoff = async (bb: Pick<BbPluginApi, "sdk">, { brief, place, route, text, images = [], locale, execution }: HandoffArgs): Promise<HandoffResult> => {
   try {
     const thread = await bb.sdk.threads.get({ threadId: brief.threadId });
     if (thread.environmentId === null) return { kind: "failed", error: "the source thread has no environment" };
@@ -59,6 +60,7 @@ export const handoff = async (bb: Pick<BbPluginApi, "sdk">, { brief, place, rout
       ...(place === "child" ? { parentThreadId: brief.threadId } : {}),
       title: brief.title,
       environment: target.environment,
+      ...(execution === undefined ? {} : { providerId: execution.providerId, model: execution.model, reasoningLevel: execution.reasoningLevel, ...(execution.serviceTier === undefined ? {} : { serviceTier: execution.serviceTier }) }),
       input: [{ type: "text", text: `${intro}\n\n${text}`, mentions: [mention] }, ...images.map((path) => ({ type: "localImage" as const, path }))],
     });
     return { kind: "created", threadId: created.id };

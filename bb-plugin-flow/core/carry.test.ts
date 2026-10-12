@@ -72,13 +72,13 @@ describe("что ложится на новый бриф", () => {
 describe("перенос в реплике агенту", () => {
   const brief = briefWith(setup, { [SETUP_ROW.checker]: ["self"] });
 
-  it("реплика называет перенесённое значение «перенесено из прошлого брифа»", () => {
+  it("реплика называет перенесённое значение «перенесено из прошлого виджета»", () => {
     const text = answerMessageText(brief, answer([
       { questionId: SETUP_ROW.executor, optionIds: ["self"] },
       { questionId: SETUP_ROW.checker, optionIds: ["self"] },
       { questionId: SETUP_ROW.testing, optionIds: ["none"] },
     ]));
-    expect(text).toContain("3. Ревью — Сам (перенесено из прошлого брифа)");
+    expect(text).toContain("3. Ревью — Сам (перенесено из прошлого виджета)");
   });
 
   it("тронутое владельцем значение реплика переносом не называет, а рекомендованное называет один раз", () => {

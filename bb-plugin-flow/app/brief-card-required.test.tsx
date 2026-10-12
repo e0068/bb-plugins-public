@@ -49,13 +49,13 @@ describe("обязательный документ в брифе", () => {
     const slot = open();
     expect(await slot.findByText("Отметь обязательные документы: HTML-прототип, Спецификация")).toBeTruthy();
     expect(slot.getByText("заполнено 0/1")).toBeTruthy();
-    expect(slot.getByRole("button", { name: "Отправить бриф" }).hasAttribute("disabled")).toBe(true);
+    expect(slot.getByRole("button", { name: "Отправить ответы" }).hasAttribute("disabled")).toBe(true);
     const group = within(slot.getByRole("group", { name: "Артефакты" }));
     fireEvent.click(group.getByRole("button", { name: /^Спецификация: сделать/ }));
     fireEvent.click(group.getByRole("button", { name: /^HTML-прототип: утвердить/ }));
     expect(slot.queryByText(/Отметь обязательные документы/)).toBeNull();
     expect(slot.queryByText(/заполнено/)).toBeNull();
-    expect(slot.getByRole("button", { name: "Отправить бриф" }).hasAttribute("disabled")).toBe(false);
+    expect(slot.getByRole("button", { name: "Отправить ответы" }).hasAttribute("disabled")).toBe(false);
   });
 });
 

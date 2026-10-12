@@ -1,8 +1,8 @@
-// Секции страницы настроек плагина: общее на все flow — автоповтор автоматизаций и очистка контекста после автоматического выбора flow.
+// Секция страницы настроек плагина: общее на все flow — автоповтор автоматизаций.
 // Коллекцию flow они правят тем же хранилищем, что и страница Flow.
 import { LocaleProvider } from "./locale";
 import { MentionsProvider } from "./mentions";
-import { AutomationRetry, AutoChoiceClear } from "./stage-settings";
+import { AutomationRetry } from "./stage-settings";
 import { useFlowSettingsLive } from "./stage-settings-store";
 
 /** Секция настроек живёт отдельно от страницы Flow и сама следит, что коллекция поменялась на сервере. */
@@ -19,15 +19,6 @@ export function AutomationRetrySection() {
       <MentionsProvider>
         <AutomationRetry />
       </MentionsProvider>
-    </LocaleProvider>
-  );
-}
-
-export function AutoChoiceSection() {
-  return (
-    <LocaleProvider>
-      <Live />
-      <AutoChoiceClear />
     </LocaleProvider>
   );
 }

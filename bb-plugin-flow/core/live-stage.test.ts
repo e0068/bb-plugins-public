@@ -12,7 +12,6 @@ const T0 = "2026-09-17T10:00:00.000Z";
 
 const review = stage("review", { name: "Review" });
 const publish: WorkStage = { ...builtinAutomationStage([]), id: "publish", name: "Publish", automation: { source: "flow", steps: ["git.create-pr"] } };
-const demo = builtinStage("demo", []);
 
 describe("живой этап — идёт работа агента или автоматизации", () => {
   it("начатый этап навыка живой, только пока агент работает", () => {
@@ -41,8 +40,9 @@ describe("живой этап — идёт работа агента или ав
   });
 
   it("этап, ждущий владельца, не живой, даже когда агент работает", () => {
-    const waiting = onBrief(EMPTY_PROGRESS, { id: "dec_1", threadId: "thr_1", title: "Демо", createdAt: T0, kind: "brief", questions: [], stages: { list: [demo], minButtonWidth: 170 }, outcome: { stage: "demo", final: true, done: [], pending: [], results: [{ label: "a", target: "a" }] } }, T0);
-    expect(progressView(waiting, [demo], true).stages[0]).toMatchObject({ state: "now", live: false });
+    const approve = builtinStage("approve", []);
+    const waiting = onBrief(EMPTY_PROGRESS, { id: "dec_1", threadId: "thr_1", title: "Утверждение", createdAt: T0, kind: "brief", questions: [], stages: { list: [approve], minButtonWidth: 170 }, outcome: { stage: "approve", final: true, done: [], pending: [], results: [{ label: "a", target: "a" }] } }, T0);
+    expect(progressView(waiting, [approve], true).stages[0]).toMatchObject({ state: "now", live: false });
   });
 
   it("законченные, впереди и вычеркнутые этапы не живые", () => {

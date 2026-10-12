@@ -25,4 +25,15 @@ describe("Демонстрация в запущенном треде", () => {
     expect(brief?.outcome?.stage).toBe("demo");
     expect(brief?.stages?.list).toEqual(settings.stages);
   });
+
+  it("Демонстрация не держит: тред не ждёт, агенту велено идти к следующему этапу", async () => {
+    const { bb, harness } = createFakePluginHost({ pluginId: "flow" });
+    const store = createStore(bb.storage.kv);
+    await store.markLaunched(THREAD);
+    registerAskTool(bb, store, { newId: () => "D2", now: () => "2026-09-16T10:00:00.000Z", stages: () => settings });
+    const result = JSON.stringify(await harness.callAgentTool(ASK_TOOL_NAME, { title: "Демонстрация", outcome }, { threadId: THREAD }));
+    expect(await store.listAwaiting()).toEqual([]);
+    expect(result).toContain("go on to the next stage of the run without waiting");
+    expect(result).not.toContain("end the turn");
+  });
 });

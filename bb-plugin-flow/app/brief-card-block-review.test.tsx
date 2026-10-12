@@ -46,7 +46,7 @@ const render = (rpc: Rpc) =>
 const open = (answerBrief: () => unknown = () => ({ kind: "not_found" })) => render({ getBrief: () => ({ kind: "found", brief, answer: null }), answerBrief });
 
 type Slot = ReturnType<typeof render>;
-const block = async (slot: Slot) => within(await slot.findByRole("group", { name: "Ответ на бриф" }));
+const block = async (slot: Slot) => within(await slot.findByRole("group", { name: "Ответы на вопросы" }));
 
 describe("блок первой части с ревью и тестированием", () => {
   it("артефакты, кнопки исполнителя, ревью и тестирования, таблица бюджета, поле и нижняя строка лежат в одной группе", async () => {
@@ -55,10 +55,10 @@ describe("блок первой части с ревью и тестирован
     for (const name of [/^Исполняет/, /^Ревью/, /^Тестирование/]) expect(group.getByRole("button", { name })).toBeTruthy();
     expect(group.getByRole("group", { name: "Этапы и бюджет" })).toBeTruthy();
     expect(group.queryByRole("button", { name: /^Приоритет/ })).toBeNull();
-    expect(group.getByRole("textbox", { name: "Дополнить бриф" })).toBeTruthy();
+    expect(group.getByRole("textbox", { name: "Дополнить ответы" })).toBeTruthy();
     expect(group.getByRole("button", { name: "Исполнять" })).toBeTruthy();
     expect(group.getByText("заполнено 4/5")).toBeTruthy();
-    const send = group.getByRole("button", { name: "Отправить бриф" });
+    const send = group.getByRole("button", { name: "Отправить ответы" });
     expect(send.className).toContain("bg-foreground");
     expect(send.hasAttribute("disabled")).toBe(true);
     expect(group.getByRole("button", { name: /^Ревью/ }).className).not.toContain("bg-foreground");
@@ -100,7 +100,7 @@ describe("блок первой части с ревью и тестирован
   it("незакрытые строки названы одной строкой под блоком новыми подписями", async () => {
     const slot = open(() => ({ kind: "incomplete", questionIds: [SETUP_ROW.checker, SETUP_ROW.testing] }));
     fireEvent.click(within(await slot.findByRole("group", { name: "Так?" })).getByRole("button", { name: /Да/ }));
-    fireEvent.click(slot.getByRole("button", { name: "Отправить бриф" }));
+    fireEvent.click(slot.getByRole("button", { name: "Отправить ответы" }));
     expect(await slot.findByText("Нужен ответ: Ревью, Тестирование")).toBeTruthy();
     expect((await block(slot)).queryByText(/нужен ответ/i)).toBeNull();
   });
@@ -108,7 +108,7 @@ describe("блок первой части с ревью и тестирован
   it("отправка несёт строки артефактов, исполнителя, ревью и тестирования", async () => {
     const slot = open();
     fireEvent.click(within(await slot.findByRole("group", { name: "Так?" })).getByRole("button", { name: /Да/ }));
-    fireEvent.click(slot.getByRole("button", { name: "Отправить бриф" }));
+    fireEvent.click(slot.getByRole("button", { name: "Отправить ответы" }));
     await vi.waitFor(() => expect(slot.rpcCalls.some((c) => c.method === "answerBrief")).toBe(true));
     const call = slot.rpcCalls.find((c) => c.method === "answerBrief")?.input as { answer: { answers: Array<{ questionId: string; optionIds: string[] }> } };
     expect(call.answer.answers.slice(0, 4).map(({ questionId, optionIds }) => ({ questionId, optionIds }))).toEqual([
@@ -135,12 +135,12 @@ describe("блок первой части с ревью и тестирован
       answeredAt: "2026-09-14T10:00:00.000Z",
     };
     const slot = render({ getBrief: () => ({ kind: "found", brief, answer: record }), answerBrief: () => ({ kind: "not_found" }) });
-    await slot.findByText("Бриф отвечен");
+    await slot.findByText("Ответ отправлен");
     const group = await block(slot);
     expect(group.getByText("Нет")).toBeTruthy();
     expect(group.getByText("Спецификация")).toBeTruthy();
     expect(group.queryByRole("textbox")).toBeNull();
-    expect(group.queryByText("Отправить бриф")).toBeNull();
+    expect(group.queryByText("Отправить ответы")).toBeNull();
   });
 });
 
@@ -155,7 +155,7 @@ describe("записанный бриф с приоритетом", () => {
     const group = await block(slot);
     expect(group.queryByRole("button", { name: /^Приоритет/ })).toBeNull();
     fireEvent.click(within(await slot.findByRole("group", { name: "Так?" })).getByRole("button", { name: /Да/ }));
-    const send = slot.getByRole("button", { name: "Отправить бриф" });
+    const send = slot.getByRole("button", { name: "Отправить ответы" });
     expect(send.hasAttribute("disabled")).toBe(false);
     fireEvent.click(send);
     await vi.waitFor(() => expect(slot.rpcCalls.some((c) => c.method === "answerBrief")).toBe(true));

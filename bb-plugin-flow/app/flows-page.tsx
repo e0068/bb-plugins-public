@@ -14,12 +14,12 @@ import { useState } from "react";
 import { useBbNavigate, useRpc, useSettings, type PluginNavPanelProps } from "@get-bb/plugin-sdk/app";
 import { useFollowSelectedThread } from "@bb-plugins/rail-collapse";
 
-import { describeFlow, describeNoFlow, flowById, limitFlow, NO_FLOW, removeFlow, renameFlow, setFlowIcon } from "../core/flows";
+import { AUTO_FLOW, describeFlow, describeNoFlow, flowById, limitFlow, NO_FLOW, removeFlow, renameFlow, setAutoAgent, setFlowAgent, setFlowIcon } from "../core/flows";
 import { Button } from "../components/ui/button";
 import { Icon } from "../components/ui/icon";
 import { Input } from "../components/ui/input";
 import { Textarea } from "../components/ui/textarea";
-import type { Flow, threadFlowRpcContract } from "../shared/contract";
+import type { AgentSettings, Flow, threadFlowRpcContract } from "../shared/contract";
 import { cn } from "../lib/utils";
 import { FLOWS_PANEL_PATH } from "../lib/panel-path";
 import { LocaleProvider } from "./locale";
@@ -32,6 +32,7 @@ import { SKILL_ICON } from "./stage-icons";
 import { HISTORY_SUB_PATH, RunHistory } from "./run-history";
 import { FlowsList } from "./flows-list";
 import { FlowGlyph } from "./flow-glyph";
+import { AgentBlock } from "./flow-agent";
 import { StageIconPicker } from "./stage-icon-picker";
 
 export function FlowsPage(props: PluginNavPanelProps) {
@@ -112,6 +113,32 @@ function NoFlowEditor({ saved }: { saved: string | undefined }) {
       </div>
       <DescriptionField label={t.flows.noFlowDescription} placeholder={t.flows.noFlowDescriptionPlaceholder} saved={saved} onSave={(text) => updateFlowSettings((s) => describeNoFlow(s, text))} />
       <p className="px-2.5 pt-1 text-xs text-subtle-foreground">{t.flows.noFlowHint}</p>
+    </section>
+  );
+}
+
+/** Блок «Агент» со стартовым сообщением в поле описания: сохраняется правкой `save` по уходу фокуса. */
+function Agent({ agent, save }: { agent: AgentSettings | undefined; save: (agent: AgentSettings) => void }) {
+  const t = useMessages();
+  const message = <DescriptionField label={t.flows.startMessage} placeholder={t.flows.startPlaceholder} saved={agent?.start} onSave={(start) => save({ ...agent, start })} />;
+  return <AgentBlock agent={agent} onSave={save} messageField={message} />;
+}
+
+/** «Автоматически»: имя и знак встроенные, правится только агент — тред с этим выбором стартует с ним до выбора flow. */
+function AutoEditor({ agent }: { agent: AgentSettings | undefined }) {
+  const t = useMessages();
+  return (
+    <section className="flex min-w-0 flex-col gap-4">
+      <div className="flex flex-col gap-1">
+        <div className="flex h-9 items-center">
+          <span className="flex size-9 shrink-0 items-center justify-center text-muted-foreground">
+            <FlowGlyph crossed={false} className="size-7" />
+          </span>
+          <h2 className="truncate pl-1.5 text-lg font-semibold">{t.flows.pickerAuto}</h2>
+        </div>
+        <p className="px-2.5 pt-1 text-xs text-subtle-foreground">{t.flows.autoHint}</p>
+      </div>
+      <Agent agent={agent} save={(next) => updateFlowSettings((s) => setAutoAgent(s, next))} />
     </section>
   );
 }
@@ -205,6 +232,7 @@ function FlowEditor({ subPath }: { subPath: string }) {
   const { settings } = useFlowSettings();
   if (settings === null) return <div aria-busy="true" />;
   if (subPath === NO_FLOW) return <NoFlowEditor saved={settings.noFlowDescription} />;
+  if (subPath === AUTO_FLOW) return <AutoEditor agent={settings.autoAgent} />;
   // Выбранный flow приходит адресом панели: его пишет лента в начале страницы, а кнопки
   // «назад» и «вперёд» браузера ходят по той же истории.
   const flow = flowById(settings, subPath);
@@ -225,6 +253,7 @@ function FlowEditor({ subPath }: { subPath: string }) {
         </div>
       </div>
       <FlowLimits flow={flow} />
+      <Agent key={`agent-${flow.id}`} agent={flow.agent} save={(next) => updateFlowSettings((s) => setFlowAgent(s, flow.id, next))} />
     </section>
   );
 }

@@ -1,6 +1,6 @@
 {
   "name": "bb-plugin-flow",
-  "version": "0.6.145",
+  "version": "0.6.146",
   "type": "module",
   "engines": {
     "bb": ">=0.42",
@@ -8,7 +8,7 @@
   },
   "bb": {
     "name": "Flow",
-    "description": "Agent questions as a brief in the thread: every option with cost and risks, the recommended one marked, an answer of your own always possible.",
+    "description": "Agent questions as a widget in the thread: every option with cost and risks, the recommended one marked, an answer of your own always possible.",
     "branding": {
       "icon": "./assets/icon.svg"
     },

@@ -2,7 +2,9 @@
 // Flow отдаёт все свои — выбор ему нужен как единственная точка, где путь к дереву треда уже есть, а Claude Code ещё не
 // запущен: здесь синхронно ложится отложенный файл ограничения навыков (./skill-scope.ts). Сбой записи сессию не трогает:
 // упавший выбор отнял бы у агента все инструменты Flow. Сессия Side chat не получает ничего: Flow её не ведёт, а дерево у
-// неё общее с основным тредом, и ограничение навыков в нём — основного.
+// неё общее с основным тредом, и ограничение навыков в нём — основного. Стартовое сообщение flow треда сессия получает
+// невидимой инструкцией: живая сессия её уже не меняет, поэтому тред с «Автоматически» получает сообщение выбранного flow
+// ответом выбора (./choose-flow.ts).
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 
 import { isSideChat } from "../core/side-chat";
@@ -18,6 +20,8 @@ export const registerSessionConfig = (
     tools: readonly string[];
     /** Кладёт отложенное решение в дерево треда; `null` — дерева нет, решение забывается. */
     prestart: (threadId: string, root: string | null) => void;
+    /** Стартовое сообщение flow треда — невидимая инструкция сессии; `null` — нет. Не задано — нет. */
+    startMessage?: (threadId: string) => string | null;
     warn: (message: string) => void;
     deliver?: (threadId: string, root: string | null) => string | undefined;
   },
@@ -30,7 +34,11 @@ export const registerSessionConfig = (
     } catch (error) {
       deps.warn(`skill scope: thread ${thread.id} not written before the session (${error instanceof Error ? error.message : String(error)})`);
     }
-    const instructions = provider.id === "claude-code" ? undefined : deps.deliver?.(thread.id, root);
-    return { tools: [...deps.tools], skills: [...FLOW_SKILLS], ...(instructions === undefined ? {} : { instructions }) };
+    // Инструкции сессии: доставка навыков провайдерам без своих навыков (первой — она нужна, чтобы навыки работали) и стартовое
+    // сообщение flow треда; вместе не длиннее 4096 символов — лишнее обрежет bb.
+    const delivered = provider.id === "claude-code" ? undefined : deps.deliver?.(thread.id, root);
+    const start = deps.startMessage?.(thread.id) ?? null;
+    const instructions = [delivered, start].filter((part): part is string => part !== undefined && part !== null && part !== "").join("\n\n");
+    return { tools: [...deps.tools], skills: [...FLOW_SKILLS], ...(instructions === "" ? {} : { instructions }) };
   });
 };

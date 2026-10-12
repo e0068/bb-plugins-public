@@ -56,7 +56,7 @@ describe("язык ответа в тред", () => {
     const images = [{ n: 1, mimeType: "image/png", dataBase64: Buffer.from("png").toString("base64") }];
     expect(await harness.callRpc("answerBrief", { id: brief.id, messageId: "msg_1", answer, locale: "en", images })).toMatchObject({ kind: "accepted" });
     const text = sentText(harness);
-    expect(text).toContain(`Brief "${brief.title}" — answer:`);
+    expect(text).toContain(`Answers to the questions "${brief.title}":`);
     expect(text).toContain("Run: spec.");
     expect(text).toContain("Budget — forecast");
     expect(text).toContain("Images: [image 1] — ");

@@ -41,20 +41,6 @@ const NO_LIMITS: Limits = { skills: false, agents: false };
 export const limitsOfAny = (flows: ReadonlyArray<Pick<Flow, "limitSkills" | "limitAgents">>): Limits =>
   flows.map(limitsOf).reduce((a, b) => ({ skills: a.skills || b.skills, agents: a.agents || b.agents }), NO_LIMITS);
 
-/** Тумблер «Очищать контекст после автоматического выбора flow»: нет поля — включён. */
-export const clearsContextAfterAutoChoice = (settings: Pick<FlowSettings, "clearContextAfterAutoChoice">): boolean => settings.clearContextAfterAutoChoice ?? true;
-
-/** Что прятать до выбора flow агентом. Без очистки после выбора не прячется ничего: урезанная сессия так и осталась бы урезанной. */
-export const limitsBeforeChoice = (settings: Pick<FlowSettings, "clearContextAfterAutoChoice"> & { flows: ReadonlyArray<Pick<Flow, "limitSkills" | "limitAgents">> }): Limits =>
-  clearsContextAfterAutoChoice(settings) ? limitsOfAny(settings.flows) : NO_LIMITS;
-
-/**
- * Начинать ли тред заново после выбора агентом: по тумблеру — когда flow выбран, и всегда, когда сессия стартовала
- * урезанной, — иначе навыки не вернутся.
- */
-export const restartsAfterChoice = (choice: { clears: boolean; chosen: boolean; limitedBeforeChoice: boolean }): boolean =>
-  choice.limitedBeforeChoice || (choice.clears && choice.chosen);
-
 const finished = (track: FlowProgress["stages"][string] | undefined): boolean => track?.finishedAt !== undefined || track?.skipped === true;
 
 /** Этап, которому есть что открыть: навык или исполнители у него самого или у его подэтапов. */

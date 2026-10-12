@@ -109,7 +109,7 @@ export const compactPreselectSetting = {
   compactPreselect: {
     type: "select" as const,
     label: "Preselect thread compaction",
-    description: "When a brief opens, «Compact the thread first» is already chosen once the context window reaches this zone of the second bar. The yellow zone includes the red one.",
+    description: "When a widget opens, «Compact the thread first» is already chosen once the context window reaches this zone of the second bar. The yellow zone includes the red one.",
     options: [COMPACT_PRESELECT_LABELS.never, COMPACT_PRESELECT_LABELS.warn, COMPACT_PRESELECT_LABELS.alert],
     default: COMPACT_PRESELECT_LABELS[DEFAULT_COMPACT_PRESELECT],
   },

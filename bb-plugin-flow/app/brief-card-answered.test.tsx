@@ -43,7 +43,7 @@ const render = (target: DecisionBrief, answer: AnswerRecord | null) =>
   );
 
 type Slot = ReturnType<typeof render>;
-const block = async (slot: Slot) => within(await slot.findByRole("group", { name: "Ответ на бриф" }));
+const block = async (slot: Slot) => within(await slot.findByRole("group", { name: "Ответы на вопросы" }));
 
 const recordOf = (answers: AnswerRecord["answer"]["answers"], forecast?: AnswerRecord["forecast"]): AnswerRecord => ({
   answer: { briefId: brief.id, answers },

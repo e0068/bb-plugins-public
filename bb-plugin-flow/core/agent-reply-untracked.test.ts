@@ -9,7 +9,7 @@ const LIST: WorkStage[] = [
   stage("stage-new-prototype", { name: "Prototype" }),
   stage("practice", { name: "Работа" }),
   stage("land", { name: "Commit, PR", automation: { source: "flow", steps: [] } }),
-  stage("demo", { kind: "demo", skill: "", name: "Демонстрация" }),
+  stage("demo", { kind: "approve", skill: "", name: "Утверждение" }),
   stage("finish", { name: "Merge", automation: { source: "flow", steps: [] } }),
 ];
 
@@ -30,12 +30,12 @@ const demoBrief = (stageId: string): DecisionBrief => ({
 
 const accepted: DecisionAnswer = { briefId: "dec_demo", answers: [], outcome: { accepted: true } };
 
-describe("работа агента впереди считается после отвеченной Демонстрации", () => {
-  it("этап до Демонстрации, которого нет в записи прогона, реплики не требует", () => {
+describe("работа агента впереди считается после отвеченного Утверждения", () => {
+  it("этап до Утверждения, которого нет в записи прогона, реплики не требует", () => {
     expect(needsAgentReply(demoBrief("demo"), accepted, progress(["practice", "land", "demo"]))).toBe(false);
   });
 
-  it("этап агента после Демонстрации реплику требует", () => {
+  it("этап агента после Утверждения реплику требует", () => {
     const list = [...LIST, stage("report", { name: "Отчёт" })];
     expect(needsAgentReply({ ...demoBrief("demo"), stages: { list, minButtonWidth: 170 } }, accepted, progress(["practice", "land", "demo"]))).toBe(true);
   });
