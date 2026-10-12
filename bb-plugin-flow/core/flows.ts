@@ -4,6 +4,7 @@
 import { builtinStage, freeId, STAGE_BUTTON_WIDTH, stageKindOf, type BuiltinKind } from "../lib/stage-constants";
 import type { AgentSettings, Flow, FlowSettings, StageSettings, WorkStage } from "../shared/contract";
 import { flowStepOrderProblem, type StepOrderProblem } from "./automation-order";
+import { moveItem } from "./reorder";
 
 /** Встроенный этап вида в ряду уже собранных — с id, свободным среди них. */
 const builtin = (kind: BuiltinKind, before: readonly WorkStage[]): WorkStage => builtinStage(kind, before.map((s) => s.id));
@@ -148,6 +149,12 @@ export const putFlow = (settings: FlowSettings, flow: Flow, position?: number): 
   const others = settings.flows.filter((f) => f.id !== flow.id);
   const place = Math.min(position ?? others.length, others.length);
   return { ...settings, flows: [...others.slice(0, place), flow, ...others.slice(place)] };
+};
+
+/** Flow `id` встаёт на место `to`; остальные сохраняют порядок. Неизвестный id и место за пределами списка порядок не меняют. */
+export const moveFlow = (settings: FlowSettings, id: string, to: number): FlowSettings => {
+  const from = settings.flows.findIndex((flow) => flow.id === id);
+  return from === -1 || to < 0 || to >= settings.flows.length ? settings : { ...settings, flows: moveItem(settings.flows, from, to) };
 };
 
 export const setFlowStages =(settings: FlowSettings, id: string, change: (stages: WorkStage[]) => WorkStage[]): FlowSettings =>

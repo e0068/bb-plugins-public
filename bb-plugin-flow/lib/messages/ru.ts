@@ -395,6 +395,7 @@ export const ru = {
     back: "Назад",
     settings: "Настройки Flow",
     newName: "Новый flow",
+    drag: (name: string) => `Перетащить flow ${name}`,
     name: "Название flow",
     description: "Когда выбирать этот flow",
     descriptionPlaceholder: "Когда выбирать этот flow — агент прочтёт это, выбирая flow автоматически",

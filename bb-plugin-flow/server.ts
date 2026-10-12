@@ -3,11 +3,12 @@
 import { randomBytes } from "node:crypto";
 import { homedir } from "node:os";
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
-import { railCollapseSetting, selectedThreadSetting } from "@bb-plugins/rail-collapse/setting";
+import { selectedThreadSetting } from "@bb-plugins/rail-collapse/setting";
 
 import { createSteps, type RunFigures } from "@bb-plugins/automation-steps/index";
 import { failureInstructionOf, retryPolicyOf, wakesAgentAfterLastRetry } from "./core/automation-run";
 import { OWN_PLUGIN_ID } from "./core/plugin-id";
+import { flowsInPanelSetting } from "./lib/flows-in-panel-setting";
 import { ANSWERED_CHANNEL, registerApi } from "./server/api";
 import { returnAwaitingBrief } from "./server/brief-return";
 import { ASK_TOOL_NAME, flowTurnInstructions, registerAskTool } from "./server/ask-tool";
@@ -80,7 +81,7 @@ export default async function plugin(bb: BbPluginApi): Promise<void> {
     [LANGUAGE_SETTING]: { type: "select", label: "Language", description: "Language of the widgets, the settings page and the answer sent to the thread. System follows the browser language.", options: [...LANGUAGE_OPTIONS], default: LANGUAGE_SYSTEM },
     ...contextSettings(() => storedContext),
     ...compactPreselectSetting,
-    ...railCollapseSetting,
+    ...flowsInPanelSetting,
     ...selectedThreadSetting("the flow"),
   });
   storedContext = await settings.get();

@@ -23,6 +23,7 @@ import type { AgentSettings, Flow, threadFlowRpcContract } from "../shared/contr
 import { cn } from "../lib/utils";
 import { FLOWS_PANEL_PATH } from "../lib/panel-path";
 import { LocaleProvider } from "./locale";
+import { usePanelListShown } from "./panel-list-store";
 import { ProviderLogosProvider } from "./provider-logos-source";
 import { useMessages } from "./locale-context";
 import { MentionsProvider, useMentions } from "./mentions";
@@ -213,13 +214,15 @@ function Flows({ subPath }: PluginNavPanelProps) {
   useSelectedThreadFlow(subPath);
   // Второй уровень узкой панели: адрес с выбранным flow (или историей) открывает правую колонку, пустой — список.
   const second = subPath !== "";
+  // Список виден в панели тредов bb — своей колонки у страницы нет и «Назад» к ней некуда.
+  const inPanel = usePanelListShown();
   return (
     <div className="@container h-full overflow-y-auto">
       {/* Список стоит в 8 px от краёв колонки, как строки тредов в левой панели bb; справа от строк до редактора те же 8 px, что и слева. */}
       <div className="flex min-w-0 flex-col @3xl:flex-row @3xl:items-start">
-        <FlowsList subPath={subPath} className={cn("px-2 py-6 @3xl:w-60 @3xl:shrink-0", second && "@max-3xl:hidden")} />
-        <div className={cn("flex min-w-0 flex-1 flex-col gap-4 p-6 @3xl:pl-0", !second && "@max-3xl:hidden")}>
-          <BackToList />
+        {!inPanel && <FlowsList subPath={subPath} className={cn("px-2 py-6 @3xl:w-60 @3xl:shrink-0", second && "@max-3xl:hidden")} />}
+        <div className={cn("flex min-w-0 flex-1 flex-col gap-4 p-6", !inPanel && "@3xl:pl-0", !second && !inPanel && "@max-3xl:hidden")}>
+          {!inPanel && <BackToList />}
           {subPath === HISTORY_SUB_PATH ? <RunHistory /> : <FlowEditor subPath={subPath} />}
         </div>
       </div>
