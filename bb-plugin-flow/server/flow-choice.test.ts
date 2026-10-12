@@ -2,7 +2,7 @@
 import { createFakePluginHost } from "@get-bb/plugin-sdk/testing";
 import { describe, expect, it } from "vitest";
 
-import { AGENT_NO_FLOW, AUTO_FLOW, NO_FLOW } from "../core/flows";
+import { AUTO_FLOW, NO_FLOW } from "../core/flows";
 import { registerFlowChoice } from "./flow-choice";
 import { createFlowSettings } from "./flow-settings";
 import { createProgress } from "./progress";
@@ -43,19 +43,6 @@ describe("строка выбора flow над композером", () => {
     await flows.save({ ...base, flows: [...base.flows, { id: "flow-outer", name: "Outer", stages: [nested, gone] }] });
     const answer = (await call("threadFlowChoice", {})) as { flows: Array<{ id: string; stages: number }> };
     expect(answer.flows.find((f) => f.id === "flow-outer")?.stages).toBe(2);
-  });
-
-  it("тред, оставленный агентом без flow, показан как «Автоматически»: агент ещё может выбрать flow", async () => {
-    const { threads, call } = await host();
-    await threads.assign(THREAD, AGENT_NO_FLOW);
-    expect(await call("threadFlowChoice", {})).toMatchObject({ selected: AUTO_FLOW });
-  });
-
-  it("«Без flow» владельца в треде, оставленном агентом без flow, запоминается как запрет", async () => {
-    const { threads, call } = await host();
-    await threads.assign(THREAD, AGENT_NO_FLOW);
-    await call("pickThreadFlow", { flowId: NO_FLOW });
-    expect(threads.pickedOf(THREAD)).toBe(NO_FLOW);
   });
 
   it("тред без привязки идёт по flow по умолчанию — он и выбран", async () => {
@@ -162,9 +149,9 @@ describe("flow треда для страницы Flow", () => {
     expect(await harness.callRpc("threadFlow", { threadId: THREAD })).toEqual({ flowId });
   });
 
-  it("без своего flow — «Автоматически», отказ агента, «Без flow», удалённый flow — null", async () => {
+  it("без своего flow — «Автоматически», «Без flow», удалённый flow — null", async () => {
     const { threads, call } = await host();
-    for (const flowId of [AUTO_FLOW, AGENT_NO_FLOW, NO_FLOW, "flow-gone"]) {
+    for (const flowId of [AUTO_FLOW, NO_FLOW, "flow-gone"]) {
       await threads.assign(THREAD, flowId);
       expect(await call("threadFlow", {})).toEqual({ flowId: null });
     }

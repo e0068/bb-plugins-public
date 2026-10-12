@@ -16,6 +16,7 @@ The owner sees what was done. A demo is a report, not a stop: in bb sending it c
 - What was not done and why.
 - **Code changed — a live result in one click.** Bring up what was made, check that it responds, and give a page or a launch command. A desktop app — a launch command.
 - **A bb plugin** does not come up from a working tree by itself: bb loads a plugin from its install path. The install can be pointed at the worktree with one command, `bb plugin install --yes path:<worktree>`, but that is temporary and the install must be returned to its permanent source; `bb plugin remove` erases the plugin's database, do not run it. Simpler: until the merge and the plugin update step, the live result is the plugin's test run command and a screenshot; after — the plugin itself.
+- **The result will be opened on a device you have not seen — check it by emulation before the demo.** A phone, another browser, a dark theme: bring the result up in Browser Automation with that device emulated and walk the gesture or screen the work is for. "Not checked" stays only for what cannot be emulated, and names the reason.
 - **A bug was fixed — steps that show it is gone.** On the same input where it occurred, not on a convenient substitute.
 - Only documents changed — there is no live result, say so.
 

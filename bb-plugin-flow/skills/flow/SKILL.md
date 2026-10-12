@@ -40,7 +40,7 @@ A chat message from the owner while your brief waits returns the brief to you: t
 
 ## Stages and their skills
 
-The stages with ids, kinds, skills and executors come in the Flow instructions for every turn — read them there, not from memory. A thread follows the flow the owner picked in the new-thread composer; a thread without a pick follows the default flow, the first in the list; a thread created with "Automatic" first gets a flow through `choose_flow`. In a thread with a flow, talk to the owner only through its stages; for anything the stages do not cover, send a `clarify` brief.
+The stages with ids, kinds, skills and executors come in the Flow instructions for every turn — read them there, not from memory. A thread follows the flow the owner picked in the new-thread composer; a thread without a pick follows the default flow, the first in the list; a thread created with "Automatic" gets its flow before its first turn — a model picks it by the flow descriptions, and the message waits in the queue meanwhile. In a thread with a flow, talk to the owner only through its stages; for anything the stages do not cover, send a `clarify` brief.
 
 | Kind | What it is | Who does it |
 | --- | --- | --- |

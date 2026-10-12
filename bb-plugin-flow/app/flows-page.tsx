@@ -92,14 +92,14 @@ function DescriptionField({ label, placeholder, saved, onSave }: { label: string
   );
 }
 
-/** Описание «когда выбирать» под названием: уходит в правило выбора flow, по которому агент выбирает flow треду с «Автоматически». */
+/** Описание «когда выбирать» под названием: по нему модель выбирает flow треду с «Автоматически» до первого хода. */
 function FlowDescription({ flow }: { flow: Flow }) {
   const t = useMessages();
   return <DescriptionField label={t.flows.description} placeholder={t.flows.descriptionPlaceholder} saved={flow.description} onSave={(text) => updateFlowSettings((s) => describeFlow(s, flow.id, text))} />;
 }
 
 /**
- * «Без flow»: имя и знак встроенные, правится только описание — агент читает его первым пунктом выбора flow, раньше описаний
+ * «Без flow»: имя и знак встроенные, правится только описание — модель выбора читает его первым пунктом, раньше описаний
  * flow.
  */
 function NoFlowEditor({ saved }: { saved: string | undefined }) {
@@ -125,7 +125,7 @@ function Agent({ agent, save }: { agent: AgentSettings | undefined; save: (agent
   return <AgentBlock agent={agent} onSave={save} messageField={message} />;
 }
 
-/** «Автоматически»: имя и знак встроенные, правится только агент — тред с этим выбором стартует с ним до выбора flow. */
+/** «Автоматически»: имя и знак встроенные, правится только модель, которая выбирает flow до хода; стартового сообщения у неё нет. */
 function AutoEditor({ agent }: { agent: AgentSettings | undefined }) {
   const t = useMessages();
   return (
@@ -139,7 +139,7 @@ function AutoEditor({ agent }: { agent: AgentSettings | undefined }) {
         </div>
         <p className="px-2.5 pt-1 text-xs text-subtle-foreground">{t.flows.autoHint}</p>
       </div>
-      <Agent agent={agent} save={(next) => updateFlowSettings((s) => setAutoAgent(s, next))} />
+      <AgentBlock agent={agent} onSave={(next) => updateFlowSettings((s) => setAutoAgent(s, next))} messageField={null} />
     </section>
   );
 }

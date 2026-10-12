@@ -11,7 +11,7 @@ The owner decides which stages go into the run, who executes them and what it co
 
 ## Where the stages come from
 
-**In bb.** The stages and their executors are listed in the turn instructions, in flow order. Send all of them, skipping none and reordering none. A thread created with "Automatic" first gets a flow: the agent picks it by the flow descriptions in the turn instructions.
+**In bb.** The stages and their executors are listed in the turn instructions, in flow order. Send all of them, skipping none and reordering none. A thread created with "Automatic" gets its flow before the first turn, so its stages are already in the turn instructions.
 
 **In Claude Code.** There is no list of flows and no flow-choosing tool here — stages by the owner's work steps: task, prototype, spec, plan, implementation, testing, review, demo. Testing goes before review: a run is cheap, and a review on a red base is not taken.
 

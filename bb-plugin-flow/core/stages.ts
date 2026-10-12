@@ -227,35 +227,6 @@ export const FLOW_RULE =
 export const SELF_ONLY_RULE =
   "self means you do the stage's work in your own session: no subagents and no workflows; if you think a stage needs one, say so up front in the stage-selection brief: recommend that executor in setup.stages, or, when the stage has no such executor, name the need in the brief's intro.";
 
-/** Выбор агента — «Без flow» и flow владельца с описаниями «когда выбирать». */
-type FlowChoices = { flows: readonly Flow[]; noFlowDescription?: string | undefined };
-
-/** Пункт выбора блоком: описание многострочное, со своими списками, и без заголовка слилось бы со следующим пунктом. */
-const choiceBlock = (name: string, idLine: string, description: string | undefined): string => `### ${name}\n\n${idLine}\n\n${description ?? "No description."}`;
-
-/** Пункты выбора: «Без flow» первым, чтобы агент сперва прочёл, когда flow не нужен, потом flow по порядку. */
-const choiceBlocks = ({ flows, noFlowDescription }: FlowChoices, noFlowIdLine: string): string[] => [
-  choiceBlock("No flow", noFlowIdLine, noFlowDescription),
-  ...flows.map((flow) => choiceBlock(flow.name, `id: \`${flow.id}\``, flow.description)),
-];
-
-/** Правило треда с выбором «Автоматически»: сперва flow по описаниям со страницы Flow, потом работа. */
-export const CHOOSE_FLOW_RULE = (choices: FlowChoices, tool: string, noFlow: string): string =>
-  [
-    `This thread has no flow yet, and the owner lets you choose one. Before any other work, compare the request with the owner's choices below — first when no flow is needed, then the flows — and call \`${tool}\` with the id of the choice that fits. A flow's answer lists its stages; follow them from the first one. If no flow is needed or none of the flows fits, call \`${tool}\` with \`${noFlow}\` and work without a flow.`,
-    ...choiceBlocks(choices, `id: \`${noFlow}\``),
-  ].join("\n\n");
-
-/**
- * Правило треда, который агент оставил без flow (и его детей): тот же выбор каждый ход — разговор без flow доходит до работы,
- * и агент назначает flow сам, не дожидаясь просьбы владельца. «Без flow» уже стоит — его id агенту не нужен.
- */
-export const CHOOSE_FLOW_AGAIN_RULE = (choices: FlowChoices, tool: string): string =>
-  [
-    `This thread runs without a flow by an agent's choice, and the owner still lets you choose one. Before working on each owner message, compare it with the choices below — first when no flow is needed, then the flows. While no flow is needed or none of the flows fits, work without a flow and do not call \`${tool}\`. Once the conversation comes to work that a flow fits, call \`${tool}\` with that flow's id before any other work and follow its stages from the first one.`,
-    ...choiceBlocks(choices, "This thread's current choice."),
-  ].join("\n\n");
-
 /** Название этапа на экране: свой и переименованный владельцем встроенный — как назван, встроенный с именем по умолчанию — по виду и языку интерфейса. */
 export const stageLabel = (stage: Pick<WorkStage, "id" | "name" | "kind">, names: Readonly<Partial<Record<BuiltinKind | "action", string>>>): string => {
   const kind = stageKindOf(stage);

@@ -50,10 +50,13 @@ export type ScriptExit = { code: number | null; timedOut: boolean; output: strin
 
 const lines = (output: string): string[] => output.split("\n").map((l) => l.trimEnd()).filter((l) => l !== "");
 
+/** Срок скрипта словами: целые минуты — минутами, иначе секундами. */
+const limitText = (ms: number): string => (ms % 60_000 === 0 ? `${ms / 60_000} minutes` : `${ms / 1000} seconds`);
+
 /** Итог шага по выходу скрипта: успех — с последней строкой вывода, провал — с причиной и хвостом вывода. */
-export const scriptOutcome = (name: string, exit: ScriptExit): StepOutcome => {
+export const scriptOutcome = (name: string, exit: ScriptExit, timeoutMs = SCRIPT_TIMEOUT_MINUTES * 60_000): StepOutcome => {
   if (exit.spawnError !== undefined) return { ok: false, error: `The script ${name} did not start: ${exit.spawnError}` };
-  if (exit.timedOut) return { ok: false, error: `The script ${name} did not finish in ${SCRIPT_TIMEOUT_MINUTES} minutes and was stopped.` };
+  if (exit.timedOut) return { ok: false, error: `The script ${name} did not finish in ${limitText(timeoutMs)} and was stopped.` };
   const all = lines(exit.output);
   if (exit.code === 0) return { ok: true, detail: all.at(-1) ?? null };
   return { ok: false, error: `The script ${name} exited with code ${exit.code ?? "unknown"}:\n${all.slice(-TAIL_LINES).join("\n")}` };

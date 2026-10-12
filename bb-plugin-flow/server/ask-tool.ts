@@ -238,10 +238,8 @@ export const registerAskTool = (
     flowIds?: () => readonly string[];
     /** Название flow треда; `undefined` — тред без flow. Бриф с этапами запоминает его и рисует им бирку Выбора этапов. */
     flowName?: (threadId: string) => string | undefined;
-    /** Идёт ли тред по flow; `false` — «без flow» или «Автоматически» до выбора агентом, и Flow не вкладывает в ход ничего, кроме `chooseFlow`. */
+    /** Идёт ли тред по flow; `false` — «без flow» или «Автоматически» до выбора, и Flow не вкладывает в ход ничего. */
     hasFlow?: (threadId: string) => boolean;
-    /** Указание треду с «Автоматически» выбрать flow самому; `null` — тред не ждёт выбора агентом. */
-    chooseFlow?: (threadId: string) => string | null;
     /** Длительность и стоимость планирования в треде; `undefined` — неизвестно. */
     planning?: (threadId: string) => Promise<Planning | undefined>;
     /** Прогресс flow треда: бриф отмечает ждущие и сделанные этапы. */
@@ -327,7 +325,7 @@ export const registerAskTool = (
   // Этапы — у flow треда и меняются на странице Flow, поэтому их список идёт вкладом к ходу, а не в неизменных инструкциях инструмента.
   bb.agents.contributeInstructions(({ threadId }) => {
     // Тред без flow Flow не ведёт: ни правила про бриф, ни этапов. Инструмент остаётся, агент зовёт его сам.
-    if (deps.hasFlow?.(threadId) === false) return deps.chooseFlow?.(threadId) ?? "";
+    if (deps.hasFlow?.(threadId) === false) return "";
     return flowTurnInstructions(deps.stages?.(threadId).stages ?? []);
   });
 };

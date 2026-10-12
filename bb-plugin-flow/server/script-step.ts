@@ -2,6 +2,8 @@
 // в рабочем дереве треда. Скрипт с shebang идёт своим интерпретатором, без
 // shebang — через sh. Треду и окружению скрипт видит id в BB_THREAD_ID и
 // BB_ENVIRONMENT_ID. Итог процесса в итог шага переводит core/automation-scripts.ts.
+// Выбор flow до хода (./auto-choice.ts) запускает свой скрипт тем же путём: со входом
+// в stdin и своими переменными окружения.
 import { spawn } from "node:child_process";
 import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -19,7 +21,13 @@ const OUTPUT_KEEP = 64_000;
 const DRAIN_MS = 200;
 
 type Place = { cwd: string; threadId: string; environmentId: string };
-export type RunOptions = { timeoutMs?: number };
+export type RunOptions = {
+  timeoutMs?: number;
+  /** Вход скрипта в stdin; нет — stdin закрыт. */
+  input?: string;
+  /** Переменные окружения сверх BB_THREAD_ID и BB_ENVIRONMENT_ID. */
+  env?: Readonly<Record<string, string>>;
+};
 
 /** Сигнал всей группе процессов скрипта; группы уже нет — нечего останавливать. */
 const killGroup = (pid: number | undefined) => {
@@ -31,7 +39,7 @@ const killGroup = (pid: number | undefined) => {
   }
 };
 
-const exitOf = (file: string, shebang: boolean, place: Place, timeoutMs: number): Promise<ScriptExit> =>
+const exitOf = (file: string, shebang: boolean, place: Place, timeoutMs: number, { input, env }: RunOptions): Promise<ScriptExit> =>
   new Promise((resolve) => {
     let output = "";
     let timedOut = false;
@@ -42,8 +50,8 @@ const exitOf = (file: string, shebang: boolean, place: Place, timeoutMs: number)
     // Своя группа процессов (detached): таймаут останавливает и то, что скрипт запустил в фоне.
     const child = spawn(shebang ? file : "/bin/sh", shebang ? [] : [file], {
       cwd: place.cwd,
-      env: { ...process.env, BB_THREAD_ID: place.threadId, BB_ENVIRONMENT_ID: place.environmentId },
-      stdio: ["ignore", "pipe", "pipe"],
+      env: { ...process.env, ...env, BB_THREAD_ID: place.threadId, BB_ENVIRONMENT_ID: place.environmentId },
+      stdio: [input === undefined ? "ignore" : "pipe", "pipe", "pipe"],
       detached: true,
     });
     const finish = (exit: ScriptExit) => {
@@ -58,6 +66,9 @@ const exitOf = (file: string, shebang: boolean, place: Place, timeoutMs: number)
       timedOut = true;
       killGroup(child.pid);
     }, timeoutMs);
+    // Скрипт, который не дочитал вход, закрывает stdin раньше: запись не должна ронять сервер.
+    child.stdin?.on("error", () => undefined);
+    child.stdin?.end(input);
     child.stdout?.on("data", keep);
     child.stderr?.on("data", keep);
     child.on("error", (error) => finish({ code: null, timedOut: false, output, spawnError: error.message }));
@@ -77,7 +88,8 @@ export async function runScript(script: Pick<AutomationScript, "name" | "content
     const file = join(dir, "script");
     await writeFile(file, script.content, "utf8");
     await chmod(file, 0o700);
-    return scriptOutcome(script.name, await exitOf(file, script.content.startsWith("#!"), place, options.timeoutMs ?? SCRIPT_TIMEOUT_MINUTES * 60_000));
+    const timeoutMs = options.timeoutMs ?? SCRIPT_TIMEOUT_MINUTES * 60_000;
+    return scriptOutcome(script.name, await exitOf(file, script.content.startsWith("#!"), place, timeoutMs, options), timeoutMs);
   } catch (error) {
     return { ok: false, error: `The script ${script.name} did not start: ${error instanceof Error ? error.message : String(error)}` };
   } finally {

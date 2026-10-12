@@ -5,7 +5,7 @@
 // шаг-скрипт без скрипта, повтор id, id «без flow». Сохраняет — server/flow-tools.ts.
 import { actionStage, automationStageId, builtinStage, freeId, linkedSubStages, NO_SKILL, SUB_STAGE_ISSUE } from "../lib/stage-constants";
 import type { Flow, FlowDraft, StageCatalog, StageDraft, StageExecutor, WorkStage } from "../shared/contract";
-import { AGENT_NO_FLOW, AUTO_FLOW, NO_FLOW, withDescription } from "./flows";
+import { AUTO_FLOW, NO_FLOW, withDescription } from "./flows";
 
 export type FlowDraftResult = { ok: true; flow: Flow } | { ok: false; problems: string[] };
 
@@ -103,7 +103,6 @@ export const resolveFlowDraft = (draft: FlowDraft, catalog: StageCatalog, newId:
     // Иначе flow с этим id был бы невыбираем: кнопка композера читает его как отказ от flow.
     ...(draft.id === NO_FLOW ? [`the flow id "${NO_FLOW}" is reserved for the "no flow" choice of the composer`] : []),
     ...(draft.id === AUTO_FLOW ? [`the flow id "${AUTO_FLOW}" is reserved for the "automatic" choice of the composer`] : []),
-    ...(draft.id === AGENT_NO_FLOW ? [`the flow id "${AGENT_NO_FLOW}" is reserved for the "no flow" choice of the agent`] : []),
     ...resolved.flatMap((r) => r.problems),
     ...(linkedSubStages(resolved.map((r) => r.stage)) ? [] : [SUB_STAGE_ISSUE]),
   ];
