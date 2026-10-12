@@ -47,11 +47,14 @@ describe("файл исполнителя по id", () => {
 
   it.each([
     ["agent:codex/coder", /coder\.toml\.md$/, '```toml\nname = "coder"\n```\n'],
-    ["workflow:DEV2", /dev2\.js\.md$/, '```js\nexport const meta = { name: "DEV2" }\n```\n'],
   ])("%s — не markdown, поэтому правая панель получает его текст снимком в блоке кода markdown", async (id, path, text) => {
     const file = await readExecutorFile(sources(), id);
     expect(file).toEqual({ hostId: "host_local", path: expect.stringMatching(path) });
     expect(await readFile(file!.path, "utf8")).toBe(text);
+  });
+
+  it("workflow — сам .js на хосте сервера: правая панель открывает его конструктором", async () => {
+    expect(await readExecutorFile(sources(), "workflow:DEV2")).toEqual({ hostId: "host_local", path: "/home/owner/.claude/workflows/dev2.js" });
   });
 
   it("неизвестный исполнитель или нет хоста — null", async () => {

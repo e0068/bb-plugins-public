@@ -1,8 +1,9 @@
 // Бэкенд Flow: инструменты агента `ask_decision`, `share_command` и `flow_stage`, исполнитель автоматизаций, коллекция
 // flow и flow тредов, настройка языка и RPC виджетов поверх kv плагина.
 import { randomBytes } from "node:crypto";
-import { readFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
+import { dirname, join } from "node:path";
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import { selectedThreadSetting } from "@bb-plugins/rail-collapse/setting";
 
@@ -41,11 +42,24 @@ import { createOwnSends } from "./server/own-sends";
 import { placeFigureStepsOnce } from "./server/figure-steps-once";
 import { createFlowSettings } from "./server/flow-settings";
 import { READ_FLOWS_TOOL_NAME, registerFlowTools, SAVE_FLOW_TOOL_NAME } from "./server/flow-tools";
+import { readProviderModels, registerWorkflowFiles } from "./server/workflow-files";
+import { registerWorkflowTools, WORKFLOW_READ_TOOL_NAME, WORKFLOW_WRITE_TOOL_NAME } from "./server/workflow-tools";
 import { createLegacyHeal } from "./server/legacy-heal";
 import { registerFlowSettingsApi, STAGE_SETTINGS_CHANNEL } from "./server/settings-api";
 import { createFlowSync, defaultSyncDir, FLOW_SYNC_CHANNEL, registerFlowSyncApi, SYNC_POLL_MS } from "./server/flow-sync";
 import { createSkillDelivery } from "./server/skill-delivery";
-import { hostCatalogSources, hostSkillFileSources, readAccountSkills, readClaudePlugins, readExecutorFile, readSkillFile, readStageCatalog, readWorkflowScripts, writeScriptFile } from "./server/stage-catalog";
+import {
+  hostCatalogSources,
+  hostSkillFileSources,
+  readAccountSkills,
+  readClaudePlugins,
+  readExecutorFile,
+  readSkillFile,
+  readStageCatalog,
+  readWorkflowAgents,
+  readWorkflowScripts,
+  writeScriptFile,
+} from "./server/stage-catalog";
 import { createSkillScope } from "./server/skill-scope";
 import { agentFor, defaultExecutionOf, executionFor, startMessageOf } from "./core/flow-agent";
 import { registerSessionConfig } from "./server/session-config";
@@ -179,7 +193,7 @@ export default async function plugin(bb: BbPluginApi): Promise<void> {
   bb.events.on("thread.deleted", ({ thread }) => void delivery.forget(thread.id));
   // Первая сессия треда стартует уже с ограничением: решение сверки ложится в дерево прямо перед стартом Claude Code.
   registerSessionConfig(bb, {
-    tools: [ASK_TOOL_NAME, FLOW_STAGE_TOOL, READ_FLOWS_TOOL_NAME, SAVE_FLOW_TOOL_NAME, COMMAND_TOOL_NAME],
+    tools: [ASK_TOOL_NAME, FLOW_STAGE_TOOL, READ_FLOWS_TOOL_NAME, SAVE_FLOW_TOOL_NAME, COMMAND_TOOL_NAME, WORKFLOW_READ_TOOL_NAME, WORKFLOW_WRITE_TOOL_NAME],
     prestart: (threadId, root) => void scope.prestart(threadId, root),
     startMessage: (threadId) => startMessageOf(agentOf(threadId)),
     deliver: delivery.deliver,
@@ -355,6 +369,18 @@ export default async function plugin(bb: BbPluginApi): Promise<void> {
   };
   void catalog();
   registerFlowTools(bb, flows, { catalog, newId });
+  // Workflow Claude Code: инструменты агента собирают их в формате конструктора, открыватель .js показывает конструктор.
+  const writeText = async (path: string, text: string) => {
+    await mkdir(dirname(path), { recursive: true });
+    await writeFile(path, text, "utf8");
+  };
+  registerWorkflowTools(bb, { dir: join(homedir(), ".claude", "workflows"), readFile: (path) => readFile(path, "utf8"), writeFile: writeText });
+  registerWorkflowFiles(bb, {
+    readFile: (path) => readFile(path, "utf8"),
+    writeFile: writeText,
+    agents: () => readWorkflowAgents(hostCatalogSources(bb)),
+    providers: () => readProviderModels(bb),
+  });
   registerFlowSettingsApi(bb, flows, { catalog, ready: async () => {
     if (!heal.done()) await catalog();
   },

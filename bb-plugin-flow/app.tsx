@@ -22,6 +22,7 @@ import { systemLanguages } from "./app/locale-context";
 import { lockAutoZoom } from "./app/viewport";
 import { TaskPanel, TASK_PANEL_ACTION } from "./app/task-card";
 import { DecisionDirective } from "./app/widget";
+import { WorkflowOpener } from "./app/workflow-opener";
 import { OWN_PLUGIN_ID } from "./core/plugin-id";
 import { resolveLocale } from "./lib/i18n";
 import { messages } from "./lib/messages";
@@ -31,6 +32,8 @@ export default definePluginApp((app) => {
   lockAutoZoom(document);
   app.slots.messageDirective({ id: "decision", component: DecisionDirective });
   app.slots.messageDirective({ id: "command", component: CommandDirective });
+  // Файл workflow — .js из ~/.claude/workflows или .bb/workflows — открывается конструктором; прочие .js — превью bb.
+  app.slots.fileOpener({ id: "workflow", title: "Workflow", extensions: ["js"], component: WorkflowOpener });
   // Задача из Демонстрации открывается сбоку своей вкладкой: чужую вкладку Tasks+ плагин открыть не может.
   app.slots.threadPanelAction({ id: TASK_PANEL_ACTION, title: "Task", icon: "ListTodo", component: TaskPanel });
   // Заголовок секции регистрируется один раз, до настроек плагина, поэтому идёт за языком браузера.

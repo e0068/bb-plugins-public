@@ -1,0 +1,33 @@
+{
+  "name": "@bb-plugins/workflow-builder",
+  "version": "0.1.0",
+  "type": "module",
+  "private": true,
+  "main": "./model.ts",
+  "exports": {
+    "./model": "./model.ts",
+    "./agents": "./agents.ts",
+    "./outline-ops": "./outline-ops.ts",
+    "./validity": "./validity.ts",
+    "./identity": "./identity.ts",
+    "./store": "./store.ts",
+    "./react": "./react/index.ts"
+  },
+  "peerDependencies": {
+    "react": ">=18"
+  },
+  "devDependencies": {
+    "@testing-library/react": "^16.3.2",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "jsdom": "^30.0.1",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "typescript": "^5.7.0",
+    "vitest": "^3.2.7"
+  },
+  "scripts": {
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  }
+}

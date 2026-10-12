@@ -10,6 +10,7 @@ import type { BbPluginApi } from "@get-bb/plugin-sdk";
 
 import { disabledPluginKeys, installedPlugins, parseAgentFile, parseCodexAgentFile, parseWorkflowFile, skillOrigin, syncedPluginName } from "../core/catalog";
 import type { ClaudePlugin } from "../core/skill-scope";
+import { workflowAgentOptions, type WorkflowAgentOption } from "../core/workflow-file";
 import type { AutomationScript, ExecutorOrigin, SkillFile, SkillOrigin, StageCatalog, StageExecutor } from "../shared/contract";
 
 export type CatalogSources = {
@@ -110,6 +111,9 @@ const readExecutorEntries = async (sources: CatalogSources): Promise<ExecutorEnt
   return distinct(lists.flat());
 };
 
+/** Агенты каталога шаблоном шага конструктора workflow. */
+export const readWorkflowAgents = async (sources: CatalogSources): Promise<WorkflowAgentOption[]> => workflowAgentOptions(await readExecutorEntries(sources));
+
 export const readStageCatalog = async (sources: CatalogSources): Promise<StageCatalog> => {
   const [skills, entries] = await Promise.all([readSkills(sources), readExecutorEntries(sources)]);
   return { skills, executors: entries.map((entry) => entry.executor) };
@@ -209,12 +213,15 @@ export const writeScriptFile = async (script: Pick<AutomationScript, "id" | "nam
   return hostId === null ? null : { hostId, path: await writeSnapshot(script.id, script.name, script.content) };
 };
 
-/** Файл агента или workflow по id исполнителя и хост сервера: markdown — сам файл, остальное — снимок; исполнитель не нашёлся, файл не прочитался или хоста нет — `null`. */
+/**
+ * Файл агента или workflow по id исполнителя и хост сервера: markdown и .js workflow — сам файл (.js правая панель открывает
+ * конструктором workflow), остальное — снимок; исполнитель не нашёлся, файл не прочитался или хоста нет — `null`.
+ */
 export const readExecutorFile = async (sources: ExecutorFileSources, id: string): Promise<SkillFile> => {
   const [entries, hostId] = await Promise.all([readExecutorEntries(sources), settled(sources.primaryHostId, null)]);
   const found = entries.find((entry) => entry.executor.id === id);
   if (hostId === null || found === undefined) return null;
-  if (extname(found.path) === ".md") return { hostId, path: found.path };
+  if (extname(found.path) === ".md" || found.executor.kind === "workflow") return { hostId, path: found.path };
   return settled(async () => ({ hostId, path: await writeSnapshot(id, basename(found.path), await sources.readFile(found.path)) }), null);
 };
 
