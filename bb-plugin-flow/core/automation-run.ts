@@ -302,6 +302,9 @@ export const conflictWakeText = (stage: WorkStage, files: readonly string[], bas
 /** Наказ агенту после последней неудачной попытки, пока владелец не написал свой в настройках. */
 export const DEFAULT_FAILURE_INSTRUCTION = "Tell the owner what failed and end your turn: Flow carries on once the owner retries or skips it.";
 
+/** Команда для владельца — только виджетом: без него владелец ищет «команду выше», которой нет. */
+const COMMAND_RULE = 'A command the owner has to run goes through share_command, with its directive line in your reply; never point the owner to a command "above" that you did not send.';
+
 /** Наказ агенту из настроек Flow; поля нет или в нём одни пробелы — наказ по умолчанию. */
 export const failureInstructionOf = (settings: Pick<FlowSettings, "wakeAgentInstruction">): string => settings.wakeAgentInstruction?.trim() || DEFAULT_FAILURE_INSTRUCTION;
 
@@ -317,7 +320,7 @@ export const withFailureInstruction = <S extends Pick<FlowSettings, "wakeAgentIn
  * владельца, что агенту делать; простоя в ней нет, как и в `wakeText`.
  */
 export const failureWakeText = (stage: WorkStage, step: string, error: string, instruction = DEFAULT_FAILURE_INSTRUCTION): string =>
-  `Flow: step ${step} of stage ${stage.id} "${stage.name}" failed after the last attempt: ${error}\n\nThe step waits for the owner's Retry or Skip above the composer. ${instruction}`;
+  `Flow: step ${step} of stage ${stage.id} "${stage.name}" failed after the last attempt: ${error}\n\nThe step waits for the owner's Retry or Skip above the composer. ${instruction}\n\n${COMMAND_RULE}`;
 
 /** Этап с упавшим шагом: не закрыт, а у прогона есть ошибка. */
 export const isFailed = (track: StageTrack): boolean => track.finishedAt === undefined && typeof track.run?.error === "string";

@@ -5,10 +5,12 @@ import type { BbPluginApi } from "@get-bb/plugin-sdk";
 
 import type { Carried } from "../core/carry";
 import { awaitingKind } from "../core/awaiting";
+import { approvalIssues } from "../core/approval-guard";
 import { liveIssues, nextFlowIssues, outcomeKind } from "../core/outcome";
 import { DECISION_ID_PREFIX, directiveLine } from "../core/directive";
 import { criterionEditable, money, plannedMinutes, recommendedForecast } from "../core/budget";
-import { FLOW_RULE, SELF_ONLY_RULE, isAskedStage, isAutomationStage, isStageCarryKey, reportIssues, stageInstructions, withStepResults } from "../core/stages";
+import { INSTRUCTIONS_LIMIT_CHARS } from "../lib/agent-limits";
+import { FLOW_RULE, SELF_ONLY_RULE, compactStageInstructions, isAskedStage, isAutomationStage, isStageCarryKey, reportIssues, stageInstructions, withStepResults } from "../core/stages";
 import { isHeadingStage } from "../core/sub-stages";
 import { stageKindOf, type BuiltinKind, type StageKind } from "../lib/stage-constants";
 import { FORK_ZERO_RULE, OPTION_PRICE_RULE, askDecisionParamsSchema, type AskDecisionParams, type Criterion, type DecisionBrief, type FlowProgress, type Planning, type RestoredDraft, type StageSettings } from "../shared/contract";
@@ -45,9 +47,9 @@ After launch (an answered brief with a stage in the run), in a flow with a Defin
 
 The owner also chooses where the work runs; a new thread takes the answer over and this thread stops.
 
-Brief kind: brief — you wait for the answer; clarify — one yesno question ("Yes"/"No"), no setup; you continue on your own reading.
+Brief kind — you decide whether to stop: brief — you wait for the answer; clarify — any question (fork, pick, confirm, yesno) with no setup, price or outcome, you keep working on your own reading and the answer arrives along the way.
 
-After the call, paste the directive line from the result into your reply as a standalone line, without quotes or backticks. For a brief except a demo, end the turn right after it. The answer arrives as a heading with the title, in the owner's language.
+After the call, paste the directive line from the result into your reply as a standalone line, without quotes or backticks. For a brief except a demo, end the turn right after it.
 
 One brief per run: go through the run stages in order; a demo stage: send its outcome and go on; only an approval stops.`;
 
@@ -127,7 +129,7 @@ const launchedIssues = (params: AskDecisionParams, stages: StageSettings["stages
 const OUTCOME_KINDS: readonly StageKind[] = ["demo", "approve"];
 
 /** Итог — про запущенную работу и про этап Демонстрации или Утверждения из flow треда; flow без Вопросов, Definition of Done и Выбора этапов запуска не ждёт. */
-const outcomeIssues = (outcome: AskDecisionParams["outcome"], launched: boolean, stages: StageSettings["stages"], flowIds: readonly string[]): string[] => {
+const outcomeIssues = (outcome: AskDecisionParams["outcome"], launched: boolean, stages: StageSettings["stages"], flowIds: readonly string[], progress: FlowProgress | null | undefined): string[] => {
   if (outcome === undefined) return [];
   if (!launched && stages.some(isAskedStage)) return ["an outcome reports a stage of running work, and the work in this thread has not started yet: send a brief with setup.stages first"];
   const approval = stages.some((stage) => stage.id === outcome.stage && stageKindOf(stage) === "approve");
@@ -135,7 +137,7 @@ const outcomeIssues = (outcome: AskDecisionParams["outcome"], launched: boolean,
   return [
     ...(reported.includes(outcome.stage) ? [] : [`outcome.stage ${outcome.stage} is not a demo or approval stage of the thread's flow: ${reported.length === 0 ? "the flow has none" : reported.join(", ")}`]),
     // Утверждение показывает, что утверждается, — живой результат нужен только Демонстрации.
-    ...(approval ? [] : liveIssues(outcome)),
+    ...(approval ? approvalIssues(stages, progress, outcome.stage) : liveIssues(outcome)),
     ...nextFlowIssues(outcome, flowIds),
   ];
 };
@@ -222,8 +224,10 @@ const toolError = (text: string) => ({ isError: true as const, content: [{ type:
 
 /** Вклад Flow в ход треда с flow: правило брифа и этапы flow. Его же отдаёт выбор flow агентом — этапы нужны в том же ходе. */
 export const flowTurnInstructions = (stages: StageSettings["stages"]): string => {
-  const listed = stageInstructions(stages);
-  return [RULE, ...(listed === null ? [] : [FLOW_RULE, listed, SELF_ONLY_RULE])].join("\n\n");
+  const compose = (listed: string | null): string => [RULE, ...(listed === null ? [] : [FLOW_RULE, listed, SELF_ONLY_RULE])].join("\n\n");
+  const full = compose(stageInstructions(stages));
+  // Больше лимита bb обрежет хвост, и агент не узнает о последних этапах — Демонстрации и утверждениях.
+  return full.length <= INSTRUCTIONS_LIMIT_CHARS ? full : compose(compactStageInstructions(stages));
 };
 
 export const registerAskTool = (
@@ -263,7 +267,7 @@ export const registerAskTool = (
       const legacy = params.kind === "brief" ? legacyIssues(params.setup) : [];
       const progress = (await deps.progress?.get(ctx.threadId)) ?? null;
       const launchedSetup = params.kind === "brief" && launched ? launchedIssues(params, settings.stages, progress) : [];
-      const outcomeProblems = outcomeIssues(params.outcome, launched, settings.stages, deps.flowIds?.() ?? []);
+      const outcomeProblems = outcomeIssues(params.outcome, launched, settings.stages, deps.flowIds?.() ?? [], deps.progress === undefined ? undefined : progress);
       const stageIssues = [...missingStagesIssues(params, launched, settings.stages), ...reportIssues(settings.stages, params.setup?.stages)];
       const base = baseIssues(params, launched, settings.stages);
       if (launchedSetup.length > 0 || outcomeProblems.length > 0)

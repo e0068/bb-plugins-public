@@ -19,7 +19,9 @@ Only what the owner decides and what changes the result. A fact you can check in
 | Pick several | Several items can be taken | Several may be recommended |
 | "Did I get this right" | The task reads ambiguously or is made of important nuances | One option "Yes"; the context says how you read the ambiguous point — the brief's scope already says what you understood, the question does not retell it; the owner writes their own version. Definition of Done items do not go here — they belong to the Definition of Done stage |
 
-Gather everything that has piled up in one go. Do not ask one question per turn.
+Questions you have to wait for go into one brief, not one per turn.
+
+**Ask as it arises, and decide yourself whether to stop.** A question you can go on without — take the simplest option and name it — goes as `kind: "clarify"`: any question kinds, no prices, the work continues and the answer arrives along the way. A question the work cannot go on without, and every question of this stage before launch, goes as `brief`: the turn ends and you wait.
 
 ## How to ask
 
@@ -82,6 +84,6 @@ No AskUserQuestion either — questions as a numbered list at the end of the rep
 
 ## After the answer
 
-Work by the answer without arguing with the choice. If it differs from your recommendation and changes cost or risk, name that in the report in one line. A new question mid-work — only when it is unclear how to proceed without it.
+Work by the answer without arguing with the choice. If it differs from your recommendation and changes cost or risk, name that in the report in one line. A new question mid-work goes out as it arises: `clarify` when you can go on without the answer, `brief` when you cannot.
 
 The owner picked a fork option that someone may later want to undo — that is a project decision: in a repository with `docs/`, record it as a file in `docs/decisions/` — what was decided, why, what was rejected and on what grounds — and a line in `docs/INDEX.md`, before implementation. One decision — one file; an outdated one is revoked by a new record linking to the old, not by editing it retroactively. A choice without a rejected alternative, or one that changes together with the code, is not recorded: its place is a comment in the task or next to the code.

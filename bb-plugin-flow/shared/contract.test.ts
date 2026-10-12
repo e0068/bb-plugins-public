@@ -46,15 +46,22 @@ const accepts = (schema: { safeParse: (v: unknown) => { success: boolean } }, va
   schema.safeParse(value).success;
 
 describe("контракт брифа", () => {
-  it("вариант развилки без описания, цены или рисков отбивается", () => {
+  it("вариант развилки без описания отбивается", () => {
     fc.assert(
-      fc.property(fc.constantFrom("description", "cost", "risks"), fc.boolean(), (field, blank) => {
+      fc.property(fc.boolean(), (blank) => {
         const broken: Record<string, unknown> = { ...fullOption("b") };
-        if (blank) broken[field] = "";
-        else delete broken[field];
+        if (blank) broken.description = "";
+        else delete broken.description;
         expect(accepts(decisionQuestionSchema, question("fork", { options: [fullOption("a", true), broken] }))).toBe(false);
       }),
     );
+  });
+
+  it("вариант развилки нового брифа без цены отбивается, а у уточнения проходит", () => {
+    const priceless = (id: string, recommended = false) => ({ id, action: `Вариант ${id}`, recommended, description: "Что именно произойдёт" });
+    const fork = { id: "f", question: "Как?", kind: "fork", options: [priceless("a", true), priceless("b")] };
+    expect(accepts(askDecisionParamsSchema, { title: "Бриф", kind: "brief", questions: [fork] })).toBe(false);
+    expect(accepts(askDecisionParamsSchema, { title: "Уточнение", kind: "clarify", questions: [fork] })).toBe(true);
   });
 
   it("компактный вариант без цены и рисков проходит", () => {
@@ -106,10 +113,21 @@ describe("контракт брифа", () => {
     expect(accepts(askDecisionParamsSchema, { title: "Пусто", questions: [] })).toBe(false);
   });
 
-  it("clarify из двух вопросов отбивается", () => {
+  it("уточнение без старых видов вопросов и без цен", () => {
+    const yes = { id: "y", question: "Так?", kind: "yesno", options: [{ id: "a", action: "Да" }, { id: "b", action: "Нет" }] };
+    const choice = { id: "c", question: "Что?", kind: "choice", options: [{ id: "a", action: "А" }, { id: "b", action: "Б" }] };
+    const pricedFork = { id: "f", question: "Как?", kind: "fork", options: [{ id: "a", action: "А", description: "а", add: { target: 1, max: 1, risk: 0 } }, { id: "b", action: "Б", description: "б", add: { target: 0, max: 0, risk: 0 } }] };
+    expect(accepts(askDecisionParamsSchema, { title: "У", kind: "clarify", questions: [yes] })).toBe(true);
+    expect(accepts(askDecisionParamsSchema, { title: "У", kind: "clarify", questions: [choice] })).toBe(false);
+    expect(accepts(askDecisionParamsSchema, { title: "У", kind: "clarify", questions: [pricedFork] })).toBe(false);
+  });
+
+  it("clarify несёт любые вопросы, но не первую часть и не итог", () => {
     const yesno = (id: string) => question("yesno", { id });
     expect(accepts(decisionBriefSchema, brief({ kind: "clarify", questions: [yesno("a")] }))).toBe(true);
-    expect(accepts(decisionBriefSchema, brief({ kind: "clarify", questions: [yesno("a"), yesno("b")] }))).toBe(false);
+    expect(accepts(decisionBriefSchema, brief({ kind: "clarify", questions: [yesno("a"), yesno("b")] }))).toBe(true);
+    expect(accepts(decisionBriefSchema, brief({ kind: "clarify", questions: [question("fork")] }))).toBe(true);
+    expect(accepts(decisionBriefSchema, brief({ kind: "clarify", questions: [yesno("a")], setup: { criteria: ["Пункт"] } }))).toBe(false);
   });
 
   it("повтор варианта в ответе на вопрос отбивается", () => {

@@ -7,7 +7,7 @@ description: The Demo stage — show the owner everything done since the previou
 
 If the owner writes in Russian, read [ru.md](ru.md) in this folder instead — it is the same skill in Russian; otherwise follow this file.
 
-The owner sees what was done. A demo is a report, not a stop: in bb sending it closes the stage, and you go on to the next stage of the run at once. Only an approval stage holds the work.
+The owner sees what was done. A demo is a report, not a stop: in bb sending it closes the stage, and you go on to the next stage of the run at once. Only an approval stage holds the work. Send the demo the moment its stage comes — do not skip it or fold it into the approval: the owner sees an approval as a comment field only, and the tool refuses an approval while a demo stage before it has not been sent.
 
 ## What to show
 
