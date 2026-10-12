@@ -1,4 +1,4 @@
-// Кнопки в титул-баре страницы Flow, левее крестика хоста: часы открывают историю прогонов, а шестерёнка правее ведёт на страницу
+// Кнопки в титул-баре страницы Flow, левее крестика хоста: значок workflow открывает раздел Workflows, часы — историю прогонов, а шестерёнка правее ведёт на страницу
 // настроек плагина в bb. Навигации на неё в SDK нет, а внутренние ссылки хост
 // перехватывает только в теле слота — шапку он в перехватчик не заворачивает.
 // Поэтому обычный клик кнопка проводит сама: новая запись истории и popstate,
@@ -14,6 +14,7 @@ import { FLOWS_PANEL_PATH, SETTINGS_ROUTE } from "../lib/panel-path";
 import { LocaleProvider } from "./locale";
 import { useMessages } from "./locale-context";
 import { HISTORY_SUB_PATH } from "./run-history";
+import { WORKFLOWS_SUB_PATH, workflowsPlace } from "../core/workflows-route";
 
 const plainClick = (event: MouseEvent): boolean => event.button === 0 && !event.metaKey && !event.ctrlKey && !event.shiftKey && !event.altKey;
 
@@ -61,9 +62,29 @@ function HistoryButton({ open }: { open: boolean }) {
   );
 }
 
+/** Раздел Workflows: конструктор workflow Claude Code на странице Flow; при открытом разделе кнопка текущая. */
+function WorkflowsButton({ open }: { open: boolean }) {
+  const t = useMessages();
+  const navigate = useBbNavigate();
+  return (
+    <Button asChild variant="ghost" size="icon" className={cn("size-7 shrink-0 text-muted-foreground hover:text-foreground", open && "text-foreground")}>
+      <button
+        type="button"
+        aria-label={t.workflows.tab}
+        title={t.workflows.tab}
+        aria-current={open ? "page" : undefined}
+        onClick={() => navigate.toPluginPanel(FLOWS_PANEL_PATH, { subPath: WORKFLOWS_SUB_PATH })}
+      >
+        <Icon name="Workflow" aria-hidden="true" className="size-4" />
+      </button>
+    </Button>
+  );
+}
+
 export function FlowsSettingsButton({ subPath }: Pick<PluginNavPanelProps, "subPath">) {
   return (
     <LocaleProvider>
+      <WorkflowsButton open={workflowsPlace(subPath) !== null} />
       <HistoryButton open={subPath === HISTORY_SUB_PATH} />
       <SettingsLink />
     </LocaleProvider>

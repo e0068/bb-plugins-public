@@ -17,7 +17,7 @@ import { stageTimeline } from "../core/stage-timeline";
 import { stampFlow, type TaskFlow } from "../core/task-flow";
 import { flowProgressSchema, flowStageParamsSchema, frozenRunSchema, progressRpcContract, type ContextFillView, type DecisionAnswer, type DecisionBrief, type FlowProgress, type FrozenRun, type Planned, type RunHistoryEntry, type RunSummaryView, type StageSettings, type WorkStage } from "../shared/contract";
 import { runKey, type PastRun, type RunFigures, type RunSpend } from "@bb-plugins/automation-steps/index";
-import type { AgentRelay, RelayHold } from "./agent-relay";
+import { RELAY_WAIT_MS, type AgentRelay, type RelayHold } from "./agent-relay";
 
 export const FLOW_STAGE_TOOL = "flow_stage";
 
@@ -320,8 +320,6 @@ const withTaskTitles = (results: readonly Result[], read: (target: string) => Pr
 /** Сколько ответ flow_stage ждёт записи старта: исполнитель пишет старт через миллисекунды после отметки, срок — с запасом. */
 const START_TIMEOUT_MS = 5000;
 const START_POLL_MS = 25;
-/** Сколько отметка ждёт автоматизацию за этапом: дольше — ход агента держит вызов, а Flow напишет в тред сам. */
-const RELAY_WAIT_MS = 10 * 60_000;
 
 const toolError = (text: string) => ({ isError: true as const, content: [{ type: "text" as const, text }] });
 

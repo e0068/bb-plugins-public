@@ -84,6 +84,11 @@ export function createEditorStore() {
         t.description = description;
       });
     },
+    // The code of a file the builder can't read as a tree, edited as text — only while such a file is open.
+    setRawSource(rawSource: string): void {
+      if (snapshot.rawSource === null) return;
+      emit({ ...snapshot, rawSource, version: snapshot.version + 1 });
+    },
     setPreviewEngine(previewEngine: Engine): void {
       emit({ ...snapshot, previewEngine, version: snapshot.version + 1 });
     },

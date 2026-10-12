@@ -937,8 +937,17 @@ export const filesRpcContract = defineRpcContract({
  * берёт из каталога Flow. Путь — абсолютный, только верхний уровень `~/.claude/workflows` или `.bb/workflows`.
  */
 export const workflowFilesRpcContract = defineRpcContract({
+  /** Workflow Claude Code из `~/.claude/workflows` для раздела Workflows страницы Flow: папка и файлы верхнего уровня с причиной, если конструктор не читает файл деревом. */
+  workflowList: {
+    input: z.null(),
+    output: z.object({
+      dir: z.string(),
+      items: z.array(z.object({ name: z.string(), path: z.string(), description: z.string(), reason: z.enum(["hand-written", "edited"]).nullable() })),
+    }),
+  },
   workflowRead: { input: z.object({ path: text }), output: z.object({ source: z.string() }) },
-  workflowSave: { input: z.object({ path: text, source: z.string() }), output: z.object({ path: z.string() }) },
+  /** `create` — новый файл: пишется, только если такого ещё нет. */
+  workflowSave: { input: z.object({ path: text, source: z.string(), create: z.boolean().optional() }), output: z.object({ path: z.string() }) },
   workflowAgents: {
     input: z.null(),
     output: z.array(
@@ -956,6 +965,16 @@ export const workflowFilesRpcContract = defineRpcContract({
   workflowProviders: {
     input: z.null(),
     output: z.array(z.object({ id: z.string(), name: z.string(), models: z.array(z.object({ id: z.string(), efforts: z.array(z.string()) })) })),
+  },
+  /** Файл агента-шаблона над настройками шага: читается и пишется только файл из списка `workflowAgents`. */
+  agentDocRead: {
+    input: z.object({ path: text }),
+    output: z.object({ path: z.string(), content: z.string().nullable(), sha256: z.string().nullable(), error: z.string().nullable() }),
+  },
+  /** Запись поверх той версии, что видел редактор: файл успел поменяться — `conflict`, а не перезапись. */
+  agentDocWrite: {
+    input: z.object({ path: text, content: z.string(), expectedSha256: z.string().nullable() }),
+    output: z.object({ outcome: z.enum(["written", "conflict", "denied", "not-found"]), sha256: z.string().nullable().optional(), message: z.string().nullable().optional() }),
   },
 });
 

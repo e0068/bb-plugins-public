@@ -4,13 +4,14 @@
 import { fileURLToPath } from "node:url";
 import { defineConfig } from "vitest/config";
 
-import { reactDedupe } from "./packages/plugin-base/vitest-react-dedupe";
+import { mdDocViewDedupe, radixDedupe, reactDedupe } from "./packages/plugin-base/vitest-react-dedupe";
 import { sharedPackagesAlias } from "./packages/plugin-base/vitest-shared-packages";
 
 export default defineConfig({
   resolve: {
     alias: { "@": fileURLToPath(new URL(".", import.meta.url)), ...sharedPackagesAlias },
-    dedupe: reactDedupe,
+    // Файл агента в конструкторе workflow — просмотрщик packages/md-doc-view: его Radix и дифф берутся из Flow, иначе второй React.
+    dedupe: [...reactDedupe, ...radixDedupe, ...mdDocViewDedupe],
   },
   test: { setupFiles: ["./test-setup.ts"] },
 });

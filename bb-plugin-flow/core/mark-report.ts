@@ -1,12 +1,13 @@
 // Слой 2 — чисто. Что наступает за этапом, который агент отметил сделанным, факт старта по записи прогресса и
 // строка ответа flow_stage об этом. «Started» ответ говорит только по записанному старту: обещание запуска,
 // которого не было, агент пересказывает владельцу. Ожидание записи — у server/progress.ts.
-import { currentName } from "../lib/stage-constants";
+import { currentName, RETRY_AUTOMATION_TOOL } from "../lib/stage-constants";
 import type { FlowProgress, StageTrack, WorkStage } from "../shared/contract";
 import { isActionStage, isAgentStage, isDue, isFailed, nextInRun, stoppedBy } from "./automation-run";
 
 /** Почему этап со шагами за отмеченным не наступает: уже прошёл или цепочку держит упавший шаг — его или другой автоматизации. */
-export type Blocker = { kind: "ran" } | { kind: "failed"; stage: WorkStage; step: string; error: string };
+export type FailedBlocker = { kind: "failed"; stage: WorkStage; step: string; error: string; retryAt?: string };
+export type Blocker = { kind: "ran" } | FailedBlocker;
 
 /**
  * Что стоит за отмеченным этапом: наступивший этап со шагами, не наступивший с причиной, этап агента `gate`,
@@ -28,9 +29,9 @@ const hasSteps = (stage: WorkStage): boolean => stage.automation !== undefined;
 const isClosed = (progress: FlowProgress, stage: WorkStage): boolean => progress.stages[stage.id]?.finishedAt !== undefined;
 
 /** Упавший шаг этапа: его id и ошибка. */
-const failureOf = (progress: FlowProgress, stage: WorkStage): Blocker => {
+const failureOf = (progress: FlowProgress, stage: WorkStage): FailedBlocker => {
   const run = progress.stages[stage.id]?.run;
-  return { kind: "failed", stage, step: run?.steps[run.at]?.id ?? "", error: run?.error ?? "" };
+  return { kind: "failed", stage, step: run?.steps[run.at]?.id ?? "", error: run?.error ?? "", ...(run?.retryAt === undefined ? {} : { retryAt: run.retryAt }) };
 };
 
 /** Этап со шагами за этапом агента `gate`: он стартует, когда `gate` закроют. */
@@ -71,6 +72,16 @@ export const returnedNote = (stages: readonly WorkStage[], progress: FlowProgres
     : "";
 };
 
+/** Что делать агенту с упавшим шагом: починил причину — повторяет сам, иначе — владельцу и конец хода. */
+const selfRetry = (failed: WorkStage): string =>
+  `If the cause is in your reach, fix it and retry the step yourself with ${RETRY_AUTOMATION_TOOL} { "stage": "${failed.id}" }; otherwise end your turn and tell the owner that.`;
+
+/** Что дальше с упавшим шагом: автоповтор назначен — Flow повторит сам; иначе шаг ждёт владельца, а агент может повторить его сам. */
+export const afterFailure = (failure: FailedBlocker): string =>
+  failure.retryAt === undefined
+    ? ` and waits for the owner's Retry or Skip above the composer. ${selfRetry(failure.stage)}`
+    : `; Flow retries the step by itself at ${failure.retryAt} — end your turn without a message to the owner: Flow writes to you if it still fails after the last attempt.`;
+
 const kindOf = (stage: WorkStage): string => (isActionStage(stage) ? "action" : "automation");
 
 /** Строка о наступившем этапе со шагами по факту старта; факта нет — старта не было. */
@@ -93,8 +104,8 @@ const blockedReply = (stage: WorkStage, reason: Blocker): string => {
   const head = `The next stage ${label(stage)} (${kindOf(stage)})`;
   if (reason.kind === "ran") return ` ${head} already ran — Flow does not run it again.`;
   return reason.stage.id === stage.id
-    ? ` ${head} was NOT started: its step ${reason.step} failed (${reason.error}) and waits for the owner's Retry or Skip above the composer — end your turn and tell the owner that.`
-    : ` ${head} was NOT started: automation ${reason.stage.id} failed at step ${reason.step} (${reason.error}), and the chain stands until the owner retries or skips it above the composer — end your turn and tell the owner that.`;
+    ? ` ${head} was NOT started: its step ${reason.step} failed (${reason.error})${afterFailure(reason)}`
+    : ` ${head} was NOT started: automation ${reason.stage.id} failed at step ${reason.step} (${reason.error}), and the chain stands${afterFailure(reason)}`;
 };
 
 /** Хвост ответа flow_stage после отметки `markedId` сделанным: что с этапом за ним и почему; сказать нечего — пустая строка. */
@@ -131,7 +142,7 @@ export const waitedReply = (stage: WorkStage, outcome: WaitOutcome, failure: Blo
       return `${ran}; here is its message to you instead of a message in the thread. Act on it now, in this turn:\n\n${outcome.text}`;
     case "quiet":
       return failure?.kind === "failed"
-        ? `${ran}; automation ${failure.stage.id} failed at step ${failure.step} (${failure.error}) and waits for the owner's Retry or Skip above the composer — end your turn and tell the owner that.`
+        ? `${ran}; automation ${failure.stage.id} failed at step ${failure.step} (${failure.error})${afterFailure(failure)}`
         : `${ran}; nothing is due for you now — end your turn without a message to the owner: Flow sends you a message when your next stage is due.`;
     case "timeout":
     case "aborted":

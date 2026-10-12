@@ -32,6 +32,8 @@ import { AddStage, SwitchSetting, WorkStagesTable } from "./stage-settings";
 import { SKILL_ICON } from "./stage-icons";
 import { HISTORY_SUB_PATH, RunHistory } from "./run-history";
 import { FlowsList } from "./flows-list";
+import { WorkflowsSection } from "./workflows-section";
+import { workflowsPlace } from "../core/workflows-route";
 import { FlowGlyph } from "./flow-glyph";
 import { AgentBlock } from "./flow-agent";
 import { StageIconPicker } from "./stage-icon-picker";
@@ -212,10 +214,14 @@ function useSelectedThreadFlow(subPath: string) {
 function Flows({ subPath }: PluginNavPanelProps) {
   useFlowSettingsLive();
   useSelectedThreadFlow(subPath);
+  // Список виден в панели тредов bb — своей колонки у страницы нет и «Назад» к ней некуда. Хук — до раннего выхода раздела
+  // Workflows: страница переходит между flow и разделом, не пересоздаваясь, и число хуков не должно зависеть от адреса.
+  const inPanel = usePanelListShown();
+  // Раздел Workflows держит свою раскладку во всю высоту: конструктору нужны колонки, а не лента страницы.
+  const workflows = workflowsPlace(subPath);
+  if (workflows !== null) return <WorkflowsSection place={workflows} />;
   // Второй уровень узкой панели: адрес с выбранным flow (или историей) открывает правую колонку, пустой — список.
   const second = subPath !== "";
-  // Список виден в панели тредов bb — своей колонки у страницы нет и «Назад» к ней некуда.
-  const inPanel = usePanelListShown();
   return (
     <div className="@container h-full overflow-y-auto">
       {/* Список стоит в 8 px от краёв колонки, как строки тредов в левой панели bb; справа от строк до редактора те же 8 px, что и слева. */}

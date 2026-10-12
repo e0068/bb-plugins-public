@@ -21,6 +21,18 @@ describe("ответ flow_stage, дождавшегося автоматизац
     expect(text).toMatch(/end your turn and tell the owner/);
   });
 
+  it("упавшему шагу ответ предлагает повторить его самому, назвав этап", () => {
+    const text = waitedReply(land, { kind: "quiet" }, { kind: "failed", stage: land, step: "git.create-pr", error: "no remote" });
+    expect(text).toContain(`retry_automation { "stage": "${land.id}" }`);
+  });
+
+  it("за упавшим шагом назначен автоповтор — ответ называет срок, а не отправляет к владельцу", () => {
+    const text = waitedReply(land, { kind: "quiet" }, { kind: "failed", stage: land, step: "git.create-pr", error: "no remote", retryAt: "2026-10-13T10:00:30.000Z" });
+    expect(text).toContain("Flow retries the step by itself at 2026-10-13T10:00:30.000Z");
+    expect(text).not.toContain("tell the owner");
+    expect(text).not.toContain("retry_automation");
+  });
+
   it("работа кончилась без реплики — ход кончается молча", () => {
     expect(waitedReply(land, { kind: "quiet" }, null)).toMatch(/end your turn without a message to the owner/);
   });

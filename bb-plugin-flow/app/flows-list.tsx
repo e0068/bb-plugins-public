@@ -14,14 +14,15 @@ import { Button } from "../components/ui/button";
 import { Icon } from "../components/ui/icon";
 import { cn } from "../lib/utils";
 import { FLOWS_PANEL_PATH } from "../lib/panel-path";
+import { workflowsPlace } from "../core/workflows-route";
 import { HISTORY_SUB_PATH } from "./run-history";
 import { FlowGlyph } from "./flow-glyph";
 import { useMessages } from "./locale-context";
 import { updateFlowSettings, useFlowSettings } from "./stage-settings-store";
 import { useFlowDrag } from "./use-flow-drag";
 
-const ROW = "flex h-7 w-full min-w-0 items-center gap-1.5 rounded-md pl-7 pr-2.5 text-left text-[13px] text-muted-foreground hover:bg-state-hover hover:text-foreground";
-const ACTIVE_ROW = "bg-state-active font-medium text-foreground";
+export const ROW = "flex h-7 w-full min-w-0 items-center gap-1.5 rounded-md pl-7 pr-2.5 text-left text-[13px] text-muted-foreground hover:bg-state-hover hover:text-foreground";
+export const ACTIVE_ROW = "bg-state-active font-medium text-foreground";
 
 export const newFlowId = (): string => `flow-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
 
@@ -41,7 +42,7 @@ export function FlowsNav({ subPath }: Pick<PluginNavPanelProps, "subPath">) {
   const { grab, grabbed, seam } = useFlowDrag(list, settings?.flows.map((flow) => flow.id) ?? []);
   if (settings === null) return null;
   // На истории, «Без flow» и «Автоматически» ни один flow не выбран: `flowById` вернул бы первый, а подсвечивать его нельзя.
-  const current = subPath === HISTORY_SUB_PATH || subPath === NO_FLOW || subPath === AUTO_FLOW ? null : flowById(settings, subPath);
+  const current = subPath === HISTORY_SUB_PATH || subPath === NO_FLOW || subPath === AUTO_FLOW || workflowsPlace(subPath) !== null ? null : flowById(settings, subPath);
   const open = (id: string) => navigate.toPluginPanel(FLOWS_PANEL_PATH, { subPath: id });
   const create = () => {
     const id = newFlowId();

@@ -4,7 +4,7 @@
 // запись в kv — у server/automation-runner.ts.
 import { isStepId, STEP_LABELS } from "@bb-plugins/automation-steps/catalog";
 import type { StepLink } from "@bb-plugins/automation-steps/index";
-import { currentName, freeId, MAX_WAKE_INSTRUCTION_CHARS, stageKindOf } from "../lib/stage-constants";
+import { currentName, freeId, MAX_WAKE_INSTRUCTION_CHARS, RETRY_AUTOMATION_TOOL, stageKindOf } from "../lib/stage-constants";
 import { scriptOf } from "./automation-scripts";
 import type { BuiltinAutomation, FlowProgress, FlowSettings, ProgressView, RunningIcon, StageTrack, WorkStage } from "../shared/contract";
 
@@ -320,7 +320,7 @@ export const withFailureInstruction = <S extends Pick<FlowSettings, "wakeAgentIn
  * владельца, что агенту делать; простоя в ней нет, как и в `wakeText`.
  */
 export const failureWakeText = (stage: WorkStage, step: string, error: string, instruction = DEFAULT_FAILURE_INSTRUCTION): string =>
-  `Flow: step ${step} of stage ${stage.id} "${stage.name}" failed after the last attempt: ${error}\n\nThe step waits for the owner's Retry or Skip above the composer. ${instruction}\n\n${COMMAND_RULE}`;
+  `Flow: step ${step} of stage ${stage.id} "${stage.name}" failed after the last attempt: ${error}\n\nThe step waits for the owner's Retry or Skip above the composer; once the cause is fixed you can retry the step yourself with ${RETRY_AUTOMATION_TOOL} { "stage": "${stage.id}" }. ${instruction}\n\n${COMMAND_RULE}`;
 
 /** Этап с упавшим шагом: не закрыт, а у прогона есть ошибка. */
 export const isFailed = (track: StageTrack): boolean => track.finishedAt === undefined && typeof track.run?.error === "string";
