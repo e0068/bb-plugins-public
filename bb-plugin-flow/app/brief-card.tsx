@@ -24,7 +24,7 @@ import { Button } from "../components/ui/button";
 import { Icon } from "../components/ui/icon";
 import { STAGE_BUTTON_WIDTH } from "../lib/stage-constants";
 import { cn } from "../lib/utils";
-import type { AnswerRecord, Artifact, Criterion, DecisionBrief, DecisionOption, DecisionQuestion, DispatchPlace, DispatchRoute, RouteBranch, RouteTree, dispatchRpcContract } from "../shared/contract";
+import type { AnswerRecord, Artifact, Criterion, DecisionBrief, DecisionOption, DecisionQuestion, DispatchPlace, DispatchRoute, RouteBranch, RouteTree, WidgetAgent, dispatchRpcContract } from "../shared/contract";
 import {
   decidedCount,
   editCriterion,
@@ -36,7 +36,6 @@ import {
   removeAddedCriterion,
   setAddedCriterion,
   setNote,
-  setOutcomeFlow,
   setOwn,
   toAnswer,
   toggleCriterion,
@@ -48,6 +47,7 @@ import {
   setRoute,
   routeIn,
   finishes,
+  settleAgent,
   settleDispatch,
 } from "./draft";
 import { withRestored } from "./draft-restore";
@@ -62,7 +62,7 @@ import { useLocale, useMessages } from "./locale-context";
 import { useScrollAnchor } from "./scroll-anchor";
 import { useMentions } from "./mentions";
 import { DemoCard } from "./outcome";
-import { FlowCell, chosenFlow, useOwnerFlows } from "./demo-flow";
+import { agentLocked, useAgentPicker, useWidgetAgent } from "./agent-cells";
 import { SectionTag } from "./section-tag";
 import { StagesTable } from "./stages-table";
 import { VoiceErrorLine, useVoiceBusy, useVoiceField } from "./voice";
@@ -954,22 +954,24 @@ function PlaceCell(props: { place: DispatchPlace; route: DispatchRoute; compact:
 const LIST_GROUP = "flex min-w-0 flex-col gap-px self-start overflow-hidden rounded-lg bg-background";
 
 /** Одна колонка места: пункт с иконкой, выбранный — с галочкой. */
-function RouteGroup<Id extends string>(props: { label: string; items: ReadonlyArray<{ id: Id; name: string; icon: string }>; chosen: Id; onPick: (id: Id) => void }) {
+function RouteGroup<Id extends string>(props: { label: string; items: ReadonlyArray<{ id: Id; name: string; icon: string; disabled?: boolean; hint?: string }>; chosen: Id; onPick: (id: Id) => void }) {
   return (
     <div role="group" aria-label={props.label} className={LIST_GROUP}>
-      {props.items.map(({ id, name, icon }) => {
+      {props.items.map(({ id, name, icon, disabled, hint }) => {
         const on = id === props.chosen;
         return (
           <button
             key={id}
             type="button"
             aria-pressed={on}
+            disabled={disabled}
             onClick={() => props.onPick(id)}
-            className="flex min-h-9 items-center justify-between gap-2 bg-state-active px-3.5 py-2 text-left text-[13px] hover:bg-state-hover"
+            className="flex min-h-9 items-center justify-between gap-2 bg-state-active px-3.5 py-2 text-left text-[13px] hover:bg-state-hover disabled:cursor-default disabled:text-muted-foreground disabled:hover:bg-state-active"
           >
             <span className={cn("flex min-w-0 items-center gap-1.5", on && "font-semibold")}>
               <Icon name={icon} aria-hidden="true" className="size-3.5 shrink-0 text-muted-foreground" />
               <span className="truncate">{name}</span>
+              {hint !== undefined && <span className="shrink-0 text-[11px] font-normal text-muted-foreground">{hint}</span>}
             </span>
             {on && <Icon name="Check" aria-hidden="true" className="size-3.5 shrink-0" />}
           </button>
@@ -1042,10 +1044,17 @@ function PlaceLists(props: {
   gap?: string;
   /** Колонки стоят под рядом отдельных кнопок и зазор берут у него — свой отступ сверху им не нужен. */
   inRow?: boolean;
+  /** Провайдер сменился: «В этом треде» выключено с пометкой — работа идёт только в новом. */
+  lockHere?: boolean;
 }) {
   const t = useMessages();
   const columns = placeColumns(props.place, props.route, otherOffered(props.projects));
-  const threads = columns.places.map((id) => ({ id, name: t.common[PLACE_LIST_NAME[id]], icon: THREAD_ICON[id] }));
+  const threads = columns.places.map((id) => ({
+    id,
+    name: t.common[PLACE_LIST_NAME[id]],
+    icon: THREAD_ICON[id],
+    ...(props.lockHere === true && id === "here" ? { disabled: true, hint: t.agentRow.otherProvider } : {}),
+  }));
   const trees = columns.trees.map((id) => ({ id, name: t.common.routeTree[id], icon: TREE_ICON[id] }));
   const branches = columns.branches.map((id) => ({ id, name: t.common.routeBranch[id], icon: BRANCH_ICON[id] }));
   // В этом треде дерева и ветки не выбирают, зато можно сперва сжать его контекст.
@@ -1109,9 +1118,11 @@ function useProjects(threadId: string, needed: boolean): { state: ProjectsState;
  * «Исполнять» у любой отправки: ячейка встаёт слева в ряд кнопок, раскрытые списки — строкой под рядом.
  * Место и маршрут берутся из черновика, а без выбора владельца — запомненные в проекте; компактация без выбора владельца — предвыбор по зоне контекста.
  */
-export function useDispatchPicker(props: { threadId: string; draft: Draft; setDraft: (update: (draft: Draft) => Draft) => void; place: DispatchPlace; route: DispatchRoute; compact: boolean; disabled: boolean; gap?: string; inRow?: boolean }): { cell: ReactNode; lists: ReactNode } {
+export function useDispatchPicker(props: { threadId: string; draft: Draft; setDraft: (update: (draft: Draft) => Draft) => void; place: DispatchPlace; route: DispatchRoute; compact: boolean; disabled: boolean; gap?: string; inRow?: boolean; lockHere?: boolean }): { cell: ReactNode; lists: ReactNode } {
   const [open, setOpen] = useState(false);
-  const place = placeIn(props.draft, props.place);
+  // Другой провайдер — только новый тред: показанное место сразу «в новом треде», а в ответ оно уходит тем же сведением.
+  const placed = placeIn(props.draft, props.place);
+  const place = props.lockHere === true && placed === "here" ? "thread" : placed;
   // Место берётся из черновика, а маршрут может прийти из памяти проекта: пара сводится здесь,
   // иначе показанное в колонках разошлось бы с тем, что уедет в ответе.
   const route = withPlace(routeIn(props.draft, props.route), place);
@@ -1133,6 +1144,7 @@ export function useDispatchPicker(props: { threadId: string; draft: Draft; setDr
       <PlaceLists
         gap={props.gap}
         inRow={props.inRow}
+        lockHere={props.lockHere}
         place={place}
         route={route}
         projects={projects.state}
@@ -1156,6 +1168,7 @@ function BriefAnswer(props: {
   roots: FileRoots | null;
   draft: Draft;
   setDraft: (update: (draft: Draft) => Draft) => void;
+  catalog: WidgetAgent | null;
   sending: boolean;
   status: string | null;
   complete: boolean;
@@ -1166,21 +1179,27 @@ function BriefAnswer(props: {
 }) {
   const { sending } = props;
   const t = useMessages();
-  const picker = useDispatchPicker({ threadId: props.brief.threadId, draft: props.draft, setDraft: props.setDraft, place: props.place, route: props.route, compact: props.compact, disabled: sending });
+  const lockHere = agentLocked(props.catalog, props.draft, undefined);
+  const picker = useDispatchPicker({ threadId: props.brief.threadId, draft: props.draft, setDraft: props.setDraft, place: props.place, route: props.route, compact: props.compact, disabled: sending, lockHere });
+  const agent = useAgentPicker({ catalog: props.catalog, draft: props.draft, setDraft: props.setDraft, recommended: undefined, cellClass: footerCell, wrapClass: (wide) => (wide ? "flex min-w-0 flex-1" : "flex flex-none"), disabled: sending });
 
   const footer = (
     <>
       <AddRow label={t.common.noteLabel} placeholder={t.brief.addItem} value={props.draft.note} disabled={sending} voiceId="note" onText={(text) => props.setDraft((d) => setNote(d, text))} />
       <AttachmentError className="bg-surface-recessed-solid px-3 py-2" />
-      <div className="grid grid-cols-1 gap-px @[34rem]:grid-cols-2">
-        <div className="flex min-w-0 gap-px">{picker.cell}</div>
+      <div className="flex flex-wrap gap-px">
+        <div className="flex min-w-0 flex-[2_1_16rem] gap-px">
+          {agent.modelCell}
+          {agent.flowCell}
+          <div className="flex min-w-0 flex-1 gap-px">{picker.cell}</div>
+        </div>
         <Button
           type="button"
           aria-label={t.common.sendBrief}
           aria-description={props.status ?? undefined}
           disabled={!props.complete || sending}
           onClick={props.onSubmit}
-          className="h-auto min-h-10 rounded-none px-3.5 py-2"
+          className="h-auto min-h-10 min-w-0 flex-[1_1_10rem] rounded-none px-3.5 py-2"
         >
           {/* Счётчик — подписью над «Отправить», как «Исполнять» над местом, только по центру. */}
           <span className="flex min-w-0 flex-col items-center py-0.5 leading-tight">
@@ -1194,51 +1213,73 @@ function BriefAnswer(props: {
       </div>
     </>
   );
-  return <AnswerBlock brief={props.brief} view={props.view} roots={props.roots} footer={footer} below={picker.lists} />;
+  return (
+    <AnswerBlock
+      brief={props.brief}
+      view={props.view}
+      roots={props.roots}
+      footer={footer}
+      below={
+        <>
+          {agent.lists}
+          {picker.lists}
+        </>
+      }
+    />
+  );
 }
 
 /** Зазор ряда кнопок Демонстрации; раскрытые списки «Исполнять» под ним — с тем же зазором, чтобы колонки стояли под кнопками. */
 const DEMO_GAP = "gap-2";
 
-/** Ряд кнопок Демонстрации — колонки одной ширины не уже 10rem: у flex с `basis-0` отступы кнопок делали их шире «Исполнять». */
-const DEMO_ROW = "grid grid-cols-[repeat(auto-fit,minmax(10rem,1fr))]";
+/** Ряд кнопок итога переносится строками: ни одна кнопка не уже своего минимума, дыр между ними нет. */
+const DEMO_ROW = "flex flex-wrap";
 
 /**
- * Кнопки Демонстрации — отдельным рядом с отступом от карточки, чтобы не нажать случайно.
- * Пустой комментарий — одна «Продолжить» («Завершить» у финальной, «Утвердить» у Утверждения); написанный или свой ответ в строке вопроса — одна «Отправить»: Демонстрация не принимается, агент отвечает.
- * Агент рекомендовал flow — первой в ряду стоит его ячейка, и «Отправить» уводит работу в выбранный flow, пока владелец не выбрал «Не переходить».
+ * Кнопки итога — отдельным рядом с отступом от поля комментария, чтобы не нажать случайно. Квадратные кнопки модели и Flow не
+ * растут, остальные делят ряд поровну не уже 10rem, главная кнопка не уже своей подписи — как в прототипе владельца.
+ * Утверждение держит работу: модель, Flow, «Исполнять» и главная кнопка — «Продолжить» («Завершить» у финального), с комментарием
+ * или своим ответом в строке вопроса — «Отправить комментарии». Демонстрация не держит: одна «Отправить комментарии», выключенная
+ * без комментария; агент рекомендовал flow — перед ней стоят модель, Flow и «Исполнять», и она уводит работу в выбранный flow.
  */
-function DemoActions(props: { brief: DecisionBrief; draft: Draft; setDraft: (update: (draft: Draft) => Draft) => void; sending: boolean; failed: boolean; complete: boolean; place: DispatchPlace; route: DispatchRoute; compact: boolean; onSubmit: (draft: Draft) => void }) {
+function DemoActions(props: { brief: DecisionBrief; draft: Draft; setDraft: (update: (draft: Draft) => Draft) => void; catalog: WidgetAgent | null; sending: boolean; failed: boolean; complete: boolean; place: DispatchPlace; route: DispatchRoute; compact: boolean; onSubmit: (draft: Draft) => void }) {
   const t = useMessages();
-  const picker = useDispatchPicker({ threadId: props.brief.threadId, draft: props.draft, setDraft: props.setDraft, place: props.place, route: props.route, compact: props.compact, disabled: props.sending, gap: DEMO_GAP, inRow: true });
   const recommended = props.brief.outcome?.nextFlow;
-  const flows = useOwnerFlows(props.brief.threadId, recommended !== undefined);
-  const flow = recommended === undefined ? null : chosenFlow(props.draft, recommended, flows);
-  // Комментарий или свой ответ в строке вопроса — Демонстрация не принимается: ровно то, что уйдёт ответом.
-  const commented = toAnswer(props.brief, props.draft).outcome?.accepted === false;
-  const button = "h-auto min-h-10 min-w-0 rounded-lg px-4 text-[13px] font-semibold";
-  // Вопросы того же брифа должны быть решены до исхода: неполный ответ иначе отбил бы только сервер.
-  const blocked = props.sending || !props.complete;
+  const approval = outcomeKind(props.brief) === "approve";
+  const withAgent = approval || recommended !== undefined;
+  const lockHere = withAgent && agentLocked(props.catalog, props.draft, recommended);
+  const picker = useDispatchPicker({ threadId: props.brief.threadId, draft: props.draft, setDraft: props.setDraft, place: props.place, route: props.route, compact: props.compact, disabled: props.sending, gap: DEMO_GAP, inRow: true, lockHere });
+  const agent = useAgentPicker({
+    catalog: withAgent ? props.catalog : null,
+    draft: props.draft,
+    setDraft: props.setDraft,
+    recommended,
+    cellClass: footerCell,
+    wrapClass: (wide) => cn("flex overflow-hidden rounded-lg", wide ? "min-w-40 flex-1 basis-0" : "flex-none"),
+    disabled: props.sending,
+    gap: DEMO_GAP,
+    inRow: true,
+  });
+  // Комментарий или свой ответ в строке вопроса — ровно то, что уйдёт ответом.
+  const answer = toAnswer(props.brief, settleAgent(props.draft, withAgent ? props.catalog : null, recommended));
+  const commented = answer.outcome?.accepted === false && answer.outcome.flow === undefined;
+  const moves = answer.outcome?.flow !== undefined;
+  const button = "h-auto min-h-10 min-w-max flex-1 basis-0 rounded-lg px-4 text-[13px] font-semibold";
+  // Вопросы того же брифа должны быть решены до исхода: неполный ответ иначе отбил бы только сервер. Демонстрации без комментария, перехода и смены модели отправлять нечего.
+  const blocked = props.sending || !props.complete || (!approval && !commented && !moves && answer.execution === undefined);
+  const label = moves ? t.outcome.send : commented || !approval ? t.outcome.sendComments : finishes(props.brief, props.draft) ? t.outcome.finish : t.outcome.continue;
   return (
     <div className="-mt-2 flex flex-col items-stretch gap-1.5">
       <div className={cn(DEMO_ROW, DEMO_GAP)}>
-        {recommended !== undefined && (
-          <div data-demo-action className="flex min-w-0 overflow-hidden rounded-lg">
-            <FlowCell
-              className={cn(footerCell, "justify-between gap-2 hover:bg-state-hover")}
-              flow={flow}
-              flows={flows}
-              disabled={props.sending}
-              onPick={(picked) => props.setDraft((d) => setOutcomeFlow(d, picked))}
-            />
-          </div>
-        )}
-        <div data-demo-action className="flex min-w-0 overflow-hidden rounded-lg">{picker.cell}</div>
-        <Button type="button" disabled={blocked} onClick={() => props.onSubmit(recommended === undefined ? props.draft : setOutcomeFlow(props.draft, flow))} className={button}>
+        {agent.modelCell}
+        {agent.flowCell}
+        {withAgent && <div data-demo-action className="flex min-w-40 flex-1 basis-0 overflow-hidden rounded-lg">{picker.cell}</div>}
+        <Button type="button" disabled={blocked} onClick={() => props.onSubmit(props.draft)} className={button}>
           {props.sending && <Icon name="Spinner" className="size-3.5 animate-spin" />}
-          {commented || flow !== null ? t.outcome.send : outcomeKind(props.brief) === "approve" ? t.outcome.approve : finishes(props.brief, props.draft) ? t.outcome.finish : t.outcome.continue}
+          {label}
         </Button>
       </div>
+      {agent.lists}
       {picker.lists}
       {props.failed && <div className="text-right text-xs text-destructive">{t.common.sendFailed}</div>}
     </div>
@@ -1316,9 +1357,13 @@ export function BriefCard({ brief, send, onResult, roots, place = "here", route 
     brief,
   };
   const preselected = compact && !finishes(brief, draft);
+  // Выбор ряда — модель и Flow — сводится перед отправкой: нетронутое предложение агента уходит ответом, совпавшее с текущим — нет.
+  const catalog = useWidgetAgent(brief.threadId);
+  const withAgent = brief.outcome === undefined || outcomeKind(brief) === "approve" || brief.outcome.nextFlow !== undefined;
+  const settled = (next: Draft) => settleDispatch(settleAgent(next, withAgent ? catalog : null, brief.outcome?.nextFlow), place, route, preselected);
   const trySubmit = () => {
     // Место уходит в ответ всегда: запомненное, которого владелец не трогал, иначе осталось бы только на экране.
-    if (complete && !sending) void submit(settleDispatch(draft, place, route, preselected));
+    if (complete && !sending) void submit(settled(draft));
   };
 
   return (
@@ -1337,13 +1382,13 @@ export function BriefCard({ brief, send, onResult, roots, place = "here", route 
         <>
           <DemoCard brief={brief} roots={roots} view={{ draft, sending, change: setDraft }} />
           <Body brief={brief} view={view} />
-          <DemoActions brief={brief} draft={draft} setDraft={setDraft} sending={sending} failed={failed} complete={complete} place={place} route={route} compact={preselected} onSubmit={(next) => void submit(settleDispatch(next, place, route, preselected))} />
+          <DemoActions brief={brief} draft={draft} setDraft={setDraft} catalog={catalog} sending={sending} failed={failed} complete={complete} place={place} route={route} compact={preselected} onSubmit={(next) => void submit(settled(next))} />
         </>
       ) : (
         <>
           <Body brief={brief} view={view} />
           {stageItems(brief).length > 0 && <SectionTag kind="select" extra={brief.stages?.flowName} className="-mb-3" />}
-          <BriefAnswer brief={brief} view={view} roots={roots} draft={draft} setDraft={setDraft} sending={sending} status={failed ? t.common.sendFailed : counter} complete={complete} place={place} route={route} compact={preselected} onSubmit={trySubmit} />
+          <BriefAnswer brief={brief} view={view} roots={roots} draft={draft} setDraft={setDraft} catalog={withAgent ? catalog : null} sending={sending} status={failed ? t.common.sendFailed : counter} complete={complete} place={place} route={route} compact={preselected} onSubmit={trySubmit} />
         </>
       )}
     </Plain>

@@ -50,7 +50,7 @@ const pressed = (scope: ReturnType<typeof within>) =>
 describe("бриф, возвращённый сообщением в чат", () => {
   it("в ленте от него одна строка: вопросов и кнопки отправки нет", async () => {
     const slot = render({ getBrief: () => ({ kind: "found", brief, answer: null, returned: true }) });
-    expect(await slot.findByText(/Бриф вернулся агенту/)).toBeTruthy();
+    expect(await slot.findByText(/Виджет вернулся агенту/)).toBeTruthy();
     expect(slot.queryByRole("group", { name: "Куда идём?" })).toBeNull();
   });
 

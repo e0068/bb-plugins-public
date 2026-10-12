@@ -12,7 +12,8 @@ import { runCascade } from "../core/sub-stages";
 import { withPlace } from "../core/places";
 import { hiddenQuestions } from "../core/visibility";
 import { ownWords } from "../core/outcome";
-import type { Criterion, DecisionAnswer, DecisionBrief, DecisionQuestion, DispatchPlace, DispatchRoute, StageAnswer } from "../shared/contract";
+import { answeredExecution, chosenExecution, chosenFlowId, proposedExecution, providerChanged } from "../core/agent-choice";
+import type { Criterion, DecisionAnswer, DecisionBrief, DecisionQuestion, DispatchPlace, DispatchRoute, Execution, StageAnswer, WidgetAgent } from "../shared/contract";
 
 /** `picked` — варианты, которых владелец коснулся сам, а не поставила рекомендация: виджет рисует их контрастными. */
 type Entry = { optionIds: readonly string[]; own: string; picked?: readonly string[] };
@@ -39,8 +40,10 @@ export type Draft = {
   compact?: boolean;
   /** Комментарий к Демонстрации; пустой — «Продолжить», написанный — «Отправить». */
   outcomeNote?: string;
-  /** Flow, в который владелец уводит работу из Демонстрации: нет поля — рекомендованный агентом, `null` — «Не переходить». */
+  /** Flow, которым пойдёт работа, из кнопки Flow ряда: нет поля — рекомендованный агентом или текущий, `null` — текущий («Не переходить»). */
   outcomeFlow?: OutcomeFlow | null;
+  /** Модель из кнопки модели ряда — как выбрал владелец; нет поля — предложение агента или модель треда. Сводится перед отправкой. */
+  execution?: Execution;
 };
 
 /** Flow перехода из Демонстрации — id и название, которое увидит агент. */
@@ -122,6 +125,31 @@ export const finishes = (brief: DecisionBrief, draft: Draft): boolean =>
 export const setOutcomeNote = (draft: Draft, note: string): Draft => ({ ...draft, outcomeNote: note });
 
 export const setOutcomeFlow = (draft: Draft, flow: OutcomeFlow | null): Draft => ({ ...draft, outcomeFlow: flow });
+
+/** Модель, выбранная владельцем; другой провайдер сразу уводит работу в новый тред — «в этом треде» его не продолжить. */
+export const setExecution = (draft: Draft, execution: Execution, current: Execution): Draft => ({
+  ...draft,
+  execution,
+  ...(providerChanged(current, execution) && (draft.place ?? "here") === "here" ? { place: "thread" as const } : {}),
+});
+
+/**
+ * Выбор ряда перед отправкой: модель — тронутая владельцем, иначе предложение выбранного flow; в ответ уходит только отличная
+ * от модели треда. Flow, совпавший с текущим, — «не переходить». Без каталога выбора модели нет — поле снимается.
+ */
+export const settleAgent = (draft: Draft, catalog: WidgetAgent | null, recommended: string | undefined): Draft => {
+  const { execution: _, ...rest } = draft;
+  // Нетронутая рекомендация агента уходит переходом в неё, как раньше у Демонстрации.
+  const untouched = recommended !== undefined && draft.outcomeFlow === undefined && recommended !== catalog?.currentFlowId;
+  const recommendedFlow = untouched ? { ...rest, outcomeFlow: { id: recommended, name: catalog?.flows.find((f) => f.id === recommended)?.name ?? recommended } } : rest;
+  if (catalog === null) return recommendedFlow;
+  const picked = draft.outcomeFlow === undefined ? undefined : (draft.outcomeFlow?.id ?? null);
+  const flowId = chosenFlowId(catalog, picked, recommended);
+  const execution = answeredExecution(catalog.current, chosenExecution(catalog, draft.execution, proposedExecution(catalog, flowId)));
+  const flowed = draft.outcomeFlow !== undefined && draft.outcomeFlow !== null && draft.outcomeFlow.id === catalog.currentFlowId ? { ...recommendedFlow, outcomeFlow: null } : recommendedFlow;
+  if (execution === undefined) return flowed;
+  return { ...flowed, execution, ...(providerChanged(catalog.current, execution) && (draft.place ?? "here") === "here" ? { place: "thread" as const } : {}) };
+};
 
 /**
  * Ответ на Демонстрацию: выбранный flow — переход, комментарий едет с ним; без перехода пустой комментарий — «Продолжить»,
@@ -302,6 +330,8 @@ export const toAnswer = (brief: DecisionBrief, draft: Draft): DecisionAnswer => 
     ...(draft.route === undefined ? {} : { route: draft.route }),
     ...(draft.compact === true ? { compact: true } : {}),
     ...(brief.outcome === undefined ? {} : { outcome: outcomeAnswer(draft, ownWords({ answers })) }),
+    ...(brief.outcome === undefined && draft.outcomeFlow !== undefined && draft.outcomeFlow !== null ? { flow: draft.outcomeFlow } : {}),
+    ...(draft.execution === undefined ? {} : { execution: draft.execution }),
   };
 };
 

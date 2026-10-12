@@ -44,6 +44,18 @@ const code = flow("flow-code", "Code", [skill("work"), nested("review-row", "flo
 const review = flow("flow-review", "Review", [skill("check"), nested("lint-row", "flow-lint")]);
 const lint = flow("flow-lint", "Lint");
 
+describe("настройки агента в папке синхронизации", () => {
+  it("agent flow и autoAgent коллекции переживают круг «коллекция → файлы → коллекция»", () => {
+    const agent = { execution: { providerId: "claude-code", model: "opus", reasoningLevel: "high" as const }, start: "Пиши коротко" };
+    const settings = collection([{ ...flow("a", "General"), agent }], { autoAgent: { start: "Выбери flow" } });
+    const built = assemble(settings);
+    expect(built.kind).toBe("ok");
+    if (built.kind !== "ok") return;
+    expect(built.settings.flows[0]!.agent).toEqual(agent);
+    expect(built.settings.autoAgent).toEqual({ start: "Выбери flow" });
+  });
+});
+
 describe("раскладка коллекции по файлам", () => {
   it("flow без ссылок на него — файл в корне, общее — settings.json", () => {
     expect(paths(collection([flow("a", "General"), flow("b", "Bug")]))).toEqual([SETTINGS_FILE, "General.flow.json", "Bug.flow.json"]);

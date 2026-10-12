@@ -210,9 +210,9 @@ const BUILTIN_ANSWERS: Record<BuiltinKind, string> = {
   questions: "ask the owner with ask_decision",
   criteria: "send setup.criteria through ask_decision",
   select: "send setup.stages through ask_decision",
-  demo: "stop and send a brief with outcome through ask_decision (outcome.stage — this id); on a comment answer it: if it asks for a change, roll back to the stage where the change is made (flow_stage) and go through the stages again in order up to this demo; without a change, send this demo again, not going further",
+  demo: "send a brief with outcome through ask_decision (outcome.stage — this id) and go on to the next stage without waiting: sending closes the stage; a comment on it may arrive later — if it asks for a change, roll back to the stage where the change is made (flow_stage) and go through the stages again in order up to this demo; without a change, answer it in one sentence and carry on",
   approve:
-    "the only stage that holds the work: stop and send a brief with outcome through ask_decision (outcome.stage — this id) — right after the widgets of the stages before it, or, after a skill stage, with sections: what earlier approvals approved, what you did since the last one, what you will do next; Approve without a comment — go on to the next stage; a comment — not approved: rework the stage before this approval as the comment asks (roll back to it with flow_stage when it is done) and send this approval again",
+    "the only stage that holds the work: stop and send a brief with outcome through ask_decision (outcome.stage — this id) — the owner sees only its title, a comment field and buttons, so the title names what is approved; Continue without a comment — go on to the next stage; a comment — not approved: rework the stage before this approval as the comment asks (roll back to it with flow_stage when it is done) and send this approval again",
 };
 
 /** Правило треда с flow: владелец видит работу этапами, а не прозой. */

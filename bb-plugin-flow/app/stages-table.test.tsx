@@ -39,7 +39,7 @@ const row = async (slot: Slot, stageId: string) => {
   return slot.container.querySelector<HTMLElement>(`[data-stage="${stageId}"]`)!;
 };
 const sentStages = async (slot: Slot): Promise<StageAnswer[]> => {
-  fireEvent.click(slot.getByRole("button", { name: "Отправить бриф" }));
+  fireEvent.click(slot.getByRole("button", { name: "Отправить ответы" }));
   await vi.waitFor(() => expect(slot.rpcCalls.some((c) => c.method === "answerBrief")).toBe(true));
   return (slot.rpcCalls.find((c) => c.method === "answerBrief")?.input as { answer: { stages: StageAnswer[] } }).answer.stages;
 };

@@ -25,10 +25,11 @@ const send = async (stage: string) => {
 };
 
 describe("Утверждение в запущенном треде", () => {
-  it("итог этапа «Утверждение» принимается без живой ссылки и ждёт утверждения", async () => {
-    const { brief, awaiting } = await send("approve");
+  it("итог этапа «Утверждение» принимается без живой ссылки, ждёт утверждения и велит закончить ход", async () => {
+    const { brief, awaiting, result } = await send("approve");
     expect(brief?.outcome?.stage).toBe("approve");
     expect(awaiting).toEqual([{ threadId: THREAD, briefId: "dec_A1", kind: "approve" }]);
+    expect(result).toContain("Then end the turn and wait for the answer.");
   });
 
   it("Демонстрации живая ссылка по-прежнему нужна", async () => {

@@ -40,7 +40,7 @@ const tags = (slot: ReturnType<typeof open>) => [...slot.container.querySelector
 describe("бирки частей брифа", () => {
   it("над вопросами, критерием и этапами — бирки вида; заголовка и подзаголовка агента в форме нет", async () => {
     const slot = open(brief);
-    await slot.findByRole("group", { name: "Ответ на бриф" });
+    await slot.findByRole("group", { name: "Ответы на вопросы" });
     expect(tags(slot)).toEqual(["Вопросы", "Definition of Done · оставлено 2 из 2", "Выбор этапов"]);
     expect(slot.queryByText("Заголовок агента")).toBeNull();
     expect(slot.queryByText("Подзаголовок агента")).toBeNull();
@@ -49,7 +49,7 @@ describe("бирки частей брифа", () => {
 
   it("бирка — без подложки", async () => {
     const slot = open(brief);
-    await slot.findByRole("group", { name: "Ответ на бриф" });
+    await slot.findByRole("group", { name: "Ответы на вопросы" });
     for (const tag of slot.container.querySelectorAll("[data-section-tag]")) expect(tag.className).not.toMatch(/\bbg-/);
   });
 

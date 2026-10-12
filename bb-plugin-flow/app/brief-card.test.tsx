@@ -157,7 +157,7 @@ describe("вторая часть брифа", () => {
   it("незакрытая строка первой части помечается по ответу incomplete", async () => {
     const slot = render({ getBrief: () => ({ kind: "found", brief, answer: null }), answerBrief: () => ({ kind: "incomplete", questionIds: [SETUP_ROW.budgetMax] }) });
     await decideAll(slot);
-    fireEvent.click(slot.getByRole("button", { name: "Отправить бриф" }));
+    fireEvent.click(slot.getByRole("button", { name: "Отправить ответы" }));
     expect(await (await group(slot, "Максимальный бюджет")).findByText("нужен ответ")).toBeTruthy();
   });
 });
@@ -168,7 +168,7 @@ describe("отвеченный бриф с первой частью", () => {
 
   it("рисуется без переключателей и полей, свои ответы видны текстом", async () => {
     const slot = openAnswered();
-    await slot.findByText("Бриф отвечен");
+    await slot.findByText("Ответ отправлен");
     expect(slot.container.querySelectorAll("input, textarea, button[aria-pressed]")).toHaveLength(0);
     expect(slot.getByText("$100")).toBeTruthy();
     expect(slot.getByText("И «Лист»")).toBeTruthy();
@@ -177,7 +177,7 @@ describe("отвеченный бриф с первой частью", () => {
 
   it("ссылки артефактов открывают файл и в отвеченном брифе", async () => {
     const slot = openAnswered();
-    await slot.findByText("Бриф отвечен");
+    await slot.findByText("Ответ отправлен");
     fireEvent.click(await slot.findByRole("link", { name: "prototype-312" }));
     expect(slot.navigateCalls).toContainEqual(workspacePreview("docs/assets/p.html"));
   });
@@ -188,8 +188,8 @@ describe("полный ответ без приоритета", () => {
     const slot = open();
     await decideAll(slot);
     expect(slot.queryByText(/заполнено/)).toBeNull();
-    fireEvent.click(slot.getByRole("button", { name: "Отправить бриф" }));
-    await slot.findByText("Бриф отвечен");
+    fireEvent.click(slot.getByRole("button", { name: "Отправить ответы" }));
+    await slot.findByText("Ответ отправлен");
     const call = slot.rpcCalls.find((c) => c.method === "answerBrief")?.input as { answer: { answers: Array<{ questionId: string }> } };
     expect(call.answer.answers.map((a) => a.questionId)).toEqual([SETUP_ROW.artifacts, SETUP_ROW.budgetTarget, SETUP_ROW.budgetMax, "how", "edits", "read"]);
   });

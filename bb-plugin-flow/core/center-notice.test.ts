@@ -33,7 +33,7 @@ describe("automationEntry", () => {
 describe("запись конца хода для центра", () => {
   it("тред держит бриф — «ждёт ответа» с названием брифа, один раз на бриф, без тоста по умолчанию", () => {
     const entry = turnEndEntry({ threadId: "thr_1", threadTitle: "Тред", brief: { id: "dec_1", title: "Плагин" } });
-    expect(entry).toMatchObject({ source: "flow", sourceName: "Flow", kind: "awaiting", kindLabel: "Ждёт ответа", title: "Ждёт ответа — бриф «Плагин»", threadId: "thr_1", threadTitle: "Тред", url: null, dedupeKey: "brief:dec_1", toastByDefault: false });
+    expect(entry).toMatchObject({ source: "flow", sourceName: "Flow", kind: "awaiting", kindLabel: "Ждёт ответа", title: "Ждёт ответа — «Плагин»", threadId: "thr_1", threadTitle: "Тред", url: null, dedupeKey: "brief:dec_1", toastByDefault: false });
     expect(isNotificationInput(entry)).toBe(true);
   });
 

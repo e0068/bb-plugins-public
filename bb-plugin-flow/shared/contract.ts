@@ -7,6 +7,7 @@ import { defineRpcContract } from "@get-bb/plugin-sdk";
 import { z } from "zod";
 
 import { STEP_IDS } from "@bb-plugins/automation-steps/catalog";
+import { MAX_START_MESSAGE_CHARS, REASONING_LEVELS, SERVICE_TIERS } from "../lib/agent-limits";
 import { MAX_SCRIPT_CHARS } from "../lib/script-limit";
 import { linkedSubStages, MAX_WAKE_INSTRUCTION_CHARS, RETRY_LIMITS, SELF_EXECUTOR, STAGE_BUTTON_WIDTH, STAGE_KINDS, SUB_STAGE_ISSUE } from "../lib/stage-constants";
 
@@ -271,6 +272,20 @@ export const stageSettingsSchema = z
     if (!linkedSubStages(s.stages)) ctx.addIssue({ code: "custom", message: SUB_STAGE_ISSUE, path: ["stages"] });
   });
 
+/** Провайдер, модель, effort и скорость агента одним значением — так их отдаёт выбор модели bb и принимает `threads.spawn`. */
+export const executionSchema = z.object({
+  providerId: text,
+  model: text,
+  reasoningLevel: z.enum(REASONING_LEVELS),
+  serviceTier: z.enum(SERVICE_TIERS).optional(),
+});
+
+/** Настройки агента flow: модель треда и стартовое сообщение; нет поля — модель композера и без сообщения. */
+export const agentSettingsSchema = z.object({
+  execution: executionSchema.optional(),
+  start: z.string().max(MAX_START_MESSAGE_CHARS).optional(),
+});
+
 /** Flow — именованная таблица этапов. Тред идёт по одному flow: из него инструкции агенту и проверка брифа. */
 export const flowSchema = z
   // `description` — когда выбирать этот flow: по описаниям агент выбирает flow треду, где в композере выбрано «Автоматически».
@@ -285,6 +300,8 @@ export const flowSchema = z
     limitAgents: z.literal(true).optional(),
     /** Иконка flow из подборки этапов; нет — знак плагина. */
     icon: text.optional(),
+    /** Агент треда этого flow: модель, effort и стартовое сообщение. */
+    agent: agentSettingsSchema.optional(),
   })
   .superRefine((f, ctx) => {
     if (!uniqueIds(f.stages)) ctx.addIssue({ code: "custom", message: "stage ids must be unique within a flow", path: ["stages"] });
@@ -306,10 +323,10 @@ export const flowSettingsSchema = z
     wakeAgentAfterLastRetry: z.boolean().optional(),
     /** Наказ агенту в той реплике — что делать с упавшим шагом; факты падения Flow ставит сам. Нет поля или пусто — наказ по умолчанию. */
     wakeAgentInstruction: z.string().max(MAX_WAKE_INSTRUCTION_CHARS).optional(),
-    /** Тред с «Автоматически» после выбора flow начинается новой сессией; нет поля — да. */
-    clearContextAfterAutoChoice: z.boolean().optional(),
     /** Когда flow не нужен: агент, выбирая flow, читает это первым пунктом, раньше описаний flow. Нет поля — описания нет. */
     noFlowDescription: z.string().optional(),
+    /** Агент треда с «Автоматически» до выбора flow: модель, effort и стартовое сообщение. */
+    autoAgent: agentSettingsSchema.optional(),
     automationSets: z.array(automationSetSchema).optional(),
     stageTemplates: z.array(stageTemplateSchema).optional(),
     version: z.literal(2).optional(),
@@ -711,6 +728,10 @@ export const decisionAnswerSchema = z.object({
   compact: z.boolean().optional(),
   /** Ответ на итог этапа: «Продолжить», свой ответ или переход в flow, выбранный владельцем. Есть только у брифа с итогом. */
   outcome: z.object({ accepted: z.boolean(), note: z.string().optional(), flow: z.object({ id: text, name: text }).optional() }).optional(),
+  /** Flow, которым пойдёт работа, выбранный в ряду виджета без итога; нет — текущий. У брифа с итогом выбор едет в `outcome.flow`. */
+  flow: z.object({ id: text, name: text }).optional(),
+  /** Провайдер, модель, effort и скорость, выбранные в ряду виджета; нет — как у треда. Другой провайдер — только в новом треде. */
+  execution: executionSchema.optional(),
 });
 
 /** Прогноз бюджета на момент отправки ответа — та же форма, что считает ядро; `null` — величина неизвестна. */
@@ -906,6 +927,7 @@ export const flowFileSchema = z.object({
   icon: text.optional(),
   limitSkills: z.literal(true).optional(),
   limitAgents: z.literal(true).optional(),
+  agent: agentSettingsSchema.optional(),
 });
 
 /** `settings.json` папки синхронизации: порядок flow по именам и общее на коллекцию; шаблоны этапов ссылаются по имени. */
@@ -944,6 +966,8 @@ export const flowSettingsRpcContract = defineRpcContract({
   getScriptFile: { input: automationScriptSchema, output: skillFileSchema },
   /** Показать файл навыка в файловой системе машины сервера bb; путь сервер находит сам по имени. */
   revealSkill: { input: z.object({ name: z.string() }), output: z.object({ revealed: z.boolean(), error: z.string().nullable() }) },
+  /** Модель по умолчанию первого доступного провайдера — начальное значение выбора модели flow; каталог не прочёлся — `null`. */
+  defaultExecution: { input: z.object({}), output: executionSchema.nullable() },
 });
 
 /** Путь журнала решений по проекту — словарь `projectId → путь от корня рабочего дерева треда`. */
@@ -1253,6 +1277,26 @@ export const automationRpcContract = defineRpcContract({
  * Flow треда в контейнере состояния Flow над композером: строка выбора у треда без прогона и после завершённого, «Отменить flow» у идущего.
  * Выбор ждёт сообщения владельца — его применяет ход владельца в хуке `message.dispatch`.
  */
+/** Выбор агента в ряду виджета: модель и flow треда, каталог моделей по провайдерам и flow владельца с их моделью. */
+export const widgetAgentSchema = z.object({
+  current: executionSchema,
+  /** Flow треда; `null` — тред без flow. */
+  currentFlowId: z.string().nullable(),
+  providers: z.array(
+    z.object({
+      id: text,
+      name: z.string(),
+      models: z.array(z.object({ model: text, name: z.string(), efforts: z.array(z.enum(REASONING_LEVELS)), defaultEffort: z.enum(REASONING_LEVELS) })),
+    }),
+  ),
+  flows: z.array(z.object({ id: text, name: z.string(), icon: text.optional(), execution: executionSchema.optional() })),
+});
+
+export const widgetAgentRpcContract = defineRpcContract({
+  /** `null` — выбора нет: Side chat или тред не прочёлся. */
+  widgetAgent: { input: z.object({ threadId: text }), output: widgetAgentSchema.nullable() },
+});
+
 export const flowChoiceRpcContract = defineRpcContract({
   /** `selected` — выбор, ждущий отправки, а без него — flow треда; тред, оставленный агентом без flow, и тред с завершённым прогоном — `AUTO_FLOW`: flow им ещё выберет агент. */
   threadFlowChoice: {
@@ -1345,6 +1389,9 @@ export type RunningThread = z.output<typeof automationRpcContract.runningThreads
 export type AgentLogo = z.output<typeof automationRpcContract.agentLogos.output>[number];
 export type StageSettings = z.output<typeof stageSettingsSchema>;
 export type Flow = z.output<typeof flowSchema>;
+export type Execution = z.output<typeof executionSchema>;
+export type AgentSettings = z.output<typeof agentSettingsSchema>;
+export type WidgetAgent = z.output<typeof widgetAgentSchema>;
 export type AutomationSet = z.output<typeof automationSetSchema>;
 export type StageTemplate = z.output<typeof stageTemplateSchema>;
 export type FlowSettings = z.output<typeof flowSettingsSchema>;

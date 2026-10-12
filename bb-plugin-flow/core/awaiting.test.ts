@@ -2,6 +2,7 @@
 import fc from "fast-check";
 import { describe, expect, it } from "vitest";
 
+import { builtinStage } from "../lib/stage-constants";
 import type { DecisionBrief } from "../shared/contract";
 import { awaitingChanges, awaitingKind, waitsForAnswer } from "./awaiting";
 import { report } from "./stages-fixtures";
@@ -10,9 +11,12 @@ const brief = (patch: Partial<DecisionBrief>): DecisionBrief => ({ id: "dec_1", 
 const question = { id: "q", kind: "confirm" as const, question: "Так?", allowOwn: false, options: [{ id: "yes", action: "Да", recommended: true }] };
 
 describe("вид ожидания брифа", () => {
-  it("уточнение не ждёт; итог — Демонстрация; дальше Вопросы, Критерии, Выбор этапов по порядку", () => {
+  it("уточнение и Демонстрация не ждут; итог Утверждения ждёт; дальше Вопросы, Критерии, Выбор этапов по порядку", () => {
+    const outcome = (stage: string) => ({ stage, final: true, done: ["a"], pending: [], results: [{ label: "a", target: "a" }] });
+    const list = [builtinStage("demo", []), builtinStage("approve", [])];
     expect(awaitingKind(brief({ kind: "clarify" }))).toBeNull();
-    expect(awaitingKind(brief({ outcome: { stage: "demo", final: true, done: ["a"], pending: [], results: [{ label: "a", target: "a" }] } }))).toBe("demo");
+    expect(awaitingKind(brief({ stages: { list, minButtonWidth: 170 }, outcome: outcome("demo") }))).toBeNull();
+    expect(awaitingKind(brief({ stages: { list, minButtonWidth: 170 }, outcome: outcome("approve") }))).toBe("approve");
     expect(awaitingKind(brief({ questions: [question], setup: { criteria: ["x"], stages: [report("task")] } }))).toBe("questions");
     expect(awaitingKind(brief({ setup: { criteria: ["x"], stages: [report("task")] } }))).toBe("criteria");
     expect(awaitingKind(brief({ setup: { stages: [report("task")] } }))).toBe("select");

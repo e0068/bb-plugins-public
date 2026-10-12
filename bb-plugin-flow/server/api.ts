@@ -6,13 +6,15 @@ import { needsAgentReply } from "../core/agent-reply";
 import { answerMessageText, openQuestions } from "../core/answer-message";
 import { forecast, hasForecast, scopeOf } from "../core/budget";
 import { carryOf } from "../core/carry";
+import { defaultExecutionOf, providerModelsOf } from "../core/flow-agent";
 import { finalCriteria } from "../core/option-criteria";
-import { demoVerdict } from "../core/outcome";
+import { demoVerdict, outcomeKind } from "../core/outcome";
 import { routeAllowed } from "../core/places";
 import { onAnswer } from "../core/progress";
 import type { Locale } from "../lib/i18n";
+import { isSideChat } from "../core/side-chat";
 import { stageItems } from "../core/stages";
-import { awaitingRpcContract, briefDraftRpcContract, decisionsRpcContract, dispatchRpcContract, filesRpcContract, type DecisionAnswer, type DecisionBrief, type DispatchRoute } from "../shared/contract";
+import { awaitingRpcContract, briefDraftRpcContract, decisionsRpcContract, dispatchRpcContract, filesRpcContract, widgetAgentRpcContract, type DecisionAnswer, type DecisionBrief, type DispatchRoute, type Execution, type WidgetAgent } from "../shared/contract";
 import { attachmentsLine, lostImages, referencedImages, uploadAttachments } from "./attachments";
 import { handoff } from "./handoff";
 import type { ProgressStore } from "./progress";
@@ -48,6 +50,10 @@ export const registerApi = (
     releaseFlow?: (threadId: string) => Promise<void>;
     /** Flow, который получит тред передачи из этого треда вместо flow исходного (./thread-start.ts); `null` снимает запись. */
     handoffFlow?: (sourceThreadId: string, flowId: string | null) => void;
+    /** Flow владельца с их моделью — для кнопки Flow и предложения модели в ряду виджета. Не задано — пусто. */
+    widgetFlows?: () => WidgetAgent["flows"];
+    /** Настоящий flow треда; без flow — `null`. Не задано — `null`. */
+    threadFlowId?: (threadId: string) => string | null;
   },
 ): void => {
   /** Работа запущена, когда владелец взял в ближайший прогон хотя бы один этап: дальше бриф спрашивает только по делу. */
@@ -75,9 +81,13 @@ export const registerApi = (
       if (answer.route !== undefined && !routeAllowed(answered, answer.route))
         throw new Error(`route "${answer.route.tree}/${answer.route.branch}" is not possible for the "${answered}" place`);
       if (answer.compact === true && answered !== "here") throw new Error(`compaction is only possible for the "here" place, not "${answered}"`);
-      const switched = answer.outcome?.flow;
-      if (switched !== undefined && brief.outcome?.nextFlow === undefined) throw new Error(`the demo offered no flow to move to, yet the answer moves to the flow "${switched.id}"`);
+      // Flow выбирают кнопкой ряда у любого виджета: у итога выбор едет в `outcome.flow`, у остальных — в `flow`.
+      const switched = answer.outcome?.flow ?? answer.flow;
       if (switched !== undefined && !(deps.flowIds?.() ?? []).includes(switched.id)) throw new Error(`the answer moves to the flow "${switched.id}", which the owner does not have`);
+      // Провайдера у живого треда не сменить: другой провайдер уходит только в новый тред.
+      const execution = answer.execution;
+      if (execution !== undefined && answered === "here" && (await bb.sdk.threads.get({ threadId: brief.threadId })).providerId !== execution.providerId)
+        throw new Error(`the provider "${execution.providerId}" differs from the thread's: another provider runs only in a new thread`);
       const open = openQuestions(brief, answer);
       if (open.length > 0) return { kind: "incomplete" as const, questionIds: open };
 
@@ -99,6 +109,8 @@ export const registerApi = (
           if (answer.compact === true) await bb.sdk.threads.compact({ threadId: brief.threadId });
           // Переход — до реплики: ход агента, который она начнёт, уже идёт по новому flow.
           if (switched !== undefined) await deps.switchFlow?.(brief.threadId, switched.id);
+          // Модель и effort — треду сразу, даже без реплики; скорость едет только репликой.
+          if (execution !== undefined) await bb.sdk.threads.update({ threadId: brief.threadId, model: execution.model, reasoningLevel: execution.reasoningLevel });
           // Реплика будит агента, поэтому уходит, только когда ему есть что
           // делать: прогресс берётся уже с этим ответом — закрытые и
           // вычеркнутые им этапы в счёт не идут. В новый тред ответ уезжает
@@ -111,14 +123,16 @@ export const registerApi = (
             // Реплика — для агента: владелец уже видит в ленте отвеченный бриф, второй его пересказ в своём пузыре ему не нужен.
             await bb.sdk.threads.send({
               threadId: brief.threadId,
-              mode: brief.kind === "clarify" ? "steer-if-active" : "queue-if-active",
+              // Уточнение и Демонстрация агента не держат: он работает дальше, и ответ должен дойти в идущем ходе, а не после него.
+              mode: brief.kind === "clarify" || (brief.outcome !== undefined && outcomeKind(brief) === "demo") ? "steer-if-active" : "queue-if-active",
+              ...(execution === undefined ? {} : { model: execution.model, reasoningLevel: execution.reasoningLevel, ...(execution.serviceTier === undefined ? {} : { serviceTier: execution.serviceTier }) }),
               input: [{ type: "text", text, mentions: [], visibility: AGENT_ONLY }, ...attached.map(({ path }) => ({ type: "localImage" as const, path, visibility: AGENT_ONLY }))],
             });
           }
         } else {
           // Ответ уезжает целиком в новый тред: исходный остаётся с отвеченным брифом и ссылкой на него.
           if (switched !== undefined) deps.handoffFlow?.(brief.threadId, switched.id);
-          const created = await handoff(bb, { brief, place, ...(answer.route === undefined ? {} : { route: answer.route }), text, images: attached.map(({ path }) => path), locale });
+          const created = await handoff(bb, { brief, place, ...(answer.route === undefined ? {} : { route: answer.route }), ...(execution === undefined ? {} : { execution }), text, images: attached.map(({ path }) => path), locale });
           if (created.kind === "failed") throw new Error(created.error);
           handoffThreadId = created.threadId;
         }
@@ -206,6 +220,36 @@ export const registerApi = (
 
   bb.rpc.register(awaitingRpcContract, {
     awaitingThreads: () => store.listAwaiting().then((list) => list.map(({ threadId, kind }) => ({ threadId, kind }))),
+  });
+
+  // Ряд виджета: модель треда, каталог моделей доступных провайдеров и flow владельца с их моделью. Сбой — `null`: кнопки модели
+  // и Flow тогда не рисуются, а остальной виджет работает как раньше.
+  bb.rpc.register(widgetAgentRpcContract, {
+    async widgetAgent({ threadId }) {
+      try {
+        const thread = await bb.sdk.threads.get({ threadId });
+        if (isSideChat(thread)) return null;
+        const own = await bb.sdk.providers.models({ providerId: thread.providerId });
+        const options = await bb.sdk.threads.defaultExecutionOptions({ threadId });
+        const current: Execution | null =
+          options === null
+            ? defaultExecutionOf(own, thread.providerId)
+            : { providerId: thread.providerId, model: options.model, reasoningLevel: options.reasoningLevel, ...(options.serviceTier === "fast" ? { serviceTier: "fast" as const } : {}) };
+        if (current === null) return null;
+        const providers: WidgetAgent["providers"] = await Promise.all(
+          own.providers
+            .filter((provider) => provider.available)
+            .map(async (provider) => ({
+              id: provider.id,
+              name: provider.displayName,
+              models: providerModelsOf(provider.id === thread.providerId ? own : await bb.sdk.providers.models({ providerId: provider.id }), provider.id),
+            })),
+        );
+        return { current, currentFlowId: deps.threadFlowId?.(threadId) ?? null, providers, flows: deps.widgetFlows?.() ?? [] };
+      } catch {
+        return null;
+      }
+    },
   });
 
   bb.rpc.register(dispatchRpcContract, {

@@ -9,7 +9,6 @@ import { join } from "node:path";
 import { createFakePluginHost } from "@get-bb/plugin-sdk/testing";
 import { afterEach, describe, expect, it } from "vitest";
 
-import type { Limits } from "../core/skill-scope";
 import type { Flow, FlowProgress, StageCatalog, WorkStage } from "../shared/contract";
 import { createSkillScope } from "./skill-scope";
 
@@ -24,18 +23,16 @@ const CATALOG: StageCatalog = {
     { id: "agent:scout", kind: "agent", name: "scout", origin: { kind: "own" } },
   ],
 };
-const BOTH: Limits = { skills: true, agents: true };
 
 const dirs: string[] = [];
 afterEach(async () => Promise.all(dirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true }))));
 
-const setup = async (options: { flow?: Flow | null; choosing?: Limits | null; personal?: boolean } = {}) => {
+const setup = async (options: { flow?: Flow | null; personal?: boolean } = {}) => {
   const root = await mkdtemp(join(tmpdir(), "skill-prestart-"));
   dirs.push(root);
   const { bb } = createFakePluginHost({ pluginId: "flow" });
   let progress: FlowProgress | null = null;
   let flow = options.flow === undefined ? FLOW : options.flow;
-  let choosing = options.choosing ?? null;
   // Дерево появляется, когда bb его создаст: до того сверка его не находит.
   let provisioned = false;
   let catalogReads = 0;
@@ -45,7 +42,6 @@ const setup = async (options: { flow?: Flow | null; choosing?: Limits | null; pe
     // Личная копия своего дерева не получит никогда; тред без окружения его ещё ждёт.
     pending: async () => !provisioned && options.personal !== true,
     flow: () => flow,
-    choosing: () => choosing,
     stages: () => flow?.stages ?? [],
     progress: async () => progress,
     catalog: async () => {
@@ -69,10 +65,7 @@ const setup = async (options: { flow?: Flow | null; choosing?: Limits | null; pe
     reloaded: () => createSkillScope(deps),
     catalogReads: () => catalogReads,
     mark: (tracks: FlowProgress["stages"]) => void (progress = { stages: tracks, waiting: [] }),
-    choose: (next: Flow | null) => {
-      flow = next;
-      choosing = null;
-    },
+    choose: (next: Flow | null) => void (flow = next),
   };
 };
 
@@ -111,31 +104,11 @@ describe("первая сессия треда — с ограничением �
     expect((json.permissions as { deny: string[] }).deny).not.toContain("Agent(code-reviewer)");
   });
 
-  it("тред с «Автоматически» до выбора: все свои навыки, встроенные навыки и агенты спрятаны", async () => {
-    const { scope, root, readNow } = await setup({ flow: null, choosing: BOTH });
+  it("тред с «Автоматически» до выбора ничего не прячет: файл не пишется — новой сессии после выбора нет, урезать первую незачем", async () => {
+    const { scope, root, file } = await setup({ flow: null });
     await scope.sync("thr");
-    expect(scope.prestart("thr", root)).toBe(true);
-    expect(readNow().skillOverrides).toEqual({ "flow-questions": "off", spec: "off", "code-review": "off", plan: "off" });
-    expect(readNow().disableBundledSkills).toBe(true);
-    expect((readNow().permissions as { deny: string[] }).deny).toEqual(expect.arrayContaining(["Agent(scout)", "Agent(code-reviewer)", "Agent(general-purpose)"]));
-    expect(await scope.limitedBeforeChoice("thr")).toBe(true);
-  });
-
-  it("признак ограничения до выбора живёт в kv: его видит и перезагруженный плагин, и после выбора flow", async () => {
-    const { scope, root, provision, choose, reloaded } = await setup({ flow: null, choosing: BOTH });
-    await scope.sync("thr");
-    scope.prestart("thr", root);
-    provision();
-    choose(null);
-    await scope.sync("thr");
-    expect(await reloaded().limitedBeforeChoice("thr")).toBe(true);
-  });
-
-  it("сессию до выбора ограничила обычная сверка в готовом дереве — признак тоже ставится", async () => {
-    const { scope, provision } = await setup({ flow: null, choosing: BOTH });
-    provision();
-    await scope.sync("thr");
-    expect(await scope.limitedBeforeChoice("thr")).toBe(true);
+    expect(scope.prestart("thr", root)).toBe(false);
+    expect(existsSync(file)).toBe(false);
   });
 
   it("тред в личной копии решения не считает и не откладывает", async () => {
@@ -153,28 +126,12 @@ describe("первая сессия треда — с ограничением �
     expect((await read()).skillOverrides).toEqual({ "code-review": "off", plan: "off" });
   });
 
-  it("агент выбрал flow — сверка открывает его этапы; отказался от flow — снимает всё, что Flow записал", async () => {
-    const chosen = await setup({ flow: null, choosing: BOTH });
-    await chosen.scope.sync("thr");
-    chosen.scope.prestart("thr", chosen.root);
-    chosen.provision();
-    chosen.choose(FLOW);
-    await chosen.scope.sync("thr");
-    expect((await chosen.read()).skillOverrides).toEqual({ "code-review": "off", plan: "off" });
-
-    const refused = await setup({ flow: null, choosing: BOTH });
-    await refused.scope.sync("thr");
-    refused.scope.prestart("thr", refused.root);
-    refused.provision();
-    refused.choose(null);
-    await refused.scope.sync("thr");
-    expect(await refused.read()).toEqual({});
-  });
-
-  it("тред со своим flow ограниченным до выбора не считается", async () => {
-    const { scope, root } = await setup();
+  it("агент выбрал flow — сверка кладёт ограничения его этапов в готовое дерево", async () => {
+    const { scope, provision, choose, read } = await setup({ flow: null });
     await scope.sync("thr");
-    scope.prestart("thr", root);
-    expect(await scope.limitedBeforeChoice("thr")).toBe(false);
+    provision();
+    choose(FLOW);
+    await scope.sync("thr");
+    expect((await read()).skillOverrides).toEqual({ "code-review": "off", plan: "off" });
   });
 });

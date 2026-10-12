@@ -21,7 +21,7 @@ const open = (b: DecisionBrief) =>
 
 const selectTag = async (b: DecisionBrief) => {
   const slot = open(b);
-  await slot.findByRole("group", { name: "Ответ на бриф" });
+  await slot.findByRole("group", { name: "Ответы на вопросы" });
   return [...slot.container.querySelectorAll("[data-section-tag]")].map((el) => el.textContent).at(-1);
 };
 

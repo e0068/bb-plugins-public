@@ -34,25 +34,28 @@ const demo: DecisionBrief = {
   stages: { list: [{ ...builtinStage("demo", []), name: "Демонстрация" }], minButtonWidth: 160 },
 };
 
-const open = () =>
+/** Утверждение — тот же итог на этапе, который держит работу: у него «Исполнять» в ряду кнопок. */
+const approval: DecisionBrief = { ...demo, outcome: { ...demo.outcome!, stage: "approve" }, stages: { list: [builtinStage("approve", [])], minButtonWidth: 160 } };
+
+const open = (brief: DecisionBrief = demo) =>
   renderSlot<PluginMessageDirectiveProps, typeof decisionsRpcContract & typeof dispatchRpcContract & typeof outcomeRpcContract>(
     app.messageDirectives[0]!,
-    { attributes: { id: demo.id }, source: `::decision{id="${demo.id}"}`, message: { id: "msg_1", threadId: "thr_1", turnId: "turn_1", projectId: null }, openWorkspaceFile: () => true },
-    { rpc: { getBrief: () => ({ kind: "found", brief: demo, answer: null }), answerBrief: () => ({ kind: "not_found" }), getDispatchPlace: () => ({ place: "thread" }), listProjects: () => ({ kind: "found" as const, projects: [] }), runOutcomeCommand: () => ({ kind: "sent", created: false }) } },
+    { attributes: { id: brief.id }, source: `::decision{id="${brief.id}"}`, message: { id: "msg_1", threadId: "thr_1", turnId: "turn_1", projectId: null }, openWorkspaceFile: () => true },
+    { rpc: { getBrief: () => ({ kind: "found", brief, answer: null }), answerBrief: () => ({ kind: "not_found" }), getDispatchPlace: () => ({ place: "thread" }), listProjects: () => ({ kind: "found" as const, projects: [] }), runOutcomeCommand: () => ({ kind: "sent", created: false }) } },
   );
 
 const classes = (element: Element, prefix: RegExp) => element.className.split(" ").filter((c) => prefix.test(c));
 
-describe("кнопки Демонстрации с комментарием выровнены", () => {
-  it("«Исполнять» и «Отправить» — одной ширины в ряду, раскрытые списки «Исполнять» — колонками с тем же зазором", async () => {
-    const slot = open();
+describe("кнопки Утверждения с комментарием выровнены", () => {
+  it("«Исполнять» и «Отправить комментарии» — одной ширины в ряду, раскрытые списки «Исполнять» — колонками с тем же зазором", async () => {
+    const slot = open(approval);
     fireEvent.change(await slot.findByRole("textbox", { name: "Комментарий к демонстрации" }), { target: { value: "Поправь" } });
     const place = slot.getByRole("button", { name: /^Исполнять/ });
-    const row = slot.getByRole("button", { name: "Отправить" }).parentElement!;
-    expect(row.className).toContain("grid-cols-[repeat(auto-fit,minmax(10rem,1fr))]");
+    const row = slot.getByRole("button", { name: "Отправить комментарии" }).parentElement!;
+    expect(row.className).toContain("flex-wrap");
     expect([...row.children]).toHaveLength(2);
     expect(row.contains(place)).toBe(true);
-    expect(slot.getByRole("group", { name: "Демонстрация" }).contains(row)).toBe(false);
+    expect(slot.getByRole("group", { name: "Утверждение" }).contains(row)).toBe(false);
     fireEvent.click(place);
     const lists = slot.getByRole("group", { name: "Тред" }).parentElement!;
     expect(classes(lists, /^gap-/)).toEqual(classes(row, /^gap-/));
@@ -67,9 +70,9 @@ describe("заголовки разделов Демонстрации", () => {
   });
 });
 
-describe("раскрытые списки «Исполнять» у Демонстрации", () => {
+describe("раскрытые списки «Исполнять» у Утверждения", () => {
   it("каждая колонка — своя скруглённая группа, все в одном ряду с зазором", async () => {
-    const slot = open();
+    const slot = open(approval);
     fireEvent.click(await slot.findByRole("button", { name: /^Исполнять/ }));
     const row = slot.getByRole("group", { name: "Тред" }).parentElement!;
     for (const name of ["Тред", "Рабочее дерево", "Ветка"]) {

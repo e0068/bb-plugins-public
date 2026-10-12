@@ -38,7 +38,7 @@ describe("строки «Дополнить» и «Свой ответ»", () =>
   it("у критерия и у всего брифа — строка «Дополнить» с «+» картинок", async () => {
     const slot = open();
     expect((await rowOf(slot, "Дополнить")).getByRole("button", { name: "Приложить изображение" })).toBeTruthy();
-    const note = await rowOf(slot, "Дополнить бриф");
+    const note = await rowOf(slot, "Дополнить ответы");
     expect(note.getByRole("button", { name: "Приложить изображение" })).toBeTruthy();
     expect((note.getByRole("textbox") as HTMLTextAreaElement).placeholder).toBe("Дополнить");
   });
@@ -54,7 +54,7 @@ describe("строки «Дополнить» и «Свой ответ»", () =>
 
   it("счётчик незакрытого — подпись внутри кнопки отправки, над «Отправить»", async () => {
     const slot = open();
-    const send = await slot.findByRole("button", { name: "Отправить бриф" });
+    const send = await slot.findByRole("button", { name: "Отправить ответы" });
     expect(send.getAttribute("aria-description")).toBe("заполнено 0/2");
     expect(send.textContent).toBe("заполнено 0/2Отправить");
   });

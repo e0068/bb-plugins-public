@@ -71,7 +71,7 @@ describe("пункты «Готово, когда» в таблице этапо
     expect(within(criterionRow(root, 0)).getByRole("checkbox", { name: "Пункт 1" }).getAttribute("aria-checked")).toBe("false");
     expect(criterionRow(root, 0).textContent).not.toContain("$");
     expect(criterionRow(root, 0).querySelector(".line-through")).toBeTruthy();
-    fireEvent.click(slot.getByRole("button", { name: "Отправить бриф" }));
+    fireEvent.click(slot.getByRole("button", { name: "Отправить ответы" }));
     await vi.waitFor(() => expect(slot.rpcCalls.some((c) => c.method === "answerBrief")).toBe(true));
     const sent = slot.rpcCalls.find((c) => c.method === "answerBrief")?.input as { answer: { criteria?: { removed: number[] } } };
     expect(sent.answer.criteria?.removed).toEqual([0]);

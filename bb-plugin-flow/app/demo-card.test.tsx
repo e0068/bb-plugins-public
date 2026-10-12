@@ -87,39 +87,31 @@ describe("карточка Демонстрации", () => {
     expect(await c.findByRole("link", { name: /^screenshots/ })).toBeTruthy();
   });
 
-  it("поле комментария прикреплено к карточке, кнопки — вне её, бюджета и этапов нет", async () => {
+  it("поле комментария прикреплено к карточке, кнопка — вне её; ни «Исполнять», ни бюджета, ни этапов", async () => {
     const slot = open();
     const wrap = await slot.findByRole("group", { name: "Демонстрация" });
     expect(within(wrap).getByRole("textbox", { name: "Комментарий к демонстрации" })).toBeTruthy();
-    expect(within(wrap).queryByRole("button", { name: /Продолжить|Исполнять/ })).toBeNull();
-    expect(slot.getByRole("button", { name: "Продолжить" })).toBeTruthy();
+    expect(within(wrap).queryByRole("button", { name: /Отправить комментарии/ })).toBeNull();
+    expect(slot.getByRole("button", { name: "Отправить комментарии" })).toBeTruthy();
+    expect(slot.queryByRole("button", { name: /Исполнять/ })).toBeNull();
     expect(slot.queryByRole("button", { name: /Бюджет/ })).toBeNull();
     expect(slot.queryByRole("checkbox", { name: /в ближайший прогон/ })).toBeNull();
   });
 
-  it("пустой комментарий — одна кнопка «Продолжить», она отправляет продолжение", async () => {
-    const answerBrief = vi.fn(accepted);
-    const slot = open({ answerBrief });
-    await card(slot);
-    expect(slot.queryByRole("button", { name: "На доработку" })).toBeNull();
-    fireEvent.click(slot.getByRole("button", { name: "Продолжить" }));
-    expect(await sentOutcome(answerBrief)).toEqual({ accepted: true });
-  });
-
-  it("у финальной Демонстрации кнопка — «Завершить»", async () => {
+  it("Демонстрация не держит работу: «Продолжить» и «Завершить» нет, без комментария отправлять нечего", async () => {
     const { next: _next, ...interim } = brief.outcome!;
     const slot = open({ patch: { outcome: { ...interim, final: true } } });
     await card(slot);
-    expect(slot.getByRole("button", { name: "Завершить" })).toBeTruthy();
+    expect(slot.queryByRole("button", { name: /Продолжить|Завершить/ })).toBeNull();
+    expect((slot.getByRole("button", { name: "Отправить комментарии" }) as HTMLButtonElement).disabled).toBe(true);
   });
 
-  it("написанный комментарий — одна кнопка «Отправить», она уходит непринятой с комментарием", async () => {
+  it("написанный комментарий — «Отправить комментарии», он уходит с комментарием", async () => {
     const answerBrief = vi.fn(accepted);
     const slot = open({ answerBrief });
     await card(slot);
     comment(slot, "Баннер ниже");
-    expect(slot.queryByRole("button", { name: /Продолжить|Учесть и продолжить|На доработку/ })).toBeNull();
-    fireEvent.click(slot.getByRole("button", { name: "Отправить" }));
+    fireEvent.click(slot.getByRole("button", { name: "Отправить комментарии" }));
     expect(await sentOutcome(answerBrief)).toEqual({ accepted: false, note: "Баннер ниже" });
   });
 

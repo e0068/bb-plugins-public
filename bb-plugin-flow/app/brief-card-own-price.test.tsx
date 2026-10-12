@@ -60,7 +60,7 @@ describe("своя цена карандашом в «Итого»", () => {
     expect(within(row).queryByRole("textbox")).toBeNull();
     expect(row.textContent).toContain("120 мин");
     expect(row.textContent).toContain("$25.55–$13");
-    fireEvent.click(slot.getByRole("button", { name: "Отправить бриф" }));
+    fireEvent.click(slot.getByRole("button", { name: "Отправить ответы" }));
     await vi.waitFor(() => expect(slot.rpcCalls.some((c) => c.method === "answerBrief")).toBe(true));
     const call = slot.rpcCalls.find((c) => c.method === "answerBrief")?.input as { answer: { budget?: unknown } };
     expect(call.answer.budget).toEqual({ minutes: "120", target: "25.55" });

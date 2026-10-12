@@ -54,7 +54,7 @@ const open = (handlers: { answerBrief?: typeof accepted; place?: { place: "here"
     },
   );
 
-const send = async (slot: ReturnType<typeof open>) => slot.findByRole("button", { name: /Отправить бриф/ });
+const send = async (slot: ReturnType<typeof open>) => slot.findByRole("button", { name: /Отправить ответы/ });
 
 describe("место исполнения в низу брифа", () => {
   it("кнопки «Принять рекомендации» больше нет", async () => {

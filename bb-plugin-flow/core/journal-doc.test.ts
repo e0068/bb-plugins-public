@@ -68,8 +68,8 @@ describe("decisionDocument", () => {
   it("тело на языке владельца — том же, что ушёл в тред", () => {
     const ru = decisionDocument({ brief, answer, decidedAt: "2026-09-15T12:00:00.000Z", locale: "ru" });
     const en = decisionDocument({ brief, answer, decidedAt: "2026-09-15T12:00:00.000Z", locale: "en" });
-    expect(ru).toContain("Бриф «Как вести работу» — ответ:");
-    expect(en).toContain('Brief "Как вести работу" — answer:');
+    expect(ru).toContain("Ответы на вопросы «Как вести работу»:");
+    expect(en).toContain('Answers to the questions "Как вести работу":');
   });
 });
 

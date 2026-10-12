@@ -43,6 +43,6 @@ describe("артефакты в карточке брифа", () => {
   it("отправить можно, не касаясь ни одного артефакта", async () => {
     const slot = open();
     fireEvent.click(within(await slot.findByRole("group", { name: "Так?" })).getByRole("button", { name: /Да/ }));
-    expect(slot.getByRole("button", { name: "Отправить бриф" }).hasAttribute("disabled")).toBe(false);
+    expect(slot.getByRole("button", { name: "Отправить ответы" }).hasAttribute("disabled")).toBe(false);
   });
 });

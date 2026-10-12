@@ -3,6 +3,7 @@ import { createFakePluginHost } from "@get-bb/plugin-sdk/testing";
 import { describe, expect, it } from "vitest";
 
 import { answerMessageText } from "../core/answer-message";
+import { builtinStage } from "../lib/stage-constants";
 import type { DecisionAnswer, DecisionBrief } from "../shared/contract";
 import { ANSWERED_CHANNEL, registerApi } from "./api";
 import { createStore } from "./store";
@@ -151,6 +152,17 @@ describe("RPC брифа", () => {
     const { harness, sends } = await setup();
     await harness.callRpc("answerBrief", { id: "dec_b", answer: fullAnswer, messageId: "msg_1" });
     expect(sends()[0]?.mode).toBe("queue-if-active");
+  });
+
+  it("комментарий к Демонстрации уходит steer-if-active, к Утверждению — queue-if-active", async () => {
+    const { harness, store, sends } = await setup();
+    const list = [builtinStage("demo", []), builtinStage("approve", [])];
+    const outcome = (stage: string) => ({ stage, final: false, next: stage, done: ["Сделано"], pending: [], results: [{ label: "a", target: "https://a" }] });
+    await store.putBrief({ id: "dec_d", threadId: "thr_1", title: "Демонстрация", createdAt: "2026-09-12T12:00:00.000Z", kind: "brief", questions: [], stages: { list, minButtonWidth: 170 }, outcome: outcome("demo") });
+    await store.putBrief({ id: "dec_a", threadId: "thr_1", title: "Утверждение", createdAt: "2026-09-12T12:00:00.000Z", kind: "brief", questions: [], stages: { list, minButtonWidth: 170 }, outcome: outcome("approve") });
+    await harness.callRpc("answerBrief", { id: "dec_d", answer: { briefId: "dec_d", answers: [], outcome: { accepted: false, note: "Поправь подпись" } }, messageId: "msg_d" });
+    await harness.callRpc("answerBrief", { id: "dec_a", answer: { briefId: "dec_a", answers: [], outcome: { accepted: false, note: "Поправь подпись" } }, messageId: "msg_a" });
+    expect(sends().map((call) => call.mode)).toEqual(["steer-if-active", "queue-if-active"]);
   });
 
   it("после записи ответа публикуется decisions:answered с идентификатором", async () => {

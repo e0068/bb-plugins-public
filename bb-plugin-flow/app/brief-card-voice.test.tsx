@@ -211,17 +211,17 @@ describe("когда микрофона нет или он не нужен", () 
       answeredAt: "2026-09-13T10:00:00.000Z",
     };
     const slot = open({ getBrief: () => ({ kind: "found", brief, answer: answered }) });
-    await slot.findByText("Бриф отвечен");
+    await slot.findByText("Ответ отправлен");
     expect(slot.queryAllByRole("button", { name: MIC })).toHaveLength(0);
   });
 
   it("пока бриф отправляется, микрофоны выключены", async () => {
     installMicrophone();
     const slot = open({ answerBrief: () => new Promise(() => {}) });
-    await slot.findByRole("textbox", { name: "Дополнить бриф" });
+    await slot.findByRole("textbox", { name: "Дополнить ответы" });
     fireEvent.click(within(slot.getByRole("group", { name: "Каким путём?" })).getByRole("button", { name: /RPC/ }));
     fireEvent.click(within(slot.getByRole("group", { name: "Так?" })).getByRole("button", { name: /Да/ }));
-    fireEvent.click(slot.getByRole("button", { name: "Отправить бриф" }));
+    fireEvent.click(slot.getByRole("button", { name: "Отправить ответы" }));
     await waitFor(() => {
       const mics = slot.getAllByRole("button", { name: MIC }) as HTMLButtonElement[];
       expect(mics.length).toBeGreaterThan(0);

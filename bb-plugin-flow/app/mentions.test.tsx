@@ -64,7 +64,7 @@ const type = (field: HTMLTextAreaElement, text: string) => {
   fireEvent.keyUp(field);
 };
 
-const noteField = async (slot: Slot) => (await slot.findByRole("textbox", { name: "Дополнить бриф" })) as HTMLTextAreaElement;
+const noteField = async (slot: Slot) => (await slot.findByRole("textbox", { name: "Дополнить ответы" })) as HTMLTextAreaElement;
 
 describe("`/` в поле брифа — навыки и команды агента треда", () => {
   it("набор `/` и начала имени открывает под полем список, суженный по набранному, у треда брифа", async () => {

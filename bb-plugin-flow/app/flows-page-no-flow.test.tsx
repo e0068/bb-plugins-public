@@ -36,7 +36,7 @@ const list = (slot: Slot) => slot.findByRole("navigation", { name: "Flow" });
 describe("«Без flow» в списке flow", () => {
   it("первая строка списка, перед flow владельца", async () => {
     const rows = within(await list(open())).getAllByRole("button").map((button) => button.textContent);
-    expect(rows.slice(0, 3)).toEqual(["Без flow", "Default", "Quick"]);
+    expect(rows.slice(0, 4)).toEqual(["Без flow", "Автоматически", "Default", "Quick"]);
   });
 
   it("стоит и при единственном flow", async () => {

@@ -55,30 +55,39 @@ const sentOutcome = async (fn: ReturnType<typeof vi.fn>) => {
 };
 
 describe("виджет Утверждения", () => {
-  it("бирка «Утверждение», пустой комментарий — кнопка «Утвердить», она утверждает", async () => {
+  it("только поле комментария и ряд кнопок: карточки нет, пустой комментарий — «Продолжить», она утверждает", async () => {
     const answerBrief = vi.fn(accepted);
     const slot = open({ answerBrief });
     const c = await card(slot);
-    expect(c.getByText("Утверждение")).toBeTruthy();
-    expect(slot.queryByRole("button", { name: "Продолжить" })).toBeNull();
-    fireEvent.click(slot.getByRole("button", { name: "Утвердить" }));
+    expect(c.getByRole("textbox", { name: "Комментарий к демонстрации" })).toBeTruthy();
+    expect(slot.queryByText("Сделано")).toBeNull();
+    expect(slot.queryByText("prototype.html")).toBeNull();
+    expect(slot.queryByRole("button", { name: "Утвердить" })).toBeNull();
+    fireEvent.click(slot.getByRole("button", { name: "Продолжить" }));
     expect(await sentOutcome(answerBrief)).toEqual({ accepted: true });
   });
 
-  it("написанный комментарий — «Отправить» вместо «Утвердить», уходит неутверждённым", async () => {
+  it("у финального Утверждения кнопка — «Завершить»", async () => {
+    const { next: _next, ...rest } = brief.outcome!;
+    const slot = open({ patch: { outcome: { ...rest, final: true } } });
+    await card(slot);
+    expect(slot.getByRole("button", { name: "Завершить" })).toBeTruthy();
+  });
+
+  it("написанный комментарий — «Отправить комментарии», уходит неутверждённым", async () => {
     const answerBrief = vi.fn(accepted);
     const slot = open({ answerBrief });
     await card(slot);
     comment(slot, "Пункты длинные");
-    expect(slot.queryByRole("button", { name: "Утвердить" })).toBeNull();
-    fireEvent.click(slot.getByRole("button", { name: "Отправить" }));
+    expect(slot.queryByRole("button", { name: "Продолжить" })).toBeNull();
+    fireEvent.click(slot.getByRole("button", { name: "Отправить комментарии" }));
     expect(await sentOutcome(answerBrief)).toEqual({ accepted: false, note: "Пункты длинные" });
   });
 
-  it("утверждённое — строка исхода «Утверждено»", async () => {
+  it("утверждённое — строка исхода «Утверждено», без карточки", async () => {
     const record: AnswerRecord = { messageId: "msg_1", answeredAt: "2026-10-10T10:05:00.000Z", answer: { briefId: brief.id, answers: [], outcome: { accepted: true } } };
     const slot = open({ record });
-    await card(slot);
-    expect(slot.getByText("Утверждено", { selector: "b" })).toBeTruthy();
+    expect(await slot.findByText("Утверждено", { selector: "b" })).toBeTruthy();
+    expect(slot.queryByText("prototype.html")).toBeNull();
   });
 });

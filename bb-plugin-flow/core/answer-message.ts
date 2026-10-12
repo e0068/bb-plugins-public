@@ -172,7 +172,7 @@ const outcomeHeading = (brief: DecisionBrief, answer: DecisionAnswer, verdict: D
     case "continue":
       return outcomeKind(brief) === "approve" ? m.approvedHeading(brief.title) : m.outcomeHeading(brief.title, false, outcomeStageName(brief));
     case "comment":
-      return m.outcomeHeading(brief.title, true, outcomeStageName(brief));
+      return outcomeKind(brief) === "approve" ? m.approveCommentHeading(brief.title) : m.outcomeHeading(brief.title, true, outcomeStageName(brief));
   }
 };
 
@@ -274,13 +274,15 @@ export const answerMessageText = (brief: DecisionBrief, answer: DecisionAnswer, 
   // Комментарий ко всему брифу работу не держит: держит только Утверждение, а оно приходит своим итогом. Сам комментарий — последним, сразу за шагом агента.
   const hint = blank(answer.note) ? [] : [m.noteGoesOn];
   const note = blank(answer.note) ? [] : [m.note(answer.note ?? "")];
-  return [heading, ...body, ...outcomeLines(brief, answer, locale), ...stagesLines(brief, answer, locale), ...budgetLine(brief, answer, locale), ...criteriaLine(brief, answer, m), ...hint, ...nextStepLine(brief, answer, m), ...note].join("\n");
+  return [heading, ...body, ...outcomeLines(brief, answer, locale), ...(answer.flow === undefined ? stagesLines(brief, answer, locale) : []), ...budgetLine(brief, answer, locale), ...criteriaLine(brief, answer, m), ...hint, ...nextStepLine(brief, answer, m), ...note].join("\n");
 };
 
 /** Шаг агента после ответа: после Демонстрации — следующий, у брифа без этапов — только остановки на утверждение. */
 const nextStepLine = (brief: DecisionBrief, answer: DecisionAnswer, m: Messages["answer"]): string[] => {
   if (brief.kind !== "brief") return [];
   if (isOutcomeBrief(brief)) return [outcomeNextStep(brief, answer, m)];
+  // Flow, выбранный кнопкой ряда у виджета без итога: тред уже в нём, прогон пустой — работа идёт с первого этапа.
+  if (answer.flow !== undefined) return [m.flowChosen(answer.flow.name)];
   if (stageItems(brief).length > 0) return [];
   const kept = entryFor(answer, SETUP_ROW.artifacts)?.optionIds ?? [];
   const approve = brief.required?.approve ?? [];

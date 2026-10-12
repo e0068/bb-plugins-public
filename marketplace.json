@@ -32,7 +32,7 @@
     {
       "id": "flow",
       "displayName": "Flow",
-      "description": "Agent questions as a brief in the thread: every option with cost and risks, the recommended one marked, an answer of your own always possible.",
+      "description": "Agent questions as a widget in the thread: every option with cost and risks, the recommended one marked, an answer of your own always possible.",
       "icon": {
         "url": "bb-plugin-flow/assets/icon.svg"
       },

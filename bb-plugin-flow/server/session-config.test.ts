@@ -11,17 +11,25 @@ const shipped = readdirSync(new URL("../skills/", import.meta.url), { withFileTy
   .filter((entry) => entry.isDirectory())
   .map((entry) => entry.name);
 
-const setup = (prestart: (threadId: string, root: string | null) => void) => {
+const setup = (prestart: (threadId: string, root: string | null) => void, startMessage?: (threadId: string) => string | null) => {
   const { bb, harness } = createFakePluginHost({ pluginId: "flow", agentSkillIds: shipped });
   for (const name of ["ask_decision", "flow_stage"])
     bb.agents.registerTool({ name, description: name, parameters: { type: "object", properties: {} }, execute: async () => "" });
-  registerSessionConfig(bb, { tools: ["ask_decision", "flow_stage"], prestart, warn: () => undefined });
+  registerSessionConfig(bb, { tools: ["ask_decision", "flow_stage"], prestart, ...(startMessage === undefined ? {} : { startMessage }), warn: () => undefined });
   return harness;
 };
 
 const worktree = { path: "/tree", workspaceProvisionType: "managed-worktree" as const };
 
 describe("настройка сессии агента", () => {
+  it("стартовое сообщение flow треда — инструкция сессии; без сообщения инструкции нет", async () => {
+    const withStart = setup(() => undefined, (threadId) => (threadId === "thr_flow" ? "Сначала воспроизведи баг" : null));
+    const flow = await withStart.resolveAgentConfiguration(makePluginAgentConfigurationContext({ environment: worktree, thread: { id: "thr_flow" } }));
+    expect(flow.instructions).toBe("Сначала воспроизведи баг");
+    const plain = await withStart.resolveAgentConfiguration(makePluginAgentConfigurationContext({ environment: worktree, thread: { id: "thr_plain" } }));
+    expect(plain.instructions).toBeNull();
+  });
+
   it("навыки Flow в выборе — ровно те, что плагин везёт в skills/", () => {
     expect([...FLOW_SKILLS].sort()).toEqual([...shipped].sort());
   });
@@ -77,4 +85,13 @@ it.each(["codex", "kimi", "acp-kimi"])("%s receives the delivered Flow skill pat
   const config = await harness.resolveAgentConfiguration(makePluginAgentConfigurationContext({ thread: { id: "t" }, environment: worktree, provider: { id: providerId } }));
   expect(config.instructions).toContain("spec: /tree/.agents/skills/spec/SKILL.md");
   expect(calls).toEqual([["t", "/tree"]]);
+});
+
+it("доставка навыков и стартовое сообщение flow — одной инструкцией, доставка первой; Claude Code получает только сообщение", async () => {
+  const { bb, harness } = createFakePluginHost({ pluginId: "flow", agentSkillIds: shipped });
+  registerSessionConfig(bb, { tools: [], prestart: () => undefined, warn: () => undefined, deliver: () => "spec: /tree/spec/SKILL.md", startMessage: () => "Пиши коротко" });
+  const codex = await harness.resolveAgentConfiguration(makePluginAgentConfigurationContext({ thread: { id: "t" }, environment: worktree, provider: { id: "codex" } }));
+  expect(codex.instructions).toBe("spec: /tree/spec/SKILL.md\n\nПиши коротко");
+  const claude = await harness.resolveAgentConfiguration(makePluginAgentConfigurationContext({ thread: { id: "t" }, environment: worktree, provider: { id: "claude-code" } }));
+  expect(claude.instructions).toBe("Пиши коротко");
 });

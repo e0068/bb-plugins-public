@@ -59,7 +59,7 @@ const open = (getBrief: () => unknown = () => ({ kind: "found", brief, answer: n
 describe("загрузка брифа", () => {
   it("пока бриф не пришёл — скелетон из восьми ячеек со сдвигом фазы, без подписей", async () => {
     const { slot } = open(() => new Promise(() => {}));
-    const skeleton = await slot.findByRole("group", { name: "Бриф загружается" });
+    const skeleton = await slot.findByRole("group", { name: "Виджет загружается" });
     const cells = skeleton.querySelectorAll("[data-skeleton-cell]");
     expect(cells).toHaveLength(8);
     const delays = new Set([...cells].map((c) => (c as HTMLElement).style.animationDelay));
@@ -87,7 +87,7 @@ describe("скрытые вопросы", () => {
     fireEvent.click(within(slot.getByRole("group", { name: "Как сделать?" })).getByRole("button", { name: /Директивой/ }));
     await waitFor(() => expect(slot.queryByRole("group", { name: "Где хранить?" })).toBeNull());
     expect(slot.queryByText(/заполнено/)).toBeNull();
-    fireEvent.click(slot.getByRole("button", { name: /Отправить бриф/ }));
+    fireEvent.click(slot.getByRole("button", { name: /Отправить ответы/ }));
     await waitFor(() => expect(sent).toHaveLength(1));
     expect(sent[0]!.answer.answers.map((a) => a.questionId)).toEqual(["how"]);
   });
@@ -102,7 +102,7 @@ describe("картинки в ответе", () => {
 
   it("вставка картинки в поле ставит метку и превью; крестик убирает превью", async () => {
     const { slot } = open();
-    const note = (await slot.findByRole("textbox", { name: "Дополнить бриф" })) as HTMLTextAreaElement;
+    const note = (await slot.findByRole("textbox", { name: "Дополнить ответы" })) as HTMLTextAreaElement;
     await paste(note, png());
     await waitFor(() => expect(slot.getByRole("img", { name: "картинка 1" })).toBeTruthy());
     expect(note.value).toContain("[картинка 1]");
@@ -112,7 +112,7 @@ describe("картинки в ответе", () => {
 
   it("метка встаёт сразу, а набранное до прихода картинки не затирается", async () => {
     const { slot } = open();
-    const note = (await slot.findByRole("textbox", { name: "Дополнить бриф" })) as HTMLTextAreaElement;
+    const note = (await slot.findByRole("textbox", { name: "Дополнить ответы" })) as HTMLTextAreaElement;
     await paste(note, png());
     expect(note.value).toBe("[картинка 1]");
     fireEvent.change(note, { target: { value: "[картинка 1] вот тут кнопка" } });
@@ -122,7 +122,7 @@ describe("картинки в ответе", () => {
 
   it("svg не прикладывается, владелец видит почему", async () => {
     const { slot } = open();
-    const note = (await slot.findByRole("textbox", { name: "Дополнить бриф" })) as HTMLTextAreaElement;
+    const note = (await slot.findByRole("textbox", { name: "Дополнить ответы" })) as HTMLTextAreaElement;
     await paste(note, new File(["<svg/>"], "a.svg", { type: "image/svg+xml" }));
     expect(await slot.findByText(/PNG, JPEG, GIF или WebP/)).toBeTruthy();
     expect(slot.queryByRole("img", { name: "картинка 1" })).toBeNull();
@@ -131,7 +131,7 @@ describe("картинки в ответе", () => {
 
   it("картинка из выбора файлов уходит вместе с ответом", async () => {
     const { slot, sent } = open();
-    await slot.findByRole("textbox", { name: "Дополнить бриф" });
+    await slot.findByRole("textbox", { name: "Дополнить ответы" });
     const picker = slot.container.querySelector<HTMLInputElement>("input[type=file]")!;
     let opened = 0;
     picker.addEventListener("click", () => (opened += 1));
@@ -142,7 +142,7 @@ describe("картинки в ответе", () => {
     });
     await waitFor(() => expect(slot.getByRole("img", { name: "картинка 1" })).toBeTruthy());
     fireEvent.click(within(slot.getByRole("group", { name: "Как сделать?" })).getByRole("button", { name: /Директивой/ }));
-    fireEvent.click(slot.getByRole("button", { name: /Отправить бриф/ }));
+    fireEvent.click(slot.getByRole("button", { name: /Отправить ответы/ }));
     await waitFor(() => expect(sent).toHaveLength(1));
     expect(sent[0]!.images?.map((i) => i.mimeType)).toEqual(["image/png"]);
   });
@@ -159,7 +159,7 @@ describe("картинка внутри своего поля", () => {
 
   it("миниатюра стоит в рамке того поля, куда картинку вставили", async () => {
     const { slot } = open();
-    const note = await slot.findByRole("textbox", { name: "Дополнить бриф" });
+    const note = await slot.findByRole("textbox", { name: "Дополнить ответы" });
     const item = slot.getByRole("textbox", { name: "Пункт 2" });
     await paste(item, png());
     await waitFor(() => within(frame(item)).getByRole("img", { name: "картинка 1" }));
@@ -168,7 +168,7 @@ describe("картинка внутри своего поля", () => {
 
   it("номер картинки стоит в левом нижнем углу миниатюры, чипа под ней нет", async () => {
     const { slot } = open();
-    const note = await slot.findByRole("textbox", { name: "Дополнить бриф" });
+    const note = await slot.findByRole("textbox", { name: "Дополнить ответы" });
     await paste(note, png());
     const thumb = await waitFor(() => within(frame(note)).getByRole("img", { name: "картинка 1" }));
     const tile = thumb.closest("[data-field-image]")!;
@@ -182,7 +182,7 @@ describe("картинка внутри своего поля", () => {
 
   it("клик по номеру вставляет метку картинки на место каретки", async () => {
     const { slot } = open();
-    const note = (await slot.findByRole("textbox", { name: "Дополнить бриф" })) as HTMLTextAreaElement;
+    const note = (await slot.findByRole("textbox", { name: "Дополнить ответы" })) as HTMLTextAreaElement;
     fireEvent.change(note, { target: { value: "Раз два" } });
     note.setSelectionRange(7, 7);
     await paste(note, png());
@@ -197,7 +197,7 @@ describe("картинка внутри своего поля", () => {
 
   it("клик по номеру, когда каретки в поле нет, дописывает метку в конец", async () => {
     const { slot } = open();
-    const note = (await slot.findByRole("textbox", { name: "Дополнить бриф" })) as HTMLTextAreaElement;
+    const note = (await slot.findByRole("textbox", { name: "Дополнить ответы" })) as HTMLTextAreaElement;
     await paste(note, png());
     await waitFor(() => expect(note.value).toBe("[картинка 1]"));
     note.blur();
@@ -207,7 +207,7 @@ describe("картинка внутри своего поля", () => {
 
   it("тап по миниатюре открывает картинку на весь экран, Esc закрывает", async () => {
     const { slot } = open();
-    const note = await slot.findByRole("textbox", { name: "Дополнить бриф" });
+    const note = await slot.findByRole("textbox", { name: "Дополнить ответы" });
     await paste(note, png());
     fireEvent.click(await waitFor(() => slot.getByRole("button", { name: "Открыть картинку 1" })));
     const viewer = await screen.findByRole("dialog", { name: "картинка 1" });
@@ -218,20 +218,20 @@ describe("картинка внутри своего поля", () => {
 
   it("крестик на миниатюре убирает и картинку, и её метку из текста", async () => {
     const { slot, sent } = open();
-    const note = (await slot.findByRole("textbox", { name: "Дополнить бриф" })) as HTMLTextAreaElement;
+    const note = (await slot.findByRole("textbox", { name: "Дополнить ответы" })) as HTMLTextAreaElement;
     await paste(note, png());
     fireEvent.change(note, { target: { value: "[картинка 1] шапка съехала" } });
     fireEvent.click(await waitFor(() => slot.getByRole("button", { name: "Убрать картинку 1" })));
     expect(note.value).toBe("шапка съехала");
     fireEvent.click(within(slot.getByRole("group", { name: "Как сделать?" })).getByRole("button", { name: /Директивой/ }));
-    fireEvent.click(slot.getByRole("button", { name: /Отправить бриф/ }));
+    fireEvent.click(slot.getByRole("button", { name: /Отправить ответы/ }));
     await waitFor(() => expect(sent).toHaveLength(1));
     expect(sent[0]!.images).toBeUndefined();
   });
 
   it("общей полосы картинок под брифом нет: картинка видна один раз, в своём поле", async () => {
     const { slot } = open();
-    const note = await slot.findByRole("textbox", { name: "Дополнить бриф" });
+    const note = await slot.findByRole("textbox", { name: "Дополнить ответы" });
     await paste(note, png());
     await waitFor(() => expect(slot.getAllByRole("img", { name: "картинка 1" })).toHaveLength(1));
   });

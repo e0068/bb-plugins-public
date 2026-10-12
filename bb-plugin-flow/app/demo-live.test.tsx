@@ -80,9 +80,10 @@ describe("результаты Демонстрации — живые", () => {
 });
 
 describe("«Исполнять» слева от любой отправки", () => {
-  it("у Демонстрации «Исполнять» стоит перед «Продолжить», и выбор нового треда уходит в ответе", async () => {
+  it("у Утверждения «Исполнять» стоит перед «Продолжить», и выбор нового треда уходит в ответе", async () => {
     const answers: DecisionAnswer[] = [];
-    const slot = open(demo, {
+    const approval: DecisionBrief = { ...demo, outcome: { ...demo.outcome!, stage: "approve" }, stages: { list: [builtinStage("approve", [])], minButtonWidth: 160 } };
+    const slot = open(approval, {
       answerBrief: ({ answer }) => {
         answers.push(answer);
         return { kind: "accepted", record: { answer, messageId: "msg_1", answeredAt: "2026-09-17T10:05:00.000Z" } };
@@ -100,7 +101,7 @@ describe("«Исполнять» слева от любой отправки", (
   it("у брифа старого вида «Исполнять» стоит перед «Отправить»", async () => {
     const slot = open(legacy);
     const place = await slot.findByRole("button", { name: /^Исполнять/ });
-    const send = slot.getByRole("button", { name: "Отправить бриф" });
+    const send = slot.getByRole("button", { name: "Отправить ответы" });
     expect(place.compareDocumentPosition(send) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 });

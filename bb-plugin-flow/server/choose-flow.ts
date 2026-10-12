@@ -1,7 +1,6 @@
 // Инструмент выбора flow агентом: тред, созданный с выбором «Автоматически», получает flow, который агент нашёл
-// по описаниям flow из инструкций хода. Ответ несёт этапы flow — по ним работа идёт уже в этом ходе. Когда тред начинается
-// заново — по тумблеру очистки после выбора flow или всегда, если сессия стартовала урезанной до выбора, — ответ
-// вместо этапов просит закончить ход: работа начнётся заново в новой сессии (./fresh-session.ts).
+// по описаниям flow из инструкций хода. Ответ несёт стартовое сообщение и этапы flow — по ним работа идёт уже в этом ходе:
+// собранная сессия своих инструкций не меняет, а новой сессии после выбора нет. Модель и effort flow тред получает со следующего хода.
 // Свой отказ от flow агент пересматривает сам, когда разговор дошёл до работы; отказ владельца — нет.
 // Выбор, который владелец успел сделать над композером, пока агент решал, выигрывает у выбора агента.
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
@@ -19,10 +18,6 @@ const toolError = (text: string) => ({ isError: true as const, content: [{ type:
 const ownerPickNote = (name: string | null) =>
   `The owner picked ${name === null ? "no flow" : `flow "${name}"`} for this thread above the composer while you were choosing, and the owner's pick wins over yours.`;
 
-/** Ответ агенту, которому Flow начнёт новую сессию: в этом ходе работы больше нет. */
-export const FRESH_SESSION_REPLY =
-  "Choice saved. Flow will restart the thread in a fresh session and send the task again there: Claude Code builds its skill list only when a session starts. End your turn now: no more tool calls, no skills, no reading or editing files — reply with one short line that the choice is made and the work starts in a fresh session.";
-
 /** Тред, которому flow выбирает агент: «Автоматически» до выбора и после собственного отказа агента. */
 const agentChooses = (flowId: string | undefined): boolean => flowId === AUTO_FLOW || flowId === AGENT_NO_FLOW;
 
@@ -35,8 +30,8 @@ export const registerChooseFlow = (
     instructions: (threadId: string) => string;
     /** Заводит треду пустой прогон назначенного flow. */
     started: (threadId: string) => Promise<void>;
-    /** Начнёт ли Flow треду новую сессию на конце хода; не задано — нет. */
-    fresh?: (threadId: string) => Promise<boolean>;
+    /** Агент назначенного flow: ставит треду его модель и отдаёт стартовое сообщение; `null` — сообщения нет. Не задано — ничего. */
+    agent?: (threadId: string) => Promise<string | null>;
     /** Агент оставил тред без flow: настройки треда сверяются, и спрятанное до выбора возвращается. Не задано — ничего. */
     refused?: (threadId: string) => Promise<void>;
   },
@@ -60,8 +55,9 @@ export const registerChooseFlow = (
       const none = chosen === NO_FLOW || chosen === AGENT_NO_FLOW;
       await deps.threads.assign(ctx.threadId, chosen);
       await (none ? deps.refused?.(ctx.threadId) : deps.started(ctx.threadId));
-      if (await (deps.fresh?.(ctx.threadId) ?? false)) return toolText(FRESH_SESSION_REPLY);
-      const reply = none ? "The thread stays without a flow; work as usual." : deps.instructions(ctx.threadId);
+      const start = none ? null : await (deps.agent?.(ctx.threadId) ?? Promise.resolve(null)).catch(() => null);
+      const stages = none ? "The thread stays without a flow; work as usual." : deps.instructions(ctx.threadId);
+      const reply = start === null ? stages : `The flow's start message for you:\n\n${start}\n\n${stages}`;
       // Выбор владельца, не совпавший с выбором агента, называется: агент работает не по тому, что выбрал сам.
       if (owners === undefined || owners === flowId) return toolText(reply);
       return toolText(`${ownerPickNote(none ? null : flowById(settings, owners).name)}\n\n${reply}`);

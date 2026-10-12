@@ -45,9 +45,8 @@ import { createFlowSync, defaultSyncDir, FLOW_SYNC_CHANNEL, registerFlowSyncApi,
 import { createSkillDelivery } from "./server/skill-delivery";
 import { hostCatalogSources, hostSkillFileSources, readAccountSkills, readClaudePlugins, readExecutorFile, readSkillFile, readStageCatalog, readWorkflowScripts, writeScriptFile } from "./server/stage-catalog";
 import { createSkillScope } from "./server/skill-scope";
-import { createFreshSession, type MessageBlocks } from "./server/fresh-session";
+import { agentFor, defaultExecutionOf, executionFor, startMessageOf } from "./core/flow-agent";
 import { registerSessionConfig } from "./server/session-config";
-import { clearsContextAfterAutoChoice, limitsBeforeChoice, restartsAfterChoice } from "./core/skill-scope";
 import { revealInFinderHere } from "@bb-plugins/reveal-in-finder/index";
 import { createStore } from "./server/store";
 import { createThreadFlows } from "./server/thread-flows";
@@ -78,7 +77,7 @@ export default async function plugin(bb: BbPluginApi): Promise<void> {
   // и хост сверяет умолчания с умолчаниями.
   let storedContext: ContextSettingValues & { [LANGUAGE_SETTING]?: unknown } = {};
   const settings = bb.settings.define({
-    [LANGUAGE_SETTING]: { type: "select", label: "Language", description: "Language of the brief, the settings page and the answer sent to the thread. System follows the browser language.", options: [...LANGUAGE_OPTIONS], default: LANGUAGE_SYSTEM },
+    [LANGUAGE_SETTING]: { type: "select", label: "Language", description: "Language of the widgets, the settings page and the answer sent to the thread. System follows the browser language.", options: [...LANGUAGE_OPTIONS], default: LANGUAGE_SYSTEM },
     ...contextSettings(() => storedContext),
     ...compactPreselectSetting,
     ...railCollapseSetting,
@@ -137,15 +136,18 @@ export default async function plugin(bb: BbPluginApi): Promise<void> {
     const environment = environmentId === null ? null : await bb.sdk.environments.get({ environmentId });
     return environment?.isWorktree === true && environment.path ? environment.path : null;
   };
+  // Агент треда по его flow: модель и effort ставятся живому треду того же провайдера, стартовое сообщение — сессии.
+  const agentOf = (threadId: string) => agentFor(flows.current(), threads.flowOf(threadId));
+  const applyAgent = async (threadId: string): Promise<void> => {
+    const execution = executionFor(agentOf(threadId), (await bb.sdk.threads.get({ threadId })).providerId);
+    if (execution !== null) await bb.sdk.threads.update({ threadId, ...execution });
+  };
   const scope = createSkillScope({
     kv: bb.storage.kv,
     worktree: worktreeOf,
     // Окружения ещё нет — первое сообщение нового треда: дерево появится к старту сессии.
     pending: async (threadId) => (await bb.sdk.threads.get({ threadId })).environmentId === null,
     flow: flowOf,
-    // До выбора flow агентом прячется то, что прячет хоть один flow: первая сессия видит только навыки плагинов bb.
-    // Тумблер очистки после выбора выключен — не прячется ничего: новой сессии, которая вернула бы навыки, не будет.
-    choosing: (threadId) => (threads.flowOf(threadId) === AUTO_FLOW ? limitsBeforeChoice(flows.current()) : null),
     stages: (threadId) => stagesOf(threadId).stages,
     progress: (threadId) => progress.get(threadId),
     catalog: () => readStageCatalog(catalogSources),
@@ -175,6 +177,7 @@ export default async function plugin(bb: BbPluginApi): Promise<void> {
   registerSessionConfig(bb, {
     tools: [ASK_TOOL_NAME, FLOW_STAGE_TOOL, READ_FLOWS_TOOL_NAME, SAVE_FLOW_TOOL_NAME, COMMAND_TOOL_NAME, CHOOSE_FLOW_TOOL],
     prestart: (threadId, root) => void scope.prestart(threadId, root),
+    startMessage: (threadId) => startMessageOf(agentOf(threadId)),
     deliver: delivery.deliver,
     warn: (message) => bb.log.warn(message),
   });
@@ -190,34 +193,6 @@ export default async function plugin(bb: BbPluginApi): Promise<void> {
     own.mark(threadId, text);
     await bb.sdk.threads.send({ threadId, mode: "queue-if-active", input: [{ type: "text", text, mentions: [] }] });
   };
-  // Тред с «Автоматически» после выбора начинает работу заново в новой сессии — по тумблеру очистки или когда сессия стартовала урезанной (./server/fresh-session.ts).
-  const textOf = (blocks: MessageBlocks) => blocks.flatMap((block) => (block.type === "text" && typeof block.text === "string" ? [block.text] : [])).join("\n");
-  const fresh = createFreshSession({
-    kv: bb.storage.kv,
-    agentChooses: (threadId) => threads.flowOf(threadId) === AUTO_FLOW || threads.flowOf(threadId) === AGENT_NO_FLOW,
-    // По тумблеру очистки — после выбора flow; всегда — когда сессия стартовала с ограничением до выбора.
-    needed: async (threadId) =>
-      restartsAfterChoice({ clears: clearsContextAfterAutoChoice(flows.current()), chosen: flowOf(threadId) !== null, limitedBeforeChoice: await scope.limitedBeforeChoice(threadId) }) &&
-      (await thread(threadId)).providerId === "claude-code" &&
-      (await worktreeOf(threadId)) !== null,
-    sync: (threadId) => scope.sync(threadId),
-    clear: (threadId) => bb.sdk.threads.clearContext({ threadId }),
-    send: async (threadId, blocks) => {
-      // Видна ли пометка агенту в тексте, который увидит хук, — неизвестно: своей отмечаются оба варианта.
-      own.mark(threadId, textOf(blocks));
-      own.mark(threadId, textOf(blocks.slice(1)));
-      await bb.sdk.threads.send({ threadId, mode: "queue-if-active", input: blocks as Parameters<typeof bb.sdk.threads.send>[0]["input"] });
-    },
-    note: (threadId) => {
-      const name = flowNameOf(threadId);
-      return name === undefined
-        ? `You already left this thread without a flow for the message below — do not call ${CHOOSE_FLOW_TOOL} for it. Below is the thread's first message: Flow sent it again in a fresh session so that all skills are loaded. Work on it as usual.`
-        : `Flow «${name}» is already chosen for this thread — do not call ${CHOOSE_FLOW_TOOL}. Below is the thread's first message: Flow sent it again in a fresh session started after the choice, with the skills of the flow. Work on it by the flow.`;
-    },
-    warn: (message) => bb.log.warn(message),
-  });
-  bb.events.on("thread.idle", ({ thread: row }) => void fresh.idle(row.id));
-  bb.events.on("thread.deleted", ({ thread: row }) => void fresh.forget(row.id));
   const runner = createAutomationRunner({
     progress,
     store,
@@ -326,6 +301,9 @@ export default async function plugin(bb: BbPluginApi): Promise<void> {
     switchFlow: (threadId, flowId) => choice.switchTo(threadId, flowId),
     releaseFlow: (threadId) => choice.release(threadId),
     handoffFlow: (sourceThreadId, flowId) => void (flowId === null ? handoffFlows.delete(sourceThreadId) : handoffFlows.set(sourceThreadId, flowId)),
+    widgetFlows: () =>
+      flows.current().flows.map((flow) => ({ id: flow.id, name: flow.name, ...(flow.icon === undefined ? {} : { icon: flow.icon }), ...(flow.agent?.execution === undefined ? {} : { execution: flow.agent.execution }) })),
+    threadFlowId: (threadId) => flowOf(threadId)?.id ?? null,
   });
   // Удалённый тред не ждёт владельца и не показывает прогресс: записи и его указатель снимаются, иначе значок висел бы
   // в левой панели. Архивированный тред и тред, отдавший работу, ключей не теряют — их ещё откроют.
@@ -389,7 +367,11 @@ export default async function plugin(bb: BbPluginApi): Promise<void> {
       await progress.annotate(threadId, (p) => p);
       await syncSkills(threadId);
     },
-    fresh: (threadId) => fresh.request(threadId),
+    // Выбранный flow — с его моделью со следующего хода и стартовым сообщением в ответе выбора.
+    agent: async (threadId) => {
+      await applyAgent(threadId).catch((error) => bb.log.warn(`flow agent: model not set for ${threadId} (${error instanceof Error ? error.message : String(error)})`));
+      return startMessageOf(agentOf(threadId));
+    },
     refused: (threadId) => scope.sync(threadId),
   });
   registerFlowSettingsApi(bb, flows, { catalog, ready: async () => {
@@ -399,6 +381,11 @@ export default async function plugin(bb: BbPluginApi): Promise<void> {
     executorFile: (id) => readExecutorFile({ ...hostCatalogSources(bb), primaryHostId: hostSkillFileSources(bb).primaryHostId }, id),
     scriptFile: (script) => writeScriptFile(script, hostSkillFileSources(bb).primaryHostId),
     reveal: revealInFinderHere,
+    // Модель по умолчанию — первого доступного провайдера машины bb: из неё стартует выбор модели flow.
+    defaultExecution: async () => {
+      const first = (await bb.sdk.providers.models()).providers.find((provider) => provider.available);
+      return first === undefined ? null : defaultExecutionOf(await bb.sdk.providers.models({ providerId: first.id }), first.id);
+    },
   });
   registerFlowPickerApi(bb, flows, threads);
   registerMentionsApi(bb, { catalog });
@@ -438,8 +425,7 @@ export default async function plugin(bb: BbPluginApi): Promise<void> {
     ownSend: own.has,
     ownerTurn: choice.ownerTurn,
     ownerMessage: (threadId) => returnAwaitingBrief({ store, publish: (id) => bb.realtime.publish(ANSWERED_CHANNEL, { id }) }, threadId),
-    firstMessage: startThread({ threads, progress, hasFlow: (threadId) => flowOf(threadId) !== null, handoffFlow: takeHandoffFlow }),
-    firstInput: (threadId, blocks) => fresh.remember(threadId, blocks),
+    firstMessage: startThread({ threads, progress, hasFlow: (threadId) => flowOf(threadId) !== null, handoffFlow: takeHandoffFlow, applyAgent }),
     // Хук ждёт решения не дольше 10 с и запирает тред на просрочке: сверка, которая затянулась, доходит в фоне.
     // Side chat, получивший flow до этой версии, его теряет вместе с прогоном.
     sideChat: async (threadId) => {

@@ -66,7 +66,7 @@ describe("логотип провайдера у исполнителя-аген
       { attributes: { id: brief.id }, source: `::decision{id="${brief.id}"}`, message: { id: "msg_1", threadId: "thr_1", turnId: "turn_1", projectId: null }, openWorkspaceFile: () => true },
       { rpc: { getBrief: () => ({ kind: "found", brief, answer: null }), answerBrief: () => ({ kind: "not_found" }) }, providers },
     );
-    await slot.findByRole("group", { name: "Ответ на бриф" });
+    await slot.findByRole("group", { name: "Ответы на вопросы" });
     const cell = slot.container.querySelector<HTMLElement>('[data-stage="plan"]')!;
     const logo = logoOf(cell)!;
     expect(logo.getAttribute("data-provider-logo")).toBe(CLAUDE_LOGO);

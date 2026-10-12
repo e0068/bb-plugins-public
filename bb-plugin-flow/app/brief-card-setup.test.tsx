@@ -45,7 +45,7 @@ const open = (answer: AnswerRecord | null = null) =>
   );
 
 type Slot = ReturnType<typeof open>;
-const block = async (slot: Slot) => within(await slot.findByRole("group", { name: "Ответ на бриф" }));
+const block = async (slot: Slot) => within(await slot.findByRole("group", { name: "Ответы на вопросы" }));
 const valueOf = (cell: HTMLElement): HTMLElement => cell.querySelector("[data-cell-value]") as HTMLElement;
 const dim = (cell: HTMLElement) => valueOf(cell).className.includes("text-muted-foreground");
 const bright = (cell: HTMLElement) => valueOf(cell).className.includes("text-foreground") && !dim(cell);

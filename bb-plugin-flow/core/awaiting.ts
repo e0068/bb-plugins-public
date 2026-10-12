@@ -4,10 +4,10 @@ import type { BuiltinKind } from "../lib/stage-constants";
 import type { AwaitingKind, DecisionBrief } from "../shared/contract";
 import { outcomeKind } from "./outcome";
 
-/** Вид ожидания; `null` — бриф владельца не держит (уточнение). */
+/** Вид ожидания; `null` — бриф владельца не держит: уточнение и Демонстрация, которая закрывается самой отправкой. */
 export const awaitingKind = (brief: DecisionBrief): BuiltinKind | null => {
   if (brief.kind === "clarify") return null;
-  if (brief.outcome !== undefined) return outcomeKind(brief);
+  if (brief.outcome !== undefined) return outcomeKind(brief) === "approve" ? "approve" : null;
   if (brief.questions.length > 0) return "questions";
   if (brief.setup?.criteria !== undefined) return "criteria";
   if (brief.setup?.stages !== undefined) return "select";

@@ -57,11 +57,11 @@ describe("ответ на бриф, после которого агенту н�
     expect(sends()).toHaveLength(1);
   });
 
-  it("демонстрация, за которой остался этап агента, уходит агенту репликой", async () => {
+  it("пустой ответ на Демонстрацию агенту не уходит даже с его этапом впереди: Демонстрация его не держала", async () => {
     const brief = demoBrief({ stages: { list: [...LIST, stage("report", { name: "Отчёт" })], minButtonWidth: 170 } });
-    const { harness, sends } = await setup(brief, { stages: { practice: { finishedAt: T } }, waiting: ["demo"] });
+    const { harness, sends } = await setup(brief, { stages: { practice: { finishedAt: T }, demo: { finishedAt: T } }, waiting: [] });
     await harness.callRpc("answerBrief", { id: brief.id, answer: { briefId: brief.id, answers: [], outcome: { accepted: true } }, messageId: "m" });
-    expect(sends()).toHaveLength(1);
+    expect(sends()).toHaveLength(0);
   });
 
   it("бриф с этапами, где ни один этап не взят в прогон, агенту не отправляется", async () => {
