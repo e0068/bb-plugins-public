@@ -36,7 +36,7 @@ const readPanel = (document: Document): PanelState => {
 };
 
 /** The Navigation API where the browser has it, polling the path otherwise. */
-function watchRoutes(window: Window, listener: () => void): () => void {
+export function watchRoutes(window: Window, listener: () => void): () => void {
   const navigation = (window as Window & { navigation?: EventTarget }).navigation;
   if (navigation !== undefined) {
     navigation.addEventListener("currententrychange", listener);
