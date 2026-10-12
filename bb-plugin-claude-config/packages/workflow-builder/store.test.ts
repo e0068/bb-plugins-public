@@ -1,11 +1,13 @@
 import { beforeEach, describe, expect, it } from "vitest";
-import { editorStore } from "../src/workflow/store";
-import { blankTree } from "../src/workflow/workflow-model";
+import { createEditorStore } from "./store";
+import { blankTree } from "./model";
 
 // What the builder column shows is decided by two fields together: `identity`
 // (a file on disk) and `draft` (a new workflow the user started). Neither
 // alone tells "nothing is open" from "an unsaved new one" — and the list next
 // to it highlights a row from the same answer.
+
+const editorStore = createEditorStore();
 
 const file = { store: "project" as const, path: "/repo/.bb/workflows/a.js", name: "a" };
 

@@ -112,24 +112,22 @@ import { ProjectSwitcher } from "@bb-plugins/project-switcher/react";
 import { rankCandidates } from "./src/suggest";
 import { extractCommandFile } from "./src/hook-script";
 import "./doc-editor.css";
-// "Workflows" section — a workflow builder embedded in the panel as another
-// rail section (see WorkflowsView below). The core (tree model, pure
-// operations over it, module-level store) and the builder itself were already
-// implemented by neighboring groups; this file only handles integration:
-// RPC glue for the wf*-procedures in server.ts and the multi-column layout
-// inside the panel.
-import { editorStore, engineForStore, type StoreKind, type Identity } from "./src/workflow/store";
-import { isSameWorkflow } from "./src/workflow/identity";
-import { compile, blankTree, type Engine, type Tree, type Agent, type Container, type Phase, type Step } from "./src/workflow/workflow-model";
-import { applyTemplate, setAgentField, setGroupSettings, nodeAt, type OutlinePath } from "./src/workflow/outline-ops";
-import { agentsMissingTemplate } from "./src/workflow/validity";
+// "Workflows" section — the workflow builder from packages/workflow-builder (tree model, its store and
+// the builder screen), embedded as another rail section (see WorkflowsView below). This file only handles
+// integration: the list, the save dialog, the Save/Delete buttons, RPC glue for the wf*-procedures in
+// server.ts and the multi-column layout inside the panel.
+import { createEditorStore, engineForStore, type StoreKind, type Identity } from "@bb-plugins/workflow-builder/store";
+import { isSameWorkflow } from "@bb-plugins/workflow-builder/identity";
+import { compile, blankTree, type Engine, type Tree, type Unrecognized } from "@bb-plugins/workflow-builder/model";
+import { nodeAt, type OutlinePath } from "@bb-plugins/workflow-builder/outline-ops";
+import { agentsMissingTemplate } from "@bb-plugins/workflow-builder/validity";
+import { withBuiltinAgents } from "@bb-plugins/workflow-builder/agents";
 import {
-  OutlineEditor,
-  AgentDetails,
-  GroupDetails,
+  EditorStoreContext,
+  WorkflowEditor,
   type AgentOption,
   type ProviderCatalogEntry,
-} from "./components/workflow/outline-editor";
+} from "@bb-plugins/workflow-builder/react";
 
 const PANEL_PATH = "claude-config";
 
@@ -1858,9 +1856,9 @@ function DocTab({
 
 // ---- "Workflows" section (ported from bb-plugin-workflow-composer, without the code column) ----
 
-// The editor tree lives in the module-level editorStore (see
-// ./src/workflow/store) — shared between the builder and the code preview
-// across several host mount points; here we read it the same way.
+// The builder's store lives for the module's lifetime, not the section's: leaving the panel and coming
+// back keeps unsaved edits (the address only re-reads a file when it names ANOTHER workflow).
+const editorStore = createEditorStore();
 const useEditor = () =>
   useSyncExternalStore(editorStore.subscribe, editorStore.getSnapshot, editorStore.getSnapshot);
 
@@ -1871,25 +1869,12 @@ interface WfItem {
   description: string;
   hasTree: boolean;
 }
-const AGENT_SCOPE_LABEL: Record<"user" | "project" | "plugin" | "builtin", string> = {
-  user: "personal",
-  project: "project",
-  plugin: "plugin",
-  builtin: "builtin",
-};
-
-// Claude Code agent types with no `.md` file for wfAgents to discover — pinned ahead of the
-// scanned catalog so they're always reachable as a template, not lost among alphabetical results.
-const BUILTIN_AGENTS: AgentOption[] = [
-  { value: "general-purpose", model: "", effort: "", provider: "", description: "General-purpose agent for researching complex questions, searching for code, and executing multi-step tasks.", scope: "builtin" },
-];
-
 function useWfAgents(rpc: Rpc, projectId: string | null): AgentOption[] {
   const [agents, setAgents] = useState<AgentOption[]>([]);
   useEffect(() => {
     void rpc.call("wfAgents", { projectId }).then((r) => setAgents(r.agents));
   }, [rpc, projectId]);
-  return [...BUILTIN_AGENTS, ...agents.filter((a) => !BUILTIN_AGENTS.some((b) => b.value === a.value))];
+  return withBuiltinAgents(agents);
 }
 
 // Workflow count for the rail ("Workflows" section). Updates on area change,
@@ -1915,22 +1900,6 @@ function useWfProviderCatalog(rpc: Rpc): ProviderCatalogEntry[] {
     void rpc.call("wfProviderCatalog", null).then((r) => setCatalog(r));
   }, [rpc]);
   return catalog;
-}
-
-// A hand-written .js file without a builder mirror tree — we show the source
-// as-is, read-only: saving over it would compile a stub tree and wipe out the
-// real code.
-function CodeOnlyView({ source }: { source: string }) {
-  return (
-    <div className="flex h-full min-h-0 flex-1 flex-col">
-      <div className="border-b border-border px-4 py-2 text-xs text-muted-foreground">
-        Hand-written — no builder tree. Read-only; edit the .js file directly.
-      </div>
-      <pre className="flex-1 overflow-auto p-4 font-mono text-xs text-foreground" aria-label="workflow source">
-        {source}
-      </pre>
-    </div>
-  );
 }
 
 function WfList({
@@ -2138,10 +2107,6 @@ function WorkflowsView({
   const items = listed ? listing.items : [];
   const [saveOpen, setSaveOpen] = useState(false);
   const [selectedPath, setSelectedPath] = useState<OutlinePath | null>(null);
-  // Combined column 4 (agents + detail): the agent list or the detail of an
-  // already-selected one (file + settings). Toggled by clicking an agent /
-  // the "Back" button.
-  const [pickerOpen, setPickerOpen] = useState(true);
 
   const agents = useWfAgents(rpc, projectId);
   const providerCatalog = useWfProviderCatalog(rpc);
@@ -2167,11 +2132,12 @@ function WorkflowsView({
   const openWorkflow = async (ref: Identity) => {
     const res = await rpc.call("wfRead", { projectId, store: ref.store, path: ref.path });
     const parsedTree = res.tree as Tree | null;
-    // No builder tree → a hand-written file: open it as-is, read-only.
+    // No builder tree → open the file as-is, read-only, with the reason.
     editorStore.load(
       parsedTree ?? blankTree(ref.name),
       ref,
       parsedTree ? null : res.source,
+      parsedTree ? null : (res.reason as Unrecognized | null),
     );
     setSelectedPath(null);
   };
@@ -2185,7 +2151,7 @@ function WorkflowsView({
   // names one OTHER than the one already open — coming back to the same
   // workflow must not throw away unsaved edits. The list is what turns a
   // name into a path (paths differ between a project's checkouts, names
-  // don't — see src/workflow/identity.ts), so this waits for the list.
+  // don't — see packages/workflow-builder/identity.ts), so this waits for the list.
   const targetName = target === null ? "" : `${target.store}/${target.name}`;
   useEffect(() => {
     if (target === null) return;
@@ -2220,34 +2186,14 @@ function WorkflowsView({
     refresh();
   };
 
-  // Selected node (for the combined column 4): the node at selectedPath, whichever kind it is.
-  const node: Phase | Step | null = selectedPath ? nodeAt(tree, selectedPath) : null;
-  const selAgent: Agent | null = node && "type" in node && node.type === "agent" ? node : null;
-  // A Phase has no `type` field at all; a Container's is "container" — either owns the BP-134 node
-  // settings (Maximum Parallel / Iterate over / Repeat), shown by GroupDetails in the same column.
-  const selGroup: Phase | Container | null = node && (!("type" in node) || node.type === "container") ? node : null;
   const previewEngine: Engine = engineForStore(identity?.store ?? (projectId ? "project" : "global"));
-  // The file for the selected agent template — shown by the upper half of the
-  // detail in Kasimov rendering (the same MdDocView as the MD Opener slot). No
-  // template or path — no upper half.
-  const selAgentPath: string | null = selAgent ? agents.find((a) => a.value === selAgent.agentType)?.path ?? null : null;
   // Колонки раздела: список workflow, конструктор открытого и деталь того, что
   // выбрано внутри него. На телефоне — одна, самая внутренняя (src/panel-columns).
   const columns = workflowColumns({
     compact,
     hasOpen: !nothingOpen,
-    hasDetail: !codeOnly && (selAgent !== null || selGroup !== null),
+    hasDetail: !codeOnly && selectedPath !== null && nodeAt(tree, selectedPath) !== null,
   });
-
-  // A newly selected step: the detail opens right away if a template is
-  // already assigned to it, otherwise — the picker list. From there, toggling
-  // happens by clicking an agent in the list or the "Back" button, so the
-  // dependency list only has selectedPath — editing selAgent.agentType
-  // (choosing a template) must not roll pickerOpen back.
-  useEffect(() => {
-    setPickerOpen(!selAgent || selAgent.agentType.trim() === "");
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedPath]);
 
   const { width: listWidth, startResize: startListResize } = useResizableWidth({
     initial: 240,
@@ -2255,28 +2201,6 @@ function WorkflowsView({
     max: 400,
     side: "left",
     storageKey: "claude-config:wf-list-width",
-  });
-  const { width: constructorWidth, startResize: startConstructorResize } = useResizableWidth({
-    initial: 360,
-    min: 220,
-    max: 760,
-    side: "left",
-    // Key with a -v2 suffix: the previous version had already written 540 to
-    // localStorage on mount (useResizableWidth writes the width on mount too),
-    // which caused the new initial value to be ignored. The new key gives a
-    // fresh start at 360, resizable down to 220.
-    storageKey: "claude-config:wf-constructor-width-v2",
-  });
-  // The combined column 4 has no resizable width of its own — it takes up all
-  // the remaining page width (flex-1); only constructorWidth (the handle
-  // between the builder and this column) governs the reserved width of the
-  // list column.
-  // Height of the detail column's upper half — the agent file in Kasimov; the handle is at the bottom, drag down for more height.
-  const { height: agentFileHeight, startResize: startAgentFileResize } = useResizableHeight({
-    initial: 280,
-    min: 120,
-    max: 640,
-    storageKey: "claude-config:wf-agent-file-height",
   });
 
   // Builder validity: an agent is valid only with a template selected. As
@@ -2288,12 +2212,11 @@ function WorkflowsView({
     // min-w-0 flex-1 — this root itself sits as a flex item in ConfigPanel's
     // row (next to the section rail); without them it wouldn't stretch to the
     // full page width and would shrink to fit its content — which meant the
-    // combined column 4 below couldn't reach the right edge.
+    // detail column couldn't reach the right edge.
     <div className="flex h-full min-h-0 min-w-0 flex-1 overflow-x-auto">
       {/* Column 2 — the list, shaped like every other section: a header with
-          the section's "+" and nothing else. Save / Validate / Run / Delete
-          used to live here even though they act on the workflow shown in the
-          next column; they moved there. */}
+          the section's "+" and nothing else. Save / Delete act on the
+          workflow shown in the next column, so they sit at its foot. */}
       {(columns === "all" || columns === "list") && (
       <div
         style={compact ? undefined : { width: listWidth }}
@@ -2317,177 +2240,47 @@ function WorkflowsView({
 
       {columns === "all" && <ResizeHandle onPointerDown={startListResize} />}
 
-      {/* Nothing open — the builder is the last column: it takes the rest of
-          the width instead of reserving room for a preview of nothing. */}
-      {(columns === "all" || columns === "builder") && (
-      <div
-        style={nothingOpen || compact ? undefined : { width: constructorWidth }}
-        className={cn(
-          "flex h-full min-h-0 min-w-0 flex-col overflow-hidden",
-          nothingOpen || compact ? "flex-1" : "shrink-0",
-        )}
-      >
-        {compact && <ColumnBack label="Workflows" onClick={() => goTo(null)} />}
-        <div className="min-h-0 flex-1 overflow-hidden">
-          {nothingOpen ? (
-            <div className="flex h-full items-center justify-center px-4 text-center text-sm text-muted-foreground">
-              Pick a workflow on the left, or press + to start a new one.
-            </div>
-          ) : codeOnly ? (
-            <CodeOnlyView source={rawSource!} />
-          ) : (
-            <OutlineEditor
-              agents={agents}
-              selectedPath={selectedPath}
-              onSelect={setSelectedPath}
-            />
-          )}
-        </div>
-        {/* The workflow's own surface, so its actions belong to it — at the
-            foot of the tree they act on, not in a header above it. No tree,
-            no actions: Save and Delete would have nothing to work on. */}
-        {!nothingOpen && (
-        <div className="flex flex-col gap-2 border-t border-border p-2">
-          {!codeOnly && invalidAgents > 0 && (
-            <p className="text-xs text-muted-foreground">
-              Workflow is invalid: {invalidAgents} {invalidAgents === 1 ? "agent" : "agents"} without a
-              chosen template. Select an agent in the "Agents" column.
-            </p>
-          )}
-          <div className="flex items-center justify-between gap-1.5">
-            <ConfirmDelete
-              what="workflow"
-              detail={identity?.path ?? identity?.name ?? "The workflow"}
-              onDelete={doDelete}
-              trigger={(ask) => (
-                <Button size="sm" variant="outline" onClick={ask} disabled={!identity}>
-                  Delete
-                </Button>
-              )}
-            />
-            <Button
-              size="sm"
-              onClick={() => setSaveOpen(true)}
-              disabled={codeOnly || invalidAgents > 0}
-            >
-              Save
-            </Button>
-          </div>
-        </div>
-        )}
-      </div>
-      )}
-
-      {!nothingOpen && columns === "all" && <ResizeHandle onPointerDown={startConstructorResize} />}
-
-      {!nothingOpen && !codeOnly && !selAgent && !selGroup && columns === "all" && (
-        // Nothing selected — the owner's third panel rule: show what the tree compiles to right now,
-        // instead of an empty column. Read-only; editing still happens in the builder / detail panels.
-        <div className="flex h-full min-h-0 min-w-0 flex-1 flex-col overflow-hidden border-l border-border">
-          <div className="shrink-0 border-b border-border px-3 py-1.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-            Compiles to
-          </div>
-          <pre className="min-h-0 flex-1 overflow-auto p-3 font-mono text-[11px] text-foreground">
-            {compile(tree, previewEngine)}
-          </pre>
-        </div>
-      )}
-
-      {!codeOnly && selGroup && (columns === "all" || columns === "detail") && (
-        // A phase/group header is selected — its settings take the whole panel (owner's rule), not a
-        // detail alongside something else.
-        <div className="flex h-full min-h-0 min-w-0 flex-1 flex-col overflow-hidden border-l border-border">
-          {compact && <ColumnBack label="Workflow" onClick={() => setSelectedPath(null)} />}
-          <GroupDetails
-            node={selGroup}
-            onSetField={(patch) => editorStore.update((draft) => setGroupSettings(draft, selectedPath!, patch))}
-          />
-        </div>
-      )}
-
-      {!codeOnly && selAgent && (columns === "all" || columns === "detail") && (
-        // Column 4 — combined: agent list (template picker) or, after
-        // selection, the detail — the template file in Kasimov rendering on
-        // top and step editing (model·effort, instructions, output format)
-        // below. It doesn't hold its own width — it takes up all the
-        // remaining page width; toggling between list and detail is done by
-        // clicking an agent / the "Back" button, not the neighboring column.
-        <div className="flex h-full min-h-0 min-w-0 flex-1 flex-col overflow-hidden border-l border-border">
-          {compact && <ColumnBack label="Workflow" onClick={() => setSelectedPath(null)} />}
-          {pickerOpen ? (
-            <div className="flex h-full flex-col gap-0.5 overflow-y-auto p-2">
-              <div className="mb-1 px-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                Agents
+      {columns !== "list" && (
+        <EditorStoreContext.Provider value={editorStore}>
+          <WorkflowEditor
+            agents={agents}
+            providerCatalog={providerCatalog}
+            previewEngine={previewEngine}
+            columns={columns}
+            selectedPath={selectedPath}
+            onSelect={setSelectedPath}
+            storageKey="claude-config:wf"
+            header={compact && columns === "builder" ? <ColumnBack label="Workflows" onClick={() => goTo(null)} /> : null}
+            renderBack={(label, onClick) => <ColumnBack label={label} onClick={onClick} />}
+            empty={
+              <div className="flex h-full items-center justify-center px-4 text-center text-sm text-muted-foreground">
+                Pick a workflow on the left, or press + to start a new one.
               </div>
-              {agents.map((a) => (
-                <button
-                  key={a.path ?? a.value}
-                  type="button"
-                  onClick={() => {
-                    editorStore.update((draft) =>
-                      applyTemplate(draft, selectedPath!, a.value, { model: a.model, effort: a.effort, provider: a.provider }),
-                    );
-                    setPickerOpen(false);
-                  }}
-                  className="block w-full rounded-md px-2 py-1.5 text-left transition-colors hover:bg-muted"
-                >
-                  <div className="truncate text-sm font-medium">{a.value}</div>
-                  <div className="text-xs text-muted-foreground">{AGENT_SCOPE_LABEL[a.scope ?? "user"]}</div>
-                </button>
-              ))}
-            </div>
-          ) : (
-            <div className="flex h-full min-h-0 flex-col overflow-hidden">
-              {/* No template file (the agent hasn't loaded yet / has no .md)
-                  — AgentDetails below has no header of its own, so the back
-                  button is kept here separately. Once the file exists, it
-                  moves into MdDocView's shared header (leading below) — so the
-                  arrow, the file path and the mode switcher end up on one
-                  line. */}
-              {!selAgentPath && (
-                <div className="flex shrink-0 items-center border-b border-border p-1">
-                  <button
-                    type="button"
-                    onClick={() => setPickerOpen(true)}
-                    className="rounded-md px-2 py-1 text-sm text-muted-foreground hover:bg-muted"
-                    aria-label="Back to the agent list"
-                  >
-                    ← Agents
-                  </button>
-                </div>
-              )}
-              {selAgentPath && (
-                <>
-                  <div style={{ height: agentFileHeight }} className="shrink-0 overflow-hidden">
-                    <ColumnMdDocView
-                      areaId={areaId}
-                      initialPath={selAgentPath}
-                      leading={
-                        <button
-                          type="button"
-                          onClick={() => setPickerOpen(true)}
-                          className="mdo-back"
-                          aria-label="Back to the agent list"
-                        >
-                          ←
-                        </button>
-                      }
-                    />
-                  </div>
-                  <HorizontalResizeHandle onPointerDown={startAgentFileResize} />
-                </>
-              )}
-              <div className="min-h-0 flex-1 overflow-hidden">
-                <AgentDetails
-                  agent={selAgent}
-                  agents={agents}
-                  providerCatalog={providerCatalog}
-                  onSetField={(patch) => editorStore.update((draft) => setAgentField(draft, selectedPath!, patch))}
+            }
+            agentFile={(path, back) => <ColumnMdDocView areaId={areaId} initialPath={path} leading={back} />}
+            footer={
+              <div className="flex items-center justify-between gap-1.5">
+                <ConfirmDelete
+                  what="workflow"
+                  detail={identity?.path ?? identity?.name ?? "The workflow"}
+                  onDelete={doDelete}
+                  trigger={(ask) => (
+                    <Button size="sm" variant="outline" onClick={ask} disabled={!identity}>
+                      Delete
+                    </Button>
+                  )}
                 />
+                <Button
+                  size="sm"
+                  onClick={() => setSaveOpen(true)}
+                  disabled={codeOnly || invalidAgents > 0}
+                >
+                  Save
+                </Button>
               </div>
-            </div>
-          )}
-        </div>
+            }
+          />
+        </EditorStoreContext.Provider>
       )}
 
       <WfSaveDialog

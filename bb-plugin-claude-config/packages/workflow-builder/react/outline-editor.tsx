@@ -1,13 +1,13 @@
-// components/workflow/outline-editor.tsx — the workflow editor as a nested outline (phase → step, a
-// step being an agent or a group). Wired to the real editorStore + outline-ops.ts: every structural
-// edit runs through editorStore.update((draft) => outlineOps.xxx(…)); markup/Tailwind classes are the
+// react/outline-editor.tsx — the workflow editor as a nested outline (phase → step, a step being an
+// agent or a group). Wired to the editor store from EditorStoreContext + outline-ops.ts: every structural
+// edit runs through store.update((draft) => outlineOps.xxx(…)); markup/Tailwind classes are the
 // design's.
 //
 // Selection (which agent's detail panel is open) is lifted to the caller: this component takes
 // `selectedPath`/`onSelect` as props instead of owning local useState, so the parent can render the
 // AgentDetails panel itself (e.g. as a separate layout column).
-import { useEffect, useState, useSyncExternalStore, type ReactNode } from "react";
-import { EFFORTS, MODELS, type Agent, type Container, type Phase, type Step, type Tree } from "../../src/workflow/workflow-model";
+import { useEffect, useState, type ReactNode } from "react";
+import { EFFORTS, MODELS, type Agent, type Container, type Phase, type Step, type Tree } from "../model";
 import {
   addPhase,
   addStep,
@@ -16,30 +16,12 @@ import {
   toggleMode,
   type GroupSettingsPatch,
   type OutlinePath,
-} from "../../src/workflow/outline-ops";
-import { editorStore, type EditorSnapshot } from "../../src/workflow/store";
-import { MarkdownEditor } from "@bb-plugins/md-editor/react";
+} from "../outline-ops";
+import type { AgentOption, ProviderCatalogEntry } from "../agents";
+import { useEditorSnapshot, useEditorStore } from "./context";
+import { MarkdownEditor } from "../../md-editor/react";
 
-// A discovered agent (from the `agents` RPC): its agentType value, frontmatter-derived
-// model/effort/provider, and — for the Save/Override decision and the tools written back to the
-// agent's .md — its tools list and which agents/ directory it lives in. "builtin" is the one scope
-// with no source file — a Claude Code agent type the client pins into the list itself (there is
-// nothing on disk for wfAgents to discover), so Save/Override never applies to it.
-export interface AgentOption {
-  value: string;
-  model: string;
-  effort: string;
-  provider: string;
-  description?: string;
-  path?: string;
-  tools?: string[];
-  scope?: "user" | "project" | "plugin" | "builtin";
-}
-export interface ProviderCatalogEntry {
-  id: string;
-  name: string;
-  models: { id: string; efforts: string[] }[];
-}
+export type { AgentOption, ProviderCatalogEntry } from "../agents";
 const isPlaceholder = (s: string) => s.trim() === "";
 const cap = (s: string) => (s ? s[0].toUpperCase() + s.slice(1) : s); // provider/model/effort display
 const PH = "text-foreground/60"; // placeholders and default values: foreground at 0.6 opacity
@@ -535,6 +517,7 @@ export function GroupDetails({ node, onSetField }: { node: Phase | Container; on
 // ---- header (Name/Description) ----
 
 function Header({ tree }: { tree: Tree }) {
+  const editorStore = useEditorStore();
   return (
     <div className="space-y-1.5 pb-1">
       <input
@@ -555,8 +538,6 @@ function Header({ tree }: { tree: Tree }) {
   );
 }
 
-const useEditor = () => useSyncExternalStore(editorStore.subscribe, editorStore.getSnapshot, editorStore.getSnapshot) as EditorSnapshot;
-
 // ---- the outline panel ----
 
 export function OutlineEditor({
@@ -568,7 +549,8 @@ export function OutlineEditor({
   selectedPath: OutlinePath | null;
   onSelect: (path: OutlinePath | null) => void;
 }) {
-  const { tree } = useEditor();
+  const editorStore = useEditorStore();
+  const { tree } = useEditorSnapshot();
 
   const remove = (path: OutlinePath) => {
     editorStore.update((draft) => removeNode(draft, path));

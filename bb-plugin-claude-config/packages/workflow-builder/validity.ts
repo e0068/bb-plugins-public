@@ -4,7 +4,7 @@
 // a template-less agent has no persona/tools to run. Groups carry no template; they recurse into their
 // own steps. `agentsMissingTemplate` returns how many agents still lack one (0 = the tree is valid).
 
-import { type Step, type Tree } from "./workflow-model";
+import { type Step, type Tree } from "./model";
 
 function missingInSteps(steps: Step[]): number {
   return steps.reduce((n, step) => {

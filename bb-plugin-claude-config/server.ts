@@ -50,8 +50,8 @@ import {
 // tree<->.js core stays a DOM-free module under src/workflow; the server
 // here only reads/writes files and calls `bb workflows` — same as in the
 // original plugin.
-import { parse as parseWorkflow, readMetaDescription } from "./src/workflow/workflow-model";
-import { engineForStore } from "./src/workflow/store";
+import { parse as parseWorkflow, readMetaDescription, recognize } from "@bb-plugins/workflow-builder/model";
+import { engineForStore } from "@bb-plugins/workflow-builder/store";
 import { OPENER_DESCRIPTORS } from "./src/open-action";
 
 // --- schemas shared between the server and the panel --------------------
@@ -538,7 +538,8 @@ export const rpcContract = defineRpcContract({
     input: z
       .object({ projectId: z.string().nullable(), store: wfStoreEnum, path: z.string() })
       .strict(),
-    output: z.object({ source: z.string(), tree: z.unknown().nullable() }),
+    // reason — why the file has no tree (null when it has one): written by hand, or edited after saving.
+    output: z.object({ source: z.string(), tree: z.unknown().nullable(), reason: z.enum(["hand-written", "edited"]).nullable() }),
   },
   wfSave: {
     input: z
@@ -2356,7 +2357,10 @@ export default function plugin(bb: BbPluginApi) {
     async wfRead({ projectId, store, path }) {
       const { hostId } = await wfResolveFile(store, projectId, path);
       const file = await bb.sdk.files.read({ hostId, path });
-      return { source: file.content, tree: parseWorkflow(file.content, engineForStore(store)) };
+      const result = recognize(file.content, engineForStore(store));
+      return result.kind === "tree"
+        ? { source: file.content, tree: result.tree, reason: null }
+        : { source: file.content, tree: null, reason: result.kind };
     },
 
     async wfSave({ projectId, store, name, source }) {

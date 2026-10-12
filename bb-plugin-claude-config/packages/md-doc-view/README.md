@@ -90,6 +90,8 @@ the source, and a jump away from that document drops it. Consumers derive the wh
 - `MdDocView.tsx` — the history, the mode, the draft, CAS, rename and delete; renders
   `DocHeader` over either `KasimovEditor` (Read, Write) or `CodeEditor` (Raw), and
   holds the one click listener that unfolds a picture.
+- `md-text.ts` — pure: the look of `MdText` — MD Opener's stock preset (`NATIVE_VIEWER_TOKEN_DEFAULTS`) without a document's format margins, as one style rule for every text on the page.
+- `MdText.tsx` — Kasimov's read mode for text a consumer assembled rather than read from a file: a field of a card, a note. No path, no modes, no history; the host's typography (`md-text.css`), MD Opener's skin of the engine, and live links given a link's role and focus. A single plain line flows inline with what stands next to it. A new `linkResolver` redraws the text — the engine asks it once per render — so keep it stable. Used by [Flow](../../bb-plugin-flow/app/linked-text.tsx) for every text field of a brief and a demo; it imports `./MdText` directly, past `MdDocView` and what that pulls in.
 - Link and path resolution is **injected** — the package doesn't depend on
   [link-navigation](../link-navigation); the consumer supplies it.
 

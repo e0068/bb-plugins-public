@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { blankAgent, blankContainer, blankPhase, blankTree, type Agent, type Tree } from "../src/workflow/workflow-model";
-import { agentsMissingTemplate, isTreeValid } from "../src/workflow/validity";
+import { blankAgent, blankContainer, blankPhase, blankTree, type Agent, type Tree } from "./model";
+import { agentsMissingTemplate, isTreeValid } from "./validity";
 
 const withTemplate = (agentType: string): Agent => ({ ...blankAgent(), agentType });
 

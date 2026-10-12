@@ -39,7 +39,7 @@ Dependencies run strictly downward; the `src/` layer is pure (no I/O) and fully 
 | L1 — scaffolding | [src/scaffold.ts](src/scaffold.ts) | Name normalization (slug) and skill/agent templates |
 | L1 — panel data | [src/panel-sections.ts](src/panel-sections.ts), [src/panel-memory.ts](src/panel-memory.ts), [src/open-action.ts](src/open-action.ts), [src/panel-columns.ts](src/panel-columns.ts) | Section table and "+" rule; remembered area/section; the host-tab-vs-column open decision; which columns a narrow screen shows |
 | L1 — docs helpers | [src/frontmatter.ts](src/frontmatter.ts), [src/imports.ts](src/imports.ts), [src/suggest.ts](src/suggest.ts), [src/weight.ts](src/weight.ts) | Frontmatter round-trip; CLAUDE.md `@`-imports; autocomplete ranking; token-weight estimate and merging late weights into rows |
-| L1 — workflow builder | [src/workflow/](src/workflow/) | Tree ↔ `.js` model/compile/parse, outline mutations, validity, identity, editor store (ported from workflow-composer) |
+| L1 — workflow builder | [packages/workflow-builder](../packages/workflow-builder) | Shared package: tree ↔ `.js` model/compile/recognize, outline mutations, validity, identity, editor store, the builder screen |
 
 ---
 
@@ -84,4 +84,4 @@ Claude Code размазывает конфигурацию по несколь�
 | L1 — скаффолд | [src/scaffold.ts](src/scaffold.ts) | Нормализация имени (slug) и шаблоны навыка/агента |
 | L1 — данные панели | [src/panel-sections.ts](src/panel-sections.ts), [src/panel-memory.ts](src/panel-memory.ts), [src/open-action.ts](src/open-action.ts), [src/panel-columns.ts](src/panel-columns.ts) | Таблица секций и правило **+**; запомненные область/секция; решение «хост-вкладка или колонка»; какие колонки показывает узкий экран |
 | L1 — помощники документов | [src/frontmatter.ts](src/frontmatter.ts), [src/imports.ts](src/imports.ts), [src/suggest.ts](src/suggest.ts), [src/weight.ts](src/weight.ts) | Round-trip frontmatter; `@`-импорты CLAUDE.md; ранжирование автодополнения; оценка веса в токенах и вливание позднего веса в строки |
-| L1 — построитель workflow | [src/workflow/](src/workflow/) | Модель Tree ↔ `.js` (compile/parse), правки аутлайна, валидность, идентичность, стор редактора (порт из workflow-composer) |
+| L1 — построитель workflow | [packages/workflow-builder](../packages/workflow-builder) | Общий пакет: модель Tree ↔ `.js` (compile/recognize), правки аутлайна, валидность, идентичность, стор редактора, экран конструктора |
