@@ -186,11 +186,15 @@ export const flowOrNone = (settings: FlowSettings, id: string | undefined): Flow
 /** Id flow, на которые ссылаются строки «Flow» flow `id`, в порядке строк; неизвестный flow ссылок не даёт. */
 const flowRefs = (flows: readonly Flow[], id: string): string[] => flows.find((flow) => flow.id === id)?.stages.flatMap((stage) => (stage.flowId === undefined ? [] : [stage.flowId])) ?? [];
 
-/** Этап вложенного flow под строкой `holder`: id и владелец с префиксом, иначе два включения одного flow слились бы в одну запись прогона. */
-const prefixed = (holder: string) => (stage: WorkStage): WorkStage => ({
+/**
+ * Этап вложенного flow `inner` под строкой `holder`: id, владелец и строки глубже — с префиксом, иначе два включения одного flow
+ * слились бы в одну запись прогона; сама строка встаёт первой в отметку `nest`.
+ */
+const prefixed = (holder: string, inner: Flow) => (stage: WorkStage): WorkStage => ({
   ...stage,
   id: `${holder}.${stage.id}`,
   ...(stage.parent === undefined ? {} : { parent: `${holder}.${stage.parent}` }),
+  nest: [{ id: holder, name: inner.name, ...(inner.icon === undefined ? {} : { icon: inner.icon }) }, ...(stage.nest ?? []).map((ref) => ({ ...ref, id: `${holder}.${ref.id}` }))],
 });
 
 /** Этапы с развёрнутыми строками; `chain` — flow, уже стоящие в цепочке развёртывания: повтор даёт ноль этапов, цикл не вешает чтение. */
@@ -198,7 +202,7 @@ const expandIn = (flows: readonly Flow[], stages: readonly WorkStage[], chain: r
   stages.flatMap((stage) => {
     if (stage.flowId === undefined) return [stage];
     const inner = flows.find((flow) => flow.id === stage.flowId);
-    return inner === undefined || chain.includes(inner.id) ? [] : expandIn(flows, inner.stages, [...chain, inner.id]).map(prefixed(stage.id));
+    return inner === undefined || chain.includes(inner.id) ? [] : expandIn(flows, inner.stages, [...chain, inner.id]).map(prefixed(stage.id, inner));
   });
 
 /**

@@ -77,6 +77,16 @@ const sumOf = (values: ReadonlyArray<number | undefined>): number | null => {
   return known.length === 0 ? null : known.reduce((s, v) => s + v, 0);
 };
 
+/** Цена нескольких строк прогноза одной: риск и деньги складываются, минуты — известные; ни одной строки — цены нет. */
+export const linesSum = (lines: readonly ForecastLine[]): Pick<ForecastLine, "minutes" | "risk" | "target" | "max"> | undefined => {
+  const known = (pick: (l: ForecastLine) => number | null) => sumOf(lines.map((l) => pick(l) ?? undefined));
+  const cents = (pick: (l: ForecastLine) => number | null) => {
+    const sum = known(pick);
+    return sum === null ? null : round(sum);
+  };
+  return lines.length === 0 ? undefined : { risk: lines.reduce((s, l) => s + l.risk, 0), minutes: known((l) => l.minutes), target: cents((l) => l.target), max: cents((l) => l.max) };
+};
+
 const line = (label: string, note: string, adds: ReadonlyArray<Add | undefined>): ForecastLine[] => {
   const sum = sumAdds(adds);
   return sum === undefined ? [] : [{ label, note, minutes: sum.minutes ?? null, risk: sum.risk, target: sum.target, max: sum.max }];

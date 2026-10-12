@@ -2,10 +2,11 @@
 // меняют три события: бриф агента, ответ владельца и отметка этапа агентом.
 // Нужно серверу, а вид — и тестам баннера, поэтому из контракта только типы.
 import { stageKindOf } from "../lib/stage-constants";
-import type { DecisionAnswer, DecisionBrief, FlowProgress, Planned, ProgressView, WorkStage } from "../shared/contract";
+import type { DecisionAnswer, DecisionBrief, FlowProgress, NestRef, Planned, ProgressStage, ProgressView, WorkStage } from "../shared/contract";
 import { automationView, executorKind, idleMinutes, isFailed, stageLiveIcon } from "./automation-run";
 import { stagePlans } from "./budget";
 import { demoVerdict, outcomeKind } from "./outcome";
+import { stagePlaces } from "./nest";
 import { askedStageIds, isAutomationStage } from "./stages";
 import { runCascade } from "./sub-stages";
 
@@ -249,6 +250,48 @@ export const reopen = (progress: FlowProgress, stages: readonly WorkStage[], id:
 
 const plus = (value: number | null, earlier: number | undefined): number | null => (earlier === undefined ? value : (value ?? 0) + earlier);
 
+/** Номера строк полосы: этапы и строки вложенных flow, вычеркнутые этапы мест не занимают. */
+export const progressPlaces = (stages: readonly ProgressStage[]): ReadonlyMap<string, string> => stagePlaces(stages, (stage) => stage.state !== "skip");
+
+/** Виды этапов, которые ставят прогон на паузу до владельца: Утверждение и кнопочный этап. */
+const PAUSING: ReadonlySet<ProgressStage["kind"]> = new Set(["approve", "action"]);
+
+export type RowTone = "current" | "pause";
+
+/** Подложка строки полосы: идущий или упавший этап — текущий; этап паузы, не вычеркнутый, — пауза; остальные без подложки. */
+export const rowTone = ({ kind, state }: Pick<ProgressStage, "kind" | "state">): RowTone | null =>
+  state === "now" || state === "fail" ? "current" : state !== "skip" && PAUSING.has(kind) ? "pause" : null;
+
+/** Состояние строки flow по его этапам: упавший или идущий этап — её состояние; ничего впереди — пройдена, а без пройденных — вычеркнута. */
+const nestState = (stages: readonly ProgressStage[]): ProgressStage["state"] => {
+  const has = (state: ProgressStage["state"]) => stages.some((stage) => stage.state === state);
+  if (has("fail")) return "fail";
+  if (has("now")) return "now";
+  if (has("todo")) return "todo";
+  return has("done") ? "done" : "skip";
+};
+
+/** Сумма чисел пройденных этапов; ни одного числа — `null`, как у этапа без факта. */
+const doneSum = (stages: readonly ProgressStage[], value: (stage: ProgressStage) => number | null): number | null => {
+  const known = stages.filter((stage) => stage.state === "done").map(value).filter((n): n is number => n !== null);
+  return known.length === 0 ? null : known.reduce((total, n) => total + n, 0);
+};
+
+/** Строка вложенного flow в полосе: название и иконка flow, состояние по его этапам, минуты и доллары пройденных; номер ей даёт `progressPlaces`. */
+export const nestSummary = (flow: NestRef, stages: readonly ProgressStage[]): ProgressStage => ({
+  id: flow.id,
+  kind: "skill",
+  name: flow.name,
+  executor: "self",
+  state: nestState(stages),
+  live: stages.some((stage) => stage.live === true),
+  results: [],
+  number: null,
+  minutes: doneSum(stages, (stage) => stage.minutes),
+  cost: doneSum(stages, (stage) => stage.cost),
+  ...(flow.icon === undefined ? {} : { icon: flow.icon }),
+});
+
 /** Вид прогресса по этапам flow треда: этап без записи — впереди, этап записи вне flow — не показывается; счёт и номера — по этапам прогона; живой — на этапе идёт работа, ждущий владельца не живой. */
 export const progressView = (progress: FlowProgress, stages: readonly WorkStage[], agentActive = false): ProgressView => {
   const rows = stages.map((stage) => {
@@ -274,6 +317,7 @@ export const progressView = (progress: FlowProgress, stages: readonly WorkStage[
       ...(stage.automation === undefined ? {} : { automation: automationView(stage, track) }),
       ...(stage.parent === undefined ? {} : { parent: stage.parent }),
       ...(stage.icon === undefined ? {} : { icon: stage.icon }),
+      ...(stage.nest === undefined ? {} : { nest: stage.nest }),
     } as const;
   });
   // Вычеркнутые этапы и под-этапы не нумеруются: номер этапа — его место среди этапов прогона верхнего уровня, он же числитель

@@ -7,11 +7,13 @@
 // автоматизации — её шаги с тем, что каждый сделал, и повтором упавшего.
 // Минуты и доллары — своими колонками: у пройденного этапа факт, у этапа
 // впереди — едва заметный план, последней строкой — сколько потрачено всего.
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { useBbNavigate, useComposerView, useRpc } from "@get-bb/plugin-sdk/app";
 
 import { contextPercent, contextSegments, contextTone, shortTokens } from "../core/context";
 import { mutedBlinkAnimation, mutedBlinkKeyframes } from "../core/muted-blink";
+import { nestTree, type NestNode } from "../core/nest";
+import { nestSummary, progressPlaces, rowTone, type RowTone } from "../core/progress";
 import { PULL_SETTLE_MS, pullOffset, settlesClosed } from "../core/pull-to-collapse";
 import { stepDetail, type FileRoots } from "../core/result-link";
 import { stageLabel } from "../core/stages";
@@ -26,6 +28,7 @@ import { reportStepAnswer } from "./automation-toasts";
 import { ResultAnchor } from "./cells";
 import { useFileRoots } from "./file-roots";
 import { FlowChoice } from "./flow-choice";
+import { FlowGlyph } from "./flow-glyph";
 import { LocaleProvider } from "./locale";
 import { useMessages } from "./locale-context";
 import { KIND_ICONS } from "./stage-icons";
@@ -35,6 +38,9 @@ import { StageGlyph } from "./stage-glyph";
 
 /** Тон заливки занятого окна: те же семантические токены, что у остальных состояний баннера. */
 const CONTEXT_TONES = { normal: "bg-primary", warn: "bg-warning", alert: "bg-destructive" } as const;
+
+/** Подложка строки полосы: текущий этап — подсветкой Flow, этап паузы — мягкой заливкой акцента, цвета кнопки «Отправить». */
+const ROW_TONES: Record<RowTone, string> = { current: "bg-state-active", pause: "bg-primary/10" };
 
 /** Процент ширины без хвоста плавающей точки: 0,5000000000000001 → «50%». */
 const widthOf = (share: number): string => `${Number((share * 100).toFixed(2))}%`;
@@ -287,7 +293,8 @@ export const money = (value: number): string => `$${Number.isInteger(value) ? va
  * от длины названия, а строка без номера оставляет колонку пустой. Минуты и доллары —
  * колонками постоянной ширины: строка без долларов не сдвигает минуты в их колонку.
  */
-const COLUMNS = "grid grid-cols-[16px_16px_minmax(0,1fr)_2.75rem_3.25rem_20px] items-center gap-2.5";
+// Колонку номера расширяет `--progress-number` списка, когда в нём есть номера с точкой.
+const COLUMNS = "grid grid-cols-[var(--progress-number,16px)_16px_minmax(0,1fr)_2.75rem_3.25rem_20px] items-center gap-2.5";
 
 export function ProgressBanner() {
   return (
@@ -382,23 +389,25 @@ function Spent({ stage }: { stage: ProgressStage }) {
 /**
  * `onToggle` — у живого бара треда, который ведёт прогон: этап, до которого прогон не дошёл, получает чекбокс «в прогоне».
  * `onExpand` — у строки, которой есть что развернуть: название становится кнопкой аккордеона.
+ * `place` — номер строки, у этапов вложенного flow — с точкой; нет — строка без номера. `glyph` — значок вместо значка этапа, у строки flow — знак flow.
  */
-export function Row({ stage, roots, onToggle, expanded = false, onExpand, subOf }: { stage: ProgressStage; roots: FileRoots | null; onToggle?: (run: boolean) => void; expanded?: boolean; onExpand?: () => void; subOf?: ProgressStage | undefined }) {
+export function Row({ stage, roots, onToggle, expanded = false, onExpand, subOf, place, glyph }: { stage: ProgressStage; roots: FileRoots | null; onToggle?: (run: boolean) => void; expanded?: boolean; onExpand?: () => void; subOf?: ProgressStage | undefined; place?: string | undefined; glyph?: ReactNode }) {
   const t = useMessages();
   const first = stage.results[0];
   const muted = stage.state === "todo" || stage.state === "skip";
+  const tone = rowTone(stage);
   return (
     // Строка выше одной: содержимое переносится, поэтому номер и значок держатся верхней строки, а не середины столбца.
     // Вычеркнутая из прогона — приглушена вся, прозрачностью: приглушённый цвет текста в теме bb почти не отличается от основного.
-    <div data-progress-row className={cn(COLUMNS, "min-h-7 items-start px-3 py-1", (stage.state === "now" || stage.state === "fail") && "bg-state-active", stage.state === "skip" && "opacity-40")}>
-      {stage.number === null || stage.number === undefined ? (
+    <div data-progress-row data-tone={tone ?? undefined} className={cn(COLUMNS, "min-h-7 items-start px-3 py-1", tone !== null && ROW_TONES[tone], stage.state === "skip" && "opacity-40")}>
+      {place === undefined ? (
         <span aria-hidden="true" />
       ) : (
         <span data-progress-number className="text-right tabular-nums leading-5 text-muted-foreground">
-          {stage.number}
+          {place}
         </span>
       )}
-      <StageIcon stage={stage} className={cn("mt-0.5", muted ? "text-muted-foreground" : "text-foreground")} />
+      {glyph ?? <StageIcon stage={stage} className={cn("mt-0.5", muted ? "text-muted-foreground" : "text-foreground")} />}
       <span className="flex min-w-0 flex-wrap items-baseline gap-x-2.5 gap-y-0.5 leading-5">
         {onExpand === undefined ? (
           <span data-progress-label className={cn(muted && "text-muted-foreground", stage.state === "skip" && "line-through")}>{stageLabel(stage, t.stages)}</span>
@@ -538,18 +547,21 @@ function TotalRow({ stages }: { stages: readonly ProgressStage[] }) {
  */
 export function StageList({ stages, roots, threadId, toggleOf, criteria = [] }: { stages: readonly ProgressStage[]; roots: FileRoots | null; threadId: string | null; toggleOf?: (stage: ProgressStage, at: number) => ((run: boolean) => void) | undefined; criteria?: readonly string[] }) {
   const [touched, setTouched] = useState<Readonly<Record<string, boolean>>>({});
+  const places = progressPlaces(stages);
   // Под-этапы свёрнуты под строкой владельца: она раскрывается и ради них, а идущий или упавший под-этап раскрывает её сам.
   const subsOf = (id: string) => stages.filter((stage) => stage.parent === id);
+  const running = (each: ProgressStage) => each.state === "now" || each.state === "fail";
   const item = (stage: ProgressStage, nested: boolean): ReactNode => {
     const subs = subsOf(stage.id);
     const canOpen = expandable(stage, criteria) || subs.length > 0;
-    const open = canOpen && (touched[stage.id] ?? (openByDefault(stage) || subs.some((sub) => sub.state === "now" || sub.state === "fail")));
+    const open = canOpen && (touched[stage.id] ?? (openByDefault(stage) || subs.some(running)));
     const toggle = toggleOf?.(stage, stages.indexOf(stage));
     return (
       <div key={stage.id} className="flex flex-col">
         <Row
           stage={stage}
           roots={roots}
+          place={places.get(stage.id)}
           {...(toggle === undefined ? {} : { onToggle: toggle })}
           {...(nested ? { subOf: stages.find((owner) => owner.id === stage.parent) } : {})}
           expanded={open}
@@ -562,11 +574,36 @@ export function StageList({ stages, roots, threadId, toggleOf, criteria = [] }: 
       </div>
     );
   };
+  // Вложенный flow — одной строкой, свёрнутой, пока прогон не внутри него: идущий или упавший этап раскрывает её сам.
+  const node = (each: NestNode<ProgressStage>): ReactNode => {
+    if (each.kind === "stage") return each.stage.parent === undefined ? item(each.stage, false) : null;
+    const summary = nestSummary(each.flow, each.stages);
+    const open = touched[each.flow.id] ?? each.stages.some(running);
+    return (
+      <div key={each.flow.id} data-progress-nest={each.flow.id} className="flex flex-col">
+        <Row
+          stage={summary}
+          roots={roots}
+          place={places.get(each.flow.id)}
+          glyph={
+            <span className="flex items-center justify-center">
+              <FlowGlyph icon={each.flow.icon} className={cn("mt-0.5 size-3.5", summary.state === "todo" || summary.state === "skip" ? "text-muted-foreground" : "text-foreground")} />
+            </span>
+          }
+          expanded={open}
+          onExpand={() => setTouched((current) => ({ ...current, [each.flow.id]: !open }))}
+        />
+        {open && each.children.map(node)}
+      </div>
+    );
+  };
+  // Номер с точкой шире одной цифры: колонка номеров всего списка растёт под самый длинный.
+  const widest = Math.max(0, ...[...places.values()].map((place) => place.length));
   return (
-    <>
-      {stages.filter((stage) => stage.parent === undefined).map((stage) => item(stage, false))}
+    <div className="contents" style={widest > 2 ? ({ "--progress-number": `${widest}ch` } as CSSProperties) : undefined}>
+      {nestTree(stages).map(node)}
       {stages.some((stage) => stage.state === "done") && <TotalRow stages={stages} />}
-    </>
+    </div>
   );
 }
 
