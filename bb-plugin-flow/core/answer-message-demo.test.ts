@@ -28,17 +28,8 @@ describe("реплика агенту на Демонстрацию", () => {
     expect(reply({ accepted: true, note: "Кнопку левее" }).split("\n")).toEqual(["Демонстрация «Демонстрация — прототип» — продолжить.", "«Кнопку левее»", "Дальше — этап «Спецификация»."]);
   });
 
-  it("комментарий — три строки: заголовок с этапом, комментарий, что делать с правкой; ссылок и следующего этапа нет", () => {
-    expect(reply({ accepted: false, note: "Баннер ниже" }).split("\n")).toEqual([
-      "Комментарии к демонстрации «Демонстрация — прототип» — этап «Демонстрация»:",
-      "«Баннер ниже»",
-      "Демонстрация уже закрыта, работа идёт дальше. Просит правку — откатись через flow_stage к этапу правки, пройди этапы заново до этой демонстрации и пришли её снова; без правки — ответь одной фразой и продолжай.",
-    ]);
-  });
-
-  it("по-английски те же три строки", () => {
-    const text = answerMessageText(brief, { briefId: brief.id, answers: [], outcome: { accepted: false, note: "Lower banner" } }, "en");
-    expect(text.split("\n")).toEqual(['Comments on the demo "Демонстрация — прототип" — the "Демонстрация" stage:', '"Lower banner"', "The demo is already closed and the work goes on. If the comment asks for a change, roll back to the stage of the change with flow_stage, go through the stages again up to this demo and send it again; without a change, answer in one sentence and carry on."]);
+  it("комментарий — заголовок с этапом и комментарий; указаний агенту нет: ответов на Демонстрацию сервер не берёт", () => {
+    expect(reply({ accepted: false, note: "Баннер ниже" }).split("\n")).toEqual(["Комментарии к демонстрации «Демонстрация — прототип» — этап «Демонстрация»:", "«Баннер ниже»"]);
   });
 
   it("финальная Демонстрация с продолжением закрывает работу", () => {

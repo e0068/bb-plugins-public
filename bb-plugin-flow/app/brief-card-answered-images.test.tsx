@@ -111,19 +111,3 @@ describe("отвеченный бриф с файлом", () => {
     expect(slot.queryByRole("img", { name: "Изображение 1" })).toBeNull();
   });
 });
-
-describe("ответ, вставший в ленту сообщением", () => {
-  it("карточка не повторяет слов владельца и его картинок, остаётся итог", async () => {
-    const { slot, answerImages } = render(clarify, { ...at, images, posted: true, answer: { briefId: clarify.id, answers: [{ questionId: "ok", optionIds: [], own: "вот так [Изображение 2]" }] } });
-    await slot.findByText("Уточнение отвечено");
-    expect(slot.queryByText("вот так", { exact: false })).toBeNull();
-    expect(slot.container.querySelectorAll("[data-image-tag]")).toHaveLength(0);
-    expect(answerImages).not.toHaveBeenCalled();
-  });
-
-  it("у демонстрации остаются сделанное и результаты", async () => {
-    const { slot } = render(demo, { ...at, posted: true, answer: { briefId: demo.id, answers: [], outcome: { accepted: false, note: "поправь" } } });
-    expect((await slot.findAllByText("Сделано")).length).toBeGreaterThan(0);
-    expect(slot.queryByText("поправь", { exact: false })).toBeNull();
-  });
-});

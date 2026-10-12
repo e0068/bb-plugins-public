@@ -1,14 +1,16 @@
 // @vitest-environment node
-// Демонстрация с рекомендованным flow: «Отправить» с выбранным flow не закрывает Демонстрацию, а переводит тред
-// (или новый тред) на этот flow. Автоматизации за Демонстрацией не идут, Automations ответа не видит.
+// Утверждение с рекомендованным flow: «Отправить» с выбранным flow не закрывает Утверждение, а переводит тред
+// (или новый тред) на этот flow. Автоматизации за Утверждением не идут, Automations ответа не видит.
 import { createFakePluginHost } from "@get-bb/plugin-sdk/testing";
 import { describe, expect, it } from "vitest";
 
+import { builtinStage } from "../lib/stage-constants";
 import type { DecisionAnswer, DecisionBrief } from "../shared/contract";
 import { registerApi } from "./api";
 import { createStore } from "./store";
 
 const demo: DecisionBrief = {
+  stages: { list: [builtinStage("approve", [])], minButtonWidth: 160 },
   id: "dec_answer",
   threadId: "thr_src",
   title: "Ответ",
@@ -16,7 +18,7 @@ const demo: DecisionBrief = {
   kind: "brief",
   questions: [],
   outcome: {
-    stage: "demo",
+    stage: "approve",
     final: true,
     done: ["Ответ дан"],
     pending: [],
@@ -125,7 +127,7 @@ describe("переход в другой flow из Демонстрации", ()
     expect(t.sent).toEqual([]);
   });
 
-  it("flow, которого демонстрация не предлагала, не принимается", async () => {
+  it("flow, которого утверждение не предлагало, не принимается", async () => {
     const { outcome } = demo;
     if (outcome === undefined) throw new Error("demo brief without outcome");
     const plain: DecisionBrief = { ...demo, id: "dec_plain", outcome: { ...outcome, nextFlow: undefined } };

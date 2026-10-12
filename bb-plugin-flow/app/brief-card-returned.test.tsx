@@ -47,13 +47,7 @@ const render = (rpc: Record<string, unknown>) =>
 const pressed = (scope: ReturnType<typeof within>) =>
   scope.queryAllByRole("button").filter((b: HTMLElement) => b.getAttribute("aria-pressed") === "true").map((b: HTMLElement) => b.textContent);
 
-describe("бриф, возвращённый сообщением в чат", () => {
-  it("в ленте от него одна строка: вопросов и кнопки отправки нет", async () => {
-    const slot = render({ getBrief: () => ({ kind: "found", brief, answer: null, returned: true }) });
-    expect(await slot.findByText(/Виджет вернулся агенту/)).toBeTruthy();
-    expect(slot.queryByRole("group", { name: "Куда идём?" })).toBeNull();
-  });
-
+describe("бриф взамен возвращённого сообщением в чат", () => {
   it("бриф взамен возвращённого открывается с выбором владельца, а не с рекомендацией", async () => {
     const restored = { draft: encodeDraft({ ...emptyDraft(), entries: { route: { optionIds: ["right"], own: "", picked: ["right"] } } }) };
     const slot = render({ getBrief: () => ({ kind: "found", brief: { ...brief, restored }, answer: null }) });

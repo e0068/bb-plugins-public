@@ -106,7 +106,7 @@ describe("предвыбор компактации по зоне контекс
 
 describe("«Завершить» финального Утверждения не компактирует тред по предвыбору", () => {
   const final: DecisionBrief = { ...demo, id: "dec_finalpreselect", outcome: { ...demo.outcome!, final: true } };
-  const comment = (slot: Slot, text: string) => fireEvent.change(slot.getByRole("textbox", { name: "Комментарий к демонстрации" }), { target: { value: text } });
+  const comment = (slot: Slot, text: string) => fireEvent.change(slot.getByRole("textbox", { name: "Комментарий к утверждению" }), { target: { value: text } });
 
   it("без комментария ячейка не обещает компактацию, и «Завершить» уходит без неё", async () => {
     const sent: DecisionAnswer[] = [];

@@ -48,7 +48,7 @@ const open = (options: { patch?: Partial<DecisionBrief>; answerBrief?: typeof ac
 
 type Slot = ReturnType<typeof open>;
 const card = async (slot: Slot) => within(await slot.findByRole("group", { name: "Утверждение" }));
-const comment = (slot: Slot, text: string) => fireEvent.change(slot.getByRole("textbox", { name: "Комментарий к демонстрации" }), { target: { value: text } });
+const comment = (slot: Slot, text: string) => fireEvent.change(slot.getByRole("textbox", { name: "Комментарий к утверждению" }), { target: { value: text } });
 const sentOutcome = async (fn: ReturnType<typeof vi.fn>) => {
   await vi.waitFor(() => expect(fn).toHaveBeenCalled());
   return (fn.mock.calls[0]![0] as { answer: DecisionAnswer }).answer.outcome;
@@ -59,7 +59,7 @@ describe("виджет Утверждения", () => {
     const answerBrief = vi.fn(accepted);
     const slot = open({ answerBrief });
     const c = await card(slot);
-    expect(c.getByRole("textbox", { name: "Комментарий к демонстрации" })).toBeTruthy();
+    expect(c.getByRole("textbox", { name: "Комментарий к утверждению" })).toBeTruthy();
     expect(slot.queryByText("Сделано")).toBeNull();
     expect(slot.queryByText("prototype.html")).toBeNull();
     expect(slot.queryByRole("button", { name: "Утвердить" })).toBeNull();

@@ -22,7 +22,7 @@ If the owner writes in Russian, read [ru.md](ru.md) in this folder instead — i
 
 The Definition of Done rests on the answers of the Questions stage. A fork option that adds or removes items is marked so.
 
-**After a demo — only the new.** When a comment on a demo sends the work back to the Definition of Done, `setup.criteria` holds only the new items, five at most: the done ones stay in the task and stay out of the widget. The owner's note on an answer "own" overrides the recommendation — apply it at once, not after the recommended option.
+**After an approval — only the new.** When a comment on an approval sends the work back to the Definition of Done, `setup.criteria` holds only the new items, five at most: the done ones stay in the task and stay out of the widget. The owner's note on an answer "own" overrides the recommendation — apply it at once, not after the recommended option.
 
 ## How to agree
 

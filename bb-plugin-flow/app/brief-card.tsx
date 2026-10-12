@@ -17,14 +17,14 @@ import { optionRemoved, placedOptionCriteria, removedCriteria } from "../core/op
 import { DEFAULT_ROUTE, offeredPlace, placeColumns, withBranch, withPlace, withProject, withTree } from "../core/places";
 import { stageItems } from "../core/stages";
 import type { FileRoots } from "../core/result-link";
-import { demoVerdict, outcomeKind } from "../core/outcome";
+import { demoVerdict, isReport, outcomeKind } from "../core/outcome";
 import { hasMarkup, plainText } from "../core/inline-links";
 import { REVIEW_ROWS, SETUP_ROW, artifactVerb, checkerAllowed, rowsOf } from "../core/rows";
 import { Button } from "../components/ui/button";
 import { Icon } from "../components/ui/icon";
 import { STAGE_BUTTON_WIDTH } from "../lib/stage-constants";
 import { cn } from "../lib/utils";
-import type { AnswerRecord, Artifact, Criterion, DecisionBrief, DecisionOption, DecisionQuestion, DispatchPlace, DispatchRoute, RouteBranch, RouteTree, WidgetAgent, dispatchRpcContract } from "../shared/contract";
+import type { AnswerRecord, Artifact, Criterion, DecisionAnswer, DecisionBrief, DecisionOption, DecisionQuestion, DispatchPlace, DispatchRoute, RouteBranch, RouteTree, WidgetAgent, dispatchRpcContract } from "../shared/contract";
 import {
   decidedCount,
   editCriterion,
@@ -62,7 +62,7 @@ import type { Messages } from "../lib/messages";
 import { useLocale, useMessages } from "./locale-context";
 import { useScrollAnchor } from "./scroll-anchor";
 import { useMentions } from "./mentions";
-import { DemoCard } from "./outcome";
+import { CommentRow, DemoCard } from "./outcome";
 import { agentLocked, useAgentPicker, useWidgetAgent } from "./agent-cells";
 import { SectionTag } from "./section-tag";
 import { StagesTable } from "./stages-table";
@@ -1231,51 +1231,49 @@ function BriefAnswer(props: {
   );
 }
 
-/** Зазор ряда кнопок Демонстрации; раскрытые списки «Исполнять» под ним — с тем же зазором, чтобы колонки стояли под кнопками. */
-const DEMO_GAP = "gap-2";
+/** Зазор ряда кнопок Утверждения; раскрытые списки «Исполнять» под ним — с тем же зазором, чтобы колонки стояли под кнопками. */
+const ACTIONS_GAP = "gap-2";
 
 /** Ряд кнопок итога переносится строками: ни одна кнопка не уже своего минимума, дыр между ними нет. */
-const DEMO_ROW = "flex flex-wrap";
+const ACTIONS_ROW = "flex flex-wrap";
 
 /**
- * Кнопки итога — отдельным рядом с отступом от поля комментария, чтобы не нажать случайно. Квадратные кнопки модели и Flow не
- * растут, остальные делят ряд поровну не уже 10rem, главная кнопка не уже своей подписи — как в прототипе владельца.
- * Утверждение держит работу: модель, Flow, «Исполнять» и главная кнопка — «Продолжить» («Завершить» у финального), с комментарием
- * или своим ответом в строке вопроса — «Отправить комментарии». Демонстрация не держит: одна «Отправить комментарии», выключенная
- * без комментария; агент рекомендовал flow — перед ней стоят модель, Flow и «Исполнять», и она уводит работу в выбранный flow.
+ * Кнопки Утверждения — отдельным рядом с отступом от поля комментария, чтобы не нажать случайно. Квадратные кнопки модели и Flow
+ * не растут, остальные делят ряд поровну не уже 10rem, главная кнопка не уже своей подписи — как в прототипе владельца.
+ * Утверждение держит работу: модель, Flow, «Исполнять» и главная кнопка — «Продолжить» («Завершить» у финального); с комментарием
+ * или своим ответом в строке вопроса — «Отправить комментарии»; рекомендованный агентом flow (`outcome.nextFlow`) предвыбран, и
+ * выбранный flow уводит работу в него — тогда кнопка «Отправить». У Демонстрации ряда нет: это отчёт.
  */
-function DemoActions(props: { brief: DecisionBrief; draft: Draft; setDraft: (update: (draft: Draft) => Draft) => void; catalog: WidgetAgent | null; sending: boolean; failed: boolean; complete: boolean; place: DispatchPlace; route: DispatchRoute; compact: boolean; onSubmit: (draft: Draft) => void }) {
+function ApprovalActions(props: { brief: DecisionBrief; draft: Draft; setDraft: (update: (draft: Draft) => Draft) => void; catalog: WidgetAgent | null; sending: boolean; failed: boolean; complete: boolean; place: DispatchPlace; route: DispatchRoute; compact: boolean; onSubmit: (draft: Draft) => void }) {
   const t = useMessages();
   const recommended = props.brief.outcome?.nextFlow;
-  const approval = outcomeKind(props.brief) === "approve";
-  const withAgent = approval || recommended !== undefined;
-  const lockHere = withAgent && agentLocked(props.catalog, props.draft, recommended);
-  const picker = useDispatchPicker({ threadId: props.brief.threadId, draft: props.draft, setDraft: props.setDraft, place: props.place, route: props.route, compact: props.compact, disabled: props.sending, gap: DEMO_GAP, inRow: true, lockHere });
+  const lockHere = agentLocked(props.catalog, props.draft, recommended);
+  const picker = useDispatchPicker({ threadId: props.brief.threadId, draft: props.draft, setDraft: props.setDraft, place: props.place, route: props.route, compact: props.compact, disabled: props.sending, gap: ACTIONS_GAP, inRow: true, lockHere });
   const agent = useAgentPicker({
-    catalog: withAgent ? props.catalog : null,
+    catalog: props.catalog,
     draft: props.draft,
     setDraft: props.setDraft,
     recommended,
     cellClass: footerCell,
     wrapClass: (wide) => cn("flex overflow-hidden rounded-lg", wide ? "min-w-40 flex-1 basis-0" : "flex-none"),
     disabled: props.sending,
-    gap: DEMO_GAP,
+    gap: ACTIONS_GAP,
     inRow: true,
   });
-  // Комментарий или свой ответ в строке вопроса — ровно то, что уйдёт ответом.
-  const answer = toAnswer(props.brief, settleAgent(props.draft, withAgent ? props.catalog : null, recommended));
-  const commented = answer.outcome?.accepted === false && answer.outcome.flow === undefined;
+  // Комментарий, свой ответ в строке вопроса или выбранный flow — ровно то, что уйдёт ответом.
+  const answer = toAnswer(props.brief, settleAgent(props.draft, props.catalog, recommended));
   const moves = answer.outcome?.flow !== undefined;
+  const commented = answer.outcome?.accepted === false && !moves;
   const button = "h-auto min-h-10 min-w-max flex-1 basis-0 rounded-lg px-4 text-[13px] font-semibold";
-  // Вопросы того же брифа должны быть решены до исхода: неполный ответ иначе отбил бы только сервер. Демонстрации без комментария, перехода и смены модели отправлять нечего.
-  const blocked = props.sending || !props.complete || (!approval && !commented && !moves && answer.execution === undefined);
-  const label = moves ? t.outcome.send : commented || !approval ? t.outcome.sendComments : finishes(props.brief, props.draft) ? t.outcome.finish : t.outcome.continue;
+  // Вопросы того же брифа должны быть решены до исхода: неполный ответ иначе отбил бы только сервер.
+  const blocked = props.sending || !props.complete;
+  const label = moves ? t.outcome.send : commented ? t.outcome.sendComments : finishes(props.brief, props.draft) ? t.outcome.finish : t.outcome.continue;
   return (
     <div className="-mt-2 flex flex-col items-stretch gap-1.5">
-      <div className={cn(DEMO_ROW, DEMO_GAP)}>
+      <div className={cn(ACTIONS_ROW, ACTIONS_GAP)}>
         {agent.modelCell}
         {agent.flowCell}
-        {withAgent && <div data-demo-action className="flex min-w-40 flex-1 basis-0 overflow-hidden rounded-lg">{picker.cell}</div>}
+        <div data-actions-cell className="flex min-w-40 flex-1 basis-0 overflow-hidden rounded-lg">{picker.cell}</div>
         <Button type="button" disabled={blocked} onClick={() => props.onSubmit(props.draft)} className={button}>
           {props.sending && <Icon name="Spinner" className="size-3.5 animate-spin" />}
           {label}
@@ -1361,11 +1359,12 @@ export function BriefCard({ brief, send, onResult, roots, place = "here", route 
   const preselected = compact && !finishes(brief, draft);
   // Выбор ряда — модель и Flow — сводится перед отправкой: нетронутое предложение агента уходит ответом, совпавшее с текущим — нет.
   const catalog = useWidgetAgent(brief.threadId);
-  const withAgent = brief.outcome === undefined || outcomeKind(brief) === "approve" || brief.outcome.nextFlow !== undefined;
-  const settled = (next: Draft) => settleDispatch(settleAgent(next, withAgent ? catalog : null, brief.outcome?.nextFlow), place, route, preselected);
+  const settled = (next: Draft) => settleDispatch(settleAgent(next, catalog, brief.outcome?.nextFlow), place, route, preselected);
+  // Демонстрация — отчёт: отвечать на неё нечем, и Ctrl+Enter в ней ничего не отправляет.
+  const report = isReport(brief);
   const trySubmit = () => {
     // Место уходит в ответ всегда: запомненное, которого владелец не трогал, иначе осталось бы только на экране.
-    if (complete && !sending) void submit(settled(draft));
+    if (!report && complete && !sending) void submit(settled(draft));
   };
 
   return (
@@ -1380,17 +1379,22 @@ export function BriefCard({ brief, send, onResult, roots, place = "here", route 
         }
       }}
     >
-      {brief.outcome !== undefined ? (
-        <>
-          <DemoCard brief={brief} roots={roots} view={{ draft, sending, change: setDraft }} />
-          <Body brief={brief} view={view} />
-          <DemoActions brief={brief} draft={draft} setDraft={setDraft} catalog={catalog} sending={sending} failed={failed} complete={complete} place={place} route={route} compact={preselected} onSubmit={(next) => void submit(settled(next))} />
-        </>
-      ) : (
+      {report ? (
+        // Демонстрация — отчёт: ни поля, ни кнопок, ни вопросов (старая, сохранённая с ними, тоже).
+        <DemoCard brief={brief} roots={roots} />
+      ) : brief.outcome === undefined ? (
         <>
           <Body brief={brief} view={view} />
           {stageItems(brief).length > 0 && <SectionTag kind="select" extra={brief.stages?.flowName} className="-mb-3" />}
-          <BriefAnswer brief={brief} view={view} roots={roots} draft={draft} setDraft={setDraft} catalog={withAgent ? catalog : null} sending={sending} status={failed ? t.common.sendFailed : counter} complete={complete} place={place} route={route} compact={preselected} onSubmit={trySubmit} />
+          <BriefAnswer brief={brief} view={view} roots={roots} draft={draft} setDraft={setDraft} catalog={catalog} sending={sending} status={failed ? t.common.sendFailed : counter} complete={complete} place={place} route={route} compact={preselected} onSubmit={trySubmit} />
+        </>
+      ) : (
+        <>
+          <div role="group" aria-label={t.stages.approve} className="flex flex-col overflow-hidden rounded-lg">
+            <CommentRow view={{ draft, sending, change: setDraft }} />
+          </div>
+          <Body brief={brief} view={view} />
+          <ApprovalActions brief={brief} draft={draft} setDraft={setDraft} catalog={catalog} sending={sending} failed={failed} complete={complete} place={place} route={route} compact={preselected} onSubmit={(next) => void submit(settled(next))} />
         </>
       )}
     </Plain>
@@ -1463,7 +1467,62 @@ export function ClarifyCard({ brief, send, onResult }: FormProps) {
   );
 }
 
-export function AnsweredBriefCard({ brief, record, roots }: { brief: DecisionBrief; record: AnswerRecord; roots: FileRoots | null }) {
+/**
+ * Уточнение, которое агент починил или решил сам (`resolves` в `ask_decision`), пока владелец не ответил: одна приглушённая
+ * строка «Решено: …» без кнопок. Назван первый вопрос; у уточнения из нескольких вопросов — его заголовок.
+ */
+export function ResolvedClarifyLine({ brief }: { brief: DecisionBrief }) {
+  const t = useMessages();
+  const [only, ...rest] = brief.questions;
+  const text = only !== undefined && rest.length === 0 ? plainText(only.question) : plainText(brief.title);
+  return (
+    <div data-brief-resolved="" className="my-3 flex items-center gap-1.5 text-xs text-muted-foreground">
+      <Icon name="CircleCheck" className="size-3.5 shrink-0" />
+      <span className="break-words">{t.common.resolved(text)}</span>
+    </div>
+  );
+}
+
+/**
+ * Отвеченный виджет целиком: что показал агент, ответ владельца и итог. `frozen` — показ внутри свёрнутой строки
+ * (см. `FoldedLine` в widget.tsx): строки статуса нет, строка уже сказала, что выборы сохранены.
+ */
+export function AnsweredBriefCard({ brief, record, roots, frozen = false }: { brief: DecisionBrief; record: AnswerRecord; roots: FileRoots | null; frozen?: boolean }) {
+  const t = useMessages();
+  const status = <StatusLine icon="CircleCheck" title={brief.kind === "clarify" ? t.common.clarifyAnswered : t.common.briefAnswered} aside={answeredAt(record.answeredAt, t.common.dateLocale)} />;
+  return (
+    <AnsweredImagesProvider briefId={brief.id} record={record}>
+      <AnsweredPlain brief={brief} answer={record.answer} verdict={verdictText(t, brief, record.answer)} forecast={record.forecast} roots={roots}>
+        {record.handoffThreadId !== undefined && (
+          <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+            <Icon name="Fork" className="size-3.5" />
+            <span>{t.common.handedOff(record.handoffThreadId)}</span>
+          </div>
+        )}
+        {!frozen && status}
+      </AnsweredPlain>
+    </AnsweredImagesProvider>
+  );
+}
+
+/** Исход отвеченного итога словами; у итога без ответа исхода нет — черновик вердикта не показывается. */
+const verdictText = (t: Messages, brief: DecisionBrief, answer: DecisionAnswer): string =>
+  answer.outcome?.flow !== undefined
+    ? t.outcome.flowSwitched(answer.outcome.flow.name)
+    : demoVerdict(answer) === "continue" && outcomeKind(brief) === "approve"
+      ? t.outcome.approved
+      : t.outcome.verdict(demoVerdict(answer) === "continue" ? "continue" : "comment");
+
+/**
+ * Неотвеченный виджет свёрнутой группы: тот же вид, что у отвеченного, но с черновиком владельца вместо ответа, без строки статуса
+ * и без вердикта итога — владелец его не выносил, показывается только текст его комментария.
+ */
+export function DraftBriefCard({ brief, draft, roots }: { brief: DecisionBrief; draft: Draft; roots: FileRoots | null }) {
+  return <AnsweredPlain brief={brief} answer={toAnswer(brief, draft)} verdict={null} forecast={undefined} roots={roots} />;
+}
+
+/** Виджет, который только читают: заголовок, показанное агентом, выбор владельца и итог; `children` — строки под ними. */
+function AnsweredPlain({ brief, answer, verdict, forecast, roots, children }: { brief: DecisionBrief; answer: DecisionAnswer; verdict: string | null; forecast: AnswerRecord["forecast"]; roots: FileRoots | null; children?: ReactNode }) {
   const t = useMessages();
   const [expanded, setExpanded] = useState<string | null>(null);
   const anchor = useScrollAnchor();
@@ -1471,59 +1530,36 @@ export function AnsweredBriefCard({ brief, record, roots }: { brief: DecisionBri
     anchor(element);
     setExpanded(rowId);
   };
-  const view: View = { draft: fromAnswer(record.answer), missing: new Set(), answered: true, sending: false, pick: noop, own: noop, change: noop, stageChange: noop, expanded, expand, brief, snapshot: record.forecast };
-  const status = <StatusLine icon="CircleCheck" title={brief.kind === "clarify" ? t.common.clarifyAnswered : t.common.briefAnswered} aside={answeredAt(record.answeredAt, t.common.dateLocale)} />;
-  // Ответ уже стоит в ленте сообщением владельца — карточка его не повторяет: остаётся показанное агентом и итог.
-  if (record.posted === true)
-    return (
-      <Plain label={brief.title}>
-        {brief.outcome !== undefined && <DemoCard brief={brief} roots={roots} />}
-        {status}
-      </Plain>
-    );
+  const view: View = { draft: fromAnswer(answer), missing: new Set(), answered: true, sending: false, pick: noop, own: noop, change: noop, stageChange: noop, expanded, expand, brief, snapshot: forecast };
   return (
-    <AnsweredImagesProvider briefId={brief.id} record={record}>
     <Plain label={brief.title}>
       {brief.outcome !== undefined ? (
         <>
           <DemoCard brief={brief} roots={roots} />
           <Body brief={brief} view={view} />
           <div className="break-words text-sm leading-relaxed text-muted-foreground">
-            <b className="font-semibold text-foreground">
-              {record.answer.outcome?.flow !== undefined
-                ? t.outcome.flowSwitched(record.answer.outcome.flow.name)
-                : demoVerdict(record.answer) === "continue" && outcomeKind(brief) === "approve"
-                  ? t.outcome.approved
-                  : t.outcome.verdict(demoVerdict(record.answer) === "continue" ? "continue" : "comment")}
-            </b>
-            {!blank(record.answer.outcome?.note ?? "") && (
+            {verdict !== null && <b className="font-semibold text-foreground">{verdict}</b>}
+            {!blank(answer.outcome?.note ?? "") && (
               <>
-                {" — "}
-                <AnsweredText text={record.answer.outcome?.note ?? ""} />
+                {verdict !== null && " — "}
+                <AnsweredText text={answer.outcome?.note ?? ""} />
               </>
             )}
           </div>
         </>
       ) : (
         <>
-          <Heading brief={brief} subtitle={t.common.deviations(deviations(brief, record.answer), deviationTotal(brief))} />
+          <Heading brief={brief} subtitle={t.common.deviations(deviations(brief, answer), deviationTotal(brief))} />
           <Body brief={brief} view={view} />
           <AnswerBlock brief={brief} view={view} roots={roots} />
         </>
       )}
-      {!blank(record.answer.note ?? "") && (
+      {!blank(answer.note ?? "") && (
         <div className="break-words text-sm leading-relaxed text-muted-foreground">
-          <b className="font-semibold text-foreground">{t.common.noteToBrief}</b> <AnsweredText text={record.answer.note ?? ""} />
+          <b className="font-semibold text-foreground">{t.common.noteToBrief}</b> <AnsweredText text={answer.note ?? ""} />
         </div>
       )}
-      {record.handoffThreadId !== undefined && (
-        <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
-          <Icon name="Fork" className="size-3.5" />
-          <span>{t.common.handedOff(record.handoffThreadId)}</span>
-        </div>
-      )}
-      {status}
+      {children}
     </Plain>
-    </AnsweredImagesProvider>
   );
 }
