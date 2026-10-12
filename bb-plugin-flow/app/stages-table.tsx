@@ -12,8 +12,9 @@
 // колонки чекбоксов.
 import { Fragment, useState, type ReactNode } from "react";
 
+import { nestTree, stagePlaces, type NestNode } from "../core/nest";
 import { SELF, executorLabel, stageExecutorIds, stageSurcharge, stageItems, stageLabel, stagePhase, type StageItem } from "../core/stages";
-import { criterionTitle, forecast, minutesText, money, optionLines, ownDollars, plannedMinutes, scopeOf, spentLines, type Forecast, type ForecastLine } from "../core/budget";
+import { criterionTitle, forecast, linesSum, minutesText, money, optionLines, ownDollars, plannedMinutes, scopeOf, spentLines, type Forecast, type ForecastLine } from "../core/budget";
 import { optionCriteria, optionRemoved, placedOptionCriteria, removedCriteria, type PlacedCriterion } from "../core/option-criteria";
 import type { FileRoots } from "../core/result-link";
 import { Icon } from "../components/ui/icon";
@@ -21,9 +22,10 @@ import type { Locale } from "../lib/i18n";
 import { messages } from "../lib/messages";
 import { stageKindOf } from "../lib/stage-constants";
 import { cn } from "../lib/utils";
-import type { DecisionBrief, StageExecutor } from "../shared/contract";
+import type { DecisionBrief, StageExecutor, WorkStage } from "../shared/contract";
 import { DocumentName, RiskText } from "./cells";
-import { pickStageExecutor, restoreOwnBudget, seedOwnBudget, setOwnBudget, stageChoiceIn, toAnswer, toggleCriterion, toggleStageRun, typedOwnPrice, type Draft } from "./draft";
+import { nestRun, pendingInNest, pickStageExecutor, restoreOwnBudget, seedOwnBudget, setOwnBudget, stageChoiceIn, toAnswer, toggleCriterion, toggleNestRun, toggleStageRun, typedOwnPrice, type Draft } from "./draft";
+import { FlowGlyph } from "./flow-glyph";
 import { RichText } from "./linked-text";
 import { useLocale, useMessages } from "./locale-context";
 import { ExecutorMark } from "./provider-logos";
@@ -125,15 +127,20 @@ function Numbers({ price }: { price: Price }) {
 }
 
 /**
- * Подпись строки: название, пометка и то, что стоит справа, — исполнитель или результат; `numbers` оставляет место под числа второй линии.
+ * Подпись строки: номер, название, пометка и то, что стоит справа, — исполнитель или результат; `numbers` оставляет место под числа второй линии.
  * `oneLine` — строка этапа: исполнитель или результат не переносится под название, а сжимается в той же линии.
  */
-function Label({ icon, children, side, numbers, indent = false, oneLine = false }: { icon: ReactNode; children: ReactNode; side?: ReactNode; numbers: boolean; indent?: boolean; oneLine?: boolean }) {
+function Label({ icon, children, side, numbers, indent = false, oneLine = false, place }: { icon: ReactNode; children: ReactNode; side?: ReactNode; numbers: boolean; indent?: boolean; oneLine?: boolean; place?: string | undefined }) {
   return (
     <>
       <span className="flex w-4 shrink-0 justify-center">{icon}</span>
       <span className={cn("flex min-w-0 flex-1 flex-col", indent && "pl-4")}>
         <span className={cn("flex min-w-0 items-center gap-x-2 gap-y-0.5 leading-5", !oneLine && "flex-wrap")}>
+          {place !== undefined && (
+            <span data-stage-number className="shrink-0 tabular-nums text-muted-foreground">
+              {place}
+            </span>
+          )}
           {children}
           {side !== undefined && <span className="flex min-w-0 items-center gap-1">{side}</span>}
         </span>
@@ -167,7 +174,7 @@ const Chevron = ({ open }: { open: boolean }) => <Icon name="ChevronDown" aria-h
 const FoldButton = ({ fold, name }: { fold: Fold; name: string }) => <button type="button" aria-expanded={fold.open} aria-label={name} onClick={fold.toggle} className={OVERLAY} />;
 
 /** `line` — цена этапа в прогоне из прогноза; снятый этап зачёркнут и чисел не несёт. */
-function StageRows({ item, view, scope, priced, line, roots, fold }: { item: StageItem; view: StagesTableView; scope: ReturnType<typeof scopeOf>; priced: boolean; line: ForecastLine | undefined; roots: FileRoots | null; fold?: Fold }) {
+function StageRows({ item, view, scope, priced, line, roots, fold, place }: { item: StageItem; view: StagesTableView; scope: ReturnType<typeof scopeOf>; priced: boolean; line: ForecastLine | undefined; roots: FileRoots | null; fold?: Fold; place: string | undefined }) {
   const t = useMessages();
   const nameOf = useExecutorName();
   const name = stageLabel(item.stage, t.stages);
@@ -190,6 +197,7 @@ function StageRows({ item, view, scope, priced, line, roots, fold }: { item: Sta
         numbers={false}
         indent={indent}
         oneLine
+        place={place}
         side={
           first === undefined ? (
             fold === undefined ? undefined : <Chevron open={fold.open} />
@@ -245,6 +253,7 @@ function StageRows({ item, view, scope, priced, line, roots, fold }: { item: Sta
       numbers={price !== undefined}
       indent={indent}
       oneLine
+      place={place}
       side={
         choosable ? (
           <span className="flex min-w-0 items-center gap-1 text-xs text-muted-foreground">
@@ -335,6 +344,39 @@ function ExecutorRows({ item, view, scope, priced, chosen }: { item: StageItem; 
           </div>
         );
       })}
+    </div>
+  );
+}
+
+/**
+ * Строка вложенного flow: номер, знак и название flow с шевроном — вся строка раскрывает его этапы под собой. Справа — сумма цен
+ * его этапов в прогоне и галочка на весь flow: снимает и ставит все несделанные этапы, при выборе не всех — с чертой.
+ * Все этапы пройдены — галочка без чекбокса, как у пройденного этапа.
+ */
+function NestRow({ node, view, place, lines, open, onFold }: { node: Extract<NestNode<WorkStage>, { kind: "flow" }>; view: StagesTableView; place: string | undefined; lines: readonly ForecastLine[]; open: boolean; onFold: () => void }) {
+  const t = useMessages();
+  const name = node.flow.name;
+  const run = nestRun(view.brief, view.draft, node.flow.id);
+  const pending = pendingInNest(view.brief, node.flow.id).length > 0;
+  const price: Price | undefined = pending && run !== false ? linesSum(lines) : undefined;
+  return (
+    <div data-nest={node.flow.id} className={cn(ROW, "relative")}>
+      <button type="button" aria-expanded={open} aria-label={name} onClick={onFold} className={OVERLAY} />
+      <div className={cn(LEFT, "pointer-events-none relative")}>
+        <Label icon={<FlowGlyph icon={node.flow.icon} className={cn("size-3.5", run === false && pending && "opacity-40")} />} numbers={price !== undefined} oneLine place={place} side={<Chevron open={open} />}>
+          <span className={cn("shrink-0", run === false && pending && "text-muted-foreground line-through opacity-40")}>{name}</span>
+        </Label>
+      </div>
+      {price !== undefined && <Numbers price={price} />}
+      <span className={cn(BOX, "relative")}>
+        {pending ? (
+          <StageCheckbox inRun={run} label={t.stages.toRun(name)} disabled={view.sending} onToggle={view.answered ? null : () => view.stageChange((d) => toggleNestRun(view.brief, d, node.flow.id))} />
+        ) : (
+          <span role="img" aria-label={t.stages.done} className="flex">
+            <Check />
+          </span>
+        )}
+      </span>
     </div>
   );
 }
@@ -494,6 +536,11 @@ export function StagesTable({ view, roots, snapshot, priced }: { view: StagesTab
   const criteriaStage = items.find((item) => stageKindOf(item.stage) === "criteria")?.stage.id;
   const criterionLines = criteriaStage === undefined ? new Map<number, ForecastLine>() : criterionLinesIn(total, view.brief.setup?.criteria?.length ?? 0, snapshot !== undefined, locale);
   const [criteriaOpen, setCriteriaOpen] = useState(true);
+  // Вложенные flow свёрнуты, пока владелец их не раскроет; номера — с точкой у их этапов.
+  const [openNests, setOpenNests] = useState<ReadonlySet<string>>(new Set());
+  const stages = items.map((item) => item.stage);
+  const tree = nestTree(stages);
+  const places = stagePlaces(stages);
   const criteriaFold: Fold = { open: criteriaOpen, toggle: () => setCriteriaOpen((was) => !was) };
   // Цена варианта с пунктами стоит на его строке под Definition of Done, а не отдельной строкой; свёрнутый список строк не показывает — цена остаётся строкой.
   const optionTaken = criteriaStage !== undefined && criteriaOpen ? optionLines(view.brief, answer, total.lines.slice(spent)) : [];
@@ -528,6 +575,30 @@ export function StagesTable({ view, roots, snapshot, priced }: { view: StagesTab
       shown
     );
   const head = "row-start-1 py-1.5 pr-2.5 text-right text-[11px] font-normal text-muted-foreground";
+  const runLine = (stage: WorkStage): ForecastLine | undefined => {
+    const item = items.find((each) => each.stage.id === stage.id);
+    return item !== undefined && stageChoiceIn(view.brief, view.draft, item).run ? stageLines.get(stage.id) : undefined;
+  };
+  const row = (node: NestNode<WorkStage>): ReactNode => {
+    if (node.kind === "flow") {
+      const open = openNests.has(node.flow.id);
+      const fold = () => setOpenNests((was) => (was.has(node.flow.id) ? new Set([...was].filter((id) => id !== node.flow.id)) : new Set([...was, node.flow.id])));
+      const lines = priced ? node.stages.flatMap((stage) => runLine(stage) ?? []) : [];
+      return (
+        <Fragment key={node.flow.id}>
+          <NestRow node={node} view={view} place={places.get(node.flow.id)} lines={lines} open={open} onFold={fold} />
+          {open && node.children.map(row)}
+        </Fragment>
+      );
+    }
+    const item = items.find((each) => each.stage.id === node.stage.id)!;
+    return (
+      <Fragment key={item.stage.id}>
+        <StageRows item={item} view={view} scope={scope} priced={priced} line={stageLines.get(item.stage.id)} roots={roots} fold={item.stage.id === criteriaStage && foldable ? criteriaFold : undefined} place={places.get(item.stage.id)} />
+        {item.stage.id === criteriaStage && criteriaFold.open && <CriterionRows view={view} lines={criterionLines} priced={priced} />}
+      </Fragment>
+    );
+  };
   return (
     <div className="@container text-xs">
       <div role="group" aria-label={t.brief.stagesTable} className={cn("flex flex-col gap-px @[34rem]:grid @[34rem]:gap-x-0", TABLE_COLUMNS)}>
@@ -546,12 +617,7 @@ export function StagesTable({ view, roots, snapshot, priced }: { view: StagesTab
         {total.lines.slice(0, spent).map((line, i) => (
           <LineRow key={`spent-${i}`} line={line} done />
         ))}
-        {items.map((item) => (
-          <Fragment key={item.stage.id}>
-            <StageRows item={item} view={view} scope={scope} priced={priced} line={stageLines.get(item.stage.id)} roots={roots} fold={item.stage.id === criteriaStage && foldable ? criteriaFold : undefined} />
-            {item.stage.id === criteriaStage && criteriaFold.open && <CriterionRows view={view} lines={criterionLines} priced={priced} />}
-          </Fragment>
-        ))}
+        {tree.map(row)}
         {priced &&
           others.map((line, i) => (
             <LineRow key={`line-${i}`} line={line} done={false} />

@@ -217,6 +217,11 @@ const FLOW_STAGE_OWNER_ISSUE = "a flow stage cannot own sub-stages";
 const noSubStageOfFlowStage = (stages: ReadonlyArray<{ id: string; flowId?: string | undefined; parent?: string | undefined }>): boolean =>
   stages.every((stage) => stage.parent === undefined || stages.find((owner) => owner.id === stage.parent)?.flowId === undefined);
 
+/** Строка «Flow», внутри которой стоит этап развёрнутого списка: её id в этом списке, название и иконка вложенного flow. */
+export const nestRefSchema = z.object({ id: text, name: text, icon: text.optional() });
+
+export type NestRef = z.output<typeof nestRefSchema>;
+
 /**
  * Этап работ в настройках: вид, навык, название и кто может исполнять кроме самого агента.
  * `kind` нет у записей до видов — вид тогда выводит `stageKindOf`; `review` — флаг прежних снимков брифа, новые этапы его не пишут.
@@ -239,6 +244,8 @@ export const workStageSchema = z
     mainAgent: z.literal(false).optional(),
     /** Этап «Flow»: id другого flow коллекции, чьи этапы встают на место строки; вид остаётся `skill`, как у этапа-автоматизации. */
     flowId: text.optional(),
+    /** Этап развёрнутого списка из вложенного flow: строки «Flow» над ним, от внешней к внутренней. В настройках поля нет — его ставит развёртывание. */
+    nest: z.array(nestRefSchema).optional(),
   })
   .superRefine((s, ctx) => {
     if (!uniqueIds(s.executors)) ctx.addIssue({ code: "custom", message: "executor ids must be unique within a stage", path: ["executors"] });
@@ -1204,6 +1211,8 @@ export const progressStageSchema = z.object({
   results: z.array(storedResultSchema),
   /** Место этапа среди этапов прогона, с 1; вычеркнутый и под-этап номера не получают. */
   number: z.number().int().positive().nullable().optional(),
+  /** Этап вложенного flow: строки «Flow» над ним, от внешней к внутренней, — полоса собирает их этапы под одной строкой. */
+  nest: z.array(nestRefSchema).optional(),
   /** Под-этап: id этапа-владельца, под строкой которого он свёрнут. */
   parent: text.optional(),
   /** Иконка, выбранная владельцем на странице Flow; нет — иконка по виду. */

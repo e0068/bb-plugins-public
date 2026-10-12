@@ -18,6 +18,7 @@ import { freeFlowName } from "../core/flow-files";
 import { stageLabel } from "../core/stages";
 import { executionOf, hasMainAgent, withExecutor, withMainAgent, withoutMainAgent, withWidget } from "../core/stage-execution";
 import { hoverAt, type Hover, type RowBox } from "../core/row-hover";
+import { stagePlaces } from "../core/nest";
 import { dropStage, ownerOf, removeStage, stageApart, stageNumbers } from "../core/sub-stages";
 import { isTemplateSaved, removeTemplate, saveTemplate, stagesFromTemplate, templatesOfKind } from "../core/stage-templates";
 import { FieldOverlay, overlayItem, useFieldOverlay } from "../components/ui/field-overlay";
@@ -827,8 +828,8 @@ function NestedStageName({ stage }: { stage: WorkStage }) {
 
 /**
  * Этап «Flow» связкой строк, как этап с под-этапами: в первой строке — только имя вложенного flow текстом (оно живое:
- * переименование flow видно сразу), ниже — по полной строке на каждый его этап, под-этапы тоже: название и чипы, только
- * для чтения. Строки связки отвечают за перетаскивание одним этапом: все несут `data-stage-row` этапа-flow.
+ * переименование flow видно сразу), ниже — по полной строке на каждый его этап, под-этапы тоже: номер через точку от номера
+ * строки — у под-этапа его нет, — название и чипы, только для чтения. Строки связки отвечают за перетаскивание одним этапом: все несут `data-stage-row` этапа-flow.
  */
 function NestedFlowRows({ flowId, ...row }: RowProps & { flowId: string }) {
   const t = useMessages();
@@ -836,6 +837,7 @@ function NestedFlowRows({ flowId, ...row }: RowProps & { flowId: string }) {
   const flows = settings?.flows ?? [];
   const target = flows.find((flow) => flow.id === flowId);
   const inner = target === undefined ? [] : expandStages(flows, target);
+  const innerPlaces = stagePlaces(inner);
   const { stage, place, catalog } = row;
   const alone = inner.length === 0;
   return (
@@ -857,7 +859,9 @@ function NestedFlowRows({ flowId, ...row }: RowProps & { flowId: string }) {
         const drop = place.drop === "whole" || (last && place.drop === "bottom") ? place.drop : null;
         return (
           <RowFrame key={innerStage.id} label={stageLabel(innerStage, t.stages)} stageId={stage.id} place={{ ...place, apart: false, edge: last && place.edge, drop, dropLabel: null }} dragging={row.dragging}>
-            <span role="cell" />
+            <span role="cell" className="flex h-7 items-center justify-center text-xs tabular-nums text-muted-foreground">
+              {innerPlaces.has(innerStage.id) && `${place.number}.${innerPlaces.get(innerStage.id)}`}
+            </span>
             <StageCells>
               <NestedStageName stage={innerStage} />
               <ReadOnlyExecution stage={innerStage} catalog={catalog} />

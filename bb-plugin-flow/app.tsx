@@ -26,6 +26,7 @@ import { WorkflowOpener } from "./app/workflow-opener";
 import { OWN_PLUGIN_ID } from "./core/plugin-id";
 import { resolveLocale } from "./lib/i18n";
 import { messages } from "./lib/messages";
+import "./app/theme.css";
 
 export default definePluginApp((app) => {
   // Каретка в поле на iPhone не приближает тред: предел масштаба на всю страницу с загрузки плагина до перезагрузки страницы.

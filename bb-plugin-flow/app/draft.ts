@@ -81,6 +81,22 @@ export const toggleStageRun = (brief: DecisionBrief, draft: Draft, item: StageIt
     .reduce((current, id) => withStage(current, id, { run }), draft);
 };
 
+/** Несделанные этапы вложенного flow `nestId` — те, что его галочка ставит и снимает. */
+export const pendingInNest = (brief: DecisionBrief, nestId: string): StageItem[] =>
+  stageItems(brief).filter((item) => stagePhase(item) === "todo" && (item.stage.nest ?? []).some((ref) => ref.id === nestId));
+
+/** Галочка вложенного flow: все его несделанные этапы в прогоне — `true`, ни одного — `false`, часть — `"mixed"`. */
+export const nestRun = (brief: DecisionBrief, draft: Draft, nestId: string): boolean | "mixed" => {
+  const runs = pendingInNest(brief, nestId).map((item) => stageChoiceIn(brief, draft, item).run);
+  return runs.every(Boolean) ? true : runs.some(Boolean) ? "mixed" : false;
+};
+
+/** Щелчок по галочке вложенного flow: стоящая снимает все его несделанные этапы, пустая и полувыбранная — ставит все. */
+export const toggleNestRun = (brief: DecisionBrief, draft: Draft, nestId: string): Draft => {
+  const run = nestRun(brief, draft, nestId) !== true;
+  return pendingInNest(brief, nestId).reduce((current, item) => withStage(current, item.stage.id, { run }), draft);
+};
+
 export const pickStageExecutor = (draft: Draft, item: StageItem, executor: string): Draft => withStage(draft, item.stage.id, { executor });
 
 /** Место исполнения — выбор владельца поверх последнего выбора в проекте; решать вопросы для этого не нужно. */

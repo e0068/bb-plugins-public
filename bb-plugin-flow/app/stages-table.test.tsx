@@ -47,7 +47,7 @@ const sentStages = async (slot: Slot): Promise<StageAnswer[]> => {
 describe("исполнитель в строке этапа", () => {
   it("стоит только у этапа, где во Flow есть выбор кроме Main Agent, — сразу за названием", async () => {
     const slot = open(fresh);
-    expect((await row(slot, "plan")).textContent).toMatch(/^План\s*Main Agent/);
+    expect((await row(slot, "plan")).textContent).toMatch(/^\d+План\s*Main Agent/);
     expect((await row(slot, "task")).textContent).not.toContain("Main Agent");
     expect(within(await row(slot, "task")).queryByRole("button", { expanded: false })).toBeNull();
   });
