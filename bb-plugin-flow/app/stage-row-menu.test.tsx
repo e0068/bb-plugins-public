@@ -57,7 +57,7 @@ describe("меню «⋯» в строке этапа", () => {
   it("новый flow из этапа встаёт в список flow строкой с его именем", async () => {
     const slot = open(LINKED);
     fireEvent.click((await menuOf(slot, 3)).getByRole("menuitem", { name: "Преобразовать во Flow" }));
-    expect(await within(slot.getByRole("navigation", { name: "Flow" })).findByRole("button", { name: /^Демо/ })).toBeTruthy();
+    expect(await within(slot.getByRole("navigation", { name: "Flow" })).findByRole("button", { name: /^Демо(?!нстрация)/ })).toBeTruthy();
   });
 
   it("этап с мёрджем, чей PR открывает этап выше, не преобразуется: пункт недоступен, причина видна, коллекция прежняя", async () => {
