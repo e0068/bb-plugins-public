@@ -1,6 +1,6 @@
 import { fileURLToPath } from "node:url";
 import { defineConfig } from "vitest/config";
-import { hugeiconsDedupe, reactDedupe } from "./packages/plugin-base/vitest-react-dedupe";
+import { reactDedupe } from "./packages/plugin-base/vitest-react-dedupe";
 import { sharedPackagesAlias } from "./packages/plugin-base/vitest-shared-packages";
 
 const rootDir = fileURLToPath(new URL(".", import.meta.url));
@@ -15,7 +15,7 @@ export default defineConfig({
       "tippy.js": "tippy.js/dist/tippy.esm.js",
       ...sharedPackagesAlias,
     },
-    dedupe: [...reactDedupe, ...hugeiconsDedupe],
+    dedupe: reactDedupe,
   },
   test: {
     name: "bb-plugin-tasks-plus",
