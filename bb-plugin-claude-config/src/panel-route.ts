@@ -15,7 +15,7 @@
 
 import { isSectionId, type SectionId } from "./panel-sections";
 import { findSettingDef } from "./settings-catalog";
-import type { StoreKind } from "./workflow/store";
+import type { StoreKind } from "@bb-plugins/workflow-builder/store";
 
 export type ConnectorOrigin = "mcpjson" | "user" | "local";
 export type HookOrigin = "user" | "project" | "local";

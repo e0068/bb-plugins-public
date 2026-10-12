@@ -7,7 +7,9 @@ import {
   importSpecifiers,
   layerViolations,
   moduleUnit,
+  reachableImports,
   resolveSpecifier,
+  uninstalledImports,
   type Layers,
   type UnitEdge,
 } from "./core";
@@ -199,5 +201,79 @@ describe("bundledImports", () => {
     expect(HOST_SHIMMED).not.toContain("@radix-ui/react-tabs");
     expect(HOST_SHIMMED).not.toContain("zod");
     expect(HOST_SHIMMED.some((name) => name.startsWith("@codemirror/"))).toBe(false);
+  });
+});
+
+describe("reachableImports", () => {
+  const files = (sources: Record<string, string>) => Object.entries(sources).map(([path, source]) => ({ path, source }));
+
+  it("follows value imports from the entry, with or without an extension, through an alias and an index file", () => {
+    const tree = files({
+      "app.tsx": 'import { Board } from "./views/board.js";\nimport { cn } from "@/lib";',
+      "views/board.tsx": 'import { useRpc } from "@get-bb/plugin-sdk/app";\nimport { TEXT } from "../shared/text";',
+      "shared/text.ts": 'import { z } from "zod";',
+      "lib/index.ts": 'import { clsx } from "clsx";',
+    });
+    expect(reachableImports(tree, "app.tsx", { "@/": "" })).toEqual([
+      { file: "views/board.tsx", specifier: "@get-bb/plugin-sdk/app" },
+      { file: "lib/index.ts", specifier: "clsx" },
+      { file: "shared/text.ts", specifier: "zod" },
+    ]);
+  });
+
+  it("does not enter a file the entry reaches only through `import type`", () => {
+    const tree = files({
+      "app.tsx": 'import type { Contract } from "./contract.js";',
+      "contract.ts": 'import { defineRpcContract } from "@get-bb/plugin-sdk";',
+    });
+    expect(reachableImports(tree, "app.tsx")).toEqual([]);
+  });
+
+  it("enters a file imported for one value next to its types", () => {
+    const tree = files({
+      "app.tsx": 'import { TEXT, type Contract } from "./contract.js";',
+      "contract.ts": 'import { defineRpcContract } from "@get-bb/plugin-sdk";',
+    });
+    expect(reachableImports(tree, "app.tsx")).toEqual([{ file: "contract.ts", specifier: "@get-bb/plugin-sdk" }]);
+  });
+
+  it("does not report files the entry never reaches", () => {
+    const tree = files({ "app.tsx": "export {};", "server.ts": 'import { defineRpcContract } from "@get-bb/plugin-sdk";' });
+    expect(reachableImports(tree, "app.tsx")).toEqual([]);
+  });
+
+  it("leaves an alias pointing outside the root alone — a shared package guards its own imports", () => {
+    const tree = files({ "app.tsx": 'import { Section } from "@bb-plugins/reduced-colors";' });
+    expect(reachableImports(tree, "app.tsx", { "@bb-plugins/": "../packages/" })).toEqual([]);
+  });
+
+  it("visits a file imported twice and an import cycle once", () => {
+    const tree = files({
+      "app.tsx": 'import "./a";\nimport "./b";',
+      "a.ts": 'import "./b";\nimport "zod";',
+      "b.ts": 'import "./a";',
+    });
+    expect(reachableImports(tree, "app.tsx")).toEqual([{ file: "a.ts", specifier: "zod" }]);
+  });
+});
+
+describe("uninstalledImports", () => {
+  const at = (specifier: string) => ({ file: "app.tsx", specifier });
+
+  it("reports a package listed only in devDependencies — the install leaves it off disk", () => {
+    expect(uninstalledImports([at("@get-bb/plugin-sdk")], ["zod"], HOST_SHIMMED)).toEqual([at("@get-bb/plugin-sdk")]);
+  });
+
+  it("accepts a dependency, its subpath and a scoped dependency's subpath", () => {
+    const imports = [at("zod"), at("yaml/util"), at("@tiptap/pm/state")];
+    expect(uninstalledImports(imports, ["zod", "yaml", "@tiptap/pm"], HOST_SHIMMED)).toEqual([]);
+  });
+
+  it("accepts what the host shims, though the plugin does not depend on it", () => {
+    expect(uninstalledImports([at("react"), at("@get-bb/plugin-sdk/app")], [], HOST_SHIMMED)).toEqual([]);
+  });
+
+  it("does not take a lookalike name for a dependency", () => {
+    expect(uninstalledImports([at("zod-extra")], ["zod"], HOST_SHIMMED)).toEqual([at("zod-extra")]);
   });
 });

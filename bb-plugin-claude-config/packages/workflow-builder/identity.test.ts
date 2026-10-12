@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { isSameWorkflow, type WorkflowRef } from "../src/workflow/identity";
+import { isSameWorkflow, type WorkflowRef } from "./identity";
 
 const ref = (over: Partial<WorkflowRef> = {}): WorkflowRef => ({
   store: "project",

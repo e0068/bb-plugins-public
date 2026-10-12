@@ -842,10 +842,17 @@ function overlayKnobs(tree: Tree, knobs: AgentKnobs[]): void {
   });
 }
 
-// File → tree, or null (→ read-only). Order: a legacy mirror is trusted as before; otherwise our marker
-// gates a body parse proven by recompile. `engine` is always known from the file's store (engineForStore).
-export function parse(source: string, engine: Engine = "bb"): Tree | null {
-  if (typeof source !== "string") return null;
+// Why a file opens read-only: written by hand (no builder mark, no legacy mirror), or compiled by the
+// builder and then edited by hand (the mark is there, but the tree no longer recompiles to the file).
+export type Unrecognized = "hand-written" | "edited";
+
+export type Recognition = { kind: "tree"; tree: Tree } | { kind: Unrecognized };
+
+// File → tree, or the reason there is none (→ read-only). Order: our marker gates a body parse proven by
+// recompile; otherwise a legacy mirror is trusted as before. `engine` is always known from the file's
+// store (engineForStore).
+export function recognize(source: string, engine: Engine = "bb"): Recognition {
+  if (typeof source !== "string") return { kind: "hand-written" };
 
   // New format FIRST: a file the current constructor wrote carries our marker. Checking it before the
   // legacy mirror matters because a new file's prompt/schema/description may legitimately contain the
@@ -854,11 +861,11 @@ export function parse(source: string, engine: Engine = "bb"): Tree | null {
   const marker = readMarker(source);
   if (marker) {
     const parsed = parseBody(source);
-    if (!parsed) return null;
+    if (!parsed) return { kind: "edited" };
     overlayKnobs(parsed, marker.agents);
     const tree = normalizeTree(parsed);
-    if (!verifyRecompile(source, tree, engine)) return null; // body hand-edited → read-only
-    return tree;
+    // body hand-edited → read-only
+    return verifyRecompile(source, tree, engine) ? { kind: "tree", tree } : { kind: "edited" };
   }
 
   // Legacy fallback: a file still carrying the old machine mirror — read it verbatim as before (trusted
@@ -869,14 +876,123 @@ export function parse(source: string, engine: Engine = "bb"): Tree | null {
     if (body.endsWith(MIRROR_CLOSE)) body = body.slice(0, -MIRROR_CLOSE.length).trim();
     try {
       const raw = JSON.parse(body) as unknown;
-      if (!raw || typeof raw !== "object" || !Array.isArray((raw as Tree).phases)) return null;
-      return normalizeTree(raw as Tree);
+      if (!raw || typeof raw !== "object" || !Array.isArray((raw as Tree).phases)) return { kind: "edited" };
+      return { kind: "tree", tree: normalizeTree(raw as Tree) };
     } catch {
-      return null;
+      return { kind: "edited" };
     }
   }
 
-  return null; // no marker, no mirror → hand-written / foreign → read-only
+  return { kind: "hand-written" }; // no marker, no mirror → hand-written / foreign → read-only
+}
+
+// File → tree, or null (→ read-only): recognize without the reason.
+export function parse(source: string, engine: Engine = "bb"): Tree | null {
+  const result = recognize(source, engine);
+  return result.kind === "tree" ? result.tree : null;
+}
+
+// ---- checkTree: an agent's JSON → a tree the compiler takes, or every problem by node path ----
+
+export type TreeCheck = { ok: true; tree: Tree } | { ok: false; problems: string[] };
+
+/** A workflow name is its file name: lowercase latin letters, digits and hyphens. */
+export const NAME_RE = /^[a-z0-9][a-z0-9-]*$/;
+const PHASE_MODES: readonly PhaseMode[] = ["single", "parallel", "pipeline"];
+const CONTAINER_MODES: readonly ContainerMode[] = ["parallel", "pipeline"];
+const AGENT_TEXT = ["label", "prompt", "model", "provider", "effort", "agentType", "schema"] as const;
+
+const isRecord = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
+
+function checkRepeat(value: unknown, at: string): string[] {
+  if (value === undefined || value === null) return [];
+  if (!isRecord(value)) return [`${at}.repeat: must be { maxLoops, until } or null`];
+  const problems: string[] = [];
+  if (typeof value.maxLoops !== "number" || !Number.isInteger(value.maxLoops) || value.maxLoops < 1) problems.push(`${at}.repeat.maxLoops: must be a whole number ≥ 1`);
+  if (value.until !== undefined && typeof value.until !== "string") problems.push(`${at}.repeat.until: must be a string`);
+  return problems;
+}
+
+// The settings a phase and a container share (decision workflow-node-settings-model).
+function checkGroupSettings(node: Record<string, unknown>, at: string): string[] {
+  const problems: string[] = [];
+  if (node.iterateOver !== undefined && typeof node.iterateOver !== "string") problems.push(`${at}.iterateOver: must be a string`);
+  if (node.iterateInWaves !== undefined && typeof node.iterateInWaves !== "boolean") problems.push(`${at}.iterateInWaves: must be true or false`);
+  if (node.maxParallel !== undefined && node.maxParallel !== null && (typeof node.maxParallel !== "number" || node.maxParallel < 1))
+    problems.push(`${at}.maxParallel: must be a number ≥ 1 or null`);
+  return [...problems, ...checkRepeat(node.repeat, at)];
+}
+
+function checkSteps(value: unknown, at: string): string[] {
+  if (!Array.isArray(value) || value.length === 0) return [`${at}: must be a non-empty array`];
+  return value.flatMap((step, i) => checkStep(step, `${at}[${i}]`));
+}
+
+function checkStep(step: unknown, at: string): string[] {
+  if (!isRecord(step)) return [`${at}: must be an object`];
+  if (step.type === "agent")
+    return [
+      ...AGENT_TEXT.filter((key) => step[key] !== undefined && typeof step[key] !== "string").map((key) => `${at}.${key}: must be a string`),
+      ...(step.prompt === undefined ? [`${at}.prompt: must be a string`] : []),
+      ...checkRepeat(step.repeat, at),
+    ];
+  if (step.type === "container")
+    return [
+      ...(CONTAINER_MODES.includes(step.mode as ContainerMode) ? [] : [`${at}.mode: must be "parallel" or "pipeline"`]),
+      ...checkGroupSettings(step, at),
+      ...checkSteps(step.steps, `${at}.steps`),
+    ];
+  return [`${at}.type: must be "agent" or "container"`];
+}
+
+function checkPhase(phase: unknown, at: string): string[] {
+  if (!isRecord(phase)) return [`${at}: must be an object`];
+  return [
+    ...(phase.title === undefined || typeof phase.title === "string" ? [] : [`${at}.title: must be a string`]),
+    ...(phase.mode === undefined || PHASE_MODES.includes(phase.mode as PhaseMode) ? [] : [`${at}.mode: must be "single", "parallel" or "pipeline"`]),
+    ...(phase.repeatBudget === undefined || phase.repeatBudget === null || typeof phase.repeatBudget === "number" ? [] : [`${at}.repeatBudget: must be a number or null`]),
+    ...checkGroupSettings(phase, at),
+    ...checkSteps(phase.steps, `${at}.steps`),
+  ];
+}
+
+// Where {{prev}} and {{item}} resolve — the same scope rules modeExpr/phaseBody compile by: {{prev}} only
+// inside a pipeline stage (and nodes nested in it), {{item}} only in an iterateOver template. Elsewhere the
+// compiler drops the placeholder silently, so the tree is refused instead.
+function scopeProblems(mode: string, steps: Step[], at: string, iterateOver: string, allowPrev: boolean, allowItem: boolean): string[] {
+  const step = (s: Step, path: string, prev: boolean, item: boolean): string[] =>
+    s.type === "container"
+      ? scopeProblems(s.mode, s.steps, path, s.iterateOver, prev, item)
+      : [
+          ...(s.prompt.includes("{{prev}}") && !prev ? [`${path}.prompt: {{prev}} works only inside a pipeline stage — here it would be dropped`] : []),
+          ...(s.prompt.includes("{{item}}") && !item ? [`${path}.prompt: {{item}} works only in the first step of an iterateOver group — here it would be dropped`] : []),
+        ];
+  if (mode === "single") return steps.length === 0 ? [] : step(steps[0], `${at}.steps[0]`, false, false);
+  if (mode === "parallel" && iterateOver.trim() !== "")
+    return [
+      ...(allowPrev ? [] : [`${at}.iterateOver: works only inside a pipeline stage — {{prev}}.${iterateOver.trim()} does not exist here`]),
+      ...(steps.length === 0 ? [] : step(steps[0], `${at}.steps[0]`, allowPrev, true)),
+    ];
+  return steps.flatMap((s, i) => step(s, `${at}.steps[${i}]`, mode === "pipeline" || allowPrev, allowItem));
+}
+
+// Never throws: a value that passes is normalized (every optional field at its default) so it compiles
+// to a file recognize() reads back as the same tree.
+export function checkTree(value: unknown): TreeCheck {
+  if (!isRecord(value)) return { ok: false, problems: ["tree: must be an object { name, description, phases }"] };
+  const problems = [
+    ...(typeof value.name === "string" && NAME_RE.test(value.name) ? [] : ["name: lowercase latin letters, digits and hyphens, e.g. review-changes"]),
+    ...(value.description === undefined || typeof value.description === "string" ? [] : ["description: must be a string"]),
+    ...(Array.isArray(value.phases) && value.phases.length > 0
+      ? value.phases.flatMap((phase, i) => checkPhase(phase, `phases[${i}]`))
+      : ["phases: must be a non-empty array"]),
+  ];
+  if (problems.length > 0) return { ok: false, problems };
+  const tree = normalizeTree(value as unknown as Tree);
+  const scope = tree.phases.flatMap((phase, i) =>
+    scopeProblems(phase.mode === "single" && phase.steps.length > 1 ? "parallel" : phase.mode, phase.steps, `phases[${i}]`, phase.iterateOver, false, false),
+  );
+  return scope.length > 0 ? { ok: false, problems: scope } : { ok: true, tree };
 }
 
 // Back-fill every node with its current default fields, so a tree recovered from an older mirror matches

@@ -38,6 +38,8 @@ export interface SegmentedControlOption<T extends string> {
   readonly value: T;
   readonly label: string;
   readonly icon?: ReactNode;
+  /** A number after the label — how many items the option holds. */
+  readonly count?: number;
 }
 
 /** The three Radix Tabs primitives the control is drawn with, imported by the plugin. */
@@ -65,6 +67,7 @@ export function SegmentedControl<T extends string>({
           <Trigger key={option.value} value={option.value} className="sgc-segment">
             {option.icon}
             {option.label}
+            {option.count !== undefined && <span className="sgc-count">{option.count}</span>}
           </Trigger>
         ))}
       </List>

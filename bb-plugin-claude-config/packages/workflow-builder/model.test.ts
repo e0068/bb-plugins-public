@@ -11,7 +11,7 @@ import {
   type Tree,
   type Agent,
   type Container,
-} from "../src/workflow/workflow-model";
+} from "./model";
 
 function agent(over: Partial<Agent> = {}): Agent {
   return { ...blankAgent(), ...over };

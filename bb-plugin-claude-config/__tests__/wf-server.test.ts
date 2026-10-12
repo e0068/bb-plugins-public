@@ -22,7 +22,7 @@ import plugin, {
   agentRefLabel,
   resolveBbBin,
 } from "../server";
-import { compile, blankTree } from "../src/workflow/workflow-model";
+import { compile, blankTree } from "@bb-plugins/workflow-builder/model";
 
 describe("extractRunId", () => {
   it("prefers JSON runId, falls back to a token, else null", () => {
@@ -365,5 +365,30 @@ describe("wfSave", () => {
     const res = (await call("wfSave", { projectId: null, store: "global", name: "g", source: "S" })) as { path: string };
     expect(res.path).toBe(join(homeDir, ".claude", "workflows", "g.js"));
     expect(written.hostId).toBeUndefined();
+  });
+});
+
+describe("wfRead — why a file has no tree", () => {
+  const read = async (content: string) => {
+    const { harness, homeDir, call } = setup();
+    harness.sdk.stub("files.read", () => ({ content, sha256: "x", contentEncoding: "utf8", sizeBytes: content.length }));
+    const path = join(homeDir, ".claude", "workflows", "w.js");
+    return (await call("wfRead", { projectId: null, store: "global", path })) as { source: string; tree: unknown; reason: string | null };
+  };
+
+  it("a file the builder wrote has a tree and no reason", async () => {
+    const res = await read(compile(blankTree("w"), "claude"));
+    expect(res.reason).toBeNull();
+    expect(res.tree).not.toBeNull();
+  });
+
+  it("a hand-written file says it was written by hand", async () => {
+    const res = await read('export const meta = { name: "epic" }\nawait agent("go")\n');
+    expect(res).toMatchObject({ tree: null, reason: "hand-written" });
+  });
+
+  it("a builder file edited by hand says it was edited after saving", async () => {
+    const res = await read(compile(blankTree("w"), "claude").replace("\n// Made with Claude Config", "\nconsole.log(1)\n// Made with Claude Config"));
+    expect(res).toMatchObject({ tree: null, reason: "edited" });
   });
 });

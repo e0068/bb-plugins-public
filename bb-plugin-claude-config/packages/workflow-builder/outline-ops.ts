@@ -10,7 +10,7 @@
  * a stale path (e.g. the node was just removed by another action) must not crash the app.
  */
 
-import { type Agent, type Container, type Phase, type RepeatSpec, type Step, type Tree, blankAgent, blankContainer, blankPhase } from "./workflow-model";
+import { type Agent, type Container, type Phase, type RepeatSpec, type Step, type Tree, blankAgent, blankContainer, blankPhase } from "./model";
 
 // path[0] = phase index; every further index is a step index, descending into nested containers.
 export type OutlinePath = number[];

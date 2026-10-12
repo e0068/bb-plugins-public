@@ -9,8 +9,8 @@ import {
   setAgentField,
   setGroupSettings,
   applyTemplate,
-} from "../src/workflow/outline-ops";
-import { blankAgent, blankContainer, blankTree, type Agent, type Tree } from "../src/workflow/workflow-model";
+} from "./outline-ops";
+import { blankAgent, blankContainer, blankTree, type Agent, type Tree } from "./model";
 
 function agent(over: Partial<Agent> = {}): Agent {
   return { ...blankAgent(), ...over };
