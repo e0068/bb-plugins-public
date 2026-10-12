@@ -21,6 +21,7 @@ import {
   type ProcessRunResult,
 } from "./process-runner";
 import { resolvePluginRoot } from "./tokens-runner";
+import type { QueryOptions } from "./types";
 
 /** Interpreters tried in order; whichever works first is remembered. */
 const INTERPRETER_CANDIDATES = ["python3", "python"] as const;
@@ -235,7 +236,7 @@ export interface AgentTimelineServiceOptions extends AgentTimelineRunnerOptions 
 
 export interface AgentTimelineService {
   /** Runs (or serves from cache) tools/agent_timeline.py for one (session, agent). */
-  query(params: AgentTimelineQueryParams): Promise<AgentTimelineRunResult>;
+  query(params: AgentTimelineQueryParams, options?: QueryOptions): Promise<AgentTimelineRunResult>;
   /** Drops every cached entry, including in-flight ones. */
   clearCache(): void;
 }
@@ -265,10 +266,10 @@ export function createAgentTimelineService(bb: BbPluginApi, options: AgentTimeli
   const entries = new Map<string, { expiresAt: number; promise: Promise<AgentTimelineRunResult> }>();
 
   return {
-    query(params) {
+    query(params, options) {
       const key = cacheKeyFor(params);
       const existing = entries.get(key);
-      if (existing && existing.expiresAt > now()) {
+      if (!options?.fresh && existing && existing.expiresAt > now()) {
         return existing.promise;
       }
 

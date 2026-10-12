@@ -21,6 +21,8 @@ import {
   DEFAULT_GEAR_SETTINGS,
   GEAR_HEIGHT_MODE_OPTIONS,
   GEAR_UNIT_OPTIONS,
+  DEFAULT_HEADER_CLICK,
+  HEADER_CLICK_OPTIONS,
   type AgentTimelineAgentInfo,
   type ThreadEntry,
   type ThreadsTimeline,
@@ -32,6 +34,7 @@ import {
   createThreadsTimelineService,
   createTokenUsageService,
   type AgentTimelineService,
+  type QueryOptions,
   type ThreadsTimelineService,
   type TokenUsageService,
 } from "./src/service";
@@ -225,7 +228,9 @@ export const rpcContract = defineRpcContract({
     // endpoint doesn't otherwise need. No `resolveSessionId` call, no
     // "no-session" status — the session is assumed already resolved by the
     // caller (e.g. from sessionTokenUsage's `sessionId`).
-    input: z.object({ session: z.string().min(1), agent: z.string().min(1) }).strict(),
+    // `fresh` — the user asked to reload (a header counter click on an open
+    // tab): skip the services' 30-second caches.
+    input: z.object({ session: z.string().min(1), agent: z.string().min(1), fresh: z.boolean().optional() }).strict(),
     output: z.discriminatedUnion("status", [
       z.object({
         status: z.literal("ready"),
@@ -270,6 +275,8 @@ export const rpcContract = defineRpcContract({
         // whether to merge each workflow run's agents into one segment.
         session: z.string().min(1).optional(),
         groupWorkflows: z.boolean().optional(),
+        // Same as agentTimeline's `fresh`: skip the 30-second cache.
+        fresh: z.boolean().optional(),
       })
       .strict(),
     output: z.discriminatedUnion("status", [
@@ -401,6 +408,7 @@ async function loadAgentTimeline(
   agentTimelineService: AgentTimelineService,
   session: string,
   agent: string,
+  options: QueryOptions,
 ) {
   // Same reasoning as loadSessionTokenUsage's try/catch: the timeline runner
   // and the totals query both call out to a child process, and must never
@@ -409,8 +417,8 @@ async function loadAgentTimeline(
   // are independent queries, no reason to serialize them.
   try {
     const [totalsResult, timelineResult] = await Promise.all([
-      service.query({ by: "agent", session, top: AGENT_ROWS_LIMIT }),
-      agentTimelineService.query({ session, agent }),
+      service.query({ by: "agent", session, top: AGENT_ROWS_LIMIT }, options),
+      agentTimelineService.query({ session, agent }, options),
     ]);
 
     if (!totalsResult.ok) {
@@ -445,9 +453,10 @@ async function loadAgentTimeline(
 async function loadThreadsTimeline(
   threadsTimelineService: ThreadsTimelineService,
   params: { limit: number; unit: number; project?: string; session?: string; groupWorkflows?: boolean },
+  options: QueryOptions,
 ) {
   try {
-    const result = await threadsTimelineService.query(params);
+    const result = await threadsTimelineService.query(params, options);
     if (!result.ok) {
       return { status: "error" as const, message: result.message };
     }
@@ -525,6 +534,13 @@ export interface PluginDeps {
  */
 function defineGearSettings(bb: BbPluginApi) {
   bb.settings.define({
+    headerClick: {
+      type: "select",
+      label: "Header counter click opens",
+      description: "popover — the dropdown under the counter; panel — the Token usage tab in the thread's right panel.",
+      options: [...HEADER_CLICK_OPTIONS],
+      default: DEFAULT_HEADER_CLICK,
+    },
     unit: {
       type: "select",
       label: "Chart time unit",
@@ -654,8 +670,8 @@ export default function plugin(bb: BbPluginApi, deps: PluginDeps = {}) {
 
   bb.rpc.register(rpcContract, {
     sessionTokenUsage: ({ threadId }) => loadSessionTokenUsage(service, threadId),
-    agentTimeline: ({ session, agent }) => loadAgentTimeline(service, agentTimelineService, session, agent),
-    threadsTimeline: (params) => loadThreadsTimeline(threadsTimelineService, params),
+    agentTimeline: ({ session, agent, fresh }) => loadAgentTimeline(service, agentTimelineService, session, agent, { fresh }),
+    threadsTimeline: ({ fresh, ...params }) => loadThreadsTimeline(threadsTimelineService, params, { fresh }),
     loadVizSettings: () => loadVizSettings(kv),
     saveVizSettings: (value) => saveVizSettings(kv, value),
     loadReducedColors: async () => parseReducedColors(await kv.get<unknown>(REDUCED_COLORS_KV_KEY)),

@@ -3,7 +3,7 @@
 // slice), so identical queries within the TTL are served from cache, and
 // concurrent identical queries share one in-flight run instead of spawning
 // a process each.
-import type { TokensQueryParams, TokensRunResult } from "./types";
+import type { QueryOptions, TokensQueryParams, TokensRunResult } from "./types";
 
 const DEFAULT_TTL_MS = 30_000;
 
@@ -12,8 +12,9 @@ export interface TokensCache {
    * Returns the cached result for `key` if still fresh; otherwise calls
    * `compute()` once, caches its promise immediately (so concurrent callers
    * for the same key await the same in-flight run), and returns it.
+   * `fresh` skips the cached result and replaces it with the new run.
    */
-  get(key: string, compute: () => Promise<TokensRunResult>): Promise<TokensRunResult>;
+  get(key: string, compute: () => Promise<TokensRunResult>, options?: QueryOptions): Promise<TokensRunResult>;
   /** Drops every cached entry, including in-flight ones. */
   clear(): void;
 }
@@ -23,9 +24,9 @@ export function createTokensCache(ttlMs = DEFAULT_TTL_MS, now: () => number = Da
   const entries = new Map<string, { expiresAt: number; promise: Promise<TokensRunResult> }>();
 
   return {
-    get(key, compute) {
+    get(key, compute, options) {
       const existing = entries.get(key);
-      if (existing && existing.expiresAt > now()) {
+      if (!options?.fresh && existing && existing.expiresAt > now()) {
         return existing.promise;
       }
 

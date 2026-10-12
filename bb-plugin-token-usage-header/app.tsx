@@ -1,7 +1,9 @@
 // bb-plugin-token-usage-header — frontend entry.
 //
 // One thread-header control: a compact button showing the session's total
-// token spend, with a popover for the full breakdown. Mounted once per
+// token spend. A click opens what the `headerClick` setting picks — a popover
+// with the session chart and breakdown card, or the session page in the
+// thread's right panel (the "session" thread panel action). Mounted once per
 // visible thread (twice in a split view) — all state lives in the
 // component, never at module scope.
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
@@ -13,6 +15,7 @@ import {
   type PluginNavPanelProps,
   type PluginRpcResult,
   type PluginThreadHeaderActionProps,
+  type PluginThreadPanelProps,
 } from "@get-bb/plugin-sdk/app";
 import { ReducedColorsProvider, ReducedColorsSection } from "@bb-plugins/reduced-colors";
 import { registerRailCollapse, registerSelectedThread, useFollowSelectedThread } from "@bb-plugins/rail-collapse";
@@ -24,17 +27,21 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { cn } from "@/lib/utils";
 import {
   DEFAULT_VIZ_SETTINGS,
-  formatCost,
-  formatPercent,
   formatPrice,
   formatTokenCount,
   parseGearSettings,
+  parseHeaderClick,
   type ChartSettings,
   type ThreadEntry,
 } from "./src/core";
 import { AgentTimelinePage, buildAgentDetailSubPath, THREADS_TIMELINE_PANEL_PATH } from "./pages/AgentTimelinePage";
 import { ThreadsTimelinePage } from "./pages/ThreadsTimelinePage";
 import { SessionChartCard } from "./pages/thread-chart";
+import { SessionSummary } from "./pages/SessionSummary";
+import { requestSessionPanelRefresh, SessionPanelTab } from "./pages/SessionPanelTab";
+
+/** The thread panel action that hosts the session page in the right panel. */
+const SESSION_PANEL_ACTION_ID = "session";
 
 type SessionTokenUsage = PluginRpcResult<(typeof rpcContract)["sessionTokenUsage"]>;
 type ReadyUsage = Extract<SessionTokenUsage, { status: "ready" }>;
@@ -44,24 +51,6 @@ type LoadState =
   | { kind: "no-session" }
   | { kind: "error"; message: string }
   | { kind: "ready"; usage: ReadyUsage };
-
-/**
- * The four phases of one model call, in display order: the three parts of
- * input fed in together (what was already cached and re-read, what was
- * newly cached, what was neither), then the generated output. `thinking`
- * isn't a phase of its own — it's already counted inside `output_tokens`,
- * so it's rendered as a nested line under the output row instead of
- * appearing here (see the nested row in UsageDetails below).
- */
-const TOKEN_PHASES: ReadonlyArray<{
-  key: "cacheRead" | "cacheWrite" | "input" | "output";
-  label: string;
-}> = [
-  { key: "cacheRead", label: "Cache read" },
-  { key: "cacheWrite", label: "Cache write" },
-  { key: "input", label: "Input" },
-  { key: "output", label: "Output" },
-];
 
 /** Reduced Colors for every chart under one mount — loaded once, not per chart (packages/reduced-colors). */
 function WithReducedColors({ children }: { children: ReactNode }) {
@@ -74,6 +63,14 @@ function ReducedColorsSettings() {
   const rpc = useRpc<typeof rpcContract>();
   return (
     <ReducedColorsSection load={() => rpc.call("loadReducedColors", {})} save={(value) => rpc.call("saveReducedColors", value)} />
+  );
+}
+
+function TokenUsagePanelTab(props: PluginThreadPanelProps) {
+  return (
+    <WithReducedColors>
+      <SessionPanelTab {...props} />
+    </WithReducedColors>
   );
 }
 
@@ -113,6 +110,7 @@ function TokenUsageHeaderButton({ threadId, isCompactViewport }: PluginThreadHea
   // setting) is still loaded from bb.storage.kv separately, below.
   const settingsState = useSettings();
   const gear = useMemo(() => parseGearSettings(settingsState.values), [settingsState.values]);
+  const opensPanel = parseHeaderClick(settingsState.values) === "panel";
   const [agentColors, setAgentColors] = useState<Record<string, string>>(DEFAULT_VIZ_SETTINGS.threads.agentColors);
   useEffect(() => {
     rpc.call("loadVizSettings", {}).then(
@@ -158,7 +156,8 @@ function TokenUsageHeaderButton({ threadId, isCompactViewport }: PluginThreadHea
   // threadsTimeline. A failure just hides the chart; the totals/agent list
   // below is the load-bearing content.
   const [sessionChart, setSessionChart] = useState<{ thread: ThreadEntry; agentLabels: Record<string, string> } | null>(null);
-  const chartSessionId = state.kind === "ready" ? state.usage.sessionId : null;
+  // The right panel draws its own chart — fetch this one only for the popover.
+  const chartSessionId = state.kind === "ready" && !opensPanel ? state.usage.sessionId : null;
   useEffect(() => {
     if (!chartSessionId) {
       setSessionChart(null);
@@ -195,6 +194,15 @@ function TokenUsageHeaderButton({ threadId, isCompactViewport }: PluginThreadHea
     });
   }
 
+  // An already open tab only gets focused by the host — reload it too. A
+  // surface without a side panel declines the open; then the session page
+  // opens in Usage Analytics instead, once the session is known.
+  function openSessionPanel() {
+    load();
+    if (navigate.openThreadPanel({ actionId: SESSION_PANEL_ACTION_ID })) requestSessionPanelRefresh(threadId);
+    else if (state.kind === "ready") openAgentDetails("main", state.usage.sessionId);
+  }
+
   const isError = state.kind === "error";
   const buttonText =
     state.kind === "ready"
@@ -213,6 +221,24 @@ function TokenUsageHeaderButton({ threadId, isCompactViewport }: PluginThreadHea
           ? "Token usage: loading"
           : `Token usage: error — ${state.message}`;
 
+  const trigger = (
+    <Button
+      type="button"
+      variant="ghost"
+      size="sm"
+      aria-label={ariaLabel}
+      className="h-7 gap-1 px-2 text-xs font-medium text-muted-foreground hover:text-foreground data-[state=open]:text-foreground"
+      onClick={opensPanel ? openSessionPanel : undefined}
+    >
+      <Icon name={isError ? "AlertCircle" : "ChartColumn"} className={cn("size-3.5", isError && "text-destructive")} aria-hidden="true" />
+      {/* The SDK's contract for isCompactViewport: "Collapse to an
+          icon-sized control when it is true — the row is short." The
+          number stays available via aria-label. */}
+      {buttonText && !isCompactViewport && <span className={cn(isError && "text-destructive")}>{buttonText}</span>}
+    </Button>
+  );
+  if (opensPanel) return trigger;
+
   return (
     <Popover
       open={open}
@@ -221,21 +247,7 @@ function TokenUsageHeaderButton({ threadId, isCompactViewport }: PluginThreadHea
         if (next) load();
       }}
     >
-      <PopoverTrigger asChild>
-        <Button
-          type="button"
-          variant="ghost"
-          size="sm"
-          aria-label={ariaLabel}
-          className="h-7 gap-1 px-2 text-xs font-medium text-muted-foreground hover:text-foreground data-[state=open]:text-foreground"
-        >
-          <Icon name={isError ? "AlertCircle" : "ChartColumn"} className={cn("size-3.5", isError && "text-destructive")} aria-hidden="true" />
-          {/* The SDK's contract for isCompactViewport: "Collapse to an
-              icon-sized control when it is true — the row is short." The
-              number stays available via aria-label. */}
-          {buttonText && !isCompactViewport && <span className={cn(isError && "text-destructive")}>{buttonText}</span>}
-        </Button>
-      </PopoverTrigger>
+      <PopoverTrigger asChild>{trigger}</PopoverTrigger>
       <PopoverContent align="start" className="max-h-[70vh] w-80 space-y-3 overflow-y-auto">
         {state.kind === "loading" && <p className="text-sm text-muted-foreground">Loading…</p>}
         {state.kind === "no-session" && (
@@ -244,132 +256,26 @@ function TokenUsageHeaderButton({ threadId, isCompactViewport }: PluginThreadHea
           </p>
         )}
         {state.kind === "error" && <p className="text-sm text-destructive">{state.message}</p>}
+        {/* The session page without its right column: the same chart and
+            breakdown card, fed by the light sessionTokenUsage call. */}
+        {state.kind === "ready" && sessionChart && (
+          <SessionChartCard
+            thread={sessionChart.thread}
+            agentLabels={sessionChart.agentLabels}
+            settings={chartSettings}
+            fillWidth={chartSettings.fillWidthPopover}
+          />
+        )}
         {state.kind === "ready" && (
-          <UsageDetails
-            usage={state.usage}
-            sessionChart={sessionChart}
-            chartSettings={chartSettings}
-            onAgentDetails={openAgentDetails}
+          <SessionSummary
+            totals={state.usage.totals}
+            agents={state.usage.agents}
+            truncated={state.usage.truncated}
+            onSelectAgent={(agentKey) => openAgentDetails(agentKey, state.usage.sessionId)}
           />
         )}
       </PopoverContent>
     </Popover>
-  );
-}
-
-function UsageDetails({
-  usage,
-  sessionChart,
-  chartSettings,
-  onAgentDetails,
-}: {
-  usage: ReadyUsage;
-  /** Session bar chart to render above the totals — null while it's loading or unavailable (chart is a bonus, not load-bearing). */
-  sessionChart: { thread: ThreadEntry; agentLabels: Record<string, string> } | null;
-  /** Same geometry/colour settings as the "Usage Analytics" feed's gear popover — keeps this chart visually identical to the feed's and the session page's. */
-  chartSettings: ChartSettings;
-  /** Navigates to the agent-detail sub-view for one agent row; omitted renders the row inert (no hover/click). */
-  onAgentDetails?: (agentKey: string, sessionId: string) => void;
-}) {
-  const { totals, agents } = usage;
-  return (
-    <div className="space-y-3">
-      {sessionChart && (
-        <SessionChartCard
-          thread={sessionChart.thread}
-          agentLabels={sessionChart.agentLabels}
-          settings={chartSettings}
-          fillWidth={chartSettings.fillWidthPopover}
-        />
-      )}
-
-      <div className="flex items-baseline justify-between">
-        <span className="text-sm font-medium text-foreground">Total tokens</span>
-        <span className="text-sm font-semibold tabular-nums text-foreground">{formatTokenCount(totals.total)}</span>
-      </div>
-
-      <dl className="space-y-1">
-        {TOKEN_PHASES.map(({ key, label }) => {
-          const value = totals[key];
-          return (
-            <div key={key} className="flex items-center justify-between gap-2 text-xs text-muted-foreground">
-              <dt>{label}</dt>
-              <dd className="tabular-nums">
-                {formatTokenCount(value)}{" "}
-                <span className="text-muted-foreground/70">({formatPercent(value, totals.total)})</span>{" "}
-                · {formatCost(totals.costs[key])}
-              </dd>
-            </div>
-          );
-        })}
-        {/* Thinking is part of the output, not a fifth phase — nested under
-            the output row above, its share is of `totals.output` (the
-            share of `totals.total` would always read "0%"). */}
-        <div className="flex items-center justify-between gap-2 pl-3 text-xs text-muted-foreground/70">
-          <dt>incl. thinking</dt>
-          <dd className="tabular-nums">
-            {formatTokenCount(totals.thinking)}{" "}
-            <span className="text-muted-foreground/50">({formatPercent(totals.thinking, totals.output)})</span>{" "}
-            · {formatCost(totals.costs.thinking)}
-          </dd>
-        </div>
-      </dl>
-
-      <div className="flex items-center justify-between border-t border-border pt-2 text-xs text-muted-foreground">
-        <span>Cost</span>
-        <span className="font-medium tabular-nums text-foreground">{formatPrice(totals.cost, totals.unpricedModels)}</span>
-      </div>
-      <div className="flex items-center justify-between text-xs text-muted-foreground">
-        <span>Responses</span>
-        <span className="font-medium tabular-nums text-foreground">{totals.messages}</span>
-      </div>
-
-      {agents.length > 0 && (
-        <div className="space-y-1 border-t border-border pt-2">
-          <div className="flex items-baseline justify-between">
-            <span className="text-xs font-medium text-muted-foreground">Agents</span>
-            {usage.truncated && (
-              <span className="text-xs text-muted-foreground/70">not all shown</span>
-            )}
-          </div>
-          <ul className="space-y-0.5">
-            {/* Name and caption aren't recomputed here — they already arrive
-                ready from the server (formatBucketDisplay), see
-                docs/decisions/token-usage-one-caption-source.md.
-                Whole row is the click target (no separate "Details" button)
-                — same row treatment as the "Agents" list in
-                pages/AgentTimelinePage.tsx's LeftPanel. */}
-            {agents.map((agent) => (
-              <li key={agent.key}>
-                <button
-                  type="button"
-                  disabled={!onAgentDetails}
-                  onClick={() => onAgentDetails?.(agent.key, usage.sessionId)}
-                  className={cn(
-                    "flex w-full items-start justify-between gap-2 rounded-md px-2 py-1 text-left text-xs",
-                    onAgentDetails && "cursor-pointer hover:bg-state-hover",
-                  )}
-                >
-                  <div className="min-w-0">
-                    <div className="truncate text-foreground" title={agent.name}>
-                      {agent.name}
-                    </div>
-                    {agent.caption && (
-                      <div className="truncate text-muted-foreground/70" title={agent.caption}>
-                        {agent.caption}
-                      </div>
-                    )}
-                  </div>
-                  <span className="shrink-0 tabular-nums text-muted-foreground">
-                    {formatTokenCount(agent.total)} · {formatPrice(agent.cost, agent.unpricedModels)}
-                  </span>
-                </button>
-              </li>
-            ))}
-          </ul>
-        </div>
-      )}
-    </div>
   );
 }
 
@@ -413,6 +319,14 @@ export default definePluginApp((app) => {
     id: "token-usage-header",
     title: "Token usage",
     component: TokenUsageHeaderAction,
+  });
+
+  app.slots.threadPanelAction({
+    id: SESSION_PANEL_ACTION_ID,
+    title: "Token usage",
+    icon: "ChartColumn",
+    layout: "flush",
+    component: TokenUsagePanelTab,
   });
 
   app.slots.navPanel({

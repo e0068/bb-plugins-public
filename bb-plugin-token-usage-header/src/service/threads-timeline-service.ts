@@ -27,6 +27,7 @@ import {
   type ProcessRunResult,
 } from "./process-runner";
 import { createThreadSessionResolver, type ThreadSessionResolver } from "./thread-session";
+import type { QueryOptions } from "./types";
 
 /** Interpreters tried in order; whichever works first is remembered. */
 const INTERPRETER_CANDIDATES = ["python3", "python"] as const;
@@ -253,7 +254,7 @@ export interface ThreadsTimelineServiceOptions extends ThreadsTimelineRunnerOpti
 
 export interface ThreadsTimelineService {
   /** Runs (or serves from cache) the threads_timeline.py slice described by `params`. */
-  query(params: ThreadsTimelineQueryParams): Promise<ThreadsTimelineRunResult>;
+  query(params: ThreadsTimelineQueryParams, options?: QueryOptions): Promise<ThreadsTimelineRunResult>;
   /** Drops every cached entry, including in-flight ones. */
   clearCache(): void;
 }
@@ -747,10 +748,10 @@ export function createThreadsTimelineService(
   const entries = new Map<string, { expiresAt: number; promise: Promise<ThreadsTimelineRunResult> }>();
 
   return {
-    query(params) {
+    query(params, options) {
       const key = threadsTimelineCacheKey(params);
       const existing = entries.get(key);
-      if (existing && existing.expiresAt > now()) {
+      if (!options?.fresh && existing && existing.expiresAt > now()) {
         return existing.promise;
       }
 

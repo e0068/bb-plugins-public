@@ -467,7 +467,7 @@ describe("server.ts agentTimeline", () => {
     ).rejects.toThrow();
   });
 
-  it("queries both the session totals and the agent timeline directly with (session, agent) — no threadId resolution", async () => {
+  it("queries the session totals and the agent timeline by (session, agent), cached unless asked fresh — no threadId resolution", async () => {
     const query = vi.fn(async (): Promise<TokensRunResult> => ({ ok: true, data: emptyReport() }));
     const service = fakeService({ query });
     const timelineQuery = vi.fn(async (): Promise<AgentTimelineRunResult> => ({ ok: true, data: emptyAgentTimeline() }));
@@ -477,8 +477,22 @@ describe("server.ts agentTimeline", () => {
     await harness.callRpc("agentTimeline", { session: "sess-1", agent: "agent-abc" });
 
     expect(service.resolveSessionId).not.toHaveBeenCalled();
-    expect(query).toHaveBeenCalledWith({ by: "agent", session: "sess-1", top: expect.any(Number) });
-    expect(timelineQuery).toHaveBeenCalledWith({ session: "sess-1", agent: "agent-abc" });
+    expect(query).toHaveBeenCalledWith({ by: "agent", session: "sess-1", top: expect.any(Number) }, { fresh: undefined });
+    expect(timelineQuery).toHaveBeenCalledWith({ session: "sess-1", agent: "agent-abc" }, { fresh: undefined });
+  });
+
+  it("a fresh request skips the cached totals and the cached timeline", async () => {
+    const query = vi.fn(async (): Promise<TokensRunResult> => ({ ok: true, data: emptyReport() }));
+    const timelineQuery = vi.fn(async (): Promise<AgentTimelineRunResult> => ({ ok: true, data: emptyAgentTimeline() }));
+    const harness = await loadPluginWithDeps({
+      service: fakeService({ query }),
+      agentTimelineService: fakeAgentTimelineService({ query: timelineQuery }),
+    });
+
+    await harness.callRpc("agentTimeline", { session: "sess-1", agent: "main", fresh: true });
+
+    expect(query).toHaveBeenCalledWith(expect.objectContaining({ session: "sess-1" }), { fresh: true });
+    expect(timelineQuery).toHaveBeenCalledWith({ session: "sess-1", agent: "main" }, { fresh: true });
   });
 
   it("maps a ready timeline (agent info + events) plus session totals/agents to the RPC output shape", async () => {
@@ -604,6 +618,15 @@ describe("server.ts threadsTimeline", () => {
     expect(result).toEqual({ status: "ready", unit: 60, threads: [], agentLabels: {}, truncated: false });
   });
 
+  it("a fresh request skips the cached slice and keeps the flag out of the slice params", async () => {
+    const query = vi.fn(async (): Promise<ThreadsTimelineRunResult> => ({ ok: true, data: emptyThreadsTimeline() }));
+    const harness = await loadPluginWithDeps({ threadsTimelineService: fakeThreadsTimelineService({ query }) });
+
+    await harness.callRpc("threadsTimeline", { limit: 1, unit: 60, session: "sess-1", fresh: true });
+
+    expect(query).toHaveBeenCalledWith({ limit: 1, unit: 60, session: "sess-1" }, { fresh: true });
+  });
+
   it("rejects limit=0 (below the minimum)", async () => {
     const harness = await loadPluginWithDeps({});
 
@@ -639,14 +662,14 @@ describe("server.ts threadsTimeline", () => {
     ).rejects.toThrow();
   });
 
-  it("passes params straight through to the threads timeline service", async () => {
+  it("passes the slice params through to the threads timeline service, cached unless asked fresh", async () => {
     const query = vi.fn(async (): Promise<ThreadsTimelineRunResult> => ({ ok: true, data: emptyThreadsTimeline() }));
     const threadsTimelineService = fakeThreadsTimelineService({ query });
     const harness = await loadPluginWithDeps({ threadsTimelineService });
 
     await harness.callRpc("threadsTimeline", { limit: 20, unit: 60, project: "my-project" });
 
-    expect(query).toHaveBeenCalledWith({ limit: 20, unit: 60, project: "my-project" });
+    expect(query).toHaveBeenCalledWith({ limit: 20, unit: 60, project: "my-project" }, { fresh: undefined });
   });
 
   it("maps a ready slice (unit + threads) to the RPC output shape", async () => {
@@ -971,12 +994,12 @@ describe("server.ts loadVizSettings / saveVizSettings", () => {
 });
 
 describe("server.ts gear settings (bb.settings.define)", () => {
-  it("declares exactly the 17 former gear-popover fields, each carrying DEFAULT_GEAR_SETTINGS's own default (single source of truth)", async () => {
+  it("declares the 17 former gear-popover fields besides its non-chart settings, each carrying DEFAULT_GEAR_SETTINGS's own default", async () => {
     const { harness } = await loadPluginFull();
     const descriptors = harness.inspection.registrations.settingsDescriptors;
 
-    const sharedSwitches: string[] = [RAIL_COLLAPSE_SETTING, SELECTED_THREAD_SETTING];
-    expect(Object.keys(descriptors).filter((key) => !sharedSwitches.includes(key)).sort()).toEqual(
+    const nonChartSettings: string[] = [RAIL_COLLAPSE_SETTING, SELECTED_THREAD_SETTING, "headerClick"];
+    expect(Object.keys(descriptors).filter((key) => !nonChartSettings.includes(key)).sort()).toEqual(
       [
         "unit",
         "fillWidthFeed",
@@ -1002,6 +1025,15 @@ describe("server.ts gear settings (bb.settings.define)", () => {
       const expected = typeof defaultValue === "boolean" ? defaultValue : String(defaultValue);
       expect(descriptors[key].default).toEqual(expected);
     }
+  });
+
+  it("declares what a header counter click opens — the popover or the right panel, popover by default", async () => {
+    const { harness } = await loadPluginFull();
+    expect(harness.inspection.registrations.settingsDescriptors.headerClick).toMatchObject({
+      type: "select",
+      options: ["popover", "panel"],
+      default: "popover",
+    });
   });
 
   it("declares the rail-collapse switch, off by default", async () => {
