@@ -6,7 +6,8 @@ import { describe, expect, it } from "vitest";
 import { parse } from "yaml";
 
 import { DEFAULT_STAGES } from "./core/flows";
-import { BUILTIN_SKILLS, FLOW_CREATE_SKILL, stageSkillOf } from "./lib/stage-constants";
+import { BUILTIN_SKILLS, CHOOSE_FLOW_SKILL, FLOW_CREATE_SKILL, stageSkillOf } from "./lib/stage-constants";
+import { FLOW_SKILLS } from "./server/session-config";
 
 const file = (name: string, doc: string) => new URL(`./skills/${name}/${doc}`, import.meta.url);
 const frontName = (text: string) => /^---\nname: (\S+)\n/.exec(text)?.[1];
@@ -44,5 +45,10 @@ describe("шапка каждого навыка плагина разбирае
 
   it("навык каждого встроенного этапа среди них", () => {
     expect(shipped).toEqual(expect.arrayContaining(named));
+  });
+
+  it("правила выбора flow — навык в плагине, который сессиям агентов не отдаётся", () => {
+    expect(shipped).toContain(CHOOSE_FLOW_SKILL);
+    expect(FLOW_SKILLS).not.toContain(CHOOSE_FLOW_SKILL);
   });
 });

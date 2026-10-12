@@ -7,7 +7,7 @@
 // владельца снимаются.
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 
-import { AGENT_NO_FLOW, AUTO_FLOW, NO_FLOW, flowById, flowOrNone, withExpandedStages } from "../core/flows";
+import { AUTO_FLOW, NO_FLOW, flowById, flowOrNone, withExpandedStages } from "../core/flows";
 import { flowChoiceRpcContract, threadFlowRpcContract } from "../shared/contract";
 import type { FlowSettingsStore } from "./flow-settings";
 import type { ProgressStore } from "./progress";
@@ -38,11 +38,11 @@ export const registerFlowChoice = (
     sideChat?: (threadId: string) => Promise<boolean>;
   },
 ): FlowChoice => {
-  /** Flow треда так, как его видит строка выбора: отказ агента — ещё «Автоматически», flow выберет агент; тред без привязки — flow по умолчанию. */
+  /** Flow треда так, как его видит строка выбора: тред без привязки — flow по умолчанию. */
   const current = (threadId: string): string => {
     const flowId = deps.threads.flowOf(threadId);
     if (flowId === NO_FLOW) return NO_FLOW;
-    return flowId === AUTO_FLOW || flowId === AGENT_NO_FLOW ? AUTO_FLOW : flowById(deps.flows.current(), flowId).id;
+    return flowId === AUTO_FLOW ? AUTO_FLOW : flowById(deps.flows.current(), flowId).id;
   };
   const finished = async (threadId: string) => (await deps.finished?.(threadId).catch(() => false)) ?? false;
   /** Что строка показывает выбранным без выбора владельца: после завершённого прогона — «Автоматически», с ним начнётся следующий. */

@@ -3,14 +3,14 @@
 // запущен: здесь синхронно ложится отложенный файл ограничения навыков (./skill-scope.ts). Сбой записи сессию не трогает:
 // упавший выбор отнял бы у агента все инструменты Flow. Сессия Side chat не получает ничего: Flow её не ведёт, а дерево у
 // неё общее с основным тредом, и ограничение навыков в нём — основного. Стартовое сообщение flow треда сессия получает
-// невидимой инструкцией: живая сессия её уже не меняет, поэтому тред с «Автоматически» получает сообщение выбранного flow
-// ответом выбора (./choose-flow.ts).
+// невидимой инструкцией только на старте: новый тред с «Автоматически» получает flow до старта сессии (./auto-choice.ts),
+// и сообщение выбранного flow приходит тем же путём, а живая сессия, выбравшая flow после завершённого прогона, его не получает.
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 
 import { isSideChat } from "../core/side-chat";
 import { BUILTIN_SKILLS, FLOW_CREATE_SKILL, ROOT_SKILL } from "../lib/stage-constants";
 
-/** Навыки, которые Flow везёт в `skills/`, — по имени из шапки SKILL.md. */
+/** Навыки, которые Flow везёт в `skills/` для агентов, — по имени из шапки SKILL.md; навык выбора flow читает только модель выбора. */
 export const FLOW_SKILLS: readonly string[] = [ROOT_SKILL, ...Object.values(BUILTIN_SKILLS), FLOW_CREATE_SKILL];
 
 export const registerSessionConfig = (

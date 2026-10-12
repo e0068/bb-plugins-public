@@ -2,11 +2,13 @@
 // треду и какое стартовое сообщение отдать сессии; модель по умолчанию из каталога bb — для выбора модели на странице Flow.
 import { REASONING_LEVELS } from "../lib/agent-limits";
 import type { AgentSettings, Execution, FlowSettings } from "../shared/contract";
-import { AUTO_FLOW, flowOrNone } from "./flows";
+import { flowOrNone } from "./flows";
 
-/** Настройки агента выбора треда: настоящий flow — его, «Автоматически» — строки «Автоматически», «Без flow» — ничего. */
-export const agentFor = (settings: FlowSettings, flowId: string | undefined): AgentSettings | undefined =>
-  flowId === AUTO_FLOW ? settings.autoAgent : flowOrNone(settings, flowId)?.agent;
+/**
+ * Настройки агента выбора треда: настоящий flow — его; «Автоматически» и «Без flow» — ничего. Блок «Агент» строки
+ * «Автоматически» задаёт не тред, а модель, которая выбирает flow до хода (../server/auto-choice.ts).
+ */
+export const agentFor = (settings: FlowSettings, flowId: string | undefined): AgentSettings | undefined => flowOrNone(settings, flowId)?.agent;
 
 /** Модель и effort для живого треда: только у того же провайдера — провайдера у треда bb не меняет. */
 export const executionFor = (agent: AgentSettings | undefined, providerId: string): Pick<Execution, "model" | "reasoningLevel"> | null =>

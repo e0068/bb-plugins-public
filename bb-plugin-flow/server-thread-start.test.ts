@@ -1,17 +1,34 @@
 // @vitest-environment node
 // Flow цепляется к треду с его первым сообщением — раньше инструкций первого хода: тред, который Flow создал
 // передачей работы, получает flow исходного треда и его прогон, новый тред с настоящим flow — пустой прогон.
+import { mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { createFakePluginHost, makeMessageDispatchHookContext, makeThreadResponse } from "@get-bb/plugin-sdk/testing";
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { addFlow, AUTO_FLOW, newFlow } from "./core/flows";
 import { QUICK_STAGES } from "./core/stages-fixtures";
 import { ASK_TOOL_NAME } from "./server/ask-tool";
-import { CHOOSE_FLOW_TOOL } from "./lib/stage-constants";
+import { FLOW_RULE } from "./core/stages";
+import { CHOOSING_REASON } from "./server/owner-turn";
 import type { FlowSettings, ProgressView } from "./shared/contract";
 import plugin from "./server";
 
 type Input = Array<{ type: string; text?: string; mentions?: unknown[] }>;
+
+// Модель выбора flow — подменённый `claude` первым в PATH: отвечает id из FAKE_CHOICE, без него — «без flow»; думает FAKE_DELAY секунд.
+const realPath = process.env.PATH;
+beforeEach(() => {
+  const bin = mkdtempSync(join(tmpdir(), "flow-claude-"));
+  writeFileSync(join(bin, "claude"), '#!/bin/sh\ncat > /dev/null\nsleep "${FAKE_DELAY:-0}"\necho "${FAKE_CHOICE:-none}"\n', { mode: 0o755 });
+  process.env.PATH = `${bin}:${realPath ?? ""}`;
+});
+afterEach(() => {
+  process.env.PATH = realPath;
+  delete process.env.FAKE_CHOICE;
+  delete process.env.FAKE_DELAY;
+});
 
 /** Бриф по правилам инструмента: объём, пункт «Готово, когда» с ценой и доля у каждого этапа навыка. */
 const briefArgs = (stages: ReadonlyArray<{ id: string; recommended: boolean }>) => ({
@@ -56,8 +73,9 @@ const setup = async (options: { hooked?: boolean; eventLast?: boolean } = {}) =>
   const composerThread = async (id: string, projectId: string) => {
     const thread = makeThreadResponse({ id, projectId, parentThreadId: null, status: "pending" });
     if (options.eventLast !== true) await harness.emitThreadEvent("thread.created", { thread });
-    await harness.registrations.hooks["message.dispatch"]!({ ...makeMessageDispatchHookContext({ thread }), initiator: "user" } as never);
+    const decision = await harness.registrations.hooks["message.dispatch"]!({ ...makeMessageDispatchHookContext({ thread, input: { blocks: [], text: "Почини кнопку" } }), initiator: "user" } as never);
     if (options.eventLast === true) await harness.emitThreadEvent("thread.created", { thread });
+    return decision;
   };
   const view = (threadId: string) => harness.callRpc<ProgressView | null>("getFlowProgress", { threadId });
   return { harness, composerThread, view, instructionsAtFirstTurn };
@@ -71,13 +89,39 @@ describe("flow и прогон треда с первого сообщения",
     expect(await view("thr_new")).toMatchObject({ done: 0, total: QUICK_STAGES.length, flowName: "Quick" });
   });
 
-  it("тред проекта с «Автоматически» прогона не получает, пока агент не выбрал flow, а выбор сразу заводит прогон", async () => {
+  it("тред проекта с «Автоматически»: первое сообщение ждёт в очереди, пока модель выбирает flow, и уходит агенту уже с этапами", async () => {
+    process.env.FAKE_CHOICE = "quick";
+    const { harness, composerThread, view } = await setup();
+    await harness.callRpc("setFlowChoice", { projectId: "proj_auto", flowId: AUTO_FLOW });
+    expect(await composerThread("thr_auto", "proj_auto")).toEqual({ action: "wait", reason: CHOOSING_REASON });
+    await vi.waitFor(() => expect(harness.recheckCount).toBe(1), { timeout: 10_000 });
+    expect(await view("thr_auto")).toMatchObject({ done: 0, flowName: "Quick" });
+    expect(harness.registrations.instructionProvider?.({ threadId: "thr_auto", projectId: "proj_auto" })).toContain(FLOW_RULE);
+    // Перепроверка очереди снова проходит хук: flow уже выбран, и сообщение уходит.
+    expect(await composerThread("thr_auto", "proj_auto")).toEqual({ action: "proceed" });
+  });
+
+  it("владелец выбрал flow над композером, пока модель думала, — тред идёт его flow, а не выбранным моделью", async () => {
+    process.env.FAKE_CHOICE = "quick";
+    process.env.FAKE_DELAY = "0.5";
+    const { harness, composerThread, view } = await setup();
+    const own = (await harness.callRpc<FlowSettings>("getFlowSettings", {})).flows.find((flow) => flow.id !== "quick")!;
+    await harness.callRpc("setFlowChoice", { projectId: "proj_auto", flowId: AUTO_FLOW });
+    expect(await composerThread("thr_auto", "proj_auto")).toEqual({ action: "wait", reason: CHOOSING_REASON });
+    await harness.callRpc("pickThreadFlow", { threadId: "thr_auto", flowId: own.id });
+    await vi.waitFor(() => expect(harness.recheckCount).toBe(1), { timeout: 10_000 });
+    expect(await composerThread("thr_auto", "proj_auto")).toEqual({ action: "proceed" });
+    expect(await view("thr_auto")).toMatchObject({ flowName: own.name });
+  });
+
+  it("модель не нашла подходящего flow — сообщение уходит, тред идёт без flow, агенту выбирать нечего", async () => {
     const { harness, composerThread, view } = await setup();
     await harness.callRpc("setFlowChoice", { projectId: "proj_auto", flowId: AUTO_FLOW });
     await composerThread("thr_auto", "proj_auto");
+    await vi.waitFor(() => expect(harness.recheckCount).toBe(1), { timeout: 10_000 });
     expect(await view("thr_auto")).toBeNull();
-    await harness.callAgentTool(CHOOSE_FLOW_TOOL, { flowId: "quick" }, { threadId: "thr_auto" });
-    expect(await view("thr_auto")).toMatchObject({ done: 0, flowName: "Quick" });
+    expect(harness.registrations.instructionProvider?.({ threadId: "thr_auto", projectId: "proj_auto" })).toBe("");
+    expect(await composerThread("thr_auto", "proj_auto")).toEqual({ action: "proceed" });
   });
 
   it("передача работы: новый тред идёт flow исходного уже в первом ходе и ведёт его прогон без снятого в брифе этапа", async () => {
@@ -91,7 +135,7 @@ describe("flow и прогон треда с первого сообщения",
     await harness.callRpc("setFlowChoice", { projectId: "proj_quick", flowId: AUTO_FLOW });
     const stages = [{ id: first!.id, run: true, executor: "self" }, { id: second!.id, run: false, executor: "self" }];
     await harness.callRpc("answerBrief", { id: briefId, messageId: "m", answer: { briefId, answers: [], place: "thread", stages } });
-    expect(instructionsAtFirstTurn[0]).not.toContain(CHOOSE_FLOW_TOOL);
+    expect(instructionsAtFirstTurn[0]).toContain(FLOW_RULE);
     const next = await view("thr_spawned_1");
     expect(next).toMatchObject({ flowName: "Quick" });
     expect(next?.stages.find((stage) => stage.id === second!.id)?.state).toBe("skip");
@@ -106,7 +150,7 @@ describe("flow и прогон треда с первого сообщения",
     const briefId = /dec_[a-z0-9]+/.exec(asked)![0];
     await harness.callRpc("setFlowChoice", { projectId: "proj_quick", flowId: AUTO_FLOW });
     await harness.callRpc("answerBrief", { id: briefId, messageId: "m", answer: { briefId, answers: [], place: "thread", stages: QUICK_STAGES.map((stage) => ({ id: stage.id, run: true, executor: "self" })) } });
-    expect(harness.registrations.instructionProvider?.({ threadId: "thr_spawned_1", projectId: "proj_quick" })).not.toContain(CHOOSE_FLOW_TOOL);
+    expect(harness.registrations.instructionProvider?.({ threadId: "thr_spawned_1", projectId: "proj_quick" })).toContain(FLOW_RULE);
     expect(await view("thr_spawned_1")).toMatchObject({ flowName: "Quick" });
   });
 
@@ -119,13 +163,14 @@ describe("flow и прогон треда с первого сообщения",
     const briefId = /dec_[a-z0-9]+/.exec(asked)![0];
     await harness.callRpc("setFlowChoice", { projectId: "proj_quick", flowId: AUTO_FLOW });
     await harness.callRpc("answerBrief", { id: briefId, messageId: "m", answer: { briefId, answers: [], place: "thread", stages: QUICK_STAGES.map((stage) => ({ id: stage.id, run: true, executor: "self" })) } });
-    expect(instructionsAtFirstTurn[0]).not.toContain(CHOOSE_FLOW_TOOL);
+    expect(instructionsAtFirstTurn[0]).toContain(FLOW_RULE);
   });
 
   it("событие создания пришло после первого сообщения — тред проекта на «Автоматически» чужого прогона не получает", async () => {
     const { harness, composerThread, view } = await setup({ eventLast: true });
     await harness.callRpc("setFlowChoice", { projectId: "proj_auto", flowId: AUTO_FLOW });
     await composerThread("thr_auto", "proj_auto");
+    await vi.waitFor(() => expect(harness.recheckCount).toBe(1), { timeout: 10_000 });
     expect(await view("thr_auto")).toBeNull();
   });
 });

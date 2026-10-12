@@ -5,10 +5,12 @@ import { readdirSync } from "node:fs";
 import { createFakePluginHost, makePluginAgentConfigurationContext } from "@get-bb/plugin-sdk/testing";
 import { describe, expect, it } from "vitest";
 
+import { CHOOSE_FLOW_SKILL } from "./lib/stage-constants";
 import plugin from "./server";
 
+// Навык выбора flow едет в skills/, но его читает модель выбора до хода, а не агент треда.
 const shipped = readdirSync(new URL("./skills/", import.meta.url), { withFileTypes: true })
-  .filter((entry) => entry.isDirectory())
+  .filter((entry) => entry.isDirectory() && entry.name !== CHOOSE_FLOW_SKILL)
   .map((entry) => entry.name);
 
 describe("выбор инструментов сессии плагином Flow", () => {

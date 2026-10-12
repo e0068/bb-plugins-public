@@ -53,15 +53,12 @@ describe("блок «Агент» у flow", () => {
 });
 
 describe("«Автоматически» на странице Flow", () => {
-  it("строка списка сразу под «Без flow»; её страница — имя и блок «Агент», без этапов", async () => {
+  it("строка списка сразу под «Без flow»; её страница — имя и блок «Агент» без стартового сообщения и без этапов", async () => {
     const slot = open(AUTO_FLOW);
     const nav = within(await slot.findByRole("navigation", { name: "Flow" }));
     expect(nav.getByRole("button", { name: "Автоматически" }).getAttribute("aria-current")).toBe("page");
     expect(await slot.findByRole("heading", { name: "Автоматически" })).toBeTruthy();
     expect(slot.queryByRole("button", { name: "Добавить этап" })).toBeNull();
-    const field = slot.getByRole("textbox", { name: "Стартовое сообщение" });
-    fireEvent.change(field, { target: { value: "Сперва выбери flow" } });
-    fireEvent.blur(field);
-    await vi.waitFor(() => expect(lastSaved(slot)?.autoAgent).toEqual({ start: "Сперва выбери flow" }));
+    expect(slot.queryByRole("textbox", { name: "Стартовое сообщение" })).toBeNull();
   });
 });

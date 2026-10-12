@@ -21,6 +21,11 @@ describe("запуск скрипта", () => {
     expect(outcome).toEqual({ ok: true, detail: "string" });
   });
 
+  it("вход доходит до скрипта в stdin, свои переменные — в окружение", async () => {
+    const outcome = await runScript({ name: "a.sh", content: 'read line\necho "$FLOW_MODEL:$line"' }, { cwd: dir(), threadId: "t", environmentId: "e" }, { input: "привет\n", env: { FLOW_MODEL: "sonnet" } });
+    expect(outcome).toEqual({ ok: true, detail: "sonnet:привет" });
+  });
+
   it("ненулевой код — провал с выводом stderr", async () => {
     const outcome = await runScript({ name: "fail.sh", content: "echo broken >&2\nexit 3" }, { cwd: dir(), threadId: "t", environmentId: "e" });
     expect(outcome).toEqual({ ok: false, error: "The script fail.sh exited with code 3:\nbroken" });
@@ -59,7 +64,7 @@ describe("запуск скрипта — края", () => {
     const cwd = dir();
     const started = Date.now();
     const outcome = await runScript({ name: "slow.sh", content: "(sleep 5; touch late.txt) &\nsleep 5" }, { cwd, threadId: "t", environmentId: "e" }, { timeoutMs: 300 });
-    expect(outcome).toEqual({ ok: false, error: "The script slow.sh did not finish in 10 minutes and was stopped." });
+    expect(outcome).toEqual({ ok: false, error: "The script slow.sh did not finish in 0.3 seconds and was stopped." });
     expect(Date.now() - started).toBeLessThan(3000);
     await new Promise((resolve) => setTimeout(resolve, 5500));
     expect(existsSync(join(cwd, "late.txt"))).toBe(false);

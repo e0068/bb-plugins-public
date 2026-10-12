@@ -1,13 +1,18 @@
 // Хук `message.dispatch` — раньше инструкций хода. Первое сообщение треда даёт ему flow и прогон (./thread-start.ts);
-// ход владельца применяет flow, выбранный в контейнере состояния Flow над композером. Сообщение не придерживается
-// никогда: тред без flow виден в самом контейнере, а ход после завершённого прогона начинает следующий — с выбранным
-// flow или с «Автоматически» (./flow-choice.ts). Сообщение владельца при ждущем брифе возвращает бриф агенту.
+// ход владельца применяет flow, выбранный в контейнере состояния Flow над композером; ход после завершённого прогона
+// начинает следующий — с выбранным flow или с «Автоматически» (./flow-choice.ts). Сообщение придерживается только
+// в треде с «Автоматически»: оно ждёт в очереди, пока flow выбирается (./auto-choice.ts). Сообщение владельца при
+// ждущем брифе возвращает бриф агенту.
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 
 import { returnsBrief } from "../core/awaiting";
 import { appliesPickedFlow } from "../core/picked-flow";
 import { isSideChat } from "../core/side-chat";
+import type { AutoChoice } from "./auto-choice";
 import type { FirstMessage } from "./thread-start";
+
+/** Подпись сообщения в очереди треда, пока flow выбирается. */
+export const CHOOSING_REASON = "Выбираю flow";
 
 type DispatchContext = Parameters<Parameters<BbPluginApi["experimental_hooks"]["on"]>[1]>[0];
 
@@ -38,15 +43,20 @@ export const registerOwnerTurn = (
     turnStart?: (threadId: string) => Promise<void>;
     /** Ход в Side chat: flow и прогон, доставшиеся ему раньше, снимаются. */
     sideChat?: (threadId: string) => Promise<void>;
+    /** Выбор flow треду с «Автоматически» до хода агента. Не задано — сообщение не ждёт. */
+    autoChoice?: AutoChoice;
   },
 ): void => {
-  // Ход сперва применяет выбранный flow и возвращает бриф, а настройки дерева сверяет последним — уже по flow этого хода.
-  const decide = async (context: DispatchContext): Promise<void> => {
-    if (deps.ownSend(context.thread.id, context.input.text)) return;
+  // Ход сперва применяет выбранный flow и возвращает бриф, потом ждёт выбора flow, а настройки дерева сверяет
+  // последним — уже по flow этого хода. Ответ — ждать ли сообщению выбора flow.
+  const decide = async (context: DispatchContext): Promise<boolean> => {
+    if (deps.ownSend(context.thread.id, context.input.text)) return false;
     const turn = { attempt: context.attempt, initiator: initiatorOf(context), retry: context.queuedMessage?.payload.kind === "retry" };
     // Хук, который бросает, запирает тред: сбой применения выбора пропускает сообщение.
     if (appliesPickedFlow(turn)) await deps.ownerTurn(context.thread.id).catch(() => undefined);
     if (returnsBrief(turn)) await deps.ownerMessage?.(context.thread.id).catch(() => undefined);
+    // Flow выбирается любому сообщению, которое начинает ход, — и владельца, и другого агента: выбирать самому агенту нечем.
+    return turn.attempt === "start-turn" && !turn.retry && deps.autoChoice?.gate(context.thread.id, context.input.text) === "wait";
   };
   bb.experimental_hooks.on("message.dispatch", async (context) => {
     // Side chat Flow не ведёт: ни flow, ни прогона, ни выбора — и не сверяет навыки дерева, общего с основным тредом.
@@ -59,7 +69,7 @@ export const registerOwnerTurn = (
       const { id, projectId, parentThreadId } = context.thread;
       await deps.firstMessage({ thread: { id, projectId, parentThreadId }, byFlow: context.thread.originPluginId === bb.pluginId, mentioned: mentionedThreads(context) }).catch(() => undefined);
     }
-    await decide(context);
+    if (await decide(context)) return { action: "wait", reason: CHOOSING_REASON };
     // Хук, который бросает, запирает тред: сбой сверки настроек пропускает сообщение.
     if (context.attempt === "start-turn") await deps.turnStart?.(context.thread.id).catch(() => undefined);
     return { action: "proceed" };

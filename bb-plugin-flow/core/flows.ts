@@ -173,18 +173,15 @@ export const flowById = (settings: FlowSettings, id: string | undefined): Flow =
  */
 export const NO_FLOW = "none";
 
-/** Выбор «Автоматически»: flow треду выбирает агент по описаниям flow, а пока не выбрал — у треда flow нет. */
+/** Выбор «Автоматически»: flow треду выбирает модель по описаниям flow до хода агента, а пока не выбрала — у треда flow нет. */
 export const AUTO_FLOW = "auto";
-
-/** Тред, который агент оставил без flow: идёт без flow, но, в отличие от выбора владельца, агент назначит flow сам, когда разговор дойдёт до работы. */
-export const AGENT_NO_FLOW = "none-by-agent";
 
 /**
  * Flow треда или его отсутствие. `NO_FLOW` и `AUTO_FLOW` — отсутствие,
  * остальное — как `flowById`: отличает отказ от flow от неизвестного id,
  * который читается как flow по умолчанию.
  */
-export const flowOrNone = (settings: FlowSettings, id: string | undefined): Flow | null => (id === NO_FLOW || id === AUTO_FLOW || id === AGENT_NO_FLOW ? null : flowById(settings, id));
+export const flowOrNone = (settings: FlowSettings, id: string | undefined): Flow | null => (id === NO_FLOW || id === AUTO_FLOW ? null : flowById(settings, id));
 
 /** Id flow, на которые ссылаются строки «Flow» flow `id`, в порядке строк; неизвестный flow ссылок не даёт. */
 const flowRefs = (flows: readonly Flow[], id: string): string[] => flows.find((flow) => flow.id === id)?.stages.flatMap((stage) => (stage.flowId === undefined ? [] : [stage.flowId])) ?? [];

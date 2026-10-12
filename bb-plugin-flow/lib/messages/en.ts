@@ -394,7 +394,7 @@ export const en: Messages = {
     descriptionPlaceholder: "When to choose this flow — the agent reads it when choosing a flow automatically",
     noFlowDescription: "When no flow is needed",
     noFlowDescriptionPlaceholder: "When no flow is needed — the agent reads it first, before the flow descriptions",
-    noFlowHint: "A thread on “Automatic” goes without a flow while the conversation fits this description — the agent checks it every turn and chooses a flow itself once it comes to work. “No flow” above the composer forbids a flow altogether.",
+    noFlowHint: "A thread on “Automatic” goes without a flow when its first message fits this description: the model that picks the flow reads it before the flows. “No flow” above the composer forbids a flow altogether.",
     remove: (name) => `Delete flow ${name}`,
     removeAction: "Delete flow",
     removeQuestion: (name) => `Delete flow ${quote(name)}? Its stages are gone for good.`,
@@ -413,7 +413,7 @@ export const en: Messages = {
     startMessage: "Start message",
     startPlaceholder: "What the agent knows from the thread's first turn — invisible in the chat",
     agentHint: "The model and effort apply to the thread when its provider matches; the agent gets the start message as an invisible session instruction.",
-    autoHint: "A thread on “Automatic” starts with this agent, and once the agent picks a flow it gets that flow's model and start message.",
+    autoHint: "This model picks the flow for a thread on “Automatic” in one call without a thread, while the owner's message waits in the queue; the thread then starts with the chosen flow's model and start message. Without a model here — Claude Code with Sonnet.",
   },
   mentions: {
     skills: "Skills and commands",

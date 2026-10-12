@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 
 import type { FlowSettings } from "../shared/contract";
 import { agentFor, defaultExecutionOf, executionFor, providerModelsOf, startMessageOf } from "./flow-agent";
-import { AGENT_NO_FLOW, AUTO_FLOW, NO_FLOW } from "./flows";
+import { AUTO_FLOW, NO_FLOW } from "./flows";
 
 const opus = { providerId: "claude-code", model: "opus", reasoningLevel: "high" as const };
 const settings: FlowSettings = {
@@ -17,12 +17,11 @@ const settings: FlowSettings = {
 };
 
 describe("агент треда по flow", () => {
-  it("настоящий flow — его настройки, «Автоматически» — строки «Автоматически», без flow — ничего", () => {
+  it("настоящий flow — его настройки; «Автоматически» и без flow — ничего: блок «Автоматически» задаёт агента выбора, а не тред", () => {
     expect(agentFor(settings, "bug")?.start).toBe("Сначала воспроизведи");
     expect(agentFor(settings, "plain")).toBeUndefined();
-    expect(agentFor(settings, AUTO_FLOW)).toEqual({ start: "Выбери flow" });
+    expect(agentFor(settings, AUTO_FLOW)).toBeUndefined();
     expect(agentFor(settings, NO_FLOW)).toBeUndefined();
-    expect(agentFor(settings, AGENT_NO_FLOW)).toBeUndefined();
   });
 
   it("модель — только тому же провайдеру", () => {

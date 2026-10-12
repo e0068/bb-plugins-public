@@ -7,7 +7,7 @@ import { isRunFinished } from "../core/run-summary";
 import { stage } from "../core/stages-fixtures";
 import { registerFlowChoice } from "./flow-choice";
 import { createFlowSettings } from "./flow-settings";
-import { registerOwnerTurn } from "./owner-turn";
+import { CHOOSING_REASON, registerOwnerTurn } from "./owner-turn";
 import { createProgress } from "./progress";
 import { createStore } from "./store";
 import { createThreadFlows } from "./thread-flows";
@@ -28,12 +28,15 @@ const host = async () => {
     return found !== null && isRunFinished(found, STAGES);
   };
   const choice = registerFlowChoice(bb, { flows, threads, progress, store: createStore(bb.storage.kv), cancelRun: () => undefined, finished });
-  registerOwnerTurn(bb, { ownSend: () => false, ownerTurn: choice.ownerTurn });
+  // Выбор flow до хода — заглушка: ждёт, пока тред на «Автоматически», и помнит, на каком прогоне её спросили.
+  const gated: Array<unknown> = [];
+  const autoChoice = { gate: (threadId: string) => (threads.flowOf(threadId) === AUTO_FLOW ? (gated.push(progress.get(threadId)), "wait" as const) : ("proceed" as const)) };
+  registerOwnerTurn(bb, { ownSend: () => false, ownerTurn: choice.ownerTurn, autoChoice });
   await threads.assign(THREAD, base.flows[0]!.id);
   // Прогон треда завершён: единственный этап закрыт.
   await progress.update(THREAD, () => ({ stages: { questions: { startedAt: AT, finishedAt: AT } }, waiting: [] }));
   const decide = () => harness.registrations.hooks["message.dispatch"]!({ ...makeMessageDispatchHookContext({ thread: { id: THREAD } }), initiator: "user" } as never);
-  return { harness, threads, progress, decide };
+  return { harness, threads, progress, decide, gated };
 };
 
 describe("сообщение владельца после завершённого прогона", () => {
@@ -42,11 +45,12 @@ describe("сообщение владельца после завершённо�
     expect(await harness.callRpc("threadFlowChoice", { threadId: THREAD })).toMatchObject({ selected: AUTO_FLOW });
   });
 
-  it("без выбора сообщение уходит сразу, тред идёт с «Автоматически», а завершённый прогон снимается", async () => {
-    const { threads, progress, decide } = await host();
-    expect(await decide()).toEqual({ action: "proceed" });
+  it("без выбора тред встаёт на «Автоматически», завершённый прогон снимается, и сообщение ждёт выбора flow", async () => {
+    const { threads, progress, decide, gated } = await host();
+    expect(await decide()).toEqual({ action: "wait", reason: CHOOSING_REASON });
     expect(threads.flowOf(THREAD)).toBe(AUTO_FLOW);
     expect(await progress.get(THREAD)).toBeNull();
+    expect(await gated[0]).toBeNull();
   });
 
   it("с выбором сообщение уходит сразу, и тред идёт выбранным flow с новой записью прогона", async () => {

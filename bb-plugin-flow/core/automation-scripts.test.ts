@@ -67,6 +67,10 @@ describe("итог запуска скрипта", () => {
     expect(scriptOutcome("a.sh", { code: null, timedOut: true, output: "" })).toEqual({ ok: false, error: "The script a.sh did not finish in 10 minutes and was stopped." });
   });
 
+  it("таймаут со своим сроком называет его: выбор flow ждёт 90 секунд, а не 10 минут", () => {
+    expect(scriptOutcome("choose-flow.sh", { code: null, timedOut: true, output: "" }, 90_000)).toEqual({ ok: false, error: "The script choose-flow.sh did not finish in 90 seconds and was stopped." });
+  });
+
   it("не запустился — провал с причиной", () => {
     expect(scriptOutcome("a.sh", { code: null, timedOut: false, output: "", spawnError: "EACCES" })).toEqual({ ok: false, error: "The script a.sh did not start: EACCES" });
   });

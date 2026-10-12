@@ -4,19 +4,21 @@
 // а без родителя — выбор своего проекта; тред Side chat — «без flow».
 import type { PluginKvStorage } from "@get-bb/plugin-sdk";
 
-import { AGENT_NO_FLOW, NO_FLOW } from "../core/flows";
+import { NO_FLOW } from "../core/flows";
 import { isSideChat } from "../core/side-chat";
 
 const THREAD_PREFIX = "thread-flow:";
 const PROJECT_PREFIX = "project-flow:";
 const PICK_PREFIX = "thread-flow-pick:";
+/** Отказ от flow, который раньше записывал агент треда, выбиравший flow сам: теперь это просто «Без flow». */
+const LEGACY_AGENT_NO_FLOW = "none-by-agent";
 
 /** Новый тред глазами привязки: проект, родитель и плагин, который его создал. */
 export type NewThread = { id: string; projectId: string; parentThreadId: string | null; originPluginId?: string | null };
 
 export type ThreadFlows = {
   flowOf(threadId: string): string | undefined;
-  /** Треды под Flow: назначенный flow и «Автоматически», пока агент не выбрал; отказ от flow не в счёт. */
+  /** Треды под Flow: назначенный flow и «Автоматически», пока flow не выбран; «Без flow» не в счёт. */
   withFlow(): string[];
   /** Ставит треду flow: следующий прогон в нём пойдёт по нему, а не по выбору проекта. */
   assign(threadId: string, flowId: string): Promise<void>;
@@ -43,7 +45,7 @@ const readAll = async (kv: PluginKvStorage, prefix: string): Promise<Map<string,
 };
 
 export const createThreadFlows = async (kv: PluginKvStorage): Promise<ThreadFlows> => {
-  const threads = await readAll(kv, THREAD_PREFIX);
+  const threads = new Map([...(await readAll(kv, THREAD_PREFIX))].map(([threadId, flowId]) => [threadId, flowId === LEGACY_AGENT_NO_FLOW ? NO_FLOW : flowId]));
   const projects = await readAll(kv, PROJECT_PREFIX);
   const picks = await readAll(kv, PICK_PREFIX);
   let writes: Promise<unknown> = Promise.resolve();
@@ -61,7 +63,7 @@ export const createThreadFlows = async (kv: PluginKvStorage): Promise<ThreadFlow
   };
   return {
     flowOf: (threadId) => threads.get(threadId),
-    withFlow: () => [...threads].flatMap(([threadId, flowId]) => (flowId === NO_FLOW || flowId === AGENT_NO_FLOW ? [] : [threadId])),
+    withFlow: () => [...threads].flatMap(([threadId, flowId]) => (flowId === NO_FLOW ? [] : [threadId])),
     async assign(threadId, flowId) {
       threads.set(threadId, flowId);
       await kv.set(`${THREAD_PREFIX}${threadId}`, flowId);

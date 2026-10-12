@@ -1,7 +1,8 @@
 // Бэкенд Flow: инструменты агента `ask_decision`, `share_command` и `flow_stage`, исполнитель автоматизаций, коллекция
 // flow и flow тредов, настройка языка и RPC виджетов поверх kv плагина.
 import { randomBytes } from "node:crypto";
-import { homedir } from "node:os";
+import { readFile } from "node:fs/promises";
+import { homedir, tmpdir } from "node:os";
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import { selectedThreadSetting } from "@bb-plugins/rail-collapse/setting";
 
@@ -11,9 +12,9 @@ import { OWN_PLUGIN_ID } from "./core/plugin-id";
 import { flowsInPanelSetting } from "./lib/flows-in-panel-setting";
 import { ANSWERED_CHANNEL, registerApi } from "./server/api";
 import { returnAwaitingBrief } from "./server/brief-return";
-import { ASK_TOOL_NAME, flowTurnInstructions, registerAskTool } from "./server/ask-tool";
-import { registerChooseFlow } from "./server/choose-flow";
-import { scriptStep } from "./server/script-step";
+import { ASK_TOOL_NAME, registerAskTool } from "./server/ask-tool";
+import { CHOICE_TIMEOUT_MS, createAutoChoice } from "./server/auto-choice";
+import { runScript, scriptStep } from "./server/script-step";
 import { readTaskFile, writeTaskFile } from "./server/task-file";
 import { createAgentRelay } from "./server/agent-relay";
 import { createAutomationRunner, externalStep, registerAutomationRunner } from "./server/automation-runner";
@@ -53,9 +54,7 @@ import { createStore } from "./server/store";
 import { createThreadFlows } from "./server/thread-flows";
 import { removeStaleRootSkill } from "./server/stale-root-skill";
 import { registerVoiceApi } from "./server/voice";
-import { AGENT_NO_FLOW, AUTO_FLOW, flowOrNone, NO_FLOW, stageSettingsOf } from "./core/flows";
-import { CHOOSE_FLOW_AGAIN_RULE, CHOOSE_FLOW_RULE } from "./core/stages";
-import { CHOOSE_FLOW_TOOL } from "./lib/stage-constants";
+import { flowOrNone, NO_FLOW, stageSettingsOf } from "./core/flows";
 import { LANGUAGE_OPTIONS, LANGUAGE_SETTING, LANGUAGE_SYSTEM } from "./lib/i18n";
 import { isRunFinished } from "./core/run-summary";
 import { liveFlowId } from "./core/run-history";
@@ -66,6 +65,10 @@ import { isSideChat } from "./core/side-chat";
 /** Время в base36 спереди — идентификаторы сортируются по созданию. */
 const newId = (): string => `${Date.now().toString(36)}${randomBytes(6).toString("hex")}`;
 const now = (): string => new Date().toISOString();
+
+/** Файл, который плагин везёт с собой: рядом с исходником, а из собранного `dist/server.js` — уровнем выше. */
+const ownFile = (path: string): Promise<string> =>
+  readFile(new URL(`./${path}`, import.meta.url), "utf8").catch(() => readFile(new URL(`../${path}`, import.meta.url), "utf8"));
 
 /** Сколько начало хода ждёт сверки настроек Claude Code дерева треда. */
 const TURN_START_SYNC_MS = 2_000;
@@ -176,7 +179,7 @@ export default async function plugin(bb: BbPluginApi): Promise<void> {
   bb.events.on("thread.deleted", ({ thread }) => void delivery.forget(thread.id));
   // Первая сессия треда стартует уже с ограничением: решение сверки ложится в дерево прямо перед стартом Claude Code.
   registerSessionConfig(bb, {
-    tools: [ASK_TOOL_NAME, FLOW_STAGE_TOOL, READ_FLOWS_TOOL_NAME, SAVE_FLOW_TOOL_NAME, COMMAND_TOOL_NAME, CHOOSE_FLOW_TOOL],
+    tools: [ASK_TOOL_NAME, FLOW_STAGE_TOOL, READ_FLOWS_TOOL_NAME, SAVE_FLOW_TOOL_NAME, COMMAND_TOOL_NAME],
     prestart: (threadId, root) => void scope.prestart(threadId, root),
     startMessage: (threadId) => startMessageOf(agentOf(threadId)),
     deliver: delivery.deliver,
@@ -256,13 +259,7 @@ export default async function plugin(bb: BbPluginApi): Promise<void> {
       }),
     () => undefined,
   );
-  // Выбор агентом — треду с «Автоматически» до выбора и после собственного отказа агента: «Без flow» и flow с описаниями каждый ход.
-  const chooseFlow = (threadId: string) => {
-    const flowId = threads.flowOf(threadId);
-    if (flowId === AUTO_FLOW) return CHOOSE_FLOW_RULE(flows.current(), CHOOSE_FLOW_TOOL, NO_FLOW);
-    return flowId === AGENT_NO_FLOW ? CHOOSE_FLOW_AGAIN_RULE(flows.current(), CHOOSE_FLOW_TOOL) : null;
-  };
-  registerAskTool(bb, store, { newId, now, stages: stagesOf, flowIds: () => flows.current().flows.map((flow) => flow.id), flowName: flowNameOf, hasFlow: (threadId) => flowOf(threadId) !== null, chooseFlow, emit, planning: (threadId) => readPlanning(bb.sdk, threadId, Date.now(), readClaudeTranscript()), progress });
+  registerAskTool(bb, store, { newId, now, stages: stagesOf, flowIds: () => flows.current().flows.map((flow) => flow.id), flowName: flowNameOf, hasFlow: (threadId) => flowOf(threadId) !== null, emit, planning: (threadId) => readPlanning(bb.sdk, threadId, Date.now(), readClaudeTranscript()), progress });
   const journalDirs = createJournalDirStore(bb.storage.kv);
   // Каждый ответ на бриф запоминается за тредом вместе с путём файла журнала: по нему итог прогона ссылается на журнал.
   const journalIndex = createJournalIndex(bb.storage.kv, store);
@@ -358,23 +355,6 @@ export default async function plugin(bb: BbPluginApi): Promise<void> {
   };
   void catalog();
   registerFlowTools(bb, flows, { catalog, newId });
-  // Пустой прогон выбранного flow — сразу: контейнер состояния Flow показывает этапы, не дожидаясь первого брифа.
-  registerChooseFlow(bb, {
-    flows,
-    threads,
-    instructions: (threadId) => flowTurnInstructions(stagesOf(threadId).stages),
-    // Тред с «Автоматически» получил flow: лишнее прячется сразу, до начала работы.
-    started: async (threadId) => {
-      await progress.annotate(threadId, (p) => p);
-      await syncSkills(threadId);
-    },
-    // Выбранный flow — с его моделью со следующего хода и стартовым сообщением в ответе выбора.
-    agent: async (threadId) => {
-      await applyAgent(threadId).catch((error) => bb.log.warn(`flow agent: model not set for ${threadId} (${error instanceof Error ? error.message : String(error)})`));
-      return startMessageOf(agentOf(threadId));
-    },
-    refused: (threadId) => scope.sync(threadId),
-  });
   registerFlowSettingsApi(bb, flows, { catalog, ready: async () => {
     if (!heal.done()) await catalog();
   },
@@ -422,7 +402,24 @@ export default async function plugin(bb: BbPluginApi): Promise<void> {
   const choice = registerFlowChoice(bb, { flows, threads, progress, store, cancelRun: (threadId) => runner.cancel(threadId), finished: runFinished, sideChat });
   // Ход владельца применяет flow, выбранный в контейнере состояния Flow; после завершённого прогона — начинает следующий.
   // Первое сообщение нового треда даёт ему flow и прогон: тред передачи — flow исходного, остальные с flow — пустой прогон.
+  // Тред с «Автоматически»: сообщение, которое начинает ход, ждёт в очереди, пока скрипт выбирает flow; у треда в `pending`
+  // окружения ещё нет, поэтому скрипт идёт во временной папке ОС. Выбранный flow — с пустым прогоном и своей моделью до хода
+  // агента; стартовое сообщение flow получает только новая сессия — у живой инструкции сессии уже собраны.
+  const autoChoice = createAutoChoice({
+    settings: () => flows.current(),
+    threads,
+    started: async (threadId) => {
+      await progress.annotate(threadId, (p) => p);
+      await applyAgent(threadId).catch((error) => bb.log.warn(`flow agent: model not set for ${threadId} (${error instanceof Error ? error.message : String(error)})`));
+    },
+    skill: () => ownFile("skills/flow-choose/SKILL.md"),
+    script: async (input, env) =>
+      runScript({ name: "choose-flow.sh", content: await ownFile("scripts/choose-flow.sh") }, { cwd: tmpdir(), threadId: "", environmentId: "" }, { timeoutMs: CHOICE_TIMEOUT_MS, input, env }),
+    release: () => void bb.experimental_hooks.recheck("message.dispatch").catch(() => undefined),
+    warn: (message) => bb.log.warn(message),
+  });
   registerOwnerTurn(bb, {
+    autoChoice,
     ownSend: own.has,
     ownerTurn: choice.ownerTurn,
     ownerMessage: (threadId) => returnAwaitingBrief({ store, publish: (id) => bb.realtime.publish(ANSWERED_CHANNEL, { id }) }, threadId),
