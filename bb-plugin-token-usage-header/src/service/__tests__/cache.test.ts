@@ -114,6 +114,22 @@ describe("createTokensCache", () => {
     expect(calls).toBe(2);
   });
 
+  it("a fresh request recomputes inside the TTL and the next plain request reuses its result", async () => {
+    let calls = 0;
+    const compute = () => {
+      calls++;
+      return Promise.resolve(OK);
+    };
+    const cache = createTokensCache(30_000);
+
+    await cache.get("k", compute);
+    const fresh = await cache.get("k", compute, { fresh: true });
+    const after = await cache.get("k", compute);
+
+    expect(calls).toBe(2);
+    expect(after).toBe(fresh);
+  });
+
   it("clear() forces the next request to recompute", async () => {
     let calls = 0;
     const compute = () => {

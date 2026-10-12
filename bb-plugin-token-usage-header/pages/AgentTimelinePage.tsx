@@ -1,8 +1,9 @@
-// Agent-detail sub-view — one agent's event-by-event timeline plus a
-// left-hand copy of the header popover's session breakdown, with agent rows
-// that switch the right panel instead of just listing totals. Ports
+// Agent-detail sub-view — one agent's event-by-event timeline plus the
+// session breakdown card (SessionSummary, the same one the header popover
+// shows), with agent rows that switch the timeline. Ports
 // prototype/agent-detail.html into real components/data; see that file for
-// the approved visual reference.
+// the approved visual reference. The page body is SessionView, which the
+// thread's right-panel tab (SessionPanelTab.tsx) renders too.
 //
 // NOT a nav panel of its own. It's rendered by app.tsx's single
 // "threads-timeline" nav panel (THREADS_TIMELINE_PANEL_PATH) whenever that
@@ -29,8 +30,6 @@ import { cn } from "@/lib/utils";
 import {
   DEFAULT_VIZ_SETTINGS,
   formatCost,
-  formatPercent,
-  formatPrice,
   formatTokenCount,
   parseGearSettings,
   type AgentTimelineEvent,
@@ -39,6 +38,7 @@ import {
   type ThreadsVizSettings,
 } from "../src/core";
 import { SessionChartCard } from "./thread-chart";
+import { SessionSummary } from "./SessionSummary";
 
 /**
  * Path of the one nav panel both pages of this plugin share — defined here
@@ -104,23 +104,6 @@ type TimelineLoadState =
   | { kind: "loading" }
   | { kind: "error"; message: string }
   | { kind: "ready"; data: ReadyAgentTimeline };
-
-/**
- * Same four phases as app.tsx's UsageDetails, duplicated rather than
- * imported: app.tsx is the top-level slot-assembly module (it imports THIS
- * file to register the nav panel), so a page importing back from it would
- * be a circular, upward dependency — against this repo's "dependencies run
- * strictly downward" rule. This file's map doesn't include a place to put a
- * shared module for the two to both import instead, so the four-row array
- * literal is kept in sync by hand; low risk, it mirrors sessionTotalsSchema
- * in server.ts and hasn't changed since the header control shipped.
- */
-const TOKEN_PHASES: ReadonlyArray<{ key: "cacheRead" | "cacheWrite" | "input" | "output"; label: string }> = [
-  { key: "cacheRead", label: "Cache read" },
-  { key: "cacheWrite", label: "Cache write" },
-  { key: "input", label: "Input" },
-  { key: "output", label: "Output" },
-];
 
 interface Turn {
   headerIndex: number | null;
@@ -260,39 +243,80 @@ function displayAgentName(agent: { key: string; description: string | null; agen
   return agent.description ?? agent.agentType ?? "Subagent";
 }
 
-export function AgentTimelinePage({ subPath }: PluginNavPanelProps) {
-  const rpc = useRpc<typeof rpcContract>();
-  const navigate = useBbNavigate();
+/** Which agent's timeline the session page shows, and the deep-link highlight window inside it. */
+export type SessionSelection = Omit<AgentDetailLinkParams, "session">;
 
-  const linkParams = useMemo(() => parseAgentDetailSubPath(subPath), [subPath]);
-  const session = linkParams.session || null;
+/**
+ * The session page at its address in Usage Analytics: the selection lives in
+ * `subPath`, so picking an agent or a chart segment re-navigates (replace —
+ * the back button returns to the feed, not through every agent clicked).
+ */
+export function AgentTimelinePage({ subPath }: PluginNavPanelProps) {
+  const navigate = useBbNavigate();
+  const { session, ...selection } = useMemo(() => parseAgentDetailSubPath(subPath), [subPath]);
+  return (
+    <SessionView
+      session={session || null}
+      selection={selection}
+      onSelect={(next) =>
+        navigate.toPluginPanel(THREADS_TIMELINE_PANEL_PATH, { subPath: buildAgentDetailSubPath({ session, ...next }), replace: true })
+      }
+      header={
+        <div className="shrink-0 border-b border-border px-4 py-2 @[44rem]:px-5">
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            className="h-7 gap-1 px-2 text-xs font-medium text-muted-foreground hover:text-foreground"
+            onClick={() => navigate.toPluginPanel(THREADS_TIMELINE_PANEL_PATH, { subPath: "" })}
+          >
+            <span aria-hidden="true">←</span> Usage Analytics
+          </Button>
+        </div>
+      }
+    />
+  );
+}
+
+/**
+ * The session page itself — chart, left column, event timeline — for any
+ * surface: the Usage Analytics page and the thread's right-panel tab. The
+ * surface owns the selection; the page reports picks through `onSelect`.
+ * Columns follow the page's own width (container query), so a narrow right
+ * panel stacks the timeline under the left column even in a wide window.
+ */
+export function SessionView({
+  session,
+  selection: linkParams,
+  onSelect,
+  refreshKey = 0,
+  header,
+}: {
+  session: string | null;
+  selection: SessionSelection;
+  onSelect: (next: SessionSelection) => void;
+  /** Bumping it reloads the timeline and chart in place — the loaded page, expanded events and toggles stay. */
+  refreshKey?: number;
+  /** Rendered above the chart — the page's back link. */
+  header?: React.ReactNode;
+}) {
+  const rpc = useRpc<typeof rpcContract>();
   const activeAgentKey = linkParams.agent;
 
   function selectAgent(agentKey: string) {
-    if (agentKey === activeAgentKey) return;
-    navigate.toPluginPanel(THREADS_TIMELINE_PANEL_PATH, {
-      // Deliberately drop from/to: a highlight window belongs to the agent
-      // it was computed for, not to whatever agent is picked next.
-      subPath: buildAgentDetailSubPath({ session: linkParams.session, agent: agentKey }),
-      replace: true,
-    });
+    // Deliberately drop from/to: a highlight window belongs to the agent it
+    // was computed for, not to whatever agent is picked next.
+    if (agentKey !== activeAgentKey) onSelect({ agent: agentKey });
   }
 
-  // Segment click on THIS page's own session chart: unlike selectAgent above,
-  // a chart segment always carries a bin's time window, and that window WAS
-  // computed for the agentKey being navigated to — so it's kept, not dropped.
-  // Re-navigating (even to the same agentKey) changes linkParams.from/to,
-  // which re-triggers the highlight/scroll effect below on the already-loaded
-  // timeline; switching agentKey additionally refetches it first.
+  // Segment click on the session chart: unlike selectAgent above, a chart
+  // segment always carries a bin's time window, and that window WAS computed
+  // for the agentKey being selected — so it's kept, not dropped. Selecting it
+  // (even for the same agentKey) changes from/to, which re-triggers the
+  // highlight/scroll effect below on the already-loaded timeline; switching
+  // agentKey additionally refetches it first.
   function selectSegment(agentKey: string, fromIso: string, toIso: string) {
-    navigate.toPluginPanel(THREADS_TIMELINE_PANEL_PATH, {
-      subPath: buildAgentDetailSubPath({ session: linkParams.session, agent: agentKey, from: fromIso, to: toIso }),
-      replace: true,
-    });
-  }
-
-  function backToFeed() {
-    navigate.toPluginPanel(THREADS_TIMELINE_PANEL_PATH, { subPath: "" });
+    onSelect({ agent: agentKey, from: fromIso, to: toIso });
   }
 
   // --- Both panels: one rpc call per (session, agent), no "no-session"
@@ -306,14 +330,25 @@ export function AgentTimelinePage({ subPath }: PluginNavPanelProps) {
       mountedRef.current = false;
     };
   }, []);
+  // A refresh of the same (session, agent) keeps the loaded timeline on
+  // screen until the new one arrives instead of flashing "Loading…".
+  const loadedTimelineRef = useRef<string | null>(null);
+  // Each effect asks the server past its 30-second cache once per refreshKey
+  // bump — a plain agent switch after a reload is served from the cache.
+  const timelineRefreshRef = useRef(refreshKey);
   useEffect(() => {
     if (!session) {
+      loadedTimelineRef.current = null;
       setTimelineState({ kind: "idle" });
       return;
     }
     let cancelled = false;
-    setTimelineState({ kind: "loading" });
-    rpc.call("agentTimeline", { session, agent: activeAgentKey }).then(
+    const timelineKey = `${session}\u0000${activeAgentKey}`;
+    if (loadedTimelineRef.current !== timelineKey) setTimelineState({ kind: "loading" });
+    loadedTimelineRef.current = timelineKey;
+    const fresh = timelineRefreshRef.current !== refreshKey;
+    timelineRefreshRef.current = refreshKey;
+    rpc.call("agentTimeline", { session, agent: activeAgentKey, ...(fresh && { fresh }) }).then(
       (result) => {
         if (cancelled || !mountedRef.current) return;
         if (result.status === "ready") setTimelineState({ kind: "ready", data: result });
@@ -330,7 +365,7 @@ export function AgentTimelinePage({ subPath }: PluginNavPanelProps) {
     return () => {
       cancelled = true;
     };
-  }, [rpc, session, activeAgentKey]);
+  }, [rpc, session, activeAgentKey, refreshKey]);
 
   // Session bar chart at the top — one horizontal token chart for the whole
   // session, workflow runs merged into single segments. Reuses the
@@ -368,13 +403,16 @@ export function AgentTimelinePage({ subPath }: PluginNavPanelProps) {
     if (mergeEvents.length === 0) return sessionChart.thread;
     return { ...sessionChart.thread, events: [...sessionChart.thread.events, ...mergeEvents].sort((a, b) => (a.ts < b.ts ? -1 : a.ts > b.ts ? 1 : 0)) };
   }, [sessionChart, mergeEvents]);
+  const chartRefreshRef = useRef(refreshKey);
   useEffect(() => {
     if (!session) {
       setSessionChart(null);
       return;
     }
     let cancelled = false;
-    rpc.call("threadsTimeline", { limit: 1, unit: gear.unit, session, groupWorkflows }).then(
+    const fresh = chartRefreshRef.current !== refreshKey;
+    chartRefreshRef.current = refreshKey;
+    rpc.call("threadsTimeline", { limit: 1, unit: gear.unit, session, groupWorkflows, ...(fresh && { fresh }) }).then(
       (result) => {
         if (cancelled || !mountedRef.current) return;
         setSessionChart(
@@ -393,7 +431,7 @@ export function AgentTimelinePage({ subPath }: PluginNavPanelProps) {
     // Agent switch keeps the same session chart — depends on `session` and
     // the bucket width, which also refetches if the gear's saved time-unit
     // setting changes.
-  }, [rpc, session, gear.unit, groupWorkflows]);
+  }, [rpc, session, gear.unit, groupWorkflows, refreshKey]);
 
   // --- Timeline display controls: NOT reset on agent change (they're
   // standing preferences, persisted below) — only `expanded`/`collapsedTurns`
@@ -476,11 +514,21 @@ export function AgentTimelinePage({ subPath }: PluginNavPanelProps) {
     setShowFullContent(false);
   }, [activeAgentKey]);
 
-  // --- Deep-link highlight: recomputed whenever the timeline (re)loads or the link's window changes. ---
+  // --- Deep-link highlight: once per freshly loaded timeline or new window.
+  // A refresh of the same (session, agent, window) reloads the data but
+  // neither scrolls back nor flashes the window again — the owner may have
+  // scrolled away since. ---
   const containerRef = useRef<HTMLDivElement>(null);
   const [highlighted, setHighlighted] = useState<Set<number> | null>(null);
+  const highlightedForRef = useRef<string | null>(null);
   useEffect(() => {
     if (timelineState.kind !== "ready") return;
+    const highlightKey = [session, activeAgentKey, linkParams.from, linkParams.to].join("\u0000");
+    if (highlightedForRef.current === highlightKey) {
+      setHighlighted(null);
+      return;
+    }
+    highlightedForRef.current = highlightKey;
     const next = computeHighlightIndices(timelineState.data.events, linkParams.from, linkParams.to);
     setHighlighted(next);
     if (!next || next.size === 0) return;
@@ -529,25 +577,10 @@ export function AgentTimelinePage({ subPath }: PluginNavPanelProps) {
   const showWorkflowToggle = Boolean(sessionChartThread && sessionChartThread.workflowCount > 0);
 
   return (
-    <div className="flex h-full flex-col overflow-y-auto">
-      <div className="shrink-0 border-b border-border px-4 py-2 md:px-5">
-        <Button
-          type="button"
-          variant="ghost"
-          size="sm"
-          className="h-7 gap-1 px-2 text-xs font-medium text-muted-foreground hover:text-foreground"
-          onClick={backToFeed}
-        >
-          <span aria-hidden="true">←</span> Usage Analytics
-        </Button>
-      </div>
+    <div className="@container flex h-full flex-col overflow-y-auto">
+      {header}
       {sessionChart && sessionChartThread && (
-        <div className="shrink-0 px-4 pt-3 md:px-5">
-          {/* The Workflow merged/split toggle used to sit here; it now lives
-              in the timeline toolbar below, alongside Hooks/Time/Grouping. */}
-          <div className="mb-1 flex items-center gap-2">
-            <span className="text-xs font-medium text-muted-foreground">Session chart</span>
-          </div>
+        <section aria-label="Session chart" className="shrink-0 px-4 pt-3 @[44rem]:px-5">
           <SessionChartCard
             thread={sessionChartThread}
             agentLabels={sessionChart.agentLabels}
@@ -556,9 +589,9 @@ export function AgentTimelinePage({ subPath }: PluginNavPanelProps) {
             onSelectAgent={selectSegment}
             activeAgentKey={activeAgentKey}
           />
-        </div>
+        </section>
       )}
-      <div className="grid grow grid-cols-1 gap-4 p-4 md:p-5 lg:grid-cols-[20rem_1fr] lg:items-start">
+      <div className="grid grow grid-cols-1 gap-4 p-4 @[44rem]:grid-cols-[20rem_1fr] @[44rem]:items-start @[44rem]:p-5">
         <LeftPanel
         session={session}
         timelineState={timelineState}
@@ -637,7 +670,7 @@ function LeftPanel({
 }) {
   if (!session) {
     return (
-      <div className="space-y-2 rounded-lg border border-border bg-popover p-4 text-xs text-muted-foreground lg:sticky lg:top-4">
+      <div className="space-y-2 rounded-lg border border-border bg-popover p-4 text-xs text-muted-foreground @[44rem]:sticky @[44rem]:top-4">
         <p className="font-medium text-foreground">No session id Claude Code</p>
         <p>
           This link carries no session parameter — the token breakdown is
@@ -649,93 +682,20 @@ function LeftPanel({
   }
 
   return (
-    <div className="space-y-3 rounded-lg border border-border bg-popover p-4 lg:sticky lg:top-4">
+    <div className="space-y-3 rounded-lg border border-border bg-popover p-4 @[44rem]:sticky @[44rem]:top-4">
       {(timelineState.kind === "loading" || timelineState.kind === "idle") && (
         <p className="text-sm text-muted-foreground">Loading…</p>
       )}
       {timelineState.kind === "error" && <p className="text-sm text-destructive">{timelineState.message}</p>}
       {timelineState.kind === "ready" && (
-        <>
-          <div className="flex items-baseline justify-between">
-            <span className="text-sm font-medium text-foreground">Total tokens</span>
-            <span className="text-sm font-semibold tabular-nums text-foreground">
-              {formatTokenCount(timelineState.data.totals.total)}
-            </span>
-          </div>
-
-          <dl className="space-y-1">
-            {TOKEN_PHASES.map(({ key, label }) => {
-              const value = timelineState.data.totals[key];
-              return (
-                <div key={key} className="flex items-center justify-between gap-2 text-xs text-muted-foreground">
-                  <dt>{label}</dt>
-                  <dd className="tabular-nums">
-                    {formatTokenCount(value)}{" "}
-                    <span className="text-subtle-foreground">({formatPercent(value, timelineState.data.totals.total)})</span>{" "}
-                    · {formatCost(timelineState.data.totals.costs[key])}
-                  </dd>
-                </div>
-              );
-            })}
-            <div className="flex items-center justify-between gap-2 pl-3 text-xs text-subtle-foreground">
-              <dt>incl. thinking</dt>
-              <dd className="tabular-nums">
-                {formatTokenCount(timelineState.data.totals.thinking)}{" "}
-                <span>({formatPercent(timelineState.data.totals.thinking, timelineState.data.totals.output)})</span>{" "}
-                · {formatCost(timelineState.data.totals.costs.thinking)}
-              </dd>
-            </div>
-          </dl>
-
-          <div className="flex items-center justify-between border-t border-border pt-2 text-xs text-muted-foreground">
-            <span>Cost</span>
-            <span className="font-medium tabular-nums text-foreground">{formatPrice(timelineState.data.totals.cost, timelineState.data.totals.unpricedModels)}</span>
-          </div>
-          <div className="flex items-center justify-between text-xs text-muted-foreground">
-            <span>Responses</span>
-            <span className="font-medium tabular-nums text-foreground">{timelineState.data.totals.messages}</span>
-          </div>
-
-          {timelineState.data.agents.length > 0 && (
-            <div className="space-y-1 border-t border-border pt-2">
-              <span className="text-xs font-medium text-muted-foreground">Agents</span>
-              <ul className="space-y-1">
-                {timelineState.data.agents.map((agent) => {
-                  // In the flow view every member row lights up as a group;
-                  // otherwise only the single open agent's row does.
-                  const active = memberKeys ? memberKeys.has(agent.key) : agent.key === activeAgentKey;
-                  return (
-                    <li key={agent.key}>
-                      <button
-                        type="button"
-                        onClick={() => onSelectAgent(agent.key)}
-                        aria-pressed={active}
-                        className={cn(
-                          "flex w-full items-start justify-between gap-2 rounded-md px-2 py-1 text-left text-xs hover:bg-state-hover",
-                          active && "bg-state-active",
-                        )}
-                      >
-                        <span className="min-w-0">
-                          <span className={cn("block truncate", active ? "text-foreground" : "text-foreground/90")} title={agent.name}>
-                            {agent.name}
-                          </span>
-                          {agent.caption && (
-                            <span className="block truncate text-subtle-foreground" title={agent.caption}>
-                              {agent.caption}
-                            </span>
-                          )}
-                        </span>
-                        <span className="shrink-0 tabular-nums text-muted-foreground">
-                          {formatTokenCount(agent.total)} · {formatPrice(agent.cost, agent.unpricedModels)}
-                        </span>
-                      </button>
-                    </li>
-                  );
-                })}
-              </ul>
-            </div>
-          )}
-        </>
+        <SessionSummary
+          totals={timelineState.data.totals}
+          agents={timelineState.data.agents}
+          // In the flow view every member row lights up as a group; otherwise
+          // only the single open agent's row does.
+          isActive={(key) => (memberKeys ? memberKeys.has(key) : key === activeAgentKey)}
+          onSelectAgent={onSelectAgent}
+        />
       )}
     </div>
   );
@@ -788,7 +748,7 @@ function ToggleButton({ pressed, onClick, label, on, off }: { pressed: boolean; 
 interface RightPanelProps {
   containerRef: React.RefObject<HTMLDivElement | null>;
   session: string | null;
-  linkParams: AgentDetailLinkParams;
+  linkParams: SessionSelection;
   timelineState: TimelineLoadState;
   /** Session-chart merged/split state — the toggle lives in this toolbar now (moved from the chart header). */
   groupWorkflows: boolean;

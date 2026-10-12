@@ -223,7 +223,7 @@ describe("threads-timeline panel — agent-detail sub-view", () => {
       },
     });
 
-    await screen.findByText("Session chart");
+    await screen.findByLabelText("Session chart");
     // The chart is the reused feed frame (ThreadRow) — the per-agent legend
     // lives in the column hover tooltip, where the workflow-merged segment
     // reads as a Workflow with its human name.
@@ -247,7 +247,7 @@ describe("threads-timeline panel — agent-detail sub-view", () => {
       },
     });
 
-    await screen.findByText("Session chart");
+    await screen.findByLabelText("Session chart");
     // The chart's first fetch groups workflows (its original, default behaviour).
     expect(inputs[0]).toEqual({ limit: 1, unit: 60, session: "sess_abc123", groupWorkflows: true });
 
@@ -271,7 +271,7 @@ describe("threads-timeline panel — agent-detail sub-view", () => {
       threadsTimeline: threadsTimelineTwoAgents,
     });
 
-    await screen.findByText("Session chart");
+    await screen.findByLabelText("Session chart");
     expect(screen.queryByRole("button", { name: /Workflow:\s*(merged|split)/ })).toBeNull();
   });
 
@@ -322,7 +322,7 @@ describe("threads-timeline panel — agent-detail sub-view", () => {
       threadsTimeline: threadsTimelineTwoAgents,
     });
 
-    await screen.findByText("Session chart");
+    await screen.findByLabelText("Session chart");
     // Full aria-label (name + token count) to pick the chart's own segment
     // button, not the left panel's identically-named agent row.
     const mainSegment = screen.getByRole("button", { name: /Main agent: 100 tokens/ });
@@ -340,7 +340,7 @@ describe("threads-timeline panel — agent-detail sub-view", () => {
       threadsTimeline: threadsTimelineTwoAgents,
     });
 
-    await screen.findByText("Session chart");
+    await screen.findByLabelText("Session chart");
     // Full aria-label (name + token count) to pick the chart's own segment
     // button, not the left panel's identically-named agent row.
     const mainSegment = screen.getByRole("button", { name: /Main agent: 100 tokens/ });
@@ -396,7 +396,7 @@ describe("threads-timeline panel — agent-detail sub-view", () => {
       threadsTimeline: threadsTimelineWithWorkflowMembers,
     });
 
-    await screen.findByText("Session chart");
+    await screen.findByLabelText("Session chart");
     const workflowSegment = screen.getByRole("button", { name: /Workflow: arch-review: 200 tokens/ });
     const mainSegment = screen.getByRole("button", { name: /Main agent: 100 tokens/ });
     expect(workflowSegment.className).not.toContain("opacity-40");
@@ -411,7 +411,7 @@ describe("threads-timeline panel — agent-detail sub-view", () => {
       threadsTimeline: threadsTimelineWithWorkflowMembers,
     });
 
-    await screen.findByText("Session chart");
+    await screen.findByLabelText("Session chart");
     const workflowSegment = screen.getByRole("button", { name: /Workflow: arch-review: 200 tokens/ });
     expect(workflowSegment.className).toContain("opacity-40");
   });
@@ -422,7 +422,7 @@ describe("threads-timeline panel — agent-detail sub-view", () => {
       threadsTimeline: threadsTimelineWithWorkflowMembers,
     });
 
-    await screen.findByText("Session chart");
+    await screen.findByLabelText("Session chart");
     fireEvent.click(screen.getByRole("button", { name: /Main agent: 100 tokens/ }));
 
     expect(slot.navigateCalls).toContainEqual({
@@ -446,7 +446,7 @@ describe("threads-timeline panel — agent-detail sub-view", () => {
       threadsTimeline: threadsTimelineWithWorkflowMembers,
     });
 
-    await screen.findByText("Session chart");
+    await screen.findByLabelText("Session chart");
     fireEvent.click(screen.getByRole("button", { name: /Workflow: arch-review: 200 tokens/ }));
 
     // No longer picks a single member (that was the pre-flow-view behavior):

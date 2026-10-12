@@ -289,6 +289,16 @@ describe("createThreadsTimelineService", () => {
     expect(calls).toHaveLength(2);
   });
 
+  it("a fresh query re-runs the script inside the TTL", async () => {
+    const { runner, calls } = fakeRunner(() => ({ ok: true, stdout: VALID_STDOUT, stderr: "", code: 0 }));
+    const service = createThreadsTimelineService(fakeBb, { processRunner: runner });
+
+    await service.query({ unit: 300 });
+    await service.query({ unit: 300 }, { fresh: true });
+    await service.query({ unit: 300 });
+    expect(calls).toHaveLength(2);
+  });
+
   it("treats different params as different cache entries", async () => {
     const { runner, calls } = fakeRunner(() => ({ ok: true, stdout: VALID_STDOUT, stderr: "", code: 0 }));
     const service = createThreadsTimelineService(fakeBb, { processRunner: runner });

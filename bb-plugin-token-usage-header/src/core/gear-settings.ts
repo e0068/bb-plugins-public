@@ -15,6 +15,10 @@
 export const GEAR_UNIT_OPTIONS = ["30", "60", "300", "900", "3600"] as const;
 export const GEAR_HEIGHT_MODE_OPTIONS = ["shared", "perCard"] as const;
 export type GearHeightMode = (typeof GEAR_HEIGHT_MODE_OPTIONS)[number];
+/** What a click on the thread-header counter opens: its popover, or the session tab in the thread's right panel. */
+export const HEADER_CLICK_OPTIONS = ["popover", "panel"] as const;
+export type HeaderClick = (typeof HEADER_CLICK_OPTIONS)[number];
+export const DEFAULT_HEADER_CLICK: HeaderClick = "popover";
 
 export interface GearSettings {
   /** Bin width in seconds — one of GEAR_UNIT_OPTIONS. */
@@ -138,4 +142,12 @@ export function parseGearSettings(values: RawSettingsValues): GearSettings {
     segRadius: parseNumber(values?.segRadius, DEFAULT_GEAR_SETTINGS.segRadius, 0, 8),
     frameLiftColor: parseColor(values?.frameLiftColor, DEFAULT_GEAR_SETTINGS.frameLiftColor),
   };
+}
+
+/**
+ * The `headerClick` setting — not a chart field, so it stays out of
+ * `GearSettings`, but it shares this module's declared-settings boundary.
+ */
+export function parseHeaderClick(values: RawSettingsValues): HeaderClick {
+  return parseEnum(values?.headerClick, HEADER_CLICK_OPTIONS, DEFAULT_HEADER_CLICK);
 }

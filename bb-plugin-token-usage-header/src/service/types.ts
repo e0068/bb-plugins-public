@@ -3,6 +3,12 @@
 // src/service/index.ts, not these directly.
 import type { TokensBy, TokensReport } from "../core";
 
+/** How a query treats the services' short-lived result caches. */
+export interface QueryOptions {
+  /** Skip a cached result and run anew; the new result replaces the cached one. A user's explicit refresh. */
+  fresh?: boolean;
+}
+
 /** Slice parameters accepted by `tools/tokens.py --json`. Mirrors its CLI flags 1:1. */
 export interface TokensQueryParams {
   /** Defaults to "session" (tokens.py's own default) when omitted. */

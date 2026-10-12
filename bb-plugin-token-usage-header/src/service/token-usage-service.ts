@@ -5,7 +5,7 @@ import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import { cacheKeyForParams, createTokensCache } from "./cache";
 import { createTokensRunner, type TokensRunnerOptions } from "./tokens-runner";
 import { createThreadSessionResolver } from "./thread-session";
-import type { TokensQueryParams, TokensRunResult } from "./types";
+import type { QueryOptions, TokensQueryParams, TokensRunResult } from "./types";
 
 export interface TokenUsageServiceOptions extends TokensRunnerOptions {
   /** Cache TTL in ms; defaults to createTokensCache's own default (30s). */
@@ -14,7 +14,7 @@ export interface TokenUsageServiceOptions extends TokensRunnerOptions {
 
 export interface TokenUsageService {
   /** Runs (or serves from cache) the tools/tokens.py slice described by `params`. */
-  query(params: TokensQueryParams): Promise<TokensRunResult>;
+  query(params: TokensQueryParams, options?: QueryOptions): Promise<TokensRunResult>;
   /** Resolves a BB threadId to its Claude Code sessionId, or null. */
   resolveSessionId(threadId: string): Promise<string | null>;
   /** Drops the query cache and the thread->session cache. */
@@ -27,8 +27,8 @@ export function createTokenUsageService(bb: BbPluginApi, options: TokenUsageServ
   const threadResolver = createThreadSessionResolver(bb);
 
   return {
-    query(params) {
-      return cache.get(cacheKeyForParams(params), () => runner.run(params));
+    query(params, options) {
+      return cache.get(cacheKeyForParams(params), () => runner.run(params), options);
     },
     resolveSessionId(threadId) {
       return threadResolver.resolve(threadId);

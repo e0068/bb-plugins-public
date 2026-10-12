@@ -216,6 +216,21 @@ describe("createAgentTimelineService", () => {
     expect(calls).toBe(2);
   });
 
+  it("a fresh query re-runs the script inside the TTL", async () => {
+    let calls = 0;
+    const { runner } = fakeRunner(() => {
+      calls++;
+      return { ok: true, stdout: VALID_STDOUT, stderr: "", code: 0 };
+    });
+    const service = createAgentTimelineService(fakeBb, { processRunner: runner });
+
+    await service.query({ session: "sess-1" });
+    await service.query({ session: "sess-1" }, { fresh: true });
+    await service.query({ session: "sess-1" });
+
+    expect(calls).toBe(2);
+  });
+
   it("clearCache() forces the next query to recompute", async () => {
     let calls = 0;
     const { runner } = fakeRunner(() => {
