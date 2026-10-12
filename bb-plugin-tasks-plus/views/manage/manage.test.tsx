@@ -35,7 +35,6 @@ if (!window.matchMedia) {
 // loadPluginApp installs the fake SDK runtime; nothing SDK-touching may be
 // imported before it runs.
 const app = await loadPluginApp(() => import("../../app"));
-const { derivePrefix } = await import("./shared.js");
 const { defaultPermissionMode, describePresetEnvironment, savePresetDraft } =
   await import("./preset-dialog.js");
 
@@ -73,18 +72,6 @@ function createdTask(input: Record<string, unknown>): Task {
     labelIds: (input.labelIds as string[]) ?? [],
   };
 }
-
-describe("derivePrefix", () => {
-  it("suggests initials for multi-word names and letters otherwise", () => {
-    expect(derivePrefix("Tasks Plugin")).toBe("TP");
-    expect(derivePrefix("Connect")).toBe("CON");
-    expect(derivePrefix("home-lab v2")).toBe("HLV");
-    // Prefixes must start with a letter and stay within 10 chars.
-    expect(derivePrefix("2fa Rollout")).toBe("R");
-    expect(derivePrefix("123")).toBe("");
-    expect(derivePrefix("a b c d e f g h i j k l")).toHaveLength(10);
-  });
-});
 
 describe("NewTaskDialog", () => {
   it("creates a task in the route's project with column defaults and navigates to it", async () => {
@@ -823,103 +810,6 @@ describe("PresetDialog environment section", () => {
   });
 });
 
-describe("NewProjectDialog", () => {
-  function renderEmptyState(overrides: Record<string, unknown> = {}) {
-    return renderSlot(
-      app.navPanels[0]!,
-      { subPath: "" },
-      {
-        rpc: {
-          listProjects: () => ({ projects: [] }),
-          listFolders: () => ({ folders: [] }),
-          listPresets: () => ({ presets: [] }),
-          sidebarSummary: () => ({ projects: [] }),
-          listTasks: () => ({ tasks: [] }),
-          ...overrides,
-        },
-      },
-    );
-  }
-
-  it("derives the prefix from the name and creates the project", async () => {
-    const createCalls: Array<Record<string, unknown>> = [];
-    const slot = renderEmptyState({
-      createProject: (input: Record<string, unknown>) => {
-        createCalls.push(input);
-        return { project: { ...project, ...input, id: PROJECT_ID } };
-      },
-    });
-    fireEvent.click(await slot.findByRole("button", { name: /New project/ }));
-    fireEvent.change(await slot.findByPlaceholderText("e.g. Tasks Plugin"), {
-      target: { value: "Home Lab" },
-    });
-    expect((slot.getByPlaceholderText("TSK") as HTMLInputElement).value).toBe(
-      "HL",
-    );
-    fireEvent.click(slot.getByRole("button", { name: "Create project" }));
-    await waitFor(() => expect(createCalls).toHaveLength(1));
-    expect(createCalls[0]).toMatchObject({
-      name: "Home Lab",
-      prefix: "HL",
-      folderId: null,
-      linkedBbProjectId: null,
-    });
-    await waitFor(() =>
-      expect(slot.navigateCalls).toContainEqual({
-        method: "toPluginPanel",
-        path: "tasks",
-        options: { subPath: PROJECT_ID },
-      }),
-    );
-  });
-
-  it("flags malformed prefixes before submit", async () => {
-    const slot = renderEmptyState();
-    fireEvent.click(await slot.findByRole("button", { name: /New project/ }));
-    const prefix = slot.getByPlaceholderText("TSK");
-    fireEvent.change(prefix, { target: { value: "9x" } });
-    // Input is uppercased; leading digit violates the prefix rule.
-    expect((prefix as HTMLInputElement).value).toBe("9X");
-    await slot.findByText(
-      "Use 1–10 uppercase letters and digits, starting with a letter.",
-    );
-    // Create stays disabled while invalid.
-    expect(
-      (
-        slot.getByRole("button", {
-          name: "Create project",
-        }) as HTMLButtonElement
-      ).disabled,
-    ).toBe(true);
-  });
-
-  it("links the personal project from the discovered project picker", async () => {
-    const createCalls: Array<Record<string, unknown>> = [];
-    const slot = renderEmptyState({
-      listBbProjects: () => ({
-        bbProjects: [{ id: "proj_personal", name: "Personal" }],
-      }),
-      createProject: (input: Record<string, unknown>) => {
-        createCalls.push(input);
-        return { project: { ...project, ...input, id: PROJECT_ID } };
-      },
-    });
-    fireEvent.click(await slot.findByRole("button", { name: /New project/ }));
-    fireEvent.change(await slot.findByPlaceholderText("e.g. Tasks Plugin"), {
-      target: { value: "Personal Tasks" },
-    });
-    fireEvent.click(slot.getByLabelText("Linked bb project"));
-    fireEvent.click(await slot.findByRole("option", { name: "Personal" }));
-    fireEvent.click(slot.getByRole("button", { name: "Create project" }));
-
-    await waitFor(() => expect(createCalls).toHaveLength(1));
-    expect(createCalls[0]).toMatchObject({
-      linkedBbProjectId: "proj_personal",
-    });
-    expect(slot.queryByPlaceholderText("proj_…")).toBeNull();
-  });
-});
-
 describe("new task dialog: assignee", () => {
   function placementRpc(createCalls: Array<Record<string, unknown>>) {
     return {
@@ -971,98 +861,4 @@ describe("new task dialog: assignee", () => {
     expect(createCalls[0]).toMatchObject({ assignee: "Claude" });
   });
 
-});
-
-describe("ManagePanel project deletion", () => {
-  function renderProjectTab(
-    taskCount: number,
-    overrides: Record<string, unknown> = {},
-  ) {
-    return renderSlot(
-      app.navPanels[0]!,
-      { subPath: "manage" },
-      {
-        rpc: {
-          listProjects: () => ({ projects: [project] }),
-          listFolders: () => ({ folders: [] }),
-          listPresets: () => ({ presets: [] }),
-          listLabels: () => ({ labels: [] }),
-          sidebarSummary: () => ({
-            projects: [{ projectId: PROJECT_ID, taskCount, activeAgentCount: 0 }],
-          }),
-          listTasks: () => ({ tasks: [] }),
-          ...overrides,
-        },
-      },
-    );
-  }
-
-  const deleteButton = (slot: ReturnType<typeof renderProjectTab>) =>
-    slot.findByRole("button", { name: "Delete project" }) as Promise<HTMLButtonElement>;
-
-  it("deletes an empty project in one click, without a confirmation", async () => {
-    const deleteCalls: Array<Record<string, unknown>> = [];
-    const slot = renderProjectTab(0, {
-      deleteProject: (input: Record<string, unknown>) => {
-        deleteCalls.push(input);
-        return { ok: true, deleted: true };
-      },
-    });
-    const button = await deleteButton(slot);
-    await waitFor(() => expect(button.disabled).toBe(false));
-    fireEvent.click(button);
-    await waitFor(() => expect(deleteCalls).toHaveLength(1));
-    expect(deleteCalls[0]).toMatchObject({ projectId: PROJECT_ID });
-    expect(deleteCalls[0]?.force).not.toBe(true);
-    expect(slot.queryByRole("dialog")).toBeNull();
-  });
-
-  it("disables deletion of a project that still has tasks and says why", async () => {
-    let deleteCalls = 0;
-    const slot = renderProjectTab(3, {
-      deleteProject: () => {
-        deleteCalls += 1;
-        return { ok: true, deleted: true };
-      },
-    });
-    await slot.findByText("Move or delete this project's tasks to delete it.");
-    const button = await deleteButton(slot);
-    expect(button.disabled).toBe(true);
-    fireEvent.click(button);
-    expect(deleteCalls).toBe(0);
-  });
-
-  it("explains a server refusal of a project that gained tasks in UI terms", async () => {
-    const slot = renderProjectTab(0, {
-      deleteProject: () => ({
-        ok: false,
-        error: {
-          code: "project_not_empty",
-          message:
-            "A project must be empty before it can be deleted; pass force: true to delete its tasks",
-        },
-      }),
-    });
-    const button = await deleteButton(slot);
-    await waitFor(() => expect(button.disabled).toBe(false));
-    fireEvent.click(button);
-    expect((await slot.findByRole("alert")).textContent).toBe(
-      "Move or delete this project's tasks to delete it.",
-    );
-    expect(slot.getByRole("button", { name: "Delete project" })).toBeDefined();
-  });
-
-  it("shows a failed delete call as it comes", async () => {
-    const slot = renderProjectTab(0, {
-      deleteProject: () => {
-        throw new Error("Project not found");
-      },
-    });
-    const button = await deleteButton(slot);
-    await waitFor(() => expect(button.disabled).toBe(false));
-    fireEvent.click(button);
-    expect((await slot.findByRole("alert")).textContent).toBe(
-      "Project not found",
-    );
-  });
 });

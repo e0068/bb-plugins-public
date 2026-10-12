@@ -16,6 +16,7 @@ import {
 } from "../views/manage/preset-dialog.js";
 import { Icon } from "@/components/ui/icon";
 import { DelayedLoading } from "../components/delayed-loading.js";
+import { ProjectIcon } from "../components/project-icon.js";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
   Tooltip,
@@ -192,18 +193,6 @@ function SectionHeader({
   );
 }
 
-function ProjectDot({ color }: { color: string }) {
-  // Project colors are user data, not theme tokens, so an inline style is the
-  // only way to render them.
-  return (
-    <span
-      aria-hidden
-      className="size-3 shrink-0 rounded-sm"
-      style={{ backgroundColor: color }}
-    />
-  );
-}
-
 function WorkingDot() {
   return (
     <span
@@ -234,7 +223,7 @@ function ProjectRow({
 }) {
   return (
     <SidebarRow active={active} onClick={onClick} title={project.name}>
-      <ProjectDot color={project.color} />
+      <ProjectIcon icon={project.icon} color={project.color} className="size-3.5 shrink-0" />
       <span className="min-w-0 flex-1 truncate">{project.name}</span>
       {summary && summary.activeAgentCount > 0 ? <WorkingDot /> : null}
       {summary ? <RowCount value={summary.taskCount} /> : null}
@@ -292,7 +281,6 @@ export interface TasksSidebarProps {
   /** Which sidebar data sets are still in flight — empty once all have loaded. */
   pendingSidebarData: readonly string[];
   onNavigate: (route: TasksRoute) => void;
-  onNewProject: () => void;
 }
 
 export function TasksSidebar({
@@ -305,7 +293,6 @@ export function TasksSidebar({
   waitingTasks,
   pendingSidebarData,
   onNavigate,
-  onNewProject,
 }: TasksSidebarProps) {
   const [collapsedFolders, setCollapsedFolders] = useState<ReadonlySet<string>>(
     new Set(),
@@ -466,16 +453,6 @@ export function TasksSidebar({
               </>
             ) : null}
             {rootFolders.map((folder) => renderFolder(folder, false))}
-            {/* With zero projects the main pane's empty-state CTA is the
-                single New-project affordance. */}
-            {(projects ?? []).length > 0 ? (
-              <div className="mt-1.5">
-                <SidebarRow onClick={onNewProject} title="New project">
-                  <Icon name="Plus" className="size-3.5 shrink-0" />
-                  <span className="flex-1">New project</span>
-                </SidebarRow>
-              </div>
-            ) : null}
             {presets ? (
               <>
                 <SectionHeader label="Agent presets" />

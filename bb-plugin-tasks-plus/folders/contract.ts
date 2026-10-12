@@ -47,13 +47,31 @@ export const syncedFolderSchema = z
   })
   .strict();
 
-export const syncableBbProjectSchema = z
+/** The board of a row of the Projects tab: what the row shows of it, never a token. */
+export const projectRowBoardSchema = z
   .object({
-    id: bbProjectIdSchema,
+    id: idSchema,
     name: z.string(),
-    repoPath: z.string().nullable(),
-    /** Already backing a connected folder — the picker should flag/skip it. */
-    alreadyConnected: z.boolean(),
+    prefix: z.string(),
+    color: z.string(),
+    /** Name of a catalog icon; absent for a board drawn with the default. */
+    icon: z.string().optional(),
+    taskCount: z.number().int().nonnegative(),
+    tasksFolder: z.string().nullable(),
+    source: syncedSourceSchema,
+  })
+  .strict();
+
+/** The bb project of a row of the Projects tab, with the checkout it keeps on this machine (none for a project without one). */
+export const projectRowBbProjectSchema = z
+  .object({ id: bbProjectIdSchema, name: z.string(), repoPath: z.string().nullable() })
+  .strict();
+
+/** A row of the Projects tab: a bb project with the board that took it — none yet. */
+export const projectRowSchema = z
+  .object({
+    bbProject: projectRowBbProjectSchema,
+    board: projectRowBoardSchema.nullable(),
   })
   .strict();
 
@@ -118,6 +136,8 @@ const connectDatabaseInputSchema = z
     tursoApiToken: z.string().optional(),
     /** A folder board whose tasks are copied into the database; the folder board stays as it is. */
     copyFromBoardId: idSchema.optional(),
+    /** The bb project the new board belongs to; the board then wears the project's name. */
+    bbProjectId: bbProjectIdSchema.optional(),
     name: z.string().optional(),
     prefix: z.string().optional(),
   })
@@ -145,11 +165,11 @@ export const foldersRpcContract = defineRpcContract({
     input: z.null(),
     output: z.object({ folders: z.array(syncedFolderSchema) }).strict(),
   },
-  /** bb projects with a local repository, for the "Add folder" picker. */
-  listSyncableBbProjects: {
+  /** Every bb project with its board, and the boards no bb project holds. */
+  listProjectRows: {
     input: z.null(),
     output: z
-      .object({ bbProjects: z.array(syncableBbProjectSchema) })
+      .object({ projects: z.array(projectRowSchema), orphans: z.array(projectRowBoardSchema) })
       .strict(),
   },
   addSyncedFolder: {
@@ -218,7 +238,9 @@ export type BoardRow = z.infer<typeof boardRowSchema>;
 export type SyncedSource = z.infer<typeof syncedSourceSchema>;
 export type TursoDatabaseEntry = z.infer<typeof tursoDatabaseSchema>;
 export type GenerateTursoApiTokenResult = z.infer<typeof generateTursoApiTokenResultSchema>;
-export type SyncableBbProject = z.infer<typeof syncableBbProjectSchema>;
+export type ProjectRow = z.infer<typeof projectRowSchema>;
+export type ProjectRowBbProject = z.infer<typeof projectRowBbProjectSchema>;
+export type ProjectRowBoard = z.infer<typeof projectRowBoardSchema>;
 export type FolderDomainError = z.infer<typeof folderDomainErrorSchema>;
 
 /** Realtime channel published when a board's connected folder changes. */

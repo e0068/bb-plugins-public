@@ -186,6 +186,8 @@ export const projectSchema = z
     prefix: projectPrefixSchema,
     nextTaskNumber: z.number().int().positive(),
     color: z.string(),
+    /** Name of a catalog icon; absent for a board drawn with the default. */
+    icon: z.string().optional(),
     folderId: idSchema.nullable(),
     linkedBbProjectId: z.string().startsWith("proj_").nullable(),
     tasksFolder: z.string().nullable(),
@@ -948,6 +950,7 @@ const updateProjectInputSchema = z
     projectId: idSchema,
     name: nonBlankStringSchema.optional(),
     color: nonBlankStringSchema.optional(),
+    icon: nonBlankStringSchema.optional(),
     folderId: idSchema.nullable().optional(),
     linkedBbProjectId: z.string().startsWith("proj_").nullable().optional(),
     tasksFolder: z.string().nullable().optional(),
@@ -957,6 +960,7 @@ const updateProjectInputSchema = z
     (input) =>
       input.name !== undefined ||
       input.color !== undefined ||
+      input.icon !== undefined ||
       input.folderId !== undefined ||
       input.linkedBbProjectId !== undefined ||
       input.tasksFolder !== undefined,

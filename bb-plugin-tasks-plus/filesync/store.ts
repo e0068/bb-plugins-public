@@ -26,6 +26,8 @@ import {
   writeBoardConfigs,
   upsertBoardConfig,
   removeBoardConfig,
+  linkTakenBy,
+  linkTakenMessage,
   nextTaskNumber,
   type BoardConfig,
   type KvStore,
@@ -554,6 +556,14 @@ export function createFileTasksStore(
   const deleteFolder = (id: string) => folderCol.remove(id);
 
   // ---------------------------------------------------------------- Boards
+  /** One board per bb project: refuses a link another board already holds,
+   *  naming that board. `exceptBoardId` is the board being written. */
+  function requireLinkFree(bbProjectId: string | null, exceptBoardId?: string): void {
+    if (bbProjectId === null) return;
+    const taken = linkTakenBy(boardConfigs, bbProjectId, exceptBoardId);
+    if (taken !== undefined) throw new Error(linkTakenMessage(bbProjectId, taken));
+  }
+
   function createProject(input: {
     id?: string;
     name: string;
@@ -564,6 +574,7 @@ export function createFileTasksStore(
     tasksFolder?: string | null;
     database?: { url: string } | null;
   }): BoardConfig {
+    requireLinkFree(input.linkedBbProjectId ?? null);
     const board: BoardConfig = {
       id: createOrValidateUlid(input.id),
       name: requireNonEmpty(input.name, "Project name"),
@@ -587,6 +598,11 @@ export function createFileTasksStore(
   // undefined field vanishes and the board comes back failing its schema.
   function updateProject(id: string, input: Partial<Omit<BoardConfig, "id">>): BoardConfig {
     const current = requireBoard(id);
+    // A board already written as a duplicate stays editable and can be unlinked:
+    // only a change of link is checked against the other boards.
+    if (input.linkedBbProjectId != null && input.linkedBbProjectId !== current.linkedBbProjectId) {
+      requireLinkFree(input.linkedBbProjectId, id);
+    }
     const updated = applyPatch(current, input);
     boardConfigs = upsertBoardConfig(boardConfigs, updated);
     persistBoards();

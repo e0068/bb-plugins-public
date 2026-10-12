@@ -38,7 +38,6 @@ import { ReducedColorsProvider } from "@bb-plugins/reduced-colors";
 import { useTasksRpc } from "./data.js";
 import {
   ManagePanel,
-  NewProjectDialog,
   NewTaskDialog,
 } from "../views/manage/index.js";
 import { Button } from "@/components/ui/button";
@@ -71,7 +70,7 @@ function hasOpenOverlay(): boolean {
   );
 }
 
-function NoProjectsEmptyState({ onNewProject }: { onNewProject: () => void }) {
+function NoProjectsEmptyState({ onOpenManage }: { onOpenManage: () => void }) {
   return (
     <div className="flex h-full flex-col items-center justify-center gap-3 p-6 text-center">
       <div className="flex size-10 items-center justify-center rounded-md bg-secondary text-muted-foreground">
@@ -80,13 +79,11 @@ function NoProjectsEmptyState({ onNewProject }: { onNewProject: () => void }) {
       <div className="space-y-1">
         <p className="text-sm font-medium">No projects yet</p>
         <p className="text-sm text-muted-foreground">
-          Create a project to start tracking tasks and dispatching work to
-          agents.
+          Connect a bb project's folder or database in Manage → Projects.
         </p>
       </div>
-      <Button size="sm" onClick={onNewProject}>
-        <Icon name="Plus" className="size-3.5" />
-        New project
+      <Button size="sm" onClick={onOpenManage}>
+        Open Manage
       </Button>
     </div>
   );
@@ -279,7 +276,6 @@ function TasksAppShellContent({ subPath }: PluginNavPanelProps) {
   const [newTaskOpen, setNewTaskOpen] = useState(false);
   // The open list's filters as a draft, so New task and "c" start from them.
   const [listSeed, setListSeed] = useState<NewTaskSeed | null>(null);
-  const [newProjectOpen, setNewProjectOpen] = useState(false);
   // Navigation is the panel's own left column. The page's right panel holds
   // the Task tab a click opens into (client/task-opening.ts).
   // Ширина решает, с чего панель открывается, и только это: дальше открыть или
@@ -406,7 +402,7 @@ function TasksAppShellContent({ subPath }: PluginNavPanelProps) {
             <TasksNavigationPanelContent subPath={subPath} />
           ) : noProjects && route.kind !== "task" && route.kind !== "manage" ? (
             <NoProjectsEmptyState
-              onNewProject={() => setNewProjectOpen(true)}
+              onOpenManage={() => navigation.go({ kind: "manage" })}
             />
           ) : (
             <NewTaskSeedContext.Provider value={setListSeed}>
@@ -443,10 +439,6 @@ function TasksAppShellContent({ subPath }: PluginNavPanelProps) {
         onOpenChange={setNewTaskOpen}
         projectId={newTaskProjectId}
         seed={listSeed ?? undefined}
-      />
-      <NewProjectDialog
-        open={newProjectOpen}
-        onOpenChange={setNewProjectOpen}
       />
     </div>
   );

@@ -648,19 +648,6 @@ describe("tasks app shell", () => {
     );
   });
 
-  it("shows the empty state and opens the New project dialog", async () => {
-    const slot = renderSlot(
-      app.navPanels[0]!,
-      { subPath: "" },
-      {
-        rpc: emptyRpc,
-      },
-    );
-    await slot.findByText("No projects yet");
-    fireEvent.click(slot.getByRole("button", { name: /New project/ }));
-    await slot.findByText("Projects group tasks under a shared key prefix.");
-  });
-
   it("renders board and task subPaths without plugin-owned sidebar chrome", async () => {
     const boardSlot = renderSlot(
       app.navPanels[0]!,
@@ -711,29 +698,6 @@ describe("tasks app shell", () => {
     });
   });
 
-  it("does not mount New project queries until the dialog opens", async () => {
-    let bbProjectCalls = 0;
-    const slot = renderSlot(
-      navigationRegistration,
-      { subPath: "all" },
-      {
-        rpc: seededRpc({
-          listBbProjects: () => {
-            bbProjectCalls += 1;
-            return { bbProjects: [] };
-          },
-        }),
-      },
-    );
-    await slot.findByRole("button", { name: "New project" });
-    expect(bbProjectCalls).toBe(0);
-
-    fireEvent.click(slot.getByRole("button", { name: "New project" }));
-
-    await slot.findByText("Projects group tasks under a shared key prefix.");
-    expect(bbProjectCalls).toBeGreaterThan(0);
-  });
-
   it("routes 'manage' to the manage panel from right-panel navigation", async () => {
     const panel = renderSlot(
       navigationRegistration,
@@ -758,7 +722,7 @@ describe("tasks app shell", () => {
         rpc: seededRpc({ listLabels: () => ({ labels: [] }) }),
       },
     );
-    await slot.findByText("Project, labels, agent presets, and folders.");
+    await slot.findByText("Projects, labels, and agent presets.");
   });
 
   it("opens quick-create on bare 'c' but not from editable targets or dialogs", async () => {

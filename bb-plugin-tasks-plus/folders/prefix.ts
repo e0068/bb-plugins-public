@@ -5,8 +5,7 @@ const FALLBACK_PREFIX = "PRJ";
 
 /**
  * Derive a project-key prefix from a bb project's name: initials for
- * multi-word names, the first three letters otherwise (mirrors the frontend's
- * live-suggestion `derivePrefix` in views/manage/shared.tsx), then disambiguate
+ * multi-word names, the first three letters otherwise, then disambiguate
  * against `taken` by appending a numeric suffix. Used when "Add folder"
  * creates a new board for a bb project that has none yet — there is no user
  * typing a name to derive from interactively, so the result must already be

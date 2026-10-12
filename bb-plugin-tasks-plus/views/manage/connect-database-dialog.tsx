@@ -5,6 +5,7 @@ import type {
   ConnectDatabaseInput,
   FoldersRpcContract,
   GenerateTursoApiTokenResult,
+  ProjectRowBbProject,
   SyncedFolder,
   TursoDatabaseEntry,
 } from "../../folders/contract.js";
@@ -90,6 +91,10 @@ interface Form {
 
 const EMPTY_FORM: Form = { copy: false, folderBoardId: "", address: "", token: "", board: "", prefix: "", tursoToken: "" };
 
+/** The form a dialog opens with: empty, or — asked to move a folder board — with the copy of that board chosen. */
+const openingForm = (copyFromBoardId: string | undefined): Form =>
+  copyFromBoardId === undefined ? EMPTY_FORM : { ...EMPTY_FORM, copy: true, folderBoardId: copyFromBoardId };
+
 /** A field with a label that focuses it, and an action on the label's row when it has one. */
 function LabelledField({ label, htmlFor, action, children }: { label: string; htmlFor: string; action?: ReactNode; children: ReactNode }) {
   return (
@@ -165,7 +170,15 @@ export interface ConnectDatabaseDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onConnected: () => void;
+  /** The bb project of the row the dialog was opened from: the board connects to it and is named after it. */
+  bbProject?: ProjectRowBbProject;
+  /** The folder board of that project to move into the database: the dialog opens with its copy chosen. */
+  copyFromBoardId?: string;
 }
+
+/** The entry of the connect input that links the board to the project of the row, when the dialog has one. */
+const projectLink = (bbProject: ConnectDatabaseDialogProps["bbProject"]): { bbProjectId?: string } =>
+  bbProject === undefined ? {} : { bbProjectId: bbProject.id };
 
 /**
  * "Connect database" — connects a board kept in an online database, or copies
@@ -176,7 +189,7 @@ export interface ConnectDatabaseDialogProps {
  * account's and copying a folder are all done by the service; the dialog only
  * closes once the connection is real.
  */
-export function ConnectDatabaseDialog({ open, onOpenChange, onConnected }: ConnectDatabaseDialogProps) {
+export function ConnectDatabaseDialog({ open, onOpenChange, onConnected, bbProject, copyFromBoardId }: ConnectDatabaseDialogProps) {
   const rpc = useRpc<FoldersRpcContract>();
   const ids = { copy: useId(), folder: useId(), address: useId(), token: useId(), board: useId(), prefix: useId(), tursoToken: useId() };
   const [form, setForm] = useState<Form>(EMPTY_FORM);
@@ -196,7 +209,7 @@ export function ConnectDatabaseDialog({ open, onOpenChange, onConnected }: Conne
 
   useEffect(() => {
     if (!open) return;
-    setForm(EMPTY_FORM);
+    setForm(openingForm(copyFromBoardId));
     setError(null);
     setTokenField("hidden");
     setListOpen(false);
@@ -213,7 +226,7 @@ export function ConnectDatabaseDialog({ open, onOpenChange, onConnected }: Conne
       (result) => setTursoTokenSaved(result.saved),
       (fetchError: unknown) => setError(describeError(fetchError)),
     );
-  }, [open, rpc]);
+  }, [open, rpc, copyFromBoardId]);
 
   // With the account's token saved, the account's databases are the address list;
   // a token Turso refuses is asked for anew before any Create database.
@@ -330,7 +343,7 @@ export function ConnectDatabaseDialog({ open, onOpenChange, onConnected }: Conne
     setBusy("connecting");
     setError(null);
     try {
-      const result = await rpc.call("connectDatabase", connectInput(form, locked));
+      const result = await rpc.call("connectDatabase", { ...connectInput(form, locked), ...projectLink(bbProject) });
       if (!result.ok) {
         if (result.error.code === TOKEN_REFUSED) showRefusal(result.error.message, typedAccountToken(form));
         else setError(result.error.message);
@@ -502,8 +515,8 @@ export function ConnectDatabaseDialog({ open, onOpenChange, onConnected }: Conne
           <LabelledField label="Board name" htmlFor={ids.board}>
             <Input
               id={ids.board}
-              value={locked?.name ?? (form.copy ? "" : form.board)}
-              disabled={form.copy || locked !== null}
+              value={bbProject?.name ?? locked?.name ?? (form.copy ? "" : form.board)}
+              disabled={form.copy || locked !== null || bbProject !== undefined}
               className="h-8"
               onChange={(event) => change({ board: event.target.value })}
             />

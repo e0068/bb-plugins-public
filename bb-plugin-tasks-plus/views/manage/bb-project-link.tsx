@@ -10,8 +10,7 @@ import {
 const NO_LINK = "__none__";
 
 /**
- * UI state for the linked-bb-project picker. Shared by NewProjectDialog and
- * the detail rail.
+ * UI state for the linked-bb-project picker of the detail rail.
  */
 export interface BbProjectLinkState {
   /** bb project id chosen from the Select. */
