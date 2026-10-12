@@ -131,6 +131,8 @@ const threadsTimelineEntrySchema = z
     start: z.string(),
     end: z.string(),
     durationSec: finiteNumber,
+    activeSec: finiteNumber,
+    waitingSec: finiteNumber,
     totalTokens: finiteNumber,
     totalCost: finiteNumber,
     unpricedModels: z.array(z.string()).optional(),

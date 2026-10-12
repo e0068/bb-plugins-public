@@ -30,6 +30,7 @@ import {
   DEFAULT_VIZ_SETTINGS,
   formatCost,
   formatPercent,
+  formatPrice,
   formatTokenCount,
   parseGearSettings,
   type AgentTimelineEvent,
@@ -688,7 +689,7 @@ function LeftPanel({
 
           <div className="flex items-center justify-between border-t border-border pt-2 text-xs text-muted-foreground">
             <span>Cost</span>
-            <span className="font-medium tabular-nums text-foreground">{(timelineState.data.totals.unpricedModels?.length ? "API price unavailable" : formatCost(timelineState.data.totals.cost))}</span>
+            <span className="font-medium tabular-nums text-foreground">{formatPrice(timelineState.data.totals.cost, timelineState.data.totals.unpricedModels)}</span>
           </div>
           <div className="flex items-center justify-between text-xs text-muted-foreground">
             <span>Responses</span>
@@ -725,7 +726,7 @@ function LeftPanel({
                           )}
                         </span>
                         <span className="shrink-0 tabular-nums text-muted-foreground">
-                          {formatTokenCount(agent.total)} · {(agent.unpricedModels?.length ? "API price unavailable" : formatCost(agent.cost))}
+                          {formatTokenCount(agent.total)} · {formatPrice(agent.cost, agent.unpricedModels)}
                         </span>
                       </button>
                     </li>

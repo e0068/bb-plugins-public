@@ -1,5 +1,5 @@
 // Git activity markers shown on the token-usage chart (commit/push/pull
-// request/merge) — types, the zod schema shared verbatim by
+// request/merge, plus context compaction) — types, the zod schema shared verbatim by
 // src/core/threads-timeline.ts, src/core/agent-timeline.ts and server.ts (no
 // mirror-then-`satisfies` duplication: those three all live in this same
 // codebase, edited by the same hand, so there's no reason to keep two copies
@@ -8,6 +8,7 @@
 // commit/merge events live in src/service/threads-timeline-service.ts and
 // src/service/agent-timeline-service.ts; this module only shapes their result.
 import { z } from "zod";
+import { formatTokenCount } from "./format";
 
 const commitEventSchema = z
   .object({
@@ -51,13 +52,26 @@ const mergeEventSchema = z
   })
   .strict();
 
-export const gitEventSchema = z.discriminatedUnion("type", [commitEventSchema, pushEventSchema, prEventSchema, mergeEventSchema]);
+/** The model's context was squeezed — a marker in the git lane, since it is a turning point of the thread like a commit. */
+const compactEventSchema = z
+  .object({
+    type: z.literal("compact"),
+    ts: z.string(),
+    /** Who started it: the user's /compact or the automatic one at the context limit; null when the transcript doesn't say. */
+    trigger: z.enum(["manual", "auto"]).nullable(),
+    /** Tokens in the context right before the compaction; null when the transcript doesn't say. */
+    preTokens: z.number().int().nonnegative().nullable(),
+  })
+  .strict();
+
+export const gitEventSchema = z.discriminatedUnion("type", [commitEventSchema, pushEventSchema, prEventSchema, mergeEventSchema, compactEventSchema]);
 
 export type GitEvent = z.infer<typeof gitEventSchema>;
 export type CommitEvent = z.infer<typeof commitEventSchema>;
 export type PushEvent = z.infer<typeof pushEventSchema>;
 export type PrEvent = z.infer<typeof prEventSchema>;
 export type MergeEvent = z.infer<typeof mergeEventSchema>;
+export type CompactEvent = z.infer<typeof compactEventSchema>;
 
 // SSH scp-like form: git@github.com:owner/repo(.git)
 const SSH_SCP_REMOTE_RE = /^git@github\.com:([^/]+)\/(.+?)(?:\.git)?\/?$/;
@@ -99,10 +113,17 @@ export function gitEventLabel(event: GitEvent): string {
       return `PR #${event.number} opened`;
     case "merge":
       return `PR #${event.number} merged`;
+    case "compact":
+      return compactLabel(event);
   }
+}
+
+function compactLabel({ trigger, preTokens }: CompactEvent): string {
+  const base = trigger ? `Context compacted (${trigger})` : "Context compacted";
+  return preTokens === null ? base : `${base} · ${formatTokenCount(preTokens)} tokens before`;
 }
 
 /** The event's outbound link, or null when none could be resolved (see the schema's own field docs). */
 export function gitEventLinkUrl(event: GitEvent): string | null {
-  return event.url;
+  return event.type === "compact" ? null : event.url;
 }

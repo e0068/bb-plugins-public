@@ -35,6 +35,8 @@ function rawThread(session: string): Omit<ThreadEntry, "bbProjectId" | "bbProjec
     start: "2026-08-20T13:44:51.138Z",
     end: "2026-08-20T14:46:48.357Z",
     durationSec: 3717,
+    activeSec: 3717,
+    waitingSec: 0,
     totalTokens: 100,
     totalCost: 1.5,
     workflowCount: 0,

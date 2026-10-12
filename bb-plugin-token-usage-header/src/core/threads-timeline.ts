@@ -33,8 +33,10 @@ import { gitEventSchema } from "./git-events";
  * script had more sessions available than --limit let through, even if the
  * final `threads` array comes back a little shorter still (see
  * RawThreadsTimelineSchema's doc comment on `truncated`).
+ * 6 -> 7: a thread gained activeSec and waitingSec (durationSec split by
+ * pauses longer than a minute), and its events may carry compact markers.
  */
-export const EXPECTED_THREADS_TIMELINE_SCHEMA_VERSION = 6;
+export const EXPECTED_THREADS_TIMELINE_SCHEMA_VERSION = 7;
 
 const AgentBinSchema = z
   .object({
@@ -77,6 +79,10 @@ const RawThreadEntrySchema = z
     start: z.string(),
     end: z.string(),
     durationSec: z.number().finite(),
+    /** durationSec minus the pauses longer than a minute between the thread's usage records: the time the agent actually worked. */
+    activeSec: z.number().finite(),
+    /** The pauses longer than a minute — active + waiting = duration. */
+    waitingSec: z.number().finite(),
     totalTokens: z.number().finite(),
     /** Cost of the thread's entire usage in USD, at the same rate as tokens.py (Bucket.cost). */
     totalCost: z.number().finite(),

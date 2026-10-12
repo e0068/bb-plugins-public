@@ -17,8 +17,8 @@ import {
   binTotal,
   flowLaneChips,
   flowStageMarks,
-  formatCost,
   formatPercent,
+  formatPrice,
   formatTokenCount,
   gitEventLabel,
   gitEventLinkUrl,
@@ -87,6 +87,16 @@ export function hexToRgba(hex: string, alpha: number): string {
   const g = parseInt(h.substring(2, 4), 16) || 0;
   const b = parseInt(h.substring(4, 6), 16) || 0;
   return `rgba(${r},${g},${b},${alpha})`;
+}
+
+/** The one-line summary of a thread's card: cost, active work, waiting, workflows (when any ran) and agents. */
+export function threadRowSummary(
+  thread: Pick<ThreadEntry, "totalCost" | "unpricedModels" | "activeSec" | "waitingSec" | "workflowCount">,
+  agentCount: number,
+): string {
+  const cost = formatPrice(thread.totalCost, thread.unpricedModels);
+  const workflows = thread.workflowCount > 0 ? [`${thread.workflowCount} workflows`] : [];
+  return [cost, fmtDuration(thread.activeSec), `${fmtDuration(thread.waitingSec)} idle`, ...workflows, `${agentCount} agents`].join(" · ");
 }
 
 function fmtDuration(sec: number): string {
@@ -167,6 +177,7 @@ export const GIT_EVENT_ICON: Record<GitEvent["type"], IconName> = {
   push: "Upload",
   pr: "GitPullRequest",
   merge: "GitMerge",
+  compact: "Compact",
 };
 
 /**
@@ -174,15 +185,17 @@ export const GIT_EVENT_ICON: Record<GitEvent["type"], IconName> = {
  * (see computeDisplayBins) — an event lands in whichever column's time
  * window [t, t + gapUnits*unit) contains its own ts. Index-aligned with
  * displayBins: result[i] is displayBins[i]'s events, [] when none fall in
- * that window. An event with an unparseable ts is dropped, not thrown — the
+ * that window. The last column also takes everything after it: the usage
+ * records end with the last answer, but a compaction or a push can come
+ * minutes later. An event with an unparseable ts is dropped, not thrown — the
  * marker lane is a bonus overlay, not something a single bad timestamp
  * should crash.
  */
 export function bucketGitEventsByBin(displayBins: readonly DisplayBin[], events: readonly GitEvent[], unit: number): GitEvent[][] {
-  return displayBins.map((displayBin) => {
+  return displayBins.map((displayBin, index) => {
     const startMs = Date.parse(displayBin.t);
     if (Number.isNaN(startMs)) return [];
-    const endMs = startMs + displayBin.gapUnits * unit * 1000;
+    const endMs = index === displayBins.length - 1 ? Number.POSITIVE_INFINITY : startMs + displayBin.gapUnits * unit * 1000;
     return events.filter((event) => {
       const eventMs = Date.parse(event.ts);
       return !Number.isNaN(eventMs) && eventMs >= startMs && eventMs < endMs;
@@ -558,9 +571,7 @@ export function ThreadRow({
           )}
         </div>
         <span className={`tabular-nums ${hug ? "w-full truncate" : "ml-auto shrink-0"}`}>
-          {/* No workflows ran — omit them entirely rather than writing "0 workflows". */}
-          {thread.workflowCount > 0 && `${thread.workflowCount} workflows · `}
-          {agentCount} agents · {fmtDuration(thread.durationSec)} · {formatTokenCount(thread.totalTokens)} · {(thread.unpricedModels?.length ? "API price unavailable" : formatCost(thread.totalCost))}
+          {threadRowSummary(thread, agentCount)}
         </span>
       </div>
 

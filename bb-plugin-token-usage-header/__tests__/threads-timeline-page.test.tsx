@@ -80,6 +80,8 @@ const THREADS_READY = {
       start: "2026-08-25T09:00:00.000Z",
       end: "2026-08-25T09:05:00.000Z",
       durationSec: 300,
+      activeSec: 300,
+      waitingSec: 0,
       totalTokens: 5000,
       totalCost: 0.42,
       workflowCount: 2,
@@ -103,6 +105,8 @@ const THREADS_READY = {
       start: "2026-08-25T08:00:00.000Z",
       end: "2026-08-25T08:02:00.000Z",
       durationSec: 120,
+      activeSec: 120,
+      waitingSec: 0,
       totalTokens: 1000,
       totalCost: 0.05,
       workflowCount: 0,
@@ -141,6 +145,8 @@ const THREADS_WITH_GAPS = {
       start: "2026-08-25T09:00:00.000Z",
       end: "2026-08-25T09:04:00.000Z",
       durationSec: 240,
+      activeSec: 240,
+      waitingSec: 0,
       totalTokens: 2000,
       totalCost: 0.2,
       workflowCount: 1,
@@ -919,6 +925,8 @@ describe("threads-timeline nav panel — liveness indicators", () => {
         start: "2026-08-25T09:00:00.000Z",
         end: "2026-08-25T09:05:00.000Z",
         durationSec: 300,
+        activeSec: 300,
+        waitingSec: 0,
         totalTokens: 5000,
         totalCost: 0.42,
         workflowCount: 0,
@@ -941,6 +949,8 @@ describe("threads-timeline nav panel — liveness indicators", () => {
         start: "2026-08-25T08:00:00.000Z",
         end: "2026-08-25T08:02:00.000Z",
         durationSec: 120,
+        activeSec: 120,
+        waitingSec: 0,
         totalTokens: 1000,
         totalCost: 0.05,
         workflowCount: 0,
@@ -963,6 +973,8 @@ describe("threads-timeline nav panel — liveness indicators", () => {
         start: "2026-08-25T07:00:00.000Z",
         end: "2026-08-25T07:01:00.000Z",
         durationSec: 60,
+        activeSec: 60,
+        waitingSec: 0,
         totalTokens: 500,
         totalCost: 0.01,
         workflowCount: 0,
@@ -1039,6 +1051,8 @@ describe("cost summary block (UsageProjectsSummary)", () => {
     start: "2026-09-03T10:00:00.000Z",
     end: "2026-09-03T11:00:00.000Z",
     durationSec: 3600,
+    activeSec: 3600,
+    waitingSec: 0,
     totalTokens: 100,
     totalCost: 6,
     workflowCount: 0,
@@ -1066,6 +1080,8 @@ describe("cost summary block (UsageProjectsSummary)", () => {
     start: "2026-08-24T11:00:00.000Z",
     end: "2026-08-24T12:00:00.000Z",
     durationSec: 3600,
+    activeSec: 3600,
+    waitingSec: 0,
     totalTokens: 100,
     totalCost: 9,
     workflowCount: 0,
@@ -1139,6 +1155,46 @@ describe("cost summary block (UsageProjectsSummary)", () => {
 
     expect(donutTotalText(slot.container)).toBe("$6.00");
     expect(screen.queryByText("Beta session")).toBeNull();
+  });
+
+  it("shows a thread's known sum as a lower bound, in the donut and in its row, when one model has no price", async () => {
+    const partial = { ...alphaThread, unpricedModels: ["codex-auto-review"] };
+    const slot = await renderThreadsTimeline({
+      threadsTimeline: async (input: unknown) => {
+        const { limit } = input as { limit: number };
+        return limit === 100 || limit === 1000
+          ? { status: "ready" as const, unit: 3600, threads: [partial], agentLabels: {}, truncated: false }
+          : THREADS_READY;
+      },
+    });
+    await screen.findByText("Alpha session");
+
+    const section = summarySection(slot.container)!;
+    expect(donutTotalText(slot.container)).toBe("≥ $6.00");
+    expect(within(section).getByLabelText("Total cost: ≥ $6.00")).toBeTruthy();
+    expect(within(section).getAllByText("≥ $6.00")).toHaveLength(3); // donut, the project's legend entry and the thread's row
+    expect(within(section).queryByText("API n/a")).toBeNull();
+  });
+
+  it("marks the total as a lower bound only in a window that contains the thread without a price", async () => {
+    const oldPartial = { ...betaThread, unpricedModels: ["codex-auto-review"] };
+    const slot = await renderThreadsTimeline({
+      threadsTimeline: async (input: unknown) => {
+        const { limit } = input as { limit: number };
+        return limit === 100 || limit === 1000
+          ? { status: "ready" as const, unit: 3600, threads: [alphaThread, oldPartial], agentLabels: {}, truncated: false }
+          : THREADS_READY;
+      },
+    });
+    await screen.findByText("Alpha session");
+    expect(donutTotalText(slot.container)).toBe("$6.00"); // Beta is 10 days old — outside the day window
+
+    fireEvent.click(screen.getByRole("button", { name: "Last 30 days" }));
+    await screen.findByText("Beta session");
+    expect(donutTotalText(slot.container)).toBe("≥ $15.00");
+    const section = summarySection(slot.container)!;
+    expect(within(section).getAllByText("≥ $9.00")).toHaveLength(2); // Beta's legend entry and its row
+    expect(within(section).getAllByText("$6.00")).toHaveLength(2); // Alpha's, exact
   });
 
   it("widening to the month window reveals older threads and updates the donut total", async () => {

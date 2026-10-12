@@ -29,6 +29,9 @@ PUSH_COMMAND_MARKER = "git push"
 # so any PreToolUse hook that blocks the command is recognized the same way.
 BLOCKED_MARKER = "BLOCKED"
 
+# Who started a compaction: the user's /compact or the automatic one at the context limit.
+COMPACT_TRIGGERS = ("manual", "auto")
+
 
 def _tool_use_blocks(record):
     if record.get("type") != "assistant":
@@ -70,6 +73,25 @@ def _pr_event(record):
     return {"type": "pr", "ts": ts, "number": number, "url": url, "repository": repository}
 
 
+def _compact_event(record):
+    """A context compaction: Claude Code writes a system record "compact_boundary" when it squeezes the conversation."""
+    if record.get("type") != "system" or record.get("subtype") != "compact_boundary":
+        return None
+    ts = record.get("timestamp")
+    if not isinstance(ts, str):
+        return None
+    meta = record.get("compactMetadata")
+    meta = meta if isinstance(meta, dict) else {}
+    trigger = meta.get("trigger")
+    pre_tokens = meta.get("preTokens")
+    return {
+        "type": "compact",
+        "ts": ts,
+        "trigger": trigger if trigger in COMPACT_TRIGGERS else None,
+        "preTokens": pre_tokens if isinstance(pre_tokens, int) and not isinstance(pre_tokens, bool) else None,
+    }
+
+
 def scan_session(paths):
     """Scans one session's raw transcript files for git-relevant facts.
 
@@ -82,7 +104,8 @@ def scan_session(paths):
       and has the latest timestamp (ISO 8601 strings sort chronologically as
       plain strings) — a session's working directory/branch rarely changes,
       but "most recent" is the closest thing to "current" if it ever does.
-    - events is pr + push facts, sorted by ts. A "pr" event comes straight
+    - events is pr + push + compact facts, sorted by ts. A "compact" event comes
+      from a compact_boundary system record. A "pr" event comes straight
       from a pr-link record. A "push" event comes from a Bash tool_use whose
       command contains PUSH_COMMAND_MARKER, paired with its own tool_result —
       only kept when that result does NOT report the attempt as blocked (a
@@ -100,6 +123,7 @@ def scan_session(paths):
     # (a tool call and its result live in the same agent's transcript), so
     # this only needs to survive across lines of one file at a time.
     pending_push = {}
+    seen_compacts = set()
     events = []
 
     for path in sorted(paths):
@@ -130,6 +154,16 @@ def scan_session(paths):
             pr_event = _pr_event(rec)
             if pr_event is not None:
                 events.append(pr_event)
+                continue
+
+            compact_event = _compact_event(rec)
+            if compact_event is not None:
+                # Claude Code repeats the same boundary record (same uuid) at
+                # several places of one transcript; it is still one compaction.
+                compact_key = rec.get("uuid") or compact_event["ts"]
+                if compact_key not in seen_compacts:
+                    seen_compacts.add(compact_key)
+                    events.append(compact_event)
                 continue
 
             for block in _tool_use_blocks(rec):

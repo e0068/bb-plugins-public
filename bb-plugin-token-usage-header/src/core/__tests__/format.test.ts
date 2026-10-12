@@ -7,6 +7,7 @@ import {
   formatCost,
   formatPercent,
   formatPercentValue,
+  formatPrice,
   formatTokenCount,
 } from "../format";
 
@@ -72,6 +73,21 @@ describe("formatCost", () => {
 
   it("formats zero", () => {
     expect(formatCost(0)).toBe("$0.00");
+  });
+});
+
+describe("formatPrice", () => {
+  it("is the plain amount when every model has a price", () => {
+    expect(formatPrice(4.184, [])).toBe("$4.18");
+    expect(formatPrice(4.184, undefined)).toBe("$4.18");
+  });
+
+  it("marks the known part as a lower bound when some model has no price", () => {
+    expect(formatPrice(61.25, ["codex-auto-review"])).toBe("≥ $61.25");
+  });
+
+  it("says the price is unavailable when no model has one", () => {
+    expect(formatPrice(0, ["kimi-for-coding"])).toBe("API price unavailable");
   });
 });
 

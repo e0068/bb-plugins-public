@@ -20,6 +20,8 @@ const THREADS = {
       start: "2026-08-25T09:00:00.000Z",
       end: "2026-08-25T09:05:00.000Z",
       durationSec: 300,
+      activeSec: 300,
+      waitingSec: 0,
       totalTokens: 7000,
       totalCost: 0.42,
       workflowCount: 0,

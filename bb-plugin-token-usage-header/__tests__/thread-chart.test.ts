@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { bucketGitEventsByBin, computeDisplayBins, segmentContainsAgent, type DisplayBin } from "../pages/thread-chart";
+import { bucketGitEventsByBin, computeDisplayBins, segmentContainsAgent, threadRowSummary, type DisplayBin } from "../pages/thread-chart";
 import type { AgentBin, GitEvent, TimelineBin } from "../src/core";
 
 describe("segmentContainsAgent", () => {
@@ -116,9 +116,48 @@ describe("bucketGitEventsByBin", () => {
     expect(bucketGitEventsByBin(bins, [first, second], UNIT)).toEqual([[first, second]]);
   });
 
+  it("keeps an event that happened after the last column in the last column", () => {
+    const bins = [bin("2026-08-20T10:00:00.000Z"), bin("2026-08-20T10:01:00.000Z")];
+    const late = commit("2026-08-20T10:20:00.000Z");
+    expect(bucketGitEventsByBin(bins, [late], UNIT)).toEqual([[], [late]]);
+  });
+
+  it("still drops an event from before the first column", () => {
+    const bins = [bin("2026-08-20T10:00:00.000Z")];
+    expect(bucketGitEventsByBin(bins, [commit("2026-08-20T09:59:59.000Z")], UNIT)).toEqual([[]]);
+  });
+
   it("drops an event with an unparseable ts instead of throwing", () => {
     const bins = [bin("2026-08-20T10:00:00.000Z")];
     const event = commit("not-a-date");
     expect(bucketGitEventsByBin(bins, [event], UNIT)).toEqual([[]]);
+  });
+});
+
+describe("threadRowSummary", () => {
+  const thread = { totalCost: 61.25, unpricedModels: [], activeSec: 24000, waitingSec: 5400, workflowCount: 1 };
+
+  it("lists cost, active time, waiting time, workflows and agents in that order", () => {
+    expect(threadRowSummary(thread, 4)).toBe("$61.25 · 6 h 40 min · 1 h 30 min idle · 1 workflows · 4 agents");
+  });
+
+  it("leaves workflows out when none ran", () => {
+    expect(threadRowSummary({ ...thread, workflowCount: 0 }, 2)).toBe("$61.25 · 6 h 40 min · 1 h 30 min idle · 2 agents");
+  });
+
+  it("shows the known part as a lower bound when one model has no price", () => {
+    expect(threadRowSummary({ ...thread, unpricedModels: ["codex-auto-review"] }, 1)).toBe(
+      "≥ $61.25 · 6 h 40 min · 1 h 30 min idle · 1 workflows · 1 agents",
+    );
+  });
+
+  it("says the API price is unavailable when no model has one", () => {
+    expect(threadRowSummary({ ...thread, totalCost: 0, unpricedModels: ["codex-auto-review"] }, 1)).toBe(
+      "API price unavailable · 6 h 40 min · 1 h 30 min idle · 1 workflows · 1 agents",
+    );
+  });
+
+  it("writes short spans in minutes and seconds", () => {
+    expect(threadRowSummary({ ...thread, activeSec: 95, waitingSec: 0, workflowCount: 0 }, 1)).toBe("$61.25 · 1 min 35 s · 0 s idle · 1 agents");
   });
 });
