@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { act, cleanup, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
-import { blankTree } from "../model";
+import { blankPhase, blankTree } from "../model";
 import { createEditorStore, type EditorStore } from "../store";
 import { EditorStoreContext } from "./context";
 import { WorkflowEditor } from "./workflow-editor";
@@ -43,5 +43,18 @@ describe("WorkflowEditor", () => {
     act(() => second.setName("renamed"));
     expect((screen.getByLabelText("outline workflow name") as HTMLInputElement).value).toBe("first");
     expect(screen.queryByLabelText("workflow source")).toBeNull();
+  });
+
+  it("a picked node's settings keep a readable width beside the tree — a narrow tab scrolls instead of squeezing them", () => {
+    const store = createEditorStore();
+    store.load({ ...blankTree("review"), phases: [blankPhase("Review")] }, file);
+    render(
+      <EditorStoreContext.Provider value={store}>
+        <WorkflowEditor agents={[]} providerCatalog={[]} previewEngine="claude" columns="all" selectedPath={[0]} onSelect={() => {}} storageKey="test" />
+      </EditorStoreContext.Provider>,
+    );
+    expect(screen.getByLabelText("outline workflow name")).toBeTruthy();
+    const column = screen.getByLabelText("group repeat max loops").closest<HTMLElement>("[style]")!;
+    expect(column.style.minWidth).toBe("280px");
   });
 });

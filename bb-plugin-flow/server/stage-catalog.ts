@@ -100,13 +100,22 @@ const readPluginAgents = async (sources: CatalogSources): Promise<ExecutorEntry[
 const distinct = (entries: readonly ExecutorEntry[]): ExecutorEntry[] =>
   entries.reduce<ExecutorEntry[]>((acc, entry) => (acc.some((seen) => seen.executor.id === entry.executor.id) ? acc : [...acc, entry]), []);
 
+/**
+ * Два файла workflow объявляют одно имя в meta (parallel-dev.js и parallel-dev-full.js — оба «parallel-dev»): каталог держит
+ * одного, и им становится файл, названный как сам workflow, а не первый по алфавиту — иначе чип открывает чужой файл.
+ */
+const namedFileFirst = (entries: ExecutorEntry[]): ExecutorEntry[] => {
+  const named = (entry: ExecutorEntry) => basename(entry.path, ".js") === entry.executor.name;
+  return [...entries.filter(named), ...entries.filter((entry) => !named(entry))];
+};
+
 const readExecutorEntries = async (sources: CatalogSources): Promise<ExecutorEntry[]> => {
   const lists = await Promise.all([
     readAgentTree(sources, join(sources.home, ".claude", "agents"), { kind: "own" }),
     readProjectAgents(sources),
     readPluginAgents(sources),
     listFiles(sources, join(sources.home, ".codex", "agents"), ".toml", 0).then((paths) => readExecutors(sources, paths, parseCodexAgentFile)),
-    listFiles(sources, join(sources.home, ".claude", "workflows"), ".js", 0).then((paths) => readExecutors(sources, paths, parseWorkflowFile)),
+    listFiles(sources, join(sources.home, ".claude", "workflows"), ".js", 0).then((paths) => readExecutors(sources, paths, parseWorkflowFile)).then(namedFileFirst),
   ]);
   return distinct(lists.flat());
 };

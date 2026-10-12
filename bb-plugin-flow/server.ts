@@ -1,7 +1,7 @@
 // Бэкенд Flow: инструменты агента `ask_decision`, `share_command` и `flow_stage`, исполнитель автоматизаций, коллекция
 // flow и flow тредов, настройка языка и RPC виджетов поверх kv плагина.
 import { randomBytes } from "node:crypto";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
@@ -33,6 +33,8 @@ import { writeDecision } from "./server/journal-writer";
 import { acrossThreads, readClaudeTranscript, readPlanning, readWindowCost, readWindowMinutes, withDescendants } from "./server/planning";
 import { type ContextSettingValues, compactPreselectSetting, compactPreselectedOf, contextFillOf, contextSettings } from "./server/context";
 import { createProgress, FLOW_STAGE_TOOL, registerProgress } from "./server/progress";
+import { registerRetryTool } from "./server/retry-tool";
+import { RETRY_AUTOMATION_TOOL } from "./lib/stage-constants";
 import { registerFlowPickerApi } from "./server/flow-picker-api";
 import { registerMentionsApi } from "./server/mentions";
 import { registerOwnerTurn } from "./server/owner-turn";
@@ -194,7 +196,7 @@ export default async function plugin(bb: BbPluginApi): Promise<void> {
   bb.events.on("thread.deleted", ({ thread }) => void delivery.forget(thread.id));
   // Первая сессия треда стартует уже с ограничением: решение сверки ложится в дерево прямо перед стартом Claude Code.
   registerSessionConfig(bb, {
-    tools: [ASK_TOOL_NAME, FLOW_STAGE_TOOL, READ_FLOWS_TOOL_NAME, SAVE_FLOW_TOOL_NAME, COMMAND_TOOL_NAME, WORKFLOW_READ_TOOL_NAME, WORKFLOW_WRITE_TOOL_NAME],
+    tools: [ASK_TOOL_NAME, FLOW_STAGE_TOOL, RETRY_AUTOMATION_TOOL, READ_FLOWS_TOOL_NAME, SAVE_FLOW_TOOL_NAME, COMMAND_TOOL_NAME, WORKFLOW_READ_TOOL_NAME, WORKFLOW_WRITE_TOOL_NAME],
     prestart: (threadId, root) => void scope.prestart(threadId, root),
     startMessage: (threadId) => startMessageOf(agentOf(threadId)),
     deliver: delivery.deliver,
@@ -370,13 +372,16 @@ export default async function plugin(bb: BbPluginApi): Promise<void> {
   };
   void catalog();
   registerFlowTools(bb, flows, { catalog, newId });
+  registerRetryTool(bb, { stages: stagesOf, progress, runner, relay });
   // Workflow Claude Code: инструменты агента собирают их в формате конструктора, открыватель .js показывает конструктор.
-  const writeText = async (path: string, text: string) => {
+  const writeText = async (path: string, text: string, exclusive = false) => {
     await mkdir(dirname(path), { recursive: true });
-    await writeFile(path, text, "utf8");
+    await writeFile(path, text, { encoding: "utf8", flag: exclusive ? "wx" : "w" });
   };
   registerWorkflowTools(bb, { dir: join(homedir(), ".claude", "workflows"), readFile: (path) => readFile(path, "utf8"), writeFile: writeText });
   registerWorkflowFiles(bb, {
+    dir: join(homedir(), ".claude", "workflows"),
+    listDir: (dir) => readdir(dir),
     readFile: (path) => readFile(path, "utf8"),
     writeFile: writeText,
     agents: () => readWorkflowAgents(hostCatalogSources(bb)),

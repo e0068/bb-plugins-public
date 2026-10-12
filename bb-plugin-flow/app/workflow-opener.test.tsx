@@ -31,8 +31,10 @@ const open = (path: string, source: string, kind: "host" | "workspace" = "host")
     rpc: {
       workflowRead: () => ({ source }),
       workflowSave: (input: { path: string }) => ({ path: input.path }),
-      workflowAgents: () => [{ value: "reviewer", model: "opus", effort: "", provider: "claude-code", scope: "user" }],
+      workflowAgents: () => [{ value: "reviewer", model: "opus", effort: "", provider: "claude-code", scope: "user", path: "/Users/owner/.claude/agents/reviewer.md" }],
       workflowProviders: () => [],
+      agentDocRead: ({ path }: { path: string }) => ({ path, content: "# Reviewer agent", sha256: "a1", error: null }),
+      agentDocWrite: () => ({ outcome: "written", sha256: "a2" }),
     } as never,
   });
 
@@ -54,10 +56,33 @@ describe("открыватель .js", () => {
     expect(saved.source).toContain("Reviews twice");
   });
 
-  it("рукописный workflow — код с причиной, без кнопки сохранения", async () => {
-    const slot = open("/Users/owner/.claude/workflows/epic.js", 'export const meta = { name: "epic" }\n');
-    expect(await slot.findByText(/No builder mark — written by hand/)).toBeTruthy();
-    expect(slot.queryByRole("button", { name: "Save" })).toBeNull();
+  it("настройки выбранного узла встают справа от дерева, а не вместо него", async () => {
+    // Вкладка уже 720 px — прежде здесь дерево уступало место настройкам с кнопкой «← Workflow».
+    vi.stubGlobal(
+      "ResizeObserver",
+      class {
+        constructor(private readonly report: ResizeObserverCallback) {}
+        observe(target: Element) {
+          this.report([{ target, contentRect: { width: 400 } } as unknown as ResizeObserverEntry], this as unknown as ResizeObserver);
+        }
+        unobserve() {}
+        disconnect() {}
+      },
+    );
+    const slot = open("/Users/owner/.claude/workflows/review.js", built);
+    fireEvent.click((await slot.findByRole("button", { name: "Review" })).closest('[role="button"]')!);
+    expect(await slot.findByText("Repeat", { selector: "span, label, div" })).toBeTruthy();
+    expect(slot.getByLabelText("outline workflow name")).toBeTruthy();
+    expect(slot.queryByRole("button", { name: /^Back to/ })).toBeNull();
+  });
+
+  it("выбранный агент: справа сверху его файл, как в Claude Config, под ним настройки шага", async () => {
+    const slot = open("/Users/owner/.claude/workflows/review.js", built);
+    fireEvent.click((await slot.findByText("reviewer", { selector: "span" })).closest('[role="button"]')!);
+    expect(await slot.findByText("/Users/owner/.claude/agents/reviewer.md", {}, { timeout: 5000 })).toBeTruthy();
+    expect(slot.rpcCalls.find((c) => c.method === "agentDocRead")?.input).toEqual({ path: "/Users/owner/.claude/agents/reviewer.md" });
+    expect(slot.getByLabelText("agent detail model")).toBeTruthy();
+    expect(slot.getByLabelText("outline workflow name")).toBeTruthy();
   });
 
   it("другой .js и файл не с хоста — встроенное превью bb", async () => {

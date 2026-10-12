@@ -114,9 +114,11 @@ describe("ответ агенту", () => {
     expect(self).toMatch(/was NOT started/);
     expect(self).toMatch(/git\.create-pr[^.]*no token/);
     expect(self).toMatch(/Retry or Skip/);
+    expect(self).toContain('retry_automation { "stage": "publish" }');
     const other = markReply("review", { kind: "blocked", stage: land, reason: { kind: "failed", stage: publish, step: "git.create-pr", error: "no token" } }, null);
     expect(other).toMatch(/land[^.]*was NOT started/);
     expect(other).toMatch(/automation publish failed/);
+    expect(other).toContain('retry_automation { "stage": "publish" }');
     const ran = markReply("review", { kind: "blocked", stage: publish, reason: { kind: "ran" } }, null);
     expect(ran).toMatch(/already ran/);
     expect(ran).not.toMatch(/Flow started/);

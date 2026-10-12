@@ -1,22 +1,20 @@
 // Открыватель .js в правой панели bb: файл workflow — `~/.claude/workflows` или `.bb/workflows` — открывается конструктором
 // workflow из packages/workflow-builder, любой другой .js — встроенным превью bb. Сюда ведёт клик по чипу workflow в
 // настройках этапа: сервер отдаёт сам .js. У каждой вкладки своё хранилище, так что две открытые workflow не делят дерево.
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { useRpc, type PluginFileOpenerProps } from "@get-bb/plugin-sdk/app";
+import { MdDocView, NATIVE_VIEWER_TOKEN_DEFAULTS, kasimovCssVars, kasimovFlags, parseKasimovSettings } from "@bb-plugins/md-doc-view";
 import { withBuiltinAgents } from "@bb-plugins/workflow-builder/agents";
 import { blankTree, compile, recognize } from "@bb-plugins/workflow-builder/model";
 import type { OutlinePath } from "@bb-plugins/workflow-builder/outline-ops";
-import { nodeAt } from "@bb-plugins/workflow-builder/outline-ops";
 import { createEditorStore } from "@bb-plugins/workflow-builder/store";
 import { agentsMissingTemplate } from "@bb-plugins/workflow-builder/validity";
 import { EditorStoreContext, useEditorSnapshot, WorkflowEditor, type AgentOption, type ProviderCatalogEntry } from "@bb-plugins/workflow-builder/react";
 
 import { workflowFileEngine, type WorkflowEngine } from "../core/workflow-file";
 import { Button } from "../components/ui/button";
+import { docLibraries } from "./doc-libraries";
 import type { workflowFilesRpcContract } from "../shared/contract";
-
-/** Уже панели — одна колонка за раз: дерево, а по выбору узла — его настройки с «Назад». */
-const COMPACT_BELOW_PX = 720;
 
 const fileName = (path: string): string => path.slice(path.lastIndexOf("/") + 1).replace(/\.js$/, "");
 
@@ -27,7 +25,11 @@ export function WorkflowOpener({ path, source, Original }: PluginFileOpenerProps
 
 type Loaded = { state: "loading" } | { state: "ready" } | { state: "failed"; message: string };
 
-function WorkflowFile({ path, engine }: { path: string; engine: WorkflowEngine }) {
+/**
+ * Редактор одного файла workflow: читает его и показывает конструктором, а нераспознанный — кодом для правки. `create` —
+ * файла ещё нет: пустое дерево с именем файла, первое сохранение его создаёт; `onSaved` зовётся после каждой записи.
+ */
+export function WorkflowFile({ path, engine, create = false, onSaved }: { path: string; engine: WorkflowEngine; create?: boolean; onSaved?: () => void }) {
   const rpc = useRpc<typeof workflowFilesRpcContract>();
   const [store] = useState(createEditorStore);
   const [loaded, setLoaded] = useState<Loaded>({ state: "loading" });
@@ -37,6 +39,12 @@ function WorkflowFile({ path, engine }: { path: string; engine: WorkflowEngine }
 
   useEffect(() => {
     let alive = true;
+    if (create) {
+      store.newWorkflow();
+      store.setName(identity.name);
+      setLoaded({ state: "ready" });
+      return;
+    }
     setLoaded({ state: "loading" });
     rpc.call("workflowRead", { path }).then(
       ({ source }) => {
@@ -52,7 +60,7 @@ function WorkflowFile({ path, engine }: { path: string; engine: WorkflowEngine }
       alive = false;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [path, engine]);
+  }, [path, engine, create]);
 
   useEffect(() => {
     void rpc.call("workflowAgents", null).then(
@@ -66,72 +74,97 @@ function WorkflowFile({ path, engine }: { path: string; engine: WorkflowEngine }
   if (loaded.state === "loading") return <div className="p-4 text-sm text-muted-foreground">Reading {identity.name}…</div>;
   return (
     <EditorStoreContext.Provider value={store}>
-      <WorkflowFileEditor path={path} engine={engine} agents={agents} providers={providers} />
+      <WorkflowFileEditor path={path} engine={engine} agents={agents} providers={providers} create={create} onSaved={onSaved} />
     </EditorStoreContext.Provider>
   );
 }
 
-function WorkflowFileEditor({ path, engine, agents, providers }: { path: string; engine: WorkflowEngine; agents: AgentOption[]; providers: ProviderCatalogEntry[] }) {
+function WorkflowFileEditor({
+  path,
+  engine,
+  agents,
+  providers,
+  create,
+  onSaved,
+}: {
+  path: string;
+  engine: WorkflowEngine;
+  agents: AgentOption[];
+  providers: ProviderCatalogEntry[];
+  create: boolean;
+  onSaved?: () => void;
+}) {
   const rpc = useRpc<typeof workflowFilesRpcContract>();
   const { tree, rawSource, version } = useEditorSnapshot();
   const [selectedPath, setSelectedPath] = useState<OutlinePath | null>(null);
-  const [savedVersion, setSavedVersion] = useState(version);
+  // Новый файл несохранён с самого начала: кнопка «Save» его создаёт.
+  const [savedVersion, setSavedVersion] = useState(create ? -1 : version);
   const [saving, setSaving] = useState<{ state: "idle" } | { state: "saving" } | { state: "failed"; message: string }>({ state: "idle" });
-  const box = useRef<HTMLDivElement>(null);
-  const [compact, setCompact] = useState(false);
-
-  // Колонок столько, сколько влезает в саму вкладку: правая панель уже окна.
-  useEffect(() => {
-    const node = box.current;
-    if (node === null || typeof ResizeObserver === "undefined") return;
-    const observer = new ResizeObserver(([entry]) => setCompact((entry?.contentRect.width ?? 0) < COMPACT_BELOW_PX));
-    observer.observe(node);
-    return () => observer.disconnect();
-  }, []);
 
   const codeOnly = rawSource !== null;
   const invalid = agentsMissingTemplate(tree);
-  const hasDetail = !codeOnly && selectedPath !== null && nodeAt(tree, selectedPath) !== null;
   const save = async () => {
     setSaving({ state: "saving" });
     const at = version;
     try {
-      await rpc.call("workflowSave", { path, source: compile(tree, engine) });
+      // Первая запись нового файла — созданием: занятое имя сервер отклоняет, а не затирает.
+      await rpc.call("workflowSave", { path, source: rawSource !== null ? rawSource : compile(tree, engine), ...(create && savedVersion === -1 ? { create: true } : {}) });
       setSavedVersion(at);
       setSaving({ state: "idle" });
+      onSaved?.();
     } catch (error) {
       setSaving({ state: "failed", message: error instanceof Error ? error.message : String(error) });
     }
   };
 
   return (
-    <div ref={box} className="flex h-full min-h-0 min-w-0 overflow-x-auto">
+    // Настройки узла встают колонкой справа от дерева при любой ширине: узкая вкладка прокручивается вбок, а не прячет дерево.
+    <div className="flex h-full min-h-0 min-w-0 overflow-x-auto">
       <WorkflowEditor
         agents={agents}
         providerCatalog={providers}
         previewEngine={engine}
-        columns={!compact ? "all" : hasDetail ? "detail" : "builder"}
+        columns="all"
         selectedPath={selectedPath}
         onSelect={setSelectedPath}
         storageKey="flow:workflow-opener"
-        renderBack={(label, onClick) => (
-          <button type="button" onClick={onClick} aria-label={`Back to ${label}`} className="flex w-full shrink-0 items-center gap-1.5 border-b border-border px-3 py-2 text-left text-sm text-muted-foreground hover:text-foreground">
-            ← {label}
-          </button>
-        )}
+        editableCode
+        agentFile={(agentPath, back) => <AgentDoc path={agentPath} leading={back} />}
         footer={
           <div className="flex items-center justify-between gap-2">
             <span className="min-w-0 truncate text-xs text-muted-foreground" title={path}>
               {saving.state === "failed" ? `Not saved: ${saving.message}` : version !== savedVersion ? "Unsaved changes" : path}
             </span>
-            {!codeOnly && (
-              <Button size="sm" onClick={() => void save()} disabled={invalid > 0 || version === savedVersion || saving.state === "saving"}>
-                Save
-              </Button>
-            )}
+            <Button size="sm" onClick={() => void save()} disabled={(!codeOnly && invalid > 0) || version === savedVersion || saving.state === "saving"}>
+              Save
+            </Button>
           </div>
         }
       />
     </div>
+  );
+}
+
+/** Вид Kasimov по умолчанию: у Flow нет своих настроек просмотрщика, а без значений документ встал бы чёрным. */
+const KASIMOV = parseKasimovSettings(undefined, NATIVE_VIEWER_TOKEN_DEFAULTS);
+
+/**
+ * Файл агента-шаблона над настройками шага — тот же просмотрщик Kasimov, что в Claude Config: Read, Write и Raw, запись
+ * с проверкой версии. Ссылки из файла не уводят в другие файлы: сервер отдаёт только файлы агентов.
+ */
+function AgentDoc({ path, leading }: { path: string; leading: ReactNode }) {
+  const rpc = useRpc<typeof workflowFilesRpcContract>();
+  return (
+    <MdDocView
+      key={path}
+      libraries={docLibraries}
+      initialPath={path}
+      load={(target) => rpc.call("agentDocRead", { path: target })}
+      save={(target, content, expectedSha256) => rpc.call("agentDocWrite", { path: target, content, expectedSha256 })}
+      resolveLinkTarget={() => null}
+      vars={kasimovCssVars(KASIMOV)}
+      {...kasimovFlags(KASIMOV)}
+      leading={leading}
+    />
   );
 }

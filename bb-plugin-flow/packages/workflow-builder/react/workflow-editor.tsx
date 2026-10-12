@@ -12,6 +12,9 @@ import { agentsMissingTemplate } from "../validity";
 import { useEditorSnapshot, useEditorStore } from "./context";
 import { AgentDetails, GroupDetails, OutlineEditor, type AgentOption, type ProviderCatalogEntry } from "./outline-editor";
 
+/** Settings beside the tree keep a readable width: in a narrow tab the row scrolls sideways instead of squeezing them. */
+const DETAIL_MIN = { minWidth: 280 } as const;
+
 /** Which of the builder's columns stand on screen: side by side, or one at a time on a narrow screen. */
 export type EditorColumns = "all" | "builder" | "detail";
 
@@ -23,18 +26,33 @@ const AGENT_SCOPE_LABEL: Record<NonNullable<AgentOption["scope"]>, string> = {
 };
 
 export const UNRECOGNIZED_TEXT: Record<Unrecognized, string> = {
-  "hand-written": "No builder mark — written by hand. Read-only; edit the .js file directly.",
-  edited: "Edited by hand after saving — the builder can't rebuild it. Read-only; edit the .js file directly.",
+  "hand-written": "No builder mark — written by hand.",
+  edited: "Edited by hand after saving — the builder can't rebuild it.",
 };
 
-/** A file the builder can't read as a tree: its source as-is, read-only, under the reason. */
-export function CodeOnlyView({ source, reason }: { source: string; reason: Unrecognized }) {
+/**
+ * A file the builder can't read as a tree: its source under the reason — read-only, or edited as text when `onChange` is
+ * given (the consumer saves it as is).
+ */
+export function CodeOnlyView({ source, reason, onChange }: { source: string; reason: Unrecognized; onChange?: (source: string) => void }) {
   return (
     <div className="flex h-full min-h-0 flex-1 flex-col">
-      <div className="border-b border-border px-4 py-2 text-xs text-muted-foreground">{UNRECOGNIZED_TEXT[reason]}</div>
-      <pre className="flex-1 overflow-auto p-4 font-mono text-xs text-foreground" aria-label="workflow source">
-        {source}
-      </pre>
+      <div className="border-b border-border px-4 py-2 text-xs text-muted-foreground">
+        {UNRECOGNIZED_TEXT[reason]} {onChange ? "Edit the code here." : "Read-only; edit the .js file directly."}
+      </div>
+      {onChange ? (
+        <textarea
+          aria-label="workflow source"
+          value={source}
+          spellCheck={false}
+          onChange={(e) => onChange(e.target.value)}
+          className="min-h-0 flex-1 resize-none bg-transparent p-4 font-mono text-xs text-foreground outline-none"
+        />
+      ) : (
+        <pre className="flex-1 overflow-auto p-4 font-mono text-xs text-foreground" aria-label="workflow source">
+          {source}
+        </pre>
+      )}
     </div>
   );
 }
@@ -60,6 +78,8 @@ export interface WorkflowEditorProps {
   agentFile?: (path: string, back: ReactNode) => ReactNode;
   /** localStorage prefix for the builder's column width and the agent file's height. */
   storageKey: string;
+  /** A file the builder can't read as a tree is edited as code instead of shown read-only. */
+  editableCode?: boolean;
 }
 
 export function WorkflowEditor({
@@ -75,6 +95,7 @@ export function WorkflowEditor({
   renderBack,
   agentFile,
   storageKey,
+  editableCode = false,
 }: WorkflowEditorProps) {
   const store = useEditorStore();
   const { tree, identity, rawSource, reason, draft } = useEditorSnapshot();
@@ -133,7 +154,7 @@ export function WorkflowEditor({
             {nothingOpen ? (
               empty
             ) : codeOnly ? (
-              <CodeOnlyView source={rawSource} reason={reason ?? "hand-written"} />
+              <CodeOnlyView source={rawSource} reason={reason ?? "hand-written"} onChange={editableCode ? store.setRawSource : undefined} />
             ) : (
               <OutlineEditor agents={agents} selectedPath={selectedPath} onSelect={onSelect} />
             )}
@@ -163,14 +184,14 @@ export function WorkflowEditor({
       )}
 
       {selGroup && (wide || columns === "detail") && (
-        <div className="flex h-full min-h-0 min-w-0 flex-1 flex-col overflow-hidden border-l border-border">
+        <div style={DETAIL_MIN} className="flex h-full min-h-0 flex-1 flex-col overflow-hidden border-l border-border">
           {back("Workflow", () => onSelect(null))}
           <GroupDetails node={selGroup} onSetField={(patch) => store.update((d) => setGroupSettings(d, selectedPath!, patch))} />
         </div>
       )}
 
       {selAgent && (wide || columns === "detail") && (
-        <div className="flex h-full min-h-0 min-w-0 flex-1 flex-col overflow-hidden border-l border-border">
+        <div style={DETAIL_MIN} className="flex h-full min-h-0 flex-1 flex-col overflow-hidden border-l border-border">
           {back("Workflow", () => onSelect(null))}
           {pickerOpen ? (
             <div className="flex h-full flex-col gap-0.5 overflow-y-auto p-2">

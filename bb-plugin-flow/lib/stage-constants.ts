@@ -36,6 +36,9 @@ export const BUILTIN_SKILLS: Record<BuiltinKind, string> = { questions: "flow-qu
 
 /** Навык, по которому агент собирает flow инструментами read_flows и save_flow; плагин везёт его в `skills/`. */
 export const FLOW_CREATE_SKILL = "flow-create";
+
+/** Инструмент агента: повторить упавший шаг автоматизации — то же, что «Повторить» владельца. */
+export const RETRY_AUTOMATION_TOOL = "retry_automation";
 /** Навык сборки workflow Claude Code инструментами `workflow_read` и `workflow_write` — в формате конструктора. */
 export const WORKFLOW_BUILDER_SKILL = "workflow-builder";
 

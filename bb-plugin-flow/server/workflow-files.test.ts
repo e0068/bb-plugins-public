@@ -8,6 +8,8 @@ import { registerWorkflowFiles, type WorkflowFileDeps } from "./workflow-files";
 const setup = (files: Record<string, string> = {}) => {
   const { bb, harness } = createFakePluginHost({ pluginId: "flow" });
   const deps: WorkflowFileDeps = {
+    dir: "/h/.claude/workflows",
+    listDir: async () => [],
     readFile: async (path) => {
       const text = files[path];
       if (text === undefined) throw new Error(`ENOENT ${path}`);
@@ -43,5 +45,24 @@ describe("файлы workflow для открывателя", () => {
     const { harness } = setup();
     expect(await harness.callRpc("workflowAgents", null)).toEqual([expect.objectContaining({ value: "reviewer" })]);
     expect(await harness.callRpc("workflowProviders", null)).toEqual([expect.objectContaining({ id: "claude-code" })]);
+  });
+
+  it("файл агента-шаблона читается и пишется поверх той версии, что видел редактор", async () => {
+    const agent = "/h/.claude/agents/reviewer.md";
+    const { harness, files } = setup({ [agent]: "# reviewer" });
+    const read = (await harness.callRpc("agentDocRead", { path: agent })) as { content: string; sha256: string };
+    expect(read.content).toBe("# reviewer");
+    expect(await harness.callRpc("agentDocWrite", { path: agent, content: "# reviewer v2", expectedSha256: read.sha256 })).toMatchObject({ outcome: "written" });
+    expect(files[agent]).toBe("# reviewer v2");
+    // Редактор держит старую версию, а файл уже другой — записи нет.
+    expect(await harness.callRpc("agentDocWrite", { path: agent, content: "# stale", expectedSha256: read.sha256 })).toMatchObject({ outcome: "conflict" });
+    expect(files[agent]).toBe("# reviewer v2");
+  });
+
+  it("файл не из списка агентов не читается и не пишется", async () => {
+    const { harness, files } = setup({ "/h/.ssh/id_rsa": "secret" });
+    expect(await harness.callRpc("agentDocRead", { path: "/h/.ssh/id_rsa" })).toMatchObject({ content: null, error: "Not an agent file." });
+    expect(await harness.callRpc("agentDocWrite", { path: "/h/.ssh/id_rsa", content: "x", expectedSha256: null })).toMatchObject({ outcome: "denied" });
+    expect(files["/h/.ssh/id_rsa"]).toBe("secret");
   });
 });

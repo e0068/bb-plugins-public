@@ -20,6 +20,9 @@ export interface AgentRelay {
   dispose(): void;
 }
 
+/** Сколько вызов инструмента ждёт реплику Flow: дольше — ход агента держит вызов, а Flow напишет в тред сам. */
+export const RELAY_WAIT_MS = 10 * 60_000;
+
 /** Как часто ожидание смотрит, идёт ли ещё работа Flow над тредом. */
 const POLL_MS = 250;
 

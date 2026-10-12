@@ -12,4 +12,12 @@ describe("реплика агенту после последней неудач
     expect(text.split("\n")[0]).toBe('Flow: step git.create-pr of stage land "Commit, PR" failed after the last attempt: gh: rate limited');
     expect(text).toContain("Retry or Skip");
   });
+
+  it("говорит, что починивший причину агент повторяет шаг сам, и называет инструмент с этапом", () => {
+    expect(failureWakeText(land, "git.create-pr", "gh: rate limited")).toContain('retry the step yourself with retry_automation { "stage": "land" }');
+  });
+
+  it("свой наказ владельца не стирает сведение об инструменте", () => {
+    expect(failureWakeText(land, "git.create-pr", "gh: rate limited", "Сообщи мне.")).toContain("retry_automation");
+  });
 });

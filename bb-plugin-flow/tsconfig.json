@@ -25,9 +25,17 @@
       ],
       "@bb-plugins/*": [
         "./packages/*"
+      ],
+      "@codemirror/*": [
+        "./node_modules/@codemirror/*"
+      ],
+      "@uiw/react-codemirror": [
+        "./node_modules/@uiw/react-codemirror"
       ]
     },
-    "resolveJsonModule": true
+    "resolveJsonModule": true,
+    "allowJs": true,
+    "checkJs": false
   },
   "include": [
     "server.ts",
@@ -41,6 +49,9 @@
     "components",
     "server",
     "app",
-    "tools"
+    "tools",
+    "./packages/cellular-kit/index.ts",
+    "./packages/cellular-kit/vendor/index.js",
+    "./packages/cellular-kit/vendor/manifest.json"
   ]
 }
