@@ -1476,3 +1476,14 @@ export type ContextFillView = z.output<typeof contextFillSchema>;
 export type AwaitingKind = z.output<typeof awaitingEntrySchema>["kind"];
 export type FlowSyncStatus = z.output<typeof flowSyncStatusSchema>;
 export type FlowSyncState = z.output<typeof flowSyncStateSchema>;
+
+/**
+ * Настройки списка тредов bb. Встроенный список рисуется внутри слота Flow (хост не отдаёт слотам `Original`) и зовёт RPC
+ * плагина, чей слот его держит, — Flow; без этих методов хост помечает слот Flow упавшим. Flow пересылает вызовы
+ * плагину thread-list, где эти настройки лежат.
+ */
+export const threadListPrefsRpcContract = defineRpcContract({
+  listPreferences: { input: z.null(), output: z.object({ preferences: z.record(z.string(), z.unknown()) }) },
+  setPreference: { input: z.object({ key: z.string(), value: z.unknown() }), output: z.object({ key: z.string(), value: z.unknown() }) },
+  resetPreference: { input: z.object({ key: z.string() }), output: z.object({ key: z.string(), value: z.unknown() }) },
+});

@@ -46,6 +46,7 @@ import { readProviderModels, registerWorkflowFiles } from "./server/workflow-fil
 import { registerWorkflowTools, WORKFLOW_READ_TOOL_NAME, WORKFLOW_WRITE_TOOL_NAME } from "./server/workflow-tools";
 import { createLegacyHeal } from "./server/legacy-heal";
 import { registerFlowSettingsApi, STAGE_SETTINGS_CHANNEL } from "./server/settings-api";
+import { registerThreadListPrefsApi } from "./server/thread-list-prefs-api";
 import { createFlowSync, defaultSyncDir, FLOW_SYNC_CHANNEL, registerFlowSyncApi, SYNC_POLL_MS } from "./server/flow-sync";
 import { createSkillDelivery } from "./server/skill-delivery";
 import {
@@ -394,6 +395,7 @@ export default async function plugin(bb: BbPluginApi): Promise<void> {
       return first === undefined ? null : defaultExecutionOf(await bb.sdk.providers.models({ providerId: first.id }), first.id);
     },
   });
+  registerThreadListPrefsApi(bb);
   registerFlowPickerApi(bb, flows, threads);
   registerMentionsApi(bb, { catalog });
   // Папка синхронизации flow: каждое сохранение уходит в неё, а приехавшее из неё Syncthing'ом сверяется опросом.

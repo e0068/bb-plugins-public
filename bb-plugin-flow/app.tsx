@@ -40,7 +40,7 @@ export default definePluginApp((app) => {
   const t = messages(resolveLocale(undefined, systemLanguages())).settings;
   // Шестерёнка в титул-баре, левее крестика хоста, открывает настройки плагина.
   app.slots.navPanel({ id: "flows", title: "Flow", icon: "Workflow", path: FLOWS_PANEL_PATH, component: FlowsPage, headerContent: FlowsSettingsButton });
-  // На странице Flow панель тредов показывает список flow вместо тредов, если владелец включил это в настройках; в остальных местах — треды bb.
+  // На странице Flow панель тредов показывает список flow вместо тредов, если владелец включил это в настройках; в остальных местах — родной список тредов bb (хост не отдаёт `Original`, поэтому его подключает сам Flow).
   app.slots.experimental_threadList({ id: "threads-or-flows", title: "Threads, flows on the Flow page", description: "bb's threads list; on the Flow page it lists the flows instead when Flow's setting is on.", component: ThreadsPanelList });
   // Страница Flow открывает flow треда, с которого пришёл владелец, — тоже по настройке.
   registerSelectedThread(app, OWN_PLUGIN_ID, useSettings);

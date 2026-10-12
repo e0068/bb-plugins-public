@@ -374,6 +374,12 @@ export const ru = {
     folderError: (message: string) => `Папка не прочиталась, flow не тронуты: ${message}`,
     folderSaveFailed: "Папку не удалось сохранить",
   },
+  threadsFallback: {
+    list: "Треды",
+    empty: "Тредов пока нет",
+    error: "Не удалось загрузить треды",
+    untitled: "Тред без названия",
+  },
   history: {
     tab: "История",
     label: "История прогонов",
