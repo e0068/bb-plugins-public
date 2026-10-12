@@ -3,7 +3,7 @@ import fc from "fast-check";
 import { describe, expect, it } from "vitest";
 
 import type { DecisionAnswer, DecisionBrief, DecisionOption, DecisionQuestion } from "../shared/contract";
-import { answerMessageText, deviations, isQuestionAnswered, openQuestions } from "./answer-message";
+import { answerMessageParts, answerMessageText, deviations, isQuestionAnswered, openQuestions } from "./answer-message";
 
 const option = (id: string, recommended = false): DecisionOption => ({
   id,
@@ -112,12 +112,22 @@ describe("текст ответа агенту", () => {
     expect(text).not.toContain("рекомендовал");
   });
 
-  it("общий текст ко всему брифу стоит последним", () => {
+  it("общий текст ко всему брифу стоит последним в словах владельца", () => {
     const note = "И не забудь про светлую тему";
-    const text = answerMessageText(briefOf([choice, fork]), answerOf([
+    const { owner } = answerMessageParts(briefOf([choice, fork]), answerOf([
       { questionId: "priority", optionIds: ["quality"] },
       { questionId: "executor", optionIds: ["self"] },
     ], note));
-    expect(lines(text).at(-1)).toContain(note);
+    expect(lines(owner).at(-1)).toContain(note);
+  });
+
+  it("слова владельца — без служебных строк, а реплика целиком — обе части подряд", () => {
+    const brief = { ...briefOf([choice]), setup: { criteria: ["Тесты зелёные"] } };
+    const answer = answerOf([{ questionId: "priority", optionIds: ["quality"] }], "Без спешки");
+    const { owner, agent } = answerMessageParts(brief, answer);
+    expect(owner).not.toContain("Definition of Done");
+    expect(owner).not.toContain("работу не держит");
+    expect(agent).toContain("Definition of Done");
+    expect(answerMessageText(brief, answer)).toBe(`${owner}\n${agent}`);
   });
 });

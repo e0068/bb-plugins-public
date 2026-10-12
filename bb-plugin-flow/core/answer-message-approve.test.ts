@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { DecisionAnswer, DecisionBrief } from "../shared/contract";
-import { answerMessageText } from "./answer-message";
+import { answerMessageParts, answerMessageText } from "./answer-message";
 import { outcomeKind } from "./outcome";
 
 const approval: DecisionBrief = {
@@ -64,7 +64,7 @@ describe("комментарий ко всему брифу без Утверж�
   it("не держит работу: агент спрашивает о неясном и делает понятное", () => {
     const plain: DecisionBrief = { ...approval, outcome: undefined, setup: { criteria: ["Тесты зелёные"] } };
     const text = answerMessageText(plain, { briefId: "dec_1", answers: [], note: "перепиши короче" });
-    expect(text).toContain("Комментарий ко всем вопросам ниже работу не держит: о неясном спроси, понятное делай.");
-    expect(text.split("\n").at(-1)).toBe("Ко всем вопросам: перепиши короче");
+    expect(text).toContain("Комментарий ко всем вопросам выше работу не держит: о неясном спроси, понятное делай.");
+    expect(answerMessageParts(plain, { briefId: "dec_1", answers: [], note: "перепиши короче" }).owner.split("\n").at(-1)).toBe("Ко всем вопросам: перепиши короче");
   });
 });

@@ -42,3 +42,17 @@ describe("номера картинок поля и снятие метки", ()
     expect(markerNumbers(withoutMarker("[картинка 3] а [картинка 3] б", 3, ru), ru)).toEqual([]);
   });
 });
+
+describe("метки картинок и файлов вместе", () => {
+  const file = (n: number) => `[файл ${n}]`;
+
+  it("текст режется по меткам обоих видов, номера идут по порядку меток", () => {
+    const text = "[картинка 1] макет и [файл 2] архив";
+    expect(splitMarkers(text, [ru, file]).filter((p) => p.marker).map((p) => p.text)).toEqual(["[картинка 1]", "[файл 2]"]);
+    expect(markerNumbers(text, [ru, file])).toEqual([1, 2]);
+  });
+
+  it("одним видом меток другой вид не находится", () => {
+    expect(markerNumbers("[файл 2]", ru)).toEqual([]);
+  });
+});

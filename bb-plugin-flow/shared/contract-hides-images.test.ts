@@ -37,10 +37,13 @@ describe("картинки во входе answerBrief", () => {
     expect(input.safeParse(call([1, 3, 4, 5, 6, 9].map((n) => image(n)))).success).toBe(true);
   });
 
-  it("седьмая, повтор номера, svg и больше 16 МБ base64 отбиваются", () => {
+  it("седьмое вложение, повтор номера и больше 16 МБ base64 отбиваются", () => {
     expect(input.safeParse(call([1, 2, 3, 4, 5, 6, 7].map((n) => image(n)))).success).toBe(false);
     expect(input.safeParse(call([image(2), image(2)])).success).toBe(false);
-    expect(input.safeParse(call([image(1, { mimeType: "image/svg+xml" })])).success).toBe(false);
     expect(input.safeParse(call([image(1, { dataBase64: "A".repeat(16 * 1024 * 1024 + 4) })])).success).toBe(false);
+  });
+
+  it("svg и архив проходят вложениями с именем файла", () => {
+    expect(input.safeParse(call([image(1, { mimeType: "image/svg+xml", name: "frame.svg" }), image(2, { mimeType: "application/zip", name: "frame.svg.zip" })])).success).toBe(true);
   });
 });

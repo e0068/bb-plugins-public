@@ -12,12 +12,16 @@ import { messages } from "../lib/messages";
 import type { Locale } from "../lib/i18n";
 import { legacyRoute, projectHost, routeEnvironment } from "../core/places";
 import type { DecisionBrief, DispatchPlace, DispatchRoute, Execution } from "../shared/contract";
+import { attachmentInput, type UploadedImage } from "./attachments";
 
 export type HandoffResult = { kind: "created"; threadId: string } | { kind: "failed"; error: string };
 
-/** `route` — дерево и ветка нового треда; без него место читается по-старому. `images` — пути вложений проекта исходного треда. */
+/**
+ * `route` — дерево и ветка нового треда; без него место читается по-старому. `images` — пути картинок-вложений проекта
+ * исходного треда; `attachments` — вложения с типом: картинки уходят картинкой, остальное — файлом.
+ */
 /** `execution` — провайдер, модель, effort и скорость нового треда из ряда виджета; нет — как у bb по умолчанию. */
-type HandoffArgs = { brief: DecisionBrief; place: Exclude<DispatchPlace, "here">; route?: DispatchRoute; text: string; images?: readonly string[]; locale?: Locale; execution?: Execution };
+type HandoffArgs = { brief: DecisionBrief; place: Exclude<DispatchPlace, "here">; route?: DispatchRoute; text: string; images?: readonly string[]; attachments?: readonly UploadedImage[]; locale?: Locale; execution?: Execution };
 
 const errorText = (error: unknown): string => (error instanceof Error ? error.message : String(error));
 
@@ -37,7 +41,8 @@ const targetEnvironment = async (sdk: BbPluginApi["sdk"], { place, route, enviro
   return { kind: "ready", environment: routeEnvironment(place, route, { environmentId, hostId: environment.hostId, branchName: environment.branchName, path: environment.path }) };
 };
 
-export const handoff = async (bb: Pick<BbPluginApi, "sdk">, { brief, place, route, text, images = [], locale, execution }: HandoffArgs): Promise<HandoffResult> => {
+export const handoff = async (bb: Pick<BbPluginApi, "sdk">, { brief, place, route, text, images = [], attachments = [], locale, execution }: HandoffArgs): Promise<HandoffResult> => {
+  const files = [...images.map((path) => ({ type: "localImage" as const, path })), ...attachments.map(attachmentInput)];
   try {
     const thread = await bb.sdk.threads.get({ threadId: brief.threadId });
     if (thread.environmentId === null) return { kind: "failed", error: "the source thread has no environment" };
@@ -47,8 +52,8 @@ export const handoff = async (bb: Pick<BbPluginApi, "sdk">, { brief, place, rout
     const targetProjectId = place === "other" && chosen.projectId !== undefined ? chosen.projectId : thread.projectId;
     const target = await targetEnvironment(bb.sdk, { place, route: chosen, environmentId, projectId: targetProjectId });
     if (target.kind === "failed") return target;
-    if (images.length > 0 && targetProjectId !== thread.projectId) {
-      await bb.sdk.projects.attachments.copy({ projectId: targetProjectId, sourceProjectId: thread.projectId, paths: [...images] });
+    if (files.length > 0 && targetProjectId !== thread.projectId) {
+      await bb.sdk.projects.attachments.copy({ projectId: targetProjectId, sourceProjectId: thread.projectId, paths: files.map(({ path }) => path) });
     }
     const token = `@thread:${brief.threadId}`;
     const intro = messages(locale).answer.handoffFrom(token);
@@ -61,7 +66,7 @@ export const handoff = async (bb: Pick<BbPluginApi, "sdk">, { brief, place, rout
       title: brief.title,
       environment: target.environment,
       ...(execution === undefined ? {} : { providerId: execution.providerId, model: execution.model, reasoningLevel: execution.reasoningLevel, ...(execution.serviceTier === undefined ? {} : { serviceTier: execution.serviceTier }) }),
-      input: [{ type: "text", text: `${intro}\n\n${text}`, mentions: [mention] }, ...images.map((path) => ({ type: "localImage" as const, path }))],
+      input: [{ type: "text", text: `${intro}\n\n${text}`, mentions: [mention] }, ...files],
     });
     return { kind: "created", threadId: created.id };
   } catch (error) {

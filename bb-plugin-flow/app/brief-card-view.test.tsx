@@ -104,43 +104,56 @@ describe("картинки в ответе", () => {
     const { slot } = open();
     const note = (await slot.findByRole("textbox", { name: "Дополнить ответы" })) as HTMLTextAreaElement;
     await paste(note, png());
-    await waitFor(() => expect(slot.getByRole("img", { name: "картинка 1" })).toBeTruthy());
-    expect(note.value).toContain("[картинка 1]");
-    fireEvent.click(slot.getByRole("button", { name: "Убрать картинку 1" }));
-    expect(slot.queryByRole("img", { name: "картинка 1" })).toBeNull();
+    await waitFor(() => expect(slot.getByRole("img", { name: "Изображение 1" })).toBeTruthy());
+    expect(note.value).toContain("[Изображение 1]");
+    fireEvent.click(slot.getByRole("button", { name: "Убрать изображение 1" }));
+    expect(slot.queryByRole("img", { name: "Изображение 1" })).toBeNull();
   });
 
   it("метка встаёт сразу, а набранное до прихода картинки не затирается", async () => {
     const { slot } = open();
     const note = (await slot.findByRole("textbox", { name: "Дополнить ответы" })) as HTMLTextAreaElement;
     await paste(note, png());
-    expect(note.value).toBe("[картинка 1]");
-    fireEvent.change(note, { target: { value: "[картинка 1] вот тут кнопка" } });
-    await waitFor(() => expect(slot.getByRole("img", { name: "картинка 1" })).toBeTruthy());
-    expect(note.value).toBe("[картинка 1] вот тут кнопка");
+    expect(note.value).toBe("[Изображение 1]");
+    fireEvent.change(note, { target: { value: "[Изображение 1] вот тут кнопка" } });
+    await waitFor(() => expect(slot.getByRole("img", { name: "Изображение 1" })).toBeTruthy());
+    expect(note.value).toBe("[Изображение 1] вот тут кнопка");
   });
 
-  it("svg не прикладывается, владелец видит почему", async () => {
+  it("svg прикладывается картинкой: метка картинки и миниатюра", async () => {
     const { slot } = open();
     const note = (await slot.findByRole("textbox", { name: "Дополнить ответы" })) as HTMLTextAreaElement;
     await paste(note, new File(["<svg/>"], "a.svg", { type: "image/svg+xml" }));
-    expect(await slot.findByText(/PNG, JPEG, GIF или WebP/)).toBeTruthy();
-    expect(slot.queryByRole("img", { name: "картинка 1" })).toBeNull();
-    expect(note.value).toBe("");
+    await waitFor(() => expect(slot.getByRole("img", { name: "Изображение 1" })).toBeTruthy());
+    expect(note.value).toBe("[Изображение 1]");
   });
 
-  it("картинка из выбора файлов уходит вместе с ответом", async () => {
+  it("архив прикладывается файлом: метка файла, плитка с именем и имя в ответе", async () => {
+    const { slot, sent } = open();
+    const note = (await slot.findByRole("textbox", { name: "Дополнить ответы" })) as HTMLTextAreaElement;
+    await paste(note, new File([new Uint8Array([80, 75, 3, 4])], "Frame 456346.svg.zip", { type: "application/zip" }));
+    await waitFor(() => expect(slot.container.querySelector("[data-file-tile]")?.textContent).toBe("Frame 456346.svg.zip"));
+    expect(note.value).toBe("[файл 1]");
+    expect(slot.getByRole("button", { name: "Убрать файл 1" })).toBeTruthy();
+    expect(slot.queryByRole("img", { name: "Изображение 1" })).toBeNull();
+    fireEvent.click(within(slot.getByRole("group", { name: "Как сделать?" })).getByRole("button", { name: /Директивой/ }));
+    fireEvent.click(slot.getByRole("button", { name: /Отправить ответы/ }));
+    await waitFor(() => expect(sent).toHaveLength(1));
+    expect(sent[0]!.images).toEqual([{ n: 1, mimeType: "application/zip", dataBase64: btoa("PK\x03\x04"), name: "Frame 456346.svg.zip" }]);
+  });
+
+  it("Изображение из выбора файлов уходит вместе с ответом", async () => {
     const { slot, sent } = open();
     await slot.findByRole("textbox", { name: "Дополнить ответы" });
     const picker = slot.container.querySelector<HTMLInputElement>("input[type=file]")!;
     let opened = 0;
     picker.addEventListener("click", () => (opened += 1));
-    fireEvent.click(slot.getAllByRole("button", { name: "Приложить изображение" })[0]!);
+    fireEvent.click(slot.getAllByRole("button", { name: "Приложить изображение или файл" })[0]!);
     expect(opened).toBe(1);
     await act(async () => {
       fireEvent.change(picker, { target: { files: [png()] } });
     });
-    await waitFor(() => expect(slot.getByRole("img", { name: "картинка 1" })).toBeTruthy());
+    await waitFor(() => expect(slot.getByRole("img", { name: "Изображение 1" })).toBeTruthy());
     fireEvent.click(within(slot.getByRole("group", { name: "Как сделать?" })).getByRole("button", { name: /Директивой/ }));
     fireEvent.click(slot.getByRole("button", { name: /Отправить ответы/ }));
     await waitFor(() => expect(sent).toHaveLength(1));
@@ -148,7 +161,7 @@ describe("картинки в ответе", () => {
   });
 });
 
-describe("картинка внутри своего поля", () => {
+describe("Изображение внутри своего поля", () => {
   const png = () => new File([new Uint8Array([137, 80, 78, 71])], "shot.png", { type: "image/png" });
   const paste = (field: HTMLElement, file: File) =>
     act(() => {
@@ -162,7 +175,7 @@ describe("картинка внутри своего поля", () => {
     const note = await slot.findByRole("textbox", { name: "Дополнить ответы" });
     const item = slot.getByRole("textbox", { name: "Пункт 2" });
     await paste(item, png());
-    await waitFor(() => within(frame(item)).getByRole("img", { name: "картинка 1" }));
+    await waitFor(() => within(frame(item)).getByRole("img", { name: "Изображение 1" }));
     expect(within(frame(note)).queryByRole("img")).toBeNull();
   });
 
@@ -170,9 +183,9 @@ describe("картинка внутри своего поля", () => {
     const { slot } = open();
     const note = await slot.findByRole("textbox", { name: "Дополнить ответы" });
     await paste(note, png());
-    const thumb = await waitFor(() => within(frame(note)).getByRole("img", { name: "картинка 1" }));
+    const thumb = await waitFor(() => within(frame(note)).getByRole("img", { name: "Изображение 1" }));
     const tile = thumb.closest("[data-field-image]")!;
-    const number = within(tile as HTMLElement).getByRole("button", { name: "Вставить метку картинки 1 в текст" });
+    const number = within(tile as HTMLElement).getByRole("button", { name: "Вставить метку изображения 1 в текст" });
     expect(number.textContent).toBe("1");
     expect(number.className).toMatch(/\bbottom-/);
     expect(number.className).toMatch(/\bleft-/);
@@ -186,32 +199,32 @@ describe("картинка внутри своего поля", () => {
     fireEvent.change(note, { target: { value: "Раз два" } });
     note.setSelectionRange(7, 7);
     await paste(note, png());
-    await waitFor(() => expect(note.value).toBe("Раз два[картинка 1]"));
+    await waitFor(() => expect(note.value).toBe("Раз два[Изображение 1]"));
     note.focus();
     note.setSelectionRange(3, 3);
-    const number = slot.getByRole("button", { name: "Вставить метку картинки 1 в текст" });
+    const number = slot.getByRole("button", { name: "Вставить метку изображения 1 в текст" });
     fireEvent.mouseDown(number);
     fireEvent.click(number);
-    await waitFor(() => expect(note.value).toBe("Раз[картинка 1] два[картинка 1]"));
+    await waitFor(() => expect(note.value).toBe("Раз[Изображение 1] два[Изображение 1]"));
   });
 
   it("клик по номеру, когда каретки в поле нет, дописывает метку в конец", async () => {
     const { slot } = open();
     const note = (await slot.findByRole("textbox", { name: "Дополнить ответы" })) as HTMLTextAreaElement;
     await paste(note, png());
-    await waitFor(() => expect(note.value).toBe("[картинка 1]"));
+    await waitFor(() => expect(note.value).toBe("[Изображение 1]"));
     note.blur();
-    fireEvent.click(slot.getByRole("button", { name: "Вставить метку картинки 1 в текст" }));
-    await waitFor(() => expect(note.value).toBe("[картинка 1][картинка 1]"));
+    fireEvent.click(slot.getByRole("button", { name: "Вставить метку изображения 1 в текст" }));
+    await waitFor(() => expect(note.value).toBe("[Изображение 1][Изображение 1]"));
   });
 
   it("тап по миниатюре открывает картинку на весь экран, Esc закрывает", async () => {
     const { slot } = open();
     const note = await slot.findByRole("textbox", { name: "Дополнить ответы" });
     await paste(note, png());
-    fireEvent.click(await waitFor(() => slot.getByRole("button", { name: "Открыть картинку 1" })));
-    const viewer = await screen.findByRole("dialog", { name: "картинка 1" });
-    expect(within(viewer).getByRole("img", { name: "картинка 1" })).toBeTruthy();
+    fireEvent.click(await waitFor(() => slot.getByRole("button", { name: "Открыть изображение 1" })));
+    const viewer = await screen.findByRole("dialog", { name: "Изображение 1" });
+    expect(within(viewer).getByRole("img", { name: "Изображение 1" })).toBeTruthy();
     fireEvent.keyDown(viewer, { key: "Escape" });
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
   });
@@ -220,8 +233,8 @@ describe("картинка внутри своего поля", () => {
     const { slot, sent } = open();
     const note = (await slot.findByRole("textbox", { name: "Дополнить ответы" })) as HTMLTextAreaElement;
     await paste(note, png());
-    fireEvent.change(note, { target: { value: "[картинка 1] шапка съехала" } });
-    fireEvent.click(await waitFor(() => slot.getByRole("button", { name: "Убрать картинку 1" })));
+    fireEvent.change(note, { target: { value: "[Изображение 1] шапка съехала" } });
+    fireEvent.click(await waitFor(() => slot.getByRole("button", { name: "Убрать изображение 1" })));
     expect(note.value).toBe("шапка съехала");
     fireEvent.click(within(slot.getByRole("group", { name: "Как сделать?" })).getByRole("button", { name: /Директивой/ }));
     fireEvent.click(slot.getByRole("button", { name: /Отправить ответы/ }));
@@ -233,6 +246,6 @@ describe("картинка внутри своего поля", () => {
     const { slot } = open();
     const note = await slot.findByRole("textbox", { name: "Дополнить ответы" });
     await paste(note, png());
-    await waitFor(() => expect(slot.getAllByRole("img", { name: "картинка 1" })).toHaveLength(1));
+    await waitFor(() => expect(slot.getAllByRole("img", { name: "Изображение 1" })).toHaveLength(1));
   });
 });

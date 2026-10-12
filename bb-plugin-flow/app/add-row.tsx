@@ -8,7 +8,7 @@ import type { ReactNode } from "react";
 
 import { splitMarkers, type MarkedPart } from "../core/image-markers";
 import { cn } from "../lib/utils";
-import { AttachButton, FieldImages, imageTag, usePasteImages } from "./attachments";
+import { AttachButton, FieldImages, allMarkers, imageTag, usePasteImages } from "./attachments";
 import { useMessages } from "./locale-context";
 import { useMentions } from "./mentions";
 import { useVoiceField } from "./voice";
@@ -18,7 +18,7 @@ export const addRowText = "min-w-0 flex-1 whitespace-pre-wrap break-words py-2 t
 
 /** Текст поля кусками, если в нём есть метка картинки; без меток — `null`, и копия под полем не нужна. */
 export function useMarkedParts(value: string): readonly MarkedPart[] | null {
-  const parts = splitMarkers(value, useMessages().attachments.marker);
+  const parts = splitMarkers(value, allMarkers(useMessages().attachments));
   return parts.some((part) => part.marker) ? parts : null;
 }
 
@@ -105,10 +105,14 @@ export function AddRow(props: {
         <div className="-ml-1.5 flex min-w-0 flex-1 items-center self-stretch">{voice.strip}</div>
       ) : (
         <>
-          {/* Обёртка стоит всегда: появление первой метки не пересоздаёт поле и не сбрасывает в нём курсор. */}
-          <div className="grid min-w-0 flex-1">
-            {parts !== null && <MarkedCopy parts={parts} className={addRowText} />}
-            {field}
+          {/* Текст и миниатюры — одной колонкой: «+» и микрофон встают по центру всей её высоты, а не только текста.
+              Обёртка поля стоит всегда: появление первой метки не пересоздаёт поле и не сбрасывает в нём курсор. */}
+          <div className="flex min-w-0 flex-1 flex-col">
+            <div className="grid min-w-0">
+              {parts !== null && <MarkedCopy parts={parts} className={addRowText} />}
+              {field}
+            </div>
+            <FieldImages target={target} className="pb-2" />
           </div>
           <span className="flex shrink-0 items-center gap-1">
             {voice.mic}
@@ -118,8 +122,6 @@ export function AddRow(props: {
       )}
       {/* Список по `/` и `@` — с новой строки рамки, под текстом, с отступом колонки «+». */}
       {mentions.list !== null && <div className="basis-full pb-2 pl-[26px]">{mentions.list}</div>}
-      {/* Ряд миниатюр — с новой строки рамки, под текстом, с отступом колонки «+». */}
-      <FieldImages target={target} className="basis-full pb-2 pl-[26px]" />
     </div>
   );
 }

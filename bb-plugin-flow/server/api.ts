@@ -3,7 +3,7 @@
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 
 import { needsAgentReply } from "../core/agent-reply";
-import { answerMessageText, openQuestions } from "../core/answer-message";
+import { answerMessageParts, openQuestions } from "../core/answer-message";
 import { forecast, hasForecast, scopeOf } from "../core/budget";
 import { carryOf } from "../core/carry";
 import { defaultExecutionOf, providerModelsOf } from "../core/flow-agent";
@@ -14,8 +14,8 @@ import { onAnswer } from "../core/progress";
 import type { Locale } from "../lib/i18n";
 import { isSideChat } from "../core/side-chat";
 import { stageItems } from "../core/stages";
-import { awaitingRpcContract, briefDraftRpcContract, decisionsRpcContract, dispatchRpcContract, filesRpcContract, widgetAgentRpcContract, type DecisionAnswer, type DecisionBrief, type DispatchRoute, type Execution, type WidgetAgent } from "../shared/contract";
-import { attachmentsLine, lostImages, referencedImages, uploadAttachments } from "./attachments";
+import { answerImagesRpcContract, awaitingRpcContract, briefDraftRpcContract, decisionsRpcContract, dispatchRpcContract, filesRpcContract, widgetAgentRpcContract, type DecisionAnswer, type DecisionBrief, type DispatchRoute, type Execution, type WidgetAgent } from "../shared/contract";
+import { attachmentInput, attachmentsLine, lostImages, readAttachments, referencedImages, uploadAttachments } from "./attachments";
 import { handoff } from "./handoff";
 import type { ProgressStore } from "./progress";
 import type { DecisionStore } from "./store";
@@ -96,12 +96,18 @@ export const registerApi = (
       const { uploaded: attached, failed } = await uploadAttachments(bb.sdk, { threadId: brief.threadId, briefId: id, images: referencedImages(answer, images, locale) });
       const predicted = hasForecast(brief) ? forecast(brief, answer, locale) : null;
       const snapshot = predicted === null ? {} : { forecast: { ...predicted, lines: [...predicted.lines] } };
-      const written = await store.putAnswer(id, { answer, messageId, answeredAt: deps.now(), ...snapshot });
+      // Пути картинок — в запись: отвеченный бриф показывает их там, где владелец их вставил.
+      const seen = attached.length === 0 ? {} : { images: attached.map(({ n, path, name }) => ({ n, path, ...(name === undefined ? {} : { name }) })) };
+      const written = await store.putAnswer(id, { answer, messageId, answeredAt: deps.now(), ...snapshot, ...seen });
       if (written.kind === "already_answered") return written;
       const lost = lostImages(answer, { uploaded: attached, failed }, locale);
-      const text = `${answerMessageText(brief, answer, locale)}${attachmentsLine(attached, lost, locale)}`;
+      const parts = answerMessageParts(brief, answer, locale);
+      // Служебное агенту: прогон, бюджет, Definition of Done, следующий шаг и пути вложений.
+      const service = `${parts.agent}${attachmentsLine(attached, lost, locale)}`.replace(/^\n/, "");
+      const text = service === "" ? parts.owner : `${parts.owner}\n${service}`;
       const place = answer.place ?? "here";
       let handoffThreadId: string | undefined;
+      let posted = false;
       try {
         if (place === "here") {
           // Компактация — первой и до конца: реплика, поставленная раньше, попала бы в срезанный контекст.
@@ -119,20 +125,27 @@ export const registerApi = (
           const record = switched === undefined ? ((await deps.progress?.get(brief.threadId).catch(() => null)) ?? null) : null;
           const ahead = record === null ? null : onAnswer(record, brief, answer, written.record.answeredAt);
           if (switched !== undefined || needsAgentReply(brief, answer, ahead, attached.length + lost.length)) {
+            // Видна ли хуку служебная часть в тексте хода — неизвестно: своей отмечаются оба варианта.
             deps.ownSend?.(brief.threadId, text);
-            // Реплика — для агента: владелец уже видит в ленте отвеченный бриф, второй его пересказ в своём пузыре ему не нужен.
+            deps.ownSend?.(brief.threadId, parts.owner);
+            // Ответ встаёт в ленту сообщением владельца — его слова и вложения, как он их отправил, — а служебное видит только агент.
             await bb.sdk.threads.send({
               threadId: brief.threadId,
               // Уточнение и Демонстрация агента не держат: он работает дальше, и ответ должен дойти в идущем ходе, а не после него.
               mode: brief.kind === "clarify" || (brief.outcome !== undefined && outcomeKind(brief) === "demo") ? "steer-if-active" : "queue-if-active",
               ...(execution === undefined ? {} : { model: execution.model, reasoningLevel: execution.reasoningLevel, ...(execution.serviceTier === undefined ? {} : { serviceTier: execution.serviceTier }) }),
-              input: [{ type: "text", text, mentions: [], visibility: AGENT_ONLY }, ...attached.map(({ path }) => ({ type: "localImage" as const, path, visibility: AGENT_ONLY }))],
+              input: [
+                { type: "text", text: parts.owner, mentions: [] },
+                ...attached.map(attachmentInput),
+                ...(service === "" ? [] : [{ type: "text" as const, text: service, mentions: [], visibility: AGENT_ONLY }]),
+              ],
             });
+            posted = true;
           }
         } else {
           // Ответ уезжает целиком в новый тред: исходный остаётся с отвеченным брифом и ссылкой на него.
           if (switched !== undefined) deps.handoffFlow?.(brief.threadId, switched.id);
-          const created = await handoff(bb, { brief, place, ...(answer.route === undefined ? {} : { route: answer.route }), ...(execution === undefined ? {} : { execution }), text, images: attached.map(({ path }) => path), locale });
+          const created = await handoff(bb, { brief, place, ...(answer.route === undefined ? {} : { route: answer.route }), ...(execution === undefined ? {} : { execution }), text, attachments: attached, locale });
           if (created.kind === "failed") throw new Error(created.error);
           handoffThreadId = created.threadId;
         }
@@ -147,6 +160,7 @@ export const registerApi = (
       // Дальше реплика уже ушла: ни один сбой ниже не снимает ответ — повтор создал бы второй тред.
       // Худшее при сбое отметки — запущенный тред ещё примет этапы; это мягче дубля треда.
       const quietly = (work: Promise<unknown>) => work.catch(() => undefined);
+      if (posted) await quietly(store.markPosted(id));
       if (handoffThreadId !== undefined) {
         await quietly(store.attachHandoff(id, handoffThreadId));
         // Переход начинает работу заново: новый тред решает этапы и бюджет своим первым брифом, а прогон ответа в исходном снимается.
@@ -200,7 +214,7 @@ export const registerApi = (
       if (brief.setup?.criteria !== undefined) emit("flow.criteria-approved");
       // Журнал — только для брифов: уточнение не решение. Сбой или отсутствие настройки не отменяют ни ответа, ни реплики, уже ушедших выше.
       if (brief.kind === "brief") await deps.writeDecision?.({ brief, answer, decidedAt: written.record.answeredAt, locale }).catch(() => undefined);
-      return { kind: "accepted" as const, record: handoffThreadId === undefined ? written.record : { ...written.record, handoffThreadId } };
+      return { kind: "accepted" as const, record: { ...written.record, ...(handoffThreadId === undefined ? {} : { handoffThreadId }), ...(posted ? { posted: true as const } : {}) } };
     },
   });
 
@@ -208,6 +222,14 @@ export const registerApi = (
     const thread = await bb.sdk.threads.get({ threadId: brief.threadId });
     await store.putRoute(thread.projectId, route);
   }
+
+  bb.rpc.register(answerImagesRpcContract, {
+    async answerImages({ id }) {
+      const [brief, record] = [await store.getBrief(id), await store.getAnswer(id)];
+      if (brief === null || record === null) return { kind: "not_found" as const };
+      return { kind: "found" as const, images: await readAttachments(bb.sdk, { threadId: brief.threadId, images: record.images ?? [] }) };
+    },
+  });
 
   bb.rpc.register(briefDraftRpcContract, {
     async saveBriefDraft({ id, draft }) {

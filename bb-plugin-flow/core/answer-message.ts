@@ -260,8 +260,12 @@ export const deviations = (brief: DecisionBrief, answer: DecisionAnswer): number
   stageItems(brief).filter((item) => stageDiffers(brief, answer, item)).length +
   (hasOwnBudget(answer) ? 1 : 0);
 
-/** Реплика ответа агенту на языке интерфейса владельца; без языка — русская, как ответы до выбора языка. */
-export const answerMessageText = (brief: DecisionBrief, answer: DecisionAnswer, locale?: Locale): string => {
+/**
+ * Реплика ответа в две части. `owner` — то, что владелец ответил: заголовок, выбор по вопросам, свои слова и комментарии;
+ * она встаёт в ленту его сообщением. `agent` — служебное для агента: прогон, бюджет, Definition of Done, следующий шаг;
+ * владелец его в ленте не видит. Пустая часть — пустая строка.
+ */
+export const answerMessageParts = (brief: DecisionBrief, answer: DecisionAnswer, locale?: Locale): { owner: string; agent: string } => {
   const m = messages(locale).answer;
   const verdict = isOutcomeBrief(brief) ? demoVerdict(answer) : null;
   const heading = verdict === null ? m.heading(brief.kind === "clarify", brief.title) : outcomeHeading(brief, answer, verdict, m);
@@ -271,10 +275,19 @@ export const answerMessageText = (brief: DecisionBrief, answer: DecisionAnswer, 
     const line = `${head}${reading.chosen}${reading.carried ? m.carried : reading.deviation}${question.id === SETUP_ROW.artifacts ? revokedLine(brief, answer, m) : ""}`;
     return reading.own === null ? line : `${line}\n${ownQuote(i + 1, reading.own)}`;
   });
-  // Комментарий ко всему брифу работу не держит: держит только Утверждение, а оно приходит своим итогом. Сам комментарий — последним, сразу за шагом агента.
+  // Комментарий ко всему брифу работу не держит: держит только Утверждение, а оно приходит своим итогом.
   const hint = blank(answer.note) ? [] : [m.noteGoesOn];
   const note = blank(answer.note) ? [] : [m.note(answer.note ?? "")];
-  return [heading, ...body, ...outcomeLines(brief, answer, locale), ...(answer.flow === undefined ? stagesLines(brief, answer, locale) : []), ...budgetLine(brief, answer, locale), ...criteriaLine(brief, answer, m), ...hint, ...nextStepLine(brief, answer, m), ...note].join("\n");
+  return {
+    owner: [heading, ...body, ...outcomeLines(brief, answer, locale), ...note].join("\n"),
+    agent: [...(answer.flow === undefined ? stagesLines(brief, answer, locale) : []), ...budgetLine(brief, answer, locale), ...criteriaLine(brief, answer, m), ...hint, ...nextStepLine(brief, answer, m)].join("\n"),
+  };
+};
+
+/** Реплика ответа агенту целиком на языке интерфейса владельца; без языка — русская, как ответы до выбора языка. */
+export const answerMessageText = (brief: DecisionBrief, answer: DecisionAnswer, locale?: Locale): string => {
+  const { owner, agent } = answerMessageParts(brief, answer, locale);
+  return agent === "" ? owner : `${owner}\n${agent}`;
 };
 
 /** Шаг агента после ответа: после Демонстрации — следующий, у брифа без этапов — только остановки на утверждение. */

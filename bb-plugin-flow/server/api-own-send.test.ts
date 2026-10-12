@@ -31,7 +31,11 @@ describe("ответ на бриф — своя отправка Flow", () => {
     const answer: DecisionAnswer = { briefId: brief.id, answers: [{ questionId: "go", optionIds: ["yes"] }] };
     await harness.callRpc("answerBrief", { id: brief.id, answer, messageId: "m" });
     const sent = harness.sdk.callsTo("threads.send")[0]![0] as { input: Array<{ type: string; text?: string }> };
-    expect(order).toEqual(["mark", "send"]);
-    expect(marked).toEqual([["thr_1", sent.input[0]!.text]]);
+    // Видна ли хуку служебная часть — неизвестно: своими отмечены и реплика целиком, и слова владельца.
+    expect(order).toEqual(["mark", "mark", "send"]);
+    expect(marked).toEqual([
+      ["thr_1", sent.input.flatMap((part) => (part.type === "text" ? [part.text] : [])).join("\n")],
+      ["thr_1", sent.input[0]!.text],
+    ]);
   });
 });
