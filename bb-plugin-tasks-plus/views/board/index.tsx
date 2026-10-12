@@ -778,7 +778,8 @@ export function BoardView({ scope, viewId, thread }: BoardViewProps) {
   layoutRef.current = layout;
   const board = useTasksQuery(
     (queryRpc) => fetchScopeBoard(queryRpc, scope, thread),
-    ["tasks:changed", "projects:changed"],
+    // Active and Waiting pick their cards by the threads' state, which moves without a task edit.
+    scope === "active" || scope === "waiting" ? ["tasks:changed", "projects:changed", "threads:changed"] : ["tasks:changed", "projects:changed"],
     [scope, thread],
   );
   // Sorted: a drag reorders the cards, not the set of them, and must not

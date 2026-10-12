@@ -70,6 +70,22 @@ export function threadLiveState(thread: ObservedThread): ThreadLiveState {
   };
 }
 
+/**
+ * The state as the board shows it. An agent that started a workflow or
+ * background agents ends its turn and waits for them, so bb reads the thread
+ * idle while work goes on; that work — seen only by the frontend, through the
+ * sidebar's live view — makes the thread working. A thread already out of
+ * idle keeps its own reading.
+ */
+export function withBackgroundWork(
+  state: ThreadLiveState | undefined,
+  busy: boolean,
+): ThreadLiveState | undefined {
+  if (!busy) return state;
+  const known = state ?? UNKNOWN_THREAD_LIVE_STATE;
+  return known.liveStatus === "idle" ? { ...known, liveStatus: "working" } : known;
+}
+
 /** The state after an event that only speaks about one half of it: a
  *  `thread.idle` event says nothing about archival and must not erase it. */
 export function patchLiveState(

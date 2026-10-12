@@ -1315,6 +1315,12 @@ export const tasksRpcContract = defineRpcContract({
     input: withCallerThread(z.object({ taskId: taskIdSchema }).strict()),
     output: z.object({ taskThreads: z.array(taskThreadSchema) }).strict(),
   },
+  // Threads whose agent waits for its own workflow or background agents, as
+  // the frontend sees them in bb's sidebar; the whole set, replacing the last.
+  reportBusyThreads: {
+    input: z.object({ threadIds: z.array(z.string()) }).strict(),
+    output: z.object({ ok: z.literal(true) }),
+  },
   // The board's sub-task burndowns, one call per board: per task with tasks
   // under it, how many of them still owed work at each column end (the last
   // one now), those ends, and how long the trend needs to reach zero. The
