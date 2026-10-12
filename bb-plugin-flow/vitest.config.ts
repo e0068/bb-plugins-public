@@ -4,13 +4,13 @@
 import { fileURLToPath } from "node:url";
 import { defineConfig } from "vitest/config";
 
-import { reactDedupe } from "./packages/plugin-base/vitest-react-dedupe";
+import { hugeiconsDedupe, reactDedupe } from "./packages/plugin-base/vitest-react-dedupe";
 import { sharedPackagesAlias } from "./packages/plugin-base/vitest-shared-packages";
 
 export default defineConfig({
   resolve: {
     alias: { "@": fileURLToPath(new URL(".", import.meta.url)), ...sharedPackagesAlias },
-    dedupe: reactDedupe,
+    dedupe: [...reactDedupe, ...hugeiconsDedupe],
   },
   test: { setupFiles: ["./test-setup.ts"] },
 });
