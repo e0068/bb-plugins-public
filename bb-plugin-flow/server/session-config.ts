@@ -8,10 +8,10 @@
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 
 import { isSideChat } from "../core/side-chat";
-import { BUILTIN_SKILLS, FLOW_CREATE_SKILL, ROOT_SKILL } from "../lib/stage-constants";
+import { BUILTIN_SKILLS, FLOW_CREATE_SKILL, ROOT_SKILL, WORKFLOW_BUILDER_SKILL } from "../lib/stage-constants";
 
 /** Навыки, которые Flow везёт в `skills/` для агентов, — по имени из шапки SKILL.md; навык выбора flow читает только модель выбора. */
-export const FLOW_SKILLS: readonly string[] = [ROOT_SKILL, ...Object.values(BUILTIN_SKILLS), FLOW_CREATE_SKILL];
+export const FLOW_SKILLS: readonly string[] = [ROOT_SKILL, ...Object.values(BUILTIN_SKILLS), FLOW_CREATE_SKILL, WORKFLOW_BUILDER_SKILL];
 
 export const registerSessionConfig = (
   bb: Pick<BbPluginApi, "agents">,

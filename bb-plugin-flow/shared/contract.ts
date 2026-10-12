@@ -868,6 +868,33 @@ export const filesRpcContract = defineRpcContract({
   },
 });
 
+/**
+ * Файл workflow в правой панели: открыватель .js читает и пишет его здесь, а агентов шаблона и модели провайдеров
+ * берёт из каталога Flow. Путь — абсолютный, только верхний уровень `~/.claude/workflows` или `.bb/workflows`.
+ */
+export const workflowFilesRpcContract = defineRpcContract({
+  workflowRead: { input: z.object({ path: text }), output: z.object({ source: z.string() }) },
+  workflowSave: { input: z.object({ path: text, source: z.string() }), output: z.object({ path: z.string() }) },
+  workflowAgents: {
+    input: z.null(),
+    output: z.array(
+      z.object({
+        value: z.string(),
+        model: z.string(),
+        effort: z.string(),
+        provider: z.string(),
+        description: z.string().optional(),
+        path: z.string().optional(),
+        scope: z.enum(["user", "project", "plugin", "builtin"]).optional(),
+      }),
+    ),
+  },
+  workflowProviders: {
+    input: z.null(),
+    output: z.array(z.object({ id: z.string(), name: z.string(), models: z.array(z.object({ id: z.string(), efforts: z.array(z.string()) })) })),
+  },
+});
+
 /** Строка списка по `/` или `@`: что показать и что встаёт в текст после знака. */
 export const mentionItemSchema = z.object({
   kind: z.enum(["skill", "command", "file", "directory"]),
