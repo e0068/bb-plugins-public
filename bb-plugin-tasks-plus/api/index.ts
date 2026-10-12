@@ -54,6 +54,7 @@ import {
   type Task,
   type TaskPullRequest,
   type TasksChangedEvent,
+  type ThreadsChangedEvent,
   type TasksDomainError,
   type TaskStatus,
   type CommentsChangedEvent,
@@ -1238,6 +1239,23 @@ export function registerHandlers(
     },
     async listTaskThreads(input) {
       return { taskThreads: await store.tasks.listTaskThreads(input.taskId) };
+    },
+    async reportBusyThreads({ threadIds }) {
+      const changed = new Set(store.tasks.setBusyThreads(threadIds));
+      if (changed.size === 0) return { ok: true as const };
+      // One read per board for every changed thread, and one event per task.
+      const perBoard = await Promise.all(
+        store.tasks.listProjects().map((board) => unlessOutOfReach(store.tasks.threadsByTaskId(board.id), new Map<string, TaskThread[]>())),
+      );
+      const taskIds = new Set([
+        ...perBoard.flatMap((byTask) => [...byTask].filter(([, threads]) => threads.some((thread) => changed.has(thread.threadId))).map(([taskId]) => taskId)),
+        ...[...changed].flatMap((threadId) => store.tasks.branchTaskIds(threadId)),
+      ]);
+      for (const taskId of taskIds) {
+        const payload: ThreadsChangedEvent = { taskId };
+        bb.realtime.publish("threads:changed", payload);
+      }
+      return { ok: true as const };
     },
     async taskCardMeta(input) {
       return { cards: await store.tasks.taskCardMeta(input.taskIds) };

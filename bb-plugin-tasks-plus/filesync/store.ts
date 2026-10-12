@@ -53,6 +53,7 @@ import { issueKeys } from "./key-issue.js";
 import {
   serializeAttachedThread,
   UNKNOWN_THREAD_LIVE_STATE,
+  withBackgroundWork,
   withLiveState,
   type AttachedThread,
   type ThreadLiveState,
@@ -183,6 +184,13 @@ export function createFileTasksStore(
    *  see docs/decisions/tasks-plus-thread-state-is-not-a-file-field.md.
    *  Filled by lifecycle/index.ts from bb's own thread events. */
   const liveStates = new Map<string, ThreadLiveState>();
+  /** Threads whose agent waits for its own workflow or background agents —
+   *  reported by the frontend from bb's sidebar, the only place that sees
+   *  that work. Kept apart from `liveStates`, which follows the turn alone. */
+  let busyThreads: ReadonlySet<string> = new Set();
+  /** A thread's state as the board shows it: the turn's, made working by background work. */
+  const liveStateOf = (threadId: string): ThreadLiveState | undefined =>
+    withBackgroundWork(liveStates.get(threadId), busyThreads.has(threadId));
   /** Треды, работающие в своих деревьях, и задачи этих деревьев, к которым
    *  они привязаны (filesync/branch-threads.ts), по id треда. */
   const branchThreads = new Map<string, BranchThread>();
@@ -341,7 +349,7 @@ export function createFileTasksStore(
       return {
         ...entry,
         task: { ...task, position },
-        threads: entry.threads.map((thread) => withLiveState(thread, liveStates.get(thread.threadId))),
+        threads: entry.threads.map((thread) => withLiveState(thread, liveStateOf(thread.threadId))),
       };
     });
   }
@@ -428,7 +436,7 @@ export function createFileTasksStore(
     const files = onePerSlug(await readBoardTaskFiles([root], undefined, wanted));
     return assembleBoardTasks({ id: board.id }, files).tasks.map((entry) => ({
       ...entry,
-      threads: entry.threads.map((thread) => withLiveState(thread, liveStates.get(thread.threadId))),
+      threads: entry.threads.map((thread) => withLiveState(thread, liveStateOf(thread.threadId))),
     }));
   }
 
@@ -467,7 +475,7 @@ export function createFileTasksStore(
     projectId?: string,
   ): Promise<BoardTask[]> {
     const passing = [...branchThreads.values()].filter(
-      (thread) => thread.slugs.length > 0 && matches(liveStates.get(thread.threadId) ?? UNKNOWN_THREAD_LIVE_STATE),
+      (thread) => thread.slugs.length > 0 && matches(liveStateOf(thread.threadId) ?? UNKNOWN_THREAD_LIVE_STATE),
     );
     const perTree = await Promise.all(
       byEnvironment(passing).map(async (threads) => {
@@ -1280,6 +1288,13 @@ export function createFileTasksStore(
   function getThreadLiveState(threadId: string): ThreadLiveState | undefined {
     return liveStates.get(threadId);
   }
+  /** Replaces the threads busy with background work; returns those whose busyness changed. */
+  function setBusyThreads(threadIds: readonly string[]): string[] {
+    const next = new Set(threadIds);
+    const changed = [...[...next].filter((id) => !busyThreads.has(id)), ...[...busyThreads].filter((id) => !next.has(id))];
+    busyThreads = next;
+    return changed;
+  }
   async function getTaskThread(id: string): Promise<TaskThread | undefined> {
     try {
       return (await requireThreadOwner(id)).thread;
@@ -1318,7 +1333,7 @@ export function createFileTasksStore(
     if (task.task.source?.origin.kind === "worktree" && hasOwnTree(caller)) {
       rememberBranchThread(withBranchSlug(branchThreads.get(thread.threadId), thread.threadId, caller, taskSlug(task.task)));
     }
-    return withLiveState(thread, liveStates.get(thread.threadId));
+    return withLiveState(thread, liveStateOf(thread.threadId));
   }
   const listTaskThreads = async (taskId: string) => (await findAssembled(taskId))?.threads ?? [];
   /** Card chips — attachment count and threads — for many tasks with one
@@ -1410,7 +1425,7 @@ export function createFileTasksStore(
     createComment, getComment, listComments, getLatestAgentComment, updateComment, deleteComment,
     createAttachment, getAttachment, listAttachmentsForTask, listAttachmentsForComment, updateAttachment, deleteAttachment,
     upsertTaskThread, getTaskThread, getTaskThreadByThreadId, listTaskThreads, taskCardMeta, listTasksForThread, deleteTaskThread,
-    setThreadLiveState, getThreadLiveState,
+    setThreadLiveState, getThreadLiveState, setBusyThreads,
     restoreBranchThreads, knowsBranchThread, branchThreadIds, discoverBranchThread, forgetBranchThread, branchTaskIds,
     createPreset, getPreset, listPresets, updatePreset, deletePreset,
     createSavedView, listSavedViews, updateSavedView, deleteSavedView,
