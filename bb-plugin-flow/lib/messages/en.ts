@@ -388,6 +388,7 @@ export const en: Messages = {
     back: "Back",
     settings: "Flow settings",
     newName: "New flow",
+    drag: (name: string) => `Drag flow ${name}`,
     name: "Flow name",
     description: "When to choose this flow",
     descriptionPlaceholder: "When to choose this flow — the agent reads it when choosing a flow automatically",

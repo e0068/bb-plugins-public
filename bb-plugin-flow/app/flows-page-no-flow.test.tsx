@@ -34,8 +34,8 @@ const lastSaved = (slot: Slot): FlowSettings | undefined => [...slot.rpcCalls].r
 const list = (slot: Slot) => slot.findByRole("navigation", { name: "Flow" });
 
 describe("«Без flow» в списке flow", () => {
-  it("первая строка списка, перед flow владельца", async () => {
-    const rows = within(await list(open())).getAllByRole("button").map((button) => button.textContent);
+  it("первые строки списка — «Без flow» и «Автоматически», перед flow владельца", async () => {
+    const rows = within(await list(open())).getAllByRole("button").map((button) => button.textContent).filter(Boolean);
     expect(rows.slice(0, 4)).toEqual(["Без flow", "Автоматически", "Default", "Quick"]);
   });
 

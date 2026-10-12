@@ -5,7 +5,7 @@
 // выбирает, по какому flow пойдёт тред, а баннер над композером треда показывает
 // прогресс flow; секции настроек плагина задают путь журнала решений и папку flow.
 import { definePluginApp, useSettings } from "@get-bb/plugin-sdk/app";
-import { registerRailCollapse, registerSelectedThread } from "@bb-plugins/rail-collapse";
+import { registerSelectedThread } from "@bb-plugins/rail-collapse";
 
 import { CommandDirective } from "./app/command";
 import { FlowPicker } from "./app/flow-picker";
@@ -16,6 +16,7 @@ import { JournalDirsSection } from "./app/journal-settings";
 import { AutomationRetrySection } from "./app/flow-settings-sections";
 import { FlowsFolderSection } from "./app/flows-folder-settings";
 import { ProgressBanner } from "./app/progress-banner";
+import { ThreadsPanelList } from "./app/threads-panel";
 import { registerAwaitingStatus } from "./app/row-status";
 import { systemLanguages } from "./app/locale-context";
 import { lockAutoZoom } from "./app/viewport";
@@ -36,8 +37,8 @@ export default definePluginApp((app) => {
   const t = messages(resolveLocale(undefined, systemLanguages())).settings;
   // Шестерёнка в титул-баре, левее крестика хоста, открывает настройки плагина.
   app.slots.navPanel({ id: "flows", title: "Flow", icon: "Workflow", path: FLOWS_PANEL_PATH, component: FlowsPage, headerContent: FlowsSettingsButton });
-  // Клик по значку Flow в левом рейле сворачивает панель тредов, если владелец включил это в настройках.
-  registerRailCollapse(app, OWN_PLUGIN_ID, useSettings);
+  // На странице Flow панель тредов показывает список flow вместо тредов, если владелец включил это в настройках; в остальных местах — треды bb.
+  app.slots.experimental_threadList({ id: "threads-or-flows", title: "Threads, flows on the Flow page", description: "bb's threads list; on the Flow page it lists the flows instead when Flow's setting is on.", component: ThreadsPanelList });
   // Страница Flow открывает flow треда, с которого пришёл владелец, — тоже по настройке.
   registerSelectedThread(app, OWN_PLUGIN_ID, useSettings);
   app.composer.customize({ id: "flow", scopes: ["new-thread"], actions: [{ id: "flow-picker", component: FlowPicker }] });

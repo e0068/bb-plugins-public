@@ -52,7 +52,12 @@ describe("меню «⋯» в строке этапа", () => {
       expect(made?.stages.map((s) => s.id)).toEqual(["preview", "demo", "restore"]);
       expect(flows[0]?.stages.map((s) => s.flowId ?? s.id)).toEqual(["ship", made?.id, "answer"]);
     });
-    expect(await within(slot.getByRole("navigation", { name: "Flow" })).findByRole("button", { name: /Демо/ })).toBeTruthy();
+  });
+
+  it("новый flow из этапа встаёт в список flow строкой с его именем", async () => {
+    const slot = open(LINKED);
+    fireEvent.click((await menuOf(slot, 3)).getByRole("menuitem", { name: "Преобразовать во Flow" }));
+    expect(await within(slot.getByRole("navigation", { name: "Flow" })).findByRole("button", { name: /^Демо/ })).toBeTruthy();
   });
 
   it("этап с мёрджем, чей PR открывает этап выше, не преобразуется: пункт недоступен, причина видна, коллекция прежняя", async () => {
