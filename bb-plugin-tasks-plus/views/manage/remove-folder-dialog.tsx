@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useRpc } from "@get-bb/plugin-sdk/app";
-import type { FoldersRpcContract, SyncedFolder } from "../../folders/contract.js";
+import type { FoldersRpcContract, ProjectRowBoard } from "../../folders/contract.js";
 import { databaseHost } from "../../folders/database-address.js";
 import { taskCountText } from "./shared.js";
 import { Button } from "@/components/ui/button";
@@ -18,36 +18,37 @@ function describeError(error: unknown): string {
 }
 
 export interface RemoveFolderDialogProps {
-  folder: SyncedFolder;
+  board: ProjectRowBoard;
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onRemoved: () => void;
 }
 
-/** What disconnecting takes away, said for the kind of source. */
-function disconnectCopy(folder: SyncedFolder): { title: string; description: string } {
-  switch (folder.source.kind) {
+/** What deleting the board takes away, said for the kind of source. */
+function deleteCopy(board: ProjectRowBoard): { title: string; description: string } {
+  const title = `Delete ${board.name}?`;
+  switch (board.source.kind) {
     case "folder":
       return {
-        title: `Disconnect "${folder.tasksFolder}"?`,
-        description: `Stops ${folder.projectName} from reading this folder. Files on disk are never touched — the ${taskCountText(folder.taskCount)} it holds simply stop showing up on this board.`,
+        title,
+        description: `${board.name} leaves Tasks+ on this machine. The task files in ${board.tasksFolder ?? "its folder"} stay where they are.`,
       };
     case "database":
       return {
-        title: `Disconnect ${databaseHost(folder.source.url)}?`,
-        description: `${folder.projectName} leaves this machine and its saved token is forgotten. The database and its ${taskCountText(folder.taskCount)} stay where they are: other machines keep working, and an invite connects it again.`,
+        title,
+        description: `${board.name} leaves this machine and its saved token is forgotten. The database ${databaseHost(board.source.url)} and its ${taskCountText(board.taskCount)} stay where they are: other machines keep working, and an invite connects it again.`,
       };
   }
 }
 
 /**
- * Disconnects a board from its source. Files on disk are never touched —
- * they're the tasks themselves, not a synced copy — so disconnecting a
- * folder just stops this board from reading it; a database board leaves
- * this machine while the database keeps serving the others.
+ * Deletes a board from this machine. The tasks are never touched — they are
+ * the files of a folder or the rows of a database, not a copy kept here — so a
+ * folder board only stops showing them, and a database board leaves this
+ * machine while the database keeps serving the others.
  */
 export function RemoveFolderDialog({
-  folder,
+  board,
   open,
   onOpenChange,
   onRemoved,
@@ -56,12 +57,12 @@ export function RemoveFolderDialog({
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const copy = disconnectCopy(folder);
+  const copy = deleteCopy(board);
   const confirm = async () => {
     setSubmitting(true);
     setError(null);
     try {
-      await rpc.call("removeSyncedFolder", { projectId: folder.projectId });
+      await rpc.call("removeSyncedFolder", { projectId: board.id });
       onOpenChange(false);
       onRemoved();
     } catch (removeError) {
@@ -93,7 +94,7 @@ export function RemoveFolderDialog({
             disabled={submitting}
             onClick={() => void confirm()}
           >
-            Disconnect
+            Delete
           </Button>
         </DialogFooter>
       </DialogContent>

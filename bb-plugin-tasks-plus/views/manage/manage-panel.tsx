@@ -1,10 +1,9 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import type { Label, Preset } from "../../shared/contract.js";
 import {
   listAllTasks,
   usePresets,
   useProjects,
-  useSidebarSummary,
   useTasksQuery,
   useTasksRpc,
 } from "../../client/data.js";
@@ -29,237 +28,11 @@ import {
   savePresetDraft,
   type PresetDraft,
 } from "./preset-dialog.js";
-import { ColorSwatchPicker, DEFAULT_COLOR, Field, prefixProblem } from "./shared.js";
-import { FoldersSection } from "./folders-section.js";
+import { ColorSwatchPicker, DEFAULT_COLOR } from "./shared.js";
+import { ProjectsSection } from "./projects-section.js";
 
 function describeError(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
-}
-
-// ---------------------------------------------------------------------------
-// Project
-// ---------------------------------------------------------------------------
-
-const NOT_EMPTY_HINT = "Move or delete this project's tasks to delete it.";
-
-/** What a new prefix does beyond the keys: where the change lands and what is left to do. */
-function renameConsequence(project: { database?: { url: string } | null }): string {
-  const mentions = "Mentions of the old keys in task descriptions and comments are rewritten too.";
-  return project.database
-    ? `${mentions} Every machine that opens this board takes the new prefix.`
-    : `${mentions} The task files in the repository change — commit them. Other machines keep the old prefix until it is changed there too.`;
-}
-
-function ProjectSection() {
-  const rpc = useTasksRpc();
-  const projects = useProjects();
-  const projectList = projects.data ?? [];
-  const [selectedProjectId, setSelectedProjectId] = useState<string | null>(
-    null,
-  );
-  const projectId = selectedProjectId ?? projectList[0]?.id ?? null;
-  const project = projectList.find((entry) => entry.id === projectId) ?? null;
-
-  const [name, setName] = useState("");
-  const [prefix, setPrefix] = useState("");
-  const [color, setColor] = useState<string>(DEFAULT_COLOR);
-  const [confirmingRename, setConfirmingRename] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [saving, setSaving] = useState(false);
-  const [deleting, setDeleting] = useState(false);
-  // Unknown until the summary loads — deletion stays off rather than guessing.
-  const taskCount = useSidebarSummary().data?.find(
-    (entry) => entry.projectId === projectId,
-  )?.taskCount;
-
-  // The editor mirrors the selected project; resync whenever that project — or
-  // its stored name/color — changes underneath us.
-  useEffect(() => {
-    if (project) {
-      setName(project.name);
-      setPrefix(project.prefix);
-      setColor(project.color);
-    }
-  }, [project?.id, project?.name, project?.prefix, project?.color]);
-
-  if (projectList.length === 0) {
-    return (
-      <p className="text-sm text-muted-foreground">
-        No projects yet — create one first.
-      </p>
-    );
-  }
-
-  const prefixChanged = project !== null && prefix !== project.prefix;
-  const prefixError = prefixChanged ? prefixProblem(prefix, projectList, project.id) : null;
-  const fieldsChanged =
-    project !== null &&
-    (name.trim() !== project.name || color !== project.color);
-  const canSave =
-    project !== null &&
-    name.trim() !== "" &&
-    (fieldsChanged || prefixChanged) &&
-    prefixError === null &&
-    !saving &&
-    !deleting;
-  const canDelete =
-    project !== null && taskCount === 0 && !saving && !deleting;
-
-  // A new prefix renames every task key of the board, so it is asked first.
-  const save = () => {
-    if (!project || !canSave) return;
-    if (prefixChanged) setConfirmingRename(true);
-    else void write();
-  };
-
-  // The prefix goes first: refused, it leaves the name and color unsaved too.
-  const write = async () => {
-    if (!project) return;
-    setSaving(true);
-    setError(null);
-    try {
-      if (prefixChanged) {
-        const renamed = await rpc.call("renameProjectPrefix", { projectId: project.id, prefix });
-        if (!renamed.ok) {
-          setError(
-            renamed.error.code === "project_prefix_conflict"
-              ? `Another board already uses the prefix ${prefix}.`
-              : renamed.error.message,
-          );
-          return;
-        }
-      }
-      if (fieldsChanged) {
-        await rpc.call("updateProject", {
-          projectId: project.id,
-          name: name.trim(),
-          color,
-        });
-      }
-    } catch (saveError) {
-      setError(describeError(saveError));
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  // Only empty projects are deletable here, so one click is enough: nothing
-  // but the project record itself can be lost.
-  const deleteProject = async () => {
-    if (!project || !canDelete) return;
-    setDeleting(true);
-    setError(null);
-    try {
-      const result = await rpc.call("deleteProject", { projectId: project.id });
-      if (result.ok) setSelectedProjectId(null);
-      // The summary can lag behind a task created elsewhere; the server's own
-      // message speaks API ("pass force: true"), so say it in UI terms.
-      else if (result.error.code === "project_not_empty") setError(NOT_EMPTY_HINT);
-      else setError(result.error.message);
-    } catch (deleteError) {
-      setError(describeError(deleteError));
-    } finally {
-      setDeleting(false);
-    }
-  };
-
-  return (
-    <div className="space-y-3">
-      <Select
-        value={projectId ?? undefined}
-        onValueChange={(value) => {
-          setSelectedProjectId(value);
-          setError(null);
-        }}
-      >
-        <SelectTrigger aria-label="Project" className="h-8 w-56">
-          <SelectValue placeholder="Project" />
-        </SelectTrigger>
-        <SelectContent>
-          {projectList.map((entry) => (
-            <SelectItem key={entry.id} value={entry.id}>
-              <span className="flex items-center gap-2">
-                <span
-                  aria-hidden
-                  className="size-2.5 rounded-sm"
-                  style={{ backgroundColor: entry.color }}
-                />
-                {entry.name}
-              </span>
-            </SelectItem>
-          ))}
-        </SelectContent>
-      </Select>
-      <Field label="Name">
-        <Input
-          value={name}
-          placeholder="Project name"
-          onChange={(event) => setName(event.target.value)}
-          onKeyDown={(event) => {
-            if (event.key === "Enter" && canSave) {
-              event.preventDefault();
-              void save();
-            }
-          }}
-          className="h-8 w-56"
-        />
-      </Field>
-      <Field
-        label="Key prefix"
-        hint={prefixError ?? "Task keys use this prefix, e.g. TSK-12. Changing it renames every task key of the board."}
-      >
-        <Input
-          value={prefix}
-          aria-label="Key prefix"
-          aria-invalid={prefixError !== null}
-          onChange={(event) => setPrefix(event.target.value.toUpperCase())}
-          className={
-            prefixError !== null
-              ? "h-8 w-32 border-destructive focus-visible:ring-destructive"
-              : "h-8 w-32"
-          }
-        />
-      </Field>
-      <Field label="Color">
-        <ColorSwatchPicker value={color} onChange={setColor} />
-      </Field>
-      <div className="flex items-center gap-2">
-        <Button
-          size="sm"
-          className="h-7"
-          disabled={!canSave}
-          onClick={save}
-        >
-          Save
-        </Button>
-        <Button
-          size="sm"
-          variant="destructive"
-          className="h-7"
-          disabled={!canDelete}
-          onClick={() => void deleteProject()}
-        >
-          Delete project
-        </Button>
-      </div>
-      {taskCount !== undefined && taskCount > 0 ? (
-        <p className="text-xs text-muted-foreground">{NOT_EMPTY_HINT}</p>
-      ) : null}
-      {error ? (
-        <p role="alert" className="text-xs text-destructive">
-          {error}
-        </p>
-      ) : null}
-      <ConfirmDialog
-        open={confirmingRename}
-        onOpenChange={setConfirmingRename}
-        title={`Rename the board's task keys from ${project?.prefix ?? ""}-n to ${prefix}-n?`}
-        description={project ? renameConsequence(project) : ""}
-        confirmLabel="Rename keys"
-        onConfirm={() => void write()}
-      />
-    </div>
-  );
 }
 
 // ---------------------------------------------------------------------------
@@ -661,7 +434,7 @@ function PresetsSection() {
 // ---------------------------------------------------------------------------
 
 /**
- * Settings-ish management surface: labels, agent presets, and folders.
+ * Settings-ish management surface: projects, labels and agent presets.
  *
  * The shell does not yet reserve a manage route or sidebar-footer slot, so
  * this is exported unmounted; when the shell grows one (e.g. a `manage`
@@ -678,27 +451,23 @@ export function ManagePanel({ className }: { className?: string }) {
       <header className="space-y-1">
         <h2 className="text-base font-semibold">Manage</h2>
         <p className="text-sm text-muted-foreground">
-          Project, labels, agent presets, and folders.
+          Projects, labels, and agent presets.
         </p>
       </header>
-      <Tabs defaultValue="project">
+      <Tabs defaultValue="projects">
         <TabsList>
-          <TabsTrigger value="project">Project</TabsTrigger>
+          <TabsTrigger value="projects">Projects</TabsTrigger>
           <TabsTrigger value="labels">Labels</TabsTrigger>
           <TabsTrigger value="presets">Presets</TabsTrigger>
-          <TabsTrigger value="folders">Folders</TabsTrigger>
         </TabsList>
-        <TabsContent value="project" className="pt-3">
-          <ProjectSection />
+        <TabsContent value="projects" className="pt-3">
+          <ProjectsSection />
         </TabsContent>
         <TabsContent value="labels" className="pt-3">
           <LabelsSection />
         </TabsContent>
         <TabsContent value="presets" className="pt-3">
           <PresetsSection />
-        </TabsContent>
-        <TabsContent value="folders" className="pt-3">
-          <FoldersSection />
         </TabsContent>
       </Tabs>
     </div>

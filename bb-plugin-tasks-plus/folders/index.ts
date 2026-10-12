@@ -3,7 +3,7 @@ import { homedir } from "node:os";
 import type { BbPluginApi, PluginRpcHandlers } from "@get-bb/plugin-sdk";
 import type { TasksApiStore } from "../api/index.js";
 import { publishProjectsChanged, publishProjectTasksChanged } from "../api/index.js";
-import type { BoardConfig } from "../filesync/board-config.js";
+import { linkTakenBy, linkTakenMessage, type BoardConfig } from "../filesync/board-config.js";
 import { createDbRepo, failureOf, peekBoard, type DbRepo } from "../filesync/db-repo.js";
 import { resolveMainRoot } from "../filesync/resolve-roots.js";
 import { defaultSourcePath } from "../filesync/resolve-roots.js";
@@ -17,12 +17,16 @@ import {
   type ConnectDatabaseInput,
   type FolderDomainError,
   type InspectDatabaseResult,
+  type ProjectRow,
+  type ProjectRowBoard,
   type SyncedFolder,
+  type SyncedSource,
 } from "./contract.js";
 import { databaseHost, databaseInvite, parseDatabaseAddress } from "./database-address.js";
 import { planConnect, sourceOf, tokenSource, usableToken, type ConnectPlan } from "./database-connect.js";
 import { createDatabaseSecrets } from "./database-secrets.js";
 import { deriveUniquePrefix } from "./prefix.js";
+import { holdsProject, projectRows, type RowBbProject } from "./project-rows.js";
 
 const DEFAULT_FOLDER_PROJECT_COLOR = "steelblue";
 /** What a database created before its board has a prefix is named after. */
@@ -105,6 +109,14 @@ async function resolveBbProjectSourcePath(
   }
 }
 
+/** The checkout a bb project keeps on this machine: its default source of the local-path kind, none for a project without one. */
+function localRepoPath(sources: Parameters<typeof defaultSourcePath>[0]): string | null {
+  return defaultSourcePath(sources.filter((source) => source.type === "local_path"));
+}
+
+/** Everything one database connection is put together from, past the plan. */
+type ConnectTarget = { boardId: string; url: string; repo: DbRepo; bbProjectId: string | null };
+
 /** Keys that more than one task carries, case aside — a database holds each key once. */
 function duplicateKeys(keys: readonly (string | null)[]): string[] {
   const counts = keys
@@ -164,26 +176,79 @@ export function registerFolders(bb: BbPluginApi, store: TasksApiStore): void {
     };
   }
 
-  function buildDatabaseRow(board: DatabaseBoard): SyncedFolder {
-    const repo = repos.get(board.id);
+  function databaseTaskCount(board: DatabaseBoard): number {
+    return repos.get(board.id)?.count() ?? 0;
+  }
+
+  function databaseSource(board: DatabaseBoard): SyncedSource {
     const at = new Date().toISOString();
+    // A board with no repository open yet is unreachable, and says so.
+    return sourceOf(board.database.url, repos.get(board.id)?.state() ?? { kind: "offline", since: at, lastSyncAt: null }, at);
+  }
+
+  function buildDatabaseRow(board: DatabaseBoard): SyncedFolder {
     return {
       projectId: board.id,
       projectName: board.name,
       projectPrefix: board.prefix,
-      taskCount: repo?.count() ?? 0,
+      taskCount: databaseTaskCount(board),
       tasksFolder: null,
       linkedBbProjectId: null,
       linkedBbProjectName: null,
       repoPath: null,
-      // A board with no repository open yet is unreachable, and says so.
-      source: sourceOf(board.database.url, repo?.state() ?? { kind: "offline", since: at, lastSyncAt: null }, at),
+      source: databaseSource(board),
     };
   }
 
   async function buildRow(board: BoardConfig): Promise<SyncedFolder | null> {
     if (isDatabaseBoard(board)) return buildDatabaseRow(board);
     return isSyncEligible(board) ? buildSyncedFolderRow(board) : null;
+  }
+
+  // --------------------------------------------------------- Projects tab
+
+  /** bb's projects, the personal one included, as the tab's rows know them. */
+  async function listBbProjects(): Promise<RowBbProject[]> {
+    const projects = await bb.sdk.projects.list({ includePersonal: true });
+    return projects.map((project) => ({ id: project.id, name: project.name, repoPath: localRepoPath(project.sources) }));
+  }
+
+  /** The board as a row shows it — counted and sourced the way listSyncedFolders does. */
+  async function buildProjectRowBoard(board: BoardConfig): Promise<ProjectRowBoard> {
+    const shown = {
+      id: board.id,
+      name: board.name,
+      prefix: board.prefix,
+      color: board.color,
+      ...(board.icon === undefined ? {} : { icon: board.icon }),
+      tasksFolder: board.tasksFolder,
+    };
+    return isDatabaseBoard(board)
+      ? { ...shown, taskCount: databaseTaskCount(board), source: databaseSource(board) }
+      : { ...shown, taskCount: await store.projectTaskCount(board.id), source: { kind: "folder" } };
+  }
+
+  /** A board in a row wears its bb project's name: a project renamed in bb renames its board here. */
+  function renameBoardsLike(bbProjects: readonly RowBbProject[]): void {
+    projectRows(bbProjects, store.tasks.listProjects()).renames.forEach(({ boardId, name }) => {
+      store.tasks.updateProject(boardId, { name });
+      publishProjectsChanged(bb, boardId);
+    });
+  }
+
+  async function listProjectRows(): Promise<{ projects: ProjectRow[]; orphans: ProjectRowBoard[] }> {
+    const bbProjects = await listBbProjects();
+    renameBoardsLike(bbProjects);
+    const rows = projectRows(bbProjects, store.tasks.listProjects());
+    return {
+      projects: await Promise.all(
+        rows.projects.map(async ({ bbProject, board }): Promise<ProjectRow> => ({
+          bbProject,
+          board: board === null ? null : await buildProjectRowBoard(board),
+        })),
+      ),
+      orphans: await Promise.all(rows.orphans.map(buildProjectRowBoard)),
+    };
   }
 
   // ------------------------------------------------------------ Databases
@@ -272,10 +337,10 @@ export function registerFolders(bb: BbPluginApi, store: TasksApiStore): void {
     void syncQuietly(repo);
   }
 
-  /** A folder board stops reading its folder; the files and the board stay. */
-  function disconnectFolder(board: BoardConfig): void {
-    store.tasks.updateProject(board.id, { tasksFolder: null });
+  /** A folder board leaves Tasks+ with its roots; its task files stay where they are. */
+  function removeFolderBoard(board: BoardConfig): void {
     store.tasks.setBoardRoots(board.id, []);
+    store.tasks.deleteProject(board.id);
   }
 
   /** A database board leaves this machine with its token; the database and its tasks stay for the others. */
@@ -388,39 +453,74 @@ export function registerFolders(bb: BbPluginApi, store: TasksApiStore): void {
     return { ok: false, error: databaseFailure(failure.reason) };
   }
 
+  /** A board linked to the project with no folder and no database does not hold it: the new board takes the project from it. */
+  function releaseProject(bbProjectId: string | null): void {
+    store.tasks
+      .listProjects()
+      .filter((board) => bbProjectId !== null && board.linkedBbProjectId === bbProjectId && !holdsProject(board))
+      .forEach((board) => store.tasks.updateProject(board.id, { linkedBbProjectId: null }));
+  }
+
+  /** The board of a connected database, on the bb project it was connected from when there is one. */
+  function createDatabaseBoard(plan: { name: string; prefix: string }, target: ConnectTarget): void {
+    releaseProject(target.bbProjectId);
+    store.tasks.createProject({
+      id: target.boardId,
+      name: plan.name,
+      prefix: plan.prefix,
+      color: DEFAULT_FOLDER_PROJECT_COLOR,
+      linkedBbProjectId: target.bbProjectId,
+      database: { url: target.url },
+    });
+  }
+
   /** Puts the board of the plan in place, in the database and in the store. */
-  async function applyPlan(plan: Exclude<ConnectPlan, { kind: "refuse" }>, boardId: string, url: string, repo: DbRepo): Promise<Step<null>> {
+  async function applyPlan(plan: Exclude<ConnectPlan, { kind: "refuse" }>, target: ConnectTarget): Promise<Step<null>> {
     switch (plan.kind) {
       case "copy": {
         const source = store.tasks.getProject(plan.sourceId);
         if (source === undefined || !isSyncEligible(source)) return refusal("The board to copy is not a connected folder.");
-        const copied = await copyFolderTasks(source, repo);
+        const copied = await copyFolderTasks(source, target.repo);
         if (!copied.ok) return copied;
-        await repo.writeBoard({ name: plan.name, prefix: plan.prefix });
-        attachRepo(boardId, repo);
-        store.tasks.createProject({ id: boardId, name: plan.name, prefix: plan.prefix, color: DEFAULT_FOLDER_PROJECT_COLOR, database: { url } });
+        await target.repo.writeBoard({ name: plan.name, prefix: plan.prefix });
+        attachRepo(target.boardId, target.repo);
+        // The copy takes the project's row from the folder board it came from: one board per bb project.
+        if (target.bbProjectId !== null && source.linkedBbProjectId === target.bbProjectId) store.tasks.updateProject(source.id, { linkedBbProjectId: null });
+        createDatabaseBoard(plan, target);
         return proceed(null);
       }
       case "adopt":
       case "fresh": {
-        if (plan.kind === "fresh") await repo.writeBoard({ name: plan.name, prefix: plan.prefix });
-        attachRepo(boardId, repo);
-        store.tasks.createProject({ id: boardId, name: plan.name, prefix: plan.prefix, color: DEFAULT_FOLDER_PROJECT_COLOR, database: { url } });
+        if (plan.kind === "fresh") await target.repo.writeBoard({ name: plan.name, prefix: plan.prefix });
+        attachRepo(target.boardId, target.repo);
+        createDatabaseBoard(plan, target);
         return proceed(null);
       }
     }
   }
 
   /**
+   * The refusal of a bb project another board holds. The folder board a copy comes from gives up
+   * the project's row to the copy, and a board with no source never held it.
+   */
+  function projectTaken(bbProjectId: string, copiedBoardId: string | undefined): string | null {
+    const holder = linkTakenBy(store.tasks.listProjects().filter(holdsProject), bbProjectId, copiedBoardId);
+    return holder === undefined ? null : linkTakenMessage(bbProjectId, holder);
+  }
+
+  /**
    * What in the store stands in the way of a new board at this address and
    * prefix. A copy shares its prefix with the folder board it came from: the
    * keys of the copied tasks carry it. A connected address gets here only to
-   * be copied into; otherwise it takes the token instead (`replaceToken`).
+   * be copied into; otherwise it takes the token instead (`replaceToken`). A
+   * bb project another board holds is not taken a second time.
    */
-  function collision(plan: ConnectPlan, url: string): string | null {
+  function collision(plan: ConnectPlan, url: string, bbProjectId: string | null): string | null {
     if (plan.kind === "refuse") return null;
     if (store.tasks.listProjects().some((board) => board.database?.url === url)) return "A board is already connected to this database.";
     const source = plan.kind === "copy" ? plan.sourceId : "";
+    const taken = bbProjectId === null ? null : projectTaken(bbProjectId, plan.kind === "copy" ? plan.sourceId : undefined);
+    if (taken !== null) return taken;
     return store.projectPrefixExists(plan.prefix, source) ? `The key prefix ${plan.prefix} is already used by another board.` : null;
   }
 
@@ -464,6 +564,17 @@ export function registerFolders(bb: BbPluginApi, store: TasksApiStore): void {
     return proceed(null);
   }
 
+  /** The bb project a database is connected from, or the refusal when bb has none by that id; none asked for is none. */
+  async function bbProjectOf(bbProjectId: string | undefined): Promise<Step<{ id: string; name: string } | null>> {
+    if (bbProjectId === undefined) return proceed(null);
+    try {
+      const { id, name } = await bb.sdk.projects.get({ projectId: bbProjectId });
+      return proceed({ id, name });
+    } catch {
+      return refusal(`bb project not found: ${bbProjectId}`, "bb_project_not_found");
+    }
+  }
+
   async function connect(input: ConnectDatabaseInput): Promise<Step<null>> {
     const address = parseDatabaseAddress(input.url);
     if (!address.ok) return refusal(address.message);
@@ -473,6 +584,8 @@ export function registerFolders(bb: BbPluginApi, store: TasksApiStore): void {
     if (connected !== undefined && input.copyFromBoardId === undefined) return replaceToken(connected, token.value);
     const copyFrom = folderBoardToCopy(input.copyFromBoardId);
     if (!copyFrom.ok) return copyFrom;
+    const project = await bbProjectOf(input.bbProjectId);
+    if (!project.ok) return project;
 
     const boardId = createUlid();
     const repo = openRepo(boardId, address.url, createHranaClient({ url: address.url, token: token.value }));
@@ -484,17 +597,21 @@ export function registerFolders(bb: BbPluginApi, store: TasksApiStore): void {
     const plan = planConnect(
       {
         copyFrom: copyFrom.value === null ? null : { id: copyFrom.value.id, name: copyFrom.value.name, prefix: copyFrom.value.prefix },
-        name: input.name,
+        // On a bb project the board is named after the project, so the dialog sends no name.
+        name: input.name ?? project.value?.name,
         prefix: input.prefix,
       },
       { board: await repo.readBoard(), taskCount: repo.count() },
     );
     if (plan.kind === "refuse") return refusal(plan.message, plan.code);
-    const blocked = collision(plan, address.url);
+    const bbProjectId = project.value?.id ?? null;
+    const blocked = collision(plan, address.url, bbProjectId);
     if (blocked !== null) return refusal(blocked);
+    // On a bb project the board is named after the project, whatever name came with the plan.
+    const named = project.value === null ? plan : { ...plan, name: project.value.name };
     let applied: Step<null>;
     try {
-      applied = await applyPlan(plan, boardId, address.url, repo);
+      applied = await applyPlan(named, { boardId, url: address.url, repo, bbProjectId });
     } catch (error) {
       repo.stop();
       detachRepo(boardId);
@@ -576,34 +693,7 @@ export function registerFolders(bb: BbPluginApi, store: TasksApiStore): void {
       return { folders: rows.filter((row): row is SyncedFolder => row !== null) };
     },
 
-    async listSyncableBbProjects() {
-      const [bbProjects, taskProjects] = await Promise.all([
-        bb.sdk.projects.list(),
-        Promise.resolve(store.tasks.listProjects()),
-      ]);
-      const linkedIds = new Set(
-        taskProjects
-          .filter(isSyncEligible)
-          .map((project) => project.linkedBbProjectId),
-      );
-      return {
-        bbProjects: bbProjects
-          .filter((project) =>
-            project.sources.some((source) => source.type === "local_path"),
-          )
-          .map((project) => {
-            const source =
-              project.sources.find((entry) => entry.isDefault) ??
-              project.sources.find((entry) => entry.type === "local_path");
-            return {
-              id: project.id,
-              name: project.name,
-              repoPath: source?.path ?? null,
-              alreadyConnected: linkedIds.has(project.id),
-            };
-          }),
-      };
-    },
+    listProjectRows,
 
     async addSyncedFolder(input) {
       const resolved = await resolveOrCreateProject(
@@ -620,7 +710,7 @@ export function registerFolders(bb: BbPluginApi, store: TasksApiStore): void {
       const project = store.tasks.getProject(input.projectId);
       if (!project) throw new Error(`Project not found: ${input.projectId}`);
       if (isDatabaseBoard(project)) await disconnectDatabase(project);
-      else disconnectFolder(project);
+      else removeFolderBoard(project);
       publishProjectsChanged(bb, project.id);
       return { ok: true };
     },
@@ -685,4 +775,13 @@ export function registerFolders(bb: BbPluginApi, store: TasksApiStore): void {
       `board-roots refresh failed: ${error instanceof Error ? error.message : String(error)}`,
     ),
   );
+
+  // A bb project renamed while Tasks+ was off renames its board at load, not
+  // only when the tab is next opened. With no board on a bb project there is
+  // nothing to rename and bb is not asked; bb's refusal is no reason to stop.
+  if (store.tasks.listProjects().some((board) => board.linkedBbProjectId !== null)) {
+    void listBbProjects().then(renameBoardsLike).catch((error: unknown) =>
+      bb.log.warn(`board-names sync failed: ${error instanceof Error ? error.message : String(error)}`),
+    );
+  }
 }

@@ -43,33 +43,6 @@ export function prefixProblem(
   return clash ? `Already used by ${clash.name}.` : null;
 }
 
-/**
- * Suggest a project prefix from its name: initials for multi-word names,
- * the first three letters otherwise. Must satisfy PROJECT_PREFIX_PATTERN,
- * so leading digits are dropped.
- */
-export function derivePrefix(name: string): string {
-  const words = name
-    .toUpperCase()
-    .replace(/[^A-Z0-9]+/g, " ")
-    .split(" ")
-    .filter(Boolean);
-  const raw =
-    words.length >= 2
-      ? words.map((word) => word[0]).join("")
-      : (words[0] ?? "").slice(0, 3);
-  return raw.replace(/^[0-9]+/, "").slice(0, 10);
-}
-
-/** Friendly copy for raw RPC failures (the store surfaces SQLite messages). */
-export function describeCreateProjectError(error: unknown): string {
-  const message = error instanceof Error ? error.message : String(error);
-  if (message.includes("UNIQUE") && message.includes("prefix")) {
-    return "That prefix is already used by another project.";
-  }
-  return message;
-}
-
 export function ColorSwatchPicker({
   value,
   onChange,

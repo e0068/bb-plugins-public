@@ -11,6 +11,8 @@ export interface BoardConfig {
   name: string;
   prefix: string;
   color: string;
+  /** Name of a catalog icon; a board without one is drawn with the default. */
+  icon?: string;
   folderId: string | null;
   linkedBbProjectId: string | null;
   tasksFolder: string | null;
@@ -70,6 +72,25 @@ export function findBoardBySource(
     (b) =>
       b.linkedBbProjectId === linkedBbProjectId && b.tasksFolder === tasksFolder,
   );
+}
+
+/**
+ * The board that already took a bb project — one board per bb project. The
+ * board being written (`exceptBoardId`) does not count against itself, and an
+ * unlinked board (`null`) takes nothing.
+ */
+export function linkTakenBy(
+  boards: readonly BoardConfig[],
+  bbProjectId: string | null,
+  exceptBoardId?: string,
+): BoardConfig | undefined {
+  if (bbProjectId === null) return undefined;
+  return boards.find((b) => b.linkedBbProjectId === bbProjectId && b.id !== exceptBoardId);
+}
+
+/** The refusal of a second board on a bb project, naming the board that holds it. */
+export function linkTakenMessage(bbProjectId: string, holder: BoardConfig): string {
+  return `bb project ${bbProjectId} is already linked to board ${holder.prefix} (${holder.name})`;
 }
 
 /**

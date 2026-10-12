@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useRpc } from "@get-bb/plugin-sdk/app";
 import type {
   FoldersRpcContract,
-  SyncableBbProject,
+  ProjectRowBbProject,
 } from "../../folders/contract.js";
 import {
   Dialog,
@@ -12,13 +12,6 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Field } from "./shared.js";
@@ -41,11 +34,13 @@ export interface AddFolderDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onConnected: () => void;
+  /** The bb project of the row the dialog was opened from. */
+  bbProject: ProjectRowBbProject;
 }
 
 /**
- * "Add folder" — connects a repo-relative folder of markdown tasks (in a bb
- * project with a local repository) to a board. Reuses (or creates) the
+ * "Add folder" — connects a repo-relative folder of markdown tasks in the
+ * repository of the bb project of a row to a board. Reuses (or creates) the
  * tasks-plugin project linked to that bb project and runs the first sync
  * inline, so the dialog only closes once the connection is real.
  */
@@ -53,33 +48,24 @@ export function AddFolderDialog({
   open,
   onOpenChange,
   onConnected,
+  bbProject,
 }: AddFolderDialogProps) {
   const rpc = useRpc<FoldersRpcContract>();
-  const [bbProjects, setBbProjects] = useState<SyncableBbProject[] | null>(
-    null,
-  );
-  const [bbProjectId, setBbProjectId] = useState("");
   const [tasksFolder, setTasksFolder] = useState(DEFAULT_TASKS_FOLDER);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!open) return;
-    setBbProjectId("");
     setTasksFolder(DEFAULT_TASKS_FOLDER);
     setError(null);
-    setBbProjects(null);
-    rpc.call("listSyncableBbProjects", null).then(
-      (result) => setBbProjects(result.bbProjects),
-      (fetchError: unknown) => setError(describeError(fetchError)),
-    );
-  }, [open, rpc]);
+  }, [open]);
 
   const pathError = useMemo(
     () => validateFolderPath(tasksFolder),
     [tasksFolder],
   );
-  const canSubmit = bbProjectId !== "" && pathError === null && !submitting;
+  const canSubmit = pathError === null && !submitting;
 
   const submit = async () => {
     if (!canSubmit) return;
@@ -87,7 +73,7 @@ export function AddFolderDialog({
     setError(null);
     try {
       const result = await rpc.call("addSyncedFolder", {
-        bbProjectId,
+        bbProjectId: bbProject.id,
         tasksFolder: tasksFolder.trim(),
       });
       if (!result.ok) {
@@ -115,35 +101,12 @@ export function AddFolderDialog({
         </DialogHeader>
         <div className="space-y-4">
           <Field label="bb project">
-            <Select
-              value={bbProjectId === "" ? undefined : bbProjectId}
-              onValueChange={setBbProjectId}
-            >
-              <SelectTrigger aria-label="bb project" className="h-8">
-                <SelectValue
-                  placeholder={
-                    bbProjects === null ? "Loading…" : "Select a project"
-                  }
-                />
-              </SelectTrigger>
-              <SelectContent>
-                {(bbProjects ?? []).map((bbProject) => (
-                  <SelectItem
-                    key={bbProject.id}
-                    value={bbProject.id}
-                    disabled={bbProject.alreadyConnected}
-                  >
-                    {bbProject.name}
-                    {bbProject.alreadyConnected ? " · already connected" : ""}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-            {bbProjects !== null && bbProjects.length === 0 ? (
-              <p className="text-xs text-muted-foreground">
-                No bb projects with a local repository were found.
+            <p className="text-sm">{bbProject.name}</p>
+            {bbProject.repoPath === null ? null : (
+              <p className="font-mono text-xs text-muted-foreground">
+                {bbProject.repoPath}
               </p>
-            ) : null}
+            )}
           </Field>
           <Field
             label="Folder path"
