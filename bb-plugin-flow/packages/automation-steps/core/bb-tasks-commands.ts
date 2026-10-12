@@ -11,6 +11,10 @@ export function markTaskStatusArgs(key: string, status: LinkedTaskStatus): strin
   return ["tasks", "update", key, "--status", status, "--json"];
 }
 
+export function showTaskArgs(key: string): string[] {
+  return ["tasks", "show", key, "--json"];
+}
+
 /** `bb tasks keys issue`: names the unnamed tasks of the calling thread's tree. */
 export function issueKeysArgs(): string[] {
   return ["tasks", "keys", "issue", "--json"];
@@ -77,6 +81,38 @@ const slugOf = (id: unknown): string | undefined => {
   const at = id.indexOf(":");
   return at < 0 || at === id.length - 1 ? undefined : id.slice(at + 1);
 };
+
+/** A direct sub-task as `bb tasks show --json` lists it. */
+export interface Subtask {
+  key: string;
+  /** Empty when the CLI reports no status. */
+  status: string;
+  slug?: string;
+}
+
+/**
+ * The direct sub-tasks of a task, read from `bb tasks show --json`'s stdout
+ * (`{"subtasks": [{"key": "...", "status": "...", "id": "..."}, ...]}`).
+ * A task with none gives `[]`; anything not that shape is `null` — unreadable
+ * is not "no sub-tasks", because the caller closes the parent on the strength
+ * of this list.
+ */
+export function parseSubtasks(stdout: string): Subtask[] | null {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(stdout);
+  } catch {
+    return null;
+  }
+  const subtasks = (parsed as { subtasks?: unknown } | null)?.subtasks;
+  if (!Array.isArray(subtasks)) return null;
+  const read = subtasks.flatMap((entry: { key?: unknown; status?: unknown; id?: unknown } | null) => {
+    if (typeof entry?.key !== "string") return [];
+    const slug = slugOf(entry.id);
+    return [{ key: entry.key, status: typeof entry.status === "string" ? entry.status : "", ...(slug === undefined ? {} : { slug }) }];
+  });
+  return read.length === subtasks.length ? read : null;
+}
 
 /**
  * The tasks linked to a thread, read from `bb tasks current --json`'s stdout

@@ -15,7 +15,7 @@
 // update is likewise kept — the caller now knows there was a promise to
 // keep; see archiveThread/createPr in server.ts, which surface both instead
 // of reporting a plain success.
-import { currentTasksArgs, linkedTaskEnv, markTaskStatusArgs, parseLinkedTasks, type LinkedTask, type LinkedTaskStatus } from "../core/bb-tasks-commands";
+import { currentTasksArgs, linkedTaskEnv, markTaskStatusArgs, parseLinkedTasks, parseSubtasks, showTaskArgs, type LinkedTask, type LinkedTaskStatus } from "../core/bb-tasks-commands";
 import { cliRunMessage, type CliPorts } from "./bb-cli-run";
 
 /** `slug` — the moved task's file name, when the CLI named it. */
@@ -33,6 +33,15 @@ export interface TaskWrite {
   readonly written?: () => Promise<void>;
 }
 
+type Listed = { unavailable: string; tasks?: undefined } | { unavailable: null; tasks: LinkedTask[] };
+
+/** The tasks linked to a thread; a listing that ran and refused reads as no tasks. */
+async function listLinkedTasks(ports: CliPorts, threadId: string): Promise<Listed> {
+  const listed = await ports.run(currentTasksArgs(threadId), linkedTaskEnv(threadId));
+  if (listed.kind === "unavailable") return { unavailable: listed.reason };
+  return { unavailable: null, tasks: listed.code === 0 ? parseLinkedTasks(listed.stdout) : [] };
+}
+
 /**
  * Lists the tasks linked to a thread and runs one `bb tasks update` per task,
  * with the thread named for the CLI. Shared by every step that edits the
@@ -45,12 +54,11 @@ export async function updateLinkedTasks(
   writeOf: (task: LinkedTask, all: readonly LinkedTask[]) => Promise<TaskWrite>,
 ): Promise<TaskStatusReport> {
   const env = linkedTaskEnv(threadId);
-  const listed = await ports.run(currentTasksArgs(threadId), env);
-  if (listed.kind === "unavailable") return { unavailable: listed.reason, results: [] };
-  if (listed.code !== 0) return { unavailable: null, results: [] };
+  const listed = await listLinkedTasks(ports, threadId);
+  if (listed.unavailable !== null) return { unavailable: listed.unavailable, results: [] };
 
   const results: TaskStatusResult[] = [];
-  const tasks = parseLinkedTasks(listed.stdout);
+  const tasks = listed.tasks;
   for (const task of tasks) {
     const write = await writeOf(task, tasks);
     const updated = await ports.run(write.args, env);
@@ -62,8 +70,61 @@ export async function updateLinkedTasks(
   return { unavailable: null, results };
 }
 
+/**
+ * Moves every linked task to `done` together with its whole tree of sub-tasks:
+ * a task is done only when everything nested in it is. Sub-tasks go first,
+ * deepest first; a task whose sub-task did not take `done` (or whose sub-tasks
+ * could not be read) stays as it was and says which ones held it back, so a
+ * parent never turns green over open work. Canceled sub-tasks are neither
+ * touched nor descended into; done ones are not written again, but what is
+ * open under them is still closed.
+ */
+async function markLinkedTasksDone(ports: CliPorts, threadId: string): Promise<TaskStatusReport> {
+  const env = linkedTaskEnv(threadId);
+  const listed = await listLinkedTasks(ports, threadId);
+  if (listed.unavailable !== null) return { unavailable: listed.unavailable, results: [] };
+
+  const results: TaskStatusResult[] = [];
+  const settled = new Map<string, boolean>();
+
+  // `status` is known for a sub-task only; a linked task is always written.
+  const close = async (task: { key: string; slug?: string; status?: string }): Promise<boolean> => {
+    const known = settled.get(task.key);
+    if (known !== undefined) return known;
+    // A task met again while its own tree is still open (a cycle) counts as not done.
+    settled.set(task.key, false);
+    const fail = (reason: string): boolean => {
+      results.push({ key: task.key, ok: false, reason });
+      return false;
+    };
+
+    const shown = await ports.run(showTaskArgs(task.key), env);
+    const subtasks = shown.kind === "ran" && shown.code === 0 ? parseSubtasks(shown.stdout) : null;
+    if (subtasks === null) return fail(`sub-tasks unreadable: ${shown.kind === "ran" && shown.code === 0 ? "unexpected answer" : cliRunMessage(shown)}`);
+
+    const held: string[] = [];
+    for (const subtask of subtasks.filter(({ status }) => status !== "canceled")) {
+      if (!(await close(subtask))) held.push(subtask.key);
+    }
+    if (held.length > 0) return fail(`sub-tasks not done: ${held.join(", ")}`);
+
+    if (task.status !== "done") {
+      const updated = await ports.run(markTaskStatusArgs(task.key, "done"), env);
+      if (!(updated.kind === "ran" && updated.code === 0)) return fail(cliRunMessage(updated));
+      results.push({ key: task.key, ok: true, ...(task.slug === undefined ? {} : { slug: task.slug }) });
+    }
+    settled.set(task.key, true);
+    return true;
+  };
+
+  for (const task of listed.tasks) await close(task);
+  return { unavailable: null, results };
+}
+
 export function markLinkedTasksStatus(ports: CliPorts, threadId: string, status: LinkedTaskStatus): Promise<TaskStatusReport> {
-  return updateLinkedTasks(ports, threadId, async ({ key }) => ({ args: markTaskStatusArgs(key, status) }));
+  return status === "done"
+    ? markLinkedTasksDone(ports, threadId)
+    : updateLinkedTasks(ports, threadId, async ({ key }) => ({ args: markTaskStatusArgs(key, status) }));
 }
 
 // Pure split of markLinkedTasksStatus's result into the two shapes every RPC
