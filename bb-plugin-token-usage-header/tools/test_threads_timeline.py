@@ -148,6 +148,37 @@ class BuildTimelineTest(unittest.TestCase):
         self.assertEqual(thread["totalCost"], round(expected.cost, 2))
         self.assertGreater(thread["totalCost"], 0)
 
+    def test_a_thread_with_a_zero_token_synthetic_model_still_has_a_price(self):
+        ts = "2026-08-19T10:00:01.000Z"
+        _write_raw(
+            self._p("projA", "sess1.jsonl"),
+            [
+                _assistant("m1", "r1", 1000, ts, model="claude-opus-5-5"),
+                _assistant("m2", "r2", 0, ts, model="<synthetic>"),
+            ],
+        )
+        thread = self._threads(limit=20, unit=300)[0]
+        self.assertEqual(thread["unpricedModels"], [])
+
+    def test_a_thread_with_tokens_on_an_unpriced_model_reports_it(self):
+        ts = "2026-08-19T10:00:01.000Z"
+        _write_raw(self._p("projA", "sess1.jsonl"), [_assistant("m1", "r1", 7, ts, model="some-unheard-of-model-xyz")])
+        thread = self._threads(limit=20, unit=300)[0]
+        self.assertEqual(thread["unpricedModels"], ["some-unheard-of-model-xyz"])
+
+    def test_thread_splits_its_duration_into_active_and_waiting_time(self):
+        _write_raw(
+            self._p("projA", "sess1.jsonl"),
+            [
+                _assistant("m1", "r1", 5, "2026-08-19T10:00:00.000Z"),
+                _assistant("m2", "r2", 5, "2026-08-19T10:00:30.000Z"),
+                _assistant("m3", "r3", 5, "2026-08-19T10:05:30.000Z"),
+            ],
+        )
+        thread = self._threads(limit=20, unit=60)[0]
+        self.assertEqual((thread["activeSec"], thread["waitingSec"]), (30, 300))
+        self.assertEqual(thread["activeSec"] + thread["waitingSec"], thread["durationSec"])
+
     def test_workflow_count_counts_distinct_workflow_runs(self):
         sess = "sess-wf"
         _write_raw(self._p("projA", sess + ".jsonl"), [_assistant("m0", "r0", 5, "2026-08-19T10:00:00.000Z")])
@@ -377,6 +408,26 @@ class BuildTimelineTest(unittest.TestCase):
                 }
             ],
         )
+
+
+class SplitActiveWaitingTest(unittest.TestCase):
+    def test_no_records_or_one_record_have_no_time(self):
+        self.assertEqual(threads_timeline.split_active_waiting([]), (0, 0))
+        self.assertEqual(threads_timeline.split_active_waiting([100]), (0, 0))
+
+    def test_a_pause_of_exactly_a_minute_is_still_work(self):
+        self.assertEqual(threads_timeline.split_active_waiting([0, 60]), (60, 0))
+
+    def test_a_pause_longer_than_a_minute_is_waiting(self):
+        self.assertEqual(threads_timeline.split_active_waiting([0, 61]), (0, 61))
+
+    def test_order_of_records_does_not_matter(self):
+        self.assertEqual(threads_timeline.split_active_waiting([400, 0, 30]), (30, 370))
+
+    def test_active_and_waiting_always_sum_to_the_span(self):
+        epochs = [0, 10, 200, 205, 1000, 1059, 4000]
+        active, waiting = threads_timeline.split_active_waiting(epochs)
+        self.assertEqual(active + waiting, max(epochs) - min(epochs))
 
 
 class AgentLabelsTest(unittest.TestCase):

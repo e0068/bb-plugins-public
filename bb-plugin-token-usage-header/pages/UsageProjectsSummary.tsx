@@ -21,7 +21,7 @@ import {
   ROW_LIMIT_OPTIONS,
   allProjectKeys,
   donutArcs,
-  formatCost,
+  formatPrice,
   hourlyBurnBuckets,
   limitRows,
   projectCostSlices,
@@ -29,6 +29,7 @@ import {
   threadCostRows,
   windowMayBeIncomplete,
   windowStartMs,
+  windowUnpricedModels,
   type CostWindow,
   type ProjectSelection,
   type RowLimit,
@@ -153,6 +154,7 @@ export function UsageProjectsSummary({ onOpenSession }: { onOpenSession: (sessio
   const visibleRows = useMemo(() => limitRows(rows, rowLimit), [rows, rowLimit]);
   const arcs = useMemo(() => donutArcs(slices.map((s) => s.share), CIRCUMFERENCE), [slices]);
   const total = useMemo(() => slices.reduce((sum, s) => sum + s.cost, 0), [slices]);
+  const totalLabel = useMemo(() => formatPrice(total, windowUnpricedModels(threads, fromMs)), [total, threads, fromMs]);
   // Colour order from the full 100-session slice, not from `slices` (which
   // sorts by cost and therefore reorders itself across D/W/M) — a project's
   // colour must stay the same regardless of which window currently has it
@@ -250,8 +252,8 @@ export function UsageProjectsSummary({ onOpenSession }: { onOpenSession: (sessio
             </g>
           </svg>
           <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center">
-            <span className="text-base font-semibold tabular-nums text-foreground" aria-label={`Total cost: ${threads.some((t) => t.unpricedModels?.length) ? "partial API cost" : formatCost(total)}`}>
-              {threads.some((t) => t.unpricedModels?.length) ? `≥ ${formatCost(total)}` : formatCost(total)}
+            <span className="text-base font-semibold tabular-nums text-foreground" aria-label={`Total cost: ${totalLabel}`}>
+              {totalLabel}
             </span>
             <span className="text-[10px] uppercase text-muted-foreground">{WINDOW_LABELS[period]}</span>
           </div>
@@ -270,7 +272,7 @@ export function UsageProjectsSummary({ onOpenSession }: { onOpenSession: (sessio
               <span className={`min-w-0 flex-1 truncate ${isActive(slice.key) ? "text-foreground" : "text-subtle-foreground"}`}>
                 {slice.label}
               </span>
-              <span className="shrink-0 tabular-nums text-muted-foreground">{formatCost(slice.cost)}</span>
+              <span className="shrink-0 tabular-nums text-muted-foreground">{formatPrice(slice.cost, slice.unpricedModels)}</span>
             </button>
           ))}
           {slices.length === 0 && phase === "ready" && <p className="text-xs text-subtle-foreground">No spend in this period.</p>}
@@ -303,7 +305,7 @@ export function UsageProjectsSummary({ onOpenSession }: { onOpenSession: (sessio
                 style={{ width: `${row.barFraction * 100}%`, backgroundColor: colorFor(row.projectKey) }}
               />
             </span>
-            <span className="w-14 shrink-0 text-right text-xs tabular-nums text-muted-foreground">{threads.find((t) => t.session === row.session)?.unpricedModels?.length ? "API n/a" : formatCost(row.cost)}</span>
+            <span className="w-16 shrink-0 text-right text-xs tabular-nums text-muted-foreground">{formatPrice(row.cost, row.unpricedModels)}</span>
           </button>
         ))}
         {rows.length === 0 && phase === "ready" && <p className="text-xs text-subtle-foreground">No threads in this period.</p>}

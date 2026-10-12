@@ -24,6 +24,8 @@ function thread(bins: TimelineBin[]): ThreadEntry {
     start: new Date(NOW_MS - 4 * HOUR_MS).toISOString(),
     end: new Date(NOW_MS - HOUR_MS).toISOString(),
     durationSec: 10800,
+    activeSec: 10800,
+    waitingSec: 0,
     totalTokens: bins.reduce((sum, b) => sum + binTotal(b), 0),
     totalCost: 1,
     workflowCount: 0,

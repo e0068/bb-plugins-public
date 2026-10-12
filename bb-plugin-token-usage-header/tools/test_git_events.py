@@ -60,6 +60,15 @@ def pr_link(ts, number=73, url="https://github.com/e0068/bb-plugins/pull/73", re
     }
 
 
+def compact_boundary(ts, trigger, pre_tokens):
+    return {
+        "type": "system",
+        "subtype": "compact_boundary",
+        "timestamp": ts,
+        "compactMetadata": {"trigger": trigger, "preTokens": pre_tokens},
+    }
+
+
 class ScanSessionTest(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
@@ -86,6 +95,53 @@ class ScanSessionTest(unittest.TestCase):
                 }
             ],
         )
+
+    def test_compact_boundary_becomes_a_compact_event(self):
+        write_jsonl(self.path, [compact_boundary("2026-10-03T17:01:21.612Z", "auto", 862349)])
+        result = git_events.scan_session([self.path])
+        self.assertEqual(
+            result["events"],
+            [{"type": "compact", "ts": "2026-10-03T17:01:21.612Z", "trigger": "auto", "preTokens": 862349}],
+        )
+
+    def test_the_same_compact_boundary_written_twice_is_one_event(self):
+        record = compact_boundary("2026-10-03T17:01:21.612Z", "auto", 862349)
+        record["uuid"] = "aa93c085"
+        write_jsonl(self.path, [record, {**record}])
+        self.assertEqual(len(git_events.scan_session([self.path])["events"]), 1)
+
+    def test_compact_boundaries_with_different_uuids_are_different_events(self):
+        first = {**compact_boundary("2026-10-03T17:01:21.612Z", "auto", 1), "uuid": "a"}
+        second = {**compact_boundary("2026-10-03T17:01:21.612Z", "auto", 1), "uuid": "b"}
+        write_jsonl(self.path, [first, second])
+        self.assertEqual(len(git_events.scan_session([self.path])["events"]), 2)
+
+    def test_a_repeated_compact_boundary_without_a_uuid_is_matched_by_its_timestamp(self):
+        record = compact_boundary("2026-10-03T17:01:21.612Z", "manual", 7)
+        write_jsonl(self.path, [record, {**record}])
+        self.assertEqual(len(git_events.scan_session([self.path])["events"]), 1)
+
+    def test_a_manual_compaction_keeps_its_trigger(self):
+        write_jsonl(self.path, [compact_boundary("2026-10-03T17:01:21.612Z", "manual", 100)])
+        self.assertEqual(git_events.scan_session([self.path])["events"][0]["trigger"], "manual")
+
+    def test_a_compact_boundary_without_metadata_is_a_compact_event_with_unknown_details(self):
+        record = {"type": "system", "subtype": "compact_boundary", "timestamp": "2026-10-03T17:01:21.612Z"}
+        write_jsonl(self.path, [record])
+        self.assertEqual(
+            git_events.scan_session([self.path])["events"],
+            [{"type": "compact", "ts": "2026-10-03T17:01:21.612Z", "trigger": None, "preTokens": None}],
+        )
+
+    def test_a_compact_boundary_without_a_timestamp_is_skipped(self):
+        record = compact_boundary("2026-10-03T17:01:21.612Z", "auto", 5)
+        del record["timestamp"]
+        write_jsonl(self.path, [record])
+        self.assertEqual(git_events.scan_session([self.path])["events"], [])
+
+    def test_other_system_records_are_not_compact_events(self):
+        write_jsonl(self.path, [{"type": "system", "subtype": "informational", "timestamp": "2026-10-03T17:01:21.612Z"}])
+        self.assertEqual(git_events.scan_session([self.path])["events"], [])
 
     def test_successful_git_push_becomes_a_push_event(self):
         write_jsonl(

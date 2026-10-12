@@ -69,6 +69,8 @@ export interface ProjectCostSlice {
   cost: number;
   /** `cost` as a fraction of the window's total — the sector's arc length. */
   share: number;
+  /** Models of the project's in-window threads that spent tokens without a rate — `cost` is then a lower bound. */
+  unpricedModels: string[];
 }
 
 /** One row of the thread list to the right of the donut. */
@@ -78,6 +80,8 @@ export interface ThreadCostRow {
   label: string;
   projectKey: string | null;
   cost: number;
+  /** Models of this thread that spent tokens without a rate — `cost` is then a lower bound. */
+  unpricedModels: string[];
   /** `cost` relative to the most expensive row — the bar's width fraction, always 1 for the first row. */
   barFraction: number;
 }
@@ -131,6 +135,20 @@ export function threadCostInWindow(thread: ThreadEntry, fromMs: number): number 
 }
 
 /**
+ * The thread's models without a rate, when the thread was active inside
+ * `[fromMs, ∞)` — a thread that ended before the window spent nothing in it,
+ * so its missing prices cannot make the window's total a lower bound.
+ */
+function threadUnpricedInWindow(thread: ThreadEntry, fromMs: number): string[] {
+  return Date.parse(thread.end) >= fromMs ? (thread.unpricedModels ?? []) : [];
+}
+
+/** Every model without a rate that threads active inside the window spent tokens on, once each, sorted. */
+export function windowUnpricedModels(threads: readonly ThreadEntry[], fromMs: number): string[] {
+  return Array.from(new Set(threads.flatMap((thread) => threadUnpricedInWindow(thread, fromMs)))).sort();
+}
+
+/**
  * Per-project spend inside the window, most expensive first (ties broken by
  * label so the order — and therefore the sector colours — stay stable across
  * renders). Projects that spent nothing in the window are absent rather than
@@ -143,13 +161,17 @@ export function projectCostSlices(threads: readonly ThreadEntry[], fromMs: numbe
     if (cost <= 0) continue;
     costs.set(thread.bbProjectName, (costs.get(thread.bbProjectName) ?? 0) + cost);
   }
+  // A project's lower-bound mark also counts its threads with no price at all
+  // (cost 0, so they never made it into `costs`).
+  const unpricedOf = (key: string | null) =>
+    windowUnpricedModels(threads.filter((thread) => thread.bbProjectName === key), fromMs);
 
   // `costs` only ever holds entries with a positive cost (see the `continue`
   // above), so a non-empty map always has a positive total — no `total > 0`
   // guard needed, and an empty map never reaches the division at all.
   const total = Array.from(costs.values()).reduce((sum, cost) => sum + cost, 0);
   return Array.from(costs.entries())
-    .map(([key, cost]) => ({ key, label: projectLabel(key), cost, share: cost / total }))
+    .map(([key, cost]) => ({ key, label: projectLabel(key), cost, share: cost / total, unpricedModels: unpricedOf(key) }))
     .sort((a, b) => b.cost - a.cost || a.label.localeCompare(b.label));
 }
 
@@ -209,6 +231,7 @@ export function threadCostRows(
       label: threadDisplayLabel(thread),
       projectKey: thread.bbProjectName,
       cost: threadCostInWindow(thread, fromMs),
+      unpricedModels: thread.unpricedModels ?? [],
     }))
     .filter((row) => row.cost > 0)
     .sort((a, b) => b.cost - a.cost || a.session.localeCompare(b.session));

@@ -2,6 +2,7 @@ import { HugeiconsIcon, type IconSvgElement } from "@hugeicons/react";
 import {
   AlertCircleIcon,
   ArrowDown01Icon,
+  ArrowShrink01Icon,
   ArrowUp01Icon,
   ChartColumnIcon,
   GitCommitIcon,
@@ -24,6 +25,7 @@ const ICON_MAP = {
   Check: Tick02Icon,
   ChevronDown: ArrowDown01Icon,
   ChevronUp: ArrowUp01Icon,
+  Compact: ArrowShrink01Icon,
   GitCommit: GitCommitIcon,
   GitPullRequest: GitPullRequestIcon,
   GitMerge: GitMergeIcon,

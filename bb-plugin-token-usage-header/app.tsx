@@ -26,6 +26,7 @@ import {
   DEFAULT_VIZ_SETTINGS,
   formatCost,
   formatPercent,
+  formatPrice,
   formatTokenCount,
   parseGearSettings,
   type ChartSettings,
@@ -197,7 +198,7 @@ function TokenUsageHeaderButton({ threadId, isCompactViewport }: PluginThreadHea
   const isError = state.kind === "error";
   const buttonText =
     state.kind === "ready"
-      ? `${formatTokenCount(state.usage.totals.total)} · ${(state.usage.totals.unpricedModels?.length ? "API price unavailable" : formatCost(state.usage.totals.cost))}`
+      ? `${formatTokenCount(state.usage.totals.total)} · ${formatPrice(state.usage.totals.cost, state.usage.totals.unpricedModels)}`
       : state.kind === "no-session"
         ? "–"
         : state.kind === "loading"
@@ -205,7 +206,7 @@ function TokenUsageHeaderButton({ threadId, isCompactViewport }: PluginThreadHea
           : "";
   const ariaLabel =
     state.kind === "ready"
-      ? `Token usage: ${formatTokenCount(state.usage.totals.total)}, ${(state.usage.totals.unpricedModels?.length ? "API price unavailable" : formatCost(state.usage.totals.cost))}`
+      ? `Token usage: ${formatTokenCount(state.usage.totals.total)}, ${formatPrice(state.usage.totals.cost, state.usage.totals.unpricedModels)}`
       : state.kind === "no-session"
         ? "Token usage: session not started yet"
         : state.kind === "loading"
@@ -316,7 +317,7 @@ function UsageDetails({
 
       <div className="flex items-center justify-between border-t border-border pt-2 text-xs text-muted-foreground">
         <span>Cost</span>
-        <span className="font-medium tabular-nums text-foreground">{(totals.unpricedModels?.length ? "API price unavailable" : formatCost(totals.cost))}</span>
+        <span className="font-medium tabular-nums text-foreground">{formatPrice(totals.cost, totals.unpricedModels)}</span>
       </div>
       <div className="flex items-center justify-between text-xs text-muted-foreground">
         <span>Responses</span>
@@ -360,7 +361,7 @@ function UsageDetails({
                     )}
                   </div>
                   <span className="shrink-0 tabular-nums text-muted-foreground">
-                    {formatTokenCount(agent.total)} · {(agent.unpricedModels?.length ? "API price unavailable" : formatCost(agent.cost))}
+                    {formatTokenCount(agent.total)} · {formatPrice(agent.cost, agent.unpricedModels)}
                   </span>
                 </button>
               </li>

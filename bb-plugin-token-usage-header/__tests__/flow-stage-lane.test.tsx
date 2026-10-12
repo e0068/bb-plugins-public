@@ -37,6 +37,8 @@ const thread = (flowStages: FlowStage[]) => ({
   start: at(0),
   end: at(9),
   durationSec: 540,
+  activeSec: 540,
+  waitingSec: 0,
   totalTokens: 10_000,
   totalCost: 1,
   workflowCount: 0,

@@ -24,6 +24,17 @@ export function formatCost(usd: number): string {
 }
 
 /**
+ * The price of something that ran on several models, some of which may have no
+ * rate: the plain amount when all are priced, "≥ amount" when only part is
+ * (the known sum is a lower bound, not the price), and "API price unavailable"
+ * when nothing known adds up to anything — a made-up total is never shown.
+ */
+export function formatPrice(usd: number, unpricedModels: readonly string[] | undefined): string {
+  if (!unpricedModels?.length) return formatCost(usd);
+  return usd > 0 ? `≥ ${formatCost(usd)}` : "API price unavailable";
+}
+
+/**
  * Rounds an already-computed percentage (e.g. `(part / whole) * 100`) to a
  * display string, e.g. 24.6 -> "25%". Non-finite input never throws — it
  * reads as "0%". Exists so a caller that already computed the ratio for

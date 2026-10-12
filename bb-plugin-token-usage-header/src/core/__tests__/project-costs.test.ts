@@ -14,6 +14,7 @@ import {
   threadCostRows,
   threadDisplayLabel,
   windowMayBeIncomplete,
+  windowUnpricedModels,
   windowStartMs,
   type ProjectSelection,
 } from "../project-costs";
@@ -39,6 +40,8 @@ function thread(overrides: Partial<ThreadEntry> = {}): ThreadEntry {
     start: new Date(NOW_MS - 3 * HOUR_MS).toISOString(),
     end: new Date(NOW_MS - HOUR_MS).toISOString(),
     durationSec: 7200,
+    activeSec: 7200,
+    waitingSec: 0,
     totalTokens: 100,
     totalCost: 10,
     workflowCount: 0,
@@ -253,6 +256,44 @@ describe("projectCostSlices", () => {
   });
 });
 
+describe("unpriced models per cut", () => {
+  const partial = (overrides: Partial<ThreadEntry>) => thread({ unpricedModels: ["codex-auto-review"], ...overrides });
+
+  it("windowUnpricedModels lists the unpriced models of threads active inside the window, once each, sorted", () => {
+    const threads = [
+      partial({ session: "a", unpricedModels: ["z-model", "a-model"] }),
+      partial({ session: "b", unpricedModels: ["a-model"] }),
+      thread({ session: "c" }),
+    ];
+    expect(windowUnpricedModels(threads, NOW_MS - 2 * HOUR_MS)).toEqual(["a-model", "z-model"]);
+  });
+
+  it("windowUnpricedModels ignores a thread that ended before the window", () => {
+    const old = partial({ session: "old", bins: [bin(80, 100)], end: new Date(NOW_MS - 79 * HOUR_MS).toISOString() });
+    expect(windowUnpricedModels([old, thread({ session: "fresh" })], NOW_MS - 2 * HOUR_MS)).toEqual([]);
+  });
+
+  it("windowUnpricedModels still sees a thread with no price at all, which has no slice", () => {
+    expect(windowUnpricedModels([partial({ totalCost: 0 })], NOW_MS - 2 * HOUR_MS)).toEqual(["codex-auto-review"]);
+  });
+
+  it("a project slice carries the unpriced models of its own in-window threads only", () => {
+    const threads = [
+      partial({ session: "a", bbProjectName: "Alpha" }),
+      thread({ session: "b", bbProjectName: "Beta" }),
+    ];
+    const slices = projectCostSlices(threads, Number.NEGATIVE_INFINITY);
+    expect(slices.find((s) => s.key === "Alpha")?.unpricedModels).toEqual(["codex-auto-review"]);
+    expect(slices.find((s) => s.key === "Beta")?.unpricedModels).toEqual([]);
+  });
+
+  it("a thread row carries its own unpriced models", () => {
+    const rows = threadCostRows([partial({ session: "a" }), thread({ session: "b", totalCost: 1 })], Number.NEGATIVE_INFINITY, { kind: "all" });
+    expect(rows.find((r) => r.session === "a")?.unpricedModels).toEqual(["codex-auto-review"]);
+    expect(rows.find((r) => r.session === "b")?.unpricedModels).toEqual([]);
+  });
+});
+
 describe("threadCostRows", () => {
   it("sorts by cost descending and scales bars against the most expensive row", () => {
     const threads = [
@@ -433,13 +474,13 @@ describe("resolveProjectSelection", () => {
   });
 
   it("keeps a project selection that still has a slice in the window", () => {
-    const slices = [{ key: "Alpha", label: "Alpha", cost: 5, share: 1 }];
+    const slices = [{ key: "Alpha", label: "Alpha", cost: 5, share: 1, unpricedModels: [] }];
     const selection: ProjectSelection = { kind: "project", key: "Alpha" };
     expect(resolveProjectSelection(selection, slices)).toEqual(selection);
   });
 
   it("falls back to 'all' when the selected project has no slice in the window (the window narrowed past it)", () => {
-    const slices = [{ key: "Alpha", label: "Alpha", cost: 5, share: 1 }];
+    const slices = [{ key: "Alpha", label: "Alpha", cost: 5, share: 1, unpricedModels: [] }];
     expect(resolveProjectSelection({ kind: "project", key: "Beta" }, slices)).toEqual({ kind: "all" });
   });
 

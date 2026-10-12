@@ -21,6 +21,8 @@ const stdout = (...sessions: string[]) =>
       start: "2026-10-08T10:00:00.000Z",
       end: "2026-10-08T11:00:00.000Z",
       durationSec: 3600,
+      activeSec: 3600,
+      waitingSec: 0,
       totalTokens: 100,
       totalCost: 1,
       workflowCount: 0,

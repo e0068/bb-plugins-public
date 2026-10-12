@@ -356,6 +356,26 @@ class CountingTest(unittest.TestCase):
         self.assertEqual(b.cost, 0)
         self.assertEqual(tokens.bucket_json("unknown", b, None, None, None)["unpricedModels"], ["some-unheard-of-model-xyz"])
 
+    def test_a_model_without_tokens_is_not_unpriced(self):
+        b = tokens.Bucket()
+        b.add({"input_tokens": 10, "output_tokens": 5}, "claude-opus-5-5", None)
+        b.add({"input_tokens": 0, "output_tokens": 0}, "<synthetic>", None)
+        self.assertIn("<synthetic>", b.models)
+        self.assertEqual(tokens.unpriced_models(b.models), [])
+        self.assertEqual(tokens.bucket_json("k", b, None, None, None)["unpricedModels"], [])
+
+    def test_unpriced_models_lists_only_models_with_tokens_and_no_price(self):
+        b = tokens.Bucket()
+        b.add({"input_tokens": 10, "output_tokens": 5}, "claude-opus-5-5", None)
+        b.add({"input_tokens": 3, "output_tokens": 0}, "codex-auto-review", None)
+        b.add({"input_tokens": 0, "output_tokens": 0}, "<synthetic>", None)
+        self.assertEqual(tokens.unpriced_models(b.models), ["codex-auto-review"])
+
+    def test_a_long_context_tier_of_a_priced_model_is_priced(self):
+        counts = tokens.ModelCounts()
+        counts.add(1, 0, 0, 0, 1)
+        self.assertEqual(tokens.unpriced_models({"gpt-5.4:long": counts}), [])
+
 
 class CostPartsTest(unittest.TestCase):
     """Bucket.cost_parts: cost broken down by token kind (H-header-only —

@@ -38,7 +38,14 @@ import git_events  # noqa: E402
 # sessions existed than --limit let through, so a caller summing this slice
 # over a wider time window than the slice actually covers can tell its total
 # is a lower bound rather than silently treating it as complete.
-SCHEMA_VERSION = 6
+# 6 -> 7: every thread gained activeSec and waitingSec (durationSec split by
+# pauses longer than WAITING_GAP_SEC), and its events may carry "compact"
+# markers (context compaction) next to pr/push.
+SCHEMA_VERSION = 7
+
+# A pause between two usage records longer than this is the agent waiting for
+# someone (the owner, a long tool) — everything shorter is work.
+WAITING_GAP_SEC = 60
 
 # Truncation threshold for meta.description in agentLabels — the legend and
 # labels in the UI aren't elastic, a long task description would break the
@@ -96,6 +103,18 @@ def _epoch(ts):
     """
     dt = tokens._parse_time_bound(ts)
     return dt.timestamp() if dt else None
+
+
+def split_active_waiting(epochs, gap_sec=WAITING_GAP_SEC):
+    """(active, waiting) seconds of the span between the first and last epoch.
+
+    Pauses longer than gap_sec between neighbouring records are waiting, the
+    rest is active, so the two always add up to max - min.
+    """
+    ordered = sorted(epochs)
+    gaps = [b - a for a, b in zip(ordered, ordered[1:])]
+    waiting = sum(g for g in gaps if g > gap_sec)
+    return sum(gaps) - waiting, waiting
 
 
 def _iso_from_epoch(epoch):
@@ -287,6 +306,7 @@ def build_timeline(root, limit=20, unit=300, project=None, session=None, group_w
                 agents_out.sort(key=lambda a: (-a["total"], a["key"]))
             bins_out.append({"t": _iso_from_epoch(bin_epoch), "agents": agents_out})
 
+        active_sec, waiting_sec = split_active_waiting(epochs)
         total_tokens = sum(a["total"] for bo in bins_out for a in bo["agents"])
         # Cost is computed from the same Buckets as tokens (each model at its
         # own tier) — the sum over buckets equals the thread's full cost,
@@ -309,9 +329,11 @@ def build_timeline(root, limit=20, unit=300, project=None, session=None, group_w
                 "start": _iso_from_epoch(start_epoch),
                 "end": _iso_from_epoch(end_epoch),
                 "durationSec": end_epoch - start_epoch,
+                "activeSec": active_sec,
+                "waitingSec": waiting_sec,
                 "totalTokens": total_tokens,
                 "totalCost": total_cost,
-                "unpricedModels": sorted({t for agents in bin_buckets.values() for b in agents.values() for t in b.models if t.removesuffix(":long") not in tokens.RATES}),
+                "unpricedModels": tokens.unpriced_models(*(b.models for agents in bin_buckets.values() for b in agents.values())),
                 "workflowCount": workflow_count,
                 "bins": bins_out,
                 "cwd": git_info["cwd"],

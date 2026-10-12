@@ -93,6 +93,21 @@ def models_json(models):
     ]
 
 
+def unpriced_models(*model_maps):
+    """Tiers that spent tokens but have no entry in RATES, sorted.
+
+    A tier without tokens costs nothing, so a missing price is no loss: Claude
+    Code's <synthetic> placeholder replies (zero usage) must not make a whole
+    thread read "API price unavailable".
+    """
+    return sorted({
+        t
+        for models in model_maps
+        for t, c in models.items()
+        if c.total > 0 and t.removesuffix(":long") not in RATES
+    })
+
+
 def variants_json(variants):
     """Usage by exact model, effort and fast mode — what the agent caption names.
 
@@ -488,7 +503,7 @@ def bucket_json(key, b, session_id, project, agent):
         "thinking": b.think,
         "messages": b.msgs,
         "cost": round(b.cost, 2),
-        "unpricedModels": sorted(t for t in b.models if t.removesuffix(":long") not in RATES),
+        "unpricedModels": unpriced_models(b.models),
         "models": models_json(b.models),
         "variants": variants_json(b.variants),
     }
@@ -633,7 +648,7 @@ def main():
                 "thinking": grand.think,
                 "messages": grand.msgs,
                 "cost": round(total_cost, 2),
-                "unpricedModels": sorted(t for t in grand.models if t.removesuffix(":long") not in RATES),
+                "unpricedModels": unpriced_models(grand.models),
                 "costs": {phase: round(value, 2) for phase, value in total_costs.items()},
                 "models": models_json(grand.models),
                 "buckets": len(buckets),

@@ -94,7 +94,44 @@ describe("shortCommitHash", () => {
   });
 });
 
+describe("gitEventSchema — compact", () => {
+  it("accepts a compaction with its trigger and the context size before it", () => {
+    const event = { type: "compact", ts: "2026-10-03T17:01:21.612Z", trigger: "auto", preTokens: 862349 };
+    expect(gitEventSchema.safeParse(event).success).toBe(true);
+  });
+
+  it("accepts a compaction whose details are unknown", () => {
+    const event = { type: "compact", ts: "2026-10-03T17:01:21.612Z", trigger: null, preTokens: null };
+    expect(gitEventSchema.safeParse(event).success).toBe(true);
+  });
+
+  it("rejects a compaction triggered by something other than manual or auto", () => {
+    const event = { type: "compact", ts: "t", trigger: "robot", preTokens: 1 };
+    expect(gitEventSchema.safeParse(event).success).toBe(false);
+  });
+});
+
 describe("gitEventLabel", () => {
+  it("formats an automatic compaction with the context size before it", () => {
+    const event: GitEvent = { type: "compact", ts: "t", trigger: "auto", preTokens: 862349 };
+    expect(gitEventLabel(event)).toBe("Context compacted (auto) · 862.3k tokens before");
+  });
+
+  it("formats a manual compaction", () => {
+    const event: GitEvent = { type: "compact", ts: "t", trigger: "manual", preTokens: 500 };
+    expect(gitEventLabel(event)).toBe("Context compacted (manual) · 500 tokens before");
+  });
+
+  it("formats a compaction with nothing known about it", () => {
+    const event: GitEvent = { type: "compact", ts: "t", trigger: null, preTokens: null };
+    expect(gitEventLabel(event)).toBe("Context compacted");
+  });
+
+  it("a compaction has no outbound link", () => {
+    const event: GitEvent = { type: "compact", ts: "t", trigger: "auto", preTokens: 1 };
+    expect(gitEventLinkUrl(event)).toBeNull();
+  });
+
   it("formats a commit as its short hash plus message", () => {
     const event: GitEvent = { type: "commit", ts: "t", hash: "a5ee9a4b3c2d1e0f", message: "fix bug", url: null };
     expect(gitEventLabel(event)).toBe("a5ee9a4 fix bug");
