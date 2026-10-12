@@ -1,7 +1,7 @@
 // Список flow слева на странице Flow и в панели тредов: первыми строками — «Без flow» и «Автоматически», встроенные,
 // неудаляемые и закреплённые, за ними плоско каждый flow ровно один раз в порядке коллекции, — без «Истории» (она в шапке
 // страницы) и без отступов вложенности. Строка — значок flow, имя и справа число flow, в которых он стоит строкой «Flow»; с их
-// именами в подсказке, при нуле числа нет. Строку flow можно перетащить за ручку на месте значка: порядок пишется в настройки,
+// именами в подсказке, при нуле числа нет. Строку flow можно перетащить за ручку в полосе слева от значка (полоса есть у каждой строки, значок не прячется): порядок пишется в настройки,
 // а первый flow остаётся flow по умолчанию. «Новый flow» — кнопка во всю ширину колонки под списком. Клик пишет flow в `subPath`
 // панели, страница читает тот же адрес обратно; подсветка идёт за `flowById`, как и содержимое. Саму папку задаёт секция
 // настроек плагина.
@@ -20,7 +20,7 @@ import { useMessages } from "./locale-context";
 import { updateFlowSettings, useFlowSettings } from "./stage-settings-store";
 import { useFlowDrag } from "./use-flow-drag";
 
-const ROW = "flex h-7 w-full min-w-0 items-center gap-1.5 rounded-md px-2.5 text-left text-[13px] text-muted-foreground hover:bg-state-hover hover:text-foreground";
+const ROW = "flex h-7 w-full min-w-0 items-center gap-1.5 rounded-md pl-7 pr-2.5 text-left text-[13px] text-muted-foreground hover:bg-state-hover hover:text-foreground";
 const ACTIVE_ROW = "bg-state-active font-medium text-foreground";
 
 export const newFlowId = (): string => `flow-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
@@ -79,7 +79,7 @@ export function FlowsNav({ subPath }: Pick<PluginNavPanelProps, "subPath">) {
                 event.preventDefault();
                 grab(flow.id);
               }}
-              className={cn("absolute left-1.5 top-1/2 flex size-5 -translate-y-1/2 cursor-grab touch-none items-center justify-center rounded-md bg-state-hover text-muted-foreground opacity-0 hover:text-foreground focus-visible:opacity-100 group-hover:opacity-100", grabbed === flow.id && "cursor-grabbing opacity-100")}
+              className={cn("absolute left-1 top-1/2 flex size-5 -translate-y-1/2 cursor-grab touch-none items-center justify-center rounded-md text-muted-foreground opacity-0 hover:text-foreground group-has-[:focus-visible]:opacity-100 group-hover:opacity-100", grabbed === flow.id && "cursor-grabbing opacity-100")}
             >
               <Icon name="DragDropVertical" aria-hidden="true" className="size-3.5" />
             </button>

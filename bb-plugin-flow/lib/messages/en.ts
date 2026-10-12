@@ -367,6 +367,12 @@ export const en: Messages = {
     folderError: (message) => `The folder did not read, flows are untouched: ${message}`,
     folderSaveFailed: "The folder was not saved",
   },
+  threadsFallback: {
+    list: "Threads",
+    empty: "No threads yet",
+    error: "Could not load threads",
+    untitled: "Untitled thread",
+  },
   history: {
     tab: "History",
     label: "Run history",

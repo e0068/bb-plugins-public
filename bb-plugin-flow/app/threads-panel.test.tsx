@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 // Панель тредов слева: со включённой настройкой на странице Flow в ней стоит список flow вместо тредов bb —
-// слот списка тредов отдаёт `Original`, настоящий список тредов, и Flow показывает его везде, где свой список не нужен.
+// слот получает `Original` (здесь его передаёт сам тест: хост 0.46.0 не отдаёт, см. threads-panel-no-original.test.tsx).
 import { cleanup, fireEvent, waitFor, within } from "@testing-library/react";
 import type { PluginThreadListProps } from "@get-bb/plugin-sdk/app";
 import { loadPluginApp, renderSlot } from "@get-bb/plugin-sdk/testing/app";
