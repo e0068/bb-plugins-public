@@ -54,11 +54,3 @@ export const radixDedupe = ["@radix-ui/react-tabs", "@radix-ui/react-direction"]
  * tests the same whether or not the shared package has a node_modules.
  */
 export const mdDocViewDedupe = ["@radix-ui/react-dialog", "@pierre/diffs"];
-
-/**
- * packages/icon-catalog keeps Hugeicons in its own `node_modules`, and Flow and
- * Tasks+ keep theirs. Without a dedupe a test run transforms the icon barrel
- * twice — slow enough to push Flow's tests to their 5 s timeout. Resolved from
- * the plugin's root, one copy serves both.
- */
-export const hugeiconsDedupe = ["@hugeicons/core-free-icons", "@hugeicons/react"];
