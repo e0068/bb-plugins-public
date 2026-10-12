@@ -85,7 +85,7 @@ describe("RPC брифа", () => {
     expect(await harness.callRpc("getBrief", { id: "dec_b" })).toEqual({
       kind: "found",
       brief: briefOf("brief"),
-      answer: { answer: fullAnswer, messageId: "msg_1", answeredAt: "2026-09-12T12:05:00.000Z" },
+      answer: { answer: fullAnswer, messageId: "msg_1", answeredAt: "2026-09-12T12:05:00.000Z", posted: true },
     });
   });
 

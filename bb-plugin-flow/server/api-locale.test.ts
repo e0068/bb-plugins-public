@@ -10,6 +10,10 @@ import type { DecisionBrief } from "../shared/contract";
 import { registerApi } from "./api";
 import { createStore } from "./store";
 
+/** Текст, который получает агент: все текстовые части реплики подряд. */
+const agentText = (input: ReadonlyArray<{ type?: string; text?: string }>): string => input.flatMap((part) => (part.type === "text" ? [part.text ?? ""] : [])).join("\n");
+
+
 const brief: DecisionBrief = {
   ...stagedBrief([report("task", { state: "review", results: [{ label: "spec.md", target: "docs/specs/spec.md" }] }), report("spec", { recommended: true, add: add(4, 8, 1, 30) })], {
     title: "Rename to Flow",
@@ -43,12 +47,12 @@ const setup = async (location: () => Promise<{ hostId: string; storageRootPath: 
 
 const answer = {
   briefId: brief.id,
-  answers: [{ questionId: "who", optionIds: [], own: "see [image 1]" }],
+  answers: [{ questionId: "who", optionIds: [], own: "see [Image 1]" }],
   stages: [{ id: "task", run: false, executor: "self", review: true, accepted: true }],
 };
 
 const sentText = (harness: Awaited<ReturnType<typeof setup>>["harness"]): string =>
-  (harness.sdk.callsTo("threads.send")[0]![0] as { input: Array<{ text?: string }> }).input[0]!.text ?? "";
+  agentText((harness.sdk.callsTo("threads.send")[0]![0] as { input: Array<{ type?: string; text?: string }> }).input);
 
 describe("язык ответа в тред", () => {
   it("ответ с языком en уходит агенту по-английски целиком: прогон, бюджет и строка картинок", async () => {
@@ -59,7 +63,7 @@ describe("язык ответа в тред", () => {
     expect(text).toContain(`Answers to the questions "${brief.title}":`);
     expect(text).toContain("Run: spec.");
     expect(text).toContain("Budget — forecast");
-    expect(text).toContain("Images: [image 1] — ");
+    expect(text).toContain("Images: [Image 1] — ");
     expect(text).not.toMatch(/[А-Яа-яЁё]/);
   });
 

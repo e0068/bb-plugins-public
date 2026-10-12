@@ -764,6 +764,10 @@ export const answerRecordSchema = z.object({
   forecast: forecastSnapshotSchema.optional(),
   /** Есть, когда владелец передал работу: тред, созданный ответом. */
   handoffThreadId: text.optional(),
+  /** Картинки, легшие вложениями проекта треда: номер метки «[картинка N]» и путь вложения. Нет у ответа без картинок и у ответов, записанных раньше. */
+  images: z.array(z.object({ n: z.number().int().positive(), path: text, name: z.string().optional() })).optional(),
+  /** Ответ встал в ленту сообщением владельца: отвеченный бриф не повторяет его слов и показывает только итог. Нет у ответов, записанных раньше. */
+  posted: z.literal(true).optional(),
   /** Сообщение, в котором стоит директива брифа. */
   messageId: text,
   answeredAt: z.iso.datetime(),
@@ -773,15 +777,19 @@ export const answerRecordSchema = z.object({
 export const ANSWER_IMAGES_MAX = 6;
 export const ANSWER_IMAGES_MAX_BASE64 = 16 * 1024 * 1024;
 
-/** Форматы, которые провайдеры принимают картинкой; svg и heic упали бы уже после принятого ответа. */
+/**
+ * Форматы, которые провайдеры принимают картинкой; остальное — svg, heic, архивы — уходит агенту файлом,
+ * картинкой оно упало бы уже после принятого ответа.
+ */
 export const ANSWER_IMAGE_TYPES = ["image/png", "image/jpeg", "image/gif", "image/webp"] as const;
 
 /**
- * Картинки ответа: в kv-запись не входят, сервер кладёт их файлами в хранилище треда и отдаёт агенту путями.
- * `n` — номер метки «[картинка N]» в тексте ответа: по нему сервер называет файл и связывает метку с путём.
+ * Вложения ответа — картинки и файлы: в kv-запись не входят, сервер кладёт их вложениями проекта треда и отдаёт агенту путями.
+ * `n` — номер метки «[картинка N]» или «[файл N]» в тексте ответа: по нему сервер называет файл и связывает метку с путём.
+ * `name` — имя файла у владельца: по нему у файла расширение и подпись плитки.
  */
 export const answerImagesSchema = z
-  .array(z.object({ n: z.number().int().positive(), mimeType: z.enum(ANSWER_IMAGE_TYPES), dataBase64: z.string().min(1) }))
+  .array(z.object({ n: z.number().int().positive(), mimeType: z.string().min(1), dataBase64: z.string().min(1), name: z.string().min(1).optional() }))
   .max(ANSWER_IMAGES_MAX)
   .refine((images) => new Set(images.map((i) => i.n)).size === images.length, "image numbers must not repeat")
   .refine((images) => images.reduce((sum, i) => sum + i.dataBase64.length, 0) <= ANSWER_IMAGES_MAX_BASE64, "images exceed 16 MB of base64");
@@ -803,6 +811,18 @@ export const decisionsRpcContract = defineRpcContract({
       z.object({ kind: z.literal("already_answered"), record: answerRecordSchema }),
       z.object({ kind: z.literal("not_found") }),
       z.object({ kind: z.literal("incomplete"), questionIds: z.array(z.string()) }),
+    ]),
+  },
+});
+
+/** Картинки отвеченного брифа, прочитанные из вложений проекта, — своим контрактом: отвеченный бриф показывает их там, где владелец их вставил. */
+export const answerImagesRpcContract = defineRpcContract({
+  /** `not_found` — брифа нет или он не отвечен; картинку, которую bb не отдал, список пропускает. */
+  answerImages: {
+    input: z.object({ id: z.string() }),
+    output: z.discriminatedUnion("kind", [
+      z.object({ kind: z.literal("found"), images: z.array(z.object({ n: z.number().int().positive(), mimeType: z.string(), dataBase64: z.string(), name: z.string().optional() })) }),
+      z.object({ kind: z.literal("not_found") }),
     ]),
   },
 });

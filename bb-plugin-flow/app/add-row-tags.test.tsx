@@ -15,10 +15,10 @@ const row = (value: string) =>
   );
 
 describe("метки картинок в строке ввода брифа", () => {
-  it("метка «[картинка N]» нарисована тегом, а поле по-прежнему держит весь текст", () => {
-    const { container, getByRole } = row("[картинка 1] Заодно поменяй шрифт. [картинка 2]");
-    expect([...container.querySelectorAll("[data-image-tag]")].map((tag) => tag.textContent)).toEqual(["[картинка 1]", "[картинка 2]"]);
-    expect((getByRole("textbox", { name: "Дополнить" }) as HTMLTextAreaElement).value).toBe("[картинка 1] Заодно поменяй шрифт. [картинка 2]");
+  it("метка «[Изображение N]» нарисована тегом, а поле по-прежнему держит весь текст", () => {
+    const { container, getByRole } = row("[Изображение 1] Заодно поменяй шрифт. [Изображение 2]");
+    expect([...container.querySelectorAll("[data-image-tag]")].map((tag) => tag.textContent)).toEqual(["[Изображение 1]", "[Изображение 2]"]);
+    expect((getByRole("textbox", { name: "Дополнить" }) as HTMLTextAreaElement).value).toBe("[Изображение 1] Заодно поменяй шрифт. [Изображение 2]");
   });
 
   it("текст без меток — одно поле, без копии под ним", () => {

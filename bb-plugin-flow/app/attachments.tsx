@@ -10,7 +10,7 @@ import * as Dialog from "@radix-ui/react-dialog";
 import { createContext, useContext, useEffect, useRef, useState, useSyncExternalStore, type ClipboardEvent, type ReactNode } from "react";
 
 import { Icon } from "../components/ui/icon";
-import { markerNumbers, withoutMarker } from "../core/image-markers";
+import { markerNumbers, withoutMarker, type Marker } from "../core/image-markers";
 import type { Messages } from "../lib/messages";
 import { usePortalScopeProps } from "../lib/portal-scope";
 import { cn } from "../lib/utils";
@@ -18,15 +18,26 @@ import type { AnswerImage } from "../shared/contract";
 import { dropPool, loadPool, savePool } from "./attachment-store";
 import { useMessages } from "./locale-context";
 
-/** Пределы и форматы контракта `answerImagesSchema`; значения — из `shared`, куда фронт ходит только за типами. */
+/** Пределы контракта `answerImagesSchema`; значения — из `shared`, куда фронт ходит только за типами. */
 const MAX_IMAGES = 6;
 const MAX_BASE64 = 16 * 1024 * 1024;
-const TYPES: readonly string[] = ["image/png", "image/jpeg", "image/gif", "image/webp"] satisfies readonly AnswerImage["mimeType"][];
 
-/** Картинка пула; `dataBase64: null` — номер уже выдан и метка стоит в тексте, файл ещё читается. */
-type Attachment = { n: number; mimeType: AnswerImage["mimeType"]; dataBase64: string | null; weight: number };
-/** Почему картинка не приложилась; словами — на языке интерфейса при показе. */
-type PoolError = { kind: "type" } | { kind: "limit" } | { kind: "read"; n: number };
+/**
+ * Вложение пула — картинка или файл; `dataBase64: null` — номер уже выдан и метка стоит в тексте, файл ещё читается.
+ * `name` — имя файла у владельца; у пулов, сохранённых до файлов, его нет.
+ */
+type Attachment = { n: number; mimeType: string; name?: string; dataBase64: string | null; weight: number };
+/** Почему вложение не приложилось; словами — на языке интерфейса при показе. */
+type PoolError = { kind: "limit" } | { kind: "read"; n: number };
+
+/** Картинка ли вложение для глаз: её показывает миниатюра, а не плитка с именем. svg — тоже картинка, хоть агенту и уходит файлом. */
+export const previewable = (mimeType: string): boolean => mimeType.startsWith("image/");
+
+/** Метка вложения в тексте: «[картинка N]» у картинки, «[файл N]» у остального. */
+const markerFor = (mimeType: string, m: Messages["attachments"]): Marker => (previewable(mimeType) ? m.marker : m.fileMarker);
+
+/** Метки всех видов, с прежней «картинкой», — для поиска по тексту. */
+export const allMarkers = (m: Messages["attachments"]): readonly Marker[] => [m.marker, m.fileMarker, m.legacyMarker];
 type Pool = { images: readonly Attachment[]; next: number; error: PoolError | null };
 
 const EMPTY: Pool = { images: [], next: 1, error: null };
@@ -81,7 +92,7 @@ const subscribe = (listener: () => void) => {
 export const attachmentsPayload = async (briefId: string): Promise<{ images?: AnswerImage[] }> => {
   await restore(briefId);
   await Promise.allSettled([...(reading.get(briefId) ?? [])]);
-  const images = poolOf(briefId).images.flatMap(({ n, mimeType, dataBase64 }) => (dataBase64 === null ? [] : [{ n, mimeType, dataBase64 }]));
+  const images = poolOf(briefId).images.flatMap(({ n, mimeType, name, dataBase64 }) => (dataBase64 === null ? [] : [{ n, mimeType, dataBase64, ...(name === undefined ? {} : { name }) }]));
   return images.length === 0 ? {} : { images };
 };
 
@@ -108,17 +119,22 @@ const base64Length = (bytes: number): number => 4 * Math.ceil(bytes / 3);
  * и набранное за время чтения не затирается. Номера не переиспользуются —
  * метка в тексте всегда указывает на одну картинку.
  */
-const addFiles = (briefId: string, files: readonly File[]): number[] => {
+/** Номер вложения и его тип: по типу в текст встаёт метка картинки или файла. */
+type Placed = { n: number; mimeType: string };
+
+/** Тип файла; файл без типа, как архив у части систем, — просто байты. */
+const typeOf = (file: File): string => file.type || "application/octet-stream";
+
+const addFiles = (briefId: string, files: readonly File[]): Placed[] => {
   const accepted: Array<{ n: number; file: File }> = [];
   update(briefId, (pool) => {
     let { images, next } = pool;
     let error: PoolError | null = null;
     for (const file of files) {
       const weight = base64Length(file.size);
-      if (!TYPES.includes(file.type)) error = { kind: "type" };
-      else if (images.length >= MAX_IMAGES || images.reduce((sum, i) => sum + i.weight, 0) + weight > MAX_BASE64) error = { kind: "limit" };
+      if (images.length >= MAX_IMAGES || images.reduce((sum, i) => sum + i.weight, 0) + weight > MAX_BASE64) error = { kind: "limit" };
       else {
-        images = [...images, { n: next, mimeType: file.type as AnswerImage["mimeType"], dataBase64: null, weight }];
+        images = [...images, { n: next, mimeType: typeOf(file), name: file.name, dataBase64: null, weight }];
         accepted.push({ n: next, file });
         next += 1;
       }
@@ -130,14 +146,14 @@ const addFiles = (briefId: string, files: readonly File[]): number[] => {
       (dataBase64) => update(briefId, (p) => ({ ...p, images: p.images.map((i) => (i.n === n ? { ...i, dataBase64 } : i)) })),
       () => update(briefId, (p) => ({ ...p, images: p.images.filter((i) => i.n !== n), error: { kind: "read", n } })),
     ));
-  return accepted.map(({ n }) => n);
+  return accepted.map(({ n, file }) => ({ n, mimeType: typeOf(file) }));
 };
 
 /**
  * Номера выдаются после подъёма пула из IndexedDB: вставка сразу после перезагрузки иначе взяла бы номер
  * сохранённой картинки. Пул обычно уже поднят провайдером, и ожидание — одна микрозадача.
  */
-const attachFiles = (briefId: string, files: readonly File[], place: (numbers: number[]) => void): void =>
+const attachFiles = (briefId: string, files: readonly File[], place: (placed: Placed[]) => void): void =>
   void restore(briefId).then(() => place(addFiles(briefId, files)));
 
 /** Поле, в которое встаёт метка картинки: текущий текст и как его заменить. */
@@ -146,12 +162,11 @@ export type AttachTarget = { value: string; onText: (text: string) => void };
 type Attach = { briefId: string; pick: (target: AttachTarget) => void };
 const AttachContext = createContext<Attach | null>(null);
 
-const errorText = (error: PoolError, m: Messages["attachments"]): string =>
-  error.kind === "type" ? m.wrongType : error.kind === "limit" ? m.tooMany : m.readFailed(error.n);
+const errorText = (error: PoolError, m: Messages["attachments"]): string => (error.kind === "limit" ? m.tooMany : m.readFailed(error.n));
 
-const withMarkers = (target: AttachTarget, numbers: readonly number[], at: number | null, m: Messages["attachments"]): void => {
-  if (numbers.length === 0) return;
-  const marker = numbers.map((n) => m.marker(n)).join(" ");
+const withMarkers = (target: AttachTarget, placed: readonly Placed[], at: number | null, m: Messages["attachments"]): void => {
+  if (placed.length === 0) return;
+  const marker = placed.map(({ n, mimeType }) => markerFor(mimeType, m)(n)).join(" ");
   const cut = at ?? target.value.length;
   target.onText(`${target.value.slice(0, cut)}${marker}${target.value.slice(cut)}`);
 };
@@ -172,15 +187,14 @@ export function AttachmentsProvider({ briefId, children }: { briefId: string; ch
       <input
         ref={input}
         type="file"
-        accept="image/*"
         multiple
         hidden
         onChange={(event) => {
           const files = [...(event.currentTarget.files ?? [])];
           const target = pending.current;
           event.currentTarget.value = "";
-          attachFiles(briefId, files, (numbers) => {
-            if (target !== null) withMarkers(target, numbers, null, t.attachments);
+          attachFiles(briefId, files, (placed) => {
+            if (target !== null) withMarkers(target, placed, null, t.attachments);
           });
         }}
       />
@@ -194,11 +208,12 @@ export function usePasteImages(target: AttachTarget): ((event: ClipboardEvent<HT
   const t = useMessages();
   if (attach === null) return undefined;
   return (event) => {
-    const files = [...(event.clipboardData?.items ?? [])].filter((item) => item.type.startsWith("image/")).flatMap((item) => item.getAsFile() ?? []);
+    // Любой файл из буфера — картинка, svg, архив; текст вставляется как обычно.
+    const files = [...(event.clipboardData?.items ?? [])].filter((item) => item.kind === "file").flatMap((item) => item.getAsFile() ?? []);
     if (files.length === 0) return;
     event.preventDefault();
     const at = event.currentTarget.selectionStart;
-    attachFiles(attach.briefId, files, (numbers) => withMarkers(target, numbers, at, t.attachments));
+    attachFiles(attach.briefId, files, (placed) => withMarkers(target, placed, at, t.attachments));
   };
 }
 
@@ -240,18 +255,18 @@ export function FieldImages({ target, className }: { target: AttachTarget; class
   const [shown, setShown] = useState<Attachment | null>(null);
   const root = useRef<HTMLDivElement>(null);
   if (attach === null) return null;
-  const images = markerNumbers(target.value, t.attachments.marker).flatMap((n) => pool.images.filter((image) => image.n === n));
+  const images = markerNumbers(target.value, allMarkers(t.attachments)).flatMap((n) => pool.images.filter((image) => image.n === n));
   if (images.length === 0) return null;
-  const remove = (n: number) => {
+  const remove = ({ n, mimeType }: Attachment) => {
     update(attach.briefId, (p) => ({ ...p, images: p.images.filter((i) => i.n !== n), error: null }));
-    target.onText(withoutMarker(target.value, n, t.attachments.marker));
+    target.onText(withoutMarker(target.value, n, markerFor(mimeType, t.attachments)));
   };
-  const insert = (n: number) => {
+  const insert = ({ n, mimeType }: Attachment) => {
     const field = [...(root.current?.parentElement?.querySelectorAll("textarea") ?? [])].find((el) => el === el.ownerDocument.activeElement);
     const at = field?.selectionStart ?? null;
-    withMarkers(target, [n], at, t.attachments);
+    withMarkers(target, [{ n, mimeType }], at, t.attachments);
     if (field === undefined || at === null) return;
-    const caret = at + t.attachments.marker(n).length;
+    const caret = at + markerFor(mimeType, t.attachments)(n).length;
     requestAnimationFrame(() => field.setSelectionRange(caret, caret));
   };
   return (
@@ -261,6 +276,8 @@ export function FieldImages({ target, className }: { target: AttachTarget; class
           <div className="relative size-14 overflow-hidden rounded-md bg-state-active">
             {image.dataBase64 === null ? (
               <div role="status" aria-label={t.attachments.reading(image.n)} className="size-full animate-pulse" />
+            ) : !previewable(image.mimeType) ? (
+              <FileTile name={image.name} />
             ) : (
               <button type="button" aria-label={t.attachments.open(image.n)} onClick={() => setShown(image)} className="size-full cursor-zoom-in">
                 <img alt={t.attachments.alt(image.n)} src={imageSrc(image)} className="size-full object-cover" />
@@ -268,18 +285,18 @@ export function FieldImages({ target, className }: { target: AttachTarget; class
             )}
             <button
               type="button"
-              aria-label={t.attachments.remove(image.n)}
-              onClick={() => remove(image.n)}
+              aria-label={previewable(image.mimeType) ? t.attachments.remove(image.n) : t.attachments.removeFile(image.n)}
+              onClick={() => remove(image)}
               className={cn(overThumb, "right-0.5 top-0.5")}
             >
               <Icon name="X" className="size-2.5" />
             </button>
             <button
               type="button"
-              aria-label={t.attachments.insert(image.n)}
-              title={t.attachments.insert(image.n)}
+              aria-label={previewable(image.mimeType) ? t.attachments.insert(image.n) : t.attachments.insertFile(image.n)}
+              title={previewable(image.mimeType) ? t.attachments.insert(image.n) : t.attachments.insertFile(image.n)}
               onMouseDown={(event) => event.preventDefault()}
-              onClick={() => insert(image.n)}
+              onClick={() => insert(image)}
               className={cn(overThumb, "bottom-0.5 left-0.5 px-1 text-[11px] leading-none tabular-nums")}
             >
               {image.n}
@@ -292,10 +309,23 @@ export function FieldImages({ target, className }: { target: AttachTarget; class
   );
 }
 
-const imageSrc = (image: Attachment): string => `data:${image.mimeType};base64,${image.dataBase64 ?? ""}`;
+/** Плитка файла, который не картинка: значок и имя; полное имя — в подсказке. */
+export function FileTile({ name }: { name?: string }) {
+  return (
+    <span data-file-tile title={name} className="flex size-full flex-col items-center justify-center gap-0.5 px-1 text-muted-foreground">
+      <Icon name="Archive" className="size-4 shrink-0" />
+      {name !== undefined && <span className="w-full truncate text-center text-[10px] leading-tight">{name}</span>}
+    </span>
+  );
+}
+
+/** Картинка, которую можно показать: из пула черновика или из вложений отвеченного брифа. */
+export type ShownImage = { mimeType: string; dataBase64: string | null };
+
+export const imageSrc = (image: ShownImage): string => `data:${image.mimeType};base64,${image.dataBase64 ?? ""}`;
 
 /** Картинка во весь экран поверх bb; закрывается тапом в любом месте и Esc. */
-function ImageViewer({ image, label, onClose }: { image: Attachment | null; label: string; onClose: () => void }) {
+export function ImageViewer({ image, label, onClose }: { image: ShownImage | null; label: string; onClose: () => void }) {
   const scope = usePortalScopeProps();
   return (
     <Dialog.Root open={image !== null} onOpenChange={(open) => !open && onClose()}>

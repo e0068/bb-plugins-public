@@ -59,6 +59,8 @@ export type DecisionStore = {
   dropAnswer(id: string): Promise<void>;
   /** Тред, созданный передачей работы: дописывается к уже записанному ответу. */
   attachHandoff(id: string, threadId: string): Promise<void>;
+  /** Ответ встал в ленту сообщением владельца. */
+  markPosted(id: string): Promise<void>;
   /** Черновик ответа владельца, пока бриф не отправлен; новый заменяет прежний. */
   putDraft(id: string, draft: string): Promise<void>;
   getDraft(id: string): Promise<string | null>;
@@ -150,6 +152,11 @@ export const createStore = (kv: PluginKvStorage): DecisionStore => {
       serialized(id, async () => {
         const existing = await getAnswer(id);
         if (existing !== null) await kv.set(answerKey(id), { ...existing, handoffThreadId: threadId });
+      }),
+    markPosted: (id) =>
+      serialized(id, async () => {
+        const existing = await getAnswer(id);
+        if (existing !== null) await kv.set(answerKey(id), { ...existing, posted: true });
       }),
     async putDraft(id, draft) {
       await kv.set(draftKey(id), draft);

@@ -2,7 +2,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { DecisionBrief } from "../shared/contract";
-import { answerMessageText } from "./answer-message";
+import { answerMessageParts, answerMessageText } from "./answer-message";
 import { SETUP_ROW } from "./rows";
 
 const brief = (required?: DecisionBrief["required"], kind: DecisionBrief["kind"] = "brief"): DecisionBrief => ({
@@ -45,10 +45,10 @@ describe("следующий шаг агента в ответе на бриф",
     expect(answerMessageText(brief(), answer(["spec"]))).not.toContain("Дальше");
   });
 
-  it("общий текст ко всему брифу остаётся последним, шаг утверждения идёт перед ним", () => {
-    const text = answerMessageText(brief({ make: [], approve: ["plan"] }), answer(["plan"], "Без спешки"));
-    expect(lines(text).at(-1)).toContain("Без спешки");
-    expect(lines(text).at(-2)).toBe("Дальше — на утверждение остановись только с — План.");
+  it("общий текст ко всему брифу закрывает слова владельца, шаг утверждения — служебную часть", () => {
+    const { owner, agent } = answerMessageParts(brief({ make: [], approve: ["plan"] }), answer(["plan"], "Без спешки"));
+    expect(lines(owner).at(-1)).toContain("Без спешки");
+    expect(lines(agent).at(-1)).toBe("Дальше — на утверждение остановись только с — План.");
   });
 
   it("ответ на уточнение не несёт шага", () => {

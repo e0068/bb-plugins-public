@@ -37,9 +37,9 @@ const rowOf = async (slot: ReturnType<typeof open>, name: string) => within((awa
 describe("строки «Дополнить» и «Свой ответ»", () => {
   it("у критерия и у всего брифа — строка «Дополнить» с «+» картинок", async () => {
     const slot = open();
-    expect((await rowOf(slot, "Дополнить")).getByRole("button", { name: "Приложить изображение" })).toBeTruthy();
+    expect((await rowOf(slot, "Дополнить")).getByRole("button", { name: "Приложить изображение или файл" })).toBeTruthy();
     const note = await rowOf(slot, "Дополнить ответы");
-    expect(note.getByRole("button", { name: "Приложить изображение" })).toBeTruthy();
+    expect(note.getByRole("button", { name: "Приложить изображение или файл" })).toBeTruthy();
     expect((note.getByRole("textbox") as HTMLTextAreaElement).placeholder).toBe("Дополнить");
   });
 
@@ -48,7 +48,7 @@ describe("строки «Дополнить» и «Свой ответ»", () =>
     for (const question of ["Как сделать?", "Верно понял?"]) {
       const group = within(await slot.findByRole("group", { name: question }));
       const field = group.getByRole("textbox", { name: "Свой ответ" });
-      expect(within(field.closest<HTMLElement>("[data-item-row]")!).getByRole("button", { name: "Приложить изображение" })).toBeTruthy();
+      expect(within(field.closest<HTMLElement>("[data-item-row]")!).getByRole("button", { name: "Приложить изображение или файл" })).toBeTruthy();
     }
   });
 

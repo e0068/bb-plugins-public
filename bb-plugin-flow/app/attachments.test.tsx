@@ -62,7 +62,7 @@ describe("картинки комментария к демонстрации", 
   it("отправка сразу после вставки ждёт, пока обе картинки дочитаются, и уносит обе", async () => {
     const attachments = await reload();
     const field = await pasteTwo(attachments);
-    await waitFor(() => expect(field.value).toBe("[картинка 1] [картинка 2]"));
+    await waitFor(() => expect(field.value).toBe("[Изображение 1] [Изображение 2]"));
     expect(decoded(await attachments.attachmentsPayload(BRIEF))).toEqual([
       { n: 1, text: "first" },
       { n: 2, text: "second" },
@@ -90,7 +90,7 @@ describe("картинки комментария к демонстрации", 
     const after = await reload();
     await after.attachmentsPayload(BRIEF);
     const field = await pasteTwo(after);
-    await waitFor(() => expect(field.value).toBe("[картинка 3] [картинка 4]"));
+    await waitFor(() => expect(field.value).toBe("[Изображение 3] [Изображение 4]"));
     expect((await after.attachmentsPayload(BRIEF)).images?.map((i) => i.n)).toEqual([1, 2, 3, 4]);
   });
 
@@ -102,7 +102,7 @@ describe("картинки комментария к демонстрации", 
     slow.ms = 50;
     const after = await reload();
     const field = await pasteTwo(after);
-    await waitFor(() => expect(field.value).toBe("[картинка 3] [картинка 4]"));
+    await waitFor(() => expect(field.value).toBe("[Изображение 3] [Изображение 4]"));
     expect(decoded(await after.attachmentsPayload(BRIEF)).map(({ n, text }) => `${n}:${text}`)).toEqual(["1:first", "2:second", "3:first", "4:second"]);
   });
 

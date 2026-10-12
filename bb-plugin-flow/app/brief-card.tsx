@@ -54,6 +54,7 @@ import { withRestored } from "./draft-restore";
 import { useDraftSender } from "./draft-sync";
 import { AddRow, addRowText, MarkedCopy, overCopy, useMarkedParts } from "./add-row";
 import { AttachmentError, AttachmentsProvider, FieldImages, usePasteImages } from "./attachments";
+import { AnsweredImagesProvider, AnsweredText } from "./answered-images";
 import { RichText, onLink } from "./linked-text";
 import { AddMeta, CardText, CheckSquare, DocumentName, buttonCard, rowCellStyle } from "./cells";
 import { answeredAt, useStoredDraft, useSubmit, type FormProps } from "./parts";
@@ -142,8 +143,8 @@ function OwnField(props: { view: View; value: string; label: string; onChange: (
   const mentions = useMentions({ value: props.value, onText: props.onChange, disabled: props.view.sending });
   if (props.view.answered)
     return (
-      <span className={cn(props.className, "inline-flex items-center", blank(props.value) && "text-muted-foreground/60")}>
-        {blank(props.value) ? props.label : props.value}
+      <span className={cn(props.className, "inline-flex items-center", parts !== null && "flex-col justify-center", blank(props.value) && "text-muted-foreground/60")}>
+        {blank(props.value) ? props.label : <AnsweredText text={props.value} imagesClassName="justify-center" />}
       </span>
     );
   if (voice.phase !== null) return <div className="-ml-1.5 flex min-w-0 flex-1 items-center self-stretch">{voice.strip}</div>;
@@ -543,7 +544,7 @@ function CriterionRow({ item, index, view, byOption }: { item: Criterion; index:
         <span className="flex min-w-0 flex-1 flex-col">
           <span className={criterionHead}>
             <span className={cn(itemText, removed && "text-muted-foreground line-through")}>
-              <RichText text={removed || change !== undefined ? title : text} />
+              {removed || change !== undefined ? <RichText text={title} /> : <AnsweredText text={text} render={(part) => <RichText text={part} />} />}
             </span>
             {!removed && <AddMeta add={add} className={criterionMeta} />}
           </span>
@@ -552,7 +553,7 @@ function CriterionRow({ item, index, view, byOption }: { item: Criterion; index:
               before={change.before}
               after={
                 <span className="whitespace-pre-wrap break-words text-sm leading-relaxed">
-                  <RichText text={text} />
+                  <AnsweredText text={text} render={(part) => <RichText text={part} />} />
                 </span>
               }
             />
@@ -784,9 +785,10 @@ function OptionCards({ question, view }: { question: DecisionQuestion; view: Vie
       })}
       {view.answered ? (
         !blank(own) && (
-          <div className="flex min-h-9 w-full items-center gap-3 bg-state-active pl-3 pr-3">
-            <span className="w-3.5 shrink-0" />
-            <span className={addRowText}>{own}</span>
+          <div className="flex min-h-9 w-full items-center bg-state-active px-3">
+            <span className={addRowText}>
+              <AnsweredText text={own} />
+            </span>
           </div>
         )
       ) : (
@@ -824,7 +826,7 @@ function ConfirmRow({ question, view, ownLabel, onEnter }: { question: DecisionQ
       })}
       {view.answered ? (
         <div className={cn("flex min-h-9 min-w-0 flex-1 items-center bg-surface-recessed-solid px-3", !blank(own) && "bg-state-active")}>
-          <span className={cn(addRowText, blank(own) && "text-muted-foreground/60")}>{blank(own) ? (ownLabel ?? t.common.ownAnswer) : own}</span>
+          <span className={cn(addRowText, blank(own) && "text-muted-foreground/60")}>{blank(own) ? (ownLabel ?? t.common.ownAnswer) : <AnsweredText text={own} />}</span>
         </div>
       ) : (
         <AddRow
@@ -1470,7 +1472,17 @@ export function AnsweredBriefCard({ brief, record, roots }: { brief: DecisionBri
     setExpanded(rowId);
   };
   const view: View = { draft: fromAnswer(record.answer), missing: new Set(), answered: true, sending: false, pick: noop, own: noop, change: noop, stageChange: noop, expanded, expand, brief, snapshot: record.forecast };
+  const status = <StatusLine icon="CircleCheck" title={brief.kind === "clarify" ? t.common.clarifyAnswered : t.common.briefAnswered} aside={answeredAt(record.answeredAt, t.common.dateLocale)} />;
+  // Ответ уже стоит в ленте сообщением владельца — карточка его не повторяет: остаётся показанное агентом и итог.
+  if (record.posted === true)
+    return (
+      <Plain label={brief.title}>
+        {brief.outcome !== undefined && <DemoCard brief={brief} roots={roots} />}
+        {status}
+      </Plain>
+    );
   return (
+    <AnsweredImagesProvider briefId={brief.id} record={record}>
     <Plain label={brief.title}>
       {brief.outcome !== undefined ? (
         <>
@@ -1484,7 +1496,12 @@ export function AnsweredBriefCard({ brief, record, roots }: { brief: DecisionBri
                   ? t.outcome.approved
                   : t.outcome.verdict(demoVerdict(record.answer) === "continue" ? "continue" : "comment")}
             </b>
-            {!blank(record.answer.outcome?.note ?? "") && ` — ${record.answer.outcome?.note ?? ""}`}
+            {!blank(record.answer.outcome?.note ?? "") && (
+              <>
+                {" — "}
+                <AnsweredText text={record.answer.outcome?.note ?? ""} />
+              </>
+            )}
           </div>
         </>
       ) : (
@@ -1496,7 +1513,7 @@ export function AnsweredBriefCard({ brief, record, roots }: { brief: DecisionBri
       )}
       {!blank(record.answer.note ?? "") && (
         <div className="break-words text-sm leading-relaxed text-muted-foreground">
-          <b className="font-semibold text-foreground">{t.common.noteToBrief}</b> {record.answer.note}
+          <b className="font-semibold text-foreground">{t.common.noteToBrief}</b> <AnsweredText text={record.answer.note ?? ""} />
         </div>
       )}
       {record.handoffThreadId !== undefined && (
@@ -1505,7 +1522,8 @@ export function AnsweredBriefCard({ brief, record, roots }: { brief: DecisionBri
           <span>{t.common.handedOff(record.handoffThreadId)}</span>
         </div>
       )}
-      <StatusLine icon="CircleCheck" title={brief.kind === "clarify" ? t.common.clarifyAnswered : t.common.briefAnswered} aside={answeredAt(record.answeredAt, t.common.dateLocale)} />
+      {status}
     </Plain>
+    </AnsweredImagesProvider>
   );
 }
