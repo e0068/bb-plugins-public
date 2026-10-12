@@ -5,6 +5,7 @@ import { useCallback, useEffect, useRef, useState, type ComponentProps, type Rea
 import { useRealtime, useRpc, type PluginMessageDirectiveProps } from "@get-bb/plugin-sdk/app";
 
 import { deviations } from "../core/answer-message";
+import { isQuickClarify } from "../core/clarify";
 import { readDecisionId } from "../core/directive";
 import { DEFAULT_ROUTE, legacyRoute, offeredPlace } from "../core/places";
 import { isLegacyBrief } from "../core/rows";
@@ -229,7 +230,7 @@ function BriefLoader({ id, source, messageId, threadId }: { id: string; source: 
         return (
           <VoiceProvider transcribe={(input) => voiceRpc.call("transcribeVoice", input)}>
             <MentionsProvider threadId={state.brief.threadId}>
-            {state.brief.kind === "clarify" ? (
+            {isQuickClarify(state.brief) ? (
               <ClarifyCard brief={state.brief} send={send} onResult={onAccepted} />
             ) : legacy ? (
               <BriefForm brief={state.brief} send={send} onResult={onAccepted} place={place.place} route={place.route} compact={place.compact} />

@@ -112,4 +112,4 @@ No AskUserQuestion — a table of stages in the reply — stage, state, recommen
 
 ## After the answer
 
-Go through the chosen stages in flow order. On a Demo stage, stop and show what was done. The rest — to the end without new questions, unless it became unclear how to proceed. A choice of the owner that differs from the recommendation is not argued; name its cost in the report in one line if it changed.
+Go through the chosen stages in flow order. On a Demo stage, send the demo and go on; only an Approval stage stops you. A question that arises on the way goes out at once — `clarify` when you can go on without the answer, `brief` when you cannot. A choice of the owner that differs from the recommendation is not argued; name its cost in the report in one line if it changed.

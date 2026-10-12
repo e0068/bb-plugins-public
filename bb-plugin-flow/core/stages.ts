@@ -217,7 +217,7 @@ const BUILTIN_ANSWERS: Record<BuiltinKind, string> = {
 
 /** Правило треда с flow: владелец видит работу этапами, а не прозой. */
 export const FLOW_RULE =
-  "This thread runs a flow: talk to the owner only through its stages — a brief for questions, Definition of Done and stage selection (consecutive ones go into one brief), a brief with outcome for a demo or an approval. Only an approval stage holds the work: a comment anywhere else does not stop you — ask about what is unclear and carry on with what is clear. For anything the stages do not cover, ask a clarify brief. Around a brief's directive line write at most one sentence — do not retell the brief.";
+  "This thread runs a flow: talk to the owner only through its stages — a brief for questions, Definition of Done and stage selection (consecutive ones go into one brief), a brief with outcome for a demo or an approval. Only an approval stage holds the work: a comment anywhere else does not stop you — ask about what is unclear and carry on with what is clear. Ask a question the moment it arises: clarify if you can keep working without the answer, brief if you cannot; send a demo when its stage comes. For anything the stages do not cover, ask a clarify. Never point the owner to a widget or a command \"above\" that you did not send with its directive line in this reply. Around a brief's directive line write at most one sentence — do not retell the brief.";
 
 /**
  * Исполнитель «Сам» для агента: этап ведётся в его сессии, без помощников.
@@ -247,7 +247,44 @@ const stageHead = (stages: readonly WorkStage[], s: WorkStage, numbers: Readonly
 export const stageInstructions = (stages: readonly WorkStage[]): string | null => {
   if (stages.length === 0) return null;
   const numbers = stageNumbers(stages);
-  return ["Work stages in the Flow settings — send all of them in setup.stages, in this order:", ...stages.map((s) => (isHeadingStage(stages, s) ? `${stageHead(stages, s, numbers)}${HEADING_TAIL}` : stageLine(s, stageHead(stages, s, numbers))))].join("\n");
+  return [STAGES_HEADER, ...stages.map((s) => (isHeadingStage(stages, s) ? `${stageHead(stages, s, numbers)}${HEADING_TAIL}` : stageLine(s, stageHead(stages, s, numbers))))].join("\n");
+};
+
+const STAGES_HEADER = "Work stages in the Flow settings — send all of them in setup.stages, in this order:";
+
+/** Слово вида встроенного этапа в тесной строке. */
+const KIND_WORD: Record<BuiltinKind, string> = { questions: "questions", criteria: "criteria", select: "select", demo: "demo", approve: "approval" };
+
+/** Что значат слова вида в тесных строках: правила этапов лежат в их навыках, здесь — только как с ними обращаться. */
+const COMPACT_LEGEND =
+  "Each stage's rules are in its skill — load it when the run reaches it. questions, criteria, select: one brief before the work. demo: a brief with outcome (outcome.stage — this id), then go on. approval: a brief with outcome, then stop. automation: Flow runs it — never run or mark it, go on by the flow_stage answer. action: the owner's — end your turn. heading: its sub-stages carry the work. executors: self — you.";
+
+/** Начало тесной строки: у под-этапа — отступ и место возле владельца. */
+const compactHead = (stages: readonly WorkStage[], s: WorkStage, numbers: ReadonlyMap<string, number | null>): string => {
+  if (s.parent === undefined) return `${numbers.get(s.id)}. ${s.id} "${currentName(s)}"`;
+  const before = stages.indexOf(s) < stages.findIndex((owner) => owner.id === s.parent);
+  return `   - ${s.id} "${currentName(s)}" (${before ? "before" : "after"} ${s.parent})`;
+};
+
+/** Тесная строка этапа: вид и навык одним словом, исполнители — если есть выбор. */
+const compactLine = (stages: readonly WorkStage[], s: WorkStage, head: string): string => {
+  const kind = stageKindOf(s);
+  if (isHeadingStage(stages, s)) return `${head} — heading`;
+  if (kind === "action") return `${head} — action`;
+  if (kind !== "skill") return `${head} — ${KIND_WORD[kind]}${stageSkillOf(s) === "" ? "" : ` (skill ${stageSkillOf(s)})`}`;
+  if (s.automation !== undefined) return `${head} — automation`;
+  const skill = s.skill === "" ? "" : ` (skill ${s.skill})`;
+  return `${head} — stage${skill}${s.executors.length === 0 ? "" : `; executors: ${stageExecutorIds(s).join(", ")}`}`;
+};
+
+/**
+ * Этапы настроек в тесном виде, когда подробные не влезают в лимит инструкций bb: все этапы по порядку, по строке на этап,
+ * и одна легенда вместо длинных пояснений в каждой строке. Без этапов — `null`.
+ */
+export const compactStageInstructions = (stages: readonly WorkStage[]): string | null => {
+  if (stages.length === 0) return null;
+  const numbers = stageNumbers(stages);
+  return [STAGES_HEADER, ...stages.map((s) => compactLine(stages, s, compactHead(stages, s, numbers))), COMPACT_LEGEND].join("\n");
 };
 
 /** Хвост этапа-заголовка: исполнять в нём нечего, работа — в его под-этапах. */

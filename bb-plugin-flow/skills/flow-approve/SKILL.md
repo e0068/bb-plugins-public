@@ -11,6 +11,8 @@ An approval is the only stage that holds the work. Everywhere else a comment doe
 
 ## What to show
 
+Never refer to widgets you did not send in this run. The approval is only a comment field, so with nothing above it the owner approves blank space — send the demo or the question first; the tool refuses an approval while a demo stage before it has no widget. A fork that is still open is not put into the title: ask it as a question.
+
 - **After a stage with a widget** — Questions, Definition of Done, Stage selection, a demo — the approval comes right after that stage's widgets, as the last of them. Its `done` names what the owner is approving: the agreed Definition of Done items, the chosen stages, the demo shown.
 - **After a skill stage** — a spec, a plan, code — the approval is a summary in three `sections`:
   - "Approved earlier" — what the previous approvals of this run approved, briefly; none — no section.

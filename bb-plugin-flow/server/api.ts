@@ -5,6 +5,7 @@ import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import { needsAgentReply } from "../core/agent-reply";
 import { answerMessageParts, openQuestions } from "../core/answer-message";
 import { forecast, hasForecast, scopeOf } from "../core/budget";
+import { settleClarifyAnswer } from "../core/clarify";
 import { carryOf } from "../core/carry";
 import { defaultExecutionOf, providerModelsOf } from "../core/flow-agent";
 import { finalCriteria } from "../core/option-criteria";
@@ -69,9 +70,10 @@ export const registerApi = (
       return { kind: "found" as const, brief, answer, ...(answer === null && (await store.isReturned(id)) ? { returned: true as const } : {}) };
     },
 
-    async answerBrief({ id, answer, messageId, images = [], locale }) {
+    async answerBrief({ id, answer: sent, messageId, images = [], locale }) {
       const brief = await store.getBrief(id);
-      if (brief === null || answer.briefId !== id) return { kind: "not_found" as const };
+      if (brief === null || sent.briefId !== id) return { kind: "not_found" as const };
+      const answer = settleClarifyAnswer(brief, sent);
       const existing = await store.getAnswer(id);
       if (existing !== null) return { kind: "already_answered" as const, record: existing };
       // Невозможный маршрут отбивается до записи ответа: у чужого проекта — ещё и маршрут без выбранного проекта

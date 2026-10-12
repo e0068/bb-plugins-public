@@ -95,8 +95,7 @@ export const decisionQuestionSchema = z
     if (q.kind === "toggles" && q.allowOwn)
       ctx.addIssue({ code: "custom", message: "a toggles question takes no own answer", path: ["allowOwn"] });
     q.options.forEach((o, i) => {
-      const priced = o.add !== undefined || (filled(o.cost) && (o.risk !== undefined || filled(o.risks)));
-      if (q.kind === "fork" && (!filled(o.description) || !priced)) optionIssue("every fork option needs description and add, or description, cost and risk", i);
+      if (q.kind === "fork" && !filled(o.description)) optionIssue("every fork option needs a description", i);
       if (q.kind === "pick" && !filled(o.description)) optionIssue("every pick option needs a description", i);
     });
   });
@@ -534,6 +533,9 @@ type BriefShape = {
   }>;
 };
 
+/** Вариант с ценой нового брифа: добавка, либо стоимость и уровень риска. */
+const priced = (o: { risk?: string | undefined; cost?: string | undefined; add?: unknown }): boolean => o.add !== undefined || (filled(o.cost) && o.risk !== undefined);
+
 const hasSetup = (brief: BriefShape): boolean => Object.values(brief.setup ?? {}).some((v) => v !== undefined);
 
 /** Есть ли в первой части что решать: шкала, критерий, исполнитель, ревью, тестирование или артефакт — утверждение тоже можно отозвать. */
@@ -557,9 +559,9 @@ const checkBrief = (brief: BriefShape, ctx: z.RefinementCtx) => {
     ctx.addIssue({ code: "custom", message: "a brief with an outcome sends no setup.stages and no setup.criteria", path: ["outcome"] });
   if (!uniqueIds(brief.questions)) issue("question ids must be unique within a brief");
   if (brief.questions.some((q) => q.id.startsWith(SETUP_ID_PREFIX))) issue(`question ids must not start with ${SETUP_ID_PREFIX}`);
-  // Уточнение — одна строка, отвечаемая одним нажатием: второй вопрос в нём остался бы без ответа навсегда.
-  if (brief.kind === "clarify" && (brief.questions.length !== 1 || brief.questions[0]?.kind !== "yesno" || hasSetup(brief)))
-    issue("a clarify brief holds exactly one yesno question and no setup");
+  // Уточнение — вопросы без остановки работы: цены, этапы и итог решает бриф, а уточнению нечего ждать.
+  if (brief.kind === "clarify" && (brief.questions.length === 0 || hasSetup(brief) || brief.outcome !== undefined))
+    issue("a clarify brief holds questions only: at least one, no setup and no outcome");
   // Скрывать можно только вопросы ниже: расчёт скрытого идёт одним проходом сверху вниз.
   const position = new Map(brief.questions.map((q, i) => [q.id, i]));
   if (brief.questions.some((q, i) => q.options.some((o) => (o.hides ?? []).some((id) => (position.get(id) ?? -1) <= i))))
@@ -622,10 +624,16 @@ const checkNewBrief = (brief: BriefShape, ctx: z.RefinementCtx) => {
   const negative = (a: OptionPrice | undefined) => a !== undefined && (a.target < 0 || a.max < 0 || (a.minutes ?? 0) < 0);
   if (brief.questions.some((q) => q.options.some((o) => negative(o.add))))
     issue(`a minus means a richer answer sits in the base: ${OPTION_PRICE_RULE}; ${FORK_ZERO_RULE}`);
+  // Уточнение — вопросы без остановки и без цен: старые виды и цена варианта ему не положены.
+  if (brief.kind === "clarify" && brief.questions.some((q) => !["fork", "pick", "confirm", "yesno"].includes(q.kind)))
+    issue("clarify questions are fork, pick, confirm or yesno");
+  if (brief.kind === "clarify" && brief.questions.some((q) => q.options.some((o) => o.add !== undefined || o.cost !== undefined || o.risk !== undefined)))
+    issue("a clarify has no prices: no add, cost or risk on its options — a question that changes the budget goes as a brief");
   if (brief.kind === "brief" && brief.questions.some((q) => q.kind !== "fork" && q.kind !== "pick" && q.kind !== "confirm"))
     issue("brief questions are fork, pick or confirm; artifacts, executor, checker and testing go into setup");
-  if (brief.questions.some((q) => q.kind === "fork" && q.options.some((o) => o.risk === undefined && o.add === undefined)))
-    issue("every fork option needs an add { target, max, risk } or a risk level: XS, S, M, L, XL or XXL");
+  // Цена варианта нужна брифу, где решается работа; уточнение её не просит.
+  if (brief.kind === "brief" && brief.questions.some((q) => q.kind === "fork" && q.options.some((o) => !priced(o))))
+    issue("every fork option needs an add { target, max, risk }, or a cost and a risk level: XS, S, M, L, XL or XXL");
   if ((brief.setup?.stages ?? []).some((s) => (s as { state?: string }).state === "review"))
     ctx.addIssue({ code: "custom", message: "stage state review is gone: a stage is todo or done, and the owner sees results on a demo stage", path: ["setup", "stages"] });
   if (brief.questions.some((q) => q.options.some((o) => (o.cost ?? "").length > COST_MAX_LENGTH)))
