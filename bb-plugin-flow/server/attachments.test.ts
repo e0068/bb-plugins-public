@@ -2,6 +2,7 @@
 import { createFakePluginHost } from "@get-bb/plugin-sdk/testing";
 import { describe, expect, it } from "vitest";
 
+import { builtinStage } from "../lib/stage-constants";
 import type { DecisionAnswer, DecisionBrief } from "../shared/contract";
 import { registerApi } from "./api";
 import { createStore } from "./store";
@@ -85,13 +86,15 @@ describe("картинки ответа — вложения проекта тр
   });
 });
 
+/** Утверждение: комментарий принимает только оно, Демонстрация — отчёт. */
 const demo: DecisionBrief = {
   id: "dec_demo",
   threadId: "thr_1",
-  title: "Демонстрация",
+  title: "Утверждение",
   createdAt: "2026-10-01T00:00:00.000Z",
   kind: "brief",
-  outcome: { stage: "demo", final: true, done: ["Сделано"], pending: [], results: [{ label: "a.md", target: "a.md" }] },
+  stages: { list: [builtinStage("approve", [])], minButtonWidth: 160 },
+  outcome: { stage: "approve", final: true, done: ["Сделано"], pending: [], results: [{ label: "a.md", target: "a.md" }] },
   questions: [],
 };
 const pngs = [
@@ -102,7 +105,7 @@ const longNote = `[Изображение 1] Не совсем понимаю, �
 const comment: DecisionAnswer = { briefId: demo.id, answers: [], outcome: { accepted: false, note: longNote } };
 const uploaded = async (args: Upload) => ({ type: "localImage", path: stored(args.filename), name: args.filename });
 
-describe("картинки комментария к демонстрации", () => {
+describe("картинки комментария к утверждению", () => {
   it("две картинки при длинном тексте загружаются обе, и реплика перечисляет имена обеих", async () => {
     const { harness, reply } = await setup(uploaded, demo);
     expect(await harness.callRpc("answerBrief", { id: demo.id, messageId: "m", answer: comment, images: pngs })).toMatchObject({ kind: "accepted" });
@@ -140,7 +143,7 @@ describe("картинки комментария к демонстрации", 
   });
 
   it("метка в тексте брифа от агента не считается картинкой владельца", async () => {
-    const quoting = { ...demo, title: "Демонстрация — что делать с [Изображение 1]" };
+    const quoting = { ...demo, title: "Утверждение — что делать с [Изображение 1]" };
     const { harness, reply } = await setup(uploaded, quoting);
     await harness.callRpc("answerBrief", { id: demo.id, messageId: "m", answer: { ...comment, outcome: { accepted: false, note: "поправь заголовок" } } });
     expect(agentText(reply().input)).not.toContain("Картинки не сохранены");

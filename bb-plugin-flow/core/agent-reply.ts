@@ -4,7 +4,6 @@
 // автоматизации за ним Flow ведёт сам.
 import type { DecisionAnswer, DecisionBrief, FlowProgress } from "../shared/contract";
 import { agentStagesAhead } from "./automation-run";
-import { stageKindOf } from "../lib/stage-constants";
 import { ownWords } from "./outcome";
 
 const said = (text: string | undefined): boolean => (text ?? "").trim().length > 0;
@@ -14,17 +13,13 @@ const said = (text: string | undefined): boolean => (text ?? "").trim().length >
  * всегда — когда владелец написал своё, в том числе в строке вопроса, или приложил картинку: это работа,
  * которую, кроме агента, никто не сделает. Уточнение агент ждёт посреди хода,
  * поэтому уходит всегда. Тред без снимка этапов или без записи прогресса о
- * работе впереди ничего не говорит — тогда реплика уходит, как раньше. Пустой
- * ответ на Демонстрацию реплики не требует: она агента не держала.
+ * работе впереди ничего не говорит — тогда реплика уходит, как раньше.
  * `progress` — запись треда уже с этим ответом.
  */
 export const needsAgentReply = (brief: DecisionBrief, answer: DecisionAnswer, progress: FlowProgress | null, attachments = 0): boolean => {
   if (brief.kind !== "brief") return true;
   if (attachments > 0 || said(answer.note) || said(answer.outcome?.note) || ownWords(answer)) return true;
   const stages = brief.stages?.list ?? [];
-  // Демонстрация агента не держала: пустой ответ на неё — не новость, агент уже идёт дальше.
-  const demo = stages.find((s) => s.id === brief.outcome?.stage);
-  if (demo !== undefined && stageKindOf(demo) === "demo" && answer.outcome?.flow === undefined) return false;
   if (progress === null || stages.length === 0) return true;
   return agentStagesAhead(stages, progress, brief.outcome?.stage);
 };

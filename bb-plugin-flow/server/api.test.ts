@@ -85,7 +85,7 @@ describe("RPC брифа", () => {
     expect(await harness.callRpc("getBrief", { id: "dec_b" })).toEqual({
       kind: "found",
       brief: briefOf("brief"),
-      answer: { answer: fullAnswer, messageId: "msg_1", answeredAt: "2026-09-12T12:05:00.000Z", posted: true },
+      answer: { answer: fullAnswer, messageId: "msg_1", answeredAt: "2026-09-12T12:05:00.000Z" },
     });
   });
 
@@ -154,15 +154,16 @@ describe("RPC брифа", () => {
     expect(sends()[0]?.mode).toBe("queue-if-active");
   });
 
-  it("комментарий к Демонстрации уходит steer-if-active, к Утверждению — queue-if-active", async () => {
+  it("ответ на Демонстрацию отбивается и ничего не отправляет, комментарий к Утверждению уходит queue-if-active", async () => {
     const { harness, store, sends } = await setup();
     const list = [builtinStage("demo", []), builtinStage("approve", [])];
     const outcome = (stage: string) => ({ stage, final: false, next: stage, done: ["Сделано"], pending: [], results: [{ label: "a", target: "https://a" }] });
     await store.putBrief({ id: "dec_d", threadId: "thr_1", title: "Демонстрация", createdAt: "2026-09-12T12:00:00.000Z", kind: "brief", questions: [], stages: { list, minButtonWidth: 170 }, outcome: outcome("demo") });
     await store.putBrief({ id: "dec_a", threadId: "thr_1", title: "Утверждение", createdAt: "2026-09-12T12:00:00.000Z", kind: "brief", questions: [], stages: { list, minButtonWidth: 170 }, outcome: outcome("approve") });
-    await harness.callRpc("answerBrief", { id: "dec_d", answer: { briefId: "dec_d", answers: [], outcome: { accepted: false, note: "Поправь подпись" } }, messageId: "msg_d" });
+    await expect(harness.callRpc("answerBrief", { id: "dec_d", answer: { briefId: "dec_d", answers: [], outcome: { accepted: false, note: "Поправь подпись" } }, messageId: "msg_d" })).rejects.toThrow(/a demo is a report/);
+    expect(await store.getAnswer("dec_d")).toBeNull();
     await harness.callRpc("answerBrief", { id: "dec_a", answer: { briefId: "dec_a", answers: [], outcome: { accepted: false, note: "Поправь подпись" } }, messageId: "msg_a" });
-    expect(sends().map((call) => call.mode)).toEqual(["steer-if-active", "queue-if-active"]);
+    expect(sends().map((call) => call.mode)).toEqual(["queue-if-active"]);
   });
 
   it("после записи ответа публикуется decisions:answered с идентификатором", async () => {

@@ -75,10 +75,10 @@ describe("нужна ли агенту реплика об ответе", () => 
     expect(needsAgentReply(demoBrief({ stages: undefined }), accepted(), progress(["practice", "land", "demo", "approve"]))).toBe(true);
   });
 
-  it("пустой ответ на Демонстрацию не нужен даже с этапом агента впереди: она агента не держала; комментарий — нужен", () => {
-    const brief = demoBrief({ stages: { list: [...LIST, stage("report", { name: "Отчёт" })], minButtonWidth: 170 }, outcome: { stage: "demo", final: false, next: "report", done: ["Сделано"], pending: [], results: [{ label: "a.md", target: "a.md" }] } });
-    expect(needsAgentReply(brief, accepted(), progress(["practice", "land", "demo"]))).toBe(false);
-    expect(needsAgentReply(brief, accepted("поправь"), progress(["practice", "land", "demo"]))).toBe(true);
+  it("пустое утверждение нужно, пока впереди этап агента: ему есть что делать", () => {
+    const brief = demoBrief({ stages: { list: [...LIST, stage("report", { name: "Отчёт" })], minButtonWidth: 170 }, outcome: { stage: "approve", final: false, next: "report", done: ["Сделано"], pending: [], results: [{ label: "a.md", target: "a.md" }] } });
+    expect(needsAgentReply(brief, accepted(), progress(["practice", "land", "demo", "approve"]))).toBe(true);
+    expect(needsAgentReply(brief, accepted(), progress(["practice", "land", "demo", "approve"], ["report"]))).toBe(false);
   });
 
   it("не нужна, когда ни один этап не взят в прогон", () => {

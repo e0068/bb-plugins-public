@@ -48,15 +48,19 @@ describe("ответ агенту на Утверждение", () => {
     expect(answerMessageText(approval, answer({ accepted: true }))).toBe(["Утверждение «Утверждение — Definition of Done» — утверждено.", "Дальше — этап «Execution»."].join("\n"));
   });
 
-  it("комментарий — не утверждено: переделать этап перед утверждением и прислать его снова", () => {
+  it("комментарий — не утверждено: виджеты вернулись, главный — комментарий; переделать этап, прислать доработанные виджеты и только потом утверждение", () => {
     const text = answerMessageText(approval, answer({ accepted: false, note: "пункты длинные" }));
     expect(text).toContain("«пункты длинные»");
-    expect(text).toContain("Не утверждено: переделай этап перед утверждением");
+    expect(text).toContain("Не утверждено: виджеты от прошлого утверждения свёрнуты и вернулись тебе");
+    expect(text).toContain("Главный — комментарий владельца к утверждению, остальные его ответы тоже в силе");
+    expect(text).toContain("Переделай этап перед утверждением");
+    expect(text).toContain("пришли новые виджеты, доработанные по комментариям");
+    expect(text).toContain("и только потом утверждение");
     expect(text).not.toContain("демонстрацию");
   });
 
-  it("комментарий к Демонстрации велит откатиться к этапу правки, если просит правку", () => {
-    expect(answerMessageText(demo, answer({ accepted: false, note: "кнопка мелкая" }))).toContain("Просит правку — откатись через flow_stage к этапу правки");
+  it("комментарий к Демонстрации-отчёту следующего шага не несёт: ответов на неё сервер не берёт", () => {
+    expect(answerMessageText(demo, answer({ accepted: false, note: "кнопка мелкая" }))).not.toContain("flow_stage");
   });
 });
 

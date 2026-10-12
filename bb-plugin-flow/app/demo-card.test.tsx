@@ -48,11 +48,6 @@ const open = (options: { patch?: Partial<DecisionBrief>; answerBrief?: typeof ac
 
 type Slot = ReturnType<typeof open>;
 const card = async (slot: Slot) => within(await slot.findByRole("group", { name: "Демонстрация" }));
-const comment = (slot: Slot, text: string) => fireEvent.change(slot.getByRole("textbox", { name: "Комментарий к демонстрации" }), { target: { value: text } });
-const sentOutcome = async (fn: ReturnType<typeof vi.fn>) => {
-  await vi.waitFor(() => expect(fn).toHaveBeenCalled());
-  return (fn.mock.calls[0]![0] as { answer: DecisionAnswer }).answer.outcome;
-};
 
 describe("карточка Демонстрации", () => {
   it("бирка вида и следующий этап; заголовка и подзаголовка агента на экране нет", async () => {
@@ -87,32 +82,46 @@ describe("карточка Демонстрации", () => {
     expect(await c.findByRole("link", { name: /^screenshots/ })).toBeTruthy();
   });
 
-  it("поле комментария прикреплено к карточке, кнопка — вне её; ни «Исполнять», ни бюджета, ни этапов", async () => {
+  it("под отчётом нет ни поля «Комментарий», ни кнопок; ни «Исполнять», ни бюджета, ни этапов", async () => {
     const slot = open();
     const wrap = await slot.findByRole("group", { name: "Демонстрация" });
-    expect(within(wrap).getByRole("textbox", { name: "Комментарий к демонстрации" })).toBeTruthy();
-    expect(within(wrap).queryByRole("button", { name: /Отправить комментарии/ })).toBeNull();
-    expect(slot.getByRole("button", { name: "Отправить комментарии" })).toBeTruthy();
+    expect(slot.queryByRole("textbox")).toBeNull();
+    expect(slot.queryByRole("button", { name: /Отправить|Продолжить|Завершить/ })).toBeNull();
+    expect(within(wrap).queryByRole("textbox", { name: "Комментарий к утверждению" })).toBeNull();
     expect(slot.queryByRole("button", { name: /Исполнять/ })).toBeNull();
     expect(slot.queryByRole("button", { name: /Бюджет/ })).toBeNull();
     expect(slot.queryByRole("checkbox", { name: /в ближайший прогон/ })).toBeNull();
   });
 
-  it("Демонстрация не держит работу: «Продолжить» и «Завершить» нет, без комментария отправлять нечего", async () => {
+  it("финальная Демонстрация — тоже только отчёт: кнопок нет вовсе", async () => {
     const { next: _next, ...interim } = brief.outcome!;
     const slot = open({ patch: { outcome: { ...interim, final: true } } });
     await card(slot);
-    expect(slot.queryByRole("button", { name: /Продолжить|Завершить/ })).toBeNull();
-    expect((slot.getByRole("button", { name: "Отправить комментарии" }) as HTMLButtonElement).disabled).toBe(true);
+    expect(slot.queryByRole("button", { name: /Отправить|Продолжить|Завершить/ })).toBeNull();
+    expect(slot.queryByRole("textbox")).toBeNull();
   });
 
-  it("написанный комментарий — «Отправить комментарии», он уходит с комментарием", async () => {
+  it("сохранённая Демонстрация с рекомендованным flow и вопросами — отчёт: ни ряда перевода, ни вопросов", async () => {
+    const slot = open({
+      patch: {
+        outcome: { ...brief.outcome!, nextFlow: "flow-bug" },
+        questions: [{ id: "q", kind: "confirm", question: "Так?", allowOwn: false, options: [{ id: "yes", action: "Yes", recommended: false }] }],
+      },
+    });
+    await card(slot);
+    expect(slot.queryByRole("button", { name: /Flow|Модель|Исполнять|Отправить|Продолжить|Завершить/ })).toBeNull();
+    expect(slot.queryByText("Так?")).toBeNull();
+  });
+
+  it("Ctrl+Enter на карточке Демонстрации ничего не отправляет", async () => {
     const answerBrief = vi.fn(accepted);
     const slot = open({ answerBrief });
-    await card(slot);
-    comment(slot, "Баннер ниже");
-    fireEvent.click(slot.getByRole("button", { name: "Отправить комментарии" }));
-    expect(await sentOutcome(answerBrief)).toEqual({ accepted: false, note: "Баннер ниже" });
+    const wrap = await slot.findByRole("group", { name: "Демонстрация" });
+    fireEvent.keyDown(wrap, { key: "Enter", ctrlKey: true });
+    fireEvent.keyDown(wrap, { key: "Enter", metaKey: true });
+    // Отправка зовёт сервер только после чтения вложений — проверка ждёт, пока этот путь успел бы дойти до вызова.
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    expect(answerBrief).not.toHaveBeenCalled();
   });
 
   it("Демонстрация с отправленным комментарием — строка исхода «Комментарий» и сам комментарий", async () => {

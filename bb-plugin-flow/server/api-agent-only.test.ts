@@ -48,15 +48,3 @@ describe("ответ без служебного", () => {
     expect(sent.input.map((part) => part.visibility)).toEqual([undefined]);
   });
 });
-
-describe("ответ, вставший в ленту", () => {
-  it("запись помечена: отвеченный бриф не повторяет слов владельца", async () => {
-    const { bb, harness } = createFakePluginHost({ pluginId: "decisions", sdk: { threads: { send: async () => ({ delivery: "started" }) } } });
-    const store = createStore(bb.storage.kv);
-    await store.putBrief(brief);
-    registerApi(bb, store, { now: () => "2026-10-03T12:05:00.000Z" });
-    const result = (await harness.callRpc("answerBrief", { id: "dec_b", answer, messageId: "msg_1" })) as { record: { posted?: true } };
-    expect(result.record.posted).toBe(true);
-    expect((await store.getAnswer("dec_b"))?.posted).toBe(true);
-  });
-});

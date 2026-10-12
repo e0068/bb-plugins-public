@@ -77,15 +77,15 @@ describe("компактация перед ответом в этом тред�
   });
 
   it("компактирует и тогда, когда агенту реплика не нужна", async () => {
-    // Принятая финальная Демонстрация без комментария: агенту делать нечего, реплика не уходит.
+    // Принятое финальное Утверждение без комментария: агенту делать нечего, реплика не уходит.
     const demo: DecisionBrief = {
       id: "dec_demo",
       threadId: "thr_src",
-      title: "Демонстрация",
+      title: "Утверждение",
       createdAt: "2026-09-24T10:00:00.000Z",
       kind: "brief",
       questions: [],
-      stages: { list: [stage("practice", { name: "Работа" }), stage("demo", { kind: "demo", skill: "", name: "Демонстрация" })], minButtonWidth: 170 },
+      stages: { list: [stage("practice", { name: "Работа" }), stage("demo", { kind: "approve", skill: "", name: "Утверждение" })], minButtonWidth: 170 },
       outcome: { stage: "demo", final: true, done: ["Сделано"], pending: [], results: [{ label: "a.md", target: "a.md" }] },
     };
     const { harness, bb, store } = await host();

@@ -153,15 +153,16 @@ const outcomeLines = (brief: DecisionBrief, answer: DecisionAnswer, locale: Loca
   !isOutcomeBrief(brief) || blank(answer.outcome?.note) ? [] : [messages(locale).answer.outcomeNote(answer.outcome?.note ?? "")];
 
 /**
- * Дальше после Демонстрации: продолжить — следующий этап или конец работы; комментарий — ответить и прислать её снова,
- * а к Утверждению — переделать этап перед ним; переход — начать выбранный flow с первого этапа.
+ * Дальше после итога: продолжить — следующий этап или конец работы; комментарий к Утверждению — переделать этап перед ним;
+ * переход — начать выбранный flow с первого этапа.
  */
-const outcomeNextStep = (brief: DecisionBrief, answer: DecisionAnswer, m: Messages["answer"]): string => {
+const outcomeNextStep = (brief: DecisionBrief, answer: DecisionAnswer, m: Messages["answer"]): string[] => {
   const flow = answer.outcome?.flow;
-  if (flow !== undefined) return m.outcomeSwitch(flow.name);
-  if (demoVerdict(answer) !== "continue") return outcomeKind(brief) === "approve" ? m.approveComment : m.outcomeComment;
+  if (flow !== undefined) return [m.outcomeSwitch(flow.name)];
+  // Комментарий принимает только Утверждение: ответа на Демонстрацию-отчёт не бывает.
+  if (demoVerdict(answer) !== "continue") return outcomeKind(brief) === "approve" ? [m.approveComment] : [];
   const next = brief.outcome?.next;
-  return next === undefined ? m.outcomeFinal : m.outcomeNext(stageNameOf(brief, next));
+  return [next === undefined ? m.outcomeFinal : m.outcomeNext(stageNameOf(brief, next))];
 };
 
 /** Заголовок реплики на Демонстрацию — по её исходу. */
@@ -293,7 +294,7 @@ export const answerMessageText = (brief: DecisionBrief, answer: DecisionAnswer, 
 /** Шаг агента после ответа: после Демонстрации — следующий, у брифа без этапов — только остановки на утверждение. */
 const nextStepLine = (brief: DecisionBrief, answer: DecisionAnswer, m: Messages["answer"]): string[] => {
   if (brief.kind !== "brief") return [];
-  if (isOutcomeBrief(brief)) return [outcomeNextStep(brief, answer, m)];
+  if (isOutcomeBrief(brief)) return outcomeNextStep(brief, answer, m);
   // Flow, выбранный кнопкой ряда у виджета без итога: тред уже в нём, прогон пустой — работа идёт с первого этапа.
   if (answer.flow !== undefined) return [m.flowChosen(answer.flow.name)];
   if (stageItems(brief).length > 0) return [];

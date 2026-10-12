@@ -56,6 +56,7 @@ export const en: Messages = {
     deviations: (count, total) => `Deviations from recommendations: ${count} of ${total}.`,
     briefAnswered: "Answer sent",
     clarifyAnswered: "Clarification answered",
+    resolved: (question: string) => `Resolved: ${question}`,
     dateLocale: "en-US",
   },
   brief: {
@@ -109,7 +110,7 @@ export const en: Messages = {
     retry: "Retry",
     notFound: "widget not found — the plugin was reinstalled or its storage was cleared",
     loading: "Widget is loading",
-    returned: "Widget returned to the agent: you wrote in the chat. Your choices carry over to the new widget.",
+    folded: "Widgets sent back to the agent, your choices are kept",
     ownValue: "Your value",
     ownPlaceholder: "your own",
     price: "Price",
@@ -151,7 +152,7 @@ export const en: Messages = {
     results: "Results",
     final: "final",
     next: (next) => `next ${next}`,
-    comment: "Comment on the demonstration",
+    comment: "Comment on the approval",
     commentPlaceholder: "Comment",
     continue: "Continue",
     finish: "Finish",
@@ -505,10 +506,10 @@ export const en: Messages = {
     handoffFrom: (thread) => `Work handed off from thread ${thread} — the owner's answer is below. Carry it on here.`,
     outcomeNext: (name) => `Next — the ${quote(name)} stage.`,
     outcomeFinal: "Next — the work is done: finish the task and report.",
-    outcomeComment: "The demo is already closed and the work goes on. If the comment asks for a change, roll back to the stage of the change with flow_stage, go through the stages again up to this demo and send it again; without a change, answer in one sentence and carry on.",
     approvedHeading: (title) => `Approval ${quote(title)} — approved.`,
     approveCommentHeading: (title) => `Changes to the approval ${quote(title)}:`,
-    approveComment: "Not approved: rework the stage before the approval as the comment asks (roll back to it with flow_stage when it is done) and send the approval again.",
+    approveComment:
+      "Not approved: the widgets since the previous approval were folded and returned to you. The owner's comment on the approval is the main one, the owner's other answers still stand. Rework the stage before the approval as the comment asks (roll back to it with flow_stage when it is done), send new widgets reworked by the comments (the owner's choices are preselected in them), and only then the approval: it is refused without reworked widgets.",
     outcomeSwitchHeading: (title, flow) => `Demo ${quote(title)} — move to the ${quote(flow)} flow.`,
     outcomeSwitch: (flow) =>
       `The thread now runs the ${quote(flow)} flow: its stages are in the turn instructions, start with the first. The scope is the findings of this demo; the owner's comment above, if any, narrows it.`,

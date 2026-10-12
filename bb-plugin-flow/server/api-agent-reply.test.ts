@@ -13,14 +13,14 @@ const THREAD = "thr_1";
 
 const LIST: WorkStage[] = [
   stage("practice", { name: "Работа" }),
-  stage("demo", { kind: "demo", skill: "", name: "Демонстрация" }),
+  stage("demo", { kind: "approve", skill: "", name: "Утверждение" }),
   stage("finish", { name: "Merge", automation: { source: "flow", steps: [] } }),
 ];
 
-const demoBrief = (patch: Partial<DecisionBrief> = {}): DecisionBrief => ({
-  id: "dec_demo",
+const approvalBrief = (patch: Partial<DecisionBrief> = {}): DecisionBrief => ({
+  id: "dec_approve",
   threadId: THREAD,
-  title: "Демонстрация",
+  title: "Утверждение",
   createdAt: T,
   kind: "brief",
   stages: { list: LIST, minButtonWidth: 170 },
@@ -40,8 +40,8 @@ const setup = async (brief: DecisionBrief, record: FlowProgress) => {
 };
 
 describe("ответ на бриф, после которого агенту нечего делать", () => {
-  it("демонстрация без комментария агенту не отправляется, но записывается", async () => {
-    const brief = demoBrief();
+  it("утверждение без комментария и без работы впереди агенту не отправляется, но записывается", async () => {
+    const brief = approvalBrief();
     const { harness, store, sends } = await setup(brief, { stages: { practice: { finishedAt: T } }, waiting: ["demo"] });
     const answer: DecisionAnswer = { briefId: brief.id, answers: [], outcome: { accepted: true } };
     expect(await harness.callRpc("answerBrief", { id: brief.id, answer, messageId: "m" })).toMatchObject({ kind: "accepted" });
@@ -49,18 +49,27 @@ describe("ответ на бриф, после которого агенту н�
     expect((await store.getAnswer(brief.id))?.answer).toEqual(answer);
   });
 
-  it("демонстрация с комментарием уходит агенту репликой", async () => {
-    const brief = demoBrief();
+  it("утверждение с комментарием уходит агенту репликой", async () => {
+    const brief = approvalBrief();
     const { harness, sends } = await setup(brief, { stages: { practice: { finishedAt: T } }, waiting: ["demo"] });
     const answer: DecisionAnswer = { briefId: brief.id, answers: [], outcome: { accepted: true, note: "поправь заголовок" } };
     await harness.callRpc("answerBrief", { id: brief.id, answer, messageId: "m" });
     expect(sends()).toHaveLength(1);
   });
 
-  it("пустой ответ на Демонстрацию агенту не уходит даже с его этапом впереди: Демонстрация его не держала", async () => {
-    const brief = demoBrief({ stages: { list: [...LIST, stage("report", { name: "Отчёт" })], minButtonWidth: 170 } });
+  it("пустое утверждение с этапом агента впереди уходит агенту: ему есть что делать", async () => {
+    const brief = approvalBrief({ stages: { list: [...LIST, stage("report", { name: "Отчёт" })], minButtonWidth: 170 } });
     const { harness, sends } = await setup(brief, { stages: { practice: { finishedAt: T }, demo: { finishedAt: T } }, waiting: [] });
     await harness.callRpc("answerBrief", { id: brief.id, answer: { briefId: brief.id, answers: [], outcome: { accepted: true } }, messageId: "m" });
+    expect(sends()).toHaveLength(1);
+  });
+
+  it("ответ на Демонстрацию отбивается: она отчёт, ничего не записывается и агенту не уходит", async () => {
+    const report = approvalBrief({ id: "dec_report", stages: { list: [stage("practice", { name: "Работа" }), stage("demo", { kind: "demo", skill: "", name: "Демонстрация" })], minButtonWidth: 170 } });
+    const { harness, store, sends } = await setup(report, { stages: { practice: { finishedAt: T } }, waiting: [] });
+    const answer: DecisionAnswer = { briefId: report.id, answers: [], outcome: { accepted: false, note: "поправь" } };
+    await expect(harness.callRpc("answerBrief", { id: report.id, answer, messageId: "m" })).rejects.toThrow(/a demo is a report/);
+    expect(await store.getAnswer(report.id)).toBeNull();
     expect(sends()).toHaveLength(0);
   });
 

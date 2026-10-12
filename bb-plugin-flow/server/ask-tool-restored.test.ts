@@ -33,22 +33,22 @@ describe("бриф взамен возвращённого получает че
     await store.putDraft("dec_K1", DRAFT);
     await store.putThreadReturned(THREAD, "dec_K1");
     expect(await ask(brief("Второй"))).toMatch(/preselected/);
-    expect((await store.getBrief("dec_K2"))?.restored).toEqual({ draft: DRAFT, criteria: ["Пункт"] });
+    expect((await store.getBrief("dec_K2"))?.restored).toEqual({ sources: [{ draft: DRAFT, criteria: ["Пункт"] }] });
     expect(await store.getThreadReturned(THREAD)).toBeNull();
     await ask(brief("Третий"));
     expect((await store.getBrief("dec_K3"))?.restored).toBeUndefined();
   });
 
-  it("бриф взамен возвращённого вернули снова, не тронув: третий получает тот же выбор, черновик забранного снят", async () => {
+  it("бриф взамен возвращённого вернули снова, не тронув: третий получает тот же выбор, черновик первого остаётся — раскрытая строка его покажет", async () => {
     const { ask, store } = await host();
     await ask(brief("Первый"));
     await store.putDraft("dec_K1", DRAFT);
     await store.putThreadReturned(THREAD, "dec_K1");
     await ask(brief("Второй"));
-    expect(await store.getDraft("dec_K1")).toBeNull();
+    expect(await store.getDraft("dec_K1")).toBe(DRAFT);
     await store.putThreadReturned(THREAD, "dec_K2");
     await ask(brief("Третий"));
-    expect((await store.getBrief("dec_K3"))?.restored).toEqual({ draft: DRAFT, criteria: ["Пункт"] });
+    expect((await store.getBrief("dec_K3"))?.restored).toEqual({ sources: [{ draft: DRAFT, criteria: ["Пункт"] }] });
   });
 
   it("уточнение возвращённый бриф не забирает: черновик ждёт брифа", async () => {

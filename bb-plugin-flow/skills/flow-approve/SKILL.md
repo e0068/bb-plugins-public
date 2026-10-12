@@ -27,9 +27,10 @@ Never refer to widgets you did not send in this run. The approval is only a comm
 - `stage` — this approval stage's id from the turn instructions; `final: false`; `next` — the stage after it.
 - `done` — what is being approved; `pending` — what is not done yet and why.
 - `sections` — the summary after a skill stage.
+- `nextFlow` — optional, only here: the id of the owner's flow for the problems you found while working. The widget preselects it in the Flow button with that flow's model, and one send of the approval moves the work into it; the owner may pick another flow or keep the current one. The tool refuses `nextFlow` on a demo — the owner moves the work with an approval button, never with a demo.
 - `results` — at least one link to what is approved. An approval needs no live result.
 
-The widget shows only the comment field and the row of buttons — no card: the owner judges what stands right above it, the widgets of the stage before. The title names what is approved; `done`, `sections` and `results` still go into the brief for the record and the decision journal. The main button is "Continue" ("Finish" on the final one); with a comment written it becomes "Send comments". After the call, paste the directive line as a standalone line and end the turn.
+The widget shows only the comment field and the row of buttons — no card: the owner judges what stands right above it, the widgets of the stage before. The title names what is approved; `done`, `sections` and `results` still go into the brief for the record and the decision journal. The owner writes the comment here: the demo before it has no comment field. The main button is "Continue" ("Finish" on the final one); with a comment written it becomes "Send comments"; with a flow chosen — "Send". After the call, paste the directive line as a standalone line and end the turn.
 
 **In Claude Code.** The same summary in sections, every file as a markdown link, then AskUserQuestion "Approve?": "Continue" (Recommended), and the owner writes a comment in "Other".
 

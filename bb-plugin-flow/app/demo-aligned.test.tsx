@@ -49,7 +49,7 @@ const classes = (element: Element, prefix: RegExp) => element.className.split(" 
 describe("кнопки Утверждения с комментарием выровнены", () => {
   it("«Исполнять» и «Отправить комментарии» — одной ширины в ряду, раскрытые списки «Исполнять» — колонками с тем же зазором", async () => {
     const slot = open(approval);
-    fireEvent.change(await slot.findByRole("textbox", { name: "Комментарий к демонстрации" }), { target: { value: "Поправь" } });
+    fireEvent.change(await slot.findByRole("textbox", { name: "Комментарий к утверждению" }), { target: { value: "Поправь" } });
     const place = slot.getByRole("button", { name: /^Исполнять/ });
     const row = slot.getByRole("button", { name: "Отправить комментарии" }).parentElement!;
     expect(row.className).toContain("flex-wrap");

@@ -146,7 +146,7 @@ export function useAgentPicker(props: { catalog: WidgetAgent | null; draft: Draf
   const modelLooked = modelLook(current, chosen, choice.proposed);
   const flowLooked = flowLook(catalog.currentFlowId, choice.flowId, props.recommended);
   const modelCell = (
-    <div data-demo-action className={props.wrapClass(modelLooked.wide)}>
+    <div data-actions-cell className={props.wrapClass(modelLooked.wide)}>
     <AgentCell
       className={props.cellClass}
       label={t.agentRow.model}
@@ -162,7 +162,7 @@ export function useAgentPicker(props: { catalog: WidgetAgent | null; draft: Draf
   );
   const flowCell =
     catalog.currentFlowId === null && catalog.flows.length === 0 ? null : (
-      <div data-demo-action className={props.wrapClass(flowLooked.wide)}>
+      <div data-actions-cell className={props.wrapClass(flowLooked.wide)}>
       <AgentCell
         className={props.cellClass}
         label={t.agentRow.flow}

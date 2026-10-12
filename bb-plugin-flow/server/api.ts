@@ -9,7 +9,7 @@ import { settleClarifyAnswer } from "../core/clarify";
 import { carryOf } from "../core/carry";
 import { defaultExecutionOf, providerModelsOf } from "../core/flow-agent";
 import { finalCriteria } from "../core/option-criteria";
-import { demoVerdict, outcomeKind } from "../core/outcome";
+import { demoVerdict, isReport, outcomeKind } from "../core/outcome";
 import { routeAllowed } from "../core/places";
 import { onAnswer } from "../core/progress";
 import type { Locale } from "../lib/i18n";
@@ -61,13 +61,21 @@ export const registerApi = (
   const launchesWork = (brief: DecisionBrief, answer: DecisionAnswer): boolean =>
     stageItems(brief).length > 0 && (answer.stages ?? []).some((stage) => stage.run);
 
+  /** Комментарий к утверждению — ответ на итог вида approve с вердиктом comment: Демонстрацию и переход в другой flow он не сворачивает. */
+  const foldsGroup = (brief: DecisionBrief, verdict: ReturnType<typeof demoVerdict>): boolean => verdict === "comment" && brief.outcome !== undefined && outcomeKind(brief) === "approve";
+
   bb.rpc.register(decisionsRpcContract, {
     async getBrief({ id }) {
       const brief = await store.getBrief(id);
       if (brief === null) return { kind: "not_found" as const };
       const answer = await store.getAnswer(id);
-      // Отвеченный бриф рисуется ответом, даже если его возвращали: ответ кнопкой — последнее слово владельца.
-      return { kind: "found" as const, brief, answer, ...(answer === null && (await store.isReturned(id)) ? { returned: true as const } : {}) };
+      // Свёрнутая группа — строка на месте утверждения; виджет, возвращённый до групп, — группа из одного.
+      const fold = (await store.getFold(id)) ?? (answer === null && (await store.isReturned(id)) ? { holder: id, ids: [id] } : null);
+      // Свёрнутый неотвеченный виджет раскрытая строка рисует черновиком владельца; несвёрнутый его держит окно.
+      const draft = fold !== null && answer === null ? await store.getDraft(id) : null;
+      // Решённым считается только неотвеченное: ответ владельца, пришедший раньше, остаётся ответом.
+      const resolved = answer === null && (await store.isResolved(id));
+      return { kind: "found" as const, brief, answer, ...(fold === null ? {} : { fold }), ...(draft === null ? {} : { draft }), ...(resolved ? { resolved: true as const } : {}) };
     },
 
     async answerBrief({ id, answer: sent, messageId, images = [], locale }) {
@@ -76,6 +84,8 @@ export const registerApi = (
       const answer = settleClarifyAnswer(brief, sent);
       const existing = await store.getAnswer(id);
       if (existing !== null) return { kind: "already_answered" as const, record: existing };
+      // Демонстрация — отчёт: ответа она не принимает, комментарий и переход в другой flow — на утверждении.
+      if (isReport(brief)) throw new Error("a demo is a report: it takes no answer — the owner comments on the approval or writes in the chat");
       // Невозможный маршрут отбивается до записи ответа: у чужого проекта — ещё и маршрут без выбранного проекта
       // или ответ вовсе без маршрута, иначе работа молча уехала бы в свой проект.
       const answered = answer.place ?? "here";
@@ -109,7 +119,6 @@ export const registerApi = (
       const text = service === "" ? parts.owner : `${parts.owner}\n${service}`;
       const place = answer.place ?? "here";
       let handoffThreadId: string | undefined;
-      let posted = false;
       try {
         if (place === "here") {
           // Компактация — первой и до конца: реплика, поставленная раньше, попала бы в срезанный контекст.
@@ -133,8 +142,8 @@ export const registerApi = (
             // Ответ встаёт в ленту сообщением владельца — его слова и вложения, как он их отправил, — а служебное видит только агент.
             await bb.sdk.threads.send({
               threadId: brief.threadId,
-              // Уточнение и Демонстрация агента не держат: он работает дальше, и ответ должен дойти в идущем ходе, а не после него.
-              mode: brief.kind === "clarify" || (brief.outcome !== undefined && outcomeKind(brief) === "demo") ? "steer-if-active" : "queue-if-active",
+              // Уточнение агента не держит: он работает дальше, и ответ должен дойти в идущем ходе, а не после него.
+              mode: brief.kind === "clarify" ? "steer-if-active" : "queue-if-active",
               ...(execution === undefined ? {} : { model: execution.model, reasoningLevel: execution.reasoningLevel, ...(execution.serviceTier === undefined ? {} : { serviceTier: execution.serviceTier }) }),
               input: [
                 { type: "text", text: parts.owner, mentions: [] },
@@ -142,7 +151,6 @@ export const registerApi = (
                 ...(service === "" ? [] : [{ type: "text" as const, text: service, mentions: [], visibility: AGENT_ONLY }]),
               ],
             });
-            posted = true;
           }
         } else {
           // Ответ уезжает целиком в новый тред: исходный остаётся с отвеченным брифом и ссылкой на него.
@@ -162,7 +170,6 @@ export const registerApi = (
       // Дальше реплика уже ушла: ни один сбой ниже не снимает ответ — повтор создал бы второй тред.
       // Худшее при сбое отметки — запущенный тред ещё примет этапы; это мягче дубля треда.
       const quietly = (work: Promise<unknown>) => work.catch(() => undefined);
-      if (posted) await quietly(store.markPosted(id));
       if (handoffThreadId !== undefined) {
         await quietly(store.attachHandoff(id, handoffThreadId));
         // Переход начинает работу заново: новый тред решает этапы и бюджет своим первым брифом, а прогон ответа в исходном снимается.
@@ -200,7 +207,12 @@ export const registerApi = (
       // Ответ кнопкой — последнее слово владельца: возвращённым бриф больше не считается, и черновик не нужен.
       await quietly(store.clearThreadReturned(brief.threadId, id));
       await quietly(store.dropDraft(id));
-      bb.realtime.publish(ANSWERED_CHANNEL, { id });
+      // Комментарий к утверждению сворачивает все виджеты от прошлого утверждения: утверждение судится по ним, а они вернулись агенту.
+      // Указатель возврата встаёт на утверждение — доработанные виджеты возьмут выбор из группы.
+      const verdict = demoVerdict(answer);
+      const folded = foldsGroup(brief, verdict) ? ((await store.foldGroup(brief.threadId, id).catch(() => null)) ?? [id]) : [];
+      if (folded.length > 0) await quietly(store.putThreadReturned(brief.threadId, id));
+      (folded.length > 0 ? folded : [id]).forEach((member) => bb.realtime.publish(ANSWERED_CHANNEL, { id: member }));
       // Ответ уже записан и ушёл: событие для Automations — последнее и ничего не отменяет.
       const emit = (trigger: FlowTrigger) => {
         try {
@@ -211,12 +223,11 @@ export const registerApi = (
       };
       // Комментарий Демонстрацию не принимает: этап открыт, и автоматизациям отвечать не на что.
       // Переход в другой flow — тоже: Демонстрация не принята, и автоматизациям за ней отвечать не на что.
-      const verdict = demoVerdict(answer);
       if (verdict !== "comment" && verdict !== "switch") emit("flow.brief-answered");
       if (brief.setup?.criteria !== undefined) emit("flow.criteria-approved");
       // Журнал — только для брифов: уточнение не решение. Сбой или отсутствие настройки не отменяют ни ответа, ни реплики, уже ушедших выше.
       if (brief.kind === "brief") await deps.writeDecision?.({ brief, answer, decidedAt: written.record.answeredAt, locale }).catch(() => undefined);
-      return { kind: "accepted" as const, record: { ...written.record, ...(handoffThreadId === undefined ? {} : { handoffThreadId }), ...(posted ? { posted: true as const } : {}) } };
+      return { kind: "accepted" as const, record: { ...written.record, ...(handoffThreadId === undefined ? {} : { handoffThreadId }) } };
     },
   });
 

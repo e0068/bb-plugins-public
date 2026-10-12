@@ -5,10 +5,11 @@ import { FLOW_RULE, stageInstructions } from "./stages";
 import { builtinStage } from "../lib/stage-constants";
 
 describe("правила, которые реплика ответа больше не повторяет, живут в инструкциях агенту", () => {
-  it("строка этапа Демонстрация: не ждать ответа; комментарий с правкой откатывает работу к этапу правки", () => {
+  it("строка этапа Демонстрация: не ждать ответа; у неё нет поля комментария, а сообщение с правкой откатывает работу к этапу правки", () => {
     const line = stageInstructions([{ ...builtinStage("demo", []), name: "Демонстрация" }]);
     expect(line).toMatch(/go on to the next stage without waiting: sending closes the stage/);
-    expect(line).toMatch(/if it asks for a change, roll back to the stage where the change is made \(flow_stage\)/);
+    expect(line).toMatch(/the demo has no comment field and takes no questions or nextFlow/);
+    expect(line).toMatch(/a chat message may ask for a change — then roll back to the stage where the change is made \(flow_stage\)/);
     expect(line).not.toMatch(/\bstop\b/);
   });
 

@@ -7,6 +7,7 @@ import { useRealtime, useRpc, type PluginMessageDirectiveProps } from "@get-bb/p
 import { deviations } from "../core/answer-message";
 import { isQuickClarify } from "../core/clarify";
 import { readDecisionId } from "../core/directive";
+import type { FileRoots } from "../core/result-link";
 import { DEFAULT_ROUTE, legacyRoute, offeredPlace } from "../core/places";
 import { isLegacyBrief } from "../core/rows";
 import { Button } from "../components/ui/button";
@@ -23,6 +24,7 @@ import type {
   dispatchRpcContract,
   DispatchPlace,
   DispatchRoute,
+  Fold,
   voiceRpcContract,
 } from "../shared/contract";
 import {
@@ -37,7 +39,8 @@ import {
 } from "./draft";
 import { attachmentsPayload, clearAttachments } from "./attachments";
 import { useLatestCopy } from "./brief-copies";
-import { AnsweredBriefCard, BriefCard, ClarifyCard, useDispatchPicker } from "./brief-card";
+import { AnsweredBriefCard, BriefCard, ClarifyCard, DraftBriefCard, ResolvedClarifyLine, useDispatchPicker } from "./brief-card";
+import { shownDraft } from "./draft-restore";
 import { clearStoredDraft } from "./draft-storage";
 import { Frame, NoteField, RecommendedStar, Titles, answeredAt, useStoredDraft, useSubmit, type FormProps } from "./parts";
 import { briefHeightKey, readHeight, summaryHeightKey, useHeldHeight } from "./held-height";
@@ -59,7 +62,7 @@ type Loaded =
   | { kind: "loading" }
   | { kind: "error" }
   | { kind: "not_found" }
-  | { kind: "found"; brief: DecisionBrief; answer: AnswerRecord | null; returned?: true };
+  | { kind: "found"; brief: DecisionBrief; answer: AnswerRecord | null; fold?: Fold; draft?: string; resolved?: true };
 
 type Rpc = ReturnType<typeof useRpc<typeof decisionsRpcContract>>;
 
@@ -186,9 +189,9 @@ function BriefLoader({ id, source, messageId, threadId }: { id: string; source: 
   const roots = useFileRoots(threadId);
   const { state, retry, answered, rpcRef } = useBrief(id);
   const voiceRpc = useRpc<typeof voiceRpcContract>();
-  const isClosed = state.kind === "found" && (state.answer !== null || state.returned === true);
+  const isClosed = state.kind === "found" && (state.answer !== null || state.fold !== undefined || state.resolved === true);
   useEffect(() => {
-    // Отвеченному и возвращённому брифу черновик и картинки не нужны — отсюда ли ушёл ответ или из другой вкладки.
+    // Отвеченному, решённому и свёрнутому брифу черновик и картинки не нужны — отсюда ли ушёл ответ или из другой вкладки; свёрнутого черновик живёт на сервере.
     if (!isClosed) return;
     clearStoredDraft(id);
     clearAttachments(id);
@@ -213,14 +216,16 @@ function BriefLoader({ id, source, messageId, threadId }: { id: string; source: 
         return <Dashed source={source}>{t.legacy.notFound}</Dashed>;
       case "found": {
         const legacy = isLegacyBrief(state.brief);
-        // Владелец написал в чат, не отправив бриф: бриф у агента, в ленте от него одна строка.
-        if (state.answer === null && state.returned === true) return <ReturnedBrief />;
+        // Группа вернулась агенту — комментарий к утверждению или сообщение в чат: на месте утверждения одна строка, остальные виджеты группы не рисуются.
+        if (state.fold !== undefined) return state.fold.holder === id ? <FoldedLine fold={state.fold} roots={roots} /> : null;
         if (state.answer !== null)
           return legacy ? (
             <AnsweredBrief brief={state.brief} record={state.answer} />
           ) : (
             <AnsweredBriefCard brief={state.brief} record={state.answer} roots={roots} />
           );
+        // Уточнение, которое агент починил или решил сам, отвечать уже нечем: одна приглушённая строка.
+        if (state.resolved === true && state.brief.kind === "clarify") return <ResolvedClarifyLine brief={state.brief} />;
         const send = async (draft: Draft) =>
           rpcRef.current.call("answerBrief", { id, answer: toAnswer(state.brief, draft), messageId, locale, ...(await attachmentsPayload(id)) });
         const onAccepted = (result: Awaited<ReturnType<typeof send>>) => {
@@ -252,14 +257,34 @@ function BriefLoader({ id, source, messageId, threadId }: { id: string; source: 
 
 // ——— рамки и состояния ———
 
-function ReturnedBrief() {
+/** Строка свёрнутой группы: что виджеты ушли агенту, а выборы сохранены; раскрывается в виджеты группы по порядку, только для чтения. */
+function FoldedLine({ fold, roots }: { fold: Fold; roots: FileRoots | null }) {
   const t = useMessages();
+  const [open, setOpen] = useState(false);
   return (
-    <div data-brief-returned="" className="my-3 flex items-center gap-2 rounded-lg border border-border bg-surface-recessed-solid px-3 py-2 text-sm text-muted-foreground">
-      <Icon name="ArrowTurnBackward" className="size-4" />
-      <span>{t.legacy.returned}</span>
+    <div data-brief-folded="" className="my-3 flex flex-col gap-3 rounded-lg border border-border bg-surface-recessed-solid text-sm text-muted-foreground">
+      <button type="button" aria-expanded={open} onClick={() => setOpen((was) => !was)} className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left hover:bg-state-hover">
+        <Icon name="ArrowTurnBackward" className="size-4" />
+        <span>{t.legacy.folded}</span>
+        <Icon name="ChevronDown" aria-hidden="true" className={cn("ml-auto size-3.5 shrink-0", open && "rotate-180")} />
+      </button>
+      {open && (
+        <div className="flex flex-col gap-3 px-3 pb-3">
+          {fold.ids.map((id) => (
+            <FoldedMember key={id} id={id} roots={roots} />
+          ))}
+        </div>
+      )}
     </div>
   );
+}
+
+/** Виджет свёрнутой группы для чтения: отвеченный — с ответом, неотвеченный — с черновиком владельца; без строки статуса. */
+function FoldedMember({ id, roots }: { id: string; roots: FileRoots | null }) {
+  const { state } = useBrief(id);
+  if (state.kind !== "found") return null;
+  if (state.answer !== null) return isLegacyBrief(state.brief) ? <AnsweredBrief brief={state.brief} record={state.answer} /> : <AnsweredBriefCard brief={state.brief} record={state.answer} roots={roots} frozen />;
+  return isLegacyBrief(state.brief) ? null : <DraftBriefCard brief={state.brief} draft={shownDraft(state.brief, state.draft)} roots={roots} />;
 }
 
 function Dashed({ source, children }: { source: string; children: ReactNode }) {

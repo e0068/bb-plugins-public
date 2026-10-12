@@ -5,15 +5,18 @@ import type { BbPluginApi } from "@get-bb/plugin-sdk";
 
 import type { Carried } from "../core/carry";
 import { awaitingKind } from "../core/awaiting";
+import { resolvesIssues, type ResolveTarget } from "../core/clarify";
 import { approvalIssues } from "../core/approval-guard";
-import { liveIssues, nextFlowIssues, outcomeKind } from "../core/outcome";
+import { isApproval, memberSources, nextGroup, restoredOf } from "../core/fold";
+import { liveIssues, nextFlowIssues, outcomeKind, reportOnlyIssues } from "../core/outcome";
 import { DECISION_ID_PREFIX, directiveLine } from "../core/directive";
-import { criterionEditable, money, plannedMinutes, recommendedForecast } from "../core/budget";
+import { money, plannedMinutes, recommendedForecast } from "../core/budget";
 import { INSTRUCTIONS_LIMIT_CHARS } from "../lib/agent-limits";
 import { FLOW_RULE, SELF_ONLY_RULE, compactStageInstructions, isAskedStage, isAutomationStage, isStageCarryKey, reportIssues, stageInstructions, withStepResults } from "../core/stages";
 import { isHeadingStage } from "../core/sub-stages";
 import { stageKindOf, type BuiltinKind, type StageKind } from "../lib/stage-constants";
 import { FORK_ZERO_RULE, OPTION_PRICE_RULE, askDecisionParamsSchema, type AskDecisionParams, type Criterion, type DecisionBrief, type FlowProgress, type Planning, type RestoredDraft, type StageSettings } from "../shared/contract";
+import { ANSWERED_CHANNEL } from "./api";
 import { FLOW_STAGE_TOOL, type ProgressStore } from "./progress";
 import { KV_VALUE_LIMIT_BYTES, type DecisionStore } from "./store";
 import type { FlowTrigger } from "./automations";
@@ -58,35 +61,53 @@ One brief per run: go through the run stages in order; a demo stage: send its ou
  * инструкциях: те уже упираются в 4096 символов.
  */
 export const RETURNED_RULE =
-  "A chat message from the owner while your brief waits returns that brief to you: the message outranks the brief — it means the plan changed. Take the message in, its text and attachments, then send the brief again, revised; the owner's choices in the returned brief stay preselected where question and option ids match. An approval stage closes only when the owner sends it with its button; a demo stage closes when you send it.";
+  "A chat message from the owner while your brief waits returns that brief to you: the message outranks the brief — it means the plan changed. Take the message in, its text and attachments, then send the brief again, revised; the owner's choices in the returned brief stay preselected where question, option and stage ids match. A message while an approval waits returns the whole group of widgets since the previous approval, and a comment under an approval's Continue button does the same: its text outranks the choices, the other choices of the owner still stand — send reworked widgets first, the choices are preselected in them, and only then the approval; an approval right after a returned one, without reworked widgets between them, is refused. An approval stage closes only when the owner sends it with its button; a demo stage closes when you send it.";
 
 /** Что агенту делать после брифа: ждать ответа, а у Демонстрации и уточнения — работать дальше. */
 const nextStep = (brief: DecisionBrief): string => {
   if (brief.kind !== "brief") return " Keep working; the answer arrives along the way.";
   if (brief.outcome !== undefined && outcomeKind(brief) === "demo")
-    return " Then go on to the next stage of the run without waiting: the demo stage is closed by this call. A comment on the demo may arrive later — then roll back to the stage it asks to change.";
+    return " Then go on to the next stage of the run without waiting: the demo stage is closed by this call.";
   return " Then end the turn and wait for the answer.";
 };
+
+/** Наказ после каждого вызова: повтор строки старого виджета рисует его заново, а решённое уточнение закрывается `resolves`. */
+const PASTE_ONCE_RULE = `Paste each directive line once, in the turn that sent it; never repeat the line of an earlier widget — a repeat draws it again. A clarify you fixed or decided yourself — close it with resolves in your next ${ASK_TOOL_NAME} call.`;
 
 const briefResult = (brief: DecisionBrief): string =>
   `${directiveLine(brief.id)}
 
 Paste the line above into your reply as a standalone line — the owner sees the brief in its place.${nextStep(brief)}${
     brief.restored === undefined ? "" : " The owner's choices from the returned brief are preselected where question and option ids match."
-  }`;
+  }
+
+${PASTE_ONCE_RULE}`;
 
 /**
- * Черновик брифа, который владелец вернул сообщением в чат, — для нового брифа треда, вместе с пунктами возвращённого:
- * правки пунктов ложатся на новый бриф по тексту. Черновика нет — возвращать нечего, указатель снимет новый бриф.
+ * Возвращённый брифу треда и выбор владельца в нём — для нового брифа. `grouped` — вернулась группа утверждения: её указатель
+ * держится до следующего утверждения, чтобы выбор получили все доработанные виджеты; одиночный забирает следующий бриф.
  */
-const restoredFrom = async (store: DecisionStore, threadId: string): Promise<{ briefId: string; restored?: RestoredDraft } | null> => {
+type Returned = { briefId: string; grouped: boolean; restored?: RestoredDraft };
+
+/**
+ * Выбор владельца из возвращённого: у группы — из всех её виджетов, у одиночного — из него самого. Ответ и черновик каждого — источник,
+ * вместе с пунктами Definition of Done: правки пунктов ложатся на новый бриф по тексту. Выбора нет — возвращать нечего.
+ */
+const restoredFrom = async (store: DecisionStore, threadId: string): Promise<Returned | null> => {
   const briefId = await store.getThreadReturned(threadId);
   if (briefId === null) return null;
-  const [draft, old] = await Promise.all([store.getDraft(briefId), store.getBrief(briefId)]);
-  // Бриф взамен возвращённого вернули снова, не тронув: его выбор — тот, что он сам принёс.
-  if (draft === null) return old?.restored === undefined ? { briefId } : { briefId, restored: old.restored };
-  const criteria = old?.setup?.criteria?.map(criterionEditable);
-  return { briefId, restored: { draft, ...(criteria === undefined ? {} : { criteria }) } };
+  const holder = await store.getBrief(briefId);
+  const grouped = holder !== null && isApproval(holder);
+  const ids = grouped ? ((await store.getFold(briefId))?.ids ?? [briefId]) : [briefId];
+  const members = await Promise.all(
+    ids.map(async (id) => ({
+      brief: id === briefId ? holder : await store.getBrief(id),
+      answer: (await store.getAnswer(id))?.answer ?? null,
+      draft: await store.getDraft(id),
+    })),
+  );
+  const restored = restoredOf(members.flatMap(memberSources));
+  return { briefId, grouped, ...(restored === undefined ? {} : { restored }) };
 };
 
 /** Перенос треда — только этапы, которые агент прислал в setup нового брифа: исполнителя, ревью и тестирования прежнего вида инструмент не принимает. */
@@ -129,16 +150,15 @@ const launchedIssues = (params: AskDecisionParams, stages: StageSettings["stages
 const OUTCOME_KINDS: readonly StageKind[] = ["demo", "approve"];
 
 /** Итог — про запущенную работу и про этап Демонстрации или Утверждения из flow треда; flow без Вопросов, Definition of Done и Выбора этапов запуска не ждёт. */
-const outcomeIssues = (outcome: AskDecisionParams["outcome"], launched: boolean, stages: StageSettings["stages"], flowIds: readonly string[], progress: FlowProgress | null | undefined): string[] => {
+const outcomeIssues = (outcome: AskDecisionParams["outcome"], questionCount: number, launched: boolean, stages: StageSettings["stages"], flowIds: readonly string[], progress: FlowProgress | null | undefined, reworkPending: boolean): string[] => {
   if (outcome === undefined) return [];
   if (!launched && stages.some(isAskedStage)) return ["an outcome reports a stage of running work, and the work in this thread has not started yet: send a brief with setup.stages first"];
   const approval = stages.some((stage) => stage.id === outcome.stage && stageKindOf(stage) === "approve");
   const reported = stages.filter((stage) => OUTCOME_KINDS.includes(stageKindOf(stage))).map((s) => s.id);
   return [
     ...(reported.includes(outcome.stage) ? [] : [`outcome.stage ${outcome.stage} is not a demo or approval stage of the thread's flow: ${reported.length === 0 ? "the flow has none" : reported.join(", ")}`]),
-    // Утверждение показывает, что утверждается, — живой результат нужен только Демонстрации.
-    ...(approval ? approvalIssues(stages, progress, outcome.stage) : liveIssues(outcome)),
-    ...nextFlowIssues(outcome, flowIds),
+    // Утверждение показывает, что утверждается, и переводит работу в рекомендованный flow; Демонстрация — отчёт с живым результатом, без вопросов и перехода.
+    ...(approval ? [...approvalIssues(stages, progress, outcome.stage, reworkPending), ...nextFlowIssues(outcome, flowIds)] : [...liveIssues(outcome), ...reportOnlyIssues(outcome, questionCount)]),
   ];
 };
 
@@ -220,6 +240,16 @@ const legacyIssues = (setup: AskDecisionParams["setup"]): string[] => {
   return sent.length === 0 ? [] : [`setup.${sent.join(", setup.")} are no longer accepted: work stages replaced documents, executor, review and testing — send them in setup.stages`];
 };
 
+/** Уточнения из `resolves` глазами хранилища: чьи они, какого вида и отвечены ли; без повторов, по порядку. */
+const resolveTargets = (store: DecisionStore, ids: readonly string[]): Promise<Array<readonly [string, ResolveTarget]>> =>
+  Promise.all(
+    [...new Set(ids)].map(async (id) => {
+      const found = await store.getBrief(id);
+      const target: ResolveTarget = found === null ? null : { threadId: found.threadId, kind: found.kind, answered: (await store.getAnswer(id)) !== null };
+      return [id, target] as const;
+    }),
+  );
+
 const toolError = (text: string) => ({ isError: true as const, content: [{ type: "text" as const, text }] });
 
 /** Вклад Flow в ход треда с flow: правило брифа и этапы flow. Его же отдаёт выбор flow агентом — этапы нужны в том же ходе. */
@@ -231,7 +261,7 @@ export const flowTurnInstructions = (stages: StageSettings["stages"]): string =>
 };
 
 export const registerAskTool = (
-  bb: Pick<BbPluginApi, "agents">,
+  bb: Pick<BbPluginApi, "agents" | "realtime">,
   store: DecisionStore,
   /** `stages` — этапы flow треда; без них бриф с этапами не принимается. */
   deps: {
@@ -267,11 +297,15 @@ export const registerAskTool = (
       const legacy = params.kind === "brief" ? legacyIssues(params.setup) : [];
       const progress = (await deps.progress?.get(ctx.threadId)) ?? null;
       const launchedSetup = params.kind === "brief" && launched ? launchedIssues(params, settings.stages, progress) : [];
-      const outcomeProblems = outcomeIssues(params.outcome, launched, settings.stages, deps.flowIds?.() ?? [], deps.progress === undefined ? undefined : progress);
+      // Утверждение вслед за свёрнутым без доработанных виджетов между ними не принимается: комментарий владельца ещё не учтён.
+      const reworkPending = (await store.getThreadGroup(ctx.threadId))?.folded === true;
+      const outcomeProblems = outcomeIssues(params.outcome, params.questions.length, launched, settings.stages, deps.flowIds?.() ?? [], deps.progress === undefined ? undefined : progress, reworkPending);
+      const { resolves = [], ...fields } = params;
+      const resolveProblems = resolvesIssues(ctx.threadId, await resolveTargets(store, resolves));
       const stageIssues = [...missingStagesIssues(params, launched, settings.stages), ...reportIssues(settings.stages, params.setup?.stages)];
       const base = baseIssues(params, launched, settings.stages);
-      if (launchedSetup.length > 0 || outcomeProblems.length > 0)
-        return toolError(`Brief not accepted: ${[...launchedSetup, ...outcomeProblems].join("; ")}.`);
+      if (launchedSetup.length > 0 || outcomeProblems.length > 0 || resolveProblems.length > 0)
+        return toolError(`Brief not accepted: ${[...launchedSetup, ...outcomeProblems, ...resolveProblems].join("; ")}.`);
       if (legacy.length > 0 || stageIssues.length > 0 || base.length > 0)
         return toolError(
           [`Brief not accepted: ${[...legacy, ...stageIssues, ...base].join("; ")}.`, ...(stageIssues.length > 0 ? [stageInstructions(settings.stages) ?? "The plugin settings have no stages."] : [])].join("\n\n"),
@@ -288,7 +322,7 @@ export const registerAskTool = (
       // Ссылки сделанной автоматизации — из её шагов: агент их не присылает.
       const stepped = withStepResults(settings.stages, params.setup?.stages, params.setup?.stages === undefined ? null : progress);
       const brief: DecisionBrief = {
-        ...params,
+        ...fields,
         ...(params.setup === undefined || stepped === undefined ? {} : { setup: { ...params.setup, stages: stepped } }),
         id: `${DECISION_ID_PREFIX}${deps.newId()}`,
         threadId: ctx.threadId,
@@ -310,14 +344,22 @@ export const registerAskTool = (
       if (zero.length > 0) return toolError(`Brief not accepted: ${zero.join("; ")}.`);
       const stored = await store.putBrief(brief);
       if (stored.kind === "stored") {
-        if (returned !== null) {
-          // Черновик уехал в новый бриф: у возвращённого его больше никто не спросит.
-          await store.clearThreadReturned(ctx.threadId, returned.briefId).catch(() => undefined);
-          await store.dropDraft(returned.briefId).catch(() => undefined);
-        }
+        // Выбор уехал в новый бриф. Группа, вернувшаяся с утверждением, отдаёт его всем виджетам до следующего утверждения;
+        // черновики свёрнутых остаются — их показывает раскрытая строка.
+        if (returned !== null && (!returned.grouped || isApproval(brief))) await store.clearThreadReturned(ctx.threadId, returned.briefId).catch(() => undefined);
+        const group = nextGroup(await store.getThreadGroup(ctx.threadId), brief);
+        await store.putThreadGroup(ctx.threadId, group).catch(() => undefined);
+        // Группа утверждения запоминается сейчас: к комментарию список треда уже уйдёт дальше — следующим брифом.
+        if (isApproval(brief)) await store.putApprovalGroup(brief.id, group.ids).catch(() => undefined);
         await deps.progress?.recordBrief(brief, brief.createdAt).catch(() => undefined);
         const kind = awaitingKind(brief);
         if (kind !== null) await store.putAwaiting(brief.threadId, { briefId: brief.id, kind }).catch(() => undefined);
+      }
+      // Решённые уточнения помечаются вместе с записью брифа: отказ по размеру ничего не закрывает. Открытые виджеты перерисуются строкой.
+      if (stored.kind === "stored") {
+        const closed = [...new Set(resolves)];
+        await Promise.all(closed.map((id) => store.markResolved(id)));
+        closed.forEach((id) => bb.realtime.publish(ANSWERED_CHANNEL, { id }));
       }
       if (stored.kind === "stored" && params.outcome !== undefined) deps.emit?.("flow.stage-done", ctx.threadId, { stageId: params.outcome.stage });
       return stored.kind === "stored"

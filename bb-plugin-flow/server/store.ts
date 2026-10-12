@@ -13,9 +13,12 @@ import {
   dispatchRouteSchema,
   type Add,
   briefDraftSchema,
+  threadGroupSchema,
   type AnswerRecord,
   type DecisionBrief,
   type DispatchRoute,
+  type Fold,
+  type ThreadGroup,
 } from "../shared/contract";
 
 export const KV_VALUE_LIMIT_BYTES = 256 * 1024;
@@ -27,9 +30,21 @@ const threadCarryKey = (threadId: string) => `decision-thread-carry:${threadId}`
 const draftKey = (id: string) => `decision-draft:${id}`;
 const returnedKey = (id: string) => `decision-returned:${id}`;
 const threadReturnedKey = (threadId: string) => `decision-thread-returned:${threadId}`;
+/** Группа треда — id виджетов после прошлого утверждения. */
+const threadGroupKey = (threadId: string) => `decision-thread-group:${threadId}`;
+/** Группа утверждения — id виджетов от прошлого утверждения до него, снимок на момент его записи. */
+const approvalGroupKey = (approvalId: string) => `decision-approval-group:${approvalId}`;
+/** Id держателя свёрнутой группы, которой принадлежит виджет. */
+const foldKey = (id: string) => `decision-fold:${id}`;
+/** Id виджетов свёрнутой группы, по ключу её держателя. */
+const foldGroupKey = (holder: string) => `decision-fold-group:${holder}`;
+/** Метка уточнения, которое агент закрыл как решённое. */
+const resolvedKey = (id: string) => `decision-resolved:${id}`;
 const threadCriteriaKey = (threadId: string): string => `thread-criteria:${threadId}`;
 
 const criteriaListSchema = z.array(z.string());
+
+const idListSchema = z.array(z.string()).min(1);
 
 const threadScopeKey = (threadId: string): string => `thread-scope:${threadId}`;
 const launchedKey = (threadId: string) => `decision-launched:${threadId}`;
@@ -59,8 +74,6 @@ export type DecisionStore = {
   dropAnswer(id: string): Promise<void>;
   /** Тред, созданный передачей работы: дописывается к уже записанному ответу. */
   attachHandoff(id: string, threadId: string): Promise<void>;
-  /** Ответ встал в ленту сообщением владельца. */
-  markPosted(id: string): Promise<void>;
   /** Черновик ответа владельца, пока бриф не отправлен; новый заменяет прежний. */
   putDraft(id: string, draft: string): Promise<void>;
   getDraft(id: string): Promise<string | null>;
@@ -74,6 +87,23 @@ export type DecisionStore = {
   getThreadReturned(threadId: string): Promise<string | null>;
   /** Новый бриф забрал возвращённый: второй его уже не получит. Указатель на другой бриф не трогается. */
   clearThreadReturned(threadId: string, briefId: string): Promise<void>;
+  /** Список группы треда: виджеты после прошлого утверждения; нет записи или она чужая — `null`. */
+  putThreadGroup(threadId: string, group: ThreadGroup): Promise<void>;
+  getThreadGroup(threadId: string): Promise<ThreadGroup | null>;
+  /** Снимок группы утверждения: виджеты до него включительно. Пишется при записи утверждения — к комментарию список треда уже мог уйти дальше. */
+  putApprovalGroup(approvalId: string, ids: readonly string[]): Promise<void>;
+  /**
+   * Утверждение `holder` свернуло группу: виджеты из её снимка, а без снимка — одно оно. Каждый становится членом группы и
+   * помечается возвращённым; список треда лишь помнит свёрнутое утверждение, ids в нём не меняются. Ответ — id свёрнутых виджетов.
+   */
+  foldGroup(threadId: string, holder: string): Promise<string[]>;
+  /** Сообщение в чат вернуло агенту один ждущий виджет: группа из одного. Список треда не меняется. */
+  foldSingle(holder: string): Promise<string[]>;
+  /** Группа, в которую свёрнут виджет; несвёрнутый — `null`. */
+  getFold(id: string): Promise<Fold | null>;
+  /** Агент закрыл уточнение как решённое (починил или решил сам): виджет рисуется строкой, пока владелец не ответил. */
+  markResolved(id: string): Promise<void>;
+  isResolved(id: string): Promise<boolean>;
   /** Перенос последнего отвеченного брифа треда — целиком, пустой тоже: он заменяет прежний. */
   putThreadCarry(threadId: string, carried: Carried): Promise<void>;
   /** Перенос треда; нет записи или она чужая — пустой перенос. */
@@ -120,6 +150,18 @@ export const createStore = (kv: PluginKvStorage): DecisionStore => {
     return parsed.success ? parsed.data : {};
   };
 
+  /** Каждый член знает держателя, держатель — всех членов; члены помечаются возвращёнными. */
+  const markFold = async (holder: string, ids: readonly string[]): Promise<string[]> => {
+    await kv.set(foldGroupKey(holder), [...ids]);
+    await Promise.all(ids.flatMap((id) => [kv.set(foldKey(id), holder), kv.set(returnedKey(id), true)]));
+    return [...ids];
+  };
+
+  const readGroup = async (threadId: string) => {
+    const parsed = threadGroupSchema.safeParse(await kv.get(threadGroupKey(threadId)));
+    return parsed.success ? parsed.data : null;
+  };
+
   const getAnswer = async (id: string) => {
     const parsed = answerRecordSchema.safeParse(await kv.get(answerKey(id)));
     return parsed.success ? parsed.data : null;
@@ -153,11 +195,6 @@ export const createStore = (kv: PluginKvStorage): DecisionStore => {
         const existing = await getAnswer(id);
         if (existing !== null) await kv.set(answerKey(id), { ...existing, handoffThreadId: threadId });
       }),
-    markPosted: (id) =>
-      serialized(id, async () => {
-        const existing = await getAnswer(id);
-        if (existing !== null) await kv.set(answerKey(id), { ...existing, posted: true });
-      }),
     async putDraft(id, draft) {
       await kv.set(draftKey(id), draft);
     },
@@ -183,6 +220,34 @@ export const createStore = (kv: PluginKvStorage): DecisionStore => {
       serialized(threadReturnedKey(threadId), async () => {
         if ((await kv.get(threadReturnedKey(threadId))) === briefId) await kv.delete(threadReturnedKey(threadId));
       }),
+    async putThreadGroup(threadId, group) {
+      await kv.set(threadGroupKey(threadId), group);
+    },
+    getThreadGroup: readGroup,
+    foldGroup: (threadId, holder) =>
+      serialized(threadGroupKey(threadId), async () => {
+        const snapshot = idListSchema.safeParse(await kv.get(approvalGroupKey(holder)));
+        const ids = snapshot.success ? snapshot.data : [holder];
+        const group = await readGroup(threadId);
+        await kv.set(threadGroupKey(threadId), group === null ? { ids, lastApprove: true, folded: true } : { ...group, folded: true });
+        return markFold(holder, ids);
+      }),
+    async putApprovalGroup(approvalId, ids) {
+      await kv.set(approvalGroupKey(approvalId), [...ids]);
+    },
+    foldSingle: (holder) => markFold(holder, [holder]),
+    async getFold(id) {
+      const holder = await kv.get(foldKey(id));
+      if (typeof holder !== "string") return null;
+      const ids = idListSchema.safeParse(await kv.get(foldGroupKey(holder)));
+      return ids.success ? { holder, ids: ids.data } : null;
+    },
+    async markResolved(id) {
+      await kv.set(resolvedKey(id), true);
+    },
+    async isResolved(id) {
+      return (await kv.get(resolvedKey(id))) === true;
+    },
     async putThreadCarry(threadId, carried) {
       await kv.set(threadCarryKey(threadId), carried);
     },

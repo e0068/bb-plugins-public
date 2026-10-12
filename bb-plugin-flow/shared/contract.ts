@@ -439,8 +439,8 @@ export const stageOutcomeSchema = z
     results: z.array(z.union([z.object({ label: text, target: text }).strict(), z.object({ label: text, command: text.max(COMMAND_MAX_LENGTH) }).strict()])).min(1),
     /** С прошлой Демонстрации менялись только документы — живой ссылки нет. */
     documentsOnly: z.literal(true).optional(),
-    /** Id flow, который агент рекомендует для найденных проблем: Демонстрация предлагает владельцу перейти в него. */
-    nextFlow: text.describe("Id of the owner's flow for problems you found while working: one send of the demo moves the work into it").optional(),
+    /** Id flow, который агент рекомендует для найденных проблем: Утверждение предлагает владельцу перейти в него; у Демонстрации поля нет. */
+    nextFlow: text.describe("Id of the owner's flow for problems you found while working; only on an approval stage outcome: one send of the approval moves the work into it").optional(),
   })
   .superRefine((o, ctx) => {
     if (o.done.length + o.pending.length === 0)
@@ -640,8 +640,30 @@ const checkNewBrief = (brief: BriefShape, ctx: z.RefinementCtx) => {
     issue(`an option cost is a short estimate like "~1M tokens" or "$12", at most ${COST_MAX_LENGTH} characters; move the explanation into description`);
 };
 
+/** Строка с массивом JSON — сам массив; всё остальное — как есть, его оценит схема. */
+const jsonList = (value: unknown): unknown => {
+  if (typeof value !== "string") return value;
+  try {
+    const parsed: unknown = JSON.parse(value);
+    return Array.isArray(parsed) ? parsed : value;
+  } catch {
+    return value;
+  }
+};
+
 /** Параметры инструмента `ask_decision`: бриф без того, что проставляет плагин. */
-export const askDecisionParamsSchema = z.object(briefFields).superRefine(checkBrief).superRefine(checkNewBrief);
+export const askDecisionParamsSchema = z
+  .object({
+    ...briefFields,
+    /** Id уточнений этого треда, которые агент закрывает как решённые: команда вызова, в хранимый бриф не входит. */
+    // Мост агента со старым описанием инструмента передаёт незнакомый список строкой JSON — её разбираем до проверки.
+    resolves: z
+      .preprocess(jsonList, z.array(text).min(1))
+      .describe("Ids of clarify widgets of this thread (the id from its directive line, dec_…) that you fixed or decided yourself and the owner has not answered: each is drawn as a resolved line without answer buttons. Works in any ask_decision call; an unknown, foreign or answered id refuses the call")
+      .optional(),
+  })
+  .superRefine(checkBrief)
+  .superRefine(checkNewBrief);
 
 /** Выбор владельца, перенесённый из прошлого отвеченного брифа треда: строка `setup.*` → варианты. */
 export const carriedSchema = z.record(z.string(), z.array(z.string()));
@@ -649,41 +671,6 @@ export const carriedSchema = z.record(z.string(), z.array(z.string()));
 /** Черновик ответа на бриф строкой виджета; сервер его не читает, а хранит и передаёт. */
 export const BRIEF_DRAFT_MAX = 64 * 1024;
 export const briefDraftSchema = z.string().max(BRIEF_DRAFT_MAX);
-
-/** Черновик возвращённого брифа и тексты его пунктов Definition of Done: правки пунктов ложатся на новый бриф по тексту, а не по номеру. */
-export const restoredDraftSchema = z.object({ draft: briefDraftSchema, criteria: z.array(z.string()).optional() });
-
-/** Итог прогона: минуты, цель и потолок в долларах; `null` у минут — времени в прогнозе нет. */
-export const plannedSchema = z.object({ minutes: z.number().nullable(), target: z.number(), max: z.number() });
-
-export const decisionBriefSchema = z
-  .object({
-    id: text,
-    threadId: text,
-    createdAt: text,
-    /** Ставит сервер новым брифам: утверждённые артефакты в них можно отозвать. У записанных раньше метки нет — они читаются как были. */
-    revocable: z.boolean().optional(),
-    /** Ставит сервер брифу запущенной работы: итог бюджета в нём — утверждённый бюджет прогона плюс выбранные варианты, без него итога нет. */
-    launched: z.literal(true).optional(),
-    /** Ставит сервер брифу запущенной работы: утверждённое Definition of Done треда — итог последнего ответа с пунктами. */
-    approved: z.array(text).min(1).optional(),
-    /** Ставит сервер брифу запущенной работы: утверждённый объём треда — база и варианты последнего ответа; без своих пунктов бриф считает от него. */
-    approvedScope: addSchema.optional(),
-    /** Ставит сервер брифу-уточнению запущенной работы: бюджет прогона из прогресса треда — итог считается от него. */
-    approvedBudget: plannedSchema.optional(),
-    /** Ставит сервер из настроек: какие документы сделать и какие утвердить обязательно. */
-    required: z.object({ make: z.array(text), approve: z.array(text) }).optional(),
-    /** Ставит сервер: сколько минут шло и сколько долларов стоило планирование в треде до брифа; без известной цены модели — только минуты. */
-    planning: z.object({ minutes: z.number().int().nonnegative(), cost: z.number().nonnegative().optional() }).optional(),
-    /** Ставит сервер: исполнитель, ревью и тестирование, которые владелец выбрал сам в прошлом отвеченном брифе треда. */
-    carried: carriedSchema.optional(),
-    /** Ставит сервер: черновик возвращённого брифа треда — владелец написал в чат, не отправив его; виджет кладёт выбор на совпавшие вопросы. */
-    restored: restoredDraftSchema.optional(),
-    /** Ставит сервер: этапы работ и название flow на момент брифа — отвеченный бриф рисуется ими, даже если настройки потом поменялись. */
-    stages: z.object({ list: z.array(workStageSchema), minButtonWidth: z.number().int(), flowName: z.string().optional() }).optional(),
-    ...briefFields,
-  })
-  .superRefine(checkBrief);
 
 export const questionAnswerSchema = z.object({
   questionId: text,
@@ -742,6 +729,59 @@ export const decisionAnswerSchema = z.object({
   execution: executionSchema.optional(),
 });
 
+/**
+ * Один источник выбора владельца в новом брифе: черновик или записанный ответ свёрнутого виджета и тексты пунктов
+ * Definition of Done того виджета — правки пунктов ложатся на новый бриф по тексту, а не по номеру.
+ */
+export const restoredSourceSchema = z.object({ draft: briefDraftSchema.optional(), answer: decisionAnswerSchema.optional(), criteria: z.array(z.string()).optional() });
+
+/**
+ * Выбор владельца из свёрнутых виджетов для нового брифа. `sources` — от старого к новому, поздний ложится поверх раннего;
+ * `draft` с `criteria` — запись одного возвращённого виджета до групп, читается как последний источник.
+ */
+export const restoredDraftSchema = z.object({ draft: briefDraftSchema.optional(), criteria: z.array(z.string()).optional(), sources: z.array(restoredSourceSchema).optional() });
+
+/**
+ * Группа треда — виджеты, присланные после прошлого утверждения, до ближайшего утверждения включительно. `lastApprove` —
+ * последний бриф группы утверждение, `folded` — комментарий к нему или сообщение в чат уже свернули группу.
+ */
+export const threadGroupSchema = z.object({ ids: z.array(text), lastApprove: z.boolean(), folded: z.boolean() });
+
+/** Свёрнутая группа: id виджета, на чьём месте стоит строка, и id всех виджетов группы по порядку. */
+export const foldSchema = z.object({ holder: text, ids: z.array(text).min(1) });
+
+/** Итог прогона: минуты, цель и потолок в долларах; `null` у минут — времени в прогнозе нет. */
+export const plannedSchema = z.object({ minutes: z.number().nullable(), target: z.number(), max: z.number() });
+
+export const decisionBriefSchema = z
+  .object({
+    id: text,
+    threadId: text,
+    createdAt: text,
+    /** Ставит сервер новым брифам: утверждённые артефакты в них можно отозвать. У записанных раньше метки нет — они читаются как были. */
+    revocable: z.boolean().optional(),
+    /** Ставит сервер брифу запущенной работы: итог бюджета в нём — утверждённый бюджет прогона плюс выбранные варианты, без него итога нет. */
+    launched: z.literal(true).optional(),
+    /** Ставит сервер брифу запущенной работы: утверждённое Definition of Done треда — итог последнего ответа с пунктами. */
+    approved: z.array(text).min(1).optional(),
+    /** Ставит сервер брифу запущенной работы: утверждённый объём треда — база и варианты последнего ответа; без своих пунктов бриф считает от него. */
+    approvedScope: addSchema.optional(),
+    /** Ставит сервер брифу-уточнению запущенной работы: бюджет прогона из прогресса треда — итог считается от него. */
+    approvedBudget: plannedSchema.optional(),
+    /** Ставит сервер из настроек: какие документы сделать и какие утвердить обязательно. */
+    required: z.object({ make: z.array(text), approve: z.array(text) }).optional(),
+    /** Ставит сервер: сколько минут шло и сколько долларов стоило планирование в треде до брифа; без известной цены модели — только минуты. */
+    planning: z.object({ minutes: z.number().int().nonnegative(), cost: z.number().nonnegative().optional() }).optional(),
+    /** Ставит сервер: исполнитель, ревью и тестирование, которые владелец выбрал сам в прошлом отвеченном брифе треда. */
+    carried: carriedSchema.optional(),
+    /** Ставит сервер: черновик возвращённого брифа треда — владелец написал в чат, не отправив его; виджет кладёт выбор на совпавшие вопросы. */
+    restored: restoredDraftSchema.optional(),
+    /** Ставит сервер: этапы работ и название flow на момент брифа — отвеченный бриф рисуется ими, даже если настройки потом поменялись. */
+    stages: z.object({ list: z.array(workStageSchema), minButtonWidth: z.number().int(), flowName: z.string().optional() }).optional(),
+    ...briefFields,
+  })
+  .superRefine(checkBrief);
+
 /** Прогноз бюджета на момент отправки ответа — та же форма, что считает ядро; `null` — величина неизвестна. */
 export const forecastSnapshotSchema = z.object({
   lines: z.array(
@@ -774,8 +814,6 @@ export const answerRecordSchema = z.object({
   handoffThreadId: text.optional(),
   /** Картинки, легшие вложениями проекта треда: номер метки «[картинка N]» и путь вложения. Нет у ответа без картинок и у ответов, записанных раньше. */
   images: z.array(z.object({ n: z.number().int().positive(), path: text, name: z.string().optional() })).optional(),
-  /** Ответ встал в ленту сообщением владельца: отвеченный бриф не повторяет его слов и показывает только итог. Нет у ответов, записанных раньше. */
-  posted: z.literal(true).optional(),
   /** Сообщение, в котором стоит директива брифа. */
   messageId: text,
   answeredAt: z.iso.datetime(),
@@ -806,8 +844,19 @@ export const decisionsRpcContract = defineRpcContract({
   getBrief: {
     input: z.object({ id: z.string() }),
     output: z.discriminatedUnion("kind", [
-      /** `returned` — владелец написал в чат, не отправив бриф: бриф вернулся агенту и в ленте свёрнут. */
-      z.object({ kind: z.literal("found"), brief: decisionBriefSchema, answer: answerRecordSchema.nullable(), returned: z.literal(true).optional() }),
+      /**
+       * `fold` — виджет в свёрнутой группе: комментарий к утверждению или сообщение владельца в чат вернули группу агенту;
+       * в ленте остаётся строка на месте `fold.holder`. `draft` — черновик неотвеченного виджета: раскрытая строка показывает его.
+       */
+      z.object({
+        kind: z.literal("found"),
+        brief: decisionBriefSchema,
+        answer: answerRecordSchema.nullable(),
+        fold: foldSchema.optional(),
+        draft: briefDraftSchema.optional(),
+        /** Неотвеченное уточнение, которое агент закрыл как решённое (`resolves` в `ask_decision`): виджет рисует строку «Решено». */
+        resolved: z.literal(true).optional(),
+      }),
       z.object({ kind: z.literal("not_found") }),
     ]),
   },
@@ -1413,6 +1462,9 @@ export type RiskLevel = z.output<typeof riskLevelSchema>;
 export type Add = z.output<typeof addSchema>;
 export type Criterion = z.output<typeof criterionSchema>;
 export type RestoredDraft = z.output<typeof restoredDraftSchema>;
+export type RestoredSource = z.output<typeof restoredSourceSchema>;
+export type ThreadGroup = z.output<typeof threadGroupSchema>;
+export type Fold = z.output<typeof foldSchema>;
 export type Planning = NonNullable<z.output<typeof decisionBriefSchema>["planning"]>;
 export type Artifact = z.output<typeof artifactSchema>;
 export type Scale = z.output<typeof scaleSchema>;

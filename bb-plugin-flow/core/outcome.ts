@@ -35,9 +35,13 @@ export const outcomeKind = (brief: DecisionBrief): OutcomeKind => {
 /** Название этапа Демонстрации брифа. */
 export const outcomeStageName = (brief: DecisionBrief): string => stageNameOf(brief, brief.outcome?.stage ?? "");
 
+/** Демонстрация — отчёт: итог не Утверждения ответа не принимает, `answerBrief` отказывает. */
+export const isReport = (brief: DecisionBrief): boolean => brief.outcome !== undefined && outcomeKind(brief) !== "approve";
+
 /**
- * Исход Демонстрации: продолжить, комментарий или переход в другой flow; `null` — итог не отвечен. Комментарий —
- * написанный к ней или свой ответ в строке вопроса — Демонстрацию не принимает: она остаётся открытой, агент отвечает, flow дальше не идёт. Переход её тоже не принимает:
+ * Исход ответа на итог: продолжить, комментарий или переход в другой flow; `null` — итог не отвечен. Отвечают на Утверждение
+ * (Демонстрация — отчёт, ответов не берёт; исходы в записях ответов на неё остались от прежних виджетов). Комментарий —
+ * написанный к нему или свой ответ в строке вопроса — Утверждение не принимает: оно остаётся открытым, агент дорабатывает. Переход его тоже не принимает:
  * тред уходит в выбранный flow, а комментарий едет туда вместе с ним.
  */
 export type DemoVerdict = "continue" | "comment" | "switch";
@@ -60,7 +64,16 @@ export const ownWords = (answer: Partial<Pick<DecisionAnswer, "answers">>): bool
 /** Демонстрация отвечена одним из двух исходов. */
 export const outcomeAnswered = (answer: Parameters<typeof demoVerdict>[0]): boolean => demoVerdict(answer) !== null;
 
-/** Рекомендованный flow — один из flow владельца: перейти в несуществующий Демонстрация не может. */
+/**
+ * Демонстрация — отчёт: вопросов у неё нет (уточнение идёт отдельным виджетом), перехода тоже — работу в другой flow
+ * переводит кнопка утверждения, поэтому `nextFlow` допустим только там.
+ */
+export const reportOnlyIssues = (outcome: Pick<StageOutcome, "nextFlow">, questionCount: number): string[] => [
+  ...(questionCount === 0 ? [] : ["a demo is a report: questions go as a clarify, a flow switch as outcome.nextFlow on an approval"]),
+  ...(outcome.nextFlow === undefined ? [] : ["outcome.nextFlow goes on an approval: the owner moves the work with its button"]),
+];
+
+/** Рекомендованный flow — один из flow владельца: перейти в несуществующий утверждение не может. */
 export const nextFlowIssues = (outcome: Pick<StageOutcome, "nextFlow">, flowIds: readonly string[]): string[] =>
   outcome.nextFlow === undefined || flowIds.includes(outcome.nextFlow)
     ? []

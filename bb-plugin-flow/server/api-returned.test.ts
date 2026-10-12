@@ -19,22 +19,24 @@ const host = async () => {
 };
 
 describe("возвращённый бриф в API виджета", () => {
-  it("черновик пишется, пока бриф ждёт; после возврата бриф отдаётся возвращённым, а черновик больше не принимается", async () => {
+  it("черновик пишется, пока бриф ждёт; после возврата бриф отдаётся свёрнутым в группу из одного вместе с черновиком, а новый черновик не принимается", async () => {
     const { store, call } = await host();
     expect(await call("saveBriefDraft", { id: brief.id, draft: "{}" })).toEqual({ kind: "saved" });
     expect(await store.getDraft(brief.id)).toBe("{}");
-    expect((await call("getBrief", { id: brief.id })).returned).toBeUndefined();
-    await store.markReturned(brief.id);
-    expect((await call("getBrief", { id: brief.id })).returned).toBe(true);
+    expect((await call("getBrief", { id: brief.id })).fold).toBeUndefined();
+    await store.foldSingle(brief.id);
+    const folded = await call("getBrief", { id: brief.id });
+    expect(folded.fold).toEqual({ holder: brief.id, ids: [brief.id] });
+    expect(folded.draft).toBe("{}");
     expect(await call("saveBriefDraft", { id: brief.id, draft: "{\"x\":1}" })).toEqual({ kind: "closed" });
     expect(await store.getDraft(brief.id)).toBe("{}");
   });
 
-  it("отвеченный бриф рисуется ответом, даже если его возвращали; черновик неизвестного брифа — not_found", async () => {
+  it("ответ кнопкой — последнее слово владельца: отвеченный бриф рисуется ответом без свёртки, если его возвращали до групп; черновик неизвестного брифа — not_found", async () => {
     const { store, call } = await host();
     await store.markReturned(brief.id);
     await call("answerBrief", { id: brief.id, answer: { briefId: brief.id, answers: [{ questionId: "go", optionIds: ["yes"] }] }, messageId: "m" });
-    expect((await call("getBrief", { id: brief.id })).returned).toBeUndefined();
+    expect((await call("getBrief", { id: brief.id })).fold).toBeUndefined();
     expect(await call("saveBriefDraft", { id: "dec_none", draft: "{}" })).toEqual({ kind: "not_found" });
   });
 

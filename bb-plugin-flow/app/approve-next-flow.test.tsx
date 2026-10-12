@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
-// Демонстрация с рекомендованным flow: в ряду кнопок — кнопки Flow и модели с рекомендацией агента, их можно сменить;
-// «Отправить» уводит работу в выбранный flow с его моделью, возврат к текущему flow ничего не отправляет.
+// Утверждение с рекомендованным flow: в ряду кнопок — кнопки Flow и модели с рекомендацией агента, их можно сменить;
+// «Отправить» уводит работу в выбранный flow с его моделью, возврат к текущему flow возвращает «Продолжить».
+// Демонстрация — отчёт: даже сохранённая с рекомендованным flow она ряда перевода не рисует (demo-card.test.tsx).
 import { cleanup, fireEvent, waitFor, within } from "@testing-library/react";
 import type { PluginMessageDirectiveProps } from "@get-bb/plugin-sdk/app";
 import { loadPluginApp, renderSlot } from "@get-bb/plugin-sdk/testing/app";
@@ -14,16 +15,16 @@ const app = await loadPluginApp(() => import("../app"));
 beforeEach(() => window.localStorage.clear());
 afterEach(cleanup);
 
-const demo: DecisionBrief = {
+const approval: DecisionBrief = {
   id: "dec_next_flow",
   threadId: "thr_1",
-  title: "Ответ на вопрос",
+  title: "Утвердить ответ",
   createdAt: "2026-10-03T10:00:00.000Z",
   kind: "brief",
   launched: true,
   questions: [],
-  outcome: { stage: "demo", final: true, done: ["Ответ дан"], pending: [], results: [{ label: "a.md", target: "a.md" }], documentsOnly: true, nextFlow: "flow-bug" },
-  stages: { list: [{ ...builtinStage("demo", []), name: "Демонстрация" }], minButtonWidth: 160 },
+  outcome: { stage: "approve", final: true, done: ["Ответ дан"], pending: [], results: [{ label: "a.md", target: "a.md" }], documentsOnly: true, nextFlow: "flow-bug" },
+  stages: { list: [builtinStage("approve", [])], minButtonWidth: 160 },
 };
 
 const opus = { providerId: "claude-code", model: "opus", reasoningLevel: "high" as const };
@@ -42,10 +43,10 @@ const catalog = {
 const open = (sent: DecisionAnswer[]) =>
   renderSlot<PluginMessageDirectiveProps, typeof decisionsRpcContract & typeof dispatchRpcContract & typeof outcomeRpcContract & typeof widgetAgentRpcContract>(
     app.messageDirectives[0]!,
-    { attributes: { id: demo.id }, source: `::decision{id="${demo.id}"}`, message: { id: "msg_1", threadId: "thr_1", turnId: "turn_1", projectId: null }, openWorkspaceFile: () => true },
+    { attributes: { id: approval.id }, source: `::decision{id="${approval.id}"}`, message: { id: "msg_1", threadId: "thr_1", turnId: "turn_1", projectId: null }, openWorkspaceFile: () => true },
     {
       rpc: {
-        getBrief: () => ({ kind: "found", brief: demo, answer: null }),
+        getBrief: () => ({ kind: "found", brief: approval, answer: null }),
         answerBrief: ({ answer }: { answer: DecisionAnswer }) => {
           sent.push(answer);
           return { kind: "not_found" };
@@ -58,13 +59,19 @@ const open = (sent: DecisionAnswer[]) =>
     },
   );
 
-describe("Демонстрация с рекомендованным flow", () => {
+describe("Утверждение с рекомендованным flow", () => {
   it("кнопка Flow — широкая, с рекомендацией агента ✦; модель flow предложена; кнопка — «Отправить»", async () => {
     const slot = open([]);
     expect(await slot.findByRole("button", { name: "Flow: Bug" })).toBeTruthy();
     expect(slot.getByRole("button", { name: /Модель: Sonnet/ })).toBeTruthy();
     expect(slot.getByRole("button", { name: "Отправить" })).toBeTruthy();
     expect(slot.queryByRole("button", { name: "Завершить" })).toBeNull();
+  });
+
+  it("рекомендованный flow предвыбран, а Демонстрации того же flow ряда нет", async () => {
+    const slot = open([]);
+    expect(await slot.findByRole("button", { name: "Flow: Bug" })).toBeTruthy();
+    expect(slot.queryByRole("button", { name: "Отправить комментарии" })).toBeNull();
   });
 
   it("«Отправить» уводит работу в рекомендованный flow с его моделью", async () => {
@@ -85,20 +92,22 @@ describe("Демонстрация с рекомендованным flow", () =
     expect(list.getByRole("button", { name: /Answer.*Сейчас/ })).toBeTruthy();
     expect(list.getByRole("button", { name: /Bug.*предлагает агент/ })).toBeTruthy();
     fireEvent.click(list.getByRole("button", { name: "Code" }));
-    fireEvent.change(slot.getByRole("textbox", { name: "Комментарий к демонстрации" }), { target: { value: "только первую находку" } });
+    fireEvent.change(slot.getByRole("textbox", { name: "Комментарий к утверждению" }), { target: { value: "только первую находку" } });
     fireEvent.click(slot.getByRole("button", { name: "Отправить" }));
     await waitFor(() => expect(sent).toHaveLength(1));
     expect(sent[0]?.outcome).toEqual({ accepted: false, note: "только первую находку", flow: { id: "flow-code", name: "Code" } });
     expect(sent[0]?.execution).toBeUndefined();
   });
 
-  it("вернуть текущий flow без комментария — отправлять нечего: «Отправить комментарии» выключена, ✦ остаётся у рекомендации", async () => {
+  it("вернуть текущий flow без комментария — снова «Завершить», ✦ остаётся у рекомендации; уходит приёмка без перехода", async () => {
     const sent: DecisionAnswer[] = [];
     const slot = open(sent);
     fireEvent.click(await slot.findByRole("button", { name: "Flow: Bug" }));
     const list = within(await slot.findByRole("group", { name: "Flow" }));
     fireEvent.click(list.getByRole("button", { name: /^Answer/ }));
-    expect((slot.getByRole("button", { name: "Отправить комментарии" }) as HTMLButtonElement).disabled).toBe(true);
     expect(within(slot.getByRole("group", { name: "Flow" })).getByRole("button", { name: /Bug.*предлагает агент/ })).toBeTruthy();
+    fireEvent.click(slot.getByRole("button", { name: "Завершить" }));
+    await waitFor(() => expect(sent).toHaveLength(1));
+    expect(sent[0]?.outcome).toEqual({ accepted: true });
   });
 });
