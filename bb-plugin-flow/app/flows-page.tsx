@@ -6,14 +6,15 @@
 // агентом — в настройках плагина (./flow-settings-sections). Страницу листает
 // её корень целиком, вместе со списком: рамок со своей прокруткой внутри нет.
 // Выбранный flow живёт в адресе страницы, чтобы ссылка открывала его; адрес
-// `history` вместо flow открывает историю прогонов (./run-history). Своей
-// ширины содержимое не держит: таблица этапов сама перестраивается по ширине
+// `history` вместо flow открывает историю прогонов (./run-history), `widget-<вид>` — страницу
+// этапа-виджета (./widget-page). Своей ширины содержимое не держит: таблица этапов сама перестраивается по ширине
 // контейнера и на телефоне встаёт в колонку — держать её широкой раскладке
 // 46rem значило бы листать страницу вбок там, где листать некуда.
 import { useState } from "react";
 import { useBbNavigate, useRpc, useSettings, type PluginNavPanelProps } from "@get-bb/plugin-sdk/app";
 import { useFollowSelectedThread } from "@bb-plugins/rail-collapse";
 
+import { widgetKindOf } from "../core/widget-anatomy";
 import { AUTO_FLOW, describeFlow, describeNoFlow, flowById, limitFlow, NO_FLOW, removeFlow, renameFlow, setAutoAgent, setFlowAgent, setFlowIcon } from "../core/flows";
 import { Button } from "../components/ui/button";
 import { Icon } from "../components/ui/icon";
@@ -36,6 +37,7 @@ import { WorkflowsSection } from "./workflows-section";
 import { workflowsPlace } from "../core/workflows-route";
 import { FlowGlyph } from "./flow-glyph";
 import { AgentBlock } from "./flow-agent";
+import { WidgetPage } from "./widget-page";
 import { StageIconPicker } from "./stage-icon-picker";
 
 export function FlowsPage(props: PluginNavPanelProps) {
@@ -240,6 +242,8 @@ function FlowEditor({ subPath }: { subPath: string }) {
   const t = useMessages();
   const { settings } = useFlowSettings();
   if (settings === null) return <div aria-busy="true" />;
+  const widget = widgetKindOf(subPath);
+  if (widget !== null) return <WidgetPage kind={widget} />;
   if (subPath === NO_FLOW) return <NoFlowEditor saved={settings.noFlowDescription} />;
   if (subPath === AUTO_FLOW) return <AutoEditor agent={settings.autoAgent} />;
   // Выбранный flow приходит адресом панели: его пишет лента в начале страницы, а кнопки

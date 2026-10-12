@@ -1,7 +1,7 @@
 // Бэкенд Flow: инструменты агента `ask_decision`, `share_command` и `flow_stage`, исполнитель автоматизаций, коллекция
 // flow и flow тредов, настройка языка и RPC виджетов поверх kv плагина.
 import { randomBytes } from "node:crypto";
-import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
+import { access, mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
@@ -48,6 +48,7 @@ import { readProviderModels, registerWorkflowFiles } from "./server/workflow-fil
 import { registerWorkflowTools, WORKFLOW_READ_TOOL_NAME, WORKFLOW_WRITE_TOOL_NAME } from "./server/workflow-tools";
 import { createLegacyHeal } from "./server/legacy-heal";
 import { registerFlowSettingsApi, STAGE_SETTINGS_CHANNEL } from "./server/settings-api";
+import { registerWidgetFiles } from "./server/widget-files";
 import { registerThreadListPrefsApi } from "./server/thread-list-prefs-api";
 import { createFlowSync, defaultSyncDir, FLOW_SYNC_CHANNEL, registerFlowSyncApi, SYNC_POLL_MS } from "./server/flow-sync";
 import { createSkillDelivery } from "./server/skill-delivery";
@@ -400,6 +401,8 @@ export default async function plugin(bb: BbPluginApi): Promise<void> {
       return first === undefined ? null : defaultExecutionOf(await bb.sdk.providers.models({ providerId: first.id }), first.id);
     },
   });
+  // Файлы состава виджета для просмотрщика bb: корень плагина — по его навыку, наличие файла — по диску.
+  registerWidgetFiles(bb, { ...hostSkillFileSources(bb), exists: (path) => access(path).then(() => true, () => false) });
   registerThreadListPrefsApi(bb);
   registerFlowPickerApi(bb, flows, threads);
   registerMentionsApi(bb, { catalog });
