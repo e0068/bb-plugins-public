@@ -13,11 +13,13 @@ import {
   dispatchRouteSchema,
   type Add,
   briefDraftSchema,
+  prototypeStateSchema,
   threadGroupSchema,
   type AnswerRecord,
   type DecisionBrief,
   type DispatchRoute,
   type Fold,
+  type PrototypeState,
   type ThreadGroup,
 } from "../shared/contract";
 
@@ -48,6 +50,8 @@ const idListSchema = z.array(z.string()).min(1);
 
 const threadScopeKey = (threadId: string): string => `thread-scope:${threadId}`;
 const launchedKey = (threadId: string) => `decision-launched:${threadId}`;
+/** Память прототипа: тред и адрес страницы без якоря. */
+const prototypeKey = (threadId: string, url: string) => `decision-prototype:${threadId}:${url}`;
 /** Маршрут нового треда по проектам. Места рядом нет: бриф всегда открывается «в этом треде». */
 const ROUTES_KEY = "dispatch-route";
 
@@ -92,6 +96,12 @@ export type DecisionStore = {
   getThreadGroup(threadId: string): Promise<ThreadGroup | null>;
   /** Снимок группы утверждения: виджеты до него включительно. Пишется при записи утверждения — к комментарию список треда уже мог уйти дальше. */
   putApprovalGroup(approvalId: string, ids: readonly string[]): Promise<void>;
+  /** Снимок группы утверждения; утверждение, записанное до снимков, — пустой список. */
+  getApprovalGroup(approvalId: string): Promise<string[]>;
+  /** Память прототипа в треде; владелец в нём ещё ничего не делал — `null`. */
+  getPrototype(threadId: string, url: string): Promise<PrototypeState | null>;
+  /** Правка памяти прототипа по очереди: правка виджета и отметка отправки не затирают друг друга. */
+  updatePrototype(threadId: string, url: string, update: (state: PrototypeState | null) => PrototypeState): Promise<PrototypeState>;
   /**
    * Утверждение `holder` свернуло группу: виджеты из её снимка, а без снимка — одно оно. Каждый становится членом группы и
    * помечается возвращённым; список треда лишь помнит свёрнутое утверждение, ids в нём не меняются. Ответ — id свёрнутых виджетов.
@@ -155,6 +165,11 @@ export const createStore = (kv: PluginKvStorage): DecisionStore => {
     await kv.set(foldGroupKey(holder), [...ids]);
     await Promise.all(ids.flatMap((id) => [kv.set(foldKey(id), holder), kv.set(returnedKey(id), true)]));
     return [...ids];
+  };
+
+  const readPrototype = async (threadId: string, url: string): Promise<PrototypeState | null> => {
+    const parsed = prototypeStateSchema.safeParse(await kv.get(prototypeKey(threadId, url)));
+    return parsed.success ? parsed.data : null;
   };
 
   const readGroup = async (threadId: string) => {
@@ -235,6 +250,17 @@ export const createStore = (kv: PluginKvStorage): DecisionStore => {
     async putApprovalGroup(approvalId, ids) {
       await kv.set(approvalGroupKey(approvalId), [...ids]);
     },
+    async getApprovalGroup(approvalId) {
+      const ids = idListSchema.safeParse(await kv.get(approvalGroupKey(approvalId)));
+      return ids.success ? ids.data : [];
+    },
+    getPrototype: (threadId, url) => readPrototype(threadId, url),
+    updatePrototype: (threadId, url, update) =>
+      serialized(prototypeKey(threadId, url), async () => {
+        const next = update(await readPrototype(threadId, url));
+        await kv.set(prototypeKey(threadId, url), next);
+        return next;
+      }),
     foldSingle: (holder) => markFold(holder, [holder]),
     async getFold(id) {
       const holder = await kv.get(foldKey(id));

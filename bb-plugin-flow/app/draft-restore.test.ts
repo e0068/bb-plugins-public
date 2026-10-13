@@ -48,10 +48,10 @@ describe("черновик возвращённого брифа на новом
     expect(draft.criteria).toEqual({ removed: [1], edited: { 2: "Ченж-лог на двух языках" }, added: ["Мой пункт"] });
   });
 
-  it("текст владельца, своя цена и комментарий к Демонстрации переносятся", () => {
+  it("своя цена и комментарий к Демонстрации переносятся, а общий комментарий брифа на бриф с итогом — нет: поля для него там нет", () => {
     const demo: DecisionBrief = { ...brief, outcome: { stage: "demo", final: false, next: "x", done: [], pending: [], results: [{ label: "a", target: "b" }] } } as DecisionBrief;
     const draft = withRestored(demo, initialDraft(demo), returned({ note: "заметка", budget: { minutes: "", target: "5", max: "" }, outcomeNote: "поправь отступы" }));
-    expect([draft.note, draft.budget.target, draft.outcomeNote]).toEqual(["заметка", "5", "поправь отступы"]);
+    expect([draft.note, draft.budget.target, draft.outcomeNote]).toEqual(["", "5", "поправь отступы"]);
   });
 
   it("без возвращённого или с нечитаемым черновиком бриф открывается как обычно", () => {

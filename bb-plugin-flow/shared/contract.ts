@@ -9,6 +9,7 @@ import { z } from "zod";
 import { STEP_IDS } from "@bb-plugins/automation-steps/catalog";
 import { MAX_START_MESSAGE_CHARS, REASONING_LEVELS, SERVICE_TIERS } from "../lib/agent-limits";
 import { MAX_SCRIPT_CHARS } from "../lib/script-limit";
+import { PROTOTYPE_LIMITS } from "../lib/prototype-protocol";
 import { linkedSubStages, MAX_WAKE_INSTRUCTION_CHARS, RETRY_LIMITS, SELF_EXECUTOR, STAGE_BUTTON_WIDTH, STAGE_KINDS, SUB_STAGE_ISSUE } from "../lib/stage-constants";
 
 export { RETRY_LIMITS, SELF_EXECUTOR, STAGE_BUTTON_WIDTH };
@@ -423,6 +424,15 @@ export const routeBranchSchema = z.enum(["current", "from-current", "from-origin
  */
 export const dispatchRouteSchema = z.object({ tree: routeTreeSchema, branch: routeBranchSchema, projectId: text.optional() });
 
+/** Адрес страницы прототипа: только `http:` и `https:` — окно виджета не открывает файлы и скрипты. */
+export const prototypeUrlSchema = text.refine((s) => {
+  try {
+    return ["http:", "https:"].includes(new URL(s).protocol);
+  } catch {
+    return false;
+  }
+}, "a prototype address is an http(s) URL");
+
 /**
  * Итог этапа: что из Definition of Done сделано, что нет и почему, что ещё важно знать и какие задачи закрыты.
  * Промежуточный итог называет следующий этап, финальному называть нечего.
@@ -446,6 +456,8 @@ export const stageOutcomeSchema = z
     results: z.array(z.union([z.object({ label: text, target: text }).strict(), z.object({ label: text, command: text.max(COMMAND_MAX_LENGTH) }).strict()])).min(1),
     /** С прошлой Демонстрации менялись только документы — живой ссылки нет. */
     documentsOnly: z.literal(true).optional(),
+    /** Прототип в окне виджета под карточкой Демонстрации: адрес страницы `http(s)` и подпись; у Утверждения не рисуется. */
+    prototype: z.object({ url: prototypeUrlSchema, title: text.optional() }).strict().optional(),
     /** Id flow, который агент рекомендует для найденных проблем: Утверждение предлагает владельцу перейти в него; у Демонстрации поля нет. */
     nextFlow: text.describe("Id of the owner's flow for problems you found while working; only on an approval stage outcome: one send of the approval moves the work into it").optional(),
   })
@@ -897,6 +909,44 @@ export const briefDraftRpcContract = defineRpcContract({
   saveBriefDraft: {
     input: z.object({ id: text, draft: briefDraftSchema }),
     output: z.discriminatedUnion("kind", [z.object({ kind: z.literal("saved") }), z.object({ kind: z.literal("closed") }), z.object({ kind: z.literal("not_found") })]),
+  },
+});
+
+const protoLabel = text.max(PROTOTYPE_LIMITS.label);
+const protoChoices = z.record(protoLabel, protoLabel).refine((choices) => Object.keys(choices).length <= PROTOTYPE_LIMITS.forks, "too many prototype choices");
+
+/** Развилка, которую прислала страница прототипа: id, подпись и варианты. */
+export const prototypeForkSchema = z.object({
+  id: protoLabel,
+  label: protoLabel,
+  options: z.array(z.object({ value: protoLabel, label: protoLabel })).min(1).max(PROTOTYPE_LIMITS.options),
+});
+
+/** Комментарий агенту к прототипу: `at` — подпись места, по которому кликнул владелец; `sent` — ушёл агенту с ответом на утверждение. */
+export const prototypeCommentSchema = z.object({ id: protoLabel, text: text.max(PROTOTYPE_LIMITS.comment), at: protoLabel.optional(), sent: z.literal(true).optional() });
+
+/** То, что пишет виджет: развилки, выбор, комментарии — без отметок отправки, их ставит сервер. */
+export const prototypeEditSchema = z.object({
+  forks: z.array(prototypeForkSchema).max(PROTOTYPE_LIMITS.forks),
+  choices: protoChoices,
+  comments: z.array(prototypeCommentSchema.omit({ sent: true })).max(PROTOTYPE_LIMITS.comments),
+});
+
+/** Память прототипа в треде: правка виджета и что из неё уже ушло агенту. */
+export const prototypeStateSchema = prototypeEditSchema.extend({
+  sentChoices: protoChoices,
+  comments: z.array(prototypeCommentSchema).max(PROTOTYPE_LIMITS.comments),
+});
+
+/** Память прототипа — своим контрактом: тред и адрес без якоря; `state: null` — владелец в этом прототипе ещё ничего не делал. */
+export const prototypeRpcContract = defineRpcContract({
+  getPrototype: {
+    input: z.object({ threadId: text, url: prototypeUrlSchema }),
+    output: z.object({ state: prototypeStateSchema.nullable() }),
+  },
+  savePrototype: {
+    input: z.object({ threadId: text, url: prototypeUrlSchema, edit: prototypeEditSchema }),
+    output: z.object({ state: prototypeStateSchema }),
   },
 });
 
@@ -1490,6 +1540,10 @@ export type RiskLevel = z.output<typeof riskLevelSchema>;
 export type Add = z.output<typeof addSchema>;
 export type Criterion = z.output<typeof criterionSchema>;
 export type RestoredDraft = z.output<typeof restoredDraftSchema>;
+export type PrototypeFork = z.output<typeof prototypeForkSchema>;
+export type PrototypeComment = z.output<typeof prototypeCommentSchema>;
+export type PrototypeEdit = z.output<typeof prototypeEditSchema>;
+export type PrototypeState = z.output<typeof prototypeStateSchema>;
 export type RestoredSource = z.output<typeof restoredSourceSchema>;
 export type ThreadGroup = z.output<typeof threadGroupSchema>;
 export type Fold = z.output<typeof foldSchema>;

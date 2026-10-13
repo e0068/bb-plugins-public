@@ -12,10 +12,11 @@ import { finalCriteria } from "../core/option-criteria";
 import { demoVerdict, isReport, outcomeKind } from "../core/outcome";
 import { routeAllowed } from "../core/places";
 import { onAnswer } from "../core/progress";
+import { EMPTY_PROTOTYPE, markSent, mergeEdit, prototypeAddress, prototypeLines } from "../core/prototype";
 import type { Locale } from "../lib/i18n";
 import { isSideChat } from "../core/side-chat";
 import { stageItems } from "../core/stages";
-import { answerImagesRpcContract, awaitingRpcContract, briefDraftRpcContract, decisionsRpcContract, dispatchRpcContract, filesRpcContract, widgetAgentRpcContract, type DecisionAnswer, type DecisionBrief, type DispatchRoute, type Execution, type WidgetAgent } from "../shared/contract";
+import { answerImagesRpcContract, awaitingRpcContract, briefDraftRpcContract, decisionsRpcContract, dispatchRpcContract, filesRpcContract, prototypeRpcContract, widgetAgentRpcContract, type DecisionAnswer, type DecisionBrief, type DispatchRoute, type Execution, type WidgetAgent } from "../shared/contract";
 import { attachmentInput, attachmentsLine, lostImages, readAttachments, referencedImages, uploadAttachments } from "./attachments";
 import { handoff } from "./handoff";
 import type { ProgressStore } from "./progress";
@@ -63,6 +64,14 @@ export const registerApi = (
 
   /** Комментарий к утверждению — ответ на итог вида approve с вердиктом comment: Демонстрацию и переход в другой flow он не сворачивает. */
   const foldsGroup = (brief: DecisionBrief, verdict: ReturnType<typeof demoVerdict>): boolean => verdict === "comment" && brief.outcome !== undefined && outcomeKind(brief) === "approve";
+
+  /** Прототипы Демонстраций группы утверждения, в которых владелец что-то сделал: адрес без якоря и память. */
+  const groupPrototypes = async (approval: DecisionBrief) => {
+    const briefs = await Promise.all((await store.getApprovalGroup(approval.id)).map((id) => store.getBrief(id)));
+    const urls = [...new Set(briefs.flatMap((member) => (member?.outcome?.prototype === undefined ? [] : [prototypeAddress(member.outcome.prototype.url)])))];
+    const states = await Promise.all(urls.map(async (url) => ({ url, state: await store.getPrototype(approval.threadId, url) })));
+    return states.flatMap(({ url, state }) => (state === null ? [] : [{ url, state }]));
+  };
 
   bb.rpc.register(decisionsRpcContract, {
     async getBrief({ id }) {
@@ -114,9 +123,12 @@ export const registerApi = (
       if (written.kind === "already_answered") return written;
       const lost = lostImages(answer, { uploaded: attached, failed }, locale);
       const parts = answerMessageParts(brief, answer, locale);
+      // Утверждение несёт агенту то, что владелец сделал в прототипах своей группы и ещё не отправлял: его слова — в его часть реплики.
+      const prototypes = outcomeKind(brief) === "approve" ? await groupPrototypes(brief) : [];
+      const owner = [parts.owner, ...prototypeLines(prototypes.map(({ state }) => state), locale)].join("\n");
       // Служебное агенту: прогон, бюджет, Definition of Done, следующий шаг и пути вложений.
       const service = `${parts.agent}${attachmentsLine(attached, lost, locale)}`.replace(/^\n/, "");
-      const text = service === "" ? parts.owner : `${parts.owner}\n${service}`;
+      const text = service === "" ? owner : `${owner}\n${service}`;
       const place = answer.place ?? "here";
       let handoffThreadId: string | undefined;
       try {
@@ -138,7 +150,7 @@ export const registerApi = (
           if (switched !== undefined || needsAgentReply(brief, answer, ahead, attached.length + lost.length)) {
             // Видна ли хуку служебная часть в тексте хода — неизвестно: своей отмечаются оба варианта.
             deps.ownSend?.(brief.threadId, text);
-            deps.ownSend?.(brief.threadId, parts.owner);
+            deps.ownSend?.(brief.threadId, owner);
             // Ответ встаёт в ленту сообщением владельца — его слова и вложения, как он их отправил, — а служебное видит только агент.
             await bb.sdk.threads.send({
               threadId: brief.threadId,
@@ -146,7 +158,7 @@ export const registerApi = (
               mode: brief.kind === "clarify" ? "steer-if-active" : "queue-if-active",
               ...(execution === undefined ? {} : { model: execution.model, reasoningLevel: execution.reasoningLevel, ...(execution.serviceTier === undefined ? {} : { serviceTier: execution.serviceTier }) }),
               input: [
-                { type: "text", text: parts.owner, mentions: [] },
+                { type: "text", text: owner, mentions: [] },
                 ...attached.map(attachmentInput),
                 ...(service === "" ? [] : [{ type: "text" as const, text: service, mentions: [], visibility: AGENT_ONLY }]),
               ],
@@ -170,6 +182,8 @@ export const registerApi = (
       // Дальше реплика уже ушла: ни один сбой ниже не снимает ответ — повтор создал бы второй тред.
       // Худшее при сбое отметки — запущенный тред ещё примет этапы; это мягче дубля треда.
       const quietly = (work: Promise<unknown>) => work.catch(() => undefined);
+      // Выбор и комментарии прототипов ушли агенту: следующее утверждение их не повторит.
+      await quietly(Promise.all(prototypes.map(({ url }) => store.updatePrototype(brief.threadId, url, (state) => markSent(state ?? EMPTY_PROTOTYPE)))));
       if (handoffThreadId !== undefined) {
         await quietly(store.attachHandoff(id, handoffThreadId));
         // Переход начинает работу заново: новый тред решает этапы и бюджет своим первым брифом, а прогон ответа в исходном снимается.
@@ -213,6 +227,9 @@ export const registerApi = (
       const folded = foldsGroup(brief, verdict) ? ((await store.foldGroup(brief.threadId, id).catch(() => null)) ?? [id]) : [];
       if (folded.length > 0) await quietly(store.putThreadReturned(brief.threadId, id));
       (folded.length > 0 ? folded : [id]).forEach((member) => bb.realtime.publish(ANSWERED_CHANNEL, { id: member }));
+      // Журнал — только для брифов: уточнение не решение. Он ложится на диск раньше события для Automations: Commit, который оно запускает,
+      // иначе проходит мимо файла этого решения. Сбой или отсутствие настройки не отменяют ни ответа, ни реплики, уже ушедших выше.
+      if (brief.kind === "brief") await deps.writeDecision?.({ brief, answer, decidedAt: written.record.answeredAt, locale }).catch(() => undefined);
       // Ответ уже записан и ушёл: событие для Automations — последнее и ничего не отменяет.
       const emit = (trigger: FlowTrigger) => {
         try {
@@ -225,8 +242,6 @@ export const registerApi = (
       // Переход в другой flow — тоже: Демонстрация не принята, и автоматизациям за ней отвечать не на что.
       if (verdict !== "comment" && verdict !== "switch") emit("flow.brief-answered");
       if (brief.setup?.criteria !== undefined) emit("flow.criteria-approved");
-      // Журнал — только для брифов: уточнение не решение. Сбой или отсутствие настройки не отменяют ни ответа, ни реплики, уже ушедших выше.
-      if (brief.kind === "brief") await deps.writeDecision?.({ brief, answer, decidedAt: written.record.answeredAt, locale }).catch(() => undefined);
       return { kind: "accepted" as const, record: { ...written.record, ...(handoffThreadId === undefined ? {} : { handoffThreadId }) } };
     },
   });
@@ -242,6 +257,13 @@ export const registerApi = (
       if (brief === null || record === null) return { kind: "not_found" as const };
       return { kind: "found" as const, images: await readAttachments(bb.sdk, { threadId: brief.threadId, images: record.images ?? [] }) };
     },
+  });
+
+  bb.rpc.register(prototypeRpcContract, {
+    getPrototype: async ({ threadId, url }) => ({ state: await store.getPrototype(threadId, prototypeAddress(url)) }),
+    savePrototype: async ({ threadId, url, edit }) => ({
+      state: await store.updatePrototype(threadId, prototypeAddress(url), (stored) => mergeEdit(stored ?? EMPTY_PROTOTYPE, edit)),
+    }),
   });
 
   bb.rpc.register(briefDraftRpcContract, {
