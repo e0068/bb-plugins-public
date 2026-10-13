@@ -1,3 +1,4 @@
+import { parseIcon } from "@bb-plugins/icon-catalog";
 import { isPropertyName } from "./properties.js";
 
 /**
@@ -22,6 +23,10 @@ export interface SectionField {
   readonly type: FieldType;
   /** The options a Select or Tags value is picked from, in the order they were added. */
   readonly options?: string[];
+  /** The icon before the field's name in a column header (@bb-plugins/icon-catalog); absent for none. */
+  readonly icon?: string;
+  /** The icon beside each option that has one, by the option. */
+  readonly optionIcons?: Readonly<Record<string, string>>;
 }
 
 /** The Tags every section starts with: the record's labels, not a value of its own — picked, shown and
@@ -72,21 +77,42 @@ export function parseFields(raw: unknown): SectionField[] {
   const seen = new Set<string>();
   return raw.flatMap((entry: unknown): SectionField[] => {
     if (entry === null || typeof entry !== "object") return [];
-    const { name, type, options } = entry as Record<string, unknown>;
+    const { name, type, options, icon, optionIcons } = entry as Record<string, unknown>;
     if (typeof name !== "string" || !isPropertyName(name) || !isFieldType(type) || seen.has(name.toLowerCase())) return [];
     seen.add(name.toLowerCase());
-    return [CHOICE_TYPES.has(type) ? { name, type, options: parseOptions(options) } : { name, type }];
+    const own = { name, type, ...(isIcon(icon) ? { icon } : {}) };
+    if (!CHOICE_TYPES.has(type)) return [own];
+    const parsed = parseOptions(options);
+    const icons = readableOptionIcons(optionIcons, parsed);
+    return [{ ...own, options: parsed, ...(icons === null ? {} : { optionIcons: icons }) }];
   });
 }
 
+const isIcon = (value: unknown): value is string => typeof value === "string" && parseIcon(value) !== null;
+
+/** The option icons that read as icons, of options the field has; null for none. */
+function readableOptionIcons(raw: unknown, options: readonly string[]): Record<string, string> | null {
+  if (raw === null || typeof raw !== "object") return null;
+  const kept = Object.entries(raw).filter((entry): entry is [string, string] => options.includes(entry[0]) && isIcon(entry[1]));
+  return kept.length === 0 ? null : Object.fromEntries(kept);
+}
+
 /** The fields a section's list declares, laid over the defaults: a declared default keeps the default's type
- *  and brings the options it was declared with. */
+ *  and brings the icon, options and option icons it was declared with. */
 const withDefaults = (declared: readonly SectionField[]): SectionField[] => {
   const own = parseFields(declared);
   const sameName = (a: SectionField) => (b: SectionField) => a.name.toLowerCase() === b.name.toLowerCase();
-  const defaults = DEFAULT_FIELDS.map((field) => {
-    const options = own.find(sameName(field))?.options;
-    return options === undefined || !CHOICE_TYPES.has(field.type) ? field : { ...field, options };
+  const defaults = DEFAULT_FIELDS.map((field): SectionField => {
+    const listed = own.find(sameName(field));
+    if (listed === undefined) return field;
+    const { icon, options, optionIcons } = listed;
+    const choice = CHOICE_TYPES.has(field.type);
+    return {
+      ...field,
+      ...(icon === undefined ? {} : { icon }),
+      ...(choice && options !== undefined ? { options } : {}),
+      ...(choice && optionIcons !== undefined ? { optionIcons } : {}),
+    };
   });
   return [...defaults, ...own.filter((field) => !DEFAULT_FIELDS.some(sameName(field)))];
 };

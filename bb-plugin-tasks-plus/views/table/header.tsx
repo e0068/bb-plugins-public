@@ -1,6 +1,9 @@
 import { useCallback, useEffect, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 import { cn } from "@/lib/utils";
 import { Icon, type IconName } from "@/components/ui/icon";
+import { EntityIcon } from "@/components/entity-icon";
+import { IconPicker } from "@/components/icon-picker";
+import { Popover, PopoverAnchor, PopoverContent } from "@/components/ui/popover";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -26,6 +29,8 @@ export interface HeaderColumnState<C extends string = RowField> {
   label?: string;
   /** The icon before the label — a section field's type. */
   typeIcon?: IconName;
+  /** The icon chosen for the column (@bb-plugins/icon-catalog); it stands in for the type's. */
+  headerIcon?: string;
   width: number;
   pinned: boolean;
   /** Left offset in px while pinned columns stick to the leading edge;
@@ -58,6 +63,8 @@ export interface HeaderActions<C extends string = RowField> {
   onMove?: (column: C, toIndex: number) => void;
   onResize: (column: C, width: number | null) => void;
   onDisplay: (column: C, patch: ColumnDisplay) => void;
+  /** Gives the column an icon, or takes it off for null; absent where columns take no icon. */
+  onHeaderIcon?: (column: C, icon: string | null) => void;
 }
 
 /** A drag (reorder) only starts once the pointer has moved this far —
@@ -143,6 +150,9 @@ function HeaderCell<C extends string>({
   dragCleanupRef: React.MutableRefObject<(() => void) | null>;
 }) {
   const [menuOpen, setMenuOpen] = useState(false);
+  const [iconOpen, setIconOpen] = useState(false);
+  // Set icon… opens the picker as the menu closes: focus sent back to the header would land outside it and shut it.
+  const pickingIcon = useRef(false);
   const [resizing, setResizing] = useState(false);
   // The click a finished drag ends with must not open the menu.
   const draggedRef = useRef(false);
@@ -257,11 +267,23 @@ function HeaderCell<C extends string>({
               actions.onMove !== undefined && "cursor-grab",
             )}
           >
-            {state.typeIcon === undefined ? null : <Icon name={state.typeIcon} aria-hidden className="size-3 shrink-0" />}
+            {state.headerIcon !== undefined ? (
+              <EntityIcon icon={state.headerIcon} className="size-3.5" />
+            ) : state.typeIcon === undefined ? null : (
+              <Icon name={state.typeIcon} aria-hidden className="size-3 shrink-0" />
+            )}
             <span className="truncate">{label}</span>
           </button>
         </DropdownMenuTrigger>
-        <DropdownMenuContent align="start" collisionPadding={8} mobileTitle={label}>
+        <DropdownMenuContent
+          align="start"
+          collisionPadding={8}
+          mobileTitle={label}
+          onCloseAutoFocus={(event) => {
+            if (pickingIcon.current) event.preventDefault();
+            pickingIcon.current = false;
+          }}
+        >
           {state.sortable ? (
             <>
               <DropdownMenuItem onSelect={() => actions.onSort(state.column, "asc")}>
@@ -304,6 +326,20 @@ function HeaderCell<C extends string>({
               </DropdownMenuCheckboxItem>
             </>
           ) : null}
+          {actions.onHeaderIcon === undefined ? null : (
+            <>
+              <DropdownMenuSeparator />
+              {/* The picker opens once the menu is gone: its search field would fight the menu for the keys. */}
+              <DropdownMenuItem
+                onSelect={() => {
+                  pickingIcon.current = true;
+                  setIconOpen(true);
+                }}
+              >
+                Set icon…
+              </DropdownMenuItem>
+            </>
+          )}
           {actions.onPin === undefined ? null : (
             <>
               <DropdownMenuSeparator />
@@ -324,6 +360,27 @@ function HeaderCell<C extends string>({
           ) : null}
         </DropdownMenuContent>
       </DropdownMenu>
+      {actions.onHeaderIcon === undefined ? null : (
+        <Popover open={iconOpen} onOpenChange={setIconOpen}>
+          <PopoverAnchor asChild>
+            <span aria-hidden className="pointer-events-none absolute inset-0" />
+          </PopoverAnchor>
+          <PopoverContent align="start" collisionPadding={8} className="w-96 p-2" mobileTitle={`Icon of ${label}`}>
+            <IconPicker
+              value={state.headerIcon}
+              onRecolor={(icon) => actions.onHeaderIcon?.(state.column, icon)}
+              onPick={(icon) => {
+                actions.onHeaderIcon?.(state.column, icon);
+                setIconOpen(false);
+              }}
+              onClear={() => {
+                actions.onHeaderIcon?.(state.column, null);
+                setIconOpen(false);
+              }}
+            />
+          </PopoverContent>
+        </Popover>
+      )}
       {dropLine !== null ? (
         <span
           data-drop-line={dropLine}

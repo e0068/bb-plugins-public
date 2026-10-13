@@ -107,6 +107,7 @@ export function assembleBoardTasks(
         createdAt: file.createdAt,
         updatedAt: file.updatedAt,
         labelIds: [...(file.task.labels ?? [])],
+        ...(file.task.icon === undefined ? {} : { icon: file.task.icon }),
         flow: file.task.flow ?? null,
         takenBy: file.task.takenBy ?? null,
         // Only a record that has properties carries the field.

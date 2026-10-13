@@ -8,6 +8,7 @@ import { linkTakenBy, linkTakenMessage, type BoardConfig } from "../filesync/boa
 import { createDbRepo, failureOf, peekBoard, type DbRepo } from "../filesync/db-repo.js";
 import { newTableId, type DbTable, type TableId } from "../filesync/db-tables.js";
 import { CHOICE_TYPES, declaredField, fieldProblem, optionProblem } from "../shared/section-fields.js";
+import { isPropertyName } from "../shared/properties.js";
 import { resolveMainRoot } from "../filesync/resolve-roots.js";
 import { defaultSourcePath } from "../filesync/resolve-roots.js";
 import { DatabaseAuthFailed, DatabaseTokenMissing, DatabaseUnreachable, diskRepo, outOfReach } from "../filesync/task-repo.js";
@@ -972,6 +973,28 @@ export function registerFolders(bb: BbPluginApi, store: TasksApiStore): void {
         // A default field gets into the list with its first option; a listed one takes it inside the database.
         if (listed) await repo.changeFieldOption(section.database.table, field.name, input.option, input.change);
         else await repo.addTableField(section.database.table, { name: field.name, type: field.type, options: [input.option] });
+      } catch (error) {
+        return { ok: false, message: databaseFailure(error).message };
+      }
+      syncTables(taskBoard.id);
+      return { ok: true };
+    },
+
+    async setFieldIcon(input) {
+      const found = sectionRepo(input.boardId);
+      if (!found.ok) return found;
+      const { section, taskBoard, repo } = found;
+      const declared = repo.tables().find((table) => table.id === section.database.table)?.fields ?? [];
+      const option = input.option ?? null;
+      // A record's own key the section never declared gets its icon by being declared a text field.
+      const field = declaredField(declared, input.field) ?? (option === null && isPropertyName(input.field) ? { name: input.field, type: "text" as const } : undefined);
+      if (field === undefined) return { ok: false, message: `The section has no “${input.field}”.` };
+      if (option !== null && !(field.options ?? []).includes(option)) return { ok: false, message: `“${field.name}” has no option “${option}”.` };
+      const listed = declared.some((own) => own.name.toLowerCase() === field.name.toLowerCase());
+      try {
+        // A default field gets into the list carrying its icon; a listed one takes it inside the database.
+        if (listed) await repo.setFieldIcon(section.database.table, field.name, option, input.icon);
+        else if (input.icon !== null) await repo.addTableField(section.database.table, { name: field.name, type: field.type, icon: input.icon });
       } catch (error) {
         return { ok: false, message: databaseFailure(error).message };
       }

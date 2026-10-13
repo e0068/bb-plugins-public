@@ -22,3 +22,8 @@ export function OverlayContainerRoot({ children }: { children: React.ReactNode }
     </OverlayContainerContext.Provider>
   );
 }
+
+/** Overlays under it hang in `container`, an element the surface did not render itself — null for <body>. */
+export function OverlayContainerProvider({ container, children }: { container: HTMLElement | null; children: React.ReactNode }) {
+  return <OverlayContainerContext.Provider value={container}>{children}</OverlayContainerContext.Provider>;
+}

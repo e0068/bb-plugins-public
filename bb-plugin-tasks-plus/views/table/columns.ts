@@ -124,3 +124,9 @@ export const sortableColumn = (column: TableColumn): boolean => isQueryField(col
 /** A comparator over tasks for one column and direction; empty values sort last both ways (shared/task-fields.ts). */
 export const compareByColumn = (sort: ColumnSort, context: SortContext): ((a: Task, b: Task) => number) =>
   compareByField(sort, factsOf(context));
+
+/** The board's column icons with `column` given `icon`, or without one for null. */
+export function withColumnIcon(icons: Readonly<Record<string, string>> | undefined, column: string, icon: string | null): Record<string, string> {
+  const { [column]: _old, ...rest } = icons ?? {};
+  return icon === null ? rest : { ...rest, [column]: icon };
+}

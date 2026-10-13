@@ -1,5 +1,6 @@
 import { defineRpcContract } from "@get-bb/plugin-sdk";
 import { z } from "zod";
+import { parseIcon } from "@bb-plugins/icon-catalog";
 import { FIELD_TYPES } from "../shared/section-fields.js";
 
 const ULID_PATTERN = /^[0-7][0-9A-HJKMNP-TV-Z]{25}$/;
@@ -254,6 +255,21 @@ export const foldersRpcContract = defineRpcContract({
   /** Adds an option to a section's Select or Tags field, or takes one away; records keep the values they hold. */
   changeFieldOption: {
     input: z.object({ boardId: idSchema, field: z.string(), option: z.string(), change: z.enum(["add", "remove"]) }).strict(),
+    output: z.discriminatedUnion("ok", [
+      z.object({ ok: z.literal(true) }).strict(),
+      z.object({ ok: z.literal(false), message: z.string() }).strict(),
+    ]),
+  },
+  /** Gives a section's field, or one option of its Select or Tags, an icon for every machine on its database; null takes it off. */
+  setFieldIcon: {
+    input: z
+      .object({
+        boardId: idSchema,
+        field: z.string(),
+        option: z.string().optional(),
+        icon: z.string().refine((value) => parseIcon(value) !== null, { message: "must be an icon" }).nullable(),
+      })
+      .strict(),
     output: z.discriminatedUnion("ok", [
       z.object({ ok: z.literal(true) }).strict(),
       z.object({ ok: z.literal(false), message: z.string() }).strict(),

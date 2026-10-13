@@ -5,6 +5,7 @@ import { useTasksRpc } from "./shell/data.js";
 import { TasksAppShell } from "./shell/app-shell.js";
 import { TasksSidebarAccessory } from "./shell/sidebar-accessory.js";
 import { BusyThreadsReporter } from "./shell/busy-threads-reporter.js";
+import { SidebarRowIcons } from "./shell/sidebar-row-icon.js";
 import { BoardColumnWidthSetting } from "./shell/board-column-width-setting.js";
 import { ReducedProjectsSetting } from "./shell/reduced-projects-setting.js";
 import { TaskDirectiveCard, TaskEmbedPanel, TaskSidePanelTab } from "./views/embed/index.js";
@@ -51,6 +52,8 @@ export default definePluginApp((app) => {
   app.slots.messageDirective({ id: "task", component: TaskDirectiveCard });
   // A thread waiting for its own workflow counts as working in Active and on the cards.
   app.slots.experimental_appOverlay({ id: "busy-threads", component: BusyThreadsReporter });
+  // A board's icon in the row of its bb project in bb's thread list, and the picker it opens.
+  app.slots.experimental_appOverlay({ id: "sidebar-project-icons", component: SidebarRowIcons });
   app.slots.settingsSection({
     id: "reduced-colors",
     title: "Reduced Colors",

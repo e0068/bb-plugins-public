@@ -1,5 +1,6 @@
 import { defineRpcContract } from "@get-bb/plugin-sdk";
 import { z } from "zod";
+import { parseIcon } from "@bb-plugins/icon-catalog";
 import type { ReducedColors } from "@bb-plugins/reduced-colors/core/settings";
 import {
   TASK_SORTS,
@@ -97,6 +98,8 @@ const commentIdSchema = z.string().min(1, "must not be blank");
  *  of the whole board. */
 const threadRecordIdSchema = z.string().min(1, "must not be blank");
 const nonBlankStringSchema = z.string().trim().min(1, "must not be blank");
+/** An icon as it is stored: a catalog name, filled:<name> or an emoji (@bb-plugins/icon-catalog). */
+const iconSchema = z.string().refine((value) => parseIcon(value) !== null, { message: "must be an icon" });
 /** An assignee or epic as a caller names it; the store checks it can be a
  *  folder. Output carries the folder name verbatim — trimming it would offer
  *  a value no folder has. */
@@ -189,6 +192,8 @@ export const projectSchema = z
     color: z.string(),
     /** Name of a catalog icon; absent for a board drawn with the default. */
     icon: z.string().optional(),
+    /** The icon in each table column's header, by the column's field; absent for none. */
+    columnIcons: z.record(z.string(), z.string()).optional(),
     folderId: idSchema.nullable(),
     linkedBbProjectId: z.string().startsWith("proj_").nullable(),
     tasksFolder: z.string().nullable(),
@@ -201,7 +206,19 @@ export const projectSchema = z
         table: z.string().optional(),
         parent: z.string().optional(),
         /** A section's fields beyond Tags and Date, in the order they were added. */
-        fields: z.array(z.object({ name: z.string(), type: z.enum(FIELD_TYPES), options: z.array(z.string()).optional() }).strict()).optional(),
+        fields: z
+          .array(
+            z
+              .object({
+                name: z.string(),
+                type: z.enum(FIELD_TYPES),
+                options: z.array(z.string()).optional(),
+                icon: z.string().optional(),
+                optionIcons: z.record(z.string(), z.string()).optional(),
+              })
+              .strict(),
+          )
+          .optional(),
       })
       .strict()
       .nullable()
@@ -274,6 +291,8 @@ export const taskSchema = z
     createdAt: z.string(),
     updatedAt: z.string(),
     labelIds: z.array(labelIdSchema),
+    /** The icon before the title, as its file's `icon:` stores it; absent for none. */
+    icon: z.string().optional(),
     /** The flow the task's run went through, stamped into the file by the
      *  Flow plugin; null or absent — no run has named one. Optional like
      *  `assignee`, so a task built without it reads as flow-less. */
@@ -309,6 +328,8 @@ export const labelSchema = z
     projectId: idSchema,
     name: z.string(),
     color: z.string(),
+    /** The icon beside the name; absent for none. */
+    icon: z.string().optional(),
   })
   .strict();
 
@@ -935,6 +956,8 @@ const updateTaskInputSchema = z
     parentTaskId: taskIdSchema.nullable().optional(),
     labelIds: taskLabelsSchema.optional(),
     assignee: placementNameSchema.nullable().optional(),
+    /** The icon before the title, or null to take it off. */
+    icon: iconSchema.nullable().optional(),
     /** A change to the record's properties (shared/properties.ts): names to set, remove and rename. */
     propertyPatch: z
       .object({
@@ -967,7 +990,8 @@ const updateTaskInputSchema = z
       input.startDate !== undefined ||
       input.parentTaskId !== undefined ||
       input.labelIds !== undefined ||
-      input.assignee !== undefined,
+      input.assignee !== undefined ||
+      input.icon !== undefined,
     { message: "at least one task field must be updated" },
   );
 
@@ -976,7 +1000,9 @@ const updateProjectInputSchema = z
     projectId: idSchema,
     name: nonBlankStringSchema.optional(),
     color: nonBlankStringSchema.optional(),
-    icon: nonBlankStringSchema.optional(),
+    icon: iconSchema.optional(),
+    /** Every column icon of the board at once: a column the map leaves out has none. */
+    columnIcons: z.record(z.string(), iconSchema).optional(),
     folderId: idSchema.nullable().optional(),
     linkedBbProjectId: z.string().startsWith("proj_").nullable().optional(),
     tasksFolder: z.string().nullable().optional(),
@@ -987,6 +1013,7 @@ const updateProjectInputSchema = z
       input.name !== undefined ||
       input.color !== undefined ||
       input.icon !== undefined ||
+      input.columnIcons !== undefined ||
       input.folderId !== undefined ||
       input.linkedBbProjectId !== undefined ||
       input.tasksFolder !== undefined,
@@ -998,9 +1025,11 @@ const updateLabelInputSchema = z
     labelId: labelIdSchema,
     name: nonBlankStringSchema.optional(),
     color: nonBlankStringSchema.optional(),
+    /** The icon beside the name, or null to take it off. */
+    icon: iconSchema.nullable().optional(),
   })
   .strict()
-  .refine((input) => input.name !== undefined || input.color !== undefined, {
+  .refine((input) => input.name !== undefined || input.color !== undefined || input.icon !== undefined, {
     message: "at least one label field must be updated",
   });
 

@@ -207,6 +207,8 @@ export interface UpdateTaskInput {
   epic?: string | null;
   /** A change to the record's properties (shared/properties.ts): names to set, remove and rename. */
   propertyPatch?: PropertyPatch;
+  /** The icon before the title (@bb-plugins/icon-catalog's parseIcon), null to take it off. */
+  icon?: string | null;
 }
 
 export interface ListTasksFilters {
@@ -240,6 +242,8 @@ export interface CreateLabelInput {
 export interface UpdateLabelInput {
   name?: string;
   color?: string;
+  /** The icon beside the name, null to take it off. */
+  icon?: string | null;
 }
 
 export interface CreateCommentInput {

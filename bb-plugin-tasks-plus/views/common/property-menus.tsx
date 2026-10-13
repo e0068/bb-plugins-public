@@ -1,3 +1,4 @@
+import { EntityIcon } from "@/components/entity-icon";
 import type { ReactNode, Ref } from "react";
 import {
   TASK_PRIORITIES,
@@ -395,6 +396,7 @@ export function TaskContextMenu({
                     className="mr-2 size-2 rounded-full"
                     style={{ backgroundColor: label.color }}
                   />
+                  <EntityIcon icon={label.icon} className="mr-1.5 size-3.5" />
                   {label.name}
                 </ContextMenuCheckboxItem>
               ))}

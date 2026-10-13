@@ -83,6 +83,7 @@ import { DelayedLoading } from "../../components/delayed-loading.js";
 import { useTakenRefusal } from "../../components/task-taken-dialog.js";
 import { SourceBanner } from "./source-banner.js";
 import { Icon } from "@/components/ui/icon";
+import { EntityIcon } from "@/components/entity-icon";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
 import {
@@ -376,6 +377,7 @@ function CardFieldValue({
         <>
           {labels.map((label) => (
             <span key={label.id} className={CARD_LABEL_CLASS} style={labelFill(label.color)}>
+              <EntityIcon icon={label.icon} className="mr-0.5 size-3" />
               {label.name}
             </span>
           ))}
@@ -503,7 +505,12 @@ function CardBlock({
 }) {
   switch (field) {
     case "title":
-      return <div className={cn("line-clamp-2 font-medium", TITLE_SIZE_CLASS[text.title], "leading-snug")}>{task.title}</div>;
+      return (
+        <div className={cn("line-clamp-2 font-medium", TITLE_SIZE_CLASS[text.title], "leading-snug")}>
+          <EntityIcon icon={task.icon} className="mr-1 inline-block size-[1.15em] align-[-0.2em]" />
+          {task.title}
+        </div>
+      );
     case "description": {
       const description = firstParagraph(task.description);
       return (

@@ -1,5 +1,7 @@
 import { useMemo, useState } from "react";
+import { useRpc } from "@get-bb/plugin-sdk/app";
 import type { Project, Task } from "../../shared/contract.js";
+import type { FoldersRpcContract } from "../../folders/contract.js";
 import { useTasksRpc } from "../../client/data.js";
 import { useOpenTask } from "../../client/task-opening.js";
 import { sectionFields, type SectionField } from "../../shared/section-fields.js";
@@ -12,7 +14,7 @@ import { AddFieldPopover, FIELD_TYPE_ICONS, OptionChips } from "../common/sectio
 import { surfaceOf } from "../common/view-state.js";
 import type { ListPreferenceScope } from "../common/list-preference.js";
 import { DetailToasts, useDetailToasts } from "../detail/toast.js";
-import { pinOffsets } from "./columns.js";
+import { pinOffsets, withColumnIcon } from "./columns.js";
 import { TitleCell } from "./cells.js";
 import { NewTaskRow } from "./new-task-row.js";
 import { TableHeader, type HeaderActions, type HeaderColumnState } from "./header.js";
@@ -105,6 +107,7 @@ export function SectionTable({ scope, thread, section }: { scope: ListPreference
   const { projectId, listScope } = surfaceOf(scope);
   const openTask = useOpenTask(taskOpeningOf(useFieldDisplay(listFieldScope(projectId, listScope))));
   const rpc = useTasksRpc();
+  const folders = useRpc<FoldersRpcContract>();
   const { toasts, push, dismiss } = useDetailToasts();
   const [layout, setLayout] = useSectionLayout(section.id);
   const records = useListTasks(section.id, listScope, NO_FILTERS, thread);
@@ -132,6 +135,20 @@ export function SectionTable({ scope, thread, section }: { scope: ListPreference
       .finally(() => setCreating(false));
   };
 
+  // A field's icon lives with the field in the section's database; the record's own columns keep theirs on the board.
+  const headerIconOf = (column: SectionColumn): string | undefined => fieldsByColumn.get(column)?.icon ?? section.columnIcons?.[column];
+  const failed = (error: unknown) => push("error", error instanceof Error ? error.message : String(error));
+  const setHeaderIcon = (column: SectionColumn, icon: string | null) => {
+    const field = fieldNameOf(column);
+    if (field === null) {
+      rpc.call("updateProject", { projectId: section.id, columnIcons: withColumnIcon(section.columnIcons, column, icon) }).catch(failed);
+      return;
+    }
+    folders
+      .call("setFieldIcon", { boardId: section.id, field, icon })
+      .then((result) => (result.ok ? undefined : push("error", result.message)), failed);
+  };
+
   const headerColumns: HeaderColumnState<SectionColumn>[] = columns.map((column) => {
     const field = fieldsByColumn.get(column);
     const dated = column === "createdAt" || column === "updatedAt" || field?.type === "date";
@@ -139,6 +156,7 @@ export function SectionTable({ scope, thread, section }: { scope: ListPreference
       column,
       label: OWN_LABELS[column] ?? fieldNameOf(column) ?? column,
       ...(field === undefined ? {} : { typeIcon: FIELD_TYPE_ICONS[field.type] }),
+      ...(headerIconOf(column) === undefined ? {} : { headerIcon: headerIconOf(column) }),
       width: widths[column],
       pinned: pinned.has(column),
       offset: offsets[column],
@@ -160,6 +178,7 @@ export function SectionTable({ scope, thread, section }: { scope: ListPreference
     onResize: (column, width) => setLayout((current) => withWidth(current, column, width)),
     onDisplay: (column, patch) =>
       setLayout((current) => (patch.format === undefined ? current : { ...current, formats: { ...current.formats, [column]: patch.format } })),
+    onHeaderIcon: setHeaderIcon,
   };
 
   const body =

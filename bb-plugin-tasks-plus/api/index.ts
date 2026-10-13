@@ -946,6 +946,7 @@ export function registerHandlers(
             parentTaskId: input.parentTaskId,
             assignee: input.assignee,
             propertyPatch: input.propertyPatch,
+            icon: input.icon,
             // Labels go in the same write: one trip to a database, not one per label.
             labelIds: input.labelIds,
           });
@@ -1147,6 +1148,7 @@ export function registerHandlers(
       const label = await store.tasks.updateLabel(input.labelId, {
         name: input.name,
         color: input.color,
+        icon: input.icon,
       });
       publishProjectsChanged(bb, label.projectId);
       return { label };

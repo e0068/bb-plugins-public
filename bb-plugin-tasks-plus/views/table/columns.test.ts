@@ -11,6 +11,7 @@ import {
   orderedColumns,
   pinOffsets,
   sortableColumn,
+  withColumnIcon,
   type ColumnSort,
   type SortContext,
   type TableColumn,
@@ -188,5 +189,13 @@ describe("sorting by a column", () => {
     expect(
       sortBy({ column: "project", direction: "asc" }, [task({ projectId: "P2" }), task({ projectId: "P1" })]).map((t) => t.projectId),
     ).toEqual(["P1", "P2"]);
+  });
+});
+
+describe("a board's column icons", () => {
+  it("take a column's new icon, and lose it for null, leaving the others", () => {
+    expect(withColumnIcon(undefined, "status", "🚦")).toEqual({ status: "🚦" });
+    expect(withColumnIcon({ status: "🚦", title: "Edit02" }, "status", "filled:Flag01")).toEqual({ status: "filled:Flag01", title: "Edit02" });
+    expect(withColumnIcon({ status: "🚦", title: "Edit02" }, "status", null)).toEqual({ title: "Edit02" });
   });
 });

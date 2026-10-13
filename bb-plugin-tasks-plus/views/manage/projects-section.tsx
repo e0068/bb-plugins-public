@@ -5,7 +5,8 @@ import { databaseHost } from "../../folders/database-address.js";
 import { TOKEN_MISSING_TEXT, TOKEN_REFUSED_TEXT } from "../../folders/token-refused.js";
 import { useTasksRpc } from "../../client/data.js";
 import { ConfirmDialog } from "../../components/confirm-dialog.js";
-import { ProjectIcon } from "@/components/project-icon";
+import { DEFAULT_PROJECT_ICON } from "@bb-plugins/icon-catalog";
+import { EntityIcon } from "@/components/entity-icon";
 import { Button } from "@/components/ui/button";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Icon } from "@/components/ui/icon";
@@ -355,7 +356,7 @@ function OrphanLine({ board, actions }: { board: ProjectRowBoard; actions: RowAc
     <tr>
       <td className={cn(CELL, "font-medium")}>{board.name}</td>
       <td className={CELL}>
-        <ProjectIcon icon={board.icon} color={board.color} className="size-4" />
+        <EntityIcon icon={board.icon} color={board.color} fallback={DEFAULT_PROJECT_ICON} className="size-4" />
       </td>
       <td className={cn(CELL, "font-mono text-xs")}>{board.prefix}</td>
       <TasksCell board={board} />
