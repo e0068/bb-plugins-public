@@ -39,6 +39,7 @@ import { shownTask, type DetailUpdate } from "./pending-update.js";
 import { DetailToasts, useDetailToasts } from "./toast.js";
 import { DelayedLoading } from "../../components/delayed-loading.js";
 import { Icon } from "@/components/ui/icon";
+import { IconPickerButton } from "@/components/icon-picker";
 import { Segments } from "@/components/ui/segments";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
@@ -128,7 +129,7 @@ function EditableTitle({
       suppressContentEditableWarning
       role="textbox"
       aria-label="Task title"
-      className="mb-2.5 mt-1 text-2xl font-semibold leading-tight outline-none"
+      className="mb-2.5 mt-1 min-w-0 flex-1 text-2xl font-semibold leading-tight outline-none"
       onKeyDown={(event) => {
         if (event.key === "Enter") {
           event.preventDefault();
@@ -469,10 +470,20 @@ function TaskDetail({
             </div>
           ) : null}
 
-          <EditableTitle
-            task={task}
-            onSave={(title) => void updateTask({ title })}
-          />
+          <div className="group/title flex items-start gap-1">
+            <IconPickerButton
+              label="Task icon"
+              value={task.icon}
+              className={cn("mt-1.5 size-8", task.icon === undefined && "opacity-0 group-hover/title:opacity-100 focus-visible:opacity-100 data-[state=open]:opacity-100")}
+              iconClassName="size-5"
+              onPick={(icon) => void updateTask({ icon })}
+              onClear={() => void updateTask({ icon: null })}
+            />
+            <EditableTitle
+              task={task}
+              onSave={(title) => void updateTask({ title })}
+            />
+          </div>
 
           {section === undefined ? (
             <>

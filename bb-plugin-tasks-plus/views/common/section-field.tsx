@@ -1,3 +1,5 @@
+import { EntityIcon } from "@/components/entity-icon";
+import { IconPickerButton } from "@/components/icon-picker";
 import { useState, type ReactNode } from "react";
 import { useRpc } from "@get-bb/plugin-sdk/app";
 // Type-only: the frontend bundle stays clear of the contracts' runtime.
@@ -121,9 +123,14 @@ export function AddFieldPopover({ sectionId, declared, trigger }: { sectionId: s
   );
 }
 
-/** One option of a Select or Tags value, as a chip. */
-export function OptionChip({ option }: { option: string }) {
-  return <span className="max-w-full truncate rounded-sm bg-state-active px-1.5 py-px text-xs text-foreground">{option}</span>;
+/** One option of a Select or Tags value, as a chip, with the option's icon when it has one. */
+export function OptionChip({ option, icon }: { option: string; icon?: string }) {
+  return (
+    <span className="inline-flex max-w-full min-w-0 items-center gap-1 rounded-sm bg-state-active px-1.5 py-px text-xs text-foreground">
+      <EntityIcon icon={icon} className="size-3" />
+      <span className="truncate">{option}</span>
+    </span>
+  );
 }
 
 /** The chips of a Select or Tags value, or nothing for an empty one. */
@@ -132,7 +139,7 @@ export function OptionChips({ field, value }: { field: SectionField; value: stri
   return (
     <span className="flex min-w-0 flex-wrap items-center gap-1">
       {chosen.map((option) => (
-        <OptionChip key={option} option={option} />
+        <OptionChip key={option} option={option} icon={field.optionIcons?.[option]} />
       ))}
     </span>
   );
@@ -194,6 +201,12 @@ export function OptionPicker({
     if (!result.ok) setProblem(result.message);
     return result.ok;
   };
+  const setIcon = async (option: string, icon: string | null) => {
+    const result = await folders
+      .call("setFieldIcon", { boardId: sectionId, field: field.name, option, icon })
+      .catch((error: unknown) => ({ ok: false as const, message: error instanceof Error ? error.message : String(error) }));
+    if (!result.ok) setProblem(result.message);
+  };
   const create = async () => {
     const option = query.trim();
     const found = optionProblem(field.options ?? [], option);
@@ -250,10 +263,20 @@ export function OptionPicker({
                 onClick={() => pick(option)}
                 className="flex h-full min-w-0 flex-1 items-center gap-2 px-1.5 text-left"
               >
-                <OptionChip option={option} />
+                <OptionChip option={option} icon={field.optionIcons?.[option]} />
                 <span className="flex-1" />
                 {chosen.includes(option) ? <Icon name="Check" className="size-3.5 shrink-0" /> : null}
               </button>
+              {(field.options ?? []).includes(option) ? (
+                <IconPickerButton
+                  label={`Icon of option ${option}`}
+                  value={field.optionIcons?.[option]}
+                  className="mr-0.5 hidden size-6 group-hover/option:flex focus-visible:flex data-[state=open]:flex"
+                  iconClassName="size-3.5"
+                  onPick={(icon) => void setIcon(option, icon)}
+                  onClear={() => void setIcon(option, null)}
+                />
+              ) : null}
               {(field.options ?? []).includes(option) ? (
                 <button
                   type="button"

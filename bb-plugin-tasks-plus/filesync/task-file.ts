@@ -94,6 +94,7 @@ export function renderTaskFile(
     const value = task[field];
     if (value != null) frontmatter[AMOUNT_KEYS[field]] = value;
   }
+  if (task.icon) frontmatter.icon = task.icon;
   if (task.dueDate) frontmatter.due = task.dueDate;
   if (task.startDate) frontmatter.start = task.startDate;
   if (task.labels && task.labels.length > 0) frontmatter.labels = [...task.labels];

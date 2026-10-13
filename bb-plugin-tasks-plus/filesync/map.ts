@@ -8,6 +8,7 @@ import {
   type TaskStatus,
   type TaskType,
 } from "../db/types.js";
+import { parseIcon } from "@bb-plugins/icon-catalog";
 import { readDollars, readMinutes } from "../shared/amounts.js";
 import type { Task } from "../shared/contract.js";
 import { isPlanDate } from "../shared/plan-date.js";
@@ -31,6 +32,8 @@ export interface MappedTaskFile {
   dueDate: string | null;
   startDate: string | null;
   labels: string[];
+  /** The file's `icon:` when it reads as an icon; absent otherwise. */
+  icon?: string;
   /** Parent task's slug or key, when the file declares one. */
   parentRef: string | null;
   /** The flow the Flow plugin stamped into the file, null when none. */
@@ -183,6 +186,7 @@ export function mapFrontmatter(
     dueDate: due !== null && isPlanDate(due) ? due : null,
     startDate: start !== null && isPlanDate(start) ? start : null,
     labels: stringArray(data.labels),
+    ...(typeof data.icon === "string" && parseIcon(data.icon) !== null ? { icon: data.icon } : {}),
     parentRef: firstString(data.parent),
     flow: mapFlow(data.flow),
     ...(takenBy === null ? {} : { takenBy }),

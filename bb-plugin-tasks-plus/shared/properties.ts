@@ -24,6 +24,7 @@ export const BOARD_KEYS: ReadonlySet<string> = new Set([
   "due",
   "start",
   "labels",
+  "icon",
   "parent",
   "taken_by",
   "threads",

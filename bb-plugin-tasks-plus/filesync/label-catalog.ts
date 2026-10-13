@@ -9,13 +9,24 @@ import { LABEL_COLOR } from "../shared/enums.js";
 export interface CatalogLabel {
   readonly name: string;
   readonly color: string;
+  /** The icon beside the name (@bb-plugins/icon-catalog); absent for none. */
+  readonly icon?: string;
 }
 
-/** The catalog with `name` in `color`: an existing name is recoloured in place, a new one goes last. */
+/** The catalog with `name` in `color`: an existing name is recoloured in place, keeping its icon; a new one goes last. */
 export const withLabel = (catalog: readonly CatalogLabel[], name: string, color: string): CatalogLabel[] =>
   catalog.some((label) => label.name === name)
-    ? catalog.map((label) => (label.name === name ? { name, color } : label))
+    ? catalog.map((label) => (label.name === name ? { ...label, color } : label))
     : [...catalog, { name, color }];
+
+/** The label with `icon`, or without one for null. */
+const withIcon = ({ icon: _old, ...label }: CatalogLabel, icon: string | null): CatalogLabel => (icon === null ? label : { ...label, icon });
+
+/** The catalog with `name` given `icon`, or none for null; a name it lacks goes last in `color`. */
+export function withLabelIcon(catalog: readonly CatalogLabel[], name: string, icon: string | null, color: string): CatalogLabel[] {
+  const listed = catalog.some((label) => label.name === name) ? catalog : [...catalog, { name, color }];
+  return listed.map((label) => (label.name === name ? withIcon(label, icon) : label));
+}
 
 /** The catalog without `name`. */
 export const withoutLabel = (catalog: readonly CatalogLabel[], name: string): CatalogLabel[] =>
@@ -27,7 +38,7 @@ export function renamedLabel(catalog: readonly CatalogLabel[], from: string, to:
   const listed = catalog.find((label) => label.name === from);
   if (listed === undefined) return withLabel(catalog, to, color ?? labelColor(catalog, to));
   const kept = to === from ? catalog : withoutLabel(catalog, to);
-  return kept.map((label) => (label.name === from ? { name: to, color: color ?? listed.color } : label));
+  return kept.map((label) => (label.name === from ? { ...label, name: to, color: color ?? listed.color } : label));
 }
 
 /** The board's labels: the catalog in its order, then the names tasks carry that it lacks. */

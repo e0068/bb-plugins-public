@@ -63,6 +63,7 @@ import {
   PopoverTrigger,
 } from "@/components/ui/popover";
 import { Icon } from "@/components/ui/icon";
+import { EntityIcon } from "@/components/entity-icon";
 import { Input } from "@/components/ui/input";
 import { readDollars, readMinutes } from "../../shared/amounts.js";
 import { cn } from "@/lib/utils";
@@ -146,6 +147,7 @@ function LabelChip({
       onRemove={onRemove}
       removeLabel={`Remove ${label.name}`}
     >
+      <EntityIcon icon={label.icon} className="size-3" />
       {label.name}
     </RemovableChip>
   );
@@ -474,6 +476,7 @@ function LabelsMenu({
                       className="size-2.5 rounded-full"
                       style={{ backgroundColor: label.color }}
                     />
+                    <EntityIcon icon={label.icon} className="size-3.5" />
                     <span className="flex-1">{label.name}</span>
                     {task.labelIds.includes(label.id) ? (
                       <Icon name="Check" className="size-3.5" />

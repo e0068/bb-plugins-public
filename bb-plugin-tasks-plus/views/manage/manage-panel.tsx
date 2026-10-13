@@ -1,3 +1,4 @@
+import { IconPickerButton } from "@/components/icon-picker";
 import { useState } from "react";
 import type { Label, Preset } from "../../shared/contract.js";
 import {
@@ -198,6 +199,15 @@ function LabelsSection() {
                   aria-hidden
                   className="size-2.5 shrink-0 rounded-full"
                   style={{ backgroundColor: label.color }}
+                />
+                <IconPickerButton
+                  label={`Icon of label ${label.name}`}
+                  value={label.icon}
+                  color={label.color}
+                  className="size-6"
+                  iconClassName="size-3.5"
+                  onPick={(icon) => void run(() => rpc.call("updateLabel", { labelId: label.id, icon }))}
+                  onClear={() => void run(() => rpc.call("updateLabel", { labelId: label.id, icon: null }))}
                 />
                 <span className="flex-1 text-sm">{label.name}</span>
                 <Button

@@ -1,3 +1,4 @@
+import { parseIcon } from "@bb-plugins/icon-catalog";
 import { parseTableId, type TableId } from "./db-tables.js";
 import { parseFields, type SectionField } from "../shared/section-fields.js";
 import type { CatalogLabel } from "./label-catalog.js";
@@ -19,6 +20,8 @@ export interface BoardConfig {
   icon?: string;
   /** The labels added in Manage → Labels with their colours (filesync/label-catalog.ts); absent for none. */
   labels?: CatalogLabel[];
+  /** The icon in each table column's header, by the column's field; absent for none. */
+  columnIcons?: Record<string, string>;
   folderId: string | null;
   linkedBbProjectId: string | null;
   tasksFolder: string | null;
@@ -44,18 +47,31 @@ export async function readBoardConfigs(kv: KvStore): Promise<BoardConfig[]> {
   // A table id that does not read as one would point the board at the task board's tables: such a board is left out.
   return stored
     .filter((board) => board.database?.table === undefined || parseTableId(board.database.table) !== null)
-    .map((board) => withReadableLabels({ ...board, database: board.database == null ? null : withReadableFields(withReadableParent(board.database)) }));
+    .map((board) => withReadableColumnIcons(withReadableLabels({ ...board, database: board.database == null ? null : withReadableFields(withReadableParent(board.database)) })));
 }
+
+/** The board with the column icons of `icons` that read as icons; none — no `columnIcons` key. */
+export function withColumnIcons({ columnIcons: _old, ...board }: BoardConfig, icons: unknown): BoardConfig {
+  if (typeof icons !== "object" || icons === null) return board;
+  const readable = Object.entries(icons).filter((entry): entry is [string, string] => typeof entry[1] === "string" && parseIcon(entry[1]) !== null);
+  return readable.length === 0 ? board : { ...board, columnIcons: Object.fromEntries(readable) };
+}
+
+const withReadableColumnIcons = (board: BoardConfig): BoardConfig => withColumnIcons(board, board.columnIcons);
 
 const isCatalogLabel = (label: unknown): label is CatalogLabel =>
   typeof label === "object" && label !== null &&
   typeof (label as CatalogLabel).name === "string" && typeof (label as CatalogLabel).color === "string";
 
+/** A label's icon that does not read as an icon is dropped, the label stays. */
+const withReadableIcon = ({ icon, ...label }: CatalogLabel): CatalogLabel =>
+  typeof icon === "string" && parseIcon(icon) !== null ? { ...label, icon } : label;
+
 /** Labels that do not read as a name and a colour are dropped; none left is no `labels` key. */
 function withReadableLabels(board: BoardConfig): BoardConfig {
   if (board.labels === undefined) return board;
   const { labels, ...rest } = board;
-  const readable = Array.isArray(labels) ? labels.filter(isCatalogLabel) : [];
+  const readable = Array.isArray(labels) ? labels.filter(isCatalogLabel).map(withReadableIcon) : [];
   return readable.length === 0 ? rest : { ...rest, labels: readable };
 }
 

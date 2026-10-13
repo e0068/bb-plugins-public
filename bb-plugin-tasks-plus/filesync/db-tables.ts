@@ -77,6 +77,17 @@ export const ADD_FIELD_OPTION = `UPDATE tables SET fields = json_set(fields, ${O
 /** Takes an option (?3), in any case, out of the options of a declared field (?2) of a section (?1). */
 export const REMOVE_FIELD_OPTION = `UPDATE tables SET fields = json_set(fields, ${OPTIONS_PATH}, (SELECT json_group_array(value) FROM json_each(tables.fields, ${OPTIONS_PATH}) WHERE lower(value) <> lower(?3))) WHERE id = ?1 AND ${FIELD_INDEX} IS NOT NULL`;
 
+/** Where the field named by ?2 stands in a section's list, as a JSON path. */
+const FIELD_PATH = `'$[' || ${FIELD_INDEX} || ']'`;
+
+/** Gives a declared field (?2) of a section (?1) an icon (?3), or takes it off for null: json_patch drops a null key. */
+export const SET_FIELD_ICON = `UPDATE tables SET fields = json_set(fields, ${FIELD_PATH}, json_patch(json_extract(fields, ${FIELD_PATH}), json_object('icon', ?3))) WHERE id = ?1 AND ${FIELD_INDEX} IS NOT NULL`;
+
+const OPTION_ICONS_PATH = `${FIELD_PATH} || '.optionIcons'`;
+
+/** Gives an option (?3) of a declared field (?2) of a section (?1) an icon (?4), or takes it off for null. */
+export const SET_OPTION_ICON = `UPDATE tables SET fields = json_set(fields, ${OPTION_ICONS_PATH}, json_patch(COALESCE(json_extract(fields, ${OPTION_ICONS_PATH}), '{}'), json_object(?3, ?4))) WHERE id = ?1 AND ${FIELD_INDEX} IS NOT NULL`;
+
 export const RENAME_TABLE = "UPDATE tables SET name = ? WHERE id = ?";
 
 /** A section's row and its pair of tables: what deleting it takes out of the database. */

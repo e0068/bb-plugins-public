@@ -9,16 +9,18 @@ import type { TaskPropertyUpdate } from "./rail.js";
  */
 
 /** A change made in the card: its properties, title, description and record fields. */
-export type DetailUpdate = TaskPropertyUpdate & { title?: string; description?: string; propertyPatch?: PropertyPatch };
+export type DetailUpdate = TaskPropertyUpdate & { title?: string; description?: string; propertyPatch?: PropertyPatch; icon?: string | null };
 
 /** The task as it is once `update` lands. */
 export function withUpdate(task: Task, update: DetailUpdate): Task {
-  const { propertyPatch, labelIds, ...fields } = update;
+  const { propertyPatch, labelIds, icon, ...fields } = update;
   const changed = Object.fromEntries(Object.entries(fields).filter(([, value]) => value !== undefined));
   return {
     ...task,
     ...changed,
     ...(labelIds === undefined ? {} : { labelIds: [...labelIds] }),
+    // null takes the icon off.
+    ...(icon === undefined ? {} : { icon: icon ?? undefined }),
     ...(propertyPatch === undefined ? {} : { properties: patchProperties(task.properties ?? {}, propertyPatch) as Record<string, string> }),
   };
 }

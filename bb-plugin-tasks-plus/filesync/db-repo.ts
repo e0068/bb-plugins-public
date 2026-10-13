@@ -10,6 +10,8 @@ import {
   LIST_TABLES,
   REMOVE_FIELD_OPTION,
   RENAME_TABLE,
+  SET_FIELD_ICON,
+  SET_OPTION_ICON,
   subtreeOf,
   TABLES_ADDED_COLUMNS,
   TABLES_FIELDS_COLUMN,
@@ -82,6 +84,8 @@ export interface DbRepo extends TaskRepo {
   addTableField(id: TableId, field: SectionField): Promise<void>;
   /** Adds an option to a declared Select or Tags field of a table, or takes one away. */
   changeFieldOption(id: TableId, field: string, option: string, change: "add" | "remove"): Promise<void>;
+  /** Gives a declared field of a section, or one option of it, an icon; null takes it off. */
+  setFieldIcon(id: TableId, field: string, option: string | null, icon: string | null): Promise<void>;
   /** Gives a table a new name. */
   renameTable(id: TableId, name: string): Promise<void>;
   /** Takes a table, its records and every table inside it out of the database. */
@@ -666,6 +670,10 @@ export function createDbRepo(client: HranaClient, options: DbRepoOptions): DbRep
 
     changeFieldOption(id, field, option, change) {
       return changeTables([{ sql: change === "add" ? ADD_FIELD_OPTION : REMOVE_FIELD_OPTION, args: [id, field, option] }]);
+    },
+
+    setFieldIcon(id, field, option, icon) {
+      return changeTables([option === null ? { sql: SET_FIELD_ICON, args: [id, field, icon] } : { sql: SET_OPTION_ICON, args: [id, field, option, icon] }]);
     },
 
     renameTable(id, name) {

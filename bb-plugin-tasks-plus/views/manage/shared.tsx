@@ -1,29 +1,8 @@
 import { Icon } from "@/components/ui/icon";
-import { isEdgeless } from "@/lib/edgeless-color";
 import { cn } from "@/lib/utils";
 
-/**
- * Fixed swatch palette for projects and labels. Values are CSS named colors —
- * they are stored as user data and rendered via inline `backgroundColor`
- * (matching the seed data's "blue"/"orange"/"violet"), so they must be valid
- * CSS colors without being hex literals.
- */
-export const COLOR_PALETTE = [
-  { value: "slateblue", label: "Indigo" },
-  { value: "steelblue", label: "Blue" },
-  { value: "lightseagreen", label: "Teal" },
-  { value: "mediumseagreen", label: "Green" },
-  { value: "goldenrod", label: "Yellow" },
-  { value: "sandybrown", label: "Orange" },
-  { value: "indianred", label: "Red" },
-  { value: "palevioletred", label: "Pink" },
-  { value: "mediumpurple", label: "Purple" },
-  { value: "slategray", label: "Gray" },
-  { value: "white", label: "White" },
-  { value: "black", label: "Black" },
-] as const;
-
-export const DEFAULT_COLOR = COLOR_PALETTE[0].value;
+export { COLOR_PALETTE, DEFAULT_COLOR } from "@/lib/color-palette";
+export { ColorSwatchPicker } from "@/components/color-swatches";
 
 /** Mirrors the contract's project prefix rule (shared/contract.ts). */
 export const PROJECT_PREFIX_PATTERN = /^[A-Z][A-Z0-9]{0,9}$/;
@@ -41,37 +20,6 @@ export function prefixProblem(
     (board) => board.id !== ownId && board.prefix.toUpperCase() === prefix.toUpperCase(),
   );
   return clash ? `Already used by ${clash.name}.` : null;
-}
-
-export function ColorSwatchPicker({
-  value,
-  onChange,
-}: {
-  value: string;
-  onChange: (color: string) => void;
-}) {
-  return (
-    <div role="radiogroup" aria-label="Color" className="flex flex-wrap gap-1.5">
-      {COLOR_PALETTE.map((swatch) => (
-        <button
-          key={swatch.value}
-          type="button"
-          role="radio"
-          aria-checked={value === swatch.value}
-          aria-label={swatch.label}
-          title={swatch.label}
-          onClick={() => onChange(swatch.value)}
-          className={cn(
-            "size-5 rounded-md",
-            isEdgeless(swatch.value) && "border border-border",
-            value === swatch.value &&
-              "ring-2 ring-ring ring-offset-2 ring-offset-background",
-          )}
-          style={{ backgroundColor: swatch.value }}
-        />
-      ))}
-    </div>
-  );
 }
 
 /** Compact labeled checkbox (no checkbox component is vendored yet). */

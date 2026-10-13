@@ -18,7 +18,8 @@ import {
 } from "../views/manage/preset-dialog.js";
 import { Icon } from "@/components/ui/icon";
 import { DelayedLoading } from "../components/delayed-loading.js";
-import { ProjectIcon } from "../components/project-icon.js";
+import { DEFAULT_PROJECT_ICON } from "@bb-plugins/icon-catalog";
+import { EntityIcon } from "../components/entity-icon.js";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
   Tooltip,
@@ -264,9 +265,10 @@ function ProjectRow({
 }) {
   return (
     <SidebarRow active={active} onClick={onClick} title={project.name} rowId={project.id}>
-      <ProjectIcon
+      <EntityIcon
         icon={project.icon}
         color={project.color}
+        fallback={DEFAULT_PROJECT_ICON}
         className={cn("size-3.5 shrink-0", branch && "group-hover/project:invisible group-focus-within/project:invisible")}
       />
       <span className="min-w-0 flex-1 truncate">{project.name}</span>

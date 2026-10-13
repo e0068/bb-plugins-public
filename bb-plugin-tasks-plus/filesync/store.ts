@@ -29,9 +29,11 @@ import {
   linkTakenBy,
   linkTakenMessage,
   nextTaskNumber,
+  withColumnIcons,
   type BoardConfig,
   type KvStore,
 } from "./board-config.js";
+
 import { createBoardRepos } from "./board-repos.js";
 import { retryOnConflict } from "./write-retry.js";
 import { outOfReach, unlessOutOfReach, WriteConflict, type RepoFile, type TaskRepo } from "./task-repo.js";
@@ -72,7 +74,7 @@ import { AMOUNT_KEYS, renderTaskFile } from "./task-file.js";
 import { patchProperties } from "../shared/properties.js";
 import { parseFrontmatter } from "./frontmatter.js";
 import { AMOUNT_FIELDS } from "../shared/amounts.js";
-import { boardLabelList, labelColor, renamedLabel, withLabel, withoutLabel, type CatalogLabel } from "./label-catalog.js";
+import { boardLabelList, labelColor, renamedLabel, withLabel, withLabelIcon, withoutLabel, type CatalogLabel } from "./label-catalog.js";
 import { filterTasks } from "./query.js";
 import { uniqueSlug, validateSlug } from "./slug.js";
 import { byLiveStatusFirst, parseTaskCursor, taskPage, type TaskPage } from "./task-page.js";
@@ -694,7 +696,10 @@ export function createFileTasksStore(
     if (input.linkedBbProjectId != null && input.linkedBbProjectId !== current.linkedBbProjectId) {
       requireLinkFree(input.linkedBbProjectId, id);
     }
-    const updated = applyPatch(current, input);
+    const { columnIcons, ...rest } = input;
+    const patched = applyPatch(current, rest);
+    // The column icons come as the whole map: an empty one takes the key off.
+    const updated = columnIcons === undefined ? patched : withColumnIcons(patched, columnIcons);
     boardConfigs = upsertBoardConfig(boardConfigs, updated);
     persistBoards();
     return updated;
@@ -1060,6 +1065,8 @@ export function createFileTasksStore(
       ...nextPlacement(placementOf(current), input),
       takenBy: claimedTakenBy(current, { status: input.status, attachesThread: false, threadId: null }, machineName),
       updatedAt: new Date().toISOString(),
+      // null takes the icon off: the file loses its `icon:` line below, and the read back has none.
+      ...(input.icon === undefined ? {} : { icon: input.icon ?? undefined }),
     };
     const root = rootOfTask(board, current);
     // Ключ — имя задачи на доске, а в main задача на доске есть всегда:
@@ -1087,6 +1094,7 @@ export function createFileTasksStore(
       ...AMOUNT_FIELDS.filter((field) => input[field] === null).map((field) => AMOUNT_KEYS[field]),
       ...(input.dueDate === null ? ["due"] : []),
       ...(input.startDate === null ? ["start"] : []),
+      ...(input.icon === null ? ["icon"] : []),
     ]);
     const kept = Object.fromEntries(Object.entries(data).filter(([key]) => !cleared.has(key)));
     const existing = input.propertyPatch === undefined ? kept : patchProperties(kept, input.propertyPatch);
@@ -1197,7 +1205,7 @@ export function createFileTasksStore(
   async function boardLabels(boardId: string): Promise<Label[]> {
     const carried = (await loadBoard(requireBoard(boardId))).flatMap((t) => t.task.labelIds);
     return boardLabelList(requireBoard(boardId).labels ?? [], carried)
-      .map(({ name, color }) => ({ id: name, projectId: boardId, name, color }));
+      .map(({ name, color, icon }) => ({ id: name, projectId: boardId, name, color, ...(icon === undefined ? {} : { icon }) }));
   }
   function setCatalog(board: BoardConfig, labels: CatalogLabel[]): void {
     const { labels: _old, ...rest } = board;
@@ -1226,7 +1234,9 @@ export function createFileTasksStore(
     const name = input.name ?? id;
     for (const { id: boardId } of holders) {
       const board = boardConfigs.find((candidate) => candidate.id === boardId);
-      if (board !== undefined) setCatalog(board, renamedLabel(board.labels ?? [], id, name, input.color));
+      if (board === undefined) continue;
+      const renamed = renamedLabel(board.labels ?? [], id, name, input.color);
+      setCatalog(board, input.icon === undefined ? renamed : withLabelIcon(renamed, name, input.icon, labelColor(renamed, name)));
     }
     persistBoards();
     if (name !== id) {
@@ -1235,7 +1245,9 @@ export function createFileTasksStore(
       }
     }
     const projectId = holders[0]!.id;
-    return { id: name, projectId, name, color: labelColor(boardConfigs.find((board) => board.id === projectId)?.labels ?? [], name) };
+    const catalog = boardConfigs.find((board) => board.id === projectId)?.labels ?? [];
+    const icon = catalog.find((label) => label.name === name)?.icon;
+    return { id: name, projectId, name, color: labelColor(catalog, name), ...(icon === undefined ? {} : { icon }) };
   }
   /** A label is deleted from every board's catalog and every task that carries it. */
   async function deleteLabel(id: string): Promise<boolean> {

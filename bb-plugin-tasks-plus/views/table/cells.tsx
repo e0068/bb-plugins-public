@@ -1,6 +1,7 @@
 import { useState } from "react";
 import type { Label, Project, Task } from "../../shared/contract.js";
 import { Icon } from "@/components/ui/icon";
+import { EntityIcon } from "@/components/entity-icon";
 import { PriorityEditor, StatusEditor, type EditFn } from "../common/property-menus.js";
 import { formatDollars, formatMinutes } from "../../shared/amounts.js";
 import type { RowField } from "../common/row-field-preference.js";
@@ -262,6 +263,7 @@ export function TitleCell({
           <Icon name="CornerDownRight" className="size-3.5" />
         </span>
       ) : null}
+      <EntityIcon icon={task.icon} className="size-4" />
       {onOpen ? (
         <button
           type="button"

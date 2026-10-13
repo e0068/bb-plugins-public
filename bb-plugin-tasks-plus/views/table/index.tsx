@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { Task } from "../../shared/contract.js";
 import { TASK_STATUSES } from "../../shared/enums.js";
-import { useProjects } from "../../client/data.js";
+import { useProjects, useTasksRpc } from "../../client/data.js";
 import { useOpenTask } from "../../client/task-opening.js";
 import { NewTaskDialog } from "../manage/index.js";
 import { DetailToasts, useDetailToasts } from "../detail/toast.js";
@@ -48,6 +48,7 @@ import {
   orderedColumns,
   pinOffsets,
   sortableColumn,
+  withColumnIcon,
   type TableColumn,
 } from "./columns.js";
 import { tableRows, type TableGroup } from "./rows.js";
@@ -362,6 +363,8 @@ function TaskTable({ scope, thread }: TableViewProps) {
   const { filters } = preference;
 
   const projects = useProjects();
+  const rpc = useTasksRpc();
+  const ownProject = projectId === null ? undefined : projects.data?.find((project) => project.id === projectId);
   const { groupBy } = settings;
   const labelProjectIds = useMemo(
     () => (projectId !== null ? [projectId] : (projects.data ?? []).map((project) => project.id)),
@@ -512,6 +515,7 @@ function TaskTable({ scope, thread }: TableViewProps) {
     widthChanged: settings.widths[column] !== undefined,
     dateFormat: isDateColumn(column) ? dateFormatOf(settings.columns, column) : null,
     icon: hasIconChoice(column) ? iconShownOf(settings.columns, column) : null,
+    ...(ownProject?.columnIcons?.[column] === undefined ? {} : { headerIcon: ownProject.columnIcons[column] }),
   }));
 
   const actions: HeaderActions = {
@@ -540,6 +544,15 @@ function TaskTable({ scope, thread }: TableViewProps) {
     },
     onDisplay: (column, patch) =>
       setTableSettings(scope, { columns: withColumnDisplay(settings.columns, column, patch) }),
+    // A column's icon is the board's: a table over several boards has none to give.
+    ...(ownProject === undefined
+      ? {}
+      : {
+          onHeaderIcon: (column: RowField, icon: string | null) =>
+            void rpc
+              .call("updateProject", { projectId: ownProject.id, columnIcons: withColumnIcon(ownProject.columnIcons, column, icon) })
+              .catch((error: unknown) => push("error", error instanceof Error ? error.message : String(error))),
+        }),
   };
 
   const scrollRef = useRef<HTMLDivElement>(null);
