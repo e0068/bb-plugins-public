@@ -17,6 +17,9 @@ export interface AutomationsBridge {
 /** Дольше событие не ждёт: бриф и ответ владельца не должны висеть на чужом плагине. Прогон в Automations при этом идёт дальше. */
 const EMIT_TIMEOUT_MS = 5_000;
 
+/** Ответ bb на запрос к незапущенному плагину — выключенному или не поднявшемуся: «is not running (status: …)». */
+const NOT_RUNNING = 503;
+
 /** Потолок запуска этапа: мёрдж с ожиданием GitHub длится минутами, но зависший плагин не должен держать инструмент агента вечно. */
 const RUN_TIMEOUT_MS = 10 * 60_000;
 
@@ -37,8 +40,8 @@ export function automationsBridge(
         bb.log.warn(`automations: ${trigger} for ${threadId} not delivered (${error instanceof Error ? error.message : String(error)})`);
         return;
       }
-      // Нет плагина — обычное дело, не повод для предупреждения.
-      if (result.ok || result.reason === "not-installed") return;
+      // Нет плагина — обычное дело, не повод для предупреждения. Незапущенный — то же самое: о сбое старта плагина скажет его запуск, а не каждое событие.
+      if (result.ok || result.reason === "not-installed" || (result.reason === "http" && result.status === NOT_RUNNING)) return;
       bb.log.warn(
         result.reason === "timeout"
           ? `automations: ${trigger} for ${threadId} got no answer in ${EMIT_TIMEOUT_MS / 1000} s — the run may still be running`

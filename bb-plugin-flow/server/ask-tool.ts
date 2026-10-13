@@ -7,6 +7,7 @@ import type { Carried } from "../core/carry";
 import { awaitingKind } from "../core/awaiting";
 import { resolvesIssues, type ResolveTarget } from "../core/clarify";
 import { approvalIssues } from "../core/approval-guard";
+import { unfinishedBefore } from "../core/automation-run";
 import { isApproval, memberSources, nextGroup, restoredOf } from "../core/fold";
 import { liveIssues, nextFlowIssues, outcomeKind, reportOnlyIssues } from "../core/outcome";
 import { DECISION_ID_PREFIX, directiveLine } from "../core/directive";
@@ -155,8 +156,11 @@ const outcomeIssues = (outcome: AskDecisionParams["outcome"], questionCount: num
   if (!launched && stages.some(isAskedStage)) return ["an outcome reports a stage of running work, and the work in this thread has not started yet: send a brief with setup.stages first"];
   const approval = stages.some((stage) => stage.id === outcome.stage && stageKindOf(stage) === "approve");
   const reported = stages.filter((stage) => OUTCOME_KINDS.includes(stageKindOf(stage))).map((s) => s.id);
+  // Демонстрация и Утверждение показывают пройденную работу: этап прогона перед ними, не закрытый агентом, — работа пропущена.
+  const open = progress === null || progress === undefined ? null : unfinishedBefore(stages, progress, outcome.stage);
   return [
     ...(reported.includes(outcome.stage) ? [] : [`outcome.stage ${outcome.stage} is not a demo or approval stage of the thread's flow: ${reported.length === 0 ? "the flow has none" : reported.join(", ")}`]),
+    ...(open === null ? [] : [`stage ${open.id} "${open.name}" comes before ${outcome.stage} in the run and is not marked done: finish it and mark it done with ${FLOW_STAGE_TOOL} first`]),
     // Утверждение показывает, что утверждается, и переводит работу в рекомендованный flow; Демонстрация — отчёт с живым результатом, без вопросов и перехода.
     ...(approval ? [...approvalIssues(stages, progress, outcome.stage, reworkPending), ...nextFlowIssues(outcome, flowIds)] : [...liveIssues(outcome), ...reportOnlyIssues(outcome, questionCount)]),
   ];

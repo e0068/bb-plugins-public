@@ -215,6 +215,11 @@ export default async function plugin(bb: BbPluginApi): Promise<void> {
     own.mark(threadId, text);
     await bb.sdk.threads.send({ threadId, mode: "queue-if-active", input: [{ type: "text", text, mentions: [] }] });
   };
+  /** PR рабочего дерева — номер, ссылка и состояние; нет PR или bb его не знает — `null`. */
+  const pullRequestOf = async (environmentId: string) => {
+    const answer = await bb.sdk.environments.pullRequest({ environmentId });
+    return answer.outcome === "available" ? { number: answer.pullRequest.number, url: answer.pullRequest.url, state: answer.pullRequest.state } : null;
+  };
   const runner = createAutomationRunner({
     progress,
     store,
@@ -249,8 +254,8 @@ export default async function plugin(bb: BbPluginApi): Promise<void> {
         return { title: row.title ?? null, environmentId: row.environmentId };
       },
       pullRequest: async (environmentId) => {
-        const answer = await bb.sdk.environments.pullRequest({ environmentId });
-        return answer.outcome === "available" ? { number: answer.pullRequest.number, url: answer.pullRequest.url } : null;
+        const pr = await pullRequestOf(environmentId);
+        return pr === null ? null : { number: pr.number, url: pr.url };
       },
       flow: flowOf,
       publish: (notice) => void center.push(automationEntry(notice)),
@@ -315,6 +320,11 @@ export default async function plugin(bb: BbPluginApi): Promise<void> {
     compactPreselected: (threadId) => compactPreselectedOf(bb.sdk, () => settings.get(), threadId),
     // Смена flow треда живёт в ./server/flow-choice.ts; ответы приходят после запуска плагина, когда `choice` уже есть.
     switchFlow: (threadId, flowId) => choice.switchTo(threadId, flowId),
+    openPullRequest: async (threadId) => {
+      const { environmentId } = await bb.sdk.threads.get({ threadId });
+      const pr = environmentId === null || environmentId === undefined ? null : await pullRequestOf(environmentId);
+      return pr === null || pr.state !== "open" ? null : { number: pr.number, url: pr.url };
+    },
     releaseFlow: (threadId) => choice.release(threadId),
     handoffFlow: (sourceThreadId, flowId) => void (flowId === null ? handoffFlows.delete(sourceThreadId) : handoffFlows.set(sourceThreadId, flowId)),
     widgetFlows: () =>

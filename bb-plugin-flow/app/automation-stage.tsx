@@ -11,7 +11,6 @@ import { Fragment, useRef, useState, type ChangeEvent, type DragEvent, type Reac
 import { isStepId, STEP_IDS, type StepId } from "@bb-plugins/automation-steps/catalog";
 import { overlayItem } from "../components/ui/field-overlay";
 import { Icon } from "../components/ui/icon";
-import { NEEDS_OPEN_PR, opensPrBefore } from "../core/automation-order";
 import { addScript, MAX_SCRIPT_CHARS, removeStep, scriptOf } from "../core/automation-scripts";
 import { applySet, removeSet } from "../core/automation-sets";
 import { moveItem } from "../core/reorder";
@@ -133,8 +132,8 @@ function SetOptions({ sets, onPick }: { sets: AutomationSets; onPick: (set: Auto
   );
 }
 
-/** Шаги Flow: уже стоящие и шаги по открытому PR раньше самого открытия недоступны; «Добавить скрипт…» открывает выбор файла. */
-function StepOptions({ taken, prOpened, onPick, onScript }: { taken: readonly AutomationStep[]; prOpened: boolean; onPick: (id: StepId) => void; onScript: (file: ScriptFile) => void }) {
+/** Шаги Flow: уже стоящие недоступны; «Добавить скрипт…» открывает выбор файла. */
+function StepOptions({ taken, onPick, onScript }: { taken: readonly AutomationStep[]; onPick: (id: StepId) => void; onScript: (file: ScriptFile) => void }) {
   const t = useMessages();
   const input = useRef<HTMLInputElement>(null);
   const [tooBig, setTooBig] = useState(false);
@@ -151,27 +150,12 @@ function StepOptions({ taken, prOpened, onPick, onScript }: { taken: readonly Au
   return (
     <div role="group" aria-label={t.settings.automationSteps}>
       <div className={groupTitle}>{t.settings.automationSteps}</div>
-      {STEP_IDS.map((id) => {
-        // Шаг по номеру открытого PR раньше самого открытия — цепочка, падающая
-        // на первом же прогоне. Такой пункт не выбрать, и подпись говорит почему.
-        const needsPr = !prOpened && NEEDS_OPEN_PR.includes(id);
-        const disabled = taken.includes(id) || needsPr;
-        return (
-          <button
-            key={id}
-            type="button"
-            role="menuitem"
-            title={needsPr ? t.settings.stepNeedsOpenPr(t.steps["git.create-pr"]) : undefined}
-            aria-disabled={disabled}
-            disabled={disabled}
-            onClick={() => onPick(id)}
-            className={menuItem}
-          >
-            <Icon name={AUTOMATION_ICON} aria-hidden="true" className="size-3.5 shrink-0 text-muted-foreground" />
-            {t.steps[id]}
-          </button>
-        );
-      })}
+      {STEP_IDS.map((id) => (
+        <button key={id} type="button" role="menuitem" aria-disabled={taken.includes(id)} disabled={taken.includes(id)} onClick={() => onPick(id)} className={menuItem}>
+          <Icon name={AUTOMATION_ICON} aria-hidden="true" className="size-3.5 shrink-0 text-muted-foreground" />
+          {t.steps[id]}
+        </button>
+      ))}
       {separator}
       <button type="button" role="menuitem" onClick={() => input.current?.click()} className={menuItem}>
         <Icon name="Code" aria-hidden="true" className="size-3.5 shrink-0 text-muted-foreground" />
@@ -187,7 +171,7 @@ function StepOptions({ taken, prOpened, onPick, onScript }: { taken: readonly Au
  * Меню скрипта: запуск, сохранённые наборы, шаги Flow и свой файл. Выбор набора или шага закрывает меню — шаг виден в
  * строке; переключатель запуска меню не закрывает. Ещё не названный новый скрипт шаги подписывают собой — через запятую.
  */
-export function ScriptOptions({ stage, stages, sets, onChange, onDone }: { stage: WorkStage; stages: readonly WorkStage[]; sets: AutomationSets; onChange: StageChange; onDone: () => void }) {
+export function ScriptOptions({ stage, sets, onChange, onDone }: { stage: WorkStage; sets: AutomationSets; onChange: StageChange; onDone: () => void }) {
   const labels = useStepLabels();
   const current = executionOf(stage);
   const automation = current.kind === "script" ? current.automation : null;
@@ -212,7 +196,6 @@ export function ScriptOptions({ stage, stages, sets, onChange, onDone }: { stage
       {separator}
       <StepOptions
         taken={steps}
-        prOpened={opensPrBefore(stages, stage.id)}
         onPick={(id) => apply((a) => ({ ...a, steps: [...a.steps, id] }))}
         // Id скрипта — случайный: номер, освободившийся после удаления, повтор прогона принял бы за прежний скрипт.
         onScript={(file) => apply((a) => addScript(a, file, crypto.randomUUID()))}
@@ -244,9 +227,10 @@ export function TagOpen({ onOpen, children }: { onOpen: () => void; children: Re
 
 /**
  * Теги шагов через шеврон: у встроенного скрипта — крест и перетаскивание, у автоматизации Automations — только чтение.
- * Шаг своего скрипта открывает его текст в правой панели; у шагов Flow файла нет.
+ * Шаг своего скрипта открывает его текст в правой панели; у шагов Flow файла нет. Шаг из `unopened` — по открытому PR, которого
+ * выше по flow никто не открывает: на нём метка-предупреждение.
  */
-export function AutomationStepTags({ stage, onChange, onOpenScript }: { stage: WorkStage; onChange: StageChange; onOpenScript: (script: AutomationScript) => void }) {
+export function AutomationStepTags({ stage, unopened, onChange, onOpenScript }: { stage: WorkStage; unopened: readonly StepId[]; onChange: StageChange; onOpenScript: (script: AutomationScript) => void }) {
   const t = useMessages();
   const [dragged, setDragged] = useState<number | null>(null);
   const label = useStepLabel();
@@ -279,6 +263,7 @@ export function AutomationStepTags({ stage, onChange, onOpenScript }: { stage: W
               className={cn(tag, "cursor-grab pr-0.5", scriptOf(automation, id) === null && "pl-2", dragged === i && "opacity-50")}
             >
               <StepLabel script={scriptOf(automation, id)} label={labelOf(id)} onOpen={onOpenScript} />
+              {isStepId(id) && unopened.includes(id) && <NoPrMark />}
               <button
                 type="button"
                 aria-label={t.settings.removeStep(labelOf(id))}
@@ -319,6 +304,16 @@ export function ReadOnlyStepTags({ stage, onOpenScript, title }: { stage: WorkSt
         </Fragment>
       ))}
     </ul>
+  );
+}
+
+/** Метка на шаге по открытому PR: выше по flow его никто не открывает, а подсказка говорит, откуда он всё же может взяться. */
+function NoPrMark() {
+  const t = useMessages();
+  return (
+    <span role="img" aria-label={t.settings.stepNoPrAbove} title={t.settings.stepNoPrAbove} className="flex shrink-0 text-warning">
+      <Icon name="AlertTriangle" aria-hidden="true" className="size-3.5" />
+    </span>
   );
 }
 

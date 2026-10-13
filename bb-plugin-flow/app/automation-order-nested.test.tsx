@@ -29,9 +29,12 @@ const open = (outer: WorkStage[]) => {
   });
 };
 
+const MARK = "Выше по flow нет «Открыть PR»: шаг сработает, если PR откроет другой flow, прошлый прогон или вы вручную";
+
 describe("порядок шагов и вложенный flow на странице", () => {
-  it("бамп после строки с вложенным flow, открывающим PR, не блокирует сохранение", async () => {
+  it("бамп после строки с вложенным flow, открывающим PR, не помечен и сохраняется", async () => {
     const slot = open([ref("nested", "opener"), chain("bump", "Бамп", ["files.bump-patch"]), spec]);
+    expect(within(await slot.findByRole("listitem", { name: "Перетащить шаг Bump patch" })).queryByRole("img")).toBeNull();
     fireEvent.click(await slot.findByRole("button", { name: "Удалить этап Spec" }));
     await vi.waitFor(() => expect(slot.rpcCalls.some((c) => c.method === "saveFlowSettings")).toBe(true));
     expect(slot.queryByRole("alert")).toBeNull();
@@ -45,11 +48,21 @@ describe("порядок шагов и вложенный flow на страни
     expect((menu.getByRole("menuitem", { name: "Смёрджить PR" }) as HTMLButtonElement).disabled).toBe(false);
   });
 
-  it("без открытого PR выше пункт по-прежнему выключен", async () => {
+  it("без открытого PR выше пункты «Смёрджить PR» и бампов тоже включены: выбор не запрещён", async () => {
     const slot = open([chain("flow-automation", "Слить", [])]);
     const row = within(await slot.findByRole("row", { name: "Этап 1" }));
     fireEvent.click(row.getByRole("button", { name: "Исполнение этапа" }));
     const menu = within(await slot.findByRole("menu", { name: "Исполнение" }));
-    expect((menu.getByRole("menuitem", { name: "Смёрджить PR" }) as HTMLButtonElement).disabled).toBe(true);
+    for (const name of ["Смёрджить PR", "Bump major", "Bump minor", "Bump patch"]) {
+      expect((menu.getByRole("menuitem", { name }) as HTMLButtonElement).disabled).toBe(false);
+    }
+  });
+
+  it("выбранный без «Открыть PR» выше мёрдж ставится в этап и получает метку", async () => {
+    const slot = open([chain("flow-automation", "Слить", [])]);
+    const row = within(await slot.findByRole("row", { name: "Этап 1" }));
+    fireEvent.click(row.getByRole("button", { name: "Исполнение этапа" }));
+    fireEvent.click(within(await slot.findByRole("menu", { name: "Исполнение" })).getByRole("menuitem", { name: "Смёрджить PR" }));
+    expect(within(await slot.findByRole("listitem", { name: "Перетащить шаг Смёрджить PR" })).getByRole("img", { name: MARK })).toBeTruthy();
   });
 });

@@ -3,7 +3,6 @@
 // контракта берутся только типы.
 import { builtinStage, freeId, STAGE_BUTTON_WIDTH, stageKindOf, type BuiltinKind } from "../lib/stage-constants";
 import type { AgentSettings, Flow, FlowSettings, StageSettings, WorkStage } from "../shared/contract";
-import { flowStepOrderProblem, type StepOrderProblem } from "./automation-order";
 import { moveItem } from "./reorder";
 
 /** Встроенный этап вида в ряду уже собранных — с id, свободным среди них. */
@@ -211,7 +210,7 @@ const expandIn = (flows: readonly Flow[], stages: readonly WorkStage[], chain: r
  */
 export const expandStages = (flows: readonly Flow[], flow: Flow): WorkStage[] => expandIn(flows, flow.stages, [flow.id]);
 
-/** Вся коллекция с развёрнутыми этапами каждого flow: так правила порядка шагов читают flow, каким его видит прогон. */
+/** Вся коллекция с развёрнутыми этапами каждого flow: так выбор flow считает этапы, какими их видит прогон. */
 export const withExpandedStages = (flows: readonly Flow[]): Flow[] => flows.map((flow) => ({ ...flow, stages: expandStages(flows, flow) }));
 
 /** Первая цепочка id flow, замкнувшаяся на себя, — от её первого flow и обратно в него; без цикла пусто. */
@@ -256,16 +255,6 @@ export const stageToFlow = (settings: FlowSettings, flowId: string, stageId: str
   const rest = flow.stages.filter((s) => !inUnit(s));
   const stages = [...rest.slice(0, at), flowStage(made, rest.map((s) => s.id)), ...rest.slice(at)];
   return addFlow(mapFlow(settings, flowId, (f) => ({ ...f, stages })), { ...made, stages: flow.stages.filter(inUnit) });
-};
-
-/**
- * Шаг, который в вынесенном flow встал бы раньше «Открыть PR»: такой этап во Flow не преобразуется — коллекцию с этим порядком
- * не сохранить. Исходный flow после выноса проходит те же шаги, поэтому смотрится только новый; невыносимый этап проблемы не даёт.
- */
-export const stageToFlowProblem = (settings: FlowSettings, flowId: string, stageId: string): StepOrderProblem | null => {
-  const after = stageToFlow(settings, flowId, stageId, { id: "", name: "" });
-  const made = after.flows.at(-1);
-  return after === settings || made === undefined ? null : flowStepOrderProblem({ ...made, stages: expandStages(after.flows, made) });
 };
 
 /** Этапы flow, с развёрнутыми строками «Flow», и общая ширина кнопки — форма, которую проверяет бриф и видят инструкции. */

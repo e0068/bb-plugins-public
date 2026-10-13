@@ -64,6 +64,20 @@ const after = (stages: readonly WorkStage[], id: string): readonly WorkStage[] =
 export const agentStagesAhead = (stages: readonly WorkStage[], progress: FlowProgress, from?: string): boolean =>
   (from === undefined ? stages : after(stages, from)).some((stage) => isOpen(progress.stages[stage.id]) && isAgentStage(stage));
 
+/** Этап держит следующие: владелец взял его в прогон или агент его начал (доработка стирает выбор владельца), и он не закрыт и не снят. */
+const holds = (track: StageTrack | undefined): boolean =>
+  track !== undefined && track.skipped !== true && track.finishedAt === undefined && (track.skipped === false || track.startedAt !== undefined);
+
+/**
+ * Первый этап-навык перед этапом `id`, который держит работу, — `null`, если такого нет. Этап без записи — из flow,
+ * пересохранённого посреди прогона, или не тронутый в прогоне без брифа: держать работу он не может. Встроенные этапы
+ * закрывают брифы, автоматизации и Action — Flow и владелец.
+ */
+export const unfinishedBefore = (stages: readonly WorkStage[], progress: FlowProgress, id: string): WorkStage | null =>
+  stages
+    .slice(0, Math.max(0, stages.findIndex((stage) => stage.id === id)))
+    .find((stage) => stageKindOf(stage) === "skill" && stage.automation === undefined && holds(progress.stages[stage.id])) ?? null;
+
 /** Этап в прогоне: не вычеркнут, а вычеркнутый — если агент его всё же закрыл. */
 const inRun = (track: StageTrack | undefined): boolean => track?.skipped !== true || track.finishedAt !== undefined;
 

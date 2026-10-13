@@ -145,14 +145,10 @@ describe("меню скрипта", () => {
     await vi.waitFor(() => expect(savedStage(slot, 3)).toEqual({ id: "review", kind: "criteria", skill: "code-review", name: "Review", executors: [] }));
   });
 
-  it("пока PR никто не открывает, шаги по PR выбрать нельзя; за этапом, открывающим PR, — можно", async () => {
-    const before = await openMenu(open(), 4);
-    expect(before.getByRole("menuitem", { name: "Смёрджить PR" }).getAttribute("aria-disabled")).toBe("true");
-    expect(before.getByRole("menuitem", { name: "Открыть PR" }).getAttribute("aria-disabled")).toBe("false");
-    cleanup();
-    const after = await openMenu(open(settings([chain("open", ["git.create-pr"]), chain("land", [])])), 2);
-    expect(after.getByRole("menuitem", { name: "Смёрджить PR" }).getAttribute("aria-disabled")).toBe("false");
-    expect(after.getByRole("menuitem", { name: "Открыть PR" }).getAttribute("aria-disabled")).toBe("false");
+  it("шаги по PR выбираются и тогда, когда PR никто не открывает: порядок не запрещён", async () => {
+    const menu = await openMenu(open(), 4);
+    expect(menu.getByRole("menuitem", { name: "Смёрджить PR" }).getAttribute("aria-disabled")).toBe("false");
+    expect(menu.getByRole("menuitem", { name: "Bump patch" }).getAttribute("aria-disabled")).toBe("false");
   });
 
   it("стоящий шаг выбрать нельзя", async () => {

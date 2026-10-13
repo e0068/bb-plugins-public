@@ -84,9 +84,9 @@ describe("плагин Flow: этап «Flow»", () => {
     await expect(setup(opener, outer)).resolves.toBeDefined();
   });
 
-  it("бамп без открытия PR, в том числе во вложенном flow, по-прежнему отклоняется", async () => {
-    const outer = flow("outer", [ref("nested", "inner"), automation("bump", ["files.bump-patch"])]);
-    await expect(setup(flow("inner", [stage("task")]), outer)).rejects.toThrow();
+  it("бамп и мёрдж без открытия PR, в том числе во вложенном flow, сохраняются: PR шаг найдёт на запуске", async () => {
+    const outer = flow("outer", [ref("nested", "inner"), automation("bump", ["files.bump-patch"]), automation("land", ["git.merge"])]);
+    await expect(setup(flow("inner", [stage("task")]), outer)).resolves.toBeDefined();
   });
 
   it("flow с удалённым вложенным flow открывается: строка этапов не даёт", async () => {

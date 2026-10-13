@@ -3,10 +3,8 @@
 // через схему: чужое значение — это умолчания, а не падение.
 import type { PluginKvStorage } from "@get-bb/plugin-sdk";
 
-import { STEP_LABELS } from "@bb-plugins/automation-steps/catalog";
-import { stepOrderMessage, stepOrderProblem } from "../core/automation-order";
 import { duplicateFlowName, withUniqueNames } from "../core/flow-files";
-import { flowCycle, fromLegacy, migrateFlows, withExpandedStages } from "../core/flows";
+import { flowCycle, fromLegacy, migrateFlows } from "../core/flows";
 import { flowSettingsSchema, stageSettingsSchema, type FlowSettings } from "../shared/contract";
 
 export const FLOW_SETTINGS_KEY = "settings:flows";
@@ -54,13 +52,6 @@ export const createFlowSettings = async (kv: PluginKvStorage): Promise<FlowSetti
       if (cycle.length > 0) {
         const names = cycle.map((id) => valid.flows.find((f) => f.id === id)?.name ?? id);
         throw new Error(`flow "${names[0]}" includes itself: ${names.join(" → ")}`);
-      }
-      // Цепочка, где бамп или мёрдж стоит раньше открытия PR, падает на первом
-      // же прогоне любого треда. Порядок читается по развёрнутым этапам: PR мог
-      // открыть вложенный flow. Отказ тоже один на всех.
-      const problem = stepOrderProblem(withExpandedStages(valid.flows));
-      if (problem !== null) {
-        throw new Error(stepOrderMessage(problem, STEP_LABELS[problem.step].en, STEP_LABELS["git.create-pr"].en));
       }
       // Имя flow — имя его файла в папке синхронизации: два одинаковых имени легли бы в один файл.
       const duplicate = duplicateFlowName(valid.flows);
