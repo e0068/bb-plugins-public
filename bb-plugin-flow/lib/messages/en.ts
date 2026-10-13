@@ -341,7 +341,6 @@ export const en: Messages = {
     templateSaved: "The stage is saved — it's in the Add stage menu",
     stageMenu: (name) => `Actions for stage ${name}`,
     toFlow: "Convert to a flow",
-    toFlowBlocked: "The stage needs a pull request opened by a stage above — it won't work as a separate flow",
     flowGroup: "Flow",
     nestedFlowGone: "flow deleted",
     emptyStage: "Empty stage",
@@ -357,9 +356,7 @@ export const en: Messages = {
     savedSets: "Saved sets",
     removeSet: (label) => `Remove set ${label}`,
     stepsReadOnly: "The steps of this automation are edited in the Automations plugin",
-    stepNeedsOpenPr: (open: string) => `Works on an open pull request: put it after "${open}"`,
-    stepOrderRefused: (step: string, stage: string, open: string) =>
-      `Not saved: "${step}" in the stage "${stage}" stands before "${open}". The step works on an open pull request, and without one the chain stops on the first run — move it after the stage that opens the pull request.`,
+    stepNoPrAbove: "There is no “Open a PR” above in this flow: the step works if another flow, an earlier run or you open the pull request",
     stepCount: (n) => `${n} ${n === 1 ? "step" : "steps"}`,
     loadFailed: "Couldn't load or save the stages — reload the page",
     table: "Work stages",
@@ -585,6 +582,9 @@ export const en: Messages = {
     outcomeSwitchHeading: (title, flow) => `Demo ${quote(title)} — move to the ${quote(flow)} flow.`,
     outcomeSwitch: (flow) =>
       `The thread now runs the ${quote(flow)} flow: its stages are in the turn instructions, start with the first. The scope is the findings of this demo; the owner's comment above, if any, narrows it.`,
+    openPullRequest: (number, url) => `PR #${number} was opened by the previous run and is not merged: ${url}.`,
+    openPullRequestAgent: (number) =>
+      `The new flow may have no stage that merges PR #${number}. Do not merge or close it yourself: ask the owner with an ask_decision widget what to do with it.`,
     flowChosen: (flow) => `The thread was moved to flow ${quote(flow)} with the Flow button: its stages are in the turn instructions, start with the first; the owner's answers above still stand.`,
     run: (list) => `Run: ${list}.`,
     noRun: "The run is empty.",

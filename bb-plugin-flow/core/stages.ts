@@ -73,11 +73,14 @@ export const executorLabel = (stage: WorkStage, id: string, locale?: Locale): st
 
 const carryKey = (stageId: string): string => `stage:${stageId}:executor`;
 
-/** Рекомендация агента: в прогон и его исполнитель, если он ещё есть в этапе. */
+/**
+ * Рекомендация агента: в прогон и его исполнитель, если он ещё есть в этапе. Автоматизацию исполняет сам Flow — она
+ * в прогоне, что бы агент ни прислал: невзятый коммит или мёрдж молча оставлял работу вне main.
+ */
 export const recommendedStageChoice = (item: StageItem): StageChoice => {
   const executor = item.report?.executor ?? SELF;
   return {
-    run: stagePhase(item) === "todo" && item.report?.recommended === true,
+    run: stagePhase(item) === "todo" && (isAutomationStage(item.stage) || item.report?.recommended === true),
     executor: knownExecutor(item.stage, executor) ? executor : (stageExecutorIds(item.stage)[0] ?? SELF),
   };
 };

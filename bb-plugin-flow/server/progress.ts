@@ -6,7 +6,7 @@ import type { BbPluginApi, PluginKvStorage } from "@get-bb/plugin-sdk";
 import { z } from "zod";
 
 import { stageGlyph } from "../components/ui/stage-glyphs";
-import { isActionStage } from "../core/automation-run";
+import { isActionStage, unfinishedBefore } from "../core/automation-run";
 import { undoDue } from "../core/automation-undo";
 import { afterMark, markReply, returnedNote, startFact, stopFailure, waitedReply, type StartFact } from "../core/mark-report";
 import { carriedBy, carrierOf, EMPTY_PROGRESS, forHandoff, onAnswer, onBrief, onMark, pendingActive, progressView, recounted, reopen, isAhead, recountWindows, toggleStageInRun, touchesProgress, answerMovesProgress, withActive } from "../core/progress";
@@ -294,7 +294,7 @@ const historyTitle = (run: FrozenRun, thread: ThreadTitle): Pick<RunHistoryEntry
 };
 
 const INSTRUCTIONS = `Mark the stages of the thread's flow as you go, so the owner sees the progress above the composer.
-- Call ${FLOW_STAGE_TOOL} with state "started" when you begin a skill stage of the run, before its first action.
+- Call ${FLOW_STAGE_TOOL} with state "started" when you begin a skill stage of the run, before its first action. A stage starts only after every skill stage of the run before it is marked done.
 - Call it with state "done" and results — links to what the stage produced, [{ label, target }] with the file name or task key as label — when you finish the stage.
 - Built-in stages (questions, Definition of Done, stage selection, demo) are marked by the briefs themselves: mark one only to roll back to it.
 - Automation stages are run and marked by Flow itself: when the next stage is an automation, mark the current stage done and wait for the answer — the call waits until Flow has run it. When the answer hands you Flow's message, act on it in the same turn; when it says to end your turn, end it — Flow sends you a message when your next stage is due. The answer says whether Flow started it, and if it did not, why and what to do. Never tell the owner an automation runs unless the answer says it started — relay what the answer says.
@@ -415,10 +415,15 @@ export const registerProgress = (
       const marking = stages.find((s) => s.id === stage);
       if (marking !== undefined && isActionStage(marking)) return toolError(`Stage ${stage} is an action: the owner runs its steps with a button, and Flow marks it — do not mark it.`);
       if (marking?.automation !== undefined) return toolError(`Stage ${stage} is an automation: Flow runs and marks it itself — do not mark it.`);
-      const track = (await progress.get(ctx.threadId))?.stages[stage];
+      const record = (await progress.get(ctx.threadId)) ?? EMPTY_PROGRESS;
+      const track = record.stages[stage];
       // Владелец снял этап чекбоксом баннера уже после выбора этапов: агент узнаёт об этом здесь.
       if (state === "started" && track?.skipped === true && track.finishedAt === undefined)
         return toolError(`The owner took stage ${stage} out of the run: skip it and go on with the next stage of the run. Nothing was marked.`);
+      // Пропущенный этап прогона молча уходил из работы: следующий начинается только после него.
+      const open = state === "started" ? unfinishedBefore(stages, record, stage) : null;
+      if (open !== null)
+        return toolError(`Stage ${open.id} "${open.name}" comes before ${stage} in the run and is not marked done: finish it and mark it done first, or ask the owner to take it out of the run. Nothing was marked.`);
       const at = deps.now();
       const startedAt = track?.startedAt;
       const window = state === "done" && startedAt !== undefined ? { from: Date.parse(startedAt), to: Date.parse(at) } : undefined;

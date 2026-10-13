@@ -4,7 +4,7 @@ import fc from "fast-check";
 import { describe, expect, it } from "vitest";
 
 import type { Flow, FlowSettings, WorkStage } from "../shared/contract";
-import { expandStages, stageToFlow, stageToFlowProblem } from "./flows";
+import { expandStages, stageToFlow } from "./flows";
 import { stage } from "./stages-fixtures";
 
 const flow = (id: string, stages: WorkStage[]): Flow => ({ id, name: id.toUpperCase(), stages });
@@ -54,19 +54,11 @@ describe("stageToFlow", () => {
 
 const chain = (id: string, steps: string[]): WorkStage => stage(id, { skill: "", automation: { source: "flow", steps: steps as never } });
 
-describe("stageToFlowProblem", () => {
-  it("этап с мёрджем, чей PR открывает этап выше, во Flow не выносится: новый flow начался бы с мёрджа без PR", () => {
-    const own = settingsOf(flow("plugin", [chain("open", ["git.commit", "git.create-pr"]), chain("merge", ["git.merge"])]));
-    expect(stageToFlowProblem(own, "plugin", "merge")?.step).toBe("git.merge");
-  });
-
-  it("этап, который сам открывает PR и мёрджит, и обычный этап выносятся без помех", () => {
-    const own = settingsOf(flow("plugin", [stage("implement"), chain("ship", ["git.create-pr", "git.merge"])]));
-    expect(stageToFlowProblem(own, "plugin", "ship")).toBeNull();
-    expect(stageToFlowProblem(own, "plugin", "implement")).toBeNull();
-  });
-
-  it("этап, который не выносится вовсе, проблемы не даёт", () => {
-    expect(stageToFlowProblem(settingsOf(flow("plugin", LINKED)), "plugin", "preview")).toBeNull();
+describe("stageToFlow и PR", () => {
+  it("этап с мёрджем выносится и тогда, когда PR открывает этап выше: прогон проходит те же этапы, запрета нет", () => {
+    const own = settingsOf(flow("plugin", [chain("open", ["git.create-pr"]), chain("merge", ["git.merge"])]));
+    const after = stageToFlow(own, "plugin", "merge", MADE);
+    expect(after.flows.map((f) => f.id)).toEqual(["plugin", "made"]);
+    expect(expandStages(after.flows, after.flows[0]!).map((s) => s.id)).toEqual(["open", "nested-flow.merge"]);
   });
 });

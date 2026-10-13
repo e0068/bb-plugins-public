@@ -55,7 +55,7 @@ The subject of the work does not set the method. "This is logic programming, so 
 | --- | --- |
 | `id`, `state` | The stage id from the flow; `todo` — not done, `done` — done. Stages already passed are `done` and cannot be taken out |
 | `results` | Only on a done skill stage: `[{ label, target }]`. `label` is the file name from `target` (with or without the extension, e.g. `spec.md`) or a task key like `BP-28`, not a document title; `target` is a path from the worktree root, an absolute path or a URL. Built-in and `todo` stages have none |
-| `recommended` | `true` — you recommend taking a `todo` stage into the run |
+| `recommended` | `true` — you recommend taking a `todo` stage into the run. Always `true` on an automation stage: its steps — a commit, a PR, a merge and the like — carry the work out, and without them it may never reach main; the plugin puts it into the run anyway, only the owner takes it out |
 | `executor` | `self` or the id of one of the stage's executors from the turn instructions |
 | `share` | `{ percent, risk }` on every `todo` skill stage: its part of the scope and how it changes the risk |
 | `factors` | `{ <executor id>: { factor, risk } }` — the multiplier and risk of each executor of the stage |

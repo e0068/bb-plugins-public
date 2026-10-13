@@ -1,15 +1,13 @@
 import { describe, expect, it } from "vitest";
 
-import { flowStepOrderProblem, opensPrBefore, stepOrderProblem } from "./automation-order";
+import { unopenedPrSteps } from "./automation-order";
 import { stage } from "./stages-fixtures";
-import type { Flow, WorkStage } from "../shared/contract";
+import type { WorkStage } from "../shared/contract";
 
 const chain = (id: string, steps: string[]): WorkStage =>
   stage(id, { name: id, skill: "", automation: { source: "flow", steps: steps as never } });
 
 const external = (id: string): WorkStage => stage(id, { name: id, skill: "", automation: { id: "auto-1", name: "Pull Request" } });
-
-const flow = (stages: WorkStage[]): Flow => ({ id: "default", name: "Default", stages });
 
 const WORKING = [
   stage("implement"),
@@ -18,44 +16,43 @@ const WORKING = [
   chain("flow-automation-2", ["files.bump-patch", "git.merge", "git.pull-main", "bb.tasks-done", "bb.archive"]),
 ];
 
-describe("stepOrderProblem", () => {
-  it("рабочий flow: PR открывает первая цепочка, мёрджит вторая", () => {
-    expect(stepOrderProblem([flow(WORKING)])).toBeNull();
+describe("unopenedPrSteps", () => {
+  it("рабочий flow: PR открывает первая цепочка, мёрджит вторая — помечать нечего", () => {
+    expect(unopenedPrSteps(WORKING, "flow-automation-2")).toEqual([]);
+    expect(unopenedPrSteps(WORKING, "flow-automation")).toEqual([]);
   });
 
-  it("бамп раньше открытия PR в той же цепочке — названы flow, этап и шаг", () => {
-    const broken = flow([chain("flow-automation", ["git.commit", "files.bump-patch", "git.fast-forward", "git.create-pr"])]);
-    expect(flowStepOrderProblem(broken)).toEqual({ flowId: "default", flowName: "Default", stageId: "flow-automation", stageName: "flow-automation", step: "files.bump-patch" });
+  it("бамп раньше открытия PR в той же цепочке — помечен только он, шаги после открытия нет", () => {
+    const stages = [chain("a", ["git.commit", "files.bump-patch", "git.create-pr", "git.merge"])];
+    expect(unopenedPrSteps(stages, "a")).toEqual(["files.bump-patch"]);
   });
 
-  it("мёрдж без открытия PR вовсе — тоже отказ", () => {
-    expect(flowStepOrderProblem(flow([chain("a", ["git.merge"])]))?.step).toBe("git.merge");
+  it("мёрдж и бамп без открытия PR вовсе — помечены оба, в порядке цепочки", () => {
+    expect(unopenedPrSteps([chain("a", ["files.bump-minor", "git.merge"])], "a")).toEqual(["files.bump-minor", "git.merge"]);
   });
 
-  it("сломан второй flow коллекции — находится и он", () => {
-    const problem = stepOrderProblem([flow(WORKING), { id: "f2", name: "Второй", stages: [chain("a", ["files.bump-minor"])] }]);
-    expect(problem).toMatchObject({ flowId: "f2", step: "files.bump-minor" });
+  it("PR открыт этапом выше — шаги этапа не помечены", () => {
+    expect(unopenedPrSteps([chain("open", ["git.create-pr"]), chain("merge", ["git.merge"])], "merge")).toEqual([]);
   });
 
-  it("автоматизация Automations — чёрный ящик: запрета после неё нет", () => {
-    expect(flowStepOrderProblem(flow([external("ext"), chain("a", ["git.merge"])]))).toBeNull();
+  it("PR открывает этап ниже — этап выше помечен: к его шагам PR ещё нет", () => {
+    expect(unopenedPrSteps([chain("merge", ["git.merge"]), chain("open", ["git.create-pr"])], "merge")).toEqual(["git.merge"]);
   });
 
-  it("скрипт шагом не мешает: он не открывает PR, но и не запрещает", () => {
-    expect(flowStepOrderProblem(flow([chain("a", ["script:s1", "git.create-pr", "files.bump-patch"])]))).toBeNull();
-  });
-});
-
-describe("opensPrBefore", () => {
-  it("вторая цепочка знает, что PR уже открыт первой", () => {
-    expect(opensPrBefore(WORKING, "flow-automation-2")).toBe(true);
+  it("автоматизация Automations — чёрный ящик: после неё метки нет", () => {
+    expect(unopenedPrSteps([external("ext"), chain("a", ["git.merge"])], "a")).toEqual([]);
   });
 
-  it("первая цепочка сама PR ещё не открыла — до её шагов его нет", () => {
-    expect(opensPrBefore([chain("a", ["git.commit"]), chain("b", [])], "a")).toBe(false);
+  it("этап, сам ставший автоматизацией Automations, не помечается: его шагов не видно", () => {
+    expect(unopenedPrSteps([external("ext")], "ext")).toEqual([]);
   });
 
-  it("цепочка, в которой уже стоит открытие PR, считает его своим", () => {
-    expect(opensPrBefore([chain("a", ["git.commit", "git.create-pr"])], "a")).toBe(true);
+  it("скрипт шагом не мешает: он не открывает PR, но и сам не помечается", () => {
+    expect(unopenedPrSteps([chain("a", ["script:s1", "git.create-pr", "files.bump-patch"])], "a")).toEqual([]);
+  });
+
+  it("неизвестный этап и этап без автоматизации — пусто", () => {
+    expect(unopenedPrSteps(WORKING, "missing")).toEqual([]);
+    expect(unopenedPrSteps(WORKING, "implement")).toEqual([]);
   });
 });

@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
-import { cleanup, fireEvent } from "@testing-library/react";
+// Порядок шагов не запрет, а подсказка: flow сохраняется любым, а шаг, которому нужен открытый PR при пустом «Открыть PR» выше, помечен на чипе.
+import { cleanup, fireEvent, within } from "@testing-library/react";
 import type { PluginNavPanelProps } from "@get-bb/plugin-sdk/app";
 import { loadPluginApp, renderSlot } from "@get-bb/plugin-sdk/testing/app";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -26,16 +27,21 @@ const open = (initial: FlowSettings, save: (input: unknown) => unknown = (input)
     settings: { language: "Русский" },
   });
 
+const MARK = "Выше по flow нет «Открыть PR»: шаг сработает, если PR откроет другой flow, прошлый прогон или вы вручную";
 
-describe("отказ сохранения на странице", () => {
-  it("запрещённый порядок не уезжает на сервер, причина написана по-русски, таблица на месте", async () => {
-    // Порядок, который меню не даёт собрать, приходит из перетаскивания и
-    // удаления шага: сохранение ловит его тем же правилом, что и сервер.
+describe("порядок шагов на странице", () => {
+  it("убрали «Открыть PR» перед мёрджем: flow уезжает на сервер без отказа, шаг получает метку", async () => {
     const slot = open(settings([chain("flow-automation", "Слить", ["git.create-pr", "git.merge"])]));
     fireEvent.click(await slot.findByRole("button", { name: "Убрать шаг Открыть PR" }));
-    const alert = await slot.findByRole("alert");
-    expect(alert.textContent).toContain("«Смёрджить PR» в этапе «Слить» стоит раньше «Открыть PR»");
-    expect(await slot.findByRole("table", { name: "Этапы работ" })).toBeTruthy();
-    expect(slot.rpcCalls.some((c) => c.method === "saveFlowSettings")).toBe(false);
+    await vi.waitFor(() => expect(slot.rpcCalls.some((c) => c.method === "saveFlowSettings")).toBe(true));
+    expect(slot.queryByRole("alert")).toBeNull();
+    expect(within(await slot.findByRole("listitem", { name: "Перетащить шаг Смёрджить PR" })).getByRole("img", { name: MARK })).toBeTruthy();
+  });
+
+  it("шаг после «Открыть PR» без метки, шаг до него — с меткой", async () => {
+    const slot = open(settings([chain("a", "Цепочка", ["files.bump-patch", "git.create-pr", "git.merge"])]));
+    const before = await slot.findByRole("listitem", { name: "Перетащить шаг Bump patch" });
+    expect(within(before).getByRole("img", { name: MARK })).toBeTruthy();
+    expect(within(slot.getByRole("listitem", { name: "Перетащить шаг Смёрджить PR" })).queryByRole("img")).toBeNull();
   });
 });

@@ -60,13 +60,13 @@ describe("меню «⋯» в строке этапа", () => {
     expect(await within(slot.getByRole("navigation", { name: "Flow" })).findByRole("button", { name: /^Демо(?!нстрация)/ })).toBeTruthy();
   });
 
-  it("этап с мёрджем, чей PR открывает этап выше, не преобразуется: пункт недоступен, причина видна, коллекция прежняя", async () => {
+  it("этап с мёрджем, чей PR открывает этап выше, преобразуется как любой: пункт доступен, без причины под ним", async () => {
     const slot = open([chain("open", ["git.create-pr"]), chain("merge", ["git.merge"])]);
     const menu = await menuOf(slot, 2);
     const item = menu.getByRole("menuitem", { name: "Преобразовать во Flow" });
-    expect(item.getAttribute("aria-disabled")).toBe("true");
-    expect(menu.getByText("Этапу нужен PR, который открывает этап выше, — отдельным flow он не заработает")).toBeTruthy();
+    expect(item.getAttribute("aria-disabled")).not.toBe("true");
+    expect(menu.queryByText(/Этапу нужен PR/)).toBeNull();
     fireEvent.click(item);
-    expect(lastSaved(slot)).toBeUndefined();
+    await vi.waitFor(() => expect(lastSaved(slot)?.flows.map((f) => f.stages.length)).toEqual([2, 1, 1]));
   });
 });

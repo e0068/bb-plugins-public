@@ -14,6 +14,7 @@ import { routeAllowed } from "../core/places";
 import { onAnswer } from "../core/progress";
 import { EMPTY_PROTOTYPE, markSent, mergeEdit, prototypeAddress, prototypeLines } from "../core/prototype";
 import type { Locale } from "../lib/i18n";
+import { messages } from "../lib/messages";
 import { isSideChat } from "../core/side-chat";
 import { stageItems } from "../core/stages";
 import { answerImagesRpcContract, awaitingRpcContract, briefDraftRpcContract, decisionsRpcContract, dispatchRpcContract, filesRpcContract, prototypeRpcContract, widgetAgentRpcContract, type DecisionAnswer, type DecisionBrief, type DispatchRoute, type Execution, type WidgetAgent } from "../shared/contract";
@@ -48,6 +49,8 @@ export const registerApi = (
     flowIds?: () => readonly string[];
     /** Переводит тред на flow, выбранный в Демонстрации: прежний прогон и работа снимаются, заводится пустой прогон нового (./flow-choice.ts). */
     switchFlow?: (threadId: string, flowId: string) => Promise<void>;
+    /** Открытый и не слитый PR рабочего дерева треда; нет такого или bb не ответил — `null`. Не задано — PR не называется. */
+    openPullRequest?: (threadId: string) => Promise<{ number: number; url: string } | null>;
     /** Снимает прогон треда, чью работу переход увёл в новый тред (./flow-choice.ts). */
     releaseFlow?: (threadId: string) => Promise<void>;
     /** Flow, который получит тред передачи из этого треда вместо flow исходного (./thread-start.ts); `null` снимает запись. */
@@ -125,9 +128,13 @@ export const registerApi = (
       const parts = answerMessageParts(brief, answer, locale);
       // Утверждение несёт агенту то, что владелец сделал в прототипах своей группы и ещё не отправлял: его слова — в его часть реплики.
       const prototypes = outcomeKind(brief) === "approve" ? await groupPrototypes(brief) : [];
-      const owner = [parts.owner, ...prototypeLines(prototypes.map(({ state }) => state), locale)].join("\n");
-      // Служебное агенту: прогон, бюджет, Definition of Done, следующий шаг и пути вложений.
-      const service = `${parts.agent}${attachmentsLine(attached, lost, locale)}`.replace(/^\n/, "");
+      // Переход снимает прогон вместе с его слиянием: открытый PR прежнего прогона назван в реплике, иначе он висит незамеченным.
+      const pr = switched === undefined ? null : ((await deps.openPullRequest?.(brief.threadId).catch(() => null)) ?? null);
+      const prLine = pr === null ? [] : [messages(locale).answer.openPullRequest(pr.number, pr.url)];
+      const owner = [parts.owner, ...prototypeLines(prototypes.map(({ state }) => state), locale), ...prLine].join("\n");
+      const prRule = pr === null ? "" : `\n${messages(locale).answer.openPullRequestAgent(pr.number)}`;
+      // Служебное агенту: прогон, бюджет, Definition of Done, что делать с открытым PR, следующий шаг и пути вложений.
+      const service = `${parts.agent}${prRule}${attachmentsLine(attached, lost, locale)}`.replace(/^\n/, "");
       const text = service === "" ? owner : `${owner}\n${service}`;
       const place = answer.place ?? "here";
       let handoffThreadId: string | undefined;

@@ -5,8 +5,6 @@
 import { useEffect, useSyncExternalStore } from "react";
 import { useRealtime, useRpc } from "@get-bb/plugin-sdk/app";
 
-import { stepOrderProblem, type StepOrderProblem } from "../core/automation-order";
-import { withExpandedStages } from "../core/flows";
 import { STAGE_SETTINGS_CHANNEL } from "../lib/channels";
 import type { FlowSettings, StageCatalog, flowSettingsRpcContract } from "../shared/contract";
 
@@ -15,20 +13,18 @@ type Rpc = ReturnType<typeof useRpc<typeof flowSettingsRpcContract>>;
 /**
  * `failed` — не прочиталась коллекция: показывать нечего. `saveError` — правка
  * не сохранена, и причина известна: таблица остаётся на экране, потому что
- * прятать её за «не удалось загрузить» значит скрыть от владельца и сам
- * запрещённый порядок, и то, чем он запрещён.
+ * прятать её за «не удалось загрузить» значит скрыть от владельца и саму правку,
+ * и то, чем сервер её отклонил.
  */
 export type FlowSettingsSnapshot = {
   settings: FlowSettings | null;
   catalog: StageCatalog;
   failed: boolean;
   saveError: string | null;
-  /** Запрещённый порядок шагов, найденный до отправки: страница пишет о нём на своём языке. */
-  saveProblem: StepOrderProblem | null;
 };
 
 const EMPTY_CATALOG: StageCatalog = { skills: [], executors: [] };
-const INITIAL: FlowSettingsSnapshot = { settings: null, catalog: EMPTY_CATALOG, failed: false, saveError: null, saveProblem: null };
+const INITIAL: FlowSettingsSnapshot = { settings: null, catalog: EMPTY_CATALOG, failed: false, saveError: null };
 
 let snapshot = INITIAL;
 let mounted = 0;
@@ -99,21 +95,11 @@ export const commitFlowSettings = (): void => {
   const settings = snapshot.settings;
   if (client === null || settings === null) return;
   unsaved = false;
-  // Порядок шагов проверяется здесь же, до отправки: тем же правилом, каким
-  // отказывает сервер, — но на экране остаётся сообщение на языке страницы, а
-  // не текст серверной ошибки, довезённый транспортом RPC.
-  const problem = stepOrderProblem(withExpandedStages(settings.flows));
-  if (problem !== null) {
-    unsaved = true;
-    publish({ ...snapshot, saveProblem: problem, saveError: null });
-    return;
-  }
   pendingSaves += 1;
   saving = saving
     .then(() => client.call("saveFlowSettings", settings))
-    .then(() => (snapshot.failed || snapshot.saveError !== null || snapshot.saveProblem !== null) && publish({ ...snapshot, failed: false, saveError: null, saveProblem: null }))
-    // Сервер отказал по существу — причина едет на экран целиком: на ней
-    // написано, какой шаг какого этапа переставить.
+    .then(() => (snapshot.failed || snapshot.saveError !== null) && publish({ ...snapshot, failed: false, saveError: null }))
+    // Сервер отказал по существу — причина едет на экран целиком.
     .catch((error: unknown) => publish({ ...snapshot, saveError: error instanceof Error ? error.message : String(error) }))
     .finally(() => {
       pendingSaves -= 1;

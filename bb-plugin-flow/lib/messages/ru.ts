@@ -348,7 +348,6 @@ export const ru = {
     templateSaved: "Этап уже сохранён — он в меню «Добавить этап»",
     stageMenu: (name: string) => `Действия с этапом ${name}`,
     toFlow: "Преобразовать во Flow",
-    toFlowBlocked: "Этапу нужен PR, который открывает этап выше, — отдельным flow он не заработает",
     flowGroup: "Flow",
     nestedFlowGone: "flow удалён",
     emptyStage: "Пустой этап",
@@ -364,9 +363,7 @@ export const ru = {
     savedSets: "Сохранённые наборы",
     removeSet: (label: string) => `Убрать набор ${label}`,
     stepsReadOnly: "Шаги этой автоматизации правятся в плагине Automations",
-    stepNeedsOpenPr: (open: string) => `Работает по открытому PR: поставьте его после шага «${open}»`,
-    stepOrderRefused: (step: string, stage: string, open: string) =>
-      `Не сохранено: «${step}» в этапе «${stage}» стоит раньше «${open}». Шаг работает по открытому PR, и без него цепочка встанет на первом же прогоне — переставьте его после этапа, который открывает PR.`,
+    stepNoPrAbove: "Выше по flow нет «Открыть PR»: шаг сработает, если PR откроет другой flow, прошлый прогон или вы вручную",
     stepCount: (n: number) => plural(n, "шаг", "шага", "шагов"),
     loadFailed: "Не удалось загрузить или сохранить этапы — обнови страницу",
     table: "Этапы работ",
@@ -595,6 +592,9 @@ export const ru = {
     outcomeSwitchHeading: (title: string, flow: string) => `Демонстрация ${quote(title)} — перейти в flow ${quote(flow)}.`,
     outcomeSwitch: (flow: string) =>
       `Тред переведён на flow ${quote(flow)}: его этапы — в инструкциях хода, начни с первого. Объём работы — находки этой демонстрации; комментарий владельца выше, если он есть, его сужает.`,
+    openPullRequest: (number: number, url: string) => `PR #${number} открыт прежним прогоном и не слит: ${url}.`,
+    openPullRequestAgent: (number: number) =>
+      `В новом flow этапа слияния PR #${number} может не быть. Сам его не сливай и не закрывай: что с ним делать, спроси владельца виджетом ask_decision.`,
     flowChosen: (flow: string) => `Тред переведён на flow ${quote(flow)} кнопкой Flow: его этапы — в инструкциях хода, начни с первого; ответы владельца выше остаются в силе.`,
     run: (list: string) => `Прогон: ${list}.`,
     noRun: "Прогон пуст.",

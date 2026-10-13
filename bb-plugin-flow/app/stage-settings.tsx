@@ -12,8 +12,10 @@ import { createContext, Fragment, useContext, useEffect, useRef, useState, type 
 import { useBbNavigate, useRpc } from "@get-bb/plugin-sdk/app";
 
 import { DEFAULT_FAILURE_INSTRUCTION, retryPolicyOf, wakesAgentAfterLastRetry, withFailureInstruction } from "../core/automation-run";
+import type { StepId } from "@bb-plugins/automation-steps/catalog";
+import { unopenedPrSteps } from "../core/automation-order";
 import { executorGroups, skillGroups, skillShortName, type ExecutorGroup } from "../core/catalog";
-import { expandStages, flowStage, nestableFlows, setFlowStages, stageToFlow, stageToFlowProblem } from "../core/flows";
+import { expandStages, flowStage, nestableFlows, setFlowStages, stageToFlow } from "../core/flows";
 import { freeFlowName } from "../core/flow-files";
 import { stageLabel } from "../core/stages";
 import { executionOf, hasMainAgent, withExecutor, withMainAgent, withoutMainAgent, withWidget } from "../core/stage-execution";
@@ -317,20 +319,23 @@ function MainAgentOption({ stage }: { stage: WorkStage }) {
   );
 }
 
-/** Меню исполнения: у скрипта — запуск и шаги, у автоматизации Automations — навыки, у агентского этапа — сегменты «Навык · Субагент · Workflow · Виджет». */
-function ExecutionMenu({ stage, stages, catalog, open, onClose }: { stage: WorkStage; stages: readonly WorkStage[]; catalog: StageCatalog; open: boolean; onClose: () => void }) {
-  const t = useMessages();
-  const setStage = useSetStage();
-  const sets = useSets();
-  // Открыт ли PR раньше этапа, читается по этапам прогона: PR мог открыть вложенный flow.
+/** Этапы прогона, как их читает Flow: со строками «Flow», раскрытыми в этапы вложенных flow, — чтобы PR, открытый вложенным flow, был виден. */
+function useRunStages(stages: readonly WorkStage[]): readonly WorkStage[] {
   const own = useContext(FlowIdContext);
   const { settings } = useFlowSettings();
   const flow = settings?.flows.find((f) => f.id === own);
-  const read = flow === undefined || settings === null ? stages : expandStages(settings.flows, flow);
+  return flow === undefined || settings === null ? stages : expandStages(settings.flows, flow);
+}
+
+/** Меню исполнения: у скрипта — запуск и шаги, у автоматизации Automations — навыки, у агентского этапа — сегменты «Навык · Субагент · Workflow · Виджет». */
+function ExecutionMenu({ stage, catalog, open, onClose }: { stage: WorkStage; catalog: StageCatalog; open: boolean; onClose: () => void }) {
+  const t = useMessages();
+  const setStage = useSetStage();
+  const sets = useSets();
   return (
     <FieldOverlay open={open} onClose={onClose} role="menu" label={t.settings.executionMenu} className="w-[20rem]">
       {executionOf(stage).kind === "script" ? (
-        <ScriptOptions stage={stage} stages={read} sets={sets} onChange={(change) => setStage(stage.id, change)} onDone={onClose} />
+        <ScriptOptions stage={stage} sets={sets} onChange={(change) => setStage(stage.id, change)} onDone={onClose} />
       ) : executionOf(stage).kind === "external" ? (
         // Шаги автоматизации Automations правятся в том плагине; здесь у неё правится только навык.
         <SkillMenuOptions stage={stage} catalog={catalog} onDone={onClose} />
@@ -462,7 +467,7 @@ function ExecutorTags({ stage, executors, files, change }: { stage: WorkStage; e
  * не снимается и тут: этап исполняет виджет Flow по этому навыку.
  * Чип с файлом открывает его в правой панели в обоих случаях.
  */
-function ExecutionChips({ stage, catalog, files, change }: { stage: WorkStage; catalog: StageCatalog; files: ChipFiles; change: ChipChange }) {
+function ExecutionChips({ stage, catalog, files, change, unopened }: { stage: WorkStage; catalog: StageCatalog; files: ChipFiles; change: ChipChange; unopened: readonly StepId[] }) {
   const execution = executionOf(stage);
   const skill = execution.kind === "script" ? "" : chipSkill(stage, catalog);
   return (
@@ -471,7 +476,7 @@ function ExecutionChips({ stage, catalog, files, change }: { stage: WorkStage; c
       {execution.kind === "executors" && <ExecutorTags stage={stage} executors={execution.executors} files={files} change={change} />}
       {execution.kind === "script" && execution.manual && <ManualMark />}
       {(execution.kind === "script" || execution.kind === "external") &&
-        (change === null ? <ReadOnlyStepTags stage={stage} onOpenScript={files.script} /> : <AutomationStepTags stage={stage} onChange={change} onOpenScript={files.script} />)}
+        (change === null ? <ReadOnlyStepTags stage={stage} onOpenScript={files.script} /> : <AutomationStepTags stage={stage} unopened={unopened} onChange={change} onOpenScript={files.script} />)}
     </>
   );
 }
@@ -499,17 +504,18 @@ function ExecutionCell({ stage, stages, catalog }: { stage: WorkStage; stages: r
   const close = () => setOpen(false);
   const { root } = useFieldOverlay(open, close);
   const files = useChipFiles(stage);
+  const unopened = unopenedPrSteps(useRunStages(stages), stage.id);
   const widget = executionOf(stage).kind === "widget";
   return (
     <span role="cell" className={cellWide}>
       <div ref={root} className={cn(chipRow, "relative")}>
-        <ExecutionChips stage={stage} catalog={catalog} files={files} change={(next) => setStage(stage.id, next)} />
+        <ExecutionChips stage={stage} catalog={catalog} files={files} change={(next) => setStage(stage.id, next)} unopened={unopened} />
         {!widget && (
           <button type="button" aria-label={t.settings.addExecution} title={t.settings.addExecution} aria-expanded={open} onClick={() => setOpen(!open)} className={cn(square, "bg-card text-muted-foreground hover:bg-state-hover hover:text-foreground")}>
             <Icon name="Plus" aria-hidden="true" className="size-3.5" />
           </button>
         )}
-        {!widget && <ExecutionMenu stage={stage} stages={stages} catalog={catalog} open={open} onClose={close} />}
+        {!widget && <ExecutionMenu stage={stage} catalog={catalog} open={open} onClose={close} />}
         <MissingFile files={files} />
       </div>
     </span>
@@ -522,7 +528,7 @@ function ReadOnlyExecution({ stage, catalog }: { stage: WorkStage; catalog: Stag
   return (
     <span role="cell" className={cellWide}>
       <div className={chipRow}>
-        <ExecutionChips stage={stage} catalog={catalog} files={files} change={null} />
+        <ExecutionChips stage={stage} catalog={catalog} files={files} change={null} unopened={[]} />
         <MissingFile files={files} />
       </div>
     </span>
@@ -705,15 +711,13 @@ const templateCell = "col-start-3 row-start-2 @[44rem]:col-start-auto @[44rem]:r
 /**
  * «⋯» строки этапа верхнего уровня; у под-этапа и строки «Flow» меню нет. «Сохранить этап шаблоном» кладёт этап целиком, с
  * под-этапами, шаблоном в меню «Добавить этап». «Преобразовать во Flow» уносит связку в новый flow с именем этапа, а на её место
- * ставит строку «Flow» нового flow; страница остаётся на текущем flow. Недоступный пункт — у сохранённого этапа и у этапа, чей
- * вынос сломал бы порядок шагов PR, — несёт причину строкой под собой: подсказку при наведении меню на нём не показывает.
+ * ставит строку «Flow» нового flow; страница остаётся на текущем flow. Недоступный пункт — у сохранённого этапа — несёт причину
+ * строкой под собой: подсказку при наведении меню на нём не показывает.
  */
 function StageMenu({ stage, stages }: { stage: WorkStage; stages: readonly WorkStage[] }) {
   const t = useMessages();
   const flowId = useContext(FlowIdContext);
-  const { settings } = useFlowSettings();
   const saved = isTemplateSaved(useStageTemplates(), stages, stage);
-  const blocked = settings !== null && stageToFlowProblem(settings, flowId, stage.id) !== null;
   const name = stageLabel(stage, t.stages);
   const save = () => updateFlowSettings((s) => ({ ...s, stageTemplates: [...saveTemplate(s.stageTemplates ?? [], stages, stage)] }));
   const toFlow = () => updateFlowSettings((s) => stageToFlow(s, flowId, stage.id, { id: newFlowId(), name: freeFlowName(s.flows, name) }));
@@ -727,7 +731,7 @@ function StageMenu({ stage, stages }: { stage: WorkStage; stages: readonly WorkS
         </DropdownMenuTrigger>
         <DropdownMenuContent align="end" collisionPadding={8}>
           <StageMenuItem label={t.settings.saveTemplate} reason={saved ? t.settings.templateSaved : null} onSelect={save} icon={<Icon name="Bookmark" aria-hidden="true" className={cn("size-3.5", saved && "fill-current")} />} />
-          <StageMenuItem label={t.settings.toFlow} reason={blocked ? t.settings.toFlowBlocked : null} onSelect={toFlow} icon={<FlowGlyph className="size-3.5" />} />
+          <StageMenuItem label={t.settings.toFlow} reason={null} onSelect={toFlow} icon={<FlowGlyph className="size-3.5" />} />
         </DropdownMenuContent>
       </DropdownMenu>
     </span>
@@ -1099,16 +1103,16 @@ export function WorkStagesTable({ flowId }: { flowId: string }) {
 
 function WorkStages({ flowId }: { flowId: string }) {
   const t = useMessages();
-  const { settings, catalog, failed, saveError, saveProblem } = useFlowSettings();
+  const { settings, catalog, failed, saveError } = useFlowSettings();
   const table = useRef<HTMLDivElement>(null);
   const stages = settings?.flows.find((f) => f.id === flowId)?.stages ?? [];
   const { dragged, grab, hover, result } = useRowDrag(table, stages);
   const places = useRowPlaces(stages, dragged, hover, result);
   return (
     <Loading failed={failed}>
-      {(saveProblem !== null || saveError !== null) && (
+      {saveError !== null && (
         <div role="alert" className="mb-1 text-xs text-destructive">
-          {saveProblem === null ? saveError : t.settings.stepOrderRefused(t.steps[saveProblem.step], saveProblem.stageName, t.steps["git.create-pr"])}
+          {saveError}
         </div>
       )}
       <div ref={table} role="table" aria-label={t.settings.table} aria-busy={settings === null || undefined} className="@container flex flex-col gap-px overflow-visible [&>*:last-child]:rounded-b-lg [&>*:nth-child(2)]:rounded-t-lg">
