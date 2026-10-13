@@ -1,0 +1,138 @@
+{
+  "app/add-row.tsx": {
+    "arbitrary-value": 7,
+    "raw-control": 1
+  },
+  "app/agent-cells.tsx": {
+    "raw-control": 3,
+    "arbitrary-value": 7
+  },
+  "app/answered-images.tsx": {
+    "arbitrary-value": 1,
+    "raw-control": 1
+  },
+  "app/attachments.tsx": {
+    "raw-control": 5,
+    "arbitrary-value": 4
+  },
+  "app/automation-stage.tsx": {
+    "arbitrary-value": 2,
+    "raw-control": 8
+  },
+  "app/automation-toasts.tsx": {
+    "inline-style": 5,
+    "raw-control": 1
+  },
+  "app/brief-card.tsx": {
+    "raw-control": 13,
+    "arbitrary-value": 24,
+    "inline-style": 1
+  },
+  "app/cells.tsx": {
+    "arbitrary-value": 6
+  },
+  "app/command.tsx": {
+    "raw-control": 3,
+    "arbitrary-value": 2
+  },
+  "app/fallback-thread-list.tsx": {
+    "arbitrary-value": 3,
+    "raw-control": 1
+  },
+  "app/flow-choice.tsx": {
+    "arbitrary-value": 7,
+    "raw-control": 2
+  },
+  "app/flows-list.tsx": {
+    "arbitrary-value": 2,
+    "raw-control": 5
+  },
+  "app/flows-page.tsx": {
+    "arbitrary-value": 4
+  },
+  "app/flows-settings-button.tsx": {
+    "raw-control": 2
+  },
+  "app/journal-settings.tsx": {
+    "arbitrary-value": 1
+  },
+  "app/mentions.tsx": {
+    "raw-control": 1
+  },
+  "app/no-math.tsx": {
+    "inline-style": 1
+  },
+  "app/parts.tsx": {
+    "arbitrary-value": 1
+  },
+  "app/progress-banner.tsx": {
+    "inline-style": 3,
+    "raw-control": 7,
+    "arbitrary-value": 20,
+    "style-tag": 1
+  },
+  "app/provider-logos.tsx": {
+    "arbitrary-value": 3,
+    "inline-style": 2
+  },
+  "app/result-row.tsx": {
+    "arbitrary-value": 2,
+    "raw-control": 1
+  },
+  "app/run-history.tsx": {
+    "arbitrary-value": 2,
+    "raw-control": 4
+  },
+  "app/run-summary.tsx": {
+    "arbitrary-value": 13,
+    "raw-control": 2,
+    "style-tag": 1,
+    "inline-style": 2
+  },
+  "app/section-tag.tsx": {
+    "arbitrary-value": 1
+  },
+  "app/segmented.tsx": {
+    "arbitrary-value": 5
+  },
+  "app/stage-checkbox.tsx": {
+    "arbitrary-value": 1,
+    "raw-control": 1
+  },
+  "app/stage-icon-picker.tsx": {
+    "raw-control": 3,
+    "arbitrary-value": 2
+  },
+  "app/stage-settings.tsx": {
+    "arbitrary-value": 31,
+    "raw-control": 13
+  },
+  "app/stages-table.tsx": {
+    "arbitrary-value": 12,
+    "raw-control": 7,
+    "inline-style": 1
+  },
+  "app/task-card.tsx": {
+    "raw-control": 1
+  },
+  "app/theme.css": {
+    "css-rule": 2
+  },
+  "app/voice.tsx": {
+    "raw-control": 1,
+    "arbitrary-value": 1
+  },
+  "app/widget-page.tsx": {
+    "arbitrary-value": 5,
+    "raw-control": 2
+  },
+  "app/widget.tsx": {
+    "inline-style": 6,
+    "raw-control": 5,
+    "arbitrary-value": 22
+  },
+  "app/workflows-section.tsx": {
+    "arbitrary-value": 2,
+    "raw-control": 2
+  }
+}

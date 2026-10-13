@@ -62,6 +62,12 @@ const fitEntries = (brief: DecisionBrief, entries: Draft["entries"]): Draft["ent
 /** Выбор владельца в источнике: черновик строкой или записанный ответ; нечитаемый — `null`. */
 const draftOf = (source: RestoredSource): Draft | null => (source.draft !== undefined ? decodeDraft(source.draft) : source.answer === undefined ? null : fromAnswer(source.answer));
 
+/**
+ * Общий комментарий, который ложится на новый бриф: только неотправленный, из черновика, и только туда, где есть его поле.
+ * Комментарий записанного ответа агент уже получил, а у брифа с итогом поля нет — перенесённый текст ушёл бы молча второй раз.
+ */
+const noteOf = (brief: DecisionBrief, source: RestoredSource, old: Draft): string => (source.draft === undefined || brief.outcome !== undefined ? "" : old.note);
+
 const isBlank = (budget: Draft["budget"]): boolean => Object.values(budget).every((text) => text.trim() === "");
 
 /**
@@ -73,13 +79,13 @@ export const withRestored = (brief: DecisionBrief, base: Draft, restored: Restor
   const stageIds = new Set(stageItems(brief).map((item) => item.stage.id));
   const sources = (restored === undefined ? [] : restoredSources(restored)).flatMap((source) => {
     const old = draftOf(source);
-    return old === null ? [] : [{ old, criteria: source.criteria }];
+    return old === null ? [] : [{ old, criteria: source.criteria, note: noteOf(brief, source, old) }];
   });
   return sources.reduce(
-    (draft, { old, criteria }): Draft => ({
+    (draft, { old, criteria, note }): Draft => ({
       ...draft,
       entries: { ...draft.entries, ...fitEntries(brief, old.entries) },
-      note: old.note === "" ? draft.note : old.note,
+      note: note === "" ? draft.note : note,
       budget: isBlank(old.budget) ? draft.budget : old.budget,
       stages: { ...draft.stages, ...Object.fromEntries(Object.entries(old.stages).filter(([id]) => stageIds.has(id))) },
       criteria: mergeCriteria(brief, draft.criteria, old.criteria, criteria),

@@ -20,6 +20,7 @@ import { useMessages } from "./locale-context";
 import { SectionTag } from "./section-tag";
 import { ResultRow } from "./result-row";
 import { TaskCard } from "./task-card";
+import { PrototypeWidget } from "./prototype-widget";
 
 export type OutcomeView = {
   draft: Draft;
@@ -97,7 +98,10 @@ function LaunchRow({ briefId, index, label, command }: { briefId: string; index:
 /** Строки результатов в карточке — выше и на подложке карточки ответа. */
 const RESULT_ROW_IN_CARD = "min-h-10 bg-card";
 
-/** Карточка Демонстрации — отчёт. У Утверждения карточки нет: что утверждается, агент называет заголовком, а поле комментария рисует форма (`CommentRow`). */
+/**
+ * Карточка Демонстрации — отчёт. У Утверждения карточки нет: что утверждается, агент называет заголовком, а поле комментария рисует форма (`CommentRow`).
+ * Прототип итога встаёт виджетом после карточки, а не в ней: карточка обрезает края, а окно прототипа шире колонки.
+ */
 export function DemoCard({ brief, roots }: { brief: DecisionBrief; roots: FileRoots | null }) {
   const t = useMessages();
   const outcome = brief.outcome;
@@ -105,6 +109,7 @@ export function DemoCard({ brief, roots }: { brief: DecisionBrief; roots: FileRo
   const kind = outcomeKind(brief);
   if (kind === "approve") return null;
   return (
+    <>
     <div role="group" aria-label={t.outcome.title} className="flex flex-col overflow-hidden rounded-lg">
       <div className="flex flex-col gap-4 bg-surface-recessed-solid px-4 pb-4 pt-3.5">
         <SectionTag kind={kind} extra={outcome.final ? t.outcome.final : outcome.next === undefined ? undefined : t.outcome.next(outcome.next)} />
@@ -136,6 +141,8 @@ export function DemoCard({ brief, roots }: { brief: DecisionBrief; roots: FileRo
         </Group>
       </div>
     </div>
+    {outcome.prototype !== undefined && <PrototypeWidget threadId={brief.threadId} url={outcome.prototype.url} {...(outcome.prototype.title === undefined ? {} : { title: outcome.prototype.title })} />}
+    </>
   );
 }
 

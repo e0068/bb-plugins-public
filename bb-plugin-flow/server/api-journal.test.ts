@@ -22,16 +22,30 @@ const answer: DecisionAnswer = { briefId: "dec_j", answers: [{ questionId: "q", 
 
 type WriteDecision = (args: { brief: DecisionBrief; answer: DecisionAnswer; decidedAt: string; locale?: Locale }) => Promise<unknown>;
 
-const setup = async (writeDecision?: WriteDecision) => {
+const setup = async (writeDecision?: WriteDecision, emit?: (trigger: string) => void) => {
   const { bb, harness } = createFakePluginHost({ pluginId: "flow", sdk: { threads: { send: async () => ({ delivery: "started" }) } } });
   const store = createStore(bb.storage.kv);
   await store.putBrief(brief);
   await store.putBrief({ ...clarify, questions: brief.questions });
-  registerApi(bb, store, { now: () => "2026-09-15T12:05:00.000Z", writeDecision });
+  registerApi(bb, store, { now: () => "2026-09-15T12:05:00.000Z", writeDecision, emit });
   return { harness };
 };
 
 describe("answerBrief пишет журнал решения", () => {
+  it("файл решения ложится на диск раньше, чем автоматизации узнают об ответе, — иначе Commit проходит мимо него", async () => {
+    const events: string[] = [];
+    const { harness } = await setup(
+      async () => {
+        await new Promise((resolve) => setTimeout(resolve, 5));
+        events.push("journal-written");
+        return { kind: "written", path: "docs/decisions/kuda-zhurnalit.md" };
+      },
+      (trigger) => events.push(trigger),
+    );
+    await harness.callRpc("answerBrief", { id: "dec_j", answer, messageId: "msg_1" });
+    expect(events).toEqual(["journal-written", "flow.brief-answered"]);
+  });
+
   it("зовёт writeDecision с брифом, ответом и временем ответа после того, как ответ принят", async () => {
     const calls: unknown[] = [];
     const { harness } = await setup(async (args) => {

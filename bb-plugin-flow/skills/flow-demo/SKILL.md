@@ -34,6 +34,11 @@ The owner sees what was done. A demo is a report, not a stop: in bb sending it c
 
 **The live result.** The owner judges the work by seeing it run, not by reading about it. Web — start the dev server or a preview in the background, run `bb connect status --json`: when paired, `bb connect expose <port>` prints the share URL — give that; otherwise give `http://localhost:<port>` and say so in `notes`; link straight to the page where the change is visible, with the query or route that puts it in the right state. Desktop — build the app from this working tree and give `{ label, command }` that starts that build; one click on "Run in terminal" has to be enough. Before sending, request every page URL and send the demo only when it answers 200; a command you have run once yourself.
 
+**A prototype — in the window of the widget.** An HTML prototype goes into `prototype: { url, title? }` of the demo outcome: the owner clicks it in a window under the demo card, as wide as the dialog, instead of opening a link. Serve the prototype folder (`python3 -m http.server <port>`), publish the port with `bb connect expose <port>` and put that `https://` address into `url`; without Connect — `http://localhost:<port>`. Above the window the widget lists the prototype's forks as rows of segments and the owner's comments; the choices and the comments reach you with the answer to the approval as the lines "Prototype choices: fork — value" and "Prototype comments: spot — text". The forks come from the page itself, by messages to `window.parent` — add them to the demo panel of the prototype:
+
+- page → widget: `{ source: "bb-prototype", type: "ready", forks: [{ id, label, options: [{ value, label }] }] }` once on load; `{ source: "bb-prototype", type: "choice", fork, value }` on every switch in its own panel; `{ source: "bb-prototype", type: "picked", label }` — the name of the element clicked after `pick`, e.g. "the Send button";
+- widget → page: `{ source: "bb-prototype", type: "restore", choices, embedded: true }` — the saved choice, apply it and hide your own demo panel; `{ source: "bb-prototype", type: "set", fork, value }` — a switch in the widget; `{ source: "bb-prototype", type: "pick" }` — the next click is not a click: name the element with `picked` instead.
+
 ```json
 {
   "title": "Demo — prototype",
