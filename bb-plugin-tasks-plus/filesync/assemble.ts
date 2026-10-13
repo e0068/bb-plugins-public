@@ -1,4 +1,5 @@
 import type { Attachment } from "../db/types.js";
+import { propertiesOf, type Properties } from "../shared/properties.js";
 import type { Comment, Task } from "../shared/contract.js";
 import { nearestEpicId } from "../shared/epic.js";
 import { parseAttachedThreads, type AttachedThread } from "../threads/live-state.js";
@@ -30,6 +31,12 @@ export interface AssembledTask {
 
 export interface AssembleResult {
   tasks: AssembledTask[];
+}
+
+/** `properties` for a file that has any, nothing for one that has none. */
+function propertiesField(frontmatter: Record<string, unknown>): { properties?: Properties } {
+  const properties = propertiesOf(frontmatter);
+  return Object.keys(properties).length === 0 ? {} : { properties };
 }
 
 function rawArray(frontmatter: Record<string, unknown>, key: string): Record<string, unknown>[] {
@@ -102,6 +109,8 @@ export function assembleBoardTasks(
         labelIds: [...(file.task.labels ?? [])],
         flow: file.task.flow ?? null,
         takenBy: file.task.takenBy ?? null,
+        // Only a record that has properties carries the field.
+        ...propertiesField(file.frontmatter),
         // From the folders above the status folder, not the frontmatter.
         assignee: file.assignee,
         epic: file.epic,

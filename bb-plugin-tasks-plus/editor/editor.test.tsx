@@ -412,6 +412,57 @@ describe("TasksEditor component", () => {
     expect(onAttachFiles).toHaveBeenCalledTimes(2);
   });
 
+  it("leaves an image dragged within the description to the editor — moved, or copied with a modifier — instead of uploading it", () => {
+    const onUploadImage = vi.fn(async () => ({ url: "/shot.png", attachmentId: "a1" }));
+    let editor: Editor | null = null;
+    render(
+      <TasksEditor
+        value=""
+        onChange={() => undefined}
+        onUploadImage={onUploadImage}
+        onEditorReady={(ready) => (editor = ready)}
+      />,
+    );
+    const view = editor!.view;
+    const file = new File(["png"], "shot.png", { type: "image/png" });
+    // A copy-modifier drag from inside: ProseMirror reports it as not moved, but the drag is its own.
+    view.dragging = { slice: view.state.doc.slice(0, 0), move: false };
+    const event = { dataTransfer: { files: [file] }, preventDefault: vi.fn(), clientX: 0, clientY: 0 } as unknown as DragEvent;
+
+    expect(editor!.options.editorProps.handleDrop!.call(view, view, event, view.state.doc.slice(0, 0), false)).toBe(false);
+    expect(onUploadImage).not.toHaveBeenCalled();
+  });
+
+  it("puts a file dropped from outside where it was dropped, however the text moved during the upload", async () => {
+    let finish: (value: { url: string; attachmentId: string }) => void = () => undefined;
+    const onUploadImage = vi.fn(() => new Promise<{ url: string; attachmentId: string }>((resolve) => (finish = resolve)));
+    let editor: Editor | null = null;
+    render(
+      <TasksEditor
+        value="Hello world"
+        onChange={() => undefined}
+        onUploadImage={onUploadImage}
+        onEditorReady={(ready) => (editor = ready)}
+      />,
+    );
+    const view = editor!.view;
+    // Dropped before "world": jsdom lays nothing out, so the point is named by its position.
+    view.posAtCoords = () => ({ pos: 7, inside: -1 });
+    const event = { dataTransfer: { files: [new File(["png"], "shot.png", { type: "image/png" })] }, preventDefault: vi.fn(), clientX: 0, clientY: 0 } as unknown as DragEvent;
+
+    expect(editor!.options.editorProps.handleDrop!.call(view, view, event, view.state.doc.slice(0, 0), false)).toBe(true);
+    editor!.commands.insertContentAt(1, "Big ");
+    finish({ url: "/shot.png", attachmentId: "a1" });
+
+    await waitFor(() => {
+      let before = "";
+      editor!.state.doc.descendants((node, pos) => {
+        if (node.type.name === "image") before = editor!.state.doc.textBetween(0, pos, "|");
+      });
+      expect(before).toBe("Big Hello ");
+    });
+  });
+
   it("replaces the document when the value prop changes externally", async () => {
     const onChange = vi.fn();
     const screen = render(
@@ -646,7 +697,7 @@ describe("TasksEditor submit-on-Enter", () => {
 });
 
 describe("адрес картинки при показе", () => {
-  const stored = "![shot](/api/v1/plugins/tasks/http/attachments/download?attachmentId=01JIMAGE0000000000000000AA)";
+  const stored = "![shot](/api/v1/plugins/tasks-plus/http/attachments/download?attachmentId=01JIMAGE0000000000000000AA)";
 
   it("картинка показывается по адресу поверхности, а в тексте остаётся исходный", async () => {
     let editor: Editor | null = null;
@@ -660,7 +711,7 @@ describe("адрес картинки при показе", () => {
     );
     await waitFor(() =>
       expect(screen.container.querySelector("img")?.getAttribute("src")).toBe(
-        "/api/v1/plugins/tasks/http/attachments/download?attachmentId=01JIMAGE0000000000000000AA&callerThreadId=thr_x",
+        "/api/v1/plugins/tasks-plus/http/attachments/download?attachmentId=01JIMAGE0000000000000000AA&callerThreadId=thr_x",
       ),
     );
     expect(editor!.storage.markdown.getMarkdown()).toBe(stored);
@@ -669,7 +720,7 @@ describe("адрес картинки при показе", () => {
   it("адрес вложения с тредом сохраняется без треда", () => {
     expect(
       roundTrip(
-        "![shot](/api/v1/plugins/tasks/http/attachments/download?attachmentId=01JIMAGE0000000000000000AA&callerThreadId=thr_x)",
+        "![shot](/api/v1/plugins/tasks-plus/http/attachments/download?attachmentId=01JIMAGE0000000000000000AA&callerThreadId=thr_x)",
       ),
     ).toBe(stored);
   });

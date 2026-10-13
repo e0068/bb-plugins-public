@@ -7,6 +7,7 @@ import type {
   TaskType,
 } from "../../shared/enums.js";
 import {
+  LABEL_COLOR,
   TASK_ESTIMATES,
   TASK_PRIORITIES,
   TASK_STATUSES,
@@ -488,6 +489,40 @@ function LabelsMenu({
   );
 }
 
+/** The labels a task carries — each as its chip, the colour its project gives it — and the "+" that picks
+ *  them the way the rail does. A section's record shows its Tags with it. */
+export function LabelsValue({
+  task,
+  labels,
+  onUpdate,
+}: {
+  task: Task;
+  labels: Label[] | undefined;
+  onUpdate: (update: TaskPropertyUpdate) => void;
+}) {
+  const known = new Map((labels ?? []).map((label) => [label.id, label]));
+  return (
+    <div className="flex min-w-0 flex-wrap items-center gap-1 py-0.5">
+      {task.labelIds.map((id) => (
+        <LabelChip
+          key={id}
+          label={known.get(id) ?? { id, projectId: task.projectId, name: id, color: LABEL_COLOR }}
+          onRemove={() => onUpdate({ labelIds: task.labelIds.filter((other) => other !== id) })}
+        />
+      ))}
+      <LabelsMenu task={task} labels={labels} onUpdate={onUpdate}>
+        <button
+          type="button"
+          aria-label="Edit labels"
+          className="inline-flex items-center rounded-md border border-dashed border-border px-1.5 py-0.5 text-muted-foreground hover:border-input hover:text-foreground"
+        >
+          <Icon name="Plus" className="size-3" />
+        </button>
+      </LabelsMenu>
+    </div>
+  );
+}
+
 /**
  * Editable "Dispatch target" row: shows the linked bb project (or an invite
  * to link one) and opens a picker that saves via updateProject. The rail's
@@ -597,6 +632,9 @@ function DispatchTargetMenu({
   );
 }
 
+/** The right-hand rail's own box — a section record's Properties stand in the same one. */
+export const RAIL_FRAME_CLASS = "w-56 shrink-0 py-10 pl-2 pr-6";
+
 const RAIL_ROW_CLASS =
   "-mx-1.5 flex w-[calc(100%+0.75rem)] items-center gap-2 rounded-md px-1.5 py-1 text-left text-sm hover:bg-state-hover";
 
@@ -683,9 +721,6 @@ export function PropertiesRail({
   onError: (message: string) => void;
   className?: string;
 }) {
-  const taskLabels = (labels ?? []).filter((label) =>
-    task.labelIds.includes(label.id),
-  );
   const active = threads.filter(isActiveThread);
   // Fetched unconditionally: the picker needs the workspace list even when
   // the project is not linked yet.
@@ -694,7 +729,7 @@ export function PropertiesRail({
     ["projects:changed"],
   );
   return (
-    <aside className={cn("w-56 shrink-0 py-10 pl-2 pr-6", className)}>
+    <aside className={cn(RAIL_FRAME_CLASS, className)}>
       <WorktreeSourceBanner task={task} />
       <h2 className="mb-1.5 text-xs font-semibold text-muted-foreground">
         Properties
@@ -760,28 +795,7 @@ export function PropertiesRail({
       <div className="mb-1 mt-3 text-2xs font-semibold text-muted-foreground">
         Labels
       </div>
-      <div className="flex flex-wrap items-center gap-1 py-0.5">
-        {taskLabels.map((label) => (
-          <LabelChip
-            key={label.id}
-            label={label}
-            onRemove={() =>
-              onUpdate({
-                labelIds: task.labelIds.filter((id) => id !== label.id),
-              })
-            }
-          />
-        ))}
-        <LabelsMenu task={task} labels={labels} onUpdate={onUpdate}>
-          <button
-            type="button"
-            aria-label="Edit labels"
-            className="inline-flex items-center rounded-md border border-dashed border-border px-1.5 py-0.5 text-muted-foreground hover:border-input hover:text-foreground"
-          >
-            <Icon name="Plus" className="size-3" />
-          </button>
-        </LabelsMenu>
-      </div>
+      <LabelsValue task={task} labels={labels} onUpdate={onUpdate} />
 
       <div className="mt-3 grid grid-cols-2 gap-2">
         <AmountInput

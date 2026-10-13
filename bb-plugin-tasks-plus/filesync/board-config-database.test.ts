@@ -28,3 +28,17 @@ describe("a board record from before databases", () => {
     expect(board?.database).toEqual({ url: "libsql://board-me.turso.io" });
   });
 });
+
+describe("a section's board record", () => {
+  const section = (database: Record<string, unknown>) => ({ ...folderBoard, tasksFolder: null, database: { url: "libsql://board-me.turso.io", ...database } });
+
+  it("keeps the section it sits in", async () => {
+    const [board] = await readBoardConfigs(kvWith([section({ table: "specs001", parent: "docs0001" })]));
+    expect(board?.database).toEqual({ url: "libsql://board-me.turso.io", table: "specs001", parent: "docs0001" });
+  });
+
+  it("reads a parent that is not a section id as no parent — a top section", async () => {
+    const [board] = await readBoardConfigs(kvWith([section({ table: "specs001", parent: "x; DROP" })]));
+    expect(board?.database).toEqual({ url: "libsql://board-me.turso.io", table: "specs001" });
+  });
+});

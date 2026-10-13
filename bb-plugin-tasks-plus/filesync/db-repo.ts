@@ -2,6 +2,26 @@ import type { HranaClient, HranaError, HranaResult, HranaRow, HranaStep, HranaSt
 import type { TaskStatus } from "../db/types.js";
 import { applyRows, INITIAL_LINK, nextLink, refusedLink, taskFilePath, tokenlessLink, type LinkState, type Mirror, type TaskRow } from "./db-mirror.js";
 import { parseTaskFile } from "./task-file.js";
+import {
+  ADD_FIELD_OPTION,
+  APPEND_TABLE_FIELD,
+  decodeTables,
+  deleteTableSteps,
+  LIST_TABLES,
+  REMOVE_FIELD_OPTION,
+  RENAME_TABLE,
+  subtreeOf,
+  TABLES_ADDED_COLUMNS,
+  TABLES_FIELDS_COLUMN,
+  TABLES_PARENT_COLUMN,
+  TABLES_SCHEMA,
+  tableNames,
+  tableRoot,
+  type DbTable,
+  type TableId,
+  type TableNames,
+} from "./db-tables.js";
+import type { SectionField } from "../shared/section-fields.js";
 import type { TaskPlacement } from "./placement.js";
 import {
   DatabaseAuthFailed,
@@ -26,7 +46,11 @@ import {
 
 export interface DbRepoOptions {
   url: string;
+  /** The table beside the task board this repository keeps; absent — the task board itself. */
+  table?: TableId;
   onChange?: () => void;
+  /** A write of this machine landed: the mirror already holds it, so no poll will tell it as a change. */
+  onWrite?: () => void;
   onStateChange?: (state: RepoState) => void;
   /** A lost attempt with its cause: the first after a live link, and each whose cause differs from the one told before it. */
   onLinkLost?: (why: UnreachableCause) => void;
@@ -46,6 +70,22 @@ export interface DbRepo extends TaskRepo {
   writePrefix(prefix: string): Promise<void>;
   /** How many tasks the mirror holds. */
   count(): number;
+  /** The text of every live record, by slug, as the last poll or write left them. */
+  snapshot(): ReadonlyMap<string, string>;
+  /** Whether the database has answered once: before that the snapshot is empty, not the board. */
+  loaded(): boolean;
+  /** The tables beside the task board, as the last poll left them; only the task board's repository reads them. */
+  tables(): readonly DbTable[];
+  /** Adds a table beside the task board and tells every machine on the next poll. */
+  addTable(id: TableId, name: string, parent: TableId | null): Promise<DbTable>;
+  /** Gives a table one more field and tells every machine on the next poll. */
+  addTableField(id: TableId, field: SectionField): Promise<void>;
+  /** Adds an option to a declared Select or Tags field of a table, or takes one away. */
+  changeFieldOption(id: TableId, field: string, option: string, change: "add" | "remove"): Promise<void>;
+  /** Gives a table a new name. */
+  renameTable(id: TableId, name: string): Promise<void>;
+  /** Takes a table, its records and every table inside it out of the database. */
+  deleteTable(id: TableId): Promise<void>;
   /** Polls the database every `pollMs` until `stop()`. */
   start(): void;
   stop(): void;
@@ -54,9 +94,9 @@ export interface DbRepo extends TaskRepo {
 const DEFAULT_POLL_MS = 2000;
 const SCHEMA_VERSION = 1;
 
-const SCHEMA_STEPS: readonly HranaStep[] = [
+const schemaSteps = (names: TableNames): readonly HranaStep[] => [
   {
-    sql: `CREATE TABLE IF NOT EXISTS tasks (
+    sql: `CREATE TABLE IF NOT EXISTS ${names.records} (
       slug TEXT PRIMARY KEY,
       key TEXT UNIQUE,
       status TEXT NOT NULL,
@@ -71,7 +111,7 @@ const SCHEMA_STEPS: readonly HranaStep[] = [
     )`,
   },
   {
-    sql: `CREATE TABLE IF NOT EXISTS board (
+    sql: `CREATE TABLE IF NOT EXISTS ${names.head} (
       id INTEGER PRIMARY KEY CHECK (id = 1),
       seq INTEGER NOT NULL,
       name TEXT NOT NULL,
@@ -79,11 +119,19 @@ const SCHEMA_STEPS: readonly HranaStep[] = [
       schema INTEGER NOT NULL
     )`,
   },
-  { sql: "INSERT OR IGNORE INTO board (id, seq, name, prefix, schema) VALUES (1, 0, '', '', ?)", args: [SCHEMA_VERSION] },
+  { sql: `INSERT OR IGNORE INTO ${names.head} (id, seq, name, prefix, schema) VALUES (1, 0, '', '', ?)`, args: [SCHEMA_VERSION] },
+  // The list of tables lives beside the task board; creating it is harmless for a table's repository too.
+  { sql: TABLES_SCHEMA },
+  { sql: TABLES_PARENT_COLUMN },
+  { sql: TABLES_FIELDS_COLUMN },
 ];
 
+/** A schema step that failed for real: a column the list already has is not a failure. */
+const schemaFailure = (step: HranaStepResult, sent: HranaStep | undefined): boolean =>
+  step.kind === "error" && !(sent !== undefined && TABLES_ADDED_COLUMNS.has(sent.sql) && /duplicate column/i.test(step.message));
+
 const TASK_COLUMNS = "slug, key, status, assignee, epic, content, version, seq, deleted, created_at, updated_at";
-const NEXT_SEQ = "(SELECT seq FROM board) + 1";
+const nextSeq = (names: TableNames): string => `(SELECT seq FROM ${names.head}) + 1`;
 
 // --- decoding what the database says ---------------------------------------
 
@@ -159,8 +207,8 @@ const slugOfPath = (filePath: string): string => (filePath.split("/").pop() ?? "
 function conflictReason(error: { code: string; message: string }): "version" | "key" | "slug" | null {
   // Another machine's transaction held the database: nothing was written, so it is retried like a lost race.
   if (error.code.startsWith("SQLITE_BUSY")) return "version";
-  if (/tasks\.slug/.test(error.message) || error.code === "SQLITE_CONSTRAINT_PRIMARYKEY") return "slug";
-  if (/tasks\.key/.test(error.message) || error.code === "SQLITE_CONSTRAINT_UNIQUE") return "key";
+  if (/\.slug\b/.test(error.message) || error.code === "SQLITE_CONSTRAINT_PRIMARYKEY") return "slug";
+  if (/\.key\b/.test(error.message) || error.code === "SQLITE_CONSTRAINT_UNIQUE") return "key";
   return null;
 }
 
@@ -180,18 +228,18 @@ const ok = (step: number) => ({ type: "ok", step }) as const;
  * changed a row, COMMIT, ROLLBACK if there was no commit, and a read-back of
  * the rows touched. A failed statement skips the rest and rolls back.
  */
-function transaction(body: readonly HranaStep[], slugs: readonly string[]): TransactionPlan {
+function transaction(names: TableNames, body: readonly HranaStep[], slugs: readonly string[]): TransactionPlan {
   const begin: HranaStep = { sql: "BEGIN IMMEDIATE" };
   const chained = body.map((step, index) => ({ ...step, condition: ok(index) }));
   /** BEGIN is step 0, so the last statement of the body sits at step `body.length`. */
   const main = body.length;
-  const bump: HranaStep = { sql: "UPDATE board SET seq = seq + 1 WHERE changes() > 0", condition: ok(main) };
+  const bump: HranaStep = { sql: `UPDATE ${names.head} SET seq = seq + 1 WHERE changes() > 0`, condition: ok(main) };
   const bumpAt = main + 1;
   const commitStep: HranaStep = { sql: "COMMIT", condition: ok(bumpAt) };
   const commitAt = bumpAt + 1;
   const rollback: HranaStep = { sql: "ROLLBACK", condition: { type: "not", cond: ok(commitAt) } };
   const read: HranaStep = {
-    sql: `SELECT ${TASK_COLUMNS} FROM tasks WHERE slug IN (${slugs.map(() => "?").join(", ")})`,
+    sql: `SELECT ${TASK_COLUMNS} FROM ${names.records} WHERE slug IN (${slugs.map(() => "?").join(", ")})`,
     args: slugs,
     condition: ok(commitAt),
   };
@@ -258,28 +306,28 @@ const rowValues = (row: NewRow): HranaValue[] => [
   row.updatedAt,
 ];
 
-const tombstonePurge = (slug: string): HranaStep => ({ sql: "DELETE FROM tasks WHERE slug = ? AND deleted = 1", args: [slug] });
+const tombstonePurge = (names: TableNames, slug: string): HranaStep => ({ sql: `DELETE FROM ${names.records} WHERE slug = ? AND deleted = 1`, args: [slug] });
 
-const insertStep = (row: NewRow, onlyIfPreviousChanged: boolean): HranaStep => ({
+const insertStep = (names: TableNames, row: NewRow, onlyIfPreviousChanged: boolean): HranaStep => ({
   sql: onlyIfPreviousChanged
-    ? `INSERT INTO tasks (${TASK_COLUMNS}) SELECT ?, ?, ?, ?, ?, ?, 1, ${NEXT_SEQ}, 0, ?, ? WHERE changes() > 0`
-    : `INSERT INTO tasks (${TASK_COLUMNS}) VALUES (?, ?, ?, ?, ?, ?, 1, ${NEXT_SEQ}, 0, ?, ?)`,
+    ? `INSERT INTO ${names.records} (${TASK_COLUMNS}) SELECT ?, ?, ?, ?, ?, ?, 1, ${nextSeq(names)}, 0, ?, ? WHERE changes() > 0`
+    : `INSERT INTO ${names.records} (${TASK_COLUMNS}) VALUES (?, ?, ?, ?, ?, ?, 1, ${nextSeq(names)}, 0, ?, ?)`,
   args: rowValues(row),
 });
 
-const updateStep = (row: NewRow, expected: number | undefined): HranaStep => {
+const updateStep = (names: TableNames, row: NewRow, expected: number | undefined): HranaStep => {
   const guard = versionGuard(expected);
   return {
-    sql: `UPDATE tasks SET key = ?, status = ?, assignee = ?, epic = ?, content = ?, version = version + 1, seq = ${NEXT_SEQ}, updated_at = ? WHERE slug = ? AND deleted = 0${guard.sql}`,
+    sql: `UPDATE ${names.records} SET key = ?, status = ?, assignee = ?, epic = ?, content = ?, version = version + 1, seq = ${nextSeq(names)}, updated_at = ? WHERE slug = ? AND deleted = 0${guard.sql}`,
     args: [row.key, row.status, row.placement.assignee, epicOf(row.placement), row.content, row.updatedAt, row.slug, ...guard.args],
   };
 };
 
 /** Marks a row deleted and frees its key, in the same stroke as whatever replaces it. */
-const tombstoneStep = (slug: string, expected: number | undefined, updatedAt: string): HranaStep => {
+const tombstoneStep = (names: TableNames, slug: string, expected: number | undefined, updatedAt: string): HranaStep => {
   const guard = versionGuard(expected);
   return {
-    sql: `UPDATE tasks SET deleted = 1, key = NULL, version = version + 1, seq = ${NEXT_SEQ}, updated_at = ? WHERE slug = ? AND deleted = 0${guard.sql}`,
+    sql: `UPDATE ${names.records} SET deleted = 1, key = NULL, version = version + 1, seq = ${nextSeq(names)}, updated_at = ? WHERE slug = ? AND deleted = 0${guard.sql}`,
     args: [updatedAt, slug, ...guard.args],
   };
 };
@@ -311,6 +359,13 @@ function applyTexts(texts: ReadonlyMap<string, string>, rows: readonly TaskRow[]
   return next;
 }
 
+const sameTables = (a: readonly DbTable[], b: readonly DbTable[]): boolean =>
+  a.length === b.length &&
+  a.every((entry, index) => {
+    const other = b[index];
+    return other !== undefined && entry.id === other.id && entry.name === other.name && entry.parent === other.parent && JSON.stringify(entry.fields) === JSON.stringify(other.fields);
+  });
+
 /** Whether the tasks a mirror holds differ: a task added, gone, or written again. */
 function mirrorChanged(before: Mirror, after: Mirror): boolean {
   if (before.size !== after.size) return true;
@@ -334,13 +389,17 @@ export async function peekBoard(client: HranaClient): Promise<HranaResult<BoardR
 }
 
 export function createDbRepo(client: HranaClient, options: DbRepoOptions): DbRepo {
-  const url = options.url;
+  const table = options.table ?? null;
+  const names = tableNames(table);
+  /** Where the paths of this repository's records start: the address itself for the task board. */
+  const url = tableRoot(options.url, table);
   const pollMs = options.pollMs ?? DEFAULT_POLL_MS;
   const now = options.now ?? (() => new Date());
 
   let mirror: Mirror = new Map();
   let texts: ReadonlyMap<string, string> = new Map();
   let board: BoardRow = { name: "", prefix: "" };
+  let tables: readonly DbTable[] = [];
   let lastSeq = -1;
   let loaded = false;
   let schemaReady = false;
@@ -393,26 +452,54 @@ export function createDbRepo(client: HranaClient, options: DbRepoOptions): DbRep
     throw failureOf(error);
   }
 
+  /** Changes the list of tables with the counter's move, in one transaction — a change no poll is told of would
+   *  never show elsewhere — then reads the list back. The first statement must find its section. */
+  function changeTables(statements: readonly HranaStep[]): Promise<void> {
+    return serialized(async () => {
+      await ready();
+      const last = statements.length;
+      const steps = unwrap(
+        await client.batch([
+          { sql: "BEGIN IMMEDIATE" },
+          ...statements.map((statement, index) => ({ ...statement, condition: { type: "ok" as const, step: index } })),
+          { sql: `UPDATE ${names.head} SET seq = seq + 1 WHERE id = 1`, condition: { type: "ok", step: last } },
+          { sql: "COMMIT", condition: { type: "ok", step: last + 1 } },
+          { sql: "ROLLBACK", condition: { type: "not", cond: { type: "ok", step: last + 2 } } },
+        ]),
+      );
+      const failed = steps.slice(0, last + 3).find((step) => step.kind === "error");
+      if (failed?.kind === "error") throw new Error(`database error ${failed.code}: ${failed.message}`);
+      const first = steps[1];
+      if (first?.kind === "ok" && first.affectedRowCount === 0) throw new Error("the section or its field is not in the database");
+      tables = decodeTables(unwrap(await client.execute(LIST_TABLES)).rows);
+    });
+  }
+
   async function ensureSchema(): Promise<void> {
     if (schemaReady) return;
-    const steps = unwrap(await client.batch(SCHEMA_STEPS));
-    const failed = steps.find((step) => step.kind === "error");
+    const sent = schemaSteps(names);
+    const steps = unwrap(await client.batch(sent));
+    const failed = steps.find((step, index) => schemaFailure(step, sent[index]));
     if (failed?.kind === "error") throw new Error(`database error ${failed.code}: ${failed.message}`);
     schemaReady = true;
   }
 
   async function pull(): Promise<void> {
     await ensureSchema();
-    const head = decodeBoardHead(unwrap(await client.execute("SELECT seq, name, prefix FROM board WHERE id = 1")).rows);
-    const { rows: changed, unreadable } =
-      head.seq > lastSeq
-        ? decodeTaskRows(unwrap(await client.execute(`SELECT ${TASK_COLUMNS} FROM tasks WHERE seq > ? ORDER BY seq`, [lastSeq])).rows)
-        : NO_ROWS;
+    const head = decodeBoardHead(unwrap(await client.execute(`SELECT seq, name, prefix FROM ${names.head} WHERE id = 1`)).rows);
+    const moved = head.seq > lastSeq;
+    const { rows: changed, unreadable } = moved
+      ? decodeTaskRows(unwrap(await client.execute(`SELECT ${TASK_COLUMNS} FROM ${names.records} WHERE seq > ? ORDER BY seq`, [lastSeq])).rows)
+      : NO_ROWS;
+    // Adding a table moves the task board's counter, so its list is read only when the counter moved.
+    const nextTables = table === null && moved ? decodeTables(unwrap(await client.execute(LIST_TABLES)).rows) : tables;
     reportUnreadable(unreadable);
     const nextMirror = applyRows(mirror, url, changed);
     texts = applyTexts(texts, changed);
-    const somethingNew = mirrorChanged(mirror, nextMirror) || head.name !== board.name || head.prefix !== board.prefix;
+    const somethingNew =
+      mirrorChanged(mirror, nextMirror) || head.name !== board.name || head.prefix !== board.prefix || !sameTables(tables, nextTables);
     mirror = nextMirror;
+    tables = nextTables;
     board = { name: head.name, prefix: head.prefix };
     lastSeq = changed.reduce((latest, row) => Math.max(latest, row.seq), Math.max(lastSeq, head.seq));
     loaded = true;
@@ -436,6 +523,7 @@ export function createDbRepo(client: HranaClient, options: DbRepoOptions): DbRep
         reportUnreadable(outcome.decoded.unreadable);
         mirror = applyRows(mirror, url, outcome.decoded.rows);
         texts = applyTexts(texts, outcome.decoded.rows);
+        options.onWrite?.();
         return outcome.decoded.rows;
       case "conflict":
         throw new WriteConflict(outcome.reason);
@@ -485,10 +573,10 @@ export function createDbRepo(client: HranaClient, options: DbRepoOptions): DbRep
         const expected = input.revision ?? knownRevision(plan);
         const transactionPlan =
           plan.kind === "create"
-            ? transaction([tombstonePurge(row.slug), insertStep(row, false)], [row.slug])
+            ? transaction(names, [tombstonePurge(names, row.slug), insertStep(names, row, false)], [row.slug])
             : plan.kind === "update"
-              ? transaction([updateStep(row, expected)], [row.slug])
-              : transaction([tombstonePurge(row.slug), tombstoneStep(plan.from, expected, at), insertStep(row, true)], [row.slug, plan.from]);
+              ? transaction(names, [updateStep(names, row, expected)], [row.slug])
+              : transaction(names, [tombstonePurge(names, row.slug), tombstoneStep(names, plan.from, expected, at), insertStep(names, row, true)], [row.slug, plan.from]);
         const rows = await commit(transactionPlan);
         const written = rows.find((candidate) => candidate.slug === input.slug);
         return {
@@ -503,7 +591,7 @@ export function createDbRepo(client: HranaClient, options: DbRepoOptions): DbRep
         await ready();
         const slug = slugOfPath(filePath);
         const known = revision ?? mirror.get(slug)?.revision ?? undefined;
-        await commit(transaction([tombstoneStep(slug, known, now().toISOString())], [slug]));
+        await commit(transaction(names, [tombstoneStep(names, slug, known, now().toISOString())], [slug]));
       });
     },
 
@@ -519,7 +607,7 @@ export function createDbRepo(client: HranaClient, options: DbRepoOptions): DbRep
     writeBoard(row) {
       return serialized(async () => {
         await ready();
-        unwrap(await client.execute("UPDATE board SET name = ?, prefix = ?, seq = seq + 1 WHERE id = 1", [row.name, row.prefix]));
+        unwrap(await client.execute(`UPDATE ${names.head} SET name = ?, prefix = ?, seq = seq + 1 WHERE id = 1`, [row.name, row.prefix]));
         board = { name: row.name, prefix: row.prefix };
       });
     },
@@ -527,12 +615,72 @@ export function createDbRepo(client: HranaClient, options: DbRepoOptions): DbRep
     writePrefix(prefix) {
       return serialized(async () => {
         await ready();
-        unwrap(await client.execute("UPDATE board SET prefix = ?, seq = seq + 1 WHERE id = 1", [prefix]));
+        unwrap(await client.execute(`UPDATE ${names.head} SET prefix = ?, seq = seq + 1 WHERE id = 1`, [prefix]));
         board = { ...board, prefix };
       });
     },
 
+    tables: () => tables,
+
+    addTable(id, name, parent) {
+      return serialized(async () => {
+        await ready();
+        const added: DbTable = { id, name, parent, fields: [] };
+        // The row and the counter's move land together or not at all: a table no poll is told of would never show elsewhere.
+        const steps = unwrap(
+          await client.batch([
+            { sql: "BEGIN IMMEDIATE" },
+            { sql: "INSERT INTO tables (id, name, parent, created_at) VALUES (?, ?, ?, ?)", args: [id, name, parent, now().toISOString()], condition: { type: "ok", step: 0 } },
+            { sql: `UPDATE ${names.head} SET seq = seq + 1 WHERE id = 1`, condition: { type: "ok", step: 1 } },
+            { sql: "COMMIT", condition: { type: "ok", step: 2 } },
+            { sql: "ROLLBACK", condition: { type: "not", cond: { type: "ok", step: 3 } } },
+          ]),
+        );
+        const failed = steps.slice(0, 4).find((step) => step.kind === "error");
+        if (failed?.kind === "error") throw new Error(`database error ${failed.code}: ${failed.message}`);
+        tables = [...tables, added];
+        return added;
+      });
+    },
+
+    addTableField(id, field) {
+      return serialized(async () => {
+        await ready();
+        // Appended inside the database, with the counter's move: a field no poll is told of would never show elsewhere.
+        const steps = unwrap(
+          await client.batch([
+            { sql: "BEGIN IMMEDIATE" },
+            { sql: APPEND_TABLE_FIELD, args: [JSON.stringify(field), id], condition: { type: "ok", step: 0 } },
+            { sql: `UPDATE ${names.head} SET seq = seq + 1 WHERE id = 1`, condition: { type: "ok", step: 1 } },
+            { sql: "COMMIT", condition: { type: "ok", step: 2 } },
+            { sql: "ROLLBACK", condition: { type: "not", cond: { type: "ok", step: 3 } } },
+          ]),
+        );
+        const failed = steps.slice(0, 4).find((step) => step.kind === "error");
+        if (failed?.kind === "error") throw new Error(`database error ${failed.code}: ${failed.message}`);
+        const appended = steps[1];
+        if (appended?.kind === "ok" && appended.affectedRowCount === 0) throw new Error(`the section ${id} is not in its database`);
+        tables = tables.map((table) => (table.id === id ? { ...table, fields: [...table.fields, field] } : table));
+      });
+    },
+
+    changeFieldOption(id, field, option, change) {
+      return changeTables([{ sql: change === "add" ? ADD_FIELD_OPTION : REMOVE_FIELD_OPTION, args: [id, field, option] }]);
+    },
+
+    renameTable(id, name) {
+      return changeTables([{ sql: RENAME_TABLE, args: [name, id] }]);
+    },
+
+    deleteTable(id) {
+      return changeTables(subtreeOf(tables, id).flatMap(deleteTableSteps));
+    },
+
     count: () => mirror.size,
+
+    snapshot: () => texts,
+
+    loaded: () => loaded,
 
     start() {
       if (timer !== null) return;

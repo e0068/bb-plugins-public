@@ -324,7 +324,9 @@ function apiTasks(_store: TasksApiStore, tasks: StoredTask[]): Task[] {
  */
 async function apiProject(store: TasksApiStore, board: BoardConfig): Promise<Project> {
   const tasks = await unlessOutOfReach(store.tasks.listTasks({ projectId: board.id }), []);
-  return { ...board, nextTaskNumber: nextTaskNumber(tasks.map((task) => task.key), board.prefix) };
+  // The board's label catalog crosses the wire through listLabels, not here.
+  const { labels: _catalog, ...project } = board;
+  return { ...project, nextTaskNumber: nextTaskNumber(tasks.map((task) => task.key), board.prefix) };
 }
 
 async function validateTaskParent(
@@ -903,6 +905,15 @@ export function registerHandlers(
       const task = await store.tasks.getTaskByKey(input.taskKey);
       return { task: task ? apiTask(store, task) : null };
     },
+    async readTaskText(input) {
+      return { text: await store.tasks.readTaskText(input.taskId) };
+    },
+    async writeTaskText(input) {
+      const written = await store.tasks.writeTaskText(input.taskId, input.content, input.expectedSha256);
+      if (written.outcome !== "written") return written;
+      publishTasksChanged(bb, input.taskId, written.projectId);
+      return { outcome: "written", sha256: written.sha256 };
+    },
     async updateTask(input) {
       try {
         const current = await store.tasks.getTask(input.taskId);
@@ -934,12 +945,10 @@ export function registerHandlers(
             startDate: input.startDate,
             parentTaskId: input.parentTaskId,
             assignee: input.assignee,
+            propertyPatch: input.propertyPatch,
+            // Labels go in the same write: one trip to a database, not one per label.
+            labelIds: input.labelIds,
           });
-          // From here on the task answers to `updated.id` — a slug change
-          // renamed the file and the id with it.
-          if (input.labelIds) {
-            await replaceTaskLabels(store, updated.id, input.labelIds);
-          }
 
           const bodies: string[] = [];
           if (updated.status !== current.status) {
@@ -977,10 +986,13 @@ export function registerHandlers(
           if (input.labelIds && labelsChanged(beforeLabelIds, input.labelIds)) {
             bodies.push(await labelChangeBody(store, updated.id, input.authorName));
           }
-          await writeSystemComments(store, updated.id, input.authorName, bodies);
+          // A section's record is a document: its text is what Kasimov shows, so no activity is written into it.
+          const section = store.tasks.getProject(updated.projectId)?.database?.table !== undefined;
+          const written = section ? [] : bodies;
+          await writeSystemComments(store, updated.id, input.authorName, written);
           return {
             task: apiTask(store, (await store.tasks.getTask(updated.id))!),
-            systemCommentsWritten: bodies.length,
+            systemCommentsWritten: written.length,
           };
         });
 

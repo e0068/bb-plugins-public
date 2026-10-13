@@ -11,6 +11,18 @@
       ],
       "@bb-plugins/*": [
         "./packages/*"
+      ],
+      "react": [
+        "./node_modules/@types/react"
+      ],
+      "react/*": [
+        "./node_modules/@types/react/*"
+      ],
+      "@codemirror/*": [
+        "./node_modules/@codemirror/*"
+      ],
+      "@radix-ui/react-tabs": [
+        "./node_modules/@radix-ui/react-tabs"
       ]
     }
   },

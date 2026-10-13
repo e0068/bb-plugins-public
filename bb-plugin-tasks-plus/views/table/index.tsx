@@ -51,6 +51,8 @@ import {
   type TableColumn,
 } from "./columns.js";
 import { tableRows, type TableGroup } from "./rows.js";
+import { SectionTable } from "./section-table.js";
+import { NewTaskRow } from "./new-task-row.js";
 import { GroupIcon } from "../board/group-icon.js";
 import { TableCell, TitleCell } from "./cells.js";
 import {
@@ -60,6 +62,8 @@ import {
   type HeaderColumnState,
 } from "./header.js";
 import { setTableSettings, useTableSettings } from "./table-preference.js";
+import { PROPERTY_COLUMN_WIDTH, propertyKeys, shownProperties, useHiddenProperties } from "./property-columns.js";
+import { DropdownMenu, DropdownMenuCheckboxItem, DropdownMenuContent, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { dateFormatOf, hasIconChoice, iconShownOf, isDateColumn, withColumnDisplay } from "./column-display.js";
 
 export interface TableViewProps {
@@ -208,6 +212,7 @@ function TableRowLine({
   onToggleCollapse,
   onOpen,
   columns,
+  properties,
   pinnedSet,
   offsets,
   edgeColumn,
@@ -221,6 +226,8 @@ function TableRowLine({
   onToggleCollapse: () => void;
   onOpen: () => void;
   columns: readonly TableColumn[];
+  /** The property names drawn after the regular columns. */
+  properties: readonly string[];
   pinnedSet: ReadonlySet<TableColumn>;
   offsets: Partial<Record<TableColumn, number>>;
   edgeColumn: TableColumn | null;
@@ -273,29 +280,77 @@ function TableRowLine({
           </div>
         );
       })}
+      {properties.map((name) => (
+        <div key={`property:${name}`} data-property-cell={name} className="flex min-w-0 items-center overflow-hidden px-2 text-muted-foreground">
+          <span className="truncate">{task.properties?.[name] ?? ""}</span>
+        </div>
+      ))}
     </div>
   );
 }
 
-/** Its own accessible name: the topbar's New task button keeps "New task" to itself. */
-function NewTaskRow({ group, onOpen }: { group: string | null; onOpen: () => void }) {
+/**
+ * The header of the property columns: a cell per shown name with a way to
+ * hide it, and a menu of every name to bring a hidden one back.
+ */
+function PropertyHeaders({ all, shown, onToggle }: { all: readonly string[]; shown: readonly string[]; onToggle: (name: string) => void }) {
+  if (all.length === 0) return null;
   return (
-    <button
-      type="button"
-      aria-label={group === null ? "Add a task" : `Add a task to ${group}`}
-      onClick={onOpen}
-      className="flex h-[34px] w-full items-center border-b border-border-hairline text-left text-sm text-subtle-foreground hover:bg-state-hover hover:text-foreground"
-    >
-      {/* Stays at the leading edge while the table scrolls sideways. */}
-      <span className="sticky left-0 flex items-center gap-1.5 px-3.5">
-        <Icon name="Plus" className="size-3.5" />
-        New task
-      </span>
-    </button>
+    <>
+      {shown.map((name) => (
+        <div
+          key={name}
+          role="columnheader"
+          className="flex shrink-0 items-center gap-1 border-b border-r border-border-hairline bg-background px-2 text-xs font-medium text-muted-foreground"
+          style={{ width: `${PROPERTY_COLUMN_WIDTH}px` }}
+        >
+          <span className="min-w-0 flex-1 truncate">{name}</span>
+          <button
+            type="button"
+            aria-label={`Hide ${name}`}
+            onClick={() => onToggle(name)}
+            className="flex shrink-0 items-center text-subtle-foreground hover:text-foreground"
+          >
+            <Icon name="EyeOff" className="size-3" />
+          </button>
+        </div>
+      ))}
+      <div className="flex shrink-0 items-center border-b border-border-hairline bg-background px-1">
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <button type="button" className="flex h-6 items-center gap-1 rounded px-1.5 text-xs text-muted-foreground hover:bg-state-hover hover:text-foreground">
+              <Icon name="Columns2" className="size-3" />
+              Properties
+            </button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" collisionPadding={8} mobileTitle="Properties">
+            {all.map((name) => (
+              <DropdownMenuCheckboxItem
+                key={name}
+                checked={shown.includes(name)}
+                onSelect={(event) => event.preventDefault()}
+                onCheckedChange={() => onToggle(name)}
+              >
+                {name}
+              </DropdownMenuCheckboxItem>
+            ))}
+          </DropdownMenuContent>
+        </DropdownMenu>
+      </div>
+    </>
   );
 }
 
+
+/** A section's table draws its own columns; every other screen is the task table. */
 export function TableView({ scope, thread }: TableViewProps) {
+  const projects = useProjects();
+  const { projectId } = surfaceOf(scope);
+  const section = projects.data?.find((project) => project.id === projectId && project.database?.table !== undefined);
+  return section === undefined ? <TaskTable scope={scope} thread={thread} /> : <SectionTable scope={scope} thread={thread} section={section} />;
+}
+
+function TaskTable({ scope, thread }: TableViewProps) {
   const { projectId, listScope } = surfaceOf(scope);
   const fieldScope = listFieldScope(projectId, listScope);
   const fieldConfig = useFieldDisplay(fieldScope);
@@ -307,6 +362,7 @@ export function TableView({ scope, thread }: TableViewProps) {
   const { filters } = preference;
 
   const projects = useProjects();
+  const { groupBy } = settings;
   const labelProjectIds = useMemo(
     () => (projectId !== null ? [projectId] : (projects.data ?? []).map((project) => project.id)),
     [projectId, projects.data],
@@ -385,14 +441,14 @@ export function TableView({ scope, thread }: TableViewProps) {
       displayTasks === undefined
         ? []
         : tableRows(displayTasks, {
-            groupBy: settings.groupBy,
+            groupBy,
             sort: settings.sort,
             context: sortContext,
             collapsedGroups: settings.collapsedGroups,
             collapsedTasks,
             labels: labels.data ?? [],
           }),
-    [displayTasks, settings.groupBy, settings.sort, sortContext, settings.collapsedGroups, collapsedTasks, labels.data],
+    [displayTasks, groupBy, settings.sort, sortContext, settings.collapsedGroups, collapsedTasks, labels.data],
   );
 
   // The draft a New task row opens with: the table's own filters, so the
@@ -432,8 +488,18 @@ export function TableView({ scope, thread }: TableViewProps) {
   );
   const pinnedSet = useMemo(() => new Set(effectivePinned), [effectivePinned]);
   const { offsets, edge } = pinOffsets(visibleColumns, effectivePinned, settings.widths);
-  const gridTemplate = visibleColumns.map((column) => `${widthOf(column)}px`).join(" ");
-  const totalWidth = visibleColumns.reduce((sum, column) => sum + widthOf(column), 0);
+  const allProperties = useMemo(() => propertyKeys(displayTasks ?? []), [displayTasks]);
+  const hiddenProperties = useHiddenProperties(projectId);
+  const shownPropertyNames = useMemo(
+    () => shownProperties(allProperties, hiddenProperties.hidden),
+    [allProperties, hiddenProperties.hidden],
+  );
+  const gridTemplate = [
+    ...visibleColumns.map((column) => `${widthOf(column)}px`),
+    ...shownPropertyNames.map(() => `${PROPERTY_COLUMN_WIDTH}px`),
+  ].join(" ");
+  const totalWidth =
+    visibleColumns.reduce((sum, column) => sum + widthOf(column), 0) + shownPropertyNames.length * PROPERTY_COLUMN_WIDTH;
 
   const headerColumns: HeaderColumnState[] = visibleColumns.map((column) => ({
     column,
@@ -509,11 +575,17 @@ export function TableView({ scope, thread }: TableViewProps) {
     body = (
       <div style={{ minWidth: `${totalWidth}px` }}>
         <div className="sticky top-0 z-20 bg-background">
-          <TableHeader columns={headerColumns} actions={actions} />
+          <TableHeader
+            columns={headerColumns}
+            actions={actions}
+            trailing={
+              <PropertyHeaders all={allProperties} shown={shownPropertyNames} onToggle={hiddenProperties.toggle} />
+            }
+          />
         </div>
         {groups.map((group) => (
           <div key={group.key}>
-            {settings.groupBy !== "none" ? (
+            {groupBy !== "none" ? (
               <div
                 data-table-group={group.key}
                 className="sticky z-10 flex items-center border-b border-border-hairline bg-background text-sm font-semibold"
@@ -533,7 +605,7 @@ export function TableView({ scope, thread }: TableViewProps) {
                   >
                     <Icon name={group.collapsed ? "ChevronRight" : "ChevronDown"} className="size-3.5" />
                   </span>
-                  <GroupIcon groupBy={settings.groupBy} groupKey={group.key} labels={labels.data ?? []} />
+                  <GroupIcon groupBy={groupBy} groupKey={group.key} labels={labels.data ?? []} />
                   {group.label}
                   <span className="text-xs font-normal tabular-nums text-subtle-foreground">
                     {group.count}
@@ -551,6 +623,7 @@ export function TableView({ scope, thread }: TableViewProps) {
                 onToggleCollapse={() => toggleTaskCollapsed(row.task.id)}
                 onOpen={() => openTask(row.task.key)}
                 columns={visibleColumns}
+                properties={shownPropertyNames}
                 pinnedSet={pinnedSet}
                 offsets={offsets}
                 edgeColumn={edge}
@@ -568,7 +641,7 @@ export function TableView({ scope, thread }: TableViewProps) {
                 }}
               />
             ))}
-            <NewTaskRow group={group.label} onOpen={() => openNewTask(group)} />
+            <NewTaskRow label={group.label === null ? "Add a task" : `Add a task to ${group.label}`} onOpen={() => openNewTask(group)} />
           </div>
         ))}
       </div>

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { SmilePlusIcon } from "@hugeicons/core-free-icons";
 import type { Task } from "../../shared/contract.js";
@@ -6,6 +6,7 @@ import { useBbNavigate } from "@get-bb/plugin-sdk/app";
 import {
   listAllTasks,
   useMentionItems,
+  useProjects,
   useTasksQuery,
   useTasksRpc,
 } from "../../client/data.js";
@@ -25,12 +26,20 @@ import { STATUS_LABELS, StatusIcon } from "../../components/task-meta.js";
 import {
   InlineProperties,
   PropertiesRail,
-  type TaskPropertyUpdate,
+  RAIL_FRAME_CLASS,
 } from "./rail.js";
 import { ThreadsSection } from "./threads.js";
+import { PropertiesGrid } from "./properties.js";
+import { RecordDoc } from "./record-doc.js";
+import { SectionProperties } from "./section-properties.js";
+import { sectionFields, type SectionField } from "../../shared/section-fields.js";
+import { removeAttachmentDescriptionReferences } from "../../shared/attachment-url.js";
+import { useRecordViewer } from "./record-viewer.js";
+import { shownTask, type DetailUpdate } from "./pending-update.js";
 import { DetailToasts, useDetailToasts } from "./toast.js";
 import { DelayedLoading } from "../../components/delayed-loading.js";
 import { Icon } from "@/components/ui/icon";
+import { Segments } from "@/components/ui/segments";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
 
@@ -231,19 +240,31 @@ function DetailSkeleton({ layout }: { layout: DetailLayout }) {
 }
 
 function TaskDetail({
-  task,
+  task: serverTask,
   layout,
   onOpenTask,
+  section,
 }: {
   task: Task;
   layout: DetailLayout;
   onOpenTask?: (taskKey: string) => void;
+  /** A section's record: its fields — all of them, and the ones its database lists — stand where a task's properties do. */
+  section?: { fields: readonly SectionField[]; declared: readonly SectionField[] };
 }) {
   const rpc = useTasksRpc();
   const navigation = useTasksNavigation();
   const openTask =
     onOpenTask ?? ((taskKey: string) => navigation.go({ kind: "task", taskKey }));
   const { toasts, push, dismiss } = useDetailToasts();
+  // A change shows at once; its write goes on in the background (pending-update.ts).
+  const [pending, setPending] = useState<readonly { gen: number; taskId: string; update: DetailUpdate }[]>([]);
+  const [answered, setAnswered] = useState<Task>();
+  const genRef = useRef(0);
+  const task = shownTask(
+    serverTask,
+    answered,
+    pending.filter((entry) => entry.taskId === serverTask.id).map((entry) => entry.update),
+  );
   const fileInputRef = useRef<HTMLInputElement>(null);
   const subtasksRef = useRef<HTMLElement>(null);
 
@@ -251,6 +272,8 @@ function TaskDetail({
   // previous markdown, so passing the server value straight through would
   // reset the editor on every unrelated realtime refresh.
   const [draft, setDraft] = useState<{ taskId: string; markdown: string }>();
+  const draftRef = useRef(draft);
+  draftRef.current = draft;
   const rpcRef = useRef(rpc);
   rpcRef.current = rpc;
   const pushRef = useRef(push);
@@ -340,17 +363,19 @@ function TaskDetail({
     return () => window.clearInterval(timer);
   }, [hasActivePullRequest, refreshPullRequests]);
 
-  const updateTask = async (
-    input: TaskPropertyUpdate & { title?: string; description?: string },
-  ) => {
+  const updateTask = async (input: DetailUpdate) => {
+    const gen = (genRef.current += 1);
+    const taskId = serverTask.id;
+    setPending((current) => [...current, { gen, taskId, update: input }]);
     try {
-      const result = await rpc.call("updateTask", {
-        taskId: task.id,
-        ...input,
-      });
-      if (!result.ok) push("error", result.error.message);
+      const result = await rpc.call("updateTask", { taskId, ...input });
+      // Answers can come back out of order: an older one never replaces a newer.
+      if (result.ok) setAnswered((prev) => (prev?.id === result.task.id && prev.updatedAt > result.task.updatedAt ? prev : result.task));
+      else push("error", result.error.message);
     } catch (error) {
       push("error", error instanceof Error ? error.message : String(error));
+    } finally {
+      setPending((current) => current.filter((entry) => entry.gen !== gen));
     }
   };
 
@@ -366,21 +391,21 @@ function TaskDetail({
 
   const uploadAttachment = useUploadAttachment();
   const displayImageSrc = useDisplayImageSrc();
+  // A pasted or dropped image reports a failed upload here: the editor only learns that none came.
   const uploadForTask = async (file: File) => {
-    const result = await uploadAttachment(file, { taskId: task.id });
-    attachments.refresh();
-    return result;
+    try {
+      return await uploadAttachment(file, { taskId: task.id });
+    } catch (error) {
+      push("error", error instanceof Error ? error.message : String(error));
+      throw error;
+    } finally {
+      attachments.refresh();
+    }
   };
 
   const onPickFiles = async (files: FileList | null) => {
-    for (const file of files ?? []) {
-      try {
-        await uploadAttachment(file, { taskId: task.id });
-      } catch (error) {
-        push("error", error instanceof Error ? error.message : String(error));
-      }
-    }
-    attachments.refresh();
+    // uploadForTask reports a failed file itself; the rest still go.
+    for (const file of Array.from(files ?? [])) await uploadForTask(file).catch(() => undefined);
   };
 
   const createSubtask = async (title: string): Promise<boolean> => {
@@ -409,7 +434,8 @@ function TaskDetail({
   const descriptionValue =
     draft && draft.taskId === task.id ? draft.markdown : task.description;
   const parentTask = parent.data ?? null;
-  const frame = DETAIL_FRAME[layout];
+  // A section's record sits under its viewer switch on the page itself, with no card around it.
+  const frame = section === undefined ? DETAIL_FRAME[layout] : { ...DETAIL_FRAME[layout], surface: "", card: "" };
 
   return (
     <div className={cn("@container flex min-h-full flex-col", frame.surface)}>
@@ -448,16 +474,26 @@ function TaskDetail({
             onSave={(title) => void updateTask({ title })}
           />
 
-          <InlineProperties
-            task={task}
-            parent={parentTask}
-            project={project}
-            labels={labels.data}
-            presets={presets.data}
-            onUpdate={(update) => void updateTask(update)}
-            onError={(message) => push("error", message)}
-            className="mb-4 @[45rem]:hidden"
-          />
+          {section === undefined ? (
+            <>
+              <InlineProperties
+                task={task}
+                parent={parentTask}
+                project={project}
+                labels={labels.data}
+                presets={presets.data}
+                onUpdate={(update) => void updateTask(update)}
+                onError={(message) => push("error", message)}
+                className="mb-4 @[45rem]:hidden"
+              />
+
+              <PropertiesGrid
+                key={task.id}
+                properties={task.properties ?? {}}
+                onSave={(propertyPatch) => void updateTask({ propertyPatch })}
+              />
+            </>
+          ) : null}
 
           <TasksEditor
             value={descriptionValue}
@@ -510,6 +546,11 @@ function TaskDetail({
                 removeDescriptionReferences: true,
               });
               if (!result.ok) throw new Error(result.error.message);
+              // The server took the images out of the description; a draft still holding them would put them back.
+              const typed = draftRef.current;
+              if (typed?.taskId === task.id) {
+                onDescriptionChange(removeAttachmentDescriptionReferences(typed.markdown, attachment.id));
+              }
               attachments.refresh();
             }}
             onError={(message) => push("error", message)}
@@ -544,17 +585,31 @@ function TaskDetail({
           </div>
         </div>
 
-        <PropertiesRail
-          task={task}
-          parent={parentTask}
-          project={project}
-          labels={labels.data}
-          threads={threads.data ?? []}
-          presets={presets.data}
-          onUpdate={(update) => void updateTask(update)}
-          onError={(message) => push("error", message)}
-          className={cn("hidden @[45rem]:block", frame.rail)}
-        />
+        {section === undefined ? (
+          <PropertiesRail
+            task={task}
+            parent={parentTask}
+            project={project}
+            labels={labels.data}
+            threads={threads.data ?? []}
+            presets={presets.data}
+            onUpdate={(update) => void updateTask(update)}
+            onError={(message) => push("error", message)}
+            className={cn("hidden @[45rem]:block", frame.rail)}
+          />
+        ) : (
+          // Always on the right, however narrow: a section's record keeps its properties in one place.
+          <aside className={cn(RAIL_FRAME_CLASS, frame.rail)}>
+            <SectionProperties
+              task={task}
+              fields={section.fields}
+              declared={section.declared}
+              labels={labels.data}
+              onSave={(propertyPatch) => void updateTask({ propertyPatch })}
+              onUpdate={(update) => void updateTask(update)}
+            />
+          </aside>
+        )}
       </div>
       <DetailToasts toasts={toasts} onDismiss={dismiss} />
     </div>
@@ -562,6 +617,7 @@ function TaskDetail({
 }
 
 export function DetailView({ taskKey, layout = "page", onOpenTask }: DetailViewProps) {
+  const projects = useProjects();
   const query = useTasksQuery(
     async (rpc) => (await rpc.call("getTaskByKey", { taskKey })).task,
     ["tasks:changed"],
@@ -585,5 +641,57 @@ export function DetailView({ taskKey, layout = "page", onOpenTask }: DetailViewP
       </div>
     );
   }
+  // A record of a table is a document: Kasimov shows it, not the task card — so the card waits for the boards to know which.
+  if (projects.data === undefined && projects.error === null) return <DetailSkeleton layout={layout} />;
+  const board = projects.data?.find((project) => project.id === query.data?.projectId);
+  if (board?.database?.table !== undefined) return <SectionRecord task={query.data} fields={board.database.fields ?? []} layout={layout} onOpenTask={onOpenTask} />;
   return <TaskDetail task={query.data} layout={layout} onOpenTask={onOpenTask} />;
+}
+
+const RECORD_VIEWERS = [
+  { value: "kasimov", label: "Kasimov" },
+  { value: "card", label: "Card" },
+] as const;
+
+/** A section's record: Kasimov or the task card, as the switch above it says. */
+function SectionRecord({
+  task,
+  fields,
+  layout,
+  onOpenTask,
+}: {
+  task: Task;
+  /** The fields the section's database lists beyond the defaults. */
+  fields: readonly SectionField[];
+  layout: DetailLayout;
+  onOpenTask: DetailViewProps["onOpenTask"];
+}) {
+  const [viewer, setViewer] = useRecordViewer();
+  return (
+    <div className="flex h-full min-h-0 flex-col">
+      <div className="flex shrink-0 justify-end px-3 pt-2">
+        <Segments label="Open the record in" value={viewer} options={RECORD_VIEWERS} onChange={setViewer} className="w-40 flex-none" />
+      </div>
+      <div className="min-h-0 flex-1">
+        {viewer === "kasimov" ? <RecordDoc task={task} /> : <SectionCard task={task} declared={fields} layout={layout} onOpenTask={onOpenTask} />}
+      </div>
+    </div>
+  );
+}
+
+/** The card of a section's record, with the fields its section's table draws: the listed ones and every key a record has. */
+function SectionCard({
+  task,
+  declared,
+  layout,
+  onOpenTask,
+}: {
+  task: Task;
+  declared: readonly SectionField[];
+  layout: DetailLayout;
+  onOpenTask: DetailViewProps["onOpenTask"];
+}) {
+  const records = useTasksQuery((rpc) => listAllTasks(rpc, { projectId: task.projectId }), ["tasks:changed"], [task.projectId]);
+  const fields = useMemo(() => sectionFields(declared, [...(records.data ?? []), task]), [declared, records.data, task]);
+  return <TaskDetail task={task} layout={layout} onOpenTask={onOpenTask} section={{ fields, declared }} />;
 }

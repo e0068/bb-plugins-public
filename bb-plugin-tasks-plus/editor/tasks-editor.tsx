@@ -5,6 +5,7 @@ import {
   type ChainedCommands,
 } from "@tiptap/core";
 import { BubbleMenuPlugin } from "@tiptap/extension-bubble-menu";
+import type { Transaction } from "@tiptap/pm/state";
 import type { IconSvgElement } from "@hugeicons/react";
 import { HugeiconsIcon } from "@hugeicons/react";
 import {
@@ -295,16 +296,24 @@ export function TasksEditor({
     ensureEditorStyles();
     if (!rootRef.current) return;
     let editor: Editor;
-    const upload = async (file: File) => {
+    /** Uploads the image and puts it where it was dropped — `at`, moved along with what is typed meanwhile — or at the caret. */
+    const upload = async (file: File, dropped?: number) => {
       const handler = uploadRef.current;
       if (!handler || !file.type.startsWith("image/")) return false;
-      const result = await handler(file);
-      editor
-        .chain()
-        .focus()
-        .setImage({ src: result.url, alt: file.name })
-        .run();
-      return true;
+      let at = dropped;
+      const follow = ({ transaction }: { transaction: Transaction }) => {
+        if (at !== undefined) at = transaction.mapping.map(at);
+      };
+      editor.on("transaction", follow);
+      try {
+        const result = await handler(file);
+        const attrs = { src: result.url, alt: file.name };
+        const chain = editor.chain().focus();
+        (at === undefined ? chain.setImage(attrs) : chain.insertContentAt(at, { type: "image", attrs })).run();
+        return true;
+      } finally {
+        editor.off("transaction", follow);
+      }
     };
     const mentionHandle: MentionSuggestionHandle = {
       getItems: (query) =>
@@ -409,10 +418,13 @@ export function TasksEditor({
             candidate.type.startsWith("image/"),
           );
           if (!file) return false;
-          void upload(file);
+          // The handler reports its own failure; a rejected upload must not go unhandled.
+          upload(file).catch(() => false);
           return true;
         },
-        handleDrop(_view, event) {
+        handleDrop(view, event) {
+          // An image dragged within the description — moved, or copied with a modifier — is the editor's own; it is not a new file.
+          if (view.dragging) return false;
           const files = [...(event.dataTransfer?.files ?? [])];
           if (attachFilesRef.current) {
             if (files.length === 0) return false;
@@ -426,7 +438,9 @@ export function TasksEditor({
           );
           if (!file) return false;
           event.preventDefault();
-          void upload(file);
+          const at = view.posAtCoords({ left: event.clientX, top: event.clientY })?.pos;
+          // The handler reports its own failure; a rejected upload must not go unhandled.
+          upload(file, at).catch(() => false);
           return true;
         },
       },

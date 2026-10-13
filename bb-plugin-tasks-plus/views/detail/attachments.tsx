@@ -2,6 +2,7 @@ import { CALLER_THREAD_FIELD } from "../../shared/enums.js";
 import {
   attachmentDownloadUrl,
   attachmentUrlInThread,
+  PLUGIN_API,
 } from "../../shared/attachment-url.js";
 import { useCallerThreadId } from "../../client/caller-thread.js";
 import { useCallback, useEffect, useState } from "react";
@@ -41,7 +42,7 @@ let tokenPromise: Promise<string> | null = null;
  */
 function pluginToken(): Promise<string> {
   tokenPromise ??= (async () => {
-    const response = await fetch("/api/v1/plugins/tasks/token", {
+    const response = await fetch(`${PLUGIN_API}/token`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: "{}",
@@ -77,7 +78,7 @@ export async function uploadAttachment(
     ...(callerThreadId === null ? {} : { [CALLER_THREAD_FIELD]: callerThreadId }),
   });
   const response = await fetch(
-    `/api/v1/plugins/tasks/http/attachments/upload?${query.toString()}`,
+    `${PLUGIN_API}/http/attachments/upload?${query.toString()}`,
     {
       method: "POST",
       headers: { "x-bb-plugin-token": token },

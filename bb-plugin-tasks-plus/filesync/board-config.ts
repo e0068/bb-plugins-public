@@ -1,3 +1,7 @@
+import { parseTableId, type TableId } from "./db-tables.js";
+import { parseFields, type SectionField } from "../shared/section-fields.js";
+import type { CatalogLabel } from "./label-catalog.js";
+
 /**
  * A board's machine-local configuration: the record that used to be a row
  * in SQLite's `projects` table. What lives here is exactly what isn't in
@@ -13,11 +17,17 @@ export interface BoardConfig {
   color: string;
   /** Name of a catalog icon; a board without one is drawn with the default. */
   icon?: string;
+  /** The labels added in Manage → Labels with their colours (filesync/label-catalog.ts); absent for none. */
+  labels?: CatalogLabel[];
   folderId: string | null;
   linkedBbProjectId: string | null;
   tasksFolder: string | null;
-  /** The online database the board lives in; null for a board that lives in folders. */
-  database: { url: string } | null;
+  /** The online database the board lives in; null for a board that lives in folders.
+   *  `mirrorFolder` — the folder of this machine its records are mirrored into, absent or null for none;
+   *  `table` — the table beside the task board this board shows, absent for the task board itself;
+   *  `parent` — the section that table sits in, absent for a top section;
+   *  `fields` — the section's fields beyond the defaults, as its database lists them, absent for none. */
+  database: { url: string; mirrorFolder?: string | null; table?: TableId; parent?: TableId; fields?: SectionField[] } | null;
   createdAt: string;
 }
 
@@ -31,7 +41,37 @@ const BOARDS_KEY = "boards";
 export async function readBoardConfigs(kv: KvStore): Promise<BoardConfig[]> {
   // Records written before boards could live in a database carry no `database` key.
   const stored = (await kv.get<Array<Omit<BoardConfig, "database"> & { database?: BoardConfig["database"] }>>(BOARDS_KEY)) ?? [];
-  return stored.map((board) => ({ ...board, database: board.database ?? null }));
+  // A table id that does not read as one would point the board at the task board's tables: such a board is left out.
+  return stored
+    .filter((board) => board.database?.table === undefined || parseTableId(board.database.table) !== null)
+    .map((board) => withReadableLabels({ ...board, database: board.database == null ? null : withReadableFields(withReadableParent(board.database)) }));
+}
+
+const isCatalogLabel = (label: unknown): label is CatalogLabel =>
+  typeof label === "object" && label !== null &&
+  typeof (label as CatalogLabel).name === "string" && typeof (label as CatalogLabel).color === "string";
+
+/** Labels that do not read as a name and a colour are dropped; none left is no `labels` key. */
+function withReadableLabels(board: BoardConfig): BoardConfig {
+  if (board.labels === undefined) return board;
+  const { labels, ...rest } = board;
+  const readable = Array.isArray(labels) ? labels.filter(isCatalogLabel) : [];
+  return readable.length === 0 ? rest : { ...rest, labels: readable };
+}
+
+/** A parent that does not read as a section id is dropped: the section is then a top one. */
+function withReadableParent(database: NonNullable<BoardConfig["database"]>): NonNullable<BoardConfig["database"]> {
+  if (database.parent === undefined || parseTableId(database.parent) !== null) return database;
+  const { parent: _unreadable, ...rest } = database;
+  return rest;
+}
+
+/** Fields that do not read as fields are dropped; none left is no `fields` key. */
+function withReadableFields(database: NonNullable<BoardConfig["database"]>): NonNullable<BoardConfig["database"]> {
+  if (database.fields === undefined) return database;
+  const { fields, ...rest } = database;
+  const readable = parseFields(fields);
+  return readable.length === 0 ? rest : { ...rest, fields: readable };
 }
 
 export async function writeBoardConfigs(

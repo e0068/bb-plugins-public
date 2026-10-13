@@ -34,7 +34,7 @@ import {
 } from "./board-config.js";
 import { createBoardRepos } from "./board-repos.js";
 import { retryOnConflict } from "./write-retry.js";
-import { outOfReach, unlessOutOfReach, type RepoFile, type TaskRepo } from "./task-repo.js";
+import { outOfReach, unlessOutOfReach, WriteConflict, type RepoFile, type TaskRepo } from "./task-repo.js";
 import { loadKvCollection, createKvCollection } from "./kv-collection.js";
 import { migrateSavedView } from "./saved-view-migrate.js";
 import { applyPatch } from "./patch.js";
@@ -69,12 +69,18 @@ import {
   type BranchThread,
 } from "./branch-threads.js";
 import { AMOUNT_KEYS, renderTaskFile } from "./task-file.js";
+import { patchProperties } from "../shared/properties.js";
 import { parseFrontmatter } from "./frontmatter.js";
 import { AMOUNT_FIELDS } from "../shared/amounts.js";
+import { boardLabelList, labelColor, renamedLabel, withLabel, withoutLabel, type CatalogLabel } from "./label-catalog.js";
 import { filterTasks } from "./query.js";
 import { uniqueSlug, validateSlug } from "./slug.js";
 import { byLiveStatusFirst, parseTaskCursor, taskPage, type TaskPage } from "./task-page.js";
 import { TASKS_PAGE_DEFAULT_LIMIT } from "../shared/pagination.js";
+import { tableRoot } from "./db-tables.js";
+import { sha256 } from "./folder-mirror.js";
+import { sectionText, sectionWrite } from "./section-text.js";
+import { sectionFields } from "../shared/section-fields.js";
 import { createOrValidateUlid, requireNonEmpty, validateDueDate,
   validateStartDate, validateDollars, validateMinutes, validateThreadId } from "./validators.js";
 
@@ -152,6 +158,27 @@ function claimedTakenBy(current: ClaimState & { key: string }, request: ClaimReq
   if (!outcome.ok) throw new TaskAlreadyTaken(current.key, outcome.takenBy);
   return outcome.takenBy;
 }
+
+/** A record's whole text and the hash the document view saves against. */
+export interface TaskText {
+  content: string;
+  sha256: string;
+}
+
+/** What saving a record's whole text came to. */
+export type TaskTextWrite =
+  | { outcome: "written"; sha256: string; projectId: string }
+  | { outcome: "conflict" }
+  | { outcome: "invalid" }
+  | { outcome: "not-found" }
+  | { outcome: "denied" };
+
+/** The hash a section's record is saved against: its own fields and text, without the dates — the change
+ *  date moves on every save — and without other records' fields, which a colleague may add meanwhile. */
+const sectionHash = (stored: string): string => sha256(sectionText(stored, [], null));
+
+/** The queue every read-then-write of this machine waits in; no board is called so. */
+const OWN_WRITES = "\0own-writes";
 
 /** A task's `source`: the file it was read from or written to, and for a database its row version. */
 function taskSource(origin: FileTaskOrigin, filePath: string, revision: number | null | undefined): NonNullable<Task["source"]> {
@@ -237,14 +264,21 @@ export function createFileTasksStore(
 
   /** Where a database board's tasks live, as a root: the address, never a path. */
   function databaseRoot(board: BoardConfig): BoardRoot {
-    return { absPath: board.database?.url ?? "", origin: { kind: "database", url: board.database?.url ?? "" } };
+    const url = board.database?.url ?? "";
+    return { absPath: tableRoot(url, board.database?.table ?? null), origin: { kind: "database", url } };
   }
 
   /** Runs a write that reads before it writes; when another machine's write
    *  got in between, catches up with the databases and runs it again from a
-   *  fresh read (filesync/write-retry.ts). A folder never conflicts. */
+   *  fresh read (filesync/write-retry.ts). A folder never conflicts.
+   *  This machine's own writes go one at a time, each read and its write
+   *  together: an upload and a description save landing at once read the
+   *  same row version, and only a real other machine may lose a race to one.
+   *  The queue is not re-entrant: a run that calls `retrying` again — or a
+   *  public write such as `updateTask` — waits on itself and stops every
+   *  write of the plugin; inside a run, call the `…FromRead` helpers. */
   function retrying<T>(run: () => Promise<T>): Promise<T> {
-    return retryOnConflict(run, syncDatabases);
+    return serialByBoard(OWN_WRITES, () => retryOnConflict(run, syncDatabases));
   }
 
   /** Catches up with every database; one that cannot be reached does not stop
@@ -538,6 +572,63 @@ export function createFileTasksStore(
     return parseFrontmatter(repo ? await repo.readText(task.source!.filePath) : await readFile(task.source!.filePath, "utf8"));
   }
 
+  /** A record's whole text — frontmatter and body — and its hash; null when there is no such record.
+   *  A section's record comes in the section's fields (section-text.ts); a task, as its file holds it. */
+  async function readTaskText(taskId: string): Promise<TaskText | null> {
+    const found = await findAssembled(taskId);
+    const source = found?.task.source;
+    if (found === undefined || source == null) return null;
+    const board = requireBoard(found.task.projectId);
+    const repo = boardRepos.repoFor(board);
+    const stored = repo ? await repo.readText(source.filePath) : await readFile(source.filePath, "utf8");
+    if (board.database?.table === undefined) return { content: stored, sha256: sha256(stored) };
+    const fields = sectionFields(board.database.fields ?? [], (await loadBoard(board)).map((record) => record.task)).map((field) => field.name);
+    const dates = { created: found.task.createdAt, updated: found.task.updatedAt };
+    return { content: sectionText(stored, fields, dates), sha256: sectionHash(stored) };
+  }
+
+  /**
+   * Writes a record's whole text as the document view saved it, when the
+   * text it was edited from is still the record's: a hash that differs means
+   * an edit came in meanwhile, and the record keeps it. A record in a folder
+   * is not written here — the document view is for records kept in a database.
+   */
+  async function writeTaskText(taskId: string, content: string, expectedSha256: string | null): Promise<TaskTextWrite> {
+    const found = await findAssembled(taskId);
+    if (found === undefined) return { outcome: "not-found" };
+    return serialByBoard(found.task.projectId, () => writeFoundText(found.task, content, expectedSha256));
+  }
+
+  async function writeFoundText(task: Task, content: string, expectedSha256: string | null): Promise<TaskTextWrite> {
+    const source = task.source;
+    if (source == null) return { outcome: "not-found" };
+    const board = requireBoard(task.projectId);
+    const repo = boardRepos.repoFor(board);
+    if (repo == null) return { outcome: "denied" };
+    const current = await repo.readText(source.filePath);
+    const section = board.database?.table !== undefined;
+    const hash = section ? sectionHash : sha256;
+    if (expectedSha256 !== null && hash(current) !== expectedSha256) return { outcome: "conflict" };
+    const edit = section ? sectionWrite(current, content) : { ok: true as const, text: content };
+    if (!edit.ok) return { outcome: "invalid" };
+    try {
+      await repo.write({
+        status: task.status,
+        slug: taskSlug(task),
+        placement: placementOf(task),
+        content: edit.text,
+        previousPath: source.filePath,
+        ...(source.revision == null ? {} : { revision: source.revision }),
+      });
+    } catch (error) {
+      if (error instanceof WriteConflict) return { outcome: "conflict" };
+      throw error;
+    } finally {
+      writes += 1;
+    }
+    return { outcome: "written", sha256: hash(edit.text), projectId: task.projectId };
+  }
+
   // ---------------------------------------------------------------- Folders
   const createFolder = (input: { id?: string; name: string; parentFolderId?: string | null }) =>
     folderCol.insert({
@@ -572,7 +663,7 @@ export function createFileTasksStore(
     folderId?: string | null;
     linkedBbProjectId?: string | null;
     tasksFolder?: string | null;
-    database?: { url: string } | null;
+    database?: BoardConfig["database"];
   }): BoardConfig {
     requireLinkFree(input.linkedBbProjectId ?? null);
     const board: BoardConfig = {
@@ -953,6 +1044,7 @@ export function createFileTasksStore(
       ...relabel(current, input, siblings),
       title: input.title ?? current.title,
       description: input.description ?? current.description,
+      labelIds: input.labelIds === undefined ? current.labelIds : [...new Set(input.labelIds)],
       status: input.status ?? current.status,
       priority: input.priority ?? current.priority,
       type: input.type === undefined ? current.type : input.type,
@@ -996,7 +1088,8 @@ export function createFileTasksStore(
       ...(input.dueDate === null ? ["due"] : []),
       ...(input.startDate === null ? ["start"] : []),
     ]);
-    const existing = Object.fromEntries(Object.entries(data).filter(([key]) => !cleared.has(key)));
+    const kept = Object.fromEntries(Object.entries(data).filter(([key]) => !cleared.has(key)));
+    const existing = input.propertyPatch === undefined ? kept : patchProperties(kept, input.propertyPatch);
     const { filePath, revision, task: written } = await persistTask(board, updated, comments, root, existing, {});
     if (written.id !== current.id || written.key !== current.key) {
       await repointChildren(board, siblings.filter((t) => t.task.parentTaskId === current.id), written);
@@ -1102,27 +1195,57 @@ export function createFileTasksStore(
 
   // ------------------------------------------------------------------ Labels
   async function boardLabels(boardId: string): Promise<Label[]> {
-    const seen = new Set<string>();
-    for (const t of await loadBoard(requireBoard(boardId))) for (const id of t.task.labelIds) seen.add(id);
-    return [...seen].map((name) => ({ id: name, projectId: boardId, name, color: "#6b7280" }));
+    const carried = (await loadBoard(requireBoard(boardId))).flatMap((t) => t.task.labelIds);
+    return boardLabelList(requireBoard(boardId).labels ?? [], carried)
+      .map(({ name, color }) => ({ id: name, projectId: boardId, name, color }));
   }
-  const createLabel = (input: CreateLabelInput): Label => ({
-    id: input.name, projectId: input.projectId, name: input.name, color: input.color,
-  });
+  function setCatalog(board: BoardConfig, labels: CatalogLabel[]): void {
+    const { labels: _old, ...rest } = board;
+    boardConfigs = upsertBoardConfig(boardConfigs, labels.length === 0 ? rest : { ...rest, labels });
+  }
+  function createLabel(input: CreateLabelInput): Label {
+    const board = requireBoard(input.projectId);
+    setCatalog(board, withLabel(board.labels ?? [], input.name, input.color));
+    persistBoards();
+    return { id: input.name, projectId: input.projectId, name: input.name, color: input.color };
+  }
   async function getLabel(id: string): Promise<Label | undefined> {
     const perBoard = await Promise.all(boardConfigs.map((b) => unlessOutOfReach(boardLabels(b.id), [])));
     return perBoard.flat().find((l) => l.id === id);
   }
   const listLabels = (projectId: string): Promise<Label[]> => boardLabels(projectId);
+  /** A label is a name, the same on every board: a new colour or name goes into
+   *  each board's catalog that lists it, a new name onto every task carrying it. */
   async function updateLabel(id: string, input: UpdateLabelInput): Promise<Label> {
-    const current = await getLabel(id);
-    if (!current) throw new Error(`Label not found: ${id}`);
-    return applyPatch(current, input);
+    // A board lists the label in its catalog, read here, or carries it on a task, read when in reach.
+    const boards = boardConfigs;
+    const carriedOn = await Promise.all(boards.map(async (board) =>
+      (await unlessOutOfReach(loadBoard(board), [])).some(({ task }) => task.labelIds.includes(id))));
+    const holders = boards.filter((board, at) => carriedOn[at] || (board.labels ?? []).some((label) => label.name === id));
+    if (holders.length === 0) throw new Error(`Label not found: ${id}`);
+    const name = input.name ?? id;
+    for (const { id: boardId } of holders) {
+      const board = boardConfigs.find((candidate) => candidate.id === boardId);
+      if (board !== undefined) setCatalog(board, renamedLabel(board.labels ?? [], id, name, input.color));
+    }
+    persistBoards();
+    if (name !== id) {
+      for (const assembled of await loadAllBoards()) {
+        if (assembled.task.labelIds.includes(id)) await renameTaskLabel(assembled.task.id, id, name);
+      }
+    }
+    const projectId = holders[0]!.id;
+    return { id: name, projectId, name, color: labelColor(boardConfigs.find((board) => board.id === projectId)?.labels ?? [], name) };
   }
-  /** Labels have no row of their own to delete (see boardLabels above) — a
-   *  label is deleted by removing its name from every task that carries it. */
+  /** A label is deleted from every board's catalog and every task that carries it. */
   async function deleteLabel(id: string): Promise<boolean> {
     let removed = false;
+    for (const board of boardConfigs) {
+      if (!(board.labels ?? []).some((label) => label.name === id)) continue;
+      setCatalog(board, withoutLabel(board.labels ?? [], id));
+      removed = true;
+    }
+    if (removed) persistBoards();
     for (const assembled of await loadAllBoards()) {
       if (assembled.task.labelIds.includes(id)) {
         await removeTaskLabel(assembled.task.id, id);
@@ -1138,8 +1261,6 @@ export function createFileTasksStore(
       return { taskId, labelId };
     });
   }
-  const setTaskLabels = (taskId: string, labelIds: string[]): Promise<void> =>
-    retrying(() => setTaskLabelsFromRead(taskId, labelIds));
   async function setTaskLabelsFromRead(taskId: string, labelIds: string[]): Promise<void> {
     const current = await requireTask(taskId);
     const board = requireBoard(current.projectId);
@@ -1156,10 +1277,20 @@ export function createFileTasksStore(
       return true;
     });
   }
+  /** Renames a label on one task, reading its labels inside the write queue. */
+  function renameTaskLabel(taskId: string, from: string, to: string): Promise<boolean> {
+    return retrying(async () => {
+      const task = await requireTask(taskId);
+      if (!task.labelIds.includes(from)) return false;
+      await setTaskLabelsFromRead(taskId, [...new Set(task.labelIds.map((name) => (name === from ? to : name)))]);
+      return true;
+    });
+  }
   const listTaskLabels = async (taskId: string) => (await requireTask(taskId)).labelIds.map((labelId) => ({ taskId, labelId }));
   const listLabelsForTask = async (taskId: string) => {
     const task = await requireTask(taskId);
-    return task.labelIds.map((name) => ({ id: name, projectId: task.projectId, name, color: "#6b7280" }));
+    const catalog = requireBoard(task.projectId).labels ?? [];
+    return task.labelIds.map((name) => ({ id: name, projectId: task.projectId, name, color: labelColor(catalog, name) }));
   };
 
   // --------------------------------------------------------------- Comments
@@ -1436,7 +1567,7 @@ export function createFileTasksStore(
     setBoardRepo, removeBoardRepo,
     createFolder, getFolder, listFolders, updateFolder, deleteFolder,
     createProject, getProject, listProjects, updateProject, renameBoardPrefix, deleteProject,
-    createTask, getTask, getTaskByKey, listTasksPage, listTasks, listSubtasks, getSubtaskDoneCounts, updateTask, deleteTask, placeTask, threadsByTaskId, listPlacements, migrateEpics, issueBoardKeys,
+    createTask, getTask, getTaskByKey, readTaskText, writeTaskText, listTasksPage, listTasks, listSubtasks, getSubtaskDoneCounts, updateTask, deleteTask, placeTask, threadsByTaskId, listPlacements, migrateEpics, issueBoardKeys,
     createLabel, getLabel, listLabels, updateLabel, deleteLabel, addTaskLabel, removeTaskLabel, listTaskLabels, listLabelsForTask,
     createComment, getComment, listComments, getLatestAgentComment, updateComment, deleteComment,
     createAttachment, getAttachment, listAttachmentsForTask, listAttachmentsForComment, updateAttachment, deleteAttachment,

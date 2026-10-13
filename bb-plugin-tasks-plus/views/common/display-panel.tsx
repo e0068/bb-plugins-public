@@ -37,9 +37,9 @@ import {
   type SubtaskScope,
   type TodayPlace,
 } from "../../shared/enums.js";
-import { useTasksQuery } from "../../client/data.js";
+import { useProjects, useTasksQuery } from "../../client/data.js";
 import type { TaskViewMode } from "../../client/routes.js";
-import type { ViewTarget } from "./view-state.js";
+import { surfaceOf, type ViewTarget } from "./view-state.js";
 import type { ListPreferenceScope } from "./list-preference.js";
 import { scopeBoardKey, loadBoardLayout, setBoardLayout, useBoardLayout, type BoardKey } from "../board/board-preference.js";
 import { parseChartPeriod, setChartPreference, useChartPreference } from "../board/chart-preference.js";
@@ -54,6 +54,7 @@ import {
 import { fillsWidth, gridColumnsOf, groupKeys, withColumnOrder, withFillWidth, withHiddenToggled, type BoardLayout } from "../board/grouping.js";
 import { fetchScopeBoard } from "../board/scope-data.js";
 import { setTableSettings, useTableSettings } from "../table/table-preference.js";
+import { SectionColumnToggles } from "../table/section-table.js";
 import { ReorderList } from "./reorder-list.js";
 
 /** A visible column's pin state and the way to flip it — the table only; a board's field list carries none. */
@@ -548,6 +549,10 @@ export function DisplayPanel({ target, layout, onClose }: DisplayPanelProps) {
   const config = useFieldDisplay(fieldScope);
   const taskOpening = taskOpeningOf(config);
   const table = useTableSettings(target.scope);
+  // A section's table has its own columns and no grouping: its columns are listed instead of the task fields.
+  const projects = useProjects();
+  const sectionId = surfaceOf(target.scope).projectId;
+  const section = target.layout === "table" ? projects.data?.find((project) => project.id === sectionId && project.database?.table !== undefined) : undefined;
   return (
     <aside aria-label="Display" className="flex h-full min-h-0 w-full flex-col bg-background">
       <div className="flex h-11 shrink-0 items-center justify-between pr-2 pl-4 text-sm font-medium">
@@ -563,17 +568,24 @@ export function DisplayPanel({ target, layout, onClose }: DisplayPanelProps) {
           </Section>
         ) : null}
         {target.layout === "board" ? <GroupingSection scope={target.scope} boardKeyOf={fieldScope as BoardKey} /> : null}
-        {target.layout === "table" ? <TableGroupSection scope={target.scope} /> : null}
-        <Section title={target.layout === "table" ? "Columns — drag to reorder" : "Fields — drag to reorder"}>
-          <FieldList
-            scope={fieldScope}
-            pin={
-              target.layout === "table"
-                ? { pinned: table.pinned, onTogglePin: (field) => setTableSettings(target.scope, { pinned: togglePinned(table.pinned, field) }) }
-                : undefined
-            }
-          />
-        </Section>
+        {target.layout === "table" && section === undefined ? <TableGroupSection scope={target.scope} /> : null}
+        {section === undefined ? null : (
+          <Section title="Columns">
+            <SectionColumnToggles section={section} />
+          </Section>
+        )}
+        {section !== undefined ? null : (
+          <Section title={target.layout === "table" ? "Columns — drag to reorder" : "Fields — drag to reorder"}>
+            <FieldList
+              scope={fieldScope}
+              pin={
+                target.layout === "table"
+                  ? { pinned: table.pinned, onTogglePin: (field) => setTableSettings(target.scope, { pinned: togglePinned(table.pinned, field) }) }
+                  : undefined
+              }
+            />
+          </Section>
+        )}
         {target.layout === "board" ? (
           <>
             <Section title="Sub-task list">

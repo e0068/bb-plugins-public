@@ -405,7 +405,7 @@ describe("тред в вызовах поверхностей треда", () =>
 
   it("картинки задачи в панели треда грузятся из дерева треда", async () => {
     const download =
-      "/api/v1/plugins/tasks/http/attachments/download?attachmentId=01HZZZZZZZZZZZZZZZZZZZZZA1";
+      "/api/v1/plugins/tasks-plus/http/attachments/download?attachmentId=01HZZZZZZZZZZZZZZZZZZZZZA1";
     const slot = renderSlot(
       app.threadPanelActions[0]!,
       { threadId: "thr_worktree", params: { taskKey: "TSK-4" } },

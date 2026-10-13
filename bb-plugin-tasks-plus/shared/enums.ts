@@ -442,3 +442,6 @@ export function addCallerThread(
   if (CALLER_THREAD_FIELD in input) return input;
   return { ...input, [CALLER_THREAD_FIELD]: threadId };
 }
+
+/** The colour every label is drawn in: a label is a name on its tasks, with no colour of its own kept. */
+export const LABEL_COLOR = "#6b7280";

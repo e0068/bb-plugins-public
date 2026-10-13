@@ -4,8 +4,10 @@ import { describe, expect, it } from "vitest";
 
 import {
   attachmentDownloadUrl,
+  attachmentDownloadUrls,
   attachmentUrlInThread,
   attachmentUrlWithoutThread,
+  removeAttachmentDescriptionReferences,
 } from "./attachment-url.js";
 
 const attachmentId = fc.stringMatching(/^[0-9A-HJKMNP-TV-Z]{26}$/);
@@ -15,7 +17,7 @@ const foreignUrl = fc.webUrl();
 describe("адрес вложения", () => {
   it("совпадает с тем, что сервер пишет в описание", () => {
     expect(attachmentDownloadUrl("01JIMAGE0000000000000000AA")).toBe(
-      "/api/v1/plugins/tasks/http/attachments/download?attachmentId=01JIMAGE0000000000000000AA",
+      "/api/v1/plugins/tasks-plus/http/attachments/download?attachmentId=01JIMAGE0000000000000000AA",
     );
   });
 
@@ -52,6 +54,30 @@ describe("адрес вложения", () => {
       fc.property(foreignUrl, threadId, (url, thread) => {
         expect(attachmentUrlInThread(url, thread)).toBe(url);
         expect(attachmentUrlWithoutThread(url)).toBe(url);
+      }),
+    );
+  });
+
+  it("картинка из описания, написанного под прежним id плагина, читается нынешним адресом", () => {
+    fc.assert(
+      fc.property(attachmentId, fc.option(threadId, { nil: null }), (id, thread) => {
+        const legacy = `/api/v1/plugins/tasks/http/attachments/download?attachmentId=${id}`;
+        expect(attachmentDownloadUrls(id)).toContain(legacy);
+        expect(attachmentUrlWithoutThread(attachmentUrlInThread(legacy, thread))).toBe(attachmentDownloadUrl(id));
+      }),
+    );
+  });
+});
+
+describe("a removed attachment's images", () => {
+  it("leave the description under either address, and the other images stay", () => {
+    fc.assert(
+      fc.property(attachmentId, attachmentId, (gone, kept) => {
+        fc.pre(gone !== kept);
+        const [current, legacy] = attachmentDownloadUrls(gone);
+        const other = `![kept.png](${attachmentDownloadUrl(kept)})`;
+        const markdown = `Intro ![a.png](${current}) ${other} ![b.svg](${legacy})`;
+        expect(removeAttachmentDescriptionReferences(markdown, gone)).toBe(`Intro  ${other} `);
       }),
     );
   });

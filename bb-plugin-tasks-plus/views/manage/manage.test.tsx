@@ -334,7 +334,7 @@ describe("NewTaskDialog attachments", () => {
       init?: RequestInit,
     ) => {
       const url = String(input);
-      if (url.includes("/plugins/tasks/token")) {
+      if (url.includes("/plugins/tasks-plus/token")) {
         return new Response(JSON.stringify({ token: "test-token" }), {
           status: 200,
         });

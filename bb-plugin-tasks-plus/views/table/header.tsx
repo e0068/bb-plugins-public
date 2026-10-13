@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
+import { useCallback, useEffect, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 import { cn } from "@/lib/utils";
-import { Icon } from "@/components/ui/icon";
+import { Icon, type IconName } from "@/components/ui/icon";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -20,8 +20,12 @@ export const HEADER_HEIGHT_PX = 32;
 
 /** A column's current layout and sort/pin state, as the caller (the table
  * view) computes it — this component only reads it and reports intent. */
-export interface HeaderColumnState {
-  column: RowField;
+export interface HeaderColumnState<C extends string = RowField> {
+  column: C;
+  /** What the header reads; a task column's own label when absent. */
+  label?: string;
+  /** The icon before the label — a section field's type. */
+  typeIcon?: IconName;
   width: number;
   pinned: boolean;
   /** Left offset in px while pinned columns stick to the leading edge;
@@ -45,13 +49,15 @@ const DATE_FORMAT_LABELS: Record<DateFormat, string> = {
   relative: "Relative",
 };
 
-export interface HeaderActions {
-  onSort: (column: RowField, direction: "asc" | "desc" | null) => void;
-  onPin: (column: RowField, pinned: boolean) => void;
-  onHide: (column: RowField) => void;
-  onMove: (column: RowField, toIndex: number) => void;
-  onResize: (column: RowField, width: number | null) => void;
-  onDisplay: (column: RowField, patch: ColumnDisplay) => void;
+/** What a header can do to its column. A table that leaves out pinning, hiding or moving
+ *  offers none of them in its menu, and without moving a drag moves nothing. */
+export interface HeaderActions<C extends string = RowField> {
+  onSort: (column: C, direction: "asc" | "desc" | null) => void;
+  onPin?: (column: C, pinned: boolean) => void;
+  onHide?: (column: C) => void;
+  onMove?: (column: C, toIndex: number) => void;
+  onResize: (column: C, width: number | null) => void;
+  onDisplay: (column: C, patch: ColumnDisplay) => void;
 }
 
 /** A drag (reorder) only starts once the pointer has moved this far —
@@ -114,7 +120,7 @@ interface ColumnDrag {
   toIndex: number;
 }
 
-function HeaderCell({
+function HeaderCell<C extends string>({
   state,
   index,
   last,
@@ -123,14 +129,14 @@ function HeaderCell({
   actions,
   dragCleanupRef,
 }: {
-  state: HeaderColumnState;
+  state: HeaderColumnState<C>;
   index: number;
   /** The row's trailing column: its resize handle stays inside the table's width. */
   last: boolean;
   /** The reorder drag in progress over this row, if any. */
   drag: ColumnDrag | null;
   onDrag: (drag: ColumnDrag | null) => void;
-  actions: HeaderActions;
+  actions: HeaderActions<C>;
   /** Ends the pointer session in progress — a reorder drag or a resize —
    * listeners and page cursor alike. Shared across every cell so at most one
    * runs at a time, and called on unmount so none outlives the table. */
@@ -140,13 +146,14 @@ function HeaderCell({
   const [resizing, setResizing] = useState(false);
   // The click a finished drag ends with must not open the menu.
   const draggedRef = useRef(false);
-  const label = ROW_FIELD_LABELS[state.column];
+  const label = state.label ?? ROW_FIELD_LABELS[state.column as RowField];
   const ariaSort = state.sort === "asc" ? "ascending" : state.sort === "desc" ? "descending" : "none";
   const dragging = drag?.fromIndex === index;
   const dropLine = drag?.toIndex === index ? dropEdge(drag.fromIndex, drag.toIndex) : null;
 
   const handleHeaderPointerDown = (event: ReactPointerEvent<HTMLButtonElement>) => {
-    if (event.button !== 0 || dragCleanupRef.current) return;
+    const { onMove } = actions;
+    if (event.button !== 0 || dragCleanupRef.current || onMove === undefined) return;
     // Holds back the menu trigger's own open-on-press: the press may be the
     // start of a drag, so the menu opens on the click that completes it.
     event.preventDefault();
@@ -158,7 +165,7 @@ function HeaderCell({
     const finish = (upEvent: PointerEvent | null) => {
       dragCleanupRef.current?.();
       if (draggedRef.current && upEvent) {
-        actions.onMove(state.column, nearestColumnIndex(row, upEvent.clientX));
+        onMove(state.column, nearestColumnIndex(row, upEvent.clientX));
       }
       // The click a drag ends with fires right after this pointerup — or on
       // another header, never reaching this one: forget the drag once it has.
@@ -245,9 +252,13 @@ function HeaderCell({
             type="button"
             onPointerDown={handleHeaderPointerDown}
             onClick={handleHeaderClick}
-            className="flex h-full min-w-0 flex-1 cursor-grab items-center truncate text-left hover:text-foreground"
+            className={cn(
+              "flex h-full min-w-0 flex-1 items-center gap-1.5 truncate text-left hover:text-foreground",
+              actions.onMove !== undefined && "cursor-grab",
+            )}
           >
-            {label}
+            {state.typeIcon === undefined ? null : <Icon name={state.typeIcon} aria-hidden className="size-3 shrink-0" />}
+            <span className="truncate">{label}</span>
           </button>
         </DropdownMenuTrigger>
         <DropdownMenuContent align="start" collisionPadding={8} mobileTitle={label}>
@@ -293,17 +304,21 @@ function HeaderCell({
               </DropdownMenuCheckboxItem>
             </>
           ) : null}
-          <DropdownMenuSeparator />
-          <DropdownMenuItem onSelect={() => actions.onPin(state.column, !state.pinned)}>
-            {state.pinned ? "Unpin column" : "Pin column"}
-          </DropdownMenuItem>
+          {actions.onPin === undefined ? null : (
+            <>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem onSelect={() => actions.onPin?.(state.column, !state.pinned)}>
+                {state.pinned ? "Unpin column" : "Pin column"}
+              </DropdownMenuItem>
+            </>
+          )}
           {state.widthChanged ? (
             <DropdownMenuItem onSelect={() => actions.onResize(state.column, null)}>
               Reset width
             </DropdownMenuItem>
           ) : null}
-          {state.column !== "title" ? (
-            <DropdownMenuItem onSelect={() => actions.onHide(state.column)}>
+          {state.column !== "title" && actions.onHide !== undefined ? (
+            <DropdownMenuItem onSelect={() => actions.onHide?.(state.column)}>
               Hide column
             </DropdownMenuItem>
           ) : null}
@@ -349,12 +364,15 @@ function HeaderCell({
 /** The table's header row: one {@link HeaderCell} per column, each opening
  * its own sort/pin/hide menu on a click, draggable to reorder — a line marks
  * where the column lands — and resizable at its trailing edge. */
-export function TableHeader({
+export function TableHeader<C extends string = RowField>({
   columns,
   actions,
+  trailing,
 }: {
-  columns: readonly HeaderColumnState[];
-  actions: HeaderActions;
+  columns: readonly HeaderColumnState<C>[];
+  actions: HeaderActions<C>;
+  /** Cells drawn after the regular columns — the property columns' headers, a section's "+". */
+  trailing?: ReactNode;
 }) {
   const dragCleanupRef = useRef<(() => void) | null>(null);
   useEffect(() => () => dragCleanupRef.current?.(), []);
@@ -370,13 +388,15 @@ export function TableHeader({
           key={state.column}
           state={state}
           index={index}
-          last={index === columns.length - 1}
+          // Cells after the columns take the table's end, so the last column's edge is an ordinary border.
+          last={index === columns.length - 1 && trailing === undefined}
           drag={drag}
           onDrag={onDrag}
           actions={actions}
           dragCleanupRef={dragCleanupRef}
         />
       ))}
+      {trailing}
     </div>
   );
 }
