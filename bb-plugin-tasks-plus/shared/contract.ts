@@ -9,6 +9,7 @@ import {
 } from "./pagination.js";
 import { COLUMN_WIDTH_LIMITS } from "./board-column-width.js";
 import { isPlanDate } from "./plan-date.js";
+import { FIELD_TYPES } from "./section-fields.js";
 import { REDUCED_PROJECTS } from "./reduced-projects.js";
 import {
   TASK_STATUSES,
@@ -193,7 +194,18 @@ export const projectSchema = z
     tasksFolder: z.string().nullable(),
     /** The online database the board lives in, null or absent for a board
      *  that lives in files. */
-    database: z.object({ url: z.string() }).strict().nullable().optional(),
+    database: z
+      .object({
+        url: z.string(),
+        mirrorFolder: z.string().nullable().optional(),
+        table: z.string().optional(),
+        parent: z.string().optional(),
+        /** A section's fields beyond Tags and Date, in the order they were added. */
+        fields: z.array(z.object({ name: z.string(), type: z.enum(FIELD_TYPES), options: z.array(z.string()).optional() }).strict()).optional(),
+      })
+      .strict()
+      .nullable()
+      .optional(),
     createdAt: z.string(),
   })
   .strict();
@@ -268,6 +280,10 @@ export const taskSchema = z
     flow: taskFlowSchema.nullable().optional(),
     /** Who took the task, null or absent when nobody did. */
     takenBy: takenBySchema.nullable().optional(),
+    /** The record's own properties — frontmatter keys the board does not
+     *  model, as text (shared/properties.ts). Optional so a task built
+     *  without it reads as having none. */
+    properties: z.record(z.string(), z.string()).optional(),
     /** The folder above the task's status folder, null at the root. Optional
      *  so a task built without it reads as unassigned. */
     assignee: placementFolderSchema.nullable().optional(),
@@ -919,12 +935,22 @@ const updateTaskInputSchema = z
     parentTaskId: taskIdSchema.nullable().optional(),
     labelIds: taskLabelsSchema.optional(),
     assignee: placementNameSchema.nullable().optional(),
+    /** A change to the record's properties (shared/properties.ts): names to set, remove and rename. */
+    propertyPatch: z
+      .object({
+        set: z.record(z.string(), z.string()).optional(),
+        remove: z.array(z.string()).optional(),
+        rename: z.record(z.string(), z.string()).optional(),
+      })
+      .strict()
+      .optional(),
     authorName: nonBlankStringSchema.default("You"),
   })
   .strict()
   .refine(
     (input) =>
       input.slug !== undefined ||
+      input.propertyPatch !== undefined ||
       input.key !== undefined ||
       input.title !== undefined ||
       input.description !== undefined ||
@@ -1151,6 +1177,19 @@ export const tasksRpcContract = defineRpcContract({
   getTaskByKey: {
     input: withCallerThread(z.object({ taskKey: nonBlankStringSchema }).strict()),
     output: z.object({ task: taskSchema.nullable() }).strict(),
+  },
+  /** A record's whole text — frontmatter and body — for the document view; null when there is no such record. */
+  readTaskText: {
+    input: z.object({ taskId: taskIdSchema }).strict(),
+    output: z.object({ text: z.object({ content: z.string(), sha256: z.string() }).strict().nullable() }).strict(),
+  },
+  /** Saves a record's whole text when `expectedSha256` is still the record's; otherwise the record keeps the edit it has. */
+  writeTaskText: {
+    input: z.object({ taskId: taskIdSchema, content: z.string(), expectedSha256: z.string().nullable() }).strict(),
+    output: z.discriminatedUnion("outcome", [
+      z.object({ outcome: z.literal("written"), sha256: z.string() }).strict(),
+      z.object({ outcome: z.enum(["conflict", "not-found", "denied", "invalid"]) }).strict(),
+    ]),
   },
   updateTask: {
     input: withCallerThread(updateTaskInputSchema),

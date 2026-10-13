@@ -17,6 +17,8 @@ import { ConnectDatabaseDialog } from "./connect-database-dialog.js";
 import { ProjectIconPicker } from "./project-icon-picker.js";
 import { RemoveFolderDialog } from "./remove-folder-dialog.js";
 import { prefixProblem } from "./shared.js";
+import { PropertyBlockItem } from "../../components/shapeshift/PropertyBlockItem.js";
+import { ShapeshiftRoot } from "../../components/shapeshift/ShapeshiftRoot.js";
 
 // ---------------------------------------------------------------------------
 // Core: what the rows say, without a screen or a server
@@ -119,8 +121,66 @@ function RowAction({ label, icon, danger, onClick }: { label: string; icon: "Con
   );
 }
 
+/**
+ * The folder of this machine a database board's records are mirrored into, as a Shapeshift row:
+ * a click opens the path for editing, Enter or leaving the field saves, Escape gives up, the minus
+ * turns the mirror off. A refused path is told under the row and the field stays open.
+ */
+function MirrorFolderField({ board, onSave }: { board: ProjectRowBoard; onSave: (folder: string | null) => Promise<string | null> }) {
+  const [draft, setDraft] = useState<string | null>(null);
+  const [problem, setProblem] = useState<string | null>(null);
+  const saved = board.mirrorFolder ?? null;
+
+  const commit = async () => {
+    if (draft === null) return;
+    const folder = draft.trim() === "" ? null : draft.trim();
+    if (folder === saved) return setDraft(null);
+    const refused = await onSave(folder);
+    setProblem(refused);
+    if (refused === null) setDraft(null);
+  };
+
+  return (
+    <ShapeshiftRoot className="mt-1 max-w-xs">
+      {draft === null ? (
+        <div className="cursor-text" onClick={(event) => (event.target as Element).closest("button")?.getAttribute("aria-label") === "Turn the mirror off" || setDraft(saved ?? "")}>
+          <PropertyBlockItem
+            name="Mirror folder"
+            value={saved ?? "Off"}
+            ov={{
+              name: { props: { "aria-label": `Mirror folder of ${board.name}` } },
+              remove: saved === null ? { visible: false } : { props: { "aria-label": "Turn the mirror off", onPress: () => void onSave(null) } },
+            }}
+          />
+        </div>
+      ) : (
+        <input
+          autoFocus
+          value={draft}
+          placeholder="~/Documents/docs-mirror"
+          aria-label={`Mirror folder of ${board.name}`}
+          className="ss-t ss-s-text-inspector-label w-full rounded-sm px-1 outline-none ring-1 ring-ring"
+          onChange={(event) => setDraft(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key === "Enter") {
+              event.preventDefault();
+              void commit();
+            }
+            if (event.key === "Escape") {
+              setDraft(null);
+              setProblem(null);
+            }
+          }}
+          onBlur={() => void commit()}
+        />
+      )}
+      {problem === null ? null : <p className="text-xs text-destructive">{problem}</p>}
+    </ShapeshiftRoot>
+  );
+}
+
 /** Where the board's tasks live: a folder's path, or a database's host with the state of the link. */
-function AddressCell({ board }: { board: ProjectRowBoard }) {
+function AddressCell({ board, onMirror }: { board: ProjectRowBoard; onMirror?: (folder: string | null) => Promise<string | null> }) {
   const { source } = board;
   switch (source.kind) {
     case "folder":
@@ -143,6 +203,7 @@ function AddressCell({ board }: { board: ProjectRowBoard }) {
             <span aria-hidden className={cn("size-1.5 rounded-full", LINK_DOT[source.state])} />
             {linkText(source)}
           </span>
+          {onMirror === undefined ? null : <MirrorFolderField board={board} onSave={onMirror} />}
         </td>
       );
   }
@@ -212,6 +273,8 @@ interface RowActions {
   edit: (board: ProjectRowBoard, change: { icon?: string; color?: string }) => void;
   rename: (board: ProjectRowBoard, prefix: string) => Promise<boolean>;
   share: (board: ProjectRowBoard) => void;
+  /** Sets the mirror folder of a database board; answers why it was refused, or null. */
+  mirror: (board: ProjectRowBoard, folder: string | null) => Promise<string | null>;
   /** Moves the folder board of the project into a database: opens the database dialog with that board to copy. */
   move: (board: ProjectRowBoard, bbProject: ProjectRowBbProject) => void;
   connect: (kind: ConnectKind, bbProject: ProjectRowBbProject) => void;
@@ -276,7 +339,7 @@ function ProjectLine({ row: { bbProject, board }, actions }: { row: ProjectRow; 
             <PrefixField key={`${board.id}:${board.prefix}`} board={board} name={name} onRename={(prefix) => actions.rename(board, prefix)} />
           </td>
           <TasksCell board={board} />
-          <AddressCell board={board} />
+          <AddressCell board={board} onMirror={(folder) => actions.mirror(board, folder)} />
           <td className={CELL}>
             <BoardAction board={board} name={name} bbProject={bbProject} actions={actions} />
           </td>
@@ -383,6 +446,15 @@ export function ProjectsSection() {
         return result.ok ? null : refusalText(result.error, prefix);
       }),
     share: (board) => void share(board),
+    mirror: async (board, folder) => {
+      try {
+        const result = await folders.call("setMirrorFolder", { boardId: board.id, folder });
+        await refresh();
+        return result.ok ? null : result.message;
+      } catch (mirrorError) {
+        return describeError(mirrorError);
+      }
+    },
     move: (board, bbProject) => setConnecting({ kind: "database", bbProject, copyFromBoardId: board.id }),
     connect: (kind, bbProject) => setConnecting({ kind, bbProject }),
     remove: (board) => setRemoveTarget(board),

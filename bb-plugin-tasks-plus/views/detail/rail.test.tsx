@@ -187,7 +187,7 @@ describe("time and budget fields", () => {
             input?.parentTaskId ? { tasks: [] } : { tasks: [{ ...task, budgetLimit: 60 }] },
           updateTask: (input: Record<string, unknown>) => {
             updateCalls.push(input);
-            return { ok: true, task: { ...task, ...input } };
+            return { ok: true, task: { ...task, budgetLimit: 60, ...input } };
           },
         }),
       },

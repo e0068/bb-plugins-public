@@ -1,5 +1,6 @@
 import { defineRpcContract } from "@get-bb/plugin-sdk";
 import { z } from "zod";
+import { FIELD_TYPES } from "../shared/section-fields.js";
 
 const ULID_PATTERN = /^[0-7][0-9A-HJKMNP-TV-Z]{25}$/;
 
@@ -59,6 +60,8 @@ export const projectRowBoardSchema = z
     taskCount: z.number().int().nonnegative(),
     tasksFolder: z.string().nullable(),
     source: syncedSourceSchema,
+    /** The folder a database board's records are mirrored into on this machine; absent for none. */
+    mirrorFolder: z.string().optional(),
   })
   .strict();
 
@@ -223,6 +226,54 @@ export const foldersRpcContract = defineRpcContract({
   databaseInvite: {
     input: z.object({ boardId: idSchema }).strict(),
     output: databaseInviteResultSchema,
+  },
+  /** Sets the folder of this machine a database board's records are mirrored into; null or blank turns the mirror off. */
+  setMirrorFolder: {
+    input: z.object({ boardId: idSchema, folder: z.string().nullable() }).strict(),
+    output: z.discriminatedUnion("ok", [
+      z.object({ ok: z.literal(true), folder: z.string().nullable() }).strict(),
+      z.object({ ok: z.literal(false), message: z.string() }).strict(),
+    ]),
+  },
+  /** Adds a table beside the task board of a database board; the answer names the new table's board. */
+  createTable: {
+    input: z.object({ boardId: idSchema, name: z.string().trim().min(1) }).strict(),
+    output: z.discriminatedUnion("ok", [
+      z.object({ ok: z.literal(true), boardId: idSchema }).strict(),
+      z.object({ ok: z.literal(false), message: z.string() }).strict(),
+    ]),
+  },
+  /** Gives a section one more field of a type; every machine on its database draws it on the next poll. */
+  addSectionField: {
+    input: z.object({ boardId: idSchema, name: z.string(), type: z.enum(FIELD_TYPES) }).strict(),
+    output: z.discriminatedUnion("ok", [
+      z.object({ ok: z.literal(true) }).strict(),
+      z.object({ ok: z.literal(false), message: z.string() }).strict(),
+    ]),
+  },
+  /** Adds an option to a section's Select or Tags field, or takes one away; records keep the values they hold. */
+  changeFieldOption: {
+    input: z.object({ boardId: idSchema, field: z.string(), option: z.string(), change: z.enum(["add", "remove"]) }).strict(),
+    output: z.discriminatedUnion("ok", [
+      z.object({ ok: z.literal(true) }).strict(),
+      z.object({ ok: z.literal(false), message: z.string() }).strict(),
+    ]),
+  },
+  /** Gives a section a new name for every machine on its database. */
+  renameSection: {
+    input: z.object({ boardId: idSchema, name: z.string().trim().min(1) }).strict(),
+    output: z.discriminatedUnion("ok", [
+      z.object({ ok: z.literal(true) }).strict(),
+      z.object({ ok: z.literal(false), message: z.string() }).strict(),
+    ]),
+  },
+  /** Takes a section, its records and every section inside it out of its database, for every machine on it. */
+  deleteSection: {
+    input: z.object({ boardId: idSchema }).strict(),
+    output: z.discriminatedUnion("ok", [
+      z.object({ ok: z.literal(true) }).strict(),
+      z.object({ ok: z.literal(false), message: z.string() }).strict(),
+    ]),
   },
   retryDatabase: {
     input: z.object({ boardId: idSchema }).strict(),

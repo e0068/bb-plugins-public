@@ -1,3 +1,4 @@
+import type { PropertyPatch } from "../shared/properties.js";
 import type { TaskSort } from "../shared/pagination.js";
 import type { DateField, NumberField, TaskLayout, TextField, ValueFilterField } from "../shared/enums.js";
 import type { Range, ViewSort } from "../shared/task-fields.js";
@@ -186,6 +187,8 @@ export interface UpdateTaskInput {
   key?: string | null;
   title?: string;
   description?: string;
+  /** The task's whole label list, written with the rest of the change. */
+  labelIds?: readonly string[];
   status?: TaskStatus;
   priority?: TaskPriority;
   type?: TaskType | null;
@@ -202,6 +205,8 @@ export interface UpdateTaskInput {
   assignee?: string | null;
   /** Folder inside the assignee's; needs an assignee. */
   epic?: string | null;
+  /** A change to the record's properties (shared/properties.ts): names to set, remove and rename. */
+  propertyPatch?: PropertyPatch;
 }
 
 export interface ListTasksFilters {

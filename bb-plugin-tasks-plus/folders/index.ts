@@ -3,8 +3,11 @@ import { homedir } from "node:os";
 import type { BbPluginApi, PluginRpcHandlers } from "@get-bb/plugin-sdk";
 import type { TasksApiStore } from "../api/index.js";
 import { publishProjectsChanged, publishProjectTasksChanged } from "../api/index.js";
+import { createFolderMirror, mirrorDirectory, type FolderMirror } from "../filesync/folder-mirror.js";
 import { linkTakenBy, linkTakenMessage, type BoardConfig } from "../filesync/board-config.js";
 import { createDbRepo, failureOf, peekBoard, type DbRepo } from "../filesync/db-repo.js";
+import { newTableId, type DbTable, type TableId } from "../filesync/db-tables.js";
+import { CHOICE_TYPES, declaredField, fieldProblem, optionProblem } from "../shared/section-fields.js";
 import { resolveMainRoot } from "../filesync/resolve-roots.js";
 import { defaultSourcePath } from "../filesync/resolve-roots.js";
 import { DatabaseAuthFailed, DatabaseTokenMissing, DatabaseUnreachable, diskRepo, outOfReach } from "../filesync/task-repo.js";
@@ -36,10 +39,30 @@ type SyncEligibleProject = BoardConfig & {
   linkedBbProjectId: string;
 };
 type DatabaseBoard = BoardConfig & { database: { url: string } };
+/** A board that shows a table beside the task board of its database. */
+type TableBoard = BoardConfig & { database: { url: string; table: TableId } };
 
 function isDatabaseBoard(project: BoardConfig): project is DatabaseBoard {
   return project.database != null;
 }
+
+function isTableBoard(project: BoardConfig): project is TableBoard {
+  return project.database?.table !== undefined;
+}
+
+/** The name of a table's folder in its task board's mirror: no separators, no leading dots. */
+function tableFolderName(tableName: string): string {
+  const name = tableName.replace(/[/\\:]/g, "-").replace(/^\.+/, "").trim();
+  return name === "" ? "section" : name;
+}
+
+/** A table's mirror: the subfolder named after it in its task board's mirror folder. */
+export function tableMirrorFolder(taskBoardFolder: string, tableName: string): string {
+  return `${taskBoardFolder.replace(/\/+$/, "")}/${tableFolderName(tableName)}`;
+}
+
+/** Two table names that would share a mirror folder — on macOS a folder's name ignores case. */
+const sameFolder = (a: string, b: string): boolean => tableFolderName(a).toLowerCase() === tableFolderName(b).toLowerCase();
 
 /** A folder board: a database board keeps no folder, whatever else it holds. */
 function isSyncEligible(project: BoardConfig): project is SyncEligibleProject {
@@ -130,6 +153,61 @@ export function registerFolders(bb: BbPluginApi, store: TasksApiStore): void {
   const secrets = createDatabaseSecrets(bb);
   /** The open repository of each database board, by board id. */
   const repos = new Map<string, DbRepo>();
+  /** The folder mirror of each database board that has one, by board id. */
+  const mirrors = new Map<string, FolderMirror>();
+
+  /** Brings a board's mirror folder up to its records. A board without one is
+   *  left, and so is one whose database has not answered yet: an empty mirror
+   *  before the first poll would take every file of the folder away. */
+  function mirrorBoard(boardId: string): void {
+    const mirror = mirrors.get(boardId);
+    const repo = repos.get(boardId);
+    if (mirror === undefined || repo === undefined || !repo.loaded()) return;
+    void mirror.sync(repo.snapshot()).catch((error: unknown) =>
+      bb.log.warn(`tasks-plus: mirroring the board into ${mirror.dir} failed: ${error instanceof Error ? error.message : String(error)}`),
+    );
+  }
+
+  /** The task board of a database: the board on its address that shows no table. */
+  function taskBoardOf(url: string): DatabaseBoard | undefined {
+    return store.tasks.listProjects().filter(isDatabaseBoard).find((board) => board.database.url === url && !isTableBoard(board));
+  }
+
+  /** The boards of the tables beside a database's task board. */
+  function tableBoardsOf(url: string): TableBoard[] {
+    return store.tasks.listProjects().filter(isTableBoard).filter((board) => board.database.url === url);
+  }
+
+  /** The folder a board mirrors into: its own setting, or a section's subfolder of its parent's folder. */
+  function mirrorSetting(board: BoardConfig): string | null {
+    if (!isDatabaseBoard(board)) return null;
+    if (!isTableBoard(board)) return board.database.mirrorFolder || null;
+    return sectionFolder(board, tableBoardsOf(board.database.url).length);
+  }
+
+  /** A section's folder: inside its parent section's, or the task board's for a top one. The chain is walked
+   *  at most once per section, so a loop in the data ends on the task board's folder instead of hanging. */
+  function sectionFolder(section: TableBoard, hops: number): string | null {
+    const { url, parent } = section.database;
+    const above = hops > 0 && parent !== undefined ? tableBoardsOf(url).find((board) => board.database.table === parent) : undefined;
+    const base = above === undefined ? taskBoardOf(url)?.database.mirrorFolder || null : sectionFolder(above, hops - 1);
+    return base ? tableMirrorFolder(base, section.name) : null;
+  }
+
+  /** Opens, moves or closes a board's mirror to match its setting. */
+  function placeMirror(board: BoardConfig): void {
+    const setting = mirrorSetting(board);
+    const dir = setting === null ? null : mirrorDirectory(setting);
+    if (dir === null) return void mirrors.delete(board.id);
+    // One folder, one board: a second mirror would take the first one's files for its own and remove them.
+    const holder = [...mirrors].find(([boardId, mirror]) => boardId !== board.id && mirror.dir.toLowerCase() === dir.toLowerCase());
+    if (holder !== undefined) {
+      mirrors.delete(board.id);
+      return void bb.log.warn(`tasks-plus: ${board.name} is not mirrored: ${dir} is already the mirror of another board`);
+    }
+    if (mirrors.get(board.id)?.dir !== dir) mirrors.set(board.id, createFolderMirror(dir, (message) => bb.log.warn(message)));
+    mirrorBoard(board.id);
+  }
 
   /**
    * Доске принадлежит одна папка: главный чекаут её bb-проекта. Обхода
@@ -223,14 +301,20 @@ export function registerFolders(bb: BbPluginApi, store: TasksApiStore): void {
       ...(board.icon === undefined ? {} : { icon: board.icon }),
       tasksFolder: board.tasksFolder,
     };
+    const mirrorFolder = isDatabaseBoard(board) ? board.database.mirrorFolder ?? null : null;
     return isDatabaseBoard(board)
-      ? { ...shown, taskCount: databaseTaskCount(board), source: databaseSource(board) }
+      ? { ...shown, taskCount: databaseTaskCount(board), source: databaseSource(board), ...(mirrorFolder === null ? {} : { mirrorFolder }) }
       : { ...shown, taskCount: await store.projectTaskCount(board.id), source: { kind: "folder" } };
+  }
+
+  /** The boards the Projects tab lays out: a table sits under its task board, not in a row of its own. */
+  function rowBoards(): BoardConfig[] {
+    return store.tasks.listProjects().filter((board) => !isTableBoard(board));
   }
 
   /** A board in a row wears its bb project's name: a project renamed in bb renames its board here. */
   function renameBoardsLike(bbProjects: readonly RowBbProject[]): void {
-    projectRows(bbProjects, store.tasks.listProjects()).renames.forEach(({ boardId, name }) => {
+    projectRows(bbProjects, rowBoards()).renames.forEach(({ boardId, name }) => {
       store.tasks.updateProject(boardId, { name });
       publishProjectsChanged(bb, boardId);
     });
@@ -239,7 +323,7 @@ export function registerFolders(bb: BbPluginApi, store: TasksApiStore): void {
   async function listProjectRows(): Promise<{ projects: ProjectRow[]; orphans: ProjectRowBoard[] }> {
     const bbProjects = await listBbProjects();
     renameBoardsLike(bbProjects);
-    const rows = projectRows(bbProjects, store.tasks.listProjects());
+    const rows = projectRows(bbProjects, rowBoards());
     return {
       projects: await Promise.all(
         rows.projects.map(async ({ bbProject, board }): Promise<ProjectRow> => ({
@@ -263,14 +347,18 @@ export function registerFolders(bb: BbPluginApi, store: TasksApiStore): void {
    * is known before the board exists, so a change or a link that moves is
    * told to the interface under it from the first poll on.
    */
-  function openRepo(boardId: string, url: string, client: HranaClient): DbRepo {
+  function openRepo(boardId: string, url: string, client: HranaClient, table?: TableId): DbRepo {
     const repo = createDbRepo(client, {
       url,
+      ...(table === undefined ? {} : { table }),
       onLinkLost: (why) => warnUnreachable(url, why),
       onChange: () => {
         publishProjectTasksChanged(bb, boardId);
         void adoptPrefix(boardId, repo);
+        mirrorBoard(boardId);
+        if (table === undefined) syncTables(boardId);
       },
+      onWrite: () => mirrorBoard(boardId),
       onStateChange: () => publishProjectsChanged(bb, boardId),
     });
     return repo;
@@ -320,6 +408,7 @@ export function registerFolders(bb: BbPluginApi, store: TasksApiStore): void {
   function detachRepo(boardId: string): void {
     repos.get(boardId)?.stop();
     repos.delete(boardId);
+    mirrors.delete(boardId);
     store.tasks.removeBoardRepo(boardId);
   }
 
@@ -327,14 +416,89 @@ export function registerFolders(bb: BbPluginApi, store: TasksApiStore): void {
   function attachRepo(boardId: string, repo: DbRepo): void {
     repos.set(boardId, repo);
     store.tasks.setBoardRepo(boardId, repo);
+    // A board taken off its repository and given another keeps its mirror.
+    const board = store.tasks.getProject(boardId);
+    if (board !== undefined) placeMirror(board);
     repo.start();
   }
 
   /** Opens a connected board's database with the token saved for it. */
   function openConnectedBoard(board: DatabaseBoard): void {
-    const repo = openRepo(board.id, board.database.url, savedTokenClient(board.database.url));
+    const repo = openRepo(board.id, board.database.url, savedTokenClient(board.database.url), board.database.table);
     attachRepo(board.id, repo);
     void syncQuietly(repo);
+  }
+
+  /**
+   * Gives every table of a task board's database a board on this machine: a
+   * table another machine added shows up here on the poll that brings it.
+   * Answers the boards it made.
+   */
+  function syncTables(taskBoardId: string): TableBoard[] {
+    const taskBoard = store.tasks.getProject(taskBoardId);
+    const repo = repos.get(taskBoardId);
+    if (taskBoard === undefined || !isDatabaseBoard(taskBoard) || isTableBoard(taskBoard) || repo === undefined) return [];
+    const url = taskBoard.database.url;
+    const known = new Set(tableBoardsOf(url).map((board) => board.database.table));
+    const made = repo
+      .tables()
+      .filter((table) => !known.has(table.id))
+      .map((table) => {
+        const taken = new Set(store.tasks.listProjects().map((board) => board.prefix));
+        const board = store.tasks.createProject({
+          name: table.name,
+          prefix: deriveUniquePrefix(table.name, taken),
+          color: taskBoard.color,
+          linkedBbProjectId: null,
+          database: sectionDatabase({ url }, table),
+        }) as TableBoard;
+        openConnectedBoard(board);
+        return board;
+      });
+    const changed = repo.tables().flatMap((table) => {
+      const board = tableBoardsOf(url).find((known) => known.database.table === table.id);
+      if (board === undefined) return [];
+      // A renamed section's folder takes its new name, as a moved one's goes under its new parent.
+      const moved = (board.database.parent ?? null) !== table.parent || board.name !== table.name;
+      const retyped = JSON.stringify(board.database.fields ?? []) !== JSON.stringify(table.fields);
+      return moved || retyped
+        ? [{ board: store.tasks.updateProject(board.id, { name: table.name, database: sectionDatabase(board.database, table) }), moved }]
+        : [];
+    });
+    // Before the database first answers the list is empty, not the sections gone.
+    const listed = new Set(repo.tables().map((table) => table.id));
+    const gone = repo.loaded() ? tableBoardsOf(url).filter((board) => !listed.has(board.database.table)) : [];
+    gone.forEach((board) => {
+      detachRepo(board.id);
+      store.tasks.deleteProject(board.id);
+    });
+    // A section that moved takes its folder, and the folders of the sections inside it, along.
+    if (changed.some((change) => change.moved)) tableBoardsOf(url).forEach(placeMirror);
+    if (made.length > 0 || changed.length > 0 || gone.length > 0) publishProjectsChanged(bb, taskBoardId);
+    return made;
+  }
+
+  /** A section's board with the task board of its database and that board's repository, which keeps the list of sections. */
+  function sectionRepo(boardId: string): { ok: true; section: TableBoard; taskBoard: DatabaseBoard; repo: DbRepo } | { ok: false; message: string } {
+    const section = store.tasks.getProject(boardId);
+    const taskBoard = section !== undefined && isTableBoard(section) ? taskBoardOf(section.database.url) : undefined;
+    const repo = taskBoard === undefined ? undefined : repos.get(taskBoard.id);
+    if (section === undefined || !isTableBoard(section) || taskBoard === undefined || repo === undefined) {
+      return { ok: false, message: "Only a section of a project's database can do that." };
+    }
+    return { ok: true, section, taskBoard, repo };
+  }
+
+  /** A section's board as its database names it: its parent and its fields — a board an older plugin made has neither. */
+  function sectionDatabase(database: { url: string; mirrorFolder?: string | null }, table: DbTable): NonNullable<BoardConfig["database"]> {
+    const { url, mirrorFolder } = database;
+    return {
+      url,
+      ...(mirrorFolder === undefined ? {} : { mirrorFolder }),
+      table: table.id,
+      ...(table.parent === null ? {} : { parent: table.parent }),
+      ...(table.fields.length === 0 ? {} : { fields: table.fields }),
+    };
   }
 
   /** A folder board leaves Tasks+ with its roots; its task files stay where they are. */
@@ -343,11 +507,13 @@ export function registerFolders(bb: BbPluginApi, store: TasksApiStore): void {
     store.tasks.deleteProject(board.id);
   }
 
-  /** A database board leaves this machine with its token; the database and its tasks stay for the others. */
+  /** A database board leaves this machine with its token and its tables; the database and its records stay for the others. */
   async function disconnectDatabase(board: DatabaseBoard): Promise<void> {
     await secrets.forgetDatabaseToken(board.database.url);
-    detachRepo(board.id);
-    store.tasks.deleteProject(board.id);
+    [board, ...tableBoardsOf(board.database.url)].forEach((left) => {
+      detachRepo(left.id);
+      store.tasks.deleteProject(left.id);
+    });
   }
 
   /** A sync whose failure is the link's business, not an error. */
@@ -689,7 +855,7 @@ export function registerFolders(bb: BbPluginApi, store: TasksApiStore): void {
 
   const handlers: PluginRpcHandlers<typeof foldersRpcContract> = {
     async listSyncedFolders() {
-      const rows = await Promise.all(store.tasks.listProjects().map(buildRow));
+      const rows = await Promise.all(rowBoards().map(buildRow));
       return { folders: rows.filter((row): row is SyncedFolder => row !== null) };
     },
 
@@ -709,6 +875,8 @@ export function registerFolders(bb: BbPluginApi, store: TasksApiStore): void {
     async removeSyncedFolder(input) {
       const project = store.tasks.getProject(input.projectId);
       if (!project) throw new Error(`Project not found: ${input.projectId}`);
+      // A table is listed in its database: taken off this machine alone, the next poll would bring it back.
+      if (isTableBoard(project)) throw new Error("A table leaves together with its project's database.");
       if (isDatabaseBoard(project)) await disconnectDatabase(project);
       else removeFolderBoard(project);
       publishProjectsChanged(bb, project.id);
@@ -721,6 +889,129 @@ export function registerFolders(bb: BbPluginApi, store: TasksApiStore): void {
       const token = await secrets.databaseToken(board.database.url);
       if (token === null) return domainError({ code: "folder_connect_failed", message: "No token is saved for this database." });
       return { ok: true, invite: databaseInvite(board.database.url, token) };
+    },
+
+    async setMirrorFolder(input) {
+      const board = store.tasks.getProject(input.boardId);
+      if (board === undefined || !isDatabaseBoard(board)) return { ok: false, message: "Only a board kept in a database has a mirror folder." };
+      if (isTableBoard(board)) return { ok: false, message: "A section mirrors into a folder inside its parent's mirror folder." };
+      const setting = input.folder?.trim() ?? "";
+      const dir = setting === "" ? null : mirrorDirectory(setting);
+      if (setting !== "" && dir === null) return { ok: false, message: "The mirror folder must be a full path, or start with ~/." };
+      // One folder, one board: a second board would take the first one's files for its own and remove them.
+      const holder = [...mirrors].find(([boardId, mirror]) => boardId !== board.id && mirror.dir === dir);
+      if (holder !== undefined) return { ok: false, message: `${store.tasks.getProject(holder[0])?.name ?? "Another board"} already mirrors into this folder.` };
+      const updated = store.tasks.updateProject(board.id, { database: { ...board.database, mirrorFolder: setting === "" ? null : setting } });
+      placeMirror(updated);
+      tableBoardsOf(board.database.url).forEach(placeMirror);
+      publishProjectsChanged(bb, board.id);
+      return { ok: true, folder: setting === "" ? null : setting };
+    },
+
+    async createTable(input) {
+      // The board the "+" was pressed on: the task board for a top section, a section for one inside it.
+      const holder = store.tasks.getProject(input.boardId);
+      const taskBoard = holder !== undefined && isDatabaseBoard(holder) ? taskBoardOf(holder.database.url) : undefined;
+      const repo = taskBoard === undefined ? undefined : repos.get(taskBoard.id);
+      if (holder === undefined || taskBoard === undefined || repo === undefined) {
+        return { ok: false, message: "Only a project kept in a database can hold sections." };
+      }
+      const parent = isTableBoard(holder) ? holder.database.table : null;
+      const name = input.name.trim();
+      const taken = repo.tables().find((table) => table.parent === parent && sameFolder(table.name, name));
+      if (taken !== undefined) return { ok: false, message: `${holder.name} already has the section ${taken.name}.` };
+      let table;
+      try {
+        table = await repo.addTable(newTableId(Math.random), name, parent);
+      } catch (error) {
+        return { ok: false, message: databaseFailure(error).message };
+      }
+      syncTables(taskBoard.id);
+      const board = tableBoardsOf(taskBoard.database.url).find((made) => made.database.table === table.id);
+      const tableRepo = board === undefined ? undefined : repos.get(board.id);
+      if (board === undefined || tableRepo === undefined) return { ok: false, message: "The section was added, but its board could not be opened." };
+      // The prefix goes into the table's own head, so the other machines take the same one; until it lands they derive their own.
+      await tableRepo
+        .sync()
+        .then(() => tableRepo.writeBoard({ name: board.name, prefix: board.prefix }))
+        .catch((error: unknown) => bb.log.warn(`tasks-plus: the prefix of table ${board.name} is not in its database yet: ${databaseFailure(error).message}`));
+      return { ok: true, boardId: board.id };
+    },
+
+    async addSectionField(input) {
+      const found = sectionRepo(input.boardId);
+      if (!found.ok) return found;
+      const { section, taskBoard, repo } = found;
+      const declared = repo.tables().find((table) => table.id === section.database.table)?.fields ?? [];
+      const problem = fieldProblem(declared, input.name);
+      if (problem !== null) return { ok: false, message: problem };
+      try {
+        await repo.addTableField(section.database.table, { name: input.name, type: input.type });
+      } catch (error) {
+        return { ok: false, message: databaseFailure(error).message };
+      }
+      syncTables(taskBoard.id);
+      return { ok: true };
+    },
+
+    async changeFieldOption(input) {
+      const found = sectionRepo(input.boardId);
+      if (!found.ok) return found;
+      const { section, taskBoard, repo } = found;
+      const declared = repo.tables().find((table) => table.id === section.database.table)?.fields ?? [];
+      const field = declaredField(declared, input.field);
+      if (field === undefined || !CHOICE_TYPES.has(field.type)) return { ok: false, message: "Only a Select or Tags property has options." };
+      const listed = declared.some((own) => own.name.toLowerCase() === field.name.toLowerCase());
+      if (input.change === "add") {
+        const problem = optionProblem(field.options ?? [], input.option);
+        if (problem !== null) return { ok: false, message: problem };
+      }
+      // An option the list never named is no option to take away.
+      if (input.change === "remove" && !listed) return { ok: true };
+      try {
+        // A default field gets into the list with its first option; a listed one takes it inside the database.
+        if (listed) await repo.changeFieldOption(section.database.table, field.name, input.option, input.change);
+        else await repo.addTableField(section.database.table, { name: field.name, type: field.type, options: [input.option] });
+      } catch (error) {
+        return { ok: false, message: databaseFailure(error).message };
+      }
+      syncTables(taskBoard.id);
+      return { ok: true };
+    },
+
+    async renameSection(input) {
+      const found = sectionRepo(input.boardId);
+      if (!found.ok) return found;
+      const { section, taskBoard, repo } = found;
+      const name = input.name.trim();
+      const parent = section.database.parent ?? null;
+      const taken = repo.tables().find((table) => table.id !== section.database.table && table.parent === parent && sameFolder(table.name, name));
+      if (taken !== undefined) return { ok: false, message: `There is already a section ${taken.name} here.` };
+      try {
+        await repo.renameTable(section.database.table, name);
+      } catch (error) {
+        return { ok: false, message: databaseFailure(error).message };
+      }
+      syncTables(taskBoard.id);
+      // The table's own head names it too; a machine that reads it before the list catches up sees the new name all the same.
+      await repos
+        .get(section.id)
+        ?.writeBoard({ name, prefix: section.prefix })
+        .catch((error: unknown) => bb.log.warn(`tasks-plus: the head of section ${name} keeps its old name: ${databaseFailure(error).message}`));
+      return { ok: true };
+    },
+
+    async deleteSection(input) {
+      const found = sectionRepo(input.boardId);
+      if (!found.ok) return found;
+      const { section, taskBoard, repo } = found;
+      try {
+        await repo.deleteTable(section.database.table);
+      } catch (error) {
+        return { ok: false, message: databaseFailure(error).message };
+      }
+      syncTables(taskBoard.id);
+      return { ok: true };
     },
 
     async createDatabase(input) {
@@ -761,6 +1052,7 @@ export function registerFolders(bb: BbPluginApi, store: TasksApiStore): void {
   bb.onDispose(() => {
     repos.forEach((repo) => repo.stop());
     repos.clear();
+    mirrors.clear();
   });
 
   // Every connected board gets its repository right after (re)load.

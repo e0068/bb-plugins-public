@@ -115,6 +115,18 @@ describe.each([
     expect((await store.listTasks({ projectId: BOARD.id, statuses: ["in_progress"] })).map((task) => task.key)).toEqual(["TSK-1"]);
   });
 
+  it("adds, renames and removes a record's own properties and keeps its fields", async () => {
+    const store = await open();
+    const created = await store.createTask({ projectId: BOARD.id, title: "Glow", estimate: "s" });
+    await store.updateTask(created.id, { propertyPatch: { set: { phone: "+7 900" } } });
+    await store.updateTask(created.id, { propertyPatch: { set: { city: "Riga" } } });
+    expect((await store.getTask(created.id))?.properties).toEqual({ phone: "+7 900", city: "Riga" });
+    await store.updateTask(created.id, { propertyPatch: { rename: { phone: "tel" }, remove: ["city"] }, title: "Glow brighter" });
+    expect(await store.getTask(created.id)).toMatchObject({ title: "Glow brighter", estimate: "s", properties: { tel: "+7 900" } });
+    await store.updateTask(created.id, { propertyPatch: { remove: ["tel"] } });
+    expect((await store.getTask(created.id))?.properties).toBeUndefined();
+  });
+
   it("keeps comments and labels", async () => {
     const store = await open();
     const created = await store.createTask({ projectId: BOARD.id, title: "Glow" });

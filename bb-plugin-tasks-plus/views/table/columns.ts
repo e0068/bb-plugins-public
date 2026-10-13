@@ -65,17 +65,17 @@ export function orderedColumns(
  * widths of the pinned columns before it — and the last pinned column, whose
  * right edge draws the pinned divider.
  */
-export function pinOffsets(
-  columns: readonly TableColumn[],
-  pinned: readonly TableColumn[],
-  widths: Partial<Record<TableColumn, number>>,
-): { offsets: Partial<Record<TableColumn, number>>; edge: TableColumn | null } {
+export function pinOffsets<C extends string = TableColumn>(
+  columns: readonly C[],
+  pinned: readonly C[],
+  widths: Partial<Record<C, number>>,
+): { offsets: Partial<Record<C, number>>; edge: C | null } {
   const pinnedSet = new Set(pinned);
   const pinnedInOrder = columns.filter((column) => pinnedSet.has(column));
-  const offsets = pinnedInOrder.reduce<{ offsets: Partial<Record<TableColumn, number>>; running: number }>(
+  const offsets = pinnedInOrder.reduce<{ offsets: Partial<Record<C, number>>; running: number }>(
     (acc, column) => ({
       offsets: { ...acc.offsets, [column]: acc.running },
-      running: acc.running + (widths[column] ?? defaultColumnWidth(column)),
+      running: acc.running + (widths[column] ?? defaultColumnWidth(column as string as TableColumn)),
     }),
     { offsets: {}, running: 0 },
   ).offsets;
@@ -89,12 +89,12 @@ export function pinOffsets(
  * `from` itself) pins it; dropping at or past that edge unpins it. The pin
  * set keeps the columns' left-to-right order.
  */
-export function moveColumn(
-  columns: readonly TableColumn[],
-  pinned: readonly TableColumn[],
-  from: TableColumn,
+export function moveColumn<C extends string = TableColumn>(
+  columns: readonly C[],
+  pinned: readonly C[],
+  from: C,
   toIndex: number,
-): { columns: TableColumn[]; pinned: TableColumn[] } {
+): { columns: C[]; pinned: C[] } {
   const withoutFrom = columns.filter((column) => column !== from);
   const index = Math.min(Math.max(toIndex, 0), withoutFrom.length);
   const newColumns = [...withoutFrom.slice(0, index), from, ...withoutFrom.slice(index)];

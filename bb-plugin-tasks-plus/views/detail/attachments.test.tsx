@@ -2,7 +2,7 @@
 import { cleanup, fireEvent, render, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Attachment } from "../../shared/contract.js";
-import { AttachmentsGrid } from "./attachments.js";
+import { AttachmentsGrid, uploadAttachment } from "./attachments.js";
 
 afterEach(() => {
   cleanup();
@@ -92,5 +92,24 @@ describe("AttachmentsGrid removal", () => {
       <AttachmentsGrid attachments={[imageAttachment()]} />,
     );
     expect(screen.queryByLabelText("Remove diagram.png")).toBeNull();
+  });
+});
+
+describe("an upload", () => {
+  it("goes to the plugin bb installed as tasks-plus, not to a plugin named tasks", async () => {
+    const urls: string[] = [];
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      urls.push(String(input));
+      return String(input).endsWith("/token")
+        ? new Response(JSON.stringify({ token: "t" }), { status: 200 })
+        : new Response(JSON.stringify({ attachmentId: "01JIMAGE0000000000000000AA", url: "/x" }), { status: 200 });
+    });
+    try {
+      await uploadAttachment(new File(["x"], "shot.png", { type: "image/png" }), { taskId: "01JTASK00000000000000000AA" });
+    } finally {
+      vi.unstubAllGlobals();
+    }
+    expect(urls).toHaveLength(2);
+    for (const url of urls) expect(url.startsWith("/api/v1/plugins/tasks-plus/")).toBe(true);
   });
 });

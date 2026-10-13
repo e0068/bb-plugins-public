@@ -6,7 +6,7 @@ import type { FileTasksStore } from "../filesync/store.js";
 import type { CallerEnvironmentCache } from "../filesync/caller-cache.js";
 import { runInCallerScope } from "../filesync/caller-scope.js";
 import { CALLER_THREAD_FIELD } from "../shared/enums.js";
-import { attachmentDownloadUrl } from "../shared/attachment-url.js";
+import { attachmentDownloadUrl, attachmentDownloadUrls, removeAttachmentDescriptionReferences } from "../shared/attachment-url.js";
 
 export const MAX_ATTACHMENT_SIZE_BYTES = 25 * 1024 * 1024;
 
@@ -78,18 +78,6 @@ export class AttachmentCleanupError extends Error {
     super(`Failed to remove attachment blob: ${attachment.fileName}`);
     this.name = "AttachmentCleanupError";
   }
-}
-
-function escapeRegExp(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
-
-export function removeAttachmentDescriptionReferences(
-  markdown: string,
-  attachmentId: string,
-): string {
-  const url = escapeRegExp(attachmentDownloadUrl(attachmentId));
-  return markdown.replace(new RegExp(`!\\[[^\\]]*\\]\\(${url}\\)`, "g"), "");
 }
 
 function pluginDataDirectory(bb: BbPluginApi): string {
@@ -468,7 +456,7 @@ export async function deleteAttachmentById(
       : undefined);
   const ownerTask = taskId ? await store.getTask(taskId) : undefined;
   let nextDescription: string | undefined;
-  if (ownerTask?.description.includes(attachmentDownloadUrl(attachment.id))) {
+  if (ownerTask !== undefined && attachmentDownloadUrls(attachment.id).some((url) => ownerTask.description.includes(url))) {
     if (!options.removeDescriptionReferences) {
       throw new AttachmentReferencedError(attachment);
     }

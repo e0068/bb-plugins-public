@@ -98,6 +98,36 @@ describe("Projects tab: the table of bb projects", () => {
     expect(within(await rowNamed(table, "Cellular")).queryByRole("button", { name: /share/i })).toBeNull();
   });
 
+  it("shows the mirror folder on the cloud board only, Off until one is set", async () => {
+    renderSection(ALL);
+    const table = await projectsTable();
+    expect((await rowNamed(table, "bb-plugins")).textContent).toContain("Mirror folderOff");
+    expect((await rowNamed(table, "Cellular")).textContent).not.toContain("Mirror folder");
+  });
+
+  it("sets the mirror folder typed in the cloud board's row, and says why a path is refused", async () => {
+    const calls = renderSection(ALL, {
+      setMirrorFolder: (input: { folder: string | null }) =>
+        input.folder?.startsWith("/") ? { ok: true, folder: input.folder } : { ok: false, message: "The mirror folder must be a full path, or start with ~/." },
+    });
+    fireEvent.click(await screen.findByRole("button", { name: "Mirror folder of bb-plugins" }));
+    const field = screen.getByRole("textbox", { name: "Mirror folder of bb-plugins" });
+    fireEvent.change(field, { target: { value: "docs" } });
+    fireEvent.keyDown(field, { key: "Enter" });
+    await waitFor(() => expect(screen.getByText(/must be a full path/)).toBeTruthy());
+    fireEvent.change(field, { target: { value: "/Users/me/docs" } });
+    fireEvent.keyDown(field, { key: "Enter" });
+    await waitFor(() => expect(calls.setMirrorFolder).toEqual([{ boardId: BBPL_ID, folder: "docs" }, { boardId: BBPL_ID, folder: "/Users/me/docs" }]));
+  });
+
+  it("turns the mirror off with the minus of its row", async () => {
+    const mirrored = { ...plugins, board: { ...plugins.board!, mirrorFolder: "/Users/me/docs" } };
+    const calls = renderSection({ projects: [mirrored], orphans: [] }, { setMirrorFolder: () => ({ ok: true, folder: null }) });
+    fireEvent.click(await screen.findByRole("button", { name: "Turn the mirror off" }));
+    await waitFor(() => expect(calls.setMirrorFolder).toEqual([{ boardId: BBPL_ID, folder: null }]));
+    expect(screen.queryByRole("textbox", { name: "Mirror folder of bb-plugins" })).toBeNull();
+  });
+
   it("copies the cloud board's invite and says so", async () => {
     const calls = renderSection(ALL);
     fireEvent.click(await screen.findByRole("button", { name: "Share bb-plugins" }));

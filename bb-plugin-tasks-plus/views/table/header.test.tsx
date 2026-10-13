@@ -198,3 +198,14 @@ describe("moving and resizing a column", () => {
     expect(actions.onResize).toHaveBeenLastCalledWith("title", null);
   });
 });
+
+describe("the column menu of a section's fixed columns", () => {
+  it("offers sorting only: no pin, no hide, and a drag does not move the column", async () => {
+    const actions: HeaderActions = { onSort: vi.fn(), onResize: vi.fn(), onDisplay: vi.fn() };
+    const slot = renderSlot({ component: () => <TableHeader columns={COLUMNS} actions={actions} /> }, {}, {});
+
+    const menu = await openMenu(slot, "Status");
+
+    expect(within(menu).getAllByRole("menuitem").map((item) => item.textContent?.trim())).toEqual(["Sort ascending", "Sort descending"]);
+  });
+});

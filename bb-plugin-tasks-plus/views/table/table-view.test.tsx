@@ -200,6 +200,13 @@ describe("a screen of tasks as a table", () => {
     expect(within(newTask).getByText("New task").className).toMatch(/\bsticky\b.*\bleft-0\b|\bleft-0\b.*\bsticky\b/);
   });
 
+  it("an ungrouped table's New task row reads Add a task, naming no group", async () => {
+    setTableSettings("all", { groupBy: "none" });
+    const slot = renderTable();
+    await waitFor(() => expect(rowKeys(slot.container)).toHaveLength(TASKS.length));
+    expect(slot.getByRole("button", { name: "Add a task" })).toBeTruthy();
+  });
+
   it("a group header carries the icon of its value", async () => {
     const slot = renderTable();
     await waitFor(() => expect(rowKeys(slot.container)).toHaveLength(TASKS.length));
@@ -223,5 +230,35 @@ describe("a screen of tasks as a table", () => {
     const slot = renderTable([]);
     await waitFor(() => expect(slot.getByText(/No tasks/)).toBeDefined());
     expect(slot.queryAllByRole("columnheader")).toHaveLength(0);
+  });
+});
+
+describe("a record's own properties as columns", () => {
+  const withProperties = [
+    task(P1, "TSK", 1, { properties: { phone: "+7 900", city: "Riga" } }),
+    task(P1, "TSK", 2, { properties: { city: "Oslo" } }),
+    task(P2, "SH", 3),
+  ];
+
+  it("draws a column per property name after the regular ones, with each record's value", async () => {
+    const slot = renderTable(withProperties);
+    await waitFor(() => expect(rowKeys(slot.container)).toHaveLength(3));
+    expect(headers(slot).slice(-2)).toEqual(["city", "phone"]);
+    const row = slot.container.querySelector('[data-task-key="TSK-1"]') as HTMLElement;
+    expect(row.querySelector('[data-property-cell="city"]')?.textContent).toBe("Riga");
+    expect(row.querySelector('[data-property-cell="phone"]')?.textContent).toBe("+7 900");
+    expect(slot.container.querySelector('[data-task-key="SH-3"] [data-property-cell="city"]')?.textContent).toBe("");
+  });
+
+  it("hides a property column from its header and brings it back from Properties", async () => {
+    const slot = renderTable(withProperties);
+    await waitFor(() => expect(rowKeys(slot.container)).toHaveLength(3));
+    fireEvent.click(slot.getByRole("button", { name: "Hide phone" }));
+    await waitFor(() => expect(headers(slot)).not.toContain("phone"));
+    expect(slot.container.querySelector('[data-property-cell="phone"]')).toBeNull();
+    fireEvent.click(slot.getByRole("button", { name: "Properties" }));
+    const menu = await slot.findByRole("dialog", { name: "Properties" });
+    fireEvent.click(await within(menu).findByRole("menuitemcheckbox", { name: "phone" }));
+    await waitFor(() => expect(headers(slot)).toContain("phone"));
   });
 });
