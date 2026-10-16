@@ -50,7 +50,12 @@ const ISLAND_CORNERS = [
   ["bl", "border-bottom-left-radius"],
   ["br", "border-bottom-right-radius"],
 ] as const;
-const BACK_FORWARD = `${TITLE_BAR} > ${BACK_FORWARD_GROUP}`;
+// С bb 0.46.1 назад/вперёд и скрытие панели лежат в общей обёртке, поэтому
+// каждая кнопка ищется на любой глубине строки, а обёртка узнаётся по внуку.
+const SIDEBAR_TRIGGER = `${TITLE_BAR} :has(> [data-sidebar="trigger"])`;
+const BACK_FORWARD = `${TITLE_BAR} ${BACK_FORWARD_GROUP}`;
+const RIGHT_PANEL_TOGGLE = `${TITLE_BAR} :has(> [data-testid="window-right-panel-toggle"])`;
+const BUTTON_GROUP = `${TITLE_BAR} > :has(> * > [data-sidebar="trigger"])`;
 
 const rule = (selector: string, declarations: readonly string[]): string =>
   `${selector} {\n${declarations.map((d) => `  ${d};`).join("\n")}\n}`;
@@ -80,9 +85,17 @@ export function windowChromeCss(): string {
     rule(WINDOWED, [`--wc-top: ${TOP_WINDOWED_PX}px`]),
     // Полоса заголовка остаётся только над островом — за неё по-прежнему тянут окно.
     rule(TITLE_BAR, [`height: var(--wc-top)`, `padding: 0`]),
-    rule(`${TITLE_BAR} > div`, [`position: fixed`, `top: var(--wc-control-top)`, `margin: 0`, `transform: none`]),
+    // Закрепляются только узнанные кнопки: незнакомый блок остаётся на месте, а не уезжает к рейке.
+    rule(`${SIDEBAR_TRIGGER},\n${BACK_FORWARD},\n${RIGHT_PANEL_TOGGLE}`, [
+      `position: fixed`,
+      `top: var(--wc-control-top)`,
+      `margin: 0`,
+      `transform: none`,
+    ]),
+    // Обёртка без своего места: её кнопки встают каждая в свой угол.
+    rule(BUTTON_GROUP, [`display: contents`]),
     // Скрытие левой панели — в левом углу первой строки панели тредов.
-    rule(`${TITLE_BAR} > :has(> [data-sidebar="trigger"])`, [`left: calc(var(--wc-rail) + var(--wc-inset))`]),
+    rule(SIDEBAR_TRIGGER, [`left: calc(var(--wc-rail) + var(--wc-inset))`]),
     // Назад и вперёд — у правого края той же строки. Ширину панели тянут мышью,
     // и задана она на самой панели, а не на корне, поэтому край берётся якорем.
     // У каждой панели — тредов, плагинов, навыков, настроек — своя первая
@@ -95,7 +108,7 @@ export function windowChromeCss(): string {
     ]),
     rule(BACK_FORWARD, [`position-anchor: --wc-sidebar-top`, `right: calc(anchor(right) + var(--wc-inset))`]),
     // Панель скрыта — назад и вперёд встают вплотную за кнопкой панели, в углу острова.
-    rule(`${COLLAPSED} > ${TITLE_BAR_ID} > ${BACK_FORWARD_GROUP}`, [
+    rule(`${COLLAPSED} > ${TITLE_BAR_ID} ${BACK_FORWARD_GROUP}`, [
       `position-anchor: none`,
       `left: calc(var(--wc-rail) + var(--wc-inset) + var(--wc-button) + var(--wc-gap))`,
       `right: auto`,
@@ -105,7 +118,7 @@ export function windowChromeCss(): string {
     rule(`${COLLAPSED} ${FULL_SCREEN_PANEL} [data-testid="thread-secondary-panel-top-chrome"]`, [
       `padding-left: calc(3 * var(--wc-button) + 3 * var(--wc-gap) + var(--wc-header-pad))`,
     ]),
-    rule(`${TITLE_BAR} > :has(> [data-testid="window-right-panel-toggle"])`, [`right: calc(var(--wc-lip) + var(--wc-inset))`]),
+    rule(RIGHT_PANEL_TOGGLE, [`right: calc(var(--wc-lip) + var(--wc-inset))`]),
     // Место под кнопку правой панели — в шапке страницы, пока панель закрыта, и в
     // шапке самой панели: так, чтобы до кнопки был тот же шаг, что между
     // кнопками шапки. Обе шапки отделены от края острова рамкой в 1 px; у шапки
