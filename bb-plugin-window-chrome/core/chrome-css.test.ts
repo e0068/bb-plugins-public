@@ -52,17 +52,8 @@ describe("таблица стилей Window Chrome", () => {
     expect(windowed?.body).toBe("--wc-top: 48px;");
   });
 
-  it("скрытие левой панели — в левом углу панели, назад и вперёд — у её правого края на любой странице рейки, скрытие правой — в правом углу острова", () => {
-    const bar = `[data-framed] > [data-testid="app-window-title-bar"]`;
-    expect(bodyOf(css, `${bar} > :has(> [data-sidebar="trigger"])`)).toMatch(/^left: /);
-    expect(bodyOf(css, `${bar} > :has(> [data-sidebar-history-shortcut-hints])`)).toContain("right: calc(anchor(right)");
+  it("якорь правого края — первая строка панели на любой странице рейки", () => {
     expect(bodyOf(css, `[data-framed] [data-testid$="-sidebar-top-reserve-row"]`)).toContain("anchor-name: --wc-sidebar-top;");
-    expect(bodyOf(css, `${bar} > :has(> [data-testid="window-right-panel-toggle"])`)).toMatch(/^right: /);
-  });
-
-  it("со скрытой панелью тредов назад и вперёд встают в левый угол острова", () => {
-    const collapsed = `[data-framed]:has(> [data-state="collapsed"]) > [data-testid="app-window-title-bar"] > :has(> [data-sidebar-history-shortcut-hints])`;
-    expect(bodyOf(css, collapsed)).toMatch(/^position-anchor: none;\n\s*left: [^;]+;\n\s*right: auto;$/);
   });
 
   it("место под кнопку правой панели в шапке страницы — только пока кнопка есть и панель закрыта", () => {

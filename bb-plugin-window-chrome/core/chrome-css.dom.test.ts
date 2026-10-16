@@ -1,0 +1,82 @@
+// @vitest-environment jsdom
+// Таблица против разметки bb, а не против своего текста: правило, которое
+// разметку не находит, проходит строковые тесты и молча ломает окно.
+import { beforeEach, describe, expect, it } from "vitest";
+
+import { windowChromeCss } from "./chrome-css";
+
+/** Строка заголовка десктопного bb 0.46.1 со скрытой правой панелью — снята с бандла bb. */
+const BB_0461 = `
+<div data-testid="app-layout-root" data-framed="">
+  <div data-testid="app-window-title-bar" class="fixed inset-x-0 top-0 flex pl-[12px]">
+    <div data-wc="group" class="flex items-center">
+      <div data-wc="back-forward" class="relative flex items-center">
+        <span data-sidebar-history-shortcut-hints=""></span>
+        <button aria-label="Go back"></button>
+        <button aria-label="Go forward"></button>
+      </div>
+      <div data-wc="trigger" class="relative flex items-center">
+        <button data-sidebar="trigger"></button>
+      </div>
+    </div>
+    <div data-wc="right" class="relative flex items-center ml-auto">
+      <button data-testid="window-right-panel-toggle" aria-expanded="false"></button>
+    </div>
+  </div>
+  <div data-state="expanded"></div>
+</div>`;
+
+/** Правила таблицы: список селекторов и тело каждого. */
+const rules = windowChromeCss()
+  .split("}")
+  .map((chunk) => chunk.trim())
+  .filter((chunk) => chunk !== "")
+  .map((chunk) => {
+    const [head, body] = chunk.split("{");
+    return { selectors: head.split(",\n").map((s) => s.trim()), body: body.trim() };
+  });
+
+/** Все объявления таблицы, которые достаются узлу. */
+const declarationsOf = (role: string): string => {
+  const node = document.querySelector(`[data-wc="${role}"]`);
+  if (node === null) throw new Error(`в разметке нет узла ${role}`);
+  return rules
+    .filter((r) => r.selectors.some((s) => node.matches(s)))
+    .map((r) => r.body)
+    .join("\n");
+};
+
+describe("кнопки строки заголовка на разметке bb 0.46.1", () => {
+  beforeEach(() => {
+    document.body.innerHTML = BB_0461;
+  });
+
+  it("общая обёртка кнопок растворяется и не закрепляется сама — иначе кнопки уезжают к рейке", () => {
+    const group = declarationsOf("group");
+    expect(group).toContain("display: contents;");
+    expect(group).not.toContain("position: fixed;");
+  });
+
+  it("скрытие левой панели закреплено в левом углу первой строки панели тредов", () => {
+    const trigger = declarationsOf("trigger");
+    expect(trigger).toContain("position: fixed;");
+    expect(trigger).toMatch(/left: calc\(var\(--wc-rail\)/);
+  });
+
+  it("назад и вперёд закреплены у правого края первой строки панели тредов", () => {
+    const backForward = declarationsOf("back-forward");
+    expect(backForward).toContain("position: fixed;");
+    expect(backForward).toContain("right: calc(anchor(right)");
+  });
+
+  it("со скрытой панелью тредов назад и вперёд встают за кнопкой панели в углу острова", () => {
+    document.querySelector(`[data-state]`)?.setAttribute("data-state", "collapsed");
+    expect(declarationsOf("back-forward")).toMatch(/left: calc\(var\(--wc-rail\) \+ var\(--wc-inset\) \+ var\(--wc-button\)/);
+  });
+
+  it("скрытие правой панели закреплено в правом углу острова", () => {
+    const right = declarationsOf("right");
+    expect(right).toContain("position: fixed;");
+    expect(right).toMatch(/right: calc\(var\(--wc-lip\)/);
+  });
+});
