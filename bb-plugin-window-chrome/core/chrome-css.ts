@@ -36,8 +36,9 @@ const COLLAPSED = `[data-framed]:has(> [data-state="collapsed"])`;
 const RIGHT_PANEL_CLOSED = `[data-framed]:has([data-testid="window-right-panel-toggle"][aria-expanded="false"])`;
 // Группа назад/вперёд узнаётся по подсказкам горячих клавиш, а не по английской подписи кнопки.
 const BACK_FORWARD_GROUP = `:has(> [data-sidebar-history-shortcut-hints])`;
-const SIDEBAR_TOP_ROW = `[data-framed] [data-testid="app-sidebar-top-reserve-row"]`;
 const ANY_SIDEBAR_TOP_ROW = `[data-framed] [data-testid$="-sidebar-top-reserve-row"]`;
+// Первая строка с содержимым — «New thread» у тредов, поиск у настроек.
+const FILLED_SIDEBAR_TOP_ROW = `${ANY_SIDEBAR_TOP_ROW}:has(> *)`;
 const PAGE_HEADER_ROW = `[data-testid="app-page-header-content-row"]`;
 const PANEL_HEADER_ROW = `[data-framed] [data-testid="thread-secondary-panel-top-chrome"]`;
 const FULL_SCREEN_PANEL = `[data-panel-id="thread-detail-secondary-panel"][data-panel-size="100.0"]`;
@@ -57,6 +58,9 @@ const BACK_FORWARD = `${TITLE_BAR} ${BACK_FORWARD_GROUP}`;
 const RIGHT_PANEL_TOGGLE = `${TITLE_BAR} :has(> [data-testid="window-right-panel-toggle"])`;
 const BUTTON_GROUP = `${TITLE_BAR} > :has(> * > [data-sidebar="trigger"])`;
 
+/** Обрезка панели тредов: справа на 6 px шире под ручку ширины панели, верхний левый угол скруглён, нижний левый — как задано. */
+const sidebarClip = (bottomLeft: string): string => `clip-path: inset(0 -6px 0 0 round ${ISLAND_RADIUS} 0 0 ${bottomLeft})`;
+
 const rule = (selector: string, declarations: readonly string[]): string =>
   `${selector} {\n${declarations.map((d) => `  ${d};`).join("\n")}\n}`;
 
@@ -72,6 +76,8 @@ export function windowChromeCss(): string {
       `--wc-button: 28px`,
       `--wc-gap: 4px`,
       `--wc-inset: 8px`,
+      // Поле кнопки вокруг иконки: иконки строк панели стоят на --wc-inset от края, у кнопки — на это поле дальше.
+      `--wc-icon-pad: calc((var(--wc-button) - var(--bb-sidebar-control-icon-size)) / 2)`,
       // Шаг между кнопками шапки bb (md:gap-2) и её боковой отступ (px-4).
       `--wc-header-gap: 0.5rem`,
       `--wc-header-pad: 1rem`,
@@ -94,15 +100,15 @@ export function windowChromeCss(): string {
     ]),
     // Обёртка без своего места: её кнопки встают каждая в свой угол.
     rule(BUTTON_GROUP, [`display: contents`]),
-    // Скрытие левой панели — в левом углу первой строки панели тредов.
-    rule(SIDEBAR_TRIGGER, [`left: calc(var(--wc-rail) + var(--wc-inset))`]),
+    // Скрытие левой панели — в левом углу первой строки панели тредов, иконкой на вертикали иконок строк под ней.
+    rule(SIDEBAR_TRIGGER, [`left: calc(var(--wc-rail) + var(--wc-inset) - var(--wc-icon-pad))`]),
     // Назад и вперёд — у правого края той же строки. Ширину панели тянут мышью,
     // и задана она на самой панели, а не на корне, поэтому край берётся якорем.
     // У каждой панели — тредов, плагинов, навыков, настроек — своя первая
     // строка; у невидимой панели строка без раскладки, и якорь берётся с видимой.
     rule(ANY_SIDEBAR_TOP_ROW, [`anchor-name: --wc-sidebar-top`, `height: var(--bb-app-chrome-row-height)`]),
-    rule(SIDEBAR_TOP_ROW, [
-      // «New thread» уходит строкой ниже, под кнопки.
+    rule(FILLED_SIDEBAR_TOP_ROW, [
+      // Содержимое строки — «New thread», поиск — уходит строкой ниже, под кнопки.
       `height: calc(var(--bb-app-chrome-row-height) + 32px)`,
       `padding-top: var(--bb-app-chrome-row-height)`,
     ]),
@@ -110,7 +116,7 @@ export function windowChromeCss(): string {
     // Панель скрыта — назад и вперёд встают вплотную за кнопкой панели, в углу острова.
     rule(`${COLLAPSED} > ${TITLE_BAR_ID} ${BACK_FORWARD_GROUP}`, [
       `position-anchor: none`,
-      `left: calc(var(--wc-rail) + var(--wc-inset) + var(--wc-button) + var(--wc-gap))`,
+      `left: calc(var(--wc-rail) + var(--wc-inset) - var(--wc-icon-pad) + var(--wc-button) + var(--wc-gap))`,
       `right: auto`,
     ]),
     rule(`${COLLAPSED} ${PAGE_HEADER_ROW}`, [`padding-left: calc(3 * var(--wc-button) + 3 * var(--wc-gap))`]),
@@ -142,7 +148,9 @@ export function windowChromeCss(): string {
     ...ISLAND_CORNERS.map(([corner, property]) =>
       rule(`${ISLAND_SIDEBAR}.rounded-${corner}-xl,\n${ISLAND_PAGE}.rounded-${corner}-xl`, [`${property}: ${ISLAND_RADIUS}`]),
     ),
-    // Панель тредов обрезана по своим скруглениям — обрезка идёт за ними.
-    rule(ISLAND_SIDEBAR, [`clip-path: inset(0 -6px 0 0 round ${ISLAND_RADIUS} 0 0 ${ISLAND_RADIUS})`]),
+    // Панель тредов обрезана по своим скруглениям — обрезка идёт за ними. Нижний
+    // левый угол bb скругляет, только когда под списком нет нижнего блока панели.
+    rule(ISLAND_SIDEBAR, [sidebarClip("0")]),
+    rule(`${ISLAND_SIDEBAR}.rounded-bl-xl`, [sidebarClip(ISLAND_RADIUS)]),
   ].join("\n");
 }

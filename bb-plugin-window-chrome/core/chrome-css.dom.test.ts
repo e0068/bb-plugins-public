@@ -69,14 +69,41 @@ describe("кнопки строки заголовка на разметке bb 
     expect(backForward).toContain("right: calc(anchor(right)");
   });
 
-  it("со скрытой панелью тредов назад и вперёд встают за кнопкой панели в углу острова", () => {
+  it("со скрытой панелью тредов назад и вперёд встают вплотную за кнопкой панели, сдвинутой к вертикали иконок", () => {
     document.querySelector(`[data-state]`)?.setAttribute("data-state", "collapsed");
-    expect(declarationsOf("back-forward")).toMatch(/left: calc\(var\(--wc-rail\) \+ var\(--wc-inset\) \+ var\(--wc-button\)/);
+    expect(declarationsOf("back-forward")).toContain(
+      "left: calc(var(--wc-rail) + var(--wc-inset) - var(--wc-icon-pad) + var(--wc-button) + var(--wc-gap));",
+    );
   });
 
   it("скрытие правой панели закреплено в правом углу острова", () => {
     const right = declarationsOf("right");
     expect(right).toContain("position: fixed;");
     expect(right).toMatch(/right: calc\(var\(--wc-lip\)/);
+  });
+});
+
+/** Первые строки панелей рейки bb 0.46.1: у настроек в строке поле поиска, у пустой панели — ничего. */
+const TOP_ROWS = `
+<div data-testid="app-layout-root" data-framed="">
+  <div data-wc="settings-row" data-testid="settings-sidebar-top-reserve-row"><input placeholder="Search" /></div>
+  <div data-wc="empty-row" data-testid="skills-sidebar-top-reserve-row"></div>
+</div>`;
+
+describe("первая строка панели под кнопками угла", () => {
+  beforeEach(() => {
+    document.body.innerHTML = TOP_ROWS;
+  });
+
+  it("поле поиска в настройках уходит строкой ниже, под кнопки, и не наползает на них", () => {
+    const row = declarationsOf("settings-row");
+    expect(row).toContain("padding-top: var(--bb-app-chrome-row-height);");
+    expect(row).toContain("height: calc(var(--bb-app-chrome-row-height) + 32px);");
+  });
+
+  it("пустая первая строка панели остаётся высотой в одну строку", () => {
+    const row = declarationsOf("empty-row");
+    expect(row).not.toContain("padding-top");
+    expect(row).toContain("height: var(--bb-app-chrome-row-height);");
   });
 });
