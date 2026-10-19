@@ -1780,9 +1780,11 @@ const FILL_PANE_CLASS =
 
 // What the compact Home needs whichever way the queue runs: no gap over the
 // sections, the scroller started under the top bar as a flex column, and
-// Recents hidden with its spacer — see the two classes below.
+// Recents hidden with its spacer — see the two classes below. bb 0.46.1
+// renamed that spacer the leading spacer and holds it a third of the screen
+// tall: left in place, it pushes the queue halfway down.
 const COMPACT_HOME_SHARED_CLASS =
-  "[[data-testid=root-compose-compact-scroll-viewport]_[data-testid=plugin-homepage-sections]:has(&)]:mt-0 [[data-testid=root-compose-compact-scroll-viewport]:has(&)]:top-14! [[data-testid=root-compose-compact-scroll-viewport]:has(&)]:flex [[data-testid=root-compose-compact-scroll-viewport]:has(&)]:flex-col [[data-testid=root-compose-compact-scroll-viewport]:has(&)_[data-root-compose-mobile-recents]]:hidden [[data-testid=root-compose-compact-scroll-viewport]:has(&)_[data-testid=root-compose-compact-recents-offset]]:hidden";
+  "[[data-testid=root-compose-compact-scroll-viewport]_[data-testid=plugin-homepage-sections]:has(&)]:mt-0 [[data-testid=root-compose-compact-scroll-viewport]:has(&)]:top-14! [[data-testid=root-compose-compact-scroll-viewport]:has(&)]:flex [[data-testid=root-compose-compact-scroll-viewport]:has(&)]:flex-col [[data-testid=root-compose-compact-scroll-viewport]:has(&)_[data-root-compose-mobile-recents]]:hidden [[data-testid=root-compose-compact-scroll-viewport]:has(&)_[data-testid=root-compose-compact-recents-offset]]:hidden [[data-testid=root-compose-compact-scroll-viewport]:has(&)_[data-testid=root-compose-compact-leading-spacer]]:hidden";
 
 // On the compact home screen bb floats the composer over a scroller that holds
 // its Recents list and, under it, the plugin sections, and starts that scroller

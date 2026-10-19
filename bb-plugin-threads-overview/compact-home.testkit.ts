@@ -39,6 +39,21 @@ export function compactHome045(): { scroller: HTMLElement; slotBox: HTMLElement;
   };
 }
 
+/**
+ * bb 0.46.1's compact Home: the same boxes as 0.45's, but the spacer over the
+ * column is the leading spacer, which bb holds about a third of the screen tall
+ * with an inline height.
+ */
+export function compactHome0461(): { scroller: HTMLElement; slotBox: HTMLElement; leadingSpacer: HTMLElement } {
+  const { scroller, slotBox } = compactHome045();
+  const leadingSpacer = document.createElement("div");
+  leadingSpacer.dataset.testid = "root-compose-compact-leading-spacer";
+  leadingSpacer.setAttribute("aria-hidden", "true");
+  leadingSpacer.style.height = "330px";
+  scroller.querySelector("[data-testid=root-compose-compact-recents-offset]")!.replaceWith(leadingSpacer);
+  return { scroller, slotBox, leadingSpacer };
+}
+
 /** Every utility the section's arbitrary variants put on `box`, read off the classes under `root`. */
 export function utilitiesOn(box: Element, root: HTMLElement): string[] {
   const utilities: string[] = [];
