@@ -17,6 +17,15 @@ const rules = (css: string): { selectors: string[]; body: string }[] =>
 const bodyOf = (css: string, selector: string): string =>
   rules(css).find((r) => r.selectors.includes(selector))?.body ?? "";
 
+/** Тела всех правил, где встречается селектор. */
+const bodiesOf = (css: string, selector: string): string[] =>
+  rules(css)
+    .filter((r) => r.selectors.includes(selector))
+    .map((r) => r.body);
+
+const SIDEBAR = `[data-framed] [data-testid="nav-rail-sidebar-body"]`;
+const PAGE = `[data-framed] main[data-sidebar="inset"]`;
+
 describe("таблица стилей Window Chrome", () => {
   const css = windowChromeCss();
 
@@ -35,11 +44,27 @@ describe("таблица стилей Window Chrome", () => {
   });
 
   it("скругление острова берётся из темы окна, без неё — 0.75rem, как у bb", () => {
-    const sidebar = `[data-framed] [data-testid="nav-rail-sidebar-body"]`;
-    const page = `[data-framed] main[data-sidebar="inset"]`;
-    expect(bodyOf(css, `${sidebar}.rounded-tl-xl`)).toBe("border-top-left-radius: var(--wc-theme-island-radius, 0.75rem);");
-    expect(bodyOf(css, `${page}.rounded-br-xl`)).toBe("border-bottom-right-radius: var(--wc-theme-island-radius, 0.75rem);");
-    expect(bodyOf(css, sidebar)).toContain("round var(--wc-theme-island-radius, 0.75rem) 0 0 var(--wc-theme-island-radius, 0.75rem)");
+    expect(bodyOf(css, `${SIDEBAR}.rounded-tl-xl`)).toBe("border-top-left-radius: var(--wc-theme-island-radius, 0.75rem);");
+    expect(bodyOf(css, `${PAGE}.rounded-br-xl`)).toBe("border-bottom-right-radius: var(--wc-theme-island-radius, 0.75rem);");
+  });
+
+  it("над нижним блоком панели тредов нижний левый угол списка тредов обрезается прямым — скруглён только верхний", () => {
+    expect(bodyOf(css, SIDEBAR)).toBe("clip-path: inset(0 -6px 0 0 round var(--wc-theme-island-radius, 0.75rem) 0 0 0);");
+  });
+
+  it("нижний левый угол панели тредов обрезается скруглённым, только когда bb скругляет его сам", () => {
+    expect(bodiesOf(css, `${SIDEBAR}.rounded-bl-xl`)).toContain(
+      "clip-path: inset(0 -6px 0 0 round var(--wc-theme-island-radius, 0.75rem) 0 0 var(--wc-theme-island-radius, 0.75rem));",
+    );
+  });
+
+  it("иконка скрытия левой панели стоит на вертикали иконок строк панели тредов, а не на поле кнопки правее", () => {
+    expect(bodyOf(css, `[data-testid="app-layout-root"][data-framed]`)).toContain(
+      "--wc-icon-pad: calc((var(--wc-button) - var(--bb-sidebar-control-icon-size)) / 2);",
+    );
+    expect(bodiesOf(css, `[data-framed] > [data-testid="app-window-title-bar"] :has(> [data-sidebar="trigger"])`)).toContain(
+      "left: calc(var(--wc-rail) + var(--wc-inset) - var(--wc-icon-pad));",
+    );
   });
 
   it("со скрытой панелью тредов шапка правой панели во весь экран отступает под три кнопки угла", () => {
