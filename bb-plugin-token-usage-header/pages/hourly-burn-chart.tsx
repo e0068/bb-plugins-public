@@ -1,12 +1,12 @@
-// Hourly token-burn bar chart for the "Usage Analytics" summary block
+// Hourly burn bar chart for the "Usage Analytics" summary block
 // (UsageProjectsSummary.tsx) — one column per hour of the selected D/W/M
-// window, height proportional to that hour's token total. Deliberately not
+// window, height proportional to that hour's tokens or cost (Chart metric). Deliberately not
 // built on ThreadRow (thread-chart.tsx): that component draws one THREAD's
 // per-agent stacked segments with a rich hover tooltip and git markers —
 // this chart has none of that, it's a single aggregate series across every
 // thread in the window, so a dedicated (much smaller) renderer stays
 // simpler than bending ThreadRow's per-thread contract to fit.
-import { barHeightPx, formatClockTime, formatTokenCount, HOUR_MS, type HourlyBurnBucket } from "../src/core";
+import { barHeightPx, formatAmountLabel, formatClockTime, HOUR_MS, type ChartMetric, type HourlyBurnBucket } from "../src/core";
 
 /** px, fixed width of each hour column — narrow enough that a month (720 columns) stays a reasonable scroll, wide enough to stay clickable/hoverable. */
 const COL_WIDTH_PX = 5;
@@ -21,22 +21,22 @@ function fmtHourRange(hourStartMs: number): string {
   return `${formatClockTime(hourStartMs)}–${formatClockTime(hourStartMs + HOUR_MS)}`;
 }
 
-export function HourlyBurnChart({ buckets }: { buckets: readonly HourlyBurnBucket[] }) {
-  const maxTokens = buckets.reduce((max, b) => Math.max(max, b.tokens), 0);
+export function HourlyBurnChart({ buckets, metric }: { buckets: readonly HourlyBurnBucket[]; metric: ChartMetric }) {
+  const maxAmount = buckets.reduce((max, b) => Math.max(max, b.amount), 0);
 
-  if (maxTokens === 0) {
-    return <p className="text-xs text-subtle-foreground">No token usage in this period.</p>;
+  if (maxAmount === 0) {
+    return <p className="text-xs text-subtle-foreground">{metric === "cost" ? "No priced usage in this period." : "No token usage in this period."}</p>;
   }
 
-  // Non-empty buckets and maxTokens > 0 guarantee at least one bucket's
-  // tokens === maxTokens, so `peak` is always found — no fallback needed.
-  const peak = buckets.find((b) => b.tokens === maxTokens)!;
+  // Non-empty buckets and maxAmount > 0 guarantee at least one bucket's
+  // amount === maxAmount, so `peak` is always found — no fallback needed.
+  const peak = buckets.find((b) => b.amount === maxAmount)!;
 
   return (
     <div className="w-full overflow-x-auto">
       <div
         role="img"
-        aria-label={`Burn by hour: peak ${formatTokenCount(maxTokens)} tokens at ${fmtHourRange(peak.hourStartMs)}`}
+        aria-label={`Burn by hour: peak ${formatAmountLabel(maxAmount, metric)} at ${fmtHourRange(peak.hourStartMs)}`}
         className="flex items-end rounded-sm"
         style={{ height: CHART_HEIGHT_PX, gap: COL_GAP_PX }}
       >
@@ -46,11 +46,11 @@ export function HourlyBurnChart({ buckets }: { buckets: readonly HourlyBurnBucke
             aria-hidden="true"
             className="relative shrink-0 self-stretch"
             style={{ width: COL_WIDTH_PX }}
-            title={`${fmtHourRange(bucket.hourStartMs)}\n${formatTokenCount(bucket.tokens)} tokens`}
+            title={`${fmtHourRange(bucket.hourStartMs)}\n${formatAmountLabel(bucket.amount, metric)}`}
           >
             <div
               className="absolute bottom-0 w-full rounded-[1px] bg-primary/70"
-              style={{ height: barHeightPx(bucket.tokens, maxTokens, CHART_HEIGHT_PX, MIN_BAR_HEIGHT_PX) }}
+              style={{ height: barHeightPx(bucket.amount, maxAmount, CHART_HEIGHT_PX, MIN_BAR_HEIGHT_PX) }}
             />
           </div>
         ))}

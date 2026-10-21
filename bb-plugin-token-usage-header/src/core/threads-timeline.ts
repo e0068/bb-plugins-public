@@ -8,6 +8,7 @@
 // script, a different JSON shape.
 import { z } from "zod";
 import type { FlowStage } from "./flow-stages";
+import type { ChartMetric } from "./gear-settings";
 import { gitEventSchema } from "./git-events";
 
 /**
@@ -35,14 +36,22 @@ import { gitEventSchema } from "./git-events";
  * RawThreadsTimelineSchema's doc comment on `truncated`).
  * 6 -> 7: a thread gained activeSec and waitingSec (durationSec split by
  * pauses longer than a minute), and its events may carry compact markers.
+ * 7 -> 8: a bin segment gained cost (its usage in USD, priced like totalCost).
  */
-export const EXPECTED_THREADS_TIMELINE_SCHEMA_VERSION = 7;
+export const EXPECTED_THREADS_TIMELINE_SCHEMA_VERSION = 8;
 
 const AgentBinSchema = z
   .object({
     /** "main" for the main agent, otherwise the subagent's agentId — as in tokens.py --by agent. */
     key: z.string(),
     total: z.number().finite(),
+    /**
+     * USD cost of this segment's usage, priced by tools/tokens.py's Bucket
+     * like the thread's totalCost; 0 for models without a rate. The v8
+     * script always emits it — a segment without it (hand-built data) reads
+     * as unpriced through agentAmount, never as a guessed price.
+     */
+    cost: z.number().finite().optional(),
     /**
      * Real agentIds merged into this segment — present ONLY when `key`
      * itself is a group workflow key (`workflow:<run>`, see
@@ -313,6 +322,16 @@ export function widthFractions(threads: readonly ThreadEntry[]): number[] {
 /** Total usage of one bin — the sum of `total` across all agents within it. */
 export function binTotal(bin: TimelineBin): number {
   return bin.agents.reduce((sum, agent) => sum + agent.total, 0);
+}
+
+/** One segment measured by the chart metric: its tokens, or its cost in USD (0 when it carries no price). */
+export function agentAmount(agent: AgentBin, metric: ChartMetric): number {
+  return metric === "cost" ? (agent.cost ?? 0) : agent.total;
+}
+
+/** One bin measured by the chart metric — the sum of its segments' amounts. */
+export function binAmount(bin: TimelineBin, metric: ChartMetric): number {
+  return bin.agents.reduce((sum, agent) => sum + agentAmount(agent, metric), 0);
 }
 
 // --- Thread liveness ---------------------------------------------------

@@ -35,6 +35,13 @@ def _assistant(msg_id, req, out_tokens, ts, model="claude-sonnet-4", inp=0):
     }
 
 
+def _segment_cost(out_tokens, model="claude-sonnet-4", ts="2026-08-19T10:00:00.000Z"):
+    """The cost a v8 bin segment carries for `out_tokens` output tokens on `model` — priced by tokens.Bucket and rounded like the script."""
+    bucket = tokens.Bucket()
+    bucket.add({"input_tokens": 0, "output_tokens": out_tokens}, model, ts)
+    return round(bucket.cost, threads_timeline.SEGMENT_COST_DIGITS)
+
+
 def _write_raw(path, lines):
     os.makedirs(os.path.dirname(path), exist_ok=True)
     with open(path, "w") as f:
@@ -79,7 +86,7 @@ class BuildTimelineTest(unittest.TestCase):
         threads = self._threads(limit=20, unit=300)
         self.assertEqual(threads, [])
 
-    def test_records_within_same_unit_merge_into_one_bin(self):
+    def test_records_within_same_unit_merge_into_one_segment(self):
         path = self._p("projA", "sess1.jsonl")
         _write_raw(
             path,
@@ -92,9 +99,9 @@ class BuildTimelineTest(unittest.TestCase):
         self.assertEqual(len(threads), 1)
         bins = threads[0]["bins"]
         self.assertEqual(len(bins), 1)
-        self.assertEqual(bins[0]["agents"], [{"key": "main", "total": 12}])
+        self.assertEqual(bins[0]["agents"], [{"key": "main", "total": 12, "cost": _segment_cost(12)}])
 
-    def test_records_crossing_unit_boundary_split_into_separate_bins(self):
+    def test_records_crossing_unit_boundary_split_into_separate_segments(self):
         path = self._p("projA", "sess1.jsonl")
         _write_raw(
             path,
@@ -107,8 +114,8 @@ class BuildTimelineTest(unittest.TestCase):
         self.assertEqual(len(threads), 1)
         bins = threads[0]["bins"]
         self.assertEqual(len(bins), 2)
-        self.assertEqual(bins[0]["agents"], [{"key": "main", "total": 5}])
-        self.assertEqual(bins[1]["agents"], [{"key": "main", "total": 7}])
+        self.assertEqual(bins[0]["agents"], [{"key": "main", "total": 5, "cost": _segment_cost(5)}])
+        self.assertEqual(bins[1]["agents"], [{"key": "main", "total": 7, "cost": _segment_cost(7)}])
 
     def test_bin_start_is_a_multiple_of_unit(self):
         path = self._p("projA", "sess1.jsonl")
@@ -147,6 +154,32 @@ class BuildTimelineTest(unittest.TestCase):
         expected.add({"input_tokens": 0, "output_tokens": 1000}, "claude-sonnet-4", ts)
         self.assertEqual(thread["totalCost"], round(expected.cost, 2))
         self.assertGreater(thread["totalCost"], 0)
+
+    def test_every_bin_segment_carries_its_own_cost_at_tokens_pricing(self):
+        # The cost chart metric sizes each segment by its own dollars, so a
+        # segment's cost is priced by the same tokens.Bucket as the thread's.
+        sess = "33333333-3333-3333-3333-333333333333"
+        ts_main, ts_sub = "2026-08-19T10:00:01.000Z", "2026-08-19T10:00:02.000Z"
+        _write_raw(self._p("projA", f"{sess}.jsonl"), [_assistant("m1", "r1", 1000, ts_main, model="claude-opus-5-5")])
+        _write_raw(self._p("projA", sess, "subagents", "agent-ccc.jsonl"), [_assistant("m2", "r2", 4000, ts_sub)])
+
+        thread = self._threads(limit=20, unit=300)[0]
+        costs = {a["key"]: a["cost"] for a in thread["bins"][0]["agents"]}
+
+        def priced(n, model, ts):
+            bucket = tokens.Bucket()
+            bucket.add({"input_tokens": 0, "output_tokens": n}, model, ts)
+            return bucket.cost
+
+        self.assertAlmostEqual(costs["main"], priced(1000, "claude-opus-5-5", ts_main), places=6)
+        self.assertAlmostEqual(costs["agent-ccc"], priced(4000, "claude-sonnet-4", ts_sub), places=6)
+        self.assertAlmostEqual(sum(costs.values()), thread["totalCost"], places=2)
+
+    def test_a_segment_on_an_unpriced_model_costs_zero(self):
+        ts = "2026-08-19T10:00:01.000Z"
+        _write_raw(self._p("projA", "sess1.jsonl"), [_assistant("m1", "r1", 7, ts, model="some-unheard-of-model-xyz")])
+        thread = self._threads(limit=20, unit=300)[0]
+        self.assertEqual(thread["bins"][0]["agents"][0]["cost"], 0)
 
     def test_a_thread_with_a_zero_token_synthetic_model_still_has_a_price(self):
         ts = "2026-08-19T10:00:01.000Z"

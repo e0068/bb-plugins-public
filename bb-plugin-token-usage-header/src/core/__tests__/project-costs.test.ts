@@ -141,6 +141,18 @@ describe("threadCostInWindow", () => {
     expect(threadCostInWindow(t, NOW_MS - 2 * HOUR_MS)).toBeCloseTo(3, 10);
   });
 
+  it("prorates by the share of dollars once the bins carry their own cost", () => {
+    // 300 cheap cache tokens long ago cost $1, 100 expensive tokens inside
+    // the window cost $3 — the window holds three quarters of the money,
+    // not a quarter as the token share would say.
+    const priced = (offsetHours: number, total: number, cost: number): TimelineBin => ({
+      t: new Date(NOW_MS - offsetHours * HOUR_MS).toISOString(),
+      agents: [{ key: "main", total, cost }],
+    });
+    const t = thread({ totalCost: 4, bins: [priced(10, 300, 1), priced(1, 100, 3)] });
+    expect(threadCostInWindow(t, NOW_MS - 2 * HOUR_MS)).toBeCloseTo(3, 10);
+  });
+
   it("counts a bin whose start is exactly the window boundary", () => {
     const t = thread({ totalCost: 8, bins: [bin(2, 100)] });
     expect(threadCostInWindow(t, NOW_MS - 2 * HOUR_MS)).toBeCloseTo(8, 10);

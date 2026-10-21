@@ -1,6 +1,7 @@
 // Pure, deterministic formatting helpers for the UI. No I/O, no locale
 // lookups that could vary between renders — same input always produces the
 // same string.
+import type { ChartMetric } from "./gear-settings";
 import type { BucketVariantUsage, TokensBucket } from "./types";
 
 /**
@@ -21,6 +22,21 @@ export function formatTokenCount(n: number): string {
 export function formatCost(usd: number): string {
   if (!Number.isFinite(usd)) return "$0.00";
   return `$${usd.toFixed(2)}`;
+}
+
+/** A segment's or an hour's cost: cents, and a nonzero amount under a cent as "<$0.01" rather than a misleading "$0.00". */
+function formatSmallCost(usd: number): string {
+  return usd > 0 && usd < 0.01 ? "<$0.01" : formatCost(usd);
+}
+
+/** A chart amount in its metric's own units — "1.2M" tokens or "$1.23". */
+export function formatAmount(value: number, metric: ChartMetric): string {
+  return metric === "cost" ? formatSmallCost(value) : formatTokenCount(value);
+}
+
+/** A chart amount that reads alone — "1.2M tokens" or "$1.23" — for tooltips and accessible names. */
+export function formatAmountLabel(value: number, metric: ChartMetric): string {
+  return metric === "cost" ? formatAmount(value, metric) : `${formatAmount(value, metric)} tokens`;
 }
 
 /**

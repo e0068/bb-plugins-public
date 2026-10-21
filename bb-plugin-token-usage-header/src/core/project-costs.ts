@@ -6,7 +6,7 @@
 // window boundary arrive as numbers from the page — that's what keeps the
 // laws below testable without freezing time (see
 // docs/decisions/usage-pie-rolling-windows.md).
-import { binTotal, type ThreadEntry } from "./threads-timeline";
+import { binAmount, type ThreadEntry } from "./threads-timeline";
 
 // The D/W/M cuts and their rolling lengths, plus windowStartMs, now live in the
 // shared engine (packages/analytics-viz core) — layer 1a lifted this verbatim
@@ -106,32 +106,38 @@ function projectLabel(key: string | null): string {
 
 /**
  * The thread's spend that falls inside `[fromMs, ∞)`, prorated by the share
- * of its tokens whose bins start inside the window — see
+ * of its money whose bins start inside the window — see
  * docs/decisions/usage-pie-cost-prorated-by-bins.md for why attributing a
- * session to a single date was rejected.
+ * session to a single date was rejected, and
+ * docs/decisions/usage-pie-prorated-by-bin-cost.md for why the share is
+ * dollars, not tokens: cheap cache reads are most of the tokens and would
+ * drag the money towards hours that cost little. Bins that carry no cost at
+ * all (data from before the script priced each segment) are shared out by
+ * tokens, as before.
  *
- * Total on every input: a thread whose bins carry no tokens at all (a slice
- * too coarse to have caught anything, or an empty session) falls back to its
- * last activity — all of the cost, or none. A bin with an unparseable
+ * Total on every input: a thread whose bins carry nothing to share by (a
+ * slice too coarse to have caught anything, or an empty session) falls back
+ * to its last activity — all of the cost, or none. A bin with an unparseable
  * timestamp is counted in the denominator but never inside a window: it has
  * no known time, and guessing one would silently move money between periods.
  */
 export function threadCostInWindow(thread: ThreadEntry, fromMs: number): number {
   if (!Number.isFinite(thread.totalCost) || thread.totalCost <= 0) return 0;
 
-  let tokensTotal = 0;
-  let tokensInWindow = 0;
+  const basis = thread.bins.some((bin) => binAmount(bin, "cost") > 0) ? "cost" : "tokens";
+  let weightTotal = 0;
+  let weightInWindow = 0;
   for (const bin of thread.bins) {
-    const tokens = binTotal(bin);
-    tokensTotal += tokens;
+    const weight = binAmount(bin, basis);
+    weightTotal += weight;
     // NaN (unparseable `t`) fails this comparison, so such a bin stays out.
-    if (Date.parse(bin.t) >= fromMs) tokensInWindow += tokens;
+    if (Date.parse(bin.t) >= fromMs) weightInWindow += weight;
   }
 
-  if (tokensTotal <= 0) {
+  if (weightTotal <= 0) {
     return Date.parse(thread.end) >= fromMs ? thread.totalCost : 0;
   }
-  return thread.totalCost * (tokensInWindow / tokensTotal);
+  return thread.totalCost * (weightInWindow / weightTotal);
 }
 
 /**

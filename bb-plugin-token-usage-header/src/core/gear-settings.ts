@@ -19,6 +19,10 @@ export type GearHeightMode = (typeof GEAR_HEIGHT_MODE_OPTIONS)[number];
 export const HEADER_CLICK_OPTIONS = ["popover", "panel"] as const;
 export type HeaderClick = (typeof HEADER_CLICK_OPTIONS)[number];
 export const DEFAULT_HEADER_CLICK: HeaderClick = "popover";
+/** What every chart's column height measures: tokens spent, or their cost in USD. */
+export const CHART_METRIC_OPTIONS = ["tokens", "cost"] as const;
+export type ChartMetric = (typeof CHART_METRIC_OPTIONS)[number];
+export const DEFAULT_CHART_METRIC: ChartMetric = "tokens";
 
 export interface GearSettings {
   /** Bin width in seconds — one of GEAR_UNIT_OPTIONS. */
@@ -150,4 +154,13 @@ export function parseGearSettings(values: RawSettingsValues): GearSettings {
  */
 export function parseHeaderClick(values: RawSettingsValues): HeaderClick {
   return parseEnum(values?.headerClick, HEADER_CLICK_OPTIONS, DEFAULT_HEADER_CLICK);
+}
+
+/**
+ * The `chartMetric` setting — one switch for every chart (feed, session
+ * chart, hourly burn). Kept out of `GearSettings` like `headerClick`: it
+ * chooses what the columns measure, not how they are laid out.
+ */
+export function parseChartMetric(values: RawSettingsValues): ChartMetric {
+  return parseEnum(values?.chartMetric, CHART_METRIC_OPTIONS, DEFAULT_CHART_METRIC);
 }

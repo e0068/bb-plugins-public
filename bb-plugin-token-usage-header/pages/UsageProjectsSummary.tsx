@@ -30,6 +30,7 @@ import {
   windowMayBeIncomplete,
   windowStartMs,
   windowUnpricedModels,
+  type ChartMetric,
   type CostWindow,
   type ProjectSelection,
   type RowLimit,
@@ -63,7 +64,14 @@ const SVG_SIZE = (RADIUS + STROKE_WIDTH) * 2;
 
 const THREADS_BUCKET_KEY = "—threads—";
 
-export function UsageProjectsSummary({ onOpenSession }: { onOpenSession: (session: string) => void }) {
+export function UsageProjectsSummary({
+  onOpenSession,
+  metric,
+}: {
+  onOpenSession: (session: string) => void;
+  /** What the hourly burn chart's columns measure — the plugin's Chart metric setting. */
+  metric: ChartMetric;
+}) {
   const rpc = useRpc<typeof rpcContract>();
   const [threads, setThreads] = useState<ThreadEntry[]>([]);
   const [sliceTruncated, setSliceTruncated] = useState(false);
@@ -163,7 +171,7 @@ export function UsageProjectsSummary({ onOpenSession }: { onOpenSession: (sessio
   // Whole-window burn, independent of the project selection below — the
   // point of an hourly chart is the account's own burn rate, not one
   // project's slice of it.
-  const hourlyBuckets = useMemo(() => hourlyBurnBuckets(threads, fromMs, nowMs), [threads, fromMs, nowMs]);
+  const hourlyBuckets = useMemo(() => hourlyBurnBuckets(threads, fromMs, nowMs, metric), [threads, fromMs, nowMs, metric]);
   // Whether THIS window's total might be missing older sessions the fetched
   // slice never reached — see windowMayBeIncomplete's doc comment. Per
   // window, not a blanket "the slice was capped": a short window like "day"
@@ -314,7 +322,7 @@ export function UsageProjectsSummary({ onOpenSession }: { onOpenSession: (sessio
       {phase === "ready" && (
         <section className="w-full space-y-1" aria-label="Burn by hour">
           <p className="text-[10px] uppercase text-muted-foreground">Burn by hour</p>
-          <HourlyBurnChart buckets={hourlyBuckets} />
+          <HourlyBurnChart buckets={hourlyBuckets} metric={metric} />
         </section>
       )}
     </section>
