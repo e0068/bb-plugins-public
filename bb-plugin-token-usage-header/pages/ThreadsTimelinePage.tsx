@@ -39,7 +39,8 @@ import {
   DEFAULT_VIZ_SETTINGS,
   THREADS_BUCKET_LABEL,
   allProjectKeys,
-  binTotal,
+  binAmount,
+  parseChartMetric,
   parseGearSettings,
   type ThreadEntry,
 } from "../src/core";
@@ -92,6 +93,7 @@ export function ThreadsTimelinePage(_props: PluginNavPanelProps) {
   // particular drives the RPC's bucket width below.
   const settingsState = useSettings();
   const gear = useMemo(() => parseGearSettings(settingsState.values), [settingsState.values]);
+  const metric = parseChartMetric(settingsState.values);
 
   const [limit, setLimit] = useState(INITIAL_LIMIT);
   const [threads, setThreads] = useState<ThreadEntry[]>([]);
@@ -306,9 +308,9 @@ export function ThreadsTimelinePage(_props: PluginNavPanelProps) {
 
   const maxBinTotal = useMemo(() => {
     let max = 0;
-    for (const t of visibleThreads) for (const bin of t.bins) max = Math.max(max, binTotal(bin));
+    for (const t of visibleThreads) for (const bin of t.bins) max = Math.max(max, binAmount(bin, metric));
     return max;
-  }, [visibleThreads]);
+  }, [visibleThreads, metric]);
   // DISPLAYED column count of the longest visible thread — after collapseEmpty
   // folds runs of empty bins into single gap columns, not the raw bin count.
   // When fillWidth is on, every thread's columns take width 100%/maxBinCount,
@@ -351,7 +353,7 @@ export function ThreadsTimelinePage(_props: PluginNavPanelProps) {
           <p className="text-sm text-muted-foreground">Token usage by agent, left to right chronologically within each thread</p>
         </header>
 
-        <UsageProjectsSummary onOpenSession={openSession} />
+        <UsageProjectsSummary onOpenSession={openSession} metric={metric} />
 
         {/* One control row: projects on the left, sort/search/agent colors on
             the right. Time unit, geometry, and the rest of the chart's visuals
@@ -460,6 +462,7 @@ export function ThreadsTimelinePage(_props: PluginNavPanelProps) {
                   unit={gear.unit}
                   chartHeight={chartHeight}
                   maxBinTotal={maxBinTotal}
+                  metric={metric}
                   perCardHeight={gear.heightMode === "perCard"}
                   maxBinCount={maxBinCount}
                   agentKeys={agentKeys}

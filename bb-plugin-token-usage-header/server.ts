@@ -21,6 +21,8 @@ import {
   DEFAULT_GEAR_SETTINGS,
   GEAR_HEIGHT_MODE_OPTIONS,
   GEAR_UNIT_OPTIONS,
+  CHART_METRIC_OPTIONS,
+  DEFAULT_CHART_METRIC,
   DEFAULT_HEADER_CLICK,
   HEADER_CLICK_OPTIONS,
   type AgentTimelineAgentInfo,
@@ -119,6 +121,8 @@ const agentTimelineAgentInfoSchema = z
 const threadsTimelineAgentBinSchema = z.object({
   key: z.string(),
   total: finiteNumber,
+  /** USD of this segment — the cost chart metric sizes columns by it; zod drops a key it isn't told about. */
+  cost: finiteNumber.optional(),
 });
 
 const threadsTimelineBinSchema = z.object({
@@ -540,6 +544,14 @@ function defineGearSettings(bb: BbPluginApi) {
       description: "popover — the dropdown under the counter; panel — the Token usage tab in the thread's right panel.",
       options: [...HEADER_CLICK_OPTIONS],
       default: DEFAULT_HEADER_CLICK,
+    },
+    chartMetric: {
+      type: "select",
+      label: "Chart metric",
+      description:
+        "What column heights measure on every chart — the Usage Analytics feed, the session chart and the hourly burn: tokens — tokens spent; cost — their price in USD.",
+      options: [...CHART_METRIC_OPTIONS],
+      default: DEFAULT_CHART_METRIC,
     },
     unit: {
       type: "select",

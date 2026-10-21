@@ -14,9 +14,13 @@ import { useViewportClamp } from "@bb-plugins/viewport-clamp";
 import { Icon, type IconName } from "@/components/ui/icon";
 import { usePortalScopeProps } from "@/lib/portal-scope";
 import {
+  agentAmount,
+  binAmount,
   binTotal,
   flowLaneChips,
   flowStageMarks,
+  formatAmount,
+  formatAmountLabel,
   formatPercent,
   formatPrice,
   formatTokenCount,
@@ -25,6 +29,7 @@ import {
   placeFlowMarks,
   threadDisplayLabel,
   type AgentBin,
+  type ChartMetric,
   type ChartSettings,
   type FlowLaneChip,
   type FlowStageMark,
@@ -227,6 +232,7 @@ export function ThreadRow({
   unit,
   chartHeight,
   maxBinTotal,
+  metric,
   perCardHeight,
   maxBinCount,
   agentKeys,
@@ -250,7 +256,10 @@ export function ThreadRow({
   thread: ThreadEntry;
   unit: number;
   chartHeight: number;
+  /** The tallest bin across all cards, measured by `metric` — the shared height reference. */
   maxBinTotal: number;
+  /** What column and segment heights measure — tokens or cost (the plugin's Chart metric setting). */
+  metric: ChartMetric;
   /** true = normalize column heights to THIS card's own tallest column (its tallest fills the card height); false = use the shared maxBinTotal across all cards. */
   perCardHeight: boolean;
   /** DISPLAYED column count of the longest visible thread (after collapseEmpty folding — see computeDisplayBins) — drives the uniform column width when fillWidth is on. */
@@ -355,7 +364,7 @@ export function ThreadRow({
   // Column-height reference: this card's own tallest column (perCard) or the
   // shared max across all cards (the default). perCard makes each card's
   // tallest column fill its height, at the cost of cross-card comparability.
-  const localMaxBinTotal = useMemo(() => thread.bins.reduce((m, bin) => Math.max(m, binTotal(bin)), 0), [thread.bins]);
+  const localMaxBinTotal = useMemo(() => thread.bins.reduce((m, bin) => Math.max(m, binAmount(bin, metric)), 0), [thread.bins, metric]);
   const effectiveMaxBinTotal = perCardHeight ? localMaxBinTotal : maxBinTotal;
 
   // Time range, total and per-agent breakdown of one bin — shared by the
@@ -364,7 +373,7 @@ export function ThreadRow({
   function describeBin(bin: TimelineBin) {
     const binStartMs = Date.parse(bin.t);
     const binEndMs = Number.isNaN(threadEndMs) ? binStartMs + unit * 1000 : Math.min(binStartMs + unit * 1000, threadEndMs);
-    const total = binTotal(bin);
+    const total = binAmount(bin, metric);
     const timeLabel = `${fmtClock(bin.t)}–${fmtClock(new Date(binEndMs).toISOString())}`;
     const ordered = agentKeys.filter((key) => bin.agents.some((a) => a.key === key)).map((key) => bin.agents.find((a) => a.key === key)!);
     return { binEndMs, total, timeLabel, ordered };
@@ -419,6 +428,16 @@ export function ThreadRow({
     [],
   );
 
+  // One segment's numbers in the tooltip legend: its share of the column by
+  // the chart metric, and under the cost metric its dollars first with the
+  // tokens behind it.
+  function segmentReading(agent: AgentBin, columnTotal: number): string {
+    const share = formatPercent(agentAmount(agent, metric), columnTotal);
+    return metric === "cost"
+      ? `${formatAmount(agentAmount(agent, metric), metric)} · ${formatTokenCount(agent.total)} · ${share}`
+      : `${formatTokenCount(agent.total)} · ${share}`;
+  }
+
   // Tooltip body for a data column: its time window, per-agent legend and git events.
   function binTipContent(binIndex: number): React.ReactNode {
     const tipDisplayBin = displayBins[binIndex];
@@ -436,7 +455,7 @@ export function ThreadRow({
                 <span className="inline-block size-2.5 shrink-0 rounded-sm" style={{ backgroundColor: colorFor(a.key) }} />
                 <span className="whitespace-nowrap">{labelFor(a.key)}</span>
                 <span className="ml-auto shrink-0 tabular-nums text-muted-foreground">
-                  {formatTokenCount(a.total)} · {formatPercent(a.total, binData.total)}
+                  {segmentReading(a, binData.total)}
                 </span>
               </li>
             ))}
@@ -627,7 +646,9 @@ export function ThreadRow({
                   style={{ height: dispHeight, borderRadius: colRadius, gap: segGap }}
                 >
                   {ordered.map((a) => {
-                    const segHeight = (a.total / total) * dispHeight;
+                    // A bin with activity but nothing to measure (unpriced models
+                    // under the cost metric) splits its floor height evenly.
+                    const segHeight = (total > 0 ? agentAmount(a, metric) / total : 1 / ordered.length) * dispHeight;
                     const faded = activeAgentKey != null && !segmentContainsAgent(a, activeAgentKey);
                     return (
                       <button
@@ -635,7 +656,7 @@ export function ThreadRow({
                         type="button"
                         className={`block w-full transition-opacity hover:opacity-80 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring ${faded ? FADED_SEGMENT_OPACITY : ""}`}
                         style={{ height: Math.max(segHeight, 1), backgroundColor: colorFor(a.key), borderRadius: segRadius }}
-                        aria-label={`${labelFor(a.key)}: ${formatTokenCount(a.total)} tokens`}
+                        aria-label={`${labelFor(a.key)}: ${formatAmountLabel(agentAmount(a, metric), metric)}`}
                         onClick={(e) => {
                           // The segment navigates to detail with a time window
                           // — stop propagation so the card's own click doesn't
@@ -767,12 +788,15 @@ export function SessionChartCard({
   thread,
   agentLabels,
   settings,
+  metric,
   fillWidth,
   onSelectAgent,
   activeAgentKey,
 }: {
   thread: ThreadEntry;
   agentLabels: Record<string, string>;
+  /** What column heights measure — the plugin's Chart metric setting, read by the page beside `settings`. */
+  metric: ChartMetric;
   /** Chart geometry/behaviour from the plugin's Settings page, plus the kv-persisted per-agent colour overrides. */
   settings: ChartSettings;
   /**
@@ -803,7 +827,7 @@ export function SessionChartCard({
       return (totals.get(b) ?? 0) - (totals.get(a) ?? 0);
     });
   }, [thread.bins]);
-  const maxBinTotal = useMemo(() => thread.bins.reduce((m, bin) => Math.max(m, binTotal(bin)), 0), [thread.bins]);
+  const maxBinTotal = useMemo(() => thread.bins.reduce((m, bin) => Math.max(m, binAmount(bin, metric)), 0), [thread.bins, metric]);
   const maxBinCount = useMemo(
     () => computeDisplayBins(thread.bins, settings.collapseEmpty, settings.unit, settings.collapseToZeroBelowMin).length,
     [thread.bins, settings.collapseEmpty, settings.unit, settings.collapseToZeroBelowMin],
@@ -821,6 +845,7 @@ export function SessionChartCard({
       unit={settings.unit}
       chartHeight={SESSION_CARD_CHART_HEIGHT * settings.heightScale}
       maxBinTotal={maxBinTotal}
+      metric={metric}
       perCardHeight={false}
       maxBinCount={maxBinCount}
       agentKeys={agentKeys}

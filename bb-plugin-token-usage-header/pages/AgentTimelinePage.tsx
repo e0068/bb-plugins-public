@@ -31,6 +31,7 @@ import {
   DEFAULT_VIZ_SETTINGS,
   formatCost,
   formatTokenCount,
+  parseChartMetric,
   parseGearSettings,
   type AgentTimelineEvent,
   type ChartSettings,
@@ -383,6 +384,7 @@ export function SessionView({
   // `gear.unit` drives the bucket width below.
   const settingsState = useSettings();
   const gear = useMemo(() => parseGearSettings(settingsState.values), [settingsState.values]);
+  const chartMetric = parseChartMetric(settingsState.values);
   // What's LEFT of the kv-persisted `threads` blob (agentColors + the
   // toolbar's sort/search/filter state, none of which this page edits) —
   // hydrated below, held so the session chart's agent colours match the
@@ -585,6 +587,7 @@ export function SessionView({
             thread={sessionChartThread}
             agentLabels={sessionChart.agentLabels}
             settings={chartSettings}
+            metric={chartMetric}
             fillWidth={chartSettings.fillWidthSession}
             onSelectAgent={selectSegment}
             activeAgentKey={activeAgentKey}

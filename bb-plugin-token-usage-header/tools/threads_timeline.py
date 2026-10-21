@@ -41,7 +41,15 @@ import git_events  # noqa: E402
 # 6 -> 7: every thread gained activeSec and waitingSec (durationSec split by
 # pauses longer than WAITING_GAP_SEC), and its events may carry "compact"
 # markers (context compaction) next to pr/push.
-SCHEMA_VERSION = 7
+# 7 -> 8: every bin segment (agents[]) gained cost — that segment's usage in
+# USD, priced by the same tokens.Bucket as totalCost, so the charts can size
+# columns by money instead of tokens.
+SCHEMA_VERSION = 8
+
+# Decimal places a segment's cost keeps: a one-minute bin of one agent often
+# costs a fraction of a cent, and rounding it to cents would flatten the
+# cost chart into zeros.
+SEGMENT_COST_DIGITS = 6
 
 # A pause between two usage records longer than this is the agent waiting for
 # someone (the owner, a long tool) — everything shorter is work.
@@ -298,7 +306,7 @@ def build_timeline(root, limit=20, unit=300, project=None, session=None, group_w
             agents_out = []
             if agents:
                 for k, b in agents.items():
-                    entry = {"key": k, "total": b.total}
+                    entry = {"key": k, "total": b.total, "cost": round(b.cost, SEGMENT_COST_DIGITS)}
                     members = members_by_key.get(k)
                     if members:
                         entry["members"] = sorted(members)

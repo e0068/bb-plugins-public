@@ -29,6 +29,7 @@ import {
   DEFAULT_VIZ_SETTINGS,
   formatPrice,
   formatTokenCount,
+  parseChartMetric,
   parseGearSettings,
   parseHeaderClick,
   type ChartSettings,
@@ -111,6 +112,7 @@ function TokenUsageHeaderButton({ threadId, isCompactViewport }: PluginThreadHea
   const settingsState = useSettings();
   const gear = useMemo(() => parseGearSettings(settingsState.values), [settingsState.values]);
   const opensPanel = parseHeaderClick(settingsState.values) === "panel";
+  const chartMetric = parseChartMetric(settingsState.values);
   const [agentColors, setAgentColors] = useState<Record<string, string>>(DEFAULT_VIZ_SETTINGS.threads.agentColors);
   useEffect(() => {
     rpc.call("loadVizSettings", {}).then(
@@ -263,6 +265,7 @@ function TokenUsageHeaderButton({ threadId, isCompactViewport }: PluginThreadHea
             thread={sessionChart.thread}
             agentLabels={sessionChart.agentLabels}
             settings={chartSettings}
+            metric={chartMetric}
             fillWidth={chartSettings.fillWidthPopover}
           />
         )}

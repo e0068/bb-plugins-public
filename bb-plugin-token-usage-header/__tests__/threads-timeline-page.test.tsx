@@ -716,6 +716,40 @@ describe("threads-timeline nav panel", () => {
     expect(perCardStack.style.height).toBe("72px");
   });
 
+  it("sizes columns by dollars under the cost metric: a cheap token-heavy bin sits below a pricier smaller one", async () => {
+    // Thread A's tallest bin by tokens (3000) costs $0.10; Thread B's lone
+    // 1000-token bin costs $1.60 — by money B is the shared maximum.
+    const [threadA, threadB] = THREADS_READY.threads;
+    const priced = {
+      ...THREADS_READY,
+      threads: [
+        {
+          ...threadA,
+          bins: [
+            { t: "2026-08-25T09:00:00.000Z", agents: [{ key: "main", total: 3000, cost: 0.1 }] },
+            {
+              t: "2026-08-25T09:01:00.000Z",
+              agents: [
+                { key: "main", total: 1500, cost: 0.2 },
+                { key: "code-reviewer", total: 500, cost: 0.6 },
+              ],
+            },
+          ],
+        },
+        { ...threadB, bins: [{ t: "2026-08-25T08:00:00.000Z", agents: [{ key: "main", total: 1000, cost: 1.6 }] }] },
+      ],
+    };
+    await renderThreadsTimeline({ threadsTimeline: async () => priced }, { heightMode: "shared", chartMetric: "cost" });
+
+    const cardB = (await screen.findByText(THREAD_B_FALLBACK_TITLE)).closest(".rounded-md.border.border-border") as HTMLElement;
+    expect((cardB.querySelector(".absolute.bottom-0.flex-col-reverse") as HTMLElement).style.height).toBe("72px");
+
+    const cardA = screen.getByText("Thread A").closest(".rounded-md.border.border-border") as HTMLElement;
+    const stacksA = Array.from(cardA.querySelectorAll(".absolute.bottom-0.flex-col-reverse")) as HTMLElement[];
+    expect(stacksA.map((stack) => stack.style.height)).toEqual(["4.5px", "36px"]);
+    expect(cardA.querySelector('[aria-label$=": $0.60"]')).not.toBeNull();
+  });
+
   it("keeps one column per bin, each empty bin with its own single-unit gap tooltip, when Collapse gaps is off", async () => {
     await renderThreadsTimeline(
       { threadsTimeline: async () => THREADS_WITH_GAPS },
@@ -1421,6 +1455,33 @@ describe("cost summary block (UsageProjectsSummary)", () => {
     // Day window = 24 one-hour buckets; Alpha's single bin (100 tokens, 1h ago) lands in the last one.
     expect(block.querySelectorAll("[title]")).toHaveLength(24);
     expect(block.querySelector('[title*="100 tokens"]')).not.toBeNull();
+  });
+
+  it("under the cost metric shows each hour's own cost in its tooltip", async () => {
+    const pricedAlpha = { ...alphaThread, bins: [{ t: "2026-09-03T11:00:00.000Z", agents: [{ key: "main", total: 100, cost: 6 }] }] };
+    const slot = await renderThreadsTimeline(
+      {
+        threadsTimeline: async (input: unknown) => {
+          const { limit } = input as { limit: number };
+          if (limit === 100 || limit === 1000) {
+            return { status: "ready" as const, unit: 3600, threads: [pricedAlpha, betaThread], agentLabels: {}, truncated: false };
+          }
+          return THREADS_READY;
+        },
+      },
+      { chartMetric: "cost" },
+    );
+    await screen.findByText("Alpha session");
+
+    const block = burnByHourBlock(slot.container)!;
+    expect(block.querySelector('[title*="$6.00"]')).not.toBeNull();
+    expect(block.querySelector('[title*="tokens"]')).toBeNull();
+  });
+
+  it("under the cost metric says no priced usage when the window's tokens carry no price", async () => {
+    const slot = await renderThreadsTimeline(rpcWithProjectSummary(), { chartMetric: "cost" });
+    await screen.findByText("Alpha session");
+    await waitFor(() => within(burnByHourBlock(slot.container)!).getByText("No priced usage in this period."));
   });
 
   it("shows the empty state when no bin falls inside the selected window", async () => {

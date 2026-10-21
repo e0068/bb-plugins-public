@@ -177,6 +177,17 @@ describe("header counter click", () => {
     expect(agentTimelineCalls(slot)).toEqual([]);
   });
 
+  it("with the cost metric labels the popover chart's segments in dollars", async () => {
+    const slice = sessionChartSlice();
+    const priced = {
+      ...slice,
+      threads: [{ ...slice.threads[0], bins: [{ t: "2026-10-12T10:00:00.000Z", agents: [{ key: "main", total: 1000, cost: 0.3 }] }] }],
+    };
+    await renderHeader({ chartMetric: "cost" }, vi.fn(() => true), rpcHandlers({ threadsTimeline: async () => priced }));
+    fireEvent.click(await screen.findByRole("button", { name: /Token usage: 1/ }));
+    expect(await screen.findByLabelText("Main agent: $0.30")).toBeTruthy();
+  });
+
   it("with \"panel\" chosen opens the Token usage tab instead of the popover", async () => {
     const openThreadPanel = vi.fn(() => true);
     await renderHeader({ headerClick: "panel" }, openThreadPanel);

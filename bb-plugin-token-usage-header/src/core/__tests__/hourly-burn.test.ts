@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 import fc from "fast-check";
 import { barHeightPx, HOUR_MS, hourlyBurnBuckets } from "../hourly-burn";
-import { binTotal, type ThreadEntry, type TimelineBin } from "../threads-timeline";
+import { binAmount, binTotal, type ThreadEntry, type TimelineBin } from "../threads-timeline";
+import type { ChartMetric } from "../gear-settings";
 
 /** Fixed "now" for every test — the core never reads the clock. Deliberately NOT grid-aligned (:17 past the hour) so an anchor-to-`toMs` bug (rather than anchor-to-the-hour-grid) would show up as a failing test — see the anchoring tests below. */
 const NOW_MS = Date.parse("2026-09-03T12:17:00.000Z");
@@ -14,6 +15,11 @@ function gridBin(hoursBeforeCurrent: number, total: number): TimelineBin {
     t: new Date(CURRENT_HOUR_START_MS - hoursBeforeCurrent * HOUR_MS).toISOString(),
     agents: total === 0 ? [] : [{ key: "main", total }],
   };
+}
+
+/** A grid bin whose single segment carries both its tokens and its cost — the shape the v8 script emits. */
+function pricedGridBin(hoursBeforeCurrent: number, total: number, cost: number): TimelineBin {
+  return { t: new Date(CURRENT_HOUR_START_MS - hoursBeforeCurrent * HOUR_MS).toISOString(), agents: [{ key: "main", total, cost }] };
 }
 
 function thread(bins: TimelineBin[]): ThreadEntry {
@@ -43,63 +49,69 @@ function thread(bins: TimelineBin[]): ThreadEntry {
   };
 }
 
-describe("hourlyBurnBuckets", () => {
-  it("returns no buckets when the window is empty, inverted, or non-finite", () => {
-    expect(hourlyBurnBuckets([thread([gridBin(1, 100)])], NOW_MS, NOW_MS)).toEqual([]);
-    expect(hourlyBurnBuckets([thread([gridBin(1, 100)])], NOW_MS, NOW_MS - HOUR_MS)).toEqual([]);
-    expect(hourlyBurnBuckets([], NaN, NOW_MS)).toEqual([]);
-    expect(hourlyBurnBuckets([], NOW_MS - HOUR_MS, NaN)).toEqual([]);
-    expect(hourlyBurnBuckets([], -Infinity, NOW_MS)).toEqual([]);
+describe("hourlyBurnBuckets by chart metric", () => {
+  it("returns no buckets when the window is empty, inverted, or non-finite, under either metric", () => {
+    expect(hourlyBurnBuckets([thread([gridBin(1, 100)])], NOW_MS, NOW_MS, "tokens")).toEqual([]);
+    expect(hourlyBurnBuckets([thread([gridBin(1, 100)])], NOW_MS, NOW_MS - HOUR_MS, "cost")).toEqual([]);
+    expect(hourlyBurnBuckets([], NaN, NOW_MS, "tokens")).toEqual([]);
+    expect(hourlyBurnBuckets([], NOW_MS - HOUR_MS, NaN, "tokens")).toEqual([]);
+    expect(hourlyBurnBuckets([], -Infinity, NOW_MS, "tokens")).toEqual([]);
   });
 
-  it("labels a bucket by the real hour-grid slot its bin belongs to, not by an offset from toMs", () => {
+  it("files an hour's amount under the real hour-grid slot its bin belongs to, not an offset from toMs", () => {
     // NOW_MS is 12:17 — not on the hour grid. A bin at the grid-aligned
     // 11:00–12:00 slot must land in a bucket labelled 11:00, never
     // 11:17–12:17 (anchoring to toMs instead of the grid would produce that).
-    const t = thread([gridBin(1, 100)]); // 11:00 UTC
-    const result = hourlyBurnBuckets([t], NOW_MS - 2 * HOUR_MS, NOW_MS);
-    const bucket = result.find((b) => b.tokens === 100)!;
+    const result = hourlyBurnBuckets([thread([gridBin(1, 100)])], NOW_MS - 2 * HOUR_MS, NOW_MS, "tokens");
+    const bucket = result.find((b) => b.amount === 100)!;
     expect(new Date(bucket.hourStartMs).toISOString()).toBe("2026-09-03T11:00:00.000Z");
   });
 
-  it("includes the hour that just ended as the last bucket when toMs itself sits exactly on the grid", () => {
-    // toMs === 12:00 exactly (a grid boundary). The bin for 11:00-12:00 (t
-    // = 11:00) must still be the last, non-empty bucket — an off-by-one that
-    // treats "toMs is on the grid" as "the 12:00 slot is included" would
-    // instead produce an extra, always-empty trailing bucket here.
-    const t = thread([gridBin(1, 50)]); // t = 11:00 UTC
-    const result = hourlyBurnBuckets([t], CURRENT_HOUR_START_MS - HOUR_MS, CURRENT_HOUR_START_MS);
-    expect(result).toEqual([{ hourStartMs: CURRENT_HOUR_START_MS - HOUR_MS, tokens: 50 }]);
+  it("ends on the hour that just closed, with no empty trailing bucket, when toMs sits exactly on the grid", () => {
+    // toMs === 12:00 exactly: the 11:00 bin is the last, non-empty bucket,
+    // with no always-empty trailing 12:00 bucket after it.
+    const result = hourlyBurnBuckets([thread([gridBin(1, 50)])], CURRENT_HOUR_START_MS - HOUR_MS, CURRENT_HOUR_START_MS, "tokens");
+    expect(result).toEqual([{ hourStartMs: CURRENT_HOUR_START_MS - HOUR_MS, amount: 50 }]);
   });
 
-  it("sums multiple threads and multiple agents landing in the same hour", () => {
+  it("adds up every thread's and every agent's amount landing in the same hour", () => {
     const a = thread([gridBin(1, 40)]);
     const b = thread([{ ...gridBin(1, 0), agents: [{ key: "main", total: 15 }, { key: "sub", total: 5 }] }]);
-    const result = hourlyBurnBuckets([a, b], NOW_MS - 2 * HOUR_MS, NOW_MS);
-    const bucket = result.find((r) => r.hourStartMs === CURRENT_HOUR_START_MS - HOUR_MS)!;
-    expect(bucket.tokens).toBe(60);
+    const bucket = hourlyBurnBuckets([a, b], NOW_MS - 2 * HOUR_MS, NOW_MS, "tokens").find((r) => r.hourStartMs === CURRENT_HOUR_START_MS - HOUR_MS)!;
+    expect(bucket.amount).toBe(60);
   });
 
-  it("drops bins outside [fromMs, toMs) and bins with an unparseable timestamp", () => {
+  it("leaves out bins outside [fromMs, toMs) and bins with an unparseable timestamp from the amounts", () => {
     const t = thread([gridBin(1, 100), gridBin(10, 999), { t: "not-a-date", agents: [{ key: "main", total: 5 }] }]);
-    const result = hourlyBurnBuckets([t], NOW_MS - 2 * HOUR_MS, NOW_MS);
-    const nonZero = result.filter((b) => b.tokens > 0);
-    expect(nonZero).toEqual([{ hourStartMs: CURRENT_HOUR_START_MS - HOUR_MS, tokens: 100 }]);
+    const nonZero = hourlyBurnBuckets([t], NOW_MS - 2 * HOUR_MS, NOW_MS, "tokens").filter((b) => b.amount > 0);
+    expect(nonZero).toEqual([{ hourStartMs: CURRENT_HOUR_START_MS - HOUR_MS, amount: 100 }]);
   });
 
-  it("law: every bucket start sits on the absolute hour grid", () => {
+  it("measures an hour in dollars under the cost metric: a cache-heavy cheap hour sits below a smaller expensive one", () => {
+    const t = thread([pricedGridBin(2, 900_000, 0.3), pricedGridBin(1, 20_000, 1.5)]);
+    const byHour = hourlyBurnBuckets([t], NOW_MS - 3 * HOUR_MS, NOW_MS, "cost").map((b) => b.amount);
+    // Window 09:17–12:17 → buckets 10:00, 11:00 and the running 12:00 hour.
+    expect(byHour).toEqual([0.3, 1.5, 0]);
+  });
+
+  it("counts a segment without a price as zero dollars under the cost metric", () => {
+    const result = hourlyBurnBuckets([thread([gridBin(1, 500)])], NOW_MS - 2 * HOUR_MS, NOW_MS, "cost");
+    expect(result.every((b) => b.amount === 0)).toBe(true);
+  });
+
+  it("law: under either metric, every bucket start sits on the absolute hour grid", () => {
     fc.assert(
       fc.property(fc.double({ min: 1, max: 2000, noNaN: true }), (spanHours) => {
-        const result = hourlyBurnBuckets([], NOW_MS - spanHours * HOUR_MS, NOW_MS);
+        const result = hourlyBurnBuckets([], NOW_MS - spanHours * HOUR_MS, NOW_MS, "tokens");
         for (const bucket of result) expect(bucket.hourStartMs % HOUR_MS).toBe(0);
       }),
     );
   });
 
-  it("law: consecutive bucket starts are exactly one hour apart", () => {
+  it("law: under either metric, consecutive bucket starts are exactly one hour apart", () => {
     fc.assert(
       fc.property(fc.double({ min: 1, max: 500, noNaN: true }), (spanHours) => {
-        const result = hourlyBurnBuckets([], NOW_MS - spanHours * HOUR_MS, NOW_MS);
+        const result = hourlyBurnBuckets([], NOW_MS - spanHours * HOUR_MS, NOW_MS, "cost");
         for (let i = 1; i < result.length; i++) {
           expect(result[i].hourStartMs - result[i - 1].hourStartMs).toBe(HOUR_MS);
         }
@@ -107,11 +119,11 @@ describe("hourlyBurnBuckets", () => {
     );
   });
 
-  it("law: the first bucket is the smallest hour-grid slot >= fromMs, the last the largest < toMs", () => {
+  it("law: the first bucket is the smallest hour-grid slot >= fromMs, the last the largest < toMs, whatever the metric", () => {
     fc.assert(
       fc.property(fc.double({ min: 1, max: 500, noNaN: true }), (spanHours) => {
         const fromMs = NOW_MS - spanHours * HOUR_MS;
-        const result = hourlyBurnBuckets([], fromMs, NOW_MS);
+        const result = hourlyBurnBuckets([], fromMs, NOW_MS, "cost");
         if (result.length === 0) return; // a sub-hour window can legitimately contain no grid slot at all
         const first = result[0].hourStartMs;
         const last = result[result.length - 1].hourStartMs;
@@ -123,35 +135,33 @@ describe("hourlyBurnBuckets", () => {
     );
   });
 
-  it("law: total tokens across all buckets equals the sum of binTotal for bins actually inside the window", () => {
+  it("law: under either metric, the buckets' total equals the sum of binAmount for bins actually inside the window", () => {
+    const metricArb = fc.constantFrom<ChartMetric>("tokens", "cost");
     fc.assert(
       fc.property(
-        // Real bins are always exactly hour-aligned (see HOUR_MS's doc
-        // comment) — an integer offset keeps every generated bin genuinely
-        // on the grid, unlike a fc.double whose tiny fractional part gets
-        // truncated away by the Date round-trip below and can land the bin
-        // 1ms off the grid it was meant to sit on.
+        // Real bins are always exactly hour-aligned — an integer offset keeps
+        // every generated bin genuinely on the grid.
         fc.array(
-          fc.array(fc.record({ hoursBeforeCurrent: fc.integer({ min: 0, max: 50 }), total: fc.nat({ max: 1_000_000 }) }), {
-            maxLength: 10,
-          }),
+          fc.array(
+            fc.record({
+              hoursBeforeCurrent: fc.integer({ min: 0, max: 50 }),
+              total: fc.nat({ max: 1_000_000 }),
+              cost: fc.double({ min: 0, max: 50, noNaN: true }),
+            }),
+            { maxLength: 10 },
+          ),
           { maxLength: 5 },
         ),
         fc.double({ min: 1, max: 48, noNaN: true }),
-        (threadsBins, spanHours) => {
+        metricArb,
+        (threadsBins, spanHours, metric) => {
           const fromMs = NOW_MS - spanHours * HOUR_MS;
-          const threads = threadsBins.map((bins) => thread(bins.map((b) => gridBin(b.hoursBeforeCurrent, b.total))));
-          const result = hourlyBurnBuckets(threads, fromMs, NOW_MS);
-
+          const threads = threadsBins.map((bins) => thread(bins.map((b) => pricedGridBin(b.hoursBeforeCurrent, b.total, b.cost))));
           const expectedTotal = threads
             .flatMap((t) => t.bins)
-            .filter((b) => {
-              const t = Date.parse(b.t);
-              return !Number.isNaN(t) && t >= fromMs && t < NOW_MS;
-            })
-            .reduce((sum, b) => sum + binTotal(b), 0);
-
-          const actualTotal = result.reduce((sum, b) => sum + b.tokens, 0);
+            .filter((b) => Date.parse(b.t) >= fromMs && Date.parse(b.t) < NOW_MS)
+            .reduce((sum, b) => sum + binAmount(b, metric), 0);
+          const actualTotal = hourlyBurnBuckets(threads, fromMs, NOW_MS, metric).reduce((sum, b) => sum + b.amount, 0);
           expect(actualTotal).toBeCloseTo(expectedTotal, 6);
         },
       ),

@@ -55,6 +55,20 @@ const validTimeline = {
 };
 
 describe("parseThreadsTimeline", () => {
+  it("keeps the cost each bin segment carries", () => {
+    const withCost = {
+      ...validTimeline,
+      threads: [
+        {
+          ...validTimeline.threads[0],
+          bins: [{ t: "2026-08-20T13:40:00.000Z", agents: [{ key: "main", total: 3411232, cost: 9.75 }] }],
+        },
+      ],
+    };
+    const result = parseThreadsTimeline(JSON.stringify(withCost));
+    expect(result.ok && result.data.threads[0].bins[0].agents[0].cost).toBe(9.75);
+  });
+
   it("parses a valid timeline report", () => {
     const result = parseThreadsTimeline(JSON.stringify(validTimeline));
     expect(result.ok).toBe(true);
