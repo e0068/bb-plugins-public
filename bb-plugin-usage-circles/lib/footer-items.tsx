@@ -1,7 +1,7 @@
 // Layer 3 — the footer items. Each limit window is its own item in BB's
 // sidebar footer: the icon is the window's live ring with the provider's logo
-// in its middle or its top right corner, the window is the provider's limits
-// with the item's own limit marked. BB renders icons outside any plugin
+// in its middle or its top right corner, the window is the provider's limits.
+// BB renders icons outside any plugin
 // context, so the usage and the ring style reach them through module stores
 // the app's overlay and settings section publish to, not through a hook.
 import { useEffect, useLayoutEffect, useRef, useSyncExternalStore, type ComponentType, type CSSProperties } from "react";
@@ -22,8 +22,6 @@ import {
   type LimitsChoice,
   type ProviderStateWire,
   type StateWire,
-  type UsageWindowInput,
-  type WindowKind,
 } from "./usage-model";
 
 export const PLUGIN_ID = "usage-circles";
@@ -177,13 +175,13 @@ function chosenWindows(state: StateWire, provider: ProviderStateWire): ProviderS
   return { ...provider, usage: { status: "ok", windows } };
 }
 
-/** The grid under Usage Limits: every chosen limit of both providers as a card, `marked` — the limit of the ring opened — standing out. */
-function GridWindow({ state, marked }: { state: StateWire | null; marked?: (state: StateWire) => UsageWindowInput | undefined }) {
+/** The grid under Usage Limits: every chosen limit of both providers as a card. */
+function GridWindow({ state }: { state: StateWire | null }) {
   const root = useRef<HTMLDivElement>(null);
   useLayoutEffect(() => {
     if (!state) return void root.current?.replaceChildren();
     const { providers, limits, coloring } = state;
-    root.current?.replaceChildren(buildAllLimits(gridLimits(providers, limits), coloring, Date.now(), marked?.(state), providersWithoutData(providers)));
+    root.current?.replaceChildren(buildAllLimits(gridLimits(providers, limits), coloring, Date.now(), providersWithoutData(providers)));
   }, [state]);
   return (
     <FooterWindow title={ALL_LIMITS_ITEM.label}>
@@ -193,12 +191,12 @@ function GridWindow({ state, marked }: { state: StateWire | null; marked?: (stat
 }
 
 /** The provider's limits a row each under its logo and "<provider> Limits"; `title` heads it until the usage arrives. */
-function ListWindow({ state, providerId, kind, title }: { state: StateWire | null; providerId: string; kind: WindowKind; title: string }) {
+function ListWindow({ state, providerId, title }: { state: StateWire | null; providerId: string; title: string }) {
   const root = useRef<HTMLDivElement>(null);
   const provider = state?.providers.find(({ id }) => id === providerId);
   useLayoutEffect(() => {
     if (!state || !provider) return void root.current?.replaceChildren();
-    root.current?.replaceChildren(buildProviderDetails(chosenWindows(state, provider), state.coloring, Date.now(), ringWindow(provider, kind)));
+    root.current?.replaceChildren(buildProviderDetails(chosenWindows(state, provider), state.coloring, Date.now()));
   }, [state, provider]);
   return (
     <FooterWindow icon={provider ? <HeaderLogo provider={provider} /> : undefined} title={provider ? `${provider.title} Limits` : title}>
@@ -207,24 +205,17 @@ function ListWindow({ state, providerId, kind, title }: { state: StateWire | nul
   );
 }
 
-/**
- * The window of a ring's footer item, the ring's own limit marked: in the List
- * layout the provider's limits a row each; in the Grid layout the grid of both providers.
- */
-export function providerPanel(providerId: string, kind: WindowKind, title = providerId): ComponentType<{ dismiss(): void }> {
-  const marked = (state: StateWire) => {
-    const provider = state.providers.find(({ id }) => id === providerId);
-    return provider && ringWindow(provider, kind);
-  };
+/** The window of a ring's footer item: in the List layout the provider's limits a row each; in the Grid layout the grid of both providers. */
+export function providerPanel(providerId: string, title = providerId): ComponentType<{ dismiss(): void }> {
   function ProviderPanel() {
     const state = useUsage();
-    return state?.layout === "grid" ? <GridWindow state={state} marked={marked} /> : <ListWindow state={state} providerId={providerId} kind={kind} title={title} />;
+    return state?.layout === "grid" ? <GridWindow state={state} /> : <ListWindow state={state} providerId={providerId} title={title} />;
   }
-  ProviderPanel.displayName = `ProviderPanel(${providerId}:${kind})`;
+  ProviderPanel.displayName = `ProviderPanel(${providerId})`;
   return ProviderPanel;
 }
 
-/** The window of the item of every limit: the grid, nothing marked. */
+/** The window of the item of every limit: the grid. */
 export function allLimitsPanel(): ComponentType<{ dismiss(): void }> {
   function AllLimitsPanel() {
     return <GridWindow state={useUsage()} />;

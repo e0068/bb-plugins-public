@@ -17,7 +17,6 @@ import {
   type ProviderTint,
   type LimitCard,
   type UsageWindowModel,
-  type UsageWindowInput,
 } from "./usage-model";
 import { ringRadii, type RingStyle } from "./ring-style";
 
@@ -275,11 +274,12 @@ function buildBars(model: UsageWindowModel): HTMLDivElement {
 export const HEADER_LOGO_PX = 16;
 /** The provider's logo before a card's name in the grid. */
 const CARD_LOGO_PX = 12;
-// The sidebar's thread rows: 8 px in from its edges, their text 8 px further in — with the window's title.
+// The sidebar's thread rows reach 8 px from its edges, and so does the limits' text, flush with the threads' icons
+// and the window's title; there is no background behind a limit, so nothing pads it.
 const DETAILS_SIDE_PX = 8;
-const ROW_PADDING = "8px";
 const DETAILS_PADDING = `0 ${DETAILS_SIDE_PX}px ${DETAILS_SIDE_PX}px`;
-const ROWS_GAP = "2px";
+const ROWS_GAP = "10px";
+const COLUMNS_GAP = "16px";
 
 /**
  * A limit as a card of the grid: the name and the percent, the two bars, and
@@ -303,15 +303,6 @@ export function buildLimitCard(model: UsageWindowModel, logo: HTMLElement | null
   return card;
 }
 
-/** A row or a card of the window, inset like the sidebar's threads; the item's own one gets the background of the selected thread. */
-function placeLimit(node: HTMLDivElement, marked: boolean): HTMLDivElement {
-  Object.assign(node.style, { padding: ROW_PADDING, borderRadius: "6px" });
-  if (!marked) return node;
-  node.dataset.highlighted = "true";
-  node.style.backgroundColor = "var(--sidebar-accent)";
-  return node;
-}
-
 function listOf(rows: readonly HTMLDivElement[]): HTMLDivElement {
   const list = div({ display: "flex", flexDirection: "column", gap: ROWS_GAP, padding: DETAILS_PADDING }, "usage-circles__details");
   list.append(...rows);
@@ -320,14 +311,14 @@ function listOf(rows: readonly HTMLDivElement[]): HTMLDivElement {
 
 /** Cards in two columns; an odd last card takes both. */
 function gridOf(cards: readonly HTMLDivElement[]): HTMLDivElement {
-  const grid = div({ display: "grid", gridTemplateColumns: "1fr 1fr", gap: ROWS_GAP, padding: DETAILS_PADDING }, "usage-circles__details");
+  const grid = div({ display: "grid", gridTemplateColumns: "1fr 1fr", rowGap: ROWS_GAP, columnGap: COLUMNS_GAP, padding: DETAILS_PADDING }, "usage-circles__details");
   if (cards.length % 2 === 1) cards[cards.length - 1]!.style.gridColumn = "1 / -1";
   grid.append(...cards);
   return grid;
 }
 
 function statusLine(text: string): HTMLDivElement {
-  const status = div({ fontSize: "12px", color: "var(--muted-foreground)", padding: ROW_PADDING }, "usage-circles__status");
+  const status = div({ fontSize: "12px", color: "var(--muted-foreground)" }, "usage-circles__status");
   status.textContent = text;
   return status;
 }
@@ -336,14 +327,11 @@ function statusLine(text: string): HTMLDivElement {
 const whyNoData = (usage: Exclude<ProviderStateWire["usage"], { status: "ok" }>): string =>
   statusLabel(usage.status, usage.status === "error" ? usage.message : undefined);
 
-/**
- * A footer item's window under the provider's logo and name: why it has no data, or
- * its limits a row each, the one of `marked`, the window the item's ring shows, standing out.
- */
-export function buildProviderDetails(provider: ProviderStateWire, coloring: Coloring, nowMs: number, marked?: UsageWindowInput): HTMLDivElement {
+/** A footer item's window under the provider's logo and name: why it has no data, or its limits a row each. */
+export function buildProviderDetails(provider: ProviderStateWire, coloring: Coloring, nowMs: number): HTMLDivElement {
   const { usage } = provider;
   if (usage.status !== "ok") return listOf([statusLine(whyNoData(usage))]);
-  return listOf(usage.windows.map((window) => placeLimit(buildWindowRow(buildUsageWindowModel(window, nowMs, coloring)), window === marked)));
+  return listOf(usage.windows.map((window) => buildWindowRow(buildUsageWindowModel(window, nowMs, coloring))));
 }
 
 /** Why a provider of the grid has no data, under its logo, across both columns. */
@@ -354,22 +342,11 @@ function missingLine(provider: ProviderStateWire): HTMLDivElement {
   return line;
 }
 
-/**
- * The grid: a card per limit of both providers, in the given order, each with its provider's logo,
- * the one of `marked` standing out; then why each of `missing` has no data.
- */
-export function buildAllLimits(
-  limits: readonly LimitCard[],
-  coloring: Coloring,
-  nowMs: number,
-  marked?: UsageWindowInput,
-  missing: readonly ProviderStateWire[] = [],
-): HTMLDivElement {
+/** The grid: a card per limit of both providers, in the given order, each with its provider's logo; then why each of `missing` has no data. */
+export function buildAllLimits(limits: readonly LimitCard[], coloring: Coloring, nowMs: number, missing: readonly ProviderStateWire[] = []): HTMLDivElement {
   if (limits.length === 0 && missing.length === 0) return listOf([statusLine("No limits to show — pick them under Limits in the plugin's settings")]);
   const grid = gridOf(
-    limits.map(({ provider, window }) =>
-      placeLimit(buildLimitCard(buildUsageWindowModel(window, nowMs, coloring), buildProviderLogo(provider, CARD_LOGO_PX)), window === marked),
-    ),
+    limits.map(({ provider, window }) => buildLimitCard(buildUsageWindowModel(window, nowMs, coloring), buildProviderLogo(provider, CARD_LOGO_PX))),
   );
   grid.append(...missing.map(missingLine));
   return grid;

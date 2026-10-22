@@ -97,7 +97,7 @@ export default definePluginApp((app) => {
       id: ring.id,
       label: ring.label,
       icon,
-      component: withFooterWindow(providerPanel(ring.providerId, ring.kind, `${ring.label.split(" — ")[0]} Limits`), item),
+      component: withFooterWindow(providerPanel(ring.providerId, `${ring.label.split(" — ")[0]} Limits`), item),
     });
     registerFooterWindow({ ...item, label: ring.label }, controller);
   }

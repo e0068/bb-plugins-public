@@ -492,6 +492,16 @@ describe("window header", () => {
     expect(title.style.fontWeight).toBe("500");
   });
 
+  it("starts the title 8 px from the window's edge, on the line of the threads' icons above it", () => {
+    const header = show().getByRole("heading").parentElement!;
+    expect(header.style.paddingLeft).toBe("8px");
+  });
+
+  it("ends the header at the window's right edge, so the pin stands on the axis of a thread row's actions button", () => {
+    const header = show().getByRole("heading").parentElement!;
+    expect(header.style.paddingRight).toBe("0px");
+  });
+
   it("a count given as words stays whole next to a long title", () => {
     const Worded = withFooterWindow(() => <FooterWindow title="A very long thread title that will not fit" count="3 queued" />, { pluginId: "p", itemId: "a" });
     const view = render(<Worded dismiss={() => undefined} />, { container: document.getElementById("mount")! });
