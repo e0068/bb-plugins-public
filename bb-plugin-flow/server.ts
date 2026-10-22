@@ -64,6 +64,7 @@ import {
   readWorkflowScripts,
   writeScriptFile,
 } from "./server/stage-catalog";
+import { createSkillLists } from "./server/skill-lists";
 import { createSkillScope } from "./server/skill-scope";
 import { agentFor, defaultExecutionOf, executionFor, startMessageOf } from "./core/flow-agent";
 import { registerSessionConfig } from "./server/session-config";
@@ -71,6 +72,8 @@ import { revealInFinderHere } from "@bb-plugins/reveal-in-finder/index";
 import { createStore } from "./server/store";
 import { createThreadFlows } from "./server/thread-flows";
 import { removeStaleRootSkill } from "./server/stale-root-skill";
+import { bringPluginsHome } from "./server/plugin-homecoming";
+import type { HomecomingTrigger } from "./core/plugin-homecoming";
 import { registerVoiceApi } from "./server/voice";
 import { flowOrNone, NO_FLOW, stageSettingsOf } from "./core/flows";
 import { LANGUAGE_OPTIONS, LANGUAGE_SETTING, LANGUAGE_SYSTEM } from "./lib/i18n";
@@ -84,9 +87,16 @@ import { isSideChat } from "./core/side-chat";
 const newId = (): string => `${Date.now().toString(36)}${randomBytes(6).toString("hex")}`;
 const now = (): string => new Date().toISOString();
 
-/** Файл, который плагин везёт с собой: рядом с исходником, а из собранного `dist/server.js` — уровнем выше. */
+/**
+ * Файл, который плагин везёт с собой: рядом с исходником, а из собранного `dist/server.js` — уровнем выше.
+ * Второй путь пробуется только когда первого нет: любая другая ошибка (EPERM и т. п.) — настоящая причина,
+ * её нельзя прятать за ENOENT от запасного пути.
+ */
 const ownFile = (path: string): Promise<string> =>
-  readFile(new URL(`./${path}`, import.meta.url), "utf8").catch(() => readFile(new URL(`../${path}`, import.meta.url), "utf8"));
+  readFile(new URL(`./${path}`, import.meta.url), "utf8").catch((err: NodeJS.ErrnoException) => {
+    if (err.code !== "ENOENT") throw err;
+    return readFile(new URL(`../${path}`, import.meta.url), "utf8");
+  });
 
 /** Сколько начало хода ждёт сверки настроек Claude Code дерева треда. */
 const TURN_START_SYNC_MS = 2_000;
@@ -117,6 +127,16 @@ export default async function plugin(bb: BbPluginApi): Promise<void> {
   const threads = await createThreadFlows(bb.storage.kv);
   bb.events.on("thread.created", threads.onThreadCreated);
   bb.events.on("thread.deleted", threads.onThreadDeleted);
+  // Плагин, поставленный из дерева треда, после архива остался бы без папки: Flow возвращает его в основную копию —
+  // при архиве и при своём запуске, если архив прошёл без него.
+  const homecoming = { plugins: bb.sdk.plugins, projects: bb.sdk.projects, warn: (m: string) => bb.log.warn(m) };
+  // Сверки идут по очереди: переустановка самого Flow в одной оборвала бы другую на середине.
+  let homeQueue: Promise<unknown> = Promise.resolve();
+  const bringHome = (trigger: HomecomingTrigger) => {
+    homeQueue = homeQueue.then(() => bringPluginsHome(homecoming, trigger, OWN_PLUGIN_ID)).catch((error) => bb.log.warn(`plugin homecoming: ${String(error)}`));
+  };
+  bb.events.on("thread.archived", ({ thread }) => bringHome({ kind: "archived", threadId: thread.id }));
+  bringHome({ kind: "startup" });
   // Тред без flow: этапов нет, и Flow не вкладывает в ход ни правила, ни их списка.
   const flowOf = (threadId: string) => flowOrNone(flows.current(), threads.flowOf(threadId));
   const stagesOf = (threadId: string) => {
@@ -151,8 +171,11 @@ export default async function plugin(bb: BbPluginApi): Promise<void> {
   // Тред, переданный до указателей прогонов, находит свой прогон по ответу на бриф, которым работу передали.
   // Свои отправки Flow — ответ на бриф и побудка: ход владельца по ним выбор flow не применяет.
   const own = createOwnSends();
+  // Список навыков проекта — один на весь Flow: каждый шаг треда читает его по всем проектам (./server/skill-lists.ts).
+  const skillLists = createSkillLists(bb, Date.now);
+  const skillFileSources = hostSkillFileSources(bb, skillLists);
   // Навыки и агенты, которые Claude Code грузит агенту треда, — по открытым этапам его flow (./server/skill-scope.ts).
-  const catalogSources = hostCatalogSources(bb);
+  const catalogSources = hostCatalogSources(bb, skillLists);
   const worktreeOf = async (threadId: string) => {
     const { environmentId } = await bb.sdk.threads.get({ threadId });
     const environment = environmentId === null ? null : await bb.sdk.environments.get({ environmentId });
@@ -180,7 +203,7 @@ export default async function plugin(bb: BbPluginApi): Promise<void> {
   });
   const delivery = createSkillDelivery({
     stages: (threadId) => stagesOf(threadId).stages,
-    source: async (name) => (await readSkillFile(hostSkillFileSources(bb), name))?.path ?? null,
+    source: async (name) => (await readSkillFile(skillFileSources, name))?.path ?? null,
     warn: (message) => bb.log.warn(message),
   });
   const syncSkills = async (threadId: string) => {
@@ -311,6 +334,8 @@ export default async function plugin(bb: BbPluginApi): Promise<void> {
   };
   registerApi(bb, store, {
     now,
+    stages: (threadId) => stagesOf(threadId).stages,
+    warn: (message) => bb.log.warn(message),
     emit,
     writeDecision: writeAndIndex,
     progress,
@@ -377,7 +402,7 @@ export default async function plugin(bb: BbPluginApi): Promise<void> {
   // Поэтому read_flows, save_flow и страница читают каталог раньше коллекции: так они видят её уже вылеченной.
   const heal = createLegacyHeal(bb.storage.kv, flows);
   const catalog = async () => {
-    const read = await readStageCatalog(hostCatalogSources(bb));
+    const read = await readStageCatalog(catalogSources);
     await heal.run(read).catch((error) => bb.log.warn(`flows: legacy stages were not cleaned (${error instanceof Error ? error.message : String(error)})`));
     return read;
   };
@@ -395,15 +420,15 @@ export default async function plugin(bb: BbPluginApi): Promise<void> {
     listDir: (dir) => readdir(dir),
     readFile: (path) => readFile(path, "utf8"),
     writeFile: writeText,
-    agents: () => readWorkflowAgents(hostCatalogSources(bb)),
+    agents: () => readWorkflowAgents(catalogSources),
     providers: () => readProviderModels(bb),
   });
   registerFlowSettingsApi(bb, flows, { catalog, ready: async () => {
     if (!heal.done()) await catalog();
   },
-    skillFile: (name) => readSkillFile(hostSkillFileSources(bb), name),
-    executorFile: (id) => readExecutorFile({ ...hostCatalogSources(bb), primaryHostId: hostSkillFileSources(bb).primaryHostId }, id),
-    scriptFile: (script) => writeScriptFile(script, hostSkillFileSources(bb).primaryHostId),
+    skillFile: (name) => readSkillFile(skillFileSources, name),
+    executorFile: (id) => readExecutorFile({ ...catalogSources, primaryHostId: skillFileSources.primaryHostId }, id),
+    scriptFile: (script) => writeScriptFile(script, skillFileSources.primaryHostId),
     reveal: revealInFinderHere,
     // Модель по умолчанию — первого доступного провайдера машины bb: из неё стартует выбор модели flow.
     defaultExecution: async () => {
@@ -412,7 +437,7 @@ export default async function plugin(bb: BbPluginApi): Promise<void> {
     },
   });
   // Файлы состава виджета для просмотрщика bb: корень плагина — по его навыку, наличие файла — по диску.
-  registerWidgetFiles(bb, { ...hostSkillFileSources(bb), exists: (path) => access(path).then(() => true, () => false) });
+  registerWidgetFiles(bb, { ...skillFileSources, exists: (path) => access(path).then(() => true, () => false), readFile: (path) => readFile(path, "utf8") });
   registerThreadListPrefsApi(bb);
   registerFlowPickerApi(bb, flows, threads);
   registerMentionsApi(bb, { catalog });

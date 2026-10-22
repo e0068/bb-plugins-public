@@ -103,13 +103,3 @@ describe("resolves отбивается с причиной, и ничего н�
     expect(signals()).toEqual([]);
   });
 });
-
-describe("наказ агенту", () => {
-  it("ответ инструмента: строку директивы вставлять один раз, решённое уточнение закрывать через resolves", async () => {
-    const { ask } = await host();
-    const result = await ask(brief);
-    expect(result).toContain("Paste each directive line once, in the turn that sent it");
-    expect(result).toContain("a repeat draws it again");
-    expect(result).toContain("close it with resolves in your next ask_decision call");
-  });
-});

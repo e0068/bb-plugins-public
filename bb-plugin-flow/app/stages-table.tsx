@@ -88,6 +88,9 @@ const CELLS = {
 /** Линия между подписью и числами на узкой карточке: от начала подписи, значок отделяет её от края, до колонки чекбоксов. */
 const RULE = "col-start-2 col-end-7 row-start-2 self-start border-t border-border pointer-events-none @[34rem]:hidden";
 
+/** Название этапа: длинное — автоматизация из нескольких шагов — переносится внутри своей ячейки, а не уходит под чекбоксы. */
+const NAME = "min-w-0 break-words";
+
 /** Колонка чекбоксов: на узкой карточке во всю высоту двух линий. */
 const BOX = "col-start-7 row-start-1 row-end-3 flex items-center justify-center @[34rem]:col-start-8 @[34rem]:row-end-2";
 
@@ -210,7 +213,7 @@ function StageRows({ item, view, scope, priced, line, roots, fold, place }: { it
           )
         }
       >
-        <span className="shrink-0">{name}</span>
+        <span className={NAME}>{name}</span>
       </Label>
     );
     return (
@@ -266,7 +269,7 @@ function StageRows({ item, view, scope, priced, line, roots, fold, place }: { it
         )
       }
     >
-      <span className={cn("shrink-0", !choice.run && "text-muted-foreground line-through", dim)}>{name}</span>
+      <span className={cn(NAME, !choice.run && "text-muted-foreground line-through", dim)}>{name}</span>
     </Label>
   );
   return (
@@ -364,7 +367,7 @@ function NestRow({ node, view, place, lines, open, onFold }: { node: Extract<Nes
       <button type="button" aria-expanded={open} aria-label={name} onClick={onFold} className={OVERLAY} />
       <div className={cn(LEFT, "pointer-events-none relative")}>
         <Label icon={<FlowGlyph icon={node.flow.icon} className={cn("size-3.5", run === false && pending && "opacity-40")} />} numbers={price !== undefined} oneLine place={place} side={<Chevron open={open} />}>
-          <span className={cn("shrink-0", run === false && pending && "text-muted-foreground line-through opacity-40")}>{name}</span>
+          <span className={cn(NAME, run === false && pending && "text-muted-foreground line-through opacity-40")}>{name}</span>
         </Label>
       </div>
       {price !== undefined && <Numbers price={price} />}

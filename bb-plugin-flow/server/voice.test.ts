@@ -48,9 +48,16 @@ describe("RPC распознавания голоса", () => {
     expect(await harness.callRpc("transcribeVoice", { audio, mimeType: "audio/webm" })).toEqual({ kind: "failed", reason: "empty" });
   });
 
-  it("сбой сервиса bb — неудача «недоступно», RPC не падает", async () => {
+  it("сбой сервиса bb — неудача «недоступно» с причиной от bb, RPC не падает", async () => {
     const harness = setup(async () => {
-      throw new Error("provider down");
+      throw new Error("  Codex: Not responding \n");
+    });
+    expect(await harness.callRpc("transcribeVoice", { audio, mimeType: "audio/webm" })).toEqual({ kind: "failed", reason: "unavailable", detail: "Codex: Not responding" });
+  });
+
+  it("сбой без слов — неудача «недоступно» без причины", async () => {
+    const harness = setup(async () => {
+      throw new Error(" ");
     });
     expect(await harness.callRpc("transcribeVoice", { audio, mimeType: "audio/webm" })).toEqual({ kind: "failed", reason: "unavailable" });
   });

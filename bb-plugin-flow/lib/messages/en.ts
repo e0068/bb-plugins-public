@@ -16,6 +16,9 @@ export const en: Messages = {
     noteLabel: "Add to the answers",
     notePlaceholder: "Add your own — to any question or to all of them",
     sendFailed: "Couldn't send — try again",
+    sendOffline: "Reason: no connection to bb — retried for half a minute",
+    sendTimeout: "Reason: bb did not answer — retried for half a minute",
+    sendRejected: (message) => `Reason: bb refused the answer — ${message}`,
     decided: (decided, total) => `${decided} of ${total} decided`,
     dispatchLabel: "Run in",
     dispatchHere: "This thread",
@@ -242,6 +245,7 @@ export const en: Messages = {
   },
   rowStatus: {
     running: (name) => `${name} · running`,
+    failed: (name) => `${name} · stopped`,
     automationFailed: "Automation stopped",
     automation: "Automation",
   },

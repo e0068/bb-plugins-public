@@ -16,24 +16,34 @@ import type { CliPorts, CliRun } from "./bb-cli-run";
 
 const run = promisify(execFile);
 
-export function bbCliClient(env: BbCliEnv = process.env): CliPorts {
+/**
+ * How long a call may run. A `bb tasks` write lands in the thread's tree and
+ * can wait behind bb's own commit lock: BBPL-931's `update --status done` did
+ * not fit in 20 s, and the step reported a bare "Command failed".
+ */
+export const BB_CLI_TIMEOUT_MS = 60_000;
+
+export function bbCliClient(env: BbCliEnv = process.env, timeoutMs = BB_CLI_TIMEOUT_MS): CliPorts {
   const executable = bbExecutable(env);
   return {
     async run(args: readonly string[], callEnv?: Readonly<Record<string, string>>): Promise<CliRun> {
       try {
         const { stdout, stderr } = await run(executable, [...args], {
-          timeout: 20000,
+          timeout: timeoutMs,
           ...(callEnv === undefined ? {} : { env: { ...process.env, ...callEnv } }),
         });
         return { kind: "ran", code: 0, stdout, stderr };
       } catch (error) {
-        // execFile throws both when the process ran and exited non-zero (a
-        // numeric `code`, with the streams attached) and when it never
-        // started at all (`code` is a spawn errno like ENOENT, and there are
-        // no streams to speak of). The two are different facts and stay so.
-        const e = error as { code?: unknown; stdout?: string; stderr?: string };
+        // execFile throws when the process ran and exited non-zero (a numeric
+        // `code`, with the streams attached), when the timeout killed it
+        // (`killed`, no code), and when it never started at all (`code` is a
+        // spawn errno like ENOENT). Three different facts, and they stay so.
+        const e = error as { code?: unknown; killed?: unknown; stdout?: string; stderr?: string };
         if (typeof e.code === "number") {
           return { kind: "ran", code: e.code, stdout: e.stdout ?? "", stderr: e.stderr ?? "" };
+        }
+        if (e.killed === true) {
+          return { kind: "unavailable", reason: `bb did not answer within ${timeoutMs / 1000} s: ${[executable, ...args].join(" ")}` };
         }
         return { kind: "unavailable", reason: messageOf(error, executable) };
       }

@@ -875,6 +875,8 @@ export const decisionsRpcContract = defineRpcContract({
         draft: briefDraftSchema.optional(),
         /** Неотвеченное уточнение, которое агент закрыл как решённое (`resolves` в `ask_decision`): виджет рисует строку «Решено». */
         resolved: z.literal(true).optional(),
+        /** Неотвеченное утверждение, после которого в прогоне нет работы агента: виджет не предлагает сжать тред, пока владелец не написал своё. */
+        idleAfter: z.literal(true).optional(),
       }),
       z.object({ kind: z.literal("not_found") }),
     ]),
@@ -968,6 +970,19 @@ export const dispatchRpcContract = defineRpcContract({
       z.object({ kind: z.literal("found"), projects: z.array(z.object({ id: text, name: z.string() })) }),
       z.object({ kind: z.literal("unavailable") }),
     ]),
+  },
+});
+
+/** Ход агента в треде: идёт — ответ вливается в него; закончен — ответ начинает новый ход. */
+export const agentTurnSchema = z.enum(["running", "ended"]);
+export type AgentTurn = z.infer<typeof agentTurnSchema>;
+
+/** Ход агента — своим контрактом, как место исполнения: его спрашивает только открытое уточнение, ради сжатия после хода. */
+export const turnRpcContract = defineRpcContract({
+  /** Идёт ли ход агента в треде; bb не ответил — ход идёт. */
+  agentTurn: {
+    input: z.object({ threadId: text }),
+    output: z.object({ turn: agentTurnSchema }),
   },
 });
 
@@ -1427,8 +1442,12 @@ export const flowStageParamsSchema = z.object({
 /** Вид ожидания: встроенный этап брифа или упавшая автоматизация — у неё `briefId` вида `automation:<этап>`. */
 export const awaitingEntrySchema = z.object({ briefId: text, kind: z.enum(["questions", "criteria", "select", "demo", "approve", "automation", "action"]) });
 
+/** Свой значок этапа в строке треда: название этапа для подписи и имя иконки из подборки, выбранной владельцем. */
+export const rowStageSchema = z.object({ name: text, icon: text });
+
 export const awaitingRpcContract = defineRpcContract({
-  awaitingThreads: { input: z.object({}), output: z.array(z.object({ threadId: text, kind: awaitingEntrySchema.shape.kind })) },
+  /** `stage` — у ждущего этапа-автоматизации или Action своя иконка. */
+  awaitingThreads: { input: z.object({}), output: z.array(z.object({ threadId: text, kind: awaitingEntrySchema.shape.kind, stage: rowStageSchema.optional() })) },
 });
 
 /** Значок идущего этапа в левой панели: автоматизация или исполнитель этапа навыка. */
@@ -1449,7 +1468,8 @@ export const automationRpcContract = defineRpcContract({
   skipAutomationStep: { input: z.object({ threadId: text, stage: text }), output: stepAnswerSchema },
   /** Нажатие владельца на кнопку шага этапа Action: `started` — шаг взят в работу, `false` — этап не ждёт нажатия или шаг уже идёт. */
   runActionStep: { input: z.object({ threadId: text, stage: text }), output: z.object({ started: z.boolean() }) },
-  runningThreads: { input: z.object({}), output: z.array(z.object({ threadId: text, icon: rowRunningIconSchema })) },
+  /** `stage` — у идущего этапа своя иконка. */
+  runningThreads: { input: z.object({}), output: z.array(z.object({ threadId: text, icon: rowRunningIconSchema, stage: rowStageSchema.optional() })) },
   /** Логотип провайдера тредов с flow: пока идёт ход, он крутится в строке треда вместо колёсика bb. */
   agentLogos: { input: z.object({}), output: z.array(z.object({ threadId: text, logoUrl: text })) },
 });
@@ -1531,7 +1551,8 @@ export const voiceRpcContract = defineRpcContract({
     }),
     output: z.discriminatedUnion("kind", [
       z.object({ kind: z.literal("transcribed"), text }),
-      z.object({ kind: z.literal("failed"), reason: z.enum(["empty", "unavailable"]) }),
+      /** `detail` — слова bb о сбое, вроде «Codex: Not responding»: владелец видит, что отказал сервис, а не микрофон. */
+      z.object({ kind: z.literal("failed"), reason: z.enum(["empty", "unavailable"]), detail: z.string().optional() }),
     ]),
   },
 });
@@ -1575,6 +1596,7 @@ export type StageTrack = z.output<typeof stageTrackSchema>;
 export type RunningIcon = z.output<typeof runningIconSchema>;
 /** Идущий тред в левой панели: значок этапа. */
 export type RunningThread = z.output<typeof automationRpcContract.runningThreads.output>[number];
+export type RowStage = z.output<typeof rowStageSchema>;
 export type AgentLogo = z.output<typeof automationRpcContract.agentLogos.output>[number];
 export type StageSettings = z.output<typeof stageSettingsSchema>;
 export type Flow = z.output<typeof flowSchema>;
@@ -1607,7 +1629,8 @@ export type FrozenRun = z.output<typeof frozenRunSchema>;
 export type RunHistoryEntry = z.output<typeof runHistoryEntrySchema>;
 export type Planned = z.output<typeof plannedSchema>;
 export type ContextFillView = z.output<typeof contextFillSchema>;
-export type AwaitingKind = z.output<typeof awaitingEntrySchema>["kind"];
+export type AwaitingEntry = z.output<typeof awaitingEntrySchema>;
+export type AwaitingKind = AwaitingEntry["kind"];
 export type FlowSyncStatus = z.output<typeof flowSyncStatusSchema>;
 export type FlowSyncState = z.output<typeof flowSyncStateSchema>;
 

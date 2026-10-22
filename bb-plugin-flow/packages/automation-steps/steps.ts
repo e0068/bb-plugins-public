@@ -25,6 +25,7 @@ import type { PluginsPort } from "./wiring/plugin-reinstall";
 import {
   attemptArchive,
   attemptLocalMainPull,
+  availableStatus,
   catchUpBranch,
   deliverIntoParent,
   parentHeadOf,
@@ -173,13 +174,6 @@ const DELIVERY_DETAIL: Record<ParentDeliveryOutcome, (parentBranch: string) => s
   delivered: (parentBranch) => `merged into ${parentBranch} — the parent thread's branch, no PR on GitHub`,
 };
 
-/**
- * Окружение без git — чаще всего проект смотрит на папку выше репозитория. Владелец
- * должен увидеть, какая это папка и что поправить, а не код статуса bb.
- */
-const notARepository = (path: string): string =>
-  `The thread's environment is not a git repository: ${path}. Point the project at the folder that holds the repository, then retry.`;
-
 /** Исключение шага — его итог, а не падение исполнителя. */
 const guarded =
   (run: (threadId: string) => Promise<StepOutcome>) =>
@@ -293,16 +287,10 @@ export function createSteps(ports: StepPorts): Steps {
       }),
     );
 
-  // Чистое дерево — не провал: коммитить нечего, цепочка идёт дальше.
+  // Чистое дерево — не провал: коммитить нечего, цепочка идёт дальше. Git-статус, который bb не отдал, — исключение.
   const commitTree = async (threadId: string): Promise<StepOutcome> => {
     const environmentId = await environmentOf(threadId);
-    const status = await sdk.environments.status({ environmentId });
-    // Окружение без папки называется своим id: другого адреса у него нет.
-    if (status.outcome === "not_applicable") return failed(notARepository((await sdk.environments.get({ environmentId })).path ?? environmentId));
-    if (status.outcome === "unavailable") {
-      const { code, workspacePath, message } = status.failure;
-      return failed(code === "not_git_repo" ? notARepository(workspacePath) : `Git status of the thread's environment is unavailable (${workspacePath}): ${message}`);
-    }
+    const status = await availableStatus(sdk, environmentId);
     if (!status.workspace.workingTree.hasUncommittedChanges) return done("nothing to commit");
     return done((await sdk.environments.commit({ environmentId })).commitSubject);
   };
@@ -319,8 +307,9 @@ export function createSteps(ports: StepPorts): Steps {
     const answer = parseIssuedKeys(ran.stdout);
     if (answer.kind === "unreadable") return failed(`Task keys were not issued: unreadable answer: ${answer.text}`);
     if (answer.keys.length === 0) return done("no unnamed tasks");
-    const committed = await commitTree(threadId);
-    return committed.ok ? done(answer.keys.join(", ")) : committed;
+    // Отказ коммита — исключение с причиной bb: его итогом делает `guarded`.
+    await commitTree(threadId);
+    return done(answer.keys.join(", "));
   };
 
   const steps: Steps = {

@@ -5,7 +5,7 @@ import { loadPluginApp, renderSlot } from "@get-bb/plugin-sdk/testing/app";
 import type { PluginRpcTestHandlers } from "@get-bb/plugin-sdk/testing/app";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { failureText } from "../core/voice";
+import { failureText, failureWithReason } from "../core/voice";
 import type { DecisionBrief, decisionsRpcContract, voiceRpcContract } from "../shared/contract";
 import { FakeMediaRecorder, installMicrophone, uninstallMicrophone } from "./voice-fakes";
 
@@ -170,5 +170,19 @@ describe("денежные поля без микрофона", () => {
     fireEvent.click(panel.getByRole("button", { name: "Править цену" }));
     expect(panel.getByRole("textbox", { name: "Своя цель" })).toBeTruthy();
     expect(panel.queryAllByRole("button", { name: MIC })).toHaveLength(0);
+  });
+});
+
+describe("сбой распознавания называет причину", () => {
+  it("bb не распознал — у поля ошибка с причиной от bb, набранный текст на месте", async () => {
+    installMicrophone();
+    const slot = open({ transcribeVoice: () => ({ kind: "failed", reason: "unavailable", detail: "Codex: Not responding" }) });
+    const group = within(await slot.findByRole("group", { name: "Каким путём?" }));
+    fireEvent.change(textbox(group, "Свой ответ"), { target: { value: "набранное" } });
+    const stop = await startIn(group, "Голосовой ввод: Свой ответ");
+    fireEvent.click(stop);
+
+    expect((await group.findByRole("alert")).textContent).toBe(failureWithReason("unavailable", "Codex: Not responding"));
+    expect(textbox(group, "Свой ответ").value).toBe("набранное");
   });
 });

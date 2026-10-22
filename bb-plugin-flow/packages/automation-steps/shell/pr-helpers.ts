@@ -28,6 +28,7 @@ import type { ArchiveFailure, MergeFailure } from "../core/notification";
 import { alreadyOpenPr, type PrSignal, refineWithLiveOpenPr } from "../core/open-pr-refinement";
 import { afterAnswer, decideLiveAsk, type AwaitMark } from "../core/pr-await";
 import { choosePrTitle } from "../core/pr-title";
+import { statusRefusalMessage } from "../core/status-refusal";
 import { parseGithubRemote } from "../core/remote";
 import { chooseToken } from "../core/token";
 import { decideVisibility, type PrPresence } from "../core/visibility";
@@ -154,13 +155,7 @@ async function openPrOf(
   const base = resolveBase(env, await resolveBaseMode(kv, environmentId));
   if (!base) throw new Error("Could not determine the environment's base branch.");
 
-  const status = await sdk.environments.status({
-    environmentId,
-    mergeBaseBranch: base.statusBase,
-  });
-  if (status.outcome !== "available") {
-    throw new Error(`environment git status unavailable (${status.outcome}).`);
-  }
+  const status = await availableStatus(sdk, environmentId, base.statusBase);
 
   // The token is already resolved (it's needed for runCreatePr too) —
   // wrapped instead of re-resolving via settings, so refining a `settled`
@@ -464,6 +459,25 @@ export async function attemptLocalMainPull(
   const pull = await runLocalMainPull(gitClient(env.path), base.githubBase);
   await kv.set(localMainPullKey(environmentId), pull);
   return pull;
+}
+
+type EnvironmentStatus = Awaited<ReturnType<Sdk["environments"]["status"]>>;
+
+/**
+ * Git-статус окружения, который bb отдал; отказ bb — исключение с его же
+ * причиной (core/status-refusal.ts), его превращает в итог шага `guarded`.
+ */
+export async function availableStatus(sdk: Sdk, environmentId: string, mergeBaseBranch?: string): Promise<Extract<EnvironmentStatus, { outcome: "available" }>> {
+  const status = await sdk.environments.status(mergeBaseBranch === undefined ? { environmentId } : { environmentId, mergeBaseBranch });
+  switch (status.outcome) {
+    case "available":
+      return status;
+    case "unavailable":
+      throw new Error(statusRefusalMessage(status));
+    case "not_applicable":
+      // Окружение без папки называется своим id: другого адреса у него нет.
+      throw new Error(statusRefusalMessage({ outcome: "not_applicable", path: (await sdk.environments.get({ environmentId })).path ?? environmentId }));
+  }
 }
 
 export async function currentHeadSha(sdk: Sdk, environmentId: string): Promise<string | null> {

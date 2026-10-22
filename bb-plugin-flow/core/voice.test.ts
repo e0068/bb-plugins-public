@@ -8,6 +8,7 @@ import {
   audioFileName,
   bytesToBase64,
   failureText,
+  failureWithReason,
   insertTranscript,
   normalizeTranscript,
   promptBefore,
@@ -103,5 +104,20 @@ describe("когда браузер умеет записывать звук", (
     const texts = [unsupportedText("insecure-origin"), unsupportedText("no-recorder"), ...VOICE_FAILURES.map(failureText)];
     expect(texts.every((t) => t.trim() !== "")).toBe(true);
     expect(new Set(texts).size).toBe(texts.length);
+  });
+});
+
+describe("причина сбоя распознавания", () => {
+  it("текст ошибки называет причину от bb, а без причины остаётся прежним", () => {
+    expect(failureWithReason("unavailable", "Codex: Not responding")).toBe(`${failureText("unavailable")} (Codex: Not responding)`);
+    expect(failureWithReason("unavailable", undefined)).toBe(failureText("unavailable"));
+  });
+
+  it("причина не теряется в тексте ни для одной ошибки", () => {
+    fc.assert(
+      fc.property(fc.constantFrom(...VOICE_FAILURES), fc.string({ minLength: 1 }).filter((s) => s.trim() !== ""), (failure, detail) =>
+        failureWithReason(failure, detail).includes(detail.trim()),
+      ),
+    );
   });
 });

@@ -13,9 +13,10 @@ export const registerVoiceApi = (bb: Pick<BbPluginApi, "rpc" | "sdk">): void => 
         const { text } = await bb.sdk.system.transcribeVoice(prompt === undefined ? { file } : { file, prompt });
         const normalized = normalizeTranscript(text);
         return normalized === "" ? { kind: "failed" as const, reason: "empty" as const } : { kind: "transcribed" as const, text: normalized };
-      } catch {
-        // Причину сбоя виджету знать незачем: владелец видит «не удалось распознать» и пробует ещё раз.
-        return { kind: "failed" as const, reason: "unavailable" as const };
+      } catch (error) {
+        // Причина от bb уходит виджету: «Codex: Not responding» говорит владельцу, что отказал сервис, а не запись.
+        const detail = error instanceof Error ? error.message.trim() : "";
+        return { kind: "failed" as const, reason: "unavailable" as const, ...(detail === "" ? {} : { detail }) };
       }
     },
   });

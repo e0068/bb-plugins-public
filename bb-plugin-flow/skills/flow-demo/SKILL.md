@@ -54,7 +54,7 @@ The owner sees what was done. A demo is a report, not a stop: in bb sending it c
 }
 ```
 
-After the call, paste the directive line as a standalone line and go on to the next stage in the same turn. Leave what you brought up running — the owner may open it later; stop it and remove the share (`bb connect unexpose <port>`) when the run ends or a newer demo replaces it.
+After the call, paste the directive line as a standalone line and go on to the next stage in the same turn. When the turn ends, paste the line once more in the final reply of the turn, above the approval line or the brief line that ends the turn: bb folds replies between tool calls under "Worked for", and the card moves to the last copy of its line — without the repeat the owner sees the approval and not the demo. Leave what you brought up running — the owner may open it later; stop it and remove the share (`bb connect unexpose <port>`) when the run ends or a newer demo replaces it.
 
 **In Claude Code.** A reply in sections: "Done", "Not done", "How to check". Every file, folder and address as a markdown link. The live result — the `http://localhost:<port>` address of the running server or exactly one launch command in a bash block. Then AskUserQuestion "What next?": "Continue" (Recommended), and the owner writes a comment in "Other". On getting the answer, stop what you brought up.
 

@@ -16,9 +16,12 @@ const ports = (cli: CliPorts): StepPorts =>
     cli,
   }) as unknown as StepPorts;
 
-const linked: CliPorts = {
-  run: async (args) => (args[1] === "current" ? ran(JSON.stringify({ tasks: [{ id: "p1:flow-ssylki", key: "BBPL-12" }, { id: "p1:mail-fix", key: "mail-fix" }] })) : ran("")),
-};
+/** CLI доски: задачи треда — `tasks`, у каждой нет подзадач, любая запись принимается. */
+const board = (tasks: readonly object[]): CliPorts => ({
+  run: async (args) => ran(args[1] === "current" ? JSON.stringify({ tasks }) : args[1] === "show" ? JSON.stringify({ subtasks: [] }) : ""),
+});
+
+const linked = board([{ id: "p1:flow-ssylki", key: "BBPL-12" }, { id: "p1:mail-fix", key: "mail-fix" }]);
 
 describe("ссылки шагов задач", () => {
   it("«Задача → done» даёт ссылку на файл каждой переведённой задачи", async () => {
@@ -49,7 +52,7 @@ describe("ссылки шага после повтора", () => {
 
 describe("задача без слага", () => {
   it("задача, у которой CLI не назвал файла, ссылки не даёт — только ключ строкой", async () => {
-    const bare: CliPorts = { run: async (args) => (args[1] === "current" ? ran(JSON.stringify({ tasks: [{ key: "BBPL-12" }] })) : ran("")) };
+    const bare = board([{ key: "BBPL-12" }]);
     expect(await createSteps(ports(bare))["bb.tasks-done"]("t1")).toEqual({ ok: true, detail: "BBPL-12" });
   });
 });

@@ -9,7 +9,7 @@ import type { BbPluginApi, PluginKvStorage } from "@get-bb/plugin-sdk";
 import { isStepId } from "@bb-plugins/automation-steps/catalog";
 import { SELF_UPDATE_PENDING_PREFIX, type PluginsPort, type StepOutcome, type Steps } from "@bb-plugins/automation-steps/index";
 import { scriptIdOf, scriptOf } from "../core/automation-scripts";
-import { waitsForAnswer } from "../core/awaiting";
+import { actionAwaitingId, automationAwaitingId, ownStageIcon, waitsForAnswer } from "../core/awaiting";
 import {
   DEFAULT_RETRY,
   archivesThread,
@@ -153,11 +153,6 @@ export const externalStep =
     if (error !== null) return { ok: false, error: `${error}${executed.length === 0 ? "" : ` (ran before the failure: ${executed.join(", ")})`}` };
     return { ok: true, detail: executed.length === 0 ? null : executed.join(", ") };
   };
-
-const awaitingId = (stageId: string) => `automation:${stageId}`;
-
-/** Ожидание владельца на этапе Action — своё: его снимает нажатие, а не повтор упавшей автоматизации. */
-const actionAwaitingId = (stageId: string) => `action:${stageId}`;
 
 const processTimer = (run: () => void, ms: number): (() => void) => {
   const handle = setTimeout(run, ms);
@@ -317,7 +312,7 @@ export const createAutomationRunner = (deps: AutomationRunnerDeps): AutomationRu
         await deps.progress.update(threadId, (p) => onIdleOpen(onStepFailed(p, stage.id, outcome.error, deps.now(), retryAt), stage.id, deps.now()));
         // Отмена, пришедшая во время записи, снимет и её: ожидания и автоповтора после неё не ставим.
         if (stale()) return false;
-        await deps.store.putAwaiting(threadId, { briefId: awaitingId(stage.id), kind: "automation" });
+        await deps.store.putAwaiting(threadId, { briefId: automationAwaitingId(stage.id), kind: "automation" });
         // Пока впереди автоповтор, падение видно только в баннере: тост — когда шаг ждёт владельца.
         if (delay === null) await ownerWaits(threadId, stage, step.id, outcome.error);
         else if (!stale()) arm(threadId, stage.id, delay);
@@ -436,7 +431,7 @@ export const createAutomationRunner = (deps: AutomationRunnerDeps): AutomationRu
     const run = record?.stages[stageId]?.run;
     const stage = deps.stages(threadId).stages.find((s) => s.id === stageId);
     if (run !== undefined && typeof run.error === "string" && stage !== undefined) return { run, stage };
-    await deps.store.clearAwaiting(threadId, awaitingId(stageId)).catch(deps.onError);
+    await deps.store.clearAwaiting(threadId, automationAwaitingId(stageId)).catch(deps.onError);
     return null;
   };
 
@@ -450,7 +445,7 @@ export const createAutomationRunner = (deps: AutomationRunnerDeps): AutomationRu
     if (failed === null) return null;
     return async () => {
       await deps.progress.update(threadId, change);
-      await deps.store.clearAwaiting(threadId, awaitingId(stageId));
+      await deps.store.clearAwaiting(threadId, automationAwaitingId(stageId));
       if (!(await runSteps(threadId, failed.stage, failed.run.steps, from(failed.run.at)))) return;
       const last = (await chain(threadId)) ?? failed.stage;
       await wakeIfAgentNext(threadId, isActionStage(failed.stage) ? "action" : "automation", last);
@@ -629,8 +624,13 @@ export const createAutomationRunner = (deps: AutomationRunnerDeps): AutomationRu
         threads.map(async (threadId): Promise<RunningThread | null> => {
           const record = await deps.progress.get(threadId);
           if (record === null) return null;
-          const icon = deps.stages(threadId).stages.map((stage) => stageLiveIcon(record, stage, false)).find(isSelfRunning);
-          return icon === undefined ? null : { threadId, icon };
+          const live = deps.stages(threadId).stages.flatMap((stage) => {
+            const icon = stageLiveIcon(record, stage, false);
+            return isSelfRunning(icon) ? [{ icon, stage }] : [];
+          })[0];
+          if (live === undefined) return null;
+          const own = ownStageIcon(live.stage);
+          return { threadId, icon: live.icon, ...(own === undefined ? {} : { stage: own }) };
         }),
       );
       return entries.filter((entry): entry is RunningThread => entry !== null);

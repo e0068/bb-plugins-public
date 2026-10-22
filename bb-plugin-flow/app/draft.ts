@@ -138,6 +138,9 @@ export const finishes = (brief: DecisionBrief, draft: Draft): boolean =>
   toAnswer(brief, draft).outcome?.accepted !== false &&
   (brief.outcome.nextFlow === undefined || draft.outcomeFlow === null);
 
+/** Ответ на итог возвращает агенту работу — комментарий, свой ответ в строке вопроса или переход в другой flow. `settled` — черновик, сведённый `settleAgent`. */
+export const returnsWork = (brief: DecisionBrief, settled: Draft): boolean => toAnswer(brief, settled).outcome?.accepted === false;
+
 export const setOutcomeNote = (draft: Draft, note: string): Draft => ({ ...draft, outcomeNote: note });
 
 export const setOutcomeFlow = (draft: Draft, flow: OutcomeFlow | null): Draft => ({ ...draft, outcomeFlow: flow });

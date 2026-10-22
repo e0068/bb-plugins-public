@@ -15,6 +15,7 @@ import { Icon } from "../components/ui/icon";
 import { Input } from "../components/ui/input";
 import { cn } from "../lib/utils";
 import type {
+  AgentTurn,
   AnswerRecord,
   DecisionBrief,
   DecisionOption,
@@ -25,6 +26,7 @@ import type {
   DispatchPlace,
   DispatchRoute,
   Fold,
+  turnRpcContract,
   voiceRpcContract,
 } from "../shared/contract";
 import {
@@ -42,7 +44,7 @@ import { useLatestCopy } from "./brief-copies";
 import { AnsweredBriefCard, BriefCard, ClarifyCard, DraftBriefCard, ResolvedClarifyLine, useDispatchPicker } from "./brief-card";
 import { shownDraft } from "./draft-restore";
 import { clearStoredDraft } from "./draft-storage";
-import { Frame, NoteField, RecommendedStar, Titles, answeredAt, useStoredDraft, useSubmit, type FormProps } from "./parts";
+import { Frame, NoteField, RecommendedStar, SendFailureReason, Titles, answeredAt, useStoredDraft, useSubmit, type FormProps } from "./parts";
 import { briefHeightKey, readHeight, summaryHeightKey, useHeldHeight } from "./held-height";
 import { useNearView } from "./near-view";
 import { RunSummaryBlock } from "./run-summary";
@@ -57,12 +59,14 @@ import { NoMath } from "./no-math";
 
 /** Канал `ANSWERED_CHANNEL` бэкенда; строкой, потому что `app` не берёт значений из `server`. */
 const ANSWERED_CHANNEL = "decisions:answered";
+/** Канал `TURN_CHANNEL` бэкенда — смена хода агента в треде. */
+const TURN_CHANNEL = "decisions:turn";
 
 type Loaded =
   | { kind: "loading" }
   | { kind: "error" }
   | { kind: "not_found" }
-  | { kind: "found"; brief: DecisionBrief; answer: AnswerRecord | null; fold?: Fold; draft?: string; resolved?: true };
+  | { kind: "found"; brief: DecisionBrief; answer: AnswerRecord | null; fold?: Fold; draft?: string; resolved?: true; idleAfter?: true };
 
 type Rpc = ReturnType<typeof useRpc<typeof decisionsRpcContract>>;
 
@@ -182,6 +186,46 @@ function useDispatchPlace(threadId: string): { place: DispatchPlace; route: Disp
   return place;
 }
 
+/** Ход из события `TURN_CHANNEL` для этого треда; чужой тред или не тот вид — `null`. */
+const turnFromEvent = (payload: unknown, threadId: string): AgentTurn | null => {
+  if (typeof payload !== "object" || payload === null) return null;
+  const { threadId: about, turn } = payload as { threadId?: unknown; turn?: unknown };
+  return about === threadId && (turn === "running" || turn === "ended") ? turn : null;
+};
+
+/**
+ * Ход агента для открытого уточнения: один запрос при открытии, дальше — события смены хода, так что сжатие появляется
+ * и пропадает без перезагрузки. Событие новее ответа на запрос и побеждает его. Не нужен (`watch` ложно) — RPC не зовётся;
+ * ответа ещё нет или сбой — `null`.
+ */
+function useAgentTurn(threadId: string, watch: boolean): AgentTurn | null {
+  const rpc = useRpc<typeof turnRpcContract>();
+  const rpcRef = useRef(rpc);
+  rpcRef.current = rpc;
+  const [turn, setTurn] = useState<AgentTurn | null>(null);
+  const heard = useRef(false);
+  useEffect(() => {
+    if (!watch) return;
+    let alive = true;
+    void rpcRef.current
+      .call("agentTurn", { threadId })
+      .then((result) => {
+        if (alive && !heard.current) setTurn(result.turn);
+      })
+      .catch(() => undefined);
+    return () => {
+      alive = false;
+    };
+  }, [threadId, watch]);
+  useRealtime(TURN_CHANNEL, (payload) => {
+    const next = turnFromEvent(payload, threadId);
+    if (next === null) return;
+    heard.current = true;
+    setTurn(next);
+  });
+  return turn;
+}
+
 function BriefLoader({ id, source, messageId, threadId }: { id: string; source: string; messageId: string; threadId: string }) {
   const t = useMessages();
   const place = useDispatchPlace(threadId);
@@ -190,6 +234,10 @@ function BriefLoader({ id, source, messageId, threadId }: { id: string; source: 
   const { state, retry, answered, rpcRef } = useBrief(id);
   const voiceRpc = useRpc<typeof voiceRpcContract>();
   const isClosed = state.kind === "found" && (state.answer !== null || state.fold !== undefined || state.resolved === true);
+  // Уточнение вливается в идущий ход: сжатие ему предлагается, только когда ход агента кончился.
+  const openClarify = state.kind === "found" && state.brief.kind === "clarify" && !isClosed;
+  const turn = useAgentTurn(threadId, openClarify);
+  const compactable = !openClarify || turn === "ended";
   useEffect(() => {
     // Отвеченному, решённому и свёрнутому брифу черновик и картинки не нужны — отсюда ли ушёл ответ или из другой вкладки; свёрнутого черновик живёт на сервере.
     if (!isClosed) return;
@@ -240,7 +288,7 @@ function BriefLoader({ id, source, messageId, threadId }: { id: string; source: 
             ) : legacy ? (
               <BriefForm brief={state.brief} send={send} onResult={onAccepted} place={place.place} route={place.route} compact={place.compact} />
             ) : (
-              <BriefCard brief={state.brief} send={send} onResult={onAccepted} roots={roots} place={place.place} route={place.route} compact={place.compact} />
+              <BriefCard brief={state.brief} send={send} onResult={onAccepted} roots={roots} place={place.place} route={place.route} compact={place.compact} compactable={compactable} idleAfter={state.idleAfter === true} />
             )}
             </MentionsProvider>
           </VoiceProvider>
@@ -566,7 +614,7 @@ function ForkSection(props: QuestionProps & { index: number; missing: boolean })
 function BriefForm({ brief, send, onResult, place, route, compact: compactPreselected }: FormProps & { place: DispatchPlace; route: DispatchRoute; compact: boolean }) {
   const t = useMessages();
   const [draft, setDraft] = useStoredDraft(brief.id);
-  const { sending, failed, missing, touch, submit } = useSubmit({ send, onResult });
+  const { sending, failed, failure, missing, touch, submit } = useSubmit({ send, onResult });
   const { decided, total } = decidedCount(brief, draft);
   const complete = decided === total;
   const single = brief.questions.length === 1;
@@ -649,6 +697,7 @@ function BriefForm({ brief, send, onResult, place, route, compact: compactPresel
             {t.common.send}
           </Button>
         </div>
+        <SendFailureReason failure={failure} className="mt-1 text-right" />
         {picker.lists !== null && <div className="mt-2">{picker.lists}</div>}
       </div>
     </Frame>

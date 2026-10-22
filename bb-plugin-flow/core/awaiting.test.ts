@@ -4,7 +4,7 @@ import { describe, expect, it } from "vitest";
 
 import { builtinStage } from "../lib/stage-constants";
 import type { DecisionBrief } from "../shared/contract";
-import { awaitingChanges, awaitingKind, waitsForAnswer } from "./awaiting";
+import { actionAwaitingId, automationAwaitingId, awaitingChanges, awaitingKind, awaitingStageId, ownStageIcon, waitsForAnswer } from "./awaiting";
 import { report } from "./stages-fixtures";
 
 const brief = (patch: Partial<DecisionBrief>): DecisionBrief => ({ id: "dec_1", threadId: "thr_1", title: "Бриф", createdAt: "2026-09-16T10:00:00.000Z", kind: "brief", questions: [], ...patch });
@@ -50,5 +50,25 @@ describe("ожидание держит владелец", () => {
   it("бриф ждёт владельца, а ожидание автоматизации и этапа Action снимает сам прогон", () => {
     expect((["questions", "criteria", "select", "demo"] as const).map(waitsForAnswer)).toEqual([true, true, true, true]);
     expect((["automation", "action"] as const).map(waitsForAnswer)).toEqual([false, false]);
+  });
+});
+
+describe("этап ожидания автоматизации и Action", () => {
+  it("ожидание автоматизации и Action называет свой этап, бриф — никакого", () => {
+    expect(awaitingStageId({ briefId: automationAwaitingId("land"), kind: "automation" })).toBe("land");
+    expect(awaitingStageId({ briefId: actionAwaitingId("deploy"), kind: "action" })).toBe("deploy");
+    expect(awaitingStageId({ briefId: "dec_1", kind: "demo" })).toBeNull();
+  });
+
+  it("id этапа читается обратно как есть, двоеточие внутри id тоже", () => {
+    fc.assert(fc.property(fc.string({ minLength: 1 }), (id) => awaitingStageId({ briefId: automationAwaitingId(id), kind: "automation" }) === id && awaitingStageId({ briefId: actionAwaitingId(id), kind: "action" }) === id));
+  });
+});
+
+describe("своя иконка этапа в строке треда", () => {
+  it("этап со своей иконкой отдаёт название и имя иконки, без неё и без этапа — ничего", () => {
+    expect(ownStageIcon({ name: "Finalize", icon: "PackageDelivered" })).toEqual({ name: "Finalize", icon: "PackageDelivered" });
+    expect(ownStageIcon({ name: "Finalize" })).toBeUndefined();
+    expect(ownStageIcon(undefined)).toBeUndefined();
   });
 });
