@@ -40,6 +40,7 @@ const sdk = (path: string | null, over: { getFails?: boolean } = {}) =>
       },
       pullRequest: async () => PR_SETTLED,
       mergePullRequest: async () => ({}),
+      status: async () => ({ outcome: "available", workspace: { workingTree: { hasUncommittedChanges: false } } }),
     },
   }) as unknown as Sdk;
 

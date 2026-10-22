@@ -30,6 +30,17 @@ export const stepFailure = (error: unknown): StepOutcome => {
 };
 
 /**
+ * Итог шага, который перед работой закоммитил дерево треда: тема коммита
+ * встаёт в начало деталей, чтобы владелец видел, откуда в ветке новый коммит.
+ * Коммита не было (`null`) или шаг провалился — итог тот же.
+ */
+export const withCommitted = (outcome: StepOutcome, subject: string | null): StepOutcome => {
+  if (subject === null || !outcome.ok) return outcome;
+  const committed = `committed: ${subject}`;
+  return { ...outcome, detail: outcome.detail === null ? committed : `${committed}; ${outcome.detail}` };
+};
+
+/**
  * Почему поднимать версию было нечему и не на чем. Это не поломка: цепочка
  * ставит шаг бампа дважды — сразу за созданием PR и перед мёрджем, — и в обоих
  * пробелах версия поднимется вторым вызовом. Провал здесь останавливал цепочку

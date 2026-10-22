@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { bumpOutcome, reinstallOutcome } from "./step-outcomes";
+import { bumpOutcome, reinstallOutcome, withCommitted } from "./step-outcomes";
 
 const bump = (over: Partial<Parameters<typeof bumpOutcome>[0]> = {}) => ({
   bumped: [],
@@ -132,5 +132,17 @@ describe("bumpOutcome — пробелы, а не поломки", () => {
       ok: true,
       detail: "the branch is not on origin yet — versions are raised by the bump step before the merge",
     });
+  });
+});
+
+describe("withCommitted", () => {
+  it("тема коммита встаёт в начало деталей успешного шага", () => {
+    expect(withCommitted({ ok: true, detail: "merged" }, "Задача → done")).toEqual({ ok: true, detail: "committed: Задача → done; merged" });
+    expect(withCommitted({ ok: true, detail: null }, "T")).toEqual({ ok: true, detail: "committed: T" });
+  });
+
+  it("без коммита и у провала итог тот же", () => {
+    expect(withCommitted({ ok: true, detail: "merged" }, null)).toEqual({ ok: true, detail: "merged" });
+    expect(withCommitted({ ok: false, error: "x" }, "T")).toEqual({ ok: false, error: "x" });
   });
 });
