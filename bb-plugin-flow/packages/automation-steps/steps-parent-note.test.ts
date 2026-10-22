@@ -60,6 +60,17 @@ const sdkOf = ({ parent, child }: { parent: string; child: string }) =>
           : { id: "e-parent", path: parent, branchName: PARENT_BRANCH, mergeBaseBranch: null, defaultBranch: "main", baseBranch: "main" },
       mergePullRequest: async () => {},
       pullRequest: async () => ({ outcome: "unavailable" }),
+      // Статус и коммит дерева — настоящим git, как их отдаёт bb: неотслеживаемое тоже считается.
+      status: async ({ environmentId }: { environmentId: string }) => ({
+        outcome: "available",
+        workspace: { workingTree: { hasUncommittedChanges: git(environmentId === "e-child" ? child : parent, "status", "--porcelain") !== "" } },
+      }),
+      commit: async ({ environmentId }: { environmentId: string }) => {
+        const cwd = environmentId === "e-child" ? child : parent;
+        git(cwd, "add", "-A");
+        git(cwd, "commit", "-q", "-m", "tree");
+        return { commitSubject: "tree" };
+      },
     },
   }) as unknown as StepPorts["sdk"];
 

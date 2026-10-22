@@ -52,6 +52,7 @@ describe("влитая ветка и несказанное родителю", (
           environmentId === "e-child"
             ? { id: "e-child", path: child, branchName: CHILD_BRANCH, mergeBaseBranch: PARENT_BRANCH, defaultBranch: "main", baseBranch: "main" }
             : { id: "e-parent", path: parent, branchName: PARENT_BRANCH, mergeBaseBranch: null, defaultBranch: "main", baseBranch: "main" },
+        status: async () => ({ outcome: "available", workspace: { workingTree: { hasUncommittedChanges: false } } }),
       },
     } as unknown as StepPorts["sdk"];
     const untouched = async () => {

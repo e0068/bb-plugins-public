@@ -24,13 +24,21 @@ const plugins: PluginsPort = {
 };
 
 /** Журнал того, что шаг сделал с PR, по порядку. */
-const harness = (refresh: StepPorts["refreshPr"], store = kv()) => {
+const harness = (refresh: StepPorts["refreshPr"], store = kv(), dirty = false, commitFails = false) => {
   const log: string[] = [];
+  let uncommitted = dirty;
   const sdk = {
     threads: { get: async () => ({ id: "t1", environmentId: "e1", title: "T" }) },
     environments: {
       get: async () => ({ id: "e1", hostId: "h", path: "/tmp/w", branchName: "b", baseBranch: "main", remoteUrl: null }),
       mergePullRequest: async ({ method }: { method: string }) => void log.push(`merge:${method}`),
+      status: async () => ({ outcome: "available", workspace: { workingTree: { hasUncommittedChanges: uncommitted } } }),
+      commit: async () => {
+        if (commitFails) throw new Error("commit hook failed");
+        log.push("commit");
+        uncommitted = false;
+        return { commitSubject: "Задача → done" };
+      },
     },
   } as unknown as StepPorts["sdk"];
   const ports: StepPorts = {
@@ -60,7 +68,19 @@ describe("«Смёрджить PR» и коммиты после «Открыт�
     expect(log).toEqual(["refresh:t1", "merge:merge"]);
   });
 
-  it("незакоммиченное в дереве — шаг падает с причиной и старое содержимое PR не вливает", async () => {
+  it("незакоммиченное в дереве шаг сперва коммитит, и оно уезжает в PR до мёрджа", async () => {
+    const { steps, log } = harness(async () => "unchanged", kv(), true);
+    expect(await steps["git.merge"]("t1")).toMatchObject({ ok: true, detail: expect.stringMatching(/^committed: Задача → done/) });
+    expect(log).toEqual(["commit", "refresh:t1", "merge:merge"]);
+  });
+
+  it("коммит не прошёл — шаг красный с причиной bb, ни догоняния PR, ни мёрджа", async () => {
+    const { steps, log } = harness(async () => "unchanged", kv(), true, true);
+    expect(await steps["git.merge"]("t1")).toEqual({ ok: false, error: "commit hook failed" });
+    expect(log).toEqual([]);
+  });
+
+  it("PR не догнать — шаг падает с причиной и старое содержимое PR не вливает", async () => {
     const { steps, log } = harness(async () => Promise.reject(new Error("Can't update the open PR right now (dirty) — commit the changes first.")));
     const outcome = await steps["git.merge"]("t1");
     expect(outcome).toMatchObject({ ok: false, error: expect.stringContaining("dirty") });

@@ -11,7 +11,7 @@ import type { BumpLevel } from "./core/plugin-version-bump";
 import { classifyFailure, RETRY_DELAYS_MS } from "./core/retry";
 import { threadTitleOf } from "./core/thread-title";
 import { mergedPullLinks, openedPullOutcome, taskLink, withLinks } from "./core/step-links";
-import { bumpOutcome, reinstallOutcome, stepFailure, type StepOutcome } from "./core/step-outcomes";
+import { bumpOutcome, reinstallOutcome, stepFailure, withCommitted, type StepOutcome } from "./core/step-outcomes";
 import { issueKeysArgs, issueKeysEnv, parseIssuedKeys } from "./core/bb-tasks-commands";
 import { bbCliClient } from "./wiring/bb-cli-client";
 import { cliRunMessage, type CliPorts } from "./wiring/bb-cli-run";
@@ -287,13 +287,29 @@ export function createSteps(ports: StepPorts): Steps {
       }),
     );
 
-  // Чистое дерево — не провал: коммитить нечего, цепочка идёт дальше. Git-статус, который bb не отдал, — исключение.
-  const commitTree = async (threadId: string): Promise<StepOutcome> => {
+  // Тема сделанного коммита; чистое дерево — `null`. Git-статус, который bb не отдал, — исключение.
+  const commitIfDirty = async (threadId: string): Promise<string | null> => {
     const environmentId = await environmentOf(threadId);
     const status = await availableStatus(sdk, environmentId);
-    if (!status.workspace.workingTree.hasUncommittedChanges) return done("nothing to commit");
-    return done((await sdk.environments.commit({ environmentId })).commitSubject);
+    if (!status.workspace.workingTree.hasUncommittedChanges) return null;
+    return (await sdk.environments.commit({ environmentId })).commitSubject;
   };
+
+  // Чистое дерево — не провал: коммитить нечего, цепочка идёт дальше.
+  const commitTree = async (threadId: string): Promise<StepOutcome> => done((await commitIfDirty(threadId)) ?? "nothing to commit");
+
+  // Шаг, двигающий ветку, сперва коммитит дерево треда. Грязное дерево здесь —
+  // не ошибка агента, а обычный ход цепочки: «Задача → done» перед FF, журнал
+  // брифов Flow, комментарий в задачу после шага Commit. Отказ на нём ронял
+  // автоматизацию до ручного коммита, а порядок шагов во flow решал, упадёт ли
+  // она вовсе. Теперь порядок не важен: незакоммиченное уходит отдельным
+  // коммитом той же темы, что дал бы шаг Commit.
+  const afterCommit =
+    (run: (threadId: string) => Promise<StepOutcome>) =>
+    async (threadId: string): Promise<StepOutcome> => {
+      const subject = await commitIfDirty(threadId);
+      return withCommitted(await run(threadId), subject);
+    };
 
   // Задача, рождённая в ветке, живёт без ключа, а правка из дерева треда его
   // не выдаёт. Команда Tasks+ выдаёт ключи в дереве треда, номерами после
@@ -316,9 +332,11 @@ export function createSteps(ports: StepPorts): Steps {
     "bb.rename-thread": guarded(renameThread),
     "bb.tasks-plan": guarded(writePlan),
     "git.commit": guarded(commitTree),
-    "git.fast-forward": guarded(async (threadId) => {
-      return done(CATCH_UP_DETAIL[await catchUpBranch(sdk, kv, threadId)]);
-    }),
+    "git.fast-forward": guarded(
+      afterCommit(async (threadId) => {
+        return done(CATCH_UP_DETAIL[await catchUpBranch(sdk, kv, threadId)]);
+      }),
+    ),
     // Ветку дочернего треда ключами наделит шаг родителя, догнавший main:
     // своё дерево и main не видят соседних волн, и номера бы совпали.
     "bb.tasks-issue-keys": guarded(orIntoParent(notNeeded, issueKeys)),
@@ -326,10 +344,12 @@ export function createSteps(ports: StepPorts): Steps {
     // ответа GitHub не открывает второй PR и говорит, что нашёл первый. Ветку
     // найденного PR шаг догоняет до ветки треда и говорит, сдвинул ли её.
     "git.create-pr": guarded(
-      orIntoParent(deliver, async (threadId) => {
-        const created = await gatherAndCreate(sdk, kv, await resolveToken(settings), threadId);
-        return openedPullOutcome(created, PR_DETAIL[created.branch](created.url));
-      }),
+      afterCommit(
+        orIntoParent(deliver, async (threadId) => {
+          const created = await gatherAndCreate(sdk, kv, await resolveToken(settings), threadId);
+          return openedPullOutcome(created, PR_DETAIL[created.branch](created.url));
+        }),
+      ),
     ),
     "bb.tasks-in-review": guarded(moveTasks("in_review")),
     // Версия ставится коммитом в ветку открытого PR и считается от базовой
@@ -341,26 +361,29 @@ export function createSteps(ports: StepPorts): Steps {
     // влитый PR — успех шага, закрытый — названный отказ, конфликт — названный
     // конфликт, а не «HTTP 409» (shell/pr-helpers.ts). Перед мёрджем ветка
     // PR догоняется до ветки треда: PR собран через API без пуша, и коммиты
-    // после «Открыть PR» иначе в main не попадают; грязное дерево — отказ.
+    // после «Открыть PR» иначе в main не попадают; незакоммиченное шаг
+    // сперва коммитит сам, чтобы оно тоже уехало в PR.
     // Догнанный PR теряет коммит бампа (wiring/create-pr.ts), поэтому версия
     // поднимается заново тем разрядом, что запомнил шаг бампа; не поднялась —
     // мёрджа нет: влить плагин на старой версии шаг бампа и не даёт.
     "git.merge": guarded(
-      orIntoParent(deliverAndTell, async (threadId) => {
-        const refreshed = await refreshPr(threadId);
-        const environmentId = await environmentOf(threadId);
-        const gh = await githubPullOf(sdk, settings, environmentId);
-        const level = refreshed === "updated" ? await kv.get<BumpLevel>(lastBumpKey(environmentId)) : undefined;
-        const rebump = level === undefined ? null : bumpOutcome(await settleVersionsForMerge(gh, level));
-        if (rebump !== null && !rebump.ok) return rebump;
-        await markAwaiting(sdk, environmentId, "merge");
-        const outcome = await mergeWithVerdict(gh, async () => void (await sdk.environments.mergePullRequest({ environmentId, method: MERGE_METHOD })));
-        if (outcome.ok) await kv.delete(lastBumpKey(environmentId));
-        const before = refreshed === "updated" ? [MERGE_REFRESHED, ...(rebump?.ok === true && rebump.detail !== null ? [`versions raised again: ${rebump.detail}`] : [])] : [];
-        const told = outcome.ok ? { ...outcome, detail: [...before, ...(outcome.detail === null ? [] : [outcome.detail])].join("; ") || null } : outcome;
-        // Ссылка мёрджа — на сам PR: номер знает только GitHub, без него ссылки нет.
-        return withLinks(told, mergedPullLinks(gh.ok ? gh : null));
-      }),
+      afterCommit(
+        orIntoParent(deliverAndTell, async (threadId) => {
+          const refreshed = await refreshPr(threadId);
+          const environmentId = await environmentOf(threadId);
+          const gh = await githubPullOf(sdk, settings, environmentId);
+          const level = refreshed === "updated" ? await kv.get<BumpLevel>(lastBumpKey(environmentId)) : undefined;
+          const rebump = level === undefined ? null : bumpOutcome(await settleVersionsForMerge(gh, level));
+          if (rebump !== null && !rebump.ok) return rebump;
+          await markAwaiting(sdk, environmentId, "merge");
+          const outcome = await mergeWithVerdict(gh, async () => void (await sdk.environments.mergePullRequest({ environmentId, method: MERGE_METHOD })));
+          if (outcome.ok) await kv.delete(lastBumpKey(environmentId));
+          const before = refreshed === "updated" ? [MERGE_REFRESHED, ...(rebump?.ok === true && rebump.detail !== null ? [`versions raised again: ${rebump.detail}`] : [])] : [];
+          const told = outcome.ok ? { ...outcome, detail: [...before, ...(outcome.detail === null ? [] : [outcome.detail])].join("; ") || null } : outcome;
+          // Ссылка мёрджа — на сам PR: номер знает только GitHub, без него ссылки нет.
+          return withLinks(told, mergedPullLinks(gh.ok ? gh : null));
+        }),
+      ),
     ),
     "git.pull-main": guarded(
       orIntoParent(notNeeded, async (threadId) => {

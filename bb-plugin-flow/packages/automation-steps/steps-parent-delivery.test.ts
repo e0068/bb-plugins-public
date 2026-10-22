@@ -70,6 +70,17 @@ const sdkOf = ({ parent, child }: { parent: string; child: string }) =>
       mergePullRequest: async () => {
         throw new Error("PR на GitHub у дочернего треда не мёрджится");
       },
+      // Статус и коммит дерева — настоящим git, как их отдаёт bb: неотслеживаемое тоже считается.
+      status: async ({ environmentId }: { environmentId: string }) => ({
+        outcome: "available",
+        workspace: { workingTree: { hasUncommittedChanges: git(environmentId === "e-child" ? child : parent, "status", "--porcelain") !== "" } },
+      }),
+      commit: async ({ environmentId }: { environmentId: string }) => {
+        const cwd = environmentId === "e-child" ? child : parent;
+        git(cwd, "add", "-A");
+        git(cwd, "commit", "-q", "-m", "tree");
+        return { commitSubject: "tree" };
+      },
     },
   }) as unknown as StepPorts["sdk"];
 
@@ -148,5 +159,40 @@ describe("дочерний тред с базой — веткой родите�
     expect(outcome).toMatchObject({ ok: false, error: expect.stringContaining("shared.md") });
     expect(git(paths.parent, "rev-parse", "HEAD")).toBe(before);
     expect(git(paths.parent, "status", "--porcelain")).toBe("");
+  });
+});
+
+// Грязное дерево перед шагом, двигающим ветку, — обычный ход цепочки: «Задача → done»
+// перенесла файл задачи, Flow записал журнал брифов. Шаг сперва коммитит его сам.
+describe("незакоммиченное перед шагами FF и «Открыть PR»", () => {
+  const dirty = (cwd: string) => {
+    rmSync(join(cwd, "plan.md"));
+    writeFileSync(join(cwd, "journal.md"), "brief\n");
+  };
+
+  it("FF коммитит перенос задачи и журнал, потом догоняет базу", async () => {
+    const paths = trees();
+    commit(paths.parent, "later.md", "later\n");
+    dirty(paths.child);
+    expect(await stepsFor(paths)["git.fast-forward"]("child")).toEqual({ ok: true, detail: "committed: tree; merged" });
+    expect(git(paths.child, "status", "--porcelain")).toBe("");
+    expect(existsSync(join(paths.child, "later.md"))).toBe(true);
+    expect(git(paths.child, "show", "--name-status", "--format=", "HEAD^1")).toBe("A\tjournal.md\nD\tplan.md");
+  });
+
+  it("«Открыть PR» коммитит незакоммиченное, и оно доезжает до родителя", async () => {
+    const paths = trees();
+    dirty(paths.child);
+    expect(await stepsFor(paths)["git.create-pr"]("child")).toMatchObject({ ok: true, detail: expect.stringMatching(/^committed: tree; merged into /) });
+    expect(existsSync(join(paths.parent, "journal.md"))).toBe(true);
+    expect(existsSync(join(paths.parent, "plan.md"))).toBe(false);
+  });
+
+  it("чистое дерево — шаг без лишнего коммита и без слова о нём", async () => {
+    const paths = trees();
+    const before = git(paths.child, "rev-parse", "HEAD");
+    commit(paths.parent, "later.md", "later\n");
+    expect(await stepsFor(paths)["git.fast-forward"]("child")).toEqual({ ok: true, detail: "fast-forwarded" });
+    expect(git(paths.child, "rev-list", "--count", `${before}..HEAD`)).toBe("1");
   });
 });
