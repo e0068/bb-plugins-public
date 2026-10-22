@@ -1,5 +1,5 @@
 // Картинки к ответу на бриф: вставка из буфера в любое поле ответа и выбор
-// файлом по «+». Пул картинок один на бриф и живёт в модуле, а не в состоянии
+// файлом по скрепке. Пул картинок один на бриф и живёт в модуле, а не в состоянии
 // компонента: переживает размонтирование сообщения, как черновик. В поле,
 // куда вставлено, встаёт метка «[картинка N]» — по ней агент понимает, к чему
 // картинка, — а внизу рамки поля миниатюра с номером в углу: клик по номеру ставит метку ещё раз, на место каретки. Сами картинки уходят с ответом с номером метки, сервер кладёт их
@@ -217,7 +217,7 @@ export function usePasteImages(target: AttachTarget): ((event: ClipboardEvent<HT
   };
 }
 
-/** «+» слева от поля: открывает выбор картинок. Вне формы брифа не рисуется. */
+/** Скрепка слева от поля: открывает выбор картинок и файлов. Вне формы брифа не рисуется. */
 export function AttachButton({ target, disabled, className }: { target: AttachTarget; disabled?: boolean; className?: string }) {
   const attach = useContext(AttachContext);
   const t = useMessages();
@@ -231,7 +231,7 @@ export function AttachButton({ target, disabled, className }: { target: AttachTa
       onClick={() => attach.pick(target)}
       className={cn("flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-state-hover hover:text-foreground disabled:cursor-default", className)}
     >
-      <Icon name="Plus" className="size-4" />
+      <Icon name="Paperclip" className="size-4" />
     </button>
   );
 }

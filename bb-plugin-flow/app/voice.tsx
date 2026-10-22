@@ -8,6 +8,7 @@ import type { z } from "zod";
 import {
   VOICE_MAX_MS,
   bytesToBase64,
+  failureWithReason,
   insertTranscript,
   promptBefore,
   voiceTexts,
@@ -75,11 +76,11 @@ export function VoiceProvider({ transcribe, children }: { transcribe: Transcribe
   }, []);
 
   const finish = useCallback(
-    (failure?: { field: string; failure: VoiceFailure }) => {
+    (failure?: { field: string; failure: VoiceFailure; detail?: string }) => {
       clearTimeout(limit.current);
       live.current = null;
       put(IDLE);
-      if (failure !== undefined) setError({ field: failure.field, text: voiceTexts(locale).failure(failure.failure) });
+      if (failure !== undefined) setError({ field: failure.field, text: failureWithReason(failure.failure, failure.detail, locale) });
     },
     [put, locale],
   );
@@ -102,7 +103,7 @@ export function VoiceProvider({ transcribe, children }: { transcribe: Transcribe
       result = { kind: "failed", reason: "unavailable" };
     }
     if (mine !== attempt.current) return;
-    if (result.kind === "failed") return finish({ field: at.field, failure: result.reason });
+    if (result.kind === "failed") return finish({ field: at.field, failure: result.reason, ...(result.detail === undefined ? {} : { detail: result.detail }) });
     finish();
     recorded.onText(result.text);
   }, [finish, put]);

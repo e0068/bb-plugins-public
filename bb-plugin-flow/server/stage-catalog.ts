@@ -12,6 +12,7 @@ import { disabledPluginKeys, installedPlugins, parseAgentFile, parseCodexAgentFi
 import type { ClaudePlugin } from "../core/skill-scope";
 import { workflowAgentOptions, type WorkflowAgentOption } from "../core/workflow-file";
 import type { AutomationScript, ExecutorOrigin, SkillFile, SkillOrigin, StageCatalog, StageExecutor } from "../shared/contract";
+import type { SkillLists } from "./skill-lists";
 
 export type CatalogSources = {
   projectIds: () => Promise<string[]>;
@@ -207,7 +208,7 @@ const codeBlock = (name: string, content: string): string => {
  * не меняет. Его открывает bb-plugin-md-opener: файл кода bb открыл бы своим monaco-editor, а тот не читает файл
  * хоста без окружения, и панель осталась бы пустой.
  */
-const writeSnapshot = async (key: string, name: string, content: string): Promise<string> => {
+export const writeSnapshot = async (key: string, name: string, content: string): Promise<string> => {
   const safe = safeName(name);
   const dir = join(tmpdir(), "bb-flow-scripts", safeName(key));
   const path = join(dir, `${safe}.md`);
@@ -249,17 +250,17 @@ export const readSkillFile = async (sources: SkillFileSources, name: string): Pr
   return hostId === null || found === undefined ? null : { hostId, path: found.filePath };
 };
 
-/** Источники файла навыка на живом сервере. */
-export const hostSkillFileSources = (bb: Pick<BbPluginApi, "sdk">): SkillFileSources => ({
+/** Источники файла навыка на живом сервере; список навыков — общий на весь Flow. */
+export const hostSkillFileSources = (bb: Pick<BbPluginApi, "sdk">, skills: SkillLists): SkillFileSources => ({
   projectIds: async () => (await bb.sdk.projects.list()).map((p) => p.id),
-  skills: async (projectId) => (await bb.sdk.skills.list({ projectId, environmentId: null })).skills,
+  skills,
   primaryHostId: async () => (await bb.sdk.system.config()).primaryHostId,
 });
 
-/** Источники каталога на живом сервере. */
-export const hostCatalogSources = (bb: Pick<BbPluginApi, "sdk">): CatalogSources => ({
+/** Источники каталога на живом сервере; список навыков — общий на весь Flow. */
+export const hostCatalogSources = (bb: Pick<BbPluginApi, "sdk">, skills: SkillLists): CatalogSources => ({
   projectIds: async () => (await bb.sdk.projects.list()).map((p) => p.id),
-  skills: async (projectId) => (await bb.sdk.skills.list({ projectId, environmentId: null })).skills,
+  skills,
   listDir: (dir) => readdir(dir),
   readFile: (path) => readFile(path, "utf8"),
   home: homedir(),

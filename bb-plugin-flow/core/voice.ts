@@ -42,6 +42,13 @@ export const voiceTexts = (locale?: Locale) => ({
 export const unsupportedText = voiceTexts().unsupported;
 export const failureText = voiceTexts().failure;
 
+/** Текст ошибки и в скобках причина от bb, если она есть. */
+export const failureWithReason = (failure: VoiceFailure, detail: string | undefined, locale?: Locale): string => {
+  const text = voiceTexts(locale).failure(failure);
+  const reason = detail?.trim() ?? "";
+  return reason === "" ? text : `${text} (${reason})`;
+};
+
 /** Без HTTPS браузер прячет и getUserMedia, поэтому небезопасный адрес — причина первой. */
 export const voiceSupport = (env: { isSecureContext: boolean; hasGetUserMedia: boolean; hasMediaRecorder: boolean }): VoiceSupport =>
   !env.isSecureContext

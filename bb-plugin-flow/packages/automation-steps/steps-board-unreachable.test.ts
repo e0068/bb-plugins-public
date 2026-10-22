@@ -8,11 +8,13 @@ const REFUSED = "The board's database refused its token — the task was not cha
 
 const ran = (stdout: string, code = 0, stderr = ""): CliRun => ({ kind: "ran", code, stdout, stderr });
 
-/** CLI доски: список задач треда отдаёт SHA-54, а запись статуса — по сценарию, по одному ответу на вызов. */
+/** CLI доски: список задач треда отдаёт SHA-54 без подзадач, а запись статуса — по сценарию, по одному ответу на вызов. */
 const board = (writes: readonly CliRun[]) => {
   let written = 0;
+  const read = (args: readonly string[]): CliRun | null =>
+    args[1] === "current" ? ran(JSON.stringify({ tasks: [{ key: "SHA-54" }] })) : args[1] === "show" ? ran(JSON.stringify({ subtasks: [] })) : null;
   const cli: CliPorts = {
-    run: async (args) => (args[1] === "current" ? ran(JSON.stringify({ tasks: [{ key: "SHA-54" }] })) : writes[Math.min(written++, writes.length - 1)]!),
+    run: async (args) => read(args) ?? writes[Math.min(written++, writes.length - 1)]!,
   };
   return { cli, writes: () => written };
 };

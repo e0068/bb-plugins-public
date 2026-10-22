@@ -1,6 +1,7 @@
 // Значок этапа в строке треда левой панели: ждущий владельца — ровный значок
 // вида, идущая автоматизация или шаг Action — мерцающий значок этапа, упавшая
-// автоматизация — ровный значок автоматизации в тоне ошибки. Пока идёт ход
+// автоматизация — ровный значок автоматизации в тоне ошибки. Этап со своей
+// иконкой рисуется ею, а подпись называет этап. Пока идёт ход
 // агента, колёсико хоста в строке треда с flow крутится логотипом провайдера.
 // Контент-скрипт живёт без контекста треда, поэтому RPC зовётся обычным POST,
 // язык берётся у браузера, а рисунок и мигание подменяются стилем-маской по
@@ -8,11 +9,13 @@
 import type { PluginAppBuilder, PluginContentScriptContext } from "@get-bb/plugin-sdk/app";
 import { ArrangeIcon, CheckListIcon, CheckmarkBadge01Icon, MessageQuestionIcon, PlayIcon, PresentationBarChart01Icon, WorkflowCircle03Icon } from "@hugeicons/core-free-icons";
 
+import { STAGE_ICONS } from "../components/ui/stage-icon-catalog";
 import { awaitingChanges } from "../core/awaiting";
 import { glyphCss, type SpinnerLogo } from "../core/row-glyph-css";
 import { resolveLocale } from "../lib/i18n";
 import { messages } from "../lib/messages";
 import type { BuiltinKind } from "../lib/stage-constants";
+import type { RowStage } from "../shared/contract";
 import { systemLanguages } from "./locale-context";
 
 const POLL_MS = 10_000;
@@ -44,17 +47,23 @@ const FALLBACK_ICON: Record<BuiltinKind | RunningKind, string> = { action: "Play
 
 const kebab = (name: string): string => name.replace(/[A-Z]/g, (c) => `-${c.toLowerCase()}`);
 
-/** Иконка Hugeicons документом svg; у Выбора этапов — линия штрихом, как у пунктирной Workflow. */
-const svgOf = (icon: BuiltinKind | RunningKind): string => {
-  const parts = ICON_DATA[icon].map(([tag, attrs]) => {
+/** Рисунок Hugeicons документом svg; `dashed` — линия штрихом, как у пунктирной Workflow Выбора этапов. */
+const svgOf = (drawing: IconData, dashed: boolean): string => {
+  const parts = drawing.map(([tag, attrs]) => {
     const own = Object.entries(attrs).filter(([name]) => name !== "key");
-    const dashed = icon === "select" ? [["strokeDasharray", "2.5 2.5"] as const] : [];
-    return `<${tag} ${[...own, ...dashed].map(([name, value]) => `${kebab(name)}="${String(value).replace(/currentColor/g, "black")}"`).join(" ")}/>`;
+    const dash = dashed ? [["strokeDasharray", "2.5 2.5"] as const] : [];
+    return `<${tag} ${[...own, ...dash].map(([name, value]) => `${kebab(name)}="${String(value).replace(/currentColor/g, "black")}"`).join(" ")}/>`;
   });
   return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none">${parts.join("")}</svg>`;
 };
 
 type Glyph = { icon: BuiltinKind | RunningKind; label: string; tone: "default" | "error"; blink: boolean };
+
+/** Значок строки: вид и, у этапа со своей иконкой, рисунок из подборки с подписью этапа. */
+type Shown = { glyph: Glyph; drawing: IconData | undefined };
+
+/** Ключ значка: смена вида, иконки или названия этапа перерисовывает строку. */
+const keyOf = (id: GlyphId, stage: RowStage | undefined): string => (stage === undefined ? id : `${id}|${stage.icon}|${stage.name}`);
 
 const post = async <T>(pluginId: string, method: string, valid: (x: unknown) => x is T): Promise<T[] | null> => {
   try {
@@ -68,6 +77,9 @@ const post = async <T>(pluginId: string, method: string, valid: (x: unknown) => 
 };
 
 const isRecord = (x: unknown): x is Record<string, unknown> => typeof x === "object" && x !== null;
+const isRowStage = (x: unknown): x is RowStage => isRecord(x) && typeof x.name === "string" && typeof x.icon === "string";
+/** Своя иконка этапа в ответе; нет её или она не той формы — `undefined`, значок по виду. */
+const stageOf = (x: Record<string, unknown>): RowStage | undefined => (isRowStage(x.stage) ? x.stage : undefined);
 const isAwaiting = (x: unknown): x is { threadId: string; kind: AwaitingKind } => isRecord(x) && typeof x.threadId === "string" && AWAITING.includes(x.kind as AwaitingKind);
 const isRunning = (x: unknown): x is { threadId: string; icon: RunningKind } => isRecord(x) && typeof x.threadId === "string" && RUNNING.includes(x.icon as RunningKind);
 const isLogo = (x: unknown): x is SpinnerLogo => isRecord(x) && typeof x.threadId === "string" && typeof x.logoUrl === "string";
@@ -90,39 +102,57 @@ export function registerAwaitingStatus(app: PluginAppBuilder): void {
         "running:action": { icon: "action", label: `Flow — ${t.rowStatus.running(t.stages.action)}`, tone: "default", blink: true },
         "running:automation": { icon: "automation", label: `Flow — ${t.rowStatus.running(t.rowStatus.automation)}`, tone: "default", blink: true },
       };
+      /** Подпись значка этапа со своей иконкой: идущий — «идёт», упавшая автоматизация — «остановилась», ждущий нажатия — название. */
+      const ownLabel = (id: GlyphId, name: string): string =>
+        `Flow — ${id === "automation" ? t.rowStatus.failed(name) : id.startsWith("running:") ? t.rowStatus.running(name) : name}`;
+      /** Значок вида, а у этапа с иконкой из подборки — её рисунок под подписью этапа; иконка вне подборки — значок вида. */
+      const shownOf = (id: GlyphId, stage: RowStage | undefined): Shown => {
+        const drawing = stage === undefined ? undefined : (STAGE_ICONS.get(stage.icon) as unknown as IconData | undefined);
+        return drawing === undefined || stage === undefined ? { glyph: glyphs[id], drawing: undefined } : { glyph: { ...glyphs[id], label: ownLabel(id, stage.name) }, drawing };
+      };
       const style = document.createElement("style");
       style.dataset.flowRowGlyphs = "";
-      const overrides = Object.values(glyphs).map((g) => ({ label: g.label, svg: svgOf(g.icon), blink: g.blink }));
-      // Стиль переписывается, только когда набор логотипов сменился.
+      const overrides = Object.values(glyphs).map((g) => ({ label: g.label, svg: svgOf(ICON_DATA[g.icon], g.icon === "select"), blink: g.blink }));
+      // Стиль переписывается, только когда сменился набор логотипов или своих иконок в строках.
       let painted: string | null = null;
-      const paint = (logos: readonly SpinnerLogo[]) => {
-        const css = glyphCss(overrides, logos);
+      let logos: readonly SpinnerLogo[] = [];
+      let shown = new Map<string, string>();
+      let own: readonly Shown[] = [];
+      const paint = () => {
+        const owned = own.map(({ glyph, drawing }) => ({ label: glyph.label, svg: svgOf(drawing ?? ICON_DATA[glyph.icon], false), blink: glyph.blink }));
+        const css = glyphCss([...overrides, ...owned], logos);
         if (css !== painted) style.textContent = painted = css;
       };
-      paint([]);
+      paint();
       document.head.append(style);
 
-      let shown = new Map<string, GlyphId>();
       let alive = true;
       const poll = async () => {
-        const [awaiting, running, logos] = await Promise.all([
+        const [awaiting, running, fetched] = await Promise.all([
           post(context.pluginId, "awaitingThreads", isAwaiting),
           post(context.pluginId, "runningThreads", isRunning),
           post(context.pluginId, "agentLogos", isLogo),
         ]);
         if (!alive) return;
-        if (logos !== null) paint(logos);
+        if (fetched !== null) logos = fetched;
         // Сбой опроса оставляет значки как были: пропавший значок хуже устаревшего на такт.
-        if (awaiting === null) return;
+        if (awaiting === null) {
+          paint();
+          return;
+        }
         // Ждущий владельца важнее идущего: сначала идущие, поверх — ждущие.
-        const next = new Map<string, GlyphId>([
-          ...(running ?? []).map((entry) => [entry.threadId, `running:${entry.icon}` as const] as const),
-          ...awaiting.map((entry) => [entry.threadId, entry.kind] as const),
+        const entries = new Map<string, { id: GlyphId; stage: RowStage | undefined }>([
+          ...(running ?? []).map((entry) => [entry.threadId, { id: `running:${entry.icon}` as const, stage: stageOf(entry) }] as const),
+          ...awaiting.map((entry) => [entry.threadId, { id: entry.kind, stage: stageOf(entry) }] as const),
         ]);
+        const next = new Map([...entries].map(([threadId, { id, stage }]) => [threadId, keyOf(id, stage)] as const));
+        const looks = new Map([...entries].map(([threadId, { id, stage }]) => [threadId, shownOf(id, stage)] as const));
+        own = [...looks.values()].filter((look) => look.drawing !== undefined);
+        paint();
         const { set, clear } = awaitingChanges(shown, next);
         clear.forEach((threadId) => setStatus(threadId, null));
-        set.forEach(([threadId, id]) => {
-          const glyph = glyphs[id];
+        set.forEach(([threadId]) => {
+          const { glyph } = looks.get(threadId)!;
           setStatus(threadId, { icon: FALLBACK_ICON[glyph.icon], label: glyph.label, tone: glyph.tone });
         });
         shown = next;

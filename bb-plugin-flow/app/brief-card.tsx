@@ -47,6 +47,7 @@ import {
   setRoute,
   routeIn,
   finishes,
+  returnsWork,
   settleAgent,
   settleDispatch,
 } from "./draft";
@@ -57,7 +58,7 @@ import { AttachmentError, AttachmentsProvider, FieldImages, usePasteImages } fro
 import { AnsweredImagesProvider, AnsweredText } from "./answered-images";
 import { RichText, onLink } from "./linked-text";
 import { AddMeta, CardText, CheckSquare, DocumentName, buttonCard, rowCellStyle } from "./cells";
-import { answeredAt, useStoredDraft, useSubmit, type FormProps } from "./parts";
+import { SendFailureReason, answeredAt, useStoredDraft, useSubmit, type FormProps } from "./parts";
 import type { Messages } from "../lib/messages";
 import { useLocale, useMessages } from "./locale-context";
 import { useScrollAnchor } from "./scroll-anchor";
@@ -1042,6 +1043,8 @@ function PlaceLists(props: {
   onPlace: (place: DispatchPlace) => void;
   onRoute: (route: DispatchRoute) => void;
   compact: boolean;
+  /** Сжать тред сейчас нельзя — у уточнения посреди хода агента: колонки сжатия нет. */
+  compactable: boolean;
   onCompact: (compact: boolean) => void;
   gap?: string;
   /** Колонки стоят под рядом отдельных кнопок и зазор берут у него — свой отступ сверху им не нужен. */
@@ -1059,17 +1062,17 @@ function PlaceLists(props: {
   }));
   const trees = columns.trees.map((id) => ({ id, name: t.common.routeTree[id], icon: TREE_ICON[id] }));
   const branches = columns.branches.map((id) => ({ id, name: t.common.routeBranch[id], icon: BRANCH_ICON[id] }));
-  // В этом треде дерева и ветки не выбирают, зато можно сперва сжать его контекст.
-  const here = props.place === "here";
+  // В этом треде дерева и ветки не выбирают, зато можно сперва сжать его контекст — если сжать его сейчас можно.
+  const compacting = props.place === "here" && props.compactable;
   const contexts = [
     { id: "keep" as const, name: t.common.contextKeep, icon: "MessageSquare" },
     { id: "compact" as const, name: t.common.contextCompact, icon: "Minimize2" },
   ];
-  const count = 1 + (trees.length > 0 || here ? 1 : 0) + (branches.length > 0 || columns.projects ? 1 : 0);
+  const count = 1 + (trees.length > 0 || compacting ? 1 : 0) + (branches.length > 0 || columns.projects ? 1 : 0);
   return (
     <div className={cn("grid grid-cols-1", LIST_COLUMNS[count], props.gap ?? "gap-1.5", props.inRow !== true && "mt-1.5")}>
       <RouteGroup label={t.common.dispatchThreadGroup} items={threads} chosen={offeredPlace(props.place)} onPick={props.onPlace} />
-      {here && (
+      {compacting && (
         <RouteGroup label={t.common.dispatchContextGroup} items={contexts} chosen={props.compact ? "compact" : "keep"} onPick={(id) => props.onCompact(id === "compact")} />
       )}
       {trees.length > 0 && (
@@ -1120,7 +1123,8 @@ function useProjects(threadId: string, needed: boolean): { state: ProjectsState;
  * «Исполнять» у любой отправки: ячейка встаёт слева в ряд кнопок, раскрытые списки — строкой под рядом.
  * Место и маршрут берутся из черновика, а без выбора владельца — запомненные в проекте; компактация без выбора владельца — предвыбор по зоне контекста.
  */
-export function useDispatchPicker(props: { threadId: string; draft: Draft; setDraft: (update: (draft: Draft) => Draft) => void; place: DispatchPlace; route: DispatchRoute; compact: boolean; disabled: boolean; gap?: string; inRow?: boolean; lockHere?: boolean }): { cell: ReactNode; lists: ReactNode } {
+export function useDispatchPicker(props: { threadId: string; draft: Draft; setDraft: (update: (draft: Draft) => Draft) => void; place: DispatchPlace; route: DispatchRoute; compact: boolean; compactable?: boolean; disabled: boolean; gap?: string; inRow?: boolean; lockHere?: boolean }): { cell: ReactNode; lists: ReactNode } {
+  const compactable = props.compactable ?? true;
   const [open, setOpen] = useState(false);
   // Другой провайдер — только новый тред: показанное место сразу «в новом треде», а в ответ оно уходит тем же сведением.
   const placed = placeIn(props.draft, props.place);
@@ -1154,6 +1158,7 @@ export function useDispatchPicker(props: { threadId: string; draft: Draft; setDr
         onPlace={pickPlace}
         onRoute={(picked) => props.setDraft((d) => setRoute(d, picked))}
         compact={compact}
+        compactable={compactable}
         onCompact={(picked) => props.setDraft((d) => setCompact(d, picked))}
       />
     ) : null,
@@ -1177,12 +1182,13 @@ function BriefAnswer(props: {
   place: DispatchPlace;
   route: DispatchRoute;
   compact: boolean;
+  compactable: boolean;
   onSubmit: () => void;
 }) {
   const { sending } = props;
   const t = useMessages();
   const lockHere = agentLocked(props.catalog, props.draft, undefined);
-  const picker = useDispatchPicker({ threadId: props.brief.threadId, draft: props.draft, setDraft: props.setDraft, place: props.place, route: props.route, compact: props.compact, disabled: sending, lockHere });
+  const picker = useDispatchPicker({ threadId: props.brief.threadId, draft: props.draft, setDraft: props.setDraft, place: props.place, route: props.route, compact: props.compact, compactable: props.compactable, disabled: sending, lockHere });
   const agent = useAgentPicker({ catalog: props.catalog, draft: props.draft, setDraft: props.setDraft, recommended: undefined, cellClass: footerCell, wrapClass: (wide) => (wide ? "flex min-w-0 flex-1" : "flex flex-none"), disabled: sending });
 
   const footer = (
@@ -1244,11 +1250,11 @@ const ACTIONS_ROW = "flex flex-wrap";
  * или своим ответом в строке вопроса — «Отправить комментарии»; рекомендованный агентом flow (`outcome.nextFlow`) предвыбран, и
  * выбранный flow уводит работу в него — тогда кнопка «Отправить». У Демонстрации ряда нет: это отчёт.
  */
-function ApprovalActions(props: { brief: DecisionBrief; draft: Draft; setDraft: (update: (draft: Draft) => Draft) => void; catalog: WidgetAgent | null; sending: boolean; failed: boolean; complete: boolean; place: DispatchPlace; route: DispatchRoute; compact: boolean; onSubmit: (draft: Draft) => void }) {
+function ApprovalActions(props: { brief: DecisionBrief; draft: Draft; setDraft: (update: (draft: Draft) => Draft) => void; catalog: WidgetAgent | null; sending: boolean; failed: boolean; complete: boolean; place: DispatchPlace; route: DispatchRoute; compact: boolean; compactable: boolean; onSubmit: (draft: Draft) => void }) {
   const t = useMessages();
   const recommended = props.brief.outcome?.nextFlow;
   const lockHere = agentLocked(props.catalog, props.draft, recommended);
-  const picker = useDispatchPicker({ threadId: props.brief.threadId, draft: props.draft, setDraft: props.setDraft, place: props.place, route: props.route, compact: props.compact, disabled: props.sending, gap: ACTIONS_GAP, inRow: true, lockHere });
+  const picker = useDispatchPicker({ threadId: props.brief.threadId, draft: props.draft, setDraft: props.setDraft, place: props.place, route: props.route, compact: props.compact, compactable: props.compactable, disabled: props.sending, gap: ACTIONS_GAP, inRow: true, lockHere });
   const agent = useAgentPicker({
     catalog: props.catalog,
     draft: props.draft,
@@ -1321,12 +1327,16 @@ function Body({ brief, view }: { brief: DecisionBrief; view: View }) {
   );
 }
 
-export function BriefCard({ brief, send, onResult, roots, place = "here", route = DEFAULT_ROUTE, compact = false }: FormProps & { roots: FileRoots | null; place?: DispatchPlace; route?: DispatchRoute; compact?: boolean }) {
+/**
+ * `compactable` — можно ли сейчас сжать тред: ложно у уточнения, пока идёт ход агента, — тогда сжатие не показывается и не уходит в ответ.
+ * `idleAfter` — после этого утверждения в прогоне нет работы агента: сжатие не предлагается, пока владелец не написал своё.
+ */
+export function BriefCard({ brief, send, onResult, roots, place = "here", route = DEFAULT_ROUTE, compact = false, compactable = true, idleAfter = false }: FormProps & { roots: FileRoots | null; place?: DispatchPlace; route?: DispatchRoute; compact?: boolean; compactable?: boolean; idleAfter?: boolean }) {
   // Бриф, присланный взамен возвращённого, открывается с выбором владельца из возвращённого.
   const [draft, setDraft] = useStoredDraft(brief.id, () => withRestored(brief, initialDraft(brief)), useDraftSender(brief.id));
   const [expanded, setExpanded] = useState<string | null>(null);
   const anchor = useScrollAnchor();
-  const { sending, failed, missing, touch, submit } = useSubmit({ send, onResult });
+  const { sending, failed, failure, missing, touch, submit } = useSubmit({ send, onResult });
   const t = useMessages();
   const { decided, total } = decidedCount(brief, draft);
   const complete = decided === total;
@@ -1356,15 +1366,20 @@ export function BriefCard({ brief, send, onResult, roots, place = "here", route 
     },
     brief,
   };
-  const preselected = compact && !finishes(brief, draft);
   // Выбор ряда — модель и Flow — сводится перед отправкой: нетронутое предложение агента уходит ответом, совпавшее с текущим — нет.
   const catalog = useWidgetAgent(brief.threadId);
+  // Сжатие, которое сейчас недоступно, снимается с черновика один раз: его не покажет ячейка и не увезёт ответ,
+  // даже если владелец выбрал его раньше — до начала хода. Утверждение, за которым агенту делать нечего, сжатия
+  // не предлагает, пока ответ, который уйдёт, — с комментарием или переходом в другой flow — не вернёт агенту работу.
+  const canCompact = compactable && (!idleAfter || returnsWork(brief, settleAgent(draft, catalog, brief.outcome?.nextFlow)));
+  const offered = canCompact ? draft : setCompact(draft, false);
+  const preselected = compact && !finishes(brief, draft);
   const settled = (next: Draft) => settleDispatch(settleAgent(next, catalog, brief.outcome?.nextFlow), place, route, preselected);
   // Демонстрация — отчёт: отвечать на неё нечем, и Ctrl+Enter в ней ничего не отправляет.
   const report = isReport(brief);
   const trySubmit = () => {
     // Место уходит в ответ всегда: запомненное, которого владелец не трогал, иначе осталось бы только на экране.
-    if (!report && complete && !sending) void submit(settled(draft));
+    if (!report && complete && !sending) void submit(settled(offered));
   };
 
   return (
@@ -1386,7 +1401,8 @@ export function BriefCard({ brief, send, onResult, roots, place = "here", route 
         <>
           <Body brief={brief} view={view} />
           {stageItems(brief).length > 0 && <SectionTag kind="select" extra={brief.stages?.flowName} className="-mb-3" />}
-          <BriefAnswer brief={brief} view={view} roots={roots} draft={draft} setDraft={setDraft} catalog={catalog} sending={sending} status={failed ? t.common.sendFailed : counter} complete={complete} place={place} route={route} compact={preselected} onSubmit={trySubmit} />
+          <BriefAnswer brief={brief} view={view} roots={roots} draft={offered} setDraft={setDraft} catalog={catalog} sending={sending} status={failed ? t.common.sendFailed : counter} complete={complete} place={place} route={route} compact={preselected} compactable={canCompact} onSubmit={trySubmit} />
+          <SendFailureReason failure={failure} className="-mt-2 text-right" />
         </>
       ) : (
         <>
@@ -1394,7 +1410,8 @@ export function BriefCard({ brief, send, onResult, roots, place = "here", route 
             <CommentRow view={{ draft, sending, change: setDraft }} />
           </div>
           <Body brief={brief} view={view} />
-          <ApprovalActions brief={brief} draft={draft} setDraft={setDraft} catalog={catalog} sending={sending} failed={failed} complete={complete} place={place} route={route} compact={preselected} onSubmit={(next) => void submit(settled(next))} />
+          <ApprovalActions brief={brief} draft={offered} setDraft={setDraft} catalog={catalog} sending={sending} failed={failed} complete={complete} place={place} route={route} compact={preselected} compactable={canCompact} onSubmit={(next) => void submit(settled(next))} />
+          <SendFailureReason failure={failure} className="-mt-2 text-right" />
         </>
       )}
     </Plain>
@@ -1424,7 +1441,7 @@ function StatusLine({ icon, title, aside }: { icon: "CircleCheck" | "MessageQues
 export function ClarifyCard({ brief, send, onResult }: FormProps) {
   const t = useMessages();
   const [draft, setDraft] = useStoredDraft(brief.id);
-  const { sending, failed, submit } = useSubmit({ send, onResult });
+  const { sending, failed, failure, submit } = useSubmit({ send, onResult });
   const view: View = {
     draft,
     missing: new Set(),
@@ -1462,6 +1479,7 @@ export function ClarifyCard({ brief, send, onResult }: FormProps) {
       ))}
       <AttachmentError />
       <StatusLine icon="MessageQuestion" title={t.brief.clarify} aside={failed ? t.brief.notSent : t.brief.optional} />
+      <SendFailureReason failure={failure} />
     </Plain>
     </AttachmentsProvider>
   );

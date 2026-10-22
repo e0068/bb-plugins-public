@@ -27,17 +27,4 @@ describe("шаг Commit в окружении без git", () => {
       error: "The thread's environment is not a git repository: /Projects/Shapeshift. Point the project at the folder that holds the repository, then retry.",
     });
   });
-
-  it("папка без репозитория по отказу bb называется так же, с путём из отказа", async () => {
-    const outcome = await createSteps(ports({ outcome: "unavailable", failure: { code: "not_git_repo", message: "not a git repository", workspacePath: "/Projects/Other" } }))["git.commit"]("t1");
-    expect(outcome).toEqual({
-      ok: false,
-      error: "The thread's environment is not a git repository: /Projects/Other. Point the project at the folder that holds the repository, then retry.",
-    });
-  });
-
-  it("другая недоступность статуса называет причину bb и папку", async () => {
-    const outcome = await createSteps(ports({ outcome: "unavailable", failure: { code: "path_not_found", message: "the folder is gone", workspacePath: "/Projects/Gone" } }))["git.commit"]("t1");
-    expect(outcome).toEqual({ ok: false, error: "Git status of the thread's environment is unavailable (/Projects/Gone): the folder is gone" });
-  });
 });

@@ -4,6 +4,7 @@ import { useEffect, useRef, useState, type KeyboardEvent, type ReactNode } from 
 
 import { Icon, type IconName } from "../components/ui/icon";
 import { Textarea } from "../components/ui/textarea";
+import { SEND_RETRY_DELAYS_MS, SEND_RETRY_WINDOW_MS, retryable, sendFailureOf, type SendFailure } from "../core/send-failure";
 import { cn } from "../lib/utils";
 import type { AnswerRecord, DecisionBrief } from "../shared/contract";
 import { emptyDraft, type Draft } from "./draft";
@@ -124,9 +125,19 @@ export type Sender = (draft: Draft) => Promise<
 
 export type FormProps = { brief: DecisionBrief; send: Sender; onResult: (result: Awaited<ReturnType<Sender>>) => void };
 
+const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+/** Обрыв связи и таймаут bb повторяются по паузам, пока не кончились паузы и окно от первой попытки; отказ и последняя неудача уходят наружу. */
+const withRetries = <T,>(send: () => Promise<T>, deadline = Date.now() + SEND_RETRY_WINDOW_MS, delays: readonly number[] = SEND_RETRY_DELAYS_MS): Promise<T> =>
+  send().catch((error: unknown) => {
+    const [delay, ...rest] = delays;
+    const again = delay !== undefined && retryable(sendFailureOf(error)) && Date.now() + delay <= deadline;
+    return again ? wait(delay).then(() => withRetries(send, deadline, rest)) : Promise.reject(error);
+  });
+
 export function useSubmit({ send, onResult }: Omit<FormProps, "brief">) {
   const [sending, setSending] = useState(false);
-  const [failed, setFailed] = useState(false);
+  const [failure, setFailure] = useState<SendFailure | null>(null);
   const [missing, setMissing] = useState<ReadonlySet<string>>(new Set());
   const inFlight = useRef(false);
 
@@ -134,13 +145,13 @@ export function useSubmit({ send, onResult }: Omit<FormProps, "brief">) {
     if (inFlight.current) return;
     inFlight.current = true;
     setSending(true);
-    setFailed(false);
+    setFailure(null);
     try {
-      const result = await send(draft);
+      const result = await withRetries(() => send(draft));
       if (result.kind === "incomplete") setMissing(new Set(result.questionIds));
       onResult(result);
-    } catch {
-      setFailed(true);
+    } catch (error) {
+      setFailure(sendFailureOf(error));
     } finally {
       inFlight.current = false;
       setSending(false);
@@ -153,7 +164,15 @@ export function useSubmit({ send, onResult }: Omit<FormProps, "brief">) {
       next.delete(questionId);
       return next;
     });
-  return { sending, failed, missing, touch, submit };
+  return { sending, failed: failure !== null, failure, missing, touch, submit };
+}
+
+/** Почему ответ не ушёл — строка под кнопкой отправки рядом с «Не удалось отправить». */
+export function SendFailureReason({ failure, className }: { failure: SendFailure | null; className?: string }) {
+  const t = useMessages().common;
+  if (failure === null) return null;
+  const text = failure.kind === "offline" ? t.sendOffline : failure.kind === "timeout" ? t.sendTimeout : t.sendRejected(failure.message);
+  return <div className={cn("break-words text-xs text-destructive", className)}>{text}</div>;
 }
 
 export const answeredAt = (iso: string, dateLocale = "ru-RU"): string =>

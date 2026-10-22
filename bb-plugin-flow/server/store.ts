@@ -16,6 +16,7 @@ import {
   prototypeStateSchema,
   threadGroupSchema,
   type AnswerRecord,
+  type AwaitingEntry,
   type DecisionBrief,
   type DispatchRoute,
   type Fold,
@@ -62,7 +63,7 @@ const AWAITING_KEY = "flow-awaiting";
 
 const awaitingSchema = z.record(z.string(), awaitingEntrySchema);
 
-export type AwaitingEntry = z.output<typeof awaitingEntrySchema>;
+export type { AwaitingEntry };
 
 export type DecisionStore = {
   putBrief(brief: DecisionBrief): Promise<{ kind: "stored" } | { kind: "too_large"; bytes: number }>;

@@ -2,6 +2,7 @@
 // Файлы виджета для просмотрщика bb: путь из состава плагина — абсолютный путь на хосте; всё остальное — `null`.
 import { createFakePluginHost } from "@get-bb/plugin-sdk/testing";
 import * as fc from "fast-check";
+import { readFile } from "node:fs/promises";
 import { describe, expect, it } from "vitest";
 
 import { allowedWidgetFiles } from "../core/widget-anatomy";
@@ -16,12 +17,15 @@ const sources = (patch: Partial<WidgetFileSources> = {}): WidgetFileSources => (
   skills: async () => [owners, { name: "other", filePath: "/plugins/other/skills/other/SKILL.md", pluginId: "other" }, OWN],
   primaryHostId: async () => "host_local",
   exists: async () => true,
+  readFile: async (path) => `// ${path}\nexport const x = 1;\n`,
   ...patch,
 });
 
 describe("файл виджета по пути из состава", () => {
-  it("корень берётся у навыка этого плагина, а не у одноимённого навыка владельца", async () => {
-    expect(await readWidgetFile(sources(), CARD)).toEqual({ hostId: "host_local", path: `/plugins/flow/${CARD}` });
+  it("корень берётся у навыка этого плагина, а не у одноимённого навыка владельца; файл кода — снимком markdown с его текстом", async () => {
+    const file = await readWidgetFile(sources(), CARD);
+    expect(file).toMatchObject({ hostId: "host_local", path: expect.stringMatching(/brief-card\.tsx\.md$/) });
+    expect(await readFile(file!.path, "utf8")).toBe(`\`\`\`tsx\n// /plugins/flow/${CARD}\nexport const x = 1;\n\`\`\`\n`);
   });
 
   it("файлы навыков плагина открываются тем же путём", async () => {
@@ -79,7 +83,7 @@ describe("RPC файла виджета", () => {
   it("getWidgetFile отвечает по пути из состава и null по чужому", async () => {
     const { bb, harness } = createFakePluginHost({ pluginId: "flow" });
     registerWidgetFiles(bb, sources());
-    expect(await harness.callRpc("getWidgetFile", { path: CARD })).toEqual({ hostId: "host_local", path: `/plugins/flow/${CARD}` });
+    expect(await harness.callRpc("getWidgetFile", { path: "skills/flow-questions/ru.md" })).toEqual({ hostId: "host_local", path: "/plugins/flow/skills/flow-questions/ru.md" });
     expect(await harness.callRpc("getWidgetFile", { path: "../secret" })).toBeNull();
   });
 });

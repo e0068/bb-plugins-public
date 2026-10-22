@@ -64,16 +64,26 @@ One brief per run: go through the run stages in order; a demo stage: send its ou
 export const RETURNED_RULE =
   "A chat message from the owner while your brief waits returns that brief to you: the message outranks the brief — it means the plan changed. Take the message in, its text and attachments, then send the brief again, revised; the owner's choices in the returned brief stay preselected where question, option and stage ids match. A message while an approval waits returns the whole group of widgets since the previous approval, and a comment under an approval's Continue button does the same: its text outranks the choices, the other choices of the owner still stand — send reworked widgets first, the choices are preselected in them, and only then the approval; an approval right after a returned one, without reworked widgets between them, is refused. An approval stage closes only when the owner sends it with its button; a demo stage closes when you send it.";
 
-/** Что агенту делать после брифа: ждать ответа, а у Демонстрации и уточнения — работать дальше. */
+/**
+ * Повтор строки в последнем ответе хода: bb сворачивает реплики между вызовами инструментов в «Worked for», а карточка брифа
+ * встаёт в последнем сообщении с его строкой — так виджет, не остановивший ход, остаётся на виду и после хода.
+ */
+const repeatInFinalReply = (where: string): string =>
+  ` When the turn ends, paste the line once more in the final reply of this turn${where}: bb folds replies between tool calls under "Worked for", and the card moves to the last copy of its line.`;
+
+/**
+ * Что агенту делать после брифа: ждать ответа, а у Демонстрации и уточнения — работать дальше и повторить строку в конце хода.
+ * Бриф, который кончает ход, сам напоминает о повторе: между демо и утверждением может пройти целый этап, и наказ демо забыт.
+ */
 const nextStep = (brief: DecisionBrief): string => {
-  if (brief.kind !== "brief") return " Keep working; the answer arrives along the way.";
+  if (brief.kind !== "brief") return ` Keep working; the answer arrives along the way.${repeatInFinalReply("")}`;
   if (brief.outcome !== undefined && outcomeKind(brief) === "demo")
-    return " Then go on to the next stage of the run without waiting: the demo stage is closed by this call.";
-  return " Then end the turn and wait for the answer.";
+    return ` Then go on to the next stage of the run without waiting: the demo stage is closed by this call.${repeatInFinalReply(", above the approval line or the brief line that ends the turn")}`;
+  return " In the same reply, paste again above this line the lines of demos and clarifies you sent earlier in this turn. Then end the turn and wait for the answer.";
 };
 
-/** Наказ после каждого вызова: повтор строки старого виджета рисует его заново, а решённое уточнение закрывается `resolves`. */
-const PASTE_ONCE_RULE = `Paste each directive line once, in the turn that sent it; never repeat the line of an earlier widget — a repeat draws it again. A clarify you fixed or decided yourself — close it with resolves in your next ${ASK_TOOL_NAME} call.`;
+/** Наказ после каждого вызова: строка виджета прошлого хода не повторяется, а решённое уточнение закрывается `resolves`. */
+const EARLIER_TURN_RULE = `Paste a directive line only in the turn that sent it; never repeat the line of a widget from an earlier turn — its card would move there. A clarify you fixed or decided yourself — close it with resolves in your next ${ASK_TOOL_NAME} call: its card collapses in place into a "Resolved: …" line.`;
 
 const briefResult = (brief: DecisionBrief): string =>
   `${directiveLine(brief.id)}
@@ -82,7 +92,7 @@ Paste the line above into your reply as a standalone line — the owner sees the
     brief.restored === undefined ? "" : " The owner's choices from the returned brief are preselected where question and option ids match."
   }
 
-${PASTE_ONCE_RULE}`;
+${EARLIER_TURN_RULE}`;
 
 /**
  * Возвращённый брифу треда и выбор владельца в нём — для нового брифа. `grouped` — вернулась группа утверждения: её указатель

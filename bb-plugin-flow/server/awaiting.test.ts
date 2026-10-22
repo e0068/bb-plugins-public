@@ -12,12 +12,12 @@ import { priced } from "./priced-fixture";
 
 const settings: StageSettings = { stages: [builtinStage("select", []), stage("task"), builtinStage("demo", [])], minButtonWidth: 170 };
 
-const host = async () => {
+const host = async (stages: StageSettings = settings) => {
   const { bb, harness } = createFakePluginHost({ pluginId: "flow", sdk: { threads: { send: async () => ({ delivery: "started" }) } } });
   const store = createStore(bb.storage.kv);
   let n = 0;
   registerAskTool(bb, store, { newId: () => `A${++n}`, now: () => "2026-09-16T10:00:00.000Z", stages: () => settings });
-  registerApi(bb, store, { now: () => "2026-09-16T10:01:00.000Z" });
+  registerApi(bb, store, { now: () => "2026-09-16T10:01:00.000Z", stages: () => stages.stages });
   const ask = (threadId: string, input: Record<string, unknown>) => harness.callAgentTool(ASK_TOOL_NAME, priced(input), { threadId });
   return { harness, store, ask };
 };
@@ -41,5 +41,16 @@ describe("ждущие владельца треды", () => {
     await store.putAwaiting("thr_a", { briefId: "dec_newer", kind: "demo" });
     await harness.callRpc("answerBrief", { id: "dec_A1", messageId: "m", answer: { briefId: "dec_A1", answers: [], stages: [{ id: "task", run: true, executor: "self" }] } });
     expect(await harness.callRpc("awaitingThreads", {})).toEqual([{ threadId: "thr_a", kind: "demo" }]);
+  });
+
+  it("упавшая автоматизация со своей иконкой отдаёт строке треда название этапа и его иконку, без иконки — только вид", async () => {
+    const land = { ...stage("land"), name: "Finalize", icon: "PackageDelivered" };
+    const { harness, store } = await host({ stages: [land, stage("plain")], minButtonWidth: 170 });
+    await store.putAwaiting("thr_a", { briefId: "automation:land", kind: "automation" });
+    await store.putAwaiting("thr_b", { briefId: "automation:plain", kind: "automation" });
+    expect(await harness.callRpc("awaitingThreads", {})).toEqual([
+      { threadId: "thr_a", kind: "automation", stage: { name: "Finalize", icon: "PackageDelivered" } },
+      { threadId: "thr_b", kind: "automation" },
+    ]);
   });
 });

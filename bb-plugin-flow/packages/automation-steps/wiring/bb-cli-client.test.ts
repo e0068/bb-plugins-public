@@ -4,7 +4,7 @@
 // (/bin/echo) proves the resolution is the thing being obeyed, and a path
 // that cannot exist proves the failure shape.
 import { describe, expect, it } from "vitest";
-import { bbCliClient } from "./bb-cli-client";
+import { BB_CLI_TIMEOUT_MS, bbCliClient } from "./bb-cli-client";
 
 describe("bbCliClient", () => {
   it("spawns the binary the environment names, passing argv through", async () => {
@@ -26,6 +26,17 @@ describe("bbCliClient", () => {
   it("a non-zero exit is an ordinary outcome, not a throw", async () => {
     const run = await bbCliClient({ BB_CLI: "/bin/sh" }).run(["-c", "exit 7"]);
     expect(run).toMatchObject({ kind: "ran", code: 7 });
+  });
+
+  // BBPL-931 закрылась только повтором: первый `bb tasks update` убил таймаут,
+  // а шаг написал голое «Command failed: …», и причину пришлось искать.
+  it("a call that outlives its timeout → unavailable, saying it did not answer in time and what was run", async () => {
+    const run = await bbCliClient({ BB_CLI: "/bin/sleep" }, 100).run(["5"]);
+    expect(run).toEqual({ kind: "unavailable", reason: "bb did not answer within 0.1 s: /bin/sleep 5" });
+  });
+
+  it("waits a minute by default: a write under bb's commit lock takes longer than 20 s", () => {
+    expect(BB_CLI_TIMEOUT_MS).toBe(60_000);
   });
 
   it("the binary does not exist → unavailable, kept apart from any exit code", async () => {

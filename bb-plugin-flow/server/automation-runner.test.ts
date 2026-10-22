@@ -284,6 +284,16 @@ describe("значок идущего этапа — только при жив�
     expect((await view())?.stages.find((s) => s.id === "review")).toMatchObject({ live: false });
   });
 
+  it("идущая автоматизация со своей иконкой отдаёт строке треда название этапа и его иконку", async () => {
+    const { steps, release } = gated();
+    const publish = { ...flowStage("publish", ["git.create-pr"]), name: "Finalize", icon: "PackageDelivered" };
+    const { harness, stateOf } = setup([review, publish], steps, undefined, idle);
+    await harness.callAgentTool(FLOW_STAGE_TOOL, { stage: "review", state: "done" }, { threadId: THREAD });
+    await vi.waitFor(async () => expect(await stateOf("publish")).toBe("now"));
+    expect(await harness.callRpc("runningThreads", {})).toEqual([{ threadId: THREAD, icon: "automation", stage: { name: "Finalize", icon: "PackageDelivered" } }]);
+    release();
+  });
+
   it("статус треда не спрашивается, когда начатого этапа навыка нет: идёт только автоматизация", async () => {
     const { steps, release } = gated();
     const agentActive = vi.fn(async () => true);

@@ -22,6 +22,9 @@ export const ru = {
     noteLabel: "Дополнить ответы",
     notePlaceholder: "Добавить своё — к любому вопросу или ко всем сразу",
     sendFailed: "Не удалось отправить — попробуй ещё раз",
+    sendOffline: "Причина: нет связи с bb — повторял полминуты",
+    sendTimeout: "Причина: bb не ответил — повторял полминуты",
+    sendRejected: (message: string) => `Причина: bb отклонил ответ — ${message}`,
     decided: (decided: number, total: number) => `${decided} из ${total} решено`,
     dispatchLabel: "Исполнять",
     dispatchHere: "В этом треде",
@@ -249,6 +252,7 @@ export const ru = {
   },
   rowStatus: {
     running: (name: string) => `${name} · идёт`,
+    failed: (name: string) => `${name} · остановилась`,
     automationFailed: "Автоматизация остановилась",
     automation: "Автоматизация",
   },

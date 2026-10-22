@@ -3,6 +3,8 @@ import type { PluginContentScriptContext } from "@get-bb/plugin-sdk/app";
 import { loadPluginApp } from "@get-bb/plugin-sdk/testing/app";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { STAGE_ICONS } from "../components/ui/stage-icon-catalog";
+
 const app = await loadPluginApp(() => import("../app"));
 
 afterEach(() => {
@@ -32,5 +34,34 @@ describe("значок идущего этапа в строке треда", ()
     const rule = css().split("\n").find((line) => line.includes('[aria-label="Flow — Автоматизация остановилась"]{'));
     expect(rule).toBeDefined();
     expect(rule).not.toMatch(/animation:/);
+  });
+
+  /** Правило стиля строки по подписи. */
+  const ruleOf = (label: string) => css().split("\n").find((line) => line.includes(`[aria-label="${label}"]{`));
+  /** Кусок рисунка иконки подборки, как он стоит в адресе маски. */
+  const drawingOf = (icon: string) => encodeURIComponent(String(STAGE_ICONS.get(icon)![0]![1].d));
+
+  it("идущая автоматизация со своей иконкой мигает этой иконкой, подпись называет этап", async () => {
+    const setStatus = await mount({ awaiting: [], running: [{ threadId: "thr_a", icon: "automation", stage: { name: "Finalize", icon: "PackageDelivered" } }] });
+    await vi.waitFor(() => expect(setStatus).toHaveBeenCalledTimes(1));
+    expect(setStatus).toHaveBeenCalledWith("thr_a", expect.objectContaining({ label: "Flow — Finalize · идёт", tone: "default" }));
+    const rule = ruleOf("Flow — Finalize · идёт");
+    expect(rule).toContain(drawingOf("PackageDelivered"));
+    expect(rule).toMatch(/animation:/);
+  });
+
+  it("упавшая автоматизация со своей иконкой — эта иконка ровно, в тоне ошибки", async () => {
+    const setStatus = await mount({ awaiting: [{ threadId: "thr_a", kind: "automation", stage: { name: "Finalize", icon: "PackageDelivered" } }], running: [] });
+    await vi.waitFor(() => expect(setStatus).toHaveBeenCalledTimes(1));
+    expect(setStatus).toHaveBeenCalledWith("thr_a", expect.objectContaining({ label: "Flow — Finalize · остановилась", tone: "error" }));
+    const rule = ruleOf("Flow — Finalize · остановилась");
+    expect(rule).toContain(drawingOf("PackageDelivered"));
+    expect(rule).not.toMatch(/animation:/);
+  });
+
+  it("иконка вне подборки — прежний значок автоматизации", async () => {
+    const setStatus = await mount({ awaiting: [{ threadId: "thr_a", kind: "automation", stage: { name: "Finalize", icon: "NoSuchIcon" } }], running: [] });
+    await vi.waitFor(() => expect(setStatus).toHaveBeenCalledTimes(1));
+    expect(setStatus).toHaveBeenCalledWith("thr_a", expect.objectContaining({ label: "Flow — Автоматизация остановилась", tone: "error" }));
   });
 });

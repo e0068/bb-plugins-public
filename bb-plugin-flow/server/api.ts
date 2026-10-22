@@ -1,11 +1,12 @@
 // RPC виджета. Виджет сам не пишет и не шлёт: запись ответа, реплика агенту
 // и сигнал другим вкладкам идут отсюда, строго в этом порядке.
-import type { BbPluginApi } from "@get-bb/plugin-sdk";
+import type { BbPluginApi, PluginRpcHandlers } from "@get-bb/plugin-sdk";
 
-import { needsAgentReply } from "../core/agent-reply";
+import { idleAfter, needsAgentReply } from "../core/agent-reply";
+import { awaitingStageId, ownStageIcon } from "../core/awaiting";
 import { answerMessageParts, openQuestions } from "../core/answer-message";
 import { forecast, hasForecast, scopeOf } from "../core/budget";
-import { settleClarifyAnswer } from "../core/clarify";
+import { settleClarifyAnswer, turnOf, type ThreadStatus } from "../core/clarify";
 import { carryOf } from "../core/carry";
 import { defaultExecutionOf, providerModelsOf } from "../core/flow-agent";
 import { finalCriteria } from "../core/option-criteria";
@@ -15,9 +16,10 @@ import { onAnswer } from "../core/progress";
 import { EMPTY_PROTOTYPE, markSent, mergeEdit, prototypeAddress, prototypeLines } from "../core/prototype";
 import type { Locale } from "../lib/i18n";
 import { messages } from "../lib/messages";
+import { sendFailureOf } from "../core/send-failure";
 import { isSideChat } from "../core/side-chat";
 import { stageItems } from "../core/stages";
-import { answerImagesRpcContract, awaitingRpcContract, briefDraftRpcContract, decisionsRpcContract, dispatchRpcContract, filesRpcContract, prototypeRpcContract, widgetAgentRpcContract, type DecisionAnswer, type DecisionBrief, type DispatchRoute, type Execution, type WidgetAgent } from "../shared/contract";
+import { answerImagesRpcContract, awaitingRpcContract, briefDraftRpcContract, decisionsRpcContract, dispatchRpcContract, filesRpcContract, prototypeRpcContract, turnRpcContract, widgetAgentRpcContract, type AgentTurn, type DecisionAnswer, type DecisionBrief, type DispatchRoute, type Execution, type WidgetAgent, type WorkStage } from "../shared/contract";
 import { attachmentInput, attachmentsLine, lostImages, readAttachments, referencedImages, uploadAttachments } from "./attachments";
 import { handoff } from "./handoff";
 import type { ProgressStore } from "./progress";
@@ -25,15 +27,34 @@ import type { DecisionStore } from "./store";
 import type { FlowTrigger } from "./automations";
 
 export const ANSWERED_CHANNEL = "decisions:answered";
+/** Ход агента в треде сменился: `{ threadId, turn }` — открытое уточнение показывает или прячет сжатие. */
+export const TURN_CHANNEL = "decisions:turn";
 
 /** Часть реплики, которую bb отдаёт агенту, но не рисует в ленте треда. */
 const AGENT_ONLY = "agent-only" as const;
 
+/** Обработчики RPC брифов, но сбой ответа на бриф пишется в журнал, прежде чем уйти виджету. */
+const warnOnAnswerFailure = (warn: ((message: string) => void) | undefined, handlers: PluginRpcHandlers<typeof decisionsRpcContract>): PluginRpcHandlers<typeof decisionsRpcContract> => ({
+  ...handlers,
+  answerBrief: async (input) => {
+    try {
+      return await handlers.answerBrief(input);
+    } catch (error) {
+      warn?.(`answerBrief ${input.id}: ${error instanceof Error ? error.message : String(error)}`);
+      throw error;
+    }
+  },
+});
+
 export const registerApi = (
-  bb: Pick<BbPluginApi, "rpc" | "realtime" | "sdk">,
+  bb: Pick<BbPluginApi, "events" | "rpc" | "realtime" | "sdk">,
   store: DecisionStore,
   deps: {
     now: () => string;
+    /** Этапы flow треда: по ним ждущая автоматизация берёт свою иконку для строки треда; не задано — значок по виду. */
+    stages?: (threadId: string) => readonly WorkStage[];
+    /** Журнал Flow; не задан — сбои не пишутся. */
+    warn?: (message: string) => void;
     writeDecision?: (args: { brief: DecisionBrief; answer: DecisionAnswer; decidedAt: string; locale?: Locale }) => Promise<unknown>;
     /** Прогресс flow треда: ответ закрывает ждущие этапы и запоминает прогон и план, а по нему же видно, осталась ли впереди работа агента. */
     progress?: Pick<ProgressStore, "recordAnswer" | "handOver" | "get">;
@@ -61,6 +82,13 @@ export const registerApi = (
     threadFlowId?: (threadId: string) => string | null;
   },
 ): void => {
+  /** Ход агента в треде; bb не ответил — ход считается идущим: лишнее сжатие хуже пропущенного. */
+  const agentTurnOf = (threadId: string): Promise<AgentTurn> =>
+    bb.sdk.threads.get({ threadId }).then(
+      (thread) => turnOf(thread.status),
+      () => "running" as const,
+    );
+
   /** Работа запущена, когда владелец взял в ближайший прогон хотя бы один этап: дальше бриф спрашивает только по делу. */
   const launchesWork = (brief: DecisionBrief, answer: DecisionAnswer): boolean =>
     stageItems(brief).length > 0 && (answer.stages ?? []).some((stage) => stage.run);
@@ -76,7 +104,8 @@ export const registerApi = (
     return states.flatMap(({ url, state }) => (state === null ? [] : [{ url, state }]));
   };
 
-  bb.rpc.register(decisionsRpcContract, {
+  // Ответ, который не ушёл, пишется в журнал Flow: виджет показывает владельцу только причину.
+  bb.rpc.register(decisionsRpcContract, warnOnAnswerFailure(deps.warn, {
     async getBrief({ id }) {
       const brief = await store.getBrief(id);
       if (brief === null) return { kind: "not_found" as const };
@@ -87,13 +116,25 @@ export const registerApi = (
       const draft = fold !== null && answer === null ? await store.getDraft(id) : null;
       // Решённым считается только неотвеченное: ответ владельца, пришедший раньше, остаётся ответом.
       const resolved = answer === null && (await store.isResolved(id));
-      return { kind: "found" as const, brief, answer, ...(fold === null ? {} : { fold }), ...(draft === null ? {} : { draft }), ...(resolved ? { resolved: true as const } : {}) };
+      // Прогон читается только для неотвеченного утверждения: признак нужен ячейке «Исполнять», которой у ответа нет.
+      const quiet = answer === null && brief.outcome !== undefined && idleAfter(brief, (await deps.progress?.get(brief.threadId).catch(() => null)) ?? null);
+      return {
+        kind: "found" as const,
+        brief,
+        answer,
+        ...(fold === null ? {} : { fold }),
+        ...(draft === null ? {} : { draft }),
+        ...(resolved ? { resolved: true as const } : {}),
+        ...(quiet ? { idleAfter: true as const } : {}),
+      };
     },
 
     async answerBrief({ id, answer: sent, messageId, images = [], locale }) {
       const brief = await store.getBrief(id);
       if (brief === null || sent.briefId !== id) return { kind: "not_found" as const };
-      const answer = settleClarifyAnswer(brief, sent);
+      // Ход треда спрашивается, только когда от него что-то зависит: уточнение с выбранным сжатием.
+      const turn = brief.kind === "clarify" && sent.compact === true ? await agentTurnOf(brief.threadId) : "running";
+      const answer = settleClarifyAnswer(brief, sent, turn);
       const existing = await store.getAnswer(id);
       if (existing !== null) return { kind: "already_answered" as const, record: existing };
       // Демонстрация — отчёт: ответа она не принимает, комментарий и переход в другой flow — на утверждении.
@@ -138,6 +179,8 @@ export const registerApi = (
       const text = service === "" ? owner : `${owner}\n${service}`;
       const place = answer.place ?? "here";
       let handoffThreadId: string | undefined;
+      // Реплика агенту ушла в bb: её таймаут не говорит, дошла ли она.
+      let delivering = false;
       try {
         if (place === "here") {
           // Компактация — первой и до конца: реплика, поставленная раньше, попала бы в срезанный контекст.
@@ -159,10 +202,12 @@ export const registerApi = (
             deps.ownSend?.(brief.threadId, text);
             deps.ownSend?.(brief.threadId, owner);
             // Ответ встаёт в ленту сообщением владельца — его слова и вложения, как он их отправил, — а служебное видит только агент.
+            delivering = true;
             await bb.sdk.threads.send({
               threadId: brief.threadId,
               // Уточнение агента не держит: он работает дальше, и ответ должен дойти в идущем ходе, а не после него.
-              mode: brief.kind === "clarify" ? "steer-if-active" : "queue-if-active",
+              // Уточнение со сжатием пришло после хода: вливаться не во что, и ответ не должен попасть в ход самого сжатия.
+              mode: brief.kind === "clarify" && answer.compact !== true ? "steer-if-active" : "queue-if-active",
               ...(execution === undefined ? {} : { model: execution.model, reasoningLevel: execution.reasoningLevel, ...(execution.serviceTier === undefined ? {} : { serviceTier: execution.serviceTier }) }),
               input: [
                 { type: "text", text: owner, mentions: [] },
@@ -176,15 +221,22 @@ export const registerApi = (
           if (switched !== undefined) deps.handoffFlow?.(brief.threadId, switched.id);
           const created = await handoff(bb, { brief, place, ...(answer.route === undefined ? {} : { route: answer.route }), ...(execution === undefined ? {} : { execution }), text, attachments: attached, locale });
           if (created.kind === "failed") throw new Error(created.error);
-          handoffThreadId = created.threadId;
+          // Создание треда не подтвердилось — ответ остаётся принятым: повтор открыл бы второй тред.
+          if (created.kind === "unconfirmed") deps.warn?.(`answerBrief ${id}: bb did not confirm the new thread, the answer is kept (${created.error})`);
+          else handoffThreadId = created.threadId;
         }
       } catch (cause) {
-        // Передача не состоялась — выбранный flow не должен достаться следующей.
-        if (switched !== undefined) deps.handoffFlow?.(brief.threadId, null);
-        // Реплика не ушла — агент ответа не узнает. Запись снимается, чтобы
-        // повторная отправка из виджета дошла, а не упёрлась в already_answered.
-        await store.dropAnswer(id);
-        throw cause;
+        // Таймаут самой реплики — исход неизвестен: она могла дойти. Ответ остаётся принятым, иначе повтор из виджета
+        // доставил бы его агенту второй раз. Таймаут шагов до реплики — сжатия, смены flow — снимает ответ.
+        if (delivering && sendFailureOf(cause).kind === "timeout") deps.warn?.(`answerBrief ${id}: bb did not confirm delivery, the answer is kept (${cause instanceof Error ? cause.message : String(cause)})`);
+        else {
+          // Передача не состоялась — выбранный flow не должен достаться следующей.
+          if (switched !== undefined) deps.handoffFlow?.(brief.threadId, null);
+          // Реплика не ушла — агент ответа не узнает. Запись снимается, чтобы
+          // повторная отправка из виджета дошла, а не упёрлась в already_answered.
+          await store.dropAnswer(id);
+          throw cause;
+        }
       }
       // Дальше реплика уже ушла: ни один сбой ниже не снимает ответ — повтор создал бы второй тред.
       // Худшее при сбое отметки — запущенный тред ещё примет этапы; это мягче дубля треда.
@@ -251,7 +303,7 @@ export const registerApi = (
       if (brief.setup?.criteria !== undefined) emit("flow.criteria-approved");
       return { kind: "accepted" as const, record: { ...written.record, ...(handoffThreadId === undefined ? {} : { handoffThreadId }) } };
     },
-  });
+  }));
 
   async function rememberRoute(brief: DecisionBrief, route: DispatchRoute): Promise<void> {
     const thread = await bb.sdk.threads.get({ threadId: brief.threadId });
@@ -283,7 +335,14 @@ export const registerApi = (
   });
 
   bb.rpc.register(awaitingRpcContract, {
-    awaitingThreads: () => store.listAwaiting().then((list) => list.map(({ threadId, kind }) => ({ threadId, kind }))),
+    awaitingThreads: () =>
+      store.listAwaiting().then((list) =>
+        list.map((entry) => {
+          const stageId = awaitingStageId(entry);
+          const own = stageId === null ? undefined : ownStageIcon(deps.stages?.(entry.threadId).find((stage) => stage.id === stageId));
+          return { threadId: entry.threadId, kind: entry.kind, ...(own === undefined ? {} : { stage: own }) };
+        }),
+      ),
   });
 
   // Ряд виджета: модель треда, каталог моделей доступных провайдеров и flow владельца с их моделью. Сбой — `null`: кнопки модели
@@ -342,6 +401,17 @@ export const registerApi = (
       return route === null ? base : { ...base, route };
     },
   });
+
+  bb.rpc.register(turnRpcContract, {
+    async agentTurn({ threadId }) {
+      return { turn: await agentTurnOf(threadId) };
+    },
+  });
+  // Смена хода — открытым уточнениям сразу: сжатие появляется и пропадает без опроса.
+  const publishTurn = ({ thread }: { thread: { id: string; status: ThreadStatus } }) => void bb.realtime.publish(TURN_CHANNEL, { threadId: thread.id, turn: turnOf(thread.status) });
+  bb.events.on("thread.active", publishTurn);
+  bb.events.on("thread.idle", publishTurn);
+  bb.events.on("thread.failed", publishTurn);
 
   bb.rpc.register(filesRpcContract, {
     async threadFiles({ threadId }) {
