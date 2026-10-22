@@ -7,8 +7,14 @@ import {
   COMPOSER_FOLD_REACH,
   canFold,
   claimsFold,
+  bottomOutOfView,
+  draftRoom,
   foldDrag,
+  footInView,
+  overflowsView,
   scrollsDraftBack,
+  topOutOfView,
+  type ComposerInView,
 } from "./composer-fold";
 import type { Point } from "./home-swipe";
 
@@ -39,6 +45,73 @@ describe("scrollsDraftBack", () => {
   it("takes a pull down over a draft resting at its first line", () => {
     expect(scrollsDraftBack({ scrollTop: 0 })).toBe(false);
     expect(scrollsDraftBack({ scrollTop: 2 })).toBe(false);
+  });
+});
+
+/** A composer from 300 to 700 px on a screen whose visible part runs from `viewTop` to `viewBottom`. */
+const inView = (viewTop: number, viewBottom: number): ComposerInView => ({ top: 300, bottom: 700, viewTop, viewBottom });
+
+describe("topOutOfView", () => {
+  it("finds the top of a composer gone above the visible part of the screen", () => {
+    expect(topOutOfView(inView(420, 900))).toBe(true);
+  });
+
+  it("finds the top of a composer standing on the screen, or a pixel or two off it, in view", () => {
+    expect(topOutOfView(inView(0, 900))).toBe(false);
+    expect(topOutOfView(inView(300, 900))).toBe(false);
+    expect(topOutOfView(inView(302, 900))).toBe(false);
+  });
+});
+
+describe("bottomOutOfView", () => {
+  it("finds the foot of a composer gone under the keyboard", () => {
+    expect(bottomOutOfView(inView(0, 460))).toBe(true);
+  });
+
+  it("finds the foot of a composer standing on the screen, or a pixel or two off it, in view", () => {
+    expect(bottomOutOfView(inView(0, 900))).toBe(false);
+    expect(bottomOutOfView(inView(0, 700))).toBe(false);
+    expect(bottomOutOfView(inView(0, 698))).toBe(false);
+  });
+});
+
+describe("footInView", () => {
+  it("finds the foot of a composer between the top of what is seen and the keyboard in view", () => {
+    expect(footInView(inView(0, 900))).toBe(true);
+    expect(footInView(inView(0, 698))).toBe(true);
+  });
+
+  it("finds the foot of a composer under the keyboard, or above the top of what is seen, out of view", () => {
+    expect(footInView(inView(0, 460))).toBe(false);
+    expect(footInView(inView(700, 1200))).toBe(false);
+  });
+});
+
+describe("overflowsView", () => {
+  it("finds a composer taller than what is seen", () => {
+    expect(overflowsView(inView(0, 300))).toBe(true);
+  });
+
+  it("finds a composer that fits what is seen, or overhangs it by a pixel or two, inside it", () => {
+    expect(overflowsView(inView(0, 900))).toBe(false);
+    expect(overflowsView(inView(100, 500))).toBe(false);
+    expect(overflowsView(inView(100, 498))).toBe(false);
+  });
+});
+
+describe("draftRoom", () => {
+  it("lets the draft grow up to the top of what is seen, less what sits above it in the composer", () => {
+    expect(draftRoom({ formTop: 100, draftTop: 110, draftBottom: 500, viewTop: 150 })).toBe(500 - 150 - 10);
+  });
+
+  it("gives the same room however tall the draft stands now, its foot where it is", () => {
+    const tall = draftRoom({ formTop: -100, draftTop: -90, draftBottom: 500, viewTop: 150 });
+    const short = draftRoom({ formTop: 300, draftTop: 310, draftBottom: 500, viewTop: 150 });
+    expect(tall).toBe(short);
+  });
+
+  it("never leaves the draft less than one line", () => {
+    expect(draftRoom({ formTop: 100, draftTop: 110, draftBottom: 180, viewTop: 150 })).toBe(COMPOSER_FOLDED_HEIGHT);
   });
 });
 

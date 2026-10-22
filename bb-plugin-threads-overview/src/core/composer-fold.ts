@@ -26,12 +26,95 @@ export function canFold(height: number, focused: boolean): boolean {
 }
 
 /**
- * Whether a pull down over the draft is a request to scroll it back to its
- * earlier lines rather than to fold the composer: a draft scrolled past its
- * first line keeps the finger, the way any list does.
+ * Whether the draft is scrolled past its first line: the composer is not at
+ * its top, and a pull down on it folds nothing — over the draft it scrolls back
+ * to the earlier lines, the way any list does.
  */
 export function scrollsDraftBack(draft: { readonly scrollTop: number }): boolean {
   return draft.scrollTop > DRAFT_SCROLL_SLACK;
+}
+
+/** How many pixels an edge of the composer may stand off the screen and still count as in view. */
+const VIEW_EDGE_SLACK = 4;
+
+/**
+ * Where the composer stands against the part of the screen the keyboard
+ * leaves: its top and its foot, and the top and the bottom of what is seen —
+ * all in px from the top of the layout viewport, the frame both
+ * `getBoundingClientRect` and `visualViewport.offsetTop` count in, not from the
+ * top of the document.
+ */
+export interface ComposerInView {
+  readonly top: number;
+  readonly bottom: number;
+  readonly viewTop: number;
+  readonly viewBottom: number;
+}
+
+/**
+ * Whether the top of the composer has gone above what is seen — a long draft
+ * with the keyboard out: a pull down then scrolls back up to it, the way any
+ * page does, and folds nothing.
+ */
+export function topOutOfView(composer: ComposerInView): boolean {
+  return composer.viewTop - composer.top > VIEW_EDGE_SLACK;
+}
+
+/**
+ * Whether the foot of the composer has gone under the keyboard — scrolled up
+ * to the top of a long draft: a push up then scrolls back down to it, if the
+ * composer is taller than what is seen too — see `overflowsView`.
+ */
+export function bottomOutOfView(composer: ComposerInView): boolean {
+  return composer.bottom - composer.viewBottom > VIEW_EDGE_SLACK;
+}
+
+/**
+ * Whether the foot of the composer stands in what is seen. A composer found
+ * with its foot out of it — under the keyboard bb has not laid its screen out
+ * for yet, or above the top — gives no measure of its room.
+ */
+export function footInView(composer: ComposerInView): boolean {
+  return composer.bottom > composer.viewTop && !bottomOutOfView(composer);
+}
+
+/**
+ * Whether the composer is taller than what is seen. A push up over one that
+ * fits is held whatever its foot does under the keyboard, so the screen does
+ * not shake; the push up a long draft needs to get back to its foot is the
+ * only one let through.
+ */
+export function overflowsView(composer: ComposerInView): boolean {
+  return composer.bottom - composer.top - (composer.viewBottom - composer.viewTop) > VIEW_EDGE_SLACK;
+}
+
+/**
+ * How far under the top of the part of the screen the keyboard leaves the
+ * composer stops, in px: room for the status bar and bb's header over the
+ * thread on a phone, which end about 109 px down.
+ */
+export const COMPOSER_TOP_RESERVE = 120;
+
+/** Where the draft sits in the composer, against the top of what is seen; px from the top of the layout viewport, as in `ComposerInView`. */
+export interface DraftPlace {
+  readonly formTop: number;
+  readonly draftTop: number;
+  readonly draftBottom: number;
+  readonly viewTop: number;
+}
+
+/**
+ * How tall the draft may grow, in px, for the composer to stay under the top
+ * of what is seen — see `COMPOSER_TOP_RESERVE`. The composer grows up from its
+ * foot, so the draft's foot stays where it is whatever its height, and the room
+ * is the run from there up to the top, less what sits above the draft in the
+ * composer.
+ * Whole pixels, never less than one line. A composer that grows down from its
+ * top would get a room that drifts with every fit — bb draws none.
+ */
+export function draftRoom(place: DraftPlace): number {
+  const above = place.draftTop - place.formTop;
+  return Math.max(COMPOSER_FOLDED_HEIGHT, Math.floor(place.draftBottom - place.viewTop - above));
 }
 
 /**

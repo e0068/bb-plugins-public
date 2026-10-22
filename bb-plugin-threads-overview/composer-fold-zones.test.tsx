@@ -282,6 +282,24 @@ describe("a push up over the composer", () => {
     expect(finger("touchmove", 540, composer.editor).defaultPrevented).toBe(false);
   });
 
+  it("is left alone while the foot of a composer taller than the screen is hidden under the keyboard, to scroll back down to it", async () => {
+    vi.stubGlobal("visualViewport", { offsetTop: 0, height: 460, addEventListener() {}, removeEventListener() {} });
+    const composer = drawComposer(600);
+    await renderOverlay();
+    finger("touchstart", 600, composer.editor);
+
+    expect(finger("touchmove", 540, composer.editor).defaultPrevented).toBe(false);
+  });
+
+  it("is held over a composer that fits the screen, its foot a little under the keyboard", async () => {
+    vi.stubGlobal("visualViewport", { offsetTop: 0, height: 760, addEventListener() {}, removeEventListener() {} });
+    const composer = drawComposer(180);
+    await renderOverlay();
+    finger("touchstart", 600, composer.editor);
+
+    expect(finger("touchmove", 599, composer.editor).defaultPrevented).toBe(true);
+  });
+
   it("is left to a draft that still has lines below to scroll to", async () => {
     const composer = drawComposer(180);
     Object.defineProperties(composer.draft, {
