@@ -141,23 +141,15 @@ describe("ring icon", () => {
 
 describe("provider panel", () => {
   it("lists every window of the item's provider", () => {
-    const Panel = providerPanel("claude-code", "session");
+    const Panel = providerPanel("claude-code");
     const view = render(<Panel dismiss={() => {}} />);
     act(() => publishUsage(STATE));
     expect(view.container.textContent).toContain("Claude Code Limits");
     expect(view.container.querySelectorAll(".usage-circles__window-row").length).toBe(2);
   });
 
-  it("marks the limit of the ring the window was opened from", () => {
-    const Panel = providerPanel("claude-code", "weekly");
-    const view = render(<Panel dismiss={() => {}} />);
-    act(() => publishUsage(STATE));
-    const marked = Array.from(view.container.querySelectorAll<HTMLElement>(".usage-circles__window-row")).filter((row) => row.dataset.highlighted === "true");
-    expect(marked.map((row) => row.textContent)).toEqual([expect.stringContaining("7 days")]);
-  });
-
   it("says why a signed-out provider has nothing to show", () => {
-    const Panel = providerPanel("codex", "session");
+    const Panel = providerPanel("codex");
     const view = render(<Panel dismiss={() => {}} />);
     act(() => publishUsage(STATE));
     expect(view.container.querySelector(".usage-circles__status")?.textContent).not.toBe("");
@@ -168,7 +160,7 @@ describe("the chosen limits and layout", () => {
   const rows = (container: HTMLElement) => Array.from(container.querySelectorAll(".usage-circles__window-row")).map((row) => row.textContent);
 
   it("shows only the chosen limits of the provider, in the chosen order", () => {
-    const Panel = providerPanel("claude-code", "session");
+    const Panel = providerPanel("claude-code");
     const view = render(<Panel dismiss={() => {}} />);
     act(() => publishUsage({ ...STATE, limits: moveLimit(DEFAULT_LIMITS, "claude-weekly", -1) }));
     expect(rows(view.container)).toEqual([expect.stringContaining("7 days"), expect.stringContaining("5 hour")]);
@@ -177,7 +169,7 @@ describe("the chosen limits and layout", () => {
   });
 
   it("still shows a limit no ring stands for, after the chosen ones", () => {
-    const Panel = providerPanel("claude-code", "session");
+    const Panel = providerPanel("claude-code");
     const view = render(<Panel dismiss={() => {}} />);
     const claude = STATE.providers[0]!;
     const windows = [
@@ -206,15 +198,15 @@ describe("the chosen limits and layout", () => {
   });
 
   it("shows the windows in a new layout at once, before the backend answers with it", () => {
-    const Panel = providerPanel("claude-code", "session");
+    const Panel = providerPanel("claude-code");
     const view = render(<Panel dismiss={() => {}} />);
     act(() => publishUsage(STATE));
     act(() => publishLayout("grid"));
     expect(view.container.querySelectorAll(".usage-circles__card").length).toBe(2);
   });
 
-  it("shows every chosen limit of both providers in a ring's window in the grid layout, under Usage Limits, each card with its provider's logo and the ring's own marked", () => {
-    const Panel = providerPanel("claude-code", "session");
+  it("shows every chosen limit of both providers in a ring's window in the grid layout, under Usage Limits, each card with its provider's logo", () => {
+    const Panel = providerPanel("claude-code");
     const view = render(<Panel dismiss={() => {}} />);
     const codex = { ...STATE.providers[1]!, usage: { status: "ok" as const, windows: [{ label: "Current session", usedPercent: 19, resetsAt: null }, { label: "Weekly limit", usedPercent: 4, resetsAt: null }] } };
     act(() => publishUsage({ ...STATE, providers: [STATE.providers[0]!, codex], layout: "grid" }));
@@ -222,12 +214,11 @@ describe("the chosen limits and layout", () => {
     const cards = Array.from(view.container.querySelectorAll<HTMLElement>(".usage-circles__card"));
     expect(cards.map((card) => card.querySelector(".usage-circles__card-heading")?.textContent)).toEqual(["5 hour12%", "7 days95%", "5 hour19%", "7 days4%"]);
     expect(cards.map((card) => card.querySelector(".usage-circles__logo")?.getAttribute("aria-label"))).toEqual(["Claude Code", "Claude Code", "Codex", "Codex"]);
-    expect(cards.map((card) => card.dataset.highlighted ?? "")).toEqual(["true", "", "", ""]);
     expect(view.container.querySelector(".usage-circles__window-row")).toBeNull();
   });
 
   it("says in the grid layout why a provider has no data, so its ring's window does not just drop it", () => {
-    const Panel = providerPanel("codex", "session");
+    const Panel = providerPanel("codex");
     const view = render(<Panel dismiss={() => {}} />);
     act(() => publishUsage({ ...STATE, layout: "grid" }));
     expect(view.container.querySelector(".usage-circles__status")?.textContent).toBe("Not authenticated");
@@ -235,7 +226,7 @@ describe("the chosen limits and layout", () => {
   });
 
   it("keeps a limit no ring stands for in the grid layout, after the chosen ones", () => {
-    const Panel = providerPanel("claude-code", "session");
+    const Panel = providerPanel("claude-code");
     const view = render(<Panel dismiss={() => {}} />);
     const claude = STATE.providers[0]!;
     const windows = [...(claude.usage.status === "ok" ? claude.usage.windows : []), { label: "Current week (Sonnet)", usedPercent: 40, resetsAt: null }];

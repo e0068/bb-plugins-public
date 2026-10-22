@@ -224,29 +224,27 @@ describe("buildProviderDetails", () => {
 
   const twoWindows = () => {
     const windows = [{ label: "Current session", usedPercent: 5, resetsAt: null }, { label: "Weekly", usedPercent: 9, resetsAt: null }];
-    const details = buildProviderDetails(provider({ status: "ok", windows }), coloring, now, windows[1]);
-    const [plain, marked] = Array.from(details.querySelectorAll<HTMLElement>(".usage-circles__window-row"));
-    return { details, plain, marked };
+    const details = buildProviderDetails(provider({ status: "ok", windows }), coloring, now);
+    return { details, rows: Array.from(details.querySelectorAll<HTMLElement>(".usage-circles__window-row")) };
   };
   const px = (value: string) => Number.parseFloat(value || "0");
 
-  it("sets the item's own row off like a selected thread: a rounded background inset from the window's edges, no bar", () => {
-    const { details, marked } = twoWindows();
-    expect(marked.dataset.highlighted).toBe("true");
-    expect(marked.style.backgroundColor).toBe("var(--sidebar-accent)");
-    expect(marked.style.boxShadow).toBe("");
-    expect(px(marked.style.borderRadius)).toBeGreaterThan(0);
-    expect(px(marked.style.marginLeft)).toBe(0);
+  it("sets no row apart and pads none: the rows' text sits 8 px from the window's edges, flush with the threads' icons", () => {
+    const { details, rows } = twoWindows();
     expect(px(details.style.paddingLeft)).toBe(8);
     expect(px(details.style.paddingRight)).toBe(8);
+    for (const row of rows) {
+      expect(row.dataset.highlighted).toBeUndefined();
+      expect(row.style.backgroundColor).toBe("");
+      expect(row.style.padding).toBe("");
+    }
   });
 
-  it("lays a row out as the mockup: 8 px around it, 4 px from the line to the bars, 2 px between bars and between rows", () => {
-    const { details, plain, marked } = twoWindows();
-    expect(px(details.style.gap)).toBe(2);
+  it("lays a row out as the mockup: 4 px from the line to the bars, 2 px between bars, 10 px between rows", () => {
+    const { details, rows } = twoWindows();
+    expect(px(details.style.gap)).toBe(10);
     expect(px(details.style.paddingBottom)).toBe(8);
-    for (const row of [plain, marked]) {
-      expect(row.style.padding).toBe("8px");
+    for (const row of rows) {
       expect(px(row.style.gap)).toBe(4);
       expect(px(row.querySelector<HTMLElement>(".usage-circles__window-bars")!.style.gap)).toBe(2);
       expect(row.querySelector(".usage-circles__window-heading ~ .usage-circles__window-reset")).toBeNull();
@@ -309,13 +307,19 @@ describe("the grid layout", () => {
   const cards = (details: HTMLElement) => Array.from(details.querySelectorAll<HTMLElement>(".usage-circles__card"));
   const px = (value: string) => Number.parseFloat(value || "0");
 
-  it("lays the limits out as cards in two columns, the item's own card set off like a selected thread", () => {
-    const details = buildAllLimits(limits, coloring, now, windows[1]);
+  it("lays the limits out as cards in two columns, 10 px between rows and 16 px between columns, none set apart or padded", () => {
+    const details = buildAllLimits(limits, coloring, now);
     expect(details.style.display).toBe("grid");
     expect(details.style.gridTemplateColumns).toBe("1fr 1fr");
-    expect(px(details.style.gap)).toBe(2);
-    expect(cards(details).map((card) => card.dataset.highlighted ?? "")).toEqual(["", "true", ""]);
-    expect(cards(details)[1]!.style.backgroundColor).toBe("var(--sidebar-accent)");
+    expect(px(details.style.rowGap)).toBe(10);
+    expect(px(details.style.columnGap)).toBe(16);
+    expect(px(details.style.paddingLeft)).toBe(8);
+    expect(px(details.style.paddingRight)).toBe(8);
+    for (const card of cards(details)) {
+      expect(card.dataset.highlighted).toBeUndefined();
+      expect(card.style.backgroundColor).toBe("");
+      expect(card.style.padding).toBe("");
+    }
   });
 
   it("stretches an odd last card over both columns", () => {
@@ -334,7 +338,6 @@ describe("the grid layout", () => {
     const reset = card!.querySelector<HTMLElement>(".usage-circles__card-reset")!;
     expect(Array.from(reset.children).map((cell) => cell.textContent)).toEqual(["2h 44m", formatResetClock(resetsAt)]);
     expect(reset.style.justifyContent).toBe("space-between");
-    expect(card!.style.padding).toBe("8px");
   });
 });
 
@@ -363,7 +366,7 @@ describe("buildAllLimits", () => {
 
   it("says why a provider has no data, under its logo, after the cards, without stretching the cards", () => {
     const offline = { ...codex, usage: { status: "unauthenticated" as const } };
-    const details = buildAllLimits(limits.slice(1), coloring, now, undefined, [offline]);
+    const details = buildAllLimits(limits.slice(1), coloring, now, [offline]);
     const status = details.querySelector<HTMLElement>(".usage-circles__status")!;
     expect(status.textContent).toBe("Not authenticated");
     expect(status.querySelector(".usage-circles__logo")?.getAttribute("aria-label")).toBe("Codex");
@@ -373,7 +376,7 @@ describe("buildAllLimits", () => {
   });
 
   it("does not ask to pick limits when a provider simply has no data", () => {
-    const details = buildAllLimits([], coloring, now, undefined, [{ ...codex, usage: { status: "expired" as const } }]);
+    const details = buildAllLimits([], coloring, now, [{ ...codex, usage: { status: "expired" as const } }]);
     expect(Array.from(details.querySelectorAll(".usage-circles__status")).map((status) => status.textContent)).toEqual(["Authentication session expired"]);
   });
 });

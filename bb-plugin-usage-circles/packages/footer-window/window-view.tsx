@@ -69,11 +69,11 @@ const HEADER: CSSProperties = {
   display: "flex",
   alignItems: "center",
   gap: 6,
-  // The sidebar's thread rows reach 8 px from its edges, titles start at 16 px, icons sit 22 px from the right:
-  // the title starts with theirs and the pin, 8 px from the top and right, sits on their icons' axis.
+  // The window is as wide as the thread rows above it. A row's icon and the section labels start 8 px in, so does
+  // the title; a row's actions button ends flush at its right edge, so does the pin — on that button's axis.
   height: 44,
   flexShrink: 0,
-  padding: "8px 8px 8px 16px",
+  padding: "8px 0 8px 8px",
   background: "var(--sidebar)",
 };
 const ICON: CSSProperties = { display: "inline-flex", flexShrink: 0, width: 16, height: 16, alignItems: "center", justifyContent: "center", color: "var(--muted-foreground)" };
