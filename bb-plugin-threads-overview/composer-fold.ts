@@ -6,17 +6,23 @@
 // of that, it stands back up and the keyboard stays. Pulled down by its panel —
 // the row of buttons and the project row under it — only the keyboard goes,
 // let go past the same reach, and the composer stays as it stands. While text
-// in it is selected, a finger drags the selection and folds nothing. A web page
-// cannot carry the keyboard with a finger, so it goes on the letting go, not in
-// the middle of the pull. A push up over an open composer is held, so the page
-// under it does not shake. A tap on the folded composer opens it again. The
-// rules live in `src/core/composer-fold.ts`; this is the hand on the composer.
+// in it is selected, a finger drags the selection and folds nothing. The pull
+// folds only a composer standing at its very top — the first line of the draft
+// in view and the composer's top on the screen above the keyboard; short of
+// it, a pull down scrolls back up through a long draft, and a push up scrolls
+// back down to a foot hidden under the keyboard. A web page cannot carry the
+// keyboard with a finger, so it goes on the letting go, not in the middle of
+// the pull. A push up over an open composer is held, so the page under it
+// does not shake. A tap on the folded composer opens it again. The rules live
+// in `src/core/composer-fold.ts`; this is the hand on the composer.
 //
 // The listeners sit on the composer itself, not on the page: a listener that
 // may hold a touch makes the browser wait on it before it scrolls, and only a
 // finger on the composer is ever held here.
 import {
   COMPOSER_FOLDED_HEIGHT,
+  COMPOSER_TOP_RESERVE,
+  bottomOutOfView,
   canFold,
   claimsFold,
   composerOpen,
@@ -24,7 +30,10 @@ import {
   foldDrag,
   foldZone,
   holdsOpenComposer,
+  overflowsView,
   scrollsDraftBack,
+  topOutOfView,
+  type ComposerInView,
   type FoldZone,
 } from "./src/core/composer-fold";
 import { hasRoomBelow, type Point } from "./src/core/home-swipe";
@@ -124,6 +133,28 @@ export function selectsTextIn(container: Element): boolean {
   return container.contains(selection.anchorNode) || container.contains(selection.focusNode);
 }
 
+/**
+ * The top of what is seen, in px from the top of the layout viewport: the
+ * top of the part of the screen the keyboard leaves, less the reserve for bb's
+ * header — see `COMPOSER_TOP_RESERVE`.
+ */
+export function seenTop(): number {
+  return (window.visualViewport?.offsetTop ?? 0) + COMPOSER_TOP_RESERVE;
+}
+
+/** Whether the fold has the height of `form` in hand: a finger pulling it, the box riding down to one line, or the composer folded. */
+export function foldHolds(form: HTMLFormElement): boolean {
+  return form.style.maxHeight !== "" || form.style.height !== "" || form.hasAttribute(FOLDED_ATTRIBUTE);
+}
+
+/** Where `form` stands against what is seen: from under bb's header down to the keyboard — see `seenTop`. */
+export function composerInView(form: HTMLFormElement): ComposerInView {
+  const { top, bottom } = form.getBoundingClientRect();
+  const view = window.visualViewport;
+  const viewBottom = (view?.offsetTop ?? 0) + (view?.height ?? window.innerHeight);
+  return { top, bottom, viewTop: seenTop(), viewBottom };
+}
+
 /** A finger on the composer, from the touch that put it down. */
 interface Pull {
   readonly start: Point;
@@ -132,8 +163,10 @@ interface Pull {
   readonly open: boolean;
   /** The composer was being typed into at the touch: the keyboard is there to put away. */
   readonly typed: boolean;
-  /** A pull from the body that folds: false over a draft scrolled back or a composer with nothing to fold. */
+  /** A pull from the body that folds: false short of the composer's very top, or over a composer with nothing to fold. */
   readonly folds: boolean;
+  /** The composer, taller than the screen, had its foot under the keyboard at the touch: a push up scrolls back down to it. */
+  readonly footHidden: boolean;
   /** The draft under the finger, if the finger is on it. */
   readonly draft: Element | null;
   last: Point | null;
@@ -203,13 +236,14 @@ export function foldByDrag(form: HTMLFormElement): () => void {
       inForm: form.contains(target),
     });
     const draft = target.closest(DRAFT_SELECTOR);
-    full = form.getBoundingClientRect().height;
+    const formDraft = form.querySelector(DRAFT_SELECTOR);
+    const view = composerInView(form);
+    full = view.bottom - view.top;
     const typed = typedInto();
-    const folds =
-      zone === "body" &&
-      !(draft !== null && scrollsDraftBack(draft)) &&
-      canFold(drawnAsOneLine() ? COMPOSER_FOLDED_HEIGHT : full, typed);
-    pull = { start: point, zone, open: standsOpen(form), typed, folds, draft, last: null };
+    const atTop = !topOutOfView(view) && !(formDraft !== null && scrollsDraftBack(formDraft));
+    const folds = zone === "body" && atTop && canFold(drawnAsOneLine() ? COMPOSER_FOLDED_HEIGHT : full, typed);
+    const footHidden = overflowsView(view) && bottomOutOfView(view);
+    pull = { start: point, zone, open: standsOpen(form), typed, folds, footHidden, draft, last: null };
   };
   const onMove = (event: TouchEvent) => {
     const now = soleFinger(event);
@@ -225,9 +259,10 @@ export function foldByDrag(form: HTMLFormElement): () => void {
     pull.last = now;
     const { start, draft } = pull;
     // An open composer has nothing a push up could do — see `holdsOpenComposer` —
-    // unless the draft under the finger still has lines below to scroll to.
+    // unless the draft under the finger still has lines below to scroll to, or
+    // the composer is taller than the screen with its foot under the keyboard.
     if (holdsOpenComposer(start, now)) {
-      if (pull.open && !(draft !== null && hasRoomBelow(draft))) event.preventDefault();
+      if (pull.open && !pull.footHidden && !(draft !== null && hasRoomBelow(draft))) event.preventDefault();
       return;
     }
     if (pull.zone === "panel") {

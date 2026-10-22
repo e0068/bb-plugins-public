@@ -87,6 +87,7 @@ import {
 import { openRowIntoThread } from "./thread-open";
 import { RowsNearView } from "./rows-near-view";
 import { findComposer, foldByDrag, mountFoldStyle, soleFinger, standsOpen } from "./composer-fold";
+import { fitComposer } from "./composer-fit";
 import { holdSticky, type Hold } from "./sticky-hold";
 import { ADOPT_ROW_SWIPE, watchEdgeSwipes, type RowAdoption } from "./edge-swipe";
 import {
@@ -2516,7 +2517,8 @@ const COMPOSER_LOOK_FRAMES = 120;
 
 /**
  * bb's composer folded by a finger pulling it down, on a thread and on Home —
- * see `composer-fold.ts`. The composer comes and goes with the screen, so it is
+ * see `composer-fold.ts` — and kept on the screen above the keyboard — see
+ * `composer-fit.ts`. The composer comes and goes with the screen, so it is
  * looked for once a frame for a while after every change of screen, and again
  * at every touch; the fold's listeners go on whichever composer is found.
  */
@@ -2546,6 +2548,7 @@ function ComposerFold() {
   }, [touch, projectId, threadId]);
 
   useEffect(() => (composer !== null ? foldByDrag(composer) : undefined), [composer]);
+  useEffect(() => (composer !== null ? fitComposer(composer) : undefined), [composer]);
 
   return null;
 }

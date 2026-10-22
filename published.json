@@ -25,9 +25,9 @@
     "publishedAt": "2026-10-13T20:26:59.436Z"
   },
   "bb-plugin-threads-overview": {
-    "version": "0.3.29",
-    "commit": "aea3ea65f48d1a6307a4b9c8bdda39f5a9a0a75a",
-    "publishedAt": "2026-10-19T14:47:06.719Z"
+    "version": "0.3.30",
+    "commit": "d73f1d09fbced446521aba96b23d3f1c2af27020",
+    "publishedAt": "2026-10-22T17:01:25.933Z"
   },
   "bb-plugin-token-usage-header": {
     "version": "0.4.18",

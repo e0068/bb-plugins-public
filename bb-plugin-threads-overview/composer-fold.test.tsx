@@ -241,6 +241,61 @@ describe("where the fold keeps out", () => {
     expect(folded(composer)).toBe(false);
   });
 
+  it("leaves a draft scrolled past its first line to scroll back from wherever the body is pulled", async () => {
+    const composer = drawComposer(180);
+    const above = document.createElement("div");
+    composer.form.prepend(above);
+    Object.defineProperty(composer.draft, "scrollTop", { configurable: true, value: 120 });
+    await renderOverlay();
+    finger("touchstart", 600, above);
+    finger("touchmove", 670, above);
+    finger("touchend", 670, above);
+    expect(folded(composer)).toBe(false);
+  });
+
+  it("leaves a composer whose top has gone above the screen to scroll back up to it", async () => {
+    const composer = drawComposer(1000);
+    await renderOverlay();
+    expect(pull(composer, 670).defaultPrevented).toBe(false);
+    finger("touchend", 670, composer.editor);
+    expect(folded(composer)).toBe(false);
+  });
+
+  it("leaves a composer whose top has come within 120 px of the top of the screen, under the thread's header", async () => {
+    const composer = drawComposer(750);
+    await renderOverlay();
+    expect(pull(composer, 670).defaultPrevented).toBe(false);
+    finger("touchend", 670, composer.editor);
+    expect(folded(composer)).toBe(false);
+  });
+
+  it("leaves a composer whose top is hidden above the part of the screen the keyboard leaves", async () => {
+    vi.stubGlobal("visualViewport", { offsetTop: 700, height: 300, addEventListener() {}, removeEventListener() {} });
+    const composer = drawComposer(180);
+    await renderOverlay();
+    expect(pull(composer, 670).defaultPrevented).toBe(false);
+    finger("touchend", 670, composer.editor);
+    expect(folded(composer)).toBe(false);
+  });
+
+  it("folds a composer standing whole on the part of the screen the keyboard leaves", async () => {
+    vi.stubGlobal("visualViewport", { offsetTop: 300, height: 500, addEventListener() {}, removeEventListener() {} });
+    const composer = drawComposer(180);
+    await renderOverlay();
+    pull(composer, 670);
+    finger("touchend", 670, composer.editor);
+    expect(folded(composer)).toBe(true);
+  });
+
+  it("folds a composer whose top is in view and foot under the keyboard", async () => {
+    vi.stubGlobal("visualViewport", { offsetTop: 480, height: 100, addEventListener() {}, removeEventListener() {} });
+    const composer = drawComposer(180);
+    await renderOverlay();
+    pull(composer, 670);
+    finger("touchend", 670, composer.editor);
+    expect(folded(composer)).toBe(true);
+  });
+
   it("leaves a one-line composer nobody is typing into alone", async () => {
     const composer = drawComposer(48);
     await renderOverlay();
