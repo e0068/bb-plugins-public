@@ -54,6 +54,7 @@ import {
   nearestSlideIndex,
   revealScrollLeft,
   UNLISTED_NAME,
+  type FlowRun,
   type ProjectGroup,
   type SortKey,
   type Span,
@@ -156,7 +157,7 @@ function threadTitle(thread: PluginSidebarThread): string {
   return thread.title ?? thread.titleFallback ?? "Без названия";
 }
 
-function toFacts(thread: PluginSidebarThread): ThreadFacts {
+function toFacts(thread: PluginSidebarThread, flowRuns: ReadonlyMap<string, FlowRun>): ThreadFacts {
   return {
     id: thread.id,
     projectId: thread.projectId,
@@ -164,6 +165,7 @@ function toFacts(thread: PluginSidebarThread): ThreadFacts {
     hasPendingInteraction: thread.hasPendingInteraction,
     indicator: thread.indicator,
     activity: thread.activity,
+    flowRun: flowRuns.get(thread.id) ?? null,
     latestAttentionAt: thread.latestAttentionAt,
   };
 }
@@ -188,6 +190,38 @@ function useProviderLookup(): (providerId: string) => ProviderBrand | null {
     );
     return (providerId: string) => brands.get(providerId) ?? null;
   }, [providers]);
+}
+
+/** As often as Flow itself repaints its row marks in the left panel. */
+const FLOW_POLL_MS = 10_000;
+
+/**
+ * What Flow runs in each thread without the agent — an automation or a pressed
+ * Action step. The sidebar view does not carry it, so it is polled over rpc.
+ */
+function useFlowRuns(): ReadonlyMap<string, FlowRun> {
+  const rpc = useRpc<typeof rpcContract>();
+  const [runs, setRuns] = useState<ReadonlyMap<string, FlowRun>>(new Map());
+  useEffect(() => {
+    let alive = true;
+    const poll = async () => {
+      try {
+        const { running } = await rpc.call("runningFlowSteps");
+        if (alive) setRuns(new Map(running.map((entry) => [entry.threadId, entry.icon])));
+      } catch {
+        // Keep the last answer: a missed poll must not flash hidden threads back in.
+      }
+    };
+    void poll();
+    const timer = setInterval(() => void poll(), FLOW_POLL_MS);
+    return () => {
+      alive = false;
+      clearInterval(timer);
+    };
+    // rpc is a fresh client per render; depending on it would restart the poll.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  return runs;
 }
 
 /** Postpone marks, loaded over rpc and kept live; mutations are optimistic. */
@@ -665,6 +699,17 @@ const STATUS_MARKS: Record<RowStatus, { label: string; hint: string; glyph: Reac
     label: "Работает",
     hint: "Агент сейчас работает",
     glyph: <Icon name="Loading" className="size-4 animate-spin text-muted-foreground" aria-hidden />,
+  },
+  // Flow's own marks for these in the left panel: the same glyph, blinking.
+  automation: {
+    label: "Идёт автоматизация",
+    hint: "Flow выполняет автоматизацию; агент не работает",
+    glyph: <Icon name="Arrange" className="size-4 animate-pulse text-muted-foreground" aria-hidden />,
+  },
+  action: {
+    label: "Идёт шаг Action",
+    hint: "Flow выполняет нажатый шаг Action; агент не работает",
+    glyph: <Icon name="Play" className="size-4 animate-pulse text-muted-foreground" aria-hidden />,
   },
   "background-command": {
     label: "Запущен фоновый процесс",
@@ -1860,6 +1905,7 @@ function AttentionSection() {
   const navigate = useBbNavigate();
   const threadActions = experimental_useSidebarThreadActions();
   const { postponedIds, setPostponed } = usePostpone();
+  const flowRuns = useFlowRuns();
   const providerOf = useProviderLookup();
   const settings = useSettings();
   const touch = useMediaQuery(TOUCH_QUERY);
@@ -1928,8 +1974,14 @@ function AttentionSection() {
   );
 
   const queue = useMemo(
-    () => attentionQueue(threads.map(toFacts), postponedIds, sort, showWorking),
-    [threads, postponedIds, sort, showWorking],
+    () =>
+      attentionQueue(
+        threads.map((thread) => toFacts(thread, flowRuns)),
+        postponedIds,
+        sort,
+        showWorking,
+      ),
+    [threads, flowRuns, postponedIds, sort, showWorking],
   );
 
   const groups = useMemo(
