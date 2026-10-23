@@ -2,7 +2,7 @@
 // off the same data: buildRingIcon (the two-concentric-ring SVG of a footer
 // item) and buildWindowRow (the two stacked bars of the item's window), plus
 // the window's content: buildProviderDetails, a row per limit of one provider,
-// and buildAllLimits, a card per limit of both providers. Pure DOM
+// and buildAllLimits, a card per limit of every provider. Pure DOM
 // construction, no plugin/SDK imports — testable with jsdom alone.
 //
 // Colors are plain inline styles, not Tailwind utility classes: BB renders the
@@ -324,25 +324,25 @@ function statusLine(text: string): HTMLDivElement {
 }
 
 /** Why a provider has no data, in the user's words. */
-const whyNoData = (usage: Exclude<ProviderStateWire["usage"], { status: "ok" }>): string =>
-  statusLabel(usage.status, usage.status === "error" ? usage.message : undefined);
+const whyNoData = (usage: Exclude<ProviderStateWire["usage"], { status: "ok" }>, providerTitle: string): string =>
+  statusLabel(usage.status, providerTitle, usage.status === "error" ? usage.message : undefined);
 
 /** A footer item's window under the provider's logo and name: why it has no data, or its limits a row each. */
 export function buildProviderDetails(provider: ProviderStateWire, coloring: Coloring, nowMs: number): HTMLDivElement {
   const { usage } = provider;
-  if (usage.status !== "ok") return listOf([statusLine(whyNoData(usage))]);
+  if (usage.status !== "ok") return listOf([statusLine(whyNoData(usage, provider.title))]);
   return listOf(usage.windows.map((window) => buildWindowRow(buildUsageWindowModel(window, nowMs, coloring))));
 }
 
 /** Why a provider of the grid has no data, under its logo, across both columns. */
 function missingLine(provider: ProviderStateWire): HTMLDivElement {
-  const line = statusLine(provider.usage.status === "ok" ? "" : whyNoData(provider.usage));
+  const line = statusLine(provider.usage.status === "ok" ? "" : whyNoData(provider.usage, provider.title));
   Object.assign(line.style, { display: "flex", alignItems: "center", gap: "4px", gridColumn: "1 / -1" });
   line.prepend(buildProviderLogo(provider, CARD_LOGO_PX));
   return line;
 }
 
-/** The grid: a card per limit of both providers, in the given order, each with its provider's logo; then why each of `missing` has no data. */
+/** The grid: a card per limit of every provider, in the given order, each with its provider's logo; then why each of `missing` has no data. */
 export function buildAllLimits(limits: readonly LimitCard[], coloring: Coloring, nowMs: number, missing: readonly ProviderStateWire[] = []): HTMLDivElement {
   if (limits.length === 0 && missing.length === 0) return listOf([statusLine("No limits to show — pick them under Limits in the plugin's settings")]);
   const grid = gridOf(

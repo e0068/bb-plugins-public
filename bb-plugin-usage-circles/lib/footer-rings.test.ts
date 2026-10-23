@@ -10,15 +10,17 @@ const claude = (windows: Array<{ label: string; usedPercent: number }>): Provide
 });
 
 describe("footer rings", () => {
-  it("offers five rings: three Claude Code windows and two Codex windows, each with its own id", () => {
+  it("offers seven rings: three Claude Code windows, two Codex and two Kimi, each with its own id", () => {
     expect(FOOTER_RINGS.map(({ providerId, kind }) => `${providerId}:${kind}`)).toEqual([
       "claude-code:session",
       "claude-code:weekly",
       "claude-code:fable",
       "codex:session",
       "codex:weekly",
+      "acp-kimi:session",
+      "acp-kimi:weekly",
     ]);
-    expect(new Set(FOOTER_RINGS.map(({ id }) => id)).size).toBe(5);
+    expect(new Set(FOOTER_RINGS.map(({ id }) => id)).size).toBe(7);
   });
 
   it("tells the session, Fable and plain weekly windows apart by their labels", () => {

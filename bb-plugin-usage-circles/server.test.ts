@@ -42,6 +42,7 @@ async function load(options: {
   usage?: () => unknown;
   providers?: () => unknown;
   settings?: Record<string, string | number | boolean>;
+  kimiUsage?: () => unknown;
 } = {}) {
   const { bb, harness } = createFakePluginHost({
     settings: options.settings,
@@ -50,7 +51,7 @@ async function load(options: {
       providers: { list: options.providers ?? (async () => LIVE_PROVIDERS) },
     },
   });
-  await plugin(bb);
+  await plugin(bb, { kimiUsage: (options.kimiUsage ?? (async () => ({ status: "not_installed" }))) as never });
   const getState = async () => (await harness.callRpc("getState", null)) as StateWire;
   const setRingDims = async (patch: Partial<RingDims>) => (await harness.callRpc("setRingDims", patch)) as RingDims;
   const resetRingDims = async () => (await harness.callRpc("resetRingDims", null)) as RingDims;
@@ -59,12 +60,13 @@ async function load(options: {
 }
 
 describe("getState", () => {
-  it("returns claude-code then codex from one usage-limits response", async () => {
-    const { getState } = await load();
+  it("returns claude-code, codex and kimi from one usage-limits response and the Kimi source", async () => {
+    const { getState } = await load({ kimiUsage: async () => ({ status: "unauthenticated" }) });
     const state = await getState();
     expect(state.providers.map((provider) => [provider.id, provider.title])).toEqual([
       ["claude-code", "Claude Code"],
       ["codex", "Codex"],
+      ["acp-kimi", "Kimi"],
     ]);
     expect(state.providers[1]!.usage).toEqual({
       status: "ok",
@@ -73,6 +75,7 @@ describe("getState", () => {
         { label: "Weekly limit", usedPercent: 1, resetsAt: "2026-09-19T17:15:48.000Z" },
       ],
     });
+    expect(state.providers[2]!.usage).toEqual({ status: "unauthenticated" });
   });
 
   it("calls the usage-limits endpoint once per getState", async () => {
@@ -190,5 +193,58 @@ describe("window layout and limits", () => {
     const picked = toggleLimit(moveLimit(DEFAULT_LIMITS, "codex-session", -1), "claude-fable");
     expect(await setLimits(picked)).toEqual(picked);
     expect((await getState()).limits).toEqual(picked);
+  });
+});
+
+describe("kimi", () => {
+  it("adds Kimi after Codex with the usage the plugin's own Kimi source reports", async () => {
+    const { getState } = await load({
+      kimiUsage: async () => ({
+        status: "ok",
+        windows: [
+          { label: "Current session", usedPercent: 39, resetsAt: "2026-10-22T15:37:38Z" },
+          { label: "Monthly limit", usedPercent: 11, resetsAt: "2026-11-07T00:00:00Z" },
+        ],
+      }),
+    });
+    const providers = (await getState()).providers;
+    expect(providers.map((provider) => [provider.id, provider.title])).toEqual([
+      ["claude-code", "Claude Code"],
+      ["codex", "Codex"],
+      ["acp-kimi", "Kimi"],
+    ]);
+    expect(providers[2]!.usage).toEqual({
+      status: "ok",
+      windows: [
+        { label: "Current session", usedPercent: 39, resetsAt: "2026-10-22T15:37:38Z" },
+        { label: "Monthly limit", usedPercent: 11, resetsAt: "2026-11-07T00:00:00Z" },
+      ],
+    });
+  });
+
+  it("reports Kimi without an installation as not_installed, while the host providers still read from usageLimits", async () => {
+    const { getState } = await load({ kimiUsage: async () => ({ status: "not_installed" }) });
+    const [claude, , kimi] = (await getState()).providers;
+    expect(claude!.usage.status).toBe("ok");
+    expect(kimi!.usage).toEqual({ status: "not_installed" });
+  });
+
+  it("carries the Kimi source's unauthenticated status through", async () => {
+    const { getState } = await load({ kimiUsage: async () => ({ status: "unauthenticated" }) });
+    const kimi = (await getState()).providers[2]!;
+    expect(kimi.usage).toEqual({ status: "unauthenticated" });
+  });
+
+  it("asks the Kimi source once across back-to-back getState calls — the server caches it like the host's usage-limits", async () => {
+    let calls = 0;
+    const { getState } = await load({
+      kimiUsage: async () => {
+        calls += 1;
+        return { status: "unauthenticated" };
+      },
+    });
+    await getState();
+    await getState();
+    expect(calls).toBe(1);
   });
 });

@@ -43,6 +43,8 @@ describe("parseLimits", () => {
       { id: "claude-session", shown: true },
       { id: "claude-weekly", shown: true },
       { id: "codex-session", shown: true },
+      { id: "kimi-session", shown: true },
+      { id: "kimi-weekly", shown: true },
     ]);
   });
 
@@ -60,7 +62,7 @@ describe("moveLimit and toggleLimit", () => {
     expect(moveLimit(DEFAULT_LIMITS, "claude-weekly", -1).map(({ id }) => id).slice(0, 2)).toEqual(["claude-weekly", "claude-session"]);
     expect(moveLimit(DEFAULT_LIMITS, "claude-weekly", 1).map(({ id }) => id).slice(1, 3)).toEqual(["claude-fable", "claude-weekly"]);
     expect(moveLimit(DEFAULT_LIMITS, "claude-session", -1)).toEqual(DEFAULT_LIMITS);
-    expect(moveLimit(DEFAULT_LIMITS, "codex-weekly", 1)).toEqual(DEFAULT_LIMITS);
+    expect(moveLimit(DEFAULT_LIMITS, "kimi-weekly", 1)).toEqual(DEFAULT_LIMITS);
   });
 
   it("moving keeps every limit and its choice; moving back undoes it", () => {

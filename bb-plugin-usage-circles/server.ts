@@ -1,10 +1,11 @@
 // bb-plugin-usage-circles — backend entry. Reads Claude Code's and Codex's
-// usage limits through the BB SDK (bb.sdk.system.usageLimits), their logos and
-// brand tints from the host's provider list, and exposes them — plus the
+// usage limits through the BB SDK (bb.sdk.system.usageLimits), Kimi's quota
+// from the Kimi coding API itself (lib/kimi-source.ts — the host has no Kimi
+// collector, see docs/decisions/usage-rings-kimi-self-fetch.md), their logos
+// and brand tints from the host's provider list, and exposes them — plus the
 // coloring settings and the ring style — over getState. The ring's dimensions,
 // tuned in the plugin's settings section, are kept in the plugin's KV store,
 // and so are the limits the windows show and their order.
-// No parsing of provider files — see docs/decisions/usage-rings-own-code.md.
 import { defineRpcContract, type BbPluginApi } from "@get-bb/plugin-sdk";
 import { z } from "zod";
 import {
@@ -18,8 +19,10 @@ import {
   type LimitsChoice,
   type ProviderTint,
   type StateWire,
+  type UsageResultWire,
 } from "./lib/usage-model";
 import { createUsageLimitsCache } from "./lib/usage-cache";
+import { createKimiUsageSource } from "./lib/kimi-source";
 import { DEFAULT_RING_DIMS, LOGO_OPTIONS, logoPlacementOf, parseRingDims, type RingDims } from "./lib/ring-style";
 
 /** KV key of the tuned ring dimensions; absent — the defaults. */
@@ -37,7 +40,11 @@ const USAGE_CACHE_TTL_MS = 20_000;
 export const PROVIDERS = [
   { id: "claude-code", title: "Claude Code" },
   { id: "codex", title: "Codex" },
+  { id: "acp-kimi", title: "Kimi" },
 ] as const;
+
+/** Kimi is the provider whose limits the plugin reads itself, not through the host. */
+const SELF_READ_PROVIDER_ID = "acp-kimi";
 
 const usageResultSchema = z.discriminatedUnion("status", [
   z.object({
@@ -126,7 +133,12 @@ async function readBrands(bb: BbPluginApi): Promise<Map<string, ProviderBrand>> 
   }
 }
 
-export default async function plugin(bb: BbPluginApi) {
+export interface PluginDeps {
+  /** Test seam: the Kimi quota source; production wires lib/kimi-source.ts against this machine's Kimi Code installation. */
+  kimiUsage?: () => Promise<UsageResultWire>;
+}
+
+export default async function plugin(bb: BbPluginApi, deps: PluginDeps = {}) {
   const settings = bb.settings.define({
     openOnHover: { type: "boolean", label: "Show panel on hover", default: true },
     coloring: {
@@ -172,7 +184,7 @@ export default async function plugin(bb: BbPluginApi) {
       type: "select",
       label: "Window layout",
       description:
-        "List: a line per limit. Grid: the limits as cards in two columns. All limits: one footer ring instead of one per limit, its window showing every limit of both providers. Which limits show, and in what order, is set under Limits below.",
+        "List: a line per limit. Grid: the limits as cards in two columns. All limits: one footer ring instead of one per limit, its window showing every limit of every provider. Which limits show, and in what order, is set under Limits below.",
       options: [...LAYOUT_OPTIONS],
       default: LAYOUT_OPTIONS[0],
     },
@@ -181,11 +193,12 @@ export default async function plugin(bb: BbPluginApi) {
   const readLimits = async (): Promise<LimitsChoice> => parseLimits(await bb.storage.kv.get(LIMITS_KEY));
 
   const usageLimitsCache = createUsageLimitsCache(() => bb.sdk.system.usageLimits(), USAGE_CACHE_TTL_MS);
+  const kimiUsageCache = createUsageLimitsCache(deps.kimiUsage ?? createKimiUsageSource(), USAGE_CACHE_TTL_MS);
 
   bb.rpc.register(rpcContract, {
     async getState(): Promise<StateWire> {
       const values = await settings.get();
-      const [usage, brands, dims, limits] = await Promise.all([usageLimitsCache.get(), readBrands(bb), readRingDims(), readLimits()]);
+      const [usage, kimiUsage, brands, dims, limits] = await Promise.all([usageLimitsCache.get(), kimiUsageCache.get(), readBrands(bb), readRingDims(), readLimits()]);
       return {
         openOnHover: values.openOnHover,
         coloring: parseColoring({
@@ -200,7 +213,7 @@ export default async function plugin(bb: BbPluginApi) {
           title,
           logoUrl: brands.get(id)?.logoUrl ?? `/api/v1/system/providers/${id}/logo`,
           tint: brands.get(id)?.tint ?? null,
-          usage: normalizeUsage(selectProvider(usage, id)),
+          usage: id === SELF_READ_PROVIDER_ID ? kimiUsage : normalizeUsage(selectProvider(usage, id)),
         })),
         ring: { logo: logoPlacementOf(values.logo), dims },
         layout: layoutOf(values.layout),

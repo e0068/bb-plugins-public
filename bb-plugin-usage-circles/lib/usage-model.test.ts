@@ -3,6 +3,8 @@ import {
   buildUsageWindowModel,
   COLORING_OPTIONS,
   DEFAULT_COLORING,
+  DEFAULT_LIMITS,
+  FOOTER_RINGS,
   formatAbsoluteReset,
   formatResetClock,
   formatRelativeReset,
@@ -10,11 +12,15 @@ import {
   normalizeUsage,
   PACE_MIN_ELAPSED,
   parseColoring,
+  ringWindow,
+  segmentCountForDuration,
   segmentFillFractions,
   selectProvider,
   statusLabel,
   tierForWindow,
+  windowKindOf,
   type Coloring,
+  type ProviderStateWire,
   type UsageTier,
 } from "./usage-model";
 
@@ -137,14 +143,15 @@ describe("formatResetClock", () => {
 });
 
 describe("statusLabel", () => {
-  it("gives a fixed label for known statuses", () => {
-    expect(statusLabel("not_installed")).toBe("Claude Code is not installed");
-    expect(statusLabel("unauthenticated")).toBe("Not authenticated");
-    expect(statusLabel("expired")).toBe("Authentication session expired");
+  it("gives a fixed label for known statuses, with the provider's own name on not_installed", () => {
+    expect(statusLabel("not_installed", "Claude Code")).toBe("Claude Code is not installed");
+    expect(statusLabel("not_installed", "Kimi")).toBe("Kimi is not installed");
+    expect(statusLabel("unauthenticated", "Kimi")).toBe("Not authenticated");
+    expect(statusLabel("expired", "Kimi")).toBe("Authentication session expired");
   });
   it("prefers the provider message for an error status", () => {
-    expect(statusLabel("error", "boom")).toBe("boom");
-    expect(statusLabel("error")).toBe("Failed to fetch data");
+    expect(statusLabel("error", "Kimi", "boom")).toBe("boom");
+    expect(statusLabel("error", "Kimi")).toBe("Failed to fetch data");
   });
 });
 
@@ -380,5 +387,48 @@ describe("selectProvider", () => {
   it("returns undefined for a provider the response does not carry", () => {
     expect(selectProvider({ "claude-code": live["claude-code"] }, "codex")).toBeUndefined();
     expect(selectProvider(undefined, "claude-code")).toBeUndefined();
+  });
+});
+
+describe("monthly windows", () => {
+  it("reads a month-labelled window as thirty days — the quota API reports only the reset", () => {
+    expect(inferWindowDurationMs("Monthly limit")).toBe(30 * 24 * 60 * 60 * 1000);
+    expect(inferWindowDurationMs("Monthly limit (Kimi Code)")).toBe(30 * 24 * 60 * 60 * 1000);
+  });
+
+  it("runs a monthly window as one continuous arc, not day segments", () => {
+    expect(segmentCountForDuration(30 * 24 * 60 * 60 * 1000)).toBe(1);
+    expect(segmentCountForDuration(7 * 24 * 60 * 60 * 1000)).toBe(7);
+  });
+
+  it("knows a monthly window is not the weekly one, so it never claims the weekly ring", () => {
+    expect(windowKindOf("Monthly limit")).toBe("monthly");
+    expect(windowKindOf("Weekly limit")).toBe("weekly");
+    const provider: ProviderStateWire = {
+      id: "acp-kimi",
+      title: "Kimi",
+      logoUrl: "",
+      tint: null,
+      usage: {
+        status: "ok",
+        windows: [
+          { label: "Current session", usedPercent: 39, resetsAt: null },
+          { label: "Weekly limit", usedPercent: 19, resetsAt: null },
+          { label: "Monthly limit", usedPercent: 11, resetsAt: null },
+        ],
+      },
+    };
+    expect(ringWindow(provider, "weekly")?.label).toBe("Weekly limit");
+  });
+});
+
+describe("kimi footer rings", () => {
+  it("offers a 5-hour and a weekly ring for Kimi, shown by default like the rest", () => {
+    const kimi = FOOTER_RINGS.filter((ring) => ring.providerId === "acp-kimi");
+    expect(kimi.map((ring) => [ring.id, ring.kind])).toEqual([
+      ["kimi-session", "session"],
+      ["kimi-weekly", "weekly"],
+    ]);
+    expect(DEFAULT_LIMITS.filter((limit) => limit.id.startsWith("kimi-")).map((limit) => limit.shown)).toEqual([true, true]);
   });
 });
