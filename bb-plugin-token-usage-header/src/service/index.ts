@@ -9,3 +9,4 @@ export * from "./thread-session";
 export * from "./token-usage-service";
 export * from "./agent-timeline-service";
 export * from "./threads-timeline-service";
+export * from "./thread-family-service";

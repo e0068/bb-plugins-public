@@ -13,3 +13,4 @@ export * from "./gear-settings";
 export * from "./project-costs";
 export * from "./project-attribution";
 export * from "./hourly-burn";
+export * from "./thread-family";

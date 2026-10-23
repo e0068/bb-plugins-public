@@ -40,6 +40,7 @@ import {
 } from "../src/core";
 import { SessionChartCard } from "./thread-chart";
 import { SessionSummary } from "./SessionSummary";
+import { ThreadFamilyBlock } from "./ThreadFamilyBlock";
 
 /**
  * Path of the one nav panel both pages of this plugin share — defined here
@@ -593,6 +594,16 @@ export function SessionView({
             activeAgentKey={activeAgentKey}
           />
         </section>
+      )}
+      {sessionChartThread?.threadId && (
+        <ThreadFamilyBlock
+          threadId={sessionChartThread.threadId}
+          unit={gear.unit}
+          groupWorkflows={groupWorkflows}
+          refreshKey={refreshKey}
+          settings={chartSettings}
+          metric={chartMetric}
+        />
       )}
       <div className="grid grow grid-cols-1 gap-4 p-4 @[44rem]:grid-cols-[20rem_1fr] @[44rem]:items-start @[44rem]:p-5">
         <LeftPanel

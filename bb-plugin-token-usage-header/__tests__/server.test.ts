@@ -14,6 +14,7 @@ import {
 import type {
   AgentTimelineRunResult,
   AgentTimelineService,
+  ThreadFamily,
   ThreadsTimelineRunResult,
   ThreadsTimelineService,
   TokenUsageService,
@@ -1103,5 +1104,41 @@ describe("server.ts gear settings (bb.settings.define)", () => {
 
     expect(descriptors.unit).toMatchObject({ type: "select", options: ["30", "60", "300", "900", "3600"] });
     expect(descriptors.heightMode).toMatchObject({ type: "select", options: ["shared", "perCard"] });
+  });
+});
+
+describe("server.ts threadFamily", () => {
+  const ASK = { threadId: "thread-1", unit: 60, groupWorkflows: true };
+  const usage = { total: 10, input: 1, cacheWrite: 2, cacheRead: 3, output: 4, thinking: 1, messages: 2, cost: 1.5, costs: { input: 0.1, cacheWrite: 0.2, cacheRead: 0.3, output: 0.9, thinking: 0.2 } };
+
+  it("passes the family through as a ready answer, asking the service for this thread, bin width and workflow grouping", async () => {
+    const query = vi.fn(async (): Promise<ThreadFamily> => ({ members: [{ threadId: "thread-1", title: "Parent", sessionId: "sess-1", totals: usage, chart: null }], total: usage, truncated: false, unreadable: 0 }));
+    const harness = await loadPluginWithDeps({ threadFamilyService: { query } });
+
+    const result = await harness.callRpc("threadFamily", ASK);
+
+    expect(result).toEqual({ status: "ready", members: [{ threadId: "thread-1", title: "Parent", sessionId: "sess-1", totals: usage, chart: null }], total: usage, truncated: false, unreadable: 0 });
+    expect(query).toHaveBeenCalledWith(ASK, { fresh: undefined });
+  });
+
+  it("asks the service past its cache when the page reloads", async () => {
+    const query = vi.fn(async (): Promise<ThreadFamily> => ({ members: [], total: usage, truncated: false, unreadable: 0 }));
+    const harness = await loadPluginWithDeps({ threadFamilyService: { query } });
+
+    await harness.callRpc("threadFamily", { ...ASK, fresh: true });
+
+    expect(query).toHaveBeenCalledWith(ASK, { fresh: true });
+  });
+
+  it("answers with an error and its message when the threads cannot be listed", async () => {
+    const harness = await loadPluginWithDeps({ threadFamilyService: { query: vi.fn(async () => Promise.reject(new Error("daemon unreachable"))) } });
+
+    expect(await harness.callRpc("threadFamily", ASK)).toEqual({ status: "error", message: "daemon unreachable" });
+  });
+
+  it("refuses a bin width that is not a positive whole number", async () => {
+    const harness = await loadPluginWithDeps({ threadFamilyService: { query: vi.fn() } });
+
+    await expect(harness.callRpc("threadFamily", { ...ASK, unit: 0 })).rejects.toThrow();
   });
 });

@@ -996,3 +996,32 @@ describe("createThreadsTimelineService: commit enrichment", () => {
     expect(calls.some((c) => c.command === "git")).toBe(false);
   });
 });
+
+describe("createThreadsTimelineService: concurrent queries", () => {
+  it("scans bb's threads once for queries about different sessions that run at the same time", async () => {
+    const { bb, harness } = createFakePluginHost();
+    harness.sdk.stub("threads.list", async () => [{ id: "thread-1", projectId: "proj-1", title: "One" }, { id: "thread-2", projectId: "proj-1", title: "Two" }]);
+    harness.sdk.stub("threads.events.list", async ({ threadId }: { threadId: string }) => [identityEvent(threadId, threadId === "thread-1" ? "sess-1" : "sess-2")]);
+    harness.sdk.stub("projects.list", async () => [{ id: "proj-1", name: "bb-plugins" }]);
+    const { runner } = fakeRunner((_command, args) => ({ ok: true, stdout: stdoutWithThreads(args.includes("sess-1") ? "sess-1" : "sess-2"), stderr: "", code: 0 }));
+    const service = createThreadsTimelineService(bb, { processRunner: runner });
+
+    const [first, second] = await Promise.all([service.query({ unit: 300, session: "sess-1" }), service.query({ unit: 300, session: "sess-2" })]);
+
+    expect([first, second].map((r) => r.ok && r.data.threads[0]?.threadId)).toEqual(["thread-1", "thread-2"]);
+    expect(harness.sdk.callsTo("threads.list")).toHaveLength(1);
+  });
+
+  it("scans again for a query that starts after the earlier scan has finished", async () => {
+    const { bb, harness } = createFakePluginHost();
+    harness.sdk.stub("threads.list", async () => []);
+    harness.sdk.stub("projects.list", async () => []);
+    const { runner } = fakeRunner((_command, args) => ({ ok: true, stdout: stdoutWithThreads(args.includes("sess-1") ? "sess-1" : "sess-2"), stderr: "", code: 0 }));
+    const service = createThreadsTimelineService(bb, { processRunner: runner });
+
+    await service.query({ unit: 300, session: "sess-1" });
+    await service.query({ unit: 300, session: "sess-2" });
+
+    expect(harness.sdk.callsTo("threads.list")).toHaveLength(2);
+  });
+});
