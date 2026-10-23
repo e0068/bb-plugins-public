@@ -1086,6 +1086,67 @@ export const commandsRpcContract = defineRpcContract({
   },
 });
 
+/** Где лежит правило: файл памяти проекта или файл в папке навыка. */
+export const RULE_KINDS = ["memory", "skill"] as const;
+const ruleKindSchema = z.enum(RULE_KINDS);
+export const RULE_TEXT_MAX = 2000;
+
+/** Похожее место, которое агент нашёл в памяти и навыках: владелец сверяет с ним правило до записи. */
+export const ruleSimilarSchema = z.object({
+  kind: ruleKindSchema,
+  path: text.describe("Absolute path of the file"),
+  line: z.number().int().positive().optional(),
+  quote: text.max(500).describe("The similar words, quoted"),
+  note: text.max(200).describe("How close it is, e.g. «the same — already in memory» or «near: about demo commands»"),
+  same: z.boolean().optional().describe("true — it already says the same: the owner should see a possible duplicate"),
+});
+
+/**
+ * Правило, которое агент предлагает записать. Пишет не агент, а плагин — после «Записать» владельца: `content` ровно
+ * то, что ляжет в файл, и в нём дословно стоит `text`, поэтому правка владельцем текста правила меняет и файл.
+ */
+export const proposeRuleParamsSchema = z.object({
+  text: text.max(RULE_TEXT_MAX).describe("The rule in one or two sentences, in the owner's words"),
+  why: text.max(1000).describe("What happened that makes it a rule"),
+  target: z.object({
+    kind: ruleKindSchema,
+    path: text.describe("Absolute path of a .md file: a memory file in ~/.claude/projects/<project>/memory/ or a file inside a skill folder …/skills/<name>/"),
+    name: text.max(120).optional().describe("The skill's name for a skill target, e.g. flow-demo"),
+  }),
+  mode: z.enum(["create", "append", "replace"]).describe("create — a new file; append — added to the end of an existing file; replace — replaces the fragment `replaces` of an existing file"),
+  content: text.max(20_000).describe("Exactly what is written: the whole new file, the text appended or the text that takes the place of `replaces`; holds text verbatim"),
+  replaces: text.max(20_000).optional().describe("Only mode replace: the exact fragment of the existing file the rule replaces, occurring there exactly once — e.g. a similar place that contradicts the rule"),
+  index: text.max(500).optional().describe("Only a new memory file: the line appended to MEMORY.md in the same folder"),
+  similar: z.array(ruleSimilarSchema).max(8).default([]).describe("Similar places you found in memory and skills; empty when none"),
+});
+
+export const ruleDecisionSchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("written"), at: z.iso.datetime(), text, paths: z.array(text) }),
+  z.object({ kind: z.literal("declined"), at: z.iso.datetime() }),
+  z.object({ kind: z.literal("conflict"), at: z.iso.datetime(), path: text }),
+]);
+
+export const ruleRecordSchema = proposeRuleParamsSchema.extend({
+  id: text,
+  threadId: text,
+  createdAt: z.iso.datetime(),
+  /** Отпечаток дописываемого файла на момент предложения: файл, изменившийся до «Записать», не перезаписывается. */
+  baseSha256: z.string().nullable(),
+  decision: ruleDecisionSchema.optional(),
+});
+
+const ruleFound = z.object({ kind: z.literal("found"), rule: ruleRecordSchema });
+const ruleNotFound = z.object({ kind: z.literal("not_found") });
+
+export const rulesRpcContract = defineRpcContract({
+  getRule: { input: z.object({ id: z.string() }), output: z.discriminatedUnion("kind", [ruleFound, ruleNotFound]) },
+  /** Файл и тред берутся из записи правила, а не от клиента: от владельца приходят только решение и поправленный текст. */
+  decideRule: {
+    input: z.object({ id: z.string(), decision: z.enum(["write", "decline"]), text: text.max(RULE_TEXT_MAX).optional(), locale: z.enum(["en", "ru"]).optional() }),
+    output: z.discriminatedUnion("kind", [ruleFound, ruleNotFound]),
+  },
+});
+
 /** Запуск результата Демонстрации — своим контрактом: тестовые обработчики типизируются по всему контракту, и метод в контракте команды потребовал бы его в каждом тесте команды. */
 export const outcomeRpcContract = defineRpcContract({
   /** Команда — из сохранённого брифа по индексу результата, тред — брифа. */
@@ -1576,6 +1637,9 @@ export type Checker = z.output<typeof checkerSchema>;
 export type BriefSetup = z.output<typeof briefSetupSchema>;
 export type DecisionOption = z.output<typeof decisionOptionSchema>;
 export type CommandRecord = z.output<typeof commandRecordSchema>;
+export type ProposeRuleParams = z.output<typeof proposeRuleParamsSchema>;
+export type RuleRecord = z.output<typeof ruleRecordSchema>;
+export type RuleKind = (typeof RULE_KINDS)[number];
 export type AnswerImage = z.output<typeof answerImagesSchema>[number];
 export type QuestionKind = z.output<typeof questionKindSchema>;
 export type DecisionQuestion = z.output<typeof decisionQuestionSchema>;

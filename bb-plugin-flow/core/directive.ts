@@ -18,3 +18,9 @@ const readPrefixed = (attributes: Readonly<Record<string, string>>, prefix: stri
 };
 
 export const readCommandId = (attributes: Readonly<Record<string, string>>) => readPrefixed(attributes, COMMAND_ID_PREFIX);
+
+export const RULE_ID_PREFIX = "rul_";
+
+export const ruleDirectiveLine = (id: string): string => `::rule{id="${id}"}`;
+
+export const readRuleId = (attributes: Readonly<Record<string, string>>) => readPrefixed(attributes, RULE_ID_PREFIX);

@@ -1,5 +1,5 @@
 // Фронт Flow: директива `::decision{id="…"}` рисует бриф в сообщении агента,
-// `::command{id="…"}` — команду с переносом, копированием и вводом, страница
+// `::command{id="…"}` — команду с переносом, копированием и вводом, `::rule{id="…"}` — правило на одобрение, страница
 // Flow в левом меню правит flow и их этапы — выбор и создание живут в шапке
 // той же панели, — а кнопка в композере нового треда
 // выбирает, по какому flow пойдёт тред, а баннер над композером треда показывает
@@ -8,6 +8,7 @@ import { definePluginApp, useSettings } from "@get-bb/plugin-sdk/app";
 import { registerSelectedThread } from "@bb-plugins/rail-collapse";
 
 import { CommandDirective } from "./app/command";
+import { RuleDirective } from "./app/rule-card";
 import { FlowPicker } from "./app/flow-picker";
 import { FlowsPage } from "./app/flows-page";
 import { FlowsSettingsButton } from "./app/flows-settings-button";
@@ -33,6 +34,8 @@ export default definePluginApp((app) => {
   lockAutoZoom(document);
   app.slots.messageDirective({ id: "decision", component: DecisionDirective });
   app.slots.messageDirective({ id: "command", component: CommandDirective });
+  // Правило в память или навык — с похожими местами и записью по «Записать» владельца.
+  app.slots.messageDirective({ id: "rule", component: RuleDirective });
   // Файл workflow — .js из ~/.claude/workflows или .bb/workflows — открывается конструктором; прочие .js — превью bb.
   app.slots.fileOpener({ id: "workflow", title: "Workflow", extensions: ["js"], component: WorkflowOpener });
   // Задача из Демонстрации открывается сбоку своей вкладкой: чужую вкладку Tasks+ плагин открыть не может.

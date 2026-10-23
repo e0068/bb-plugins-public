@@ -10,8 +10,7 @@ import { useBbNavigate, type PluginNavPanelProps } from "@get-bb/plugin-sdk/app"
 
 import { freeFlowName } from "../core/flow-files";
 import { addFlow, AUTO_FLOW, flowById, flowHolders, newFlow, NO_FLOW } from "../core/flows";
-import { widgetKindOf, widgetSubPath } from "../core/widget-anatomy";
-import { BUILTIN_KINDS } from "../lib/stage-constants";
+import { WIDGET_ICONS, WIDGET_KINDS, widgetKindOf, widgetSubPath } from "../core/widget-anatomy";
 import { Button } from "../components/ui/button";
 import { Icon } from "../components/ui/icon";
 import { cn } from "../lib/utils";
@@ -19,10 +18,10 @@ import { FLOWS_PANEL_PATH } from "../lib/panel-path";
 import { workflowsPlace } from "../core/workflows-route";
 import { HISTORY_SUB_PATH } from "./run-history";
 import { FlowGlyph } from "./flow-glyph";
-import { KIND_ICONS } from "./stage-icons";
 import { useMessages } from "./locale-context";
 import { updateFlowSettings, useFlowSettings } from "./stage-settings-store";
 import { useFlowDrag } from "./use-flow-drag";
+import { widgetName } from "./widget-page";
 
 export const ROW = "flex h-7 w-full min-w-0 items-center gap-1.5 rounded-md pl-7 pr-2.5 text-left text-[13px] text-muted-foreground hover:bg-state-hover hover:text-foreground";
 export const ACTIVE_ROW = "bg-state-active font-medium text-foreground";
@@ -101,16 +100,16 @@ export function FlowsNav({ subPath }: Pick<PluginNavPanelProps, "subPath">) {
   );
 }
 
-/** Группа «Виджеты» под flow: пять встроенных этапов-виджетов, строка открывает страницу с составом вида и примером его карточки. */
+/** Группа «Виджеты» под flow: пять встроенных этапов-виджетов и правило, строка открывает страницу с составом вида и примером его карточки. */
 function WidgetsGroup({ subPath, open }: Pick<PluginNavPanelProps, "subPath"> & { open: (subPath: string) => void }) {
   const t = useMessages();
   return (
     <>
       <div className="mt-3.5 px-2.5 pb-1 pl-7 text-xs font-semibold text-muted-foreground">{t.flows.widgets.group}</div>
-      {BUILTIN_KINDS.map((kind) => (
-        <button key={kind} type="button" aria-current={subPath === widgetSubPath(kind) ? "page" : undefined} onClick={() => open(widgetSubPath(kind))} title={t.stages[kind]} className={cn(ROW, subPath === widgetSubPath(kind) && ACTIVE_ROW)}>
-          <Icon name={KIND_ICONS[kind]} aria-hidden="true" className="size-3.5 shrink-0" />
-          <span className="truncate">{t.stages[kind]}</span>
+      {WIDGET_KINDS.map((kind) => (
+        <button key={kind} type="button" aria-current={subPath === widgetSubPath(kind) ? "page" : undefined} onClick={() => open(widgetSubPath(kind))} title={widgetName(kind, t)} className={cn(ROW, subPath === widgetSubPath(kind) && ACTIVE_ROW)}>
+          <Icon name={WIDGET_ICONS[kind]} aria-hidden="true" className="size-3.5 shrink-0" />
+          <span className="truncate">{widgetName(kind, t)}</span>
         </button>
       ))}
     </>

@@ -1,12 +1,14 @@
 // Текст агента в брифе и демонстрации — движком Kasimov в режиме чтения, как документ в MD Opener (MdText,
 // packages/md-doc-view): таблицы, заголовки, код, цитаты, списки и диаграммы mermaid. Ссылка `[текст](цель)` открывает
-// файл или адрес тем же путём, что ссылка результата этапа. Корни файлов треда кладёт загрузчик брифа в контекст,
+// файл или адрес тем же путём, что ссылка результата этапа, а картинка `![подпись](путь)` грузится из дерева треда
+// маршрутом сервера Flow (core/brief-image.ts). Корни файлов треда кладёт загрузчик брифа в контекст,
 // чтобы не тянуть их пропсом через каждую строку.
-import { createContext, useCallback, useContext, useEffect, useRef, useState, type MouseEvent } from "react";
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type MouseEvent } from "react";
 import { useBbNavigate } from "@get-bb/plugin-sdk/app";
 import { MdText } from "@bb-plugins/md-doc-view/MdText";
 
-import { hasMarkup, hrefTarget } from "../core/inline-links";
+import { briefImageUrl } from "../core/brief-image";
+import { bareHref, hasMarkup, hrefTarget } from "../core/inline-links";
 import { liveLink, type FileRoots } from "../core/result-link";
 import { useHostDark } from "./use-host-dark";
 
@@ -28,8 +30,7 @@ function useLinkResolver() {
   navigate.current = current;
   return useCallback(
     (href: string) => {
-      // Kasimov отдаёт сырое содержимое скобок: путь с пробелами — в угловых скобках, вокруг — пробелы.
-      const { target, line } = hrefTarget(href.trim().replace(/^<(.+)>$/, "$1"));
+      const { target, line } = hrefTarget(bareHref(href));
       const link = liveLink(target, roots);
       switch (link.kind) {
         case "url":
@@ -43,6 +44,19 @@ function useLinkResolver() {
     [roots],
   );
 }
+
+/**
+ * Адрес картинки из дерева треда. Корни ещё не пришли — резолвера нет, и движок ждёт его вместе с корнями ссылок; у
+ * треда нет дерева — адреса нет, и на месте снимка плашка с подписью.
+ */
+function useImageResolver() {
+  const roots = useContext(FileRootsContext);
+  const threadId = roots?.threadId;
+  const tree = roots?.environmentId != null;
+  return useMemo(() => (threadId === undefined ? undefined : (src: string) => (tree ? briefImageUrl(threadId, src) : null)), [threadId, tree]);
+}
+
+type Resolvers = { linkResolver: ReturnType<typeof useLinkResolver>; imageResolver: ReturnType<typeof useImageResolver> };
 
 declare global {
   interface Window {
@@ -64,7 +78,7 @@ const loadMermaid = (): Promise<void> =>
  * Текст с диаграммой. Kasimov рисует её один раз, при создании, поэтому текст создаётся заново, когда библиотека
  * загрузилась, и когда bb сменил тему — цвета диаграммы берутся из темы в момент отрисовки.
  */
-function WithDiagrams({ text, linkResolver }: { text: string; linkResolver: ReturnType<typeof useLinkResolver> }) {
+function WithDiagrams({ text, resolvers }: { text: string; resolvers: Resolvers }) {
   const dark = useHostDark();
   const [ready, setReady] = useState(() => window.Mermaid !== undefined);
   useEffect(() => {
@@ -74,7 +88,7 @@ function WithDiagrams({ text, linkResolver }: { text: string; linkResolver: Retu
       alive = false;
     };
   }, []);
-  return <MdText key={`${ready}:${dark}`} text={text} linkResolver={linkResolver} />;
+  return <MdText key={`${ready}:${dark}`} text={text} {...resolvers} />;
 }
 
 /**
@@ -86,6 +100,6 @@ export function RichText({ text }: { text: string }) {
 }
 
 function Marked({ text }: { text: string }) {
-  const linkResolver = useLinkResolver();
-  return MERMAID_FENCE.test(text) ? <WithDiagrams text={text} linkResolver={linkResolver} /> : <MdText text={text} linkResolver={linkResolver} />;
+  const resolvers = { linkResolver: useLinkResolver(), imageResolver: useImageResolver() };
+  return MERMAID_FENCE.test(text) ? <WithDiagrams text={text} resolvers={resolvers} /> : <MdText text={text} {...resolvers} />;
 }
