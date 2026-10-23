@@ -1478,6 +1478,15 @@ export const timelineStageSchema = z.object({
 });
 export type TimelineStage = z.output<typeof timelineStageSchema>;
 
+/** Немой ход треда: агент закрыл ход без ответа, потому что провайдер отказал; `quota` — лимит подписки, `message` — слова провайдера. */
+export const silentTurnSchema = z.object({ kind: z.enum(["quota", "error"]), message: z.string().nullable(), at: z.number() });
+export type SilentTurnView = z.output<typeof silentTurnSchema>;
+
+/** Плашка немого хода над композером — своим контрактом: она стоит и в треде без прогона. */
+export const silentTurnRpcContract = defineRpcContract({
+  getSilentTurn: { input: z.object({ threadId: text }), output: silentTurnSchema.nullable() },
+});
+
 export const progressRpcContract = defineRpcContract({
   getFlowProgress: { input: z.object({ threadId: text }), output: progressViewSchema.nullable() },
   /** Этапы прогона треда с проходами по порядку flow — для шкал других плагинов; прогона нет — пустой список. */

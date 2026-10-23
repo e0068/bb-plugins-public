@@ -697,6 +697,11 @@ export const ru = {
     drag: (name: string, owner: string) => `Перетащить под-этап ${name} этапа ${owner}`,
     inRun: (name: string, owner: string) => `Под-этап ${name} этапа ${owner} в прогоне`,
   },
+  silentTurn: {
+    title: "Агент закрыл ход без ответа",
+    quota: "Лимит подписки провайдера исчерпан — напиши снова после сброса окна",
+    unknown: "Провайдер отказал, причину он не назвал",
+  },
 };
 
 export type Messages = typeof ru;

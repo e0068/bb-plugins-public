@@ -23,7 +23,8 @@ import { createNoticePublisher } from "./server/automation-notices";
 import { automationsBridge } from "./server/automations";
 import { centerBridge, registerNoticeActions } from "./server/center";
 import { registerBriefImages } from "./server/brief-image";
-import { automationEntry, turnEndEntry } from "./core/center-notice";
+import { automationEntry, silentTurnEntry, turnEndEntry } from "./core/center-notice";
+import { createSilentTurns, defaultKimiHome, readTextFromDisk, registerSilentTurns } from "./server/silent-turn";
 import { waitsForAnswer } from "./core/awaiting";
 import { COMMAND_TOOL_NAME, registerCommands } from "./server/command";
 import { RULE_TOOL_NAME, registerRules } from "./server/rules";
@@ -152,8 +153,15 @@ export default async function plugin(bb: BbPluginApi): Promise<void> {
   const emit = (trigger: Parameters<typeof automations.emit>[0], threadId: string, context?: { stageId?: string }) => void automations.emit(trigger, threadId, context);
   // Центр уведомлений — тоже отдельный плагин: конец хода в треде с flow и итог автоматизации идут к нему по HTTP, без него ничего не меняется.
   const center = centerBridge(bb);
+  // Немой ход: Kimi на отказ провайдера закрывает ход в bb как успешный и без слов — причину Flow берёт из журнала сессии Kimi (./server/silent-turn.ts).
+  const silentTurns = createSilentTurns({ readText: readTextFromDisk, kimiHome: defaultKimiHome(), now: Date.now });
+  registerSilentTurns(bb, silentTurns);
+  const workDirOf = async (environmentId: string | null): Promise<string | null> =>
+    environmentId === null ? null : ((await bb.sdk.environments.get({ environmentId }).catch(() => null))?.path ?? null);
   bb.events.on("thread.idle", async ({ thread }) => {
     if (flowOf(thread.id) === null) return;
+    const silent = await silentTurns.check(thread.id, { providerId: thread.providerId, workDir: await workDirOf(thread.environmentId) });
+    if (silent !== null) return void (await center.push(silentTurnEntry({ threadId: thread.id, threadTitle: thread.title ?? null, silent })));
     const waiting = (await store.listAwaiting()).find((entry) => entry.threadId === thread.id && waitsForAnswer(entry.kind));
     const brief = waiting === undefined ? null : await store.getBrief(waiting.briefId);
     await center.push(turnEndEntry({ threadId: thread.id, threadTitle: thread.title ?? null, brief: brief === null ? null : { id: brief.id, title: brief.title } }));
