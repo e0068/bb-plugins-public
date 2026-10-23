@@ -6,12 +6,14 @@
 // that archiving would cut short, so the row shows the status in place of
 // Archive. Layer 1: depends on nothing.
 
-/** The states a queue row can show; "working" only when the queue is asked to show running threads. */
+/** The states a queue row can show; "working", "automation" and "action" only when the queue is asked to show running threads. */
 export type RowStatus =
   | "unread-success"
   | "unread-error"
   | "waiting-for-input"
   | "working"
+  | "automation"
+  | "action"
   | "background-command";
 
 /** The minimal thread facts the status rule reads. */
@@ -22,13 +24,15 @@ export interface StatusFacts {
   readonly hasPendingInteraction: boolean;
   /** The agent is doing work right now — `isWorking` of the attention model. */
   readonly working?: boolean;
+  /** A Flow step running without the agent — `flowRun` of the attention model. */
+  readonly flowRun?: "automation" | "action" | null;
   /** A background command is still running — `runsBackgroundCommand` of the attention model. */
   readonly backgroundCommand?: boolean;
 }
 
 function isRowStatus(
   indicator: string,
-): indicator is Exclude<RowStatus, "working" | "background-command"> {
+): indicator is Exclude<RowStatus, "working" | "automation" | "action" | "background-command"> {
   return (
     indicator === "unread-success" ||
     indicator === "unread-error" ||
@@ -39,6 +43,7 @@ function isRowStatus(
 /** The status a row shows, or null when there is nothing to show. */
 export function rowStatus(thread: StatusFacts): RowStatus | null {
   if (thread.hasPendingInteraction) return "waiting-for-input";
+  if (thread.flowRun != null) return thread.flowRun;
   if (thread.working === true) return "working";
   if (isRowStatus(thread.indicator)) return thread.indicator;
   return thread.backgroundCommand === true ? "background-command" : null;
@@ -69,9 +74,9 @@ export function worktreeOf(environment: EnvironmentFacts | null): Worktree | nul
 
 /**
  * Whether a row shows how long its thread has waited since its last activity.
- * A working thread's spinner already says it is active right now, so it
- * shows no time.
+ * A working thread's spinner, like a running Flow step's mark, already says
+ * it is active right now, so it shows no time.
  */
 export function showsWaitingTime(status: RowStatus | null): boolean {
-  return status !== "working";
+  return status !== "working" && status !== "automation" && status !== "action";
 }

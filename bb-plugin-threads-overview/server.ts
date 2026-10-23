@@ -15,6 +15,9 @@
 //
 // The preview window's footer also asks here for what the sidebar view does not
 // carry: the thread's model, effort and mode, and its branch's git state.
+//
+// Nor does the sidebar view know what Flow runs in a thread without the agent —
+// an automation or a pressed Action step — so the section asks Flow through here.
 import { defineRpcContract, type BbPluginApi } from "@get-bb/plugin-sdk";
 import { z } from "zod";
 import {
@@ -34,6 +37,11 @@ const POSTPONE_CHANGED_CHANNEL = "postpone-changed";
 
 const postponedEntrySchema = z.object({ threadId: z.string(), at: z.number() });
 
+/** Flow's plugin id and the RPC that lists threads running a step without the agent (bb-plugin-flow/shared/contract.ts). */
+const FLOW_PLUGIN_ID = "flow";
+const FLOW_RUNNING_METHOD = "runningThreads";
+const flowRunSchema = z.object({ threadId: z.string(), icon: z.enum(["automation", "action"]) });
+
 export const rpcContract = defineRpcContract({
   listPostponed: {
     input: z.null(),
@@ -44,6 +52,10 @@ export const rpcContract = defineRpcContract({
       .object({ threadId: z.string().min(1), postponed: z.boolean() })
       .strict(),
     output: z.object({ ok: z.literal(true) }),
+  },
+  runningFlowSteps: {
+    input: z.null(),
+    output: z.object({ running: z.array(flowRunSchema) }),
   },
   threadDetails: {
     input: z.object({ threadId: z.string().min(1) }).strict(),
@@ -154,6 +166,18 @@ export default async function plugin(bb: BbPluginApi) {
         : dropMark(before, threadId);
       await commit(before, after);
       return { ok: true } as const;
+    },
+    async runningFlowSteps() {
+      // Flow not installed, disabled or too old: nothing runs on its behalf.
+      const running = await orNull(() =>
+        bb.sdk.plugins.callRpc({
+          pluginId: FLOW_PLUGIN_ID,
+          method: FLOW_RUNNING_METHOD,
+          input: {},
+          outputSchema: z.array(flowRunSchema),
+        }),
+      );
+      return { running: running ?? [] };
     },
     async threadDetails({ threadId }) {
       const [execution, git] = await Promise.all([readExecution(threadId), readGit(threadId)]);

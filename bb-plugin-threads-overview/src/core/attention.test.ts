@@ -28,6 +28,7 @@ function thread(over: Partial<ThreadFacts> = {}): ThreadFacts {
     hasPendingInteraction: false,
     indicator: "none",
     activity: IDLE_ACTIVITY,
+    flowRun: null,
     latestAttentionAt: 1000,
     ...over,
   };

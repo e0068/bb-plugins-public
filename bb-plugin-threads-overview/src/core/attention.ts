@@ -14,6 +14,9 @@ export interface ThreadActivity {
   readonly goals: number;
 }
 
+/** What Flow is running in a thread on its own: an automation, or an Action step the user pressed. */
+export type FlowRun = "automation" | "action";
+
 /** The minimal thread facts the attention rules read. */
 export interface ThreadFacts {
   readonly id: string;
@@ -24,6 +27,8 @@ export interface ThreadFacts {
   /** The host's compact per-row state; "runtime" is a running foreground turn. */
   readonly indicator: string;
   readonly activity: ThreadActivity;
+  /** A Flow step running in the thread without the agent; null when none, or Flow is absent. */
+  readonly flowRun: FlowRun | null;
   /** Epoch ms the thread last wanted the user — its queue-entry time. */
   readonly latestAttentionAt: number;
 }
@@ -33,8 +38,9 @@ function hasRunningWork(thread: ThreadFacts): boolean {
   // Background commands are left out: a dev server or a watcher keeps running
   // after the agent has finished, and the thread then waits on the user.
   const background = a.workflows + a.backgroundAgents + a.planMode + a.goals;
-  // `runtime` is a foreground turn, which the activity counts never cover.
-  return background > 0 || thread.indicator === "runtime";
+  // `runtime` is a foreground turn, which the activity counts never cover; a
+  // Flow step runs with no turn at all, and the thread does not wait on the user.
+  return background > 0 || thread.indicator === "runtime" || thread.flowRun !== null;
 }
 
 /** True when a background command — a dev server, a watcher — is still running. */

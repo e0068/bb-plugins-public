@@ -21,6 +21,7 @@ function thread(id: string, over: Partial<ThreadFacts> = {}): ThreadFacts {
     hasPendingInteraction: false,
     indicator: "background-command",
     activity: { ...IDLE, backgroundCommands: 1 },
+    flowRun: null,
     latestAttentionAt: 1000,
     ...over,
   };

@@ -13,6 +13,7 @@ function thread(id: string, over: Partial<ThreadFacts> = {}): ThreadFacts {
     hasPendingInteraction: false,
     indicator: "none",
     activity: IDLE,
+    flowRun: null,
     latestAttentionAt: 1000,
     ...over,
   };
@@ -44,6 +45,17 @@ describe("attentionQueue and running threads", () => {
     expect(
       ids(attentionQueue([waiting, foreground, background], none, "waiting-newest", true)),
     ).toEqual(["waiting", "background", "foreground"]);
+  });
+
+  it("counts a running Flow step as work: out of the list, back in when asked", () => {
+    const automation = thread("automation", { flowRun: "automation", latestAttentionAt: 500 });
+    const action = thread("action", { flowRun: "action", latestAttentionAt: 600 });
+    expect(ids(attentionQueue([waiting, automation, action], none, "waiting-longest"))).toEqual(["waiting"]);
+    expect(ids(attentionQueue([waiting, automation, action], none, "waiting-longest", true))).toEqual([
+      "automation",
+      "action",
+      "waiting",
+    ]);
   });
 
   it("still keeps archived and postponed threads out, running or not", () => {
