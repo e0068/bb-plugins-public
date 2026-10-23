@@ -26,7 +26,7 @@ const open = (id: string, found = true) =>
 
 describe("блок команды в сообщении", () => {
   it("регистрирует директиву command рядом с decision", () => {
-    expect(app.messageDirectives.map((d) => d.id).sort()).toEqual(["command", "decision"]);
+    expect(app.messageDirectives.map((d) => d.id).sort()).toEqual(["command", "decision", "rule"]);
   });
 
   it("показывает команду; перенос переключается", async () => {

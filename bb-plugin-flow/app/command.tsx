@@ -24,7 +24,7 @@ const SENT_MS = 1600;
 
 const iconButton = "flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-state-hover hover:text-foreground disabled:cursor-default";
 
-function Dashed({ source, children }: { source: string; children: string }) {
+export function Dashed({ source, children }: { source: string; children: string }) {
   return (
     <div className="my-3 flex flex-wrap items-center gap-2 rounded-lg border border-dashed border-border bg-surface-recessed-solid px-3 py-2.5 text-sm text-muted-foreground">
       <Icon name="AlertCircle" className="size-4" />

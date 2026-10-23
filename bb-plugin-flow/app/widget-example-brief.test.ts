@@ -5,8 +5,9 @@ import { describe, expect, it } from "vitest";
 import { BUILTIN_KINDS } from "../lib/stage-constants";
 import { en } from "../lib/messages/en";
 import { ru } from "../lib/messages/ru";
-import { decisionBriefSchema } from "../shared/contract";
-import { exampleBrief } from "./widget-page";
+import { editedRule, proposalIssues } from "../core/rule";
+import { decisionBriefSchema, ruleRecordSchema } from "../shared/contract";
+import { exampleBrief, exampleRule } from "./widget-page";
 
 describe("учебное содержимое карточки виджета", () => {
   it.each([
@@ -24,5 +25,15 @@ describe("учебное содержимое карточки виджета", 
     const ids = BUILTIN_KINDS.map((kind) => exampleBrief(kind, ru).id);
     expect(new Set(ids).size).toBe(BUILTIN_KINDS.length);
     expect(ids.every((id) => id.startsWith("example:"))).toBe(true);
+  });
+
+  it.each([
+    ["ru", ru],
+    ["en", en],
+  ] as const)("учебное правило — замена, которую пропустил бы инструмент, язык %s", (_, messages) => {
+    const rule = exampleRule(messages);
+    expect(ruleRecordSchema.safeParse(rule).success).toBe(true);
+    expect(proposalIssues(rule, "/Users/you")).toEqual([]);
+    expect(editedRule(rule, "Б")).toEqual({ content: "Б.\n", index: undefined });
   });
 });

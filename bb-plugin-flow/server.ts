@@ -1,4 +1,4 @@
-// Бэкенд Flow: инструменты агента `ask_decision`, `share_command` и `flow_stage`, исполнитель автоматизаций, коллекция
+// Бэкенд Flow: инструменты агента `ask_decision`, `share_command`, `propose_rule` и `flow_stage`, исполнитель автоматизаций, коллекция
 // flow и flow тредов, настройка языка и RPC виджетов поверх kv плагина.
 import { randomBytes } from "node:crypto";
 import { access, mkdir, readdir, readFile, writeFile } from "node:fs/promises";
@@ -22,9 +22,11 @@ import { createAutomationRunner, externalStep, registerAutomationRunner } from "
 import { createNoticePublisher } from "./server/automation-notices";
 import { automationsBridge } from "./server/automations";
 import { centerBridge, registerNoticeActions } from "./server/center";
+import { registerBriefImages } from "./server/brief-image";
 import { automationEntry, turnEndEntry } from "./core/center-notice";
 import { waitsForAnswer } from "./core/awaiting";
 import { COMMAND_TOOL_NAME, registerCommands } from "./server/command";
+import { RULE_TOOL_NAME, registerRules } from "./server/rules";
 import { registerSpendBackfill } from "./server/spend-backfill";
 import { createJournalDirStore } from "./server/dir-settings";
 import { registerJournalSettingsApi } from "./server/journal-settings-api";
@@ -220,7 +222,7 @@ export default async function plugin(bb: BbPluginApi): Promise<void> {
   bb.events.on("thread.deleted", ({ thread }) => void delivery.forget(thread.id));
   // Первая сессия треда стартует уже с ограничением: решение сверки ложится в дерево прямо перед стартом Claude Code.
   registerSessionConfig(bb, {
-    tools: [ASK_TOOL_NAME, FLOW_STAGE_TOOL, RETRY_AUTOMATION_TOOL, READ_FLOWS_TOOL_NAME, SAVE_FLOW_TOOL_NAME, COMMAND_TOOL_NAME, WORKFLOW_READ_TOOL_NAME, WORKFLOW_WRITE_TOOL_NAME],
+    tools: [ASK_TOOL_NAME, FLOW_STAGE_TOOL, RETRY_AUTOMATION_TOOL, READ_FLOWS_TOOL_NAME, SAVE_FLOW_TOOL_NAME, COMMAND_TOOL_NAME, RULE_TOOL_NAME, WORKFLOW_READ_TOOL_NAME, WORKFLOW_WRITE_TOOL_NAME],
     prestart: (threadId, root) => void scope.prestart(threadId, root),
     startMessage: (threadId) => startMessageOf(agentOf(threadId)),
     deliver: delivery.deliver,
@@ -293,6 +295,7 @@ export default async function plugin(bb: BbPluginApi): Promise<void> {
   bb.onDispose(() => relay.dispose());
   registerAutomationRunner(bb, runner);
   registerNoticeActions(bb, runner);
+  registerBriefImages(bb);
   // Выключенный или перезагружаемый Flow не должен повторять шаги старым процессом: новый поставит повторы заново из записей.
   bb.onDispose(() => runner.dispose());
   // Прогон, прерванный перезапуском сервера, продолжается сразу после загрузки плагина; завершённый до этой версии и не
@@ -398,6 +401,7 @@ export default async function plugin(bb: BbPluginApi): Promise<void> {
   ({ freezeFinished, runFigures } = registered);
   registerSpendBackfill(bb, registered.pastRuns);
   registerCommands(bb, { newId, now, readBrief: (id) => store.getBrief(id) });
+  registerRules(bb, { newId, now, home: homedir(), ownSend: own.mark });
   // Каждое чтение каталога, пока разовая чистка не прошла, сверяет с ним этапы прежнего flow по умолчанию; первое — сразу при запуске.
   // Поэтому read_flows, save_flow и страница читают каталог раньше коллекции: так они видят её уже вылеченной.
   const heal = createLegacyHeal(bb.storage.kv, flows);

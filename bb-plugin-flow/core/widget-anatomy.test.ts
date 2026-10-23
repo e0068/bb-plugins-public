@@ -7,30 +7,35 @@ import * as fc from "fast-check";
 import { describe, expect, it } from "vitest";
 
 import { BUILTIN_KINDS, BUILTIN_SKILLS } from "../lib/stage-constants";
-import { allowedWidgetFiles, anatomyOf, pluginRootOf, WIDGET_ROLES, widgetKindOf, widgetSkillFiles, widgetSubPath } from "./widget-anatomy";
+import { allowedWidgetFiles, anatomyOf, pluginRootOf, WIDGET_KINDS, WIDGET_ROLES, widgetKindOf, widgetSkillFiles, widgetSubPath } from "./widget-anatomy";
 
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
 
 describe("состав виджета", () => {
-  it.each(BUILTIN_KINDS)("у вида %s есть пять ролей в одном порядке и в каждой хотя бы один файл", (kind) => {
+  it("виды — пять встроенных этапов и за ними правило", () => {
+    expect(WIDGET_KINDS).toEqual([...BUILTIN_KINDS, "rule"]);
+  });
+
+  it.each(WIDGET_KINDS)("у вида %s есть пять ролей в одном порядке и в каждой хотя бы один файл", (kind) => {
     const roles = anatomyOf(kind);
     expect(roles.map((r) => r.role)).toEqual([...WIDGET_ROLES]);
     expect(roles.every((r) => r.files.length > 0)).toBe(true);
   });
 
-  it.each(BUILTIN_KINDS)("каждый файл вида %s лежит на диске", (kind) => {
+  it.each(WIDGET_KINDS)("каждый файл вида %s лежит на диске", (kind) => {
     const files = [...anatomyOf(kind).flatMap((r) => r.files), ...widgetSkillFiles(kind)];
     expect(files.filter((file) => !existsSync(join(ROOT, file)))).toEqual([]);
   });
 
-  it("навык вида — его SKILL.md и ru.md из папки навыка плагина", () => {
+  it("навык вида — его SKILL.md и ru.md из папки навыка плагина, у правила — навык flow", () => {
     expect(BUILTIN_KINDS.map(widgetSkillFiles)).toEqual(BUILTIN_KINDS.map((k) => [`skills/${BUILTIN_SKILLS[k]}/SKILL.md`, `skills/${BUILTIN_SKILLS[k]}/ru.md`]));
+    expect(widgetSkillFiles("rule")).toEqual(["skills/flow/SKILL.md"]);
   });
 
   it("разрешённых файлов ровно столько, сколько в составах, без повторов между ролями одного вида", () => {
-    const all = BUILTIN_KINDS.flatMap((k) => [...anatomyOf(k).flatMap((r) => r.files), ...widgetSkillFiles(k)]);
+    const all = WIDGET_KINDS.flatMap((k) => [...anatomyOf(k).flatMap((r) => r.files), ...widgetSkillFiles(k)]);
     expect(allowedWidgetFiles()).toEqual(new Set(all));
-    BUILTIN_KINDS.forEach((k) => {
+    WIDGET_KINDS.forEach((k) => {
       const own = anatomyOf(k).flatMap((r) => r.files);
       expect(new Set(own).size).toBe(own.length);
     });
@@ -39,11 +44,11 @@ describe("состав виджета", () => {
 
 describe("адрес страницы виджета", () => {
   it("вид переживает путь туда и обратно", () => {
-    expect(BUILTIN_KINDS.map((k) => widgetKindOf(widgetSubPath(k)))).toEqual([...BUILTIN_KINDS]);
+    expect(WIDGET_KINDS.map((k) => widgetKindOf(widgetSubPath(k)))).toEqual([...WIDGET_KINDS]);
   });
 
   it("адрес не меняется при кодировании в адресную строку браузера", () => {
-    expect(BUILTIN_KINDS.map((k) => encodeURIComponent(widgetSubPath(k)))).toEqual(BUILTIN_KINDS.map(widgetSubPath));
+    expect(WIDGET_KINDS.map((k) => encodeURIComponent(widgetSubPath(k)))).toEqual(WIDGET_KINDS.map(widgetSubPath));
   });
 
   it("id flow, служебные адреса и чужой вид — не виджет", () => {
@@ -51,7 +56,7 @@ describe("адрес страницы виджета", () => {
   });
 
   it("любая строка, не равная адресу вида, — не виджет", () => {
-    const own = new Set(BUILTIN_KINDS.map(widgetSubPath));
+    const own = new Set(WIDGET_KINDS.map(widgetSubPath));
     fc.assert(fc.property(fc.string(), (s) => own.has(s) || widgetKindOf(s) === null));
   });
 });

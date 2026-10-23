@@ -1,20 +1,22 @@
-// Страница этапа-виджета на странице Flow (адрес `widget-<вид>`): из чего вид состоит — навык, настройки, файлы кода по ролям —
-// и под составом пример: настоящая карточка плагина с учебным содержимым. Файл открывается в просмотрщике bb; путь на хосте
-// находит сервер по пути из состава (../server/widget-files.ts), а нет файла — под составом строка об этом.
-// Карточка примера живая, но отправка никуда не уходит: `send` отвечает «не найден», а черновик сервер для чужого id отвергает.
+// Страница виджета на странице Flow (адрес `widget-<вид>`): из чего вид состоит — навык, настройки этапа, файлы кода по ролям —
+// и под составом пример: настоящая карточка плагина с учебным содержимым. У правила настроек нет: оно не этап flow.
+// Файл открывается в просмотрщике bb; путь на хосте находит сервер по пути из состава (../server/widget-files.ts),
+// а нет файла — под составом строка об этом.
+// Карточка примера живая, но отправка никуда не уходит: `send` отвечает «не найден», а черновик сервер для чужого id отвергает;
+// пример правила решает сам у себя и ничего не записывает.
 // Как у любой живой карточки, выбор владельца в примере помнится в окне до очистки хранилища — это свойство карточки, не примера.
 import { useRef, useState } from "react";
 import { useBbNavigate, useRpc } from "@get-bb/plugin-sdk/app";
 
-import { anatomyOf, widgetSkillFiles } from "../core/widget-anatomy";
+import { anatomyOf, isBuiltinWidget, WIDGET_ICONS, widgetSkillFiles, type WidgetKind } from "../core/widget-anatomy";
 import { Icon } from "../components/ui/icon";
 import { BUILTIN_SKILLS, builtinStage, type BuiltinKind } from "../lib/stage-constants";
 import type { Messages } from "../lib/messages";
-import type { DecisionBrief, voiceRpcContract } from "../shared/contract";
+import type { DecisionBrief, RuleRecord, voiceRpcContract } from "../shared/contract";
 import type { widgetFilesRpcContract } from "../server/widget-files";
 import { BriefCard } from "./brief-card";
 import { useMessages } from "./locale-context";
-import { KIND_ICONS } from "./stage-icons";
+import { RuleCard } from "./rule-card";
 import { VoiceProvider } from "./voice";
 
 type Sample = Messages["flows"]["widgets"]["sample"];
@@ -71,6 +73,29 @@ export const exampleBrief = (kind: BuiltinKind, t: Messages): DecisionBrief => {
   }
 };
 
+/** Название виджета: у этапа — его название по умолчанию, у правила — своё. */
+export const widgetName = (kind: WidgetKind, t: Messages): string => (isBuiltinWidget(kind) ? t.stages[kind] : t.flows.widgets.ruleName);
+
+const EXAMPLE_SKILL = "/Users/you/.claude/skills/flow-questions/SKILL.md";
+
+/** Учебное правило: замена строки навыка, которая с ним расходится, — дифф показывает и уходящую строку, и новую. */
+export const exampleRule = (t: Messages): RuleRecord => {
+  const s: Sample = t.flows.widgets.sample;
+  return {
+    id: "example:rule",
+    threadId: "example",
+    createdAt: BASE.createdAt,
+    baseSha256: null,
+    text: s.ruleText,
+    why: s.ruleWhy,
+    target: { kind: "skill", path: EXAMPLE_SKILL, name: "flow-questions" },
+    mode: "replace",
+    replaces: `${s.ruleOld}\n`,
+    content: `${s.ruleText}.\n`,
+    similar: [{ kind: "skill", path: EXAMPLE_SKILL, line: 12, quote: s.ruleOld, note: s.ruleNote }],
+  };
+};
+
 /**
  * Файл состава открывается в просмотрщике bb; `missing` — файла последнего клика сервер не нашёл. Ответ на клик, за которым
  * уже был следующий, не считается.
@@ -113,7 +138,7 @@ function Path({ path }: { path: string }) {
   );
 }
 
-function Skill({ kind, open }: { kind: BuiltinKind; open: (path: string) => void }) {
+function Skill({ kind, open }: { kind: WidgetKind; open: (path: string) => void }) {
   const t = useMessages();
   return (
     <div className={SECTION}>
@@ -148,7 +173,7 @@ function Settings({ kind }: { kind: BuiltinKind }) {
   );
 }
 
-function Code({ kind, files }: { kind: BuiltinKind; files: ReturnType<typeof useWidgetFiles> }) {
+function Code({ kind, files }: { kind: WidgetKind; files: ReturnType<typeof useWidgetFiles> }) {
   const t = useMessages();
   return (
     <div className={SECTION}>
@@ -172,20 +197,38 @@ function Code({ kind, files }: { kind: BuiltinKind; files: ReturnType<typeof use
 }
 
 /** Пример: настоящая карточка, отправка которой никуда не уходит. */
-function Example({ kind }: { kind: BuiltinKind }) {
+function Example({ kind }: { kind: WidgetKind }) {
   const t = useMessages();
   const voice = useRpc<typeof voiceRpcContract>();
   return (
     <div className={SECTION}>
       <h3 className={SECTION_TITLE}>{t.flows.widgets.example}</h3>
-      <VoiceProvider transcribe={(input) => voice.call("transcribeVoice", input)}>
-        <BriefCard brief={exampleBrief(kind, t)} send={async () => ({ kind: "not_found" })} onResult={() => undefined} roots={null} />
-      </VoiceProvider>
+      {isBuiltinWidget(kind) ? (
+        <VoiceProvider transcribe={(input) => voice.call("transcribeVoice", input)}>
+          <BriefCard brief={exampleBrief(kind, t)} send={async () => ({ kind: "not_found" })} onResult={() => undefined} roots={null} />
+        </VoiceProvider>
+      ) : (
+        <RuleExample rule={exampleRule(t)} />
+      )}
     </div>
   );
 }
 
-export function WidgetPage({ kind }: { kind: BuiltinKind }) {
+/** Пример правила решает сам у себя: «Записать» и «Не записывать» показывают строку исхода, файлы не трогаются. */
+function RuleExample({ rule }: { rule: RuleRecord }) {
+  return (
+    <RuleCard
+      key={rule.text}
+      initial={rule}
+      decide={async ({ decision, text }) => ({
+        kind: "found",
+        rule: { ...rule, decision: decision === "write" ? { kind: "written", at: rule.createdAt, text: text ?? rule.text, paths: [rule.target.path] } : { kind: "declined", at: rule.createdAt } },
+      })}
+    />
+  );
+}
+
+export function WidgetPage({ kind }: { kind: WidgetKind }) {
   const t = useMessages();
   const files = useWidgetFiles();
   return (
@@ -193,14 +236,14 @@ export function WidgetPage({ kind }: { kind: BuiltinKind }) {
       <div className="flex flex-col gap-1">
         <div className="flex h-9 items-center">
           <span className="flex size-9 shrink-0 items-center justify-center text-muted-foreground">
-            <Icon name={KIND_ICONS[kind]} aria-hidden="true" className="size-7" />
+            <Icon name={WIDGET_ICONS[kind]} aria-hidden="true" className="size-7" />
           </span>
-          <h2 className="truncate pl-1.5 text-lg font-semibold">{t.stages[kind]}</h2>
+          <h2 className="truncate pl-1.5 text-lg font-semibold">{widgetName(kind, t)}</h2>
         </div>
         <p className="px-2.5 pt-1 text-[13px] text-muted-foreground">{t.flows.widgets.purpose[kind]}</p>
       </div>
       <Skill kind={kind} open={files.open} />
-      <Settings kind={kind} />
+      {isBuiltinWidget(kind) && <Settings kind={kind} />}
       <Code kind={kind} files={files} />
       <Example kind={kind} />
     </section>
