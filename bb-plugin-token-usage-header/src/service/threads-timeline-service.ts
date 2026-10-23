@@ -26,6 +26,8 @@ import {
   type ProcessRunner,
   type ProcessRunResult,
 } from "./process-runner";
+import { mapWithLimit } from "./map-with-limit";
+import { singleFlight } from "./single-flight";
 import { createThreadSessionResolver, type ThreadSessionResolver } from "./thread-session";
 import type { QueryOptions } from "./types";
 
@@ -343,20 +345,6 @@ function isAtRest(thread: { status?: string }): boolean {
   return thread.status === "idle" || thread.status === "error";
 }
 
-/** `fn` over every item with at most `limit` calls running at once; results in item order. */
-async function mapWithLimit<T, R>(items: readonly T[], limit: number, fn: (item: T) => Promise<R>): Promise<R[]> {
-  const results: R[] = new Array(items.length);
-  let next = 0;
-  const worker = async (): Promise<void> => {
-    while (next < items.length) {
-      const index = next++;
-      results[index] = await fn(items[index]!);
-    }
-  };
-  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
-  return results;
-}
-
 /**
  * Scans up to THREADS_SCAN_LIMIT of BB's most recent threads and resolves
  * every Claude Code session each one ran on (via `resolver`, i.e.
@@ -502,14 +490,14 @@ async function resolveEnvironmentProjects(bb: BbPluginApi, environmentIds: reado
  */
 async function enrichBbProjects(
   bb: BbPluginApi,
-  resolver: ThreadSessionResolver,
+  sessionMapOf: () => Promise<Map<string, SessionBbThread>>,
   timeline: ThreadsTimeline,
   nowMs: number,
 ): Promise<ThreadsTimeline> {
   if (timeline.threads.length === 0) return timeline;
 
   try {
-    const [sessionMap, directory] = await Promise.all([buildSessionToBbThreadMap(bb, resolver), buildProjectDirectory(bb)]);
+    const [sessionMap, directory] = await Promise.all([sessionMapOf(), buildProjectDirectory(bb)]);
     const knownProjectNames = new Set(directory.names.values());
 
     const environmentIds = Array.from(
@@ -744,6 +732,10 @@ export function createThreadsTimelineService(
   // Holds every scanned thread: a smaller cache would evict each thread
   // before the next scan comes back to it and re-read all of them every time.
   const resolver = createThreadSessionResolver(bb, { now, maxCacheEntries: THREADS_SCAN_LIMIT });
+  // Queries about different sessions — the thread family asks for dozens at
+  // once — would each walk the same thousand threads; those that overlap
+  // share one walk.
+  const sessionMapOf = singleFlight(() => buildSessionToBbThreadMap(bb, resolver));
 
   const entries = new Map<string, { expiresAt: number; promise: Promise<ThreadsTimelineRunResult> }>();
 
@@ -761,7 +753,7 @@ export function createThreadsTimelineService(
       // together.
       const promise = runner.run(params).then(async (result): Promise<ThreadsTimelineRunResult> => {
         if (!result.ok) return result;
-        const withProjects = await enrichBbProjects(bb, resolver, result.data, now());
+        const withProjects = await enrichBbProjects(bb, sessionMapOf, result.data, now());
         const withCommits = await enrichCommits(withProjects, processRunner);
         const withStages = await enrichFlowStages(bb, withCommits);
         return { ok: true, data: withStages };

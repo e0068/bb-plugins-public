@@ -16,6 +16,7 @@ import {
   flowStageSchema,
   gitEventSchema,
   parseVizSettings,
+  usageTotalsOf,
   vizSettingsSchema,
   VIZ_SETTINGS_KV_KEY,
   DEFAULT_GEAR_SETTINGS,
@@ -33,10 +34,13 @@ import {
 } from "./src/core";
 import {
   createAgentTimelineService,
+  createThreadFamilyService,
   createThreadsTimelineService,
   createTokenUsageService,
   type AgentTimelineService,
+  type FamilyMember,
   type QueryOptions,
+  type ThreadFamilyService,
   type ThreadsTimelineService,
   type TokenUsageService,
 } from "./src/service";
@@ -182,6 +186,16 @@ const threadsTimelineAgentLabelsSchema = z.record(z.string(), z.string()) satisf
   ThreadsTimeline["agentLabels"]
 >;
 
+// One thread of a family: its session's totals and its own chart. The chart
+// reuses the feed's entry schema; `chart` is null when only the chart failed.
+const familyMemberSchema = z.object({
+  threadId: z.string(),
+  title: z.string().nullable(),
+  sessionId: z.string(),
+  totals: sessionTotalsSchema,
+  chart: z.object({ thread: threadsTimelineEntrySchema, agentLabels: threadsTimelineAgentLabelsSchema }).nullable(),
+}) satisfies z.ZodType<FamilyMember>;
+
 /**
  * The Claude Code session of a BB thread, alone — for the Usage Analytics page
  * that opens on the selected thread's session; null when the thread has none
@@ -295,6 +309,26 @@ export const rpcContract = defineRpcContract({
       z.object({ status: z.literal("error"), message: z.string() }),
     ]),
   },
+  threadFamily: {
+    // The thread and every thread it spawned, children of children included:
+    // each one's usage and chart, and their sum — for the session page's
+    // family block. `unit` and `groupWorkflows` are the chart's own, as in
+    // threadsTimeline; `fresh` skips the services' 30-second caches.
+    input: z.object({ threadId: z.string().min(1), unit: z.number().int().positive(), groupWorkflows: z.boolean(), fresh: z.boolean().optional() }).strict(),
+    output: z.discriminatedUnion("status", [
+      z.object({
+        status: z.literal("ready"),
+        /** Empty for a thread that started nothing — the page then shows no family block. */
+        members: z.array(familyMemberSchema),
+        total: sessionTotalsSchema,
+        /** True when the family was longer than the service reads at once and the rest is left out. */
+        truncated: z.boolean(),
+        /** Threads whose usage could not be read; not in `members` and not in `total`. */
+        unreadable: z.number().int().nonnegative(),
+      }),
+      z.object({ status: z.literal("error"), message: z.string() }),
+    ]),
+  },
   // See docs/decisions/token-usage-viz-settings-persist-kv.md and
   // docs/decisions/token-usage-gear-to-native-settings.md: what's LEFT of
   // the two pages' visualization state (agent colours, sort, filters, detail
@@ -357,18 +391,7 @@ function mapSessionTotals(report: TokensReport) {
   });
 
   return {
-    totals: {
-      total: totals.total,
-      input: totals.input,
-      cacheWrite: cacheWriteTotal(totals),
-      cacheRead: totals.cacheRead,
-      output: totals.output,
-      thinking: totals.thinking,
-      cost: totals.cost,
-      ...(totals.unpricedModels ? { unpricedModels: totals.unpricedModels } : {}),
-      costs: totals.costs,
-      messages: totals.messages,
-    },
+    totals: usageTotalsOf(totals),
     agents,
   };
 }
@@ -480,6 +503,23 @@ async function loadThreadsTimeline(
   }
 }
 
+async function loadThreadFamily(
+  service: ThreadFamilyService,
+  params: { threadId: string; unit: number; groupWorkflows: boolean },
+  options: QueryOptions,
+) {
+  // Listing the threads is the one thing that can reject (daemon unreachable);
+  // a single member failing is already folded into `unreadable`.
+  try {
+    return { status: "ready" as const, ...(await service.query(params, options)) };
+  } catch (err) {
+    return {
+      status: "error" as const,
+      message: err instanceof Error ? err.message : "Failed to read the thread family.",
+    };
+  }
+}
+
 /**
  * kv.get can reject the same way the query pipeline can (host unreachable
  * mid-request) — caught here rather than left to escape as an opaque
@@ -517,6 +557,8 @@ export interface PluginDeps {
   service?: TokenUsageService;
   agentTimelineService?: AgentTimelineService;
   threadsTimelineService?: ThreadsTimelineService;
+  /** Reads a thread together with its descendants; defaults to one built on the two services above. */
+  threadFamilyService?: ThreadFamilyService;
   /** Defaults to `bb.storage.kv` — overridable so tests can point viz-settings persistence at their own in-memory kv instead of the fake host's real one. */
   kv?: PluginKvStorage;
 }
@@ -668,6 +710,7 @@ export default function plugin(bb: BbPluginApi, deps: PluginDeps = {}) {
   const service = deps.service ?? createTokenUsageService(bb);
   const agentTimelineService = deps.agentTimelineService ?? createAgentTimelineService(bb);
   const threadsTimelineService = deps.threadsTimelineService ?? createThreadsTimelineService(bb);
+  const threadFamilyService = deps.threadFamilyService ?? createThreadFamilyService(bb, { tokenUsage: service, threadsTimeline: threadsTimelineService });
   const kv = deps.kv ?? bb.storage.kv;
 
   defineGearSettings(bb);
@@ -684,6 +727,7 @@ export default function plugin(bb: BbPluginApi, deps: PluginDeps = {}) {
     sessionTokenUsage: ({ threadId }) => loadSessionTokenUsage(service, threadId),
     agentTimeline: ({ session, agent, fresh }) => loadAgentTimeline(service, agentTimelineService, session, agent, { fresh }),
     threadsTimeline: ({ fresh, ...params }) => loadThreadsTimeline(threadsTimelineService, params, { fresh }),
+    threadFamily: ({ fresh, ...params }) => loadThreadFamily(threadFamilyService, params, { fresh }),
     loadVizSettings: () => loadVizSettings(kv),
     saveVizSettings: (value) => saveVizSettings(kv, value),
     loadReducedColors: async () => parseReducedColors(await kv.get<unknown>(REDUCED_COLORS_KV_KEY)),
