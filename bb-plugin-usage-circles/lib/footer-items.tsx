@@ -133,7 +133,7 @@ const providerLogo: LogoOf = (provider, style) => [style.logo === "center" ? cen
 /** The icon of one ring's footer item: the ring with its provider's logo. */
 export const ringIcon = (ring: FooterRing): ComponentType<{ className?: string }> => ringIconOf(() => ring, providerLogo, ring.id);
 
-/** The icon of the item of every limit: the ring of the first chosen limit, with no logo — the item stands for both providers. */
+/** The icon of the item of every limit: the ring of the first chosen limit, with no logo — the item stands for every provider. */
 export const allLimitsIcon = (): ComponentType<{ className?: string }> => ringIconOf(firstShownRing, () => [], ALL_LIMITS_ITEM.id);
 
 function ringIconOf(pick: (state: StateWire | null) => FooterRing, logoOf: LogoOf, name: string): ComponentType<{ className?: string }> {
@@ -175,7 +175,7 @@ function chosenWindows(state: StateWire, provider: ProviderStateWire): ProviderS
   return { ...provider, usage: { status: "ok", windows } };
 }
 
-/** The grid under Usage Limits: every chosen limit of both providers as a card. */
+/** The grid under Usage Limits: every chosen limit of every provider as a card. */
 function GridWindow({ state }: { state: StateWire | null }) {
   const root = useRef<HTMLDivElement>(null);
   useLayoutEffect(() => {
@@ -205,7 +205,7 @@ function ListWindow({ state, providerId, title }: { state: StateWire | null; pro
   );
 }
 
-/** The window of a ring's footer item: in the List layout the provider's limits a row each; in the Grid layout the grid of both providers. */
+/** The window of a ring's footer item: in the List layout the provider's limits a row each; in the Grid layout the grid of every provider. */
 export function providerPanel(providerId: string, title = providerId): ComponentType<{ dismiss(): void }> {
   function ProviderPanel() {
     const state = useUsage();

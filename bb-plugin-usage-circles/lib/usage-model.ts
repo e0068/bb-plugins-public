@@ -13,10 +13,13 @@ export type UsageTier = "blue" | "yellow" | "red" | "unknown";
 const HOUR_MS = 60 * 60 * 1000;
 const DAY_MS = 24 * HOUR_MS;
 const WEEK_MS = 7 * DAY_MS;
+/** A monthly quota window as the API lets us see it: it reports only the reset, so the month is a thirty-day estimate. */
+const MONTH_MS = 30 * DAY_MS;
 const DEFAULT_SESSION_HOURS = 5;
 
 const HOUR_LABEL_PATTERN = /(\d+)\s*-?\s*hour/i;
 const SESSION_LABEL_PATTERN = /session/i;
+const MONTH_LABEL_PATTERN = /month/i;
 
 export interface UsageWindowInput {
   label: string;
@@ -143,11 +146,14 @@ export function inferWindowDurationMs(label: string): number {
     if (hours > 0) return hours * HOUR_MS;
   }
   if (SESSION_LABEL_PATTERN.test(label)) return DEFAULT_SESSION_HOURS * HOUR_MS;
+  if (MONTH_LABEL_PATTERN.test(label)) return MONTH_MS;
   return WEEK_MS;
 }
 
 export function segmentCountForDuration(durationMs: number): 1 | 7 {
-  return durationMs < WEEK_MS ? 1 : 7;
+  if (durationMs < WEEK_MS) return 1;
+  // Thirty day-segments on a monthly ring read as noise; it runs as one arc.
+  return durationMs < MONTH_MS ? 7 : 1;
 }
 
 /**
@@ -239,13 +245,13 @@ export function buildUsageWindowModel(window: UsageWindowInput, nowMs: number, c
   };
 }
 
-/** Statuses `bb.sdk.system.usageLimits()` reports for a provider besides "ok". */
+/** Statuses a usage source reports for a provider besides "ok". */
 export type UsageProviderErrorStatus = "not_installed" | "unauthenticated" | "expired" | "error";
 
-export function statusLabel(status: UsageProviderErrorStatus, message?: string): string {
+export function statusLabel(status: UsageProviderErrorStatus, providerTitle: string, message?: string): string {
   switch (status) {
     case "not_installed":
-      return "Claude Code is not installed";
+      return `${providerTitle} is not installed`;
     case "unauthenticated":
       return "Not authenticated";
     case "expired":
@@ -340,12 +346,13 @@ export function normalizeUsage(
 
 // One footer item per limit window. The live data labels the 5-hour window
 // "Current session" rather than "5-hour limit", so both signals mark it; a
-// Fable-labelled window is the Fable weekly one; anything else is the plain
-// weekly window.
-export type WindowKind = "session" | "weekly" | "fable";
+// Fable-labelled window is the Fable weekly one; a month-labelled window is a
+// monthly quota (Kimi reports two); anything else is the plain weekly window.
+export type WindowKind = "session" | "weekly" | "fable" | "monthly";
 
 export function windowKindOf(label: string): WindowKind {
   if (SESSION_LABEL_PATTERN.test(label) || HOUR_LABEL_PATTERN.test(label)) return "session";
+  if (MONTH_LABEL_PATTERN.test(label)) return "monthly";
   return /fable/i.test(label) ? "fable" : "weekly";
 }
 
@@ -364,6 +371,8 @@ export const FOOTER_RINGS: readonly FooterRing[] = [
   { id: "claude-fable", providerId: "claude-code", kind: "fable", label: "Claude Code — Fable weekly limit" },
   { id: "codex-session", providerId: "codex", kind: "session", label: "Codex — 5-hour limit" },
   { id: "codex-weekly", providerId: "codex", kind: "weekly", label: "Codex — weekly limit" },
+  { id: "kimi-session", providerId: "acp-kimi", kind: "session", label: "Kimi — 5-hour limit" },
+  { id: "kimi-weekly", providerId: "acp-kimi", kind: "weekly", label: "Kimi — weekly limit" },
 ];
 
 /** The window a ring shows; none while the provider reports no usage or lacks that window. */
@@ -374,7 +383,7 @@ export function ringWindow(provider: ProviderStateWire, kind: WindowKind): Usage
 // ---------------------------------------------------------------------------
 // The window's layout and which limits it shows, in what order.
 
-/** A ring's window: a row per limit of its provider, or every chosen limit of both providers as cards; `all` keeps only the Usage Limits item in the footer. */
+/** A ring's window: a row per limit of its provider, or every chosen limit of every provider as cards; `all` keeps only the Usage Limits item in the footer. */
 export type Layout = "list" | "grid" | "all";
 
 /** The options of the Window layout setting, in the order of `Layout`. */
@@ -444,7 +453,7 @@ export function unclaimedWindows(provider: ProviderStateWire): UsageWindowInput[
   return provider.usage.windows.filter((window) => !claimed.includes(window));
 }
 
-/** The cards of the grid: the chosen limits of both providers in the chosen order, then the windows no ring stands for. */
+/** The cards of the grid: the chosen limits of every provider in the chosen order, then the windows no ring stands for. */
 export const gridLimits = (providers: readonly ProviderStateWire[], limits: LimitsChoice): LimitCard[] => [
   ...shownLimits(providers, limits),
   ...providers.flatMap((provider) => unclaimedWindows(provider).map((window) => ({ provider, window }))),

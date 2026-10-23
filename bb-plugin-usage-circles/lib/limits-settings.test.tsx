@@ -43,7 +43,7 @@ describe("the Limits section", () => {
     fireEvent.click(view.getByRole("button", { name: "Move Codex — 5-hour limit down" }));
     expect(names()).toEqual(FOOTER_RINGS.map(({ id }) => id));
     expect((view.getByRole("button", { name: "Move Claude Code — 5-hour limit up" }) as HTMLButtonElement).disabled).toBe(true);
-    expect((view.getByRole("button", { name: "Move Codex — weekly limit down" }) as HTMLButtonElement).disabled).toBe(true);
+    expect((view.getByRole("button", { name: "Move Kimi — weekly limit down" }) as HTMLButtonElement).disabled).toBe(true);
   });
 
   it("says so when the choice could not be kept", async () => {
