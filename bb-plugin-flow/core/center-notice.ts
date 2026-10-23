@@ -7,6 +7,7 @@ import type { NotificationAction, NotificationInput, NotificationSegment, Notifi
 import { ru } from "../lib/messages/ru";
 import { flowRoute } from "../lib/panel-path";
 import { noticeCard, type AutomationNotice, type NoticeAction, type NoticeWords, type Segment } from "./automation-notice";
+import type { SilentTurn } from "./silent-turn";
 
 /** HTTP-вход Flow, который центр зовёт кнопками «Повторить» и «Пропустить». */
 export const NOTICE_ACTION_PATH = "/notification-action";
@@ -30,6 +31,24 @@ export const turnEndEntry = ({ threadId, threadTitle, brief }: { threadId: strin
   threadTitle,
   url: null,
   toastByDefault: false,
+});
+
+/**
+ * Немой ход: агент закрыл ход без ответа, потому что провайдер отказал. Это
+ * сбой, а не «ход закончен»: запись красная и всплывает тостом сразу — иначе
+ * владелец узнает о нём, только написав в тред ещё раз.
+ */
+export const silentTurnEntry = ({ threadId, threadTitle, silent }: { threadId: string; threadTitle: string | null; silent: SilentTurn }): NotificationInput => ({
+  ...SOURCE,
+  kind: "turn-silent",
+  kindLabel: "Ход без ответа",
+  title: `Агент закрыл ход без ответа — ${silent.kind === "quota" ? "лимит подписки исчерпан" : (silent.message ?? "причина неизвестна")}`,
+  tone: "error",
+  threadId,
+  threadTitle,
+  url: null,
+  dedupeKey: `silent:${threadId}:${silent.at}`,
+  toastByDefault: true,
 });
 
 /** Слова карточки — русские, как всё в центре; шаг называется словарём Flow, а незнакомый — подписью снимка прогона. */

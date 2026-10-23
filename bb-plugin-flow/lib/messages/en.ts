@@ -687,4 +687,9 @@ export const en: Messages = {
     drag: (name, owner) => `Drag sub-stage ${name} of ${owner}`,
     inRun: (name, owner) => `Sub-stage ${name} of ${owner} in the run`,
   },
+  silentTurn: {
+    title: "The agent ended the turn without a reply",
+    quota: "The provider's subscription limit is used up — write again once the window resets",
+    unknown: "The provider refused and gave no reason",
+  },
 };

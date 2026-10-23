@@ -17,6 +17,7 @@ import { JournalDirsSection } from "./app/journal-settings";
 import { AutomationRetrySection } from "./app/flow-settings-sections";
 import { FlowsFolderSection } from "./app/flows-folder-settings";
 import { ProgressBanner } from "./app/progress-banner";
+import { SilentTurnBanner } from "./app/silent-turn-banner";
 import { ThreadsPanelList } from "./app/threads-panel";
 import { registerAwaitingStatus } from "./app/row-status";
 import { systemLanguages } from "./app/locale-context";
@@ -50,7 +51,15 @@ export default definePluginApp((app) => {
   registerSelectedThread(app, OWN_PLUGIN_ID, useSettings);
   app.composer.customize({ id: "flow", scopes: ["new-thread"], actions: [{ id: "flow-picker", component: FlowPicker }] });
   // Контейнер состояния Flow: пока прогон идёт — полоса этапов, без прогона и после завершённого — выбор flow.
-  app.composer.customize({ id: "flow-progress", scopes: ["thread"], banners: [{ id: "progress", chrome: "bare", component: ProgressBanner }] });
+  // Над ним — плашка немого хода: провайдер отказал, а bb показал пустой ход.
+  app.composer.customize({
+    id: "flow-progress",
+    scopes: ["thread"],
+    banners: [
+      { id: "silent-turn", chrome: "bare", component: SilentTurnBanner },
+      { id: "progress", chrome: "bare", component: ProgressBanner },
+    ],
+  });
   registerAwaitingStatus(app);
   app.slots.settingsSection({ id: "journal-dirs", title: t.journalTitle, description: t.journalDescription, component: JournalDirsSection });
   app.slots.settingsSection({ id: "automation-retry", title: t.retryTitle, description: t.retryDescription, component: AutomationRetrySection });
