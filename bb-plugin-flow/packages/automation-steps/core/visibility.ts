@@ -60,6 +60,28 @@ export function decideVisibility(input: VisibilityInput): VisibilityDecision {
 }
 
 /**
+ * Отказ PR из самой базы: тред, работающий прямо в main (чекаут проекта),
+ * иначе записал бы коммит PR в main на GitHub — PR собирается через API,
+ * и ветка головы PR переписывается его коммитом.
+ */
+export function prFromBaseRefusal(headBranch: string, baseBranch: string): string | null {
+  return headBranch === baseBranch
+    ? `The thread works on ${baseBranch} itself — there is no branch to open a PR from. Move the work to its own branch and run the step again.`
+    : null;
+}
+
+/**
+ * Присутствие PR для шага «Открыть PR»: живой ответ GitHub сильнее сигнала bb.
+ * bb 0.47.1 больше не отдаёт PR окружения через SDK, его сигнал всегда
+ * `unknown`, и без этого шаг отказывал у каждого треда. GitHub спросить не
+ * вышло — решает сигнал bb.
+ */
+export function presenceForCreate(host: PrPresence, live: { asked: true; open: boolean } | { asked: false }): PrPresence {
+  if (!live.asked) return host;
+  return live.open ? "open" : "absent";
+}
+
+/**
  * The last word: even a "ready" branch has nothing to PR when its content is
  * already in the base. That happens after ANY kind of merge — the plugin's
  * own squash, bb's native button, a merge on github.com — because all of them

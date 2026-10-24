@@ -257,6 +257,7 @@ export const ru = {
     automation: "Автоматизация",
   },
   steps: {
+    "git.tree-from-origin": "Дерево и ветка от origin/main",
     "bb.rename-thread": "Переименовать тред согласно задаче",
     "bb.tasks-plan": "План → задача",
     "git.commit": "Commit",

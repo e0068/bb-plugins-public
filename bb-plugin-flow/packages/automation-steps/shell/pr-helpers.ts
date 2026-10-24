@@ -13,6 +13,7 @@ import { headShaArgs } from "../core/git-commands";
 import { configPathFromGitdir, originUrlFromGitConfig, parseGitdirPointer } from "../core/git-config";
 import {
   getPullRequestRequest,
+  mergePullRequestRequest,
   listOpenPullRequestsRequest,
   parseOpenPullRequest,
   parsePullState,
@@ -31,7 +32,7 @@ import { choosePrTitle } from "../core/pr-title";
 import { statusRefusalMessage } from "../core/status-refusal";
 import { parseGithubRemote } from "../core/remote";
 import { chooseToken } from "../core/token";
-import { decideVisibility, type PrPresence } from "../core/visibility";
+import { decideVisibility, presenceForCreate, prFromBaseRefusal, type PrPresence } from "../core/visibility";
 import { bbCliClient } from "../wiring/bb-cli-client";
 import { type CreatePrPorts, type PrCommitInput, type RefreshOutcome, runCreatePr, runRefreshPr } from "../wiring/create-pr";
 import { type CatchUpOutcome, type ParentDeliveryOutcome, runCatchUp, runParentDelivery } from "../wiring/catch-up";
@@ -154,6 +155,8 @@ async function openPrOf(
   const env = await sdk.environments.get({ environmentId });
   const base = resolveBase(env, await resolveBaseMode(kv, environmentId));
   if (!base) throw new Error("Could not determine the environment's base branch.");
+  const fromBase = env.branchName === null ? null : prFromBaseRefusal(env.branchName, base.githubBase);
+  if (fromBase !== null) throw new Error(fromBase);
 
   const status = await availableStatus(sdk, environmentId, base.statusBase);
 
@@ -170,7 +173,8 @@ async function openPrOf(
   // открытым PR, которого уже нет, — по такому шаг отчитался бы чужим адресом.
   // Ветку открытого PR шаг догоняет до ветки треда: PR собран через API, без
   // пуша, и закоммиченное после открытия иначе на GitHub не попадает.
-  const open = alreadyOpenPr(pr, await askLiveOpenPrForEnv(sdk, () => Promise.resolve(token), env, base));
+  const live = await askLiveOpenPrForEnv(sdk, () => Promise.resolve(token), env, base);
+  const open = alreadyOpenPr(pr, live);
   const refresh = async (found: { url: string; number: number }) => {
     // bb ещё держит прошлый PR — значку нужно время, чтобы увидеть этот.
     if (pr.presence !== "open") await markAwaiting(sdk, environmentId, "publish");
@@ -185,7 +189,7 @@ async function openPrOf(
     const liveAhead = await liveAheadOf(env.path, base);
     const decision = await resolveVisibility(
       visibilityPorts(kv, environmentId, env.path, base),
-      { workspace: visibilityWorkspace(status.workspace, liveAhead), pr: pr.presence },
+      { workspace: visibilityWorkspace(status.workspace, liveAhead), pr: presenceForCreate(pr.presence, live.asked ? { asked: true, open: live.pr !== null } : live) },
     );
     if (!decision.visible) {
       throw new Error(`Can't open a PR right now (${decision.reason}).`);
@@ -333,6 +337,26 @@ export async function attemptMerge(run: () => Promise<void>): Promise<MergeFailu
     return { step: "merge", message: messageOf(error) };
   }
 }
+
+/**
+ * Вливание PR для шага «Смёрджить PR». До bb 0.47.1 PR вливал сам bb методом
+ * SDK; в 0.47.1 метода нет, и шаг падал на «is not a function». Без метода
+ * PR вливается запросом к GitHub — тем же методом слияния.
+ */
+export const mergeThroughHostOrGithub =
+  (sdk: Sdk, gh: GithubPull, environmentId: string) =>
+  async (): Promise<void> => {
+    const host = (sdk.environments as { mergePullRequest?: Sdk["environments"]["mergePullRequest"] }).mergePullRequest;
+    if (typeof host === "function") return void (await host({ environmentId, method: MERGE_METHOD }));
+    if (!gh.ok) throw new Error(`The pull request was not found on GitHub: ${gh.reason}`);
+    const answer = await gh.ports.send(mergePullRequestRequest(gh.repo, gh.number, MERGE_METHOD));
+    if (answer.status !== 200) throw new Error(`GitHub refused the merge: HTTP ${answer.status}${githubMessageOf(answer.data)}`);
+  };
+
+const githubMessageOf = (data: unknown): string => {
+  const message = typeof data === "object" && data !== null ? (data as { message?: unknown }).message : undefined;
+  return typeof message === "string" && message.length > 0 ? ` — ${message}` : "";
+};
 
 /**
  * The archive after a merge. The merge has landed by then, so a refusal is an

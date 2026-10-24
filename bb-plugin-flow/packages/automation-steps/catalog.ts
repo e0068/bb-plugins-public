@@ -2,7 +2,9 @@
 // не должен попасть код эффектов шагов.
 
 /**
- * Шаги в порядке, в котором их обычно ставят в автоматизацию. Три шага бампа
+ * Шаги в порядке, в котором их обычно ставят в автоматизацию. Дерево и ветка
+ * от origin/main стоят первыми: Flow уводит тред из чекаута проекта ещё до
+ * первого хода агента, если этот шаг — первый этап его flow. Три шага бампа
  * стоят сразу за открытием PR: версия пишется коммитом в ветку уже открытого
  * PR, поэтому раньше её ставить некуда, а позже — поздно. Шаг идемпотентен:
  * ветку, уже стоящую выше базы, он не трогает. Поэтому цепочка, которая ещё
@@ -20,6 +22,7 @@
  * коммита до main не доедет.
  */
 export const STEP_IDS = [
+  "git.tree-from-origin",
   "bb.rename-thread",
   "bb.tasks-plan",
   "git.commit",
@@ -41,6 +44,7 @@ export const STEP_IDS = [
 export type StepId = (typeof STEP_IDS)[number];
 
 export const STEP_LABELS: Readonly<Record<StepId, { readonly en: string; readonly ru: string }>> = {
+  "git.tree-from-origin": { en: "Worktree and branch from origin/main", ru: "Дерево и ветка от origin/main" },
   "bb.rename-thread": { en: "Rename the thread after its task", ru: "Переименовать тред согласно задаче" },
   "bb.tasks-plan": { en: "Plan → task", ru: "План → задача" },
   "git.commit": { en: "Commit", ru: "Commit" },
