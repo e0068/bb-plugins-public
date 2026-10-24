@@ -9,6 +9,7 @@ import { useCallback, useEffect, useState } from "react";
 import type { Attachment, AttachmentOwnerRef } from "../../shared/contract.js";
 import { formatFileSize } from "../../shared/format.js";
 import { ConfirmDialog } from "../../components/confirm-dialog.js";
+import { AttachmentOpener, type PreviewLinks } from "./attachment-preview.js";
 import { Icon } from "@/components/ui/icon";
 
 /**
@@ -164,10 +165,13 @@ function RemovalSpinner() {
 
 export function AttachmentsGrid({
   attachments,
+  links,
   onRemove,
   onError,
 }: {
   attachments: Attachment[];
+  /** Where links inside a previewed markdown file lead. */
+  links?: PreviewLinks;
   /** When provided, each attachment gains a remove affordance. */
   onRemove?: (attachment: Attachment) => Promise<void>;
   onError?: (message: string) => void;
@@ -237,9 +241,10 @@ export function AttachmentsGrid({
       key={attachment.id}
       className="flex items-center gap-2 rounded-md border border-border bg-card px-2.5 py-1.5 text-sm shadow-2xs"
     >
-      <a
-        href={attachmentUrl(attachment.id)}
-        download={attachment.fileName}
+      <AttachmentOpener
+        attachment={attachment}
+        url={attachmentUrl(attachment.id)}
+        links={links}
         className="flex min-w-0 items-center gap-2 rounded-sm hover:bg-state-hover"
       >
         <span className="flex size-6 shrink-0 items-center justify-center rounded-sm bg-secondary text-muted-foreground">
@@ -251,7 +256,7 @@ export function AttachmentsGrid({
             {formatFileSize(attachment.sizeBytes)}
           </span>
         </span>
-      </a>
+      </AttachmentOpener>
       {removeButton(attachment, "file")}
     </div>
   );

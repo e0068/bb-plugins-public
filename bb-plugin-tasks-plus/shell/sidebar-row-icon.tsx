@@ -4,8 +4,9 @@
 // bb drops a node React made into a parent React does not own. An app overlay's own element is such a parent too —
 // bb leaves it out of the page — so the picker hangs in bb's app element at the top of #root, which React made.
 import { useEffect, useRef, useState } from "react";
-import { experimental_useSidebarThreads } from "@get-bb/plugin-sdk/app";
+import { experimental_useSidebarThreads, useRealtime } from "@get-bb/plugin-sdk/app";
 import { DEFAULT_PROJECT_ICON } from "@bb-plugins/icon-catalog";
+import { announceProjectsChanged } from "@bb-plugins/task-bridge";
 import { IconPicker } from "@/components/icon-picker";
 import { OverlayContainerProvider } from "@/components/ui/overlay-container";
 import { Popover, PopoverAnchor, PopoverContent } from "@/components/ui/popover";
@@ -18,13 +19,17 @@ const BUTTON_ATTR = "data-tasks-project-icon";
 const KEY_ATTR = "data-tasks-project-icon-key";
 const BOARD_ATTR = "data-tasks-project-icon-board";
 const GROUP_LABEL = '[data-sidebar="group-label"]';
-/** Exactly the icon's size, so its hover keeps off the name and the rows above and below. */
-const BUTTON_CLASS = "inline-flex size-4 shrink-0 items-center justify-center rounded-sm hover:bg-state-hover";
 /**
- * A thread row starts its 16px logo 8px in, and so does the label its content: the 16px button sits on the logos as
- * it is, and 2px after it plus the label's 4px gap start the name where the thread titles do, 6px after the logo.
+ * The size and hover of bb's «+», «…» and Projects' folder on the same row: 28px with a 16px icon, 36px with a 20px
+ * one under a finger. A thread row starts its logo 8px in, and so does the label its content; the margins give the
+ * button's extra size back, so the icon sits on the logos, the row keeps its height, and 2px after the icon plus the
+ * label's 4px gap start the name where the thread titles do.
  */
-const BUTTON_MARGIN = "0 2px 0 0";
+const BUTTON_CLASS = [
+  "inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md hover:bg-state-hover -my-1.5 -ml-1.5 -mr-1",
+  "max-md:pointer-coarse:h-9 max-md:pointer-coarse:w-9 max-md:pointer-coarse:-my-2 max-md:pointer-coarse:-ml-2 max-md:pointer-coarse:-mr-1.5",
+].join(" ");
+const ICON_CLASS = "size-4 shrink-0 max-md:pointer-coarse:size-5";
 
 const SVG_NS = "http://www.w3.org/2000/svg";
 /** `strokeLinecap` → `stroke-linecap`: a glyph keys its SVG attributes the way React props are written. `viewBox`
@@ -46,7 +51,7 @@ const paintAttributes = (paint: Paint | undefined) => {
 /** The icon as components/entity-icon.tsx draws it, in plain DOM. */
 function iconSvg(drawing: IconDrawing): SVGElement {
   const bare = drawing.kind === "glyph" && drawing.tile === undefined ? paintOf(drawing.ink) : {};
-  const svg = svgNode("svg", { viewBox: `0 0 ${ICON_BOX} ${ICON_BOX}`, width: ICON_BOX, height: ICON_BOX, fill: "none", "aria-hidden": "true", class: ["size-4 shrink-0", bare.className].filter(Boolean).join(" ") });
+  const svg = svgNode("svg", { viewBox: `0 0 ${ICON_BOX} ${ICON_BOX}`, width: ICON_BOX, height: ICON_BOX, fill: "none", "aria-hidden": "true", class: [ICON_CLASS, bare.className].filter(Boolean).join(" ") });
   if (bare.color !== undefined) svg.setAttribute("style", `color: ${bare.color}`);
   if (drawing.kind === "emoji") {
     // A colour emoji is a glyph of the text: with the svg's fill="none" Chrome draws nothing.
@@ -96,7 +101,6 @@ function rowButton(name: string, board: RowBoard, onOpen: (picking: Picking) => 
   button.setAttribute(BOARD_ATTR, board.boardId);
   button.setAttribute("aria-label", `Icon of ${name}`);
   button.className = BUTTON_CLASS;
-  button.style.margin = BUTTON_MARGIN;
   paint(button, board);
   // The row underneath folds the project and drags it; the button only picks its icon.
   button.addEventListener("pointerdown", (event) => event.stopPropagation());
@@ -154,6 +158,9 @@ function SidebarRowIconsInner() {
   const latest = useRef({ projects, boards: boards.data ?? [] });
   latest.current = { projects, boards: boards.data ?? [] };
   const scheduleRef = useRef<() => void>(() => {});
+  // Other plugins wearing these icons (Threads Overview) hear only their own events: the overlay, mounted on every
+  // page, tells them through the window (packages/task-bridge).
+  useRealtime("projects:changed", () => announceProjectsChanged(window));
 
   useEffect(() => {
     let frame: number | null = null;

@@ -38,6 +38,15 @@ export type RepoState =
   /** This machine holds no token for the database: nothing is asked of it until one is given. */
   | { kind: "no-token"; since: string; lastSyncAt: string | null };
 
+/** The bytes of attached files, by attachment id, where every machine of the board reads them. */
+export interface BlobStore {
+  /** Replaces whatever the id held. */
+  write(id: string, bytes: Uint8Array): Promise<void>;
+  /** `null` — nothing was written under the id, or it was removed. */
+  read(id: string): Promise<Uint8Array | null>;
+  remove(id: string): Promise<void>;
+}
+
 export interface TaskRepo {
   list(): Promise<RepoFile[]>;
   readText(filePath: string): Promise<string>;
@@ -48,6 +57,8 @@ export interface TaskRepo {
   state(): RepoState;
   /** Keeps the board's new key prefix where every machine reads it; a repository that keeps no board record has none. */
   writePrefix?(prefix: string): Promise<void>;
+  /** Where attached files are shared between machines; a folder keeps them on this machine's disk and has none. */
+  readonly blobs?: BlobStore;
 }
 
 /** A conditional write that lost: the row moved on (`version`), or the key or the slug is already taken. */

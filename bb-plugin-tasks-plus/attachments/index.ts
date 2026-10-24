@@ -1,10 +1,12 @@
-import { mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
+import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, join, resolve, sep } from "node:path";
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import type { Attachment } from "../db/types.js";
 import type { FileTasksStore } from "../filesync/store.js";
 import type { CallerEnvironmentCache } from "../filesync/caller-cache.js";
 import { runInCallerScope } from "../filesync/caller-scope.js";
+import { outOfReach, type BlobStore } from "../filesync/task-repo.js";
 import { CALLER_THREAD_FIELD } from "../shared/enums.js";
 import { attachmentDownloadUrl, attachmentDownloadUrls, removeAttachmentDescriptionReferences } from "../shared/attachment-url.js";
 
@@ -114,10 +116,17 @@ function pathInside(root: string, blobPath: string): string {
   return absolutePath;
 }
 
+/**
+ * Removes the files of attachments from this machine's disk and, for a
+ * database project, from the database every machine reads them from —
+ * `cloud` is that project's `store.projectBlobs`, resolved while the project
+ * is still known.
+ */
 export async function removeAttachmentBlobs(
   bb: BbPluginApi,
   store: FileTasksStore,
   attachments: readonly Pick<Attachment, "id" | "blobPath">[],
+  cloud: BlobStore | null,
 ): Promise<void> {
   if (attachments.length === 0) return;
   const root = requireStoreRoot(store);
@@ -125,6 +134,7 @@ export async function removeAttachmentBlobs(
     attachments.map(async (attachment) => {
       const absolutePath = pathInside(root, attachment.blobPath);
       await rm(dirname(absolutePath), { recursive: true, force: true });
+      await cloud?.remove(attachment.id);
     }),
   );
   const failures = removals.flatMap((result, index) => {
@@ -354,14 +364,17 @@ async function readRequestBody(request: Request): Promise<Uint8Array> {
   return body;
 }
 
+/** Where an attachment's file lies once its upload is done; before that its record points at `blobs/pending`. */
+const finalBlobPath = (id: string, fileName: string): string => join("blobs", id, fileName);
+
 async function persistAttachment(
   store: FileTasksStore,
   owner: AttachmentOwner,
   fileName: string,
   mime: string,
-  sizeBytes: number,
-  writeBlob: (path: string) => Promise<void>,
+  bytes: Uint8Array,
 ): Promise<Attachment> {
+  const sizeBytes = bytes.byteLength;
   if (sizeBytes > MAX_ATTACHMENT_SIZE_BYTES) {
     throw new AttachmentRequestError(413, "attachment exceeds the 25 MB limit");
   }
@@ -375,20 +388,69 @@ async function persistAttachment(
     blobPath: join("blobs", "pending", safeFileName),
     isImage: isInlineRasterMime(safeMime),
   });
-  const blobPath = join("blobs", attachment.id, safeFileName);
+  const blobPath = finalBlobPath(attachment.id, safeFileName);
   const absolutePath = pathInside(requireStoreRoot(store), blobPath);
+  const cloud = await store.attachmentBlobs(attachment.id);
 
   try {
     await mkdir(dirname(absolutePath), { recursive: true });
-    await writeBlob(absolutePath);
+    await writeFile(absolutePath, bytes);
+    // A database project's file goes where every machine of the board reads it.
+    await cloud?.write(attachment.id, bytes);
     return await store.updateAttachment(attachment.id, {
       blobPath,
     });
   } catch (error) {
     await store.deleteAttachment(attachment.id);
     await rm(dirname(absolutePath), { recursive: true, force: true });
+    // Parts that did reach the database go too; failing that, the upload's own error is the one to tell.
+    await cloud?.remove(attachment.id).catch(() => undefined);
     throw error;
   }
+}
+
+const isMissingFile = (error: unknown): boolean =>
+  error instanceof Error && "code" in error && error.code === "ENOENT";
+
+/** The file on this machine's disk; `null` — none, or one cut short. */
+async function diskBytes(absolutePath: string, sizeBytes: number): Promise<Uint8Array | null> {
+  try {
+    const bytes = await readFile(absolutePath);
+    return bytes.byteLength === sizeBytes ? bytes : null;
+  } catch (error) {
+    if (isMissingFile(error)) return null;
+    throw error;
+  }
+}
+
+/** Puts the file in place whole: a reader alongside sees the old file or the new one, never a part. */
+async function writeWhole(absolutePath: string, bytes: Uint8Array): Promise<void> {
+  const partial = `${absolutePath}.part-${randomUUID()}`;
+  try {
+    await writeFile(partial, bytes);
+    await rename(partial, absolutePath);
+  } catch (error) {
+    await rm(partial, { force: true });
+    throw error;
+  }
+}
+
+/**
+ * An attachment's file: from this machine's disk, or — uploaded on another
+ * machine of a database project — from the database, kept on disk after
+ * the first read. `null` — the file is nowhere, or its upload is not done.
+ */
+async function storedBytes(store: FileTasksStore, attachment: Attachment): Promise<Uint8Array | null> {
+  const absolutePath = pathInside(requireStoreRoot(store), attachment.blobPath);
+  const onDisk = await diskBytes(absolutePath, attachment.sizeBytes);
+  if (onDisk !== null) return onDisk;
+  if (attachment.blobPath !== finalBlobPath(attachment.id, attachment.fileName)) return null;
+  const cloud = await store.attachmentBlobs(attachment.id);
+  const bytes = (await cloud?.read(attachment.id)) ?? null;
+  if (bytes === null) return null;
+  await mkdir(dirname(absolutePath), { recursive: true });
+  await writeWhole(absolutePath, bytes);
+  return bytes;
 }
 
 export async function saveAttachmentFromBytes(
@@ -401,8 +463,7 @@ export async function saveAttachmentFromBytes(
     normalizeOwner(options.taskId, options.commentId),
     options.fileName,
     options.mime ?? inferMimeFromBytes(bytes, options.fileName),
-    bytes.byteLength,
-    (destinationPath) => writeFile(destinationPath, bytes),
+    bytes,
   );
 }
 
@@ -411,9 +472,9 @@ export async function readAttachmentContent(
   attachmentId: string,
 ): Promise<{ attachment: Attachment; content: Buffer }> {
   const attachment = await store.getAttachment(attachmentId);
-  if (!attachment) throw new Error(`Attachment not found: ${attachmentId}`);
-  const sourcePath = pathInside(requireStoreRoot(store), attachment.blobPath);
-  return { attachment, content: await readFile(sourcePath) };
+  const content = attachment ? await storedBytes(store, attachment) : null;
+  if (!attachment || content === null) throw new Error(`Attachment not found: ${attachmentId}`);
+  return { attachment, content: Buffer.from(content) };
 }
 
 function errorResponse(context: PluginHttpContext, error: unknown): Response {
@@ -470,9 +531,12 @@ export async function deleteAttachmentById(
   }
 
   try {
-    await (options.removeBlobs ?? removeAttachmentBlobs)(bb, store, [
-      attachment,
-    ]);
+    await (options.removeBlobs ?? removeAttachmentBlobs)(
+      bb,
+      store,
+      [attachment],
+      ownerTask ? store.projectBlobs(ownerTask.projectId) : null,
+    );
   } catch (error) {
     throw new AttachmentCleanupError(attachment, error);
   }
@@ -542,8 +606,7 @@ export function registerAttachments(
             parameters.owner,
             parameters.fileName,
             parameters.mime,
-            body.byteLength,
-            (destinationPath) => writeFile(destinationPath, body),
+            body,
           ),
         );
         await publishAttachmentChanged(bb, store, attachment);
@@ -568,22 +631,25 @@ export function registerAttachments(
     const environment = await callerEnvironment(
       context.req.query(CALLER_THREAD_FIELD) ?? null,
     );
-    const attachment = attachmentId
-      ? await runInCallerScope(environment, () => store.getAttachment(attachmentId))
+    const found = attachmentId
+      ? await runInCallerScope(environment, async () => {
+          const attachment = await store.getAttachment(attachmentId);
+          return attachment ? { attachment, bytes: await storedBytes(store, attachment) } : undefined;
+        }).catch((error: unknown) => {
+          if (outOfReach(error)) return "out-of-reach" as const;
+          throw error;
+        })
       : undefined;
-    if (!attachment)
+    if (found === "out-of-reach")
+      return context.json({ error: "the project's database is out of reach" }, 503);
+    if (!found || found.bytes === null)
       return context.json({ error: "attachment not found" }, 404);
 
-    const absolutePath = pathInside(root, attachment.blobPath);
-    try {
-      await stat(absolutePath);
-    } catch {
-      return context.json({ error: "attachment not found" }, 404);
-    }
+    const { attachment, bytes } = found;
     const disposition = isInlineRasterMime(attachment.mime)
       ? "inline"
       : "attachment";
-    return new Response(new Uint8Array(await readFile(absolutePath)), {
+    return new Response(new Uint8Array(bytes), {
       headers: {
         "Content-Type": attachment.mime,
         "Content-Length": String(attachment.sizeBytes),

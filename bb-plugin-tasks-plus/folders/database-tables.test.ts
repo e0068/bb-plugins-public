@@ -259,6 +259,64 @@ describe("Tables beside a project's task board, in its database", () => {
     expect((await projects(b)).map((project) => project.name)).not.toContain("Docs");
   });
 
+  it("moves a section into another section and back to the top of its project, for the other machine too", async () => {
+    const { a, b, board, onB } = await sharedProject();
+    const docs = await a.call<Created>("createTable", { boardId: board.id, name: "Docs" });
+    const specs = await a.call<Created>("createTable", { boardId: board.id, name: "Specs" });
+    const docsId = docs.ok ? docs.boardId : "";
+    const specsId = specs.ok ? specs.boardId : "";
+    const sectionOn = async (host: TasksHost, name: string) => (await projects(host)).find((project) => project.name === name)?.database;
+
+    const drafts = await a.call<Created>("createTable", { boardId: docsId, name: "Drafts" });
+    expect(drafts).toMatchObject({ ok: true });
+
+    expect(await a.call("moveSection", { boardId: docsId, into: specsId })).toEqual({ ok: true });
+    expect((await sectionOn(a, "Docs"))?.parent).toBe((await sectionOn(a, "Specs"))?.table);
+
+    await b.call("retryDatabase", { boardId: onB.id });
+    await vi.waitFor(async () => expect((await sectionOn(b, "Docs"))?.parent).toBe((await sectionOn(b, "Specs"))?.table));
+    expect((await sectionOn(b, "Drafts"))?.parent).toBe((await sectionOn(b, "Docs"))?.table);
+
+    expect(await a.call("moveSection", { boardId: docsId, into: board.id })).toEqual({ ok: true });
+    expect((await sectionOn(a, "Docs"))?.parent).toBeUndefined();
+  });
+
+  it("refuses one of two moves sent together that would put two sections inside each other", async () => {
+    const { a, board } = await sharedProject();
+    const docs = await a.call<Created>("createTable", { boardId: board.id, name: "Docs" });
+    const specs = await a.call<Created>("createTable", { boardId: board.id, name: "Specs" });
+    const docsId = docs.ok ? docs.boardId : "";
+    const specsId = specs.ok ? specs.boardId : "";
+
+    const results = await Promise.all([
+      a.call<{ ok: boolean; message?: string }>("moveSection", { boardId: docsId, into: specsId }),
+      a.call<{ ok: boolean; message?: string }>("moveSection", { boardId: specsId, into: docsId }),
+    ]);
+
+    expect(results.filter((result) => result.ok)).toHaveLength(1);
+    expect(results.find((result) => !result.ok)?.message).toMatch(/inside itself/);
+    expect((await projects(a)).filter((project) => project.database?.table !== undefined && project.database.parent === undefined)).toHaveLength(1);
+  });
+
+  it("refuses to move a section into itself, into a section inside it, into another project or beside a namesake", async () => {
+    const { a, board } = await sharedProject();
+    const docs = await a.call<Created>("createTable", { boardId: board.id, name: "Docs" });
+    const docsId = docs.ok ? docs.boardId : "";
+    const drafts = await a.call<Created>("createTable", { boardId: docsId, name: "Drafts" });
+    const draftsId = drafts.ok ? drafts.boardId : "";
+    const notes = await a.call<Created>("createTable", { boardId: docsId, name: "Notes" });
+    await a.call<Created>("createTable", { boardId: board.id, name: "notes" });
+    const solo = await a.call<{ project: { id: string } }>("createProject", { name: "Solo", prefix: "SOL", color: "blue" });
+
+    expect(await a.call("moveSection", { boardId: docsId, into: docsId })).toMatchObject({ ok: false });
+    expect(await a.call("moveSection", { boardId: docsId, into: draftsId })).toMatchObject({ ok: false });
+    expect(await a.call("moveSection", { boardId: docsId, into: solo.project.id })).toMatchObject({ ok: false });
+    expect(await a.call("moveSection", { boardId: notes.ok ? notes.boardId : "", into: board.id })).toMatchObject({ ok: false, message: expect.stringMatching(/already/) });
+    expect((await projects(a)).find((project) => project.id === draftsId)?.database?.parent).toBe(
+      (await projects(a)).find((project) => project.id === docsId)?.database?.table,
+    );
+  });
+
   it("deletes a section with the sections inside it, on the other machine too, and leaves a project alone", async () => {
     const { a, b, board, onB } = await sharedProject();
     const docs = await a.call<Created>("createTable", { boardId: board.id, name: "Docs" });

@@ -32,12 +32,14 @@ import { ThreadsSection } from "./threads.js";
 import { PropertiesGrid } from "./properties.js";
 import { RecordDoc } from "./record-doc.js";
 import { SectionProperties } from "./section-properties.js";
+import { useNarrowCard } from "./narrow-card.js";
 import { sectionFields, type SectionField } from "../../shared/section-fields.js";
 import { removeAttachmentDescriptionReferences } from "../../shared/attachment-url.js";
 import { useRecordViewer } from "./record-viewer.js";
 import { shownTask, type DetailUpdate } from "./pending-update.js";
 import { DetailToasts, useDetailToasts } from "./toast.js";
 import { DelayedLoading } from "../../components/delayed-loading.js";
+import { Button } from "@/components/ui/button";
 import { Icon } from "@/components/ui/icon";
 import { IconPickerButton } from "@/components/icon-picker";
 import { Segments } from "@/components/ui/segments";
@@ -437,9 +439,21 @@ function TaskDetail({
   const parentTask = parent.data ?? null;
   // A section's record sits under its viewer switch on the page itself, with no card around it.
   const frame = section === undefined ? DETAIL_FRAME[layout] : { ...DETAIL_FRAME[layout], surface: "", card: "" };
+  const container = useRef<HTMLDivElement>(null);
+  const narrow = useNarrowCard(container);
+  const sectionProperties = section === undefined ? null : (
+    <SectionProperties
+      task={task}
+      fields={section.fields}
+      declared={section.declared}
+      labels={labels.data}
+      onSave={(propertyPatch) => void updateTask({ propertyPatch })}
+      onUpdate={(update) => void updateTask(update)}
+    />
+  );
 
   return (
-    <div className={cn("@container flex min-h-full flex-col", frame.surface)}>
+    <div ref={container} className={cn("@container flex min-h-full flex-col", frame.surface)}>
       <div className={cn("flex flex-1 items-stretch", frame.card)}>
         <div className={cn("w-full min-w-0 max-w-[55rem] flex-1", frame.body)}>
           {parentTask || subtasks.data?.length ? (
@@ -470,20 +484,41 @@ function TaskDetail({
             </div>
           ) : null}
 
-          <div className="group/title flex items-start gap-1">
-            <IconPickerButton
-              label="Task icon"
-              value={task.icon}
-              className={cn("mt-1.5 size-8", task.icon === undefined && "opacity-0 group-hover/title:opacity-100 focus-visible:opacity-100 data-[state=open]:opacity-100")}
-              iconClassName="size-5"
-              onPick={(icon) => void updateTask({ icon })}
-              onClear={() => void updateTask({ icon: null })}
-            />
+          {/* As in Notion: the title lines up with the text, the icon sits above it —
+              large once set, an "Add icon" button on hover until then. */}
+          <div className="group/title">
+            {task.icon === undefined ? (
+              <div className="flex h-7 items-center opacity-0 transition-opacity focus-within:opacity-100 group-hover/title:opacity-100 has-[[data-state=open]]:opacity-100">
+                <IconPickerButton
+                  label="Task icon"
+                  value={task.icon}
+                  onPick={(icon) => void updateTask({ icon })}
+                  onClear={() => void updateTask({ icon: null })}
+                  trigger={
+                    <Button type="button" variant="ghost" size="sm" className="-ml-2 h-7 gap-1.5 px-2 text-muted-foreground">
+                      <HugeiconsIcon icon={SmilePlusIcon} className="size-4" />
+                      Add icon
+                    </Button>
+                  }
+                />
+              </div>
+            ) : (
+              <IconPickerButton
+                label="Task icon"
+                value={task.icon}
+                className="-ml-1.5 mb-1 size-[4.5rem] [&_svg]:size-14"
+                onPick={(icon) => void updateTask({ icon })}
+                onClear={() => void updateTask({ icon: null })}
+              />
+            )}
             <EditableTitle
               task={task}
               onSave={(title) => void updateTask({ title })}
             />
           </div>
+
+          {/* On a narrow card a section's record keeps its properties under the title, as a task does. */}
+          {sectionProperties !== null && narrow ? <div className="mb-4">{sectionProperties}</div> : null}
 
           {section === undefined ? (
             <>
@@ -516,6 +551,8 @@ function TaskDetail({
             displayImageSrc={displayImageSrc}
             mentionItems={mentionItems}
             onOpenThread={(threadId) => navigate.toThread(threadId)}
+            onOpenLink={(url) => navigate.openUrl(url)}
+            onOpenTask={openTask}
           />
 
           <div className="mb-1 mt-3 flex items-center gap-1">
@@ -551,6 +588,11 @@ function TaskDetail({
 
           <AttachmentsGrid
             attachments={attachments.data ?? []}
+            links={{
+              onOpenThread: (threadId) => navigate.toThread(threadId),
+              onOpenLink: (url) => navigate.openUrl(url),
+              onOpenTask: openTask,
+            }}
             onRemove={async (attachment) => {
               const result = await rpc.call("deleteAttachment", {
                 attachmentId: attachment.id,
@@ -592,7 +634,8 @@ function TaskDetail({
           {/* TaskActivity draws its own top hairline; adding one here would
               stack two dividers above the Activity header. */}
           <div className="mt-1">
-            <TaskActivity taskId={task.id} taskKey={task.key} />
+            {/* Keyed by the record: an unsent draft is dropped, not carried into the next record. */}
+            <TaskActivity key={task.id} taskId={task.id} taskKey={task.key} onOpenTask={openTask} />
           </div>
         </div>
 
@@ -608,18 +651,8 @@ function TaskDetail({
             onError={(message) => push("error", message)}
             className={cn("hidden @[45rem]:block", frame.rail)}
           />
-        ) : (
-          // Always on the right, however narrow: a section's record keeps its properties in one place.
-          <aside className={cn(RAIL_FRAME_CLASS, frame.rail)}>
-            <SectionProperties
-              task={task}
-              fields={section.fields}
-              declared={section.declared}
-              labels={labels.data}
-              onSave={(propertyPatch) => void updateTask({ propertyPatch })}
-              onUpdate={(update) => void updateTask(update)}
-            />
-          </aside>
+        ) : narrow ? null : (
+          <aside className={cn(RAIL_FRAME_CLASS, frame.rail)}>{sectionProperties}</aside>
         )}
       </div>
       <DetailToasts toasts={toasts} onDismiss={dismiss} />

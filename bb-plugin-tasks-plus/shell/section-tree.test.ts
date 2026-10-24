@@ -1,7 +1,8 @@
 // @vitest-environment node
 import fc from "fast-check";
 import { describe, expect, it } from "vitest";
-import { closedAtDepth, foldedLevel, foldLevels, toggleOpen, treeKey, treeRows, type SectionNode } from "./section-tree.js";
+import type { Project } from "../shared/contract.js";
+import { closedAtDepth, foldedLevel, foldLevels, takesSection, toggleOpen, treeKey, treeRows, type SectionNode } from "./section-tree.js";
 
 const node = (id: string, ...children: SectionNode[]): SectionNode => ({ id, children });
 
@@ -81,5 +82,30 @@ describe("the arrows on the project tree", () => {
 
   it("leave other keys alone", () => {
     expect(treeKey(rows, "a", "x")).toEqual({ current: "a", toggle: null });
+  });
+});
+
+const board = (id: string, database: Project["database"]): Project => ({ id, name: id, database }) as Project;
+const URL = "libsql://team.turso.io";
+// team
+//   docs
+//     drafts
+//   notes
+// other (another database), files (no database)
+const BOARDS = [
+  board("team", { url: URL }),
+  board("docs", { url: URL, table: "docs" }),
+  board("drafts", { url: URL, table: "drafts", parent: "docs" }),
+  board("notes", { url: URL, table: "notes" }),
+  board("other", { url: "libsql://other.turso.io" }),
+  board("files", null),
+];
+const at = (id: string) => BOARDS.find((entry) => entry.id === id)!;
+const targetsOf = (id: string) => BOARDS.filter((target) => takesSection(target, at(id), BOARDS)).map((target) => target.id);
+
+describe("where a dragged section may go", () => {
+  it("into another section of its project, or to its project's row when it sits deeper", () => {
+    expect(targetsOf("docs")).toEqual(["notes"]);
+    expect(targetsOf("drafts")).toEqual(["team", "notes"]);
   });
 });

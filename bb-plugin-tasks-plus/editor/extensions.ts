@@ -5,6 +5,10 @@ import Image, { type ImageOptions } from "@tiptap/extension-image";
 import TaskList from "@tiptap/extension-task-list";
 import TaskItem from "@tiptap/extension-task-item";
 import Placeholder from "@tiptap/extension-placeholder";
+import Table from "@tiptap/extension-table";
+import TableRow from "@tiptap/extension-table-row";
+import TableHeader from "@tiptap/extension-table-header";
+import TableCell from "@tiptap/extension-table-cell";
 import { Markdown } from "tiptap-markdown";
 import { Plugin, PluginKey } from "@tiptap/pm/state";
 import type { DOMOutputSpec } from "@tiptap/pm/model";
@@ -349,6 +353,22 @@ const SurfaceImage = Image.extend<
   },
 });
 
+// A markdown cell holds one paragraph: with a second one in a cell (Enter)
+// tiptap-markdown would save the whole table as HTML. So Enter in a cell
+// does nothing, and Shift+Enter breaks the line — saved as <br> in the row.
+const MarkdownTableHeader = TableHeader.extend({ content: "paragraph" });
+const MarkdownTableCell = TableCell.extend({ content: "paragraph" });
+
+/** tiptap-markdown closes a table with a line break even when it ends the document; the saved text keeps none. */
+const TrimmedMarkdown = Markdown.extend({
+  onBeforeCreate() {
+    this.parent?.();
+    const storage = this.editor.storage.markdown as { getMarkdown: () => string };
+    const getMarkdown = storage.getMarkdown;
+    storage.getMarkdown = () => getMarkdown().replace(/\n+$/, "");
+  },
+});
+
 export function createEditorExtensions(options?: {
   placeholder?: () => string;
   mentionHandle?: MentionSuggestionHandle;
@@ -364,6 +384,11 @@ export function createEditorExtensions(options?: {
     }),
     TightTaskList,
     TaskItem.configure({ nested: true }),
+    // A markdown table stays a table: without these its cells collapse into one paragraph, and saving writes that back.
+    Table,
+    TableRow,
+    MarkdownTableHeader,
+    MarkdownTableCell,
     MarkdownTaskInput,
     TaskMention,
     ThreadMention,
@@ -374,7 +399,7 @@ export function createEditorExtensions(options?: {
     Placeholder.configure({
       placeholder: () => options?.placeholder?.() ?? "",
     }),
-    Markdown.configure({
+    TrimmedMarkdown.configure({
       html: true,
       tightLists: true,
       bulletListMarker: "-",

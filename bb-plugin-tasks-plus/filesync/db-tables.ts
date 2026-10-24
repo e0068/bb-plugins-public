@@ -89,6 +89,10 @@ const OPTION_ICONS_PATH = `${FIELD_PATH} || '.optionIcons'`;
 export const SET_OPTION_ICON = `UPDATE tables SET fields = json_set(fields, ${OPTION_ICONS_PATH}, json_patch(COALESCE(json_extract(fields, ${OPTION_ICONS_PATH}), '{}'), json_object(?3, ?4))) WHERE id = ?1 AND ${FIELD_INDEX} IS NOT NULL`;
 
 export const RENAME_TABLE = "UPDATE tables SET name = ? WHERE id = ?";
+/** Puts table ?2 inside ?1, or at the top for NULL — unless ?1 sits inside ?2, which the database itself checks, so two
+ *  moves sent together never put two tables inside each other. */
+export const MOVE_TABLE =
+  "UPDATE tables SET parent = ?1 WHERE id = ?2 AND (?1 IS NULL OR NOT EXISTS (WITH RECURSIVE up(id) AS (SELECT ?1 UNION SELECT t.parent FROM tables t JOIN up ON t.id = up.id WHERE t.parent IS NOT NULL) SELECT 1 FROM up WHERE id = ?2))";
 
 /** A section's row and its pair of tables: what deleting it takes out of the database. */
 export const deleteTableSteps = (id: TableId): { sql: string; args?: string[] }[] => {

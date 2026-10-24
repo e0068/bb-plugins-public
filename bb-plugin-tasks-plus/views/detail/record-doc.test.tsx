@@ -158,6 +158,35 @@ describe("a record of a table, opened", () => {
   });
 });
 
+describe("the Properties of a section's record by the card's width", () => {
+  const cardWidth = (width: number) =>
+    vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(width);
+
+  afterEach(() => vi.restoreAllMocks());
+
+  it("stand under the title, above the text, on a card as narrow as a phone", async () => {
+    window.localStorage.setItem("bb-tasks:record-viewer", "card");
+    cardWidth(390);
+    const slot = renderDetail(record(DOCS_ID, "DOC-1"));
+    const properties = await slot.findByRole("region", { name: "Properties" });
+    const title = slot.getByRole("textbox", { name: "Task title" });
+    const [attach] = slot.getAllByRole("button", { name: "Attach file" });
+
+    expect(properties.closest("aside")).toBeNull();
+    expect(title.compareDocumentPosition(properties) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(properties.compareDocumentPosition(attach!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it("keep their column on the right on a wide card", async () => {
+    window.localStorage.setItem("bb-tasks:record-viewer", "card");
+    cardWidth(1200);
+    const slot = renderDetail(record(DOCS_ID, "DOC-1"));
+    const properties = await slot.findByRole("region", { name: "Properties" });
+
+    expect(properties.closest("aside")).not.toBeNull();
+  });
+});
+
 describe("a section's field edited in the card", () => {
   const patches = (slot: ReturnType<typeof renderDetail>) =>
     slot.rpcCalls.filter((call) => call.method === "updateTask").map((call) => (call.input as { propertyPatch?: unknown }).propertyPatch);

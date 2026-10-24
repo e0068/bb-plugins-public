@@ -5,8 +5,8 @@ import type { TasksApiStore } from "../api/index.js";
 import { publishProjectsChanged, publishProjectTasksChanged } from "../api/index.js";
 import { createFolderMirror, mirrorDirectory, type FolderMirror } from "../filesync/folder-mirror.js";
 import { linkTakenBy, linkTakenMessage, type BoardConfig } from "../filesync/board-config.js";
-import { createDbRepo, failureOf, peekBoard, type DbRepo } from "../filesync/db-repo.js";
-import { newTableId, type DbTable, type TableId } from "../filesync/db-tables.js";
+import { createDbRepo, failureOf, peekBoard, TableUnchanged, type DbRepo } from "../filesync/db-repo.js";
+import { newTableId, subtreeOf, type DbTable, type TableId } from "../filesync/db-tables.js";
 import { CHOICE_TYPES, declaredField, fieldProblem, optionProblem } from "../shared/section-fields.js";
 import { isPropertyName } from "../shared/properties.js";
 import { resolveMainRoot } from "../filesync/resolve-roots.js";
@@ -1021,6 +1021,31 @@ export function registerFolders(bb: BbPluginApi, store: TasksApiStore): void {
         .get(section.id)
         ?.writeBoard({ name, prefix: section.prefix })
         .catch((error: unknown) => bb.log.warn(`tasks-plus: the head of section ${name} keeps its old name: ${databaseFailure(error).message}`));
+      return { ok: true };
+    },
+
+    async moveSection(input) {
+      const found = sectionRepo(input.boardId);
+      if (!found.ok) return found;
+      const { section, taskBoard, repo } = found;
+      const into = store.tasks.getProject(input.into);
+      // The project's own board takes a section to the top; a section of the same database, inside it.
+      const parent =
+        into?.id === taskBoard.id ? null : into !== undefined && isTableBoard(into) && into.database.url === section.database.url ? into.database.table : undefined;
+      if (parent === undefined) return { ok: false, message: "A section moves only inside its own project." };
+      const insideItself = { ok: false as const, message: "A section can't go inside itself or a section inside it." };
+      if (parent !== null && subtreeOf(repo.tables(), section.database.table).includes(parent)) return insideItself;
+      if (parent === (section.database.parent ?? null)) return { ok: true };
+      const taken = repo.tables().find((table) => table.id !== section.database.table && table.parent === parent && sameFolder(table.name, section.name));
+      if (taken !== undefined) return { ok: false, message: `There is already a section ${taken.name} here.` };
+      try {
+        await repo.moveTable(section.database.table, parent);
+      } catch (error) {
+        // The list read above can be a move behind: the database itself refuses a parent inside the section.
+        if (parent !== null && error instanceof TableUnchanged) return insideItself;
+        return { ok: false, message: databaseFailure(error).message };
+      }
+      syncTables(taskBoard.id);
       return { ok: true };
     },
 

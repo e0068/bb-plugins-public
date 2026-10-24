@@ -9,7 +9,11 @@
 //
 // The engine decides at render whether a link is live, by asking the resolver
 // once — so a new resolver (the consumer learned where files are) recreates
-// the editor, while new text is only set into the one already there. A live
+// the editor, while new text is only set into the one already there. A picture
+// with a relative `src` asks the image resolver for its address the same way;
+// without one the engine draws a "caption — path" placeholder, and a picture
+// whose address doesn't load is swapped for the same placeholder — the engine
+// itself leaves a broken image there. A live
 // link is a bare span in the engine's markup; after each render it is given a
 // link's role and focus, and Enter on it clicks it.
 import { useLayoutEffect, useRef, type KeyboardEvent } from "react";
@@ -24,10 +28,28 @@ export interface MdTextProps {
   text: string;
   /** Live link → what a click does; `null` leaves it plain text. Keep it stable: a new one redraws the text. */
   linkResolver: (href: string) => KasimovLink | null;
+  /** A picture's relative `src` → the address to load it from; `null` or absent leaves the placeholder. Keep it stable too. */
+  imageResolver?: ((src: string) => string | null) | undefined;
 }
 
 const STYLE_ID = "mdt-vars";
 const LIVE_LINK = ".mde-link-live";
+const PICTURE = "img.mde-imgpic";
+
+const span = (doc: Document, className: string, text?: string): HTMLSpanElement => {
+  const node = doc.createElement("span");
+  node.className = className;
+  if (text !== undefined) node.textContent = text;
+  return node;
+};
+
+/** The engine's own placeholder markup (placeholder in ../kasimov/kasimov.js): a mark, then "caption — path". */
+const placeholder = (img: HTMLImageElement, src: string): HTMLSpanElement => {
+  const doc = img.ownerDocument;
+  const box = span(doc, "mde-ctl mde-imgerr");
+  box.append(span(doc, "mde-imgerr-mark", "🖼"), span(doc, "mde-imgerr-text", (img.alt ? `${img.alt} — ` : "") + src));
+  return box;
+};
 
 const markLinks = (host: HTMLElement): void =>
   host.querySelectorAll<HTMLElement>(LIVE_LINK).forEach((link) => {
@@ -47,7 +69,7 @@ const ensureRule = (doc: Document): void => {
   doc.head.append(style);
 };
 
-export function MdText({ text, linkResolver }: MdTextProps) {
+export function MdText({ text, linkResolver, imageResolver }: MdTextProps) {
   const hostRef = useRef<HTMLSpanElement | null>(null);
   const editorRef = useRef<KasimovEditorInstance | null>(null);
   const textRef = useRef(text);
@@ -58,6 +80,20 @@ export function MdText({ text, linkResolver }: MdTextProps) {
   useLayoutEffect(() => {
     const host = hostRef.current!;
     ensureRule(host.ownerDocument);
+    // Address → the path written in the text, for the placeholder of a picture that didn't load.
+    const sources = new Map<string, string>();
+    const remember = (resolve: (src: string) => string | null) => (src: string) => {
+      const url = resolve(src);
+      if (url !== null) sources.set(url, src);
+      return url;
+    };
+    const onError = (event: Event): void => {
+      if (!(event.target instanceof HTMLImageElement) || !event.target.matches(PICTURE)) return;
+      const url = event.target.getAttribute("src") ?? "";
+      event.target.replaceWith(placeholder(event.target, sources.get(url) ?? url));
+    };
+    // An image's error doesn't bubble: the host hears it on the way down.
+    host.addEventListener("error", onError, true);
     const editor = createEditor(host, {
       value: textRef.current,
       editable: false,
@@ -65,14 +101,16 @@ export function MdText({ text, linkResolver }: MdTextProps) {
       atLinks: false,
       frontmatter: false,
       linkResolver,
+      ...(imageResolver === undefined ? {} : { imageResolver: remember(imageResolver) }),
     });
     markLinks(host);
     editorRef.current = editor;
     return () => {
+      host.removeEventListener("error", onError, true);
       editor.destroy();
       editorRef.current = null;
     };
-  }, [linkResolver]);
+  }, [linkResolver, imageResolver]);
 
   useLayoutEffect(() => {
     if (editorRef.current === null || editorRef.current.getValue() === text) return;

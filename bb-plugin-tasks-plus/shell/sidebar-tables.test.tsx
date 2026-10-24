@@ -37,6 +37,7 @@ function renderPanel(
   createTable = vi.fn(() => ({ ok: true, boardId: DOCS_ID })),
   renameSection = vi.fn(() => ({ ok: true })),
   deleteSection = vi.fn(() => ({ ok: true })),
+  moveSection = vi.fn((): { ok: boolean; message?: string } => ({ ok: true })),
 ) {
   const slot = renderSlot(
     { ...app.navPanels[0]!, component: TasksNavigationPanel },
@@ -60,10 +61,11 @@ function renderPanel(
         createTable,
         renameSection,
         deleteSection,
+        moveSection,
       },
     },
   );
-  return { slot, createTable, renameSection, deleteSection };
+  return { slot, createTable, renameSection, deleteSection, moveSection };
 }
 
 describe("sections on the Tasks+ sidebar", () => {
@@ -189,6 +191,47 @@ describe("sections on the Tasks+ sidebar", () => {
     fireEvent.keyDown(name, { key: "Enter" });
 
     await vi.waitFor(() => expect(renameSection).toHaveBeenCalledWith(expect.objectContaining({ boardId: DOCS_ID, name: "Guides" })));
+  });
+
+  it("are dragged onto a row to go inside it: Specs dropped on its project goes to the top", async () => {
+    const { slot, moveSection } = renderPanel();
+    const specs = await slot.findByTitle("Specs");
+    const dataTransfer = { setData: () => {}, effectAllowed: "", dropEffect: "" };
+    fireEvent.dragStart(specs, { dataTransfer });
+    const team = slot.getByTitle("Team");
+
+    expect(fireEvent.dragOver(team, { dataTransfer })).toBe(false);
+    expect(team.closest("[data-drop-target]")).not.toBeNull();
+    fireEvent.drop(team, { dataTransfer });
+
+    await vi.waitFor(() => expect(moveSection).toHaveBeenCalledWith(expect.objectContaining({ boardId: SPECS_ID, into: TEAM_ID })));
+    expect(slot.container.querySelector("[data-drop-target]")).toBeNull();
+  });
+
+  it("take no drop into the section itself, a section inside it, the row it already sits in or another project", async () => {
+    const { slot, moveSection } = renderPanel();
+    const docs = await slot.findByTitle("Docs");
+    const dataTransfer = { setData: () => {}, effectAllowed: "", dropEffect: "" };
+    fireEvent.dragStart(docs, { dataTransfer });
+
+    for (const title of ["Docs", "Specs", "Team", "Alpha"]) {
+      const row = slot.getByTitle(title);
+      expect(fireEvent.dragOver(row, { dataTransfer })).toBe(true);
+      expect(row.closest("[data-drop-target]")).toBeNull();
+      fireEvent.drop(row, { dataTransfer });
+    }
+    expect(moveSection).not.toHaveBeenCalled();
+  });
+
+  it("tell why a move was refused, under the row the section was dropped on", async () => {
+    const { slot } = renderPanel(undefined, undefined, undefined, vi.fn(() => ({ ok: false, message: "There is already a section Specs here." })));
+    const specs = await slot.findByTitle("Specs");
+    const dataTransfer = { setData: () => {}, effectAllowed: "", dropEffect: "" };
+    fireEvent.dragStart(specs, { dataTransfer });
+    fireEvent.dragOver(slot.getByTitle("Team"), { dataTransfer });
+    fireEvent.drop(slot.getByTitle("Team"), { dataTransfer });
+
+    expect((await slot.findByRole("alert")).textContent).toMatch(/already a section Specs/);
   });
 
   it("are deleted from a section's menu once the dialog, naming what goes with it, is confirmed", async () => {

@@ -271,8 +271,7 @@ export function OptionPicker({
                 <IconPickerButton
                   label={`Icon of option ${option}`}
                   value={field.optionIcons?.[option]}
-                  className="mr-0.5 hidden size-6 group-hover/option:flex focus-visible:flex data-[state=open]:flex"
-                  iconClassName="size-3.5"
+                  className="mr-0.5 hidden size-6 group-hover/option:flex focus-visible:flex data-[state=open]:flex [&_svg]:size-3.5"
                   onPick={(icon) => void setIcon(option, icon)}
                   onClear={() => void setIcon(option, null)}
                 />
