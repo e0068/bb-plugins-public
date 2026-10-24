@@ -725,3 +725,95 @@ describe("адрес картинки при показе", () => {
     ).toBe(stored);
   });
 });
+
+describe("ссылки и таблицы в описании (BBPL-914)", () => {
+  const table = "| Документ | Роль |\n| --- | --- |\n| Вводная | Контекст задачи |\n| План | Шаги |";
+
+  it("ссылка в описании открывается обычным кликом", () => {
+    const onOpenLink = vi.fn();
+    const screen = render(
+      <TasksEditor
+        value="Читать [гайд](https://example.com/guide)."
+        onChange={() => undefined}
+        onOpenLink={onOpenLink}
+      />,
+    );
+    fireEvent.click(screen.container.querySelector('a[href="https://example.com/guide"]')!);
+    expect(onOpenLink).toHaveBeenCalledWith("https://example.com/guide");
+  });
+
+  it("markdown-таблица показывается таблицей со строками и столбцами", () => {
+    const screen = render(<TasksEditor value={table} onChange={() => undefined} />);
+    const rows = Array.from(screen.container.querySelectorAll("table tr"), (row) =>
+      Array.from(row.querySelectorAll("th, td"), (cell) => cell.textContent),
+    );
+    expect(rows).toEqual([
+      ["Документ", "Роль"],
+      ["Вводная", "Контекст задачи"],
+      ["План", "Шаги"],
+    ]);
+  });
+
+  it("таблица после сохранения остаётся markdown-таблицей", () => {
+    expect(roundTrip(table)).toBe(table);
+  });
+
+  it("таблица остаётся markdown-таблицей после Enter в ячейке", () => {
+    const editor = new Editor({ extensions: createEditorExtensions(), content: table });
+    try {
+      let cell = -1;
+      editor.state.doc.descendants((node, pos) => {
+        if (cell === -1 && node.isTextblock && node.textContent === "Контекст задачи") cell = pos + 1 + "Контекст".length;
+      });
+      editor.chain().setTextSelection(cell).run();
+      editor.view.someProp("handleKeyDown", (handle) => handle(editor.view, new KeyboardEvent("keydown", { key: "Enter" })));
+      expect(editor.storage.markdown.getMarkdown()).toMatch(/^\| Документ \| Роль \|/);
+    } finally {
+      editor.destroy();
+    }
+  });
+});
+
+describe("ссылка на другую запись (BBPL-918)", () => {
+  const renderWith = (value: string, readOnly = false) => {
+    const onOpenTask = vi.fn();
+    const onOpenLink = vi.fn();
+    const screen = render(
+      <TasksEditor value={value} onChange={() => undefined} readOnly={readOnly} onOpenTask={onOpenTask} onOpenLink={onOpenLink} />,
+    );
+    return { screen, onOpenTask, onOpenLink };
+  };
+
+  it("ссылка на ключ записи открывает эту запись, а не браузер", () => {
+    const { screen, onOpenTask, onOpenLink } = renderWith("Текущая цена [инструмента](VOC-8): ask и bid.");
+    fireEvent.click(screen.getByText("инструмента"));
+    expect(onOpenTask).toHaveBeenCalledWith("VOC-8");
+    expect(onOpenLink).not.toHaveBeenCalled();
+  });
+
+  it("ссылка на ключ открывает запись и в комментарии только для чтения", () => {
+    const { screen, onOpenTask } = renderWith("См. [задачу](BBPL-918)", true);
+    fireEvent.click(screen.getByText("задачу"));
+    expect(onOpenTask).toHaveBeenCalledWith("BBPL-918");
+  });
+
+  it("@-плашка задачи открывает свою запись", () => {
+    const { screen, onOpenTask } = renderWith("Связано с [VOC-8](bbtask://VOC-8)");
+    fireEvent.click(screen.container.querySelector('[data-task-mention="VOC-8"]')!);
+    expect(onOpenTask).toHaveBeenCalledWith("VOC-8");
+  });
+
+  it("ссылка на сайт по-прежнему уходит в браузер", () => {
+    const { screen, onOpenTask, onOpenLink } = renderWith("[Открыть](https://claude.ai/artifact/abc)");
+    fireEvent.click(screen.getByText("Открыть"));
+    expect(onOpenLink).toHaveBeenCalledWith("https://claude.ai/artifact/abc");
+    expect(onOpenTask).not.toHaveBeenCalled();
+  });
+
+  it("ссылка, похожая на путь, а не на ключ, записи не открывает", () => {
+    const { screen, onOpenTask, onOpenLink } = renderWith("[файл](docs/VOC-8.md)");
+    fireEvent.click(screen.getByText("файл"));
+    expect(onOpenTask).not.toHaveBeenCalled();
+    expect(onOpenLink).not.toHaveBeenCalled();
+  });
+});

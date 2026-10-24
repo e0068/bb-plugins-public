@@ -81,6 +81,18 @@ describe("the icon before a task's title", () => {
   });
 });
 
+describe("the size of a task's icon", () => {
+  // A button sizes every svg inside it to 16px by a rule stronger than a size class on the svg itself, so a size set
+  // on the icon alone loses: the 72px tile showed a 16px sign.
+  it("fills its tile instead of the button's 16px", async () => {
+    const { slot } = openTask({ ...task, icon: "Rocket" });
+
+    const button = await slot.findByRole("button", { name: "Task icon" });
+    expect(button.className.split(/\s+/)).not.toContain("[&_svg]:size-4");
+    expect(button.className.split(/\s+/)).toContain("[&_svg]:size-14");
+  });
+});
+
 describe("a task with a change on its way", () => {
   it("shows a picked icon at once, and none once it is taken off", () => {
     const shown = withUpdate({ ...task, icon: "🚀" } as never, { icon: "🔥" });

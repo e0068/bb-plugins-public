@@ -204,8 +204,7 @@ function LabelsSection() {
                   label={`Icon of label ${label.name}`}
                   value={label.icon}
                   color={label.color}
-                  className="size-6"
-                  iconClassName="size-3.5"
+                  className="size-6 [&_svg]:size-3.5"
                   onPick={(icon) => void run(() => rpc.call("updateLabel", { labelId: label.id, icon }))}
                   onClear={() => void run(() => rpc.call("updateLabel", { labelId: label.id, icon: null }))}
                 />

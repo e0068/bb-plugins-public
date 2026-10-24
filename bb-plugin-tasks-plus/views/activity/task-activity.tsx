@@ -28,6 +28,7 @@ import {
   useDisplayImageSrc,
   useUploadAttachment,
 } from "../detail/attachments.js";
+import { AttachmentOpener, type PreviewLinks } from "../detail/attachment-preview.js";
 import {
   AttachmentChip,
   stageFiles,
@@ -107,12 +108,13 @@ function UserAvatar({ name }: { name: string }) {
   );
 }
 
-function FileAttachmentCard({ attachment }: { attachment: Attachment }) {
+function FileAttachmentCard({ attachment, links }: { attachment: Attachment; links: PreviewLinks }) {
   const attachmentUrl = useAttachmentUrl();
   return (
-    <a
-      href={attachmentUrl(attachment.id)}
-      download={attachment.fileName}
+    <AttachmentOpener
+      attachment={attachment}
+      url={attachmentUrl(attachment.id)}
+      links={links}
       title={`${attachment.fileName} · ${formatFileSize(attachment.sizeBytes)}`}
       className="inline-flex min-w-0 max-w-60 items-center gap-2 rounded-md border border-border bg-card px-2.5 py-1.5 text-xs shadow-2xs hover:border-input hover:bg-state-hover focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
     >
@@ -125,7 +127,7 @@ function FileAttachmentCard({ attachment }: { attachment: Attachment }) {
           {formatFileSize(attachment.sizeBytes)}
         </small>
       </span>
-    </a>
+    </AttachmentOpener>
   );
 }
 
@@ -181,9 +183,12 @@ function ImageAttachmentFigure({
  */
 export function AttachmentTracks({
   attachments,
+  links,
   onOpenImage,
 }: {
   attachments: Attachment[];
+  /** Where links inside a previewed markdown file lead. */
+  links: PreviewLinks;
   onOpenImage: (attachment: Attachment) => void;
 }) {
   const files = attachments.filter((attachment) => !attachment.isImage);
@@ -193,7 +198,7 @@ export function AttachmentTracks({
       {files.length > 0 ? (
         <div className="flex flex-wrap items-start gap-1.5">
           {files.map((attachment) => (
-            <FileAttachmentCard key={attachment.id} attachment={attachment} />
+            <FileAttachmentCard key={attachment.id} attachment={attachment} links={links} />
           ))}
         </div>
       ) : null}
@@ -244,12 +249,17 @@ function SystemEvent({ comment, nowMs }: { comment: Comment; nowMs: number }) {
   );
 }
 
-function CommentCard({ entry, nowMs }: { entry: FeedEntry; nowMs: number }) {
+function CommentCard({ entry, nowMs, onOpenTask }: { entry: FeedEntry; nowMs: number; onOpenTask: (taskKey: string) => void }) {
   const { comment, attachments } = entry;
   const agent = comment.kind === "agent";
   const navigate = useBbNavigate();
   const displayImageSrc = useDisplayImageSrc();
   const [lightbox, setLightbox] = useState<Attachment | null>(null);
+  const links: PreviewLinks = {
+    onOpenThread: (threadId) => navigate.toThread(threadId),
+    onOpenLink: (url) => navigate.openUrl(url),
+    onOpenTask,
+  };
   return (
     <div className="relative mb-3.5 flex gap-2.5">
       {agent ? (
@@ -275,11 +285,12 @@ function CommentCard({ entry, nowMs }: { entry: FeedEntry; nowMs: number }) {
           readOnly
           variant="comment"
           displayImageSrc={displayImageSrc}
-          onOpenThread={(threadId) => navigate.toThread(threadId)}
+          {...links}
         />
         {attachments.length > 0 ? (
           <AttachmentTracks
             attachments={attachments}
+            links={links}
             onOpenImage={setLightbox}
           />
         ) : null}
@@ -300,9 +311,10 @@ function CommentCard({ entry, nowMs }: { entry: FeedEntry; nowMs: number }) {
 interface ComposerProps {
   taskId: string;
   notificationTarget: AgentNotificationTarget;
+  onOpenTask: (taskKey: string) => void;
 }
 
-export function CommentComposer({ taskId, notificationTarget }: ComposerProps) {
+export function CommentComposer({ taskId, notificationTarget, onOpenTask }: ComposerProps) {
   const rpc = useTasksRpc();
   const navigate = useBbNavigate();
   const mentionItems = useMentionItems();
@@ -419,6 +431,8 @@ export function CommentComposer({ taskId, notificationTarget }: ComposerProps) {
         className="min-h-11"
         mentionItems={mentionItems}
         onOpenThread={(threadId) => navigate.toThread(threadId)}
+        onOpenLink={(url) => navigate.openUrl(url)}
+        onOpenTask={onOpenTask}
         onSubmit={() => void send()}
         onAttachFiles={stageMore}
       />
@@ -544,10 +558,12 @@ export interface TaskActivityProps {
   taskId: string;
   /** Task key like TSK-4; reserved for deep links from feed entries. */
   taskKey: string;
+  /** Opens a record whose pill or `[text](KEY)` link is clicked in a comment. */
+  onOpenTask: (taskKey: string) => void;
 }
 
 /** Activity feed + comment composer for the task detail page. */
-export function TaskActivity({ taskId }: TaskActivityProps) {
+export function TaskActivity({ taskId, onOpenTask }: TaskActivityProps) {
   const feed = useActivityFeed(taskId);
   const nowMs = useNowTick();
   const entries = feed.data ?? [];
@@ -581,13 +597,14 @@ export function TaskActivity({ taskId }: TaskActivityProps) {
               nowMs={nowMs}
             />
           ) : (
-            <CommentCard key={entry.comment.id} entry={entry} nowMs={nowMs} />
+            <CommentCard key={entry.comment.id} entry={entry} nowMs={nowMs} onOpenTask={onOpenTask} />
           ),
         )}
       </div>
       <CommentComposer
         taskId={taskId}
         notificationTarget={notificationTarget}
+        onOpenTask={onOpenTask}
       />
     </section>
   );

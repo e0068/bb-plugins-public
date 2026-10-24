@@ -283,6 +283,15 @@ export const foldersRpcContract = defineRpcContract({
       z.object({ ok: z.literal(false), message: z.string() }).strict(),
     ]),
   },
+  /** Puts a section, with the sections inside it, into another section of its project, or — `into` its project's
+   *  own board — at the top, for every machine on its database. */
+  moveSection: {
+    input: z.object({ boardId: idSchema, into: idSchema }).strict(),
+    output: z.discriminatedUnion("ok", [
+      z.object({ ok: z.literal(true) }).strict(),
+      z.object({ ok: z.literal(false), message: z.string() }).strict(),
+    ]),
+  },
   /** Takes a section, its records and every section inside it out of its database, for every machine on it. */
   deleteSection: {
     input: z.object({ boardId: idSchema }).strict(),

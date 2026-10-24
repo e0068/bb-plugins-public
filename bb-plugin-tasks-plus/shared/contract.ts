@@ -100,6 +100,21 @@ const threadRecordIdSchema = z.string().min(1, "must not be blank");
 const nonBlankStringSchema = z.string().trim().min(1, "must not be blank");
 /** An icon as it is stored: a catalog name, filled:<name> or an emoji (@bb-plugins/icon-catalog). */
 const iconSchema = z.string().refine((value) => parseIcon(value) !== null, { message: "must be an icon" });
+/** How a part of a drawn icon is painted: a colour of its own, or the theme's text or page colour (lib/icon-drawing.ts). */
+const iconPaintSchema = z.union([z.object({ color: z.string() }).strict(), z.enum(["foreground", "background"])]);
+/** An icon ready to draw — SVG nodes in a 24×24 box, or an emoji — so a plugin without the icon catalog draws it too. */
+export const iconDrawingSchema = z.discriminatedUnion("kind", [
+  z
+    .object({
+      kind: z.literal("glyph"),
+      nodes: z.array(z.tuple([z.string(), z.record(z.string(), z.union([z.string(), z.number()]))]).readonly()).readonly(),
+      transform: z.string().optional(),
+      ink: iconPaintSchema.optional(),
+      tile: iconPaintSchema.optional(),
+    })
+    .strict(),
+  z.object({ kind: z.literal("emoji"), char: z.string() }).strict(),
+]);
 /** An assignee or epic as a caller names it; the store checks it can be a
  *  folder. Output carries the folder name verbatim — trimming it would offer
  *  a value no folder has. */
@@ -1169,6 +1184,11 @@ export const tasksRpcContract = defineRpcContract({
   listProjects: {
     input: z.object({ folderId: idSchema.nullable().optional() }).strict(),
     output: z.object({ projects: z.array(projectSchema) }).strict(),
+  },
+  /** The icon of every bb project with a board, ready to draw — for other plugins naming the project (Threads Overview). */
+  bbProjectIcons: {
+    input: z.object({}).strict(),
+    output: z.object({ icons: z.array(z.object({ bbProjectId: z.string(), drawing: iconDrawingSchema }).strict()) }).strict(),
   },
   createTask: {
     input: withCallerThread(z

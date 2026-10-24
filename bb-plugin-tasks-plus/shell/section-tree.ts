@@ -47,6 +47,14 @@ export const sectionTree = (roots: readonly Project[], projects: readonly Projec
 export const sectionsUnder = (holder: Project, projects: readonly Project[]): Project[] =>
   sectionsIn(holder, projects).flatMap((section) => [section, ...sectionsUnder(section, projects)]);
 
+/** Whether `section` may be dropped on `target`: a row of its own project's database that is neither the section,
+ *  nor a section inside it, nor the row it already sits in. */
+export const takesSection = (target: Project, section: Project, projects: readonly Project[]): boolean =>
+  target.id !== section.id &&
+  target.database?.url === section.database?.url &&
+  !sectionsUnder(section, projects).some((inner) => inner.id === target.id) &&
+  !sectionsIn(target, projects).some((inner) => inner.id === section.id);
+
 /** The rows drawn: each node, and under an open one its children, a step deeper. */
 export const treeRows = (nodes: readonly SectionNode[], closed: ReadonlySet<string>, depth = 0): TreeRow[] =>
   nodes.flatMap((node) => {

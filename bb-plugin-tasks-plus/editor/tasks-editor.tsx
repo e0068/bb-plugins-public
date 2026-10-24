@@ -29,6 +29,12 @@ import {
   type MentionSuggestionHandle,
 } from "./extensions.js";
 
+/** A link the browser opens: the host's openUrl takes only these. */
+const WEB_LINK = /^https?:\/\//i;
+
+/** A link to another record by its key, `[text](VOC-8)`: a board prefix, a dash, a number. */
+const TASK_KEY_LINK = /^[A-Z][A-Z0-9]{0,9}-\d+$/;
+
 /** True while an IME is composing (e.g. Japanese candidate selection). */
 function isImeComposing(event: KeyboardEvent): boolean {
   return event.isComposing || event.keyCode === 229;
@@ -70,7 +76,7 @@ const EDITOR_CSS = `
 .bb-tasks-editor .tiptap li { margin-top: 0.3em; padding-left: 0.3em; }
 .bb-tasks-editor .tiptap li > p, .bb-tasks-editor .tiptap li > ul, .bb-tasks-editor .tiptap li > ol { margin-top: 0.3em; }
 .bb-tasks-editor .tiptap li::marker { color: var(--muted-foreground); }
-.bb-tasks-editor .tiptap a { color: inherit; font-weight: 500; text-decoration: underline; text-decoration-color: color-mix(in oklab, currentColor 30%, transparent); cursor: pointer; }
+.bb-tasks-editor .tiptap a { color: var(--timeline-accent, var(--primary)); font-weight: 500; text-decoration: underline; text-decoration-color: color-mix(in oklab, currentColor 30%, transparent); cursor: pointer; }
 .bb-tasks-editor .tiptap a:hover { text-decoration-color: currentColor; }
 .bb-tasks-editor .tiptap strong { font-weight: 600; }
 .bb-tasks-editor .tiptap code { background: var(--muted); border-radius: min(calc(var(--radius) * 0.6), 0.35em); padding: 0.125em 0.3em; font-size: 0.85em; font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace); }
@@ -78,6 +84,11 @@ const EDITOR_CSS = `
 .bb-tasks-editor .tiptap pre code { background: none; padding: 0; font-size: inherit; }
 .bb-tasks-editor .tiptap blockquote { border-left: 2px solid var(--border); padding-left: 0.85em; margin: 0.75em 0 0; color: var(--muted-foreground); }
 .bb-tasks-editor .tiptap hr { border: none; border-top: 1px solid var(--border); margin: 1.5em 0 0; }
+.bb-tasks-editor .tiptap table { border-collapse: collapse; margin: 0.9em 0 0; width: 100%; }
+.bb-tasks-editor .tiptap th, .bb-tasks-editor .tiptap td { border: 1px solid var(--border); padding: 0.35em 0.6em; text-align: left; vertical-align: top; }
+.bb-tasks-editor .tiptap th { background: var(--muted); font-weight: 600; }
+.bb-tasks-editor .tiptap :is(th, td) > p { margin: 0; }
+.bb-tasks-editor .tiptap .selectedCell { background: color-mix(in oklab, var(--primary) 12%, transparent); }
 .bb-tasks-editor .tiptap img { display: block; max-width: 100%; max-height: 24rem; margin: 0.9em 0 0; border-radius: var(--radius); border: 1px solid var(--border); }
 .bb-tasks-editor .tiptap ul[data-type="taskList"] { list-style: none; padding-left: 0.25em; }
 .bb-tasks-editor .tiptap ul[data-type="taskList"] ul[data-type="taskList"] { margin-top: 0; }
@@ -95,8 +106,8 @@ const EDITOR_CSS = `
   color: var(--primary); padding: 0.05em 0.35em;
   font-size: 0.9em; font-weight: 500; white-space: nowrap;
 }
-.bb-tasks-editor .bb-tasks-thread-mention { cursor: pointer; }
-.bb-tasks-editor .bb-tasks-thread-mention:hover { background: color-mix(in oklab, var(--primary) 20%, transparent); }
+.bb-tasks-editor .bb-tasks-mention[data-task-mention], .bb-tasks-editor .bb-tasks-thread-mention { cursor: pointer; }
+.bb-tasks-editor .bb-tasks-mention[data-task-mention]:hover, .bb-tasks-editor .bb-tasks-thread-mention:hover { background: color-mix(in oklab, var(--primary) 20%, transparent); }
 .bb-tasks-editor .bb-tasks-mention-icon {
   display: inline-block; width: 0.95em; height: 0.95em;
   vertical-align: -0.12em; margin-right: 0.3em;
@@ -216,6 +227,10 @@ export interface TasksEditorProps {
   mentionItems?: (query: string) => Promise<MentionItem[]>;
   /** Invoked when a thread-mention pill is clicked (edit and read-only). */
   onOpenThread?: (threadId: string) => void;
+  /** Invoked when a web link is clicked (edit and read-only); without it a click only places the caret. */
+  onOpenLink?: (url: string) => void;
+  /** Invoked with a record's key when a task pill or a `[text](KEY)` link is clicked (edit and read-only). */
+  onOpenTask?: (taskKey: string) => void;
   /**
    * When set, bare Enter (and Cmd/Ctrl+Enter) invoke this instead of inserting
    * a newline. Shift+Enter still inserts a newline. Used by the task comment
@@ -239,6 +254,8 @@ export function TasksEditor({
   displayImageSrc,
   mentionItems,
   onOpenThread,
+  onOpenLink,
+  onOpenTask,
   onSubmit,
   onEditorReady,
   className,
@@ -262,6 +279,10 @@ export function TasksEditor({
   mentionItemsRef.current = mentionItems;
   const openThreadRef = useRef(onOpenThread);
   openThreadRef.current = onOpenThread;
+  const openLinkRef = useRef(onOpenLink);
+  openLinkRef.current = onOpenLink;
+  const openTaskRef = useRef(onOpenTask);
+  openTaskRef.current = onOpenTask;
   const onSubmitRef = useRef(onSubmit);
   onSubmitRef.current = onSubmit;
   const readyRef = useRef(onEditorReady);
@@ -493,16 +514,31 @@ export function TasksEditor({
     });
     editor.on("transaction", () => setRevision((current) => current + 1));
     readyRef.current?.(editor);
-    // Thread pills open their thread on click. A plain DOM listener (instead
-    // of ProseMirror's handleClickOn) also covers read-only comment bodies.
+    // Thread pills open their thread, task pills and `[text](KEY)` links
+    // their record, web links their page on click. A plain DOM listener
+    // (instead of ProseMirror's handleClickOn) also covers read-only comment
+    // bodies.
     const root = rootRef.current;
     const onClick = (event: MouseEvent) => {
       if (!(event.target instanceof Element)) return;
-      const pill = event.target.closest("[data-thread-mention]");
-      const threadId = pill?.getAttribute("data-thread-mention");
+      const threadId = event.target.closest("[data-thread-mention]")?.getAttribute("data-thread-mention");
       if (threadId && openThreadRef.current) {
         event.preventDefault();
         openThreadRef.current(threadId);
+        return;
+      }
+      const url = event.target.closest("a[href]")?.getAttribute("href");
+      const taskKey =
+        event.target.closest("[data-task-mention]")?.getAttribute("data-task-mention") ??
+        (url && TASK_KEY_LINK.test(url) ? url : null);
+      if (taskKey && openTaskRef.current) {
+        event.preventDefault();
+        openTaskRef.current(taskKey);
+        return;
+      }
+      if (url && WEB_LINK.test(url) && openLinkRef.current) {
+        event.preventDefault();
+        openLinkRef.current(url);
       }
     };
     root.addEventListener("click", onClick);

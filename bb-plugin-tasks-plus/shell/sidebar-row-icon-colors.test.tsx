@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { cleanup, fireEvent, waitFor } from "@testing-library/react";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { onProjectsChanged } from "@bb-plugins/task-bridge";
 import { loadPluginApp, renderSlot } from "@get-bb/plugin-sdk/testing/app";
 import type { PluginSidebarThreadsState } from "@get-bb/plugin-sdk/app";
 import { prepareBoardDom } from "../test-support/board-harness.js";
@@ -40,16 +41,25 @@ function renderOverlay(icon: string) {
 const rowButton = (group: HTMLElement) => group.querySelector<HTMLButtonElement>("[data-tasks-project-icon]");
 
 describe("a project's icon in bb's thread list, in its own colours", () => {
-  it("is a button the icon's own size, so its hover is no bigger than the icon", async () => {
+  it("is a button the size of bb's buttons on the row, its icon as big as theirs", async () => {
     const group = bbRow();
     renderOverlay("ph:rocket");
     await waitFor(() => expect(rowButton(group)).not.toBeNull());
 
-    const button = rowButton(group)!;
-    expect(button.className).toContain("size-4");
-    expect(button.className).not.toContain("h-7");
-    expect(button.querySelector("svg")?.getAttribute("class")).toContain("size-4");
-    expect(button.style.margin).toBe("0px 2px 0px 0px");
+    const classes = rowButton(group)!.className.split(" ");
+    const icon = rowButton(group)!.querySelector("svg")!.getAttribute("class")!.split(" ");
+    expect(classes).toEqual(expect.arrayContaining(["h-7", "w-7", "rounded-md", "hover:bg-state-hover", "max-md:pointer-coarse:h-9", "max-md:pointer-coarse:w-9"]));
+    expect(icon).toEqual(expect.arrayContaining(["size-4", "max-md:pointer-coarse:size-5"]));
+  });
+
+  it("keeps its icon where the icon was, by giving the button's extra size back in negative margins", async () => {
+    const group = bbRow();
+    renderOverlay("ph:rocket");
+    await waitFor(() => expect(rowButton(group)).not.toBeNull());
+
+    expect(rowButton(group)!.className.split(" ")).toEqual(
+      expect.arrayContaining(["-my-1.5", "-ml-1.5", "-mr-1", "max-md:pointer-coarse:-my-2", "max-md:pointer-coarse:-ml-2", "max-md:pointer-coarse:-mr-1.5"]),
+    );
   });
 
   it("draws a Phosphor sign on its own tile", async () => {
@@ -106,5 +116,16 @@ describe("a colour picked from the thread list while the picker is open", () => 
     expect(button.isConnected).toBe(true);
     expect(rowButton(group)).toBe(button);
     expect(slot.queryByLabelText("Search icons")).not.toBeNull();
+  });
+});
+
+describe("a board change told to other plugins", () => {
+  it("reaches the window, where Threads Overview hears it to redraw its project icons", async () => {
+    const changed = vi.fn();
+    const off = onProjectsChanged(window, changed);
+    const slot = renderOverlay("ph:rocket");
+    await slot.behavior.emitRealtime("projects:changed", { projectId: BOARD_ID });
+    off();
+    expect(changed).toHaveBeenCalledTimes(1);
   });
 });

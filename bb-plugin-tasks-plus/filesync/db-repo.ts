@@ -2,6 +2,7 @@ import type { HranaClient, HranaError, HranaResult, HranaRow, HranaStep, HranaSt
 import type { TaskStatus } from "../db/types.js";
 import { applyRows, INITIAL_LINK, nextLink, refusedLink, taskFilePath, tokenlessLink, type LinkState, type Mirror, type TaskRow } from "./db-mirror.js";
 import { parseTaskFile } from "./task-file.js";
+import { BLOBS_SCHEMA, blobParts, INSERT_BLOB_PART, joinBlobParts, READ_BLOB_PART, REMOVE_BLOB } from "./db-blobs.js";
 import {
   ADD_FIELD_OPTION,
   APPEND_TABLE_FIELD,
@@ -10,6 +11,7 @@ import {
   LIST_TABLES,
   REMOVE_FIELD_OPTION,
   RENAME_TABLE,
+  MOVE_TABLE,
   SET_FIELD_ICON,
   SET_OPTION_ICON,
   subtreeOf,
@@ -31,6 +33,7 @@ import {
   DatabaseUnreachable,
   outOfReach,
   WriteConflict,
+  type BlobStore,
   type RepoFile,
   type RepoState,
   type RepoWrite,
@@ -45,6 +48,14 @@ import {
  * `batch` — a transaction with a conditional update by row version — so two
  * machines can neither overwrite each other nor issue one key twice.
  */
+
+/** A change of the list of tables found no row to change: the section or its field is gone, or — for a move — the
+ *  database found the new parent inside the section. */
+export class TableUnchanged extends Error {
+  constructor() {
+    super("the section or its field is not in the database");
+  }
+}
 
 export interface DbRepoOptions {
   url: string;
@@ -88,8 +99,11 @@ export interface DbRepo extends TaskRepo {
   setFieldIcon(id: TableId, field: string, option: string | null, icon: string | null): Promise<void>;
   /** Gives a table a new name. */
   renameTable(id: TableId, name: string): Promise<void>;
+  /** Puts a table inside another table, or at the top for null. */
+  moveTable(id: TableId, parent: TableId | null): Promise<void>;
   /** Takes a table, its records and every table inside it out of the database. */
   deleteTable(id: TableId): Promise<void>;
+  readonly blobs: BlobStore;
   /** Polls the database every `pollMs` until `stop()`. */
   start(): void;
   stop(): void;
@@ -128,6 +142,7 @@ const schemaSteps = (names: TableNames): readonly HranaStep[] => [
   { sql: TABLES_SCHEMA },
   { sql: TABLES_PARENT_COLUMN },
   { sql: TABLES_FIELDS_COLUMN },
+  { sql: BLOBS_SCHEMA },
 ];
 
 /** A schema step that failed for real: a column the list already has is not a failure. */
@@ -474,7 +489,7 @@ export function createDbRepo(client: HranaClient, options: DbRepoOptions): DbRep
       const failed = steps.slice(0, last + 3).find((step) => step.kind === "error");
       if (failed?.kind === "error") throw new Error(`database error ${failed.code}: ${failed.message}`);
       const first = steps[1];
-      if (first?.kind === "ok" && first.affectedRowCount === 0) throw new Error("the section or its field is not in the database");
+      if (first?.kind === "ok" && first.affectedRowCount === 0) throw new TableUnchanged();
       tables = decodeTables(unwrap(await client.execute(LIST_TABLES)).rows);
     });
   }
@@ -552,7 +567,33 @@ export function createDbRepo(client: HranaClient, options: DbRepoOptions): DbRep
     await sync();
   }
 
+  /** The parts of a file from `part` on, one request each, up to the first that is not there. */
+  async function readParts(id: string, part: number): Promise<string[]> {
+    const data = unwrap(await client.execute(READ_BLOB_PART, [id, part])).rows[0]?.data;
+    return typeof data === "string" ? [data, ...(await readParts(id, part + 1))] : [];
+  }
+
+  /** Files go around the mirror's queue: a long upload must not hold up the poll. */
+  const blobs: BlobStore = {
+    async write(id, bytes) {
+      await ensureSchema();
+      unwrap(await client.execute(REMOVE_BLOB, [id]));
+      for (const [part, data] of blobParts(bytes).entries()) unwrap(await client.execute(INSERT_BLOB_PART, [id, part, data]));
+    },
+    async read(id) {
+      await ensureSchema();
+      const parts = await readParts(id, 0);
+      return parts.length === 0 ? null : joinBlobParts(parts);
+    },
+    async remove(id) {
+      await ensureSchema();
+      unwrap(await client.execute(REMOVE_BLOB, [id]));
+    },
+  };
+
   const repo: DbRepo = {
+    blobs,
+
     async list() {
       await loadedMirror();
       return [...mirror.values()];
@@ -678,6 +719,10 @@ export function createDbRepo(client: HranaClient, options: DbRepoOptions): DbRep
 
     renameTable(id, name) {
       return changeTables([{ sql: RENAME_TABLE, args: [name, id] }]);
+    },
+
+    moveTable(id, parent) {
+      return changeTables([{ sql: MOVE_TABLE, args: [parent, id] }]);
     },
 
     deleteTable(id) {

@@ -36,7 +36,7 @@ import {
 
 import { createBoardRepos } from "./board-repos.js";
 import { retryOnConflict } from "./write-retry.js";
-import { outOfReach, unlessOutOfReach, WriteConflict, type RepoFile, type TaskRepo } from "./task-repo.js";
+import { outOfReach, unlessOutOfReach, WriteConflict, type BlobStore, type RepoFile, type TaskRepo } from "./task-repo.js";
 import { loadKvCollection, createKvCollection } from "./kv-collection.js";
 import { migrateSavedView } from "./saved-view-migrate.js";
 import { applyPatch } from "./patch.js";
@@ -1407,6 +1407,15 @@ export function createFileTasksStore(
     await writeAttachments(task, [...task.attachments, attachment]);
     return attachment;
   }
+  /** Where a project's attached files are shared between machines: its database; `null` — a folder project, or none. */
+  function projectBlobs(projectId: string): BlobStore | null {
+    const board = boardConfigs.find((b) => b.id === projectId);
+    return board === undefined ? null : (boardRepos.repoFor(board)?.blobs ?? null);
+  }
+  /** The same for the project an attachment's task belongs to. */
+  async function attachmentBlobs(id: string): Promise<BlobStore | null> {
+    return projectBlobs((await requireAttachmentOwner(id)).task.task.projectId);
+  }
   const listAttachmentsForTask = async (taskId: string) => (await findAssembled(taskId))?.attachments ?? [];
   const listAttachmentsForComment = async (commentId: string) => {
     return (await loadAllBoards()).flatMap((t) => t.attachments).filter((a) => a.commentId === commentId);
@@ -1582,7 +1591,7 @@ export function createFileTasksStore(
     createTask, getTask, getTaskByKey, readTaskText, writeTaskText, listTasksPage, listTasks, listSubtasks, getSubtaskDoneCounts, updateTask, deleteTask, placeTask, threadsByTaskId, listPlacements, migrateEpics, issueBoardKeys,
     createLabel, getLabel, listLabels, updateLabel, deleteLabel, addTaskLabel, removeTaskLabel, listTaskLabels, listLabelsForTask,
     createComment, getComment, listComments, getLatestAgentComment, updateComment, deleteComment,
-    createAttachment, getAttachment, listAttachmentsForTask, listAttachmentsForComment, updateAttachment, deleteAttachment,
+    createAttachment, getAttachment, projectBlobs, attachmentBlobs, listAttachmentsForTask, listAttachmentsForComment, updateAttachment, deleteAttachment,
     upsertTaskThread, getTaskThread, getTaskThreadByThreadId, listTaskThreads, taskCardMeta, listTasksForThread, deleteTaskThread,
     setThreadLiveState, getThreadLiveState, setBusyThreads,
     restoreBranchThreads, knowsBranchThread, branchThreadIds, discoverBranchThread, forgetBranchThread, branchTaskIds,

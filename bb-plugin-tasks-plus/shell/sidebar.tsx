@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState, type KeyboardEvent, type ReactNode } from "react";
+import { createContext, useCallback, useContext, useEffect, useMemo, useState, type DragEvent, type KeyboardEvent, type ReactNode } from "react";
 import type {
   Folder,
   Preset,
@@ -45,6 +45,7 @@ import {
   sectionsIn,
   sectionsUnder,
   sectionTree,
+  takesSection,
   toggleOpen,
   treeKey,
   treeRows,
@@ -283,6 +284,35 @@ function ProjectRow({
   );
 }
 
+/** The section being dragged over the tree and the row it would go into, shared by every row of the tree. */
+interface SectionDrag {
+  readonly dragged: Project | null;
+  readonly over: string | null;
+  readonly start: (section: Project) => void;
+  readonly hover: (rowId: string | null) => void;
+  readonly end: () => void;
+}
+
+const SectionDragContext = createContext<SectionDrag>({ dragged: null, over: null, start: () => {}, hover: () => {}, end: () => {} });
+
+function useSectionDragState(): SectionDrag {
+  const [dragged, setDragged] = useState<Project | null>(null);
+  const [over, setOver] = useState<string | null>(null);
+  return useMemo(
+    () => ({
+      dragged,
+      over,
+      start: setDragged,
+      hover: setOver,
+      end: () => {
+        setDragged(null);
+        setOver(null);
+      },
+    }),
+    [dragged, over],
+  );
+}
+
 /** A section of a project's database, shown under the project or under the section it sits in. */
 
 /** The name field New section opens under its row: Enter makes the section and keeps the field busy until
@@ -375,6 +405,20 @@ function ProjectEntry({
   const [refusal, setRefusal] = useState<string | null>(null);
   const holdsSections = project.database != null;
   const section = holderId !== null;
+  const folders = useRpc<FoldersRpcContract>();
+  const drag = useContext(SectionDragContext);
+  const takes = drag.dragged !== null && takesSection(project, drag.dragged, projects);
+  const dropHere = async (event: DragEvent) => {
+    event.preventDefault();
+    const moving = drag.dragged;
+    drag.end();
+    if (moving === null) return;
+    setRefusal(null);
+    const result = await folders
+      .call("moveSection", { boardId: moving.id, into: project.id })
+      .catch((error: unknown) => ({ ok: false as const, message: error instanceof Error ? error.message : String(error) }));
+    if (!result.ok) setRefusal(result.message);
+  };
   const sections = sectionsIn(project, projects);
   const branch = sections.length > 0;
   const open = branch && !closed.has(project.id);
@@ -390,7 +434,35 @@ function ProjectEntry({
       {renaming ? (
         <RenameSectionField section={project} onClose={() => setRenaming(false)} />
       ) : (
-        <div className="group/project relative">
+        <div
+          className="group/project relative rounded-md data-[drop-target]:bg-sidebar-accent data-[drop-target]:ring-1 data-[drop-target]:ring-ring"
+          data-drop-target={takes && drag.over === project.id ? "" : undefined}
+          // A section is dragged by its row onto another row of its project, which it then sits in.
+          draggable={section}
+          onDragStart={
+            section
+              ? (event) => {
+                  event.dataTransfer.setData("text/plain", project.name);
+                  event.dataTransfer.effectAllowed = "move";
+                  drag.start(project);
+                }
+              : undefined
+          }
+          onDragEnd={drag.end}
+          onDragOver={
+            takes
+              ? (event) => {
+                  event.preventDefault();
+                  event.dataTransfer.dropEffect = "move";
+                  if (drag.over !== project.id) drag.hover(project.id);
+                }
+              : undefined
+          }
+          onDragLeave={(event) => {
+            if (drag.over === project.id && !event.currentTarget.contains(event.relatedTarget as Node | null)) drag.hover(null);
+          }}
+          onDrop={takes ? (event) => void dropHere(event) : undefined}
+        >
           <ProjectRow
             project={project}
             summary={summaryByProject.get(project.id)}
@@ -691,6 +763,7 @@ export function TasksSidebar({
   // Display menu only saves into it.
   const { data: savedViewData, refresh: refreshViews } = useSavedViews();
   const savedViews: readonly SavedView[] = savedViewData ?? [];
+  const sectionDrag = useSectionDragState();
   // Keyed remount resets the dialog draft per open/target. Saving publishes
   // projects:changed, which refreshes the shell's presets query.
   const [presetDialog, setPresetDialog] = useState<{
@@ -787,159 +860,161 @@ export function TasksSidebar({
   };
 
   return (
-    <div className="flex h-full min-h-0 flex-col bg-sidebar">
-      <nav className="min-h-0 flex-1 overflow-y-auto px-2 pb-4 pt-2">
-        <div className="space-y-px">
-          <SidebarRow
-            active={route.kind === "all"}
-            onClick={() => onNavigate({ kind: "all", view: null })}
-          >
-            <Icon name="ListView" className="size-3.5 shrink-0" />
-            <span className="flex-1">All tasks</span>
-            {summaries ? <RowCount value={totalTasks} /> : null}
-          </SidebarRow>
-          <SidebarRow
-            active={route.kind === "active"}
-            onClick={() => onNavigate({ kind: "active", view: null })}
-          >
-            <Icon name="Zap" className="size-3.5 shrink-0" />
-            <span className="flex-1">Active</span>
-            {activeTasks && activeTasks.length > 0 ? <WorkingDot /> : null}
-            {activeTasks ? <RowCount value={activeTasks.length} /> : null}
-          </SidebarRow>
-          <SidebarRow
-            active={route.kind === "waiting"}
-            onClick={() => onNavigate({ kind: "waiting", view: null })}
-          >
-            <Icon name="Clock" className="size-3.5 shrink-0" />
-            <span className="flex-1">Waiting</span>
-            {waitingTasks ? <RowCount value={waitingTasks.length} /> : null}
-          </SidebarRow>
-          <SidebarRow
-            active={route.kind === "analytics"}
-            onClick={() => onNavigate({ kind: "analytics" })}
-          >
-            <Icon name="ChartColumn" className="size-3.5 shrink-0" />
-            <span className="flex-1">Analytics</span>
-          </SidebarRow>
-        </div>
-        {savedViews.length > 0 ? (
-          <>
-            <SectionHeader label="Views" />
-            <div className="space-y-px">
-              {savedViews.map((view) => (
-                <ViewRow
-                  key={view.id}
-                  view={view}
-                  active={
-                    route.kind === "view" && route.savedViewId === view.id
-                  }
-                  onOpen={() =>
-                    onNavigate({ kind: "view", savedViewId: view.id })
-                  }
-                  onRename={(name) => {
-                    void rpc
-                      .call("updateSavedView", { savedViewId: view.id, name })
-                      .then(() => refreshViews());
-                  }}
-                  onDelete={() => {
-                    void rpc
-                      .call("deleteSavedView", { savedViewId: view.id })
-                      .then(() => refreshViews());
-                  }}
-                />
-              ))}
-            </div>
-          </>
-        ) : null}
-        {pendingSidebarData.length > 0 ? (
-          <SidebarSkeleton pending={pendingSidebarData} />
-        ) : (
-          <>
-            {ungrouped.length > 0 ? (
-              <>
-                <SectionHeader label="Projects" trailing={foldSwitch} />
-                <div className="space-y-px" onKeyDown={walk(ungrouped)}>
-                  {ungrouped.map(entry)}
-                </div>
-              </>
-            ) : null}
-            {rootFolders.map((folder) => renderFolder(folder, false))}
-            {presets ? (
-              <>
-                <SectionHeader label="Agent presets" />
-                <div className="space-y-px">
-                  {presets.map((preset) => (
+    <SectionDragContext.Provider value={sectionDrag}>
+      <div className="flex h-full min-h-0 flex-col bg-sidebar">
+        <nav className="min-h-0 flex-1 overflow-y-auto px-2 pb-4 pt-2">
+          <div className="space-y-px">
+            <SidebarRow
+              active={route.kind === "all"}
+              onClick={() => onNavigate({ kind: "all", view: null })}
+            >
+              <Icon name="ListView" className="size-3.5 shrink-0" />
+              <span className="flex-1">All tasks</span>
+              {summaries ? <RowCount value={totalTasks} /> : null}
+            </SidebarRow>
+            <SidebarRow
+              active={route.kind === "active"}
+              onClick={() => onNavigate({ kind: "active", view: null })}
+            >
+              <Icon name="Zap" className="size-3.5 shrink-0" />
+              <span className="flex-1">Active</span>
+              {activeTasks && activeTasks.length > 0 ? <WorkingDot /> : null}
+              {activeTasks ? <RowCount value={activeTasks.length} /> : null}
+            </SidebarRow>
+            <SidebarRow
+              active={route.kind === "waiting"}
+              onClick={() => onNavigate({ kind: "waiting", view: null })}
+            >
+              <Icon name="Clock" className="size-3.5 shrink-0" />
+              <span className="flex-1">Waiting</span>
+              {waitingTasks ? <RowCount value={waitingTasks.length} /> : null}
+            </SidebarRow>
+            <SidebarRow
+              active={route.kind === "analytics"}
+              onClick={() => onNavigate({ kind: "analytics" })}
+            >
+              <Icon name="ChartColumn" className="size-3.5 shrink-0" />
+              <span className="flex-1">Analytics</span>
+            </SidebarRow>
+          </div>
+          {savedViews.length > 0 ? (
+            <>
+              <SectionHeader label="Views" />
+              <div className="space-y-px">
+                {savedViews.map((view) => (
+                  <ViewRow
+                    key={view.id}
+                    view={view}
+                    active={
+                      route.kind === "view" && route.savedViewId === view.id
+                    }
+                    onOpen={() =>
+                      onNavigate({ kind: "view", savedViewId: view.id })
+                    }
+                    onRename={(name) => {
+                      void rpc
+                        .call("updateSavedView", { savedViewId: view.id, name })
+                        .then(() => refreshViews());
+                    }}
+                    onDelete={() => {
+                      void rpc
+                        .call("deleteSavedView", { savedViewId: view.id })
+                        .then(() => refreshViews());
+                    }}
+                  />
+                ))}
+              </div>
+            </>
+          ) : null}
+          {pendingSidebarData.length > 0 ? (
+            <SidebarSkeleton pending={pendingSidebarData} />
+          ) : (
+            <>
+              {ungrouped.length > 0 ? (
+                <>
+                  <SectionHeader label="Projects" trailing={foldSwitch} />
+                  <div className="space-y-px" onKeyDown={walk(ungrouped)}>
+                    {ungrouped.map(entry)}
+                  </div>
+                </>
+              ) : null}
+              {rootFolders.map((folder) => renderFolder(folder, false))}
+              {presets ? (
+                <>
+                  <SectionHeader label="Agent presets" />
+                  <div className="space-y-px">
+                    {presets.map((preset) => (
+                      <SidebarRow
+                        key={preset.id}
+                        title={`Edit preset ${preset.name}`}
+                        onClick={() =>
+                          setPresetDialog({ key: Date.now(), editing: preset })
+                        }
+                      >
+                        <Icon name="Brain" className="size-3.5 shrink-0" />
+                        <span className="min-w-0 flex-1 truncate">
+                          {preset.name}
+                        </span>
+                        {preset.environmentKind === "new-worktree" ? (
+                          <TooltipProvider delayDuration={300}>
+                            <Tooltip>
+                              <TooltipTrigger asChild>
+                                <span
+                                  aria-label="Spawns a new worktree"
+                                  className="flex shrink-0 text-muted-foreground/70"
+                                >
+                                  <Icon name="GitBranch" className="size-3" />
+                                </span>
+                              </TooltipTrigger>
+                              <TooltipContent side="left">
+                                Spawns a new worktree
+                              </TooltipContent>
+                            </Tooltip>
+                          </TooltipProvider>
+                        ) : null}
+                      </SidebarRow>
+                    ))}
+                    {presets.length === 0 ? (
+                      <div className="px-2 py-1 text-xs text-muted-foreground">
+                        No presets yet.
+                      </div>
+                    ) : null}
                     <SidebarRow
-                      key={preset.id}
-                      title={`Edit preset ${preset.name}`}
+                      title="New preset"
                       onClick={() =>
-                        setPresetDialog({ key: Date.now(), editing: preset })
+                        setPresetDialog({ key: Date.now(), editing: null })
                       }
                     >
-                      <Icon name="Brain" className="size-3.5 shrink-0" />
-                      <span className="min-w-0 flex-1 truncate">
-                        {preset.name}
-                      </span>
-                      {preset.environmentKind === "new-worktree" ? (
-                        <TooltipProvider delayDuration={300}>
-                          <Tooltip>
-                            <TooltipTrigger asChild>
-                              <span
-                                aria-label="Spawns a new worktree"
-                                className="flex shrink-0 text-muted-foreground/70"
-                              >
-                                <Icon name="GitBranch" className="size-3" />
-                              </span>
-                            </TooltipTrigger>
-                            <TooltipContent side="left">
-                              Spawns a new worktree
-                            </TooltipContent>
-                          </Tooltip>
-                        </TooltipProvider>
-                      ) : null}
+                      <Icon name="Plus" className="size-3.5 shrink-0" />
+                      <span className="flex-1">New preset</span>
                     </SidebarRow>
-                  ))}
-                  {presets.length === 0 ? (
-                    <div className="px-2 py-1 text-xs text-muted-foreground">
-                      No presets yet.
-                    </div>
-                  ) : null}
-                  <SidebarRow
-                    title="New preset"
-                    onClick={() =>
-                      setPresetDialog({ key: Date.now(), editing: null })
-                    }
-                  >
-                    <Icon name="Plus" className="size-3.5 shrink-0" />
-                    <span className="flex-1">New preset</span>
-                  </SidebarRow>
-                </div>
-              </>
-            ) : null}
-          </>
-        )}
-      </nav>
-      <div className="shrink-0 border-t border-border-hairline px-2 py-1.5">
-        <SidebarRow
-          active={route.kind === "manage"}
-          onClick={() => onNavigate({ kind: "manage" })}
-        >
-          <Icon name="Settings" className="size-3.5 shrink-0" />
-          <span className="flex-1">Manage</span>
-        </SidebarRow>
+                  </div>
+                </>
+              ) : null}
+            </>
+          )}
+        </nav>
+        <div className="shrink-0 border-t border-border-hairline px-2 py-1.5">
+          <SidebarRow
+            active={route.kind === "manage"}
+            onClick={() => onNavigate({ kind: "manage" })}
+          >
+            <Icon name="Settings" className="size-3.5 shrink-0" />
+            <span className="flex-1">Manage</span>
+          </SidebarRow>
+        </div>
+        {presetDialog ? (
+          <PresetDialog
+            key={presetDialog.key}
+            open
+            onOpenChange={(open) => {
+              if (!open) setPresetDialog(null);
+            }}
+            editing={presetDialog.editing}
+            onSave={(draft) => savePresetDraft(rpc, presetDialog.editing, draft)}
+          />
+        ) : null}
       </div>
-      {presetDialog ? (
-        <PresetDialog
-          key={presetDialog.key}
-          open
-          onOpenChange={(open) => {
-            if (!open) setPresetDialog(null);
-          }}
-          editing={presetDialog.editing}
-          onSave={(draft) => savePresetDraft(rpc, presetDialog.editing, draft)}
-        />
-      ) : null}
-    </div>
+    </SectionDragContext.Provider>
   );
 }

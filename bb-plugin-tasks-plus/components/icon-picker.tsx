@@ -1,4 +1,4 @@
-import { startTransition, useDeferredValue, useEffect, useMemo, useState, type ReactNode } from "react";
+import { startTransition, useDeferredValue, useEffect, useMemo, useState, type ReactElement, type ReactNode } from "react";
 import type { IconColors } from "@bb-plugins/icon-catalog";
 import { colorsOf, iconChoices, PLACEHOLDER_ICON, recolored, tabOf, type IconTab } from "@/lib/icon-drawing";
 import { cn } from "@/lib/utils";
@@ -134,14 +134,14 @@ export function IconPicker({ value, color, onPick, onRecolor, onClear }: IconPic
 
 /**
  * A button showing the icon that opens the picker in a popover; a pick or Remove closes it, a colour does not.
- * Without an icon it shows `fallback`, or a faint placeholder when there is none.
+ * Without an icon it shows `fallback`, or a faint placeholder when there is none; `trigger` replaces the button.
  */
 export function IconPickerButton({
   label,
   fallback = null,
   className,
-  iconClassName = "size-4",
   header,
+  trigger,
   onPick,
   onClear,
   ...picker
@@ -149,23 +149,28 @@ export function IconPickerButton({
   /** The button's and the popover's name. */
   label: string;
   fallback?: string | null;
+  /** The button's classes; the icon's size goes here as `[&_svg]:size-…` — a size on the icon itself loses to the
+   *  button's own 16px svg rule. */
   className?: string;
-  iconClassName?: string;
   /** Above the tabs: the project's own colour, for a project. */
   header?: ReactNode;
+  /** Another opener in place of the icon button — Notion's "Add icon" above a title. */
+  trigger?: ReactElement;
 }) {
   const [open, setOpen] = useState(false);
   const shown = picker.value ?? fallback ?? undefined;
   return (
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger asChild>
-        <Button type="button" variant="ghost" size="icon" aria-label={label} className={cn("size-7 shrink-0", className)}>
-          {shown === undefined ? (
-            <EntityIcon icon={PLACEHOLDER_ICON} className={cn("text-muted-foreground/50", iconClassName)} />
-          ) : (
-            <EntityIcon icon={shown} color={picker.color} fallback={fallback} className={iconClassName} />
-          )}
-        </Button>
+        {trigger ?? (
+          <Button type="button" variant="ghost" size="icon" aria-label={label} className={cn("size-7 shrink-0", className)}>
+            {shown === undefined ? (
+              <EntityIcon icon={PLACEHOLDER_ICON} className="text-muted-foreground/50" />
+            ) : (
+              <EntityIcon icon={shown} color={picker.color} fallback={fallback} />
+            )}
+          </Button>
+        )}
       </PopoverTrigger>
       <PopoverContent align="start" collisionPadding={8} className="flex w-96 flex-col gap-2 p-2" mobileTitle={label}>
         {header}

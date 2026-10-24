@@ -25,6 +25,29 @@ describe("MdText", () => {
     for (const selector of [".mde-h", ".mde-quote", "b", "code", ".mde-li", "pre.mde-code"]) expect(container.querySelector(selector)).not.toBeNull();
   });
 
+  it("a picture with a relative path loads from the address the image resolver gave", () => {
+    const resolver = vi.fn((src: string) => `/files?src=${encodeURIComponent(src)}`);
+    const { container } = render(<MdText text={"![Shot](docs/a.jpg)"} linkResolver={none} imageResolver={resolver} />);
+    expect(container.querySelector("img")?.getAttribute("src")).toBe("/files?src=docs%2Fa.jpg");
+    expect(container.querySelector(".mde-imgerr")).toBeNull();
+  });
+
+  it("without an image resolver, or when it answers null, a relative picture stays a placeholder", () => {
+    const bare = render(<MdText text={"![Shot](docs/a.jpg)"} linkResolver={none} />);
+    expect(bare.container.querySelector("img")).toBeNull();
+    expect(bare.container.querySelector(".mde-imgerr")?.textContent).toContain("Shot");
+    cleanup();
+    const refused = render(<MdText text={"![Shot](docs/a.jpg)"} linkResolver={none} imageResolver={none} />);
+    expect(refused.container.querySelector("img")).toBeNull();
+  });
+
+  it("a picture whose address doesn't load becomes the same placeholder, with the caption and the path from the text", () => {
+    const { container } = render(<MdText text={"![Shot](docs/a.jpg)\n\n![Logo](https://x.test/l.png)"} linkResolver={none} imageResolver={(src) => `/files?src=${src}`} />);
+    for (const img of container.querySelectorAll("img")) fireEvent.error(img);
+    expect(container.querySelector("img")).toBeNull();
+    expect([...container.querySelectorAll(".mde-imgerr")].map((box) => box.textContent)).toEqual(["🖼Shot — docs/a.jpg", "🖼Logo — https://x.test/l.png"]);
+  });
+
   it("a click on a link the resolver answered calls its onClick with the raw href", () => {
     const onClick = vi.fn();
     const resolver = vi.fn((href: string) => (href === "a/b.ts:12" ? { onClick } : null));

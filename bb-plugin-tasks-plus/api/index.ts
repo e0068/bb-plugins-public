@@ -3,6 +3,7 @@ import { parseReducedColors, REDUCED_COLORS_KV_KEY } from "@bb-plugins/reduced-c
 import { burndownEnds, forecastMs, openSeriesOf } from "../analytics/burndown.js";
 import { ganttRowsOf } from "../analytics/gantt.js";
 import { segmentTasks, tileAnswer } from "../analytics/tile.js";
+import { bbProjectIcons } from "../lib/bb-project-icons.js";
 import { isWorkingThread } from "../shared/thread-activity.js";
 import { checkColumnWidthBounds, COLUMN_WIDTH_BOUNDS_KV_KEY, parseColumnWidthBounds } from "../shared/board-column-width.js";
 import { parseReducedProjects, REDUCED_PROJECTS_KV_KEY } from "../shared/reduced-projects.js";
@@ -847,7 +848,8 @@ export function registerHandlers(
         const attachments = await attachmentsForTasks(store.tasks, taskIds);
         const deleted = store.tasks.deleteProject(input.projectId);
         if (deleted) {
-          await removeAttachmentBlobs(bb, store.tasks, attachments);
+          // Only this machine's copies go: a database project's tasks stay in the database, and their files with them.
+          await removeAttachmentBlobs(bb, store.tasks, attachments, null);
           publishProjectsChanged(bb, input.projectId);
         }
         return { ok: true, deleted };
@@ -864,6 +866,9 @@ export function registerHandlers(
             .map((project) => apiProject(store, project)),
         ),
       };
+    },
+    bbProjectIcons() {
+      return { icons: bbProjectIcons(store.tasks.listProjects()) };
     },
     async createTask(input) {
       try {
@@ -1015,7 +1020,8 @@ export function registerHandlers(
       const attachments = await attachmentsForTasks(store.tasks, [input.taskId]);
       const deleted = await store.tasks.deleteTask(input.taskId);
       if (deleted && task) {
-        await removeAttachmentBlobs(bb, store.tasks, attachments);
+        // The task is gone either way: a file left behind is logged, and the change is still told.
+        await removeAttachmentBlobs(bb, store.tasks, attachments, store.tasks.projectBlobs(task.projectId)).catch(() => undefined);
         publishTasksChanged(bb, task.id, task.projectId);
       }
       return { deleted };

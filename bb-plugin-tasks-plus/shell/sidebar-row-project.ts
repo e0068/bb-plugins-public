@@ -1,5 +1,6 @@
 // Layer: shell, pure. Which bb project a project row of bb's thread list stands for, and which board's icon it wears.
 // bb gives plugins no slot on that row: shell/sidebar-row-icon.tsx reads the row off bb's markup and asks here.
+import { linkedBoardOf, type LinkedBoard } from "../lib/bb-project-icons.js";
 
 export interface GroupRow {
   /** The project's name as the row shows it. */
@@ -18,14 +19,6 @@ export interface RowBoard {
   readonly boardId: string;
   readonly icon: string | undefined;
   readonly color: string;
-}
-
-interface Board {
-  readonly id: string;
-  readonly icon?: string;
-  readonly color: string;
-  readonly linkedBbProjectId: string | null;
-  readonly database?: { readonly table?: string } | null;
 }
 
 const THREAD_HREF = /\/projects\/(proj_[A-Za-z0-9]+)\/threads\//;
@@ -51,7 +44,7 @@ export function projectOfGroupRow(row: GroupRow, projects: readonly NamedProject
 }
 
 /** The task board linked to the bb project — not a section beside it — or null for a project with none. */
-export function rowBoardOf(projectId: string, boards: readonly Board[]): RowBoard | null {
-  const board = boards.find((candidate) => candidate.linkedBbProjectId === projectId && candidate.database?.table === undefined);
+export function rowBoardOf(projectId: string, boards: readonly LinkedBoard[]): RowBoard | null {
+  const board = linkedBoardOf(projectId, boards);
   return board === undefined ? null : { boardId: board.id, icon: board.icon, color: board.color };
 }

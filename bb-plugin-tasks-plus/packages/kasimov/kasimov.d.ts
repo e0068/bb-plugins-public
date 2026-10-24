@@ -74,6 +74,12 @@ export interface KasimovOptions {
   /** Mermaid node style: "contrast" — a filled chip with inverse text; anything else/empty — "soft" nodes (default). */
   mermaidNodes?: "soft" | "contrast";
   linkResolver?: (href: string) => KasimovLink | null;
+  /**
+   * A picture's relative `src` → the address the browser loads it from; `null`
+   * leaves the "caption — path" placeholder. `data:`, `http(s):`, `blob:` and
+   * `/…` sources skip it: the engine hands them to the browser as they are.
+   */
+  imageResolver?: (src: string) => string | null;
   pathProvider?: (
     query: string,
     mode: "path" | "import",
