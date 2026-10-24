@@ -10,6 +10,7 @@ import { type ParentDelivery, parentNote } from "./core/parent-delivery";
 import type { BumpLevel } from "./core/plugin-version-bump";
 import { classifyFailure, RETRY_DELAYS_MS } from "./core/retry";
 import { threadTitleOf } from "./core/thread-title";
+import { treePlaceOf, type TreePlace } from "./core/tree-place";
 import { mergedPullLinks, openedPullOutcome, taskLink, withLinks } from "./core/step-links";
 import { bumpOutcome, reinstallOutcome, stepFailure, withCommitted, type StepOutcome } from "./core/step-outcomes";
 import { issueKeysArgs, issueKeysEnv, parseIssuedKeys } from "./core/bb-tasks-commands";
@@ -34,7 +35,7 @@ import {
   markAwaiting,
   githubBranchesOf,
   githubPullOf,
-  MERGE_METHOD,
+  mergeThroughHostOrGithub,
   mergeWithVerdict,
   parentDeliveryOf,
   pluginImportsOf,
@@ -90,6 +91,12 @@ export interface StepPorts {
    * проходят зелёными: писать нечего, а не что-то сломалось.
    */
   runFigures?: (threadId: string) => Promise<RunFigures | null>;
+  /**
+   * Отвод своей ветки перед коммитом, когда тред стоит на ветке по умолчанию
+   * (shell/branch-off.ts): отведённая ветка или `null`. Без порта шаги
+   * коммитят в текущую ветку, как раньше.
+   */
+  branchOff?: (threadId: string) => Promise<string | null>;
 }
 
 /**
@@ -172,6 +179,18 @@ const PR_DETAIL: Record<PrBranchOutcome, (url: string) => string> = {
 const DELIVERY_DETAIL: Record<ParentDeliveryOutcome, (parentBranch: string) => string> = {
   "already-in": (parentBranch) => `already in ${parentBranch}`,
   delivered: (parentBranch) => `merged into ${parentBranch} — the parent thread's branch, no PR on GitHub`,
+};
+
+/**
+ * Строка шага «Дерево и ветка от origin/main». Сам тред переносит Flow до
+ * первого хода, а шаг только говорит, где тред работает, и не падает: тред,
+ * у которого дерево и ветка уже свои, проходит его зелёным.
+ */
+const TREE_DETAIL: Record<TreePlace, string> = {
+  "not-started": "not started yet — Flow moves the thread before its first turn",
+  "own-tree": "already in its own worktree",
+  "project-checkout": "the thread already works in the project checkout — Flow moves a thread only before its first turn",
+  "no-git": "the thread's folder has no git",
 };
 
 /** Исключение шага — его итог, а не падение исполнителя. */
@@ -288,15 +307,23 @@ export function createSteps(ports: StepPorts): Steps {
     );
 
   // Тема сделанного коммита; чистое дерево — `null`. Git-статус, который bb не отдал, — исключение.
-  const commitIfDirty = async (threadId: string): Promise<string | null> => {
+  const commitIfDirty = async (threadId: string): Promise<string | null> => (await commitOffDefault(threadId)).subject;
+  // Тред на ветке по умолчанию с правками сперва уходит на свою ветку: коммит не ложится в main. Чистое дерево
+  // ветку не отводит — чекаут остаётся на main, и «Открыть PR» отказывает PR из самой базы понятной причиной.
+  const commitOffDefault = async (threadId: string): Promise<{ branch: string | null; subject: string | null }> => {
     const environmentId = await environmentOf(threadId);
     const status = await availableStatus(sdk, environmentId);
-    if (!status.workspace.workingTree.hasUncommittedChanges) return null;
-    return (await sdk.environments.commit({ environmentId })).commitSubject;
+    if (!status.workspace.workingTree.hasUncommittedChanges) return { branch: null, subject: null };
+    const branch = (await ports.branchOff?.(threadId)) ?? null;
+    return { branch, subject: (await sdk.environments.commit({ environmentId })).commitSubject };
   };
 
   // Чистое дерево — не провал: коммитить нечего, цепочка идёт дальше.
-  const commitTree = async (threadId: string): Promise<StepOutcome> => done((await commitIfDirty(threadId)) ?? "nothing to commit");
+  const commitTree = async (threadId: string): Promise<StepOutcome> => {
+    const { branch, subject } = await commitOffDefault(threadId);
+    const committed = subject ?? "nothing to commit";
+    return done(branch === null ? committed : `moved off the default branch to ${branch}; ${committed}`);
+  };
 
   // Шаг, двигающий ветку, сперва коммитит дерево треда. Грязное дерево здесь —
   // не ошибка агента, а обычный ход цепочки: «Задача → done» перед FF, журнал
@@ -328,7 +355,13 @@ export function createSteps(ports: StepPorts): Steps {
     return done(answer.keys.join(", "));
   };
 
+  const treePlace = async (threadId: string): Promise<StepOutcome> => {
+    const { environmentId } = await sdk.threads.get({ threadId });
+    return done(TREE_DETAIL[treePlaceOf(environmentId === null ? null : await sdk.environments.get({ environmentId }))]);
+  };
+
   const steps: Steps = {
+    "git.tree-from-origin": guarded(treePlace),
     "bb.rename-thread": guarded(renameThread),
     "bb.tasks-plan": guarded(writePlan),
     "git.commit": guarded(commitTree),
@@ -376,7 +409,7 @@ export function createSteps(ports: StepPorts): Steps {
           const rebump = level === undefined ? null : bumpOutcome(await settleVersionsForMerge(gh, level));
           if (rebump !== null && !rebump.ok) return rebump;
           await markAwaiting(sdk, environmentId, "merge");
-          const outcome = await mergeWithVerdict(gh, async () => void (await sdk.environments.mergePullRequest({ environmentId, method: MERGE_METHOD })));
+          const outcome = await mergeWithVerdict(gh, mergeThroughHostOrGithub(sdk, gh, environmentId));
           if (outcome.ok) await kv.delete(lastBumpKey(environmentId));
           const before = refreshed === "updated" ? [MERGE_REFRESHED, ...(rebump?.ok === true && rebump.detail !== null ? [`versions raised again: ${rebump.detail}`] : [])] : [];
           const told = outcome.ok ? { ...outcome, detail: [...before, ...(outcome.detail === null ? [] : [outcome.detail])].join("; ") || null } : outcome;

@@ -7,7 +7,7 @@ import { dirname, join } from "node:path";
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import { selectedThreadSetting } from "@bb-plugins/rail-collapse/setting";
 
-import { createSteps, type RunFigures } from "@bb-plugins/automation-steps/index";
+import { branchOffDefaultBranch, createSteps, type RunFigures, type Steps } from "@bb-plugins/automation-steps/index";
 import { failureInstructionOf, retryPolicyOf, wakesAgentAfterLastRetry } from "./core/automation-run";
 import { OWN_PLUGIN_ID } from "./core/plugin-id";
 import { flowsInPanelSetting } from "./lib/flows-in-panel-setting";
@@ -42,6 +42,7 @@ import { registerFlowPickerApi } from "./server/flow-picker-api";
 import { registerMentionsApi } from "./server/mentions";
 import { registerOwnerTurn } from "./server/owner-turn";
 import { startThread } from "./server/thread-start";
+import { createRelocation } from "./server/relocate";
 import { registerFlowChoice } from "./server/flow-choice";
 import { createOwnSends } from "./server/own-sends";
 import { placeFigureStepsOnce } from "./server/figure-steps-once";
@@ -148,6 +149,14 @@ export default async function plugin(bb: BbPluginApi): Promise<void> {
     return flow === null ? { stages: [], minButtonWidth: settings.minButtonWidth } : stageSettingsOf(settings, flow);
   };
   const flowNameOf = (threadId: string) => flowOf(threadId)?.name;
+  // Тред с flow, заведённый в чекауте проекта, уезжает в своё дерево от origin/main до первого хода — если первый этап flow это шаг дерева.
+  const relocation = createRelocation({
+    sdk: bb.sdk,
+    stagesOf: (threadId) => stagesOf(threadId).stages,
+    recheck: () => bb.experimental_hooks.recheck("message.dispatch").catch((error: unknown) => bb.log.warn(`relocation: the hook was not rechecked (${String(error)})`)),
+    started: (threadId) => progress.annotate(threadId, (p) => p),
+    warn: (message) => bb.log.warn(message),
+  });
   // Automations — отдельный плагин: события Flow и этапы-автоматизации идут к нему по HTTP, без него Flow работает как раньше.
   const automations = automationsBridge(bb);
   const emit = (trigger: Parameters<typeof automations.emit>[0], threadId: string, context?: { stageId?: string }) => void automations.emit(trigger, threadId, context);
@@ -258,7 +267,10 @@ export default async function plugin(bb: BbPluginApi): Promise<void> {
     store,
     stages: stagesOf,
     // Своей настройки токена у Flow нет: шаги берут токен у `gh auth token` на машине bb.
-    steps: createSteps({ sdk: bb.sdk, kv: bb.storage.kv, settings: { get: async () => ({ githubToken: undefined }) }, plugins: bb.sdk.plugins, ownPluginId: OWN_PLUGIN_ID, tell: send, runFigures: (threadId) => runFigures(threadId) }),
+    steps: withRelocatedTree(
+      createSteps({ sdk: bb.sdk, kv: bb.storage.kv, settings: { get: async () => ({ githubToken: undefined }) }, plugins: bb.sdk.plugins, ownPluginId: OWN_PLUGIN_ID, tell: send, runFigures: (threadId) => runFigures(threadId), branchOff: branchOffDefaultBranch(bb.sdk) }),
+      relocation.isRelocated,
+    ),
     external: externalStep(automations.run),
     script: scriptStep(bb.sdk),
     thread,
@@ -506,6 +518,7 @@ export default async function plugin(bb: BbPluginApi): Promise<void> {
     ownSend: own.has,
     ownerTurn: choice.ownerTurn,
     ownerMessage: (threadId) => returnAwaitingBrief({ store, publish: (id) => bb.realtime.publish(ANSWERED_CHANNEL, { id }) }, threadId),
+    relocation,
     firstMessage: startThread({ threads, progress, hasFlow: (threadId) => flowOf(threadId) !== null, handoffFlow: takeHandoffFlow, applyAgent }),
     // Хук ждёт решения не дольше 10 с и запирает тред на просрочке: сверка, которая затянулась, доходит в фоне.
     // Side chat, получивший flow до этой версии, его теряет вместе с прогоном.
@@ -523,3 +536,10 @@ export default async function plugin(bb: BbPluginApi): Promise<void> {
   registerJournalSettingsApi(bb, journalDirs);
   registerVoiceApi(bb);
 }
+
+/** Шаг дерева в треде, который Flow сам завёл переносом: окружения у него ещё нет, но дерево уже своё. */
+const withRelocatedTree = (steps: Steps, isRelocated: (threadId: string) => boolean): Steps => ({
+  ...steps,
+  "git.tree-from-origin": async (threadId) =>
+    isRelocated(threadId) ? { ok: true, detail: "moved out of the project checkout — its own worktree from origin/main" } : steps["git.tree-from-origin"](threadId),
+});

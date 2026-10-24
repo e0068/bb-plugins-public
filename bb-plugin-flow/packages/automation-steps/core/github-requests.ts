@@ -77,6 +77,11 @@ export function getPullRequestRequest(repo: RepoRef, number: number): GithubRequ
   return { method: "GET", path: `${base(repo)}/pulls/${number}` };
 }
 
+/** Вливает PR тем же методом, каким его вливал bb, пока SDK это умел. */
+export function mergePullRequestRequest(repo: RepoRef, number: number, method: "merge" | "squash" | "rebase"): GithubRequest {
+  return { method: "PUT", path: `${base(repo)}/pulls/${number}/merge`, body: { merge_method: method } };
+}
+
 /**
  * The state of a pull request as the merge step needs it: `merged` is the
  * step's own goal already reached (a repeat, or a merge someone made by

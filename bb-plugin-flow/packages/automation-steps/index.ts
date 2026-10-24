@@ -10,3 +10,5 @@ export type { PluginsPort, ReinstallReport } from "./wiring/plugin-reinstall";
 export { runKey, spentDollars, spentMinutes, type RunSpend } from "./core/task-figures";
 export { backfillTaskSpend, type BackfillLine, type PastRun } from "./wiring/task-figures";
 export { bbCliClient } from "./wiring/bb-cli-client";
+// Отвод своей ветки перед коммитом — порт `branchOff` шагов, его передаёт плагин-исполнитель.
+export { branchOffDefaultBranch } from "./shell/branch-off";

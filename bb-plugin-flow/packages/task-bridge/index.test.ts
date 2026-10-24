@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { OPEN_TASK_EVENT, announceTasksChanged, onOpenTask, onTasksChanged, requestOpenTask } from "./index";
+import { OPEN_TASK_EVENT, announceProjectsChanged, announceTasksChanged, onOpenTask, onProjectsChanged, onTasksChanged, requestOpenTask } from "./index";
 
 const request = { taskKey: "BBPL-7", threadId: "thr_1" };
 
@@ -56,5 +56,20 @@ describe("задачи изменились", () => {
     off();
     announceTasksChanged(target);
     expect(changed).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("проекты изменились", () => {
+  it("доходит до каждого слушателя, пока он подписан, и не будит слушателей задач", () => {
+    const target = new EventTarget();
+    const changed = vi.fn();
+    const tasks = vi.fn();
+    const off = onProjectsChanged(target, changed);
+    onTasksChanged(target, tasks);
+    announceProjectsChanged(target);
+    off();
+    announceProjectsChanged(target);
+    expect(changed).toHaveBeenCalledTimes(1);
+    expect(tasks).not.toHaveBeenCalled();
   });
 });

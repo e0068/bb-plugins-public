@@ -9,6 +9,7 @@ import { returnsBrief } from "../core/awaiting";
 import { appliesPickedFlow } from "../core/picked-flow";
 import { isSideChat } from "../core/side-chat";
 import type { AutoChoice } from "./auto-choice";
+import type { FirstDispatch, Relocation } from "./relocate";
 import type { FirstMessage } from "./thread-start";
 
 /** Подпись сообщения в очереди треда, пока flow выбирается. */
@@ -28,6 +29,15 @@ const mentionedThreads = (context: DispatchContext): string[] =>
     block.type === "text" ? (block.mentions ?? []).flatMap((mention) => (mention.resource.kind === "thread" ? [mention.resource.threadId] : [])) : [],
   );
 
+/** Первое сообщение глазами переноса; намерение окружения bb кладёт в контекст, а типы SDK его пока не описывают. */
+const firstDispatchOf = (context: DispatchContext): FirstDispatch => ({
+  thread: { id: context.thread.id, projectId: context.thread.projectId, title: context.thread.title ?? null },
+  hostId: context.host?.id ?? null,
+  environmentIntent: (context as { environmentIntent?: unknown }).environmentIntent,
+  blocks: context.input.blocks,
+  execution: context.requestedExecution,
+});
+
 export const registerOwnerTurn = (
   bb: Pick<BbPluginApi, "experimental_hooks" | "pluginId">,
   deps: {
@@ -45,6 +55,8 @@ export const registerOwnerTurn = (
     sideChat?: (threadId: string) => Promise<void>;
     /** Выбор flow треду с «Автоматически» до хода агента. Не задано — сообщение не ждёт. */
     autoChoice?: AutoChoice;
+    /** Перенос треда из чекаута проекта в своё дерево до первого хода (./relocate.ts). Не задано — тред остаётся где был. */
+    relocation?: Pick<Relocation, "hold">;
   },
 ): void => {
   // Ход сперва применяет выбранный flow и возвращает бриф, потом ждёт выбора flow, а настройки дерева сверяет
@@ -70,6 +82,11 @@ export const registerOwnerTurn = (
       await deps.firstMessage({ thread: { id, projectId, parentThreadId }, byFlow: context.thread.originPluginId === bb.pluginId, mentioned: mentionedThreads(context) }).catch(() => undefined);
     }
     if (await decide(context)) return { action: "wait", reason: CHOOSING_REASON };
+    // Первое сообщение треда, уезжающего из чекаута, ждёт нового треда. Хук, который бросает, запирает тред: сбой переноса пропускает сообщение.
+    if (deps.relocation !== undefined && context.thread.status === "pending" && context.attempt === "start-turn") {
+      const decision = await deps.relocation.hold(firstDispatchOf(context)).catch(() => null);
+      if (decision !== null) return decision;
+    }
     // Хук, который бросает, запирает тред: сбой сверки настроек пропускает сообщение.
     if (context.attempt === "start-turn") await deps.turnStart?.(context.thread.id).catch(() => undefined);
     return { action: "proceed" };

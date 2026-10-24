@@ -52,3 +52,17 @@ export function onTasksChanged(target: EventTarget, changed: () => void): () => 
   target.addEventListener(TASKS_CHANGED_EVENT, listener);
   return () => target.removeEventListener(TASKS_CHANGED_EVENT, listener);
 }
+
+/** Tasks+ узнал, что доски изменились, — имя, цвет или иконка. */
+export const PROJECTS_CHANGED_EVENT = "bb-plugins:tasks-plus:projects-changed";
+
+export function announceProjectsChanged(target: EventTarget): void {
+  target.dispatchEvent(new Event(PROJECTS_CHANGED_EVENT));
+}
+
+/** Слушает «проекты изменились»; возвращает отписку. */
+export function onProjectsChanged(target: EventTarget, changed: () => void): () => void {
+  const listener = (): void => changed();
+  target.addEventListener(PROJECTS_CHANGED_EVENT, listener);
+  return () => target.removeEventListener(PROJECTS_CHANGED_EVENT, listener);
+}

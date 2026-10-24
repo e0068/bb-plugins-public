@@ -250,6 +250,7 @@ export const en: Messages = {
     automation: "Automation",
   },
   steps: {
+    "git.tree-from-origin": "Worktree and branch from origin/main",
     "bb.rename-thread": "Rename the thread after its task",
     "bb.tasks-plan": "Plan → task",
     "git.commit": "Commit",
