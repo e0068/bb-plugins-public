@@ -8,6 +8,9 @@
     "paths": {
       "@/*": [
         "./*"
+      ],
+      "@bb-plugins/*": [
+        "./packages/*"
       ]
     },
     "skipLibCheck": false
