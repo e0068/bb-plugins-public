@@ -87,6 +87,7 @@ import {
 } from "./home-layer";
 import { openRowIntoThread } from "./thread-open";
 import { RowsNearView } from "./rows-near-view";
+import { ProjectIcon, ProjectIconsProvider } from "./project-icons";
 import { findComposer, foldByDrag, mountFoldStyle, soleFinger, standsOpen } from "./composer-fold";
 import { fitComposer } from "./composer-fit";
 import { holdSticky, type Hold } from "./sticky-hold";
@@ -747,15 +748,18 @@ function WorktreeMark({ worktree }: { worktree: Worktree }) {
 
 /** The line under a title: the worktree the thread runs in, if any, then the project. */
 function RowCaption({
+  projectId,
   projectLabel,
   worktree,
 }: {
+  projectId: string;
   projectLabel: string;
   worktree: Worktree | null;
 }) {
   return (
     <span className="flex items-center gap-1 text-xs text-muted-foreground">
       {worktree !== null && <WorktreeMark worktree={worktree} />}
+      <ProjectIcon projectId={projectId} className="size-3.5" />
       {projectLabel}
     </span>
   );
@@ -810,7 +814,9 @@ function ThreadRow({
         <span className="truncate text-sm">{title}</span>
         {projectLabel === null && worktree !== null && <WorktreeMark worktree={worktree} />}
       </span>
-      {projectLabel !== null && <RowCaption projectLabel={projectLabel} worktree={worktree} />}
+      {projectLabel !== null && (
+        <RowCaption projectId={thread.projectId} projectLabel={projectLabel} worktree={worktree} />
+      )}
     </button>
   );
   // A working thread's spinner already says it is active now — see `showsWaitingTime`.
@@ -1137,6 +1143,7 @@ function PostponedRow({
         <button type="button" onClick={onOpen} className={ROW_TARGET_CLASS}>
           <span className="w-full truncate text-sm text-muted-foreground">{title}</span>
           <RowCaption
+            projectId={thread.projectId}
             projectLabel={projectLabel}
             worktree={worktreeOf(thread.environment)}
           />
@@ -1413,6 +1420,7 @@ function GroupPills({
           aria-pressed={index === active}
           onClick={() => onSelect(index)}
         >
+          <ProjectIcon projectId={group.projectId} className="size-4" />
           {group.name}
           <span className="text-muted-foreground">{group.threads.length}</span>
         </Button>
@@ -1900,7 +1908,16 @@ function useQueueLayout(): QueueLayout {
   return queueLayout(settings.values?.invertOnPhone, useIsCompactViewport());
 }
 
+/** The section, with the icons its projects wear. */
 function AttentionSection() {
+  return (
+    <ProjectIconsProvider>
+      <AttentionQueue />
+    </ProjectIconsProvider>
+  );
+}
+
+function AttentionQueue() {
   const { status, threads, projects } = experimental_useSidebarThreads();
   const navigate = useBbNavigate();
   const threadActions = experimental_useSidebarThreadActions();

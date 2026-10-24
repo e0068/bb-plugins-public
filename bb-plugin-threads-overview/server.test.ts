@@ -115,3 +115,48 @@ describe("the bottom-up queue on a phone", () => {
     });
   });
 });
+
+describe("projectIcons rpc", () => {
+  const ROCKET = { bbProjectId: "proj_a1", drawing: { kind: "emoji", char: "🚀" } };
+  const FOLDER = {
+    bbProjectId: "proj_b2",
+    drawing: { kind: "glyph", nodes: [["path", { d: "M0 0h24", stroke: "currentColor", strokeWidth: 1.5 }]], ink: { color: "steelblue" } },
+  };
+
+  async function icons(answer: () => unknown) {
+    const sdk = {
+      plugins: {
+        callRpc: async ({ outputSchema }: { outputSchema: { parse: (value: unknown) => unknown } }) =>
+          outputSchema.parse(answer()),
+      },
+    } as unknown as Sdk;
+    const { bb, harness } = createFakePluginHost({ pluginId: "threads-overview", sdk });
+    await plugin(bb);
+    return { result: await harness.behavior.callRpc("projectIcons", null), harness };
+  }
+
+  it("hands on the icons Tasks+ draws for bb projects", async () => {
+    const { result, harness } = await icons(() => ({ icons: [ROCKET, FOLDER] }));
+    expect(result).toEqual({ icons: [ROCKET, FOLDER] });
+    expect(harness.sdk.callsTo("plugins.callRpc")[0]![0]).toMatchObject({
+      pluginId: "tasks-plus",
+      method: "bbProjectIcons",
+      input: {},
+    });
+  });
+
+  it("answers no icons at all when Tasks+ is not there or answers out of shape", async () => {
+    const missing = await icons(() => {
+      throw new Error("plugin tasks-plus is not running");
+    });
+    expect(missing.result).toEqual({ icons: null });
+    const garbled = await icons(() => ({ projects: [] }));
+    expect(garbled.result).toEqual({ icons: null });
+  });
+
+  it("drops only an icon it cannot draw, keeping the rest", async () => {
+    const sticker = { bbProjectId: "proj_c3", drawing: { kind: "sticker" } };
+    const { result } = await icons(() => ({ icons: [ROCKET, sticker, FOLDER] }));
+    expect(result).toEqual({ icons: [ROCKET, FOLDER] });
+  });
+});

@@ -18,6 +18,9 @@
 //
 // Nor does the sidebar view know what Flow runs in a thread without the agent —
 // an automation or a pressed Action step — so the section asks Flow through here.
+//
+// A project's icon is its Tasks+ board's, the one bb's thread list wears; the
+// section asks Tasks+ for it here, ready to draw.
 import { defineRpcContract, type BbPluginApi } from "@get-bb/plugin-sdk";
 import { z } from "zod";
 import {
@@ -42,6 +45,24 @@ const FLOW_PLUGIN_ID = "flow";
 const FLOW_RUNNING_METHOD = "runningThreads";
 const flowRunSchema = z.object({ threadId: z.string(), icon: z.enum(["automation", "action"]) });
 
+/** Tasks+'s plugin id and the RPC that draws each bb project's icon (bb-plugin-tasks-plus/shared/contract.ts). */
+const TASKS_PLUGIN_ID = "tasks-plus";
+const TASKS_ICONS_METHOD = "bbProjectIcons";
+const iconPaintSchema = z.union([z.object({ color: z.string() }), z.enum(["foreground", "background"])]);
+const projectIconDrawingSchema = z.discriminatedUnion("kind", [
+  z.object({
+    kind: z.literal("glyph"),
+    nodes: z.array(z.tuple([z.string(), z.record(z.string(), z.union([z.string(), z.number()]))])),
+    transform: z.string().optional(),
+    ink: iconPaintSchema.optional(),
+    tile: iconPaintSchema.optional(),
+  }),
+  z.object({ kind: z.literal("emoji"), char: z.string() }),
+]);
+const projectIconSchema = z.object({ bbProjectId: z.string(), drawing: projectIconDrawingSchema });
+export type ProjectIconDrawing = z.infer<typeof projectIconDrawingSchema>;
+export type IconPaint = z.infer<typeof iconPaintSchema>;
+
 export const rpcContract = defineRpcContract({
   listPostponed: {
     input: z.null(),
@@ -56,6 +77,11 @@ export const rpcContract = defineRpcContract({
   runningFlowSteps: {
     input: z.null(),
     output: z.object({ running: z.array(flowRunSchema) }),
+  },
+  projectIcons: {
+    input: z.null(),
+    // Null when Tasks+ did not answer: the section keeps the icons it shows.
+    output: z.object({ icons: z.array(projectIconSchema).nullable() }),
   },
   threadDetails: {
     input: z.object({ threadId: z.string().min(1) }).strict(),
@@ -178,6 +204,23 @@ export default async function plugin(bb: BbPluginApi) {
         }),
       );
       return { running: running ?? [] };
+    },
+    async projectIcons() {
+      // Tasks+ not installed, disabled or too old: no answer, and no icons.
+      const answer = await orNull(() =>
+        bb.sdk.plugins.callRpc({
+          pluginId: TASKS_PLUGIN_ID,
+          method: TASKS_ICONS_METHOD,
+          input: {},
+          outputSchema: z.object({ icons: z.array(z.unknown()) }),
+        }),
+      );
+      // Each icon on its own: one this side cannot draw — a kind a newer Tasks+ added — takes no other off.
+      const icons = answer?.icons.flatMap((icon) => {
+        const parsed = projectIconSchema.safeParse(icon);
+        return parsed.success ? [parsed.data] : [];
+      });
+      return { icons: icons ?? null };
     },
     async threadDetails({ threadId }) {
       const [execution, git] = await Promise.all([readExecution(threadId), readGit(threadId)]);
