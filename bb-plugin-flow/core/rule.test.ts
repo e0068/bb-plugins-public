@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 
 import * as fc from "fast-check";
 
-import { appended, editedRule, occurrences, placeLabelOf, proposalIssues, replaced, ruleDiff, ruleTargetIssue, skillNameOf } from "./rule";
+import { appended, editedRule, occurrences, placeLabelOf, proposalIssues, replaced, ruleDiff, ruleTargetIssue, skillNameOf, withRuleText } from "./rule";
 
 const HOME = "/Users/me";
 const MEMORY = `${HOME}/.claude/projects/-Users-me-repo/memory`;
@@ -31,9 +31,8 @@ describe("куда можно писать правило", () => {
 describe("предложение", () => {
   const base = { text: "Правило", why: "потому", target: { kind: "memory" as const, path: `${MEMORY}/rule.md` }, mode: "create" as const, content: "# Правило\n", similar: [] };
 
-  it("текст обязан стоять в записи дословно, оглавление — только у нового файла памяти, MEMORY.md — не цель", () => {
+  it("оглавление — только у нового файла памяти, MEMORY.md — не цель", () => {
     expect(proposalIssues(base, HOME)).toEqual([]);
-    expect(proposalIssues({ ...base, content: "другое" }, HOME)).toHaveLength(1);
     expect(proposalIssues({ ...base, mode: "append", index: "- [x](x.md)" }, HOME)).toHaveLength(1);
     expect(proposalIssues({ ...base, target: { kind: "memory", path: `${MEMORY}/MEMORY.md` }, content: "Правило" }, HOME)).toHaveLength(1);
   });
@@ -42,6 +41,26 @@ describe("предложение", () => {
     expect(proposalIssues({ ...base, mode: "replace", replaces: "старое" }, HOME)).toEqual([]);
     expect(proposalIssues({ ...base, mode: "replace", replaces: "  " }, HOME)).toHaveLength(1);
     expect(proposalIssues({ ...base, mode: "append", replaces: "старое" }, HOME)).toHaveLength(1);
+  });
+});
+
+describe("текст правила в записи", () => {
+  const call = { text: "Правило", why: "потому", target: { kind: "skill" as const, path: `${HOME}/.claude/skills/x/SKILL.md` }, mode: "append" as const, similar: [] };
+
+  it("запись не дана — пишется сам текст правила", () => {
+    expect(withRuleText(call).content).toBe("Правило");
+  });
+
+  it("запись пересказывает правило своими словами — текст правила дописывается в её конец, пересказ остаётся", () => {
+    expect(withRuleText({ ...call, content: "- Пересказ правила" }).content).toBe("- Пересказ правила\nПравило\n");
+  });
+
+  it("текст правила уже стоит в записи — запись не меняется", () => {
+    fc.assert(fc.property(fc.string(), fc.string(), (head, tail) => withRuleText({ ...call, content: `${head}Правило${tail}` }).content === `${head}Правило${tail}`));
+  });
+
+  it("в записи всегда стоит текст правила — правка владельца дойдёт до файла", () => {
+    fc.assert(fc.property(fc.string({ minLength: 1 }), fc.option(fc.string(), { nil: undefined }), (text, content) => withRuleText({ ...call, text, content }).content.includes(text)));
   });
 });
 

@@ -243,6 +243,12 @@ const ownQuote = (number: number, own: string): string => {
   return `${own.split("\n").map((line) => (line.trim() === "" ? `${indent}>` : `${indent}> ${line}`)).join("\n")}\n`;
 };
 
+/** Ответы владельца на вопросы брифа строками «вопрос — ответ» — для строки этапа Вопросов в баннере; без ответа вопрос не попадает. */
+export const answeredLines = (brief: DecisionBrief, answer: DecisionAnswer, locale?: Locale): string[] =>
+  readings(brief, answer, locale)
+    .filter(({ question }) => brief.questions.some((q) => q.id === question.id))
+    .flatMap(({ question, reading }) => (reading === null ? [] : [`${question.question} — ${reading.chosen}${reading.own === null ? "" : ` (${reading.own})`}`]));
+
 const readings = (brief: DecisionBrief, answer: DecisionAnswer, locale?: Locale) => {
   const carried = carriedFor(brief);
   const hidden = hiddenQuestions(brief, answer);

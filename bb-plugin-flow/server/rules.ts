@@ -8,9 +8,9 @@ import { dirname } from "node:path";
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 
 import { RULE_ID_PREFIX, ruleDirectiveLine } from "../core/directive";
-import { appended, editedRule, memoryIndexOf, occurrences, proposalIssues, replaced, ruleTargetIssue } from "../core/rule";
+import { appended, editedRule, memoryIndexOf, occurrences, proposalIssues, replaced, ruleTargetIssue, withRuleText } from "../core/rule";
 import { messages } from "../lib/messages";
-import { proposeRuleParamsSchema, ruleRecordSchema, rulesRpcContract, type RuleRecord } from "../shared/contract";
+import { proposeRuleCallSchema, ruleRecordSchema, rulesRpcContract, type RuleRecord } from "../shared/contract";
 
 export const RULE_TOOL_NAME = "propose_rule";
 
@@ -76,8 +76,9 @@ export const registerRules = (bb: Pick<BbPluginApi, "agents" | "rpc" | "storage"
     description: "Propose a working rule for the owner to approve into a memory file or a skill; the plugin writes it on approval.",
     instructions: RULE_INSTRUCTIONS,
     presentation: { label: { pending: "Preparing a rule", completed: "Rule proposed in the thread" } },
-    parameters: proposeRuleParamsSchema,
-    async execute(params, ctx) {
+    parameters: proposeRuleCallSchema,
+    async execute(call, ctx) {
+      const params = withRuleText(call);
       const refuse = (issues: string[]) => new Error(`The rule is not proposed:\n- ${issues.join("\n- ")}`);
       // Путь сверяется до диска: отказ «already exists» не должен говорить агенту, что лежит вне памяти и навыков.
       const issues = proposalIssues(params, deps.home);

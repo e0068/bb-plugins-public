@@ -25,8 +25,10 @@ import type {
   dispatchRpcContract,
   DispatchPlace,
   DispatchRoute,
+  ChecklistItem,
   Fold,
   turnRpcContract,
+  GroupAnswer,
   voiceRpcContract,
 } from "../shared/contract";
 import {
@@ -41,6 +43,7 @@ import {
 } from "./draft";
 import { attachmentsPayload, clearAttachments } from "./attachments";
 import { useLatestCopy } from "./brief-copies";
+import { ChecklistCard } from "./checklist-card";
 import { AnsweredBriefCard, BriefCard, ClarifyCard, DraftBriefCard, ResolvedClarifyLine, useDispatchPicker } from "./brief-card";
 import { shownDraft } from "./draft-restore";
 import { clearStoredDraft } from "./draft-storage";
@@ -66,7 +69,7 @@ type Loaded =
   | { kind: "loading" }
   | { kind: "error" }
   | { kind: "not_found" }
-  | { kind: "found"; brief: DecisionBrief; answer: AnswerRecord | null; fold?: Fold; draft?: string; resolved?: true; idleAfter?: true };
+  | { kind: "found"; brief: DecisionBrief; answer: AnswerRecord | null; fold?: Fold; draft?: string; resolved?: true; idleAfter?: true; checklist?: ChecklistItem[]; sentWith?: string };
 
 type Rpc = ReturnType<typeof useRpc<typeof decisionsRpcContract>>;
 
@@ -270,12 +273,23 @@ function BriefLoader({ id, source, messageId, threadId }: { id: string; source: 
           return legacy ? (
             <AnsweredBrief brief={state.brief} record={state.answer} />
           ) : (
-            <AnsweredBriefCard brief={state.brief} record={state.answer} roots={roots} />
+            <>
+              <AnsweredBriefCard brief={state.brief} record={state.answer} roots={roots} />
+              {/* Чек-лист по комментариям к виджетам — под ответом Утверждения, которое его завело; агент отмечает пункты по ходу. */}
+              {state.checklist !== undefined && <ChecklistCard items={state.checklist} />}
+            </>
           );
         // Уточнение, которое агент починил или решил сам, отвечать уже нечем: одна приглушённая строка.
         if (state.resolved === true && state.brief.kind === "clarify") return <ResolvedClarifyLine brief={state.brief} />;
-        const send = async (draft: Draft) =>
-          rpcRef.current.call("answerBrief", { id, answer: toAnswer(state.brief, draft), messageId, locale, ...(await attachmentsPayload(id)) });
+        const send = async (draft: Draft, extra?: { group?: GroupAnswer[] }) =>
+          rpcRef.current.call("answerBrief", {
+            id,
+            answer: toAnswer(state.brief, draft),
+            messageId,
+            locale,
+            ...(await attachmentsPayload(id)),
+            ...(extra?.group === undefined || extra.group.length === 0 ? {} : { group: extra.group }),
+          });
         const onAccepted = (result: Awaited<ReturnType<typeof send>>) => {
           if (result.kind === "accepted" || result.kind === "already_answered") answered(result.record);
           if (result.kind === "not_found") retry();
@@ -283,12 +297,13 @@ function BriefLoader({ id, source, messageId, threadId }: { id: string; source: 
         return (
           <VoiceProvider transcribe={(input) => voiceRpc.call("transcribeVoice", input)}>
             <MentionsProvider threadId={state.brief.threadId}>
-            {isQuickClarify(state.brief) ? (
+            {/* Уточнение, которое ждёт Утверждения, кликом не отвечает: выбор копится и уходит с «Продолжить». */}
+            {isQuickClarify(state.brief) && state.brief.settle === undefined ? (
               <ClarifyCard brief={state.brief} send={send} onResult={onAccepted} />
             ) : legacy ? (
               <BriefForm brief={state.brief} send={send} onResult={onAccepted} place={place.place} route={place.route} compact={place.compact} />
             ) : (
-              <BriefCard brief={state.brief} send={send} onResult={onAccepted} roots={roots} place={place.place} route={place.route} compact={place.compact} compactable={compactable} idleAfter={state.idleAfter === true} />
+              <BriefCard brief={state.brief} send={send} onResult={onAccepted} roots={roots} place={place.place} route={place.route} compact={place.compact} compactable={compactable} idleAfter={state.idleAfter === true} {...(state.sentWith === undefined ? {} : { sentWith: state.sentWith })} />
             )}
             </MentionsProvider>
           </VoiceProvider>

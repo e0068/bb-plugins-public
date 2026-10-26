@@ -43,6 +43,10 @@ import { registerMentionsApi } from "./server/mentions";
 import { registerOwnerTurn } from "./server/owner-turn";
 import { startThread } from "./server/thread-start";
 import { createRelocation } from "./server/relocate";
+import { CHECKLIST_TOOL } from "./core/checklist";
+import type { DecisionBrief } from "./shared/contract";
+import { registerChecklistTool } from "./server/checklist-tool";
+import { tellApplied } from "./server/flow-applied";
 import { registerFlowChoice } from "./server/flow-choice";
 import { createOwnSends } from "./server/own-sends";
 import { placeFigureStepsOnce } from "./server/figure-steps-once";
@@ -239,7 +243,7 @@ export default async function plugin(bb: BbPluginApi): Promise<void> {
   bb.events.on("thread.deleted", ({ thread }) => void delivery.forget(thread.id));
   // Первая сессия треда стартует уже с ограничением: решение сверки ложится в дерево прямо перед стартом Claude Code.
   registerSessionConfig(bb, {
-    tools: [ASK_TOOL_NAME, FLOW_STAGE_TOOL, RETRY_AUTOMATION_TOOL, READ_FLOWS_TOOL_NAME, SAVE_FLOW_TOOL_NAME, COMMAND_TOOL_NAME, RULE_TOOL_NAME, WORKFLOW_READ_TOOL_NAME, WORKFLOW_WRITE_TOOL_NAME],
+    tools: [ASK_TOOL_NAME, FLOW_STAGE_TOOL, CHECKLIST_TOOL, RETRY_AUTOMATION_TOOL, READ_FLOWS_TOOL_NAME, SAVE_FLOW_TOOL_NAME, COMMAND_TOOL_NAME, RULE_TOOL_NAME, WORKFLOW_READ_TOOL_NAME, WORKFLOW_WRITE_TOOL_NAME],
     prestart: (threadId, root) => void scope.prestart(threadId, root),
     startMessage: (threadId) => startMessageOf(agentOf(threadId)),
     deliver: delivery.deliver,
@@ -328,7 +332,10 @@ export default async function plugin(bb: BbPluginApi): Promise<void> {
       }),
     () => undefined,
   );
-  registerAskTool(bb, store, { newId, now, stages: stagesOf, flowIds: () => flows.current().flows.map((flow) => flow.id), flowName: flowNameOf, hasFlow: (threadId) => flowOf(threadId) !== null, emit, planning: (threadId) => readPlanning(bb.sdk, threadId, Date.now(), readClaudeTranscript()), progress });
+  registerChecklistTool(bb, store);
+  // Решение агента записывает модуль ответов, а он подключается ниже: ссылка заполняется, когда он встанет.
+  let recordDecided: ((brief: DecisionBrief) => Promise<void>) | undefined;
+  registerAskTool(bb, store, { decided: (brief) => recordDecided?.(brief) ?? Promise.resolve(), newId, now, stages: stagesOf, flowIds: () => flows.current().flows.map((flow) => flow.id), flowName: flowNameOf, hasFlow: (threadId) => flowOf(threadId) !== null, emit, planning: (threadId) => readPlanning(bb.sdk, threadId, Date.now(), readClaudeTranscript()), progress });
   const journalDirs = createJournalDirStore(bb.storage.kv);
   // Каждый ответ на бриф запоминается за тредом вместе с путём файла журнала: по нему итог прогона ссылается на журнал.
   const journalIndex = createJournalIndex(bb.storage.kv, store);
@@ -355,7 +362,7 @@ export default async function plugin(bb: BbPluginApi): Promise<void> {
     handoffFlows.delete(sourceThreadId);
     return flowId;
   };
-  registerApi(bb, store, {
+  recordDecided = registerApi(bb, store, {
     now,
     stages: (threadId) => stagesOf(threadId).stages,
     warn: (message) => bb.log.warn(message),
@@ -378,7 +385,7 @@ export default async function plugin(bb: BbPluginApi): Promise<void> {
     widgetFlows: () =>
       flows.current().flows.map((flow) => ({ id: flow.id, name: flow.name, ...(flow.icon === undefined ? {} : { icon: flow.icon }), ...(flow.agent?.execution === undefined ? {} : { execution: flow.agent.execution }) })),
     threadFlowId: (threadId) => flowOf(threadId)?.id ?? null,
-  });
+  }).recordDecided;
   // Удалённый тред не ждёт владельца и не показывает прогресс: записи и его указатель снимаются, иначе значок висел бы
   // в левой панели. Архивированный тред и тред, отдавший работу, ключей не теряют — их ещё откроют.
   bb.events.on("thread.deleted", ({ thread }) => {
@@ -389,6 +396,7 @@ export default async function plugin(bb: BbPluginApi): Promise<void> {
   const registered = registerProgress(bb, progress, {
     now,
     stages: stagesOf,
+    checklist: async (threadId) => (await store.getChecklist(threadId))?.items ?? [],
     flowName: flowNameOf,
     // Окно этапа читает логи всех тредов прогона и их потомков: работу ведут и треды, которым её передали, и дочерние.
     windowCost: (threadId, from, to) => readWindowCost(runSessions, threadId, from, to, readClaudeTranscript()),
@@ -405,6 +413,7 @@ export default async function plugin(bb: BbPluginApi): Promise<void> {
     settled: (threadId) => scope.settled(threadId),
     readTaskFile: (threadId, target) => readTaskFile(bb.sdk, threadId, target),
     criteria: (threadId) => store.getThreadCriteria(threadId),
+    answers: (threadId) => store.getThreadAnswers(threadId),
     writeTaskFile: (threadId, target, text) => writeTaskFile(bb.sdk, threadId, target, text),
     flow: (threadId) => {
       const flow = flowOf(threadId);
@@ -494,7 +503,18 @@ export default async function plugin(bb: BbPluginApi): Promise<void> {
     known.catch(() => sideChats.delete(threadId));
     return known;
   };
-  const choice = registerFlowChoice(bb, { flows, threads, progress, store, cancelRun: (threadId) => runner.cancel(threadId), finished: runFinished, sideChat });
+  // «Применить» посреди хода: этапы нового flow — агенту в тот же ход строкой `steer`.
+  const applied = tellApplied({
+    active: async (threadId) => (await bb.sdk.threads.get({ threadId })).status === "active",
+    steer: (threadId, input) => bb.sdk.threads.send({ threadId, mode: "steer", input }),
+    mark: own.mark,
+    flowOf: (flowId) => {
+      const flow = flowOrNone(flows.current(), flowId);
+      return flow === null ? null : { name: flow.name, stages: stageSettingsOf(flows.current(), flow).stages };
+    },
+    isNoFlow: (flowId) => flowId === NO_FLOW,
+  });
+  const choice = registerFlowChoice(bb, { flows, threads, progress, store, cancelRun: (threadId) => runner.cancel(threadId), finished: runFinished, sideChat, applied });
   // Ход владельца применяет flow, выбранный в контейнере состояния Flow; после завершённого прогона — начинает следующий.
   // Первое сообщение нового треда даёт ему flow и прогон: тред передачи — flow исходного, остальные с flow — пустой прогон.
   // Тред с «Автоматически»: сообщение, которое начинает ход, ждёт в очереди, пока скрипт выбирает flow; у треда в `pending`

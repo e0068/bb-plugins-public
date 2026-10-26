@@ -7,7 +7,8 @@ import { automationView, executorKind, idleMinutes, isFailed, stageLiveIcon } fr
 import { stagePlans } from "./budget";
 import { demoVerdict, outcomeKind } from "./outcome";
 import { stagePlaces } from "./nest";
-import { askedStageIds, isAutomationStage } from "./stages";
+import { askedStageIds, isAutomationStage, recommendedStageChoice, stageItems, stagePhase } from "./stages";
+import { holdsNothing } from "./settle";
 import { runCascade } from "./sub-stages";
 
 export const EMPTY_PROGRESS: FlowProgress = { stages: {}, waiting: [] };
@@ -42,7 +43,20 @@ export const touchesProgress = (brief: DecisionBrief): boolean => brief.setup?.s
 /** Меняет ли ответ прогресс: бриф с этапами или итогом — да; уточнение запущенной работы — только своим прогнозом, новым планом прогона. */
 export const answerMovesProgress = (brief: DecisionBrief, planned: Planned | undefined): boolean => touchesProgress(brief) || (brief.launched === true && planned !== undefined);
 
-/** Бриф агента: сделанные по отчёту получают конец и ссылки, Демонстрация закрывается, ждущие — начало. */
+
+/**
+ * Рекомендованный прогон брифа, который ход не держит: этапы впереди получают исполнителя, предложенного агентом. Снять этап
+ * отправкой нельзя: пропуск — решение владельца, он приходит ответом с Утверждением (docs/decisions/flow-run-holds-every-stage-until-owner-approves-drop.md).
+ */
+const recommendedRun = (progress: FlowProgress, brief: DecisionBrief): FlowProgress =>
+  stageItems(brief)
+    .filter((item) => stagePhase(item) === "todo")
+    .reduce((p, item) => patch(p, item.stage.id, (t) => (t.finishedAt === undefined ? { ...t, executor: recommendedStageChoice(item).executor } : t)), progress);
+
+/**
+ * Бриф агента: сделанные по отчёту получают конец и ссылки, Демонстрация закрывается, ждущие — начало. Бриф, который прогон не держит,
+ * закрывает свои этапы отправкой, как Демонстрация, и сразу ставит рекомендованный прогон: выбор владельца придёт с Утверждением.
+ */
 export const onBrief = (progress: FlowProgress, brief: DecisionBrief, at: string): FlowProgress => {
   if (!touchesProgress(brief)) return progress;
   const done = (brief.setup?.stages ?? []).filter((r) => r.state !== "todo");
@@ -50,6 +64,11 @@ export const onBrief = (progress: FlowProgress, brief: DecisionBrief, at: string
   // Демонстрация — отчёт, а не остановка: этап закрыт отправкой, автоматизация за ним идёт сразу.
   const demo = reportedDemo(brief);
   const finished = demo === null ? reported : patch(reported, demo, (t) => finish(at)(start(at)(t)));
+  if (holdsNothing(brief)) {
+    const own = waitingOf(brief);
+    const closed = own.reduce((p, id) => patch(p, id, (t) => finish(at)(start(at)(t))), finished);
+    return { ...recommendedRun(closed, brief), waiting: progress.waiting.filter((id) => !own.includes(id)), lastBriefId: brief.id };
+  }
   const waiting = waitingOf(brief);
   // Бриф запоминается записью: под его карточкой в ленте встанет итог, когда прогон закроется.
   return { ...waiting.reduce((p, id) => patch(p, id, start(at)), finished), waiting, lastBriefId: brief.id };

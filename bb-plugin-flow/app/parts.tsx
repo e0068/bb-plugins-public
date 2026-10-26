@@ -6,7 +6,7 @@ import { Icon, type IconName } from "../components/ui/icon";
 import { Textarea } from "../components/ui/textarea";
 import { SEND_RETRY_DELAYS_MS, SEND_RETRY_WINDOW_MS, retryable, sendFailureOf, type SendFailure } from "../core/send-failure";
 import { cn } from "../lib/utils";
-import type { AnswerRecord, DecisionBrief } from "../shared/contract";
+import type { AnswerRecord, DecisionBrief, GroupAnswer } from "../shared/contract";
 import { emptyDraft, type Draft } from "./draft";
 import { readStoredDraft, storeDraft } from "./draft-storage";
 import { AttachButton, usePasteImages } from "./attachments";
@@ -116,7 +116,8 @@ export function useStoredDraft(briefId: string, initial: () => Draft = emptyDraf
   return [draft, setDraft] as const;
 }
 
-export type Sender = (draft: Draft) => Promise<
+/** `extra.group` — у Утверждения: ответы виджетов его группы, копивших ответ до него. */
+export type Sender = (draft: Draft, extra?: { group?: GroupAnswer[] }) => Promise<
   | { kind: "accepted"; record: AnswerRecord }
   | { kind: "already_answered"; record: AnswerRecord }
   | { kind: "not_found" }
@@ -141,13 +142,13 @@ export function useSubmit({ send, onResult }: Omit<FormProps, "brief">) {
   const [missing, setMissing] = useState<ReadonlySet<string>>(new Set());
   const inFlight = useRef(false);
 
-  const submit = async (draft: Draft) => {
+  const submit = async (draft: Draft, extra?: { group?: GroupAnswer[] }) => {
     if (inFlight.current) return;
     inFlight.current = true;
     setSending(true);
     setFailure(null);
     try {
-      const result = await withRetries(() => send(draft));
+      const result = await withRetries(() => send(draft, extra));
       if (result.kind === "incomplete") setMissing(new Set(result.questionIds));
       onResult(result);
     } catch (error) {

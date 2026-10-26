@@ -47,6 +47,7 @@ import { gitRunMessage } from "../wiring/git-run";
 import { githubClient } from "../wiring/github-client";
 import { readLinkedTask } from "../wiring/linked-task";
 import { type LocalMainPullResult, runLocalMainPull } from "../wiring/local-main-pull";
+import { headOfBaseCheckout, type LocalRefreshReport, refreshLocalPlugins } from "../wiring/local-plugin-refresh";
 import { checkMergedContent } from "../wiring/merged-content";
 import { waitForMergeability } from "../wiring/mergeability-wait";
 import { askLiveOpenPr, findLiveOpenPr, type OpenPrAnswer } from "../wiring/open-pr-lookup";
@@ -469,20 +470,36 @@ export async function githubBranchesOf(
 // path/base, try to pull main, and save the result to KV. Returns `null`
 // when there's nothing to try (no path or base branch) — the effect
 // silently skips the step at that point, retryMainPull turns it into an RPC error.
-export async function attemptLocalMainPull(
+export async function attemptLocalMainPull(sdk: Sdk, kv: PluginKvStorage, environmentId: string): Promise<LocalMainPullResult | null> {
+  return (await pullLocalMain(sdk, kv, environmentId, null))?.pull ?? null;
+}
+
+/**
+ * The same pull, and the plugins bb runs from folders of the integration copy
+ * it moved are rebuilt (wiring/local-plugin-refresh.ts); `refresh` is `null`
+ * when the pull failed or the base is checked out nowhere.
+ */
+export const attemptLocalMainPullRefreshing = (sdk: Sdk, kv: PluginKvStorage, environmentId: string, plugins: { port: PluginsPort; ownPluginId: string }) =>
+  pullLocalMain(sdk, kv, environmentId, plugins);
+
+async function pullLocalMain(
   sdk: Sdk,
   kv: PluginKvStorage,
   environmentId: string,
-): Promise<LocalMainPullResult | null> {
+  plugins: { port: PluginsPort; ownPluginId: string } | null,
+): Promise<{ pull: LocalMainPullResult; refresh: LocalRefreshReport | null } | null> {
   const env = await sdk.environments.get({ environmentId });
   // This always pulls the remote into the local ref — its own job regardless
   // of the base-mode toggle — so only githubBase (mode-independent) is used.
   const base = resolveBase(env, DEFAULT_BASE_MODE);
   if (!base || !env.path) return null;
 
-  const pull = await runLocalMainPull(gitClient(env.path), base.githubBase);
+  const git = gitClient(env.path);
+  const before = plugins === null ? null : await headOfBaseCheckout(git, base.githubBase);
+  const pull = await runLocalMainPull(git, base.githubBase);
   await kv.set(localMainPullKey(environmentId), pull);
-  return pull;
+  const refresh = pull.ok && before !== null && plugins !== null ? await refreshLocalPlugins(plugins.port, git, before, plugins.ownPluginId, () => pluginImportsOf(sdk, environmentId)) : null;
+  return { pull, refresh };
 }
 
 type EnvironmentStatus = Awaited<ReturnType<Sdk["environments"]["status"]>>;

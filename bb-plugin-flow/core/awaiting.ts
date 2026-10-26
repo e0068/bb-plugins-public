@@ -3,10 +3,13 @@
 import type { BuiltinKind } from "../lib/stage-constants";
 import type { AwaitingEntry, AwaitingKind, DecisionBrief, RowStage, WorkStage } from "../shared/contract";
 import { outcomeKind } from "./outcome";
+import { holdsNothing } from "./settle";
 
-/** Вид ожидания; `null` — бриф владельца не держит: уточнение и Демонстрация, которая закрывается самой отправкой. */
+/** Вид ожидания; `null` — бриф владельца не держит: уточнение, Демонстрация, которая закрывается самой отправкой, и бриф с меткой `settle`. */
 export const awaitingKind = (brief: DecisionBrief): BuiltinKind | null => {
   if (brief.kind === "clarify") return null;
+  // Вопросы, Definition of Done и Выбор этапов с меткой прогон не держат: ответ копится до Утверждения или агент решил сам.
+  if (holdsNothing(brief)) return null;
   if (brief.outcome !== undefined) return outcomeKind(brief) === "approve" ? "approve" : null;
   if (brief.questions.length > 0) return "questions";
   if (brief.setup?.criteria !== undefined) return "criteria";

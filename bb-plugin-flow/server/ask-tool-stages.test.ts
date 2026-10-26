@@ -60,7 +60,9 @@ describe("ask_decision и этапы работ", () => {
 
   it("перенос этапов из прошлого брифа треда встаёт в новый бриф с этапами", async () => {
     const { harness, store, idOf } = host();
-    const first = await store.getBrief(idOf(await harness.callAgentTool(ASK_TOOL_NAME, priced({ title: "Первый", setup: { stages: reports } }))));
+    // Первый бриф ничего не берёт в прогон: бриф без метки удержания запустил бы работу сразу, и второй Выбор этапов ждал бы отката.
+    const idle = reports.map((r) => ({ ...r, recommended: false }));
+    const first = await store.getBrief(idOf(await harness.callAgentTool(ASK_TOOL_NAME, priced({ title: "Первый", setup: { stages: idle } }))));
     await store.putThreadCarry(first!.threadId, { "stage:plan:executor": [planner.id], "stage:ghost:review": ["on"] });
     const second = await store.getBrief(idOf(await harness.callAgentTool(ASK_TOOL_NAME, priced({ title: "Второй", setup: { stages: reports } }))));
     expect(second?.carried).toEqual({ "stage:plan:executor": [planner.id] });

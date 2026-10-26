@@ -1,11 +1,13 @@
 // Flow треда в контейнере состояния Flow над его композером. У треда без прогона
 // и после завершённого — строка выбора: выбор запоминается и ждёт сообщения
-// владельца, которое начнёт ход, — тогда flow достаётся треду, и для настоящего
-// flow заводится пустой прогон, чтобы строку сразу сменил бар. Завершённый
+// владельца, которое начнёт ход, или «Применить» — тогда flow достаётся треду, и для настоящего
+// flow заводится пустой прогон, чтобы строку сразу сменил бар; агенту в идущем ходе «Применить» шлёт строку с этапами. Завершённый
 // прогон без выбора уступает «Автоматически». У идущего прогона — «Отменить
 // flow»: тред идёт без flow, а прогон, отложенные шаги автоматизаций и ожидание
 // владельца снимаются.
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
+
+import type { Locale } from "../lib/i18n";
 
 import { AUTO_FLOW, NO_FLOW, flowById, flowOrNone, withExpandedStages } from "../core/flows";
 import { flowChoiceRpcContract, threadFlowRpcContract } from "../shared/contract";
@@ -29,13 +31,15 @@ export const registerFlowChoice = (
     flows: FlowSettingsStore;
     threads: ThreadFlows;
     progress: Pick<ProgressStore, "annotate" | "remove" | "run">;
-    store: Pick<DecisionStore, "dropAwaiting" | "resetThreadWork">;
+    store: Pick<DecisionStore, "dropAwaiting" | "resetThreadWork" | "dropChecklist">;
     /** Гасит отложенные автоповторы треда и останавливает его идущие шаги (./automation-runner.ts). */
     cancelRun: (threadId: string) => void;
     /** Прогон треда завершён: flow у треда больше нет, и следующий выбирается заново. Нет — прогон не завершается никогда. */
     finished?: (threadId: string) => Promise<boolean>;
     /** Тред — Side chat. Нет — Side chat не бывает. */
     sideChat?: (threadId: string) => Promise<boolean>;
+    /** «Применить» отдал треду flow: агенту в идущем ходе — строка с его этапами. Нет — агенту ничего не уходит. */
+    applied?: (threadId: string, flowId: string, locale: Locale | undefined) => Promise<void>;
   },
 ): FlowChoice => {
   /** Flow треда так, как его видит строка выбора: тред без привязки — flow по умолчанию. */
@@ -53,24 +57,55 @@ export const registerFlowChoice = (
     await deps.threads.pick(threadId, null);
     deps.cancelRun(threadId);
     await deps.store.dropAwaiting(threadId);
+    // Чек-лист прошлого прогона не держит этапы следующего.
+    await deps.store.dropChecklist(threadId);
     await deps.progress.remove(threadId);
+  };
+
+  /**
+   * Выбор достаётся треду: завершённый прогон уступает следующему — его итог уже заморожен под своим брифом, — а настоящий flow
+   * получает пустой прогон: бар 0/N сразу; правка без продвижения — этапы ещё не начаты, и автоматизациям нечего делать.
+   */
+  const give = async (threadId: string, flowId: string, done: boolean) => {
+    if (done) await deps.progress.remove(threadId);
+    await deps.store.dropChecklist(threadId);
+    await deps.threads.assign(threadId, flowId);
+    if (flowOrNone(deps.flows.current(), flowId) !== null) await deps.progress.annotate(threadId, (progress) => progress);
+  };
+  /** Идёт ли у треда прогон и завершён ли он: строки выбора над незавершённым нет. */
+  const runState = async (threadId: string) => {
+    const running = (await deps.progress.run(threadId)) !== null;
+    return { running, done: running && (await finished(threadId)) };
   };
 
   bb.rpc.register(flowChoiceRpcContract, {
     // Side chat выбора flow не предлагает: Flow его не ведёт.
-    threadFlowChoice: async ({ threadId }) =>
-      (await deps.sideChat?.(threadId).catch(() => false))
-        ? null
-        : {
-            flows: withExpandedStages(deps.flows.current().flows).map(({ id, name, stages, icon }) => ({ id, name, stages: stages.length, ...(icon === undefined ? {} : { icon }) })),
-            selected: deps.threads.pickedOf(threadId) ?? (await shown(threadId)),
-          },
+    threadFlowChoice: async ({ threadId }) => {
+      if (await deps.sideChat?.(threadId).catch(() => false)) return null;
+      const current = await shown(threadId);
+      return {
+        flows: withExpandedStages(deps.flows.current().flows).map(({ id, name, stages, icon }) => ({ id, name, stages: stages.length, ...(icon === undefined ? {} : { icon }) })),
+        selected: deps.threads.pickedOf(threadId) ?? current,
+        current,
+      };
+    },
 
     async pickThreadFlow({ threadId, flowId }) {
       if (!known(flowId)) return { kind: "failed" as const, reason: "unknown-flow" as const };
       // Выбор того, что у треда уже стоит, — отказ от прежнего выбора, а не новый.
       await deps.threads.pick(threadId, flowId === (await shown(threadId)) ? null : flowId);
       return { kind: "picked" as const, selected: flowId };
+    },
+
+    async applyThreadFlow({ threadId, locale }) {
+      const { running, done } = await runState(threadId);
+      if (running && !done) return { kind: "failed" as const, reason: "running" as const };
+      const picked = await deps.threads.takePicked(threadId);
+      if (picked === undefined) return { kind: "failed" as const, reason: "nothing-picked" as const };
+      await give(threadId, picked, done);
+      // Строка агенту — после того как flow уже у треда: сбой доставки выбора не откатывает.
+      await deps.applied?.(threadId, picked, locale).catch(() => undefined);
+      return { kind: "applied" as const, flowId: picked };
     },
 
     async cancelFlow({ threadId }) {
@@ -105,16 +140,11 @@ export const registerFlowChoice = (
     async ownerTurn(threadId) {
       // Выбор снимается в любом случае: прогон, начатый агентом после выбора, он не перебивает — строки выбора над баром уже нет.
       const taken = await deps.threads.takePicked(threadId);
-      const running = (await deps.progress.run(threadId)) !== null;
-      const done = running && (await finished(threadId));
+      const { running, done } = await runState(threadId);
       // Завершённый прогон без выбора уступает «Автоматически» — тому, что строка и показывала выбранным.
       const picked = taken ?? (done ? AUTO_FLOW : undefined);
       if (picked === undefined || (running && !done)) return;
-      // Завершённый прогон уступает следующему: его итог уже заморожен под своим брифом.
-      if (done) await deps.progress.remove(threadId);
-      await deps.threads.assign(threadId, picked);
-      // Пустой прогон — бар 0/N сразу после отправки; правка без продвижения: этапы ещё не начаты, и автоматизациям нечего делать.
-      if (flowOrNone(deps.flows.current(), picked) !== null) await deps.progress.annotate(threadId, (progress) => progress);
+      await give(threadId, picked, done);
     },
   };
 };

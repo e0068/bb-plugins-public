@@ -1,6 +1,6 @@
 ---
 name: flow-demo
-description: The Demo stage — show the owner everything done since the previous demo, with a link to every result and a live result in one click, and go on without waiting; the demo has no comment field and no buttons — the owner comments on the approval. In bb — a brief with outcome via ask_decision; in plain Claude Code — a report and AskUserQuestion. Use it on the Demo stage of a Flow and when the work has reached a point where the owner should see it. Этап Демонстрация — показать сделанное и живой результат.
+description: The Demo stage — show the owner everything done since the previous demo, with a link to every result and a live result in one click, and go on without waiting; the demo has no buttons — its comment, when an approval stands ahead, goes with that approval. In bb — a brief with outcome via ask_decision; in plain Claude Code — a report and AskUserQuestion. Use it on the Demo stage of a Flow and when the work has reached a point where the owner should see it. Этап Демонстрация — показать сделанное и живой результат.
 ---
 
 # Demo
@@ -62,7 +62,7 @@ No AskUserQuestion — the same report ending with "continue or write a comment"
 
 ## No comment on the demo itself
 
-The demo widget is the report and nothing else: no comment field, no buttons. The owner comments on the approval stage that follows — a comment there is rework by `flow-approve` — or writes in the chat; a chat message can arrive at any moment, while you are on a later stage, too. Answer it. If it asks for a change, return the work to the stage where the change is made — roll back to it with flow_stage — and go through the stages after it again in order, reviews and automations included, up to this demo, and send the demo again: otherwise the change skips the review and the commit after it. A comment without a change — answer it in one sentence and carry on where you are.
+The demo widget is the report: no buttons. When an approval stands ahead, it has a comment field — the comment does not stop the run and arrives with that approval as a checklist item. The owner also comments on the approval stage that follows — a comment there is rework by `flow-approve` — or writes in the chat; a chat message can arrive at any moment, while you are on a later stage, too. Answer it. If it asks for a change, return the work to the stage where the change is made — roll back to it with flow_stage — and go through the stages after it again in order, reviews and automations included, up to this demo, and send the demo again: otherwise the change skips the review and the commit after it. A comment without a change — answer it in one sentence and carry on where you are.
 
 The tasks under "Review" go to done at the end of the run: the automation step "Task → done" moves every task linked to the thread; one not linked to it, or a flow without that step, — set it done yourself: `bb tasks update <key> --status done`.
 
