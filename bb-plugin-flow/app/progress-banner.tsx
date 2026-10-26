@@ -307,12 +307,12 @@ export function ProgressBanner() {
 function Banner() {
   const { scope } = useComposerView();
   const threadId = scope.kind === "thread" ? scope.threadId : null;
-  const { view, drop } = useProgress(threadId);
+  const { view, drop, refresh } = useProgress(threadId);
   const [open, setOpen] = useState(false);
   if (threadId === null || view === undefined) return null;
   // Тред без идущего прогона — до первого и после завершённого — на месте бара строка выбора flow: прогон начнётся с сообщением владельца.
   // Кроме треда, который работу отдал: итог лёг в ленту носителя, и здесь, чем кончилась работа, видно только по баннеру.
-  if (view === null || (view.finished === true && view.carrier === undefined)) return <FlowChoice threadId={threadId} />;
+  if (view === null || (view.finished === true && view.carrier === undefined)) return <FlowChoice threadId={threadId} onApplied={refresh} />;
   if (view.total === 0) return null;
   // Свой экземпляр на тред: переключения этапов, ещё не подтверждённые опросом, не переходят в другой тред.
   return <Progress key={threadId} view={view} threadId={threadId} open={open} toggle={() => setOpen((value) => !value)} onCancelled={() => {
@@ -322,12 +322,14 @@ function Banner() {
 }
 
 /** Прогон треда: `undefined` — сервер ещё не ответил, `null` — прогона нет; `drop` снимает его сразу, не дожидаясь опроса. */
-function useProgress(threadId: string | null): { view: ProgressView | null | undefined; drop: () => void } {
+function useProgress(threadId: string | null): { view: ProgressView | null | undefined; drop: () => void; refresh: () => void } {
   const rpc = useRpc<typeof progressRpcContract>();
   // Клиент RPC приходит новым объектом на каждый рендер: без ссылки опрос перезапускался бы каждую перерисовку.
   const rpcRef = useRef(rpc);
   rpcRef.current = rpc;
   const [view, setView] = useState<ProgressView | null | undefined>(undefined);
+  // Внеочередной такт: «Применить» завёл прогон, и бар сменяет строку выбора сразу, а не на следующем такте.
+  const pullRef = useRef<() => void>(() => undefined);
   useEffect(() => {
     if (threadId === null) return;
     let alive = true;
@@ -337,6 +339,7 @@ function useProgress(threadId: string | null): { view: ProgressView | null | und
         // Баннер — справка: пропущенный такт не стоит тоста.
         () => undefined,
       );
+    pullRef.current = () => void pull();
     void pull();
     const timer = setInterval(() => void pull(), POLL_MS);
     return () => {
@@ -344,7 +347,7 @@ function useProgress(threadId: string | null): { view: ProgressView | null | und
       clearInterval(timer);
     };
   }, [threadId]);
-  return { view, drop: () => setView(null) };
+  return { view, drop: () => setView(null), refresh: () => pullRef.current() };
 }
 
 /** Корни файлов прогона: окружение — из вида прогона, он помнит его и у замороженного итога; хранилище — у bb. */
@@ -477,23 +480,27 @@ export function Row({ stage, roots, onToggle, expanded = false, onExpand, subOf,
 }
 
 /** Есть ли строке что развернуть: результаты сверх первого, шаги автоматизации, до которой прогон дошёл, или утверждённые пункты у Definition of Done. */
-const expandable = (stage: ProgressStage, criteria: readonly string[]): boolean =>
-  stage.state !== "todo" && stage.state !== "skip" && (stage.results.length > 1 || (stage.automation?.steps.length ?? 0) > 0 || showsCriteria(stage, criteria));
+const expandable = (stage: ProgressStage, criteria: readonly string[], answers: readonly string[] = []): boolean =>
+  stage.state !== "todo" && stage.state !== "skip" && (stage.results.length > 1 || (stage.automation?.steps.length ?? 0) > 0 || showsCriteria(stage, criteria) || showsAnswers(stage, answers));
 
 /** Строка Definition of Done раскрывает утверждённые пункты треда. */
 const showsCriteria = (stage: ProgressStage, criteria: readonly string[]): boolean => stage.kind === "criteria" && criteria.length > 0;
 
-/** Утверждённые пункты Definition of Done — нумерованным списком под серединой строки этапа. */
-function CriteriaItems({ criteria }: { criteria: readonly string[] }) {
+/** Строка Вопросов раскрывает ответы владельца. */
+const showsAnswers = (stage: ProgressStage, answers: readonly string[]): boolean => stage.kind === "questions" && answers.length > 0;
+
+/** Утверждённые пункты Definition of Done — нумерованным списком под серединой строки этапа; ответы на Вопросы — тем же списком без номеров. */
+function CriteriaItems({ criteria, answers = false }: { criteria: readonly string[]; answers?: boolean }) {
+  const List = answers ? "ul" : "ol";
   return (
-    <div data-progress-criteria className={cn(COLUMNS, "px-3 pb-1")}>
+    <div {...(answers ? { "data-progress-answers": "" } : { "data-progress-criteria": "" })} className={cn(COLUMNS, "px-3 pb-1")}>
       <span />
       <span />
-      <ol className="flex min-w-0 list-decimal flex-col gap-0.5 pl-4 text-[13px] leading-5">
+      <List className={cn("flex min-w-0 flex-col gap-0.5 pl-4 text-[13px] leading-5", answers ? "list-disc" : "list-decimal")}>
         {criteria.map((item, i) => (
           <li key={i} className="break-words">{item}</li>
         ))}
-      </ol>
+      </List>
       <span />
       <span />
       <span />
@@ -545,7 +552,7 @@ function TotalRow({ stages }: { stages: readonly ProgressStage[] }) {
  * `threadId` — тред, который ведёт прогон: из него нажимаются шаги автоматизаций; `null` — шаги только видны.
  * `toggleOf` — чекбокс «в прогоне» у этапа; нет — у этапа чекбокса нет. `criteria` — утверждённые пункты Definition of Done для его строки.
  */
-export function StageList({ stages, roots, threadId, toggleOf, criteria = [] }: { stages: readonly ProgressStage[]; roots: FileRoots | null; threadId: string | null; toggleOf?: (stage: ProgressStage, at: number) => ((run: boolean) => void) | undefined; criteria?: readonly string[] }) {
+export function StageList({ stages, roots, threadId, toggleOf, criteria = [], answers = [] }: { stages: readonly ProgressStage[]; roots: FileRoots | null; threadId: string | null; toggleOf?: (stage: ProgressStage, at: number) => ((run: boolean) => void) | undefined; criteria?: readonly string[]; answers?: readonly string[] }) {
   const [touched, setTouched] = useState<Readonly<Record<string, boolean>>>({});
   const places = progressPlaces(stages);
   // Под-этапы свёрнуты под строкой владельца: она раскрывается и ради них, а идущий или упавший под-этап раскрывает её сам.
@@ -553,7 +560,7 @@ export function StageList({ stages, roots, threadId, toggleOf, criteria = [] }: 
   const running = (each: ProgressStage) => each.state === "now" || each.state === "fail";
   const item = (stage: ProgressStage, nested: boolean): ReactNode => {
     const subs = subsOf(stage.id);
-    const canOpen = expandable(stage, criteria) || subs.length > 0;
+    const canOpen = expandable(stage, criteria, answers) || subs.length > 0;
     const open = canOpen && (touched[stage.id] ?? (openByDefault(stage) || subs.some(running)));
     const toggle = toggleOf?.(stage, stages.indexOf(stage));
     return (
@@ -569,6 +576,7 @@ export function StageList({ stages, roots, threadId, toggleOf, criteria = [] }: 
         />
         {open && stage.results.length > 1 && <MoreResults stage={stage} roots={roots} />}
         {open && showsCriteria(stage, criteria) && <CriteriaItems criteria={criteria} />}
+        {open && showsAnswers(stage, answers) && <CriteriaItems criteria={answers} answers />}
         {open && stage.automation !== undefined && <AutomationSteps stage={stage} threadId={threadId} />}
         {open && subs.length > 0 && <div className="ml-6 flex flex-col border-l border-border">{subs.map((sub) => item(sub, true))}</div>}
       </div>
@@ -760,7 +768,7 @@ function Progress({ view, threadId, open, toggle, onCancelled }: { view: Progres
               {driver !== null && <FlowMenu threadId={driver} onCancelled={onCancelled} />}
             </div>
           )}
-          <StageList stages={stages} roots={roots} threadId={driver} criteria={view.criteria} toggleOf={(stage, at) => (driver === null || at <= reached ? undefined : (run) => toggleStage(stage.id, run))} />
+          <StageList stages={stages} roots={roots} threadId={driver} criteria={view.criteria} answers={view.answers} toggleOf={(stage, at) => (driver === null || at <= reached ? undefined : (run) => toggleStage(stage.id, run))} />
         </div>
       )}
       {view.carrier !== undefined && (

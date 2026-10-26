@@ -90,7 +90,18 @@ export const readStoredDraft = (briefId: string): Draft | null => {
   return raw === null ? null : decodeDraft(raw);
 };
 
-export const storeDraft = (briefId: string, draft: Draft): void =>
+/** Слушатели правок черновиков окна: Утверждение пересчитывает правки виджетов своей группы, пока владелец их правит. */
+const listeners = new Set<() => void>();
+
+/** Подписка на правки черновиков окна; ответ — отписка. */
+export const subscribeDrafts = (listener: () => void): (() => void) => {
+  listeners.add(listener);
+  return () => void listeners.delete(listener);
+};
+
+export const storeDraft = (briefId: string, draft: Draft): void => {
   attempt(() => storage()?.setItem(`${KEY_PREFIX}${briefId}`, encodeDraft(draft)));
+  listeners.forEach((listener) => listener());
+};
 
 export const clearStoredDraft = (briefId: string): void => attempt(() => storage()?.removeItem(`${KEY_PREFIX}${briefId}`));

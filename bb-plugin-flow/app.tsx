@@ -50,16 +50,10 @@ export default definePluginApp((app) => {
   // Страница Flow открывает flow треда, с которого пришёл владелец, — тоже по настройке.
   registerSelectedThread(app, OWN_PLUGIN_ID, useSettings);
   app.composer.customize({ id: "flow", scopes: ["new-thread"], actions: [{ id: "flow-picker", component: FlowPicker }] });
+  // Плашка немого хода: провайдер отказал, а bb показал пустой ход. Свой контейнер над контейнером состояния Flow.
+  app.composer.customize({ id: "flow-silent-turn", scopes: ["thread"], banners: [{ id: "silent-turn", chrome: "bare", component: SilentTurnBanner }] });
   // Контейнер состояния Flow: пока прогон идёт — полоса этапов, без прогона и после завершённого — выбор flow.
-  // Над ним — плашка немого хода: провайдер отказал, а bb показал пустой ход.
-  app.composer.customize({
-    id: "flow-progress",
-    scopes: ["thread"],
-    banners: [
-      { id: "silent-turn", chrome: "bare", component: SilentTurnBanner },
-      { id: "progress", chrome: "bare", component: ProgressBanner },
-    ],
-  });
+  app.composer.customize({ id: "flow-progress", scopes: ["thread"], banners: [{ id: "progress", chrome: "bare", component: ProgressBanner }] });
   registerAwaitingStatus(app);
   app.slots.settingsSection({ id: "journal-dirs", title: t.journalTitle, description: t.journalDescription, component: JournalDirsSection });
   app.slots.settingsSection({ id: "automation-retry", title: t.retryTitle, description: t.retryDescription, component: AutomationRetrySection });

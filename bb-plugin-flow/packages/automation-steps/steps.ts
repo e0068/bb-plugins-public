@@ -25,7 +25,7 @@ import type { PlannedFigures, RunSpend } from "./core/task-figures";
 import type { PluginsPort } from "./wiring/plugin-reinstall";
 import {
   attemptArchive,
-  attemptLocalMainPull,
+  attemptLocalMainPullRefreshing,
   availableStatus,
   catchUpBranch,
   deliverIntoParent,
@@ -420,9 +420,18 @@ export function createSteps(ports: StepPorts): Steps {
     ),
     "git.pull-main": guarded(
       orIntoParent(notNeeded, async (threadId) => {
-        const pull = await attemptLocalMainPull(sdk, kv, await environmentOf(threadId));
-        if (pull === null) return failed("The environment has no working copy or base branch to pull main into.");
-        return pull.ok ? done() : failed(pull.reason);
+        const attempt = await attemptLocalMainPullRefreshing(sdk, kv, await environmentOf(threadId), { port: ports.plugins, ownPluginId: ports.ownPluginId });
+        if (attempt === null) return failed("The environment has no working copy or base branch to pull main into.");
+        if (!attempt.pull.ok) return failed(attempt.pull.reason);
+        // Плагины из папок основной копии собираются заново здесь же, собственный — после цепочки, как у шага обновления.
+        const { refreshed, problems, pendingSelf } = attempt.refresh ?? { refreshed: [], problems: [], pendingSelf: null };
+        if (pendingSelf !== null) await kv.set(selfUpdatePendingKey(threadId), pendingSelf);
+        const told = [
+          ...(refreshed.length === 0 ? [] : [`rebuilt from the integration copy: ${refreshed.join(", ")}`]),
+          ...(pendingSelf === null ? [] : [`${pendingSelf} rebuilds itself after the run`]),
+          ...problems.map((problem) => `plugin not rebuilt: ${problem}`),
+        ];
+        return done(told.length === 0 ? null : told.join("; "));
       }),
     ),
     // Плагины переводятся на смёрдженный код по файлам самого PR. Собственный

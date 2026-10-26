@@ -26,12 +26,18 @@ const selectBrief = { title: "Выбор", setup: { stages: [{ id: "select", sta
 const clarify = { title: "Тема", kind: "clarify", questions: [{ id: "q", kind: "yesno", question: "Светлую?", options: [{ id: "yes", action: "Да" }, { id: "no", action: "Нет" }] }] };
 
 describe("ждущие владельца треды", () => {
-  it("бриф до запуска с пунктами и этапами ставит тред ждать «Критериев», уточнение — нет, ответ снимает", async () => {
+  it("Выбор этапов и уточнение тред не держат: агент работает дальше, ждать владельца нечего", async () => {
     const { harness, ask } = await host();
     await ask("thr_a", selectBrief);
     await ask("thr_b", clarify);
+    expect(await harness.callRpc("awaitingThreads", {})).toEqual([]);
+  });
+
+  it("бриф без метки удержания — записанный до неё — ждёт «Критериев», ответ снимает", async () => {
+    const { harness, store } = await host();
+    await store.putAwaiting("thr_a", { briefId: "dec_old", kind: "criteria" });
     expect(await harness.callRpc("awaitingThreads", {})).toEqual([{ threadId: "thr_a", kind: "criteria" }]);
-    await harness.callRpc("answerBrief", { id: "dec_A1", messageId: "m", answer: { briefId: "dec_A1", answers: [], stages: [{ id: "task", run: true, executor: "self" }] } });
+    await store.clearAwaiting("thr_a", "dec_old");
     expect(await harness.callRpc("awaitingThreads", {})).toEqual([]);
   });
 

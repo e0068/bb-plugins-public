@@ -398,7 +398,14 @@ export const createAutomationRunner = (deps: AutomationRunnerDeps): AutomationRu
       await deps.kv.delete(key);
       if (typeof pluginId === "string" && pluginId.length > 0) pluginIds.add(pluginId);
     }
-    for (const pluginId of pluginIds) await deps.plugins.applyUpdate({ pluginId });
+    if (pluginIds.size === 0) return;
+    // Плагин из папки bb держит закреплённым: обновление его не пересобирает, а установка из той же папки — да, с настройками и секретами.
+    const sources = new Map((await deps.plugins.list()).plugins.map((plugin) => [plugin.id, plugin.source]));
+    for (const pluginId of pluginIds) {
+      const source = sources.get(pluginId);
+      if (source?.startsWith("path:") === true) await deps.plugins.install({ source });
+      else await deps.plugins.applyUpdate({ pluginId });
+    }
   };
 
   // Работа Flow над тредом, которую можно дождаться: нажатие на шаг Action не отказывает, пока цепочка доводит своё.

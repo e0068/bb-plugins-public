@@ -7,6 +7,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { addFlow, newFlow, NO_FLOW } from "./core/flows";
 import { stage } from "./core/stages-fixtures";
+import { builtinStage } from "./lib/stage-constants";
 import { FLOW_STAGE_TOOL } from "./server/progress";
 import type { FlowSettings } from "./shared/contract";
 import plugin from "./server";
@@ -45,13 +46,18 @@ describe("Flow → Центр уведомлений", () => {
     expect(pushed[0]).toMatchObject({ source: "flow", kind: "turn-done", title: "Ход закончен", threadId: "thr_1", threadTitle: "Тред" });
   });
 
-  it("конец хода с брифом, ждущим владельца, — «Ждёт ответа» с названием брифа", async () => {
+  it("конец хода с Утверждением, ждущим владельца, — «Ждёт ответа» с названием брифа", async () => {
     const pushed = stubCenter();
     const { harness, idle } = await boot();
-    await harness.callAgentTool("ask_decision", priced({ title: "Плагин", setup: { stages: STAGES }, questions: [{ id: "q", question: "Да?", kind: "confirm", options: [{ id: "yes", action: "Yes" }] }] }), { threadId: "thr_1" });
-    await idle("thr_1");
+    const current = await harness.callRpc<FlowSettings>("getFlowSettings", {});
+    await harness.callRpc("saveFlowSettings", addFlow(current, { ...newFlow("approve", "Approve"), stages: [builtinStage("approve", [])] }));
+    await harness.callRpc("setFlowChoice", { projectId: "proj_ap", flowId: "approve" });
+    await harness.emitThreadEvent("thread.created", { thread: makeThreadResponse({ id: "thr_ap", projectId: "proj_ap", parentThreadId: null }) });
+    const outcome = { stage: "approve", final: false, next: "Дальше", done: ["Сделано"], pending: [], results: [{ label: "a.md", target: "a.md" }] };
+    expect(await harness.callAgentTool("ask_decision", { title: "Плагин", outcome }, { threadId: "thr_ap" })).toContain("end the turn");
+    await idle("thr_ap");
     await vi.waitFor(() => expect(pushed.some((p) => (p as { kind: string }).kind === "awaiting")).toBe(true));
-    expect(pushed.find((p) => (p as { kind: string }).kind === "awaiting")).toMatchObject({ title: "Ждёт ответа — «Плагин»", threadId: "thr_1" });
+    expect(pushed.find((p) => (p as { kind: string }).kind === "awaiting")).toMatchObject({ title: "Ждёт ответа — «Плагин»", threadId: "thr_ap" });
   });
 
   it("тред без flow в центр не пишет", async () => {

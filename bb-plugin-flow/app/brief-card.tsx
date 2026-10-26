@@ -63,6 +63,8 @@ import type { Messages } from "../lib/messages";
 import { useLocale, useMessages } from "./locale-context";
 import { useScrollAnchor } from "./scroll-anchor";
 import { useMentions } from "./mentions";
+import { approveLabel, settledInitial } from "./approval-edits";
+import { useApprovalGroup } from "./approval-group";
 import { CommentRow, DemoCard } from "./outcome";
 import { agentLocked, useAgentPicker, useWidgetAgent } from "./agent-cells";
 import { SectionTag } from "./section-tag";
@@ -1250,7 +1252,7 @@ const ACTIONS_ROW = "flex flex-wrap";
  * или своим ответом в строке вопроса — «Отправить комментарии»; рекомендованный агентом flow (`outcome.nextFlow`) предвыбран, и
  * выбранный flow уводит работу в него — тогда кнопка «Отправить». У Демонстрации ряда нет: это отчёт.
  */
-function ApprovalActions(props: { brief: DecisionBrief; draft: Draft; setDraft: (update: (draft: Draft) => Draft) => void; catalog: WidgetAgent | null; sending: boolean; failed: boolean; complete: boolean; place: DispatchPlace; route: DispatchRoute; compact: boolean; compactable: boolean; onSubmit: (draft: Draft) => void }) {
+function ApprovalActions(props: { brief: DecisionBrief; draft: Draft; setDraft: (update: (draft: Draft) => Draft) => void; catalog: WidgetAgent | null; sending: boolean; failed: boolean; complete: boolean; place: DispatchPlace; route: DispatchRoute; compact: boolean; compactable: boolean; edits: number; ready: boolean; undecided: readonly string[]; onSubmit: (draft: Draft) => void }) {
   const t = useMessages();
   const recommended = props.brief.outcome?.nextFlow;
   const lockHere = agentLocked(props.catalog, props.draft, recommended);
@@ -1272,8 +1274,10 @@ function ApprovalActions(props: { brief: DecisionBrief; draft: Draft; setDraft: 
   const commented = answer.outcome?.accepted === false && !moves;
   const button = "h-auto min-h-10 min-w-max flex-1 basis-0 rounded-lg px-4 text-[13px] font-semibold";
   // Вопросы того же брифа должны быть решены до исхода: неполный ответ иначе отбил бы только сервер.
-  const blocked = props.sending || !props.complete;
-  const label = moves ? t.outcome.send : commented ? t.outcome.sendComments : finishes(props.brief, props.draft) ? t.outcome.finish : t.outcome.continue;
+  // Утверждение ждёт список своей группы, а утверждать не даёт, пока в её виджетах есть вопрос без ответа: на доработку — можно.
+  const undecided = !commented && !moves && props.undecided.length > 0;
+  const blocked = props.sending || !props.complete || !props.ready || undecided;
+  const label = approveLabel({ moves, commented, edits: props.edits, finishes: finishes(props.brief, props.draft) }, t.outcome);
   return (
     <div className="-mt-2 flex flex-col items-stretch gap-1.5">
       <div className={cn(ACTIONS_ROW, ACTIONS_GAP)}>
@@ -1287,6 +1291,8 @@ function ApprovalActions(props: { brief: DecisionBrief; draft: Draft; setDraft: 
       </div>
       {agent.lists}
       {picker.lists}
+      {undecided && <div className="text-right text-xs text-destructive">{t.outcome.undecided(props.undecided.join(", "))}</div>}
+      {props.edits > 0 && !commented && !moves && !undecided && <div className="text-right text-xs text-muted-foreground">{t.outcome.goesWith(props.edits)}</div>}
       {props.failed && <div className="text-right text-xs text-destructive">{t.common.sendFailed}</div>}
     </div>
   );
@@ -1331,9 +1337,9 @@ function Body({ brief, view }: { brief: DecisionBrief; view: View }) {
  * `compactable` — можно ли сейчас сжать тред: ложно у уточнения, пока идёт ход агента, — тогда сжатие не показывается и не уходит в ответ.
  * `idleAfter` — после этого утверждения в прогоне нет работы агента: сжатие не предлагается, пока владелец не написал своё.
  */
-export function BriefCard({ brief, send, onResult, roots, place = "here", route = DEFAULT_ROUTE, compact = false, compactable = true, idleAfter = false }: FormProps & { roots: FileRoots | null; place?: DispatchPlace; route?: DispatchRoute; compact?: boolean; compactable?: boolean; idleAfter?: boolean }) {
+export function BriefCard({ brief, send, onResult, roots, place = "here", route = DEFAULT_ROUTE, compact = false, compactable = true, idleAfter = false, sentWith }: FormProps & { roots: FileRoots | null; place?: DispatchPlace; route?: DispatchRoute; compact?: boolean; compactable?: boolean; idleAfter?: boolean; sentWith?: string }) {
   // Бриф, присланный взамен возвращённого, открывается с выбором владельца из возвращённого.
-  const [draft, setDraft] = useStoredDraft(brief.id, () => withRestored(brief, initialDraft(brief)), useDraftSender(brief.id));
+  const [draft, setDraft] = useStoredDraft(brief.id, () => (brief.settle === undefined ? withRestored(brief, initialDraft(brief)) : settledInitial(brief)), useDraftSender(brief.id));
   const [expanded, setExpanded] = useState<string | null>(null);
   const anchor = useScrollAnchor();
   const { sending, failed, failure, missing, touch, submit } = useSubmit({ send, onResult });
@@ -1366,6 +1372,16 @@ export function BriefCard({ brief, send, onResult, roots, place = "here", route 
     },
     brief,
   };
+  // Утверждение уносит ответы виджетов своей группы, копивших их до него; правки считаются живьём.
+  const approval = brief.outcome !== undefined && !isReport(brief);
+  const group = useApprovalGroup(brief, approval);
+  /** Утверждение уносит ответы группы; комментарий к нему — на доработку: ответы остаются черновиками и вернутся агенту виджетами. */
+  const sendApproval = (next: Draft) => {
+    const outcome = toAnswer(brief, settled(next)).outcome;
+    const rework = outcome?.accepted === false && outcome.flow === undefined;
+    if (!rework && group.undecided.length > 0) return Promise.resolve();
+    return submit(settled(next), rework ? {} : { group: group.group() });
+  };
   // Выбор ряда — модель и Flow — сводится перед отправкой: нетронутое предложение агента уходит ответом, совпавшее с текущим — нет.
   const catalog = useWidgetAgent(brief.threadId);
   // Сжатие, которое сейчас недоступно, снимается с черновика один раз: его не покажет ячейка и не увезёт ответ,
@@ -1379,7 +1395,13 @@ export function BriefCard({ brief, send, onResult, roots, place = "here", route 
   const report = isReport(brief);
   const trySubmit = () => {
     // Место уходит в ответ всегда: запомненное, которого владелец не трогал, иначе осталось бы только на экране.
-    if (!report && complete && !sending) void submit(settled(offered));
+    // Бриф с меткой `settle` сам не отправляется: его правки уходят с Утверждением. Утверждение и по Ctrl+Enter уносит свою группу.
+    if (report || brief.settle !== undefined || !complete || sending) return;
+    if (approval) {
+      if (group.ready) void sendApproval(offered);
+      return;
+    }
+    void submit(settled(offered));
   };
 
   return (
@@ -1395,8 +1417,20 @@ export function BriefCard({ brief, send, onResult, roots, place = "here", route 
       }}
     >
       {report ? (
-        // Демонстрация — отчёт: ни поля, ни кнопок, ни вопросов (старая, сохранённая с ними, тоже).
-        <DemoCard brief={brief} roots={roots} />
+        // Демонстрация — отчёт: ни кнопок, ни вопросов (старая, сохранённая с ними, тоже). Перед Утверждением — поле комментария, он уйдёт с ним.
+        <>
+          <DemoCard brief={brief} roots={roots} />
+          {brief.settle === "approval" && sentWith !== undefined && <StatusLine icon="CircleCheck" title={t.outcome.sentWith} aside={brief.title} />}
+          {brief.settle === "approval" && sentWith === undefined && (
+            <>
+              <AddRow label={t.outcome.commentPlaceholder} placeholder={t.outcome.commentPlaceholder} value={draft.note} disabled={sending} voiceId="note" onText={(text) => setDraft((d) => setNote(d, text))} />
+              <StatusLine icon="MessageQuestion" title={t.outcome.heldTill} aside={brief.title} />
+            </>
+          )}
+        </>
+      ) : brief.outcome === undefined && brief.settle !== undefined ? (
+        // Вопросы, Definition of Done и Выбор этапов прогон не держат: нижней секции нет, правки копятся до Утверждения или решены агентом.
+        <SettledBrief brief={brief} view={brief.settle === "agent" ? { ...view, answered: true } : view} roots={roots} draft={draft} setDraft={setDraft} sending={sending} />
       ) : brief.outcome === undefined ? (
         <>
           <Body brief={brief} view={view} />
@@ -1407,10 +1441,26 @@ export function BriefCard({ brief, send, onResult, roots, place = "here", route 
       ) : (
         <>
           <div role="group" aria-label={t.stages.approve} className="flex flex-col overflow-hidden rounded-lg">
-            <CommentRow view={{ draft, sending, change: setDraft }} />
+            <CommentRow view={{ draft, sending, change: setDraft }} rework={group.edits > 0} />
           </div>
           <Body brief={brief} view={view} />
-          <ApprovalActions brief={brief} draft={offered} setDraft={setDraft} catalog={catalog} sending={sending} failed={failed} complete={complete} place={place} route={route} compact={preselected} compactable={canCompact} onSubmit={(next) => void submit(settled(next))} />
+          <ApprovalActions
+            brief={brief}
+            draft={offered}
+            setDraft={setDraft}
+            catalog={catalog}
+            sending={sending}
+            failed={failed}
+            complete={complete}
+            place={place}
+            route={route}
+            compact={preselected}
+            compactable={canCompact}
+            edits={group.edits}
+            ready={group.ready}
+            undecided={group.undecided}
+            onSubmit={(next) => void sendApproval(next)}
+          />
           <SendFailureReason failure={failure} className="-mt-2 text-right" />
         </>
       )}
@@ -1420,6 +1470,24 @@ export function BriefCard({ brief, send, onResult, roots, place = "here", route 
 }
 
 const noop = () => {};
+
+/**
+ * Бриф, который прогон не держит: вопросы, пункты и этапы, под ними поле комментария и строка, куда уйдёт правка, — без кнопки.
+ * `agent` — Утверждения впереди нет, агент решил сам: виджет только показывает решённое.
+ */
+function SettledBrief({ brief, view, roots, draft, setDraft, sending }: { brief: DecisionBrief; view: View; roots: FileRoots | null; draft: Draft; setDraft: (update: (draft: Draft) => Draft) => void; sending: boolean }) {
+  const t = useMessages();
+  const held = brief.settle === "approval";
+  const note = held ? <AddRow label={t.outcome.commentPlaceholder} placeholder={t.outcome.commentPlaceholder} value={draft.note} disabled={sending} voiceId="note" onText={(text) => setDraft((d) => setNote(d, text))} /> : undefined;
+  return (
+    <>
+      <Body brief={brief} view={view} />
+      {stageItems(brief).length > 0 && <SectionTag kind="select" extra={brief.stages?.flowName} className="-mb-3" />}
+      <AnswerBlock brief={brief} view={view} roots={roots} footer={note} />
+      <StatusLine icon={held ? "MessageQuestion" : "CircleCheck"} title={held ? t.outcome.heldTill : t.outcome.decidedByAgent} aside={brief.title} />
+    </>
+  );
+}
 
 /** Строка состояния под брифом: значок, что это, и пояснение через точку. */
 function StatusLine({ icon, title, aside }: { icon: "CircleCheck" | "MessageQuestion"; title: string; aside: string }) {

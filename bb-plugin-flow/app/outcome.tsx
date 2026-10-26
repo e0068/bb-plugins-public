@@ -147,7 +147,8 @@ export function DemoCard({ brief, roots }: { brief: DecisionBrief; roots: FileRo
 }
 
 /** Поле комментария к итогу: единственное, что видно у неотвеченного Утверждения. */
-export function CommentRow({ view }: { view: OutcomeView }) {
+export function CommentRow({ view, rework = false }: { view: OutcomeView; rework?: boolean }) {
   const t = useMessages();
-  return <AddRow label={t.outcome.comment} placeholder={t.outcome.commentPlaceholder} value={view.draft.outcomeNote ?? ""} disabled={view.sending} voiceId="outcome" onText={(text) => view.change((d) => setOutcomeNote(d, text))} className="min-h-10" />;
+  // У Утверждения с группой комментарий — «не утверждаю, на доработку»: подсказка поля говорит это заранее.
+  return <AddRow label={t.outcome.comment} placeholder={rework ? t.outcome.reworkPlaceholder : t.outcome.commentPlaceholder} value={view.draft.outcomeNote ?? ""} disabled={view.sending} voiceId="outcome" onText={(text) => view.change((d) => setOutcomeNote(d, text))} className="min-h-10" />;
 }

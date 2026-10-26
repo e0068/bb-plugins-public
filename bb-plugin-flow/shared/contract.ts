@@ -772,6 +772,18 @@ export const foldSchema = z.object({ holder: text, ids: z.array(text).min(1) });
 /** Итог прогона: минуты, цель и потолок в долларах; `null` у минут — времени в прогнозе нет. */
 export const plannedSchema = z.object({ minutes: z.number().nullable(), target: z.number(), max: z.number() });
 
+/** Ответ виджета группы Утверждения: ответ брифа из его черновика или комментарий к Демонстрации. */
+export const groupAnswerSchema = z.object({ id: text, answer: decisionAnswerSchema.optional(), note: z.string().optional() });
+export type GroupAnswer = z.infer<typeof groupAnswerSchema>;
+
+/** Пункт чек-листа по комментарию владельца к виджету: где оставлен, что сказано, отметил ли агент выполненным. */
+export const checklistItemSchema = z.object({ id: text, where: text, text, done: z.boolean() });
+export type ChecklistItem = z.infer<typeof checklistItemSchema>;
+
+/** Чек-лист треда: пункты и Утверждение, ответ которого его завёл, — карточка встаёт под этим ответом. */
+export const checklistSchema = z.object({ approvalId: text, items: z.array(checklistItemSchema) });
+export type Checklist = z.infer<typeof checklistSchema>;
+
 export const decisionBriefSchema = z
   .object({
     id: text,
@@ -797,6 +809,12 @@ export const decisionBriefSchema = z
     restored: restoredDraftSchema.optional(),
     /** Ставит сервер: этапы работ и название flow на момент брифа — отвеченный бриф рисуется ими, даже если настройки потом поменялись. */
     stages: z.object({ list: z.array(workStageSchema), minButtonWidth: z.number().int(), flowName: z.string().optional() }).optional(),
+    /**
+     * Ставит сервер виджету, который прогон не держит, — вопросам, Definition of Done, выбору этапов и Демонстрации в треде с flow.
+     * `approval` — впереди во flow Утверждение: ответы, правки и комментарий владельца копятся черновиком и уходят с ним;
+     * `agent` — Утверждения впереди нет: агент решил сам, виджет только показывает решённое. Нет метки — бриф держит ход и отвечается сам, как раньше.
+     */
+    settle: z.enum(["approval", "agent"]).optional(),
     ...briefFields,
   })
   .superRefine(checkBrief);
@@ -859,6 +877,14 @@ export const answerImagesSchema = z
   .refine((images) => new Set(images.map((i) => i.n)).size === images.length, "image numbers must not repeat")
   .refine((images) => images.reduce((sum, i) => sum + i.dataBase64.length, 0) <= ANSWER_IMAGES_MAX_BASE64, "images exceed 16 MB of base64");
 
+/** Виджеты группы Утверждения, которые копят ответ до него: неотвеченные с `settle: "approval"`, по порядку ленты. */
+export const approvalGroupRpcContract = defineRpcContract({
+  approvalMembers: {
+    input: z.object({ id: z.string() }),
+    output: z.object({ members: z.array(decisionBriefSchema) }),
+  },
+});
+
 export const decisionsRpcContract = defineRpcContract({
   getBrief: {
     input: z.object({ id: z.string() }),
@@ -877,13 +903,20 @@ export const decisionsRpcContract = defineRpcContract({
         resolved: z.literal(true).optional(),
         /** Неотвеченное утверждение, после которого в прогоне нет работы агента: виджет не предлагает сжать тред, пока владелец не написал своё. */
         idleAfter: z.literal(true).optional(),
+        /** Чек-лист по комментариям к виджетам, заведённый этим Утверждением: карточка под его ответом. */
+        checklist: z.array(checklistItemSchema).optional(),
+        /** Виджет, копивший ответ, ушёл агенту с этим Утверждением: поле комментария ему больше не нужно. */
+        sentWith: z.string().optional(),
       }),
       z.object({ kind: z.literal("not_found") }),
     ]),
   },
   answerBrief: {
-    /** `locale` — язык интерфейса владельца: на нём уходит реплика агенту; без него — русский, как до выбора языка. */
-    input: z.object({ id: z.string(), answer: decisionAnswerSchema, messageId: text, images: answerImagesSchema.optional(), locale: z.enum(["en", "ru"]).optional() }),
+    /**
+     * `locale` — язык интерфейса владельца: на нём уходит реплика агенту; без него — русский, как до выбора языка.
+     * `group` — только у Утверждения: ответы виджетов его группы, копившиеся черновиком (`settle: "approval"`), и комментарий к Демонстрации.
+     */
+    input: z.object({ id: z.string(), answer: decisionAnswerSchema, messageId: text, images: answerImagesSchema.optional(), locale: z.enum(["en", "ru"]).optional(), group: z.array(groupAnswerSchema).optional() }),
     output: z.discriminatedUnion("kind", [
       z.object({ kind: z.literal("accepted"), record: answerRecordSchema }),
       z.object({ kind: z.literal("already_answered"), record: answerRecordSchema }),
@@ -1118,6 +1151,17 @@ export const proposeRuleParamsSchema = z.object({
   replaces: text.max(20_000).optional().describe("Only mode replace: the exact fragment of the existing file the rule replaces, occurring there exactly once — e.g. a similar place that contradicts the rule"),
   index: text.max(500).optional().describe("Only a new memory file: the line appended to MEMORY.md in the same folder"),
   similar: z.array(ruleSimilarSchema).max(8).default([]).describe("Similar places you found in memory and skills; empty when none"),
+});
+
+/**
+ * Вызов инструмента: агент может не дать `content` или пересказать в нём правило своими словами — инструмент
+ * не отказывает, а ставит текст правила в запись сам (`withRuleText`), и дальше живёт уже предложение.
+ */
+export const proposeRuleCallSchema = proposeRuleParamsSchema.extend({
+  content: text
+    .max(20_000)
+    .optional()
+    .describe("Exactly what is written: the whole new file, the text appended or the text that takes the place of `replaces`. Holds text verbatim; when it does not, text is appended at its end; omitted — text alone is written"),
 });
 
 export const ruleDecisionSchema = z.discriminatedUnion("kind", [
@@ -1432,6 +1476,8 @@ export const progressViewSchema = z.object({
   carrier: z.object({ threadId: text, title: z.string().nullable() }).optional(),
   /** Утверждённые пункты Definition of Done треда: их раскрывает строка этапа Definition of Done; нет — строка не раскрывается. */
   criteria: z.array(text).optional(),
+  /** Ответы владельца на Вопросы строками «вопрос — ответ»: их раскрывает строка этапа Вопросов; нет — строка не раскрывается. */
+  answers: z.array(text).optional(),
 });
 
 /** Баннер прогресса — своим контрактом: брифу он не нужен. */
@@ -1570,15 +1616,23 @@ export const widgetAgentRpcContract = defineRpcContract({
 });
 
 export const flowChoiceRpcContract = defineRpcContract({
-  /** `selected` — выбор, ждущий отправки, а без него — flow треда; тред, оставленный агентом без flow, и тред с завершённым прогоном — `AUTO_FLOW`: flow им ещё выберет агент. */
+  /** `current` — то, что строка показывает без выбора владельца: «Применить» видна, когда `selected` от него отличается. `selected` — выбор, ждущий отправки, а без него — flow треда; тред, оставленный агентом без flow, и тред с завершённым прогоном — `AUTO_FLOW`: flow им ещё выберет агент. */
   threadFlowChoice: {
     input: z.object({ threadId: text }),
     /** `null` — тред выбора flow не предлагает: это Side chat. */
-    output: z.object({ flows: z.array(z.object({ id: text, name: text, stages: z.number().int().nonnegative(), icon: text.optional() })), selected: text }).nullable(),
+    output: z.object({ flows: z.array(z.object({ id: text, name: text, stages: z.number().int().nonnegative(), icon: text.optional() })), selected: text, current: text.optional() }).nullable(),
   },
   pickThreadFlow: {
     input: z.object({ threadId: text, flowId: text }),
     output: z.discriminatedUnion("kind", [z.object({ kind: z.literal("picked"), selected: text }), z.object({ kind: z.literal("failed"), reason: z.literal("unknown-flow") })]),
+  },
+  /**
+   * «Применить»: выбор, ждущий сообщения, достаётся треду сразу — без сообщения и посреди хода; агенту в идущем ходе уходит строка
+   * с этапами нового flow. `nothing-picked` — выбора нет; `running` — у треда идёт прогон, строки выбора над ним нет.
+   */
+  applyThreadFlow: {
+    input: z.object({ threadId: text, locale: z.enum(["en", "ru"]).optional() }),
+    output: z.discriminatedUnion("kind", [z.object({ kind: z.literal("applied"), flowId: text }), z.object({ kind: z.literal("failed"), reason: z.enum(["nothing-picked", "running"]) })]),
   },
   /** Тред идёт без flow: прогон снят, отложенные шаги автоматизаций погашены, ожидание владельца снято. `carried` — прогон ведёт другой тред, отменять его отсюда нельзя. */
   cancelFlow: {
@@ -1647,6 +1701,7 @@ export type BriefSetup = z.output<typeof briefSetupSchema>;
 export type DecisionOption = z.output<typeof decisionOptionSchema>;
 export type CommandRecord = z.output<typeof commandRecordSchema>;
 export type ProposeRuleParams = z.output<typeof proposeRuleParamsSchema>;
+export type ProposeRuleCall = z.output<typeof proposeRuleCallSchema>;
 export type RuleRecord = z.output<typeof ruleRecordSchema>;
 export type RuleKind = (typeof RULE_KINDS)[number];
 export type AnswerImage = z.output<typeof answerImagesSchema>[number];

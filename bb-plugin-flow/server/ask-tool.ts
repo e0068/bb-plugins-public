@@ -13,7 +13,8 @@ import { liveIssues, nextFlowIssues, outcomeKind, reportOnlyIssues } from "../co
 import { DECISION_ID_PREFIX, directiveLine } from "../core/directive";
 import { money, plannedMinutes, recommendedForecast } from "../core/budget";
 import { INSTRUCTIONS_LIMIT_CHARS } from "../lib/agent-limits";
-import { FLOW_RULE, SELF_ONLY_RULE, compactStageInstructions, isAskedStage, isAutomationStage, isStageCarryKey, reportIssues, stageInstructions, withStepResults } from "../core/stages";
+import { holdsNothing, joinsApproval, settleOf } from "../core/settle";
+import { FLOW_RULE, SELF_ONLY_RULE, compactStageInstructions, isAskedStage, isAutomationStage, isStageCarryKey, recommendedStageChoice, reportIssues, stageInstructions, stageItems, withStepResults } from "../core/stages";
 import { isHeadingStage } from "../core/sub-stages";
 import { stageKindOf, type BuiltinKind, type StageKind } from "../lib/stage-constants";
 import { FORK_ZERO_RULE, OPTION_PRICE_RULE, askDecisionParamsSchema, type AskDecisionParams, type Criterion, type DecisionBrief, type FlowProgress, type Planning, type RestoredDraft, type StageSettings } from "../shared/contract";
@@ -51,9 +52,9 @@ After launch (an answered brief with a stage in the run), in a flow with a Defin
 
 The owner also chooses where the work runs; a new thread takes the answer over and this thread stops.
 
-Brief kind — you decide whether to stop: brief — you wait for the answer; clarify — any question (fork, pick, confirm, yesno) with no setup, price or outcome, you keep working on your own reading and the answer arrives along the way.
+Kind: brief — only an approval stops you; other briefs go on by the recommended values, owner edits come with the next approval. clarify — any question with no setup, price or outcome.
 
-After the call, paste the directive line from the result into your reply as a standalone line, without quotes or backticks. For a brief except a demo, end the turn right after it.
+After the call, paste the directive line from the result as a standalone line, without quotes or backticks, and do what the result says.
 
 One brief per run: go through the run stages in order; a demo stage: send its outcome and go on; only an approval stops.`;
 
@@ -72,13 +73,18 @@ const repeatInFinalReply = (where: string): string =>
   ` When the turn ends, paste the line once more in the final reply of this turn${where}: bb folds replies between tool calls under "Worked for", and the card moves to the last copy of its line.`;
 
 /**
- * Что агенту делать после брифа: ждать ответа, а у Демонстрации и уточнения — работать дальше и повторить строку в конце хода.
- * Бриф, который кончает ход, сам напоминает о повторе: между демо и утверждением может пройти целый этап, и наказ демо забыт.
+ * Что агенту делать после брифа: ждать ответа только у Утверждения и брифа без метки, остальным — работать дальше и
+ * повторить строку в конце хода. Бриф, который кончает ход, сам напоминает о повторе: между демо и утверждением может
+ * пройти целый этап, и наказ демо забыт.
  */
 const nextStep = (brief: DecisionBrief): string => {
   if (brief.kind !== "brief") return ` Keep working; the answer arrives along the way.${repeatInFinalReply("")}`;
   if (brief.outcome !== undefined && outcomeKind(brief) === "demo")
-    return ` Then go on to the next stage of the run without waiting: the demo stage is closed by this call.${repeatInFinalReply(", above the approval line or the brief line that ends the turn")}`;
+    return ` Then go on to the next stage of the run without waiting: the demo stage is closed by this call.${brief.settle === "approval" ? " The owner's comment on it arrives with the next approval." : ""}${repeatInFinalReply(", above the approval line or the brief line that ends the turn")}`;
+  if (brief.settle === "approval")
+    return ` Then go on without waiting, on the recommended values: these stages are closed by this call, and the owner's answers, edits and comments arrive together with the next approval.${repeatInFinalReply(", above the approval line or the brief line that ends the turn")}`;
+  if (brief.settle === "agent")
+    return ` Then go on without waiting: no approval stands ahead in the flow, so the recommended values are your decision — items formulated and stages chosen from the history of similar tasks; the widget only shows them.${repeatInFinalReply(", above the approval line or the brief line that ends the turn")}`;
   return " In the same reply, paste again above this line the lines of demos and clarifies you sent earlier in this turn. Then end the turn and wait for the answer.";
 };
 
@@ -264,6 +270,19 @@ const resolveTargets = (store: DecisionStore, ids: readonly string[]): Promise<A
     }),
   );
 
+/**
+ * Неотвеченные уточнения группы ждут «Продолжить» нового Утверждения: метка `approval` снимает с них свою кнопку и вносит их
+ * в группу, а `refresh` перерисовывает их открытые виджеты.
+ */
+const joinClarifies = async (store: DecisionStore, ids: readonly string[], refresh: (id: string) => void): Promise<void> => {
+  for (const id of ids) {
+    const member = await store.getBrief(id);
+    if (member === null || !joinsApproval(member, (await store.getAnswer(id)) !== null, await store.isResolved(id))) continue;
+    await store.putBrief({ ...member, settle: "approval" });
+    refresh(id);
+  }
+};
+
 const toolError = (text: string) => ({ isError: true as const, content: [{ type: "text" as const, text }] });
 
 /** Вклад Flow в ход треда с flow: правило брифа и этапы flow. Его же отдаёт выбор flow агентом — этапы нужны в том же ходе. */
@@ -292,6 +311,8 @@ export const registerAskTool = (
     planning?: (threadId: string) => Promise<Planning | undefined>;
     /** Прогресс flow треда: бриф отмечает ждущие и сделанные этапы. */
     progress?: Pick<ProgressStore, "recordBrief" | "get">;
+    /** Бриф, по которому агент решил сам: его рекомендации ложатся, как ответ кнопкой (./api.ts). Нет — ничего не пишется. */
+    decided?: (brief: DecisionBrief) => Promise<void>;
     /** Сообщает Automations о событии Flow; не ждётся и не бросает (./automations.ts). */
     emit?: (trigger: FlowTrigger, threadId: string, context?: { stageId?: string }) => void;
   },
@@ -335,8 +356,11 @@ export const registerAskTool = (
       const approvedBudget = midWork && params.setup?.stages === undefined ? (progress?.planned ?? null) : null;
       // Ссылки сделанной автоматизации — из её шагов: агент их не присылает.
       const stepped = withStepResults(settings.stages, params.setup?.stages, params.setup?.stages === undefined ? null : progress);
+      const approval = params.outcome !== undefined && settings.stages.some((s) => s.id === params.outcome?.stage && stageKindOf(s) === "approve");
+      const settle = settleOf(fields, settings.stages, progress, approval, launched);
       const brief: DecisionBrief = {
         ...fields,
+        ...(settle === undefined ? {} : { settle }),
         ...(params.setup === undefined || stepped === undefined ? {} : { setup: { ...params.setup, stages: stepped } }),
         id: `${DECISION_ID_PREFIX}${deps.newId()}`,
         threadId: ctx.threadId,
@@ -364,8 +388,15 @@ export const registerAskTool = (
         const group = nextGroup(await store.getThreadGroup(ctx.threadId), brief);
         await store.putThreadGroup(ctx.threadId, group).catch(() => undefined);
         // Группа утверждения запоминается сейчас: к комментарию список треда уже уйдёт дальше — следующим брифом.
-        if (isApproval(brief)) await store.putApprovalGroup(brief.id, group.ids).catch(() => undefined);
+        if (isApproval(brief)) {
+          await store.putApprovalGroup(brief.id, group.ids).catch(() => undefined);
+          await joinClarifies(store, group.ids, (id) => bb.realtime.publish(ANSWERED_CHANNEL, { id })).catch(() => undefined);
+        }
         await deps.progress?.recordBrief(brief, brief.createdAt).catch(() => undefined);
+        // Утверждения впереди нет — рекомендации агента и есть решение: пункты, ответы, журнал и события ложатся сразу.
+        if (holdsNothing(brief) && brief.settle === "agent") await deps.decided?.(brief).catch(() => undefined);
+        // Бриф, который прогон не держит, запускает работу сразу — рекомендованным прогоном; выбор владельца придёт с Утверждением.
+        if (holdsNothing(brief) && stageItems(brief).some((item) => recommendedStageChoice(item).run)) await store.markLaunched(ctx.threadId).catch(() => undefined);
         const kind = awaitingKind(brief);
         if (kind !== null) await store.putAwaiting(brief.threadId, { briefId: brief.id, kind }).catch(() => undefined);
       }
