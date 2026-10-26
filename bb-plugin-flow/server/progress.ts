@@ -10,7 +10,7 @@ import { isActionStage, unfinishedBefore } from "../core/automation-run";
 import { checklistBlock, openItems } from "../core/checklist";
 import { undoDue } from "../core/automation-undo";
 import { delegatedReply, earlierResults, reworkReply, threadProviderOf } from "../core/provider-threads";
-import { afterMark, markReply, returnedNote, startFact, stopFailure, waitedReply, type StartFact } from "../core/mark-report";
+import { afterMark, boundaryNote, markReply, returnedNote, stageRef, startFact, stopFailure, upcomingAfter, waitedReply, type StartFact } from "../core/mark-report";
 import { carriedBy, carrierOf, EMPTY_PROGRESS, forHandoff, onAnswer, onBrief, onMark, pendingActive, progressView, recounted, reopen, isAhead, recountWindows, toggleStageInRun, touchesProgress, answerMovesProgress, withActive } from "../core/progress";
 import { historyOrder } from "../core/run-history";
 import { isRunFinished, runSummary } from "../core/run-summary";
@@ -20,6 +20,8 @@ import { stampFlow, type TaskFlow } from "../core/task-flow";
 import { flowProgressSchema, flowStageParamsSchema, frozenRunSchema, progressRpcContract, type ContextFillView, type DecisionAnswer, type DecisionBrief, type ChecklistItem, type FlowProgress, type FrozenRun, type Planned, type RunHistoryEntry, type RunSummaryView, type StageSettings, type WorkStage } from "../shared/contract";
 import { runKey, type PastRun, type RunFigures, type RunSpend } from "@bb-plugins/automation-steps/index";
 import { RELAY_WAIT_MS, type AgentRelay, type RelayHold } from "./agent-relay";
+import type { Boundary, StageState } from "./boundary";
+import type { StageModels } from "./stage-models";
 import type { ProviderThreads } from "./provider-threads";
 
 export const FLOW_STAGE_TOOL = "flow_stage";
@@ -324,6 +326,12 @@ const withTaskTitles = (results: readonly Result[], read: (target: string) => Pr
 const START_TIMEOUT_MS = 5000;
 const START_POLL_MS = 25;
 
+/** Где этап в прогоне треда: закрыт, начат или ещё нет. */
+export const stageStateOf = async (progress: Pick<ProgressStore, "get">, threadId: string, stageId: string): Promise<StageState> => {
+  const track = (await progress.get(threadId))?.stages[stageId];
+  return track?.finishedAt !== undefined ? "closed" : track?.startedAt !== undefined ? "started" : "todo";
+};
+
 const toolError = (text: string) => ({ isError: true as const, content: [{ type: "text" as const, text }] });
 
 export const registerProgress = (
@@ -371,6 +379,12 @@ export const registerProgress = (
     settled?: (threadId: string) => Promise<void>;
     /** Чек-лист треда по комментариям владельца: пока в нём есть открытые пункты, следующий этап не начинается. Нет — чек-листа не бывает. */
     checklist?: (threadId: string) => Promise<readonly ChecklistItem[]>;
+    /** Граница этапов: на отметке «готово» Flow назначает обслуживание треда — сжатие и модель следующего этапа; нет — граница не работает. */
+    boundary?: Pick<Boundary, "schedule" | "continueNow" | "carriedOn">;
+    /** План обслуживания треда перед этапом — сжатие и модель этапа (./stage-models.ts); нет — граница не работает. */
+    stageModels?: StageModels;
+    /** Сбой, о котором нужна строка в логе: реплика границы не ушла. */
+    warn?: (message: string) => void;
     /** Дочерний тред другого провайдера, которому отдан начатый этап с исполнителем `thread:<провайдер>` (./provider-threads.ts); нет — этап ведёт агент. */
     delegate?: ProviderThreads["delegate"];
   },
@@ -461,9 +475,29 @@ export const registerProgress = (
         const verdict = state === "done" ? afterMark(stages, marked, stage) : ({ kind: "none" } as const);
         const fact = verdict.kind === "due" ? await awaitStart(ctx.threadId, stages, verdict.stage.id, Date.now() + (deps.startTimeoutMs ?? START_TIMEOUT_MS)) : null;
         // Автоматизация пошла или стоит в очереди за идущей — вызов ждёт её конца; этап Action ждёт владельца, и ждать нечего.
-        const waits = hold !== undefined && verdict.kind === "due" && !isActionStage(verdict.stage) && (fact?.kind === "started" || fact?.kind === "busy");
-        const waited = waits ? await waitFor(ctx.threadId, stages, verdict.stage, hold, ctx.signal) : null;
-        const ahead = `${waited?.text ?? markReply(stage, verdict, fact)}${state === "done" ? returnedNote(stages, marked, stage) : ""}`;
+        const running = verdict.kind === "due" && !isActionStage(verdict.stage) && (fact?.kind === "started" || fact?.kind === "busy");
+        // Граница этапов: следующая работа агента впереди — сразу за этапом или за автоматизацией, которая действительно пошла.
+        const upcoming = state === "done" && deps.boundary !== undefined ? upcomingAfter(stages, marked, stage) : null;
+        const plan = deps.stageModels === undefined || upcoming === null || (upcoming.via === "automation" && !running) ? null : await deps.stageModels.plan(ctx.threadId, upcoming.stage, true);
+        if (plan !== null && upcoming !== null && deps.boundary !== undefined) {
+          deps.boundary.schedule(ctx.threadId, { ...plan, nextStage: stageRef(upcoming.stage), stageId: upcoming.stage.id, fresh: true });
+          // Агент без автоматизации впереди продолжит по реплике Flow, когда его ход кончится; перед автоматизацией будит она.
+          if (upcoming.via === "agent") void deps.boundary.continueNow(ctx.threadId).catch((error: unknown) => deps.warn?.(`flow_stage: the stage boundary message failed to reach the thread (${error instanceof Error ? error.message : String(error)})`));
+        }
+        // Доработка: этап, чья модель не та, что у треда, начинается после конца хода — модель ставит Flow, сжатие здесь не нужно.
+        // Этап, отданный дочернему треду другого провайдера, ведёт ребёнок: модель родителя ему не нужна.
+        const reworkPlan =
+          state === "started" && deps.boundary !== undefined && deps.stageModels !== undefined && marking !== undefined && threadProviderOf(marked.stages[stage]?.executor ?? "") === null && !deps.boundary.carriedOn(ctx.threadId, stage) ? await deps.stageModels.plan(ctx.threadId, marking, false) : null;
+        if (reworkPlan !== null && marking !== undefined && deps.boundary !== undefined) {
+          deps.boundary.schedule(ctx.threadId, { ...reworkPlan, nextStage: stageRef(marking), stageId: marking.id, fresh: false });
+          void deps.boundary.continueNow(ctx.threadId).catch((error: unknown) => deps.warn?.(`flow_stage: the stage boundary message failed to reach the thread (${error instanceof Error ? error.message : String(error)})`));
+        }
+        // Автоматизация не держит вызов, когда назначена граница: она идёт, пока тред простаивает, и будящая реплика пройдёт через Flow.
+        const waits = hold !== undefined && plan === null && running;
+        const waited = waits && verdict.kind === "due" ? await waitFor(ctx.threadId, stages, verdict.stage, hold, ctx.signal) : null;
+        const boundaryTail = plan !== null && upcoming !== null ? boundaryNote(plan, upcoming) : reworkPlan !== null && marking !== undefined ? boundaryNote(reworkPlan, { via: "agent", stage: marking }) : "";
+        // За этапом агента, с границей или без, строка о незапущенной автоматизации после него остаётся: у агента она единственная.
+        const ahead = `${waited?.text ?? markReply(stage, verdict, fact)}${boundaryTail}${state === "done" ? returnedNote(stages, marked, stage) : ""}`;
         const undoNote = undoLines.length === 0 ? "" : ` ${undoLines.join(" ")}`;
         // Этап с исполнителем-тредом ведёт дочерний тред провайдера: Flow заводит его сам, агент только ждёт отчёта.
         const providerId = state === "started" && marking !== undefined ? threadProviderOf(marked.stages[stage]?.executor ?? "") : null;
@@ -495,9 +529,27 @@ export const registerProgress = (
     const minutes = await deps.windowMinutes(threadId, windows).catch(() => undefined);
     // Ответ не по числу окон — считать нечего: ждём следующего опроса, а не пишем половину.
     if (minutes === undefined || minutes.length !== windows.length) return record;
+    // Встроенные этапы закрывает ответ владельца, а не отметка агента, и цены у них нет: доллары окна добираются вместе с минутами.
+    const costs = await costsOf(threadId, windows);
     let filled = record;
-    await progress.annotate(threadId, (p) => (filled = withActive(p, windows.map((window, i) => ({ id: window.id, minutes: minutes[i]! })))));
+    await progress.annotate(threadId, (p) => (filled = recounted(p, windows.map((window, i) => ({ id: window.id, minutes: minutes[i]!, ...(costs[i] === undefined ? {} : { cost: costs[i]! }) })))));
     return filled;
+  };
+
+  /**
+   * Доллары каждого окна по логам сессий треда; не прочиталось — `undefined` на месте окна. Окно одного брифа общее для всех
+   * его этапов: цена кладётся один раз, первому этапу группы, иначе сумма этапов утроила бы деньги. Нулевое окно цены не получает.
+   */
+  const costsOf = (threadId: string, windows: ReadonlyArray<{ from: number; to: number }>): Promise<Array<number | undefined>> => {
+    const seen = new Set<string>();
+    return Promise.all(
+      windows.map((window) => {
+        const key = `${window.from}:${window.to}`;
+        if (window.to <= window.from || seen.has(key)) return undefined;
+        seen.add(key);
+        return deps.windowCost(threadId, window.from, window.to).catch(() => undefined);
+      }),
+    );
   };
 
   /**

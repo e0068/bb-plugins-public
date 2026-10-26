@@ -26,8 +26,8 @@ describe("настройки Flow про список в панели тредо
   it("пороги второй полосы — в токенах, предвыбор компактации — с жёлтой зоны", async () => {
     const { bb, harness } = createFakePluginHost({ pluginId: "flow" });
     await plugin(bb);
-    expect(harness.registrations.settingsDescriptors.contextWarnTokens).toMatchObject({ type: "number", default: 250_000 });
-    expect(harness.registrations.settingsDescriptors.contextAlertTokens).toMatchObject({ type: "number", default: 400_000 });
+    expect(harness.registrations.settingsDescriptors.contextWarnTokens).toMatchObject({ type: "number", default: 150_000 });
+    expect(harness.registrations.settingsDescriptors.contextAlertTokens).toMatchObject({ type: "number", default: 300_000 });
     expect(harness.registrations.settingsDescriptors.compactPreselect).toMatchObject({ type: "select", options: ["Never", "In the yellow zone", "In the red zone"], default: "In the yellow zone" });
   });
 

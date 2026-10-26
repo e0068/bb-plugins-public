@@ -61,16 +61,16 @@ describe("пороги полосы в токенах из настроек пл
   });
 
   it("настройка пуста — пороги по умолчанию", async () => {
-    expect(await withSettings({})).toMatchObject({ warnTokens: 250_000, alertTokens: 400_000 });
+    expect(await withSettings({})).toMatchObject({ warnTokens: 150_000, alertTokens: 300_000 });
   });
 
   it("проценты прошлой версии в хранилище не читаются — действуют умолчания", async () => {
-    expect(await withSettings({ contextWarnPercent: 10, contextAlertPercent: 20 })).toMatchObject({ warnTokens: 250_000, alertTokens: 400_000 });
+    expect(await withSettings({ contextWarnPercent: 10, contextAlertPercent: 20 })).toMatchObject({ warnTokens: 150_000, alertTokens: 300_000 });
   });
 
   it("настройки не прочитались — пороги по умолчанию, а не отсутствие полосы", async () => {
     const fill = await contextFillOf(sourceOf(async () => [usage(50, 100)]), async () => { throw new Error("нет доступа"); }, "thr_1");
-    expect(fill).toMatchObject({ share: 0.5, warnTokens: 250_000, alertTokens: 400_000 });
+    expect(fill).toMatchObject({ share: 0.5, warnTokens: 150_000, alertTokens: 300_000 });
   });
 
   it("чисел нет — порогов не спрашиваем и полосы не будет", async () => {
@@ -80,10 +80,10 @@ describe("пороги полосы в токенах из настроек пл
   });
 
   it("перевёрнутая пара сбрасывается на умолчание, а не разворачивается", async () => {
-    expect(await withSettings({ contextWarnTokens: 500_000, contextAlertTokens: 300_000 })).toMatchObject({ warnTokens: 250_000, alertTokens: 400_000 });
+    expect(await withSettings({ contextWarnTokens: 500_000, contextAlertTokens: 200_000 })).toMatchObject({ warnTokens: 150_000, alertTokens: 300_000 });
   });
 
   it("не число в пороге сбрасывает пару на умолчание", async () => {
-    expect(await withSettings({ contextWarnTokens: "двести", contextAlertTokens: 400_000 })).toMatchObject({ warnTokens: 250_000, alertTokens: 400_000 });
+    expect(await withSettings({ contextWarnTokens: "двести", contextAlertTokens: 300_000 })).toMatchObject({ warnTokens: 150_000, alertTokens: 300_000 });
   });
 });

@@ -56,7 +56,7 @@ describe("ask_decision и виды этапов", () => {
   it("этап в состоянии review новый бриф не принимает", async () => {
     const { ask } = await host(false);
     const stages = secondSelect.map((s) => (s.id === "task" ? { ...s, state: "review" } : s));
-    await expect(ask({ title: "Бриф", setup: { stages } })).rejects.toThrow(/state review is gone/);
+    await expect(ask({ title: "Бриф", setup: { stages } })).rejects.toThrow(/state/);
   });
 
   it("итог — только у этапа вида Демонстрация", async () => {

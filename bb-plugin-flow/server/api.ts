@@ -21,7 +21,7 @@ import { isSideChat } from "../core/side-chat";
 import { stageItems } from "../core/stages";
 import { checklistOf, checklistRule } from "../core/checklist";
 import { recommendedAnswer } from "../core/settle";
-import { answerImagesRpcContract, approvalGroupRpcContract, awaitingRpcContract, briefDraftRpcContract, decisionsRpcContract, dispatchRpcContract, filesRpcContract, prototypeRpcContract, turnRpcContract, widgetAgentRpcContract, type AgentTurn, type DecisionAnswer, type DecisionBrief, type DispatchRoute, type Execution, type GroupAnswer, type WidgetAgent, type WorkStage } from "../shared/contract";
+import { answerImagesRpcContract, approvalGroupRpcContract, awaitingRpcContract, briefDraftRpcContract, decisionsRpcContract, dispatchRpcContract, filesRpcContract, prototypeRpcContract, turnRpcContract, widgetAgentRpcContract, type AgentTurn, type DecisionAnswer, type DecisionBrief, type DispatchRoute, type Execution, type FlowProgress, type GroupAnswer, type WidgetAgent, type WorkStage } from "../shared/contract";
 import { attachmentInput, attachmentsLine, lostImages, readAttachments, referencedImages, uploadAttachments } from "./attachments";
 import { handoff } from "./handoff";
 import type { ProgressStore } from "./progress";
@@ -71,6 +71,14 @@ export const registerApi = (
     carryFlow?: (fromThreadId: string, toThreadId: string) => Promise<void>;
     /** Дошло ли окно треда до зоны предвыбора компактации (./context.ts); нет зависимости или сбой — бриф открывается без компактации. */
     compactPreselected?: (threadId: string) => Promise<boolean>;
+    /**
+     * Модель, которую надо поставить треду перед следующей работой агента, когда владелец своей не выбрал: по прогрессу уже с этим
+     * ответом (./stage-models.ts); `null` — менять нечего. Встроенные этапы закрывает ответ, а не отметка агента, поэтому граница
+     * этапов на них не срабатывает. Сбой — модель не меняется.
+     */
+    stageModel?: (threadId: string, progress: FlowProgress) => Promise<string | null>;
+    /** Владелец выбрал модель треда в ответе (`chosen`) или ответил без выбора: выбранную Flow не перебивает моделью этапа (./stage-models.ts). */
+    ownerModel?: (threadId: string, chosen: boolean) => void;
     /** Id flow владельца: переход принимается только в один из них. */
     flowIds?: () => readonly string[];
     /** Переводит тред на flow, выбранный в Демонстрации: прежний прогон и работа снимаются, заводится пустой прогон нового (./flow-choice.ts). */
@@ -297,6 +305,13 @@ export const registerApi = (
           // После перехода у агента вся работа нового flow впереди.
           const record = switched === undefined ? ((await deps.progress?.get(brief.threadId).catch(() => null)) ?? null) : null;
           const ahead = record === null ? null : onAnswer(record, brief, answer, written.record.answeredAt);
+          deps.ownerModel?.(brief.threadId, execution !== undefined);
+          // Модель владельца главнее; без неё тред получает модель следующего этапа. Сбой смены модели ответ не отменяет.
+          if (execution === undefined && ahead !== null) {
+            const model = await deps.stageModel?.(brief.threadId, ahead).catch(() => null);
+            if (model !== null && model !== undefined)
+              await bb.sdk.threads.update({ threadId: brief.threadId, model }).catch((error: unknown) => deps.warn?.(`answer: the model of the next stage was not set (${error instanceof Error ? error.message : String(error)})`));
+          }
           if (switched !== undefined || grouped.owner.length > 0 || grouped.agent.length > 0 || needsAgentReply(brief, answer, ahead, attached.length + lost.length)) {
             // Видна ли хуку служебная часть в тексте хода — неизвестно: своей отмечаются оба варианта.
             deps.ownSend?.(brief.threadId, text);

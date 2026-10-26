@@ -1,5 +1,8 @@
 // Вторая полоса баннера: доля занятого окна контекста, её тон по двум порогам
 // владельца и отрезки полосы, на которые эти пороги её делят. Чисто, без эффектов.
+import { SELF_EXECUTOR, stageSkillOf } from "../lib/stage-constants";
+import type { WorkStage } from "../shared/contract";
+import { executionOf } from "./stage-execution";
 
 /** Обычный, предупреждающий и тревожный тон заливки занятого. */
 export type ContextTone = "normal" | "warn" | "alert";
@@ -15,11 +18,12 @@ export interface ContextThresholds {
 
 /**
  * Значения по умолчанию объявлены здесь и читаются сервером: записанное дважды,
- * в настройке и в запасном значении, число разошлось бы молча. Это прежние 25%
- * и 40% окна в миллион токенов — тревожить надо на первой трети, задолго до конца окна.
+ * в настройке и в запасном значении, число разошлось бы молча. Каждый шаг агента
+ * перечитывает весь контекст, поэтому тревожить надо рано: с 150 тысяч граница
+ * этапов уже сжимает тред, а с 300 тысяч полоса краснеет.
  */
-export const DEFAULT_WARN_TOKENS = 250_000;
-export const DEFAULT_ALERT_TOKENS = 400_000;
+export const DEFAULT_WARN_TOKENS = 150_000;
+export const DEFAULT_ALERT_TOKENS = 300_000;
 
 export const DEFAULT_CONTEXT_THRESHOLDS: ContextThresholds = {
   warnTokens: DEFAULT_WARN_TOKENS,
@@ -58,7 +62,7 @@ export function thresholdsOrDefault(warn: unknown, alert: unknown): ContextThres
   return { warnTokens: warn, alertTokens: alert };
 }
 
-/** Тон по занятым токенам. Порог включается в свою полосу: ровно 250 000 — уже предупреждение. */
+/** Тон по занятым токенам. Порог включается в свою полосу: ровно 150 000 — уже предупреждение. */
 export function contextTone(usedTokens: number, thresholds: ContextThresholds): ContextTone {
   if (usedTokens >= thresholds.alertTokens) return "alert";
   if (usedTokens >= thresholds.warnTokens) return "warn";
@@ -127,4 +131,79 @@ export function preselectsCompact(preselect: CompactPreselect, tone: ContextTone
     case "alert":
       return tone === "alert";
   }
+}
+
+/** Кэш провайдера живёт час без вызовов: после паузы дольше часа следующий шаг записывает весь контекст заново, по двойной цене. */
+export const CACHE_TTL_MS = 3_600_000;
+
+/**
+ * Прошёл ли с `createdAt` больше часа. Время, которое не читается, кэш не истекает: сжатие само не включается.
+ * Ровно час — ещё жив; «сейчас» приходит аргументом, мир ядро не читает.
+ */
+export function cacheExpired(createdAt: string, now: Date): boolean {
+  const created = Date.parse(createdAt);
+  return Number.isFinite(created) && now.getTime() - created > CACHE_TTL_MS;
+}
+
+/** Роль модели этапа: Sonnet тянет реализацию и тесты, Opus — остальную работу агента. */
+export type ModelRole = "sonnet" | "opus";
+
+/** Навыки, этапы которых ведёт Sonnet: реализация и тестирование. */
+const SONNET_SKILLS: readonly string[] = ["code-standards-fp", "testing-tdd"];
+
+/** Роль модели этапа; у автоматизации и действия, которые исполняет сам Flow, модели нет. */
+export function stageModelRole(stage: WorkStage): ModelRole | null {
+  const execution = executionOf(stage);
+  if (execution.kind === "script" || execution.kind === "external") return null;
+  return SONNET_SKILLS.includes(stageSkillOf(stage)) ? "sonnet" : "opus";
+}
+
+/** Первая модель каталога провайдера, чей id содержит имя роли; такой нет — `null`, и модель треда не трогается. */
+export const modelFor = (role: ModelRole, models: ReadonlyArray<{ readonly model: string }>): string | null =>
+  models.find((entry) => entry.model.toLowerCase().includes(role))?.model ?? null;
+
+/**
+ * Модель, на которую надо поставить тред для роли: уже стоящая модель этой роли остаётся — менять одну Sonnet на другую
+ * незачем. Иначе та, что стояла у треда до перехода на другую роль (`remembered`), если она есть в каталоге и подходит роли;
+ * иначе первая из каталога.
+ */
+export const wantedModel = (role: ModelRole, currentModel: string | null, models: ReadonlyArray<{ readonly model: string }>, remembered: string | null = null): string | null => {
+  const fits = (model: string): boolean => model.toLowerCase().includes(role);
+  if (currentModel !== null && fits(currentModel)) return currentModel;
+  return remembered !== null && fits(remembered) && models.some((entry) => entry.model === remembered) ? remembered : modelFor(role, models);
+};
+
+/** Что сделать с тредом на границе этапов: сжать контекст и/или поставить модель следующего этапа. */
+export interface BoundaryPlan {
+  readonly compact: boolean;
+  readonly model: string | null;
+}
+
+/** Сжимать велит жёлтый тон и выше; модель ставится, когда нужная известна и отличается от стоящей. Нечего делать — `null`. */
+export function boundaryPlan(input: { readonly tone: ContextTone; readonly currentModel: string | null; readonly wantedModel: string | null }): BoundaryPlan | null {
+  const compact = input.tone !== "normal";
+  const model = input.wantedModel !== null && input.wantedModel !== input.currentModel ? input.wantedModel : null;
+  return compact || model !== null ? { compact, model } : null;
+}
+
+/** Множитель агента-исполнителя, который советует бриф: субагент работает в своём контексте и обходится дешевле главного агента. */
+export const SUBAGENT_FACTOR = { factor: 0.7, risk: 0 } as const;
+
+/**
+ * Совет о субагенте в отчётах брифа. Контекст не обычный — каждый шаг главного агента перечитывает его весь, — поэтому у
+ * несделанного этапа реализации или тестов (роль Sonnet), который агент оставил себе, а во flow у него есть агент-исполнитель,
+ * рекомендуется первый такой агент; нет у этапа множителя этого агента — ставится `SUBAGENT_FACTOR`. Остальное не трогается.
+ */
+export function withSubagents<R extends { id: string; state: string; executor: string; factors?: Record<string, { factor: number; risk: number }> | undefined }>(
+  reports: readonly R[],
+  stages: readonly WorkStage[],
+  tone: ContextTone,
+): R[] {
+  if (tone === "normal") return [...reports];
+  return reports.map((report) => {
+    const stage = stages.find((s) => s.id === report.id);
+    const agent = stage === undefined ? undefined : stage.executors.find((e) => e.kind === "agent");
+    if (stage === undefined || agent === undefined || report.state !== "todo" || report.executor !== SELF_EXECUTOR || stageModelRole(stage) !== "sonnet") return report;
+    return { ...report, executor: agent.id, factors: { ...report.factors, ...(report.factors?.[agent.id] === undefined ? { [agent.id]: SUBAGENT_FACTOR } : {}) } };
+  });
 }

@@ -13,12 +13,13 @@ import { liveIssues, nextFlowIssues, outcomeKind, reportOnlyIssues } from "../co
 import { DECISION_ID_PREFIX, directiveLine } from "../core/directive";
 import { terminalCommandIssue } from "../core/terminal-command";
 import { money, plannedMinutes, recommendedForecast } from "../core/budget";
+import { contextTone, withSubagents } from "../core/context";
 import { INSTRUCTIONS_LIMIT_CHARS } from "../lib/agent-limits";
 import { holdsNothing, joinsApproval, settleOf } from "../core/settle";
 import { FLOW_RULE, SELF_ONLY_RULE, compactStageInstructions, isAskedStage, isAutomationStage, isStageCarryKey, recommendedStageChoice, reportIssues, stageInstructions, stageItems, withStepResults } from "../core/stages";
 import { isHeadingStage } from "../core/sub-stages";
 import { stageKindOf, type BuiltinKind, type StageKind } from "../lib/stage-constants";
-import { FORK_ZERO_RULE, OPTION_PRICE_RULE, askDecisionParamsSchema, type AskDecisionParams, type Criterion, type DecisionBrief, type FlowProgress, type Planning, type RestoredDraft, type StageSettings } from "../shared/contract";
+import { FORK_ZERO_RULE, OPTION_PRICE_RULE, askDecisionParamsSchema, type AskDecisionParams, type ContextFillView, type Criterion, type DecisionBrief, type FlowProgress, type Planning, type RestoredDraft, type StageSettings } from "../shared/contract";
 import { ANSWERED_CHANNEL } from "./api";
 import { FLOW_STAGE_TOOL, type ProgressStore } from "./progress";
 import { KV_VALUE_LIMIT_BYTES, type DecisionStore } from "./store";
@@ -26,45 +27,35 @@ import type { FlowTrigger } from "./automations";
 
 export const ASK_TOOL_NAME = "ask_decision";
 
-const RULE = `Ask the owner every question, clarification, fork and point of confusion only with the ${ASK_TOOL_NAME} tool — never as prose in your reply. Gather everything that has piled up so far into one brief instead of asking one question per turn. Mark as recommended the option you would pick yourself.`;
+const RULE = `Ask the owner every question, clarification, fork and point of confusion only with the ${ASK_TOOL_NAME} tool, never as prose in your reply; gather what has piled up into one brief and mark the option you would pick as recommended.`;
 
-export const ASK_INSTRUCTIONS = `${RULE}
-
-A brief has two parts.
+export const ASK_INSTRUCTIONS = `Ask the owner only through this tool, never as prose; mark the option you would pick as recommended.
 
 scope — what you understood: the minimal work, each fork at its simplest answer, as a nested list; every brief before launch starts with it.
 
-setup — the first part, no questions: what there is, your recommendation marked.
-- criteria — Definition of Done, one checkable statement per item: { text, add } or { text, before, after, add }, scope items first. add { target, max, risk, minutes } — your active spend with own tests; whole task with stages: xs 12, s 17, m 29, l 50 min, more — reason in intro (flow-criteria); target and minutes > 0.
-- stages (setup.stages) — all stages of the flow, in order (Flow instructions): { id, state (todo, done), results, recommended, executor, share, factors }. A done skill stage needs results [{ label, target }], label = file name or task key. recommended: true — into the run. executor — self or the stage's agent:…/workflow:…. share { percent, risk } on every todo skill stage — its part of the scope beyond the items (the work itself 100, a spec ~15); factors { <executor id>: { factor, risk } } — multiplier > 0, you are 1. No add or adds on stages.
+setup — the first part, no questions:
+- criteria — Definition of Done, one checkable item each; a changed item names before and after. add { target, max, risk, minutes } — your active spend with own tests; target and minutes > 0.
+- stages — every stage of the flow, in order. share { percent, risk } on every todo skill stage — its part of the scope (the work itself 100); factors { <executor id>: { factor, risk } } — a multiplier > 0, you are 1. No add or adds on stages.
+The budget forecast: scope = kept items + chosen options; a run stage adds scope × percent × factor. Risk is an integer, 1r ≈ 10% chance a blocking defect reaches the owner: implementation raises it, spec, plan, prototype, review and testing lower it.
 
-The budget forecast: scope = kept items + chosen options; a run stage adds scope × percent × factor; the 100 stage adds only (factor − 1) × scope, its risk goes on items. Risk: integer, 1r ≈ 10% chance a blocking defect reaches the owner; implementation raises it, spec, plan, prototype, review and testing lower it (scale: flow-stage-selection). Refused before launch: no scope, unpriced item, skill stage without share, fork without 0, $0 forecast.
+questions — an id does not start with "setup.".
+- fork — one answer that changes the outcome; every option needs description and add (or cost + risk XS…XXL). The simplest option costs 0, its work in setup.criteria; others: add = price of own criteria.
+- pick — several answers, description on every option.
+- confirm — one "Yes" on what scope leaves open.
+hides on an option — ids of questions below that lose meaning when it is chosen; the owner does not see them. criteria on an option — items it adds while chosen, required if priced; an item of an option the owner drops themselves stays in the list struck through, so an item that depends on one answer goes on the option, not into setup.criteria; removes — setup.criteria indexes it strikes.
 
-questions — the second part; an id does not start with "setup.".
-- fork — one answer, the choice changes the outcome. Every option requires description and add (or old cost + risk XS…XXL). The simplest option costs 0, its work in setup.criteria; others: add = price of own criteria ≥ 0, replaced items in removes. At most one recommended.
-- pick — several answers. Every option needs description; add if it adds work.
-- confirm — "did I get this right" on what scope leaves open: one "Yes"; context not retelling scope.
-hides on an option — ids of questions below that lose meaning when it is chosen; the owner does not see them.
-criteria on an option — items it adds while chosen, required if priced; an item of an option the owner drops themselves stays in the list struck through, so an item that depends on one answer goes on the option, not into setup.criteria; removes — setup.criteria indexes it strikes then.
+outcome — a demo of running work instead of setup; results hold a live one — an http(s) URL or { label, command } — unless documentsOnly.
 
-outcome — a demo of running work instead of setup: { stage (a demo stage id), final, next (only when not final), done ([text] — closed since the previous demo), pending ([{ text, why }]), notes, tasks ([{ key, done, note }]), results (at least one: { label, target } — a file, path or URL; { label, command } — a one-click command), documentsOnly (only documents changed since the previous demo) }. Unless documentsOnly, results hold a live one: an http(s) URL or a command.
+clarify — any question with no setup, price or outcome; brief — only an approval stops you.
 
-After launch (an answered brief with a stage in the run), in a flow with a Definition of Done stage forks, criteria and stages go only into a brief after rolling back to it (flow_stage).
-
-The owner also chooses where the work runs; a new thread takes the answer over and this thread stops.
-
-Kind: brief — only an approval stops you; other briefs go on by the recommended values, owner edits come with the next approval. clarify — any question with no setup, price or outcome.
-
-After the call, paste the directive line from the result as a standalone line, without quotes or backticks, and do what the result says.
-
-One brief per run: go through the run stages in order; a demo stage: send its outcome and go on; only an approval stops.`;
+Paste the result's directive line standalone, with no quotes or backticks.`;
 
 /**
  * Сообщение владельца в чат при ждущем брифе возвращает бриф агенту (./brief-return.ts). В описании инструмента, а не в
  * инструкциях: те уже упираются в 4096 символов.
  */
 export const RETURNED_RULE =
-  "A chat message from the owner while your brief waits returns that brief to you: the message outranks the brief — it means the plan changed. Take the message in, its text and attachments, then send the brief again, revised; the owner's choices in the returned brief stay preselected where question, option and stage ids match. A message while an approval waits returns the whole group of widgets since the previous approval, and a comment under an approval's Continue button does the same: its text outranks the choices, the other choices of the owner still stand — send reworked widgets first, the choices are preselected in them, and only then the approval; an approval right after a returned one, without reworked widgets between them, is refused. An approval stage closes only when the owner sends it with its button; a demo stage closes when you send it.";
+  "A chat message from the owner while your brief waits returns it and outranks it: take in the text and attachments, then send the brief again, revised; the owner's choices stay preselected where ids match. A message or a comment under an approval's Continue returns the whole group of widgets since the previous approval: send the reworked widgets first, then the approval — one right after a returned one, without reworked widgets between, is refused. An approval closes only when the owner sends it with its button.";
 
 /**
  * Повтор строки в последнем ответе хода: bb сворачивает реплики между вызовами инструментов в «Worked for», а карточка брифа
@@ -288,7 +279,9 @@ const joinClarifies = async (store: DecisionStore, ids: readonly string[], refre
 
 const toolError = (text: string) => ({ isError: true as const, content: [{ type: "text" as const, text }] });
 
-/** Вклад Flow в ход треда с flow: правило брифа и этапы flow. Его же отдаёт выбор flow агентом — этапы нужны в том же ходе. */
+/**
+ * Вклад Flow в ход треда с flow: правило брифа и этапы flow. Его же отдаёт выбор flow агентом — этапы нужны в том же ходе.
+ */
 export const flowTurnInstructions = (stages: StageSettings["stages"]): string => {
   const compose = (listed: string | null): string => [RULE, ...(listed === null ? [] : [FLOW_RULE, listed, SELF_ONLY_RULE])].join("\n\n");
   const full = compose(stageInstructions(stages));
@@ -310,6 +303,8 @@ export const registerAskTool = (
     flowName?: (threadId: string) => string | undefined;
     /** Идёт ли тред по flow; `false` — «без flow» или «Автоматически» до выбора, и Flow не вкладывает в ход ничего. */
     hasFlow?: (threadId: string) => boolean;
+    /** Заполненность окна контекста треда с порогами; не ниже жёлтого — бриф с этапами советует субагента на реализации и тестах. Нет — не советует. */
+    context?: (threadId: string) => Promise<ContextFillView | null>;
     /** Длительность и стоимость планирования в треде; `undefined` — неизвестно. */
     planning?: (threadId: string) => Promise<Planning | undefined>;
     /** Прогресс flow треда: бриф отмечает ждущие и сделанные этапы. */
@@ -325,7 +320,7 @@ export const registerAskTool = (
   bb.agents.registerTool({
     name: ASK_TOOL_NAME,
     description:
-      "Ask the owner: a brief rendered as a widget in the thread. It opens with scope — what you understood; first part (setup) shows the work stages of the thread's flow — done ones with links and ones to run with executor, share and factors — plus Definition of Done items priced by you and a budget button counted from them with time, recommendations preselected; second part holds questions: forks with description and add, multi-answer picks and confirmations. " +
+      "Ask the owner: a brief rendered as a widget in the thread — scope, setup (the flow's stages with executor, share and factors; Definition of Done items priced by you) and questions. " +
       'Every text field takes markdown links [text](target) — a path from the tree root (path:12 for a line), an absolute path or a URL: anything that lives in a file is named as a link to it, a fragment as one link "fragment (what it is) — file". ' +
       RETURNED_RULE,
     instructions: ASK_INSTRUCTIONS,
@@ -360,7 +355,10 @@ export const registerAskTool = (
       // Утверждённый бюджет нужен только уточнению: второй Выбор этапов считает прогноз заново.
       const approvedBudget = midWork && params.setup?.stages === undefined ? (progress?.planned ?? null) : null;
       // Ссылки сделанной автоматизации — из её шагов: агент их не присылает.
-      const stepped = withStepResults(settings.stages, params.setup?.stages, params.setup?.stages === undefined ? null : progress);
+      const reported = withStepResults(settings.stages, params.setup?.stages, params.setup?.stages === undefined ? null : progress);
+      // Контекст не обычный: у реализации и тестов, оставленных себе, рекомендуется агент-исполнитель этапа — он работает в своём контексте.
+      const fill = reported === undefined ? null : await deps.context?.(ctx.threadId).catch(() => null);
+      const stepped = reported === undefined || fill === null || fill === undefined ? reported : withSubagents(reported, settings.stages, contextTone(fill.usedTokens, fill));
       const approval = params.outcome !== undefined && settings.stages.some((s) => s.id === params.outcome?.stage && stageKindOf(s) === "approve");
       const settle = settleOf(fields, settings.stages, progress, approval, launched);
       const brief: DecisionBrief = {

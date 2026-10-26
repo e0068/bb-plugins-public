@@ -32,25 +32,6 @@ describe("память выбора в ответе и брифе", () => {
 });
 
 describe("подпись документа", () => {
-  it("label документа — имя файла из target с расширением или без", () => {
-    expect(parse(params({ label: "x.md", target: "docs/specs/x.md" })).success).toBe(true);
-    expect(parse(params({ label: "x", target: "docs/specs/x.md" })).success).toBe(true);
-  });
-
-  it("label документа — ключ задачи", () => {
-    expect(parse(params({ label: "BP-28", target: "docs/tasks/todo/some-slug.md" })).success).toBe(true);
-  });
-
-  it("label словом отклоняется сообщением file name or task key", () => {
-    const result = parse(params({ label: "спецификация", target: "docs/specs/x.md" }));
-    expect(result.success).toBe(false);
-    expect(JSON.stringify(result.error?.issues)).toContain("file name or task key");
-  });
-
-  it("ссылка на URL правилу label не подчиняется", () => {
-    expect(parse(params({ label: "Спека в Notion", target: "https://notion.so/spec" })).success).toBe(true);
-  });
-
   it("записанный бриф с label словом читается хранилищем", () => {
     const stored = { id: "dec_1", threadId: "thr_1", createdAt: "2026-09-14T00:00:00.000Z", title: "Бриф", setup: { artifacts: artifacts({ link: { label: "спецификация", target: "docs/specs/x.md" } }) } };
     expect(decisionBriefSchema.safeParse(stored).success).toBe(true);

@@ -6,6 +6,7 @@ import { useRealtime, useRpc, type PluginMessageDirectiveProps } from "@get-bb/p
 
 import { deviations } from "../core/answer-message";
 import { isQuickClarify } from "../core/clarify";
+import { CACHE_TTL_MS, cacheExpired } from "../core/context";
 import { readDecisionId } from "../core/directive";
 import type { FileRoots } from "../core/result-link";
 import { DEFAULT_ROUTE, legacyRoute, offeredPlace } from "../core/places";
@@ -189,6 +190,28 @@ function useDispatchPlace(threadId: string): { place: DispatchPlace; route: Disp
   return place;
 }
 
+/**
+ * Истёк ли кэш провайдера к брифу: прошёл больше часа с его создания. Открытый виджет не ждёт перезагрузки — таймер
+ * ставится на отметку часа и переключает предвыбор сжатия сам. Без брифа или для закрытого (`watch` ложно) кэш не нужен.
+ */
+function useCacheExpired(createdAt: string | null, watch: boolean): boolean {
+  const [expired, setExpired] = useState(() => createdAt !== null && cacheExpired(createdAt, new Date()));
+  useEffect(() => {
+    if (createdAt === null || !watch) return;
+    const left = Date.parse(createdAt) + CACHE_TTL_MS - Date.now();
+    // Отметка уже позади или время брифа нечитаемо: считать нечего.
+    if (!Number.isFinite(left) || left < 0) {
+      setExpired(cacheExpired(createdAt, new Date()));
+      return;
+    }
+    setExpired(false);
+    // +1 мс: кэш истёк, когда прошло больше часа, а ровно час — ещё жив.
+    const timer = setTimeout(() => setExpired(cacheExpired(createdAt, new Date())), left + 1);
+    return () => clearTimeout(timer);
+  }, [createdAt, watch]);
+  return expired;
+}
+
 /** Ход из события `TURN_CHANNEL` для этого треда; чужой тред или не тот вид — `null`. */
 const turnFromEvent = (payload: unknown, threadId: string): AgentTurn | null => {
   if (typeof payload !== "object" || payload === null) return null;
@@ -241,6 +264,9 @@ function BriefLoader({ id, source, messageId, threadId }: { id: string; source: 
   const openClarify = state.kind === "found" && state.brief.kind === "clarify" && !isClosed;
   const turn = useAgentTurn(threadId, openClarify);
   const compactable = !openClarify || turn === "ended";
+  // Сжатие предвыбрано, когда окно дошло до зоны настройки или кэш провайдера к брифу уже истёк.
+  const stale = useCacheExpired(state.kind === "found" ? state.brief.createdAt : null, !isClosed);
+  const compact = place.compact || stale;
   useEffect(() => {
     // Отвеченному, решённому и свёрнутому брифу черновик и картинки не нужны — отсюда ли ушёл ответ или из другой вкладки; свёрнутого черновик живёт на сервере.
     if (!isClosed) return;
@@ -301,9 +327,9 @@ function BriefLoader({ id, source, messageId, threadId }: { id: string; source: 
             {isQuickClarify(state.brief) && state.brief.settle === undefined ? (
               <ClarifyCard brief={state.brief} send={send} onResult={onAccepted} />
             ) : legacy ? (
-              <BriefForm brief={state.brief} send={send} onResult={onAccepted} place={place.place} route={place.route} compact={place.compact} />
+              <BriefForm brief={state.brief} send={send} onResult={onAccepted} place={place.place} route={place.route} compact={compact} />
             ) : (
-              <BriefCard brief={state.brief} send={send} onResult={onAccepted} roots={roots} place={place.place} route={place.route} compact={place.compact} compactable={compactable} idleAfter={state.idleAfter === true} {...(state.sentWith === undefined ? {} : { sentWith: state.sentWith })} />
+              <BriefCard brief={state.brief} send={send} onResult={onAccepted} roots={roots} place={place.place} route={place.route} compact={compact} compactable={compactable} idleAfter={state.idleAfter === true} {...(state.sentWith === undefined ? {} : { sentWith: state.sentWith })} />
             )}
             </MentionsProvider>
           </VoiceProvider>
