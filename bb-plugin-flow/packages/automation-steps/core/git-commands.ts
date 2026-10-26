@@ -65,6 +65,22 @@ export function fastForwardAtArgs(path: string, base: string): readonly string[]
   return ["-C", path, ...fastForwardArgs(`origin/${base}`)];
 }
 
+// Both moves below run only once local `<base>` is measured to carry nothing
+// origin lacks (wiring/local-main-pull.ts): after a squash merge its own
+// commits are already in origin under another SHA. `reset --keep` keeps the
+// copy's uncommitted changes (staged ones come back unstaged) and refuses
+// rather than overwrite one; `branch -f` refuses a branch checked out in any
+// worktree.
+/** `git -C <path> reset --keep origin/<base>` — put the branch checked out in `<path>` onto origin. */
+export function resetKeepAtArgs(path: string, base: string): readonly string[] {
+  return ["-C", path, "reset", "--keep", `origin/${base}`];
+}
+
+/** `git branch -f <base> origin/<base>` — put the local ref `<base>`, checked out nowhere, onto origin. */
+export function moveBranchToOriginArgs(base: string): readonly string[] {
+  return ["branch", "-f", base, `origin/${base}`];
+}
+
 /** `git -C <path> rev-parse HEAD` — the commit the worktree at `<path>` stands on. */
 export function headAtArgs(path: string): readonly string[] {
   return ["-C", path, "rev-parse", "HEAD"];

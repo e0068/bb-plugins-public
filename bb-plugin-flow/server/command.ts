@@ -6,13 +6,17 @@ import type { BbPluginApi } from "@get-bb/plugin-sdk";
 
 import { applyToTerminal } from "@bb-plugins/thread-terminal/index";
 import { COMMAND_ID_PREFIX, commandDirectiveLine } from "../core/directive";
+import { terminalCommandIssue } from "../core/terminal-command";
+import { TERMINAL_COMMAND_MAX_CHARS } from "../lib/agent-limits";
 import { commandRecordSchema, commandsRpcContract, outcomeRpcContract, shareCommandParamsSchema, type CommandRecord, type DecisionBrief } from "../shared/contract";
 
 export const COMMAND_TOOL_NAME = "share_command";
 
-export const COMMAND_INSTRUCTIONS = `Hand the owner a command they should run in their terminal with the ${COMMAND_TOOL_NAME} tool, not as a bash code block in your reply: one command — one call. The owner sees a block with "Wrap lines", "Copy" and "Run in terminal" buttons. After the call, paste the directive line from the result into your reply as a standalone line, without quotes or backticks.`;
+export const COMMAND_INSTRUCTIONS = `Hand the owner a command they should run in their terminal with the ${COMMAND_TOOL_NAME} tool, not as a bash code block in your reply: one command — one call, at most ${TERMINAL_COMMAND_MAX_CHARS} characters: a longer one goes into a script file in the thread storage, and the call hands over the short command that runs it. The owner sees a block with "Wrap lines", "Copy" and "Run in terminal" buttons. After the call, paste the directive line from the result into your reply as a standalone line, without quotes or backticks.`;
 
 const keyOf = (id: string): string => `command:${id}`;
+
+const toolError = (text: string) => ({ isError: true as const, content: [{ type: "text" as const, text }] });
 
 export const registerCommands = (bb: Pick<BbPluginApi, "agents" | "rpc" | "storage" | "sdk">, deps: { newId: () => string; now: () => string; readBrief?: (id: string) => Promise<DecisionBrief | null> }): void => {
   const kv = bb.storage.kv;
@@ -28,6 +32,8 @@ export const registerCommands = (bb: Pick<BbPluginApi, "agents" | "rpc" | "stora
     presentation: { label: { pending: "Preparing a command", completed: "Command in the thread" } },
     parameters: shareCommandParamsSchema,
     async execute(params, ctx) {
+      const issue = terminalCommandIssue(params.command, "The command");
+      if (issue !== null) return toolError(`Command not accepted: ${issue}`);
       const record: CommandRecord = { id: `${COMMAND_ID_PREFIX}${deps.newId()}`, threadId: ctx.threadId, command: params.command, createdAt: deps.now() };
       await kv.set(keyOf(record.id), record);
       return `${commandDirectiveLine(record.id)}\n\nPaste the line above into your reply as a standalone line — the owner sees the command with buttons in its place.`;

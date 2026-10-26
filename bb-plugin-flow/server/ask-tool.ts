@@ -11,6 +11,7 @@ import { unfinishedBefore } from "../core/automation-run";
 import { isApproval, memberSources, nextGroup, restoredOf } from "../core/fold";
 import { liveIssues, nextFlowIssues, outcomeKind, reportOnlyIssues } from "../core/outcome";
 import { DECISION_ID_PREFIX, directiveLine } from "../core/directive";
+import { terminalCommandIssue } from "../core/terminal-command";
 import { money, plannedMinutes, recommendedForecast } from "../core/budget";
 import { INSTRUCTIONS_LIMIT_CHARS } from "../lib/agent-limits";
 import { holdsNothing, joinsApproval, settleOf } from "../core/settle";
@@ -177,6 +178,8 @@ const outcomeIssues = (outcome: AskDecisionParams["outcome"], questionCount: num
   return [
     ...(reported.includes(outcome.stage) ? [] : [`outcome.stage ${outcome.stage} is not a demo or approval stage of the thread's flow: ${reported.length === 0 ? "the flow has none" : reported.join(", ")}`]),
     ...(open === null ? [] : [`stage ${open.id} "${open.name}" comes before ${outcome.stage} in the run and is not marked done: finish it and mark it done with ${FLOW_STAGE_TOOL} first`]),
+    // Команду результата владелец запускает кнопкой в терминале: длинная обрежется там так же, как у share_command.
+    ...outcome.results.flatMap((result, i) => ("command" in result ? [terminalCommandIssue(result.command, `outcome.results[${i}].command`)] : [])).filter((issue) => issue !== null),
     // Утверждение показывает, что утверждается, и переводит работу в рекомендованный flow; Демонстрация — отчёт с живым результатом, без вопросов и перехода.
     ...(approval ? [...approvalIssues(stages, progress, outcome.stage, reworkPending), ...nextFlowIssues(outcome, flowIds)] : [...liveIssues(outcome), ...reportOnlyIssues(outcome, questionCount)]),
   ];
