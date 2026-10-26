@@ -6,13 +6,23 @@ import {
   DEFAULT_ALERT_TOKENS,
   DEFAULT_CONTEXT_THRESHOLDS,
   DEFAULT_WARN_TOKENS,
+  CACHE_TTL_MS,
+  withSubagents,
+  SUBAGENT_FACTOR,
+  boundaryPlan,
+  cacheExpired,
   contextPercent,
   contextSegments,
   contextShare,
   contextTone,
+  modelFor,
+  wantedModel,
+  type ContextTone,
+  stageModelRole,
   thresholdsOrDefault,
   shortTokens,
 } from "./context";
+import { CODE_FLOW, stage } from "./stages-fixtures";
 
 describe("доля занятого окна", () => {
   it("делит занятое на окно", () => {
@@ -86,9 +96,15 @@ describe("пара порогов в токенах", () => {
     expect(thresholdsOrDefault(250_000, Number.POSITIVE_INFINITY)).toEqual(DEFAULT_CONTEXT_THRESHOLDS);
   });
 
-  it("по умолчанию жёлтый с 250 000 токенов, красный с 400 000", () => {
-    expect(DEFAULT_WARN_TOKENS).toBe(250_000);
-    expect(DEFAULT_ALERT_TOKENS).toBe(400_000);
+  it("по умолчанию жёлтый с 150 000 токенов, красный с 300 000", () => {
+    expect(DEFAULT_WARN_TOKENS).toBe(150_000);
+    expect(DEFAULT_ALERT_TOKENS).toBe(300_000);
+  });
+
+  it("порог ровно 150 000 — уже жёлтый, на токен ниже — обычный", () => {
+    expect(contextTone(149_999, DEFAULT_CONTEXT_THRESHOLDS)).toBe("normal");
+    expect(contextTone(150_000, DEFAULT_CONTEXT_THRESHOLDS)).toBe("warn");
+    expect(contextTone(300_000, DEFAULT_CONTEXT_THRESHOLDS)).toBe("alert");
   });
 
   it("на любом входе пара осмысленна: жёлтый строго меньше красного, оба не отрицательны", () => {
@@ -193,5 +209,176 @@ describe("токены коротко", () => {
     expect(shortTokens(1_000_000)).toBe("1M");
     expect(shortTokens(1_250_000)).toBe("1.3M");
     expect(shortTokens(950)).toBe("950");
+  });
+});
+
+describe("кэш провайдера", () => {
+  const created = "2026-10-26T00:00:00.000Z";
+  const at = (ms: number) => new Date(Date.parse(created) + ms);
+
+  it("час — это 3 600 000 мс", () => {
+    expect(CACHE_TTL_MS).toBe(3_600_000);
+  });
+
+  it("через 59 мин 59 с кэш жив, через 60 мин 1 с истёк", () => {
+    expect(cacheExpired(created, at(59 * 60_000 + 59_000))).toBe(false);
+    expect(cacheExpired(created, at(60 * 60_000 + 1_000))).toBe(true);
+  });
+
+  it("ровно час — ещё не истёк: истёк, когда прошло больше часа", () => {
+    expect(cacheExpired(created, at(CACHE_TTL_MS))).toBe(false);
+    expect(cacheExpired(created, at(CACHE_TTL_MS + 1))).toBe(true);
+  });
+
+  it("время нечитаемо — кэш считается живым, сжатие само не включается", () => {
+    expect(cacheExpired("не дата", at(10 * CACHE_TTL_MS))).toBe(false);
+  });
+
+  it("истечение монотонно по времени", () => {
+    fc.assert(
+      fc.property(fc.nat(10_000_000_000), fc.nat(10_000_000_000), (a, b) => {
+        const [early, late] = a <= b ? [a, b] : [b, a];
+        return !cacheExpired(created, at(early)) || cacheExpired(created, at(late));
+      }),
+    );
+  });
+});
+
+describe("модель этапа", () => {
+  const byId = (id: string) => CODE_FLOW.find((s) => s.id === id)!;
+
+  it("реализация и тестирование — Sonnet", () => {
+    expect(stageModelRole(byId("implement"))).toBe("sonnet");
+    expect(stageModelRole(byId("testing"))).toBe("sonnet");
+  });
+
+  it("остальные этапы агента, встроенные и навыковые, — Opus", () => {
+    ["questions", "criteria", "select", "task", "prototype", "demo", "spec", "plan", "review"].forEach((id) => expect(stageModelRole(byId(id))).toBe("opus"));
+  });
+
+  it("автоматизация и Action исполняются Flow, у них модели нет", () => {
+    expect(stageModelRole(byId("flow-automation"))).toBeNull();
+    expect(stageModelRole(stage("press", { kind: "action", skill: "" }))).toBeNull();
+  });
+
+  it("навык `code-standards-fp` у встроенного этапа тоже даёт Sonnet", () => {
+    expect(stageModelRole(stage("x", { kind: "demo", skill: "code-standards-fp" }))).toBe("sonnet");
+  });
+
+  it("первая модель каталога, чей id содержит имя роли", () => {
+    const models = [{ model: "claude-haiku-4-5" }, { model: "claude-opus-4-1" }, { model: "claude-sonnet-4-5" }, { model: "claude-sonnet-4-6" }];
+    expect(modelFor("sonnet", models)).toBe("claude-sonnet-4-5");
+    expect(modelFor("opus", models)).toBe("claude-opus-4-1");
+  });
+
+  it("нужной модели в каталоге нет или каталог пуст — null", () => {
+    expect(modelFor("sonnet", [{ model: "claude-opus-4-1" }])).toBeNull();
+    expect(modelFor("opus", [])).toBeNull();
+  });
+
+  it("тред уже на модели нужной роли — её и оставляют, а не меняют на первую в каталоге", () => {
+    const models = [{ model: "claude-sonnet-4-5" }, { model: "claude-sonnet-4-6" }];
+    expect(wantedModel("sonnet", "claude-sonnet-4-6", models)).toBe("claude-sonnet-4-6");
+    expect(wantedModel("sonnet", "claude-opus-4-1", models)).toBe("claude-sonnet-4-5");
+    expect(wantedModel("sonnet", null, models)).toBe("claude-sonnet-4-5");
+    expect(wantedModel("opus", "claude-sonnet-4-6", models)).toBeNull();
+  });
+
+  it("возврат на Opus — к той модели, что стояла до Sonnet; нет запомненной или её нет в каталоге — первая по роли", () => {
+    const models = [{ model: "claude-opus-4-1" }, { model: "claude-opus-4-5" }, { model: "claude-sonnet-4-5" }];
+    expect(wantedModel("opus", "claude-sonnet-4-5", models, "claude-opus-4-5")).toBe("claude-opus-4-5");
+    expect(wantedModel("opus", "claude-sonnet-4-5", models, null)).toBe("claude-opus-4-1");
+    expect(wantedModel("opus", "claude-sonnet-4-5", models, "claude-opus-9")).toBe("claude-opus-4-1");
+    expect(wantedModel("opus", "claude-sonnet-4-5", models, "claude-sonnet-4-5")).toBe("claude-opus-4-1");
+  });
+
+  it("тред уже на Opus — запомненная модель его не меняет", () => {
+    const models = [{ model: "claude-opus-4-1" }, { model: "claude-opus-4-5" }];
+    expect(wantedModel("opus", "claude-opus-4-1", models, "claude-opus-4-5")).toBe("claude-opus-4-1");
+  });
+
+  it("запомненная модель к Sonnet не относится", () => {
+    expect(wantedModel("sonnet", "claude-opus-4-5", [{ model: "claude-sonnet-4-5" }], "claude-opus-4-5")).toBe("claude-sonnet-4-5");
+  });
+
+  it("регистр id не важен", () => {
+    expect(modelFor("sonnet", [{ model: "Claude-SONNET-4" }])).toBe("Claude-SONNET-4");
+  });
+});
+
+describe("план границы этапов", () => {
+  it("контекст ниже жёлтого и та же модель — плана нет", () => {
+    expect(boundaryPlan({ tone: "normal", currentModel: "opus", wantedModel: "opus" })).toBeNull();
+  });
+
+  it("желаемой модели нет — модель не трогается, плана нет", () => {
+    expect(boundaryPlan({ tone: "normal", currentModel: "opus", wantedModel: null })).toBeNull();
+    expect(boundaryPlan({ tone: "normal", currentModel: null, wantedModel: null })).toBeNull();
+  });
+
+  it("жёлтый и красный тон велят сжать, модель остаётся", () => {
+    expect(boundaryPlan({ tone: "warn", currentModel: "opus", wantedModel: "opus" })).toEqual({ compact: true, model: null });
+    expect(boundaryPlan({ tone: "alert", currentModel: "opus", wantedModel: null })).toEqual({ compact: true, model: null });
+  });
+
+  it("другая модель при обычном тоне — только смена модели", () => {
+    expect(boundaryPlan({ tone: "normal", currentModel: "opus", wantedModel: "sonnet" })).toEqual({ compact: false, model: "sonnet" });
+  });
+
+  it("модель треда неизвестна, а нужная есть — ставится", () => {
+    expect(boundaryPlan({ tone: "normal", currentModel: null, wantedModel: "sonnet" })).toEqual({ compact: false, model: "sonnet" });
+  });
+
+  it("жёлтый тон и другая модель — и сжатие, и модель", () => {
+    expect(boundaryPlan({ tone: "warn", currentModel: "opus", wantedModel: "sonnet" })).toEqual({ compact: true, model: "sonnet" });
+  });
+
+  it("план есть ровно тогда, когда тон не обычный или модель другая", () => {
+    const tones = fc.constantFrom<ContextTone>("normal", "warn", "alert");
+    const models = fc.constantFrom<string | null>(null, "a", "b");
+    fc.assert(
+      fc.property(tones, models, models, (tone, currentModel, wantedModel) => {
+        const plan = boundaryPlan({ tone, currentModel, wantedModel });
+        const expected = tone !== "normal" || (wantedModel !== null && wantedModel !== currentModel);
+        return (plan !== null) === expected;
+      }),
+    );
+  });
+});
+
+describe("совет о субагенте в отчётах брифа", () => {
+  const agent = { id: "agent:implementer", kind: "agent", name: "implementer" } as const;
+  const workflow = { id: "workflow:lead", kind: "workflow", name: "lead" } as const;
+  const stages = [
+    stage("implement", { skill: "code-standards-fp", executors: [agent] }),
+    stage("testing", { skill: "testing-tdd", executors: [workflow, agent] }),
+    stage("spec", { skill: "spec", executors: [agent] }),
+    stage("bare", { skill: "code-standards-fp" }),
+    stage("flowonly", { skill: "code-standards-fp", executors: [workflow] }),
+  ];
+  const report = (id: string, patch: Record<string, unknown> = {}) => ({ id, state: "todo", executor: "self", ...patch });
+  const reports = [report("implement"), report("testing"), report("spec"), report("bare"), report("flowonly")];
+  const warn = DEFAULT_CONTEXT_THRESHOLDS;
+
+  it("ниже порога отчёты не меняются", () => {
+    expect(withSubagents(reports, stages, contextTone(149_999, warn))).toEqual(reports);
+  });
+
+  it("на пороге ровно реализация и тесты получают первого агента этапа и его множитель", () => {
+    const out = withSubagents(reports, stages, contextTone(150_000, warn));
+    expect(out[0]).toMatchObject({ executor: "agent:implementer", factors: { "agent:implementer": SUBAGENT_FACTOR } });
+    expect(out[1]).toMatchObject({ executor: "agent:implementer", factors: { "agent:implementer": { factor: 0.7, risk: 0 } } });
+  });
+
+  it("этап с другой ролью, без агента-исполнителя или только с workflow не трогается", () => {
+    const out = withSubagents(reports, stages, "alert");
+    expect(out.slice(2)).toEqual(reports.slice(2));
+  });
+
+  it("этап, где уже выбран исполнитель или сделан, не трогается; свой множитель агента сохраняется", () => {
+    const chosen = [report("implement", { executor: "agent:implementer" }), report("testing", { state: "done" })];
+    expect(withSubagents(chosen, stages, "warn")).toEqual(chosen);
+    const own = [report("implement", { factors: { "agent:implementer": { factor: 1.2, risk: 1 } } })];
+    expect(withSubagents(own, stages, "warn")[0]).toMatchObject({ executor: "agent:implementer", factors: { "agent:implementer": { factor: 1.2, risk: 1 } } });
   });
 });

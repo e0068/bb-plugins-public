@@ -33,7 +33,7 @@ describe("заполненность окна доезжает от журнал
   it("событие журнала становится долей и порогами в токенах по умолчанию", async () => {
     const harness = await boot([usageEvent(250_000, 1_000_000)]);
     expect(await harness.callRpc("getFlowProgress", { threadId: THREAD })).toMatchObject({
-      context: { share: 0.25, usedTokens: 250_000, windowTokens: 1_000_000, warnTokens: 250_000, alertTokens: 400_000 },
+      context: { share: 0.25, usedTokens: 250_000, windowTokens: 1_000_000, warnTokens: 150_000, alertTokens: 300_000 },
     });
   });
 
@@ -51,13 +51,13 @@ describe("пара порогов в токенах сторожится на в
 
   it("жёлтый не ниже красного — запись отклонена ошибкой с числом соседа, пара прежняя", async () => {
     const harness = await boot([usageEvent(1, 2)]);
-    await expect(harness.setSettings({ contextWarnTokens: 400_000 })).rejects.toThrow(/lower than the red threshold \(400000 tokens\)/);
-    expect(await thresholdsOf(harness)).toMatchObject({ warnTokens: 250_000, alertTokens: 400_000 });
+    await expect(harness.setSettings({ contextWarnTokens: 300_000 })).rejects.toThrow(/lower than the red threshold \(300000 tokens\)/);
+    expect(await thresholdsOf(harness)).toMatchObject({ warnTokens: 150_000, alertTokens: 300_000 });
   });
 
   it("красный не выше жёлтого — запись отклонена ошибкой с числом соседа", async () => {
     const harness = await boot([usageEvent(1, 2)]);
-    await expect(harness.setSettings({ contextAlertTokens: 200_000 })).rejects.toThrow(/higher than the yellow threshold \(250000 tokens\)/);
+    await expect(harness.setSettings({ contextAlertTokens: 100_000 })).rejects.toThrow(/higher than the yellow threshold \(150000 tokens\)/);
   });
 
   it("сосед сверяется с последней записью: поднял красный — жёлтый может подняться за ним", async () => {

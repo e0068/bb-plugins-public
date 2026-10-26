@@ -15,7 +15,8 @@ const brief: DecisionBrief = {
   id: "dec_compact",
   threadId: "thr_1",
   title: "Компактация перед ответом",
-  createdAt: "2026-09-24T10:00:00.000Z",
+  // Свежий бриф: бриф старше часа открывается со сжатием по возрасту кэша (brief-card-cache-expired.test.tsx).
+  createdAt: new Date().toISOString(),
   kind: "brief",
   setup: { criteria: ["Тесты зелёные"] },
   questions: [],

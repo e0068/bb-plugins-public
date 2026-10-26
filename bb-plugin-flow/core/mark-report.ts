@@ -3,7 +3,7 @@
 // которого не было, агент пересказывает владельцу. Ожидание записи — у server/progress.ts.
 import { currentName, RETRY_AUTOMATION_TOOL } from "../lib/stage-constants";
 import type { FlowProgress, StageTrack, WorkStage } from "../shared/contract";
-import { isActionStage, isAgentStage, isDue, isFailed, nextInRun, stoppedBy } from "./automation-run";
+import { isActionStage, isAgentStage, isDue, isFailed, nextInRun, openAfter, stoppedBy } from "./automation-run";
 
 /** Почему этап со шагами за отмеченным не наступает: уже прошёл или цепочку держит упавший шаг — его или другой автоматизации. */
 export type FailedBlocker = { kind: "failed"; stage: WorkStage; step: string; error: string; retryAt?: string };
@@ -63,6 +63,9 @@ export const startFact = (stages: readonly WorkStage[], progress: FlowProgress, 
 };
 
 const label = (stage: WorkStage): string => `${stage.id} "${currentName(stage)}"`;
+
+/** Подпись этапа для агента: id и название, как в ответах flow_stage. */
+export const stageRef = label;
 
 /** Следующий этап прогона за отмеченным владелец вернул чекбоксом после выбора этапов — агент знает прогон по брифу и иначе прошёл бы мимо. */
 export const returnedNote = (stages: readonly WorkStage[], progress: FlowProgress, markedId: string): string => {
@@ -148,4 +151,43 @@ export const waitedReply = (stage: WorkStage, outcome: WaitOutcome, failure: Blo
     case "aborted":
       return ` Flow started the next stage ${label(stage)} — an automation; it still runs — end your turn without a message to the owner: Flow sends you a message when it ends.`;
   }
+};
+
+/**
+ * Следующая работа агента за отмеченным этапом: этап агента сразу за ним или, когда между ними автоматизации, первый этап
+ * агента за их цепочкой. Цепочка, которую обрывает Action, или её конец без этапа агента — работы нет: после Action
+ * ждёт владелец, а не агент.
+ */
+export type Upcoming = { via: "agent" | "automation"; stage: WorkStage };
+
+export const upcomingAfter = (stages: readonly WorkStage[], progress: FlowProgress, markedId: string): Upcoming | null => {
+  const walk = (from: string, via: Upcoming["via"]): Upcoming | null => {
+    const next = nextInRun(stages, progress, from);
+    if (next === null || isActionStage(next)) return null;
+    return hasSteps(next) ? walk(next.id, "automation") : { via, stage: next };
+  };
+  return walk(markedId, "agent");
+};
+
+/**
+ * Следующая работа агента по записи прогресса, не по отметке: первый незакрытый и не вычеркнутый этап прогона или, когда это
+ * автоматизация, первый этап агента за их цепочкой. Нужна ответу на бриф, который закрывает встроенные этапы без отметки агента.
+ */
+export const nextWork = (stages: readonly WorkStage[], progress: FlowProgress): Upcoming | null => {
+  const open = openAfter(stages, progress, "");
+  if (open === null || isActionStage(open)) return null;
+  if (isAgentStage(open)) return { via: "agent", stage: open };
+  const behind = upcomingAfter(stages, progress, open.id);
+  return behind === null ? null : { via: "automation", stage: behind.stage };
+};
+
+const joined = (parts: readonly string[]): string => (parts.length < 2 ? (parts[0] ?? "") : `${parts.slice(0, -1).join(", ")} and ${parts.at(-1)}`);
+
+/**
+ * Хвост ответа flow_stage, когда на границе этапов Flow обслужит тред: агенту — закончить ход и ждать «продолжай»;
+ * перед автоматизацией ход кончается и так, и ответ говорит только, что Flow успеет до будящей реплики.
+ */
+export const boundaryNote = (plan: { compact: boolean; model: string | null }, upcoming: Upcoming): string => {
+  const doing = [...(plan.compact ? ["compacts the thread"] : []), ...(plan.model === null ? [] : [`sets the model of stage ${label(upcoming.stage)}`])];
+  return upcoming.via === "agent" ? ` End your turn now: Flow ${joined([...doing, 'sends you "carry on"'])}.` : ` Before the message that wakes you, Flow ${joined(doing)}.`;
 };

@@ -1,11 +1,13 @@
 // @vitest-environment node
 import { describe, expect, it } from "vitest";
 
-import { askDecisionParamsSchema } from "./contract";
+import { decisionBriefSchema } from "./contract";
 
-const brief = (setup: Record<string, unknown>) => ({ title: "Бриф", setup });
+// Исполнитель, ревью, тестирование и артефакты в вызове инструмента больше не принимаются (схема вызова их не показывает):
+// их правила живут в схеме чтения хранимых брифов, и старые виджеты читаются по ним.
+const brief = (setup: Record<string, unknown>) => ({ id: "dec_1", threadId: "thr_1", createdAt: "2026-09-13T00:00:00.000Z", title: "Бриф", setup });
 
-const accepts = (setup: Record<string, unknown>) => askDecisionParamsSchema.safeParse(brief(setup)).success;
+const accepts = (setup: Record<string, unknown>) => decisionBriefSchema.safeParse(brief(setup)).success;
 
 const models = (recommended: number, ...names: string[]) => names.map((name, i) => ({ name, recommended: i === recommended }));
 

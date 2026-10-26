@@ -24,24 +24,31 @@ export const COMMAND_MAX_LENGTH = 20_000;
 export const riskLevelSchema = z.enum(["XS", "S", "M", "L", "XL", "XXL"]);
 
 /**
+ * Целое число. Не `.int()`: тот в схеме вызова разворачивается границами безопасного целого на несколько десятков символов
+ * в каждом поле, а агент платит за схему в каждом вызове; `multipleOf(1)` отбивает те же дроби и пишется короче.
+ */
+const whole = z.number().multipleOf(1);
+
+/**
  * Добавка к бюджету — цель и потолок в долларах, — к риску целым числом и ко времени в минутах.
  * Все части в обе стороны: у исполнителя, ревью и тестирования добавка — разница с базой, и минус значит экономию.
  * Цель и потолок — границы диапазона в любом порядке: у экономии агенты путают знак, и бриф их не отбивает, а упорядочивает.
  */
 export const addSchema = z
-  .object({ target: z.number(), max: z.number(), risk: z.number().int(), minutes: z.number().int().optional() })
+  .object({ target: z.number(), max: z.number(), risk: whole, minutes: whole.optional() })
   .overwrite((a) => (a.max >= a.target ? a : { ...a, target: a.max, max: a.target }));
 
 /**
  * Доля этапа в объёме работы: процент от объёма (реализация самим агентом — 100) и риск этапа целым числом.
  * Деньги и минуты этапа считает плагин: объём × процент × множитель исполнителя.
  */
-export const stageShareSchema = z.object({ percent: z.number().nonnegative(), risk: z.number().int() });
+export const stageShareSchema = z.object({ percent: z.number().nonnegative(), risk: whole });
 
 /** Исполнитель этапа — множитель к его доле, всегда больше нуля, и свой риск сверху. */
-export const executorFactorSchema = z.object({ factor: z.number().positive(), risk: z.number().int() });
+export const executorFactorSchema = z.object({ factor: z.number().positive(), risk: whole });
 
-export const decisionOptionSchema = z.object({
+/** Поля варианта, которые инструмент принимает у нового брифа. */
+const optionFields = {
   id: text,
   /** «Что делаем» — заголовок варианта. */
   action: text,
@@ -51,8 +58,6 @@ export const decisionOptionSchema = z.object({
   cost: z.string().optional(),
   /** Уровень риска; обязателен у развилки нового брифа. */
   risk: riskLevelSchema.optional(),
-  /** Риски прозой — поле старых брифов, новые пишут риски в `description`. */
-  risks: z.string().optional(),
   /** Добавка варианта к бюджету и риску брифа; у развилки заменяет пару `cost` и `risk`. */
   add: addSchema.optional(),
   /** Вопросы того же брифа, которые при этом выборе теряют смысл: владелец их не видит, агент их не получает. */
@@ -61,7 +66,17 @@ export const decisionOptionSchema = z.object({
   criteria: z.array(text).min(1).optional(),
   /** Номера пунктов `setup.criteria` с нуля, которые вариант снимает, пока выбран. */
   removes: z.array(z.number().int().nonnegative()).min(1).optional(),
+};
+
+/** Вариант хранимого брифа: к полям нового брифа добавлены риски прозой — поле старых брифов. */
+export const decisionOptionSchema = z.object({
+  ...optionFields,
+  /** Риски прозой — поле старых брифов, новые пишут риски в `description`. */
+  risks: z.string().optional(),
 });
+
+/** Вариант вызова инструмента: без рисков прозой, которых сервер в новом брифе не читает. */
+const decisionOptionCallSchema = z.object(optionFields);
 
 /**
  * `fork`, `pick`, `confirm` — вопросы второй части. `toggles`, `choice` и
@@ -74,39 +89,51 @@ const filled = (value: string | undefined): boolean => (value ?? "").trim().leng
 
 const uniqueIds = (items: ReadonlyArray<{ id: string }>): boolean => new Set(items.map((i) => i.id)).size === items.length;
 
-export const decisionQuestionSchema = z
-  .object({
-    id: text,
-    question: text,
-    context: z.string().optional(),
-    /** Поле своего ответа у `choice`; у остальных видов оно есть всегда, у `toggles` запрещено. */
-    allowOwn: z.boolean().default(false),
-    kind: questionKindSchema,
-    options: z.array(decisionOptionSchema).min(1),
-  })
-  .superRefine((q, ctx) => {
-    const issue = (message: string) => ctx.addIssue({ code: "custom", message, path: ["options"] });
-    const optionIssue = (message: string, i: number) => ctx.addIssue({ code: "custom", message, path: ["options", i] });
-    if (!uniqueIds(q.options)) issue("option ids must be unique within a question");
-    if (q.kind === "confirm" ? q.options.length !== 1 : q.options.length < 2)
-      issue(q.kind === "confirm" ? "a confirm question has exactly one option: yes" : "a question needs at least two options");
-    if (q.kind !== "toggles" && q.kind !== "pick" && q.options.filter((o) => o.recommended).length > 1)
-      issue(`a ${q.kind} question recommends at most one option`);
-    if (q.kind === "yesno" && q.options.length !== 2) issue("a yesno question has exactly two options: yes and no");
-    if (q.kind === "toggles" && q.allowOwn)
-      ctx.addIssue({ code: "custom", message: "a toggles question takes no own answer", path: ["allowOwn"] });
-    q.options.forEach((o, i) => {
-      if (q.kind === "fork" && !filled(o.description)) optionIssue("every fork option needs a description", i);
-      if (q.kind === "pick" && !filled(o.description)) optionIssue("every pick option needs a description", i);
-    });
+const questionFields = {
+  id: text,
+  question: text,
+  context: z.string().optional(),
+  /** Поле своего ответа у `choice`; у остальных видов оно есть всегда, у `toggles` запрещено. */
+  allowOwn: z.boolean().default(false),
+};
+
+/** Правила вопроса: число и уникальность вариантов, рекомендации, описания. Одни для хранимого вопроса и для вопроса вызова. */
+const questionRules = (
+  q: { kind: string; allowOwn: boolean; options: ReadonlyArray<{ id: string; recommended: boolean; description?: string | undefined }> },
+  ctx: z.RefinementCtx,
+): void => {
+  const issue = (message: string) => ctx.addIssue({ code: "custom", message, path: ["options"] });
+  const optionIssue = (message: string, i: number) => ctx.addIssue({ code: "custom", message, path: ["options", i] });
+  if (!uniqueIds(q.options)) issue("option ids must be unique within a question");
+  if (q.kind === "confirm" ? q.options.length !== 1 : q.options.length < 2)
+    issue(q.kind === "confirm" ? "a confirm question has exactly one option: yes" : "a question needs at least two options");
+  if (q.kind !== "toggles" && q.kind !== "pick" && q.options.filter((o) => o.recommended).length > 1)
+    issue(`a ${q.kind} question recommends at most one option`);
+  if (q.kind === "yesno" && q.options.length !== 2) issue("a yesno question has exactly two options: yes and no");
+  if (q.kind === "toggles" && q.allowOwn)
+    ctx.addIssue({ code: "custom", message: "a toggles question takes no own answer", path: ["allowOwn"] });
+  q.options.forEach((o, i) => {
+    if (q.kind === "fork" && !filled(o.description)) optionIssue("every fork option needs a description", i);
+    if (q.kind === "pick" && !filled(o.description)) optionIssue("every pick option needs a description", i);
   });
+};
+
+/** Вопрос хранимого брифа — любого вида, какой когда-либо записывался. */
+export const decisionQuestionSchema = z
+  .object({ ...questionFields, kind: questionKindSchema, options: z.array(decisionOptionSchema).min(1) })
+  .superRefine(questionRules);
+
+/** Вопрос вызова инструмента: только виды, которые сервер принимает. */
+const decisionQuestionCallSchema = z
+  .object({ ...questionFields, kind: z.enum(["fork", "pick", "confirm", "yesno"]), options: z.array(decisionOptionCallSchema).min(1) })
+  .superRefine(questionRules);
 
 export const artifactStateSchema = z.enum(["approved", "ready", "stale", "missing"]);
 
 export const artifactSchema = z
   .object({
     id: text,
-    /** Имя колонки; в новом брифе — из `ARTIFACT_SLOTS`. */
+    /** Имя колонки: артефакты есть только у брифов, записанных до этапов работ. */
     name: text,
     /** `approved` — есть и утверждён; `ready` — есть, ждёт утверждения; `stale` — не актуален; `missing` — нет. */
     state: artifactStateSchema,
@@ -371,29 +398,43 @@ export const flowDraftSchema = z.object({
   stages: z.array(stageDraftSchema),
 });
 
+/** Множитель самого агента — единица по определению: присланный `factors.self` отбрасывается, остальные остаются. */
+const withoutSelfFactor = <S extends { factors?: Record<string, { factor: number; risk: number }> | undefined }>({ factors, ...rest }: S): S => {
+  if (factors?.[SELF_EXECUTOR] === undefined) return (factors === undefined ? rest : { ...rest, factors }) as S;
+  const { [SELF_EXECUTOR]: _self, ...others } = factors;
+  return (Object.keys(others).length === 0 ? rest : { ...rest, factors: others }) as S;
+};
+
+/** Поля отчёта об этапе, общие для хранимого брифа и для вызова инструмента. */
+const reportFields = {
+  id: text,
+  results: z.array(z.object({ label: text, target: text })).min(1).optional(),
+  /** Рекомендую взять в ближайший прогон; только у несделанного. */
+  recommended: z.boolean().default(false),
+  executor: text.default(SELF_EXECUTOR),
+  share: stageShareSchema.optional(),
+  factors: z.record(z.string(), executorFactorSchema).optional(),
+};
+
+const reportRules = (s: { state: string; results?: unknown; recommended: boolean }, ctx: z.RefinementCtx): void => {
+  // Ссылки сделанного этапа навыка проверяет `reportIssues`: вид этапа знают настройки, а не отчёт.
+  if (s.state === "todo" && s.results !== undefined) ctx.addIssue({ code: "custom", message: "a todo stage has no results yet", path: ["results"] });
+  if (s.state !== "todo" && s.recommended) ctx.addIssue({ code: "custom", message: "only a todo stage is recommended for the next run", path: ["recommended"] });
+};
+
 /**
- * Отчёт агента об этапе: `todo` — не сделан, `done` — сделан; `review` — сделан и ждал приёмки, только в брифах, записанных до Демонстрации.
+ * Отчёт агента об этапе в хранимом брифе: `todo` — не сделан, `done` — сделан; `review` — сделан и ждал приёмки, только в брифах, записанных до Демонстрации.
  * `add` — добавка этапа, когда исполняет сам агент; `adds` — разница исполнителей этапа по их id.
  */
 export const stageReportSchema = z
   .object({
-    id: text,
+    ...reportFields,
     state: z.enum(["todo", "review", "done"]),
-    results: z.array(z.object({ label: text, target: text })).min(1).optional(),
-    /** Рекомендую взять в ближайший прогон; только у несделанного. */
-    recommended: z.boolean().default(false),
-    executor: text.default(SELF_EXECUTOR),
     /** Доллары этапа и разница исполнителей — у брифов, записанных до доли от объёма. */
     add: addSchema.optional(),
     adds: z.record(z.string(), addSchema).optional(),
-    share: stageShareSchema.optional(),
-    factors: z.record(z.string(), executorFactorSchema).optional(),
   })
-  .superRefine((s, ctx) => {
-    // Ссылки сделанного этапа навыка проверяет `reportIssues`: вид этапа знают настройки, а не отчёт.
-    if (s.state === "todo" && s.results !== undefined) ctx.addIssue({ code: "custom", message: "a todo stage has no results yet", path: ["results"] });
-    if (s.state !== "todo" && s.recommended) ctx.addIssue({ code: "custom", message: "only a todo stage is recommended for the next run", path: ["recommended"] });
-  })
+  .superRefine(reportRules)
   // `adds.self` — цена этапа своими силами, то есть его `add`: агенты кладут её в `adds`, и бриф её туда переносит, а не отбивает.
   .overwrite(({ adds, ...s }) => {
     if (adds?.[SELF_EXECUTOR] === undefined) return adds === undefined ? s : { ...s, adds };
@@ -401,11 +442,17 @@ export const stageReportSchema = z
     return { ...s, add: s.add ?? self, ...(Object.keys(others).length === 0 ? {} : { adds: others }) };
   })
   // Множитель самого агента — единица по определению: присланный `factors.self` бриф отбрасывает, а не отбивает.
-  .overwrite(({ factors, ...s }) => {
-    if (factors?.[SELF_EXECUTOR] === undefined) return factors === undefined ? s : { ...s, factors };
-    const { [SELF_EXECUTOR]: _self, ...others } = factors;
-    return Object.keys(others).length === 0 ? s : { ...s, factors: others };
-  });
+  .overwrite(withoutSelfFactor);
+
+/**
+ * Отчёт об этапе в вызове инструмента: этап либо `todo`, либо `done`. Долларов и разницы исполнителей у этапа нет — их поля
+ * схема не показывает; присланные всё равно доезжают до проверок брифа и отбиваются там с объяснением.
+ */
+const stageReportCallSchema = z
+  .object({ ...reportFields, state: z.enum(["todo", "done"]) })
+  .catchall(z.unknown())
+  .superRefine(reportRules)
+  .overwrite(withoutSelfFactor);
 
 /**
  * Где исполнять работу: `here` — этот тред; `thread` — новый тред соседом этого, без родителя;
@@ -462,7 +509,7 @@ export const stageOutcomeSchema = z
     /** Прототип в окне виджета под карточкой Демонстрации: адрес страницы `http(s)` и подпись; у Утверждения не рисуется. */
     prototype: z.object({ url: prototypeUrlSchema, title: text.optional() }).strict().optional(),
     /** Id flow, который агент рекомендует для найденных проблем: Утверждение предлагает владельцу перейти в него; у Демонстрации поля нет. */
-    nextFlow: text.describe("Id of the owner's flow for problems you found while working; only on an approval stage outcome: one send of the approval moves the work into it").optional(),
+    nextFlow: text.describe("Id of the owner's flow for the problems you found; approval outcome only: the approval moves the work into it").optional(),
   })
   .superRefine((o, ctx) => {
     if (o.done.length + o.pending.length === 0)
@@ -477,7 +524,16 @@ export const criterionSchema = z.union([
   z.object({ text, add: addSchema.optional() }).strict(),
 ]);
 
-/** Первая часть брифа: не вопросы, а состояние и рекомендации. Подписи строк рисует виджет. */
+/** Пункт Definition of Done в вызове: один объект на «было»/«стало» и добавку; «было» и «стало» идут только вместе. */
+const criterionCallSchema = z.union([
+  text,
+  z
+    .object({ text, before: text.optional(), after: text.optional(), add: addSchema.optional() })
+    .strict()
+    .refine((c): c is Exclude<Criterion, string> => (c.before === undefined) === (c.after === undefined), "before and after go together: a changed item names both"),
+]);
+
+/** Первая часть хранимого брифа: не вопросы, а состояние и рекомендации. Подписи строк рисует виджет. */
 export const briefSetupSchema = z
   .object({
     artifacts: z.array(artifactSchema).min(1).optional(),
@@ -503,30 +559,49 @@ export const briefSetupSchema = z
         ctx.addIssue({ code: "custom", message: `a workflow ${key} needs executor workflow or fanout`, path: [key] });
   });
 
-/** Колонки артефактов нового брифа — все четыре и в этом порядке: прототип вторым, спецификация третьей. */
-export const ARTIFACT_SLOTS = [
-  { id: "task", name: "Задача" },
-  { id: "prototype", name: "HTML-прототип" },
-  { id: "spec", name: "Спецификация" },
-  { id: "plan", name: "План" },
-] as const;
+/**
+ * Первая часть брифа в вызове инструмента: Definition of Done и этапы. Артефакты, исполнитель, ревью, тестирование,
+ * приоритет и ряды бюджета заменили этапы работ — схема их не показывает, но присланные доезжают до проверок и отбиваются
+ * там с объяснением (`legacyIssues` в ./server/ask-tool.ts, `checkNewBrief`), а не пропадают молча.
+ */
+const briefSetupCallSchema = z
+  .object({
+    criteria: z.array(criterionCallSchema).min(1).optional(),
+    stages: z.array(stageReportCallSchema).min(1).optional(),
+  })
+  .catchall(z.unknown())
+  .superRefine((s, ctx) => {
+    if (s.stages !== undefined && !uniqueIds(s.stages)) ctx.addIssue({ code: "custom", message: "stage ids must be unique", path: ["stages"] });
+  });
 
 /** Префикс идентификаторов строк первой части в ответе. */
 export const SETUP_ID_PREFIX = "setup.";
 
 export const briefKindSchema = z.enum(["brief", "clarify"]);
 
-const briefFields = {
+const sharedBriefFields = {
   title: text,
   intro: z.string().optional(),
   /** `brief` — агент ждёт ответа; `clarify` — можно не отвечать. */
   kind: briefKindSchema.default("brief"),
   /** «Что я понял» — минимальный набор работы многоуровневым списком; его пункты — `setup.criteria`, их цены — база бюджета. */
   scope: z.string().min(1).optional(),
-  setup: briefSetupSchema.optional(),
   /** Итог этапа вместо первой части: работа уже идёт, спрашивать про этапы и бюджет нечего. */
   outcome: stageOutcomeSchema.optional(),
+};
+
+/** Поля хранимого брифа: читаются любые первая часть и вопросы, какие когда-либо записывались. */
+const briefFields = {
+  ...sharedBriefFields,
+  setup: briefSetupSchema.optional(),
   questions: z.array(decisionQuestionSchema).default([]),
+};
+
+/** Поля вызова инструмента: то, что сервер принимает у нового брифа. */
+const callBriefFields = {
+  ...sharedBriefFields,
+  setup: briefSetupCallSchema.optional(),
+  questions: z.array(decisionQuestionCallSchema).default([]),
 };
 
 /** Цена варианта, как её видят проверки брифа: риск им не нужен. */
@@ -545,7 +620,7 @@ type BriefShape = {
         budgetTarget?: unknown;
         budgetMax?: unknown;
         criteria?: unknown;
-        stages?: ReadonlyArray<{ add?: unknown; adds?: unknown }> | undefined;
+        stages?: ReadonlyArray<{ id: string; add?: unknown; adds?: unknown }> | undefined;
       }
     | undefined;
   questions: ReadonlyArray<{
@@ -593,13 +668,6 @@ const checkBrief = (brief: BriefShape, ctx: z.RefinementCtx) => {
     issue("an option removes only items of setup.criteria, by their index from zero");
 };
 
-/** Подпись ссылки документа — имя файла из пути (с расширением или без) или ключ задачи; ссылка на URL подписывается как угодно. */
-const labelNamesFile = (label: string, target: string): boolean => {
-  if (/^https?:\/\//.test(target) || /^[A-Z][A-Z0-9]*-\d+$/.test(label)) return true;
-  const base = target.split("/").pop() ?? "";
-  return label === base || label === base.replace(/\.[^.]+$/, "");
-};
-
 /** Цена варианта (BBPL-531): цена его собственных пунктов от нуля, а вычитание — только removes, его делает плагин. */
 export const OPTION_PRICE_RULE =
   "an option's add is the price of its own criteria, counted from zero, never negative; base items it replaces go in removes, and the plugin subtracts their price itself";
@@ -610,26 +678,11 @@ export const FORK_ZERO_RULE = "before launch a fork's simplest option costs 0 an
 /** Потолок цены варианта: длиннее — уже пояснение, а не оценка, и в строке «Цена · Риск» оно не помещается. */
 export const COST_MAX_LENGTH = 40;
 
-// Новый бриф: артефакты — только в setup, приоритета и бюджетов-шкал нет, вопросы — только fork, pick и confirm,
-// у развилки — уровень риска. Хранилище эти правила не применяет: старые брифы читаются как были.
+// Новый бриф: приоритета и бюджетов-шкал нет, вопросы — только fork, pick и confirm, у развилки — уровень риска.
+// Хранилище эти правила не применяет: старые брифы читаются как были. Артефакты, исполнителя, ревью и тестирование
+// отбивает `legacyIssues` в ./server/ask-tool.ts: их полей в схеме вызова нет.
 const checkNewBrief = (brief: BriefShape, ctx: z.RefinementCtx) => {
   const issue = (message: string) => ctx.addIssue({ code: "custom", message, path: ["questions"] });
-  const artifacts = brief.setup?.artifacts;
-  const slotted = (list: NonNullable<typeof artifacts>) =>
-    list.length === ARTIFACT_SLOTS.length && ARTIFACT_SLOTS.every((slot, i) => list[i]?.id === slot.id && list[i]?.name === slot.name);
-  if (artifacts !== undefined && !slotted(artifacts))
-    ctx.addIssue({
-      code: "custom",
-      message: `artifacts are exactly ${ARTIFACT_SLOTS.map((a) => a.id).join(", ")} in this order, named ${ARTIFACT_SLOTS.map((a) => `«${a.name}»`).join(", ")}; an absent one is state missing`,
-      path: ["setup", "artifacts"],
-    });
-  const unnamed = (artifacts ?? []).filter((a) => a.link !== undefined && !labelNamesFile(a.link.label, a.link.target)).map((a) => a.id);
-  if (unnamed.length > 0)
-    ctx.addIssue({
-      code: "custom",
-      message: `artifact link label is the file name or task key, not a document title: ${unnamed.join(", ")} — use the base name of target, like "spec.md", or a key like "BP-28"`,
-      path: ["setup", "artifacts"],
-    });
   if (brief.setup?.priority !== undefined)
     issue("priority is gone: the owner decides executor, checker (review) and testing; send those instead");
   if (brief.setup?.budgetTarget !== undefined || brief.setup?.budgetMax !== undefined)
@@ -676,12 +729,12 @@ const jsonList = (value: unknown): unknown => {
 /** Параметры инструмента `ask_decision`: бриф без того, что проставляет плагин. */
 export const askDecisionParamsSchema = z
   .object({
-    ...briefFields,
+    ...callBriefFields,
     /** Id уточнений этого треда, которые агент закрывает как решённые: команда вызова, в хранимый бриф не входит. */
     // Мост агента со старым описанием инструмента передаёт незнакомый список строкой JSON — её разбираем до проверки.
     resolves: z
       .preprocess(jsonList, z.array(text).min(1))
-      .describe("Ids of clarify widgets of this thread (the id from its directive line, dec_…) that you fixed or decided yourself and the owner has not answered: each is drawn as a resolved line without answer buttons. Works in any ask_decision call; an unknown, foreign or answered id refuses the call")
+      .describe("Ids (dec_…) of this thread's clarify widgets that you fixed or decided yourself and the owner has not answered: each collapses into a resolved line. Any call; an unknown, foreign or answered id refuses it")
       .optional(),
   })
   .superRefine(checkBrief)

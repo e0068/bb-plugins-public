@@ -18,6 +18,9 @@ import { CHOICE_TIMEOUT_MS, createAutoChoice } from "./server/auto-choice";
 import { runScript, scriptStep } from "./server/script-step";
 import { readTaskFile, writeTaskFile } from "./server/task-file";
 import { createAgentRelay } from "./server/agent-relay";
+import { nextWork } from "./core/mark-report";
+import { createBoundary, stageModelsOf } from "./server/boundary";
+import { createStageModels } from "./server/stage-models";
 import { createAutomationRunner, externalStep, registerAutomationRunner } from "./server/automation-runner";
 import { createNoticePublisher } from "./server/automation-notices";
 import { automationsBridge } from "./server/automations";
@@ -35,7 +38,7 @@ import { createJournalIndex } from "./server/journal-index";
 import { writeDecision } from "./server/journal-writer";
 import { acrossThreads, readClaudeTranscript, readPlanning, readWindowCost, readWindowMinutes, withDescendants } from "./server/planning";
 import { type ContextSettingValues, compactPreselectSetting, compactPreselectedOf, contextFillOf, contextSettings } from "./server/context";
-import { createProgress, FLOW_STAGE_TOOL, registerProgress } from "./server/progress";
+import { createProgress, FLOW_STAGE_TOOL, registerProgress, stageStateOf } from "./server/progress";
 import { registerRetryTool } from "./server/retry-tool";
 import { RETRY_AUTOMATION_TOOL } from "./lib/stage-constants";
 import { registerFlowPickerApi } from "./server/flow-picker-api";
@@ -262,6 +265,15 @@ export default async function plugin(bb: BbPluginApi): Promise<void> {
     own.mark(threadId, text);
     await bb.sdk.threads.send({ threadId, mode: "queue-if-active", input: [{ type: "text", text, mentions: [] }] });
   };
+  // Граница этапов: тред сжимается и получает модель следующего этапа до реплики, что его будит (./server/boundary.ts).
+  const boundary = createBoundary({ threads: bb.sdk.threads, send, stageState: (threadId, stageId) => stageStateOf(progress, threadId, stageId), warn: (message) => bb.log.warn(message) });
+  // Сжатие, модель и порядок «сначала тред, потом реплика» — на каждый план в одном месте; планы по замеру контекста и по модели треда.
+  const stageModels = createStageModels({ context: (threadId) => contextFillOf(bb.sdk, () => settings.get(), threadId), models: (threadId) => stageModelsOf(bb.sdk, threadId) });
+  // Назначенную границу исполняет только будящая реплика Flow после автоматизации; посторонняя отправка (`tell` шага) её не трогает.
+  const wake = async (threadId: string, text: string) => {
+    if (boundary.scheduled(threadId)) await boundary.service(threadId);
+    await send(threadId, text);
+  };
   /** PR рабочего дерева — номер, ссылка и состояние; нет PR или bb его не знает — `null`. */
   const pullRequestOf = async (environmentId: string) => {
     const answer = await bb.sdk.environments.pullRequest({ environmentId });
@@ -315,7 +327,7 @@ export default async function plugin(bb: BbPluginApi): Promise<void> {
   });
   advance = (threadId) => void runner.advance(threadId);
   // Ход агента идёт, пока тред active: кончился — ответ вызова уже никто не прочтёт, и реплика идёт в тред.
-  const relay = createAgentRelay({ busy: runner.busy, alive: async (threadId) => (await thread(threadId)).active, send, onError: (error) => bb.log.warn(`flow_stage: a Flow message failed to reach the thread (${error instanceof Error ? error.message : String(error)})`) });
+  const relay = createAgentRelay({ busy: runner.busy, alive: async (threadId) => (await thread(threadId)).active, send: wake, onError: (error) => bb.log.warn(`flow_stage: a Flow message failed to reach the thread (${error instanceof Error ? error.message : String(error)})`) });
   // Реплики, застрявшие в ожиданиях выгружаемого Flow, уходят в тред, а ждущие вызовы отвечают.
   bb.onDispose(() => relay.dispose());
   registerAutomationRunner(bb, runner);
@@ -344,7 +356,7 @@ export default async function plugin(bb: BbPluginApi): Promise<void> {
     skillPath: async (name) => (await readSkillFile(skillFileSources, name))?.path ?? null,
     now: Date.now,
   });
-  registerAskTool(bb, store, { decided: (brief) => recordDecided?.(brief) ?? Promise.resolve(), newId, now, stages: stagesOf, flowIds: () => flows.current().flows.map((flow) => flow.id), flowName: flowNameOf, hasFlow: (threadId) => flowOf(threadId) !== null, emit, planning: (threadId) => readPlanning(bb.sdk, threadId, Date.now(), readClaudeTranscript()), progress, limits: providerThreads.line });
+  registerAskTool(bb, store, { context: (threadId) => contextFillOf(bb.sdk, () => settings.get(), threadId), decided: (brief) => recordDecided?.(brief) ?? Promise.resolve(), newId, now, stages: stagesOf, flowIds: () => flows.current().flows.map((flow) => flow.id), flowName: flowNameOf, hasFlow: (threadId) => flowOf(threadId) !== null, emit, planning: (threadId) => readPlanning(bb.sdk, threadId, Date.now(), readClaudeTranscript()), progress, limits: providerThreads.line });
   const journalDirs = createJournalDirStore(bb.storage.kv);
   // Каждый ответ на бриф запоминается за тредом вместе с путём файла журнала: по нему итог прогона ссылается на журнал.
   const journalIndex = createJournalIndex(bb.storage.kv, store);
@@ -373,6 +385,12 @@ export default async function plugin(bb: BbPluginApi): Promise<void> {
   };
   recordDecided = registerApi(bb, store, {
     now,
+    // Встроенные этапы закрывает ответ владельца: модель следующего этапа ставится здесь, граница flow_stage на них не срабатывает.
+    ownerModel: stageModels.owner,
+    stageModel: async (threadId, after) => {
+      const next = nextWork(stagesOf(threadId).stages, after);
+      return next === null ? null : ((await stageModels.plan(threadId, next.stage, false))?.model ?? null);
+    },
     stages: (threadId) => stagesOf(threadId).stages,
     warn: (message) => bb.log.warn(message),
     emit,
@@ -418,6 +436,9 @@ export default async function plugin(bb: BbPluginApi): Promise<void> {
     // Доработка откатывает закрытые автоматизации за начатым заново этапом тем же исполнителем шагов.
     undo: (threadId, stages) => runner.undo(threadId, stages),
     relay,
+    boundary,
+    stageModels,
+    warn: (message) => bb.log.warn(message),
     // Правка прогресса уже поставила сверку треда в очередь: ответ ждёт её, а не запускает вторую.
     settled: (threadId) => scope.settled(threadId),
     readTaskFile: (threadId, target) => readTaskFile(bb.sdk, threadId, target),

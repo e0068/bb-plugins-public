@@ -66,17 +66,31 @@ describe("новый бриф — схема инструмента", () => {
     const parsed = askDecisionParamsSchema.parse({
       title: "Бриф",
       setup: {
-        executor: { recommended: "subagents", adds: { subagents: add(3, 5, 1) } },
-        checker: { recommended: "agent", adds: { self: add(0, 0, 1) }, models: [{ name: "Opus 5", recommended: true, add: add(3, 5, -3) }] },
         criteria: [{ text: "Кнопка", before: "Два ряда", after: "Одна кнопка", add: add(5, 9, 3) }],
       },
       questions: [fork()],
     });
-    expect(parsed.setup?.executor?.adds?.subagents).toEqual(add(3, 5, 1));
-    expect(parsed.setup?.checker?.adds?.self).toEqual(add(0, 0, 1));
-    expect(parsed.setup?.checker?.models?.[0]?.add).toEqual(add(3, 5, -3));
     expect(parsed.setup?.criteria?.[0]).toEqual({ text: "Кнопка", before: "Два ряда", after: "Одна кнопка", add: add(5, 9, 3) });
     expect(parsed.questions[0]?.options[0]?.add).toEqual(add(1, 2, 1));
     expect(decisionAnswerSchema.parse({ briefId: "dec_1", answers: [], budget: { target: "$25", max: "$40" } }).budget).toEqual({ target: "$25", max: "$40" });
+  });
+
+  it("хранимый бриф сохраняет добавки исполнителя и проверяющего", () => {
+    const parsed = decisionBriefSchema.parse({
+      id: "dec_1",
+      threadId: "thr_1",
+      createdAt: "2026-09-13T00:00:00.000Z",
+      title: "Старый",
+      setup: { executor: { recommended: "subagents", adds: { subagents: add(3, 5, 1) } }, checker: { recommended: "agent", adds: { self: add(0, 0, 1) }, models: [{ name: "Opus 5", recommended: true, add: add(3, 5, -3) }] } },
+      questions: [],
+    });
+    expect(parsed.setup?.executor?.adds?.subagents).toEqual(add(3, 5, 1));
+    expect(parsed.setup?.checker?.adds?.self).toEqual(add(0, 0, 1));
+    expect(parsed.setup?.checker?.models?.[0]?.add).toEqual(add(3, 5, -3));
+  });
+
+  it("пункт-изменение без «стало» или без «было» отбивается", () => {
+    expect(accepts({ title: "Бриф", setup: { criteria: [{ text: "Кнопка", before: "Два ряда" }] } })).toBe(false);
+    expect(accepts({ title: "Бриф", setup: { criteria: [{ text: "Кнопка", after: "Одна кнопка" }] } })).toBe(false);
   });
 });
