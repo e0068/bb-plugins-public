@@ -26,7 +26,7 @@ The Definition of Done rests on the answers of the Questions stage. A fork optio
 
 ## How to agree
 
-**In bb.** Items go into `setup.criteria` of the same `ask_decision` brief as Questions and Stage selection.
+**In bb.** Items go into `setup.criteria` of the same `ask_decision` brief as Questions and Stage selection. The brief does not stop the run: you go on by your items, and the owner's edits arrive with the next approval. With no approval ahead in the flow, formulate the items yourself from the history of similar tasks and go on.
 
 **What you understood — `scope`.** Every brief before the work is launched starts with `scope`: the minimal set of work you understood — every fork at its simplest answer — as a nested list (`"- item\n  - detail"`). The widget shows it first, above the questions, with the base price next to it. Its items are the first items of `criteria`.
 

@@ -42,11 +42,10 @@ describe("прогресс flow на сервере", () => {
 
   it("бриф, ответ и отметки агента ведут этапы; конец этапа пишет минуты и стоимость окна", async () => {
     const { harness, tick } = await host(1.8);
+    // Вопросы и Выбор этапов прогон не держат: закрыты отправкой брифа, рекомендованный прогон стоит сразу.
     await harness.callAgentTool(ASK_TOOL_NAME, priced(stagesBrief), { threadId: THREAD });
-    expect(await harness.callRpc("getFlowProgress", { threadId: THREAD })).toMatchObject({ current: "questions", done: 0, total: 4 });
+    expect(await harness.callRpc("getFlowProgress", { threadId: THREAD })).toMatchObject({ current: "task", done: 2, total: 4 });
     tick(3);
-    await harness.callRpc("answerBrief", { id: "dec_P1", messageId: "m", answer: { briefId: "dec_P1", answers: [], stages: [{ id: "task", run: true, executor: "self" }, { id: "demo", run: true, executor: "self" }] } });
-    expect(await harness.callRpc("getFlowProgress", { threadId: THREAD })).toMatchObject({ current: "task", done: 2 });
     await harness.callAgentTool(FLOW_STAGE_TOOL, { stage: "task", state: "started" }, { threadId: THREAD });
     tick(12);
     const link = { label: "task.md", target: "docs/tasks/task.md" };

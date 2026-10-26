@@ -21,13 +21,13 @@ Only what the owner decides and what changes the result. A fact you can check in
 
 Questions you have to wait for go into one brief, not one per turn.
 
-**Ask as it arises, and decide yourself whether to stop.** A question you can go on without — take the simplest option and name it — goes as `kind: "clarify"`: any question kinds, no prices, the work continues and the answer arrives along the way. A question the work cannot go on without, and every question of this stage before launch, goes as `brief`: the turn ends and you wait.
+**Ask as it arises, and decide yourself whether to stop.** A question you can go on without — take the simplest option and name it — goes as `kind: "clarify"`: any question kinds, no prices, the work continues and the answer arrives along the way. A question of this stage goes as `brief`: in a thread with a flow it does not stop the run — you go on by the recommended answers, and the owner's answers and comments arrive with the next approval; with no approval ahead, the recommended answers are your decision.
 
 ## How to ask
 
 **A question reads by itself.** The open brief shows the owner the questions with their options; the title and intro of the brief are not seen next to them. So the question and its context name the problem in plain words — what is broken or what is being chosen and how it affects the user — not a process step. Not "What do we do with the review?", but "On a phone, a search erased to empty closed the field together with the keyboard; I fixed it, the reviewer has not seen the fix — check again?". Before sending, re-read each question apart from the intro: is it clear from it alone what it is about and how the options differ.
 
-**In bb.** Questions go into `questions` of an `ask_decision` brief. If the Definition of Done and Stage selection stages follow, their parts go into the same brief — one brief, not three. After the call, paste the directive line from the result as a standalone line and end the turn.
+**In bb.** Questions go into `questions` of an `ask_decision` brief. If the Definition of Done and Stage selection stages follow, their parts go into the same brief — one brief, not three. After the call, paste the directive line from the result as a standalone line and do what the result says: the widget has no send button of its own.
 
 | `kind` | When | What is required |
 | --- | --- | --- |

@@ -62,8 +62,10 @@ describe("виджет Утверждения", () => {
     expect(c.getByRole("textbox", { name: "Комментарий к утверждению" })).toBeTruthy();
     expect(slot.queryByText("Сделано")).toBeNull();
     expect(slot.queryByText("prototype.html")).toBeNull();
-    expect(slot.queryByRole("button", { name: "Утвердить" })).toBeNull();
-    fireEvent.click(slot.getByRole("button", { name: "Продолжить" }));
+    // Кнопка ждёт список виджетов своей группы: без него ответы группы не ушли бы с Утверждением.
+    const approve = slot.getByRole("button", { name: "Продолжить" }) as HTMLButtonElement;
+    await vi.waitFor(() => expect(approve.disabled).toBe(false));
+    fireEvent.click(approve);
     expect(await sentOutcome(answerBrief)).toEqual({ accepted: true });
   });
 

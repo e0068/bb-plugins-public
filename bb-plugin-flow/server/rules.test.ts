@@ -79,7 +79,19 @@ describe("инструмент propose_rule", () => {
     await expect(propose(harness, { ...skillRule(), target: { kind: "skill", path: join(home, "notes", "x.md") } })).rejects.toThrow(/skills/);
     await expect(propose(harness, { ...skillRule(), mode: "create" })).rejects.toThrow(/already exists/);
     await expect(propose(harness, { ...memoryRule(), mode: "append", index: undefined })).rejects.toThrow(/does not exist/);
-    await expect(propose(harness, { ...skillRule(), content: "другой текст" })).rejects.toThrow(/verbatim/);
+  });
+
+  it("вызов без записи принимается: в файл пойдёт сам текст правила", async () => {
+    const { harness } = setup();
+    const { content: _, ...call } = skillRule();
+    expect(await propose(harness, call)).toContain(ruleDirectiveLine(`${RULE_ID_PREFIX}R1`));
+    expect(await harness.callRpc("getRule", { id: `${RULE_ID_PREFIX}R1` })).toMatchObject({ rule: { content: skillRule().text } });
+  });
+
+  it("вызов, где запись пересказывает правило, принимается: текст правила дописан в конец записи", async () => {
+    const { harness } = setup();
+    expect(await propose(harness, { ...skillRule(), content: "Пересказ правила своими словами." })).toContain(ruleDirectiveLine(`${RULE_ID_PREFIX}R1`));
+    expect(await harness.callRpc("getRule", { id: `${RULE_ID_PREFIX}R1` })).toMatchObject({ rule: { content: `Пересказ правила своими словами.\n${skillRule().text}\n` } });
   });
 
   it("замена — только куска, который стоит в файле ровно один раз", async () => {

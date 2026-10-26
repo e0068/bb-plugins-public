@@ -49,7 +49,7 @@ The subject of the work does not set the method. "This is logic programming, so 
 
 ## How to ask
 
-**In bb.** Stages go into `setup.stages` of the same `ask_decision` brief as Questions and Definition of Done — all stages of the flow, in its order, with the ids from the turn instructions:
+**In bb.** The brief does not stop the run: the recommended stages go into the run when it is sent, and the owner's changes arrive with the next approval; with no approval ahead in the flow, pick the stages yourself from the history of similar tasks and go on. Stages go into `setup.stages` of the same `ask_decision` brief as Questions and Definition of Done — all stages of the flow, in its order, with the ids from the turn instructions:
 
 | Field | What it is |
 | --- | --- |

@@ -1,7 +1,7 @@
 // Правило, которое агент предлагает записать в память или навык: куда можно писать, что именно
 // ляжет в файл после правки владельцем и как это показать. Чистые функции — их зовут и сервер,
 // и виджет; пути разбираются строкой, без node:path, потому что ядро едет и во фронт.
-import type { ProposeRuleParams, RuleKind, RuleRecord } from "../shared/contract";
+import type { ProposeRuleCall, ProposeRuleParams, RuleKind, RuleRecord } from "../shared/contract";
 
 /** Оглавление памяти лежит рядом с её файлами. */
 export const MEMORY_INDEX = "MEMORY.md";
@@ -30,11 +30,19 @@ export const ruleTargetIssue = (target: { kind: RuleKind; path: string }, home: 
 
 export const memoryIndexOf = (path: string): string => `${path.slice(0, path.lastIndexOf("/"))}/${MEMORY_INDEX}`;
 
+/**
+ * Предложение из вызова агента: правка владельцем текста правила меняет запись там, где текст стоит дословно,
+ * поэтому текст в записи стоит всегда. Записи нет — пишется сам текст; запись его пересказывает — текст встаёт в конец.
+ */
+export const withRuleText = (call: ProposeRuleCall): ProposeRuleParams => {
+  const { content = call.text } = call;
+  return { ...call, content: content.includes(call.text) ? content : appended(content, call.text) };
+};
+
 /** Что не так с предложением, кроме состояния файлов на диске; пусто — можно показывать владельцу. */
 export const proposalIssues = (params: ProposeRuleParams, home: string): string[] => [
   ...[ruleTargetIssue(params.target, home)].filter((issue): issue is string => issue !== null),
   ...params.similar.filter((place) => !clean(place.path)).map((place) => `similar "${place.path}" is not a clean absolute path`),
-  ...(params.content.includes(params.text) ? [] : ["content must hold text verbatim: the owner's edit of the rule replaces it there"]),
   ...(params.index !== undefined && (params.target.kind !== "memory" || params.mode !== "create") ? ["index is only for a new memory file"] : []),
   ...(params.mode === "replace" && (params.replaces ?? "").trim() === "" ? ["mode replace needs replaces: the exact fragment of the file the rule replaces"] : []),
   ...(params.mode !== "replace" && params.replaces !== undefined ? ["replaces is only for mode replace"] : []),

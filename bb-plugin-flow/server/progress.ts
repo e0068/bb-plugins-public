@@ -7,6 +7,7 @@ import { z } from "zod";
 
 import { stageGlyph } from "../components/ui/stage-glyphs";
 import { isActionStage, unfinishedBefore } from "../core/automation-run";
+import { checklistBlock, openItems } from "../core/checklist";
 import { undoDue } from "../core/automation-undo";
 import { afterMark, markReply, returnedNote, startFact, stopFailure, waitedReply, type StartFact } from "../core/mark-report";
 import { carriedBy, carrierOf, EMPTY_PROGRESS, forHandoff, onAnswer, onBrief, onMark, pendingActive, progressView, recounted, reopen, isAhead, recountWindows, toggleStageInRun, touchesProgress, answerMovesProgress, withActive } from "../core/progress";
@@ -15,7 +16,7 @@ import { isRunFinished, runSummary } from "../core/run-summary";
 import { isTaskFile, taskTitle } from "../core/run-tasks";
 import { stageTimeline } from "../core/stage-timeline";
 import { stampFlow, type TaskFlow } from "../core/task-flow";
-import { flowProgressSchema, flowStageParamsSchema, frozenRunSchema, progressRpcContract, type ContextFillView, type DecisionAnswer, type DecisionBrief, type FlowProgress, type FrozenRun, type Planned, type RunHistoryEntry, type RunSummaryView, type StageSettings, type WorkStage } from "../shared/contract";
+import { flowProgressSchema, flowStageParamsSchema, frozenRunSchema, progressRpcContract, type ContextFillView, type DecisionAnswer, type DecisionBrief, type ChecklistItem, type FlowProgress, type FrozenRun, type Planned, type RunHistoryEntry, type RunSummaryView, type StageSettings, type WorkStage } from "../shared/contract";
 import { runKey, type PastRun, type RunFigures, type RunSpend } from "@bb-plugins/automation-steps/index";
 import { RELAY_WAIT_MS, type AgentRelay, type RelayHold } from "./agent-relay";
 
@@ -352,6 +353,8 @@ export const registerProgress = (
     liveFlowId?: (id: string | undefined, name: string | undefined) => string | undefined;
     /** Утверждённые пункты Definition of Done треда — для строки этапа в баннере; пусто — строка не раскрывается. */
     criteria?: (threadId: string) => Promise<readonly string[]>;
+    /** Ответы владельца на Вопросы треда строками — для строки этапа Вопросов в баннере; пусто — строка не раскрывается. */
+    answers?: (threadId: string) => Promise<readonly string[]>;
     /** Файлы журнала треда за окно прогона (core/run-journal.ts); нет — итог без журнала. */
     journal?: (threadId: string, window: { startedAt: string; finishedAt: string }) => Promise<readonly string[]>;
     /** Сколько мс ответ flow_stage ждёт записи старта этапа со шагами за отмеченным; нет — 5 000. */
@@ -364,6 +367,8 @@ export const registerProgress = (
     relayWaitMs?: number;
     /** Сверка настроек Claude Code дерева треда с новым прогрессом: ответ отметки ждёт её; нет — не ждёт. */
     settled?: (threadId: string) => Promise<void>;
+    /** Чек-лист треда по комментариям владельца: пока в нём есть открытые пункты, следующий этап не начинается. Нет — чек-листа не бывает. */
+    checklist?: (threadId: string) => Promise<readonly ChecklistItem[]>;
   },
 ): { freezeFinished: (threadId: string) => Promise<void>; runFigures: (threadId: string) => Promise<RunFigures | null>; pastRuns: () => Promise<PastRun[]> } => {
   /**
@@ -421,6 +426,9 @@ export const registerProgress = (
       if (state === "started" && track?.skipped === true && track.finishedAt === undefined)
         return toolError(`The owner took stage ${stage} out of the run: skip it and go on with the next stage of the run. Nothing was marked.`);
       // Пропущенный этап прогона молча уходил из работы: следующий начинается только после него.
+      // Чек-лист по комментариям владельца закрывается до следующего этапа: так «Продолжить с правками» не теряет правки.
+      const checklist = state === "started" ? ((await deps.checklist?.(ctx.threadId).catch(() => [])) ?? []) : [];
+      if (openItems(checklist).length > 0) return toolError(checklistBlock(checklist));
       const open = state === "started" ? unfinishedBefore(stages, record, stage) : null;
       if (open !== null)
         return toolError(`Stage ${open.id} "${open.name}" comes before ${stage} in the run and is not marked done: finish it and mark it done first, or ask the owner to take it out of the run. Nothing was marked.`);
@@ -624,6 +632,7 @@ export const registerProgress = (
       const context = (await deps.context?.(threadId).catch(() => null)) ?? null;
       const flowName = deps.flowName?.(carrier);
       const criteria = (await deps.criteria?.(carrier).catch(() => [])) ?? [];
+      const answers = (await deps.answers?.(carrier).catch(() => [])) ?? [];
       // Завершённость и итог считаются по той же записи, что и вид: баннер снимается и блок в ленте появляются одним ответом.
       const stages = deps.stages(carrier).stages;
       const finished = isRunFinished(record, stages);
@@ -640,6 +649,7 @@ export const registerProgress = (
         ...(context === null ? {} : { context }),
         ...(carrier === threadId ? {} : { carrier: { threadId: carrier, title: thread.title ?? null } }),
         ...(criteria.length === 0 ? {} : { criteria: [...criteria] }),
+        ...(answers.length === 0 ? {} : { answers: [...answers] }),
       };
     },
 

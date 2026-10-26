@@ -9,6 +9,7 @@ import {
   answerRecordSchema,
   awaitingEntrySchema,
   carriedSchema,
+  checklistSchema,
   decisionBriefSchema,
   dispatchRouteSchema,
   type Add,
@@ -17,6 +18,7 @@ import {
   threadGroupSchema,
   type AnswerRecord,
   type AwaitingEntry,
+  type Checklist,
   type DecisionBrief,
   type DispatchRoute,
   type Fold,
@@ -37,6 +39,8 @@ const threadReturnedKey = (threadId: string) => `decision-thread-returned:${thre
 const threadGroupKey = (threadId: string) => `decision-thread-group:${threadId}`;
 /** Группа утверждения — id виджетов от прошлого утверждения до него, снимок на момент его записи. */
 const approvalGroupKey = (approvalId: string) => `decision-approval-group:${approvalId}`;
+const checklistKey = (threadId: string) => `decision-checklist:${threadId}`;
+const sentWithKey = (id: string) => `decision-sent-with:${id}`;
 /** Id держателя свёрнутой группы, которой принадлежит виджет. */
 const foldKey = (id: string) => `decision-fold:${id}`;
 /** Id виджетов свёрнутой группы, по ключу её держателя. */
@@ -44,6 +48,7 @@ const foldGroupKey = (holder: string) => `decision-fold-group:${holder}`;
 /** Метка уточнения, которое агент закрыл как решённое. */
 const resolvedKey = (id: string) => `decision-resolved:${id}`;
 const threadCriteriaKey = (threadId: string): string => `thread-criteria:${threadId}`;
+const threadAnswersKey = (threadId: string): string => `thread-answers:${threadId}`;
 
 const criteriaListSchema = z.array(z.string());
 
@@ -99,6 +104,15 @@ export type DecisionStore = {
   putApprovalGroup(approvalId: string, ids: readonly string[]): Promise<void>;
   /** Снимок группы утверждения; утверждение, записанное до снимков, — пустой список. */
   getApprovalGroup(approvalId: string): Promise<string[]>;
+  /** Чек-лист треда по комментариям к виджетам и Утверждение, которое его завело; новый заменяет прежний. */
+  putChecklist(threadId: string, checklist: Checklist): Promise<void>;
+  /** Чек-лист треда; нет или запись чужая — `null`. */
+  getChecklist(threadId: string): Promise<Checklist | null>;
+  /** Чек-лист треда снимается: прогон, к которому он относился, снят или сменился. */
+  dropChecklist(threadId: string): Promise<void>;
+  /** Виджет, копивший ответ, ушёл агенту с Утверждением `approvalId`: Демонстрация ответа не получает, а поле комментария ей больше не нужно. */
+  markSentWith(id: string, approvalId: string): Promise<void>;
+  getSentWith(id: string): Promise<string | null>;
   /** Память прототипа в треде; владелец в нём ещё ничего не делал — `null`. */
   getPrototype(threadId: string, url: string): Promise<PrototypeState | null>;
   /** Правка памяти прототипа по очереди: правка виджета и отметка отправки не затирают друг друга. */
@@ -122,6 +136,9 @@ export type DecisionStore = {
   /** Утверждённое Definition of Done треда — итог последнего ответа с пунктами; пустой список запись снимает. */
   putThreadCriteria(threadId: string, items: readonly string[]): Promise<void>;
   getThreadCriteria(threadId: string): Promise<string[]>;
+  /** Ответы владельца на Вопросы треда строками «вопрос — ответ» — для строки этапа в баннере; новый ответ заменяет прежние. */
+  putThreadAnswers(threadId: string, lines: readonly string[]): Promise<void>;
+  getThreadAnswers(threadId: string): Promise<string[]>;
   /** Утверждённый объём треда — цена, от которой считает бриф без своих пунктов. */
   putThreadScope(threadId: string, scope: Add): Promise<void>;
   getThreadScope(threadId: string): Promise<Add | null>;
@@ -251,6 +268,19 @@ export const createStore = (kv: PluginKvStorage): DecisionStore => {
     async putApprovalGroup(approvalId, ids) {
       await kv.set(approvalGroupKey(approvalId), [...ids]);
     },
+    putChecklist: (threadId, checklist) => serialized(checklistKey(threadId), () => kv.set(checklistKey(threadId), checklist)),
+    async getChecklist(threadId) {
+      const parsed = checklistSchema.safeParse(await kv.get(checklistKey(threadId)));
+      return parsed.success ? parsed.data : null;
+    },
+    dropChecklist: (threadId) => serialized(checklistKey(threadId), () => kv.delete(checklistKey(threadId))),
+    async markSentWith(id, approvalId) {
+      await kv.set(sentWithKey(id), approvalId);
+    },
+    async getSentWith(id) {
+      const value = await kv.get(sentWithKey(id));
+      return typeof value === "string" ? value : null;
+    },
     async getApprovalGroup(approvalId) {
       const ids = idListSchema.safeParse(await kv.get(approvalGroupKey(approvalId)));
       return ids.success ? ids.data : [];
@@ -289,6 +319,13 @@ export const createStore = (kv: PluginKvStorage): DecisionStore => {
       const parsed = criteriaListSchema.safeParse(await kv.get(threadCriteriaKey(threadId)));
       return parsed.success ? parsed.data : [];
     },
+    async putThreadAnswers(threadId, lines) {
+      await (lines.length === 0 ? kv.delete(threadAnswersKey(threadId)) : kv.set(threadAnswersKey(threadId), [...lines]));
+    },
+    async getThreadAnswers(threadId) {
+      const parsed = criteriaListSchema.safeParse(await kv.get(threadAnswersKey(threadId)));
+      return parsed.success ? parsed.data : [];
+    },
     async putThreadScope(threadId, scope) {
       await kv.set(threadScopeKey(threadId), scope);
     },
@@ -303,7 +340,7 @@ export const createStore = (kv: PluginKvStorage): DecisionStore => {
       await kv.set(launchedKey(threadId), true);
     },
     async resetThreadWork(threadId) {
-      await Promise.all([launchedKey, threadCarryKey, threadCriteriaKey, threadScopeKey].map((key) => kv.delete(key(threadId))));
+      await Promise.all([launchedKey, threadCarryKey, threadCriteriaKey, threadAnswersKey, threadScopeKey, checklistKey].map((key) => kv.delete(key(threadId))));
     },
     async getRoute(projectId) {
       const parsed = routesSchema.safeParse(await kv.get(ROUTES_KEY));

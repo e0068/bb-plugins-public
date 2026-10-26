@@ -27,7 +27,8 @@ const OUTCOME_STAGES = { minButtonWidth: 170 };
 /** Учебное содержимое карточки вида: то, что агент прислал бы владельцу на этом этапе. Чистая функция текстов словаря. */
 export const exampleBrief = (kind: BuiltinKind, t: Messages): DecisionBrief => {
   const s: Sample = t.flows.widgets.sample;
-  const brief = { ...BASE, id: `example:${kind}`, title: s.title };
+  // Вопросы, Definition of Done, Выбор этапов и Демонстрация прогон не держат: их правки уходят с Утверждением, и пример рисует их так же.
+  const brief = { ...BASE, id: `example:${kind}`, title: s.title, ...(kind === "approve" ? {} : { settle: "approval" as const }) };
   switch (kind) {
     case "questions":
       return {
@@ -41,6 +42,27 @@ export const exampleBrief = (kind: BuiltinKind, t: Messages): DecisionBrief => {
             options: [
               { id: "list", action: s.listOption, recommended: true, description: s.listText, add: { target: 0, max: 0, risk: 0 } },
               { id: "inline", action: s.inlineOption, recommended: false, description: s.inlineText, add: { target: 2, max: 4, risk: 2, minutes: 10 } },
+            ],
+          },
+          {
+            id: "details",
+            kind: "pick",
+            question: s.pickQuestion,
+            allowOwn: false,
+            options: [
+              { id: "size", action: s.pickSize, recommended: true, description: s.pickSizeText },
+              { id: "date", action: s.pickDate, recommended: false, description: s.pickDateText },
+            ],
+          },
+          { id: "reading", kind: "confirm", question: s.confirmQuestion, context: s.confirmContext, allowOwn: false, options: [{ id: "yes", action: s.confirmYes, recommended: true }] },
+          {
+            id: "light",
+            kind: "yesno",
+            question: s.yesnoQuestion,
+            allowOwn: false,
+            options: [
+              { id: "yes", action: s.yes, recommended: true },
+              { id: "no", action: s.no, recommended: false },
             ],
           },
         ],

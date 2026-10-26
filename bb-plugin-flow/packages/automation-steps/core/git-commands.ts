@@ -65,6 +65,16 @@ export function fastForwardAtArgs(path: string, base: string): readonly string[]
   return ["-C", path, ...fastForwardArgs(`origin/${base}`)];
 }
 
+/** `git -C <path> rev-parse HEAD` — the commit the worktree at `<path>` stands on. */
+export function headAtArgs(path: string): readonly string[] {
+  return ["-C", path, "rev-parse", "HEAD"];
+}
+
+/** `git -C <path> diff --name-only <from> HEAD` — the files the worktree at `<path>` changed since `<from>`. */
+export function changedSinceAtArgs(path: string, from: string): readonly string[] {
+  return ["-C", path, "diff", "--name-only", from, "HEAD"];
+}
+
 // The pair below answers "is the branch's content already in the base?" (see
 // merged-content.ts). `merge-tree` merges without touching the working copy
 // and prints the resulting tree; `rev-parse <base>^{tree}` gives the base's
