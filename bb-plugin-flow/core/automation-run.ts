@@ -7,6 +7,7 @@ import type { StepLink } from "@bb-plugins/automation-steps/index";
 import { currentName, freeId, MAX_WAKE_INSTRUCTION_CHARS, RETRY_AUTOMATION_TOOL, stageKindOf } from "../lib/stage-constants";
 import { scriptOf } from "./automation-scripts";
 import type { BuiltinAutomation, FlowProgress, FlowSettings, ProgressView, RunningIcon, StageTrack, WorkStage } from "../shared/contract";
+import { threadProviderOf } from "./provider-threads";
 
 /** Шаг в снимке прогона: id, подпись и — у пройденного — строка успеха, которую он вернул. */
 export type RunStep = { id: string; label: string; detail?: string };
@@ -17,7 +18,9 @@ type StepView = NonNullable<ProgressView["stages"][number]["automation"]>["steps
 export const archivesThread = (steps: readonly RunStep[]): boolean => steps.some((step) => step.id === "bb.archive");
 
 /** Вид исполнителя по его id: `agent:…`, `workflow:…` или сам агент. */
-export const executorKind = (id: string | undefined): "self" | "agent" | "workflow" => (id?.startsWith("agent:") ? "agent" : id?.startsWith("workflow:") ? "workflow" : "self");
+/** Вид исполнителя в баннере: дочерний тред другого провайдера (`thread:`) ведёт этап вне сессии, как агент. */
+export const executorKind = (id: string | undefined): "self" | "agent" | "workflow" =>
+  id?.startsWith("agent:") || threadProviderOf(id ?? "") !== null ? "agent" : id?.startsWith("workflow:") ? "workflow" : "self";
 
 /** Подпись шага встроенной автоматизации: шаг Flow — английская, скрипт — имя его файла, пропавший скрипт — id шага. */
 const builtinStepLabel = (automation: BuiltinAutomation, id: string): string => (isStepId(id) ? STEP_LABELS[id].en : (scriptOf(automation, id)?.name ?? id));

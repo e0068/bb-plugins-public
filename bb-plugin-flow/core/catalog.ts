@@ -151,6 +151,8 @@ export type ExecutorGroup = ExecutorOrigin | { kind: "codex" } | { kind: "workfl
 
 const executorGroupOf = (executor: StageExecutor): ExecutorGroup => {
   if (executor.kind === "workflow") return { kind: "workflow" };
+  // Тред провайдера — группой своего источника (bb), даже когда провайдер — Codex: агенты Codex — другое.
+  if (executor.kind === "thread") return executor.origin ?? { kind: "own" };
   if (executor.provider === CODEX_PROVIDER) return { kind: "codex" };
   return executor.origin ?? { kind: "own" };
 };
@@ -169,6 +171,9 @@ const executorRank = (group: ExecutorGroup): string => {
       return "4";
   }
 };
+
+/** Сегмент меню исполнителей: «Субагент» держит агентов и треды провайдеров, «Workflow» — workflow. */
+export const inSegment = (executor: StageExecutor, segment: "agent" | "workflow"): boolean => (segment === "workflow") === (executor.kind === "workflow");
 
 /** Исполнители меню группами: мои, проекты, плагины, Codex, workflow; внутри группы — порядок каталога. */
 export const executorGroups = (executors: readonly StageExecutor[]): Array<{ group: ExecutorGroup; executors: StageExecutor[] }> =>

@@ -78,6 +78,7 @@ import { agentFor, defaultExecutionOf, executionFor, startMessageOf } from "./co
 import { registerSessionConfig } from "./server/session-config";
 import { revealInFinderHere } from "@bb-plugins/reveal-in-finder/index";
 import { createStore } from "./server/store";
+import { createProviderThreads } from "./server/provider-threads";
 import { createThreadFlows } from "./server/thread-flows";
 import { removeStaleRootSkill } from "./server/stale-root-skill";
 import { bringPluginsHome } from "./server/plugin-homecoming";
@@ -335,7 +336,15 @@ export default async function plugin(bb: BbPluginApi): Promise<void> {
   registerChecklistTool(bb, store);
   // Решение агента записывает модуль ответов, а он подключается ниже: ссылка заполняется, когда он встанет.
   let recordDecided: ((brief: DecisionBrief) => Promise<void>) | undefined;
-  registerAskTool(bb, store, { decided: (brief) => recordDecided?.(brief) ?? Promise.resolve(), newId, now, stages: stagesOf, flowIds: () => flows.current().flows.map((flow) => flow.id), flowName: flowNameOf, hasFlow: (threadId) => flowOf(threadId) !== null, emit, planning: (threadId) => readPlanning(bb.sdk, threadId, Date.now(), readClaudeTranscript()), progress });
+  // Этап с исполнителем «Тред <провайдер>» ведёт дочерний тред другого провайдера; лимиты провайдеров — в ходе треда.
+  const providerThreads = createProviderThreads(bb, {
+    stages: (threadId) => stagesOf(threadId).stages,
+    expectDelegate: threads.expectDelegate,
+    criteria: (threadId) => store.getThreadCriteria(threadId),
+    skillPath: async (name) => (await readSkillFile(skillFileSources, name))?.path ?? null,
+    now: Date.now,
+  });
+  registerAskTool(bb, store, { decided: (brief) => recordDecided?.(brief) ?? Promise.resolve(), newId, now, stages: stagesOf, flowIds: () => flows.current().flows.map((flow) => flow.id), flowName: flowNameOf, hasFlow: (threadId) => flowOf(threadId) !== null, emit, planning: (threadId) => readPlanning(bb.sdk, threadId, Date.now(), readClaudeTranscript()), progress, limits: providerThreads.line });
   const journalDirs = createJournalDirStore(bb.storage.kv);
   // Каждый ответ на бриф запоминается за тредом вместе с путём файла журнала: по нему итог прогона ссылается на журнал.
   const journalIndex = createJournalIndex(bb.storage.kv, store);
@@ -414,6 +423,7 @@ export default async function plugin(bb: BbPluginApi): Promise<void> {
     readTaskFile: (threadId, target) => readTaskFile(bb.sdk, threadId, target),
     criteria: (threadId) => store.getThreadCriteria(threadId),
     answers: (threadId) => store.getThreadAnswers(threadId),
+    delegate: providerThreads.delegate,
     writeTaskFile: (threadId, target, text) => writeTaskFile(bb.sdk, threadId, target, text),
     flow: (threadId) => {
       const flow = flowOf(threadId);

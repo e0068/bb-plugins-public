@@ -14,7 +14,7 @@ import { useBbNavigate, useRpc } from "@get-bb/plugin-sdk/app";
 import { DEFAULT_FAILURE_INSTRUCTION, retryPolicyOf, wakesAgentAfterLastRetry, withFailureInstruction } from "../core/automation-run";
 import type { StepId } from "@bb-plugins/automation-steps/catalog";
 import { unopenedPrSteps } from "../core/automation-order";
-import { executorGroups, skillGroups, skillShortName, type ExecutorGroup } from "../core/catalog";
+import { executorGroups, inSegment, skillGroups, skillShortName, type ExecutorGroup } from "../core/catalog";
 import { expandStages, flowStage, nestableFlows, setFlowStages, stageToFlow } from "../core/flows";
 import { freeFlowName } from "../core/flow-files";
 import { stageLabel } from "../core/stages";
@@ -238,12 +238,12 @@ const segmentOf = (stage: WorkStage): Segment => {
 };
 
 /** Агенты или workflow каталога группами по источнику; галочка — стоит ли исполнитель у этапа. */
-function ExecutorOptions({ stage, catalog, kind }: { stage: WorkStage; catalog: StageCatalog; kind: StageExecutor["kind"] }) {
+function ExecutorOptions({ stage, catalog, kind }: { stage: WorkStage; catalog: StageCatalog; kind: "agent" | "workflow" }) {
   const t = useMessages();
   const setStage = useSetStage();
   const shown = stageLabel(stage, t.stages);
   const current = executionOf(stage);
-  const found = catalog.executors.filter((e) => e.kind === kind);
+  const found = catalog.executors.filter((e) => inSegment(e, kind));
   const mainAgent = kind === "agent" && current.kind === "executors" ? <MainAgentOption stage={stage} /> : null;
   if (found.length === 0)
     return (
