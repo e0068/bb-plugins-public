@@ -318,6 +318,8 @@ export const registerAskTool = (
     decided?: (brief: DecisionBrief) => Promise<void>;
     /** Сообщает Automations о событии Flow; не ждётся и не бросает (./automations.ts). */
     emit?: (trigger: FlowTrigger, threadId: string, context?: { stageId?: string }) => void;
+    /** Строка лимитов провайдеров для хода треда (./provider-threads.ts); `null` или нет — строки нет. */
+    limits?: (threadId: string) => string | null;
   },
 ): void => {
   bb.agents.registerTool({
@@ -420,6 +422,7 @@ export const registerAskTool = (
   bb.agents.contributeInstructions(({ threadId }) => {
     // Тред без flow Flow не ведёт: ни правила про бриф, ни этапов. Инструмент остаётся, агент зовёт его сам.
     if (deps.hasFlow?.(threadId) === false) return "";
-    return flowTurnInstructions(deps.stages?.(threadId).stages ?? []);
+    const limits = deps.limits?.(threadId) ?? null;
+    return [flowTurnInstructions(deps.stages?.(threadId).stages ?? []), ...(limits === null ? [] : [limits])].join("\n\n");
   });
 };

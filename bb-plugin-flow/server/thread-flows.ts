@@ -1,7 +1,7 @@
 // Какой flow у треда, какой выбран над его композером до отправки и какой —
 // в композере проекта. Инструкции агенту собираются синхронно, поэтому привязки
 // живут в памяти и дописываются в kv следом. Новый тред берёт flow родителя,
-// а без родителя — выбор своего проекта; тред Side chat — «без flow».
+// а без родителя — выбор своего проекта; тред Side chat и тред, которому Flow отдал этап, — «без flow».
 import type { PluginKvStorage } from "@get-bb/plugin-sdk";
 
 import { NO_FLOW } from "../core/flows";
@@ -36,6 +36,8 @@ export type ThreadFlows = {
   onThreadDeleted(payload: { thread: { id: string } }): void;
   /** Ждёт записи в kv, начатые привязками новых тредов. */
   settled(): Promise<void>;
+  /** Следующий ребёнок треда — дочерний тред, которому Flow отдал этап: он идёт без flow, а не по flow родителя. */
+  expectDelegate(parentThreadId: string): void;
 };
 
 const readAll = async (kv: PluginKvStorage, prefix: string): Promise<Map<string, string>> => {
@@ -48,6 +50,8 @@ export const createThreadFlows = async (kv: PluginKvStorage): Promise<ThreadFlow
   const threads = new Map([...(await readAll(kv, THREAD_PREFIX))].map(([threadId, flowId]) => [threadId, flowId === LEGACY_AGENT_NO_FLOW ? NO_FLOW : flowId]));
   const projects = await readAll(kv, PROJECT_PREFIX);
   const picks = await readAll(kv, PICK_PREFIX);
+  // Родители, чей следующий ребёнок — тред этапа: метка живёт до его создания, перезапуск плагина её не помнит.
+  const delegating = new Set<string>();
   let writes: Promise<unknown> = Promise.resolve();
   const unpick = async (threadId: string) => {
     if (picks.delete(threadId)) await kv.delete(`${PICK_PREFIX}${threadId}`);
@@ -55,7 +59,8 @@ export const createThreadFlows = async (kv: PluginKvStorage): Promise<ThreadFlow
   const bind: ThreadFlows["bind"] = (thread) => {
     // Уже привязанный тред — привязан первым сообщением раньше события создания, например flow исходного треда передачи.
     if (threads.has(thread.id)) return;
-    const flowId = isSideChat(thread) ? NO_FLOW : thread.parentThreadId === null ? projects.get(thread.projectId) : threads.get(thread.parentThreadId);
+    const delegated = thread.parentThreadId !== null && delegating.delete(thread.parentThreadId);
+    const flowId = isSideChat(thread) || delegated ? NO_FLOW : thread.parentThreadId === null ? projects.get(thread.projectId) : threads.get(thread.parentThreadId);
     if (flowId === undefined) return;
     // Память — сразу: сборка инструкций первого хода может прийти раньше записи в kv.
     threads.set(thread.id, flowId);
@@ -92,6 +97,9 @@ export const createThreadFlows = async (kv: PluginKvStorage): Promise<ThreadFlow
     },
     settled: async () => {
       await writes;
+    },
+    expectDelegate: (parentThreadId) => {
+      delegating.add(parentThreadId);
     },
   };
 };

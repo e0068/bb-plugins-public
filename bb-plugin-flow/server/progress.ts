@@ -9,6 +9,7 @@ import { stageGlyph } from "../components/ui/stage-glyphs";
 import { isActionStage, unfinishedBefore } from "../core/automation-run";
 import { checklistBlock, openItems } from "../core/checklist";
 import { undoDue } from "../core/automation-undo";
+import { delegatedReply, earlierResults, reworkReply, threadProviderOf } from "../core/provider-threads";
 import { afterMark, markReply, returnedNote, startFact, stopFailure, waitedReply, type StartFact } from "../core/mark-report";
 import { carriedBy, carrierOf, EMPTY_PROGRESS, forHandoff, onAnswer, onBrief, onMark, pendingActive, progressView, recounted, reopen, isAhead, recountWindows, toggleStageInRun, touchesProgress, answerMovesProgress, withActive } from "../core/progress";
 import { historyOrder } from "../core/run-history";
@@ -19,6 +20,7 @@ import { stampFlow, type TaskFlow } from "../core/task-flow";
 import { flowProgressSchema, flowStageParamsSchema, frozenRunSchema, progressRpcContract, type ContextFillView, type DecisionAnswer, type DecisionBrief, type ChecklistItem, type FlowProgress, type FrozenRun, type Planned, type RunHistoryEntry, type RunSummaryView, type StageSettings, type WorkStage } from "../shared/contract";
 import { runKey, type PastRun, type RunFigures, type RunSpend } from "@bb-plugins/automation-steps/index";
 import { RELAY_WAIT_MS, type AgentRelay, type RelayHold } from "./agent-relay";
+import type { ProviderThreads } from "./provider-threads";
 
 export const FLOW_STAGE_TOOL = "flow_stage";
 
@@ -369,6 +371,8 @@ export const registerProgress = (
     settled?: (threadId: string) => Promise<void>;
     /** Чек-лист треда по комментариям владельца: пока в нём есть открытые пункты, следующий этап не начинается. Нет — чек-листа не бывает. */
     checklist?: (threadId: string) => Promise<readonly ChecklistItem[]>;
+    /** Дочерний тред другого провайдера, которому отдан начатый этап с исполнителем `thread:<провайдер>` (./provider-threads.ts); нет — этап ведёт агент. */
+    delegate?: ProviderThreads["delegate"];
   },
 ): { freezeFinished: (threadId: string) => Promise<void>; runFigures: (threadId: string) => Promise<RunFigures | null>; pastRuns: () => Promise<PastRun[]> } => {
   /**
@@ -461,7 +465,17 @@ export const registerProgress = (
         const waited = waits ? await waitFor(ctx.threadId, stages, verdict.stage, hold, ctx.signal) : null;
         const ahead = `${waited?.text ?? markReply(stage, verdict, fact)}${state === "done" ? returnedNote(stages, marked, stage) : ""}`;
         const undoNote = undoLines.length === 0 ? "" : ` ${undoLines.join(" ")}`;
-        return `Stage ${stage} marked ${state}.${ahead}${undoNote}`;
+        // Этап с исполнителем-тредом ведёт дочерний тред провайдера: Flow заводит его сам, агент только ждёт отчёта.
+        const providerId = state === "started" && marking !== undefined ? threadProviderOf(marked.stages[stage]?.executor ?? "") : null;
+        // Повторное начало тем же исполнителем — доработка: этап уже у ребёнка, правки идут ему, второй тред не заводится.
+        // Исполнитель прошлого прохода — из записи до отметки: после неё там уже исполнитель нового прохода.
+        const delegated =
+          providerId === null || deps.delegate === undefined || marking === undefined
+            ? ""
+            : track?.startedAt !== undefined && track.executor === marked.stages[stage]?.executor
+              ? reworkReply(stage, providerId)
+              : delegatedReply(stage, providerId, await deps.delegate({ threadId: ctx.threadId, stage: marking, providerId, results: earlierResults(stages, marked, stage) }));
+        return `Stage ${stage} marked ${state}.${ahead}${undoNote}${delegated}`;
       } finally {
         hold?.release();
       }

@@ -1,6 +1,6 @@
 // Каталог секции этапов: навыки bb по всем проектам с их источником, агенты — свои из ~/.claude/agents с подпапками,
-// из .claude/agents проектов bb, из установленных плагинов Claude Code и из ~/.codex/agents, — и сохранённые
-// workflow владельца, а отдельно — где лежит файл навыка по имени.
+// из .claude/agents проектов bb, из установленных плагинов Claude Code и из ~/.codex/agents, — сохранённые
+// workflow владельца и треды провайдеров bb, а отдельно — где лежит файл навыка по имени.
 // Источник, который не ответил, даёт пустую
 // часть каталога — секция настроек остаётся рабочей и без подсказок.
 import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
@@ -9,6 +9,7 @@ import { basename, extname, join } from "node:path";
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 
 import { disabledPluginKeys, installedPlugins, parseAgentFile, parseCodexAgentFile, parseWorkflowFile, skillOrigin, syncedPluginName } from "../core/catalog";
+import { OWN_PROVIDER, threadExecutor } from "../core/provider-threads";
 import type { ClaudePlugin } from "../core/skill-scope";
 import { workflowAgentOptions, type WorkflowAgentOption } from "../core/workflow-file";
 import type { AutomationScript, ExecutorOrigin, SkillFile, SkillOrigin, StageCatalog, StageExecutor } from "../shared/contract";
@@ -22,6 +23,8 @@ export type CatalogSources = {
   home: string;
   /** Проекты bb и их папка по умолчанию — там лежат `.claude/agents` проекта; нет источника — агентов проектов нет. */
   projects?: () => Promise<ReadonlyArray<{ name: string; path: string }>>;
+  /** Провайдеры bb — из них исполнители «Тред <провайдер>»; нет источника — тредов нет. */
+  providers?: () => Promise<ReadonlyArray<{ id: string; displayName: string }>>;
 };
 
 const settled = async <T>(work: () => Promise<T>, fallback: T): Promise<T> => {
@@ -124,9 +127,13 @@ const readExecutorEntries = async (sources: CatalogSources): Promise<ExecutorEnt
 /** Агенты каталога шаблоном шага конструктора workflow. */
 export const readWorkflowAgents = async (sources: CatalogSources): Promise<WorkflowAgentOption[]> => workflowAgentOptions(await readExecutorEntries(sources));
 
+/** Исполнители-треды: провайдер bb, кроме того, на котором Flow ведёт треды, — дочерний тред этапа. Файла у них нет. */
+const readThreadExecutors = async (sources: CatalogSources): Promise<StageExecutor[]> =>
+  (await settled(sources.providers ?? (async () => []), [])).filter((provider) => provider.id !== OWN_PROVIDER).map(threadExecutor);
+
 export const readStageCatalog = async (sources: CatalogSources): Promise<StageCatalog> => {
-  const [skills, entries] = await Promise.all([readSkills(sources), readExecutorEntries(sources)]);
-  return { skills, executors: entries.map((entry) => entry.executor) };
+  const [skills, entries, threads] = await Promise.all([readSkills(sources), readExecutorEntries(sources), readThreadExecutors(sources)]);
+  return { skills, executors: [...entries.map((entry) => entry.executor), ...threads] };
 };
 
 /** Записи папки без точки в имени — подпапки; не прочиталась — ни одной. */
@@ -269,4 +276,5 @@ export const hostCatalogSources = (bb: Pick<BbPluginApi, "sdk">, skills: SkillLi
       const source = project.sources.find((s) => s.isDefault) ?? project.sources[0];
       return source === undefined ? [] : [{ name: project.name, path: source.path }];
     }),
+  providers: async () => (await bb.sdk.providers.list()).filter((provider) => provider.available),
 });

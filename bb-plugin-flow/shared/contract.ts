@@ -168,11 +168,14 @@ export const executorOriginSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("plugin"), plugin: text }),
 ]);
 
-/** Исполнитель этапа из настроек: агент или workflow. Подписи хранятся вместе с id, чтобы снимок в брифе не зависел от файлов агентов. */
+/**
+ * Исполнитель этапа из настроек: агент, workflow или дочерний тред другого провайдера bb. Подписи хранятся вместе с id,
+ * чтобы снимок в брифе не зависел от файлов агентов.
+ */
 export const stageExecutorSchema = z.object({
-  /** `agent:<name>` или `workflow:<name>`; у агента Codex — `agent:codex/<name>`. */
+  /** `agent:<name>`, `workflow:<name>` или `thread:<id провайдера bb>`; у агента Codex — `agent:codex/<name>`. */
   id: text,
-  kind: z.enum(["agent", "workflow"]),
+  kind: z.enum(["agent", "workflow", "thread"]),
   name: text,
   model: z.string().optional(),
   /** Поставщик агента — по нему виджет берёт иконку. */
