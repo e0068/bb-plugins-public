@@ -5,8 +5,10 @@
 // "Disable this message with git config advice.diverging false") plus a terse
 // fatal line — unreadable dumped into a toast. This also names WHICH kind of
 // failure it was, because they are not the same to the user:
-//   - a divergence is permanent — the local branch has commits origin doesn't
-//     (the usual state after a squash merge), and no retry fast-forwards it;
+//   - a divergence is permanent — the local branch carries work origin lacks
+//     (a divergence whose content is all in origin, the usual state after a
+//     squash merge, the shell settles itself — wiring/local-main-pull.ts), and
+//     no retry fast-forwards it;
 //   - a busy branch or uncommitted changes are transient — a retry works once
 //     the other working copy is free or its changes are put away.
 //
@@ -14,16 +16,25 @@
 // on here are stable English, not the caller's locale.
 export function describeMainPullFailure(gitOutput: string): string {
   const text = gitOutput.trim();
-  if (/not possible to fast-forward|non-fast-forward|can't be fast-forwarded/i.test(text)) {
+  if (isDivergedPull(text)) {
     return "local main has diverged from origin and can't be fast-forwarded (the usual state after a squash merge)";
   }
   if (/refusing to (?:fetch|update) into branch .* checked out/i.test(text)) {
     return "main is checked out in another working copy — retry once it is free";
   }
-  if (/changes .* would be overwritten|commit your changes or stash/i.test(text)) {
+  if (/changes .* would be overwritten|commit your changes or stash|not uptodate\. cannot merge/i.test(text)) {
     return "the main working copy has uncommitted changes blocking the pull";
   }
   return stripGitAdvice(text);
+}
+
+/**
+ * The refusal was a divergence — the one kind the shell may still settle by
+ * itself, when everything local main carries is already in origin (see
+ * wiring/local-main-pull.ts).
+ */
+export function isDivergedPull(gitOutput: string): boolean {
+  return /not possible to fast-forward|non-fast-forward|can't be fast-forwarded/i.test(gitOutput);
 }
 
 // The fallback for an unrecognised failure: drop git's `hint:` advice lines
