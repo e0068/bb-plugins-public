@@ -18,6 +18,8 @@ import { bbCliClient } from "./wiring/bb-cli-client";
 import { cliRunMessage, type CliPorts } from "./wiring/bb-cli-run";
 import type { CatchUpOutcome, ParentDeliveryOutcome } from "./wiring/catch-up";
 import type { RefreshOutcome } from "./wiring/create-pr";
+import { gitClient } from "./wiring/git-client";
+import type { GitPorts } from "./wiring/git-run";
 import { findLinkedTask } from "./wiring/linked-task";
 import { markLinkedTasksStatus, splitTaskStatusResults, type TaskStatusReport } from "./wiring/mark-task-status";
 import { writeTaskFact, writeTaskPlan } from "./wiring/task-figures";
@@ -28,6 +30,7 @@ import {
   attemptLocalMainPullRefreshing,
   availableStatus,
   catchUpBranch,
+  codeInMainGate,
   deliverIntoParent,
   parentHeadOf,
   environmentIdOf,
@@ -97,6 +100,8 @@ export interface StepPorts {
    * коммитят в текущую ветку, как раньше.
    */
   branchOff?: (threadId: string) => Promise<string | null>;
+  /** git в дереве по пути; по умолчанию — настоящий процесс. Шаг «Задача → done» спрашивает им, в main ли код треда. */
+  git?: (path: string) => GitPorts;
 }
 
 /**
@@ -229,7 +234,9 @@ export function createSteps(ports: StepPorts): Steps {
   };
 
   const moveTasks = (status: "in_review" | "done") => async (threadId: string) => {
-    const report = await markLinkedTasksStatus(cli(), threadId, status);
+    // В done задача уходит только с кодом треда в origin/main; в in_review — как есть.
+    const gate = codeInMainGate(sdk, ports.git ?? gitClient, threadId);
+    const report = await markLinkedTasksStatus(cli(), threadId, status, gate);
     const outcome = tasksOutcome(report, "Linked tasks were not moved", `Tasks not moved to ${status}`);
     if (!outcome.ok) return outcome;
     // Ссылку на файл даёт только закрытая задача: её этап — последний, и задача

@@ -53,6 +53,7 @@ import { tellApplied } from "./server/flow-applied";
 import { registerFlowChoice } from "./server/flow-choice";
 import { createOwnSends } from "./server/own-sends";
 import { placeFigureStepsOnce } from "./server/figure-steps-once";
+import { spareOpenChildren, withSparedChildren } from "./server/spare-children";
 import { createFlowSettings } from "./server/flow-settings";
 import { READ_FLOWS_TOOL_NAME, registerFlowTools, SAVE_FLOW_TOOL_NAME } from "./server/flow-tools";
 import { readProviderModels, registerWorkflowFiles } from "./server/workflow-files";
@@ -90,7 +91,7 @@ import type { HomecomingTrigger } from "./core/plugin-homecoming";
 import { registerVoiceApi } from "./server/voice";
 import { flowOrNone, NO_FLOW, stageSettingsOf } from "./core/flows";
 import { LANGUAGE_OPTIONS, LANGUAGE_SETTING, LANGUAGE_SYSTEM } from "./lib/i18n";
-import { isRunFinished } from "./core/run-summary";
+import { isRunFinished, isRunOpen } from "./core/run-summary";
 import { liveFlowId } from "./core/run-history";
 import { runJournal } from "./core/run-journal";
 import { DEFAULT_JOURNAL_DIR } from "./lib/journal-dir";
@@ -287,14 +288,23 @@ export default async function plugin(bb: BbPluginApi): Promise<void> {
     const answer = await bb.sdk.environments.pullRequest({ environmentId });
     return answer.outcome === "available" ? { number: answer.pullRequest.number, url: answer.pullRequest.url, state: answer.pullRequest.state } : null;
   };
+  /** Прогон треда начат и не закончен — по этапам треда, который его ведёт. */
+  const runOpen = async (threadId: string) => {
+    const found = await progress.run(threadId);
+    return found !== null && isRunOpen(found.progress, stagesOf(found.carrier).stages);
+  };
   const runner = createAutomationRunner({
     progress,
     store,
     stages: stagesOf,
     // Своей настройки токена у Flow нет: шаги берут токен у `gh auth token` на машине bb.
-    steps: withRelocatedTree(
-      createSteps({ sdk: bb.sdk, kv: bb.storage.kv, settings: { get: async () => ({ githubToken: undefined }) }, plugins: bb.sdk.plugins, ownPluginId: OWN_PLUGIN_ID, tell: send, runFigures: (threadId) => runFigures(threadId), branchOff: branchOffDefaultBranch(bb.sdk) }),
-      relocation.isRelocated,
+    // Архив родителя уносит и его детей: дети с открытой работой сперва поднимаются на уровень родителя.
+    steps: withSparedChildren(
+      withRelocatedTree(
+        createSteps({ sdk: bb.sdk, kv: bb.storage.kv, settings: { get: async () => ({ githubToken: undefined }) }, plugins: bb.sdk.plugins, ownPluginId: OWN_PLUGIN_ID, tell: send, runFigures: (threadId) => runFigures(threadId), branchOff: branchOffDefaultBranch(bb.sdk) }),
+        relocation.isRelocated,
+      ),
+      (threadId) => spareOpenChildren({ sdk: bb.sdk, runOpen }, threadId),
     ),
     external: externalStep(automations.run),
     script: scriptStep(bb.sdk),

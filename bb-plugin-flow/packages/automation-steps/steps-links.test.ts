@@ -8,7 +8,8 @@ const ran = (stdout: string): CliRun => ({ kind: "ran", code: 0, stdout, stderr:
 
 const ports = (cli: CliPorts): StepPorts =>
   ({
-    sdk: {},
+    // Тред без окружения: кода ветки у него нет, шаг «Задача → done» git не спрашивает.
+    sdk: { threads: { get: async () => ({ id: "t1", environmentId: null, parentThreadId: null }) } },
     kv: { get: async () => undefined, set: async () => undefined, delete: async () => undefined, list: async () => [] },
     settings: { get: async () => ({ githubToken: "token" }) },
     plugins: {},

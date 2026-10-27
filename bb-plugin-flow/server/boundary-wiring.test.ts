@@ -39,6 +39,7 @@ const boot = async (stages: WorkStage[], options: { used: number; model: string;
         send: async (args: { mode?: string | undefined; input: ReadonlyArray<{ type: string; text?: string }> }) => (calls.push(`send:${args.mode}`), sent.push(args.input[0]?.text ?? ""), { delivery: "queued" }),
         stop: async () => ({}),
         archive: async () => ({}),
+        list: async () => [],
       },
       providers: {
         models: async () => ({

@@ -73,6 +73,15 @@ export const isRunFinished = (progress: FlowProgress, stages: readonly WorkStage
   return rows.every((row) => row.track.finishedAt !== undefined && !isFailed(row.track));
 };
 
+/**
+ * Прогон открыт, когда работа в нём начата и не закрыта: этап начинался, а ждущий владельца, упавший
+ * или незакрытый этап остался. Тред без начатого этапа работы ещё не вёл — его прогон не открыт.
+ */
+export const isRunOpen = (progress: FlowProgress, stages: readonly WorkStage[]): boolean => {
+  const rows = tracked(progress, stages).filter((row) => inRun(row.track));
+  return rows.some((row) => row.track.startedAt !== undefined) && !isRunFinished(progress, stages);
+};
+
 /** Исполнитель этапа словами: id из записи, а имя и модель — из самого этапа. */
 const executorOf = (stage: WorkStage, track: Track): Pick<RunExecutor, "id" | "kind" | "name" | "model"> => {
   const id = track.executor ?? SELF;
