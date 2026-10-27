@@ -309,7 +309,7 @@ export default async function plugin(bb: BbPluginApi): Promise<void> {
     providers,
     // Доигранный прогон Flow пускает работу дальше. Текст собирает исполнитель. Агент, чей
     // вызов flow_stage ждёт автоматизацию, получает реплику ответом инструмента, и в тред она не идёт.
-    wake: (threadId, text) => relay.deliver(threadId, text),
+    wake: (threadId, text, due) => relay.deliver(threadId, text, due),
     kv: bb.storage.kv,
     plugins: bb.sdk.plugins,
     now,

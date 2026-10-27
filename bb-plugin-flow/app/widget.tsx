@@ -220,8 +220,8 @@ const turnFromEvent = (payload: unknown, threadId: string): AgentTurn | null => 
 };
 
 /**
- * Ход агента для открытого уточнения: один запрос при открытии, дальше — события смены хода, так что сжатие появляется
- * и пропадает без перезагрузки. Событие новее ответа на запрос и побеждает его. Не нужен (`watch` ложно) — RPC не зовётся;
+ * Ход агента для открытого уточнения и виджета, копящего ответ до Утверждения: один запрос при открытии, дальше — события
+ * смены хода, так что сжатие и подпись «агент ждёт Утверждения» появляются и пропадают без перезагрузки. Событие новее ответа на запрос и побеждает его. Не нужен (`watch` ложно) — RPC не зовётся;
  * ответа ещё нет или сбой — `null`.
  */
 function useAgentTurn(threadId: string, watch: boolean): AgentTurn | null {
@@ -262,7 +262,9 @@ function BriefLoader({ id, source, messageId, threadId }: { id: string; source: 
   const isClosed = state.kind === "found" && (state.answer !== null || state.fold !== undefined || state.resolved === true);
   // Уточнение вливается в идущий ход: сжатие ему предлагается, только когда ход агента кончился.
   const openClarify = state.kind === "found" && state.brief.kind === "clarify" && !isClosed;
-  const turn = useAgentTurn(threadId, openClarify);
+  // Виджет, копящий ответ до Утверждения, говорит «агент работает дальше» только пока ход идёт; кончился — агент ждёт Утверждения.
+  const heldForApproval = state.kind === "found" && state.brief.settle === "approval" && !isClosed && state.sentWith === undefined;
+  const turn = useAgentTurn(threadId, openClarify || heldForApproval);
   const compactable = !openClarify || turn === "ended";
   // Сжатие предвыбрано, когда окно дошло до зоны настройки или кэш провайдера к брифу уже истёк.
   const stale = useCacheExpired(state.kind === "found" ? state.brief.createdAt : null, !isClosed);
@@ -329,7 +331,7 @@ function BriefLoader({ id, source, messageId, threadId }: { id: string; source: 
             ) : legacy ? (
               <BriefForm brief={state.brief} send={send} onResult={onAccepted} place={place.place} route={place.route} compact={compact} />
             ) : (
-              <BriefCard brief={state.brief} send={send} onResult={onAccepted} roots={roots} place={place.place} route={place.route} compact={compact} compactable={compactable} idleAfter={state.idleAfter === true} {...(state.sentWith === undefined ? {} : { sentWith: state.sentWith })} />
+              <BriefCard brief={state.brief} send={send} onResult={onAccepted} roots={roots} place={place.place} route={place.route} compact={compact} compactable={compactable} agentIdle={turn === "ended"} idleAfter={state.idleAfter === true} {...(state.sentWith === undefined ? {} : { sentWith: state.sentWith })} />
             )}
             </MentionsProvider>
           </VoiceProvider>

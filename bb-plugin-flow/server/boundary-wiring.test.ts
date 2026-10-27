@@ -2,7 +2,7 @@
 // Стык границы этапов с входом сервера: настоящие поверхности хоста вместо подставленных в registerProgress аргументов.
 // Замер контекста, модель треда и каталог моделей читаются из bb, а будящая реплика Flow идёт через обёртку send.
 import { createFakePluginHost, makeThreadResponse } from "@get-bb/plugin-sdk/testing";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { addFlow, newFlow } from "../core/flows";
 import { stage } from "../core/stages-fixtures";
@@ -24,11 +24,13 @@ type Approved = Record<string, { providerId: string; model: string; reasoningLev
 const boot = async (stages: WorkStage[], options: { used: number; model: string; approved?: Approved }) => {
   const calls: string[] = [];
   const sent: string[] = [];
+  // Ход агента идёт, пока тред active; `endTurn` — агент прочёл ответ отметки и закончил ход.
+  const turn = { active: true };
   const { bb, harness } = createFakePluginHost({
     pluginId: "flow",
     sdk: {
       threads: {
-        get: async () => ({ id: THREAD, providerId: "claude-code", status: "active", environmentId: null, title: null, projectId: "proj_a" }),
+        get: async () => ({ id: THREAD, providerId: "claude-code", status: turn.active ? "active" : "idle", environmentId: null, title: null, projectId: "proj_a" }),
         defaultExecutionOptions: async () => ({ model: options.model, reasoningLevel: "medium" }),
         events: { list: async () => [usageEvent(options.used)] },
         wait: async () => (calls.push("wait"), { matched: true }),
@@ -61,7 +63,7 @@ const boot = async (stages: WorkStage[], options: { used: number; model: string;
     const answer = (await harness.callAgentTool(FLOW_STAGE_TOOL, { stage: id, state }, { threadId: THREAD })) as { content: Array<{ text: string }> } | string;
     return typeof answer === "string" ? answer : answer.content.map((part) => part.text).join("");
   };
-  return { mark, calls, sent };
+  return { mark, calls, sent, endTurn: () => void (turn.active = false) };
 };
 
 const settle = () => new Promise((resolve) => setTimeout(resolve, 150));
@@ -95,10 +97,11 @@ describe("вход сервера: утверждённая модель дое�
   });
 
   it("впереди автоматизация: сжатие и модель идут перед будящей репликой Flow", async () => {
-    const { mark, calls, sent } = await boot([stage("review", { name: "Review" }), archive, stage("implement", { skill: "code-standards-fp", name: "Implementation" })], { used: 200_000, model: "claude-opus-4-1", approved: { implement: SONNET } });
+    const { mark, calls, sent, endTurn } = await boot([stage("review", { name: "Review" }), archive, stage("implement", { skill: "code-standards-fp", name: "Implementation" })], { used: 200_000, model: "claude-opus-4-1", approved: { implement: SONNET } });
     await mark("review", "started");
     const answer = await mark("review", "done");
-    await settle();
+    endTurn();
+    await vi.waitFor(() => expect(sent).not.toEqual([]));
     expect(answer).toContain("Before the message that wakes you, Flow compacts the thread and sets the model of stage implement");
     expect(calls.indexOf("compact")).toBeGreaterThanOrEqual(0);
     expect(calls.indexOf("compact")).toBeLessThan(calls.indexOf("update:claude-sonnet-4-5/high"));

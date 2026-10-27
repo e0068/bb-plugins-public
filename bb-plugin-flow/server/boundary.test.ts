@@ -3,13 +3,15 @@
 import { createFakePluginHost } from "@get-bb/plugin-sdk/testing";
 import { describe, expect, it } from "vitest";
 
-import { BOUNDARY_WAIT_MS, PLAN_TTL_MS, createBoundary, threadModelsOf, type StageState } from "./boundary";
+import { BOUNDARY_WAIT_MS, FALLBACK_MS, PLAN_TTL_MS, createBoundary, threadModelsOf, type StageState } from "./boundary";
 
 const THREAD = "thr_boundary";
 
 type Failing = { wait?: boolean; compact?: boolean; update?: boolean; send?: boolean };
 
 const setup = (failing: Failing = {}, options: { state?: () => StageState; clock?: () => number } = {}) => {
+  /** Запасные таймеры: тесты запускают их руками, минуту никто не ждёт. */
+  const timers: Array<{ fire: () => Promise<void>; ms: number; cancelled: boolean }> = [];
   const calls: string[] = [];
   const waits: Array<{ threadId: string; status?: string | undefined; timeoutMs?: number | undefined }> = [];
   const sends: Array<{ mode?: string; text: string }> = [];
@@ -46,9 +48,19 @@ const setup = (failing: Failing = {}, options: { state?: () => StageState; clock
     },
     ...(options.state === undefined ? {} : { stageState: async () => options.state!() }),
     ...(options.clock === undefined ? {} : { now: options.clock }),
+    setTimer: (fire, ms) => {
+      const timer = { fire, ms, cancelled: false };
+      timers.push(timer);
+      return () => void (timer.cancelled = true);
+    },
     warn: (message) => warnings.push(message),
   });
-  return { boundary, calls, waits, sends, warnings };
+  /** Срабатывает последний живой таймер. */
+  const fireTimer = async (): Promise<void> => {
+    const live = timers.filter((timer) => !timer.cancelled);
+    await live[live.length - 1]?.fire();
+  };
+  return { boundary, calls, waits, sends, warnings, timers, fireTimer };
 };
 
 const plan = { compact: true, model: { model: "claude-sonnet-4-5", reasoningLevel: "high" as const }, nextStage: 'implement "Implementation"', stageId: "implement", fresh: true };
@@ -229,6 +241,174 @@ describe("граница этапов: реплика только пока эт
     await boundary.continueNow(THREAD);
     expect(boundary.carriedOn(THREAD, "implement")).toBe(true);
     expect(boundary.carriedOn(THREAD, "testing")).toBe(false);
+  });
+});
+
+describe("граница этапов: два обещания подряд", () => {
+  const next = { ...plan, stageId: "implement", fresh: false, compact: false, model: { model: "claude-opus-5-5", reasoningLevel: "high" as const } };
+
+  it("«готово» и тут же «начат» одним махом — реплика одна, с моделью нового этапа", async () => {
+    let state: StageState = "todo";
+    const { boundary, calls, sends } = setup({}, { state: () => state });
+    boundary.schedule(THREAD, plan);
+    const first = boundary.continueNow(THREAD);
+    // Агент начал следующий этап, пока первое обещание ждало: второе обещание — доработка начатого этапа.
+    state = "started";
+    boundary.schedule(THREAD, next);
+    const second = boundary.continueNow(THREAD);
+    await Promise.all([first, second]);
+    expect(sends).toHaveLength(1);
+    expect(calls).toContain("update:claude-opus-5-5/high");
+    expect(calls.at(-1)).toBe("send");
+    expect(boundary.scheduled(THREAD)).toBe(false);
+  });
+
+  it("первое обещание уже обслужено, а второе пришло под отправку — реплика уходит и по нему", async () => {
+    const { boundary, sends } = setup();
+    boundary.schedule(THREAD, plan);
+    const first = boundary.continueNow(THREAD);
+    await Promise.resolve();
+    boundary.schedule(THREAD, { ...plan, stageId: "review", nextStage: 'review "Review"' });
+    await boundary.continueNow(THREAD);
+    await first;
+    expect(sends.map((sent) => sent.text)).toEqual([expect.stringContaining('review "Review"')]);
+  });
+
+  it("сжатие первого плана не пропадает, если этап к его обслуживанию уже начат", async () => {
+    const { boundary, calls } = setup({}, { state: () => "started" });
+    boundary.schedule(THREAD, plan);
+    const first = boundary.continueNow(THREAD);
+    boundary.schedule(THREAD, next);
+    await Promise.all([first, boundary.continueNow(THREAD)]);
+    expect(calls).toEqual(["wait", "compact", "update:claude-opus-5-5/high", "send"]);
+  });
+});
+
+describe("граница этапов: запасной сигнал", () => {
+  it("обещание ставит таймер на минуту", async () => {
+    const { boundary, timers } = setup();
+    boundary.schedule(THREAD, plan);
+    await boundary.continueNow(THREAD);
+    expect(timers).toHaveLength(1);
+    expect(timers[0]!.ms).toBe(FALLBACK_MS);
+    expect(FALLBACK_MS).toBe(60_000);
+  });
+
+  it("сигнал, отправленный вовремя, не дублируется", async () => {
+    const { boundary, sends, fireTimer } = setup();
+    boundary.schedule(THREAD, plan);
+    await boundary.continueNow(THREAD);
+    await fireTimer();
+    expect(sends).toHaveLength(1);
+  });
+
+  it("пропавший сигнал приходит по таймеру — без сжатия и смены модели", async () => {
+    const lost = setup({ send: true }, { state: () => "todo" });
+    lost.boundary.schedule(THREAD, plan);
+    await expect(lost.boundary.continueNow(THREAD)).rejects.toThrow("send failed");
+    lost.calls.length = 0;
+    await lost.fireTimer();
+    expect(lost.calls).toEqual(["send"]);
+  });
+
+  it("основная отправка упала — таймер повторяет её, один раз", async () => {
+    let broken = true;
+    const sends: string[] = [];
+    const { bb } = createFakePluginHost({ pluginId: "flow", sdk: { threads: { wait: async () => ({ matched: true }), compact: async () => ({ ok: true }), update: async () => ({}) } } });
+    const timers: Array<() => Promise<void>> = [];
+    const boundary = createBoundary({
+      threads: bb.sdk.threads,
+      send: async (_threadId, text) => {
+        if (broken) throw new Error("stale API handle");
+        sends.push(text);
+      },
+      setTimer: (fire) => {
+        timers.push(fire);
+        return () => undefined;
+      },
+      warn: () => undefined,
+    });
+    boundary.schedule(THREAD, plan);
+    await expect(boundary.continueNow(THREAD)).rejects.toThrow("stale API handle");
+    broken = false;
+    await timers[0]!();
+    await timers[0]!();
+    expect(sends).toHaveLength(1);
+  });
+
+  it("агент сам начал следующий этап, не закончив ход, — таймер молчит", async () => {
+    const { boundary, sends, fireTimer } = setup({}, { state: () => "started" });
+    boundary.schedule(THREAD, plan);
+    await boundary.continueNow(THREAD);
+    await fireTimer();
+    expect(sends).toEqual([]);
+  });
+
+  it("тред разбудил Flow после автоматизации — таймер молчит", async () => {
+    const { boundary, sends, fireTimer } = setup({ send: true });
+    boundary.schedule(THREAD, plan);
+    await expect(boundary.continueNow(THREAD)).rejects.toThrow();
+    boundary.schedule(THREAD, plan);
+    await boundary.service(THREAD);
+    await fireTimer();
+    expect(sends).toEqual([]);
+  });
+
+  it("этап закрыт к сроку таймера — сигнала нет", async () => {
+    let state: StageState = "todo";
+    const { boundary, sends, fireTimer } = setup({ send: true }, { state: () => state });
+    boundary.schedule(THREAD, plan);
+    await expect(boundary.continueNow(THREAD)).rejects.toThrow();
+    state = "closed";
+    await fireTimer();
+    expect(sends).toEqual([]);
+  });
+
+  it("новое обещание снимает таймер прежнего", async () => {
+    const { boundary, timers } = setup();
+    boundary.schedule(THREAD, plan);
+    await boundary.continueNow(THREAD);
+    boundary.schedule(THREAD, plan);
+    await boundary.continueNow(THREAD);
+    expect(timers.map((timer) => timer.cancelled)).toEqual([true, false]);
+  });
+
+  it("обслуживание ещё идёт — таймер ждёт ещё минуту, а не шлёт вторую реплику", async () => {
+    let release: () => void = () => undefined;
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    const timers: Array<{ fire: () => Promise<void>; cancelled: boolean }> = [];
+    const sends: string[] = [];
+    const { bb } = createFakePluginHost({ pluginId: "flow", sdk: { threads: { wait: async () => (await gate, { matched: true }), compact: async () => ({ ok: true }), update: async () => ({}) } } });
+    const boundary = createBoundary({
+      threads: bb.sdk.threads,
+      send: async (_threadId, text) => void sends.push(text),
+      setTimer: (fire) => {
+        const timer = { fire, cancelled: false };
+        timers.push(timer);
+        return () => void (timer.cancelled = true);
+      },
+      warn: () => undefined,
+    });
+    boundary.schedule(THREAD, plan);
+    const serving = boundary.continueNow(THREAD);
+    await Promise.resolve();
+    await timers[0]!.fire();
+    expect(sends).toEqual([]);
+    expect(timers).toHaveLength(2);
+    release();
+    await serving;
+    await timers[1]!.fire();
+    expect(sends).toHaveLength(1);
+  });
+
+  it("обещание старше срока плана таймер уже не обслуживает", async () => {
+    let clock = 0;
+    const { boundary, sends, fireTimer } = setup({ send: true }, { clock: () => clock });
+    boundary.schedule(THREAD, plan);
+    await expect(boundary.continueNow(THREAD)).rejects.toThrow();
+    clock = PLAN_TTL_MS + 1;
+    await fireTimer();
+    expect(sends).toEqual([]);
   });
 });
 

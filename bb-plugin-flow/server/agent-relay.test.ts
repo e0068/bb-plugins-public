@@ -1,5 +1,5 @@
 // @vitest-environment node
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { createAgentRelay } from "./agent-relay";
 
@@ -126,5 +126,108 @@ describe("реплика Flow ждущему вызову flow_stage", () => {
     await relay.deliver("thr_2", "go");
     expect(sent).toEqual(["go"]);
     expect(await waited).toEqual({ kind: "timeout" });
+  });
+});
+
+describe("поздняя реплика с перепроверкой", () => {
+  it("ход агента идёт — реплика ждёт его конца и до этого в тред не уходит", async () => {
+    const state = { busy: false, alive: true };
+    const { relay, sent } = relayWith(state);
+    await relay.deliver(T, "next stage", async () => true);
+    await tick();
+    expect(sent).toEqual([]);
+    state.alive = false;
+    await vi.waitFor(() => expect(sent).toEqual(["next stage"]));
+  });
+
+  it("к концу хода реплика уже не нужна — в тред не уходит никогда", async () => {
+    const state = { busy: false, alive: true };
+    const { relay, sent } = relayWith(state);
+    const due = vi.fn(async () => false);
+    await relay.deliver(T, "next stage", due);
+    state.alive = false;
+    await vi.waitFor(() => expect(due).toHaveBeenCalledTimes(1));
+    await tick();
+    await tick();
+    expect(sent).toEqual([]);
+    expect(due).toHaveBeenCalledTimes(1);
+  });
+
+  it("нужна к концу хода — уходит ровно один раз", async () => {
+    const state = { busy: false, alive: true };
+    const { relay, sent } = relayWith(state);
+    await relay.deliver(T, "next stage", async () => true);
+    state.alive = false;
+    await vi.waitFor(() => expect(sent).toEqual(["next stage"]));
+    await tick();
+    await tick();
+    expect(sent).toEqual(["next stage"]);
+  });
+
+  it("хода уже нет — перепроверка сразу, нужна — реплика уходит, не нужна — нет", async () => {
+    const { relay, sent } = relayWith({ busy: false, alive: false });
+    await relay.deliver(T, "needed", async () => true);
+    await relay.deliver(T, "stale", async () => false);
+    expect(sent).toEqual(["needed"]);
+  });
+
+  it("ждущий вызов flow_stage получает реплику сразу, перепроверка не нужна", async () => {
+    const { relay, sent } = relayWith({ busy: true, alive: true });
+    const due = vi.fn(async () => false);
+    const waited = relay.hold(T).wait({ ms: 10_000 });
+    await relay.deliver(T, "carry on", due);
+    expect(await waited).toEqual({ kind: "reply", text: "carry on" });
+    expect(due).not.toHaveBeenCalled();
+    expect(sent).toEqual([]);
+  });
+
+  it("поставленное, но не ждавшее ожидание передаёт реплику дальше с перепроверкой", async () => {
+    const state = { busy: false, alive: true };
+    const { relay, sent } = relayWith(state);
+    const due = vi.fn(async () => false);
+    const hold = relay.hold(T);
+    await relay.deliver(T, "next stage", due);
+    hold.release();
+    await tick();
+    expect(sent).toEqual([]);
+    state.alive = false;
+    await vi.waitFor(() => expect(due).toHaveBeenCalledTimes(1));
+    expect(sent).toEqual([]);
+  });
+
+  it("без перепроверки поведение прежнее — в тред сразу, даже когда ход идёт", async () => {
+    const { relay, sent } = relayWith({ busy: false, alive: true });
+    await relay.deliver(T, "now");
+    expect(sent).toEqual(["now"]);
+  });
+
+  it("выгрузка не теряет отложенную реплику: перепроверка и отправка, если она нужна", async () => {
+    const { relay, sent } = relayWith({ busy: false, alive: true });
+    await relay.deliver(T, "kept", async () => true);
+    await relay.deliver(T, "stale", async () => false);
+    relay.dispose();
+    await tick();
+    expect(sent).toEqual(["kept"]);
+  });
+
+  it("после выгрузки опрос хода остановлен — реплика не уходит второй раз", async () => {
+    const state = { busy: false, alive: true };
+    const { relay, sent } = relayWith(state);
+    await relay.deliver(T, "kept", async () => true);
+    relay.dispose();
+    state.alive = false;
+    await tick();
+    await tick();
+    expect(sent).toEqual(["kept"]);
+  });
+
+  it("сбой перепроверки или отправки идёт в onError, а не наружу", async () => {
+    const errors: unknown[] = [];
+    const state = { alive: true };
+    const relay = createAgentRelay({ busy: () => false, alive: async () => state.alive, send: async () => { throw new Error("send"); }, onError: (e) => void errors.push(e), pollMs: 5 });
+    await relay.deliver(T, "a", async () => true);
+    await relay.deliver(T, "b", async () => { throw new Error("due"); });
+    state.alive = false;
+    await vi.waitFor(() => expect(errors).toHaveLength(2));
   });
 });
