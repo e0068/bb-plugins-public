@@ -15,7 +15,8 @@
 // update is likewise kept — the caller now knows there was a promise to
 // keep; see archiveThread/createPr in server.ts, which surface both instead
 // of reporting a plain success.
-import { currentTasksArgs, linkedTaskEnv, markTaskStatusArgs, parseLinkedTasks, parseSubtasks, showTaskArgs, type LinkedTask, type LinkedTaskStatus } from "../core/bb-tasks-commands";
+import { commentTaskArgs, currentTasksArgs, linkedTaskEnv, markTaskStatusArgs, parseLinkedTasks, parseSubtasks, showTaskArgs, type LinkedTask, type LinkedTaskStatus } from "../core/bb-tasks-commands";
+import type { DoneHold } from "../core/branch-in-main";
 import { cliRunMessage, type CliPorts } from "./bb-cli-run";
 
 /** `slug` — the moved task's file name, when the CLI named it. */
@@ -79,10 +80,14 @@ export async function updateLinkedTasks(
  * touched nor descended into; done ones are not written again, but what is
  * open under them is still closed.
  */
-async function markLinkedTasksDone(ports: CliPorts, threadId: string): Promise<TaskStatusReport> {
+async function markLinkedTasksDone(ports: CliPorts, threadId: string, gate: DoneGate): Promise<TaskStatusReport> {
   const env = linkedTaskEnv(threadId);
   const listed = await listLinkedTasks(ports, threadId);
   if (listed.unavailable !== null) return { unavailable: listed.unavailable, results: [] };
+
+  // Asked only when there is something to close: a thread with no task never pays for the check.
+  const hold = listed.tasks.length === 0 ? null : await gate();
+  if (hold !== null) return holdTasks(ports, env, listed.tasks, hold);
 
   const results: TaskStatusResult[] = [];
   const settled = new Map<string, boolean>();
@@ -121,9 +126,26 @@ async function markLinkedTasksDone(ports: CliPorts, threadId: string): Promise<T
   return { unavailable: null, results };
 }
 
-export function markLinkedTasksStatus(ports: CliPorts, threadId: string, status: LinkedTaskStatus): Promise<TaskStatusReport> {
+/** `null` lets the tasks go to `done`; a hold keeps them where they are and says why. */
+export type DoneGate = () => Promise<DoneHold | null>;
+
+/** The gate that lets everything through — for a caller with no condition on `done`. */
+const OPEN_GATE: DoneGate = async () => null;
+
+/** Every task stays as it was and gets the reason as a comment; a comment that did not take is named next to the reason. */
+async function holdTasks(ports: CliPorts, env: Record<string, string>, tasks: readonly LinkedTask[], hold: DoneHold): Promise<TaskStatusReport> {
+  const results: TaskStatusResult[] = [];
+  for (const { key } of tasks) {
+    const commented = await ports.run(commentTaskArgs(key, hold.comment), env);
+    const written = commented.kind === "ran" && commented.code === 0;
+    results.push({ key, ok: false, reason: written ? hold.reason : `${hold.reason}; comment not written: ${cliRunMessage(commented)}` });
+  }
+  return { unavailable: null, results };
+}
+
+export function markLinkedTasksStatus(ports: CliPorts, threadId: string, status: LinkedTaskStatus, gate: DoneGate = OPEN_GATE): Promise<TaskStatusReport> {
   return status === "done"
-    ? markLinkedTasksDone(ports, threadId)
+    ? markLinkedTasksDone(ports, threadId, gate)
     : updateLinkedTasks(ports, threadId, async ({ key }) => ({ args: markTaskStatusArgs(key, status) }));
 }
 

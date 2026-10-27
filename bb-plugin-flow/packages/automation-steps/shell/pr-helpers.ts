@@ -41,9 +41,12 @@ import { liveAheadCount } from "../wiring/fast-forward";
 import { readExecutablePaths } from "../wiring/file-modes";
 import { mergedPullRequestFiles } from "../wiring/merged-pr-files";
 import { ghAuthToken } from "../wiring/gh-token";
+import { doneHold } from "../core/branch-in-main";
 import { gitClient } from "../wiring/git-client";
 import { treeFiles } from "../wiring/tree-files";
-import { gitRunMessage } from "../wiring/git-run";
+import { gitRunMessage, type GitPorts } from "../wiring/git-run";
+import { checkBranchInMain } from "../wiring/branch-in-main";
+import type { DoneGate } from "../wiring/mark-task-status";
 import { githubClient } from "../wiring/github-client";
 import { readLinkedTask } from "../wiring/linked-task";
 import { type LocalMainPullResult, runLocalMainPull } from "../wiring/local-main-pull";
@@ -596,6 +599,26 @@ export async function parentDeliveryOf(sdk: Sdk, threadId: string): Promise<Chil
   if (!thread.parentThreadId || !thread.environmentId) return null;
   const delivery = await parentDeliveryFor(sdk, thread, await sdk.environments.get({ environmentId: thread.environmentId }));
   return delivery === null ? null : { ...delivery, parentThreadId: thread.parentThreadId, title: thread.title ?? null };
+}
+
+/**
+ * The condition of the step «Задача → done»: the thread's code is already in
+ * origin/<base>, by commit or by content (wiring/branch-in-main.ts). Not met —
+ * the tasks stay and the hold says why. A thread with no environment has no
+ * branch to deliver, and a child thread whose work goes into its parent's
+ * branch is delivered by the parent's PR: both pass as before.
+ */
+export function codeInMainGate(sdk: Sdk, git: (path: string) => GitPorts, threadId: string): DoneGate {
+  return async () => {
+    const thread = await sdk.threads.get({ threadId });
+    if (!thread.environmentId) return null;
+    const env = await sdk.environments.get({ environmentId: thread.environmentId });
+    if ((await parentDeliveryFor(sdk, thread, env)) !== null) return null;
+    const base = resolveBase(env, DEFAULT_BASE_MODE);
+    if (!base || !env.path) return doneHold("unknown", base?.statusBase ?? "the base branch");
+    const verdict = await checkBranchInMain(git(env.path), base);
+    return verdict === "in-main" ? null : doneHold(verdict, base.statusBase);
+  };
 }
 
 /** A delivery with the child thread it comes from: whom to tell and how to name the wave. */

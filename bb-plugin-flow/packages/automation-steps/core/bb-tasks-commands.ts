@@ -15,6 +15,11 @@ export function showTaskArgs(key: string): string[] {
   return ["tasks", "show", key, "--json"];
 }
 
+/** `bb tasks comment <key> --body <text>`: the text is one argument, newlines and quotes included. */
+export function commentTaskArgs(key: string, body: string): string[] {
+  return ["tasks", "comment", key, "--body", body, "--json"];
+}
+
 /** `bb tasks keys issue`: names the unnamed tasks of the calling thread's tree. */
 export function issueKeysArgs(): string[] {
   return ["tasks", "keys", "issue", "--json"];

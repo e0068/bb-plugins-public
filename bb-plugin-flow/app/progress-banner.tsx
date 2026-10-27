@@ -330,7 +330,7 @@ function StopControl({ stage, threadId }: { stage: ProgressStage; threadId: stri
   if (mode === null) return null;
   if (mode === "stopping")
     return (
-      <span data-stop-state className="whitespace-nowrap text-xs text-muted-foreground">
+      <span data-stop-state className="self-center whitespace-nowrap text-xs text-muted-foreground">
         {t.progress.stopping}
       </span>
     );
@@ -346,7 +346,7 @@ function StopControl({ stage, threadId }: { stage: ProgressStage; threadId: stri
         setSending(true);
         void reportStepAnswer(rpc.call(method, { threadId, stage: stage.id }), stage.name, t).finally(() => setSending(false));
       }}
-      className="h-6 px-2.5 font-semibold disabled:opacity-70"
+      className="h-6 shrink-0 self-center px-2.5 font-semibold disabled:opacity-70"
     >
       {mode === "stop" ? t.progress.stop : t.progress.continue}
     </Button>
@@ -889,7 +889,7 @@ function Progress({ view, threadId, open, toggle, onCancelled }: { view: Progres
         )}
       </button>
       {driver !== null && <StopControl stage={current} threadId={driver} />}
-      <Button type="button" variant="ghost" tabIndex={-1} aria-hidden="true" onClick={toggle} className="h-auto w-8 shrink-0 justify-start rounded-none pr-3 hover:bg-transparent">
+      <Button type="button" variant="ghost" tabIndex={-1} aria-hidden="true" onClick={toggle} className="h-auto w-auto shrink-0 rounded-none pl-0 pr-3 hover:bg-transparent">
         <Icon name="ChevronDown" aria-hidden="true" className={cn("size-3.5 text-muted-foreground", open && "rotate-180")} />
       </Button>
       </div>

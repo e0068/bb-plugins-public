@@ -19,9 +19,13 @@ const board = (writes: readonly CliRun[]) => {
   return { cli, writes: () => written };
 };
 
-/** Шагу «Задача → done» нужны только CLI и пауза: остальные порты он не трогает. */
+/** Шагу «Задача → done» нужны CLI, пауза и тред без окружения (git он не спрашивает): остальные порты он не трогает. */
 const stepsOver = (cli: CliPorts, slept: number[]) =>
-  createSteps({ cli, sleep: async (ms) => void slept.push(ms) } as unknown as StepPorts);
+  createSteps({
+    cli,
+    sdk: { threads: { get: async () => ({ id: "t1", environmentId: null, parentThreadId: null }) } },
+    sleep: async (ms) => void slept.push(ms),
+  } as unknown as StepPorts);
 
 describe("шаг «Задача → done» и облачная база доски", () => {
   it("первая запись не дошла до базы, вторая прошла — шаг зелёный и называет задачу", async () => {

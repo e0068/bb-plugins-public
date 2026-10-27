@@ -2,7 +2,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { FlowProgress, WorkStage } from "../shared/contract";
-import { isRunFinished, runSummary } from "./run-summary";
+import { isRunFinished, isRunOpen, runSummary } from "./run-summary";
 import { EMPTY_PROGRESS, onBrief } from "./progress";
 import { report, stage, stagedBrief } from "./stages-fixtures";
 
@@ -84,5 +84,29 @@ describe("бриф, под которым встаёт итог", () => {
   it("запись помнит последний бриф треда, коснувшийся прогресса", () => {
     const brief = stagedBrief([report("code", { state: "todo" })], { id: "dec_last", stages: { list: STAGES, minButtonWidth: 170 } });
     expect(onBrief(EMPTY_PROGRESS, brief, at(0)).lastBriefId).toBe("dec_last");
+  });
+});
+
+describe("открытый прогон", () => {
+  it("этап начат, остальные не закрыты — прогон открыт", () => {
+    expect(isRunOpen({ stages: { code: { startedAt: at(0) } }, waiting: [] }, STAGES)).toBe(true);
+  });
+
+  it("этап ждёт владельца — прогон открыт", () => {
+    expect(isRunOpen({ ...finished, waiting: ["review"] }, STAGES)).toBe(true);
+  });
+
+  it("упавшая автоматизация — прогон открыт", () => {
+    const failed: FlowProgress = { stages: { ...finished.stages, code: { startedAt: at(0), run: { steps: [{ id: "git.commit", label: "Commit" }], at: 0, error: "не прошло" } } }, waiting: [] };
+    expect(isRunOpen(failed, STAGES)).toBe(true);
+  });
+
+  it("все этапы закрыты — прогон не открыт", () => {
+    expect(isRunOpen(finished, STAGES)).toBe(false);
+  });
+
+  it("ни один этап не начинался — работы ещё нет, прогон не открыт", () => {
+    expect(isRunOpen({ stages: {}, waiting: [] }, STAGES)).toBe(false);
+    expect(isRunOpen({ stages: { code: { skipped: true }, review: { skipped: true }, plan: { skipped: true } }, waiting: [] }, STAGES)).toBe(false);
   });
 });
