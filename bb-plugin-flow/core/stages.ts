@@ -8,7 +8,7 @@ import { currentName, isDefaultName, SELF_EXECUTOR, stageKindOf, stageSkillOf, t
 import { ACTION_TAIL, AUTOMATION_TAIL } from "./automation-run";
 import { hasMainAgent } from "./stage-execution";
 import { isHeadingStage, stageNumbers } from "./sub-stages";
-import type { Add, DecisionAnswer, DecisionBrief, Flow, FlowProgress, StageAnswer, StageReport, WorkStage } from "../shared/contract";
+import type { Add, DecisionAnswer, DecisionBrief, Execution, Flow, FlowProgress, StageAnswer, StageReport, WorkStage } from "../shared/contract";
 import { sumAdds } from "./adds";
 
 /** Id исполнителя «сам». */
@@ -22,7 +22,7 @@ export type StageItem = { stage: WorkStage; report: StageReport | undefined };
 export type StagePhase = StageReport["state"];
 
 /** Что владелец решает по несделанному этапу: брать ли в прогон и кто исполняет. */
-export type StageChoice = { run: boolean; executor: string };
+export type StageChoice = { run: boolean; executor: string; model?: Execution };
 
 /** Встроенные виды, которые бриф спрашивает у владельца до работы. */
 const ASKED: readonly BuiltinKind[] = ["questions", "criteria", "select"];
@@ -89,7 +89,12 @@ export const recommendedStageChoice = (item: StageItem): StageChoice => {
 export const initialStageChoice = (brief: DecisionBrief, item: StageItem): StageChoice => {
   const recommended = recommendedStageChoice(item);
   const executor = (brief.carried ?? {})[carryKey(item.stage.id)]?.[0];
-  return { run: recommended.run, executor: executor !== undefined && knownExecutor(item.stage, executor) ? executor : recommended.executor };
+  const model = brief.stages?.models?.[item.stage.id];
+  return {
+    run: recommended.run,
+    executor: executor !== undefined && knownExecutor(item.stage, executor) ? executor : recommended.executor,
+    ...(model === undefined ? {} : { model }),
+  };
 };
 
 export const stageAnswerOf = (answer: DecisionAnswer, stageId: string): StageAnswer | undefined => answer.stages?.find((s) => s.id === stageId);
@@ -97,7 +102,7 @@ export const stageAnswerOf = (answer: DecisionAnswer, stageId: string): StageAns
 /** Выбор по этапу в ответе; этап без записи в ответе стоит на выборе по умолчанию. */
 export const answeredStageChoice = (brief: DecisionBrief, answer: DecisionAnswer, item: StageItem): StageChoice => {
   const entry = stageAnswerOf(answer, item.stage.id);
-  return entry === undefined ? initialStageChoice(brief, item) : { run: entry.run, executor: entry.executor };
+  return entry === undefined ? initialStageChoice(brief, item) : { run: entry.run, executor: entry.executor, ...(entry.model === undefined ? {} : { model: entry.model }) };
 };
 
 /** Этап-автоматизацию исполняет сам Flow, без модели и без агента: выбирать в ней нечего и стоить она не может. */
@@ -115,14 +120,33 @@ const sharePrice = (share: NonNullable<StageReport["share"]>, factor: { factor: 
 
 const SELF_FACTOR = { factor: 1, risk: 0 } as const;
 
+/** Во сколько раз модель дешевле Opus: Sonnet 0,6, Haiku 0,2; Opus и прочие — 1. Сопоставление по подстроке id без учёта регистра. */
+const MODEL_FACTORS: ReadonlyArray<readonly [string, number]> = [
+  ["opus", 1],
+  ["sonnet", 0.6],
+  ["haiku", 0.2],
+];
+
+export const modelFactor = (model: string | undefined): number => {
+  const id = model?.toLowerCase();
+  return id === undefined ? 1 : (MODEL_FACTORS.find(([name]) => id.includes(name))?.[1] ?? 1);
+};
+
+/** Модели этапа и треда, от которых зависит цена этапа Main Agent. */
+type StageModels = { stage?: string; thread?: string };
+
+const selfFactor = (models: StageModels | undefined): { factor: number; risk: number } =>
+  models === undefined ? SELF_FACTOR : { factor: modelFactor(models.stage) / modelFactor(models.thread), risk: 0 };
+
 /**
  * Цена этапа с исполнителем. Этап с долей — доля объёма работы с множителем исполнителя (сам агент — ×1);
  * этап брифа, записанного раньше, — своя добавка в долларах плюс разница исполнителя. У автоматизации цены нет, что бы ни прислал агент.
+ * Модель этапа меняет цену только у Main Agent: объём умножается на множитель её модели к модели треда.
  */
-export const stageAdd = (item: StageItem, executor: string, scope?: Add): Add | undefined => {
+export const stageAdd = (item: StageItem, executor: string, scope?: Add, models?: StageModels): Add | undefined => {
   if (isAutomationStage(item.stage)) return undefined;
   const share = item.report?.share;
-  if (share !== undefined) return sharePrice(share, executor === SELF ? SELF_FACTOR : (item.report?.factors?.[executor] ?? SELF_FACTOR), scope);
+  if (share !== undefined) return sharePrice(share, executor === SELF ? selfFactor(models) : (item.report?.factors?.[executor] ?? SELF_FACTOR), scope);
   return sumAdds([item.report?.add, executor === SELF ? undefined : item.report?.adds?.[executor]]);
 };
 
@@ -137,8 +161,8 @@ const minus = (a: Add, b: Add): Add => ({ target: cents(a.target - b.target), ma
  * Надбавка этапа к итогу брифа. Этап самой работы у Main Agent — база, её уже называют пункты Definition of Done:
  * он не прибавляет ничего, другой исполнитель — только разницу против Main Agent. Остальные этапы прибавляют свою цену.
  */
-export const stageSurcharge = (item: StageItem, executor: string, scope?: Add): Add | undefined => {
-  const price = stageAdd(item, executor, scope);
+export const stageSurcharge = (item: StageItem, executor: string, scope?: Add, models?: StageModels): Add | undefined => {
+  const price = stageAdd(item, executor, scope, models);
   const base = isWorkStage(item) ? stageAdd(item, SELF, scope) : undefined;
   return price === undefined || base === undefined ? price : minus(price, base);
 };

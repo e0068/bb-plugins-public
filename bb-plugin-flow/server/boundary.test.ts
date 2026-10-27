@@ -3,7 +3,7 @@
 import { createFakePluginHost } from "@get-bb/plugin-sdk/testing";
 import { describe, expect, it } from "vitest";
 
-import { BOUNDARY_WAIT_MS, PLAN_TTL_MS, createBoundary, stageModelsOf, type StageState } from "./boundary";
+import { BOUNDARY_WAIT_MS, PLAN_TTL_MS, createBoundary, threadModelsOf, type StageState } from "./boundary";
 
 const THREAD = "thr_boundary";
 
@@ -29,8 +29,8 @@ const setup = (failing: Failing = {}, options: { state?: () => StageState; clock
           if (failing.compact === true) throw new Error("compaction failed");
           return { ok: true };
         },
-        update: async (args: { model?: string | null | undefined }) => {
-          calls.push(`update:${args.model}`);
+        update: async (args: { model?: string | null | undefined; reasoningLevel?: string | null | undefined }) => {
+          calls.push(`update:${args.model}/${args.reasoningLevel}`);
           if (failing.update === true) throw new Error("update failed");
           return {};
         },
@@ -51,14 +51,14 @@ const setup = (failing: Failing = {}, options: { state?: () => StageState; clock
   return { boundary, calls, waits, sends, warnings };
 };
 
-const plan = { compact: true, model: "claude-sonnet-4-5", nextStage: 'implement "Implementation"', stageId: "implement", fresh: true };
+const plan = { compact: true, model: { model: "claude-sonnet-4-5", reasoningLevel: "high" as const }, nextStage: 'implement "Implementation"', stageId: "implement", fresh: true };
 
 describe("граница этапов: обслуживание", () => {
   it("ждёт простоя, сжимает, ставит модель — в таком порядке", async () => {
     const { boundary, calls, waits } = setup();
     boundary.schedule(THREAD, plan);
     await boundary.service(THREAD);
-    expect(calls).toEqual(["wait", "compact", "update:claude-sonnet-4-5"]);
+    expect(calls).toEqual(["wait", "compact", "update:claude-sonnet-4-5/high"]);
     expect(waits[0]).toMatchObject({ threadId: THREAD, status: "idle", timeoutMs: BOUNDARY_WAIT_MS });
   });
 
@@ -70,7 +70,7 @@ describe("граница этапов: обслуживание", () => {
     const { boundary, calls } = setup();
     boundary.schedule(THREAD, { ...plan, compact: false });
     await boundary.service(THREAD);
-    expect(calls).toEqual(["wait", "update:claude-sonnet-4-5"]);
+    expect(calls).toEqual(["wait", "update:claude-sonnet-4-5/high"]);
   });
 
   it("план без модели не зовёт update", async () => {
@@ -117,7 +117,7 @@ describe("граница этапов: обслуживание", () => {
     const { boundary, calls, warnings } = setup({ compact: true });
     boundary.schedule(THREAD, plan);
     await expect(boundary.service(THREAD)).resolves.toBeUndefined();
-    expect(calls).toEqual(["wait", "compact", "update:claude-sonnet-4-5"]);
+    expect(calls).toEqual(["wait", "compact", "update:claude-sonnet-4-5/high"]);
     expect(warnings.join("\n")).toContain("compaction failed");
   });
 
@@ -142,7 +142,7 @@ describe("граница этапов: продолжить сразу", () => {
     const { boundary, calls, sends } = setup();
     boundary.schedule(THREAD, plan);
     await boundary.continueNow(THREAD);
-    expect(calls).toEqual(["wait", "compact", "update:claude-sonnet-4-5", "send"]);
+    expect(calls).toEqual(["wait", "compact", "update:claude-sonnet-4-5/high", "send"]);
     expect(sends).toEqual([{ mode: "queue-if-active", text: expect.stringContaining('carry on with stage implement "Implementation"') }]);
     expect(sends[0]!.text).toContain("Flow: the stage boundary is serviced");
   });
@@ -151,7 +151,7 @@ describe("граница этапов: продолжить сразу", () => {
     const { boundary, calls } = setup({ compact: true });
     boundary.schedule(THREAD, plan);
     await boundary.continueNow(THREAD);
-    expect(calls).toEqual(["wait", "compact", "update:claude-sonnet-4-5", "send"]);
+    expect(calls).toEqual(["wait", "compact", "update:claude-sonnet-4-5/high", "send"]);
   });
 
   it("тред не простоял в срок — реплика всё равно уходит, но в очередь", async () => {
@@ -187,7 +187,7 @@ describe("граница этапов: реплика только пока эт
     state = "closed";
     await sending;
     expect(sends).toEqual([]);
-    expect(calls).toEqual(["wait", "compact", "update:claude-sonnet-4-5"]);
+    expect(calls).toEqual(["wait", "compact", "update:claude-sonnet-4-5/high"]);
   });
 
   it("этап уже закрыт к назначению — тред не трогают вовсе", async () => {
@@ -253,32 +253,35 @@ describe("граница этапов: протухший план", () => {
   });
 });
 
-describe("модель треда и каталог для границы", () => {
-  const sdkOf = (providerId: string, options: { model: string } | null) => ({
+describe("модель треда с каталогом effort", () => {
+  const sdkOf = (providerId: string, options: { providerId: string; model: string; reasoningLevel: string } | null) => ({
     threads: { get: async () => ({ providerId }), defaultExecutionOptions: async () => options },
     providers: {
       models: async () => ({
         providers: [{ id: "claude-code", available: true }],
         models: [
-          { model: "claude-opus-4-1", isDefault: true, defaultReasoningEffort: "medium" },
-          { model: "claude-sonnet-4-5", isDefault: false, defaultReasoningEffort: "medium" },
+          { model: "claude-opus-4-1", isDefault: true, defaultReasoningEffort: "medium", supportedReasoningEfforts: [{ reasoningEffort: "medium" }, { reasoningEffort: "high" }] },
+          { model: "claude-sonnet-4-5", isDefault: false, defaultReasoningEffort: "medium", supportedReasoningEfforts: [{ reasoningEffort: "low" }] },
           { model: "gpt-5", isDefault: false, defaultReasoningEffort: "medium", routeProviderId: "codex" },
         ],
       }),
     },
   });
 
-  it("тред Claude Code — его модель и модели провайдера, чужие маршруты не в счёт", async () => {
-    const found = await stageModelsOf(sdkOf("claude-code", { model: "claude-opus-4-1" }) as never, THREAD);
-    expect(found?.current).toBe("claude-opus-4-1");
-    expect(found?.models.map((entry) => entry.model).sort()).toEqual(["claude-opus-4-1", "claude-sonnet-4-5"]);
+  it("тред Claude Code — модель с effort и модели провайдера со своими effort, чужие маршруты не в счёт", async () => {
+    const found = await threadModelsOf(sdkOf("claude-code", { providerId: "claude-code", model: "claude-opus-4-1", reasoningLevel: "high" }) as never, THREAD);
+    expect(found?.current).toEqual({ providerId: "claude-code", model: "claude-opus-4-1", reasoningLevel: "high" });
+    expect(found?.models).toEqual([
+      { model: "claude-opus-4-1", efforts: ["medium", "high"] },
+      { model: "claude-sonnet-4-5", efforts: ["low"] },
+    ]);
   });
 
-  it("модель треда неизвестна — current пуст, каталог на месте", async () => {
-    expect((await stageModelsOf(sdkOf("claude-code", null) as never, THREAD))?.current).toBeNull();
+  it("модель треда неизвестна — плана моделей нет", async () => {
+    expect(await threadModelsOf(sdkOf("claude-code", null) as never, THREAD)).toBeNull();
   });
 
   it("тред другого провайдера — модель не меняется", async () => {
-    expect(await stageModelsOf(sdkOf("codex", { model: "gpt-5" }) as never, THREAD)).toBeNull();
+    expect(await threadModelsOf(sdkOf("codex", { providerId: "codex", model: "gpt-5", reasoningLevel: "medium" }) as never, THREAD)).toBeNull();
   });
 });

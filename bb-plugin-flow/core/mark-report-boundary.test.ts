@@ -60,13 +60,13 @@ describe("что ответ flow_stage говорит о границе", () => 
   });
 
   it("агенту: закончить ход, сжатие, модель и «продолжай»", () => {
-    expect(boundaryNote({ compact: true, model: "claude-sonnet-4-5" }, next)).toBe(
+    expect(boundaryNote({ compact: true, model: { model: "claude-sonnet-4-5", reasoningLevel: "high" } }, next)).toBe(
       ' End your turn now: Flow compacts the thread, sets the model of stage implement "Implementation" and sends you "carry on".',
     );
   });
 
   it("без сжатия — только модель", () => {
-    expect(boundaryNote({ compact: false, model: "claude-sonnet-4-5" }, next)).toBe(' End your turn now: Flow sets the model of stage implement "Implementation" and sends you "carry on".');
+    expect(boundaryNote({ compact: false, model: { model: "claude-sonnet-4-5", reasoningLevel: "high" } }, next)).toBe(' End your turn now: Flow sets the model of stage implement "Implementation" and sends you "carry on".');
   });
 
   it("без модели — только сжатие", () => {
@@ -74,7 +74,7 @@ describe("что ответ flow_stage говорит о границе", () => 
   });
 
   it("перед автоматизацией ход кончается и так: ответ говорит, что Flow сделает до будящей реплики", () => {
-    expect(boundaryNote({ compact: true, model: "claude-sonnet-4-5" }, { via: "automation", stage: testing })).toBe(
+    expect(boundaryNote({ compact: true, model: { model: "claude-sonnet-4-5", reasoningLevel: "high" } }, { via: "automation", stage: testing })).toBe(
       ' Before the message that wakes you, Flow compacts the thread and sets the model of stage testing "Testing".',
     );
   });

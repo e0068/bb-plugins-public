@@ -19,7 +19,9 @@ const usageEvent = (usedTokens: number) => ({
 
 const archive: WorkStage = { id: "archive", kind: "skill", skill: "", name: "Archive", executors: [], automation: { source: "flow", steps: ["bb.archive"] } };
 
-const boot = async (stages: WorkStage[], options: { used: number; model: string }) => {
+type Approved = Record<string, { providerId: string; model: string; reasoningLevel: "medium" | "high" }>;
+
+const boot = async (stages: WorkStage[], options: { used: number; model: string; approved?: Approved }) => {
   const calls: string[] = [];
   const sent: string[] = [];
   const { bb, harness } = createFakePluginHost({
@@ -31,7 +33,7 @@ const boot = async (stages: WorkStage[], options: { used: number; model: string 
         events: { list: async () => [usageEvent(options.used)] },
         wait: async () => (calls.push("wait"), { matched: true }),
         compact: async () => (calls.push("compact"), { ok: true }),
-        update: async (args: { model?: string | null | undefined }) => (calls.push(`update:${args.model}`), {}),
+        update: async (args: { model?: string | null | undefined; reasoningLevel?: string | null | undefined }) => (calls.push(`update:${args.model}/${args.reasoningLevel}`), {}),
         send: async (args: { mode?: string | undefined; input: ReadonlyArray<{ type: string; text?: string }> }) => (calls.push(`send:${args.mode}`), sent.push(args.input[0]?.text ?? ""), { delivery: "queued" }),
         stop: async () => ({}),
         archive: async () => ({}),
@@ -53,6 +55,8 @@ const boot = async (stages: WorkStage[], options: { used: number; model: string 
   await harness.callRpc("saveFlowSettings", addFlow(settings as never, { ...newFlow("boundary", "Boundary"), stages }));
   await harness.callRpc("setFlowChoice", { projectId: "proj_a", flowId: "boundary" });
   await harness.emitThreadEvent("thread.created", { thread: makeThreadResponse({ id: THREAD, projectId: "proj_a", parentThreadId: null }) });
+  // Утверждённая модель этапа — как её записал ответ на Выбор этапов.
+  if (options.approved !== undefined) await bb.storage.kv.set(`flow-progress:${THREAD}`, { stages: Object.fromEntries(Object.entries(options.approved).map(([id, model]) => [id, { model }])), waiting: [] });
   const mark = async (id: string, state: "started" | "done") => {
     const answer = (await harness.callAgentTool(FLOW_STAGE_TOOL, { stage: id, state }, { threadId: THREAD })) as { content: Array<{ text: string }> } | string;
     return typeof answer === "string" ? answer : answer.content.map((part) => part.text).join("");
@@ -62,14 +66,24 @@ const boot = async (stages: WorkStage[], options: { used: number; model: string 
 
 const settle = () => new Promise((resolve) => setTimeout(resolve, 150));
 
-describe("граница этапов во входе сервера", () => {
-  it("замер контекста и модель треда читаются из bb: сжатие, смена модели, потом реплика «продолжай» в очередь", async () => {
-    const { mark, calls, sent } = await boot([stage("review", { name: "Review" }), stage("implement", { skill: "code-standards-fp", name: "Implementation" })], { used: 200_000, model: "claude-opus-4-1" });
+const SONNET = { providerId: "claude-code", model: "claude-sonnet-4-5", reasoningLevel: "high" as const };
+
+describe("вход сервера: утверждённая модель доезжает до границы", () => {
+  it("замер контекста и модель треда читаются из bb: сжатие, утверждённая модель с effort, потом реплика «продолжай» в очередь", async () => {
+    const { mark, calls, sent } = await boot([stage("review", { name: "Review" }), stage("implement", { skill: "code-standards-fp", name: "Implementation" })], { used: 200_000, model: "claude-opus-4-1", approved: { implement: SONNET } });
     await mark("review", "started");
     expect(await mark("review", "done")).toContain("End your turn now: Flow compacts the thread, sets the model of stage implement");
     await settle();
-    expect(calls).toEqual(["wait", "compact", "update:claude-sonnet-4-5", "send:queue-if-active"]);
+    expect(calls).toEqual(["wait", "compact", "update:claude-sonnet-4-5/high", "send:queue-if-active"]);
     expect(sent[0]).toContain('carry on with stage implement "Implementation"');
+  });
+
+  it("этап без утверждённой модели модель треда не меняет, даже если это реализация", async () => {
+    const { mark, calls } = await boot([stage("review", { name: "Review" }), stage("implement", { skill: "code-standards-fp", name: "Implementation" })], { used: 100_000, model: "claude-opus-4-1" });
+    await mark("review", "started");
+    expect(await mark("review", "done")).toBe("Stage review marked done.");
+    await settle();
+    expect(calls).toEqual([]);
   });
 
   it("контекст ниже порога и модель та же — ответ прежний, тред не трогают", async () => {
@@ -81,14 +95,14 @@ describe("граница этапов во входе сервера", () => {
   });
 
   it("впереди автоматизация: сжатие и модель идут перед будящей репликой Flow", async () => {
-    const { mark, calls, sent } = await boot([stage("review", { name: "Review" }), archive, stage("implement", { skill: "code-standards-fp", name: "Implementation" })], { used: 200_000, model: "claude-opus-4-1" });
+    const { mark, calls, sent } = await boot([stage("review", { name: "Review" }), archive, stage("implement", { skill: "code-standards-fp", name: "Implementation" })], { used: 200_000, model: "claude-opus-4-1", approved: { implement: SONNET } });
     await mark("review", "started");
     const answer = await mark("review", "done");
     await settle();
     expect(answer).toContain("Before the message that wakes you, Flow compacts the thread and sets the model of stage implement");
     expect(calls.indexOf("compact")).toBeGreaterThanOrEqual(0);
-    expect(calls.indexOf("compact")).toBeLessThan(calls.indexOf("update:claude-sonnet-4-5"));
-    expect(calls.indexOf("update:claude-sonnet-4-5")).toBeLessThan(calls.findIndex((call) => call.startsWith("send")));
+    expect(calls.indexOf("compact")).toBeLessThan(calls.indexOf("update:claude-sonnet-4-5/high"));
+    expect(calls.indexOf("update:claude-sonnet-4-5/high")).toBeLessThan(calls.findIndex((call) => call.startsWith("send")));
     expect(sent.join("\n")).toContain("implement");
   });
 });

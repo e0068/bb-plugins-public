@@ -1,7 +1,7 @@
 // Вторая полоса баннера: доля занятого окна контекста, её тон по двум порогам
 // владельца и отрезки полосы, на которые эти пороги её делят. Чисто, без эффектов.
 import { SELF_EXECUTOR, stageSkillOf } from "../lib/stage-constants";
-import type { WorkStage } from "../shared/contract";
+import type { Execution, WorkStage } from "../shared/contract";
 import { executionOf } from "./stage-execution";
 
 /** Обычный, предупреждающий и тревожный тон заливки занятого. */
@@ -162,27 +162,44 @@ export function stageModelRole(stage: WorkStage): ModelRole | null {
 export const modelFor = (role: ModelRole, models: ReadonlyArray<{ readonly model: string }>): string | null =>
   models.find((entry) => entry.model.toLowerCase().includes(role))?.model ?? null;
 
+/** Модель этапа и её effort — то, что граница ставит треду. */
+export type StageModel = { readonly model: string; readonly reasoningLevel: Execution["reasoningLevel"] };
+
+/** Модель каталога провайдера и efforts, которые она знает. */
+export type CatalogModel = { readonly model: string; readonly efforts: readonly Execution["reasoningLevel"][] };
+
+const fitsRole = (role: ModelRole, model: string): boolean => model.toLowerCase().includes(role);
+
+/** Effort треда, если модель его знает или не перечисляет свои; иначе первый из её списка. */
+const effortFor = (level: Execution["reasoningLevel"], efforts: readonly Execution["reasoningLevel"][]): Execution["reasoningLevel"] =>
+  efforts.length === 0 || efforts.includes(level) ? level : efforts[0]!;
+
 /**
- * Модель, на которую надо поставить тред для роли: уже стоящая модель этой роли остаётся — менять одну Sonnet на другую
- * незачем. Иначе та, что стояла у треда до перехода на другую роль (`remembered`), если она есть в каталоге и подходит роли;
- * иначе первая из каталога.
+ * Модель этапа по его роли: реализация и тесты — Sonnet, остальная работа агента — Opus, того же провайдера, что у треда.
+ * Уже стоящая модель нужной роли остаётся как есть; иначе берётся первая модель роли из каталога с effort треда.
+ * Скорость треда в план не переносится. Автоматизация и действие модели не имеют, а роли в каталоге нет — плана нет, `null`.
  */
-export const wantedModel = (role: ModelRole, currentModel: string | null, models: ReadonlyArray<{ readonly model: string }>, remembered: string | null = null): string | null => {
-  const fits = (model: string): boolean => model.toLowerCase().includes(role);
-  if (currentModel !== null && fits(currentModel)) return currentModel;
-  return remembered !== null && fits(remembered) && models.some((entry) => entry.model === remembered) ? remembered : modelFor(role, models);
-};
+export function plannedModel(stage: WorkStage, current: Execution, catalog: readonly CatalogModel[]): Execution | null {
+  const role = stageModelRole(stage);
+  if (role === null) return null;
+  const on = (model: string, reasoningLevel: Execution["reasoningLevel"]): Execution => ({ providerId: current.providerId, model, reasoningLevel });
+  if (fitsRole(role, current.model)) return on(current.model, current.reasoningLevel);
+  const entry = catalog.find((candidate) => fitsRole(role, candidate.model));
+  return entry === undefined ? null : on(entry.model, effortFor(current.reasoningLevel, entry.efforts));
+}
 
 /** Что сделать с тредом на границе этапов: сжать контекст и/или поставить модель следующего этапа. */
 export interface BoundaryPlan {
   readonly compact: boolean;
-  readonly model: string | null;
+  readonly model: StageModel | null;
 }
 
-/** Сжимать велит жёлтый тон и выше; модель ставится, когда нужная известна и отличается от стоящей. Нечего делать — `null`. */
-export function boundaryPlan(input: { readonly tone: ContextTone; readonly currentModel: string | null; readonly wantedModel: string | null }): BoundaryPlan | null {
+const sameModel = (a: StageModel | null, b: StageModel): boolean => a !== null && a.model === b.model && a.reasoningLevel === b.reasoningLevel;
+
+/** Сжимать велит жёлтый тон и выше; модель с effort ставится, когда утверждена и отличается от стоящих. Нечего делать — `null`. */
+export function boundaryPlan(input: { readonly tone: ContextTone; readonly current: StageModel | null; readonly approved: StageModel | null }): BoundaryPlan | null {
   const compact = input.tone !== "normal";
-  const model = input.wantedModel !== null && input.wantedModel !== input.currentModel ? input.wantedModel : null;
+  const model = input.approved !== null && !sameModel(input.current, input.approved) ? input.approved : null;
   return compact || model !== null ? { compact, model } : null;
 }
 

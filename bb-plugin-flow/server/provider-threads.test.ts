@@ -4,16 +4,18 @@ import { createFakePluginHost, makeThreadResponse } from "@get-bb/plugin-sdk/tes
 import { describe, expect, it } from "vitest";
 
 import type { WorkStage } from "../shared/contract";
-import { createProviderThreads } from "./provider-threads";
+import { createProviderThreads, paceLeadSetting } from "./provider-threads";
 
 const codexExecutor = { id: "thread:codex", kind: "thread" as const, name: "Тред Codex", provider: "codex" };
 const practice: WorkStage = { id: "practice", name: "Execution", kind: "skill", skill: "code-standards-fp", executors: [codexExecutor] };
-const window = (usedPercent: number) => ({ status: "ok", accountEmail: null, planLabel: null, windows: [{ label: "Current session", usedPercent, resetsAt: "2026-10-26T14:30:00.000Z" }] });
+const START = Date.parse("2026-10-26T12:00:00.000Z");
+// Из пятичасового окна прошла половина: сброс через два с половиной часа.
+const window = (usedPercent: number) => ({ status: "ok", accountEmail: null, planLabel: null, windows: [{ label: "Current session", usedPercent, resetsAt: new Date(START + 2.5 * 3_600_000).toISOString() }] });
 
-const setup = (options: { usage?: () => Promise<unknown>; spawn?: (args: unknown) => Promise<unknown>; stages?: readonly WorkStage[] } = {}) => {
+const setup = (options: { usage?: () => Promise<unknown>; spawn?: (args: unknown) => Promise<unknown>; stages?: readonly WorkStage[]; lead?: () => number } = {}) => {
   const spawned: unknown[] = [];
   const expected: string[] = [];
-  let now = 0;
+  let now = START;
   const { bb } = createFakePluginHost({
     pluginId: "flow",
     sdk: {
@@ -33,6 +35,7 @@ const setup = (options: { usage?: () => Promise<unknown>; spawn?: (args: unknown
     criteria: async () => ["Тред Codex выбирается исполнителем"],
     skillPath: async () => "/home/owner/.claude/skills/code-standards-fp/SKILL.md",
     now: () => now,
+    lead: options.lead ?? (() => 20),
   });
   return { threads, spawned, expected, tick: (ms: number) => (now += ms) };
 };
@@ -45,6 +48,16 @@ describe("лимиты во вкладе хода", () => {
     expect(threads.line("thr_parent")).toBeNull();
     await settle();
     expect(threads.line("thr_parent")).toContain("recommend executor thread:codex");
+  });
+
+  it("порог обгона читается на каждом ходу: настройку поменяли — совет следует за ней", async () => {
+    let lead = 20;
+    const { threads } = setup({ lead: () => lead });
+    threads.line("thr_parent");
+    await settle();
+    expect(threads.line("thr_parent")).toContain("recommend executor thread:codex");
+    lead = 100;
+    expect(threads.line("thr_parent")).not.toContain("recommend executor thread:codex");
   });
 
   it("bb не ответил о лимитах — строки нет, ход не падает", async () => {
@@ -93,5 +106,14 @@ describe("дочерний тред этапа", () => {
   it("bb не завёл тред — исход со строкой ошибки, без исключения", async () => {
     const { threads } = setup({ spawn: async () => Promise.reject(new Error("provider codex is not installed")) });
     expect(await threads.delegate({ threadId: "thr_parent", stage: practice, providerId: "codex", results: [] })).toEqual({ kind: "failed", error: "provider codex is not installed" });
+  });
+});
+
+describe("настройка порога обгона", () => {
+  it("по умолчанию 20%, принимает целое от 1 до 500 и отклоняет ноль, 501 и дробь", () => {
+    const { default: initial, experimental_schema: schema } = paceLeadSetting.providerPaceLead;
+    expect(initial).toBe(20);
+    for (const good of [1, 500]) expect(schema.safeParse(good).success).toBe(true);
+    for (const bad of [0, 501, 12.5]) expect(schema.safeParse(bad).success).toBe(false);
   });
 });

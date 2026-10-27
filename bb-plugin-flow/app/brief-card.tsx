@@ -89,6 +89,8 @@ type View = {
   brief: DecisionBrief;
   /** Прогноз, который владелец видел при отправке; у живого брифа и старых ответов его нет. */
   snapshot?: AnswerRecord["forecast"];
+  /** Каталог моделей треда: по нему таблица этапов называет и меняет модель этапа; нет каталога — модели в таблице нет. */
+  catalog?: WidgetAgent | null;
 };
 
 /** Несёт ли ответ метки выбора владельца; ответы, записанные до меток, красятся по расхождению с рекомендацией. */
@@ -1347,6 +1349,8 @@ export function BriefCard({ brief, send, onResult, roots, place = "here", route 
   const { decided, total } = decidedCount(brief, draft);
   const complete = decided === total;
   const counter = complete ? null : t.common.filled(decided, total);
+  // Выбор ряда — модель и Flow — сводится перед отправкой: нетронутое предложение агента уходит ответом, совпавшее с текущим — нет.
+  const catalog = useWidgetAgent(brief.threadId);
   const view: View = {
     draft,
     missing,
@@ -1371,6 +1375,7 @@ export function BriefCard({ brief, send, onResult, roots, place = "here", route 
       setExpanded(rowId);
     },
     brief,
+    catalog,
   };
   // Утверждение уносит ответы виджетов своей группы, копивших их до него; правки считаются живьём.
   const approval = brief.outcome !== undefined && !isReport(brief);
@@ -1382,8 +1387,6 @@ export function BriefCard({ brief, send, onResult, roots, place = "here", route 
     if (!rework && group.undecided.length > 0) return Promise.resolve();
     return submit(settled(next), rework ? {} : { group: group.group() });
   };
-  // Выбор ряда — модель и Flow — сводится перед отправкой: нетронутое предложение агента уходит ответом, совпавшее с текущим — нет.
-  const catalog = useWidgetAgent(brief.threadId);
   // Сжатие, которое сейчас недоступно, снимается с черновика один раз: его не покажет ячейка и не увезёт ответ,
   // даже если владелец выбрал его раньше — до начала хода. Утверждение, за которым агенту делать нечего, сжатия
   // не предлагает, пока ответ, который уйдёт, — с комментарием или переходом в другой flow — не вернёт агенту работу.
@@ -1616,7 +1619,8 @@ function AnsweredPlain({ brief, answer, verdict, forecast, roots, children }: { 
     anchor(element);
     setExpanded(rowId);
   };
-  const view: View = { draft: fromAnswer(answer), missing: new Set(), answered: true, sending: false, pick: noop, own: noop, change: noop, stageChange: noop, expanded, expand, brief, snapshot: forecast };
+  const catalog = useWidgetAgent(brief.threadId, stageItems(brief).length > 0);
+  const view: View = { draft: fromAnswer(answer), missing: new Set(), answered: true, sending: false, pick: noop, own: noop, change: noop, stageChange: noop, expanded, expand, brief, snapshot: forecast, catalog };
   return (
     <Plain label={brief.title}>
       {brief.outcome !== undefined ? (

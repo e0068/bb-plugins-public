@@ -36,10 +36,10 @@ describe("нажатие на начатый этап Action", () => {
     };
     const track = async (id: string) => (await progress.get(THREAD))?.stages[id];
 
-    await markDone("s2");
-    await vi.waitFor(async () => expect((await track("p2"))?.run).toBeDefined());
     await markDone("s1");
     await vi.waitFor(async () => expect((await track("p1"))?.run).toBeDefined());
+    await markDone("s2");
+    await vi.waitFor(async () => expect((await track("p2"))?.run).toBeDefined());
     expect(await runner.runActionStep(THREAD, "p2")).toBe(true);
     await vi.waitFor(async () => expect((await track("p2"))?.run?.at).toBe(1));
     expect(calls).toEqual(["git.create-pr"]);

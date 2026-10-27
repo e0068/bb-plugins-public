@@ -7,7 +7,7 @@ import { requiredOf } from "../core/required";
 import { REVIEW_NONE, REVIEW_ROWS, SETUP_ROW, checkerAllowed, rowsOf } from "../core/rows";
 import { criterionEditable, ownDollars } from "../core/budget";
 import { carriedFor } from "../core/carry";
-import { initialStageChoice, stageItems, stagePhase, type StageChoice, type StageItem } from "../core/stages";
+import { SELF, initialStageChoice, stageItems, stagePhase, type StageChoice, type StageItem } from "../core/stages";
 import { runCascade } from "../core/sub-stages";
 import { withPlace } from "../core/places";
 import { hiddenQuestions } from "../core/visibility";
@@ -24,7 +24,7 @@ export type CriteriaDraft = { removed: readonly number[]; edited: Readonly<Recor
 /**
  * Выбор по этапу: заданы только поля, которых владелец коснулся, остальное — выбор по умолчанию.
  */
-export type StageDraft = { run?: boolean; executor?: string };
+export type StageDraft = { run?: boolean; executor?: string; model?: Execution };
 
 /** `budget` — своя цена владельца: время в минутах, цель и потолок в долларах; пустое поле значит «прогноз». `place` — где исполнять работу. */
 export type Draft = {
@@ -66,7 +66,10 @@ const withStage = (draft: Draft, stageId: string, patch: StageDraft): Draft => (
 export const stageChoiceIn = (brief: DecisionBrief, draft: Draft, item: StageItem): StageChoice => {
   const initial = initialStageChoice(brief, item);
   const own = draft.stages[item.stage.id] ?? {};
-  return { run: own.run ?? initial.run, executor: own.executor ?? initial.executor };
+  const executor = own.executor ?? initial.executor;
+  // Модель — только у этапа Main Agent: у агента и workflow она серая, и граница не ставит треду то, чего владелец не выбирал.
+  const model = executor === SELF ? (own.model ?? initial.model) : undefined;
+  return { run: own.run ?? initial.run, executor, ...(model === undefined ? {} : { model }) };
 };
 
 /**
@@ -98,6 +101,9 @@ export const toggleNestRun = (brief: DecisionBrief, draft: Draft, nestId: string
 };
 
 export const pickStageExecutor = (draft: Draft, item: StageItem, executor: string): Draft => withStage(draft, item.stage.id, { executor });
+
+/** Модель этапа, выбранная владельцем поверх модели плана брифа. */
+export const pickStageModel = (draft: Draft, item: StageItem, model: Execution): Draft => withStage(draft, item.stage.id, { model });
 
 /** Место исполнения — выбор владельца поверх последнего выбора в проекте; решать вопросы для этого не нужно. */
 export const setPlace = (draft: Draft, place: DispatchPlace): Draft => ({ ...draft, place });
@@ -186,7 +192,7 @@ const stageAnswers = (brief: DecisionBrief, draft: Draft): StageAnswer[] =>
   stageItems(brief).map((item) => {
     const own = draft.stages[item.stage.id] ?? {};
     const choice = stageChoiceIn(brief, draft, item);
-    const picked = (["run", "executor"] as const).filter((key) => own[key] !== undefined);
+    const picked = (["run", "executor", "model"] as const).filter((key) => own[key] !== undefined);
     return { id: item.stage.id, ...choice, ...(picked.length === 0 ? {} : { picked: [...picked] }) };
   });
 
@@ -394,6 +400,7 @@ export const fromAnswer = (answer: DecisionAnswer): Draft => ({
       {
         ...(s.picked?.includes("run") ? { run: s.run } : {}),
         ...(s.picked?.includes("executor") ? { executor: s.executor } : {}),
+        ...(s.picked?.includes("model") && s.model !== undefined ? { model: s.model } : {}),
       },
     ]),
   ),

@@ -5,10 +5,10 @@ import { describe, expect, it } from "vitest";
 import plugin from "./server";
 
 describe("настройки Flow про список в панели тредов", () => {
-  it("язык, пороги, предвыбор компактации, список flow в панели и показ выбранного треда — в этом порядке", async () => {
+  it("язык, пороги, предвыбор компактации, порог совета по темпу, список flow в панели и показ выбранного треда — в этом порядке", async () => {
     const { bb, harness } = createFakePluginHost({ pluginId: "flow" });
     await plugin(bb);
-    expect(Object.keys(harness.registrations.settingsDescriptors)).toEqual(["language", "contextWarnTokens", "contextAlertTokens", "compactPreselect", "showFlowsInThreadsPanel", "showSelectedThread"]);
+    expect(Object.keys(harness.registrations.settingsDescriptors)).toEqual(["language", "contextWarnTokens", "contextAlertTokens", "compactPreselect", "providerPaceLead", "showFlowsInThreadsPanel", "showSelectedThread"]);
   });
 
   it("список flow в панели тредов — переключатель, выключенный по умолчанию", async () => {

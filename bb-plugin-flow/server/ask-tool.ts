@@ -6,20 +6,20 @@ import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import type { Carried } from "../core/carry";
 import { awaitingKind } from "../core/awaiting";
 import { resolvesIssues, type ResolveTarget } from "../core/clarify";
-import { approvalIssues } from "../core/approval-guard";
+import { approvalIssues, outcomeText } from "../core/approval-guard";
 import { unfinishedBefore } from "../core/automation-run";
 import { isApproval, memberSources, nextGroup, restoredOf } from "../core/fold";
 import { liveIssues, nextFlowIssues, outcomeKind, reportOnlyIssues } from "../core/outcome";
 import { DECISION_ID_PREFIX, directiveLine } from "../core/directive";
 import { terminalCommandIssue } from "../core/terminal-command";
 import { money, plannedMinutes, recommendedForecast } from "../core/budget";
-import { contextTone, withSubagents } from "../core/context";
+import { contextTone, plannedModel, withSubagents, type CatalogModel } from "../core/context";
 import { INSTRUCTIONS_LIMIT_CHARS } from "../lib/agent-limits";
 import { holdsNothing, joinsApproval, settleOf } from "../core/settle";
 import { FLOW_RULE, SELF_ONLY_RULE, compactStageInstructions, isAskedStage, isAutomationStage, isStageCarryKey, recommendedStageChoice, reportIssues, stageInstructions, stageItems, withStepResults } from "../core/stages";
 import { isHeadingStage } from "../core/sub-stages";
 import { stageKindOf, type BuiltinKind, type StageKind } from "../lib/stage-constants";
-import { FORK_ZERO_RULE, OPTION_PRICE_RULE, askDecisionParamsSchema, type AskDecisionParams, type ContextFillView, type Criterion, type DecisionBrief, type FlowProgress, type Planning, type RestoredDraft, type StageSettings } from "../shared/contract";
+import { FORK_ZERO_RULE, OPTION_PRICE_RULE, askDecisionParamsSchema, type AskDecisionParams, type ContextFillView, type Criterion, type DecisionBrief, type Execution, type FlowProgress, type Planning, type RestoredDraft, type StageSettings } from "../shared/contract";
 import { ANSWERED_CHANNEL } from "./api";
 import { FLOW_STAGE_TOOL, type ProgressStore } from "./progress";
 import { KV_VALUE_LIMIT_BYTES, type DecisionStore } from "./store";
@@ -165,14 +165,15 @@ const outcomeIssues = (outcome: AskDecisionParams["outcome"], questionCount: num
   const approval = stages.some((stage) => stage.id === outcome.stage && stageKindOf(stage) === "approve");
   const reported = stages.filter((stage) => OUTCOME_KINDS.includes(stageKindOf(stage))).map((s) => s.id);
   // Демонстрация и Утверждение показывают пройденную работу: этап прогона перед ними, не закрытый агентом, — работа пропущена.
-  const open = progress === null || progress === undefined ? null : unfinishedBefore(stages, progress, outcome.stage);
+  // Утверждение, где владелец соглашается на снятие этапа, этапами, предложенными к снятию, не держится.
+  const open = progress === null || progress === undefined ? null : unfinishedBefore(stages, progress, outcome.stage, !approval);
   return [
     ...(reported.includes(outcome.stage) ? [] : [`outcome.stage ${outcome.stage} is not a demo or approval stage of the thread's flow: ${reported.length === 0 ? "the flow has none" : reported.join(", ")}`]),
     ...(open === null ? [] : [`stage ${open.id} "${open.name}" comes before ${outcome.stage} in the run and is not marked done: finish it and mark it done with ${FLOW_STAGE_TOOL} first`]),
     // Команду результата владелец запускает кнопкой в терминале: длинная обрежется там так же, как у share_command.
     ...outcome.results.flatMap((result, i) => ("command" in result ? [terminalCommandIssue(result.command, `outcome.results[${i}].command`)] : [])).filter((issue) => issue !== null),
     // Утверждение показывает, что утверждается, и переводит работу в рекомендованный flow; Демонстрация — отчёт с живым результатом, без вопросов и перехода.
-    ...(approval ? [...approvalIssues(stages, progress, outcome.stage, reworkPending), ...nextFlowIssues(outcome, flowIds)] : [...liveIssues(outcome), ...reportOnlyIssues(outcome, questionCount)]),
+    ...(approval ? [...approvalIssues(stages, progress, outcome.stage, reworkPending, outcomeText(outcome)), ...nextFlowIssues(outcome, flowIds)] : [...liveIssues(outcome), ...reportOnlyIssues(outcome, questionCount)]),
   ];
 };
 
@@ -289,6 +290,20 @@ export const flowTurnInstructions = (stages: StageSettings["stages"]): string =>
   return full.length <= INSTRUCTIONS_LIMIT_CHARS ? full : compose(compactStageInstructions(stages));
 };
 
+/**
+ * План моделей брифа: `plannedModel` каждого навыкового этапа, у которого он есть, и модель треда, от которой считается цена этапа.
+ * Встроенные этапы — Вопросы, Демонстрация, Утверждение — модели в Выборе этапов не показывают.
+ */
+const modelPlanOf = (stages: StageSettings["stages"], thread: { current: Execution; models: readonly CatalogModel[] }): { models: Record<string, Execution>; threadModel: Execution } => ({
+  models: Object.fromEntries(
+    stages
+      .filter((stage) => stageKindOf(stage) === "skill")
+      .map((stage) => [stage.id, plannedModel(stage, thread.current, thread.models)] as const)
+      .filter((entry): entry is readonly [string, Execution] => entry[1] !== null),
+  ),
+  threadModel: thread.current,
+});
+
 export const registerAskTool = (
   bb: Pick<BbPluginApi, "agents" | "realtime">,
   store: DecisionStore,
@@ -315,6 +330,8 @@ export const registerAskTool = (
     emit?: (trigger: FlowTrigger, threadId: string, context?: { stageId?: string }) => void;
     /** Строка лимитов провайдеров для хода треда (./provider-threads.ts); `null` или нет — строки нет. */
     limits?: (threadId: string) => string | null;
+    /** Модель треда с effort и каталог моделей его провайдера (./boundary.ts); `null` — тред не Claude Code. Бриф с этапами несёт по ним план моделей; нет или сбой — без плана. */
+    threadModels?: (threadId: string) => Promise<{ current: Execution; models: readonly CatalogModel[] } | null>;
   },
 ): void => {
   bb.agents.registerTool({
@@ -361,6 +378,10 @@ export const registerAskTool = (
       const stepped = reported === undefined || fill === null || fill === undefined ? reported : withSubagents(reported, settings.stages, contextTone(fill.usedTokens, fill));
       const approval = params.outcome !== undefined && settings.stages.some((s) => s.id === params.outcome?.stage && stageKindOf(s) === "approve");
       const settle = settleOf(fields, settings.stages, progress, approval, launched);
+      const withStages = params.setup?.stages !== undefined || params.outcome !== undefined;
+      // План моделей — тот же `plannedModel`, что потом ставит граница; тред не Claude Code или каталог не прочёлся — плана нет.
+      const threadModels = withStages ? await deps.threadModels?.(ctx.threadId).catch(() => null) : null;
+      const modelPlan = threadModels === null || threadModels === undefined ? null : modelPlanOf(settings.stages, threadModels);
       const brief: DecisionBrief = {
         ...fields,
         ...(settle === undefined ? {} : { settle }),
@@ -378,7 +399,14 @@ export const registerAskTool = (
         ...(approvedBudget === null ? {} : { approvedBudget }),
         ...(params.setup?.stages === undefined && params.outcome === undefined
           ? {}
-          : { stages: { list: settings.stages, minButtonWidth: settings.minButtonWidth, ...(flowName === undefined ? {} : { flowName }) } }),
+          : {
+              stages: {
+                list: settings.stages,
+                minButtonWidth: settings.minButtonWidth,
+                ...(flowName === undefined ? {} : { flowName }),
+                ...(modelPlan === null ? {} : modelPlan),
+              },
+            }),
         createdAt: deps.now(),
       };
       const zero = zeroForecastIssues(brief, launched);

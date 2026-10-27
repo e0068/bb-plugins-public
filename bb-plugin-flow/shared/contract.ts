@@ -776,7 +776,9 @@ export const stageAnswerSchema = z.object({
   review: z.boolean().optional(),
   accepted: z.boolean().optional(),
   note: z.string().optional(),
-  picked: z.array(z.enum(["run", "executor", "review"])).optional(),
+  /** Модель этапа, выбранная владельцем; поля нет — этап идёт на модели треда. */
+  model: executionSchema.optional(),
+  picked: z.array(z.enum(["run", "executor", "review", "model"])).optional(),
 });
 
 export const decisionAnswerSchema = z.object({
@@ -864,7 +866,17 @@ export const decisionBriefSchema = z
     /** Ставит сервер: черновик возвращённого брифа треда — владелец написал в чат, не отправив его; виджет кладёт выбор на совпавшие вопросы. */
     restored: restoredDraftSchema.optional(),
     /** Ставит сервер: этапы работ и название flow на момент брифа — отвеченный бриф рисуется ими, даже если настройки потом поменялись. */
-    stages: z.object({ list: z.array(workStageSchema), minButtonWidth: z.number().int(), flowName: z.string().optional() }).optional(),
+    stages: z
+      .object({
+        list: z.array(workStageSchema),
+        minButtonWidth: z.number().int(),
+        flowName: z.string().optional(),
+        /** План моделей по этапам; нет поля — этапы идут на модели треда. */
+        models: z.record(z.string(), executionSchema).optional(),
+        /** Модель треда: от неё считается множитель цены этапа. */
+        threadModel: executionSchema.optional(),
+      })
+      .optional(),
     /**
      * Ставит сервер виджету, который прогон не держит, — вопросам, Definition of Done, выбору этапов и Демонстрации в треде с flow.
      * `approval` — впереди во flow Утверждение: ответы, правки и комментарий владельца копятся черновиком и уходят с ним;
@@ -1362,9 +1374,13 @@ export const stageTrackSchema = z.object({
   /** Начало открытого интервала простоя (ISO); поля нет — этап сейчас не стоит. */
   idleSince: z.string().optional(),
   skipped: z.boolean().optional(),
+  /** Этап снят по предложению агента, а не владельцем: он остаётся в прогоне, пока владелец не утвердил снятие. */
+  proposed: z.boolean().optional(),
   executor: z.string().optional(),
+  /** Модель этапа по ответу владельца; поля нет — модель треда. */
+  model: executionSchema.optional(),
   /** Выбор ответа владельца для уже пройденного этапа: ляжет в этап, когда доработка начнёт его проход заново. */
-  nextPass: z.object({ skipped: z.boolean(), executor: z.string().optional() }).optional(),
+  nextPass: z.object({ skipped: z.boolean(), executor: z.string().optional(), model: executionSchema.optional() }).optional(),
   /**
    * Прошлые проходы этапа, сброшенные доработкой: доллары, минуты работы — те же, что в строке баннера, — стенные минуты
    * и начало первого прохода (ISO). Повторный проход складывается с ними, а не затирает.
@@ -1397,6 +1413,10 @@ export const stageTrackSchema = z.object({
       skipQueued: z.literal(true).optional(),
       /** Шаг упал на конфликте слияния, и Flow разбудил агента треда его разрешать: следующий конфликт ждёт владельца, а не новой побудки. */
       agentWoken: z.literal(true).optional(),
+      /** Владелец нажал «Стоп», пока шаг идёт: скрипт оборван, шаг без сигнала доходит до конца, следующие не стартуют. */
+      stopping: z.literal(true).optional(),
+      /** Прогон остановлен владельцем: этап ждёт его «Продолжить», как упавший, но без срока автоповтора. */
+      stopped: z.literal(true).optional(),
     })
     .optional(),
 });
@@ -1478,7 +1498,7 @@ export const progressStageSchema = z.object({
         z.object({
           id: text,
           label: text,
-          state: z.enum(["done", "now", "fail", "todo", "wait"]),
+          state: z.enum(["done", "now", "fail", "todo", "wait", "stop"]),
           error: z.string().nullable(),
           /** Что шаг сделал: адрес PR, тема коммита, ключи переведённых задач. Не сказал — `null`; поля нет у шагов, снятых до того, как строку успеха начали хранить. */
           detail: z.string().nullable().default(null),
@@ -1488,6 +1508,10 @@ export const progressStageSchema = z.object({
           skipQueued: z.boolean().default(false),
         }),
       ),
+      /** Владелец нажал «Стоп», а идущий шаг ещё не кончился. */
+      stopping: z.boolean().default(false),
+      /** Этап остановлен владельцем и ждёт «Продолжить». */
+      stopped: z.boolean().default(false),
     })
     .optional(),
 });
@@ -1638,6 +1662,8 @@ export const automationRpcContract = defineRpcContract({
   /** `busy` — повтор отказан потому, что Flow сейчас ведёт тред, например попыткой автоповтора; нет — этап не ждёт. Пропуск упавшего шага в занятом треде не отказывает, а ждёт итога попытки. */
   retryAutomation: { input: z.object({ threadId: text, stage: text }), output: stepAnswerSchema },
   skipAutomationStep: { input: z.object({ threadId: text, stage: text }), output: stepAnswerSchema },
+  /** «Стоп» у идущего этапа-автоматизации: `started` — запрос принят; `false` — этап не идёт или это Action. */
+  stopAutomation: { input: z.object({ threadId: text, stage: text }), output: stepAnswerSchema },
   /** Нажатие владельца на кнопку шага этапа Action: `started` — шаг взят в работу, `false` — этап не ждёт нажатия или шаг уже идёт. */
   runActionStep: { input: z.object({ threadId: text, stage: text }), output: z.object({ started: z.boolean() }) },
   /** `stage` — у идущего этапа своя иконка. */

@@ -3,11 +3,12 @@
 import type { BbPluginApi, PluginRpcHandlers } from "@get-bb/plugin-sdk";
 
 import { idleAfter, needsAgentReply } from "../core/agent-reply";
-import { awaitingStageId, ownStageIcon } from "../core/awaiting";
+import { awaitingStageId, ownStageIcon, stillAwaiting } from "../core/awaiting";
 import { answeredLines, answerMessageParts, openQuestions } from "../core/answer-message";
 import { forecast, hasForecast, scopeOf } from "../core/budget";
 import { settleClarifyAnswer, turnOf, type ThreadStatus } from "../core/clarify";
 import { carryOf } from "../core/carry";
+import type { StageModel } from "../core/context";
 import { defaultExecutionOf, providerModelsOf } from "../core/flow-agent";
 import { finalCriteria } from "../core/option-criteria";
 import { demoVerdict, isReport, outcomeKind } from "../core/outcome";
@@ -56,7 +57,10 @@ export const registerApi = (
   store: DecisionStore,
   deps: {
     now: () => string;
-    /** Этапы flow треда: по ним ждущая автоматизация берёт свою иконку для строки треда; не задано — значок по виду. */
+    /**
+     * Этапы flow треда: по ним ждущая автоматизация берёт свою иконку для строки треда, а упавший шаг или Action этапа,
+     * которого больше нет, треда не держит. Не задано — значок по виду, и держит любой.
+     */
     stages?: (threadId: string) => readonly WorkStage[];
     /** Журнал Flow; не задан — сбои не пишутся. */
     warn?: (message: string) => void;
@@ -72,13 +76,11 @@ export const registerApi = (
     /** Дошло ли окно треда до зоны предвыбора компактации (./context.ts); нет зависимости или сбой — бриф открывается без компактации. */
     compactPreselected?: (threadId: string) => Promise<boolean>;
     /**
-     * Модель, которую надо поставить треду перед следующей работой агента, когда владелец своей не выбрал: по прогрессу уже с этим
-     * ответом (./stage-models.ts); `null` — менять нечего. Встроенные этапы закрывает ответ, а не отметка агента, поэтому граница
-     * этапов на них не срабатывает. Сбой — модель не меняется.
+     * Утверждённая модель с effort, которую надо поставить треду перед следующей работой агента, когда владелец своей не выбрал:
+     * по прогрессу уже с этим ответом (./stage-models.ts); `null` — менять нечего. Встроенные этапы закрывает ответ, а не отметка
+     * агента, поэтому граница этапов на них не срабатывает. Сбой — модель не меняется.
      */
-    stageModel?: (threadId: string, progress: FlowProgress) => Promise<string | null>;
-    /** Владелец выбрал модель треда в ответе (`chosen`) или ответил без выбора: выбранную Flow не перебивает моделью этапа (./stage-models.ts). */
-    ownerModel?: (threadId: string, chosen: boolean) => void;
+    stageModel?: (threadId: string, progress: FlowProgress) => Promise<StageModel | null>;
     /** Id flow владельца: переход принимается только в один из них. */
     flowIds?: () => readonly string[];
     /** Переводит тред на flow, выбранный в Демонстрации: прежний прогон и работа снимаются, заводится пустой прогон нового (./flow-choice.ts). */
@@ -305,12 +307,11 @@ export const registerApi = (
           // После перехода у агента вся работа нового flow впереди.
           const record = switched === undefined ? ((await deps.progress?.get(brief.threadId).catch(() => null)) ?? null) : null;
           const ahead = record === null ? null : onAnswer(record, brief, answer, written.record.answeredAt);
-          deps.ownerModel?.(brief.threadId, execution !== undefined);
-          // Модель владельца главнее; без неё тред получает модель следующего этапа. Сбой смены модели ответ не отменяет.
+          // Модель владельца главнее; без неё тред получает утверждённую модель и effort следующего этапа. Сбой смены модели ответ не отменяет.
           if (execution === undefined && ahead !== null) {
             const model = await deps.stageModel?.(brief.threadId, ahead).catch(() => null);
             if (model !== null && model !== undefined)
-              await bb.sdk.threads.update({ threadId: brief.threadId, model }).catch((error: unknown) => deps.warn?.(`answer: the model of the next stage was not set (${error instanceof Error ? error.message : String(error)})`));
+              await bb.sdk.threads.update({ threadId: brief.threadId, model: model.model, reasoningLevel: model.reasoningLevel }).catch((error: unknown) => deps.warn?.(`answer: the model of the next stage was not set (${error instanceof Error ? error.message : String(error)})`));
           }
           if (switched !== undefined || grouped.owner.length > 0 || grouped.agent.length > 0 || needsAgentReply(brief, answer, ahead, attached.length + lost.length)) {
             // Видна ли хуку служебная часть в тексте хода — неизвестно: своей отмечаются оба варианта.
@@ -466,14 +467,17 @@ export const registerApi = (
   });
 
   bb.rpc.register(awaitingRpcContract, {
-    awaitingThreads: () =>
-      store.listAwaiting().then((list) =>
-        list.map((entry) => {
-          const stageId = awaitingStageId(entry);
-          const own = stageId === null ? undefined : ownStageIcon(deps.stages?.(entry.threadId).find((stage) => stage.id === stageId));
-          return { threadId: entry.threadId, kind: entry.kind, ...(own === undefined ? {} : { stage: own }) };
-        }),
-      ),
+    // Ожидание этапа, убранного из flow, снимается при чтении: кнопки Retry, Skip или Action у него уже нет, и значок висел бы вечно.
+    awaitingThreads: async () => {
+      const list = (await store.listAwaiting()).map((entry) => ({ entry, stages: deps.stages?.(entry.threadId) }));
+      const held = ({ entry, stages }: (typeof list)[number]) => stages === undefined || stillAwaiting(entry, stages.map((stage) => stage.id));
+      await Promise.all(list.filter((item) => !held(item)).map(({ entry }) => store.clearAwaiting(entry.threadId, entry.briefId).catch(() => undefined)));
+      return list.filter(held).map(({ entry, stages }) => {
+        const stageId = awaitingStageId(entry);
+        const own = stageId === null ? undefined : ownStageIcon(stages?.find((stage) => stage.id === stageId));
+        return { threadId: entry.threadId, kind: entry.kind, ...(own === undefined ? {} : { stage: own }) };
+      });
+    },
   });
 
   // Ряд виджета: модель треда, каталог моделей доступных провайдеров и flow владельца с их моделью. Сбой — `null`: кнопки модели

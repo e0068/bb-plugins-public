@@ -48,3 +48,12 @@ export const ownStageIcon = (stage: Pick<WorkStage, "name" | "icon"> | undefined
  * в идущий ход тоже. Сообщение, которое другой плагин отправил от имени владельца, — комментарий из Tasks+ — тоже его слова.
  */
 export const returnsBrief = ({ initiator, retry }: { initiator: string; retry: boolean }): boolean => initiator === "user" && !retry;
+
+/**
+ * Держит ли запись ожидания тред по-прежнему: упавший шаг автоматизации и Action ждут кнопки своего этапа, и, когда этап
+ * убран из flow треда, кнопки нет — такая запись больше ничего не ждёт. Ожидание брифа от этапов flow не зависит.
+ */
+export const stillAwaiting = (entry: AwaitingEntry, stageIds: readonly string[]): boolean => {
+  const stageId = awaitingStageId(entry);
+  return stageId === null || stageIds.includes(stageId);
+};
