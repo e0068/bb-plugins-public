@@ -97,8 +97,10 @@ describe("откат Flow к этапу", () => {
     expect(result).toContain("criteria");
   });
 
-  it("демонстрация после запуска проходит без отката", async () => {
-    const { ask } = await setup();
+  it("демонстрация после запуска и закрытой реализации проходит без отката", async () => {
+    const { ask, mark } = await setup();
+    await mark("implement", "started");
+    await mark("implement", "done");
     const result = await ask({ title: "Готово", outcome: { stage: "demo", final: true, done: ["Две кнопки под деревом"], pending: [], results: [{ label: "Проверить", command: "bb thread show thr_n364he4z6h" }] } });
     expect(result).toMatch(/::decision\{id="dec_R\d+"\}/);
   });

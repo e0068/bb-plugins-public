@@ -19,7 +19,7 @@ import { runScript, scriptStep } from "./server/script-step";
 import { readTaskFile, writeTaskFile } from "./server/task-file";
 import { createAgentRelay } from "./server/agent-relay";
 import { nextWork } from "./core/mark-report";
-import { createBoundary, stageModelsOf } from "./server/boundary";
+import { createBoundary, threadModelsOf } from "./server/boundary";
 import { createStageModels } from "./server/stage-models";
 import { createAutomationRunner, externalStep, registerAutomationRunner } from "./server/automation-runner";
 import { createNoticePublisher } from "./server/automation-notices";
@@ -81,7 +81,8 @@ import { agentFor, defaultExecutionOf, executionFor, startMessageOf } from "./co
 import { registerSessionConfig } from "./server/session-config";
 import { revealInFinderHere } from "@bb-plugins/reveal-in-finder/index";
 import { createStore } from "./server/store";
-import { createProviderThreads } from "./server/provider-threads";
+import { createProviderThreads, paceLeadSetting } from "./server/provider-threads";
+import { paceLeadOf } from "./core/provider-threads";
 import { createThreadFlows } from "./server/thread-flows";
 import { removeStaleRootSkill } from "./server/stale-root-skill";
 import { bringPluginsHome } from "./server/plugin-homecoming";
@@ -119,11 +120,12 @@ export default async function plugin(bb: BbPluginApi): Promise<void> {
   // ходит в настройки вторым путём. Схема каждого порога сверяет ввод с
   // соседом, а сосед — последняя запись хранилища: до первого чтения её нет,
   // и хост сверяет умолчания с умолчаниями.
-  let storedContext: ContextSettingValues & { [LANGUAGE_SETTING]?: unknown } = {};
+  let storedContext: ContextSettingValues & { [LANGUAGE_SETTING]?: unknown; providerPaceLead?: unknown } = {};
   const settings = bb.settings.define({
     [LANGUAGE_SETTING]: { type: "select", label: "Language", description: "Language of the widgets, the settings page and the answer sent to the thread. System follows the browser language.", options: [...LANGUAGE_OPTIONS], default: LANGUAGE_SYSTEM },
     ...contextSettings(() => storedContext),
     ...compactPreselectSetting,
+    ...paceLeadSetting,
     ...flowsInPanelSetting,
     ...selectedThreadSetting("the flow"),
   });
@@ -268,7 +270,13 @@ export default async function plugin(bb: BbPluginApi): Promise<void> {
   // Граница этапов: тред сжимается и получает модель следующего этапа до реплики, что его будит (./server/boundary.ts).
   const boundary = createBoundary({ threads: bb.sdk.threads, send, stageState: (threadId, stageId) => stageStateOf(progress, threadId, stageId), warn: (message) => bb.log.warn(message) });
   // Сжатие, модель и порядок «сначала тред, потом реплика» — на каждый план в одном месте; планы по замеру контекста и по модели треда.
-  const stageModels = createStageModels({ context: (threadId) => contextFillOf(bb.sdk, () => settings.get(), threadId), models: (threadId) => stageModelsOf(bb.sdk, threadId) });
+  const stageModels = createStageModels({
+    context: (threadId) => contextFillOf(bb.sdk, () => settings.get(), threadId),
+    current: async (threadId) => {
+      const found = await threadModelsOf(bb.sdk, threadId);
+      return found === null ? null : { model: found.current.model, reasoningLevel: found.current.reasoningLevel };
+    },
+  });
   // Назначенную границу исполняет только будящая реплика Flow после автоматизации; посторонняя отправка (`tell` шага) её не трогает.
   const wake = async (threadId: string, text: string) => {
     if (boundary.scheduled(threadId)) await boundary.service(threadId);
@@ -355,8 +363,9 @@ export default async function plugin(bb: BbPluginApi): Promise<void> {
     criteria: (threadId) => store.getThreadCriteria(threadId),
     skillPath: async (name) => (await readSkillFile(skillFileSources, name))?.path ?? null,
     now: Date.now,
+    lead: () => paceLeadOf(storedContext.providerPaceLead),
   });
-  registerAskTool(bb, store, { context: (threadId) => contextFillOf(bb.sdk, () => settings.get(), threadId), decided: (brief) => recordDecided?.(brief) ?? Promise.resolve(), newId, now, stages: stagesOf, flowIds: () => flows.current().flows.map((flow) => flow.id), flowName: flowNameOf, hasFlow: (threadId) => flowOf(threadId) !== null, emit, planning: (threadId) => readPlanning(bb.sdk, threadId, Date.now(), readClaudeTranscript()), progress, limits: providerThreads.line });
+  registerAskTool(bb, store, { context: (threadId) => contextFillOf(bb.sdk, () => settings.get(), threadId), decided: (brief) => recordDecided?.(brief) ?? Promise.resolve(), newId, now, stages: stagesOf, flowIds: () => flows.current().flows.map((flow) => flow.id), flowName: flowNameOf, hasFlow: (threadId) => flowOf(threadId) !== null, emit, planning: (threadId) => readPlanning(bb.sdk, threadId, Date.now(), readClaudeTranscript()), progress, limits: providerThreads.line, threadModels: (threadId) => threadModelsOf(bb.sdk, threadId) });
   const journalDirs = createJournalDirStore(bb.storage.kv);
   // Каждый ответ на бриф запоминается за тредом вместе с путём файла журнала: по нему итог прогона ссылается на журнал.
   const journalIndex = createJournalIndex(bb.storage.kv, store);
@@ -385,11 +394,10 @@ export default async function plugin(bb: BbPluginApi): Promise<void> {
   };
   recordDecided = registerApi(bb, store, {
     now,
-    // Встроенные этапы закрывает ответ владельца: модель следующего этапа ставится здесь, граница flow_stage на них не срабатывает.
-    ownerModel: stageModels.owner,
+    // Встроенные этапы закрывает ответ владельца: утверждённая модель следующего этапа ставится здесь, граница flow_stage на них не срабатывает.
     stageModel: async (threadId, after) => {
       const next = nextWork(stagesOf(threadId).stages, after);
-      return next === null ? null : ((await stageModels.plan(threadId, next.stage, false))?.model ?? null);
+      return next === null ? null : ((await stageModels.plan(threadId, next.stage, false, after))?.model ?? null);
     },
     stages: (threadId) => stagesOf(threadId).stages,
     warn: (message) => bb.log.warn(message),

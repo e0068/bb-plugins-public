@@ -17,6 +17,9 @@ const T0 = "2026-09-26T10:00:00.000Z";
 const flowStage = (id: string, steps: StepId[]): WorkStage => ({ id, kind: "skill", skill: "", name: id, executors: [], automation: { source: "flow", steps } });
 const action = (id: string, steps: StepId[]): WorkStage => ({ ...actionStage([]), id, name: id, automation: { source: "flow", steps } });
 
+/** Прогон, где владелец снял эти этапы: они не держат следующие. */
+const removedByOwner = (...ids: string[]): FlowProgress => ({ stages: Object.fromEntries(ids.map((id) => [id, { skipped: true }])), waiting: [] });
+
 const textOf = (result: unknown): string =>
   typeof result === "string" ? result : ((result as { content?: Array<{ text?: string }> }).content ?? []).map((c) => c.text ?? "").join("");
 
@@ -77,9 +80,9 @@ const review = stage("review");
 const testing = stage("testing");
 
 describe("flow_stage и старт автоматизации за отмеченным этапом", () => {
-  it("тред thr_897e6zxubm: implement и testing закрыты, этапы до них не тронуты — автоматизация 12 стартует, ответ это подтверждает", async () => {
+  it("тред thr_897e6zxubm: implement и testing закрыты, остальные этапы навыка до них владелец снял — автоматизация 12 стартует, ответ это подтверждает", async () => {
     const { steps, calls } = fakeSteps();
-    const { markDone, track } = await setup(CODE_FLOW, steps);
+    const { markDone, track } = await setup(CODE_FLOW, steps, { seeded: { [THREAD]: removedByOwner("task", "prototype", "spec", "plan", "review") } });
     await markDone("implement");
     const reply = await markDone("testing");
     expect(reply).toMatch(/Flow started the next stage flow-automation/);
@@ -169,18 +172,18 @@ describe("flow_stage и старт автоматизации за отмече�
 });
 
 describe("побудка агента после доигранной автоматизации", () => {
-  it("смотрит на этап за автоматизацией, а не на первый незакрытый этап flow: за ней Action — агента не будят", async () => {
+  it("смотрит на этап за автоматизацией, а не на первый незакрытый этап flow: за ней Action, этап в начале flow снят владельцем — агента не будят", async () => {
     const { steps } = fakeSteps();
-    const { markDone, track, sent } = await setup([stage("questions"), review, flowStage("publish", ["git.create-pr"]), action("press", ["git.merge"])], steps);
+    const { markDone, track, sent } = await setup([stage("questions"), review, flowStage("publish", ["git.create-pr"]), action("press", ["git.merge"])], steps, { seeded: { [THREAD]: removedByOwner("questions") } });
     await markDone("review");
     await vi.waitFor(async () => expect((await track("press"))?.run).toBeDefined());
     await new Promise((resolve) => setTimeout(resolve, 20));
     expect(sent).toEqual([]);
   });
 
-  it("за автоматизацией — этап агента: агента будят, хотя этапы в начале flow не тронуты", async () => {
+  it("за автоматизацией — этап агента: агента будят, хотя этапы в начале flow сняты владельцем", async () => {
     const { steps } = fakeSteps();
-    const { markDone, sent } = await setup(CODE_FLOW, steps);
+    const { markDone, sent } = await setup(CODE_FLOW, steps, { seeded: { [THREAD]: removedByOwner("task", "prototype", "spec", "plan", "review") } });
     await markDone("implement");
     await markDone("testing");
     await vi.waitFor(() => expect(sent).toHaveLength(1));

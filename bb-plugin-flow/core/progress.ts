@@ -7,7 +7,7 @@ import { automationView, executorKind, idleMinutes, isFailed, stageLiveIcon } fr
 import { stagePlans } from "./budget";
 import { demoVerdict, outcomeKind } from "./outcome";
 import { stagePlaces } from "./nest";
-import { askedStageIds, isAutomationStage, recommendedStageChoice, stageItems, stagePhase } from "./stages";
+import { askedStageIds, isAutomationStage, recommendedStageChoice, stageItems, stagePhase, type StageItem } from "./stages";
 import { holdsNothing } from "./settle";
 import { runCascade } from "./sub-stages";
 
@@ -45,13 +45,38 @@ export const answerMovesProgress = (brief: DecisionBrief, planned: Planned | und
 
 
 /**
+ * Снятие предлагает агент: несделанный этап-навык он не рекомендовал, и владелец его так и оставил. Снятое владельцем против
+ * рекомендации — его выбор; встроенные этапы и автоматизации прогон не держат, их снятие ждать нечему.
+ */
+export const isProposedDrop = (item: StageItem | undefined): boolean =>
+  item !== undefined && stageKindOf(item.stage) === "skill" && item.stage.automation === undefined && stagePhase(item) === "todo" && !recommendedStageChoice(item).run;
+
+/** После выбора этапов во flow стоит Утверждение: оно утвердит снятие и снимет метку; иначе метка осталась бы навсегда. */
+export const approvalFollowsSelection = (brief: DecisionBrief): boolean => {
+  const list = brief.stages?.list ?? [];
+  const selected = list.reduce((last, stage, at) => (stageKindOf(stage) === "select" ? at : last), -1);
+  return list.some((stage, at) => at > selected && stageKindOf(stage) === "approve");
+};
+
+/**
  * Рекомендованный прогон брифа, который ход не держит: этапы впереди получают исполнителя, предложенного агентом. Снять этап
  * отправкой нельзя: пропуск — решение владельца, он приходит ответом с Утверждением (docs/decisions/flow-run-holds-every-stage-until-owner-approves-drop.md).
+ * Этап, который агент не рекомендовал, получает метку «предложено»: он держит прогон, а Утверждение впереди должно его назвать.
  */
-const recommendedRun = (progress: FlowProgress, brief: DecisionBrief): FlowProgress =>
-  stageItems(brief)
+const recommendedRun = (progress: FlowProgress, brief: DecisionBrief): FlowProgress => {
+  const proposing = approvalFollowsSelection(brief);
+  return stageItems(brief)
     .filter((item) => stagePhase(item) === "todo")
-    .reduce((p, item) => patch(p, item.stage.id, (t) => (t.finishedAt === undefined ? { ...t, executor: recommendedStageChoice(item).executor } : t)), progress);
+    .reduce(
+      (p, item) =>
+        patch(p, item.stage.id, (t) => {
+          if (t.finishedAt !== undefined) return t;
+          const { proposed: _before, ...open } = t;
+          return { ...open, executor: recommendedStageChoice(item).executor, ...(proposing && isProposedDrop(item) ? { proposed: true } : {}) };
+        }),
+      progress,
+    );
+};
 
 /**
  * Бриф агента: сделанные по отчёту получают конец и ссылки, Демонстрация закрывается, ждущие — начало. Бриф, который прогон не держит,
@@ -74,6 +99,15 @@ export const onBrief = (progress: FlowProgress, brief: DecisionBrief, at: string
   return { ...waiting.reduce((p, id) => patch(p, id, start(at)), finished), waiting, lastBriefId: brief.id };
 };
 
+/** Утверждение отвечено без комментария и перехода: владелец согласился с тем, что показано выше. */
+const outcomeApproved = (brief: DecisionBrief, verdict: ReturnType<typeof demoVerdict>): boolean => brief.outcome !== undefined && outcomeKind(brief) === "approve" && verdict === "continue";
+
+/** Согласие владельца: предложенные к снятию этапы сняты, метки ожидания нет. */
+const withoutProposals = (progress: FlowProgress): FlowProgress => ({
+  ...progress,
+  stages: Object.fromEntries(Object.entries(progress.stages).map(([id, { proposed: _proposed, ...track }]) => [id, track])),
+});
+
 /**
  * Ответ владельца: закрываются ждущие этапы отвечаемого брифа (Демонстрация с комментарием или переходом — нет) — не чужого, пришедшего позже;
  * этапы вне прогона снимаются, исполнитель и план запоминаются. Пройденный этап остаётся пройденным, а выбор для него
@@ -88,13 +122,20 @@ export const onAnswer = (progress: FlowProgress, brief: DecisionBrief, answer: D
   const verdict = demoVerdict(answer);
   const commented = brief.outcome !== undefined && (verdict === "comment" || verdict === "switch");
   const closed = commented ? progress : own.reduce((p, id) => patch(p, id, finish(at)), progress);
+  const items = approvalFollowsSelection(brief) ? stageItems(brief) : [];
   const chosen = (answer.stages ?? []).reduce((p, s) => {
-    const choice = { skipped: !s.run, executor: s.executor };
-    return patch(p, s.id, (t) => (t.finishedAt === undefined ? { ...t, ...choice } : own.includes(s.id) ? t : { ...t, nextPass: choice }));
+    const choice = { skipped: !s.run, executor: s.executor, ...(s.model === undefined ? {} : { model: s.model }) };
+    const proposed = !s.run && isProposedDrop(items.find((item) => item.stage.id === s.id));
+    // Без модели в ответе поля в следе нет: прежняя модель этапа не переживает ответ.
+    return patch(p, s.id, ({ proposed: _before, ...t }) => {
+      const { model: _model, ...kept } = t;
+      return t.finishedAt === undefined ? { ...kept, ...choice, ...(proposed ? { proposed } : {}) } : own.includes(s.id) ? t : { ...t, nextPass: choice };
+    });
   }, closed);
+  const agreed = outcomeApproved(brief, verdict) ? withoutProposals(chosen) : chosen;
   const plans = { ...progress.plans, ...stagePlans(brief, answer) };
   return {
-    ...chosen,
+    ...agreed,
     waiting: progress.waiting.filter((id) => !own.includes(id)),
     ...(planned === undefined ? {} : { planned: { ...planned } }),
     ...(Object.keys(plans).length === 0 ? {} : { plans }),
@@ -199,12 +240,13 @@ const spentSoFar = (track: Track): Track["earlier"] =>
         from: track.earlier?.from ?? track.startedAt ?? track.finishedAt,
       };
 
-/** След этапа, который проходится заново с момента `at`: остаются исполнитель, вычеркнутость — выбранные ответом для нового прохода, если он был, — траты и время прошлых проходов. */
+/** След этапа, который проходится заново с момента `at`: остаются исполнитель, модель, вычеркнутость — выбранные ответом для нового прохода, если он был, — траты и время прошлых проходов. */
 const cleared = (at: string) => (track: Track): Track => {
   const earlier = spentSoFar(track);
-  const { executor, skipped } = track.nextPass ?? track;
+  const { executor, skipped, model } = track.nextPass ?? track;
   return {
     ...(executor === undefined ? {} : { executor }),
+    ...(model === undefined ? {} : { model }),
     ...(skipped === undefined ? {} : { skipped }),
     ...(earlier === undefined ? {} : { earlier }),
     ...passesSoFar(track, at),
@@ -227,7 +269,13 @@ export const touched = (track: Track | undefined): boolean => track !== undefine
 export const isAhead = (progress: FlowProgress, stages: readonly WorkStage[], id: string): boolean => {
   const index = stages.findIndex((stage) => stage.id === id);
   const reached = stages.map((stage, at) => (touched(progress.stages[stage.id]) || progress.waiting.includes(stage.id) ? at : -1));
-  return index >= 0 && index > Math.max(-1, ...reached);
+  return index >= 0 && (isOpenBehind(progress, id) || index > Math.max(-1, ...reached));
+};
+
+/** Нетронутый этап, который держит прогон, даже стоя позади идущего: владелец вправе его снять — других выходов у него нет. */
+const isOpenBehind = (progress: FlowProgress, id: string): boolean => {
+  const track = progress.stages[id];
+  return !touched(track) && !progress.waiting.includes(id) && track?.skipped !== true;
 };
 
 /**
@@ -245,7 +293,8 @@ export const toggleStageInRun = (progress: FlowProgress, stages: readonly WorkSt
 /** Владелец убирает этап из прогона или возвращает его; этап, до которого прогон дошёл — начатый, закрытый, ждущий владельца, со шагами, — не меняется. */
 export const setStageInRun = (progress: FlowProgress, id: string, run: boolean): FlowProgress => {
   const reached = touched(progress.stages[id]) || progress.waiting.includes(id);
-  return reached ? progress : patch(progress, id, (current) => ({ ...current, skipped: !run }));
+  // Владелец решил сам: метка «предложено агентом» с этапа уходит, ждать утверждения нечего.
+  return reached ? progress : patch(progress, id, ({ proposed: _proposed, ...current }) => ({ ...current, skipped: !run }));
 };
 
 /**
@@ -254,7 +303,7 @@ export const setStageInRun = (progress: FlowProgress, id: string, run: boolean):
  * незакоммиченными. Тронутая автоматизация возвращается в прогон, даже если ответ после её прохода её не брал: она уже
  * вынесла работу наружу — коммит, PR, мёрж, — и без нового прохода правки доработки туда не дойдут. Этап навыка, снятый
  * ответом, остаётся снятым: это выбор владельца на новый проход. Траты сброшенных проходов копятся в `earlier`.
- * Старт незакрытого этапа ничего не меняет: нетронутые этапы раньше закрытых — обычный прогон, а не доработка.
+ * Старт незакрытого этапа ничего не меняет: это обычный ход прогона, а не доработка.
  */
 export const reopen = (progress: FlowProgress, stages: readonly WorkStage[], id: string, at: string): FlowProgress => {
   const index = stages.findIndex((stage) => stage.id === id);

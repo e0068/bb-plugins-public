@@ -15,11 +15,12 @@ import { FlowGlyph } from "./flow-glyph";
 import { useMessages } from "./locale-context";
 import { ProviderMark } from "./provider-logos";
 
-/** Каталог выбора агента треда; пока не пришёл или не пришёл вовсе — `null`, и кнопок модели и Flow нет. */
-export function useWidgetAgent(threadId: string): WidgetAgent | null {
+/** Каталог выбора агента треда; пока не пришёл или не пришёл вовсе — `null`, и кнопок модели и Flow нет. `wanted: false` — каталог не нужен, запроса нет. */
+export function useWidgetAgent(threadId: string, wanted = true): WidgetAgent | null {
   const rpc = useRpc<typeof widgetAgentRpcContract>();
   const [catalog, setCatalog] = useState<WidgetAgent | null>(null);
   useEffect(() => {
+    if (!wanted) return undefined;
     let live = true;
     rpc.call("widgetAgent", { threadId }).then(
       (found) => live && setCatalog(found),
@@ -29,14 +30,14 @@ export function useWidgetAgent(threadId: string): WidgetAgent | null {
       live = false;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps -- каталог читается один раз на тред, а не на новый объект клиента
-  }, [threadId]);
+  }, [threadId, wanted]);
   return catalog;
 }
 
 /** Effort модели: у модели без списка — только выбранный, иначе колонка осталась бы пустой. */
-const effortsOf = (efforts: readonly Execution["reasoningLevel"][] | undefined, chosen: Execution["reasoningLevel"]): readonly Execution["reasoningLevel"][] => (efforts === undefined || efforts.length === 0 ? [chosen] : efforts);
+export const effortsOf = (efforts: readonly Execution["reasoningLevel"][] | undefined, chosen: Execution["reasoningLevel"]): readonly Execution["reasoningLevel"][] => (efforts === undefined || efforts.length === 0 ? [chosen] : efforts);
 
-const cap = (text: string): string => text.charAt(0).toUpperCase() + text.slice(1);
+export const cap = (text: string): string => text.charAt(0).toUpperCase() + text.slice(1);
 
 /** Квадрат — та же высота, что у ячеек ряда, без подписи. */
 const SQUARE = "flex-none basis-auto w-10 justify-center px-0";
@@ -73,10 +74,10 @@ function AgentCell(props: { className: string; label: string; caption: string; v
 /** Колонка — та же скруглённая группа, что у «Исполнять». */
 const LIST_GROUP = "flex min-w-0 flex-col gap-px self-start overflow-hidden rounded-lg bg-background";
 
-type MarkedItem = { id: string; name: string; icon?: ReactNode; marks: ItemMarks; hint?: string; disabled?: boolean };
+export type MarkedItem = { id: string; name: string; icon?: ReactNode; marks: ItemMarks; hint?: string; disabled?: boolean };
 
 /** Колонка с пометками: галочка у выбранного, «Сейчас» у текущего справа, ✦ у предложения агента после названия. */
-function MarkedGroup(props: { label: string; items: readonly MarkedItem[]; onPick: (id: string) => void; footer?: ReactNode }) {
+export function MarkedGroup(props: { label: string; items: readonly MarkedItem[]; onPick: (id: string) => void; footer?: ReactNode }) {
   const t = useMessages();
   return (
     <div role="group" aria-label={props.label} className={LIST_GROUP}>

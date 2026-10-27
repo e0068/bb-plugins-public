@@ -1,3 +1,4 @@
+import { cloneElement, type ReactElement } from "react";
 import { describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen } from "@testing-library/react";
 import { SegmentedControl } from "./test-support/tabs-kit";
@@ -54,6 +55,73 @@ describe("SegmentedControl", () => {
     );
 
     expect(screen.getByRole("tablist", { name: "Режим файла" })).toBeInTheDocument();
+  });
+
+  it("icon-only: no label text, the label is the segment's name", () => {
+    render(
+      <SegmentedControl
+        value="read"
+        onChange={vi.fn()}
+        iconOnly
+        options={[
+          { value: "read", label: "Read", icon: <svg data-testid="read-icon" /> },
+          { value: "raw", label: "Raw", icon: <svg /> },
+        ]}
+      />,
+    );
+
+    const segment = screen.getByRole("tab", { name: "Read" });
+    expect(segment.textContent).toBe("");
+    expect(segment).toContainElement(screen.getByTestId("read-icon"));
+  });
+
+  it("disabled: pressing a segment changes nothing", () => {
+    const onChange = vi.fn();
+    render(<SegmentedControl value="read" onChange={onChange} options={OPTIONS} disabled />);
+
+    fireEvent.mouseDown(screen.getByRole("tab", { name: "Raw" }));
+    fireEvent.click(screen.getByRole("tab", { name: "Raw" }));
+
+    expect(onChange).not.toHaveBeenCalled();
+    expect(screen.getByRole("tab", { name: "Raw" })).toBeDisabled();
+  });
+
+  it("wrapSegment receives every segment with its option", () => {
+    render(
+      <SegmentedControl
+        value="read"
+        onChange={vi.fn()}
+        options={OPTIONS}
+        wrapSegment={(segment, option) => <span data-testid={`wrap-${option.value}`}>{segment}</span>}
+      />,
+    );
+
+    for (const option of OPTIONS) {
+      expect(screen.getByTestId(`wrap-${option.value}`)).toContainElement(screen.getByRole("tab", { name: option.label }));
+    }
+  });
+
+  // A tooltip trigger with asChild rewrites the segment's data-state for its
+  // own open/closed; the look keys on aria-selected too, which stays.
+  it("the active segment keeps aria-selected when a wrapper takes over its data-state", () => {
+    render(
+      <SegmentedControl
+        value="write"
+        onChange={vi.fn()}
+        options={OPTIONS}
+        wrapSegment={(segment) => cloneElement(segment as ReactElement<Record<string, unknown>>, { "data-state": "closed" })}
+      />,
+    );
+
+    const active = screen.getByRole("tab", { name: "Write" });
+    expect(active.getAttribute("data-state")).toBe("closed");
+    expect(active.getAttribute("aria-selected")).toBe("true");
+  });
+
+  it("points at no tab panel: the control never renders one", () => {
+    render(<SegmentedControl value="read" onChange={vi.fn()} options={OPTIONS} />);
+
+    expect(screen.getByRole("tab", { name: "Read" }).hasAttribute("aria-controls")).toBe(false);
   });
 
   it("shows an option's count inside its segment, and no number where none was given", () => {

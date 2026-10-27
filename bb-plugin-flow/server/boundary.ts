@@ -3,7 +3,9 @@
 // приходят аргументами, правила — что сжимать и на какую модель — решает core/context.ts.
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 
+import type { CatalogModel, StageModel } from "../core/context";
 import { providerModelsOf } from "../core/flow-agent";
+import type { Execution } from "../shared/contract";
 import { RELAY_WAIT_MS } from "./agent-relay";
 
 /** Провайдер, чьим тредам Flow меняет модель по этапам: у других провайдеров каталог моделей и их имена другие. */
@@ -18,7 +20,7 @@ export const PLAN_TTL_MS = 6 * RELAY_WAIT_MS;
 /** Что сделать с тредом на границе: сжать, поставить модель (`null` — не трогать) и о каком этапе напомнить агенту. */
 export interface ScheduledBoundary {
   readonly compact: boolean;
-  readonly model: string | null;
+  readonly model: StageModel | null;
   /** Этап, с которого агент продолжит, — подписью для реплики. */
   readonly nextStage: string;
   /** Id этапа: реплика уходит, только пока он открыт. */
@@ -94,7 +96,8 @@ export const createBoundary = (deps: {
     const idle = await attempt("waiting for the thread to go idle", () => deps.threads.wait({ threadId, status: "idle", timeoutMs: deps.waitMs ?? BOUNDARY_WAIT_MS }));
     if (!idle) return;
     if (plan.compact) await attempt("compaction", () => deps.threads.compact({ threadId }));
-    if (plan.model !== null) await attempt("model update", () => deps.threads.update({ threadId, model: plan.model }));
+    const { model } = plan;
+    if (model !== null) await attempt("model update", () => deps.threads.update({ threadId, model: model.model, reasoningLevel: model.reasoningLevel }));
   };
 
   return {
@@ -132,12 +135,16 @@ export const createBoundary = (deps: {
 type ModelSdk = { threads: Pick<BbPluginApi["sdk"]["threads"], "get" | "defaultExecutionOptions">; providers: Pick<BbPluginApi["sdk"]["providers"], "models"> };
 
 /**
- * Модель треда и модели его провайдера из каталога bb. Тред не Claude Code — `null`: модель ему не меняется.
- * Сбой чтения уходит наружу: вызывающий считает его «модель не трогать».
+ * Модель треда с effort и модели его провайдера из каталога bb, у каждой свои effort. Тред не Claude Code или модель
+ * треда неизвестна — `null`: модель ему не меняется. Сбой чтения уходит наружу: вызывающий считает его «модель не трогать».
  */
-export const stageModelsOf = async (sdk: ModelSdk, threadId: string): Promise<{ current: string | null; models: ReadonlyArray<{ model: string }> } | null> => {
+export const threadModelsOf = async (sdk: ModelSdk, threadId: string): Promise<{ current: Execution; models: CatalogModel[] } | null> => {
   const { providerId } = await sdk.threads.get({ threadId });
   if (providerId !== MODEL_PROVIDER) return null;
   const [options, catalog] = await Promise.all([sdk.threads.defaultExecutionOptions({ threadId }), sdk.providers.models({ providerId })]);
-  return { current: options?.model ?? null, models: providerModelsOf(catalog, providerId) };
+  if (options === null) return null;
+  return {
+    current: { providerId, model: options.model, reasoningLevel: options.reasoningLevel },
+    models: providerModelsOf(catalog, providerId).map(({ model, efforts }) => ({ model, efforts })),
+  };
 };

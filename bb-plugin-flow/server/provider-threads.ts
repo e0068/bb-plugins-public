@@ -1,12 +1,24 @@
 // Тред другого провайдера bb исполнителем этапа (BBPL-965), оболочка: лимиты провайдеров в памяти для синхронной сборки
 // хода и дочерний тред, которому Flow отдаёт этап по отметке его начала. Решения — в ../core/provider-threads.ts.
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
+import { z } from "zod";
 
-import { delegateMessage, limitsLine, threadProviderOf, type DelegateResult, type UsageSnapshot } from "../core/provider-threads";
+import { DEFAULT_PACE_LEAD, delegateMessage, limitsLine, threadProviderOf, type DelegateResult, type UsageSnapshot } from "../core/provider-threads";
 import type { WorkStage } from "../shared/contract";
 
 /** Сколько мс ответ bb о лимитах годится для хода; старше — ход берёт его, а новый читается в фоне. */
 const FRESH_MS = 60_000;
+
+/** Настройка Flow: на сколько процентов окно Claude должно обгонять время до сброса, чтобы агент предложил другой провайдер. */
+export const paceLeadSetting = {
+  providerPaceLead: {
+    type: "number" as const,
+    label: "Provider advice — usage ahead of time, %",
+    description: "The agent suggests running a stage in a thread of another provider when a Claude 5-hour or weekly limit window is used up this many percent faster than its time passes (20 means 1.2 times as fast) and the other provider's windows are not. The pace is not judged in the first 10% of a window.",
+    experimental_schema: z.number().int().min(1).max(500),
+    default: DEFAULT_PACE_LEAD,
+  },
+};
 
 export type ProviderThreads = {
   /** Строка лимитов для хода треда; лимиты ещё не прочитаны или у flow нет тредов провайдеров — `null`. */
@@ -29,6 +41,8 @@ export const createProviderThreads = (
     /** Файл навыка по имени; не нашёлся — `null`. */
     skillPath: (name: string) => Promise<string | null>;
     now: () => number;
+    /** Порог обгона, %: на каждом ходу читается заново — настройку меняют на ходу. */
+    lead: () => number;
   },
 ): ProviderThreads => {
   let snapshot: { usage: UsageSnapshot; at: number } | null = null;
@@ -55,7 +69,7 @@ export const createProviderThreads = (
       // Flow без тредов провайдеров лимиты не читает: строки у него всё равно нет.
       if (!executors.some((executor) => threadProviderOf(executor.id) !== null)) return null;
       if (snapshot === null || deps.now() - snapshot.at >= FRESH_MS) refresh();
-      return snapshot === null ? null : limitsLine(snapshot.usage, executors);
+      return snapshot === null ? null : limitsLine(snapshot.usage, executors, { now: deps.now(), lead: deps.lead() });
     },
     delegate: async ({ threadId, stage, providerId, results }) => {
       try {

@@ -6,10 +6,11 @@ import { describe, expect, it } from "vitest";
 import { builtinStage } from "../lib/stage-constants";
 import { addFlow, newFlow } from "../core/flows";
 import { stage } from "../core/stages-fixtures";
-import type { DecisionAnswer, DecisionBrief, FlowProgress, StageSettings } from "../shared/contract";
+import type { StageModel } from "../core/context";
+import type { DecisionAnswer, DecisionBrief, Execution, FlowProgress, StageSettings } from "../shared/contract";
 import plugin from "../server";
 import { registerApi } from "./api";
-import { FLOW_STAGE_TOOL, createProgress } from "./progress";
+import { createProgress } from "./progress";
 import { createStore } from "./store";
 
 const T0 = "2026-10-26T10:00:00.000Z";
@@ -28,16 +29,15 @@ describe("answerBrief: модель следующего этапа", () => {
   };
   const answer = (extra: Partial<DecisionAnswer> = {}): DecisionAnswer => ({ briefId: "dec_1", answers: [], stages: [{ id: "implement", run: true, executor: "self" }], place: "here", ...extra });
 
-  const setup = async (stageModel: (threadId: string, progress: FlowProgress) => Promise<string | null>) => {
+  const setup = async (stageModel: (threadId: string, progress: FlowProgress) => Promise<StageModel | null>) => {
     const log: string[] = [];
-    const owners: boolean[] = [];
     const seen: FlowProgress[] = [];
     const { bb, harness } = createFakePluginHost({
       pluginId: "flow",
       sdk: {
         threads: {
           compact: async () => (log.push("compact"), { ok: true }),
-          update: async (args: { model?: string | null | undefined }) => (log.push(`update:${args.model}`), {}),
+          update: async (args: { model?: string | null | undefined; reasoningLevel?: string | null | undefined }) => (log.push(`update:${args.model}/${args.reasoningLevel}`), {}),
           send: async () => (log.push("send"), { delivery: "queued" }),
           get: async () => ({ providerId: "claude-code", projectId: "proj_1", environmentId: "env_1" }),
         },
@@ -47,37 +47,30 @@ describe("answerBrief: модель следующего этапа", () => {
     const progress = createProgress(bb.storage.kv);
     await store.putBrief(brief);
     await progress.recordBrief(brief, T0);
-    registerApi(bb, store, { now: () => T0, stages: () => settings.stages, progress, ownerModel: (_threadId, chosen) => void owners.push(chosen), stageModel: async (threadId, after) => (seen.push(after), stageModel(threadId, after)) });
-    return { call: (input: unknown) => harness.callRpc("answerBrief", input), log, seen, owners };
+    registerApi(bb, store, { now: () => T0, stages: () => settings.stages, progress, stageModel: async (threadId, after) => (seen.push(after), stageModel(threadId, after)) });
+    return { call: (input: unknown) => harness.callRpc("answerBrief", input), log, seen };
   };
 
-  it("перед репликой тред получает модель, а прогресс в помощник приходит уже с этим ответом", async () => {
-    const { call, log, seen } = await setup(async () => "claude-sonnet-4-5");
+  const SONNET: StageModel = { model: "claude-sonnet-4-5", reasoningLevel: "high" };
+
+  it("перед репликой тред получает утверждённую модель с effort, а прогресс в помощник приходит уже с этим ответом", async () => {
+    const { call, log, seen } = await setup(async () => SONNET);
     await call({ id: "dec_1", answer: answer(), messageId: "m" });
-    expect(log).toEqual(["update:claude-sonnet-4-5", "send"]);
+    expect(log).toEqual(["update:claude-sonnet-4-5/high", "send"]);
     expect(seen[0]?.stages.select?.finishedAt).toBeDefined();
   });
 
   it("со сжатием: сначала сжатие, потом модель, потом реплика", async () => {
-    const { call, log } = await setup(async () => "claude-sonnet-4-5");
+    const { call, log } = await setup(async () => SONNET);
     await call({ id: "dec_1", answer: answer({ compact: true }), messageId: "m" });
-    expect(log).toEqual(["compact", "update:claude-sonnet-4-5", "send"]);
+    expect(log).toEqual(["compact", "update:claude-sonnet-4-5/high", "send"]);
   });
 
   it("модель, выбранная владельцем, главнее: помощник не зовётся", async () => {
-    const { call, log, seen } = await setup(async () => "claude-sonnet-4-5");
+    const { call, log, seen } = await setup(async () => SONNET);
     await call({ id: "dec_1", answer: answer({ execution: { providerId: "claude-code", model: "claude-opus-4-1", reasoningLevel: "high" } }), messageId: "m" });
-    expect(log).toEqual(["update:claude-opus-4-1", "send"]);
+    expect(log).toEqual(["update:claude-opus-4-1/high", "send"]);
     expect(seen).toEqual([]);
-  });
-
-  it("выбор модели владельцем помечается за тредом, ответ без выбора помету снимает", async () => {
-    const { call, owners } = await setup(async () => null);
-    await call({ id: "dec_1", answer: answer({ execution: { providerId: "claude-code", model: "claude-opus-4-1", reasoningLevel: "high" } }), messageId: "m" });
-    expect(owners).toEqual([true]);
-    const without = await setup(async () => null);
-    await without.call({ id: "dec_1", answer: answer(), messageId: "m" });
-    expect(without.owners).toEqual([false]);
   });
 
   it("менять нечего или помощник упал — ответ принимается без смены модели", async () => {
@@ -92,7 +85,7 @@ describe("answerBrief: модель следующего этапа", () => {
   });
 });
 
-describe("answerBrief во входе сервера: следующий этап и модель из bb", () => {
+describe("ответ ставит утверждённую модель следующего этапа", () => {
   const THREAD = "thr_stage_model";
   const flowStages = [builtinStage("select", []), stage("implement", { skill: "code-standards-fp", name: "Implementation" }), stage("review", { name: "Review" })];
   const stored: DecisionBrief = {
@@ -115,7 +108,7 @@ describe("answerBrief во входе сервера: следующий эта�
           get: async () => ({ id: THREAD, providerId: "claude-code", status: "idle", environmentId: null, title: null, projectId: "proj_a" }),
           defaultExecutionOptions: async () => ({ model, reasoningLevel: "medium" }),
           events: { list: async () => [] },
-          update: async (args: { model?: string | null | undefined }) => (log.push(`update:${args.model}`), {}),
+          update: async (args: { model?: string | null | undefined; reasoningLevel?: string | null | undefined }) => (log.push(`update:${args.model}/${args.reasoningLevel}`), {}),
           send: async () => (log.push("send"), { delivery: "queued" }),
         },
         providers: {
@@ -143,37 +136,34 @@ describe("answerBrief во входе сервера: следующий эта�
     return { log, reply, harness };
   };
 
-  const run = [{ id: "implement", run: true, executor: "self" }, { id: "review", run: true, executor: "self" }];
+  const SONNET: Execution = { providerId: "claude-code", model: "claude-sonnet-4-5", reasoningLevel: "high" };
+  const OPUS: Execution = { providerId: "claude-code", model: "claude-opus-4-1", reasoningLevel: "medium" };
+  const run = [
+    { id: "implement", run: true, executor: "self", model: SONNET },
+    { id: "review", run: true, executor: "self", model: OPUS },
+  ];
 
-  it("ответ на Выбор этапов переводит тред с Opus на Sonnet перед репликой: дальше реализация", async () => {
+  it("ответ на Выбор этапов ставит треду утверждённую модель и effort реализации перед репликой", async () => {
     const { log, reply } = await boot("claude-opus-4-1", { select: { startedAt: T0 } });
     await reply(run);
-    expect(log).toEqual(["update:claude-sonnet-4-5", "send"]);
+    expect(log).toEqual(["update:claude-sonnet-4-5/high", "send"]);
   });
 
-  it("тред уже на Sonnet — модель не трогается", async () => {
+  it("утверждённое уже стоит — модель не трогается", async () => {
     const { log, reply } = await boot("claude-sonnet-4-5", { select: { startedAt: T0 } });
-    await reply(run);
+    await reply([{ ...run[0]!, model: { ...SONNET, reasoningLevel: "medium" } }, run[1]!]);
     expect(log).toEqual(["send"]);
   });
 
-  it("реализацию владелец вычеркнул: следующий этап — ревью на Opus, тред остаётся на Opus", async () => {
+  it("ответ без моделей этапов модель треда не меняет — даже перед реализацией", async () => {
     const { log, reply } = await boot("claude-opus-4-1", { select: { startedAt: T0 } });
-    await reply([{ id: "implement", run: false, executor: "self" }, { id: "review", run: true, executor: "self" }]);
+    await reply([{ id: "implement", run: true, executor: "self" }, { id: "review", run: true, executor: "self" }]);
     expect(log).toEqual(["send"]);
   });
 
-  it("модель, выбранная владельцем в брифе, не перебивается ни «начат», ни «готово» на этапе другой модели", async () => {
-    const { log, reply, harness } = await boot("claude-opus-4-1", { select: { startedAt: T0 } });
-    await reply(run, { providerId: "claude-code", model: "claude-opus-4-1", reasoningLevel: "high" });
-    log.length = 0;
-    const mark = async (stageId: string, state: "started" | "done") => {
-      const answer = (await harness.callAgentTool(FLOW_STAGE_TOOL, { stage: stageId, state }, { threadId: THREAD })) as { content: Array<{ text: string }> } | string;
-      return typeof answer === "string" ? answer : answer.content.map((part) => part.text).join("");
-    };
-    expect(await mark("implement", "started")).toBe("Stage implement marked started.");
-    expect(await mark("implement", "done")).toBe("Stage implement marked done.");
-    await new Promise((resolve) => setTimeout(resolve, 80));
-    expect(log).toEqual([]);
+  it("реализацию владелец вычеркнул: следующий этап — ревью на утверждённой Opus, тред остаётся на Opus", async () => {
+    const { log, reply } = await boot("claude-opus-4-1", { select: { startedAt: T0 } });
+    await reply([{ ...run[0]!, run: false }, run[1]!]);
+    expect(log).toEqual(["send"]);
   });
 });

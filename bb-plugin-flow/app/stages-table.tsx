@@ -13,6 +13,7 @@
 import { Fragment, useState, type ReactNode } from "react";
 
 import { nestTree, stagePlaces, type NestNode } from "../core/nest";
+import { itemMarks, switchModel, switchProvider } from "../core/agent-choice";
 import { SELF, executorLabel, stageExecutorIds, stageSurcharge, stageItems, stageLabel, stagePhase, type StageItem } from "../core/stages";
 import { criterionTitle, forecast, linesSum, minutesText, money, optionLines, ownDollars, plannedMinutes, scopeOf, spentLines, type Forecast, type ForecastLine } from "../core/budget";
 import { optionCriteria, optionRemoved, placedOptionCriteria, removedCriteria, type PlacedCriterion } from "../core/option-criteria";
@@ -22,9 +23,10 @@ import type { Locale } from "../lib/i18n";
 import { messages } from "../lib/messages";
 import { stageKindOf } from "../lib/stage-constants";
 import { cn } from "../lib/utils";
-import type { DecisionBrief, StageExecutor, WorkStage } from "../shared/contract";
+import type { DecisionBrief, Execution, StageExecutor, WidgetAgent, WorkStage } from "../shared/contract";
+import { MarkedGroup, cap, effortsOf } from "./agent-cells";
 import { DocumentName, RiskText } from "./cells";
-import { nestRun, pendingInNest, pickStageExecutor, restoreOwnBudget, seedOwnBudget, setOwnBudget, stageChoiceIn, toAnswer, toggleCriterion, toggleNestRun, toggleStageRun, typedOwnPrice, type Draft } from "./draft";
+import { nestRun, pendingInNest, pickStageExecutor, pickStageModel, restoreOwnBudget, seedOwnBudget, setOwnBudget, stageChoiceIn, toAnswer, toggleCriterion, toggleNestRun, toggleStageRun, typedOwnPrice, type Draft } from "./draft";
 import { FlowGlyph } from "./flow-glyph";
 import { RichText } from "./linked-text";
 import { useLocale, useMessages } from "./locale-context";
@@ -45,6 +47,8 @@ export type StagesTableView = {
   expanded: string | null;
   /** `anchor` — нажатая часть строки: раскрытие не сдвигает её на экране. */
   expand: (key: string | null, anchor?: Element | null) => void;
+  /** Каталог моделей треда: без него модели этапа в таблице нет — ни подписи, ни выбора. */
+  catalog?: WidgetAgent | null;
 };
 
 /** Ключ раскрытия строки этапа: исполнители у несделанного, результаты у сделанного. */
@@ -168,6 +172,10 @@ function useExecutorName() {
   return (item: StageItem, id: string): string => (id === SELF ? t.settings.mainAgent : executorLabel(item.stage, id, locale));
 }
 
+/** Модель словами: «Opus · High»; модели нет в каталоге — её id. */
+const modelText = (catalog: WidgetAgent, execution: Execution): string =>
+  `${catalog.providers.find((p) => p.id === execution.providerId)?.models.find((m) => m.model === execution.model)?.name ?? execution.model} · ${cap(execution.reasoningLevel)}`;
+
 /** Свёртка строк под этапом — у Definition of Done это его пункты: строка этапа их прячет и показывает. */
 type Fold = { open: boolean; toggle: () => void };
 
@@ -246,10 +254,17 @@ function StageRows({ item, view, scope, priced, line, roots, fold, place }: { it
   const ids = automation ? [] : stageExecutorIds(item.stage);
   // Выбор есть, только если во Flow этапу добавлен исполнитель кроме Main Agent; у снятого этапа его не видно.
   const choosable = ids.length > 1 && choice.run;
-  const clickable = choosable && !view.answered;
+  // Модель этапа показана у Main Agent и у этапа без исполнителей; агент-исполнитель называет свою модель в имени, у автоматизации модели нет.
+  const catalog = view.catalog ?? null;
+  const stageModel = catalog === null || automation || !choice.run || choice.executor !== SELF ? undefined : choice.model;
+  const modelOf = stageModel === undefined || catalog === null ? undefined : modelText(catalog, stageModel);
+  const models = { stage: choice.model?.model, thread: view.brief.stages?.threadModel?.model };
+  const modelPickable = stageModel !== undefined;
+  const clickable = (choosable || modelPickable) && !view.answered;
   const price: Price | undefined = priced && choice.run ? line : undefined;
   const executor = item.stage.executors.find((e) => e.id === choice.executor);
   const dim = !choice.run && "opacity-40";
+  const chevron = clickable && <Icon name="ChevronDown" aria-hidden="true" className={cn("size-3.5 shrink-0", open && "rotate-180")} />;
   const label = (
     <Label
       icon={<span className={cn("flex", dim)}>{icon}</span>}
@@ -261,8 +276,13 @@ function StageRows({ item, view, scope, priced, line, roots, fold, place }: { it
         choosable ? (
           <span className="flex min-w-0 items-center gap-1 text-xs text-muted-foreground">
             <ExecutorIcon executor={executor} />
-            <span className="min-w-0 truncate">{nameOf(item, choice.executor)}</span>
-            {clickable && <Icon name="ChevronDown" aria-hidden="true" className={cn("size-3.5 shrink-0", open && "rotate-180")} />}
+            <span className="min-w-0 truncate">{modelOf === undefined ? nameOf(item, choice.executor) : `${nameOf(item, choice.executor)} · ${modelOf}`}</span>
+            {chevron}
+          </span>
+        ) : modelOf !== undefined ? (
+          <span className="flex min-w-0 items-center gap-1 text-xs text-muted-foreground">
+            <span className="min-w-0 truncate">{modelOf}</span>
+            {chevron}
           </span>
         ) : fold === undefined ? undefined : (
           <Chevron open={fold.open} />
@@ -276,7 +296,7 @@ function StageRows({ item, view, scope, priced, line, roots, fold, place }: { it
     <>
       <div data-stage={item.stage.id} className={cn(ROW, "relative")}>
         {clickable ? (
-          <button type="button" aria-expanded={open} aria-label={t.stages.executorGroup(name)} disabled={view.sending} onClick={(e) => toggle(e.currentTarget)} className={OVERLAY} />
+          <button type="button" aria-expanded={open} aria-label={choosable ? t.stages.executorGroup(name) : t.stages.modelGroup(name)} disabled={view.sending} onClick={(e) => toggle(e.currentTarget)} className={OVERLAY} />
         ) : (
           fold !== undefined && <FoldButton fold={fold} name={name} />
         )}
@@ -292,7 +312,8 @@ function StageRows({ item, view, scope, priced, line, roots, fold, place }: { it
           />
         </span>
       </div>
-      {open && clickable && <ExecutorRows item={item} view={view} scope={scope} priced={priced} chosen={choice.executor} />}
+      {open && clickable && choosable && <ExecutorRows item={item} view={view} scope={scope} models={models} priced={priced} chosen={choice.executor} />}
+      {open && clickable && catalog !== null && stageModel !== undefined && <ModelColumns item={item} view={view} catalog={catalog} chosen={stageModel} />}
     </>
   );
 }
@@ -301,7 +322,7 @@ function StageRows({ item, view, scope, priced, line, roots, fold, place }: { it
  * Исполнители раскрытого этапа строками — светлее строк этапов, с теми же тёмными разрывами; вся строка — кнопка выбора,
  * галочка выбранного — в колонке чекбоксов. Светлая подложка полупрозрачная, поэтому лежит на непрозрачной строке таблицы.
  */
-function ExecutorRows({ item, view, scope, priced, chosen }: { item: StageItem; view: StagesTableView; scope: ReturnType<typeof scopeOf>; priced: boolean; chosen: string }) {
+function ExecutorRows({ item, view, scope, models, priced, chosen }: { item: StageItem; view: StagesTableView; scope: ReturnType<typeof scopeOf>; models: { stage: string | undefined; thread: string | undefined }; priced: boolean; chosen: string }) {
   const t = useMessages();
   const nameOf = useExecutorName();
   const recommended = item.report?.executor ?? SELF;
@@ -309,7 +330,7 @@ function ExecutorRows({ item, view, scope, priced, chosen }: { item: StageItem; 
     <div role="group" aria-label={t.stages.executorGroup(stageLabel(item.stage, t.stages))} className={cn("flex flex-col gap-px", SUBGRID)}>
       {stageExecutorIds(item.stage).map((id) => {
         const executor = item.stage.executors.find((e) => e.id === id);
-        const price = priced ? stageSurcharge(item, id, scope) : undefined;
+        const price = priced ? stageSurcharge(item, id, scope, models) : undefined;
         const on = id === chosen;
         return (
           <div key={id} className={cn("bg-surface-recessed-solid", SUBGRID)}>
@@ -347,6 +368,66 @@ function ExecutorRows({ item, view, scope, priced, chosen }: { item: StageItem; 
           </div>
         );
       })}
+    </div>
+  );
+}
+
+/** Ширина колонок модели — литералами: Tailwind собирает bb при установке, собранной строки в CSS не будет. */
+const MODEL_COLUMNS = `grid grid-cols-1 gap-1.5 @[34rem]:grid-cols-3 ${SPAN}`;
+
+/**
+ * Модель этапа Main Agent колонками «Провайдер · Модель · Effort», как в ряду виджета: галочка у выбранной, ✦ у модели плана брифа,
+ * «Сейчас» у модели треда. Провайдер другой, чем у треда, на границе этапов не включить — только новым тредом.
+ */
+function ModelColumns({ item, view, catalog, chosen }: { item: StageItem; view: StagesTableView; catalog: WidgetAgent; chosen: Execution }) {
+  const t = useMessages();
+  const current = catalog.current;
+  const planned = view.brief.stages?.models?.[item.stage.id];
+  const sameProvider = chosen.providerId === current.providerId;
+  const provider = catalog.providers.find((p) => p.id === chosen.providerId);
+  const efforts = effortsOf(provider?.models.find((m) => m.model === chosen.model)?.efforts, chosen.reasoningLevel);
+  const pick = (next: Execution) => view.stageChange((d) => pickStageModel(d, item, next));
+  return (
+    <div role="group" aria-label={t.stages.modelGroup(stageLabel(item.stage, t.stages))} className={MODEL_COLUMNS}>
+      <MarkedGroup
+        label={t.agentRow.provider}
+        items={catalog.providers.map((p) => ({
+          id: p.id,
+          name: p.name,
+          marks: itemMarks(p.id, { chosen: chosen.providerId, current: current.providerId, proposed: planned !== undefined && planned.providerId !== current.providerId ? planned.providerId : null }),
+          ...(p.id === current.providerId ? {} : { hint: t.stages.newThreadOnly, disabled: true }),
+        }))}
+        onPick={(id) => pick(switchProvider(catalog, chosen, id))}
+      />
+      <MarkedGroup
+        label={t.agentRow.model}
+        items={(provider?.models ?? []).map((m) => ({
+          id: m.model,
+          name: m.name,
+          marks: itemMarks(m.model, {
+            chosen: chosen.model,
+            current: sameProvider ? current.model : null,
+            proposed: planned !== undefined && planned.providerId === chosen.providerId ? planned.model : null,
+          }),
+        }))}
+        onPick={(id) => pick(switchModel(catalog, chosen, id))}
+      />
+      <MarkedGroup
+        label={t.agentRow.effort}
+        items={efforts.map((effort) => ({
+          id: effort,
+          name: cap(effort),
+          marks: itemMarks(effort, {
+            chosen: chosen.reasoningLevel,
+            current: sameProvider && current.model === chosen.model ? current.reasoningLevel : null,
+            proposed: planned !== undefined && planned.providerId === chosen.providerId && planned.model === chosen.model ? planned.reasoningLevel : null,
+          }),
+        }))}
+        onPick={(id) => {
+          const reasoningLevel = efforts.find((effort) => effort === id);
+          if (reasoningLevel !== undefined) pick({ ...chosen, reasoningLevel });
+        }}
+      />
     </div>
   );
 }

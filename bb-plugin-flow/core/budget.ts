@@ -12,7 +12,7 @@ import type { Add, Checker, Criterion, DecisionAnswer, DecisionBrief, Planned, S
 import { SETUP_ROW, rowsOf } from "./rows";
 import { sumAdds } from "./adds";
 import { removedCriteria } from "./option-criteria";
-import { answeredStageChoice, executorLabel, stageAdd, stageItems, stagePhase, stageSurcharge } from "./stages";
+import { answeredStageChoice, executorLabel, stageAdd, stageItems, stagePhase, stageSurcharge, type StageChoice } from "./stages";
 
 /**
  * Строка разбивки; `null` — величина неизвестна: у планирования без цены модели нет денег, у добавок без `minutes` — времени.
@@ -119,11 +119,14 @@ export const plannedMinutes = (f: Pick<Forecast, "lines" | "spent">): number | n
   return sum === null ? null : Math.max(0, sum);
 };
 
+/** Модели этапа и треда для цены этапа Main Agent; модели этапа нет — цена прежняя. */
+const modelsOf = (brief: DecisionBrief, choice: StageChoice): { stage?: string; thread?: string } => ({ stage: choice.model?.model, thread: brief.stages?.threadModel?.model });
+
 /** Этап в прогоне, ещё не сделанный, — строка «название · исполнитель» со своей надбавкой; сделанный работы не добавляет. */
 const stageLines = (brief: DecisionBrief, answer: DecisionAnswer, scope: Add | undefined, locale?: Locale): ForecastLine[] =>
   stageItems(brief).flatMap((item) => {
     const choice = answeredStageChoice(brief, answer, item);
-    return stagePhase(item) !== "todo" || !choice.run ? [] : line(item.stage.name, executorLabel(item.stage, choice.executor, locale), [stageSurcharge(item, choice.executor, scope)]).map((l) => ({ ...l, stage: item.stage.id }));
+    return stagePhase(item) !== "todo" || !choice.run ? [] : line(item.stage.name, executorLabel(item.stage, choice.executor, locale), [stageSurcharge(item, choice.executor, scope, modelsOf(brief, choice))]).map((l) => ({ ...l, stage: item.stage.id }));
   });
 
 /** Бриф, записанный до цены от объёма: этапы в долларах или строки исполнителя, ревью и документов вместо этапов. */
@@ -181,7 +184,7 @@ export const stagePlans = (brief: DecisionBrief, answer: DecisionAnswer): Record
   return Object.fromEntries(
     stageItems(brief).flatMap((item) => {
       const choice = answeredStageChoice(brief, answer, item);
-      const add = stagePhase(item) === "todo" && choice.run ? stageAdd(item, choice.executor, scope) : undefined;
+      const add = stagePhase(item) === "todo" && choice.run ? stageAdd(item, choice.executor, scope, modelsOf(brief, choice)) : undefined;
       // Пустая цена — доля от объёма без цены — плана не даёт: «~$0» в контейнере ничего не обещает.
       const empty = add === undefined || (add.minutes === undefined && add.target === 0);
       return empty ? [] : [[item.stage.id, { minutes: add.minutes ?? null, target: add.target }]];

@@ -22,6 +22,8 @@ import {
   onRunStart,
   onSkipQueued,
   onStepDone,
+  onRunStopped,
+  onRunStopping,
   onStepFailed,
   onStepStarted,
   openAfter,
@@ -42,6 +44,8 @@ import {
   conflictWakeText,
   failureWakeText,
   onAgentWoken,
+  STOPPED_ERROR,
+  stoppedWakeText,
 } from "../core/automation-run";
 import { automationRpcContract, type AutomationScript, type FlowProgress, type AgentLogo, type RunningIcon, type RunningThread, type StageSettings, type StepAnswer, type WorkStage } from "../shared/contract";
 import type { AutomationsBridge } from "./automations";
@@ -65,7 +69,7 @@ export interface AutomationRunnerDeps {
   steps: Steps;
   external: ExternalStep;
   /** Запуск скрипта этапа в треде; нет — шаги-скрипты падают с причиной. */
-  script?: (threadId: string, script: AutomationScript) => Promise<StepOutcome>;
+  script?: (threadId: string, script: AutomationScript, signal?: AbortSignal) => Promise<StepOutcome>;
   /** Провайдер треда — для логотипа в строке треда, не прочитался — логотипа нет; занятость — для проверки хода агента. */
   thread: (threadId: string) => Promise<Pick<ThreadState, "providerId" | "active">>;
   /** Треды под Flow, включая «Автоматически»: логотип агента получают они, в том числе до первой отметки этапа. Нет — логотипов нет. */
@@ -109,6 +113,11 @@ export interface AutomationRunner {
    * Тред занят, а шаг упал или идёт попытка его автоповтора, — пропуск запоминается и применяется, когда попытка упадёт.
    */
   skip(threadId: string, stageId: string): Promise<StepAnswer>;
+  /**
+   * «Стоп» у идущего этапа-автоматизации: запрос ложится в след, а идущий шаг-скрипт обрывается сразу. Шаг без сигнала доходит до конца,
+   * следующие не стартуют, этап встаёт и ждёт «Продолжить». Отказ — Flow не ведёт этот тред, этап не идёт, закрыт, уже останавливается или это Action.
+   */
+  stop(threadId: string, stageId: string): Promise<StepAnswer>;
   /** Нажатие владельца на шаг этапа Action: `false` — этап не ждёт нажатия или шаг уже идёт. */
   runActionStep(threadId: string, stageId: string): Promise<boolean>;
   /** Треды, где сейчас идёт прогон автоматизации или нажатый шаг Action, и значок этапа; ждущие владельца не входят. */
@@ -256,14 +265,17 @@ export const createAutomationRunner = (deps: AutomationRunnerDeps): AutomationRu
     await deps.wake?.(threadId, failureWakeText(stage, stepId, error, deps.failureInstruction?.())).catch(deps.onError);
   };
 
-  const execute = (stage: WorkStage, step: RunStep, threadId: string): Promise<StepOutcome> => {
+  // Сигналы отмены идущих шагов по треду и этапу: «Стоп» обрывает шаг-скрипт, шаги каталога сигнала не читают.
+  const aborts = new Map<string, AbortController>();
+
+  const execute = (stage: WorkStage, step: RunStep, threadId: string, signal?: AbortSignal): Promise<StepOutcome> => {
     const automation = stage.automation;
     if (automation !== undefined && !("source" in automation)) return deps.external(automation.id, threadId);
     if (automation !== undefined && scriptIdOf(step.id) !== null) {
       // Скрипт берётся из этапа сейчас: прерванный прогон хранит только id и подпись шага.
       const script = scriptOf(automation, step.id);
       if (script === null) return Promise.resolve({ ok: false, error: "The script of this step is no longer in the stage." });
-      return deps.script === undefined ? Promise.resolve({ ok: false, error: "Scripts cannot run here." }) : deps.script(threadId, script);
+      return deps.script === undefined ? Promise.resolve({ ok: false, error: "Scripts cannot run here." }) : deps.script(threadId, script, signal);
     }
     return isStepId(step.id) ? deps.steps[step.id](threadId) : Promise.resolve({ ok: false, error: `Unknown step ${step.id}.` });
   };
@@ -281,20 +293,59 @@ export const createAutomationRunner = (deps: AutomationRunnerDeps): AutomationRu
     if (!active) await deps.releaseAgent(threadId).catch(deps.onError);
   };
 
-  /** Шаги этапа с места `from`; `false` — шаг упал, цепочка стоит. */
+  /** Просил ли владелец остановить идущий прогон этапа. */
+  const stopRequested = async (threadId: string, stageId: string): Promise<boolean> => (await deps.progress.get(threadId))?.stages[stageId]?.run?.stopping === true;
+
+  /**
+   * Шаг под сигналом «Стоп»; `null` — запрос остановки пришёл раньше, шаг не начат. Сигнал виден «Стопу» до проверки запроса:
+   * запрос, пришедший после проверки, оборвёт шаг, а пришедший до неё — не даст ему начаться.
+   */
+  const attempt = async (threadId: string, stage: WorkStage, step: RunStep): Promise<StepOutcome | null> => {
+    const key = timerKey(threadId, stage.id);
+    const controller = new AbortController();
+    aborts.set(key, controller);
+    try {
+      return (await stopRequested(threadId, stage.id)) ? null : await execute(stage, step, threadId, controller.signal);
+    } finally {
+      if (aborts.get(key) === controller) aborts.delete(key);
+    }
+  };
+
+  /**
+   * Этап остановлен владельцем на шаге `step`: он ждёт «Продолжить», как упавший, но без тоста и автоповтора, а агент слышит, что остановил владелец.
+   * Остановка — не падение: в историю падений она не пишется.
+   */
+  const halt = async (threadId: string, stage: WorkStage, step: RunStep, error: string, stale: () => boolean): Promise<void> => {
+    await deps.progress.update(threadId, (p) => onIdleOpen(onRunStopped(p, stage.id, error), stage.id, deps.now()));
+    if (stale()) return;
+    await deps.store.putAwaiting(threadId, { briefId: automationAwaitingId(stage.id), kind: "automation" });
+    if (!stale()) await deps.wake?.(threadId, stoppedWakeText(stage, step.id)).catch(deps.onError);
+  };
+
+  /** Шаги этапа с места `from`; `false` — шаг упал или этап остановлен владельцем, цепочка стоит. */
   const runSteps = async (threadId: string, stage: WorkStage, steps: readonly RunStep[], from: number): Promise<boolean> => {
     const epoch = epochOf(threadId);
     const stale = () => epochOf(threadId) !== epoch;
     for (const [offset, step] of steps.slice(from).entries()) {
       await releaseBeforeArchive(threadId, steps.slice(from + offset));
-      const outcome = await execute(stage, step, threadId);
+      const outcome = await attempt(threadId, stage, step);
       if (stale()) return false;
+      // Запрос остановки, пришедший между шагами или за шаг, который дошёл до конца: следующий не стартует, этап встаёт на нём.
+      if (outcome === null) {
+        await halt(threadId, stage, step, STOPPED_ERROR, stale);
+        return false;
+      }
       if (!outcome.ok) {
         const track = (await deps.progress.get(threadId))?.stages[stage.id];
         if (stale()) return false;
         // Пропуск, запомненный во время этой попытки, закроет шаг сразу за ней: ни ожидания владельца, ни тоста «шаг упал».
         if (track?.run?.skipQueued === true) {
           await deps.progress.update(threadId, (p) => onStepFailed(p, stage.id, outcome.error, deps.now()));
+          return false;
+        }
+        // Шаг упал или оборван под «Стоп»: этап остановлен на нём самом, с его ошибкой.
+        if (track?.run?.stopping === true) {
+          await halt(threadId, stage, step, outcome.error, stale);
           return false;
         }
         // Конфликт слияния таймером не снимается: его разрешает агент треда, а шаг повторяется после его хода. Второй конфликт — владельцу.
@@ -568,6 +619,22 @@ export const createAutomationRunner = (deps: AutomationRunnerDeps): AutomationRu
     },
     // Повтор снимает ошибку и закрывает простой: этап снова пошёл.
     retry: (threadId, stageId) => unblock(threadId, stageId, { change: (p) => onRunRetry(onIdleClose(p, stageId, deps.now()), stageId), from: (at) => at }),
+    stop: async (threadId, stageId) => {
+      // Останавливается только то, что Flow ведёт сейчас сам: Action и тред без работы Flow «Стопа» не принимают.
+      const stage = deps.stages(threadId).stages.find((s) => s.id === stageId);
+      if (stage?.automation === undefined || isActionStage(stage) || !active.has(threadId)) return { started: false };
+      // Проверка и запись — одним шагом очереди прогресса: запрос между шагами цепочки не теряется между чтением и записью.
+      // Упавший, остановленный, закрытый и уже останавливаемый этапы запись не меняет.
+      let accepted = false;
+      await deps.progress.annotate(threadId, (p) => {
+        const track = p.stages[stageId];
+        accepted = track?.run !== undefined && track.finishedAt === undefined && track.run.error === null && track.run.stopping !== true;
+        return accepted ? onRunStopping(p, stageId) : p;
+      });
+      // Запрос ложится в след до обрыва: оборванный шаг, вернувшись, находит его и встаёт остановленным, а не упавшим.
+      if (accepted) aborts.get(timerKey(threadId, stageId))?.abort();
+      return { started: accepted };
+    },
     runActionStep: async (threadId, stageId) => {
       // Идущий шаг не перезапускается: второе нажатие отказывает сразу, не дожидаясь первого.
       if ((await deps.progress.get(threadId).catch(() => null))?.stages[stageId]?.run?.busy === true) return false;
@@ -675,6 +742,7 @@ export const registerAutomationRunner = (bb: Pick<BbPluginApi, "rpc">, runner: A
     // Повтор отвечает сразу, шаги идут в фоне: мёрдж ждёт GitHub минутами.
     retryAutomation: ({ threadId, stage }) => runner.retry(threadId, stage),
     skipAutomationStep: ({ threadId, stage }) => runner.skip(threadId, stage),
+    stopAutomation: ({ threadId, stage }) => runner.stop(threadId, stage),
     // Шаг Action идёт в фоне: ответ приходит сразу, а кнопка держит лоадер до записи прогресса.
     runActionStep: async ({ threadId, stage }) => ({ started: await runner.runActionStep(threadId, stage) }),
     runningThreads: () => runner.running(),

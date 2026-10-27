@@ -12,6 +12,7 @@ import { join } from "node:path";
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 
 import type { StepOutcome } from "@bb-plugins/automation-steps/index";
+import { STOPPED_ERROR } from "../core/automation-run";
 import { SCRIPT_TIMEOUT_MINUTES, scriptOutcome, type ScriptExit } from "../core/automation-scripts";
 import type { AutomationScript } from "../shared/contract";
 
@@ -27,7 +28,12 @@ export type RunOptions = {
   input?: string;
   /** Переменные окружения сверх BB_THREAD_ID и BB_ENVIRONMENT_ID. */
   env?: Readonly<Record<string, string>>;
+  /** Сигнал отмены: владелец нажал «Стоп» — вся группа процессов скрипта гаснет сразу, итог — {@link STOPPED_ERROR}. Снятый заранее сигнал скрипт не запускает. */
+  signal?: AbortSignal;
 };
+
+/** Чем кончился запуск: процесс вышел сам или его оборвал сигнал. */
+type Ended = { kind: "exit"; exit: ScriptExit } | { kind: "stopped" };
 
 /** Сигнал всей группе процессов скрипта; группы уже нет — нечего останавливать. */
 const killGroup = (pid: number | undefined) => {
@@ -39,8 +45,9 @@ const killGroup = (pid: number | undefined) => {
   }
 };
 
-const exitOf = (file: string, shebang: boolean, place: Place, timeoutMs: number, { input, env }: RunOptions): Promise<ScriptExit> =>
+const exitOf = (file: string, shebang: boolean, place: Place, timeoutMs: number, { input, env, signal }: RunOptions): Promise<Ended> =>
   new Promise((resolve) => {
+    if (signal?.aborted === true) return resolve({ kind: "stopped" });
     let output = "";
     let timedOut = false;
     let settled = false;
@@ -54,34 +61,43 @@ const exitOf = (file: string, shebang: boolean, place: Place, timeoutMs: number,
       stdio: [input === undefined ? "ignore" : "pipe", "pipe", "pipe"],
       detached: true,
     });
-    const finish = (exit: ScriptExit) => {
+    const finish = (ended: Ended) => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
+      signal?.removeEventListener("abort", onAbort);
       child.stdout?.destroy();
       child.stderr?.destroy();
-      resolve(exit);
+      resolve(ended);
+    };
+    const done = (exit: ScriptExit) => finish({ kind: "exit", exit });
+    // «Стоп»: убиваем всю группу и отвечаем сразу, не дожидаясь, пока дочитается вывод.
+    const onAbort = () => {
+      killGroup(child.pid);
+      finish({ kind: "stopped" });
     };
     const timer = setTimeout(() => {
       timedOut = true;
       killGroup(child.pid);
     }, timeoutMs);
+    signal?.addEventListener("abort", onAbort, { once: true });
     // Скрипт, который не дочитал вход, закрывает stdin раньше: запись не должна ронять сервер.
     child.stdin?.on("error", () => undefined);
     child.stdin?.end(input);
     child.stdout?.on("data", keep);
     child.stderr?.on("data", keep);
-    child.on("error", (error) => finish({ code: null, timedOut: false, output, spawnError: error.message }));
-    child.on("close", (code) => finish({ code, timedOut, output }));
+    child.on("error", (error) => done({ code: null, timedOut: false, output, spawnError: error.message }));
+    child.on("close", (code) => done({ code, timedOut, output }));
     // Итог — по выходу самого скрипта: close ждёт, пока закроют вывод все, кто его унаследовал.
     child.on("exit", (code) => {
       if (timedOut) killGroup(child.pid);
-      setTimeout(() => finish({ code, timedOut, output }), DRAIN_MS);
+      setTimeout(() => done({ code, timedOut, output }), DRAIN_MS);
     });
   });
 
 /** Запускает скрипт в `place.cwd` и отвечает итогом шага; временный файл удаляется в любом исходе. */
 export async function runScript(script: Pick<AutomationScript, "name" | "content">, place: Place, options: RunOptions = {}): Promise<StepOutcome> {
+  if (options.signal?.aborted === true) return { ok: false, error: STOPPED_ERROR };
   const dir = await mkdtemp(join(tmpdir(), "flow-script-"));
   try {
     // Имя файла владельца — только подпись шага: на диске скрипт всегда `script`, путь из имени сюда не попадает.
@@ -89,7 +105,8 @@ export async function runScript(script: Pick<AutomationScript, "name" | "content
     await writeFile(file, script.content, "utf8");
     await chmod(file, 0o700);
     const timeoutMs = options.timeoutMs ?? SCRIPT_TIMEOUT_MINUTES * 60_000;
-    return scriptOutcome(script.name, await exitOf(file, script.content.startsWith("#!"), place, timeoutMs, options), timeoutMs);
+    const ended = await exitOf(file, script.content.startsWith("#!"), place, timeoutMs, options);
+    return ended.kind === "stopped" ? { ok: false, error: STOPPED_ERROR } : scriptOutcome(script.name, ended.exit, timeoutMs);
   } catch (error) {
     return { ok: false, error: `The script ${script.name} did not start: ${error instanceof Error ? error.message : String(error)}` };
   } finally {
@@ -100,12 +117,12 @@ export async function runScript(script: Pick<AutomationScript, "name" | "content
 /** Шаг-скрипт треда: рабочее дерево окружения треда — место запуска. */
 export const scriptStep =
   (sdk: Pick<BbPluginApi["sdk"], "threads" | "environments">) =>
-  async (threadId: string, script: AutomationScript): Promise<StepOutcome> => {
+  async (threadId: string, script: AutomationScript, signal?: AbortSignal): Promise<StepOutcome> => {
     try {
       const { environmentId } = await sdk.threads.get({ threadId });
       const env = environmentId === null ? null : await sdk.environments.get({ environmentId });
       if (env === null || !env.path) return { ok: false, error: "The thread has no working copy on disk to run the script in." };
-      return await runScript(script, { cwd: env.path, threadId, environmentId: env.id });
+      return await runScript(script, { cwd: env.path, threadId, environmentId: env.id }, { signal });
     } catch (error) {
       return { ok: false, error: error instanceof Error ? error.message : String(error) };
     }

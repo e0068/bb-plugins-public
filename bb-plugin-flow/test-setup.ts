@@ -50,3 +50,16 @@ process.env.HOME = home;
 // «встретил» бы папку предыдущего и взял flow оттуда. Тесты синхронизации задают папку сами.
 process.env.BB_FLOW_SYNC_DIR = "";
 afterAll(() => rmSync(home, { recursive: true, force: true }));
+
+// Фейковый хост SDK отдаёт loopback с портом живого bb: запрос теста без своей заглушки fetch или переживший её
+// уходил в настоящий bb — emit в Automations Builder, push в центр уведомлений. Сторож стоит до любого stubGlobal, поэтому unstubAllGlobals возвращает его,
+// а не настоящий fetch. Тесту, которому нужен loopback, нужна своя заглушка.
+const LOOPBACK_HOSTS = new Set(["127.0.0.1", "localhost", "[::1]"]);
+const realFetch = globalThis.fetch;
+const urlOf = (input: Parameters<typeof fetch>[0]): string => (input instanceof Request ? input.url : String(input));
+globalThis.fetch = (input, init) => {
+  const url = urlOf(input);
+  return LOOPBACK_HOSTS.has(URL.parse(url, globalThis.location?.href)?.hostname ?? "")
+    ? Promise.reject(new Error(`тест Flow не ходит в живой bb: ${url} — заглуши fetch в тесте`))
+    : realFetch(input, init);
+};

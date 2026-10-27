@@ -16,7 +16,6 @@ import {
   contextShare,
   contextTone,
   modelFor,
-  wantedModel,
   type ContextTone,
   stageModelRole,
   thresholdsOrDefault,
@@ -276,71 +275,53 @@ describe("модель этапа", () => {
     expect(modelFor("opus", [])).toBeNull();
   });
 
-  it("тред уже на модели нужной роли — её и оставляют, а не меняют на первую в каталоге", () => {
-    const models = [{ model: "claude-sonnet-4-5" }, { model: "claude-sonnet-4-6" }];
-    expect(wantedModel("sonnet", "claude-sonnet-4-6", models)).toBe("claude-sonnet-4-6");
-    expect(wantedModel("sonnet", "claude-opus-4-1", models)).toBe("claude-sonnet-4-5");
-    expect(wantedModel("sonnet", null, models)).toBe("claude-sonnet-4-5");
-    expect(wantedModel("opus", "claude-sonnet-4-6", models)).toBeNull();
-  });
-
-  it("возврат на Opus — к той модели, что стояла до Sonnet; нет запомненной или её нет в каталоге — первая по роли", () => {
-    const models = [{ model: "claude-opus-4-1" }, { model: "claude-opus-4-5" }, { model: "claude-sonnet-4-5" }];
-    expect(wantedModel("opus", "claude-sonnet-4-5", models, "claude-opus-4-5")).toBe("claude-opus-4-5");
-    expect(wantedModel("opus", "claude-sonnet-4-5", models, null)).toBe("claude-opus-4-1");
-    expect(wantedModel("opus", "claude-sonnet-4-5", models, "claude-opus-9")).toBe("claude-opus-4-1");
-    expect(wantedModel("opus", "claude-sonnet-4-5", models, "claude-sonnet-4-5")).toBe("claude-opus-4-1");
-  });
-
-  it("тред уже на Opus — запомненная модель его не меняет", () => {
-    const models = [{ model: "claude-opus-4-1" }, { model: "claude-opus-4-5" }];
-    expect(wantedModel("opus", "claude-opus-4-1", models, "claude-opus-4-5")).toBe("claude-opus-4-1");
-  });
-
-  it("запомненная модель к Sonnet не относится", () => {
-    expect(wantedModel("sonnet", "claude-opus-4-5", [{ model: "claude-sonnet-4-5" }], "claude-opus-4-5")).toBe("claude-sonnet-4-5");
-  });
-
   it("регистр id не важен", () => {
     expect(modelFor("sonnet", [{ model: "Claude-SONNET-4" }])).toBe("Claude-SONNET-4");
   });
 });
 
 describe("план границы этапов", () => {
-  it("контекст ниже жёлтого и та же модель — плана нет", () => {
-    expect(boundaryPlan({ tone: "normal", currentModel: "opus", wantedModel: "opus" })).toBeNull();
+  const opus = { model: "opus", reasoningLevel: "high" } as const;
+  const sonnet = { model: "sonnet", reasoningLevel: "high" } as const;
+
+  it("контекст ниже жёлтого и та же модель с тем же effort — плана нет", () => {
+    expect(boundaryPlan({ tone: "normal", current: opus, approved: opus })).toBeNull();
   });
 
-  it("желаемой модели нет — модель не трогается, плана нет", () => {
-    expect(boundaryPlan({ tone: "normal", currentModel: "opus", wantedModel: null })).toBeNull();
-    expect(boundaryPlan({ tone: "normal", currentModel: null, wantedModel: null })).toBeNull();
+  it("утверждённой модели нет — модель не трогается, плана нет", () => {
+    expect(boundaryPlan({ tone: "normal", current: opus, approved: null })).toBeNull();
+    expect(boundaryPlan({ tone: "normal", current: null, approved: null })).toBeNull();
   });
 
   it("жёлтый и красный тон велят сжать, модель остаётся", () => {
-    expect(boundaryPlan({ tone: "warn", currentModel: "opus", wantedModel: "opus" })).toEqual({ compact: true, model: null });
-    expect(boundaryPlan({ tone: "alert", currentModel: "opus", wantedModel: null })).toEqual({ compact: true, model: null });
+    expect(boundaryPlan({ tone: "warn", current: opus, approved: opus })).toEqual({ compact: true, model: null });
+    expect(boundaryPlan({ tone: "alert", current: opus, approved: null })).toEqual({ compact: true, model: null });
   });
 
-  it("другая модель при обычном тоне — только смена модели", () => {
-    expect(boundaryPlan({ tone: "normal", currentModel: "opus", wantedModel: "sonnet" })).toEqual({ compact: false, model: "sonnet" });
+  it("другая модель при обычном тоне — только смена модели вместе с effort", () => {
+    expect(boundaryPlan({ tone: "normal", current: opus, approved: sonnet })).toEqual({ compact: false, model: sonnet });
   });
 
-  it("модель треда неизвестна, а нужная есть — ставится", () => {
-    expect(boundaryPlan({ tone: "normal", currentModel: null, wantedModel: "sonnet" })).toEqual({ compact: false, model: "sonnet" });
+  it("та же модель с другим effort — смена effort", () => {
+    expect(boundaryPlan({ tone: "normal", current: opus, approved: { model: "opus", reasoningLevel: "medium" } })).toEqual({ compact: false, model: { model: "opus", reasoningLevel: "medium" } });
+  });
+
+  it("модель треда неизвестна, а утверждённая есть — ставится", () => {
+    expect(boundaryPlan({ tone: "normal", current: null, approved: sonnet })).toEqual({ compact: false, model: sonnet });
   });
 
   it("жёлтый тон и другая модель — и сжатие, и модель", () => {
-    expect(boundaryPlan({ tone: "warn", currentModel: "opus", wantedModel: "sonnet" })).toEqual({ compact: true, model: "sonnet" });
+    expect(boundaryPlan({ tone: "warn", current: opus, approved: sonnet })).toEqual({ compact: true, model: sonnet });
   });
 
-  it("план есть ровно тогда, когда тон не обычный или модель другая", () => {
+  it("план есть ровно тогда, когда тон не обычный или утверждённое отличается от стоящего", () => {
     const tones = fc.constantFrom<ContextTone>("normal", "warn", "alert");
-    const models = fc.constantFrom<string | null>(null, "a", "b");
+    const models = fc.constantFrom(null, opus, sonnet, { model: "opus", reasoningLevel: "low" } as const);
     fc.assert(
-      fc.property(tones, models, models, (tone, currentModel, wantedModel) => {
-        const plan = boundaryPlan({ tone, currentModel, wantedModel });
-        const expected = tone !== "normal" || (wantedModel !== null && wantedModel !== currentModel);
-        return (plan !== null) === expected;
+      fc.property(tones, models, models, (tone, current, approved) => {
+        const plan = boundaryPlan({ tone, current, approved });
+        const differs = approved !== null && (current === null || approved.model !== current.model || approved.reasoningLevel !== current.reasoningLevel);
+        return (plan !== null) === (tone !== "normal" || differs) && (plan === null || (plan.model === null) === !differs);
       }),
     );
   });

@@ -67,19 +67,22 @@ const after = (stages: readonly WorkStage[], id: string): readonly WorkStage[] =
 export const agentStagesAhead = (stages: readonly WorkStage[], progress: FlowProgress, from?: string): boolean =>
   (from === undefined ? stages : after(stages, from)).some((stage) => isOpen(progress.stages[stage.id]) && isAgentStage(stage));
 
-/** Этап держит следующие: владелец взял его в прогон или агент его начал (доработка стирает выбор владельца), и он не закрыт и не снят. */
-const holds = (track: StageTrack | undefined): boolean =>
-  track !== undefined && track.skipped !== true && track.finishedAt === undefined && (track.skipped === false || track.startedAt !== undefined);
+/**
+ * Этап держит следующие, пока не закрыт: прогон держит работу, поэтому обязателен любой этап, который владелец не снял, —
+ * даже нетронутый и без записи. Снятый по предложению агента держит до утверждения владельца, если `proposalsHold`.
+ */
+const holds = (track: StageTrack | undefined, proposalsHold: boolean): boolean =>
+  track?.finishedAt === undefined && (track?.proposed === true ? proposalsHold : track?.skipped !== true);
 
 /**
- * Первый этап-навык перед этапом `id`, который держит работу, — `null`, если такого нет. Этап без записи — из flow,
- * пересохранённого посреди прогона, или не тронутый в прогоне без брифа: держать работу он не может. Встроенные этапы
- * закрывают брифы, автоматизации и Action — Flow и владелец.
+ * Первый этап-навык перед этапом `id`, который держит работу, — `null`, если такого нет. Встроенные этапы закрывают
+ * брифы, автоматизации и Action — Flow и владелец. Утверждение, в котором владелец соглашается на снятие, предложенными
+ * этапами не держится: `proposalsHold` для него `false`.
  */
-export const unfinishedBefore = (stages: readonly WorkStage[], progress: FlowProgress, id: string): WorkStage | null =>
+export const unfinishedBefore = (stages: readonly WorkStage[], progress: FlowProgress, id: string, proposalsHold = true): WorkStage | null =>
   stages
     .slice(0, Math.max(0, stages.findIndex((stage) => stage.id === id)))
-    .find((stage) => stageKindOf(stage) === "skill" && stage.automation === undefined && holds(progress.stages[stage.id])) ?? null;
+    .find((stage) => stageKindOf(stage) === "skill" && stage.automation === undefined && holds(progress.stages[stage.id], proposalsHold)) ?? null;
 
 /** Этап в прогоне: не вычеркнут, а вычеркнутый — если агент его всё же закрыл. */
 const inRun = (track: StageTrack | undefined): boolean => track?.skipped !== true || track.finishedAt !== undefined;
@@ -161,8 +164,11 @@ export const actionAt = (stages: readonly WorkStage[], progress: FlowProgress, i
   return due === null ? null : (due.from ?? 0);
 };
 
-/** Прогон без признака «шаг идёт» и без назначенного автоповтора: оба живут, только пока шаг идёт или ждёт повтора. */
-const idle = ({ busy: _busy, retryAt: _retryAt, ...run }: NonNullable<StageTrack["run"]>): NonNullable<StageTrack["run"]> => run;
+/** Прогон без признака «шаг идёт», без назначенного автоповтора и без остановки: они живут, только пока шаг идёт, ждёт повтора или владельца. Запрос остановки не снимается — его решает вызывающий. */
+const idle = ({ busy: _busy, retryAt: _retryAt, stopped: _stopped, ...run }: NonNullable<StageTrack["run"]>): NonNullable<StageTrack["run"]> => run;
+
+/** Прогон без запроса остановки. */
+const unrequested = ({ stopping: _stopping, ...run }: NonNullable<StageTrack["run"]>): NonNullable<StageTrack["run"]> => run;
 
 /** Автоповтор упавшего шага: через сколько секунд и сколько раз подряд; 0 секунд — не повторять, 0 попыток — без ограничения. */
 export type RetryPolicy = { seconds: number; attempts: number };
@@ -218,7 +224,9 @@ export const onStepDone = (progress: FlowProgress, stageId: string, at: string, 
     const next = track.run.at + 1;
     const steps = withDetail(track.run.steps, track.run.at, detail);
     // Попытки автоповтора считаются на шаг: следующий шаг начинает со своих.
-    const { autoRetries: _used, skipQueued: _skip, agentWoken: _woken, ...run } = idle(track.run);
+    const { autoRetries: _used, skipQueued: _skip, agentWoken: _woken, ...kept } = idle(track.run);
+    // Запрос остановки переживает шаг, пока есть следующий: на нём этап и встанет; последний шаг закрывает этап как обычно.
+    const run = next >= track.run.steps.length ? unrequested(kept) : kept;
     // Один PR дают и «Открыть PR», и «Смёрджить PR» одного этапа: ссылка встаёт в итоги один раз — по адресу, не по подписи.
     const fresh = links.filter((link) => !(track.results ?? []).some((r) => r.target === link.target));
     const results = fresh.length === 0 ? {} : { results: [...(track.results ?? []), ...fresh] };
@@ -235,7 +243,7 @@ export const onStepFailed = (progress: FlowProgress, stageId: string, error: str
   patch(progress, stageId, (track) => {
     if (track.run === undefined) return track;
     const step = track.run.steps[track.run.at]?.id ?? String(track.run.at);
-    return { ...track, run: { ...idle(track.run), error, failures: [...(track.run.failures ?? []), { step, at, error }], ...(retryAt === undefined ? {} : { retryAt }) } };
+    return { ...track, run: { ...unrequested(idle(track.run)), error, failures: [...(track.run.failures ?? []), { step, at, error }], ...(retryAt === undefined ? {} : { retryAt }) } };
   });
 
 /**
@@ -246,9 +254,20 @@ export const onRunRetry = (progress: FlowProgress, stageId: string, auto = false
   patch(progress, stageId, (track) => {
     if (track.run === undefined) return track;
     // Повтор владельца — новый заход: конфликт снова будит агента.
-    const { autoRetries: used, agentWoken, ...run } = idle(track.run);
+    const { autoRetries: used, agentWoken, ...run } = unrequested(idle(track.run));
     return { ...track, run: { ...run, error: null, ...(auto ? { autoRetries: (used ?? 0) + 1, ...(agentWoken === undefined ? {} : { agentWoken }) } : {}) } };
   });
+
+/** Владелец остановил идущий этап: запрос ложится в след, а идущий шаг доходит до конца или обрывается. Этап без прогона не меняется. */
+export const onRunStopping = (progress: FlowProgress, stageId: string): FlowProgress =>
+  patch(progress, stageId, (track) => (track.run === undefined ? track : { ...track, run: { ...track.run, stopping: true } }));
+
+/**
+ * Этап остановлен владельцем на текущем шаге: он ждёт «Продолжить», как упавший, но без срока автоповтора и без записи в историю падений.
+ * `error` — ошибка шага, на котором остановили, а у оборванного шага — {@link STOPPED_ERROR}. Этап без прогона не меняется.
+ */
+export const onRunStopped = (progress: FlowProgress, stageId: string, error: string): FlowProgress =>
+  patch(progress, stageId, (track) => (track.run === undefined ? track : { ...track, run: { ...unrequested(idle(track.run)), error, stopped: true } }));
 
 /** Шаг упал на конфликте слияния, и агента треда разбудили его разрешать: провал без срока автоповтора, повтор — после хода агента. */
 export const onAgentWoken = (progress: FlowProgress, stageId: string, error: string, at: string): FlowProgress =>
@@ -339,6 +358,13 @@ export const withFailureInstruction = <S extends Pick<FlowSettings, "wakeAgentIn
 export const failureWakeText = (stage: WorkStage, step: string, error: string, instruction = DEFAULT_FAILURE_INSTRUCTION): string =>
   `Flow: step ${step} of stage ${stage.id} "${stage.name}" failed after the last attempt: ${error}\n\nThe step waits for the owner's Retry or Skip above the composer; once the cause is fixed you can retry the step yourself with ${RETRY_AUTOMATION_TOOL} { "stage": "${stage.id}" }. ${instruction}\n\n${COMMAND_RULE}`;
 
+/** Ошибка остановленного шага, когда его оборвал сам «Стоп»; шаг, доигравший до своей ошибки, держит её. */
+export const STOPPED_ERROR = "Stopped by the owner.";
+
+/** Реплика агенту: этап остановил владелец — где, что сделанное не откатано и что продолжает владелец. */
+export const stoppedWakeText = (stage: WorkStage, step: string): string =>
+  `Flow: automation ${stage.id} "${stage.name}" was stopped by the owner at step ${step}. Steps already done are not undone. Do not retry or work around it yourself — the owner presses Continue in the banner header.`;
+
 /** Этап с упавшим шагом: не закрыт, а у прогона есть ошибка. */
 export const isFailed = (track: StageTrack): boolean => track.finishedAt === undefined && typeof track.run?.error === "string";
 
@@ -354,15 +380,21 @@ const stepState = (track: StageTrack, index: number, waits: boolean): StepView["
   // До снимка шагов этап не начат: кнопки нет, иначе нажатие пришло бы раньше, чем Flow встал в ожидание владельца.
   if (run === undefined || index > run.at) return "todo";
   if (index < run.at) return "done";
+  if (run.stopped === true) return "stop";
   if (run.error !== null) return "fail";
   return waits && run.busy !== true ? "wait" : "now";
 };
 
-/** Шаги этапа-автоматизации или этапа Action с состояниями для полосы; ошибка — только у упавшего, `wait` — шаг Action ждёт нажатия. */
-export const automationView = (stage: WorkStage, track: StageTrack): { steps: StepView[] } => ({
+/**
+ * Шаги этапа-автоматизации или этапа Action с состояниями для полосы; ошибка — только у упавшего и остановленного шага, `wait` — шаг Action ждёт нажатия,
+ * `stop` — шаг, на котором этап остановил владелец. `stopping` — запрос остановки принят, шаг ещё идёт.
+ */
+export const automationView = (stage: WorkStage, track: StageTrack): { steps: StepView[]; stopping: boolean; stopped: boolean } => ({
+  stopping: track.finishedAt === undefined && track.run?.stopping === true,
+  stopped: track.finishedAt === undefined && track.run?.stopped === true,
   steps: (track.run?.steps ?? stepsOf(stage)).map((step, index) => {
     const state = stepState(track, index, isActionStage(stage));
-    const failed = state === "fail";
+    const failed = state === "fail" || state === "stop";
     // У упавшего шага кнопки остаются и с отметкой: пропуск, который не применился, владелец нажмёт снова.
     const skipQueued = state === "now" && track.run?.skipQueued === true;
     return { id: step.id, label: step.label, state, error: failed ? (track.run?.error ?? null) : null, detail: step.detail ?? null, retryAt: failed ? (track.run?.retryAt ?? null) : null, skipQueued };

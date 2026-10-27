@@ -18,6 +18,7 @@ import { PULL_SETTLE_MS, pullOffset, settlesClosed } from "../core/pull-to-colla
 import { stepDetail, type FileRoots } from "../core/result-link";
 import { stageLabel } from "../core/stages";
 import { runCascade } from "../core/sub-stages";
+import { Button } from "../components/ui/button";
 import { ConfirmDialog } from "../components/ui/dialog";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "../components/ui/dropdown-menu";
 import { FlowMark } from "../components/ui/flow-mark";
@@ -80,10 +81,16 @@ const iconOf = (stage: ProgressStage): string => stageIconName({ kind: stage.kin
 /** Приглушённое мерцание элемента, на этапе которого идёт работа; кадры кладёт полоса. */
 export const pulse = (live: boolean | undefined) => (live === true ? { "data-pulse": "", style: { animation: mutedBlinkAnimation } } : {});
 
+/** Этап остановил владелец: он ждёт «Продолжить», как упавший, но красным не горит — это не падение. */
+const stoppedByOwner = (stage: ProgressStage): boolean => stage.automation?.stopped === true;
+
+/** Этап упал сам — не остановлен владельцем. */
+const failing = (stage: ProgressStage): boolean => stage.state === "fail" && !stoppedByOwner(stage);
+
 /** Значок этапа — как на странице Flow: иконка, выбранная владельцем, а без неё — иконка вида; мерцает, пока на этапе идёт работа. */
 export function StageIcon({ stage, className }: { stage: ProgressStage; className?: string }) {
   return (
-    <span data-stage-icon {...pulse(stage.live)} className={cn("flex items-center justify-center", stage.state === "fail" && "text-destructive")}>
+    <span data-stage-icon {...pulse(stage.live)} className={cn("flex items-center justify-center", failing(stage) && "text-destructive")}>
       <StageGlyph icon={stage.icon} fallback={iconOf(stage)} className={cn("size-3.5", className)} />
     </span>
   );
@@ -187,6 +194,10 @@ function StepDetail({ detail }: { detail: string | null | undefined }) {
   );
 }
 
+/** Строка под названием шага: остановленный владельцем — словами остановки, идущий при запросе «Стоп» — что дожидается конца; иначе ошибка шага, если есть. */
+const stepNote = (step: StepView, stopping: boolean, t: ReturnType<typeof useMessages>): string | null =>
+  step.state === "stop" ? t.progress.stoppedStep(step.error ?? "") : step.state === "now" && stopping ? t.progress.stoppingStep : step.error;
+
 /**
  * Строки шагов автоматизации под её этапом; у упавшего — ошибка, «Повторить» и «Пропустить» — когда эффект уже есть, например PR открыт руками.
  * `threadId` — тред, который ведёт прогон; `null` — прогон ведёт другой тред, и шаги отсюда только видны.
@@ -199,7 +210,9 @@ export function AutomationSteps({ stage, threadId }: { stage: ProgressStage; thr
   const steps = stage.automation?.steps ?? [];
   return (
     <div role="list" aria-label={t.progress.steps(stage.name)} className="flex flex-col">
-      {steps.map((step, i) => (
+      {steps.map((step, i) => {
+        const note = stepNote(step, stage.automation?.stopping === true, t);
+        return (
         <div key={`${i}-${step.id}`} role="listitem" data-progress-step className={cn(COLUMNS, "min-h-6 px-3 py-0.5 text-[11px]")}>
           <span />
           <span />
@@ -211,11 +224,11 @@ export function AutomationSteps({ stage, threadId }: { stage: ProgressStage; thr
                 <span title={label(step)} className={cn("max-w-full shrink-0 truncate", step.state === "todo" && "text-muted-foreground", step.state === "fail" && "text-destructive")}>
                   {label(step)}
                 </span>
-                {step.error === null && <StepDetail detail={step.detail} />}
+                {note === null && <StepDetail detail={step.detail} />}
               </span>
-              {step.error !== null && (
+              {note !== null && (
                 <span data-step-error className="min-w-0 whitespace-normal break-words text-muted-foreground">
-                  {step.error}
+                  {note}
                 </span>
               )}
             </span>
@@ -252,7 +265,8 @@ export function AutomationSteps({ stage, threadId }: { stage: ProgressStage; thr
           <span />
           <Mark state={step.state} live={stage.live} />
         </div>
-      ))}
+        );
+      })}
     </div>
   );
 }
@@ -268,7 +282,7 @@ function RetryCountdown({ at }: { at: string }) {
   return <span className="whitespace-nowrap pr-1 text-muted-foreground">{t.progress.retryIn(Math.max(0, Math.ceil((Date.parse(at) - now) / 1000)))}</span>;
 }
 
-/** Отметка справа: сделано, идёт, упало, впереди. */
+/** Отметка справа: сделано, идёт, упало, остановлено владельцем, впереди. */
 function Mark({ state, live }: { state: StepView["state"]; live: boolean | undefined }) {
   return (
     <span className="flex size-5 items-center justify-center">
@@ -278,6 +292,8 @@ function Mark({ state, live }: { state: StepView["state"]; live: boolean | undef
         <span aria-hidden="true" {...pulse(live)} className="size-1.5 rounded-full bg-foreground" />
       ) : state === "fail" ? (
         <Icon name="X" aria-hidden="true" className="size-3.5 text-destructive" />
+      ) : state === "stop" ? (
+        <span aria-hidden="true" className="size-2.5 rounded-xs bg-muted-foreground" />
       ) : (
         <span aria-hidden="true" className="size-3 rounded-full border border-border" />
       )}
@@ -295,6 +311,47 @@ export const money = (value: number): string => `$${Number.isInteger(value) ? va
  */
 // Колонку номера расширяет `--progress-number` списка, когда в нём есть номера с точкой.
 const COLUMNS = "grid grid-cols-[var(--progress-number,16px)_16px_minmax(0,1fr)_2.75rem_3.25rem_20px] items-center gap-2.5";
+
+/** Что показывает шапка у этапа-автоматизации: «Стоп» идущему, «Останавливается…» после запроса, «Продолжить» остановленному; остальным — ничего. */
+const stopMode = (stage: ProgressStage): "stop" | "stopping" | "continue" | null => {
+  const automation = stage.automation;
+  if (automation === undefined || stage.kind === "action") return null;
+  if (automation.stopped) return "continue";
+  if (automation.stopping) return "stopping";
+  return stage.state === "now" ? "stop" : null;
+};
+
+/** Кнопка шапки баннера: «Стоп» останавливает идущую автоматизацию, «Продолжить» возобновляет остановленную тем же повтором, что и у упавшего шага. */
+function StopControl({ stage, threadId }: { stage: ProgressStage; threadId: string }) {
+  const t = useMessages();
+  const rpc = useRpc<typeof automationRpcContract>();
+  const [sending, setSending] = useState(false);
+  const mode = stopMode(stage);
+  if (mode === null) return null;
+  if (mode === "stopping")
+    return (
+      <span data-stop-state className="whitespace-nowrap text-xs text-muted-foreground">
+        {t.progress.stopping}
+      </span>
+    );
+  const method = mode === "stop" ? "stopAutomation" : "retryAutomation";
+  return (
+    <Button
+      type="button"
+      data-stop-button
+      variant={mode === "stop" ? "outline" : "default"}
+      size="sm"
+      disabled={sending}
+      onClick={() => {
+        setSending(true);
+        void reportStepAnswer(rpc.call(method, { threadId, stage: stage.id }), stage.name, t).finally(() => setSending(false));
+      }}
+      className="h-6 px-2.5 font-semibold disabled:opacity-70"
+    >
+      {mode === "stop" ? t.progress.stop : t.progress.continue}
+    </Button>
+  );
+}
 
 export function ProgressBanner() {
   return (
@@ -460,6 +517,8 @@ export function Row({ stage, roots, onToggle, expanded = false, onExpand, subOf,
           <Icon name="Check" aria-hidden="true" className="size-3.5" />
         ) : stage.state === "now" ? (
           <span aria-hidden="true" {...pulse(stage.live)} className="size-1.5 rounded-full bg-foreground" />
+        ) : stoppedByOwner(stage) ? (
+          <span aria-hidden="true" className="size-2.5 rounded-xs bg-muted-foreground" />
         ) : stage.state === "fail" ? (
           <Icon name="X" aria-hidden="true" className="size-3.5 text-destructive" />
         ) : onToggle !== undefined ? (
@@ -768,7 +827,7 @@ function Progress({ view, threadId, open, toggle, onCancelled }: { view: Progres
               {driver !== null && <FlowMenu threadId={driver} onCancelled={onCancelled} />}
             </div>
           )}
-          <StageList stages={stages} roots={roots} threadId={driver} criteria={view.criteria} answers={view.answers} toggleOf={(stage, at) => (driver === null || at <= reached ? undefined : (run) => toggleStage(stage.id, run))} />
+          <StageList stages={stages} roots={roots} threadId={driver} criteria={view.criteria} answers={view.answers} toggleOf={(stage, at) => (driver === null || (at <= reached && stage.state !== "todo") ? undefined : (run) => toggleStage(stage.id, run))} />
         </div>
       )}
       {view.carrier !== undefined && (
@@ -779,12 +838,14 @@ function Progress({ view, threadId, open, toggle, onCancelled }: { view: Progres
       )}
       {/* Слева — номер идущего этапа и общее число: значок этапа переехал на свой сегмент полосы, и ячейка под него больше не нужна.
           Вслух номер читается словами — это в aria-label: «11/14» экранному диктору ничего не говорит. */}
+      {/* «Стоп» — сосед кнопки-переключателя, а не её потомок: кнопка в кнопке недопустима, а нажатие не должно раскрывать баннер. Шеврон — вторая, скрытая от диктора, мишень того же переключателя: так он остаётся справа от «Стоп». */}
+      <div className="flex items-stretch gap-2.5 hover:bg-state-hover">
       <button
         type="button"
         aria-expanded={open}
         aria-label={t.progress.label(stageLabel(current, t.stages), view.step, view.total)}
         onClick={toggle}
-        className="grid min-h-[34px] w-full grid-cols-[auto_16px_minmax(0,1fr)_auto_20px] items-center gap-2.5 px-3 py-1.5 text-left hover:bg-state-hover"
+        className="grid min-h-[34px] min-w-0 flex-1 grid-cols-[auto_16px_minmax(0,1fr)_auto] items-center gap-2.5 py-1.5 pl-3 text-left"
       >
         {/* Сначала счёт сделанного, затем значок идущего этапа, и только потом полоса: полоса отвечает «где», числа — «сколько». */}
         <span data-progress-count className="shrink-0 tabular-nums">{t.progress.count(view.done, view.total)}</span>
@@ -804,11 +865,13 @@ function Progress({ view, threadId, open, toggle, onCancelled }: { view: Progres
                   "relative flex-1 rounded-sm [will-change:opacity]",
                   stage.state === "done"
                     ? "bg-foreground"
-                    : stage.state === "fail"
-                      ? "bg-destructive"
-                      : stage.state === "now"
-                        ? "bg-foreground/45"
-                        : "bg-state-active",
+                    : stoppedByOwner(stage)
+                      ? "bg-muted-foreground"
+                      : stage.state === "fail"
+                        ? "bg-destructive"
+                        : stage.state === "now"
+                          ? "bg-foreground/45"
+                          : "bg-state-active",
                 )}
               >
               </i>
@@ -824,8 +887,12 @@ function Progress({ view, threadId, open, toggle, onCancelled }: { view: Progres
             <span>{view.planned.target === view.planned.max ? money(view.planned.target) : `${money(view.planned.target)}–${money(view.planned.max).slice(1)}`}</span>
           </span>
         )}
-        <Icon name="ChevronDown" aria-hidden="true" className={cn("size-3.5 text-muted-foreground", open && "rotate-180")} />
       </button>
+      {driver !== null && <StopControl stage={current} threadId={driver} />}
+      <Button type="button" variant="ghost" tabIndex={-1} aria-hidden="true" onClick={toggle} className="h-auto w-8 shrink-0 justify-start rounded-none pr-3 hover:bg-transparent">
+        <Icon name="ChevronDown" aria-hidden="true" className={cn("size-3.5 text-muted-foreground", open && "rotate-180")} />
+      </Button>
+      </div>
       {/* Свёрнутая полоса прячет шаги — ждущий шаг Action показывается своей строкой, иначе кнопку негде нажать. */}
       {!open && waiting !== undefined && driver !== null && <ActionBar stage={waiting} threadId={driver} />}
     </div>
