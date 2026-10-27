@@ -182,6 +182,7 @@ export const en: Messages = {
     reworkPlaceholder: "Comment — sends back for rework",
     goesWith: (n) => `${n} ${n === 1 ? "answer, edit or comment goes" : "answers, edits and comments go"} with it`,
     heldTill: "Goes to the agent with the approval — the agent keeps working meanwhile",
+    heldTillIdle: "Goes to the agent with the approval — the agent is waiting for it",
     decidedByAgent: "Decided by the agent: no approval ahead",
     sentWith: "Went to the agent with the approval",
     undecided: (titles) => `Answer the questions in the widgets above: ${titles}`,

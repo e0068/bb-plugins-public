@@ -78,8 +78,11 @@ export interface AutomationRunnerDeps {
   providers: () => Promise<readonly HostProvider[]>;
   /** Освобождает процесс простаивающего агента треда перед шагами, за которыми архивация. Нет — процесс остаётся. */
   releaseAgent?: (threadId: string) => Promise<void>;
-  /** Реплика агенту готовым текстом: доигранный прогон Flow пускает работу дальше. Нет — тред просто стоит на следующем этапе. */
-  wake?: (threadId: string, text: string) => Promise<void>;
+  /**
+   * Реплика агенту готовым текстом: доигранный прогон Flow пускает работу дальше. Нет — тред просто стоит на следующем этапе.
+   * `due` — перепроверка «реплика ещё нужна» для доставки, которая задержалась до конца хода агента; без неё реплика безусловная.
+   */
+  wake?: (threadId: string, text: string, due?: () => Promise<boolean>) => Promise<void>;
   /** kv прогона: шаг `bb.reinstall` кладёт сюда отложенное самообновление, цепочка его снимает. */
   kv: PluginKvStorage;
   /** Плагины хоста: ими применяется отложенное самообновление, когда цепочка доиграна. */
@@ -586,19 +589,28 @@ export const createAutomationRunner = (deps: AutomationRunnerDeps): AutomationRu
     (await deps.store.listAwaiting()).some((entry) => entry.threadId === threadId && waitsForAnswer(entry.kind));
 
   /**
-   * Этап за последним доигранным этапом `last` ведёт агент — его надо разбудить; автоматизацию и этап Action Flow тянет сам.
-   * Смотрится этап прогона за `last`, а не первый незакрытый во flow: нетронутые этапы в начале flow работой за автоматизацией не являются.
+   * Этап за последним доигранным этапом `last`, который ведёт агент и ради которого его будят; `null` — будить некого:
+   * автоматизацию и этап Action Flow тянет сам. Смотрится этап прогона за `last`, а не первый незакрытый во flow:
+   * нетронутые этапы в начале flow работой за автоматизацией не являются.
    */
-  const wakeIfAgentNext = async (threadId: string, kind: "automation" | "action", last: WorkStage): Promise<void> => {
+  const wakeTarget = async (threadId: string, last: WorkStage): Promise<WorkStage | null> => {
     const record = await deps.progress.get(threadId);
-    if (record === null) return;
-    const stages = deps.stages(threadId).stages;
-    const next = openAfter(stages, record, last.id);
-    if (next === null || !isAgentStage(next)) return;
+    if (record === null) return null;
+    const next = openAfter(deps.stages(threadId).stages, record, last.id);
+    if (next === null || !isAgentStage(next)) return null;
     // Бриф этого этапа уже у владельца — Демонстрация ждёт кнопки: реплика
     // разбудила бы агента там, где его работа сделана и решает владелец.
-    if (await holdsOwner(threadId)) return;
-    await deps.wake?.(threadId, wakeText(kind, next));
+    return (await holdsOwner(threadId)) ? null : next;
+  };
+
+  /** Будит агента ради этапа за `last`, если он его ведёт. */
+  const wakeIfAgentNext = async (threadId: string, kind: "automation" | "action", last: WorkStage): Promise<void> => {
+    const next = await wakeTarget(threadId, last);
+    if (next === null) return;
+    // Реплика может дойти уже после конца хода агента, а за ход он сам закрывает следующий этап и шлёт бриф: поздняя
+    // реплика «Next stage» открыла бы закрытое заново. Потому в момент доставки решение перепроверяется по свежему прогрессу.
+    const due = async (): Promise<boolean> => (await wakeTarget(threadId, last))?.id === next.id;
+    await deps.wake?.(threadId, wakeText(kind, next), due);
   };
 
   /** Цепочка и реплика за ней: агент будится, только когда Flow действительно доиграл автоматизацию. */

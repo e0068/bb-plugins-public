@@ -1338,8 +1338,9 @@ function Body({ brief, view }: { brief: DecisionBrief; view: View }) {
 /**
  * `compactable` — можно ли сейчас сжать тред: ложно у уточнения, пока идёт ход агента, — тогда сжатие не показывается и не уходит в ответ.
  * `idleAfter` — после этого утверждения в прогоне нет работы агента: сжатие не предлагается, пока владелец не написал своё.
+ * `agentIdle` — ход агента кончился: подпись под виджетом, ждущим Утверждения, говорит «агент ждёт его» вместо «работает дальше».
  */
-export function BriefCard({ brief, send, onResult, roots, place = "here", route = DEFAULT_ROUTE, compact = false, compactable = true, idleAfter = false, sentWith }: FormProps & { roots: FileRoots | null; place?: DispatchPlace; route?: DispatchRoute; compact?: boolean; compactable?: boolean; idleAfter?: boolean; sentWith?: string }) {
+export function BriefCard({ brief, send, onResult, roots, place = "here", route = DEFAULT_ROUTE, compact = false, compactable = true, idleAfter = false, agentIdle = false, sentWith }: FormProps & { roots: FileRoots | null; place?: DispatchPlace; route?: DispatchRoute; compact?: boolean; compactable?: boolean; idleAfter?: boolean; agentIdle?: boolean; sentWith?: string }) {
   // Бриф, присланный взамен возвращённого, открывается с выбором владельца из возвращённого.
   const [draft, setDraft] = useStoredDraft(brief.id, () => (brief.settle === undefined ? withRestored(brief, initialDraft(brief)) : settledInitial(brief)), useDraftSender(brief.id));
   const [expanded, setExpanded] = useState<string | null>(null);
@@ -1427,13 +1428,13 @@ export function BriefCard({ brief, send, onResult, roots, place = "here", route 
           {brief.settle === "approval" && sentWith === undefined && (
             <>
               <AddRow label={t.outcome.commentPlaceholder} placeholder={t.outcome.commentPlaceholder} value={draft.note} disabled={sending} voiceId="note" onText={(text) => setDraft((d) => setNote(d, text))} />
-              <StatusLine icon="MessageQuestion" title={t.outcome.heldTill} aside={brief.title} />
+              <StatusLine icon="MessageQuestion" title={agentIdle ? t.outcome.heldTillIdle : t.outcome.heldTill} aside={brief.title} />
             </>
           )}
         </>
       ) : brief.outcome === undefined && brief.settle !== undefined ? (
         // Вопросы, Definition of Done и Выбор этапов прогон не держат: нижней секции нет, правки копятся до Утверждения или решены агентом.
-        <SettledBrief brief={brief} view={brief.settle === "agent" ? { ...view, answered: true } : view} roots={roots} draft={draft} setDraft={setDraft} sending={sending} />
+        <SettledBrief brief={brief} view={brief.settle === "agent" ? { ...view, answered: true } : view} roots={roots} draft={draft} setDraft={setDraft} sending={sending} agentIdle={agentIdle} />
       ) : brief.outcome === undefined ? (
         <>
           <Body brief={brief} view={view} />
@@ -1478,7 +1479,7 @@ const noop = () => {};
  * Бриф, который прогон не держит: вопросы, пункты и этапы, под ними поле комментария и строка, куда уйдёт правка, — без кнопки.
  * `agent` — Утверждения впереди нет, агент решил сам: виджет только показывает решённое.
  */
-function SettledBrief({ brief, view, roots, draft, setDraft, sending }: { brief: DecisionBrief; view: View; roots: FileRoots | null; draft: Draft; setDraft: (update: (draft: Draft) => Draft) => void; sending: boolean }) {
+function SettledBrief({ brief, view, roots, draft, setDraft, sending, agentIdle }: { brief: DecisionBrief; view: View; roots: FileRoots | null; draft: Draft; setDraft: (update: (draft: Draft) => Draft) => void; sending: boolean; agentIdle: boolean }) {
   const t = useMessages();
   const held = brief.settle === "approval";
   const note = held ? <AddRow label={t.outcome.commentPlaceholder} placeholder={t.outcome.commentPlaceholder} value={draft.note} disabled={sending} voiceId="note" onText={(text) => setDraft((d) => setNote(d, text))} /> : undefined;
@@ -1487,7 +1488,7 @@ function SettledBrief({ brief, view, roots, draft, setDraft, sending }: { brief:
       <Body brief={brief} view={view} />
       {stageItems(brief).length > 0 && <SectionTag kind="select" extra={brief.stages?.flowName} className="-mb-3" />}
       <AnswerBlock brief={brief} view={view} roots={roots} footer={note} />
-      <StatusLine icon={held ? "MessageQuestion" : "CircleCheck"} title={held ? t.outcome.heldTill : t.outcome.decidedByAgent} aside={brief.title} />
+      <StatusLine icon={held ? "MessageQuestion" : "CircleCheck"} title={held ? (agentIdle ? t.outcome.heldTillIdle : t.outcome.heldTill) : t.outcome.decidedByAgent} aside={brief.title} />
     </>
   );
 }

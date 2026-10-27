@@ -17,6 +17,9 @@ export const BOUNDARY_WAIT_MS = RELAY_WAIT_MS;
 /** Сколько назначенный план живёт: автоматизация, которую он ждёт, идёт недолго, а план, переживший её, обслужил бы чужую реплику. */
 export const PLAN_TTL_MS = 6 * RELAY_WAIT_MS;
 
+/** Через сколько после обещания «продолжай» Flow шлёт его сам, если основная отправка не дошла. */
+export const FALLBACK_MS = 60_000;
+
 /** Что сделать с тредом на границе: сжать, поставить модель (`null` — не трогать) и о каком этапе напомнить агенту. */
 export interface ScheduledBoundary {
   readonly compact: boolean;
@@ -44,7 +47,8 @@ export interface Boundary {
   service(threadId: string): Promise<void>;
   /**
    * Для агента без автоматизации впереди: обслуживает тред и присылает «продолжай этап». Реплика уходит один раз на план и только
-   * пока этап открыт. Сбой отправки уходит наружу.
+   * пока этап открыт. План, назначенный, пока обслуживается прежний, не теряется: реплика идёт по самому свежему. Не дошла
+   * основная отправка — через {@link FALLBACK_MS} реплику шлёт запасной таймер, без сжатия и смены модели. Сбой отправки уходит наружу.
    */
   continueNow(threadId: string): Promise<void>;
   /** Реплика «продолжай» об этом этапе уже ушла последней: доработка с отметкой «начат» не заводит вторую границу. */
@@ -62,11 +66,33 @@ export const createBoundary = (deps: {
   warn: (message: string) => void;
   waitMs?: number;
   now?: () => number;
+  /** Срок запасной реплики после обещания; по умолчанию {@link FALLBACK_MS}. */
+  fallbackMs?: number;
+  /** Ставит таймер и возвращает его отмену; тесты подменяют его, чтобы не ждать минуту. */
+  setTimer?: (fire: () => Promise<void>, ms: number) => () => void;
 }): Boundary => {
   const plans = new Map<string, { plan: ScheduledBoundary; at: number }>();
   const running = new Set<string>();
   const carried = new Map<string, string>();
+  /** Последнее обещание «продолжай» по треду: номер, время, этап и отмена его запасного таймера. */
+  const promises = new Map<string, { seq: number; at: number; plan: ScheduledBoundary; cancel: () => void }>();
+  /** До какого номера обещаний реплика «продолжай» уже ушла. */
+  const answered = new Map<string, number>();
   const now = deps.now ?? Date.now;
+  const setTimer =
+    deps.setTimer ??
+    ((fire: () => Promise<void>, ms: number) => {
+      const timer = setTimeout(() => void fire(), ms);
+      timer.unref();
+      return () => clearTimeout(timer);
+    });
+
+  /** План треда в пределах срока, не снимая его; протухший снимается. */
+  const peek = (threadId: string): ScheduledBoundary | undefined => {
+    const found = plans.get(threadId);
+    if (found !== undefined && now() - found.at > PLAN_TTL_MS) plans.delete(threadId);
+    return plans.get(threadId)?.plan;
+  };
 
   const take = (threadId: string): ScheduledBoundary | undefined => {
     const found = plans.get(threadId);
@@ -100,6 +126,65 @@ export const createBoundary = (deps: {
     if (model !== null) await attempt("model update", () => deps.threads.update({ threadId, model: model.model, reasoningLevel: model.reasoningLevel }));
   };
 
+  /** Обещания треда, данные до сих пор, закрыты: реплика ушла, или агент продолжил сам, или тред будит Flow. */
+  const settle = (threadId: string, upTo = promises.get(threadId)?.seq ?? 0): void => void answered.set(threadId, Math.max(answered.get(threadId) ?? 0, upTo));
+
+  const text = (plan: ScheduledBoundary): string => `Flow: the stage boundary is serviced — carry on with stage ${plan.nextStage}.`;
+
+  /** Реплика «продолжай»: закрывает все обещания, данные до неё. */
+  const send = async (threadId: string, plan: ScheduledBoundary): Promise<void> => {
+    const covered = promises.get(threadId)?.seq ?? 0;
+    carried.set(threadId, plan.stageId);
+    await deps.send(threadId, text(plan));
+    settle(threadId, covered);
+  };
+
+  /** Берёт планы по одному, самый свежий последним: между ними тред не отпускают, и обещание, данное под идущим обслуживанием, не теряется. */
+  const drain = async (threadId: string): Promise<void> => {
+    let owed = false;
+    for (let plan = take(threadId); plan !== undefined; plan = take(threadId)) {
+      if (!(await waiting(threadId, plan))) {
+        // Агент сам начал или закрыл этап: обещание исполнено без реплики, запасной таймер её не шлёт.
+        settle(threadId);
+        owed ||= plan.compact;
+        continue;
+      }
+      await serve(threadId, { ...plan, compact: plan.compact || owed });
+      owed = false;
+      // Пока тред простаивал, назначили новый план: он решает, что дальше, и свою модель ставит сам.
+      if (peek(threadId) !== undefined) continue;
+      // Этап могли закрыть или начать сами: реплика была бы лишней.
+      if (!(await waiting(threadId, plan))) {
+        settle(threadId);
+        continue;
+      }
+      await send(threadId, plan);
+    }
+  };
+
+  /** Ставит запасной таймер на только что данное обещание; прежний снимается. */
+  const arm = (threadId: string, plan: ScheduledBoundary): void => {
+    promises.get(threadId)?.cancel();
+    const seq = (promises.get(threadId)?.seq ?? 0) + 1;
+    const at = now();
+    const fire = async (): Promise<void> => {
+      const promise = promises.get(threadId);
+      if (promise?.seq !== seq || (answered.get(threadId) ?? 0) >= seq || now() - at > PLAN_TTL_MS) return;
+      // Основная отправка ещё идёт: её реплика закроет обещание сама, таймер лишь стережёт её.
+      if (running.has(threadId)) {
+        promise.cancel = setTimer(fire, deps.fallbackMs ?? FALLBACK_MS);
+        return;
+      }
+      try {
+        // Закрытый этап реплики не ждёт; начатый уже — ждёт: агент мог закончить ход, не продолжив.
+        if (await waiting(threadId, { ...plan, fresh: false })) await send(threadId, plan);
+      } catch (error) {
+        deps.warn(`stage boundary: fallback message failed (${error instanceof Error ? error.message : String(error)})`);
+      }
+    };
+    promises.set(threadId, { seq, at, plan, cancel: setTimer(fire, deps.fallbackMs ?? FALLBACK_MS) });
+  };
+
   return {
     schedule: (threadId, plan) => void plans.set(threadId, { plan, at: now() }),
     scheduled: (threadId) => {
@@ -110,21 +195,19 @@ export const createBoundary = (deps: {
     carriedOn: (threadId, stageId) => carried.get(threadId) === stageId,
     async service(threadId) {
       const plan = take(threadId);
+      // За обслуживанием идёт будящая реплика Flow: она и есть обещанный сигнал.
+      if (plan !== undefined) settle(threadId);
       if (plan !== undefined && (await waiting(threadId, plan))) await serve(threadId, plan);
     },
     async continueNow(threadId) {
-      const plan = take(threadId);
+      const plan = peek(threadId);
       if (plan === undefined) return;
-      // Один план на тред: пока первая реплика обслуживается, повторная отметка второй не добавляет.
+      arm(threadId, plan);
+      // Один обслуживающий вызов на тред: новый план остаётся в очереди, обслуживающий подберёт его, не выходя.
       if (running.has(threadId)) return;
       running.add(threadId);
       try {
-        if (!(await waiting(threadId, plan))) return;
-        await serve(threadId, plan);
-        // Пока тред простаивал, этап могли закрыть или начать сами: реплика была бы лишней.
-        if (!(await waiting(threadId, plan))) return;
-        carried.set(threadId, plan.stageId);
-        await deps.send(threadId, `Flow: the stage boundary is serviced — carry on with stage ${plan.nextStage}.`);
+        await drain(threadId);
       } finally {
         running.delete(threadId);
       }
