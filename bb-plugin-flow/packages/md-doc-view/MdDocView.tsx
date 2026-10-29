@@ -25,6 +25,7 @@ import {
   type DocHistory,
 } from "./doc-history";
 import { DraftGuard } from "./DraftGuard";
+import { isExternalLink } from "./external-link";
 import { FileActions } from "./FileActions";
 import { zoomTargetOf, type ZoomTarget } from "./image-zoom";
 import { ImageZoom } from "./ImageZoom";
@@ -38,6 +39,10 @@ import {
 } from "./doc-mode";
 import { lineDiff } from "./line-diff";
 import "./md-doc-view.css";
+// Link icons come from Shapeshift, not from here: one stylesheet keyed
+// on the engine's data-href. After the engine's own CSS (KasimovEditor above
+// brings it) — its hover underline weighs as much as .mde-link, which drops it.
+import "../shapeshift-link-icons/vendor/link-icons.css";
 
 export interface LoadedDoc {
   path: string;
@@ -88,6 +93,11 @@ export interface MdDocViewProps {
   ) => Promise<SaveResult>;
   /** Absolute target of an in-tab link, or null (link is not clickable). */
   resolveLinkTarget: (href: string, fromPath: string) => string | null;
+  /**
+   * Opens a web or mail link outside the app. Default — a new browser window
+   * cut off from this one.
+   */
+  openExternal?: (href: string) => void;
   /** CSS custom properties (`--kasi-*`) for the editor's appearance. */
   vars?: Record<string, string>;
   /** Clicking a live link follows it. default true. */
@@ -166,12 +176,19 @@ export interface MdDocViewProps {
   remove?: (path: string) => Promise<RemoveResult>;
 }
 
+// The host catches a new window and hands the address to the system browser
+// or mail client; noopener keeps the page it opens away from this one.
+const openInBrowser = (href: string) => {
+  window.open(href, "_blank", "noopener,noreferrer");
+};
+
 export function MdDocView({
   libraries,
   initialPath,
   load,
   save,
   resolveLinkTarget,
+  openExternal = openInBrowser,
   vars,
   followLinks,
   atLinks,
@@ -299,9 +316,11 @@ export function MdDocView({
 
   const current = history.current ?? doc?.path ?? initialPath;
 
-  // An in-tab link is clickable if resolveLinkTarget returned an absolute
-  // target; clicking a missing one will surface an error from load.
+  // A web or mail link leaves the app; an in-tab link is clickable if
+  // resolveLinkTarget returned an absolute target — clicking a missing one
+  // surfaces an error from load.
   const linkResolver = (href: string) => {
+    if (isExternalLink(href)) return { onClick: () => openExternal(href) };
     const abs = resolveLinkTarget(href, current);
     return abs ? { onClick: () => openAbs(abs) } : null;
   };

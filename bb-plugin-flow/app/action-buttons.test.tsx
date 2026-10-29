@@ -5,6 +5,8 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import { ru } from "../lib/messages/ru";
 
+const app = await loadPluginApp(() => import("../app"));
+
 afterEach(cleanup);
 
 type StepState = "wait" | "now" | "fail" | "done" | "todo";
@@ -37,7 +39,6 @@ const view = (first: StepState, second: StepState = "todo") => ({
 });
 
 const mount = async (progress: unknown) => {
-  const app = await loadPluginApp(() => import("../app"));
   const customization = app.composerCustomizations.find((c) => c.id === "flow-progress")!;
   return renderSlot(customization.banners![0]!, {}, {
     rpc: { getFlowProgress: () => progress, runActionStep: () => ({ started: true }) } as never,

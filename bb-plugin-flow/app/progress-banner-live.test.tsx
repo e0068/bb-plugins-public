@@ -5,6 +5,8 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import { MUTED_BLINK } from "../core/muted-blink";
 
+const app = await loadPluginApp(() => import("../app"));
+
 afterEach(cleanup);
 
 const review = { id: "review", kind: "skill", name: "Ревью", executor: "agent", state: "done", results: [], minutes: 12, cost: 4 };
@@ -27,7 +29,6 @@ const land = (state: "now" | "fail", live: boolean) => ({
 const view = (stage: object) => ({ current: (stage as { id: string }).id, done: 1, step: 2, total: 2, planned: null, environmentId: null, stages: [review, stage] });
 
 const mount = async (progress: unknown) => {
-  const app = await loadPluginApp(() => import("../app"));
   const customization = app.composerCustomizations.find((c) => c.id === "flow-progress")!;
   return renderSlot(customization.banners![0]!, {}, {
     rpc: { getFlowProgress: () => progress } as never,

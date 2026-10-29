@@ -2,7 +2,7 @@
 import { existsSync, mkdtempSync, readdirSync, readFileSync, realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { runScript, scriptStep } from "./script-step";
 
@@ -51,13 +51,19 @@ describe("запуск скрипта", () => {
 });
 
 describe("запуск скрипта — края", () => {
-  const leftovers = () => readdirSync(tmpdir()).filter((name) => name.startsWith("flow-script-")).sort();
-
+  // Своя временная папка: в общем os.tmpdir() видны временные файлы соседних прогонов.
   it("временный файл скрипта удаляется и после успеха, и после провала", async () => {
-    const before = leftovers();
-    await runScript({ name: "ok.sh", content: "exit 0" }, { cwd: dir(), threadId: "t", environmentId: "e" });
-    await runScript({ name: "bad.sh", content: "exit 1" }, { cwd: dir(), threadId: "t", environmentId: "e" });
-    expect(leftovers().filter((name) => !before.includes(name))).toEqual([]);
+    const own = realpathSync(mkdtempSync(join(tmpdir(), "flow-tmp-")));
+    const cwd = dir();
+    vi.stubEnv("TMPDIR", own);
+    try {
+      expect(tmpdir()).toBe(own);
+      await runScript({ name: "ok.sh", content: "exit 0" }, { cwd, threadId: "t", environmentId: "e" });
+      await runScript({ name: "bad.sh", content: "exit 1" }, { cwd, threadId: "t", environmentId: "e" });
+    } finally {
+      vi.unstubAllEnvs();
+    }
+    expect(readdirSync(own)).toEqual([]);
   });
 
   it("таймаут останавливает скрипт вместе с фоновыми процессами и не ждёт их", async () => {

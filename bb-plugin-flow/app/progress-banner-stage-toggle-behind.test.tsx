@@ -4,6 +4,8 @@ import { loadPluginApp, renderSlot } from "@get-bb/plugin-sdk/testing/app";
 import { afterEach, describe, expect, it } from "vitest";
 import { threadFiles } from "./file-roots-fixture";
 
+const app = await loadPluginApp(() => import("../app"));
+
 afterEach(cleanup);
 
 const view = {
@@ -22,7 +24,6 @@ const view = {
 
 describe("чекбоксы только у этапов впереди прогона", () => {
   it("этап, убранный брифом и уже оставшийся позади идущего, чекбокса не получает", async () => {
-    const app = await loadPluginApp(() => import("../app"));
     const customization = app.composerCustomizations.find((c) => c.id === "flow-progress")!;
     const slot = renderSlot(customization.banners![0]!, {}, { rpc: { getFlowProgress: () => view, threadFiles, setStageInRun: () => ({ kind: "set" }) } as never, composer: { scope: { kind: "thread", threadId: "thr_1" } }, settings: { language: "Русский" } });
     fireEvent.click(await screen.findByRole("button", { name: /Прогресс flow/ }));

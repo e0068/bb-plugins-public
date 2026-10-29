@@ -17,6 +17,9 @@ export type NoticeActionRequest = { action: "retry" | "skip"; threadId: string; 
 
 const SOURCE = { source: "flow", sourceName: "Flow" } as const;
 
+/** Ключ записи «Ждёт ответа» брифа `briefId`: по нему запись не дублируется, и по нему же её карточку отзывают. */
+export const awaitingKey = (briefId: string): string => `brief:${briefId}`;
+
 /**
  * Конец хода в треде с flow: держит тред бриф, ждущий владельца, — «ждёт
  * ответа», одна запись на бриф; иначе «ход закончен», своя на каждый ход.
@@ -26,7 +29,7 @@ export const turnEndEntry = ({ threadId, threadTitle, brief }: { threadId: strin
   ...SOURCE,
   ...(brief === null
     ? { kind: "turn-done", kindLabel: "Ход закончен", title: "Ход закончен", dedupeKey: null }
-    : { kind: "awaiting", kindLabel: "Ждёт ответа", title: `Ждёт ответа — «${brief.title}»`, dedupeKey: `brief:${brief.id}` }),
+    : { kind: "awaiting", kindLabel: "Ждёт ответа", title: `Ждёт ответа — «${brief.title}»`, dedupeKey: awaitingKey(brief.id) }),
   threadId,
   threadTitle,
   url: null,

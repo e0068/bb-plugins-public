@@ -4,7 +4,7 @@ import { describe, expect, it } from "vitest";
 
 import { builtinStage } from "../lib/stage-constants";
 import type { DecisionBrief } from "../shared/contract";
-import { actionAwaitingId, automationAwaitingId, awaitingChanges, awaitingKind, awaitingStageId, ownStageIcon, waitsForAnswer } from "./awaiting";
+import { actionAwaitingId, automationAwaitingId, awaitingChanges, awaitingKind, awaitingStageId, isStageAwaitingId, ownStageIcon, waitsForAnswer } from "./awaiting";
 import { report } from "./stages-fixtures";
 
 const brief = (patch: Partial<DecisionBrief>): DecisionBrief => ({ id: "dec_1", threadId: "thr_1", title: "Бриф", createdAt: "2026-09-16T10:00:00.000Z", kind: "brief", questions: [], ...patch });
@@ -62,6 +62,13 @@ describe("этап ожидания автоматизации и Action", () =>
 
   it("id этапа читается обратно как есть, двоеточие внутри id тоже", () => {
     fc.assert(fc.property(fc.string({ minLength: 1 }), (id) => awaitingStageId({ briefId: automationAwaitingId(id), kind: "automation" }) === id && awaitingStageId({ briefId: actionAwaitingId(id), kind: "action" }) === id));
+  });
+});
+
+describe("id ожидания этапа и id брифа", () => {
+  it("id автоматизации и Action — ожидание этапа при любом id этапа, id брифа — нет", () => {
+    fc.assert(fc.property(fc.string(), (id) => isStageAwaitingId(automationAwaitingId(id)) && isStageAwaitingId(actionAwaitingId(id))));
+    expect(["dec_1", "dec_mvtgwg69030dac02d5a6", "brief:dec_1"].map(isStageAwaitingId)).toEqual([false, false, false]);
   });
 });
 

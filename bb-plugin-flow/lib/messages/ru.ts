@@ -387,6 +387,7 @@ export const ru = {
     removeSet: (label: string) => `Убрать набор ${label}`,
     stepsReadOnly: "Шаги этой автоматизации правятся в плагине Automations",
     stepNoPrAbove: "Выше по flow нет «Открыть PR»: шаг сработает, если PR откроет другой flow, прошлый прогон или вы вручную",
+    stepBeforeMerge: "Станет красным: кода ещё нет в main — поставьте шаг после «Смёрджить PR»",
     stepCount: (n: number) => plural(n, "шаг", "шага", "шагов"),
     loadFailed: "Не удалось загрузить или сохранить этапы — обнови страницу",
     table: "Этапы работ",

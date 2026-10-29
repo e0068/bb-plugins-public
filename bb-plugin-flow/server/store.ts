@@ -56,6 +56,7 @@ const idListSchema = z.array(z.string()).min(1);
 
 const threadScopeKey = (threadId: string): string => `thread-scope:${threadId}`;
 const launchedKey = (threadId: string) => `decision-launched:${threadId}`;
+const handedOffKey = (threadId: string) => `decision-handed-off:${threadId}`;
 /** Память прототипа: тред и адрес страницы без якоря. */
 const prototypeKey = (threadId: string, url: string) => `decision-prototype:${threadId}:${url}`;
 /** Маршрут нового треда по проектам. Места рядом нет: бриф всегда открывается «в этом треде». */
@@ -145,6 +146,9 @@ export type DecisionStore = {
   /** Работа треда уже отправлена на исполнение: этапы и бюджет в нём больше не спрашиваются. */
   isLaunched(threadId: string): Promise<boolean>;
   markLaunched(threadId: string): Promise<void>;
+  /** Дочерний тред создан передачей работы: её начал владелец своим брифом, и брифы треда остаются ему, а не родителю. */
+  isHandedOff(threadId: string): Promise<boolean>;
+  markHandedOff(threadId: string): Promise<void>;
   /** Тред уходит в другой flow: запуск, перенос, утверждённые критерии и объём прежней работы ему больше не принадлежат. */
   resetThreadWork(threadId: string): Promise<void>;
   /** Последний маршрут нового треда в проекте; нет записи или она чужая — `null`. */
@@ -338,6 +342,12 @@ export const createStore = (kv: PluginKvStorage): DecisionStore => {
     },
     async markLaunched(threadId) {
       await kv.set(launchedKey(threadId), true);
+    },
+    async isHandedOff(threadId) {
+      return (await kv.get(handedOffKey(threadId))) === true;
+    },
+    async markHandedOff(threadId) {
+      await kv.set(handedOffKey(threadId), true);
     },
     async resetThreadWork(threadId) {
       await Promise.all([launchedKey, threadCarryKey, threadCriteriaKey, threadAnswersKey, threadScopeKey, checklistKey].map((key) => kv.delete(key(threadId))));

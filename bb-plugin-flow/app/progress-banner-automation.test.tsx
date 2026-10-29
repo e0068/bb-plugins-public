@@ -5,6 +5,8 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import { ru } from "../lib/messages/ru";
 
+const app = await loadPluginApp(() => import("../app"));
+
 afterEach(cleanup);
 
 const land = (state: "now" | "fail") => ({
@@ -36,7 +38,6 @@ const view = (state: "now" | "fail") => ({
 });
 
 const mount = async (progress: unknown) => {
-  const app = await loadPluginApp(() => import("../app"));
   const customization = app.composerCustomizations.find((c) => c.id === "flow-progress")!;
   return renderSlot(customization.banners![0]!, {}, {
     rpc: { getFlowProgress: () => progress, retryAutomation: () => ({ started: true }) } as never,
@@ -68,7 +69,6 @@ describe("автоматизация в полосе прогресса", () => 
 
 describe("выход из упавшего шага", () => {
   it("«Пропустить» на упавшем шаге зовёт skipAutomationStep", async () => {
-    const app = await loadPluginApp(() => import("../app"));
     const customization = app.composerCustomizations.find((c) => c.id === "flow-progress")!;
     const slot = renderSlot(customization.banners![0]!, {}, {
       rpc: { getFlowProgress: () => view("fail"), skipAutomationStep: () => ({ started: true }) } as never,

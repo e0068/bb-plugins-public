@@ -14,10 +14,13 @@ import { configPathFromGitdir, originUrlFromGitConfig, parseGitdirPointer } from
 import {
   getPullRequestRequest,
   mergePullRequestRequest,
+  listMergedPullRequestsRequest,
   listOpenPullRequestsRequest,
+  parseLastClosedPull,
   parseOpenPullRequest,
   parsePullState,
   type ChangedFile,
+  type LastClosedPull,
   type OpenPullRequest,
   type PullState,
   type RepoRef,
@@ -41,7 +44,7 @@ import { liveAheadCount } from "../wiring/fast-forward";
 import { readExecutablePaths } from "../wiring/file-modes";
 import { mergedPullRequestFiles } from "../wiring/merged-pr-files";
 import { ghAuthToken } from "../wiring/gh-token";
-import { doneHold } from "../core/branch-in-main";
+import { doneHold, type BranchInMain } from "../core/branch-in-main";
 import { gitClient } from "../wiring/git-client";
 import { treeFiles } from "../wiring/tree-files";
 import { gitRunMessage, type GitPorts } from "../wiring/git-run";
@@ -300,15 +303,25 @@ export const messageOf = (error: unknown): string => (error instanceof Error ? e
  * comes back as a transient failure that steps.ts repeats. The repeat runs
  * this whole helper again, so a PR that landed meanwhile answers success and
  * a branch that turned out to conflict answers with its named reason.
+ *
+ * No PR at all is asked of git, not of GitHub: GitHub lists only open PRs, so
+ * a repeat after the merge finds none (BBPL-987). The branch's code already in
+ * the base is that merge — success; anything else falls through to the merge
+ * attempt and its own "not found".
  */
-export async function mergeWithVerdict(gh: GithubPull, merge: () => Promise<void>): Promise<StepOutcome> {
+export async function mergeWithVerdict(
+  gh: GithubPull,
+  merge: () => Promise<void>,
+  inMain: () => Promise<BranchInMain> = async () => "unknown",
+): Promise<StepOutcome> {
+  if (!gh.ok && gh.gap === "no-pull-request" && (await inMain()) === "in-main") return ALREADY_MERGED;
   // Не смогли спросить GitHub — мёрдж всё равно пробуется: его делает сам bb,
   // и наша неудача с токеном или сетью не повод не сделать работу. Ответит
   // тогда bb, своей ошибкой.
   if (!gh.ok) return reportMerge(await attemptMerge(merge));
 
   const before = await readPullState(gh);
-  if (before === "merged") return { ok: true, detail: "already merged" };
+  if (before === "merged") return ALREADY_MERGED;
   if (before === "closed") {
     return { ok: false, error: "the pull request is closed without a merge — reopen it or open a new one" };
   }
@@ -320,8 +333,10 @@ export async function mergeWithVerdict(gh: GithubPull, merge: () => Promise<void
   if (failure === null) return { ok: true, detail: null };
   // Мёрдж мог и пройти: bb отвечает ошибкой и на потерянный ответ тоже.
   // Спрашиваем GitHub, а не гадаем по тексту.
-  return (await readPullState(gh)) === "merged" ? { ok: true, detail: "already merged" } : reportMerge(failure);
+  return (await readPullState(gh)) === "merged" ? ALREADY_MERGED : reportMerge(failure);
 }
+
+const ALREADY_MERGED: StepOutcome = { ok: true, detail: "already merged" };
 
 const reportMerge = (failure: MergeFailure | null): StepOutcome =>
   failure === null ? { ok: true, detail: null } : { ok: false, error: failure.message };
@@ -415,8 +430,9 @@ export async function githubPullOf(
   sdk: Sdk,
   settings: GithubTokenSettings,
   environmentId: string,
+  client: (token: string) => CreatePrPorts = githubClient,
 ): Promise<GithubPull> {
-  const branches = await githubBranchesOf(sdk, settings, environmentId);
+  const branches = await githubBranchesOf(sdk, settings, environmentId, client);
   if (!branches.ok) return branches;
   try {
     const { ports, repo, baseBranch, headBranch } = branches;
@@ -435,6 +451,16 @@ export async function githubPullOf(
   }
 }
 
+/** The PR the step itself has just opened: its number is known, bb's cache and GitHub's list are not asked. */
+export const withPullNumber = (branches: GithubBranches, number: number): GithubPull => (branches.ok ? { ...branches, number } : branches);
+
+/** What became of the branch's newest closed PR, asked of GitHub; not asked or not answered — `"unknown"`. */
+export async function lastClosedPullOf(branches: GithubBranches): Promise<LastClosedPull | "unknown"> {
+  if (!branches.ok) return "unknown";
+  const answer = await branches.ports.send(listMergedPullRequestsRequest(branches.repo, branches.headBranch, branches.baseBranch));
+  return (answer.status === 200 ? parseLastClosedPull(answer.data) : null) ?? "unknown";
+}
+
 /**
  * The repository, both branch names and a GitHub port — everything a step
  * needs that is not the pull request itself. Split out of `githubPullOf`
@@ -451,6 +477,7 @@ export async function githubBranchesOf(
   sdk: Sdk,
   settings: GithubTokenSettings,
   environmentId: string,
+  client: (token: string) => CreatePrPorts = githubClient,
 ): Promise<GithubBranches> {
   try {
     const env = await sdk.environments.get({ environmentId });
@@ -462,7 +489,7 @@ export async function githubBranchesOf(
     if (!env.branchName) return { ok: false, reason: "the environment has no current branch" };
     const token = await resolveToken(settings);
     const repo = await readOrigin(sdk, env.hostId, env.path);
-    return { ok: true, ports: githubClient(token), repo, baseBranch: base.githubBase, headBranch: env.branchName };
+    return { ok: true, ports: client(token), repo, baseBranch: base.githubBase, headBranch: env.branchName };
   } catch (error) {
     return { ok: false, reason: error instanceof Error ? error.message : String(error) };
   }
@@ -619,6 +646,13 @@ export function codeInMainGate(sdk: Sdk, git: (path: string) => GitPorts, thread
     const verdict = await checkBranchInMain(git(env.path), base);
     return verdict === "in-main" ? null : doneHold(verdict, base.statusBase);
   };
+}
+
+/** Код ветки окружения уже в базе — checkBranchInMain без треда; нет базы или копии на диске — не узнать. */
+export async function environmentInMain(sdk: Sdk, git: (path: string) => GitPorts, environmentId: string): Promise<BranchInMain> {
+  const env = await sdk.environments.get({ environmentId });
+  const base = resolveBase(env, DEFAULT_BASE_MODE);
+  return base && env.path ? checkBranchInMain(git(env.path), base) : "unknown";
 }
 
 /** A delivery with the child thread it comes from: whom to tell and how to name the wave. */

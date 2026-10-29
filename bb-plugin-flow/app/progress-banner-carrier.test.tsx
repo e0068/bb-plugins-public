@@ -3,6 +3,8 @@ import { cleanup, fireEvent, screen, waitFor } from "@testing-library/react";
 import { loadPluginApp, renderSlot } from "@get-bb/plugin-sdk/testing/app";
 import { afterEach, describe, expect, it } from "vitest";
 
+const app = await loadPluginApp(() => import("../app"));
+
 afterEach(cleanup);
 
 const row = (id: string, state: string) => ({ id, kind: "skill", name: id, executor: "self", state, results: [], minutes: null, cost: null });
@@ -25,7 +27,6 @@ const carried = (title: string | null, patch: Record<string, unknown> = {}) => (
 });
 
 const mount = async (progress: unknown) => {
-  const app = await loadPluginApp(() => import("../app"));
   const customization = app.composerCustomizations.find((c) => c.id === "flow-progress")!;
   return renderSlot(customization.banners![0]!, {}, {
     rpc: { getFlowProgress: () => progress, threadFiles: () => ({ environmentId: null, storage: { hostId: "local", storageRootPath: "/storage/thr_new" } }) } as never,

@@ -3,6 +3,8 @@ import { cleanup, fireEvent, screen } from "@testing-library/react";
 import { loadPluginApp, renderSlot } from "@get-bb/plugin-sdk/testing/app";
 import { afterEach, describe, expect, it } from "vitest";
 
+const app = await loadPluginApp(() => import("../app"));
+
 afterEach(cleanup);
 
 const ERROR = "GitHub: Pull Request is not mergeable because the base branch has moved";
@@ -31,7 +33,6 @@ const view = {
 
 describe("ошибка шага автоматизации", () => {
   it("начинается своей строкой под названием шага и читается целиком", async () => {
-    const app = await loadPluginApp(() => import("../app"));
     const customization = app.composerCustomizations.find((c) => c.id === "flow-progress")!;
     const slot = renderSlot(customization.banners![0]!, {}, {
       rpc: { getFlowProgress: () => view } as never,

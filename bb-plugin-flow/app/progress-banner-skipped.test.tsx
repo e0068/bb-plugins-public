@@ -5,6 +5,8 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import type { ProgressStage } from "../shared/contract";
 
+const app = await loadPluginApp(() => import("../app"));
+
 afterEach(cleanup);
 
 const row = (id: string, state: string, number: number | null) => ({ id, kind: "skill", name: id, executor: "self", state, results: [], number, minutes: null, wallMinutes: null, cost: null });
@@ -20,7 +22,6 @@ const view = {
 };
 
 const mount = async () => {
-  const app = await loadPluginApp(() => import("../app"));
   const customization = app.composerCustomizations.find((c) => c.id === "flow-progress")!;
   const slot = renderSlot(customization.banners![0]!, {}, { rpc: { getFlowProgress: () => view } as never, composer: { scope: { kind: "thread", threadId: "thr_1" } }, settings: { language: "Русский" } });
   (await screen.findByRole("button", { name: /Прогресс flow/ })).click();
@@ -40,7 +41,6 @@ describe("вычеркнутый из прогона этап приглушён
   });
 
   it("строка этапа в блоке итога прогона — та же: вычеркнутая приглушена, и корни файлов ей для этого не нужны", async () => {
-    await loadPluginApp(() => import("../app"));
     const { Row } = await import("./progress-banner");
     const { container } = render(<Row stage={row("plan", "skip", null) as unknown as ProgressStage} roots={null} />);
     expect(dimmed(rowOf(container, "plan"))).toBe(true);

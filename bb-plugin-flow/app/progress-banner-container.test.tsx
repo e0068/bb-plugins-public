@@ -5,6 +5,8 @@ import { cleanup, fireEvent, screen } from "@testing-library/react";
 import { loadPluginApp, renderSlot } from "@get-bb/plugin-sdk/testing/app";
 import { afterEach, describe, expect, it } from "vitest";
 
+const app = await loadPluginApp(() => import("../app"));
+
 afterEach(cleanup);
 
 const results = ["spec.md", "plan.md", "notes.md"].map((label) => ({ label, target: `docs/${label}` }));
@@ -36,7 +38,6 @@ const view = {
 };
 
 const open = async () => {
-  const app = await loadPluginApp(() => import("../app"));
   const customization = app.composerCustomizations.find((c) => c.id === "flow-progress")!;
   const slot = renderSlot(customization.banners![0]!, {}, {
     rpc: { getFlowProgress: () => view } as never,

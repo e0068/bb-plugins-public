@@ -4,6 +4,8 @@ import { loadPluginApp, renderSlot } from "@get-bb/plugin-sdk/testing/app";
 import { afterEach, describe, expect, it } from "vitest";
 import { threadFiles } from "./file-roots-fixture";
 
+const app = await loadPluginApp(() => import("../app"));
+
 afterEach(cleanup);
 
 const view = {
@@ -21,7 +23,6 @@ const view = {
 };
 
 const mount = async () => {
-  const app = await loadPluginApp(() => import("../app"));
   const customization = app.composerCustomizations.find((c) => c.id === "flow-progress")!;
   return renderSlot(customization.banners![0]!, {}, {
     rpc: { getFlowProgress: () => view, threadFiles, cancelFlow: () => ({ kind: "cancelled" }), threadFlowChoice: () => ({ flows: [{ id: "flow-plugin", name: "BB Plugin", stages: 3 }], selected: "none" }) } as never,

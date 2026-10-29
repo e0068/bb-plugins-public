@@ -1,0 +1,16 @@
+{
+  "name": "@bb-plugins/shapeshift-link-icons",
+  "version": "0.1.0",
+  "type": "module",
+  "private": true,
+  "description": "Вендоренная копия файла стилей значков ссылок дизайн-системы Shapeshift (vendor/): значки у ссылок по адресу data-href.",
+  "scripts": {
+    "update": "node update.mjs",
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "typescript": "^5.7.0",
+    "vitest": "^3.2.7"
+  }
+}

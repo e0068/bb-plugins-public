@@ -11,6 +11,7 @@ import { ArrangeIcon, CheckListIcon, CheckmarkBadge01Icon, MessageQuestionIcon, 
 
 import { STAGE_ICONS } from "../components/ui/stage-icon-catalog";
 import { awaitingChanges } from "../core/awaiting";
+import { queuedThreadIds } from "../core/queued-threads";
 import { glyphCss, type SpinnerLogo } from "../core/row-glyph-css";
 import { resolveLocale } from "../lib/i18n";
 import { messages } from "../lib/messages";
@@ -76,6 +77,20 @@ const post = async <T>(pluginId: string, method: string, valid: (x: unknown) => 
   }
 };
 
+/**
+ * Треды с сообщением в очереди хоста — ждущим отправки или не отправившимся. Это внутренний REST хоста, а не SDK:
+ * список без архивных (с ними ответ в мегабайты) лёгкий. Сбой запроса — `null`: опрос держит прошлое множество,
+ * иначе один неудачный такт вернул бы значок на тред, у которого хост рисует свои часики.
+ */
+const fetchQueuedThreadIds = async (): Promise<ReadonlySet<string> | null> => {
+  try {
+    const res = await fetch("/api/v1/threads?archived=false");
+    return res.ok ? queuedThreadIds(await res.json()) : null;
+  } catch {
+    return null;
+  }
+};
+
 const isRecord = (x: unknown): x is Record<string, unknown> => typeof x === "object" && x !== null;
 const isRowStage = (x: unknown): x is RowStage => isRecord(x) && typeof x.name === "string" && typeof x.icon === "string";
 /** Своя иконка этапа в ответе; нет её или она не той формы — `undefined`, значок по виду. */
@@ -117,6 +132,8 @@ export function registerAwaitingStatus(app: PluginAppBuilder): void {
       let painted: string | null = null;
       let logos: readonly SpinnerLogo[] = [];
       let shown = new Map<string, string>();
+      // Очередь хоста с последнего удачного запроса; до него — пустая, значки как до очереди.
+      let queued: ReadonlySet<string> = new Set();
       let own: readonly Shown[] = [];
       const paint = () => {
         const owned = own.map(({ glyph, drawing }) => ({ label: glyph.label, svg: svgOf(drawing ?? ICON_DATA[glyph.icon], false), blink: glyph.blink }));
@@ -128,23 +145,28 @@ export function registerAwaitingStatus(app: PluginAppBuilder): void {
 
       let alive = true;
       const poll = async () => {
-        const [awaiting, running, fetched] = await Promise.all([
+        const [awaiting, running, fetched, fetchedQueued] = await Promise.all([
           post(context.pluginId, "awaitingThreads", isAwaiting),
           post(context.pluginId, "runningThreads", isRunning),
           post(context.pluginId, "agentLogos", isLogo),
+          fetchQueuedThreadIds(),
         ]);
         if (!alive) return;
         if (fetched !== null) logos = fetched;
+        if (fetchedQueued !== null) queued = fetchedQueued;
         // Сбой опроса оставляет значки как были: пропавший значок хуже устаревшего на такт.
         if (awaiting === null) {
           paint();
           return;
         }
-        // Ждущий владельца важнее идущего: сначала идущие, поверх — ждущие.
-        const entries = new Map<string, { id: GlyphId; stage: RowStage | undefined }>([
-          ...(running ?? []).map((entry) => [entry.threadId, { id: `running:${entry.icon}` as const, stage: stageOf(entry) }] as const),
-          ...awaiting.map((entry) => [entry.threadId, { id: entry.kind, stage: stageOf(entry) }] as const),
-        ]);
+        // Ждущий владельца важнее идущего: сначала идущие, поверх — ждущие. Тред с сообщением в очереди хоста значка
+        // не получает: у строки свои часики или крестик, и `awaitingChanges` сам снимает значок, поставленный раньше.
+        const entries = new Map<string, { id: GlyphId; stage: RowStage | undefined }>(
+          [
+            ...(running ?? []).map((entry) => [entry.threadId, { id: `running:${entry.icon}` as const, stage: stageOf(entry) }] as const),
+            ...awaiting.map((entry) => [entry.threadId, { id: entry.kind, stage: stageOf(entry) }] as const),
+          ].filter(([threadId]) => !queued.has(threadId)),
+        );
         const next = new Map([...entries].map(([threadId, { id, stage }]) => [threadId, keyOf(id, stage)] as const));
         const looks = new Map([...entries].map(([threadId, { id, stage }]) => [threadId, shownOf(id, stage)] as const));
         own = [...looks.values()].filter((look) => look.drawing !== undefined);
