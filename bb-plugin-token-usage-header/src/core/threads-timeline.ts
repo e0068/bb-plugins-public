@@ -37,8 +37,10 @@ import { gitEventSchema } from "./git-events";
  * 6 -> 7: a thread gained activeSec and waitingSec (durationSec split by
  * pauses longer than a minute), and its events may carry compact markers.
  * 7 -> 8: a bin segment gained cost (its usage in USD, priced like totalCost).
+ * 8 -> 9: a thread gained agentModels (the exact model id each of its agents
+ * spent most tokens on).
  */
-export const EXPECTED_THREADS_TIMELINE_SCHEMA_VERSION = 8;
+export const EXPECTED_THREADS_TIMELINE_SCHEMA_VERSION = 9;
 
 const AgentBinSchema = z
   .object({
@@ -99,6 +101,15 @@ const RawThreadEntrySchema = z
     /** How many distinct workflow runs took part in the session (0 — a regular thread with no workflow). */
     workflowCount: z.number().int().nonnegative(),
     bins: z.array(TimelineBinSchema),
+    /**
+     * agent key (as in bins[].agents[].key) -> the exact model id the agent
+     * spent most tokens on, so a chart can colour it by model. Per thread, not
+     * top-level like agentLabels: "main" ran on a different model in each
+     * thread. An agent with no usage has no entry; the v9 script always emits
+     * the field — a thread without it (hand-built data) names no models, and
+     * its agents keep their palette colours.
+     */
+    agentModels: z.record(z.string(), z.string()).optional(),
     /** The session's working directory, from its own transcript records — null when none carried both cwd and gitBranch. Used by the service layer to resolve commit events via a live `git log`; the parsed report otherwise only reads it, never runs anything with it. */
     cwd: z.string().nullable(),
     /** The session's git branch, same source/nullability as cwd. */

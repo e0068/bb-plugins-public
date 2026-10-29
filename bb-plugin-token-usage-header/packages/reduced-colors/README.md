@@ -22,7 +22,7 @@
 ## Как подключить к плагину
 
 1. В RPC-контракт — `loadReducedColors` (выход `parseReducedColors` поверх `bb.storage.kv.get(REDUCED_COLORS_KV_KEY)`) и `saveReducedColors` (пишет KV).
-2. В `app.tsx` — `app.slots.settingsSection({ id: "reduced-colors", title: "Reduced Colors", component })`, где компонент отдаёт `ReducedColorsSection` вызовы этих методов.
+2. В `app.tsx` — `app.slots.settingsSection({ id: "reduced-colors", title: "Reduced Colors", component })`, где компонент отдаёт `ReducedColorsSection` вызовы этих методов. Если плагин решает «включено или нет» сам — например, выбором из нескольких схем, — секции передают `hideSwitch`: тумблера нет, строки цветов не гаснут, а `enabled` плагин отдаёт из своего `load`.
 3. Корень экрана с графиками — в `ReducedColorsProvider`, цвет серии — из `useSeriesColors` по палитре в порядке легенды.
 
 Тесты: `npm test` — property на fast-check для ядра, jsdom/testing-library для React.

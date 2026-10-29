@@ -167,9 +167,9 @@ describe("threads-timeline panel — agent-detail sub-view", () => {
 
     // The left panel's breakdown is fed from the agentTimeline response (no
     // second sessionTokenUsage round trip); the only other calls are the
-    // mount-time viz-settings and Reduced Colors loads and the top session
-    // chart's threadsTimeline slice.
-    const allowed = new Set(["agentTimeline", "loadVizSettings", "loadReducedColors", "threadsTimeline"]);
+    // mount-time viz-settings, chart colour scheme and Reduced Colors loads and
+    // the top session chart's threadsTimeline slice.
+    const allowed = new Set(["agentTimeline", "loadVizSettings", "loadChartColorScheme", "loadReducedColors", "threadsTimeline"]);
     expect(slot.rpcCalls.filter((call) => !allowed.has(call.method))).toEqual([]);
     expect(slot.rpcCalls.some((call) => call.method === "agentTimeline")).toBe(true);
     for (const call of slot.rpcCalls) {

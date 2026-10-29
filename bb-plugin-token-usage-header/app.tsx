@@ -17,7 +17,7 @@ import {
   type PluginThreadHeaderActionProps,
   type PluginThreadPanelProps,
 } from "@get-bb/plugin-sdk/app";
-import { ReducedColorsProvider, ReducedColorsSection } from "@bb-plugins/reduced-colors";
+import { ReducedColorsProvider } from "@bb-plugins/reduced-colors";
 import { registerRailCollapse, registerSelectedThread, useFollowSelectedThread } from "@bb-plugins/rail-collapse";
 import { USAGE_PLUGIN_ID } from "@/lib/plugin-id";
 import type { rpcContract, threadSessionRpcContract } from "./server";
@@ -39,6 +39,8 @@ import { AgentTimelinePage, buildAgentDetailSubPath, THREADS_TIMELINE_PANEL_PATH
 import { ThreadsTimelinePage } from "./pages/ThreadsTimelinePage";
 import { SessionChartCard } from "./pages/thread-chart";
 import { SessionSummary } from "./pages/SessionSummary";
+import { ChartColorSchemeProvider } from "./pages/chart-color-scheme";
+import { ChartColorsSettings } from "./pages/ChartColorsSettings";
 import { requestSessionPanelRefresh, SessionPanelTab } from "./pages/SessionPanelTab";
 
 /** The thread panel action that hosts the session page in the right panel. */
@@ -53,33 +55,42 @@ type LoadState =
   | { kind: "error"; message: string }
   | { kind: "ready"; usage: ReadyUsage };
 
-/** Reduced Colors for every chart under one mount — loaded once, not per chart (packages/reduced-colors). */
-function WithReducedColors({ children }: { children: ReactNode }) {
-  const rpc = useRpc<typeof rpcContract>();
-  return <ReducedColorsProvider load={() => rpc.call("loadReducedColors", {})}>{children}</ReducedColorsProvider>;
-}
-
-/** The settings page's own Reduced Colors block — bb's declared settings have no colour field. */
-function ReducedColorsSettings() {
+/** The chart colour scheme and Reduced Colors for every chart under one mount — loaded once, not per chart (packages/reduced-colors). */
+function WithChartColors({ children }: { children: ReactNode }) {
   const rpc = useRpc<typeof rpcContract>();
   return (
-    <ReducedColorsSection load={() => rpc.call("loadReducedColors", {})} save={(value) => rpc.call("saveReducedColors", value)} />
+    <ChartColorSchemeProvider load={() => rpc.call("loadChartColorScheme", {})}>
+      <ReducedColorsProvider load={() => rpc.call("loadReducedColors", {})}>{children}</ReducedColorsProvider>
+    </ChartColorSchemeProvider>
+  );
+}
+
+/** The settings page's own Chart Colors block — bb's declared settings have no colour field. */
+function ChartColorsSettingsSection() {
+  const rpc = useRpc<typeof rpcContract>();
+  return (
+    <ChartColorsSettings
+      loadScheme={() => rpc.call("loadChartColorScheme", {})}
+      saveScheme={(scheme) => rpc.call("saveChartColorScheme", { scheme })}
+      loadReducedColors={() => rpc.call("loadReducedColors", {})}
+      saveReducedColors={(value) => rpc.call("saveReducedColors", value)}
+    />
   );
 }
 
 function TokenUsagePanelTab(props: PluginThreadPanelProps) {
   return (
-    <WithReducedColors>
+    <WithChartColors>
       <SessionPanelTab {...props} />
-    </WithReducedColors>
+    </WithChartColors>
   );
 }
 
 function TokenUsageHeaderAction(props: PluginThreadHeaderActionProps) {
   return (
-    <WithReducedColors>
+    <WithChartColors>
       <TokenUsageHeaderButton {...props} />
-    </WithReducedColors>
+    </WithChartColors>
   );
 }
 
@@ -311,9 +322,9 @@ function ThreadsTimelinePanel({ subPath }: PluginNavPanelProps) {
     openThread: (threadId) => navigate.toThread(threadId),
   });
   return (
-    <WithReducedColors>
+    <WithChartColors>
       {subPath === "" ? <ThreadsTimelinePage subPath={subPath} /> : <AgentTimelinePage subPath={subPath} />}
-    </WithReducedColors>
+    </WithChartColors>
   );
 }
 
@@ -346,9 +357,9 @@ export default definePluginApp((app) => {
   registerSelectedThread(app, USAGE_PLUGIN_ID, useSettings);
 
   app.slots.settingsSection({
-    id: "reduced-colors",
-    title: "Reduced Colors",
-    description: "Charts use a gradient of two colours instead of the palette.",
-    component: ReducedColorsSettings,
+    id: "chart-colors",
+    title: "Chart Colors",
+    description: "How the charts colour agents: by palette, by the model they ran on, or by a gradient of two colours.",
+    component: ChartColorsSettingsSection,
   });
 });

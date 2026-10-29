@@ -315,6 +315,67 @@ class BuildTimelineTest(unittest.TestCase):
         # No record is lost or double-counted between the main agent and the subagent.
         self.assertEqual(threads[0]["totalTokens"], 14)
 
+    def test_each_agent_is_named_by_the_model_it_ran_on(self):
+        sess = "33333333-3333-3333-3333-333333333333"
+        _write_raw(self._p("projA", f"{sess}.jsonl"), [_assistant("m1", "r1", 5, "2026-08-19T10:00:01.000Z", model="claude-opus-4-8")])
+        _write_raw(
+            self._p("projA", sess, "subagents", "agent-aaa.jsonl"),
+            [_assistant("m2", "r2", 9, "2026-08-19T10:00:02.000Z", model="claude-haiku-4-5")],
+        )
+        thread = self._threads(limit=20, unit=10)[0]
+        self.assertEqual(thread["agentModels"], {"main": "claude-opus-4-8", "agent-aaa": "claude-haiku-4-5"})
+
+    def test_an_agent_that_switched_models_is_named_by_the_one_with_most_tokens_across_all_bins(self):
+        sess = "44444444-4444-4444-4444-444444444444"
+        _write_raw(
+            self._p("projA", f"{sess}.jsonl"),
+            [
+                _assistant("m1", "r1", 6, "2026-08-19T10:00:01.000Z", model="claude-sonnet-4"),
+                _assistant("m2", "r2", 5, "2026-08-19T10:00:11.000Z", model="claude-opus-4-8"),
+                _assistant("m3", "r3", 4, "2026-08-19T10:00:21.000Z", model="claude-opus-4-8"),
+            ],
+        )
+        thread = self._threads(limit=20, unit=10)[0]
+        self.assertEqual(thread["agentModels"], {"main": "claude-opus-4-8"})
+
+    def test_a_tie_between_models_goes_to_the_first_id_alphabetically(self):
+        sess = "55555555-5555-5555-5555-555555555555"
+        _write_raw(
+            self._p("projA", f"{sess}.jsonl"),
+            [
+                _assistant("m1", "r1", 5, "2026-08-19T10:00:01.000Z", model="claude-sonnet-4"),
+                _assistant("m2", "r2", 5, "2026-08-19T10:00:02.000Z", model="claude-opus-4-8"),
+            ],
+        )
+        thread = self._threads(limit=20, unit=10)[0]
+        self.assertEqual(thread["agentModels"], {"main": "claude-opus-4-8"})
+
+    def test_a_placeholder_record_without_usage_does_not_name_a_model(self):
+        sess = "66666666-6666-6666-6666-666666666666"
+        _write_raw(
+            self._p("projA", f"{sess}.jsonl"),
+            [
+                _assistant("m1", "r1", 0, "2026-08-19T10:00:01.000Z", model="<synthetic>"),
+                _assistant("m2", "r2", 3, "2026-08-19T10:00:02.000Z", model="claude-sonnet-4"),
+            ],
+        )
+        thread = self._threads(limit=20, unit=10)[0]
+        self.assertEqual(thread["agentModels"], {"main": "claude-sonnet-4"})
+
+    def test_a_merged_workflow_segment_is_named_by_the_model_most_of_its_members_used(self):
+        sess = "77777777-7777-7777-7777-777777777777"
+        _write_raw(self._p("projA", sess + ".jsonl"), [_assistant("m0", "r0", 5, "2026-08-19T10:00:00.000Z", model="claude-opus-4-8")])
+        _write_raw(
+            self._p("projA", sess, "subagents", "workflows", "wf_run1", "agent-x.jsonl"),
+            [_assistant("m1", "r1", 3, "2026-08-19T10:00:01.000Z", model="claude-haiku-4-5")],
+        )
+        _write_raw(
+            self._p("projA", sess, "subagents", "workflows", "wf_run1", "agent-y.jsonl"),
+            [_assistant("m2", "r2", 4, "2026-08-19T10:00:02.000Z", model="claude-sonnet-4")],
+        )
+        thread = threads_timeline.build_timeline(self.root, limit=20, unit=300, group_workflows=True)["threads"][0]
+        self.assertEqual(thread["agentModels"], {"main": "claude-opus-4-8", "workflow:wf_run1": "claude-sonnet-4"})
+
     def test_agents_within_a_bin_are_sorted_by_total_desc(self):
         sess = "22222222-2222-2222-2222-222222222222"
         main_path = self._p("projA", f"{sess}.jsonl")

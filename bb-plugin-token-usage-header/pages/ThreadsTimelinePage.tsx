@@ -44,7 +44,7 @@ import {
   parseGearSettings,
   type ThreadEntry,
 } from "../src/core";
-import { ThreadRow, computeDisplayBins, useSeriesColorFor } from "./thread-chart";
+import { ThreadRow, computeDisplayBins, useAgentColors } from "./thread-chart";
 import { THREADS_TIMELINE_PANEL_PATH, buildAgentDetailSubPath } from "./AgentTimelinePage";
 import { UsageProjectsSummary } from "./UsageProjectsSummary";
 
@@ -226,7 +226,14 @@ export function ThreadsTimelinePage(_props: PluginNavPanelProps) {
     });
   }, [threads]);
   const [agentColors, setAgentColors] = useState<Record<string, string>>({});
-  const colorFor = useSeriesColorFor(agentKeys, (agentKey) => agentColors[agentKey] || undefined);
+  const colorsOf = useAgentColors(agentKeys, (agentKey) => agentColors[agentKey] || undefined);
+  // The legend lists an agent once for the whole feed, so under the model scheme
+  // it shows the model of the first thread that has the agent; the columns use their own thread's.
+  const legendModels = useMemo(
+    // fromEntries keeps the last pair of a key, so the pairs go in reversed to keep the first.
+    () => Object.fromEntries(threads.flatMap((t) => Object.entries(t.agentModels ?? {})).reverse()),
+    [threads],
+  );
   /** Display-only name for an agentId — colour/click/agentColors keys stay the raw id, only the shown text changes. */
   function labelFor(agentKey: string): string {
     return agentLabels[agentKey] ?? agentKey;
@@ -439,7 +446,7 @@ export function ThreadsTimelinePage(_props: PluginNavPanelProps) {
             />
             <AgentColorsPopover
               agentKeys={agentKeys}
-              colorFor={colorFor}
+              colorFor={colorsOf(legendModels)}
               labelFor={labelFor}
               onAgentColorChange={(key, hex) => setAgentColors((prev) => ({ ...prev, [key]: hex }))}
             />
@@ -466,7 +473,7 @@ export function ThreadsTimelinePage(_props: PluginNavPanelProps) {
                   perCardHeight={gear.heightMode === "perCard"}
                   maxBinCount={maxBinCount}
                   agentKeys={agentKeys}
-                  colorFor={colorFor}
+                  colorFor={colorsOf(thread.agentModels)}
                   labelFor={labelFor}
                   onSegmentClick={openAgentDetail}
                   onOpenThread={thread.threadId ? () => navigate.toThread(thread.threadId!) : undefined}

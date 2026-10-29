@@ -7,28 +7,31 @@ import type { rpcContract } from "../server";
 
 afterEach(cleanup);
 
-describe("Reduced Colors settings section", () => {
-  it("is registered on the settings page under its own title", async () => {
-    const app = await loadPluginApp(() => import("../app"));
-    expect(app.settingsSections.find((section) => section.id === "reduced-colors")).toMatchObject({ title: "Reduced Colors" });
-  });
-
-  it("loads the stored value and saves the switch through the plugin's rpc", async () => {
+// The scheme choice itself is covered in chart-color-scheme.test.tsx; this block
+// is about the gradient colours that the Reduced Colors scheme keeps.
+describe("Reduced Colors gradient inside the Chart Colors settings section", () => {
+  it("loads the stored gradient and saves an edit of it through the plugin's rpc", async () => {
     const app = await loadPluginApp(() => import("../app"));
     const saved: ReducedColors[] = [];
     const rpc: Partial<PluginRpcTestHandlers<typeof rpcContract>> = {
-      loadReducedColors: async () => DEFAULT_REDUCED_COLORS,
+      loadChartColorScheme: async () => "reduced",
+      saveChartColorScheme: async () => ({ ok: true as const }),
+      loadReducedColors: async () => ({ ...DEFAULT_REDUCED_COLORS, enabled: true }),
       saveReducedColors: async (value) => {
         saved.push(value);
         return { ok: true as const };
       },
     };
-    renderSlot(app.settingsSections.find((section) => section.id === "reduced-colors")!, {}, {
+    renderSlot(app.settingsSections.find((section) => section.id === "chart-colors")!, {}, {
       rpc: rpc as PluginRpcTestHandlers<typeof rpcContract>,
     });
 
-    fireEvent.click(await screen.findByRole("switch", { name: "Use Reduced Colors" }));
+    // The light theme's low end typed over the dark theme's high end: a colour the pair does not hold yet.
+    const typed = DEFAULT_REDUCED_COLORS.light.low;
+    fireEvent.change(await screen.findByRole("textbox", { name: "Dark theme high colour" }), { target: { value: typed } });
 
-    await waitFor(() => expect(saved).toEqual([{ ...DEFAULT_REDUCED_COLORS, enabled: true }]));
+    await waitFor(() =>
+      expect(saved).toEqual([{ ...DEFAULT_REDUCED_COLORS, enabled: true, dark: { ...DEFAULT_REDUCED_COLORS.dark, high: typed } }]),
+    );
   });
 });

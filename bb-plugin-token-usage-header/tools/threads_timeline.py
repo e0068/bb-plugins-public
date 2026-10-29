@@ -44,7 +44,10 @@ import git_events  # noqa: E402
 # 7 -> 8: every bin segment (agents[]) gained cost — that segment's usage in
 # USD, priced by the same tokens.Bucket as totalCost, so the charts can size
 # columns by money instead of tokens.
-SCHEMA_VERSION = 8
+# 8 -> 9: every thread gained agentModels — the exact model id each agent of
+# the thread spent most tokens on, so the charts can colour an agent by the
+# model it ran on.
+SCHEMA_VERSION = 9
 
 # Decimal places a segment's cost keeps: a one-minute bin of one agent often
 # costs a fraction of a cent, and rounding it to cents would flatten the
@@ -158,6 +161,27 @@ def _agent_label(agent_key, meta):
     return agent_key
 
 
+def _dominant_models(bin_buckets):
+    """agent key -> the model id that agent spent most tokens on, across all the bins.
+
+    An agent can switch models mid-session (the main one through /model), but
+    a chart colours it once, so the model with the most tokens names it; a tie
+    goes to the first id alphabetically, so the answer doesn't depend on
+    record order. A model without usage (Claude Code's <synthetic> placeholder
+    replies) never names an agent, and an agent without any usage has no entry.
+    """
+    by_agent = defaultdict(lambda: defaultdict(int))
+    for agents in bin_buckets.values():
+        for key, bucket in agents.items():
+            for (model, _effort, _fast), counts in bucket.variants.items():
+                by_agent[key][model] += counts.total
+    return {
+        key: min((m for m, total in models.items() if total > 0), key=lambda m: (-models[m], m))
+        for key, models in by_agent.items()
+        if any(total > 0 for total in models.values())
+    }
+
+
 def _workflow_name(root, project, session, run_id):
     """Human-readable workflow name for its run_id.
 
@@ -243,7 +267,7 @@ def build_timeline(root, limit=20, unit=300, project=None, session=None, group_w
     # every record of a given agent-<id>.jsonl file (one meta.json per agent
     # invocation), so which record "wins" doesn't change the label.
     agent_labels = {}
-    for rec in tokens.walk(files):
+    for rec in tokens.walk(files, use_index=True):
         records_by_session[rec["session"]].append(rec)
         key = _bin_key(rec, group_workflows)
         if key not in agent_labels:
@@ -344,6 +368,7 @@ def build_timeline(root, limit=20, unit=300, project=None, session=None, group_w
                 "unpricedModels": tokens.unpriced_models(*(b.models for agents in bin_buckets.values() for b in agents.values())),
                 "workflowCount": workflow_count,
                 "bins": bins_out,
+                "agentModels": _dominant_models(bin_buckets),
                 "cwd": git_info["cwd"],
                 "gitBranch": git_info["gitBranch"],
                 "events": git_info["events"],

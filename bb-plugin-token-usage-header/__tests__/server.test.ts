@@ -766,6 +766,43 @@ describe("server.ts threadsTimeline", () => {
     expect(result).toMatchObject({ threads: [{ bins: [{ agents: [{ key: "main", cost: 0.75 }] }] }] });
   });
 
+  it("carries each thread's agent models through to the frontend", async () => {
+    const thread = {
+      session: "sess-1",
+      project: "my-project",
+      title: "sess-1",
+      start: "2026-08-25T10:00:00Z",
+      end: "2026-08-25T10:05:00Z",
+      durationSec: 300,
+      activeSec: 300,
+      waitingSec: 0,
+      totalTokens: 1500,
+      totalCost: 0.75,
+      workflowCount: 0,
+      bins: [{ t: "2026-08-25T10:00:00Z", agents: [{ key: "main", total: 1500 }] }],
+      agentModels: { main: "claude-opus-4-8" },
+      cwd: null,
+      gitBranch: null,
+      events: [],
+      bbProjectId: null,
+      bbProjectName: null,
+      threadId: null,
+      bbThreadTitle: null,
+      isAlive: false,
+      isWorking: false,
+      flowStages: [],
+    };
+    const timeline: ThreadsTimeline = { schemaVersion: 9, unit: 60, threads: [thread], agentLabels: {}, truncated: false };
+    const threadsTimelineService = fakeThreadsTimelineService({
+      query: vi.fn(async (): Promise<ThreadsTimelineRunResult> => ({ ok: true, data: timeline })),
+    });
+    const harness = await loadPluginWithDeps({ threadsTimelineService });
+
+    const result = await harness.callRpc("threadsTimeline", { limit: 20, unit: 60 });
+
+    expect(result).toMatchObject({ threads: [{ agentModels: { main: "claude-opus-4-8" } }] });
+  });
+
   it("passes truncated through to the RPC output as-is", async () => {
     const timeline: ThreadsTimeline = { schemaVersion: 1, unit: 60, threads: [], agentLabels: {}, truncated: true };
     const threadsTimelineService = fakeThreadsTimelineService({
