@@ -3,6 +3,8 @@ import { cleanup, fireEvent, screen, waitFor } from "@testing-library/react";
 import { loadPluginApp, renderSlot } from "@get-bb/plugin-sdk/testing/app";
 import { afterEach, describe, expect, it } from "vitest";
 
+const app = await loadPluginApp(() => import("../app"));
+
 afterEach(cleanup);
 
 const flows = [
@@ -12,7 +14,6 @@ const flows = [
 
 const mount = async (selected = "none") => {
   const state = { selected };
-  const app = await loadPluginApp(() => import("../app"));
   const customization = app.composerCustomizations.find((c) => c.id === "flow-progress")!;
   const slot = renderSlot(customization.banners![0]!, {}, {
     rpc: {
@@ -63,7 +64,6 @@ describe("строка выбора flow в треде без прогона", (
   });
 
   it("без ответа о выборе строки нет", async () => {
-    const app = await loadPluginApp(() => import("../app"));
     const customization = app.composerCustomizations.find((c) => c.id === "flow-progress")!;
     const slot = renderSlot(customization.banners![0]!, {}, { rpc: { getFlowProgress: () => null } as never, composer: { scope: { kind: "thread", threadId: "thr_1" } }, settings: { language: "Русский" } });
     await waitFor(() => expect(slot.rpcCalls.some((c) => c.method === "threadFlowChoice")).toBe(true));

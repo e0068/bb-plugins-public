@@ -6,6 +6,8 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import { ru } from "../lib/messages/ru";
 
+const app = await loadPluginApp(() => import("../app"));
+
 // В треде Mail «Пропустить» в полосе прогона молча гасло и снова загоралось:
 // ответ сервера никто не читал. Отказ и ошибка вызова теперь видны тостом —
 // так же, как у кнопок в тосте об упавшем шаге.
@@ -47,7 +49,6 @@ const view = (pull: { state: "now" | "fail"; skipQueued?: boolean }) => ({
 
 const mount = async (progress: unknown, rpc: Record<string, () => unknown>) => {
   render(<Toaster />);
-  const app = await loadPluginApp(() => import("../app"));
   const banner = app.composerCustomizations.find((c) => c.id === "flow-progress")!.banners![0]!;
   const slot = renderSlot(banner, {}, { rpc: { getFlowProgress: () => progress, ...rpc } as never, composer: { scope: { kind: "thread", threadId: "thr_1" } }, settings: { language: "Русский" } });
   fireEvent.click(await screen.findByRole("button", { name: /Прогресс flow/ }));

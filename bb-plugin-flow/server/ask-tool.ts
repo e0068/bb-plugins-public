@@ -5,6 +5,7 @@ import type { BbPluginApi } from "@get-bb/plugin-sdk";
 
 import type { Carried } from "../core/carry";
 import { awaitingKind } from "../core/awaiting";
+import { childBriefResult, parentNotice, routesToParent } from "../core/child-brief";
 import { resolvesIssues, type ResolveTarget } from "../core/clarify";
 import { approvalIssues, outcomeText } from "../core/approval-guard";
 import { unfinishedBefore } from "../core/automation-run";
@@ -305,7 +306,7 @@ const modelPlanOf = (stages: StageSettings["stages"], thread: { current: Executi
 });
 
 export const registerAskTool = (
-  bb: Pick<BbPluginApi, "agents" | "realtime">,
+  bb: Pick<BbPluginApi, "agents" | "realtime" | "log">,
   store: DecisionStore,
   /** `stages` — этапы flow треда; без них бриф с этапами не принимается. */
   deps: {
@@ -332,8 +333,23 @@ export const registerAskTool = (
     limits?: (threadId: string) => string | null;
     /** Модель треда с effort и каталог моделей его провайдера (./boundary.ts); `null` — тред не Claude Code. Бриф с этапами несёт по ним план моделей; нет или сбой — без плана. */
     threadModels?: (threadId: string) => Promise<{ current: Execution; models: readonly CatalogModel[] } | null>;
+    /** Родитель, который ведёт работу треда; `null` — тред без такого родителя. Бриф запуска потомка уходит ему, а не владельцу. Нет или сбой — владельцу. */
+    parentOf?: (threadId: string) => Promise<string | null>;
+    /** Реплика родителю о брифе потомка, который ждёт его ответа (../core/child-brief.ts). */
+    tellParent?: (parentThreadId: string, text: string) => Promise<void>;
   },
 ): void => {
+  /** Дошла ли реплика родителю; не дошла — причина в журнал Flow, а бриф остаётся владельцу. */
+  const tellParent = (parentThreadId: string, text: string): Promise<boolean> =>
+    deps.tellParent === undefined
+      ? Promise.resolve(false)
+      : deps.tellParent(parentThreadId, text).then(
+          () => true,
+          (error: unknown) => {
+            bb.log.warn(`ask_decision: the brief did not reach the parent thread ${parentThreadId}, it stays with the owner (${error instanceof Error ? error.message : String(error)})`);
+            return false;
+          },
+        );
   bb.agents.registerTool({
     name: ASK_TOOL_NAME,
     description:
@@ -412,6 +428,7 @@ export const registerAskTool = (
       const zero = zeroForecastIssues(brief, launched);
       if (zero.length > 0) return toolError(`Brief not accepted: ${zero.join("; ")}.`);
       const stored = await store.putBrief(brief);
+      const parent = stored.kind === "stored" && routesToParent(brief) ? ((await deps.parentOf?.(ctx.threadId).catch(() => null)) ?? null) : null;
       if (stored.kind === "stored") {
         // Выбор уехал в новый бриф. Группа, вернувшаяся с утверждением, отдаёт его всем виджетам до следующего утверждения;
         // черновики свёрнутых остаются — их показывает раскрытая строка.
@@ -428,6 +445,12 @@ export const registerAskTool = (
         if (holdsNothing(brief) && brief.settle === "agent") await deps.decided?.(brief).catch(() => undefined);
         // Бриф, который прогон не держит, запускает работу сразу — рекомендованным прогоном; выбор владельца придёт с Утверждением.
         if (holdsNothing(brief) && stageItems(brief).some((item) => recommendedStageChoice(item).run)) await store.markLaunched(ctx.threadId).catch(() => undefined);
+      }
+      // Бриф запуска потомка ждёт родителя, а не владельца: значка ожидания у владельца нет, родителю — реплика с брифом.
+      // Реплика уходит и по брифу, решённому агентом: родитель может его поменять (BBPL-994).
+      // Реплика не дошла — бриф остаётся владельцу: иначе он пропал бы молча, и тред ждал бы ответа ниоткуда.
+      const routed = parent !== null && (await tellParent(parent, parentNotice(ctx.threadId, brief))) ? parent : null;
+      if (stored.kind === "stored" && routed === null) {
         const kind = awaitingKind(brief);
         if (kind !== null) await store.putAwaiting(brief.threadId, { briefId: brief.id, kind }).catch(() => undefined);
       }
@@ -439,7 +462,9 @@ export const registerAskTool = (
       }
       if (stored.kind === "stored" && params.outcome !== undefined) deps.emit?.("flow.stage-done", ctx.threadId, { stageId: params.outcome.stage });
       return stored.kind === "stored"
-        ? briefResult(brief)
+        ? routed === null
+          ? briefResult(brief)
+          : childBriefResult(brief, routed)
         : toolError(`The brief takes ${stored.bytes} bytes, and storage accepts at most ${KV_VALUE_LIMIT_BYTES} bytes per brief. Split the questions into several briefs.`);
     },
   });

@@ -1,7 +1,7 @@
 // Текст агента в брифе и демонстрации — движком Kasimov в режиме чтения, как документ в MD Opener (MdText,
 // packages/md-doc-view): таблицы, заголовки, код, цитаты, списки и диаграммы mermaid. Ссылка `[текст](цель)` открывает
-// файл или адрес тем же путём, что ссылка результата этапа, а картинка `![подпись](путь)` грузится из дерева треда
-// маршрутом сервера Flow (core/brief-image.ts). Корни файлов треда кладёт загрузчик брифа в контекст,
+// файл или адрес тем же путём, что ссылка результата этапа, а картинка `![подпись](путь)` грузится из дерева или
+// хранилища треда маршрутом сервера Flow (core/brief-image.ts). Корни файлов треда кладёт загрузчик брифа в контекст,
 // чтобы не тянуть их пропсом через каждую строку.
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type MouseEvent } from "react";
 import { useBbNavigate } from "@get-bb/plugin-sdk/app";
@@ -46,14 +46,20 @@ function useLinkResolver() {
 }
 
 /**
- * Адрес картинки из дерева треда. Корни ещё не пришли — резолвера нет, и движок ждёт его вместе с корнями ссылок; у
- * треда нет дерева — адреса нет, и на месте снимка плашка с подписью.
+ * Адрес картинки из корней треда: путь от корня дерева ищется в дереве, абсолютный — в дереве и хранилище. Корни ещё не
+ * пришли — резолвера нет, и движок ждёт его вместе с корнями ссылок; нужного корня у треда нет — адреса нет, и на месте
+ * снимка плашка с подписью.
  */
 function useImageResolver() {
   const roots = useContext(FileRootsContext);
   const threadId = roots?.threadId;
   const tree = roots?.environmentId != null;
-  return useMemo(() => (threadId === undefined ? undefined : (src: string) => (tree ? briefImageUrl(threadId, src) : null)), [threadId, tree]);
+  const anyRoot = tree || roots?.storage != null;
+  return useMemo(() => {
+    if (threadId === undefined) return undefined;
+    const hasRoot = (src: string) => (bareHref(src).startsWith("/") ? anyRoot : tree);
+    return (src: string) => (hasRoot(src) ? briefImageUrl(threadId, src) : null);
+  }, [threadId, tree, anyRoot]);
 }
 
 type Resolvers = { linkResolver: ReturnType<typeof useLinkResolver>; imageResolver: ReturnType<typeof useImageResolver> };

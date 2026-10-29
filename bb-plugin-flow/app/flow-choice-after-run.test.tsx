@@ -3,6 +3,8 @@ import { cleanup, screen } from "@testing-library/react";
 import { loadPluginApp, renderSlot } from "@get-bb/plugin-sdk/testing/app";
 import { afterEach, describe, expect, it } from "vitest";
 
+const app = await loadPluginApp(() => import("../app"));
+
 afterEach(cleanup);
 
 const finished = {
@@ -18,7 +20,6 @@ const finished = {
 
 describe("после завершённого прогона контейнер состояния Flow — строка выбора flow", () => {
   it("прогон завершён — строка стоит на «Автоматически»; над композером у Flow только полоса прогона, тостов Flow там нет", async () => {
-    const app = await loadPluginApp(() => import("../app"));
     const customization = app.composerCustomizations.find((c) => c.id === "flow-progress")!;
     expect(customization.banners!.map((banner) => banner.id)).toEqual(["progress"]);
     renderSlot(customization.banners![0]!, {}, {

@@ -24,8 +24,13 @@ const review = (() => {
 })();
 const files: Record<string, string> = { [`${DIR}/review.js`]: review, [`${DIR}/lead-waves.js`]: "const MAX_ROUNDS = 5\n" };
 
-const open = (subPath: string) =>
-  renderSlot<PluginNavPanelProps, never>(app.navPanels.find((p) => p.id === "flows")!, { subPath }, {
+type Saved = { path: string; source: string };
+
+/** Раздел на странице Flow; `saved` — первое сохранение workflow: тест ждёт сам вызов, а не таймер. */
+const open = (subPath: string) => {
+  let save: (input: Saved) => void = () => undefined;
+  const saved = new Promise<Saved>((resolve) => (save = resolve));
+  const slot = renderSlot<PluginNavPanelProps, never>(app.navPanels.find((p) => p.id === "flows")!, { subPath }, {
     rpc: {
       getFlowSettings: () => settings,
       saveFlowSettings: (input: unknown) => input,
@@ -38,13 +43,13 @@ const open = (subPath: string) =>
         ],
       }),
       workflowRead: ({ path }: { path: string }) => ({ source: files[path] ?? "" }),
-      workflowSave: ({ path }: { path: string }) => ({ path }),
+      workflowSave: (input: Saved) => (save(input), { path: input.path }),
       workflowAgents: () => [],
       workflowProviders: () => [],
     } as never,
   });
-
-const saved = (slot: ReturnType<typeof open>) => slot.rpcCalls.find((c) => c.method === "workflowSave")?.input as { path: string; source: string } | undefined;
+  return Object.assign(slot, { saved });
+};
 
 // Конструктор рисует редактор markdown на каждого агента: под нагрузкой полного прогона ему нужно больше пяти секунд по умолчанию.
 vi.setConfig({ testTimeout: 20000 });
@@ -60,15 +65,16 @@ describe("раздел Workflows страницы Flow", () => {
     const slot = open("workflows/review");
     fireEvent.change(await slot.findByLabelText("outline workflow description"), { target: { value: "Reviews twice" } });
     fireEvent.click(slot.getByRole("button", { name: "Save" }));
-    await vi.waitFor(() => expect(saved(slot)?.source).toContain("Reviews twice"), { timeout: 5000 });
-    expect(saved(slot)?.path).toBe(`${DIR}/review.js`);
+    const { path, source } = await slot.saved;
+    expect(source).toContain("Reviews twice");
+    expect(path).toBe(`${DIR}/review.js`);
   });
 
   it("рукописный workflow правится как код и сохраняется как есть", async () => {
     const slot = open("workflows/lead-waves");
     fireEvent.change(await slot.findByLabelText("workflow source"), { target: { value: "const MAX_ROUNDS = 7\n" } });
     fireEvent.click(slot.getByRole("button", { name: "Save" }));
-    await vi.waitFor(() => expect(saved(slot)).toEqual({ path: `${DIR}/lead-waves.js`, source: "const MAX_ROUNDS = 7\n" }), { timeout: 5000 });
+    expect(await slot.saved).toEqual({ path: `${DIR}/lead-waves.js`, source: "const MAX_ROUNDS = 7\n" });
   });
 
   it("новый workflow: имя, пустой конструктор, первое сохранение создаёт файл", async () => {

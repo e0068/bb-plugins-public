@@ -380,6 +380,7 @@ export const en: Messages = {
     removeSet: (label) => `Remove set ${label}`,
     stepsReadOnly: "The steps of this automation are edited in the Automations plugin",
     stepNoPrAbove: "There is no “Open a PR” above in this flow: the step works if another flow, an earlier run or you open the pull request",
+    stepBeforeMerge: "Will go red: the code is not in main yet — put the step after “Merge the PR”",
     stepCount: (n) => `${n} ${n === 1 ? "step" : "steps"}`,
     loadFailed: "Couldn't load or save the stages — reload the page",
     table: "Work stages",

@@ -17,7 +17,7 @@ import { issueKeysArgs, issueKeysEnv, parseIssuedKeys } from "./core/bb-tasks-co
 import { bbCliClient } from "./wiring/bb-cli-client";
 import { cliRunMessage, type CliPorts } from "./wiring/bb-cli-run";
 import type { CatchUpOutcome, ParentDeliveryOutcome } from "./wiring/catch-up";
-import type { RefreshOutcome } from "./wiring/create-pr";
+import type { CreatePrPorts, RefreshOutcome } from "./wiring/create-pr";
 import { gitClient } from "./wiring/git-client";
 import type { GitPorts } from "./wiring/git-run";
 import { findLinkedTask } from "./wiring/linked-task";
@@ -34,10 +34,13 @@ import {
   deliverIntoParent,
   parentHeadOf,
   environmentIdOf,
+  environmentInMain,
   gatherAndCreate,
   markAwaiting,
   githubBranchesOf,
   githubPullOf,
+  lastClosedPullOf,
+  withPullNumber,
   mergeThroughHostOrGithub,
   mergeWithVerdict,
   parentDeliveryOf,
@@ -47,6 +50,7 @@ import {
   resolveToken,
   settleVersionsForMerge,
   type ChildDelivery,
+  type GithubBranches,
   type GithubTokenSettings,
   type PrBranchOutcome,
   type Sdk,
@@ -89,6 +93,13 @@ export interface StepPorts {
    */
   refreshPr?: (threadId: string) => Promise<RefreshOutcome | "no-open-pr">;
   /**
+   * Открыть PR ветки треда — им «Смёрджить PR» везёт в main хвост, оставшийся
+   * на ветке после влитого PR. По умолчанию — настоящий GitHub.
+   */
+  openPr?: (threadId: string) => Promise<{ url: string; number: number }>;
+  /** Клиент GitHub по токену, которым «Смёрджить PR» спрашивает и вливает PR; по умолчанию — настоящий. */
+  github?: (token: string) => CreatePrPorts;
+  /**
    * План и факт прогона треда — их знает только плагин, ведущий прогон.
    * Без порта шаги «План → задача» и «Факт → задача» ничего не пишут и
    * проходят зелёными: писать нечего, а не что-то сломалось.
@@ -121,6 +132,9 @@ export const lastBumpKey = (environmentId: string): string => `last-bump-level:$
 
 /** Деталь мёрджа, перед которым PR догнан до ветки треда: владелец видит, что коммиты после «Открыть PR» доехали. */
 export const MERGE_REFRESHED = "PR branch brought up to the thread's branch";
+
+/** Деталь мёрджа хвоста: PR ветки уже влит, а коммиты после него уехали новым PR. */
+export const mergeTailOpened = (number: number): string => `commits after the merged PR opened as PR #${number}`;
 
 export type Steps = Readonly<Record<StepId, (threadId: string) => Promise<StepOutcome>>>;
 
@@ -213,6 +227,23 @@ export function createSteps(ports: StepPorts): Steps {
   const { sdk, kv, settings } = ports;
   const cli = () => ports.cli ?? bbCliClient();
   const refreshPr = ports.refreshPr ?? (async (threadId: string) => refreshOpenPr(sdk, kv, await resolveToken(settings), threadId));
+  const openPr = ports.openPr ?? (async (threadId: string) => gatherAndCreate(sdk, kv, await resolveToken(settings), threadId));
+  const git = ports.git ?? gitClient;
+
+  /**
+   * Хвост после влитого PR — новым PR на ветку треда. Последний закрытый PR
+   * ветки не влит — отказ: закрытое владельцем шаг не вливает в обход него.
+   * Влитого PR у ветки нет или GitHub не ответил — `null`: хвоста нет, решает мёрдж.
+   */
+  const openTail = async (threadId: string, branches: GithubBranches): Promise<{ branches: GithubBranches; number: number } | null> => {
+    const last = await lastClosedPullOf(branches);
+    if (last === "unmerged") throw new Error("the branch's last pull request was closed without a merge — reopen it or open a new one");
+    if (last !== "merged") return null;
+    const opened = await openPr(threadId).catch((error: unknown) => {
+      throw new Error(`the branch has commits after its merged pull request, but a PR for them could not be opened: ${messageOf(error)}`);
+    });
+    return { branches, number: opened.number };
+  };
 
   const environmentOf = async (threadId: string): Promise<string> => {
     const environmentId = await environmentIdOf(sdk, threadId);
@@ -235,7 +266,7 @@ export function createSteps(ports: StepPorts): Steps {
 
   const moveTasks = (status: "in_review" | "done") => async (threadId: string) => {
     // В done задача уходит только с кодом треда в origin/main; в in_review — как есть.
-    const gate = codeInMainGate(sdk, ports.git ?? gitClient, threadId);
+    const gate = codeInMainGate(sdk, git, threadId);
     const report = await markLinkedTasksStatus(cli(), threadId, status, gate);
     const outcome = tasksOutcome(report, "Linked tasks were not moved", `Tasks not moved to ${status}`);
     if (!outcome.ok) return outcome;
@@ -399,26 +430,36 @@ export function createSteps(ports: StepPorts): Steps {
     "files.bump-patch": bumpStep("patch"),
     // Состояние PR спрашивается у GitHub до мёрджа и после упавшего: уже
     // влитый PR — успех шага, закрытый — названный отказ, конфликт — названный
-    // конфликт, а не «HTTP 409» (shell/pr-helpers.ts). Перед мёрджем ветка
+    // конфликт, а не «HTTP 409» (shell/pr-helpers.ts). PR не найден, а код
+    // ветки уже в main, — тоже успех: GitHub ищет только открытые PR, и повтор
+    // шага после мёржа иначе падал бы «not found» (BBPL-987). Перед мёрджем ветка
     // PR догоняется до ветки треда: PR собран через API без пуша, и коммиты
     // после «Открыть PR» иначе в main не попадают; незакоммиченное шаг
     // сперва коммитит сам, чтобы оно тоже уехало в PR.
     // Догнанный PR теряет коммит бампа (wiring/create-pr.ts), поэтому версия
     // поднимается заново тем разрядом, что запомнил шаг бампа; не поднялась —
     // мёрджа нет: влить плагин на старой версии шаг бампа и не даёт.
+    // Открытого PR нет, код ветки не в main, а последний PR ветки влит, — это
+    // хвост после мёржа (журнал прогона, слияние с main): шаг открывает на него
+    // новый PR, поднимает версии его разрядом бампа (по умолчанию patch) и вливает
+    // (BBPL-992). Не открылся — шаг красный, мёрдж не засчитан.
     "git.merge": guarded(
       afterCommit(
         orIntoParent(deliverAndTell, async (threadId) => {
           const refreshed = await refreshPr(threadId);
           const environmentId = await environmentOf(threadId);
-          const gh = await githubPullOf(sdk, settings, environmentId);
-          const level = refreshed === "updated" ? await kv.get<BumpLevel>(lastBumpKey(environmentId)) : undefined;
+          const inMain = refreshed === "no-open-pr" ? await environmentInMain(sdk, git, environmentId) : null;
+          const tail = inMain === "not-in-main" ? await openTail(threadId, await githubBranchesOf(sdk, settings, environmentId, ports.github)) : null;
+          const gh = tail === null ? await githubPullOf(sdk, settings, environmentId, ports.github) : withPullNumber(tail.branches, tail.number);
+          const remembered = refreshed === "updated" || tail !== null ? await kv.get<BumpLevel>(lastBumpKey(environmentId)) : undefined;
+          const level = remembered ?? (tail === null ? undefined : "patch");
           const rebump = level === undefined ? null : bumpOutcome(await settleVersionsForMerge(gh, level));
           if (rebump !== null && !rebump.ok) return rebump;
           await markAwaiting(sdk, environmentId, "merge");
-          const outcome = await mergeWithVerdict(gh, mergeThroughHostOrGithub(sdk, gh, environmentId));
+          const outcome = await mergeWithVerdict(gh, mergeThroughHostOrGithub(sdk, gh, environmentId), async () => inMain ?? environmentInMain(sdk, git, environmentId));
           if (outcome.ok) await kv.delete(lastBumpKey(environmentId));
-          const before = refreshed === "updated" ? [MERGE_REFRESHED, ...(rebump?.ok === true && rebump.detail !== null ? [`versions raised again: ${rebump.detail}`] : [])] : [];
+          const raised = rebump?.ok === true && rebump.detail !== null ? [`${tail === null ? "versions raised again" : "versions"}: ${rebump.detail}`] : [];
+          const before = [...(tail === null ? [] : [mergeTailOpened(tail.number)]), ...(refreshed === "updated" ? [MERGE_REFRESHED] : []), ...raised];
           const told = outcome.ok ? { ...outcome, detail: [...before, ...(outcome.detail === null ? [] : [outcome.detail])].join("; ") || null } : outcome;
           // Ссылка мёрджа — на сам PR: номер знает только GitHub, без него ссылки нет.
           return withLinks(told, mergedPullLinks(gh.ok ? gh : null));

@@ -312,6 +312,23 @@ export function parseMergedPullNumber(data: unknown): number | null {
   return merged ? merged.number : null;
 }
 
+/** What became of a branch's newest closed PR: merged, closed without a merge, or there is none. */
+export type LastClosedPull = "merged" | "unmerged" | "none";
+
+/**
+ * Parses {@link listMergedPullRequestsRequest}'s response — newest first — into
+ * the fate of the newest closed PR. Unlike {@link parseMergedPullNumber}, a
+ * newer PR closed without a merge is not passed over: it is the answer.
+ * `null` when the body is not a list.
+ */
+export function parseLastClosedPull(data: unknown): LastClosedPull | null {
+  if (!Array.isArray(data)) return null;
+  if (data.length === 0) return "none";
+  const newest: unknown = data[0];
+  const mergedAt = newest !== null && typeof newest === "object" ? (newest as { merged_at?: unknown }).merged_at : undefined;
+  return typeof mergedAt === "string" ? "merged" : "unmerged";
+}
+
 /** GitHub's largest page for a PR's file list. */
 export const PULL_FILES_PAGE_SIZE = 100;
 

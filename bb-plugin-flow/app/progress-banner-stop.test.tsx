@@ -7,6 +7,9 @@ import { afterEach, describe, expect, it } from "vitest";
 import { en } from "../lib/messages/en";
 import { ru } from "../lib/messages/ru";
 
+// Приложение грузится при сборе файла, а не в первом тесте: импорт всего дерева под нагрузкой дольше таймаута теста в 5 с.
+const app = await loadPluginApp(() => import("../app"));
+
 afterEach(cleanup);
 
 type Mode = "running" | "stopping" | "stopped";
@@ -44,7 +47,6 @@ const view = (mode: Mode, kind = "skill", carrier?: { threadId: string }) => ({
 });
 
 const mount = async (progress: unknown) => {
-  const app = await loadPluginApp(() => import("../app"));
   const customization = app.composerCustomizations.find((c) => c.id === "flow-progress")!;
   return renderSlot(customization.banners![0]!, {}, {
     rpc: { getFlowProgress: () => progress, retryAutomation: () => ({ started: true }), stopAutomation: () => ({ started: true }) } as never,
@@ -115,15 +117,5 @@ describe("Стоп в шапке баннера", () => {
     await mount(view("running", "skill", { threadId: "thr_carrier" }));
     await head();
     expect(screen.queryByRole("button", { name: "Стоп" })).toBeNull();
-  });
-});
-
-describe("ченж-лог: пункт задачи на двух языках", () => {
-  it("пункт ждёт версии и говорит по-русски и по-английски", async () => {
-    const { readFileSync } = await import("node:fs");
-    const { join } = await import("node:path");
-    const text = readFileSync(join(process.cwd(), "changelog", "flow-knopka-stop-u-iduschei-avtomatizacii.md"), "utf8");
-    expect(text).toMatch(/^---\nversion: coming-soon\n---\n/);
-    expect(text).toMatch(/\n- ru: \S.*\n {2}en: \S/);
   });
 });

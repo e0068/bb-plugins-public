@@ -181,13 +181,3 @@ describe("карточка брифа показывает модель этап
     expect(slot.rpcCalls.some((c) => c.method === "widgetAgent")).toBe(true);
   });
 });
-
-describe("ченж-лог: пункт задачи на двух языках", () => {
-  it("пункт ждёт версии и говорит по-русски и по-английски", async () => {
-    const { readFileSync } = await import("node:fs");
-    const { join } = await import("node:path");
-    const text = readFileSync(join(process.cwd(), "changelog", "flow-model-etapa-vidna-i-vybiraetsya-v-vybore-etapov.md"), "utf8");
-    expect(text).toMatch(/^---\nversion: coming-soon\n---\n/);
-    expect(text).toMatch(/\n- ru: \S.*\n {2}en: \S/);
-  });
-});

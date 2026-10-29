@@ -1,6 +1,7 @@
-// Картинка в тексте брифа — `![подпись](docs/снимок.jpg)`. Путь идёт от корня дерева треда, а браузер файлов хоста не
-// видит: движок текста без адреса рисует вместо снимка плашку «подпись — путь». Адрес даёт маршрут сервера Flow, он
-// читает файл из дерева того треда, чей бриф. Отдаются только растровые картинки внутри дерева.
+// Картинка в тексте брифа — `![подпись](docs/снимок.jpg)` от корня дерева треда или абсолютным путём внутри дерева или
+// хранилища треда. Браузер файлов хоста не видит: движок текста без адреса рисует вместо снимка плашку «подпись — путь».
+// Адрес даёт маршрут сервера Flow, он читает файл из корней того треда, чей бриф. Отдаются только растровые картинки
+// внутри этих корней.
 import { bareHref } from "./inline-links";
 import { OWN_PLUGIN_ID } from "./plugin-id";
 
@@ -24,23 +25,44 @@ export const imageType = (path: string): string | null => {
 /** Адрес снимка для движка текста; путь не картинка — `null`, и движок оставляет плашку. */
 export const briefImageUrl = (threadId: string, raw: string): string | null => {
   const src = bareHref(raw);
-  return imageType(src) === null ? null : `/api/v1/plugins/${OWN_PLUGIN_ID}/http${BRIEF_IMAGE_PATH}?${new URLSearchParams({ thread: threadId, src }).toString()}`;
+  return imageType(src) === null || isAddress(src) ? null : `/api/v1/plugins/${OWN_PLUGIN_ID}/http${BRIEF_IMAGE_PATH}?${new URLSearchParams({ thread: threadId, src }).toString()}`;
 };
 
 /** Снимок в дереве: путь от корня без `.` и `..` и тип картинки. */
 export type TreeImage = { path: string; type: string };
 
-/** Снимок по пути из текста; путь абсолютный, уходит из дерева или не картинка — `null`. */
-export const treeImage = (src: string): TreeImage | null => {
-  const type = imageType(src);
-  if (src.startsWith("/") || type === null) return null;
+/** Путь без `.` и `..`; выход выше его начала — `null`. */
+const normalPath = (path: string): string | null => {
   const parts: string[] = [];
-  for (const part of src.split("/")) {
+  for (const part of path.split("/")) {
     if (part === "" || part === ".") continue;
     if (part !== "..") parts.push(part);
     else if (parts.pop() === undefined) return null;
   }
-  return { path: parts.join("/"), type };
+  return parts.join("/");
+};
+
+/** Адрес, а не путь файла: `//хост/…`, запрос `?…` или якорь `#…` — например, сам адрес маршрута снимков. */
+const isAddress = (src: string): boolean => src.startsWith("//") || /[?#]/.test(src);
+
+/** Снимок по пути из текста; путь абсолютный, уходит из дерева или не картинка — `null`. */
+export const treeImage = (src: string): TreeImage | null => {
+  const type = imageType(src);
+  const path = src.startsWith("/") || type === null ? null : normalPath(src);
+  return path === null || type === null ? null : { path, type };
+};
+
+/** Снимок по абсолютному пути файла: путь от корня диска без `.` и `..`; путь не абсолютный, адрес или не картинка — `null`. */
+export const absoluteImage = (src: string): TreeImage | null => {
+  const type = imageType(src);
+  const path = !src.startsWith("/") || isAddress(src) || type === null ? null : normalPath(src);
+  return path === null || type === null ? null : { path: `/${path}`, type };
+};
+
+/** Абсолютный снимок внутри корня — тот же снимок путём от корня; вне корня или пустой корень — `null`. */
+export const underRoot = (root: string, image: TreeImage): TreeImage | null => {
+  const base = `${root.replace(/\/+$/, "")}/`;
+  return base !== "/" && image.path.startsWith(base) ? { path: image.path.slice(base.length), type: image.type } : null;
 };
 
 /**

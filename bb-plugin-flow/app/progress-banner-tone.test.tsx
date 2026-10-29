@@ -5,6 +5,8 @@ import { loadPluginApp, renderSlot } from "@get-bb/plugin-sdk/testing/app";
 import { afterEach, describe, expect, it } from "vitest";
 import { threadFiles } from "./file-roots-fixture";
 
+const app = await loadPluginApp(() => import("../app"));
+
 afterEach(cleanup);
 
 const row = (id: string, kind: string, state: string) => ({ id, kind, name: id, executor: "self", state, results: [], minutes: null, cost: null });
@@ -19,7 +21,6 @@ const progress = {
 };
 
 const tones = async () => {
-  const app = await loadPluginApp(() => import("../app"));
   const customization = app.composerCustomizations.find((c) => c.id === "flow-progress")!;
   const slot = renderSlot(customization.banners![0]!, {}, {
     rpc: { getFlowProgress: () => progress, threadFiles, setStageInRun: () => ({ kind: "set" }) } as never,

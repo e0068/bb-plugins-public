@@ -30,11 +30,17 @@ export const awaitingChanges = <K>(prev: ReadonlyMap<string, K>, next: ReadonlyM
  */
 export const waitsForAnswer = (kind: AwaitingKind): boolean => kind !== "automation" && kind !== "action";
 
+const AUTOMATION_PREFIX = "automation:";
+const ACTION_PREFIX = "action:";
+
 /** Id ожидания упавшей автоматизации: его снимает повтор или пропуск шага этого этапа. */
-export const automationAwaitingId = (stageId: string): string => `automation:${stageId}`;
+export const automationAwaitingId = (stageId: string): string => `${AUTOMATION_PREFIX}${stageId}`;
 
 /** Id ожидания этапа Action — своё: его снимает нажатие, а не повтор упавшей автоматизации. */
-export const actionAwaitingId = (stageId: string): string => `action:${stageId}`;
+export const actionAwaitingId = (stageId: string): string => `${ACTION_PREFIX}${stageId}`;
+
+/** Принадлежит ли id ожиданию этапа (автоматизации или Action), а не брифу: у такого карточки «Ждёт ответа» никогда не было. */
+export const isStageAwaitingId = (id: string): boolean => id.startsWith(AUTOMATION_PREFIX) || id.startsWith(ACTION_PREFIX);
 
 /** Этап, на котором стоит ожидание автоматизации или Action; ожидание брифа этапа не называет — `null`. */
 export const awaitingStageId = (entry: AwaitingEntry): string | null => (waitsForAnswer(entry.kind) ? null : entry.briefId.slice(entry.briefId.indexOf(":") + 1));

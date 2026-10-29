@@ -3,6 +3,8 @@ import { cleanup, fireEvent, screen, waitFor } from "@testing-library/react";
 import { loadPluginApp, renderSlot } from "@get-bb/plugin-sdk/testing/app";
 import { afterEach, describe, expect, it } from "vitest";
 
+const app = await loadPluginApp(() => import("../app"));
+
 afterEach(cleanup);
 
 const flows = [{ id: "flow-plugin", name: "BB Plugin", stages: 11 }];
@@ -18,7 +20,6 @@ const bar = {
 };
 
 const mount = async (state: { selected: string; current: string }) => {
-  const app = await loadPluginApp(() => import("../app"));
   const customization = app.composerCustomizations.find((c) => c.id === "flow-progress")!;
   const slot = renderSlot(customization.banners![0]!, {}, {
     rpc: {

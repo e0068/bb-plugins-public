@@ -24,12 +24,14 @@ import { createStageModels } from "./server/stage-models";
 import { createAutomationRunner, externalStep, registerAutomationRunner } from "./server/automation-runner";
 import { createNoticePublisher } from "./server/automation-notices";
 import { automationsBridge } from "./server/automations";
-import { centerBridge, registerNoticeActions } from "./server/center";
+import { centerBridge, registerNoticeActions, retractOnSettle } from "./server/center";
 import { registerBriefImages } from "./server/brief-image";
 import { automationEntry, silentTurnEntry, turnEndEntry } from "./core/center-notice";
 import { createSilentTurns, defaultKimiHome, readTextFromDisk, registerSilentTurns } from "./server/silent-turn";
 import { waitsForAnswer } from "./core/awaiting";
 import { COMMAND_TOOL_NAME, registerCommands } from "./server/command";
+import { CHILD_ANSWER_TOOL, registerChildAnswerTool } from "./server/child-answer-tool";
+import { managingParentOf } from "./server/managing-parent";
 import { RULE_TOOL_NAME, registerRules } from "./server/rules";
 import { registerSpendBackfill } from "./server/spend-backfill";
 import { createJournalDirStore } from "./server/dir-settings";
@@ -132,7 +134,9 @@ export default async function plugin(bb: BbPluginApi): Promise<void> {
   });
   storedContext = await settings.get();
   settings.onChange((next) => { storedContext = next; });
-  const store = createStore(bb.storage.kv);
+  // Центр уведомлений — отдельный плагин: снятое ожидание брифа отзывает у него карточку «Ждёт ответа», конец хода и итог автоматизации идут к нему по HTTP, без него ничего не меняется.
+  const center = centerBridge(bb);
+  const store = retractOnSettle(createStore(bb.storage.kv), center);
   const flows = await createFlowSettings(bb.storage.kv);
   // Шаги плана и факта встают во flow при первом запуске из main; сбой — попытка на следующем запуске.
   const ownSource = async () => (await bb.sdk.plugins.list()).plugins.find((p) => p.id === OWN_PLUGIN_ID)?.source;
@@ -171,8 +175,6 @@ export default async function plugin(bb: BbPluginApi): Promise<void> {
   // Automations — отдельный плагин: события Flow и этапы-автоматизации идут к нему по HTTP, без него Flow работает как раньше.
   const automations = automationsBridge(bb);
   const emit = (trigger: Parameters<typeof automations.emit>[0], threadId: string, context?: { stageId?: string }) => void automations.emit(trigger, threadId, context);
-  // Центр уведомлений — тоже отдельный плагин: конец хода в треде с flow и итог автоматизации идут к нему по HTTP, без него ничего не меняется.
-  const center = centerBridge(bb);
   // Немой ход: Kimi на отказ провайдера закрывает ход в bb как успешный и без слов — причину Flow берёт из журнала сессии Kimi (./server/silent-turn.ts).
   const silentTurns = createSilentTurns({ readText: readTextFromDisk, kimiHome: defaultKimiHome(), now: Date.now });
   registerSilentTurns(bb, silentTurns);
@@ -250,7 +252,7 @@ export default async function plugin(bb: BbPluginApi): Promise<void> {
   bb.events.on("thread.deleted", ({ thread }) => void delivery.forget(thread.id));
   // Первая сессия треда стартует уже с ограничением: решение сверки ложится в дерево прямо перед стартом Claude Code.
   registerSessionConfig(bb, {
-    tools: [ASK_TOOL_NAME, FLOW_STAGE_TOOL, CHECKLIST_TOOL, RETRY_AUTOMATION_TOOL, READ_FLOWS_TOOL_NAME, SAVE_FLOW_TOOL_NAME, COMMAND_TOOL_NAME, RULE_TOOL_NAME, WORKFLOW_READ_TOOL_NAME, WORKFLOW_WRITE_TOOL_NAME],
+    tools: [ASK_TOOL_NAME, FLOW_STAGE_TOOL, CHECKLIST_TOOL, RETRY_AUTOMATION_TOOL, READ_FLOWS_TOOL_NAME, SAVE_FLOW_TOOL_NAME, COMMAND_TOOL_NAME, RULE_TOOL_NAME, WORKFLOW_READ_TOOL_NAME, WORKFLOW_WRITE_TOOL_NAME, CHILD_ANSWER_TOOL],
     prestart: (threadId, root) => void scope.prestart(threadId, root),
     startMessage: (threadId) => startMessageOf(agentOf(threadId)),
     deliver: delivery.deliver,
@@ -363,9 +365,15 @@ export default async function plugin(bb: BbPluginApi): Promise<void> {
       }),
     () => undefined,
   );
-  registerChecklistTool(bb, store);
+  registerChecklistTool(bb, store, (threadId) => void runner.advance(threadId));
   // Решение агента записывает модуль ответов, а он подключается ниже: ссылка заполняется, когда он встанет.
   let recordDecided: ((brief: DecisionBrief) => Promise<void>) | undefined;
+  const parentOf = managingParentOf(store, bb.sdk);
+  /** Реплика родителю — своя отправка Flow: иначе она вернула бы агенту родителя его ждущий бриф. */
+  const tellParent = async (parentThreadId: string, text: string): Promise<void> => {
+    own.mark(parentThreadId, text);
+    await bb.sdk.threads.send({ threadId: parentThreadId, mode: "queue-if-active", input: [{ type: "text", text, mentions: [] }] });
+  };
   // Этап с исполнителем «Тред <провайдер>» ведёт дочерний тред другого провайдера; лимиты провайдеров — в ходе треда.
   const providerThreads = createProviderThreads(bb, {
     stages: (threadId) => stagesOf(threadId).stages,
@@ -375,7 +383,7 @@ export default async function plugin(bb: BbPluginApi): Promise<void> {
     now: Date.now,
     lead: () => paceLeadOf(storedContext.providerPaceLead),
   });
-  registerAskTool(bb, store, { context: (threadId) => contextFillOf(bb.sdk, () => settings.get(), threadId), decided: (brief) => recordDecided?.(brief) ?? Promise.resolve(), newId, now, stages: stagesOf, flowIds: () => flows.current().flows.map((flow) => flow.id), flowName: flowNameOf, hasFlow: (threadId) => flowOf(threadId) !== null, emit, planning: (threadId) => readPlanning(bb.sdk, threadId, Date.now(), readClaudeTranscript()), progress, limits: providerThreads.line, threadModels: (threadId) => threadModelsOf(bb.sdk, threadId) });
+  registerAskTool(bb, store, { context: (threadId) => contextFillOf(bb.sdk, () => settings.get(), threadId), decided: (brief) => recordDecided?.(brief) ?? Promise.resolve(), newId, now, stages: stagesOf, flowIds: () => flows.current().flows.map((flow) => flow.id), flowName: flowNameOf, hasFlow: (threadId) => flowOf(threadId) !== null, emit, planning: (threadId) => readPlanning(bb.sdk, threadId, Date.now(), readClaudeTranscript()), progress, limits: providerThreads.line, threadModels: (threadId) => threadModelsOf(bb.sdk, threadId), parentOf, tellParent });
   const journalDirs = createJournalDirStore(bb.storage.kv);
   // Каждый ответ на бриф запоминается за тредом вместе с путём файла журнала: по нему итог прогона ссылается на журнал.
   const journalIndex = createJournalIndex(bb.storage.kv, store);
@@ -402,7 +410,7 @@ export default async function plugin(bb: BbPluginApi): Promise<void> {
     handoffFlows.delete(sourceThreadId);
     return flowId;
   };
-  recordDecided = registerApi(bb, store, {
+  const api = registerApi(bb, store, {
     now,
     // Встроенные этапы закрывает ответ владельца: утверждённая модель следующего этапа ставится здесь, граница flow_stage на них не срабатывает.
     stageModel: async (threadId, after) => {
@@ -430,7 +438,9 @@ export default async function plugin(bb: BbPluginApi): Promise<void> {
     widgetFlows: () =>
       flows.current().flows.map((flow) => ({ id: flow.id, name: flow.name, ...(flow.icon === undefined ? {} : { icon: flow.icon }), ...(flow.agent?.execution === undefined ? {} : { execution: flow.agent.execution }) })),
     threadFlowId: (threadId) => flowOf(threadId)?.id ?? null,
-  }).recordDecided;
+  });
+  recordDecided = api.recordDecided;
+  registerChildAnswerTool(bb, store, { answerBrief: api.answerBrief, parentOf, newId });
   // Удалённый тред не ждёт владельца и не показывает прогресс: записи и его указатель снимаются, иначе значок висел бы
   // в левой панели. Архивированный тред и тред, отдавший работу, ключей не теряют — их ещё откроют.
   bb.events.on("thread.deleted", ({ thread }) => {

@@ -9,7 +9,8 @@ import type { DecisionStore } from "./store";
 
 const toolError = (text: string) => ({ isError: true as const, content: [{ type: "text" as const, text }] });
 
-export const registerChecklistTool = (bb: Pick<BbPluginApi, "agents" | "realtime">, store: Pick<DecisionStore, "getChecklist" | "putChecklist">): void => {
+/** `allDone` зовётся, когда отмечен последний пункт: автоматизации, ждавшие чек-лист, пора запускать. */
+export const registerChecklistTool = (bb: Pick<BbPluginApi, "agents" | "realtime">, store: Pick<DecisionStore, "getChecklist" | "putChecklist">, allDone: (threadId: string) => void = () => undefined): void => {
   bb.agents.registerTool({
     name: CHECKLIST_TOOL,
     description: "Mark items of the checklist from the owner's comments on the widgets as done; the next stage of the run starts only when every item is done.",
@@ -24,7 +25,9 @@ export const registerChecklistTool = (bb: Pick<BbPluginApi, "agents" | "realtime
       await store.putChecklist(ctx.threadId, { ...checklist, items });
       bb.realtime.publish(ANSWERED_CHANNEL, { id: checklist.approvalId });
       const open = openItems(items);
-      return open.length === 0 ? "Every checklist item is done: go on with the next stage of the run." : `Marked. Still open: ${open.map((item) => item.id).join(", ")}.`;
+      if (open.length > 0) return `Marked. Still open: ${open.map((item) => item.id).join(", ")}.`;
+      allDone(ctx.threadId);
+      return "Every checklist item is done: go on with the next stage of the run.";
     },
   });
 };

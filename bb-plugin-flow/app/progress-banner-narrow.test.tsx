@@ -3,6 +3,8 @@ import { cleanup, fireEvent, screen } from "@testing-library/react";
 import { loadPluginApp, renderSlot } from "@get-bb/plugin-sdk/testing/app";
 import { afterEach, describe, expect, it } from "vitest";
 
+const app = await loadPluginApp(() => import("../app"));
+
 // На iPhone раскрытый прогресс-бар листался вбок: у упавшего шага отсчёт автоповтора,
 // «Повторить» и «Пропустить» стояли в колонке `auto` без переноса, забирали 251 px из 348,
 // названию шага оставалось 12 px, и строка выходила за список на 7 px.
@@ -42,7 +44,6 @@ const CASES = [
 ] as const;
 
 const stepRow = async (progress: unknown) => {
-  const app = await loadPluginApp(() => import("../app"));
   const banner = app.composerCustomizations.find((c) => c.id === "flow-progress")!.banners![0]!;
   renderSlot(banner, {}, { rpc: { getFlowProgress: () => progress } as never, composer: { scope: { kind: "thread", threadId: "thr_1" } }, settings: { language: "Русский" } });
   fireEvent.click(await screen.findByRole("button", { name: /Прогресс flow/ }));

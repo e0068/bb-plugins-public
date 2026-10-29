@@ -47,6 +47,7 @@ import {
   STOPPED_ERROR,
   stoppedWakeText,
 } from "../core/automation-run";
+import { openItems } from "../core/checklist";
 import { automationRpcContract, type AutomationScript, type FlowProgress, type AgentLogo, type RunningIcon, type RunningThread, type StageSettings, type StepAnswer, type WorkStage } from "../shared/contract";
 import type { AutomationsBridge } from "./automations";
 import type { ProgressStore, ThreadState } from "./progress";
@@ -64,7 +65,8 @@ export type RunnerNotice =
 
 export interface AutomationRunnerDeps {
   progress: ProgressStore;
-  store: Pick<DecisionStore, "putAwaiting" | "clearAwaiting" | "listAwaiting">;
+  /** `getChecklist`: пока в чек-листе по комментариям владельца к Утверждению есть открытый пункт, новые автоматизации не стартуют. */
+  store: Pick<DecisionStore, "putAwaiting" | "clearAwaiting" | "listAwaiting" | "getChecklist">;
   stages: (threadId: string) => StageSettings;
   steps: Steps;
   external: ExternalStep;
@@ -405,7 +407,10 @@ export const createAutomationRunner = (deps: AutomationRunnerDeps): AutomationRu
    * Ответ — последний доигранный этап или `null`: по нему Flow решает, будить ли агента, и смотрит на этап за ним.
    */
   const chain = async (threadId: string, resumeOnly = false, ran: WorkStage | null = null): Promise<WorkStage | null> => {
-    const record = await deps.progress.get(threadId);
+    // Чек-лист читается вместе с записью прогресса: лишнее ожидание сдвинуло бы старт автоматизации.
+    const [record, checklist] = await Promise.all([deps.progress.get(threadId), resumeOnly ? null : deps.store.getChecklist(threadId)]);
+    // Утверждение с комментариями закрыто, но правки по ним ещё не сделаны: новая автоматизация не начинается, пока агент не отметит все пункты.
+    if (openItems(checklist?.items ?? []).length > 0) return ran;
     const pending = record === null ? null : (resumeOnly ? interruptedAutomation : pendingAutomation)(deps.stages(threadId).stages, record);
     if (pending === null) return (await awaitAction(threadId)) ?? ran;
     const { stage, from } = pending;

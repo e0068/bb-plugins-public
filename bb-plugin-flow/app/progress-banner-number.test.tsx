@@ -3,6 +3,9 @@ import { cleanup, screen, within } from "@testing-library/react";
 import { loadPluginApp, renderSlot } from "@get-bb/plugin-sdk/testing/app";
 import { afterEach, describe, expect, it } from "vitest";
 
+// Приложение грузится при сборе файла, а не в первом тесте: импорт всего дерева под нагрузкой дольше таймаута теста в 5 с.
+const app = await loadPluginApp(() => import("../app"));
+
 afterEach(cleanup);
 
 const row = (id: string, state: string, number: number | null, minutes: number | null = null, wallMinutes: number | null = null) => ({
@@ -36,7 +39,6 @@ const view = {
 };
 
 const mount = async (progress: unknown = view) => {
-  const app = await loadPluginApp(() => import("../app"));
   const customization = app.composerCustomizations.find((c) => c.id === "flow-progress")!;
   return renderSlot(customization.banners![0]!, {}, { rpc: { getFlowProgress: () => progress } as never, composer: { scope: { kind: "thread", threadId: "thr_1" } }, settings: { language: "Русский" } });
 };

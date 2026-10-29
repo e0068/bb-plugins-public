@@ -6,10 +6,8 @@
 
 export const NOTIFICATIONS_PLUGIN_ID = "notifications";
 
-const PUSH_PATH = "push";
-
-/** `/api/v1/plugins/notifications/http/push` под базой; пустая база — свой origin страницы. */
-export const notificationsUrl = (baseUrl: string): string => `${baseUrl}/api/v1/plugins/${NOTIFICATIONS_PLUGIN_ID}/http/${PUSH_PATH}`;
+/** `/api/v1/plugins/notifications/http/<путь>` под базой, по умолчанию `push`; пустая база — свой origin страницы. */
+export const notificationsUrl = (baseUrl: string, path: "push" | "retract" = "push"): string => `${baseUrl}/api/v1/plugins/${NOTIFICATIONS_PLUGIN_ID}/http/${path}`;
 
 /** Виды событий собственных источников центра — Flow и PR; у них свои значки в журнале. */
 export const NOTIFICATION_KINDS = ["awaiting", "turn-done", "automation-done", "automation-failed", "pr-opened", "pr-merged", "pr-checks-failed"] as const;
@@ -81,6 +79,12 @@ export interface NotificationInput {
   toast?: NotificationToast | null;
   /** Всплывает ли вид, пока владелец его не переключил; нет — всплывает. */
   toastByDefault?: boolean;
+}
+
+/** Отзыв записи: источник говорит, что событие кончилось, и центр закрывает карточки записей с этим ключом; журнал не трогается. */
+export interface NotificationRetraction {
+  source: string;
+  dedupeKey: string;
 }
 
 /** Запись после разбора: умолчания заполнены. */
@@ -170,6 +174,8 @@ export const isNotificationInput = (x: unknown): x is NotificationInput =>
   (x.toast === undefined || x.toast === null || isNotificationToast(x.toast)) &&
   isAbsentOr((v): v is boolean => typeof v === "boolean")(x.toastByDefault);
 
+export const isNotificationRetraction = (x: unknown): x is NotificationRetraction => isRecord(x) && isSource(x.source) && isFilled(x.dedupeKey);
+
 export const acceptedOf = (input: NotificationInput): AcceptedNotification => ({
   ...input,
   sourceName: input.sourceName ?? input.source,
@@ -203,25 +209,25 @@ export interface ClientOptions {
 
 export interface NotificationsClient {
   push(input: NotificationInput): Promise<ClientResult<null>>;
+  retract(input: NotificationRetraction): Promise<ClientResult<null>>;
 }
 
 export function notificationsClient(baseUrl: string, fetchImpl: typeof fetch, options: ClientOptions = {}): NotificationsClient {
-  return {
-    async push(input) {
-      const headers: Record<string, string> = { "content-type": "application/json", ...(options.origin === undefined ? {} : { origin: options.origin }) };
-      const init: RequestInit = { method: "POST", headers, body: JSON.stringify(input) };
-      let response: Response;
-      try {
-        response = await fetchImpl(notificationsUrl(baseUrl), options.timeoutMs === undefined ? init : { ...init, signal: AbortSignal.timeout(options.timeoutMs) });
-      } catch (error) {
-        const timedOut = error instanceof Error && (error.name === "TimeoutError" || error.name === "AbortError");
-        return { ok: false, reason: timedOut ? "timeout" : "network" };
-      }
-      if (response.status === 404) return { ok: false, reason: "not-installed", status: 404 };
-      if (!response.ok) return { ok: false, reason: "http", status: response.status };
-      return { ok: true, value: null };
-    },
+  const post = async (path: "push" | "retract", body: unknown): Promise<ClientResult<null>> => {
+    const headers: Record<string, string> = { "content-type": "application/json", ...(options.origin === undefined ? {} : { origin: options.origin }) };
+    const init: RequestInit = { method: "POST", headers, body: JSON.stringify(body) };
+    let response: Response;
+    try {
+      response = await fetchImpl(notificationsUrl(baseUrl, path), options.timeoutMs === undefined ? init : { ...init, signal: AbortSignal.timeout(options.timeoutMs) });
+    } catch (error) {
+      const timedOut = error instanceof Error && (error.name === "TimeoutError" || error.name === "AbortError");
+      return { ok: false, reason: timedOut ? "timeout" : "network" };
+    }
+    if (response.status === 404) return { ok: false, reason: "not-installed", status: 404 };
+    if (!response.ok) return { ok: false, reason: "http", status: response.status };
+    return { ok: true, value: null };
   };
+  return { push: (input) => post("push", input), retract: (input) => post("retract", input) };
 }
 
 // Лента обновлений плагинов витрины. Её собирает сайт витрины на шаге

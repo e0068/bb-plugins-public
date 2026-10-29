@@ -4,6 +4,8 @@ import { loadPluginApp, renderSlot } from "@get-bb/plugin-sdk/testing/app";
 import { afterEach, describe, expect, it } from "vitest";
 import { threadFiles, workspacePreview } from "./file-roots-fixture";
 
+const app = await loadPluginApp(() => import("../app"));
+
 afterEach(cleanup);
 
 const link = { label: "prototype.html", target: "docs/assets/x/prototype.html" };
@@ -26,7 +28,6 @@ const view = {
 };
 
 const mount = async (progress: unknown = view) => {
-  const app = await loadPluginApp(() => import("../app"));
   const customization = app.composerCustomizations.find((c) => c.id === "flow-progress")!;
   return renderSlot(customization.banners![0]!, {}, { rpc: { getFlowProgress: () => progress, threadFiles } as never, composer: { scope: { kind: "thread", threadId: "thr_1" } }, settings: { language: "Русский" } });
 };
@@ -42,7 +43,6 @@ describe("баннер прогресса flow", () => {
   });
 
   it("баннер зарегистрирован над композером треда без карточки", async () => {
-    const app = await loadPluginApp(() => import("../app"));
     const customization = app.composerCustomizations.find((c) => c.id === "flow-progress");
     expect(customization?.scopes).toEqual(["thread"]);
     expect(customization?.banners?.[0]?.chrome).toBe("bare");

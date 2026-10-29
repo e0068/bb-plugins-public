@@ -228,9 +228,9 @@ export function TagOpen({ onOpen, children }: { onOpen: () => void; children: Re
 /**
  * Теги шагов через шеврон: у встроенного скрипта — крест и перетаскивание, у автоматизации Automations — только чтение.
  * Шаг своего скрипта открывает его текст в правой панели; у шагов Flow файла нет. Шаг из `unopened` — по открытому PR, которого
- * выше по flow никто не открывает: на нём метка-предупреждение.
+ * выше по flow никто не открывает, шаг из `beforeMerge` ждёт код в main левее мёрджа своего этапа: на них метка-предупреждение.
  */
-export function AutomationStepTags({ stage, unopened, onChange, onOpenScript }: { stage: WorkStage; unopened: readonly StepId[]; onChange: StageChange; onOpenScript: (script: AutomationScript) => void }) {
+export function AutomationStepTags({ stage, unopened, beforeMerge, onChange, onOpenScript }: { stage: WorkStage; unopened: readonly StepId[]; beforeMerge: readonly StepId[]; onChange: StageChange; onOpenScript: (script: AutomationScript) => void }) {
   const t = useMessages();
   const [dragged, setDragged] = useState<number | null>(null);
   const label = useStepLabel();
@@ -263,7 +263,8 @@ export function AutomationStepTags({ stage, unopened, onChange, onOpenScript }: 
               className={cn(tag, "cursor-grab pr-0.5", scriptOf(automation, id) === null && "pl-2", dragged === i && "opacity-50")}
             >
               <StepLabel script={scriptOf(automation, id)} label={labelOf(id)} onOpen={onOpenScript} />
-              {isStepId(id) && unopened.includes(id) && <NoPrMark />}
+              {isStepId(id) && unopened.includes(id) && <StepWarning label={t.settings.stepNoPrAbove} />}
+              {isStepId(id) && beforeMerge.includes(id) && <StepWarning label={t.settings.stepBeforeMerge} />}
               <button
                 type="button"
                 aria-label={t.settings.removeStep(labelOf(id))}
@@ -307,11 +308,10 @@ export function ReadOnlyStepTags({ stage, onOpenScript, title }: { stage: WorkSt
   );
 }
 
-/** Метка на шаге по открытому PR: выше по flow его никто не открывает, а подсказка говорит, откуда он всё же может взяться. */
-function NoPrMark() {
-  const t = useMessages();
+/** Метка-предупреждение на шаге, который по порядку flow, скорее всего, не сработает; подсказка говорит почему. */
+function StepWarning({ label }: { label: string }) {
   return (
-    <span role="img" aria-label={t.settings.stepNoPrAbove} title={t.settings.stepNoPrAbove} className="flex shrink-0 text-warning">
+    <span role="img" aria-label={label} title={label} className="flex shrink-0 text-warning">
       <Icon name="AlertTriangle" aria-hidden="true" className="size-3.5" />
     </span>
   );

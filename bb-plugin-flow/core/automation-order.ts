@@ -1,4 +1,5 @@
-// Слой 2 — чисто. Порядок шагов внутри flow: какому шагу нужен открытый PR, а выше его никто не открывает.
+// Слой 2 — чисто. Порядок шагов внутри flow: какому шагу нужен открытый PR, а выше его никто не открывает, и какой
+// шаг ждёт код треда в main раньше, чем этап его туда сливает.
 //
 // Шаги бампа версии и мёрджа работают по номеру открытого PR. Но PR принадлежит
 // ветке треда, а не flow: шаг находит его у GitHub на запуске, и PR мог открыть
@@ -9,6 +10,10 @@
 // Автоматизация плагина Automations — чёрный ящик: её шаги здесь не видны, и
 // PR она открыть может. Встретив такую выше, правило молчит: метка, которая не
 // может отличить рабочий flow от сломанного, дороже пробела.
+//
+// «Задача → done» закрывает задачу, только когда код треда уже в origin/main, —
+// иначе шаг краснеет. Стоит он в этапе левее «Смёрджить PR» — к его запуску
+// этот этап ещё ничего не слил, и шаг покраснеет наверняка.
 import { isStepId, type StepId } from "@bb-plugins/automation-steps/catalog";
 import type { WorkStage } from "../shared/contract";
 
@@ -37,4 +42,19 @@ export const unopenedPrSteps = (stages: readonly WorkStage[], stageId: string): 
   if (own === null || above.some((steps) => steps === null || steps.includes(OPENS_PR))) return [];
   const opening = own.indexOf(OPENS_PR);
   return own.slice(0, opening < 0 ? own.length : opening).filter(needsOpenPr);
+};
+
+/** Шаги, которым нужен код треда в main. */
+const NEEDS_CODE_IN_MAIN: readonly StepId[] = ["bb.tasks-done"];
+
+const MERGES: StepId = "git.merge";
+
+/**
+ * Шаги этапа `stageId`, которые ждут код треда в main, а стоят левее «Смёрджить PR» того же этапа: к их запуску этап ещё
+ * не слил PR. Мёрджа в этапе нет — правило молчит: PR мог слить другой этап или владелец.
+ */
+export const doneBeforeMergeSteps = (stages: readonly WorkStage[], stageId: string): readonly StepId[] => {
+  const own = stages.find((s) => s.id === stageId);
+  const steps = own === undefined ? [] : (builtinSteps(own) ?? []);
+  return steps.slice(0, Math.max(steps.indexOf(MERGES), 0)).filter((step): step is StepId => isStepId(step) && NEEDS_CODE_IN_MAIN.includes(step));
 };

@@ -13,7 +13,7 @@ import { useBbNavigate, useRpc } from "@get-bb/plugin-sdk/app";
 
 import { DEFAULT_FAILURE_INSTRUCTION, retryPolicyOf, wakesAgentAfterLastRetry, withFailureInstruction } from "../core/automation-run";
 import type { StepId } from "@bb-plugins/automation-steps/catalog";
-import { unopenedPrSteps } from "../core/automation-order";
+import { doneBeforeMergeSteps, unopenedPrSteps } from "../core/automation-order";
 import { executorGroups, inSegment, skillGroups, skillShortName, type ExecutorGroup } from "../core/catalog";
 import { expandStages, flowStage, nestableFlows, setFlowStages, stageToFlow } from "../core/flows";
 import { freeFlowName } from "../core/flow-files";
@@ -467,7 +467,7 @@ function ExecutorTags({ stage, executors, files, change }: { stage: WorkStage; e
  * не снимается и тут: этап исполняет виджет Flow по этому навыку.
  * Чип с файлом открывает его в правой панели в обоих случаях.
  */
-function ExecutionChips({ stage, catalog, files, change, unopened }: { stage: WorkStage; catalog: StageCatalog; files: ChipFiles; change: ChipChange; unopened: readonly StepId[] }) {
+function ExecutionChips({ stage, catalog, files, change, unopened, beforeMerge }: { stage: WorkStage; catalog: StageCatalog; files: ChipFiles; change: ChipChange; unopened: readonly StepId[]; beforeMerge: readonly StepId[] }) {
   const execution = executionOf(stage);
   const skill = execution.kind === "script" ? "" : chipSkill(stage, catalog);
   return (
@@ -476,7 +476,7 @@ function ExecutionChips({ stage, catalog, files, change, unopened }: { stage: Wo
       {execution.kind === "executors" && <ExecutorTags stage={stage} executors={execution.executors} files={files} change={change} />}
       {execution.kind === "script" && execution.manual && <ManualMark />}
       {(execution.kind === "script" || execution.kind === "external") &&
-        (change === null ? <ReadOnlyStepTags stage={stage} onOpenScript={files.script} /> : <AutomationStepTags stage={stage} unopened={unopened} onChange={change} onOpenScript={files.script} />)}
+        (change === null ? <ReadOnlyStepTags stage={stage} onOpenScript={files.script} /> : <AutomationStepTags stage={stage} unopened={unopened} beforeMerge={beforeMerge} onChange={change} onOpenScript={files.script} />)}
     </>
   );
 }
@@ -504,12 +504,14 @@ function ExecutionCell({ stage, stages, catalog }: { stage: WorkStage; stages: r
   const close = () => setOpen(false);
   const { root } = useFieldOverlay(open, close);
   const files = useChipFiles(stage);
-  const unopened = unopenedPrSteps(useRunStages(stages), stage.id);
+  const runStages = useRunStages(stages);
+  const unopened = unopenedPrSteps(runStages, stage.id);
+  const beforeMerge = doneBeforeMergeSteps(runStages, stage.id);
   const widget = executionOf(stage).kind === "widget";
   return (
     <span role="cell" className={cellWide}>
       <div ref={root} className={cn(chipRow, "relative")}>
-        <ExecutionChips stage={stage} catalog={catalog} files={files} change={(next) => setStage(stage.id, next)} unopened={unopened} />
+        <ExecutionChips stage={stage} catalog={catalog} files={files} change={(next) => setStage(stage.id, next)} unopened={unopened} beforeMerge={beforeMerge} />
         {!widget && (
           <button type="button" aria-label={t.settings.addExecution} title={t.settings.addExecution} aria-expanded={open} onClick={() => setOpen(!open)} className={cn(square, "bg-card text-muted-foreground hover:bg-state-hover hover:text-foreground")}>
             <Icon name="Plus" aria-hidden="true" className="size-3.5" />
@@ -528,7 +530,7 @@ function ReadOnlyExecution({ stage, catalog }: { stage: WorkStage; catalog: Stag
   return (
     <span role="cell" className={cellWide}>
       <div className={chipRow}>
-        <ExecutionChips stage={stage} catalog={catalog} files={files} change={null} unopened={[]} />
+        <ExecutionChips stage={stage} catalog={catalog} files={files} change={null} unopened={[]} beforeMerge={[]} />
         <MissingFile files={files} />
       </div>
     </span>

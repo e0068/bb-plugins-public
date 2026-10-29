@@ -5,6 +5,8 @@ import { cleanup, screen } from "@testing-library/react";
 import { loadPluginApp, renderSlot } from "@get-bb/plugin-sdk/testing/app";
 import { afterEach, describe, expect, it } from "vitest";
 
+const app = await loadPluginApp(() => import("../app"));
+
 afterEach(cleanup);
 
 const running = {
@@ -21,7 +23,6 @@ const running = {
 };
 
 const mount = async () => {
-  const app = await loadPluginApp(() => import("../app"));
   const customization = app.composerCustomizations.find((c) => c.id === "flow-progress")!;
   return renderSlot(customization.banners![0]!, {}, {
     rpc: { getFlowProgress: () => running, retryAutomation: () => ({ started: true }), stopAutomation: () => ({ started: true }) } as never,

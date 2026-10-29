@@ -52,6 +52,9 @@ const warnOnAnswerFailure = (warn: ((message: string) => void) | undefined, hand
   },
 });
 
+/** Ответ на бриф, как от кнопки виджета: им же отвечает родитель на бриф потомка (./child-answer-tool.ts). */
+export type AnswerBrief = PluginRpcHandlers<typeof decisionsRpcContract>["answerBrief"];
+
 export const registerApi = (
   bb: Pick<BbPluginApi, "events" | "rpc" | "realtime" | "sdk">,
   store: DecisionStore,
@@ -96,7 +99,7 @@ export const registerApi = (
     /** Настоящий flow треда; без flow — `null`. Не задано — `null`. */
     threadFlowId?: (threadId: string) => string | null;
   },
-): { recordDecided: (brief: DecisionBrief) => Promise<void> } => {
+): { recordDecided: (brief: DecisionBrief) => Promise<void>; answerBrief: AnswerBrief } => {
   /** Ход агента в треде; bb не ответил — ход считается идущим: лишнее сжатие хуже пропущенного. */
   const agentTurnOf = (threadId: string): Promise<AgentTurn> =>
     bb.sdk.threads.get({ threadId }).then(
@@ -195,7 +198,7 @@ export const registerApi = (
   });
 
   // Ответ, который не ушёл, пишется в журнал Flow: виджет показывает владельцу только причину.
-  bb.rpc.register(decisionsRpcContract, warnOnAnswerFailure(deps.warn, {
+  const decisions = warnOnAnswerFailure(deps.warn, {
     async getBrief({ id }) {
       const brief = await store.getBrief(id);
       if (brief === null) return { kind: "not_found" as const };
@@ -339,7 +342,11 @@ export const registerApi = (
           if (created.kind === "failed") throw new Error(created.error);
           // Создание треда не подтвердилось — ответ остаётся принятым: повтор открыл бы второй тред.
           if (created.kind === "unconfirmed") deps.warn?.(`answerBrief ${id}: bb did not confirm the new thread, the answer is kept (${created.error})`);
-          else handoffThreadId = created.threadId;
+          else {
+            handoffThreadId = created.threadId;
+            // Дочерний тред передачи — работа владельца: его брифы не уходят родителю (./ask-tool.ts).
+            if (place === "child") await store.markHandedOff(created.threadId).catch(() => undefined);
+          }
         }
       } catch (cause) {
         // Таймаут самой реплики — исход неизвестен: она могла дойти. Ответ остаётся принятым, иначе повтор из виджета
@@ -417,11 +424,13 @@ export const registerApi = (
       };
       // Комментарий Демонстрацию не принимает: этап открыт, и автоматизациям отвечать не на что.
       // Переход в другой flow — тоже: Демонстрация не принята, и автоматизациям за ней отвечать не на что.
-      if (verdict !== "comment" && verdict !== "switch") emit("flow.brief-answered");
-      if (brief.setup?.criteria !== undefined) emit("flow.criteria-approved");
+      // Бриф, решённый агентом, события уже послал при записи (recordDecided): ответ на него — пересмотр решения, автоматизации второй раз не идут.
+      if (brief.settle !== "agent" && verdict !== "comment" && verdict !== "switch") emit("flow.brief-answered");
+      if (brief.settle !== "agent" && brief.setup?.criteria !== undefined) emit("flow.criteria-approved");
       return { kind: "accepted" as const, record: { ...written.record, ...(handoffThreadId === undefined ? {} : { handoffThreadId }) } };
     },
-  }));
+  });
+  bb.rpc.register(decisionsRpcContract, decisions);
 
   /**
    * Бриф, по которому агент решил сам — Утверждения впереди нет: его рекомендации ложатся, как ответ кнопкой, — пункты, ответы
@@ -565,5 +574,5 @@ export const registerApi = (
     },
   });
 
-  return { recordDecided };
+  return { recordDecided, answerBrief: decisions.answerBrief };
 };
