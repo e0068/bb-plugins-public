@@ -112,6 +112,7 @@ import { parsePreviewDelayMs } from "./src/core/preview";
 import { parsePreviewSize } from "./src/core/preview-size";
 import { queueLayout, type QueueLayout } from "./src/core/queue-layout";
 import { scrolledToEnd } from "./src/core/scroll-end";
+import { queuedWorkOf } from "./src/core/queued";
 import { rowStatus, showsWaitingTime, worktreeOf, type RowStatus, type Worktree } from "./src/core/status";
 import { ProviderLogo, type ProviderBrand } from "@/components/provider-logo";
 import { Button } from "@/components/ui/button";
@@ -165,6 +166,8 @@ function toFacts(thread: PluginSidebarThread, flowRuns: ReadonlyMap<string, Flow
     isArchived: thread.isArchived,
     hasPendingInteraction: thread.hasPendingInteraction,
     indicator: thread.indicator,
+    // The host puts `queuedWork` on the row, but the SDK types of this plugin do not know it yet.
+    queuedWork: queuedWorkOf((thread as { queuedWork?: unknown }).queuedWork),
     activity: thread.activity,
     flowRun: flowRuns.get(thread.id) ?? null,
     latestAttentionAt: thread.latestAttentionAt,
@@ -717,6 +720,17 @@ const STATUS_MARKS: Record<RowStatus, { label: string; hint: string; glyph: Reac
     hint: "Запущен фоновый процесс, например сервер; агент не работает",
     glyph: <Icon name="Terminal" className="size-4 text-muted-foreground/75" aria-hidden />,
   },
+  // bb 0.48 queue states: the same clock and cross the host's own sidebar paints.
+  "queued-waiting": {
+    label: "Сообщение ждёт отправки",
+    hint: "Сообщение ждёт отправки — тред держит Concurrency limit",
+    glyph: <Icon name="Clock" className="size-4 text-muted-foreground/75" aria-hidden />,
+  },
+  "queued-failed": {
+    label: "Сообщение не отправилось",
+    hint: "Сообщение из очереди не отправилось",
+    glyph: <Icon name="CircleX" className="size-4 text-destructive" aria-hidden />,
+  },
 };
 
 /** Sized like a row action, so a status and the Archive button take one slot. */
@@ -827,7 +841,7 @@ function ThreadRow({
   );
   const postpone = (
     <RowAction
-      icon="Clock"
+      icon="AlarmClock"
       label="Отложить"
       hint="Отложить — убрать из списка, пока в треде не возобновится работа"
       look={touch ? "tray" : "inline"}

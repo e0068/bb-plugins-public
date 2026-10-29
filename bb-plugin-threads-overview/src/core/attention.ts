@@ -2,8 +2,9 @@
 // into which groups, and which of those groups a swipe track is showing.
 //
 // No effects and no SDK imports — the frontend maps its live sidebar rows onto
-// these shapes, and the tests pin the rules directly against them. Layer 1:
-// depends on nothing.
+// these shapes, and the tests pin the rules directly against them. Layer 2:
+// depends on the queue model only.
+import type { QueuedWork } from "./queued";
 
 /** Live work counts on a thread. All zero means nothing is running. */
 export interface ThreadActivity {
@@ -26,6 +27,8 @@ export interface ThreadFacts {
   readonly hasPendingInteraction: boolean;
   /** The host's compact per-row state; "runtime" is a running foreground turn. */
   readonly indicator: string;
+  /** The thread's message queue in the host; absent means "none". `indicator` hides it behind busier states. */
+  readonly queuedWork?: QueuedWork;
   readonly activity: ThreadActivity;
   /** A Flow step running in the thread without the agent; null when none, or Flow is absent. */
   readonly flowRun: FlowRun | null;
@@ -40,7 +43,14 @@ function hasRunningWork(thread: ThreadFacts): boolean {
   const background = a.workflows + a.backgroundAgents + a.planMode + a.goals;
   // `runtime` is a foreground turn, which the activity counts never cover; a
   // Flow step runs with no turn at all, and the thread does not wait on the user.
-  return background > 0 || thread.indicator === "runtime" || thread.flowRun !== null;
+  // A message waiting in the host's queue holds a Concurrency limit slot: the
+  // thread is about to work, and again it does not wait on the user.
+  return (
+    background > 0 ||
+    thread.indicator === "runtime" ||
+    thread.queuedWork === "waiting" ||
+    thread.flowRun !== null
+  );
 }
 
 /** True when a background command — a dev server, a watcher — is still running. */
