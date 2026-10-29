@@ -11,6 +11,10 @@ import { parseReducedColors, REDUCED_COLORS_KV_KEY, type ReducedColors } from "@
 import { railCollapseSetting, selectedThreadSetting } from "@bb-plugins/rail-collapse/setting";
 import {
   agentTimelineEventSchema,
+  CHART_COLOR_SCHEMES,
+  CHART_COLOR_SCHEME_KV_KEY,
+  parseChartColorScheme,
+  type ChartColorScheme,
   cacheWriteTotal,
   formatBucketDisplay,
   flowStageSchema,
@@ -149,6 +153,9 @@ const threadsTimelineEntrySchema = z
     unpricedModels: z.array(z.string()).optional(),
     workflowCount: finiteNumber,
     bins: z.array(threadsTimelineBinSchema),
+    // Model each agent spent the most tokens on in this thread — the model
+    // colour scheme paints by it. See threads-timeline.ts's ThreadEntry doc.
+    agentModels: z.record(z.string(), z.string()).optional(),
     // Working directory/branch the session ran in, and pr/push/commit
     // markers mined from its transcript (pr/push by tools/git_events.py,
     // commit appended live by threads-timeline-service.ts's enrichCommits)
@@ -362,7 +369,25 @@ export const rpcContract = defineRpcContract({
     input: z.custom<ReducedColors>(),
     output: z.object({ ok: z.literal(true) }),
   },
+  // The chart colour scheme (palette / by model / Reduced Colors): one choice
+  // where Reduced Colors used to be a switch. loadReducedColors below answers
+  // "on" exactly under the Reduced Colors scheme, so the charts' ramp follows
+  // the scheme without the switch stored in the blob being kept in step.
+  loadChartColorScheme: {
+    input: z.object({}).strict().default({}),
+    output: z.enum(CHART_COLOR_SCHEMES),
+  },
+  saveChartColorScheme: {
+    input: z.object({ scheme: z.enum(CHART_COLOR_SCHEMES) }),
+    output: z.object({ ok: z.literal(true) }),
+  },
 });
+
+/** The scheme in force: the stored choice, else Reduced Colors if its old switch is on, else the palette. */
+async function loadChartColorScheme(kv: PluginKvStorage): Promise<ChartColorScheme> {
+  const [stored, reduced] = await Promise.all([kv.get<unknown>(CHART_COLOR_SCHEME_KV_KEY), kv.get<unknown>(REDUCED_COLORS_KV_KEY)]);
+  return parseChartColorScheme(stored, parseReducedColors(reduced).enabled);
+}
 
 /**
  * Session totals + per-agent breakdown, mapped from tools/tokens.py's report
@@ -730,9 +755,17 @@ export default function plugin(bb: BbPluginApi, deps: PluginDeps = {}) {
     threadFamily: ({ fresh, ...params }) => loadThreadFamily(threadFamilyService, params, { fresh }),
     loadVizSettings: () => loadVizSettings(kv),
     saveVizSettings: (value) => saveVizSettings(kv, value),
-    loadReducedColors: async () => parseReducedColors(await kv.get<unknown>(REDUCED_COLORS_KV_KEY)),
+    loadReducedColors: async () => ({
+      ...parseReducedColors(await kv.get<unknown>(REDUCED_COLORS_KV_KEY)),
+      enabled: (await loadChartColorScheme(kv)) === "reduced",
+    }),
     saveReducedColors: async (value) => {
       await kv.set(REDUCED_COLORS_KV_KEY, parseReducedColors(value));
+      return { ok: true as const };
+    },
+    loadChartColorScheme: () => loadChartColorScheme(kv),
+    saveChartColorScheme: async ({ scheme }) => {
+      await kv.set(CHART_COLOR_SCHEME_KV_KEY, scheme);
       return { ok: true as const };
     },
   });

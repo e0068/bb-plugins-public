@@ -10,11 +10,14 @@ import type * as React from "react";
 import { createPortal } from "react-dom";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { useSeriesColors } from "@bb-plugins/reduced-colors";
+import { useHostColorMode } from "@bb-plugins/code-editor/use-host-color-mode";
 import { useViewportClamp } from "@bb-plugins/viewport-clamp";
 import { Icon, type IconName } from "@/components/ui/icon";
 import { usePortalScopeProps } from "@/lib/portal-scope";
+import { useChartColorScheme } from "./chart-color-scheme";
 import {
   agentAmount,
+  agentColor,
   binAmount,
   binTotal,
   flowLaneChips,
@@ -67,6 +70,24 @@ export const DEFAULT_PALETTE = ["#3b82f6", "#22c55e", "#f59e0b", "#ef4444", "#a8
 export function useSeriesColorFor<K>(keys: readonly K[], ownColor: (key: K) => string | undefined = () => undefined): (key: K) => string {
   const colors = useSeriesColors(keys.map((key, index) => ownColor(key) ?? DEFAULT_PALETTE[index % DEFAULT_PALETTE.length]!));
   return (key) => colors[Math.max(keys.indexOf(key), 0)] ?? DEFAULT_PALETTE[0]!;
+}
+
+/**
+ * Colour of each agent under the chosen chart colour scheme, per thread: the
+ * returned function takes a thread's `agentModels` and gives that thread's
+ * colour-of-agent function. The model comes per thread because "main" ran on
+ * a different model in each; the palette slot and Reduced Colors ramp step
+ * (useSeriesColorFor) are what an agent gets when its model has no colour of
+ * its own, so they stay per legend, not per thread.
+ */
+export function useAgentColors(
+  keys: readonly string[],
+  manualColor: (key: string) => string | undefined,
+): (agentModels: Readonly<Record<string, string>> | undefined) => (key: string) => string {
+  const scheme = useChartColorScheme();
+  const theme = useHostColorMode();
+  const fallback = useSeriesColorFor(keys, manualColor);
+  return (agentModels) => (key) => agentColor({ scheme, theme, model: agentModels?.[key], manual: manualColor(key), fallback: fallback(key) });
 }
 
 /** Opacity applied to a segment belonging to an agent OTHER than activeAgentKey — see ThreadRow's activeAgentKey prop. */
@@ -833,7 +854,7 @@ export function SessionChartCard({
     [thread.bins, settings.collapseEmpty, settings.unit, settings.collapseToZeroBelowMin],
   );
 
-  const colorFor = useSeriesColorFor(agentKeys, (key) => settings.agentColors[key]);
+  const colorFor = useAgentColors(agentKeys, (key) => settings.agentColors[key])(thread.agentModels);
   const labelFor = (key: string) => {
     const name = agentLabels[key] ?? key;
     return key.startsWith(WORKFLOW_KEY_PREFIX) ? `Workflow: ${name}` : name;

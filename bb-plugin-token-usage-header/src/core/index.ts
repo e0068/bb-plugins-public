@@ -10,6 +10,7 @@ export * from "./git-events";
 export * from "./flow-stages";
 export * from "./viz-settings";
 export * from "./gear-settings";
+export * from "./chart-colors";
 export * from "./project-costs";
 export * from "./project-attribution";
 export * from "./hourly-burn";

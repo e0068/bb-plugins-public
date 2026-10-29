@@ -55,6 +55,33 @@ const validTimeline = {
 };
 
 describe("parseThreadsTimeline", () => {
+  it("expects schema version 9, the one that names each agent's model", () => {
+    expect(EXPECTED_THREADS_TIMELINE_SCHEMA_VERSION).toBe(9);
+  });
+
+  it("keeps the model each agent of a thread ran on", () => {
+    const withModels = {
+      ...validTimeline,
+      threads: [{ ...validTimeline.threads[0], agentModels: { main: "claude-opus-4-8", "agent-a9e92d5bea00f5cb7": "claude-haiku-4-5" } }],
+    };
+    const result = parseThreadsTimeline(JSON.stringify(withModels));
+    expect(result.ok && result.data.threads[0].agentModels).toEqual({
+      main: "claude-opus-4-8",
+      "agent-a9e92d5bea00f5cb7": "claude-haiku-4-5",
+    });
+  });
+
+  it("reads a thread without agentModels as one that names no models", () => {
+    const result = parseThreadsTimeline(JSON.stringify(validTimeline));
+    expect(result.ok && result.data.threads[0].agentModels).toBeUndefined();
+  });
+
+  it("rejects an agentModels value that is not a model id", () => {
+    const bad = { ...validTimeline, threads: [{ ...validTimeline.threads[0], agentModels: { main: 7 } }] };
+    const result = parseThreadsTimeline(JSON.stringify(bad));
+    expect(!result.ok && result.reason).toBe("invalid_shape");
+  });
+
   it("keeps the cost each bin segment carries", () => {
     const withCost = {
       ...validTimeline,

@@ -15,6 +15,7 @@ if _PACKAGE is None:
     raise RuntimeError("provider-usage assets missing; rebuild the plugin")
 sys.path.insert(0, str(_PACKAGE / "shell"))
 from store import usage_store
+import token_index
 ROOT = usage_store(os.path.expanduser("~/.claude/projects"))
 
 # Version of the --json report format. Bump on ANY breaking format change
@@ -366,7 +367,99 @@ def load_meta(jsonl_path):
     except Exception:
         return None
 
-def walk(paths, since=None, until=None):
+def normalize_usage(u):
+    """Brings usage to its canonical form — the one place it is interpreted.
+
+    Transcripts carry the cache write in two shapes: the old flat one
+    (`cache_creation_input_tokens`) and the newer one split by lifetime
+    (`cache_creation.ephemeral_5m/1h`). The old shape counts as 5-minute.
+
+    Normalized here rather than in Bucket because there are two readers:
+    the direct read and the index, which stores parsed numbers. Were they
+    to interpret usage separately, they would drift apart silently.
+    """
+    cc = u.get("cache_creation") or {}
+    cw5 = cc.get("ephemeral_5m_input_tokens", 0)
+    if not cc:
+        cw5 += u.get("cache_creation_input_tokens", 0)
+    return {
+        "input_tokens": u.get("input_tokens", 0),
+        "cache_creation": {
+            "ephemeral_5m_input_tokens": cw5,
+            "ephemeral_1h_input_tokens": cc.get("ephemeral_1h_input_tokens", 0),
+        },
+        "cache_read_input_tokens": u.get("cache_read_input_tokens", 0),
+        "output_tokens": u.get("output_tokens", 0),
+        "output_tokens_details": {
+            "thinking_tokens": (u.get("output_tokens_details") or {}).get("thinking_tokens", 0),
+        },
+        "api_context_input_tokens": u.get("api_context_input_tokens", 0),
+        "speed": u.get("speed"),
+    }
+
+def file_header(path):
+    """Fields shared by every record of one file: project, session, agent, run.
+
+    All of it comes from the path: agent transcripts live under
+    `<session>/subagents/`, workflow-run files also under `workflows/<runId>/`.
+    """
+    parts = os.path.relpath(path, ROOT).split(os.sep)
+    stem = os.path.basename(path)[:-len(".jsonl")]
+    in_subagents = "subagents" in parts
+    is_agent_file = in_subagents and stem.startswith("agent-")
+    return {
+        "project": parts[0],
+        "session": parts[parts.index("subagents") - 1] if in_subagents else stem,
+        # either the main session, or a run's helper file
+        # (e.g. journal.jsonl) — not a separate agent invocation
+        "agentId": stem if is_agent_file else None,
+        "workflowRunId": parts[parts.index("workflows") + 1] if "workflows" in parts else None,
+        "meta": load_meta(path) if is_agent_file else None,
+    }
+
+def file_records(path, start=0):
+    """One file's records, collapsed by dedup key: the last one wins.
+
+    While a response is streaming, the transcript writes it several times
+    with the same (message.id, requestId) pair, growing output_tokens; the
+    final value is in the last record, earlier ones are incomplete
+    snapshots. This used to keep the first record — output was
+    undercounted. See decisions/token-usage-dedup-last-wins.md.
+
+    Returns ({dedup key: record}, end). The dict keeps the order of each
+    key's first appearance — walk() dedups across files in that order.
+    `end` is the byte offset just past the last newline-terminated line:
+    a line still being written is parsed if it already is valid JSON, but
+    the index resumes from `end` and reads it again once it is complete.
+    start — the byte offset to read from (the index reading a tail).
+    """
+    records = {}
+    end = start
+    try:
+        with open(path, "rb") as fh:
+            fh.seek(start)
+            for line in fh:
+                if line.endswith(b"\n"):
+                    end += len(line)
+                try:
+                    d = json.loads(line.decode("utf-8", "ignore"))
+                    msg = d.get("message") or {}
+                    u = msg.get("usage")
+                except Exception:
+                    continue
+                if not u or d.get("type") != "assistant":
+                    continue
+                records[(msg.get("id"), d.get("requestId"))] = {
+                    "usage": normalize_usage(u),
+                    "model": msg.get("model"),
+                    "effort": d.get("effort"),
+                    "ts": d.get("timestamp"),
+                }
+    except OSError:
+        return {}, start
+    return records, end
+
+def walk(paths, since=None, until=None, use_index=False):
     """Yields one record per usage object found in the transcripts.
 
     Each record is a dict with fields:
@@ -379,7 +472,13 @@ def walk(paths, since=None, until=None):
                         workflow run, otherwise None
       meta           — parsed agent-<id>.meta.json (agentType,
                         description, model, ...), or None
-      usage, model, ts — as in the original assistant record
+      usage          — normalized (see normalize_usage)
+      model, effort, ts — as in the original assistant record
+
+    use_index — read a large slice through the on-disk index (token_index),
+    which re-reads only what was appended since the last query. A small
+    slice is still read directly: loading the index would cost more. The
+    output is the same either way — same files, same order, same rules.
 
     since/until — user-supplied slice boundaries, parsed right here
     strictly (see _parse_time_bound): a nonexistent calendar date raises
@@ -393,60 +492,20 @@ def walk(paths, since=None, until=None):
     """
     since_dt = _parse_time_bound(since, strict=True)
     until_dt = _parse_time_bound(until, strict=True, end_of_day=True)
-    seen = set()
     # Fix file order by sorting: a dedup key can appear in two files at
     # once (threads moved between environments), and the order decides
     # which file — and therefore which session — the usage gets attributed to.
     # os.listdir/glob don't guarantee that order.
-    for f in sorted(paths):
-        rel = os.path.relpath(f, ROOT)
-        parts = rel.split(os.sep)
-        project = parts[0]
-        stem = os.path.basename(f)[:-len(".jsonl")]
-        in_subagents = "subagents" in parts
-        is_agent_file = in_subagents and stem.startswith("agent-")
-
-        if in_subagents:
-            session = parts[parts.index("subagents") - 1]
-        else:
-            session = stem
-
-        workflow_run_id = parts[parts.index("workflows") + 1] if "workflows" in parts else None
-
-        if is_agent_file:
-            agent_id = stem
-            meta = load_meta(f)
-        else:
-            # either the main session, or a run's helper file
-            # (e.g. journal.jsonl) — not a separate agent invocation
-            agent_id = None
-            meta = None
-
-        # Collapse the file's records by dedup key: the last one wins.
-        # While a response is streaming, the transcript writes it several
-        # times with the same (message.id, requestId) pair, growing
-        # output_tokens; the final value is in the last record, earlier ones
-        # are incomplete snapshots. This used to keep the first record —
-        # output was undercounted. See decisions/token-usage-dedup-last-wins.md.
-        records = {}
-        with open(f, errors="ignore") as fh:
-            for line in fh:
-                try:
-                    d = json.loads(line)
-                except Exception:
-                    continue
-                msg = d.get("message") or {}
-                u = msg.get("usage")
-                if not u or d.get("type") != "assistant":
-                    continue
-                records[(msg.get("id"), d.get("requestId"))] = {
-                    "usage": u,
-                    "model": msg.get("model"),
-                    "effort": d.get("effort"),
-                    "ts": d.get("timestamp"),
-                }
-
-        for dedup, rec in records.items():
+    paths = sorted(paths)
+    if use_index and token_index.should_use_index(paths):
+        indexed = token_index.read(paths, file_records)
+        read = lambda f: indexed.get(f, {})
+    else:
+        read = lambda f: file_records(f)[0]
+    seen = set()
+    for f in paths:
+        header = file_header(f)
+        for dedup, rec in read(f).items():
             if dedup in seen:
                 continue
             seen.add(dedup)
@@ -456,11 +515,7 @@ def walk(paths, since=None, until=None):
                 if since_dt and (ts_dt is None or ts_dt < since_dt):  continue
                 if until_dt and (ts_dt is None or ts_dt > until_dt):  continue
             yield {
-                "project": project,
-                "session": session,
-                "agentId": agent_id,
-                "workflowRunId": workflow_run_id,
-                "meta": meta,
+                **header,
                 "usage": rec["usage"],
                 "model": rec["model"],
                 "effort": rec["effort"],
@@ -535,6 +590,8 @@ def main():
     ap.add_argument("--until")
     ap.add_argument("--top", type=int, default=25)
     ap.add_argument("--json", action="store_true", help="print a single JSON object instead of a table")
+    ap.add_argument("--no-index", action="store_true",
+                    help="read the transcripts directly, bypassing the index (the reference for comparison)")
     a = ap.parse_args()
     # a slice with a negative --top would drop the largest buckets instead of limiting output
     if a.top < 0:
@@ -558,7 +615,7 @@ def main():
     bucket_agent = {}                    # key -> agent object or None (only for --by agent)
     bucket_label = {}                    # key -> human-readable label for the table
 
-    for rec in walk(files, a.since, a.until):
+    for rec in walk(files, a.since, a.until, use_index=not a.no_index):
         session, project = rec["session"], rec["project"]
         if a.session and not session.startswith(a.session):
             continue
