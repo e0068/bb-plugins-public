@@ -20,6 +20,7 @@ let worktree: string;
 let kv: KvStore;
 let events: Map<string, ThreadEvent>;
 let sdkThreads: Map<string, Record<string, unknown>>;
+let services: Map<string, { start(signal: AbortSignal): Promise<void> }>;
 
 const board: BoardConfig = {
   id: "b1", name: "Board", prefix: "TSK", color: "blue", folderId: null,
@@ -74,7 +75,11 @@ function fakeBb(): BbPluginApi {
         },
       },
     },
-    background: { service() {} },
+    background: {
+      service(name: string, service: { start(signal: AbortSignal): Promise<void> }) {
+        services.set(name, service);
+      },
+    },
     log: { warn() {} },
     realtime: { publish() {} },
   } as unknown as BbPluginApi;
@@ -115,6 +120,7 @@ beforeEach(() => {
   kv = fakeKv();
   events = new Map();
   sdkThreads = new Map();
+  services = new Map();
 });
 afterEach(() => {
   rmSync(main, { recursive: true, force: true });
@@ -184,7 +190,7 @@ describe("Active и Waiting видят задачи из ветки треда",
     expect(titles(await store.tasks.listTasks({ activeOnly: true }))).toEqual(["Shared"]);
   });
 
-  it("после перезапуска плагина задача из ветки работающего треда снова в Active", async () => {
+  it("после перезапуска плагина фоновая сверка возвращает задачу из ветки работающего треда в Active", async () => {
     await branchTask("thr_w", "Branch task");
     const before = boardStore();
     sdkThreads.set("thr_w", threadRow("thr_w", "active"));
@@ -196,6 +202,11 @@ describe("Active и Waiting видят задачи из ветки треда",
     // уже работает, больше не придёт.
     const restarted = boardStore();
     await registerLifecycle(fakeBb(), restarted);
+    const controller = new AbortController();
+    const running = services.get("thread-status-reconcile")!.start(controller.signal);
+    await waitFor(async () => (await restarted.tasks.listTasks({ activeOnly: true })).length > 0);
+    controller.abort();
+    await running;
 
     expect(titles(await restarted.tasks.listTasks({ activeOnly: true }))).toEqual(["Branch task"]);
   });

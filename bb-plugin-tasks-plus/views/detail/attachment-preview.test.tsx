@@ -117,6 +117,19 @@ describe("a plain-text attachment", () => {
   });
 });
 
+describe("a text attachment whose file never reached this machine", () => {
+  it("says so and asks to attach it again, instead of a bare status code", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => Response.json({ error: "attachment not found" }, { status: 404 })));
+    render(<AttachmentsGrid attachments={[fileAttachment("decisions.md")]} />);
+
+    openCard("decisions.md");
+
+    const dialog = await screen.findByRole("dialog");
+    expect(await within(dialog).findByText(/not on this machine.*attach it again/i)).toBeTruthy();
+    expect(within(dialog).queryByText(/HTTP 404/)).toBeNull();
+  });
+});
+
 describe("any other attachment", () => {
   it("still downloads on click", () => {
     render(<AttachmentsGrid attachments={[fileAttachment("report.pdf", "application/pdf")]} />);

@@ -136,13 +136,21 @@ async function reconcilableThreadIds(store: TasksApiStore): Promise<string[]> {
   return [...ids];
 }
 
+/** One pass over the tracked threads, one bb read per thread. Stops between
+ *  threads once the signal aborts: after a timeout or unload the API handle is
+ *  stale, and every further read would only log a warning. Returns how many
+ *  threads there were to reconcile (0 — nothing is tracked). */
 async function reconcileTrackedThreads(
   bb: BbPluginApi,
   store: TasksApiStore,
-): Promise<void> {
-  for (const threadId of await reconcilableThreadIds(store)) {
+  signal: AbortSignal,
+): Promise<number> {
+  const threadIds = await reconcilableThreadIds(store);
+  for (const threadId of threadIds) {
+    if (signal.aborted) break;
     await reconcileThread(bb, store, threadId);
   }
+  return threadIds.length;
 }
 
 function waitForNextReconciliation(
@@ -196,27 +204,22 @@ export async function registerLifecycle(
   // Lifecycle events cover live transitions without a full-SDK subscription.
   // Reconciliation is the recovery path for transitions that happened while
   // the plugin was unloaded — and, since live state is process memory, the
-  // only source of it after a restart.
+  // only source of it after a restart. The first pass runs at once when the
+  // service starts, in the background: bb gives the plugin factory 30 s, and
+  // one thread read per tracked thread does not fit into that.
   bb.background.service("thread-status-reconcile", {
     async start(signal) {
       while (!signal.aborted) {
-        if ((await reconcilableThreadIds(store)).length === 0) {
-          await waitForNextReconciliation(
-            signal,
-            THREAD_STATUS_IDLE_INTERVAL_MS,
-          );
-          continue;
-        }
+        const reconciled = await reconcileTrackedThreads(bb, store, signal);
         await waitForNextReconciliation(
           signal,
-          THREAD_STATUS_RECONCILE_INTERVAL_MS,
+          reconciled === 0
+            ? THREAD_STATUS_IDLE_INTERVAL_MS
+            : THREAD_STATUS_RECONCILE_INTERVAL_MS,
         );
-        if (signal.aborted) break;
-        await reconcileTrackedThreads(bb, store);
       }
     },
   });
 
   await store.tasks.restoreBranchThreads();
-  await reconcileTrackedThreads(bb, store);
 }
