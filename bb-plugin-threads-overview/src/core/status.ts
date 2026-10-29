@@ -4,9 +4,14 @@
 // A status on a row says the thread still holds something for the user — a
 // result not yet read or a question not yet answered — or still runs a process
 // that archiving would cut short, so the row shows the status in place of
-// Archive. Layer 1: depends on nothing.
+// Archive. Layer 2: depends on the queue model only.
+import type { QueuedWork } from "./queued";
 
-/** The states a queue row can show; "working", "automation" and "action" only when the queue is asked to show running threads. */
+/**
+ * The states a queue row can show; "working", "automation", "action" and
+ * "queued-waiting" (a message held back by the host's Concurrency limit) only
+ * when the queue is asked to show running threads.
+ */
 export type RowStatus =
   | "unread-success"
   | "unread-error"
@@ -14,7 +19,9 @@ export type RowStatus =
   | "working"
   | "automation"
   | "action"
-  | "background-command";
+  | "background-command"
+  | "queued-waiting"
+  | "queued-failed";
 
 /** The minimal thread facts the status rule reads. */
 export interface StatusFacts {
@@ -22,6 +29,8 @@ export interface StatusFacts {
   readonly indicator: string;
   /** The agent is blocked on the user: an approval or a question. */
   readonly hasPendingInteraction: boolean;
+  /** The thread's message queue in the host; absent means "none". The host's `indicator` hides it behind busier states. */
+  readonly queuedWork?: QueuedWork;
   /** The agent is doing work right now — `isWorking` of the attention model. */
   readonly working?: boolean;
   /** A Flow step running without the agent — `flowRun` of the attention model. */
@@ -30,9 +39,10 @@ export interface StatusFacts {
   readonly backgroundCommand?: boolean;
 }
 
+/** The host's own indicators a row shows as they are; the queue states come from `queuedWork`, not from the indicator. */
 function isRowStatus(
   indicator: string,
-): indicator is Exclude<RowStatus, "working" | "automation" | "action" | "background-command"> {
+): indicator is "unread-success" | "unread-error" | "waiting-for-input" {
   return (
     indicator === "unread-success" ||
     indicator === "unread-error" ||
@@ -44,7 +54,11 @@ function isRowStatus(
 export function rowStatus(thread: StatusFacts): RowStatus | null {
   if (thread.hasPendingInteraction) return "waiting-for-input";
   if (thread.flowRun != null) return thread.flowRun;
+  // A waiting message outranks "working": the thread counts as working, yet it
+  // is the host's Concurrency limit that holds it.
+  if (thread.queuedWork === "waiting") return "queued-waiting";
   if (thread.working === true) return "working";
+  if (thread.queuedWork === "failed") return "queued-failed";
   if (isRowStatus(thread.indicator)) return thread.indicator;
   return thread.backgroundCommand === true ? "background-command" : null;
 }

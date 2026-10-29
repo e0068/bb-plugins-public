@@ -1871,6 +1871,81 @@ describe("running threads toggle", () => {
   });
 });
 
+describe("the Postpone button", () => {
+  it("is an alarm clock, so the clock of a message waiting to send is not taken for it", async () => {
+    const slot = await renderSection({ sidebarThreads: STATUS_THREADS });
+    await slot.findByText("Тихий тред");
+    const button = within(rowOf(slot, "Тихий тред")).getByRole("button", { name: "Отложить" });
+    expect(button.querySelector("[data-icon]")?.getAttribute("data-icon")).toBe("AlarmClock");
+  });
+});
+
+describe("a message in the host's queue (bb 0.48)", () => {
+  /** The host's row carries `queuedWork`, which the SDK types do not know. */
+  const queued = (over: Partial<PluginSidebarThread>, queuedWork: string): PluginSidebarThread =>
+    ({ ...idleThread(over), queuedWork }) as PluginSidebarThread;
+  const withThreads = (...threads: PluginSidebarThread[]) => ({ sidebarThreads: { ...TWO_PROJECTS, threads } });
+  const showRunning = async (slot: Awaited<ReturnType<typeof renderSection>>) =>
+    fireEvent.click(await slot.findByRole("button", { name: "Работающие треды: скрыты" }));
+
+  it("keeps a thread with a message waiting to send out of the list, as a working one", async () => {
+    const slot = await renderSection(
+      withThreads(
+        queued({ id: "th_wait", title: "Ждёт отправки", latestAttentionAt: 2000 }, "waiting"),
+        idleThread({ id: "th_idle", title: "Свободный" }),
+      ),
+    );
+    await slot.findByText("Свободный");
+    expect(slot.queryByText("Ждёт отправки")).toBeNull();
+  });
+
+  it("shows it, marked as waiting to send and not as working, once running threads are shown", async () => {
+    const slot = await renderSection(withThreads(queued({ id: "th_wait", title: "Ждёт отправки" }, "waiting")));
+    await showRunning(slot);
+    const row = rowOf(slot, "Ждёт отправки");
+    expect(within(row).getByRole("img", { name: "Сообщение ждёт отправки" })).toBeDefined();
+    expect(within(row).queryByRole("img", { name: "Работает" })).toBeNull();
+    expect(within(row).queryByLabelText("Архивировать")).toBeNull();
+  });
+
+  it.each([
+    ["a dev server", { indicator: "background-command" }],
+    ["an unread reply", { indicator: "unread-success" }],
+  ])("keeps a waiting message the thread has beside %s out of the list, and shows the clock", async (_name, over) => {
+    const slot = await renderSection(
+      withThreads(queued({ id: "th_hidden", title: "Скрытая очередь", ...over }, "waiting"), idleThread({ id: "th_idle", title: "Свободный" })),
+    );
+    await slot.findByText("Свободный");
+    expect(slot.queryByText("Скрытая очередь")).toBeNull();
+    await showRunning(slot);
+    expect(within(rowOf(slot, "Скрытая очередь")).getByRole("img", { name: "Сообщение ждёт отправки" })).toBeDefined();
+  });
+
+  it("lists a thread whose message failed to send with its own mark and no Archive button", async () => {
+    const slot = await renderSection(withThreads(queued({ id: "th_fail", title: "Не отправилось" }, "failed")));
+    await slot.findByText("Не отправилось");
+    const row = rowOf(slot, "Не отправилось");
+    expect(within(row).getByRole("img", { name: "Сообщение не отправилось" })).toBeDefined();
+    expect(within(row).queryByLabelText("Архивировать")).toBeNull();
+  });
+
+  it("shows the cross, not the terminal, on a failed message of a thread with a dev server", async () => {
+    const slot = await renderSection(
+      withThreads(queued({ id: "th_fail", title: "Не отправилось", indicator: "background-command" }, "failed")),
+    );
+    await slot.findByText("Не отправилось");
+    const row = rowOf(slot, "Не отправилось");
+    expect(within(row).getByRole("img", { name: "Сообщение не отправилось" })).toBeDefined();
+    expect(within(row).queryByRole("img", { name: "Запущен фоновый процесс" })).toBeNull();
+  });
+
+  it("takes an unknown queuedWork of the host for no queue", async () => {
+    const slot = await renderSection(withThreads(queued({ id: "th_x", title: "Обычный" }, "sending")));
+    await slot.findByText("Обычный");
+    expect(within(rowOf(slot, "Обычный")).getByLabelText("Архивировать")).toBeDefined();
+  });
+});
+
 describe("time on a working thread", () => {
   const RUNNING_AND_WAITING = {
     sidebarThreads: {
