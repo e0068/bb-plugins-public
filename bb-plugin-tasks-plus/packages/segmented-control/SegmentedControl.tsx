@@ -29,7 +29,7 @@
 // PLUGIN's own tree, so a utility written down here reaches a consumer's
 // stylesheet only if that consumer happens to use the same one somewhere else.
 // See the note at the top of that file.
-import type { ReactNode } from "react";
+import { Fragment, type ReactNode } from "react";
 import type * as TabsPrimitive from "@radix-ui/react-tabs";
 
 import "./segmented-control.css";
@@ -51,6 +51,15 @@ export interface SegmentedControlProps<T extends string> {
   readonly onChange: (next: T) => void;
   readonly options: readonly SegmentedControlOption<T>[];
   readonly "aria-label"?: string;
+  /** Segments show only their icons; the label stays as each segment's accessible name. */
+  readonly iconOnly?: boolean;
+  readonly disabled?: boolean;
+  /**
+   * Wraps each segment — for a tooltip on an icon-only segment. The wrapper
+   * gets the segment itself and must pass its props and ref down to it
+   * (Radix `asChild` does).
+   */
+  readonly wrapSegment?: (segment: ReactNode, option: { readonly value: T; readonly label: string }) => ReactNode;
 }
 
 export function SegmentedControl<T extends string>({
@@ -59,16 +68,31 @@ export function SegmentedControl<T extends string>({
   onChange,
   options,
   "aria-label": ariaLabel,
+  iconOnly = false,
+  disabled = false,
+  wrapSegment = (segment) => segment,
 }: SegmentedControlProps<T>) {
   return (
     <Root value={value} onValueChange={(next) => onChange(next as T)}>
       <List aria-label={ariaLabel} className="sgc-track">
         {options.map((option) => (
-          <Trigger key={option.value} value={option.value} className="sgc-segment">
-            {option.icon}
-            {option.label}
-            {option.count !== undefined && <span className="sgc-count">{option.count}</span>}
-          </Trigger>
+          <Fragment key={option.value}>
+            {wrapSegment(
+              <Trigger
+                value={option.value}
+                disabled={disabled}
+                aria-label={iconOnly ? option.label : undefined}
+                // No TabsContent ever follows: the id Radix points at would dangle.
+                aria-controls={undefined}
+                className={iconOnly ? "sgc-segment sgc-segment-icon" : "sgc-segment"}
+              >
+                {option.icon}
+                {!iconOnly && option.label}
+                {!iconOnly && option.count !== undefined && <span className="sgc-count">{option.count}</span>}
+              </Trigger>,
+              option,
+            )}
+          </Fragment>
         ))}
       </List>
     </Root>

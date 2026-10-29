@@ -46,9 +46,13 @@
   color: var(--foreground);
 }
 
-/* Radix writes data-state on the trigger; the filled pill is the only mark of
-   which option is on — there is no border on the track to carry it. */
-.sgc-segment[data-state="active"] {
+/* The filled pill is the only mark of which option is on — there is no
+   border on the track to carry it. Radix Tabs writes both data-state and
+   aria-selected on the trigger; a tooltip wrapped around the segment
+   (wrapSegment) takes data-state over for its own open/closed, so
+   aria-selected carries it too. */
+.sgc-segment[data-state="active"],
+.sgc-segment[aria-selected="true"] {
   background: var(--state-active);
   color: var(--foreground);
   box-shadow: var(--shadow-xs, 0 1px 2px 0 rgb(0 0 0 / 0.05));
@@ -69,4 +73,13 @@
 .sgc-segment:focus-visible {
   outline: 2px solid var(--ring);
   outline-offset: 2px;
+}
+
+/* Icon-only: a square segment, the icon a size up from the text variant. */
+.sgc-segment-icon {
+  padding: 4px;
+}
+
+.sgc-segment:disabled[aria-selected="true"] {
+  opacity: 1;
 }

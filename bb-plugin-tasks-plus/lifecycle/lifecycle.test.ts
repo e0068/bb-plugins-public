@@ -16,6 +16,8 @@ let kv: KvStore;
 let board: BoardConfig;
 let events: Map<string, ThreadEvent>;
 let sdkThreads: Map<string, Record<string, unknown>>;
+let services: Map<string, { start(signal: AbortSignal): Promise<void> }>;
+let threadReads: string[];
 
 function fakeKv(): KvStore {
   const map = new Map<string, unknown>();
@@ -41,13 +43,18 @@ function fakeBb(): BbPluginApi {
     sdk: {
       threads: {
         async get({ threadId }: { threadId: string }) {
+          threadReads.push(threadId);
           const thread = sdkThreads.get(threadId);
           if (!thread) throw Object.assign(new Error("gone"), { code: "thread_not_found" });
           return thread;
         },
       },
     },
-    background: { service() {} },
+    background: {
+      service(name: string, service: { start(signal: AbortSignal): Promise<void> }) {
+        services.set(name, service);
+      },
+    },
     log: { warn() {} },
     realtime: { publish() {} },
   } as unknown as BbPluginApi;
@@ -103,6 +110,8 @@ beforeEach(() => {
   kv = fakeKv();
   events = new Map();
   sdkThreads = new Map();
+  services = new Map();
+  threadReads = [];
   board = {
     id: "b1", name: "Board", prefix: "TSK", color: "blue", folderId: null,
     linkedBbProjectId: null, tasksFolder: "tasks", database: null, createdAt: "2026-01-01T00:00:00.000Z",
@@ -168,57 +177,121 @@ describe("thread lifecycle", () => {
     expect(await store.tasks.listComments(task.id)).toEqual([]);
   });
 
-  it("число чтений доски за сверку не зависит от числа задач", async () => {
-    const firstRoot = root;
-    const one = countingStore(makeStore());
-    await taskWithThread(one.store);
-    root = mkdtempSync(join(tmpdir(), "lifecycle-"));
-    const many = countingStore(makeStore());
-    await taskWithThread(many.store);
-    for (const title of ["B", "C", "D", "E"]) {
-      await many.store.tasks.createTask({ projectId: "b1", title });
-    }
-    sdkThreads.set("thr_x", { id: "thr_x", status: "idle", archivedAt: null, deletedAt: null });
-
-    await registerLifecycle(fakeBb(), one.store);
-    await registerLifecycle(fakeBb(), many.store);
-    rmSync(firstRoot, { recursive: true, force: true });
-
-    expect(many.calls.threadsByTaskId).toBe(one.calls.threadsByTaskId);
-    expect(many.calls.listTaskThreads).toBe(0);
-  });
-
-  it("после перезапуска состояние привязанного треда восстанавливает сверка", async () => {
-    const before = makeStore();
-    const task = await taskWithThread(before);
-    // «active» — единственный статус, который виден как «working»: у треда
-    // без наблюдения умолчание «idle», поэтому без сверки разница заметна.
-    sdkThreads.set("thr_x", { id: "thr_x", status: "active", archivedAt: null, deletedAt: null });
-
-    // Перезапуск плагина: память состояния пуста, и единственный, кто знает
-    // о живых тредах, — сверка на загрузке.
-    const restarted = makeStore();
-    await registerLifecycle(fakeBb(), restarted);
-
-    expect((await restarted.tasks.listTaskThreads(task.id))[0]?.liveStatus).toBe("working");
-  });
-
-  it.each([
-    ["отвергает токен", new DatabaseAuthFailed()],
-    ["не отвечает", new DatabaseUnreachable()],
-  ])("старт не падает, когда база одной доски %s, — треды остальных досок сверяются", async (_, failure) => {
+  it("старт плагина не ждёт сверки: треды у bb не спрашиваются", async () => {
     const store = makeStore();
-    const task = await taskWithThread(store);
+    await taskWithThread(store);
     sdkThreads.set("thr_x", { id: "thr_x", status: "idle", archivedAt: null, deletedAt: null });
-    const tasks = {
-      ...store.tasks,
-      listProjects: () => [...store.tasks.listProjects(), { ...board, id: "b2" }],
-      threadsByTaskId: (projectId: string) =>
-        projectId === "b2" ? Promise.reject(failure) : store.tasks.threadsByTaskId(projectId),
-    };
 
-    await registerLifecycle(fakeBb(), { ...store, tasks } as TasksApiStore);
+    await registerLifecycle(fakeBb(), store);
 
-    expect((await store.tasks.listTaskThreads(task.id))[0]?.liveStatus).toBe("idle");
+    expect(threadReads).toEqual([]);
+    expect(services.has("thread-status-reconcile")).toBe(true);
+  });
+
+  describe("фоновая сверка", () => {
+    /** Запускает сервис сверки и отдаёт способ его остановить; сервис живёт до
+     *  отмены сигнала, поэтому тест всегда гасит его сам. */
+    async function startReconcile(store: TasksApiStore) {
+      await registerLifecycle(fakeBb(), store);
+      const controller = new AbortController();
+      const running = services.get("thread-status-reconcile")!.start(controller.signal);
+      return {
+        controller,
+        stop: async () => {
+          controller.abort();
+          await running;
+        },
+      };
+    }
+
+    it("первый проход идёт сразу, без ожидания интервала", async () => {
+      const store = makeStore();
+      const task = await taskWithThread(store);
+      // «active» — единственный статус, который виден как «working»: у треда
+      // без наблюдения умолчание «idle», поэтому без сверки разница заметна.
+      sdkThreads.set("thr_x", { id: "thr_x", status: "active", archivedAt: null, deletedAt: null });
+
+      // Перезапуск плагина: память состояния пуста, и единственный, кто знает
+      // о живых тредах, — сверка в фоне.
+      const restarted = makeStore();
+      const { stop } = await startReconcile(restarted);
+      await waitFor(
+        async () => (await restarted.tasks.listTaskThreads(task.id))[0]?.liveStatus === "working",
+      );
+      await stop();
+
+      expect(threadReads).toEqual(["thr_x"]);
+    });
+
+    it.each([
+      ["отвергает токен", new DatabaseAuthFailed()],
+      ["не отвечает", new DatabaseUnreachable()],
+    ])("когда база одной доски %s, треды остальных досок сверяются", async (_, failure) => {
+      const store = makeStore();
+      const task = await taskWithThread(store);
+      sdkThreads.set("thr_x", { id: "thr_x", status: "idle", archivedAt: null, deletedAt: null });
+      const tasks = {
+        ...store.tasks,
+        listProjects: () => [...store.tasks.listProjects(), { ...board, id: "b2" }],
+        threadsByTaskId: (projectId: string) =>
+          projectId === "b2" ? Promise.reject(failure) : store.tasks.threadsByTaskId(projectId),
+      };
+
+      const { stop } = await startReconcile({ ...store, tasks } as TasksApiStore);
+      await waitFor(
+        async () => (await store.tasks.listTaskThreads(task.id))[0]?.liveStatus === "idle",
+      );
+      await stop();
+    });
+
+    it("число чтений доски за проход сверки не зависит от числа задач", async () => {
+      const firstRoot = root;
+      const one = countingStore(makeStore());
+      await taskWithThread(one.store);
+      root = mkdtempSync(join(tmpdir(), "lifecycle-"));
+      const many = countingStore(makeStore());
+      await taskWithThread(many.store);
+      for (const title of ["B", "C", "D", "E"]) {
+        await many.store.tasks.createTask({ projectId: "b1", title });
+      }
+      sdkThreads.set("thr_x", { id: "thr_x", status: "idle", archivedAt: null, deletedAt: null });
+
+      // Один проход на каждую доску: сервис гасится, как только тред прочитан, —
+      // проход доводится до конца, следующий не начинается.
+      for (const { store } of [one, many]) {
+        threadReads = [];
+        const { stop } = await startReconcile(store);
+        await waitFor(async () => threadReads.length === 1);
+        await stop();
+      }
+      rmSync(firstRoot, { recursive: true, force: true });
+
+      expect(many.calls.threadsByTaskId).toBe(one.calls.threadsByTaskId);
+      expect(many.calls.listTaskThreads).toBe(0);
+    });
+
+    it("отмена сигнала посреди прохода останавливает дальнейшие чтения тредов", async () => {
+      const store = makeStore();
+      const task = await taskWithThread(store);
+      for (const threadId of ["thr_b", "thr_c", "thr_d"]) {
+        await store.tasks.upsertTaskThread({ taskId: task.id, threadId, presetName: "Opus", title: threadId });
+      }
+      for (const threadId of ["thr_x", "thr_b", "thr_c", "thr_d"]) {
+        sdkThreads.set(threadId, { id: threadId, status: "idle", archivedAt: null, deletedAt: null });
+      }
+      const controller = new AbortController();
+      const bb = fakeBb();
+      const read = bb.sdk.threads.get.bind(bb.sdk.threads);
+      // Сигнал гаснет во время первого чтения: остальные треды читаться не должны.
+      bb.sdk.threads.get = async (args) => {
+        controller.abort();
+        return read(args);
+      };
+
+      await registerLifecycle(bb, store);
+      await services.get("thread-status-reconcile")!.start(controller.signal);
+
+      expect(threadReads).toHaveLength(1);
+    });
   });
 });

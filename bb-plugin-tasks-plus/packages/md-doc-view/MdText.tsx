@@ -10,25 +10,27 @@
 // The engine decides at render whether a link is live, by asking the resolver
 // once — so a new resolver (the consumer learned where files are) recreates
 // the editor, while new text is only set into the one already there. A picture
-// with a relative `src` asks the image resolver for its address the same way;
-// without one the engine draws a "caption — path" placeholder, and a picture
-// whose address doesn't load is swapped for the same placeholder — the engine
-// itself leaves a broken image there. A live
-// link is a bare span in the engine's markup; after each render it is given a
-// link's role and focus, and Enter on it clicks it.
+// with a relative `src` asks the image resolver for its address the same way,
+// and one with an absolute file path is rewritten through the resolver before
+// the engine sees the text (image-paths.ts). Without a resolver the engine
+// draws a "caption — path" placeholder, and a picture whose address doesn't
+// load is swapped for the same placeholder — the engine itself leaves a broken
+// image there. A live link is a bare span in the engine's markup; after each
+// render it is given a link's role and focus, and Enter on it clicks it.
 import { useLayoutEffect, useRef, type KeyboardEvent } from "react";
 import { createEditor } from "../kasimov/kasimov.js";
 import type { KasimovEditorInstance, KasimovLink } from "../kasimov/kasimov.js";
 import "../kasimov/kasimov.css";
 import "./md-doc-view.css";
 import "./md-text.css";
+import { resolveImagePaths } from "./image-paths";
 import { MD_TEXT_CLASS, mdTextRule } from "./md-text";
 
 export interface MdTextProps {
   text: string;
   /** Live link → what a click does; `null` leaves it plain text. Keep it stable: a new one redraws the text. */
   linkResolver: (href: string) => KasimovLink | null;
-  /** A picture's relative `src` → the address to load it from; `null` or absent leaves the placeholder. Keep it stable too. */
+  /** A picture's relative `src` or absolute file path → the address to load it from; `null` or absent leaves the placeholder. Keep it stable too. */
   imageResolver?: ((src: string) => string | null) | undefined;
 }
 
@@ -74,6 +76,8 @@ export function MdText({ text, linkResolver, imageResolver }: MdTextProps) {
   const editorRef = useRef<KasimovEditorInstance | null>(null);
   const textRef = useRef(text);
   textRef.current = text;
+  // Text → what the engine gets: absolute picture paths already resolved.
+  const prepareRef = useRef((value: string) => value);
 
   // Layout effects, not passive ones: the text lands in the DOM in the same
   // commit as the card around it, so no frame shows an empty field.
@@ -94,14 +98,16 @@ export function MdText({ text, linkResolver, imageResolver }: MdTextProps) {
     };
     // An image's error doesn't bubble: the host hears it on the way down.
     host.addEventListener("error", onError, true);
+    const resolveImage = imageResolver === undefined ? undefined : remember(imageResolver);
+    prepareRef.current = (value) => (resolveImage === undefined ? value : resolveImagePaths(value, resolveImage));
     const editor = createEditor(host, {
-      value: textRef.current,
+      value: prepareRef.current(textRef.current),
       editable: false,
       followLinks: true,
       atLinks: false,
       frontmatter: false,
       linkResolver,
-      ...(imageResolver === undefined ? {} : { imageResolver: remember(imageResolver) }),
+      ...(resolveImage === undefined ? {} : { imageResolver: resolveImage }),
     });
     markLinks(host);
     editorRef.current = editor;
@@ -113,8 +119,9 @@ export function MdText({ text, linkResolver, imageResolver }: MdTextProps) {
   }, [linkResolver, imageResolver]);
 
   useLayoutEffect(() => {
-    if (editorRef.current === null || editorRef.current.getValue() === text) return;
-    editorRef.current.setValue(text);
+    const value = prepareRef.current(text);
+    if (editorRef.current === null || editorRef.current.getValue() === value) return;
+    editorRef.current.setValue(value);
     markLinks(hostRef.current!);
   }, [text]);
 

@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, onTestFinished, vi } from "vitest";
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 
 import type { LoadedDoc, RevealResult, SaveResult } from "./MdDocView";
@@ -158,7 +158,8 @@ function makeLoad() {
   });
 }
 
-// In-tab links resolve to abs; http/https — null (not clickable).
+// In-tab links resolve to abs. http/https/mailto never get here — MdDocView
+// opens them itself; the null branch stays as a net should that break.
 const resolveLinkTarget = (href: string): string | null =>
   /^https?:/.test(href) ? null : href === "b.md" ? "/b.md" : `/${href}`;
 
@@ -196,12 +197,6 @@ describe("MdDocView", () => {
   it("shows the first file's content", async () => {
     const view = renderView();
     await view.findByText("[neighbor](b.md) and [external](https://x.dev)");
-  });
-
-  it("an in-tab link is clickable, an external (http) one is not", async () => {
-    const view = renderView();
-    await view.findByTestId("link-b.md");
-    expect(view.getByTestId("plain-https://x.dev")).toBeInTheDocument();
   });
 
   it("clicking a link jumps into the file, back returns via the stack", async () => {
@@ -291,6 +286,54 @@ describe("MdDocView", () => {
     expect(mde.getAttribute("data-atlinks")).toBe("false");
     expect(mde.getAttribute("data-frontmatter")).toBe("false");
     expect(mde.getAttribute("data-mermaid")).toBe("contrast");
+  });
+});
+
+describe("MdDocView: links out of the document", () => {
+  const OUT = "[site](https://x.dev) [mail](mailto:a@b.com) [neighbor](b.md)";
+  const loadOut = () =>
+    vi.fn(async (path: string): Promise<LoadedDoc> =>
+      path === "/a.md" ? { path, content: OUT, sha256: "s" } : DOCS[path] ?? { path, content: "x", sha256: "s" },
+    );
+
+  it("a web link is clickable and opens outside, the tab stays on its document", async () => {
+    const openExternal = vi.fn();
+    const load = loadOut();
+    const view = renderView({ load, openExternal });
+
+    fireEvent.click(await view.findByTestId("link-https://x.dev"));
+
+    expect(openExternal).toHaveBeenCalledWith("https://x.dev");
+    expect(load).toHaveBeenCalledTimes(1);
+  });
+
+  it("a mail link opens outside too", async () => {
+    const openExternal = vi.fn();
+    const view = renderView({ load: loadOut(), openExternal });
+
+    fireEvent.click(await view.findByTestId("link-mailto:a@b.com"));
+
+    expect(openExternal).toHaveBeenCalledWith("mailto:a@b.com");
+  });
+
+  it("a file link still jumps inside the tab and opens nothing outside", async () => {
+    const openExternal = vi.fn();
+    const view = renderView({ load: loadOut(), openExternal });
+
+    fireEvent.click(await view.findByTestId("link-b.md"));
+
+    await view.findByText("# neighbor");
+    expect(openExternal).not.toHaveBeenCalled();
+  });
+
+  it("without a host opener a web link opens in a new browser window, cut off from this one", async () => {
+    const open = vi.spyOn(window, "open").mockReturnValue(null);
+    onTestFinished(() => open.mockRestore());
+    const view = renderView({ load: loadOut() });
+
+    fireEvent.click(await view.findByTestId("link-https://x.dev"));
+
+    expect(open).toHaveBeenCalledWith("https://x.dev", "_blank", "noopener,noreferrer");
   });
 });
 

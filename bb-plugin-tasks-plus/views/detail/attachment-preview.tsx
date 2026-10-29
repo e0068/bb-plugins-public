@@ -13,6 +13,12 @@ export type PreviewLinks = Pick<TasksEditorProps, "onOpenLink" | "onOpenTask" | 
 
 type Loaded = { state: "loading" } | { state: "loaded"; text: string } | { state: "failed"; reason: string };
 
+/**
+ * The server knows the attachment but has its file neither on this machine's disk nor in the board's database:
+ * it was uploaded on another machine and never shared. Only attaching it again brings it back.
+ */
+const MISSING_FILE = "the file is not on this machine — it was uploaded on another one and never shared. Attach it again.";
+
 /** The text of the file at `url`, read once per address. */
 function useFileText(url: string): Loaded {
   const [loaded, setLoaded] = useState<Loaded>({ state: "loading" });
@@ -21,6 +27,7 @@ function useFileText(url: string): Loaded {
     setLoaded({ state: "loading" });
     fetch(url)
       .then(async (response) => {
+        if (response.status === 404) throw new Error(MISSING_FILE);
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
         return response.text();
       })

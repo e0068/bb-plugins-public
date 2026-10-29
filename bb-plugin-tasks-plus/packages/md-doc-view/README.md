@@ -43,10 +43,17 @@ interface MdDocViewProps {
   load: (path) => Promise<LoadedDoc>;                       // {path, content, sha256, error?}
   save: (path, content, expectedSha256) => Promise<SaveResult>; // CAS
   resolveLinkTarget: (href, fromPath) => string | null;     // absolute in-tab target or null
+  openExternal?: (href) => void;                            // http(s)/mailto; default window.open, noopener
   rename?: (path, name) => Promise<RenameResult>;           // {outcome: "renamed", path} | {outcome, message}
   remove?: (path) => Promise<RemoveResult>;                 // {outcome: "removed"} | {outcome, message}
 }
 ```
+
+A web or mail link (`http:`, `https:`, `mailto:`) never reaches
+`resolveLinkTarget`: the view makes it clickable itself and hands it to
+`openExternal`, so every consumer opens it the same way. Its icon, like the
+icon of a file link, comes from the design system, not from this package
+([decision](../../docs/decisions/link-icons-live-in-design-system.md)).
 
 Any file — markdown or not — is edited as raw text; there's no separate
 "read-only" mode *for a file*. `readOnly` is about the other case: a document
@@ -75,6 +82,7 @@ the source, and a jump away from that document drops it. Consumers derive the wh
 - `portal-scope.ts` — the marks every portaled dialog of the package carries.
 - `image-menu.ts` — pure: the picture's menu as a kit `MenuSpec` over the picture the engine parsed and the five actions it handed over, plus `trailing` — the pause the width slider waits out, because every action rebuilds the whole document. The clock is injected like the actions are, and the wait can be called off: a width still on its way would otherwise land on an editor a switch out of Write has already destroyed.
 - `image-zoom.ts` — pure: whether a click inside the document landed on a raster picture, and which.
+- `external-link.ts` — pure: whether a link leaves the app (`http:`, `https:`, `mailto:`), so the view opens it outside instead of asking the consumer's resolver. Kept here rather than taken from link-navigation: resolution stays injected.
 - `libraries.ts` — types only: the CodeMirror kit and Radix Tabs a plugin
   hands down as one `DocLibraries`.
 - `DocHeader.tsx` — the header as a view with no state: everything it shows
