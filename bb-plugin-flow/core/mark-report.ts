@@ -175,13 +175,14 @@ export const waitedReply = (stage: WorkStage, outcome: WaitOutcome, failure: Blo
 /**
  * Следующая работа агента за отмеченным этапом: этап агента сразу за ним или, когда между ними автоматизации, первый этап
  * агента за их цепочкой. Цепочка, которую обрывает Action, или её конец без этапа агента — работы нет: после Action
- * ждёт владелец, а не агент.
+ * ждёт владелец, а не агент. Уже закрытые этапы пропускаются: отметку можно поставить задним числом, раньше этапа, который
+ * уже закрыт, и «следующим» не должен стать пройденный этап.
  */
 export type Upcoming = { via: "agent" | "automation"; stage: WorkStage };
 
 export const upcomingAfter = (stages: readonly WorkStage[], progress: FlowProgress, markedId: string): Upcoming | null => {
   const walk = (from: string, via: Upcoming["via"]): Upcoming | null => {
-    const next = nextInRun(stages, progress, from);
+    const next = openAfter(stages, progress, from);
     if (next === null || isActionStage(next)) return null;
     return hasSteps(next) ? walk(next.id, "automation") : { via, stage: next };
   };

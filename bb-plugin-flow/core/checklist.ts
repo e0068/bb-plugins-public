@@ -18,10 +18,15 @@ export const tick = (items: readonly ChecklistItem[], ids: readonly string[]): {
 
 const itemLine = (item: ChecklistItem): string => `- ${item.id} [${item.done ? "x" : " "}] ${item.where}: ${item.text}`;
 
-/** Чек-лист агенту в ответе Утверждения: пункты с id и что с ними делать. */
-export const checklistRule = (items: readonly ChecklistItem[]): string =>
+/**
+ * Чек-лист агенту в ответе Утверждения: пункты с id и что с ними делать. Утверждённое работу продолжает без нового утверждения;
+ * отклонённое («на доработку») откатывается к этапу как обычно и делает пункты в доработке, до этапа за ним.
+ */
+export const checklistRule = (items: readonly ChecklistItem[], approved = true): string =>
   [
-    `Checklist from the owner's comments on the widgets — the approval stands, no new approval is needed. Do every item, mark each done with ${CHECKLIST_TOOL} as you finish it; the next stage starts only when all are done. If an item is unclear, go back to the Questions stage with a question instead.`,
+    approved
+      ? `Checklist from the owner's comments on the widgets — the approval stands, no new approval is needed. Do every item, mark each done with ${CHECKLIST_TOOL} as you finish it; the next stage starts only when all are done. If an item is unclear, go back to the Questions stage with a question instead.`
+      : `Checklist from the owner's comments on the widgets — the approval is not approved, so these items are part of the rework. Roll back with flow_stage as usual, do every item in the rework and mark each done with ${CHECKLIST_TOOL} as you finish it; flow_stage refuses to start the stage after the reworked one while an item is open. If an item is unclear, go back to the Questions stage with a question instead.`,
     ...items.map(itemLine),
   ].join("\n");
 

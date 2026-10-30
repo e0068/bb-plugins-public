@@ -17,7 +17,7 @@ import { optionRemoved, placedOptionCriteria, removedCriteria } from "../core/op
 import { DEFAULT_ROUTE, offeredPlace, placeColumns, withBranch, withPlace, withProject, withTree } from "../core/places";
 import { stageItems } from "../core/stages";
 import type { FileRoots } from "../core/result-link";
-import { demoVerdict, isReport, outcomeKind } from "../core/outcome";
+import { answeredAsQuestions, demoVerdict, isReport, outcomeKind } from "../core/outcome";
 import { hasMarkup, plainText } from "../core/inline-links";
 import { REVIEW_ROWS, SETUP_ROW, artifactVerb, checkerAllowed, rowsOf } from "../core/rows";
 import { Button } from "../components/ui/button";
@@ -1381,12 +1381,15 @@ export function BriefCard({ brief, send, onResult, roots, place = "here", route 
   // Утверждение уносит ответы виджетов своей группы, копивших их до него; правки считаются живьём.
   const approval = brief.outcome !== undefined && !isReport(brief);
   const group = useApprovalGroup(brief, approval);
-  /** Утверждение уносит ответы группы; комментарий к нему — на доработку: ответы остаются черновиками и вернутся агенту виджетами. */
+  /**
+   * Утверждение уносит ответы и комментарии группы при любой кнопке. «На доработку» их не записывает — они остаются черновиками
+   * и вернутся владельцу виджетами, — но агент читает их из этой же реплики, поэтому недорешённый вопрос ему не помеха.
+   */
   const sendApproval = (next: Draft) => {
     const outcome = toAnswer(brief, settled(next)).outcome;
     const rework = outcome?.accepted === false && outcome.flow === undefined;
     if (!rework && group.undecided.length > 0) return Promise.resolve();
-    return submit(settled(next), rework ? {} : { group: group.group() });
+    return submit(settled(next), { group: group.group() });
   };
   // Сжатие, которое сейчас недоступно, снимается с черновика один раз: его не покажет ячейка и не увезёт ответ,
   // даже если владелец выбрал его раньше — до начала хода. Утверждение, за которым агенту делать нечего, сжатия
@@ -1421,9 +1424,10 @@ export function BriefCard({ brief, send, onResult, roots, place = "here", route 
       }}
     >
       {report ? (
-        // Демонстрация — отчёт: ни кнопок, ни вопросов (старая, сохранённая с ними, тоже). Перед Утверждением — поле комментария, он уйдёт с ним.
+        // Демонстрация — отчёт без кнопок. Перед Утверждением — вопросы, если они есть, и поле комментария: ответы и комментарий уйдут с ним.
         <>
           <DemoCard brief={brief} roots={roots} />
+          {brief.settle === "approval" && sentWith === undefined && <QuestionsSection brief={brief} view={view} />}
           {brief.settle === "approval" && sentWith !== undefined && <StatusLine icon="CircleCheck" title={t.outcome.sentWith} aside={brief.title} />}
           {brief.settle === "approval" && sentWith === undefined && (
             <>
@@ -1579,7 +1583,10 @@ export function ResolvedClarifyLine({ brief }: { brief: DecisionBrief }) {
  */
 export function AnsweredBriefCard({ brief, record, roots, frozen = false }: { brief: DecisionBrief; record: AnswerRecord; roots: FileRoots | null; frozen?: boolean }) {
   const t = useMessages();
-  const status = <StatusLine icon="CircleCheck" title={brief.kind === "clarify" ? t.common.clarifyAnswered : t.common.briefAnswered} aside={answeredAt(record.answeredAt, t.common.dateLocale)} />;
+  // Демонстрация, чьи вопросы ушли с Утверждением, — отчёт: она «ушла агенту с Утверждением», а не «ответ отправлен».
+  const sentWithApproval = answeredAsQuestions(brief, record.answer);
+  const answered = sentWithApproval ? t.outcome.sentWith : brief.kind === "clarify" ? t.common.clarifyAnswered : t.common.briefAnswered;
+  const status = <StatusLine icon="CircleCheck" title={answered} aside={answeredAt(record.answeredAt, t.common.dateLocale)} />;
   return (
     <AnsweredImagesProvider briefId={brief.id} record={record}>
       <AnsweredPlain brief={brief} answer={record.answer} verdict={verdictText(t, brief, record.answer)} forecast={record.forecast} roots={roots}>
@@ -1595,13 +1602,13 @@ export function AnsweredBriefCard({ brief, record, roots, frozen = false }: { br
   );
 }
 
-/** Исход отвеченного итога словами; у итога без ответа исхода нет — черновик вердикта не показывается. */
-const verdictText = (t: Messages, brief: DecisionBrief, answer: DecisionAnswer): string =>
-  answer.outcome?.flow !== undefined
-    ? t.outcome.flowSwitched(answer.outcome.flow.name)
-    : demoVerdict(answer) === "continue" && outcomeKind(brief) === "approve"
-      ? t.outcome.approved
-      : t.outcome.verdict(demoVerdict(answer) === "continue" ? "continue" : "comment");
+/** Исход отвеченного итога словами; у итога без ответа и у ответа без итога (вопросы демонстрации) исхода нет — вердикт не показывается. */
+const verdictText = (t: Messages, brief: DecisionBrief, answer: DecisionAnswer): string | null => {
+  if (answer.outcome === undefined) return null;
+  if (answer.outcome.flow !== undefined) return t.outcome.flowSwitched(answer.outcome.flow.name);
+  const continued = demoVerdict(answer) === "continue";
+  return continued && outcomeKind(brief) === "approve" ? t.outcome.approved : t.outcome.verdict(continued ? "continue" : "comment");
+};
 
 /**
  * Неотвеченный виджет свёрнутой группы: тот же вид, что у отвеченного, но с черновиком владельца вместо ответа, без строки статуса
@@ -1622,6 +1629,9 @@ function AnsweredPlain({ brief, answer, verdict, forecast, roots, children }: { 
   };
   const catalog = useWidgetAgent(brief.threadId, stageItems(brief).length > 0);
   const view: View = { draft: fromAnswer(answer), missing: new Set(), answered: true, sending: false, pick: noop, own: noop, change: noop, stageChange: noop, expanded, expand, brief, snapshot: forecast, catalog };
+  // Демонстрация, чьи вопросы ушли с Утверждением: её комментарий лежит в `answer.note`, а не в итоге, и подписан как комментарий к демо.
+  const withApproval = answeredAsQuestions(brief, answer);
+  const demoNote = (withApproval ? answer.note : answer.outcome?.note) ?? "";
   return (
     <Plain label={brief.title}>
       {brief.outcome !== undefined ? (
@@ -1630,10 +1640,10 @@ function AnsweredPlain({ brief, answer, verdict, forecast, roots, children }: { 
           <Body brief={brief} view={view} />
           <div className="break-words text-sm leading-relaxed text-muted-foreground">
             {verdict !== null && <b className="font-semibold text-foreground">{verdict}</b>}
-            {!blank(answer.outcome?.note ?? "") && (
+            {!blank(demoNote) && (
               <>
                 {verdict !== null && " — "}
-                <AnsweredText text={answer.outcome?.note ?? ""} />
+                <AnsweredText text={demoNote} />
               </>
             )}
           </div>
@@ -1645,7 +1655,7 @@ function AnsweredPlain({ brief, answer, verdict, forecast, roots, children }: { 
           <AnswerBlock brief={brief} view={view} roots={roots} />
         </>
       )}
-      {!blank(answer.note ?? "") && (
+      {!blank(answer.note ?? "") && !withApproval && (
         <div className="break-words text-sm leading-relaxed text-muted-foreground">
           <b className="font-semibold text-foreground">{t.common.noteToBrief}</b> <AnsweredText text={answer.note ?? ""} />
         </div>

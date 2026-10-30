@@ -10,6 +10,7 @@ import { selectedThreadSetting } from "@bb-plugins/rail-collapse/setting";
 import { branchOffDefaultBranch, createSteps, type RunFigures, type Steps } from "@bb-plugins/automation-steps/index";
 import { failureInstructionOf, retryPolicyOf, wakesAgentAfterLastRetry } from "./core/automation-run";
 import { OWN_PLUGIN_ID } from "./core/plugin-id";
+import { otherFlowsOf } from "./core/next-flow-offer";
 import { flowsInPanelSetting } from "./lib/flows-in-panel-setting";
 import { ANSWERED_CHANNEL, registerApi } from "./server/api";
 import { returnAwaitingBrief } from "./server/brief-return";
@@ -383,7 +384,7 @@ export default async function plugin(bb: BbPluginApi): Promise<void> {
     now: Date.now,
     lead: () => paceLeadOf(storedContext.providerPaceLead),
   });
-  registerAskTool(bb, store, { context: (threadId) => contextFillOf(bb.sdk, () => settings.get(), threadId), decided: (brief) => recordDecided?.(brief) ?? Promise.resolve(), newId, now, stages: stagesOf, flowIds: () => flows.current().flows.map((flow) => flow.id), flowName: flowNameOf, hasFlow: (threadId) => flowOf(threadId) !== null, emit, planning: (threadId) => readPlanning(bb.sdk, threadId, Date.now(), readClaudeTranscript()), progress, limits: providerThreads.line, threadModels: (threadId) => threadModelsOf(bb.sdk, threadId), parentOf, tellParent });
+  registerAskTool(bb, store, { context: (threadId) => contextFillOf(bb.sdk, () => settings.get(), threadId), decided: (brief) => recordDecided?.(brief) ?? Promise.resolve(), newId, now, stages: stagesOf, flowIds: () => flows.current().flows.map((flow) => flow.id), flowName: flowNameOf, otherFlows: (threadId) => otherFlowsOf(flows.current().flows, flowOf(threadId)?.id), hasFlow: (threadId) => flowOf(threadId) !== null, emit, planning: (threadId) => readPlanning(bb.sdk, threadId, Date.now(), readClaudeTranscript()), progress, limits: providerThreads.line, threadModels: (threadId) => threadModelsOf(bb.sdk, threadId), parentOf, tellParent });
   const journalDirs = createJournalDirStore(bb.storage.kv);
   // Каждый ответ на бриф запоминается за тредом вместе с путём файла журнала: по нему итог прогона ссылается на журнал.
   const journalIndex = createJournalIndex(bb.storage.kv, store);

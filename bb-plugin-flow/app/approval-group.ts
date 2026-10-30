@@ -4,6 +4,7 @@
 import { useRpc } from "@get-bb/plugin-sdk/app";
 import { useEffect, useRef, useState } from "react";
 
+import { memberOf } from "../core/outcome";
 import type { approvalGroupRpcContract, DecisionBrief, GroupAnswer } from "../shared/contract";
 import { memberAnswer, memberDecided, memberDraft, memberEdits } from "./approval-edits";
 import { subscribeDrafts } from "./draft-storage";
@@ -39,6 +40,6 @@ export function useApprovalGroup(approval: DecisionBrief, enabled: boolean): { r
   }, [approval.id, enabled]);
   const list = members ?? [];
   const edits = list.reduce((sum, member) => sum + memberEdits(member, memberDraft(member)), 0);
-  const undecided = list.filter((member) => member.outcome === undefined && !memberDecided(member, memberDraft(member))).map((member) => member.title);
+  const undecided = list.filter((member) => memberOf(member).outcome === undefined && !memberDecided(member, memberDraft(member))).map((member) => member.title);
   return { ready: !enabled || members !== null, edits, undecided, group: () => list.map((member) => memberAnswer(member, memberDraft(member))) };
 }

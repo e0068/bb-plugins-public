@@ -41,6 +41,33 @@ export const markerNumbers = (text: string, marker: Marker | readonly Marker[]):
   ...new Set([...text.matchAll(markerPattern(marker))].map(numberOf)),
 ];
 
+/** Текст с метками, перенумерованными по `map`; метка, которой в карте нет, и вид каждой метки остаются как были. */
+export const renumberMarkers = (text: string, markers: readonly Marker[], map: ReadonlyMap<number, number>): string =>
+  text.replace(markerPattern(markers), (...args: unknown[]) => {
+    const groups = args.slice(1, 1 + markers.length) as Array<string | undefined>;
+    const kind = groups.findIndex((group) => group !== undefined);
+    const n = Number(groups[kind]);
+    return markers[kind]!(map.get(n) ?? n);
+  });
+
+/**
+ * Куда переехать номерам `wanted`, чтобы не совпасть с занятыми: свободный номер остаётся, занятый уходит на ближайший
+ * свободный. Занятые пополняются выданными, поэтому следующий вызов с тем же набором не выдаст их повторно.
+ */
+export const freshNumbers = (taken: Set<number>, wanted: readonly number[]): Map<number, number> => {
+  const moves = new Map<number, number>();
+  let free = 1;
+  for (const n of wanted) {
+    if (taken.has(n)) {
+      while (taken.has(free)) free += 1;
+    }
+    const to = taken.has(n) ? free : n;
+    taken.add(to);
+    moves.set(n, to);
+  }
+  return moves;
+};
+
 /** Текст без метки картинки `n`: каждое её вхождение уходит вместе с одним пробелом рядом, чтобы слова не слиплись и не разошлись. */
 export const withoutMarker = (text: string, n: number, marker: Marker): string => {
   const tag = escape(marker(n));

@@ -5,7 +5,7 @@
 // в предел значения.
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 
-import { markerNumbers } from "../core/image-markers";
+import { freshNumbers, markerNumbers, renumberMarkers } from "../core/image-markers";
 import type { Locale } from "../lib/i18n";
 import { messages } from "../lib/messages";
 import type { AnswerImage, DecisionAnswer } from "../shared/contract";
@@ -100,6 +100,44 @@ const ownerWords = (answer: DecisionAnswer): string =>
 export const referencedImages = (answer: DecisionAnswer, images: readonly AnswerImage[], locale?: Locale): AnswerImage[] => {
   const marked = new Set(markedNumbers(ownerWords(answer), locale));
   return images.filter(({ n }) => marked.has(n));
+};
+
+/** Строки значения целиком, глубоко: метки картинок могут стоять в любом своём слове владельца. */
+const mapText = <T>(value: T, change: (text: string) => string): T => {
+  if (typeof value === "string") return change(value) as T;
+  if (Array.isArray(value)) return value.map((item) => mapText(item, change)) as T;
+  if (value !== null && typeof value === "object") return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, mapText(item, change)])) as T;
+  return value;
+};
+
+/** Слова владельца в виджете группы: ответ брифа — все его своими словами, Демонстрация — её комментарий. */
+const memberWords = (member: { answer?: DecisionAnswer; note?: string }): string => (member.answer === undefined ? (member.note ?? "") : ownerWords(member.answer));
+
+/**
+ * Картинки виджетов группы вместе с картинками Утверждения. Каждое поле нумерует свои картинки с единицы, а агент получает
+ * одну реплику: метка виджета, совпавшая с занятой, переезжает на свободный номер — и в его словах, и в картинке, —
+ * иначе две «[картинка 1]» указывали бы на один файл. Картинка без метки в словах виджета агенту не уходит.
+ */
+export const withGroupImages = <M extends { answer?: DecisionAnswer; note?: string; images?: readonly AnswerImage[] }>(
+  answer: DecisionAnswer,
+  own: readonly AnswerImage[],
+  members: readonly M[],
+  locale?: Locale,
+): { images: AnswerImage[]; members: M[] } => {
+  const m = messages(locale).attachments;
+  const markers = [m.marker, m.fileMarker, m.legacyMarker];
+  const taken = new Set([...markedNumbers(ownerWords(answer), locale), ...own.map(({ n }) => n)]);
+  const moved = members.map((member) => {
+    const wanted = markedNumbers(memberWords(member), locale);
+    const moves = freshNumbers(taken, wanted);
+    const renumber = (text: string) => renumberMarkers(text, markers, moves);
+    const images = (member.images ?? []).flatMap((image) => (moves.has(image.n) ? [{ ...image, n: moves.get(image.n)! }] : []));
+    return {
+      member: { ...member, ...(member.answer === undefined ? {} : { answer: mapText(member.answer, renumber) }), ...(member.note === undefined ? {} : { note: renumber(member.note) }) },
+      images,
+    };
+  });
+  return { images: [...own, ...moved.flatMap(({ images }) => images)], members: moved.map(({ member }) => member) };
 };
 
 /**

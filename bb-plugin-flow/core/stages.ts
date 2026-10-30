@@ -237,7 +237,7 @@ const BUILTIN_ANSWERS: Record<BuiltinKind, string> = {
   questions: "ask the owner with ask_decision",
   criteria: "send setup.criteria through ask_decision",
   select: "send setup.stages through ask_decision",
-  demo: "send a brief with outcome through ask_decision (outcome.stage — this id) and go on to the next stage without waiting: sending closes the stage; the demo has no comment field and takes no questions or nextFlow, but a chat message may ask for a change — then roll back to the stage where the change is made (flow_stage) and go through the stages again in order up to this demo; without a change, answer it in one sentence and carry on",
+  demo: "send a brief with outcome through ask_decision (outcome.stage — this id) and go on to the next stage without waiting: sending closes the stage; the demo takes no nextFlow; with an approval ahead a question about it goes in its own questions, not in a separate widget; a chat message may ask for a change — then roll back to the stage where the change is made (flow_stage) and go through the stages again in order up to this demo; without a change, answer it in one sentence and carry on",
   approve:
     "the only stage that holds the work: stop and send a brief with outcome through ask_decision (outcome.stage — this id) — the owner sees only its title, a comment field and buttons, so the title names what is approved; Continue without a comment — go on to the next stage; a comment — not approved: rework the stage before this approval as the comment asks (roll back to it with flow_stage when it is done) and send this approval again",
 };

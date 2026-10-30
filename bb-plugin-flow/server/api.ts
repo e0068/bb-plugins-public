@@ -11,7 +11,7 @@ import { carryOf } from "../core/carry";
 import type { StageModel } from "../core/context";
 import { defaultExecutionOf, providerModelsOf } from "../core/flow-agent";
 import { finalCriteria } from "../core/option-criteria";
-import { demoVerdict, isReport, outcomeKind } from "../core/outcome";
+import { demoVerdict, isReport, memberOf, outcomeKind } from "../core/outcome";
 import { routeAllowed } from "../core/places";
 import { onAnswer } from "../core/progress";
 import { EMPTY_PROTOTYPE, markSent, mergeEdit, prototypeAddress, prototypeLines } from "../core/prototype";
@@ -22,15 +22,16 @@ import { isSideChat } from "../core/side-chat";
 import { stageItems } from "../core/stages";
 import { checklistOf, checklistRule } from "../core/checklist";
 import { recommendedAnswer } from "../core/settle";
-import { answerImagesRpcContract, approvalGroupRpcContract, awaitingRpcContract, briefDraftRpcContract, decisionsRpcContract, dispatchRpcContract, filesRpcContract, prototypeRpcContract, turnRpcContract, widgetAgentRpcContract, type AgentTurn, type DecisionAnswer, type DecisionBrief, type DispatchRoute, type Execution, type FlowProgress, type GroupAnswer, type WidgetAgent, type WorkStage } from "../shared/contract";
-import { attachmentInput, attachmentsLine, lostImages, readAttachments, referencedImages, uploadAttachments } from "./attachments";
+import { answerImagesRpcContract, approvalGroupRpcContract, awaitingRpcContract, briefDraftRpcContract, decisionsRpcContract, dispatchRpcContract, filesRpcContract, prototypeRpcContract, turnRpcContract, widgetAgentRpcContract, type AgentTurn, type AnswerImage, type DecisionAnswer, type DecisionBrief, type DispatchRoute, type Execution, type FlowProgress, type GroupAnswer, type WidgetAgent, type WorkStage } from "../shared/contract";
+import { attachmentInput, attachmentsLine, lostImages, readAttachments, referencedImages, uploadAttachments, withGroupImages } from "./attachments";
 import { handoff } from "./handoff";
 import type { ProgressStore } from "./progress";
 import type { DecisionStore } from "./store";
 import type { FlowTrigger } from "./automations";
 
 /** Виджет группы Утверждения: бриф с ответом из черновика или Демонстрация со своим комментарием. */
-type Member = { member: DecisionBrief; answer?: DecisionAnswer; note?: string };
+/** Виджет группы: `member` — каким он отвечает, `report` — это Демонстрация (её вопросы отвечают брифом без итога, но она остаётся отчётом). */
+type Member = { member: DecisionBrief; report: boolean; answer?: DecisionAnswer; note?: string; images?: AnswerImage[] };
 
 export const ANSWERED_CHANNEL = "decisions:answered";
 /** Ход агента в треде сменился: `{ threadId, turn }` — открытое уточнение показывает или прячет сжатие. */
@@ -133,22 +134,25 @@ export const registerApi = (
   };
 
   /**
-   * Ответы виджетов группы из присланного: бриф — ответ из черновика, Демонстрация — комментарий. Виджет, которого клиент не прислал, —
+   * Ответы виджетов группы из присланного: бриф и Демонстрация с вопросами — ответ из черновика, Демонстрация без вопросов — комментарий. Виджет, которого клиент не прислал, —
    * отказ, а не молчаливая потеря: его правки иначе не дошли бы до агента и не попали бы и в следующее Утверждение.
    */
   const groupOf = async (approval: DecisionBrief, sent: readonly GroupAnswer[]): Promise<Member[]> => {
-    const pending = await pendingMembers(approval.id);
-    const missing = pending.filter((member) => !sent.some((e) => e.id === member.id) || (member.outcome === undefined && sent.find((e) => e.id === member.id)?.answer?.briefId !== member.id));
-    if (missing.length > 0) throw new Error(`the approval carries no answers of its group widgets ${missing.map((member) => member.id).join(", ")}: reload the approval and send it again`);
-    return pending.map((member) => {
+    const pending = (await pendingMembers(approval.id)).map((original) => ({ member: memberOf(original), report: original.outcome !== undefined }));
+    const missing = pending.filter(({ member }) => !sent.some((e) => e.id === member.id) || (member.outcome === undefined && sent.find((e) => e.id === member.id)?.answer?.briefId !== member.id));
+    if (missing.length > 0) throw new Error(`the approval carries no answers of its group widgets ${missing.map(({ member }) => member.id).join(", ")}: reload the approval and send it again`);
+    return pending.map(({ member, report }) => {
       const entry = sent.find((e) => e.id === member.id)!;
       const answer = member.outcome === undefined ? entry.answer : undefined;
-      return { member, ...(answer === undefined ? {} : { answer }), ...(entry.note === undefined ? {} : { note: entry.note }) };
+      return { member, report, ...(answer === undefined ? {} : { answer }), ...(entry.note === undefined ? {} : { note: entry.note }), ...(entry.images === undefined ? {} : { images: entry.images }) };
     });
   };
 
-  /** Части реплики от группы: владельцу — ответы виджетов и комментарии к ним, агенту — служебное ответов. */
-  const memberParts = (members: readonly Member[], locale: Locale | undefined): { owner: string[]; agent: string[] } => {
+  /**
+   * Части реплики от группы: владельцу — ответы виджетов и комментарии к ним, агенту — служебное ответов. «На доработку» ответы
+   * не записывает, и служебного у них нет: прогон и бюджет черновика не действуют, виджеты вернутся владельцу с ним.
+   */
+  const memberParts = (members: readonly Member[], locale: Locale | undefined, recorded: boolean): { owner: string[]; agent: string[] } => {
     const m = messages(locale).answer;
     const parts = members.map(({ member, answer, note }) => {
       const comment = answer?.note ?? note;
@@ -157,7 +161,7 @@ export const registerApi = (
       // Комментарий виджета уходит пунктом чек-листа, а не строкой «ко всем вопросам».
       const { note: _, ...plain } = answer;
       const own = answerMessageParts(member, plain, locale);
-      return { owner: [own.owner, ...comments], agent: own.agent === "" ? [] : [own.agent] };
+      return { owner: [own.owner, ...comments], agent: !recorded || own.agent === "" ? [] : [own.agent] };
     });
     return { owner: parts.flatMap((p) => p.owner), agent: parts.flatMap((p) => p.agent) };
   };
@@ -176,15 +180,20 @@ export const registerApi = (
     }
   };
 
-  /** Ответ виджета группы ложится, как ответ его собственной кнопкой «в этом треде»: запись, запуск, перенос, пункты, прогон, журнал. */
-  const recordMember = async (member: DecisionBrief, answer: DecisionAnswer, messageId: string, locale: Locale | undefined, threadIds: readonly string[]) => {
+  /**
+   * Ответ виджета группы ложится, как ответ его собственной кнопкой «в этом треде»: запись, запуск, перенос, пункты, прогон, журнал.
+   * Отчёт (Демонстрация с вопросами) строку этапа «Вопросы» в баннере и перенос выбора в следующий бриф не трогает — они от брифов с Вопросами.
+   */
+  const recordMember = async (member: DecisionBrief, report: boolean, answer: DecisionAnswer, messageId: string, locale: Locale | undefined, threadIds: readonly string[]) => {
     const at = deps.now();
     const predicted = hasForecast(member) ? forecast(member, answer, locale) : null;
     const written = await store.putAnswer(member.id, { answer, messageId, answeredAt: at, ...(predicted === null ? {} : { forecast: { ...predicted, lines: [...predicted.lines] } }) });
     if (written.kind === "already_answered") return;
     if (launchesWork(member, answer)) await store.markLaunched(member.threadId);
-    await store.putThreadCarry(member.threadId, carryOf(member, answer));
-    await keepCriteria(member, answer, threadIds, locale);
+    if (!report) {
+      await store.putThreadCarry(member.threadId, carryOf(member, answer));
+      await keepCriteria(member, answer, threadIds, locale);
+    }
     const planned = predicted === null ? undefined : { minutes: predicted.minutes, target: predicted.target, max: predicted.max };
     await deps.progress?.recordAnswer(member, answer, at, planned).catch(() => undefined);
     await store.clearAwaiting(member.threadId, member.id);
@@ -255,16 +264,21 @@ export const registerApi = (
         throw new Error(`the provider "${execution.providerId}" differs from the thread's: another provider runs only in a new thread`);
       const open = openQuestions(brief, answer);
       if (open.length > 0) return { kind: "incomplete" as const, questionIds: open };
-      // Утверждение без комментария отвечает и за виджеты своей группы, копившие ответ черновиком: их ответы и комментарии едут с ним.
-      // С комментарием группа сворачивается, как раньше, и черновики остаются черновиками — агент покажет виджеты заново.
-      const members = outcomeKind(brief) === "approve" && demoVerdict(answer) === "continue" ? await groupOf(brief, group) : [];
-      const membersOpen = members.flatMap((m) => (m.answer === undefined ? [] : openQuestions(m.member, m.answer)));
+      // Утверждение уносит ответы и комментарии виджетов своей группы, копивших их черновиком, — какую бы кнопку владелец ни нажал.
+      // Без комментария к Утверждению ответы ещё и записываются; с комментарием («на доработку») группа сворачивается, и они остаются
+      // черновиками — агент покажет виджеты заново, а слова владельца и его картинки читает из этой реплики.
+      const verdict = demoVerdict(answer);
+      const recorded = verdict === "continue";
+      const carried = outcomeKind(brief) === "approve" && (recorded || verdict === "comment") ? await groupOf(brief, group) : [];
+      // Картинки виджетов нумеруют метки с единицы, как и картинки Утверждения: номера сводятся, чтобы метки не путались.
+      const { images: shipped, members } = withGroupImages(answer, referencedImages(answer, images, locale), carried, locale);
+      const membersOpen = recorded ? members.flatMap((m) => (m.answer === undefined ? [] : openQuestions(m.member, m.answer))) : [];
       if (membersOpen.length > 0) return { kind: "incomplete" as const, questionIds: membersOpen };
       const checklist = checklistOf(members.map((m) => ({ where: m.member.title, text: m.answer?.note ?? m.note })));
 
       // Снимок прогноза — то, что владелец видел при отправке: отвеченный бриф рисует его, даже если формула потом изменится.
       // Картинки грузятся до записи ответа. Не принятая bb картинка ответ не роняет: реплика назовёт её несохранённой.
-      const { uploaded: attached, failed } = await uploadAttachments(bb.sdk, { threadId: brief.threadId, briefId: id, images: referencedImages(answer, images, locale) });
+      const { uploaded: attached, failed } = await uploadAttachments(bb.sdk, { threadId: brief.threadId, briefId: id, images: shipped });
       const predicted = hasForecast(brief) ? forecast(brief, answer, locale) : null;
       const snapshot = predicted === null ? {} : { forecast: { ...predicted, lines: [...predicted.lines] } };
       // Пути картинок — в запись: отвеченный бриф показывает их там, где владелец их вставил.
@@ -278,11 +292,11 @@ export const registerApi = (
       // Переход снимает прогон вместе с его слиянием: открытый PR прежнего прогона назван в реплике, иначе он висит незамеченным.
       const pr = switched === undefined ? null : ((await deps.openPullRequest?.(brief.threadId).catch(() => null)) ?? null);
       const prLine = pr === null ? [] : [messages(locale).answer.openPullRequest(pr.number, pr.url)];
-      const grouped = memberParts(members, locale);
+      const grouped = memberParts(members, locale, recorded);
       const owner = [parts.owner, ...grouped.owner, ...prototypeLines(prototypes.map(({ state }) => state), locale), ...prLine].join("\n");
       const prRule = pr === null ? "" : `\n${messages(locale).answer.openPullRequestAgent(pr.number)}`;
       // Служебное агенту: прогон, бюджет, Definition of Done, что делать с открытым PR, следующий шаг и пути вложений.
-      const groupRule = [...grouped.agent, ...(checklist.length === 0 ? [] : [checklistRule(checklist)])].map((line) => `\n${line}`).join("");
+      const groupRule = [...grouped.agent, ...(checklist.length === 0 ? [] : [checklistRule(checklist, recorded)])].map((line) => `\n${line}`).join("");
       const service = `${parts.agent}${groupRule}${prRule}${attachmentsLine(attached, lost, locale)}`.replace(/^\n/, "");
       const text = service === "" ? owner : `${owner}\n${service}`;
       const place = answer.place ?? "here";
@@ -365,11 +379,11 @@ export const registerApi = (
       // Дальше реплика уже ушла: ни один сбой ниже не снимает ответ — повтор создал бы второй тред.
       // Худшее при сбое отметки — запущенный тред ещё примет этапы; это мягче дубля треда.
       const quietly = (work: Promise<unknown>) => work.catch(() => undefined);
-      // Ответы группы записываются, когда реплика уже ушла: каждый виджет — как отвеченный своей кнопкой, Демонстрация — без ответа, она отчёт.
+      // Ответы группы записываются, когда реплика уже ушла: каждый виджет — как отвеченный своей кнопкой, Демонстрация без вопросов — без ответа, она отчёт.
       // Пункты Definition of Done и ответы едут и в новый тред, куда ушла работа, как у брифа, отвеченного своей кнопкой.
       const workThreads = [brief.threadId, ...(handoffThreadId === undefined ? [] : [handoffThreadId])];
-      for (const m of members) {
-        if (m.answer !== undefined) await quietly(recordMember(m.member, m.answer, messageId, locale, workThreads));
+      for (const m of recorded ? members : []) {
+        if (m.answer !== undefined) await quietly(recordMember(m.member, m.report, m.answer, messageId, locale, workThreads));
         else await quietly(Promise.all([store.dropDraft(m.member.id), store.markSentWith(m.member.id, id)]));
         bb.realtime.publish(ANSWERED_CHANNEL, { id: m.member.id });
       }
@@ -407,7 +421,6 @@ export const registerApi = (
       await quietly(store.dropDraft(id));
       // Комментарий к утверждению сворачивает все виджеты от прошлого утверждения: утверждение судится по ним, а они вернулись агенту.
       // Указатель возврата встаёт на утверждение — доработанные виджеты возьмут выбор из группы.
-      const verdict = demoVerdict(answer);
       const folded = foldsGroup(brief, verdict) ? ((await store.foldGroup(brief.threadId, id).catch(() => null)) ?? [id]) : [];
       if (folded.length > 0) await quietly(store.putThreadReturned(brief.threadId, id));
       (folded.length > 0 ? folded : [id]).forEach((member) => bb.realtime.publish(ANSWERED_CHANNEL, { id: member }));

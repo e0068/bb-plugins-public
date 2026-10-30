@@ -140,16 +140,6 @@ describe("Утверждение уносит ответы группы", () => 
     expect(slot.queryByRole("textbox", { name: /Комментарий/ })).toBeNull();
   });
 
-  it("комментарий к Утверждению — «Отправить комментарии», ответы группы не уходят", async () => {
-    storeDraft("dec_q", setNote(settledInitial(questions), "x"));
-    const answerBrief = vi.fn(accepted);
-    const slot = open(approval, { answerBrief });
-    await slot.findByRole("button", { name: "Продолжить с правками · 1" });
-    fireEvent.change(slot.getByRole("textbox", { name: "Комментарий к утверждению" }), { target: { value: "переделай" } });
-    fireEvent.click(slot.getByRole("button", { name: "Отправить комментарии" }));
-    await vi.waitFor(() => expect(answerBrief).toHaveBeenCalled());
-    expect((answerBrief.mock.calls[0]![0] as unknown as { group?: unknown }).group).toBeUndefined();
-  });
 
   it("чек-лист — карточкой под ответом Утверждения: сколько отмечено и пункты", async () => {
     const items = [

@@ -10,6 +10,7 @@ import { resolvesIssues, type ResolveTarget } from "../core/clarify";
 import { approvalIssues, outcomeText } from "../core/approval-guard";
 import { unfinishedBefore } from "../core/automation-run";
 import { isApproval, memberSources, nextGroup, restoredOf } from "../core/fold";
+import { hasApprovalStage, nextFlowOffer, type FlowRef } from "../core/next-flow-offer";
 import { liveIssues, nextFlowIssues, outcomeKind, reportOnlyIssues } from "../core/outcome";
 import { DECISION_ID_PREFIX, directiveLine } from "../core/directive";
 import { terminalCommandIssue } from "../core/terminal-command";
@@ -72,8 +73,10 @@ const repeatInFinalReply = (where: string): string =>
  */
 const nextStep = (brief: DecisionBrief): string => {
   if (brief.kind !== "brief") return ` Keep working; the answer arrives along the way.${repeatInFinalReply("")}`;
-  if (brief.outcome !== undefined && outcomeKind(brief) === "demo")
-    return ` Then go on to the next stage of the run without waiting: the demo stage is closed by this call.${brief.settle === "approval" ? " The owner's comment on it arrives with the next approval." : ""}${repeatInFinalReply(", above the approval line or the brief line that ends the turn")}`;
+  if (brief.outcome !== undefined && outcomeKind(brief) === "demo") {
+    const owner = brief.questions.length > 0 ? " The owner's answers and comment on it arrive with the next approval." : " The owner's comment on it arrives with the next approval.";
+    return ` Then go on to the next stage of the run without waiting: the demo stage is closed by this call.${brief.settle === "approval" ? owner : ""}${repeatInFinalReply(", above the approval line or the brief line that ends the turn")}`;
+  }
   if (brief.settle === "approval")
     return ` Then go on without waiting, on the recommended values: these stages are closed by this call, and the owner's answers, edits and comments arrive together with the next approval.${repeatInFinalReply(", above the approval line or the brief line that ends the turn")}`;
   if (brief.settle === "agent")
@@ -160,7 +163,7 @@ const launchedIssues = (params: AskDecisionParams, stages: StageSettings["stages
 const OUTCOME_KINDS: readonly StageKind[] = ["demo", "approve"];
 
 /** Итог — про запущенную работу и про этап Демонстрации или Утверждения из flow треда; flow без Вопросов, Definition of Done и Выбора этапов запуска не ждёт. */
-const outcomeIssues = (outcome: AskDecisionParams["outcome"], questionCount: number, launched: boolean, stages: StageSettings["stages"], flowIds: readonly string[], progress: FlowProgress | null | undefined, reworkPending: boolean): string[] => {
+const outcomeIssues = (outcome: AskDecisionParams["outcome"], questionCount: number, launched: boolean, stages: StageSettings["stages"], flowIds: readonly string[], progress: FlowProgress | null | undefined, reworkPending: boolean, held: boolean): string[] => {
   if (outcome === undefined) return [];
   if (!launched && stages.some(isAskedStage)) return ["an outcome reports a stage of running work, and the work in this thread has not started yet: send a brief with setup.stages first"];
   const approval = stages.some((stage) => stage.id === outcome.stage && stageKindOf(stage) === "approve");
@@ -173,8 +176,8 @@ const outcomeIssues = (outcome: AskDecisionParams["outcome"], questionCount: num
     ...(open === null ? [] : [`stage ${open.id} "${open.name}" comes before ${outcome.stage} in the run and is not marked done: finish it and mark it done with ${FLOW_STAGE_TOOL} first`]),
     // Команду результата владелец запускает кнопкой в терминале: длинная обрежется там так же, как у share_command.
     ...outcome.results.flatMap((result, i) => ("command" in result ? [terminalCommandIssue(result.command, `outcome.results[${i}].command`)] : [])).filter((issue) => issue !== null),
-    // Утверждение показывает, что утверждается, и переводит работу в рекомендованный flow; Демонстрация — отчёт с живым результатом, без вопросов и перехода.
-    ...(approval ? [...approvalIssues(stages, progress, outcome.stage, reworkPending, outcomeText(outcome)), ...nextFlowIssues(outcome, flowIds)] : [...liveIssues(outcome), ...reportOnlyIssues(outcome, questionCount)]),
+    // Утверждение показывает, что утверждается, и переводит работу в рекомендованный flow; Демонстрация — отчёт с живым результатом без перехода; вопросы берёт, только когда ответ копится до Утверждения впереди (`held` — метка `settle`).
+    ...(approval ? [...approvalIssues(stages, progress, outcome.stage, reworkPending, outcomeText(outcome)), ...nextFlowIssues(outcome, flowIds)] : [...liveIssues(outcome), ...reportOnlyIssues(outcome, questionCount, held)]),
   ];
 };
 
@@ -284,11 +287,20 @@ const toolError = (text: string) => ({ isError: true as const, content: [{ type:
 /**
  * Вклад Flow в ход треда с flow: правило брифа и этапы flow. Его же отдаёт выбор flow агентом — этапы нужны в том же ходе.
  */
-export const flowTurnInstructions = (stages: StageSettings["stages"]): string => {
-  const compose = (listed: string | null): string => [RULE, ...(listed === null ? [] : [FLOW_RULE, listed, SELF_ONLY_RULE])].join("\n\n");
-  const full = compose(stageInstructions(stages));
-  // Больше лимита bb обрежет хвост, и агент не узнает о последних этапах — Демонстрации и утверждениях.
-  return full.length <= INSTRUCTIONS_LIMIT_CHARS ? full : compose(compactStageInstructions(stages));
+export const flowTurnInstructions = (stages: StageSettings["stages"], flows: readonly FlowRef[] = []): string => {
+  const offering = hasApprovalStage(stages);
+  const offer = (shown: readonly FlowRef[]): string[] => {
+    const text = offering ? nextFlowOffer(shown, shown.length < flows.length) : null;
+    return text === null ? [] : [text];
+  };
+  const compose = (listed: string | null, shown: readonly FlowRef[]): string =>
+    [RULE, ...(listed === null ? [] : [FLOW_RULE, listed, SELF_ONLY_RULE, ...offer(shown)])].join("\n\n");
+  // Больше лимита bb обрежет хвост, и агент не узнает о последних этапах — Демонстрации и утверждениях. Урезается сперва список flow,
+  // потом подробность этапов; правило nextFlow остаётся всегда, а полный список агент читает инструментом read_flows.
+  const forms = [stageInstructions(stages), compactStageInstructions(stages)];
+  const shortening = Array.from({ length: flows.length + 1 }, (_, dropped) => flows.slice(0, flows.length - dropped));
+  const fits = forms.flatMap((listed) => shortening.map((shown) => compose(listed, shown))).find((text) => text.length <= INSTRUCTIONS_LIMIT_CHARS);
+  return fits ?? compose(forms[1] ?? null, []);
 };
 
 /**
@@ -315,6 +327,8 @@ export const registerAskTool = (
     stages?: (threadId: string) => StageSettings;
     /** Id flow владельца: рекомендованный Демонстрацией flow должен быть одним из них. */
     flowIds?: () => readonly string[];
+    /** Другие flow владельца, на которые Утверждение треда может перевести работу: id и название. */
+    otherFlows?: (threadId: string) => readonly FlowRef[];
     /** Название flow треда; `undefined` — тред без flow. Бриф с этапами запоминает его и рисует им бирку Выбора этапов. */
     flowName?: (threadId: string) => string | undefined;
     /** Идёт ли тред по flow; `false` — «без flow» или «Автоматически» до выбора, и Flow не вкладывает в ход ничего. */
@@ -367,8 +381,10 @@ export const registerAskTool = (
       const launchedSetup = params.kind === "brief" && launched ? launchedIssues(params, settings.stages, progress) : [];
       // Утверждение вслед за свёрнутым без доработанных виджетов между ними не принимается: комментарий владельца ещё не учтён.
       const reworkPending = (await store.getThreadGroup(ctx.threadId))?.folded === true;
-      const outcomeProblems = outcomeIssues(params.outcome, params.questions.length, launched, settings.stages, deps.flowIds?.() ?? [], deps.progress === undefined ? undefined : progress, reworkPending);
       const { resolves = [], ...fields } = params;
+      const approval = params.outcome !== undefined && settings.stages.some((s) => s.id === params.outcome?.stage && stageKindOf(s) === "approve");
+      const settle = settleOf(fields, settings.stages, progress, approval, launched);
+      const outcomeProblems = outcomeIssues(params.outcome, params.questions.length, launched, settings.stages, deps.flowIds?.() ?? [], deps.progress === undefined ? undefined : progress, reworkPending, settle === "approval");
       const resolveProblems = resolvesIssues(ctx.threadId, await resolveTargets(store, resolves));
       const stageIssues = [...missingStagesIssues(params, launched, settings.stages), ...reportIssues(settings.stages, params.setup?.stages)];
       const base = baseIssues(params, launched, settings.stages);
@@ -392,8 +408,6 @@ export const registerAskTool = (
       // Контекст не обычный: у реализации и тестов, оставленных себе, рекомендуется агент-исполнитель этапа — он работает в своём контексте.
       const fill = reported === undefined ? null : await deps.context?.(ctx.threadId).catch(() => null);
       const stepped = reported === undefined || fill === null || fill === undefined ? reported : withSubagents(reported, settings.stages, contextTone(fill.usedTokens, fill));
-      const approval = params.outcome !== undefined && settings.stages.some((s) => s.id === params.outcome?.stage && stageKindOf(s) === "approve");
-      const settle = settleOf(fields, settings.stages, progress, approval, launched);
       const withStages = params.setup?.stages !== undefined || params.outcome !== undefined;
       // План моделей — тот же `plannedModel`, что потом ставит граница; тред не Claude Code или каталог не прочёлся — плана нет.
       const threadModels = withStages ? await deps.threadModels?.(ctx.threadId).catch(() => null) : null;
@@ -474,6 +488,6 @@ export const registerAskTool = (
     // Тред без flow Flow не ведёт: ни правила про бриф, ни этапов. Инструмент остаётся, агент зовёт его сам.
     if (deps.hasFlow?.(threadId) === false) return "";
     const limits = deps.limits?.(threadId) ?? null;
-    return [flowTurnInstructions(deps.stages?.(threadId).stages ?? []), ...(limits === null ? [] : [limits])].join("\n\n");
+    return [flowTurnInstructions(deps.stages?.(threadId).stages ?? [], deps.otherFlows?.(threadId) ?? []), ...(limits === null ? [] : [limits])].join("\n\n");
   });
 };

@@ -1,5 +1,6 @@
 // Чистая часть группы Утверждения: правки виджетов, копящих ответ до него, их ответы для отправки и подпись главной кнопки.
 // Отдельно от хука группы: тестам и другим модулям не нужен клиент RPC.
+import { memberOf } from "../core/outcome";
 import type { Messages } from "../lib/messages";
 import type { DecisionBrief, GroupAnswer } from "../shared/contract";
 import { acceptRecommendations, decidedCount, initialDraft, toAnswer, type Draft } from "./draft";
@@ -15,7 +16,8 @@ export const memberDraft = (member: DecisionBrief): Draft => readStoredDraft(mem
 const blank = (text: string | undefined): boolean => text === undefined || text.trim() === "";
 
 /** Сколько правок владелец внёс в виджет: ответы не по рекомендации, правки пунктов, этапы, комментарий. */
-export const memberEdits = (member: DecisionBrief, draft: Draft): number => {
+export const memberEdits = (viewed: DecisionBrief, draft: Draft): number => {
+  const member = memberOf(viewed);
   const comment = blank(draft.note) ? 0 : 1;
   if (member.outcome !== undefined) return comment;
   const before = toAnswer(member, settledInitial(member));
@@ -26,9 +28,14 @@ export const memberEdits = (member: DecisionBrief, draft: Draft): number => {
   return answers + stages + criteria + comment;
 };
 
-/** Ответ виджета группы для отправки с Утверждением: бриф — ответ из черновика, Демонстрация — только комментарий. */
-export const memberAnswer = (member: DecisionBrief, draft: Draft): GroupAnswer =>
-  member.outcome !== undefined ? { id: member.id, ...(blank(draft.note) ? {} : { note: draft.note.trim() }) } : { id: member.id, answer: toAnswer(member, draft) };
+/**
+ * Ответ виджета группы для отправки с Утверждением: бриф и Демонстрация с вопросами — ответ из черновика (комментарий лежит
+ * в нём), Демонстрация без вопросов — только комментарий.
+ */
+export const memberAnswer = (viewed: DecisionBrief, draft: Draft): GroupAnswer => {
+  const member = memberOf(viewed);
+  return member.outcome !== undefined ? { id: member.id, ...(blank(draft.note) ? {} : { note: draft.note.trim() }) } : { id: member.id, answer: toAnswer(member, draft) };
+};
 
 /**
  * Подпись главной кнопки Утверждения: выбранный flow — «Отправить»; комментарий — «Отправить комментарии»; правки виджетов —
@@ -45,7 +52,8 @@ export const approveLabel = (state: { moves: boolean; commented: boolean; edits:
  * Решены ли все вопросы виджета группы: развилка без рекомендации ждёт выбора владельца, и Утверждение без него не утверждает.
  * Уточнение необязательно — без ответа агент работает по своему пониманию, поэтому Утверждение оно не держит.
  */
-export const memberDecided = (member: DecisionBrief, draft: Draft): boolean => {
+export const memberDecided = (viewed: DecisionBrief, draft: Draft): boolean => {
+  const member = memberOf(viewed);
   if (member.kind === "clarify") return true;
   const { decided, total } = decidedCount(member, draft);
   return decided === total;
