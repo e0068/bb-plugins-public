@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { projectOfGroupRow, rowBoardOf } from "./sidebar-row-project";
+import { projectOfGroupRow, projectOfThreadHref, rowBoardOf } from "./sidebar-row-project";
 
 const PROJECTS = [
   { id: "proj_a1", name: "bb-plugins" },
@@ -39,5 +39,16 @@ describe("the board a project row wears the icon of", () => {
 
   it("is none for a project no board is linked to", () => {
     expect(rowBoardOf("proj_b2", [section, board])).toBeNull();
+  });
+});
+
+describe("the project a thread row's link names", () => {
+  it("is the project of a thread link", () => {
+    expect(projectOfThreadHref("/projects/proj_a1/threads/thr_1")).toBe("proj_a1");
+  });
+
+  it("is none for a link that names no project: a personal thread, a missing link", () => {
+    expect(projectOfThreadHref("/threads/thr_1")).toBeNull();
+    expect(projectOfThreadHref(null)).toBeNull();
   });
 });

@@ -55,6 +55,7 @@ import {
 } from "@/components/ui/command";
 import { Button } from "@/components/ui/button";
 import { Icon } from "@/components/ui/icon";
+import { drawnColor } from "@/lib/icon-drawing";
 import { cn } from "@/lib/utils";
 import { CheckboxField, DEFAULT_COLOR } from "./shared.js";
 import { PlanDatePopover } from "../common/plan-date-picker.js";
@@ -484,7 +485,7 @@ export function NewTaskDialog({
             <span
               aria-hidden
               className="size-3 shrink-0 rounded-sm"
-              style={{ backgroundColor: project.color }}
+              style={{ backgroundColor: drawnColor(project.icon, project.color) }}
             />
           ) : null}
           {subtaskMode ? "New sub-task" : "New task"}

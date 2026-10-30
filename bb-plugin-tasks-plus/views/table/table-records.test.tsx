@@ -243,4 +243,21 @@ describe("a table's records", () => {
     await slot.findByRole("button", { name: "New record" });
     expect(await headerNames(slot)).not.toContain("Description");
   });
+
+  it("nest sub-records under their parent, the parent first, and fold them from its arrow", async () => {
+    const parent = record("CT-1", "Copy Trading", {});
+    const child = (n: number): Task => ({ ...record(`CT-${n}`, `Part ${n}`, {}), parentTaskId: parent.id });
+    // The children come before their parent in the list, as the board stores them.
+    const { slot } = renderTable(DOCS, undefined, [child(2), child(3), parent]);
+    await slot.findByText("Part 2");
+
+    const keys = () => Array.from(document.querySelectorAll("[data-task-key]")).map((row) => row.getAttribute("data-task-key"));
+    expect(keys()).toEqual(["CT-1", "CT-2", "CT-3"]);
+    expect(document.querySelectorAll("[data-title-lead='branch']")).toHaveLength(2);
+
+    fireEvent.click(slot.getByRole("button", { name: "Collapse sub-tasks" }));
+
+    await waitFor(() => expect(keys()).toEqual(["CT-1"]));
+    expect(slot.getByRole("button", { name: "Expand sub-tasks" })).toBeTruthy();
+  });
 });

@@ -5,6 +5,7 @@ import { listAllTasks, useTasksQuery } from "../client/data.js";
 import type { ResolvedTasksRoute, TasksRoute } from "../client/routes.js";
 import { Button } from "@/components/ui/button";
 import { Icon } from "@/components/ui/icon";
+import { drawnColor } from "@/lib/icon-drawing";
 import { cn } from "@/lib/utils";
 import {
   Tooltip,
@@ -253,7 +254,7 @@ export function TasksTopbar({
               <span
                 aria-hidden
                 className="size-3 shrink-0 rounded-sm"
-                style={{ backgroundColor: project.color }}
+                style={{ backgroundColor: drawnColor(project.icon, project.color) }}
               />
             ) : null}
             <span className="truncate font-semibold">
@@ -270,7 +271,7 @@ export function TasksTopbar({
                 <span
                   aria-hidden
                   className="size-3 shrink-0 rounded-sm"
-                  style={{ backgroundColor: project.color }}
+                  style={{ backgroundColor: drawnColor(project.icon, project.color) }}
                 />
                 <span className="hidden truncate text-muted-foreground @md:inline">{project.name}</span>
                 <span className="hidden text-subtle-foreground @md:inline">/</span>
@@ -310,7 +311,7 @@ export function TasksTopbar({
                 <span
                   aria-hidden
                   className="size-3 shrink-0 rounded-sm"
-                  style={{ backgroundColor: project.color }}
+                  style={{ backgroundColor: drawnColor(project.icon, project.color) }}
                 />
                 <span className="truncate font-medium">{project.name}</span>
               </button>
