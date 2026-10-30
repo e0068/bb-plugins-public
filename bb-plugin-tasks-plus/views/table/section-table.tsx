@@ -15,7 +15,8 @@ import { surfaceOf } from "../common/view-state.js";
 import type { ListPreferenceScope } from "../common/list-preference.js";
 import { DetailToasts, useDetailToasts } from "../detail/toast.js";
 import { pinOffsets, withColumnIcon } from "./columns.js";
-import { TitleCell } from "./cells.js";
+import { TableRowLine } from "./table-row.js";
+import { nestedRows } from "./rows.js";
 import { NewTaskRow } from "./new-task-row.js";
 import { TableHeader, type HeaderActions, type HeaderColumnState } from "./header.js";
 import {
@@ -27,7 +28,7 @@ import {
   numberOf,
   sectionColumnWidth,
   sectionValue,
-  sortedRecords,
+  recordComparator,
   useSectionLayout,
   visibleSectionColumns,
   withToggled,
@@ -113,7 +114,12 @@ export function SectionTable({ scope, thread, section }: { scope: ListPreference
   const records = useListTasks(section.id, listScope, NO_FILTERS, thread);
   const fields = useMemo(() => sectionFields(section.database?.fields ?? [], records.data ?? []), [section.database?.fields, records.data]);
   const fieldsByColumn = useMemo(() => new Map(fields.map((field) => [`field:${field.name}`, field])), [fields]);
-  const rows = useMemo(() => sortedRecords(records.data ?? [], layout.sort, fields), [records.data, layout.sort, fields]);
+  // Sub-records stand under their parent, folded by its arrow; the sort orders siblings, never splitting a family.
+  const [collapsed, setCollapsed] = useState<readonly string[]>([]);
+  const rows = useMemo(
+    () => nestedRows(records.data ?? [], recordComparator(layout.sort, fields), collapsed),
+    [records.data, layout.sort, fields, collapsed],
+  );
   const columns = visibleSectionColumns(fields, layout);
   const widths = Object.fromEntries(columns.map((column) => [column, sectionColumnWidth(layout, column)])) as Record<SectionColumn, number>;
   const { offsets, edge } = pinOffsets(columns, layout.pinned, widths);
@@ -209,39 +215,23 @@ export function SectionTable({ scope, thread, section }: { scope: ListPreference
             }
           />
         </div>
-        {rows.map((task) => (
-          <div
+        {rows.map(({ task, depth, childCount }) => (
+          <TableRowLine
             key={task.id}
-            role="row"
-            data-task-key={task.key}
-            onClick={(event) => {
-              if ((event.target as HTMLElement).closest("button, a")) return;
-              openTask(task.key);
-            }}
-            className="group grid h-[34px] cursor-pointer items-stretch border-b border-border-hairline text-sm hover:bg-state-hover"
-            style={{ gridTemplateColumns: gridTemplate }}
-          >
-            {columns.map((column) => (
-              <div
-                key={column}
-                data-column={column}
-                className={cn(
-                  "flex min-w-0 items-center overflow-hidden px-2",
-                  column !== "title" && "text-muted-foreground",
-                  pinned.has(column) &&
-                    "sticky z-[1] bg-background before:pointer-events-none before:absolute before:inset-0 before:-z-10 group-hover:before:bg-state-hover",
-                  column === edge && "border-r border-border-hairline",
-                )}
-                style={pinned.has(column) ? { left: `${offsets[column] ?? 0}px` } : undefined}
-              >
-                {column === "title" ? (
-                  <TitleCell task={task} depth={0} childCount={0} collapsed={false} onToggle={() => {}} onOpen={() => openTask(task.key)} />
-                ) : (
-                  <SectionCell task={task} column={column} field={fieldsByColumn.get(column)} layout={layout} now={now} />
-                )}
-              </div>
-            ))}
-          </div>
+            task={task}
+            depth={depth}
+            childCount={childCount}
+            collapsed={collapsed.includes(task.id)}
+            onToggleCollapse={() => setCollapsed((current) => (current.includes(task.id) ? current.filter((id) => id !== task.id) : [...current, task.id]))}
+            onOpen={() => openTask(task.key)}
+            columns={columns}
+            pinnedSet={pinned}
+            offsets={offsets}
+            edgeColumn={edge}
+            gridTemplate={gridTemplate}
+            renderCell={(column) => <SectionCell task={task} column={column} field={fieldsByColumn.get(column)} layout={layout} now={now} />}
+            cellClassName={(column) => (column === "title" ? undefined : "text-muted-foreground")}
+          />
         ))}
         <NewTaskRow label="New record" text="New record" busy={creating} onOpen={createRecord} />
       </div>

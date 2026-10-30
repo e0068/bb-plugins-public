@@ -1,5 +1,6 @@
 // Layer: shell. An invisible app overlay that puts a board's icon into the row of its bb project in bb's thread
-// list, where a thread row has its provider's logo, and opens the icon picker from it. bb gives plugins no slot on
+// list, where a thread row has its provider's logo, and opens the icon picker from it; a thread working in another
+// project wears that project's icon in place of bb's folder after its title. bb gives plugins no slot on
 // that row, so the button is laid into bb's markup — with plain DOM, not React: while any plugin awaits something,
 // bb drops a node React made into a parent React does not own. An app overlay's own element is such a parent too —
 // bb leaves it out of the page — so the picker hangs in bb's app element at the top of #root, which React made.
@@ -13,7 +14,7 @@ import { Popover, PopoverAnchor, PopoverContent } from "@/components/ui/popover"
 import { EMOJI_SIZE, ICON_BOX, iconDrawing, paintOf, TILE_RADIUS, type IconDrawing, type Paint } from "@/lib/icon-drawing";
 import { useProjects, useTasksRpc } from "./data.js";
 import { TasksRefreshProvider } from "./refresh.js";
-import { projectOfGroupRow, rowBoardOf, type NamedProject, type RowBoard } from "./sidebar-row-project.js";
+import { projectOfGroupRow, projectOfThreadHref, rowBoardOf, type NamedProject, type RowBoard } from "./sidebar-row-project.js";
 
 const BUTTON_ATTR = "data-tasks-project-icon";
 const KEY_ATTR = "data-tasks-project-icon-key";
@@ -30,6 +31,12 @@ const BUTTON_CLASS = [
   "max-md:pointer-coarse:h-9 max-md:pointer-coarse:w-9 max-md:pointer-coarse:-my-2 max-md:pointer-coarse:-ml-2 max-md:pointer-coarse:-mr-1.5",
 ].join(" ");
 const ICON_CLASS = "size-4 shrink-0 max-md:pointer-coarse:size-5";
+
+/** The folder-with-an-arrow bb puts after the title of a thread working in another project than the row it sits
+ *  under; its hint names that project. The project's icon takes the folder's place and size inside it. */
+const CROSS_PROJECT = "[data-sidebar-thread-cross-project]";
+const THREAD_ICON_ATTR = "data-tasks-thread-project-icon";
+const THREAD_ICON_CLASS = "size-3.5 shrink-0";
 
 const SVG_NS = "http://www.w3.org/2000/svg";
 /** `strokeLinecap` → `stroke-linecap`: a glyph keys its SVG attributes the way React props are written. `viewBox`
@@ -49,9 +56,9 @@ const paintAttributes = (paint: Paint | undefined) => {
 };
 
 /** The icon as components/entity-icon.tsx draws it, in plain DOM. */
-function iconSvg(drawing: IconDrawing): SVGElement {
+function iconSvg(drawing: IconDrawing, sizeClass: string): SVGElement {
   const bare = drawing.kind === "glyph" && drawing.tile === undefined ? paintOf(drawing.ink) : {};
-  const svg = svgNode("svg", { viewBox: `0 0 ${ICON_BOX} ${ICON_BOX}`, width: ICON_BOX, height: ICON_BOX, fill: "none", "aria-hidden": "true", class: [ICON_CLASS, bare.className].filter(Boolean).join(" ") });
+  const svg = svgNode("svg", { viewBox: `0 0 ${ICON_BOX} ${ICON_BOX}`, width: ICON_BOX, height: ICON_BOX, fill: "none", "aria-hidden": "true", class: [sizeClass, bare.className].filter(Boolean).join(" ") });
   if (bare.color !== undefined) svg.setAttribute("style", `color: ${bare.color}`);
   if (drawing.kind === "emoji") {
     // A colour emoji is a glyph of the text: with the svg's fill="none" Chrome draws nothing.
@@ -87,11 +94,44 @@ const drawingKey = (board: RowBoard) => `${board.icon ?? ""}|${board.color}`;
 /** The button of a board's row on the page now: bb re-renders its rows, and a new one may stand there. */
 const liveButton = (boardId: string) => document.querySelector(`[${BOARD_ATTR}="${boardId}"]`);
 
+const boardDrawing = (board: RowBoard) => iconDrawing(board.icon, DEFAULT_PROJECT_ICON, board.color);
+
 /** Draws the board's icon into the button. */
 function paint(button: Element, board: RowBoard): void {
-  const drawing = iconDrawing(board.icon, DEFAULT_PROJECT_ICON, board.color);
-  button.replaceChildren(...(drawing === null ? [] : [iconSvg(drawing)]));
+  const drawing = boardDrawing(board);
+  button.replaceChildren(...(drawing === null ? [] : [iconSvg(drawing, ICON_CLASS)]));
   button.setAttribute(KEY_ATTR, drawingKey(board));
+}
+
+/** bb's own drawing in a cross-project marker, hidden while the project's icon stands in for it. */
+const bbFolderOf = (marker: Element) => marker.querySelector<SVGElement>(`svg:not([${THREAD_ICON_ATTR}])`);
+
+/** Puts back bb's folder in a cross-project marker. */
+function restoreThreadMarker(marker: Element): void {
+  marker.querySelector(`[${THREAD_ICON_ATTR}]`)?.remove();
+  bbFolderOf(marker)?.style.removeProperty("display");
+}
+
+/** Puts, refreshes or takes off the project's icon in every thread row bb marks as working in another project. */
+function placeThreadIcons(boards: Parameters<typeof rowBoardOf>[1]): void {
+  for (const marker of Array.from(document.querySelectorAll(CROSS_PROJECT))) {
+    const href = marker.closest("[data-sidebar-rename-row]")?.querySelector("a[data-sidebar-thread-id]")?.getAttribute("href") ?? null;
+    const projectId = projectOfThreadHref(href);
+    const board = projectId === null ? null : rowBoardOf(projectId, boards);
+    const drawing = board === null ? null : boardDrawing(board);
+    if (board === null || drawing === null) {
+      restoreThreadMarker(marker);
+      continue;
+    }
+    bbFolderOf(marker)?.style.setProperty("display", "none");
+    const placed = marker.querySelector(`[${THREAD_ICON_ATTR}]`);
+    if (placed?.getAttribute(KEY_ATTR) === drawingKey(board)) continue;
+    const icon = iconSvg(drawing, THREAD_ICON_CLASS);
+    icon.setAttribute(THREAD_ICON_ATTR, "");
+    icon.setAttribute(KEY_ATTR, drawingKey(board));
+    placed?.remove();
+    marker.append(icon);
+  }
 }
 
 function rowButton(name: string, board: RowBoard, onOpen: (picking: Picking) => void): HTMLButtonElement {
@@ -164,7 +204,10 @@ function SidebarRowIconsInner() {
 
   useEffect(() => {
     let frame: number | null = null;
-    const scan = () => placeRowIcons(latest.current.projects, latest.current.boards, setPicking);
+    const scan = () => {
+      placeRowIcons(latest.current.projects, latest.current.boards, setPicking);
+      placeThreadIcons(latest.current.boards);
+    };
     const schedule = () => {
       if (frame === null) frame = requestAnimationFrame(() => ((frame = null), scan()));
     };
@@ -176,6 +219,7 @@ function SidebarRowIconsInner() {
       observer.disconnect();
       if (frame !== null) cancelAnimationFrame(frame);
       document.querySelectorAll(`[${BUTTON_ATTR}]`).forEach((button) => button.remove());
+      document.querySelectorAll(CROSS_PROJECT).forEach(restoreThreadMarker);
     };
   }, []);
   useEffect(() => scheduleRef.current(), [projects, boards.data]);

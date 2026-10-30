@@ -62,11 +62,16 @@ function transformOf(box: number, tiled: boolean): string | undefined {
 /** A colour as painted where nothing under it shows it off: black and white take the theme's text colour. */
 const bare = (color: string | undefined): Paint | undefined => (color === undefined ? undefined : isEdgeless(color) ? "foreground" : { color });
 
-/** The tile's colour and the glyph's on it, or no tile. */
-function tileOf(icon: Exclude<Icon, { kind: "emoji" }>, color: string | undefined): { tile: Paint; ink: Paint } | null {
+/** The colour of the tile `icon` is drawn on — undefined when neither it nor the bearer chose one; null for no tile. */
+function tileColorOf(icon: Exclude<Icon, { kind: "emoji" }>, color: string | undefined): string | undefined | null {
   if (icon.kind === "line") return null;
   // A Hugeicons sign has no filled weight: it is always drawn on a tile, the bearer's colour when none is chosen.
-  const tile = icon.background ?? (icon.set === "phosphor" ? null : color);
+  return icon.background ?? (icon.set === "phosphor" ? null : color);
+}
+
+/** The tile's colour and the glyph's on it, or no tile. */
+function tileOf(icon: Exclude<Icon, { kind: "emoji" }>, color: string | undefined): { tile: Paint; ink: Paint } | null {
+  const tile = tileColorOf(icon, color);
   if (tile === null) return null;
   // A tile without a colour, or black or white, is the theme's text colour, and the glyph on it the page's.
   // A black or white line on it follows the theme too, so it stays the tile's opposite.
@@ -87,6 +92,18 @@ export function iconDrawing(raw: string | undefined, fallback: string | null, co
   const transform = transformOf(box, tiled !== null);
   const ink = tiled?.ink ?? bare(icon.color ?? color);
   return { kind: "glyph", nodes, ...(transform === undefined ? {} : { transform }), ...(ink === undefined ? {} : { ink }), ...(tiled === null ? {} : { tile: tiled.tile }) };
+}
+
+/**
+ * The colour a bearer is seen in where its icon is drawn — a project's, in the sidebar: the tile's, else the line's
+ * the icon chose, else the bearer's own `color`. What a screen paints beside the icon (a chart's segment, a dot at
+ * the name) takes it, so the two never disagree. Black and white are returned as they are; the screen decides how
+ * they stay visible.
+ */
+export function drawnColor(raw: string | undefined, color: string): string {
+  const icon = parseIcon(raw);
+  if (icon === null || icon.kind === "emoji") return color;
+  return tileColorOf(icon, color) ?? icon.color ?? color;
 }
 
 export type IconTab = "line" | "filled" | "emoji";

@@ -1,5 +1,6 @@
-// Layer: shell, pure. Which bb project a project row of bb's thread list stands for, and which board's icon it wears.
-// bb gives plugins no slot on that row: shell/sidebar-row-icon.tsx reads the row off bb's markup and asks here.
+// Layer: shell, pure. Which bb project a project row — or a thread row — of bb's thread list stands for, and which
+// board's icon it wears. bb gives plugins no slot on those rows: shell/sidebar-row-icon.tsx reads them off bb's markup
+// and asks here.
 import { linkedBoardOf, type LinkedBoard } from "../lib/bb-project-icons.js";
 
 export interface GroupRow {
@@ -39,9 +40,12 @@ function mostFrequent(values: readonly string[]): string | null {
 export function projectOfGroupRow(row: GroupRow, projects: readonly NamedProject[]): string | null {
   const named = projects.filter((project) => project.name === row.name).map((project) => project.id);
   if (named.length === 1) return named[0]!;
-  const linked = row.threadHrefs.flatMap((href) => THREAD_HREF.exec(href)?.[1] ?? []);
+  const linked = row.threadHrefs.flatMap((href) => projectOfThreadHref(href) ?? []);
   return mostFrequent(named.length === 0 ? linked : linked.filter((id) => named.includes(id)));
 }
+
+/** The bb project a thread row's link names — the project the thread works in — or null for a link naming none. */
+export const projectOfThreadHref = (href: string | null): string | null => (href === null ? null : (THREAD_HREF.exec(href)?.[1] ?? null));
 
 /** The task board linked to the bb project — not a section beside it — or null for a project with none. */
 export function rowBoardOf(projectId: string, boards: readonly LinkedBoard[]): RowBoard | null {

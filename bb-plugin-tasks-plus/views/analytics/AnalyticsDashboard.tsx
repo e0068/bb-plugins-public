@@ -182,7 +182,7 @@ export function AnalyticsDashboard() {
   const projects = [...(projectsQuery.data?.projects ?? [])].sort((a, b) => a.name.localeCompare(b.name) || a.id.localeCompare(b.id));
   const reducedProjects = useTasksQuery((client) => client.call("loadReducedProjects", {}), [], []).data ?? DEFAULT_REDUCED_PROJECTS;
   // A new board only when a project, its colour or the choice changes — the charts' colours are memoised on it.
-  const boardSignature = `${reducedProjects}|${projects.map((project) => `${project.id}:${project.color}`).join("|")}`;
+  const boardSignature = `${reducedProjects}|${projects.map((project) => `${project.id}:${project.color}:${project.icon ?? ""}`).join("|")}`;
   const board = useMemo<ChartBoard>(() => ({ projects, reducedProjects }), [boardSignature]);
 
   const span = useTasksQuery(

@@ -85,6 +85,7 @@ import { SourceBanner } from "./source-banner.js";
 import { Icon } from "@/components/ui/icon";
 import { EntityIcon } from "@/components/entity-icon";
 import { Skeleton } from "@/components/ui/skeleton";
+import { drawnColor } from "@/lib/icon-drawing";
 import { cn } from "@/lib/utils";
 import {
   ROW_FIELD_LABELS,
@@ -427,7 +428,7 @@ function CardFieldValue({
           aria-hidden
           title={project.name}
           className="size-2.5 shrink-0 rounded-sm"
-          style={{ backgroundColor: project.color }}
+          style={{ backgroundColor: drawnColor(project.icon, project.color) }}
         />
       ) : null;
   }

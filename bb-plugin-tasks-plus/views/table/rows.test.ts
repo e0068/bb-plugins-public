@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import type { Task, TaskStatus } from "../../shared/contract.js";
 import { TASK_STATUSES } from "../../shared/enums.js";
 import type { SortContext } from "./columns.js";
-import { tableRows, type RowsInput, type TableGroup } from "./rows.js";
+import { nestedRows, tableRows, type RowsInput, type TableGroup } from "./rows.js";
 
 function task(n: number, overrides: Partial<Task> = {}): Task {
   return {
@@ -139,5 +139,25 @@ describe("sorting and collapsing rows", () => {
     expect(rowKeys(tableRows(tasks, { ...INPUT, collapsedTasks: ["T2"] }))).toEqual(["TSK-1", "TSK-2", "TSK-4"]);
     const collapsedGroup = tableRows(tasks, { ...INPUT, collapsedGroups: ["todo"] });
     expect(collapsedGroup.map((group) => [group.key, group.count, group.rows.length])).toEqual([["todo", 4, 0]]);
+  });
+});
+
+describe("nestedRows — the rows of an ungrouped table with its own sort", () => {
+  // A parent stored last, as in a section whose first record is the parent of the rest.
+  const family = [task(2, { parentTaskId: "T1" }), task(3, { parentTaskId: "T1" }), task(1)];
+  const keyDepth = (rows: ReturnType<typeof nestedRows>) => rows.map((row) => `${row.task.key}:${row.depth}`);
+
+  it("puts the parent first and its children under it, one level deeper", () => {
+    expect(keyDepth(nestedRows(family, null, []))).toEqual(["TSK-1:0", "TSK-2:1", "TSK-3:1"]);
+    expect(nestedRows(family, null, [])[0]?.childCount).toBe(2);
+  });
+
+  it("orders siblings by the comparator without pulling a child out from under its parent", () => {
+    const byTitleDesc = (a: Task, b: Task) => b.title.localeCompare(a.title);
+    expect(keyDepth(nestedRows([...family, task(4)], byTitleDesc, []))).toEqual(["TSK-4:0", "TSK-1:0", "TSK-3:1", "TSK-2:1"]);
+  });
+
+  it("keeps a folded parent's row and drops its subtree", () => {
+    expect(keyDepth(nestedRows(family, null, ["T1"]))).toEqual(["TSK-1:0"]);
   });
 });

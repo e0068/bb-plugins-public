@@ -92,6 +92,21 @@ function sortForest(nodes: readonly Node[], compare: ((a: Task, b: Task) => numb
 }
 
 /**
+ * The rows of one ungrouped table: families under their roots, siblings ordered
+ * by `compare` (the incoming order when `null`), a collapsed task's subtree
+ * folded away. The section tables draw their records through this, with their
+ * own comparator, where `tableRows` brings the task columns' sort.
+ */
+export function nestedRows(
+  tasks: readonly Task[],
+  compare: ((a: Task, b: Task) => number) | null,
+  collapsedTasks: readonly string[],
+): TableRow[] {
+  const collapsed = new Set(collapsedTasks);
+  return sortForest(buildForest(tasks), compare).flatMap((node) => flatten(node, collapsed));
+}
+
+/**
  * A label-grouped task can carry several labels; it stands in the group of
  * whichever comes first in the groups' own order, or `NONE_KEY` when it
  * carries none of them.

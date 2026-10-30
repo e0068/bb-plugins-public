@@ -7,6 +7,7 @@ import { createContext, useContext, useMemo, type ReactNode } from "react";
 import { useSeriesPainting, type SeriesPainting } from "@bb-plugins/reduced-colors";
 
 import { TASK_TYPES, type TaskStatus, type TaskType } from "../../db/types.js";
+import { drawnColor } from "../../lib/icon-drawing";
 import type { ReducedProjects } from "../../shared/reduced-projects.js";
 import { seriesColor } from "./closed-model";
 import { OVERFLOW_COLOR, STATUS_COLOR, TYPE_COLOR } from "./palette";
@@ -14,7 +15,7 @@ import { OVERFLOW_COLOR, STATUS_COLOR, TYPE_COLOR } from "./palette";
 /** What the screen paints projects from: the board's projects with their own colours, and what Reduced Colors does to them. */
 export interface ChartBoard {
   /** In board order — the order of their ramp steps. */
-  readonly projects: readonly { readonly id: string; readonly color: string }[];
+  readonly projects: readonly { readonly id: string; readonly color: string; readonly icon?: string | undefined }[];
   readonly reducedProjects: ReducedProjects;
 }
 
@@ -57,7 +58,7 @@ const byIndexIn =
  */
 export function chartColors(painting: SeriesPainting, board: ChartBoard): ChartColors {
   const ids = board.projects.map((project) => project.id);
-  const own = byIndexIn(ids, board.projects.map((project) => project.color));
+  const own = byIndexIn(ids, board.projects.map((project) => drawnColor(project.icon, project.color)));
   switch (painting.kind) {
     case "palette":
       return {

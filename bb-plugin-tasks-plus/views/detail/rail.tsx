@@ -66,6 +66,7 @@ import { Icon } from "@/components/ui/icon";
 import { EntityIcon } from "@/components/entity-icon";
 import { Input } from "@/components/ui/input";
 import { readDollars, readMinutes } from "../../shared/amounts.js";
+import { drawnColor } from "@/lib/icon-drawing";
 import { cn } from "@/lib/utils";
 import { labelFill } from "../common/label-fill.js";
 import { PlanDatePopover, type PlanDateKind } from "../common/plan-date-picker.js";
@@ -844,7 +845,7 @@ export function PropertiesRail({
         <span
           aria-hidden
           className="size-3 shrink-0 rounded-sm"
-          style={{ backgroundColor: project?.color }}
+          style={{ backgroundColor: project && drawnColor(project.icon, project.color) }}
         />
         <span className="truncate">{project?.name ?? "…"}</span>
       </div>
@@ -1015,7 +1016,7 @@ export function InlineProperties({
             <span
               aria-hidden
               className="size-2 shrink-0 rounded-sm"
-              style={{ backgroundColor: project.color }}
+              style={{ backgroundColor: drawnColor(project.icon, project.color) }}
             />
             {project.name}
           </span>

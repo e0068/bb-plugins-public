@@ -6,6 +6,7 @@ import {
   DEFAULT_SECTION_LAYOUT,
   movedSectionLayout,
   readSectionLayout,
+  recordComparator,
   sortedRecords,
   visibleSectionColumns,
   withWidth,
@@ -117,5 +118,14 @@ describe("a stored layout", () => {
       DEFAULT_SECTION_LAYOUT,
     );
     expect(readSectionLayout("junk")).toEqual(DEFAULT_SECTION_LAYOUT);
+  });
+});
+
+describe("a section's record comparator", () => {
+  it("is nothing without a sort, and orders two records the way the sort does", () => {
+    expect(recordComparator(null, FIELDS)).toBeNull();
+    const compare = recordComparator({ column: "field:size", direction: "asc" }, FIELDS)!;
+    expect(compare(record("ten", { size: "10" }), record("nine", { size: "9" }))).toBeGreaterThan(0);
+    expect(compare(record("none"), record("nine", { size: "9" }))).toBeGreaterThan(0);
   });
 });

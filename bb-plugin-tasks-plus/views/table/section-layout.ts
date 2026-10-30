@@ -112,24 +112,28 @@ function compareValues(type: FieldType, a: string, b: string): number | null {
   return a === "" || b === "" ? null : a.localeCompare(b);
 }
 
-/** The records ordered by the sort, the empty values last both ways; unsorted when there is no sort. */
-export function sortedRecords<T extends Pick<Task, "title" | "description" | "createdAt" | "updatedAt" | "properties" | "labelIds">>(
-  records: readonly T[],
-  sort: SectionSort | null,
-  fields: readonly SectionField[],
-): T[] {
-  if (sort === null) return [...records];
+type SortableRecord = Pick<Task, "title" | "description" | "createdAt" | "updatedAt" | "properties" | "labelIds">;
+
+/** How the sort compares two records, the empty values last both ways; `null` when there is no sort. */
+export function recordComparator(sort: SectionSort | null, fields: readonly SectionField[]): (<T extends SortableRecord>(x: T, y: T) => number) | null {
+  if (sort === null) return null;
   const name = fieldNameOf(sort.column);
   const type: FieldType = name === null ? (sort.column === "title" || sort.column === "description" ? "text" : "date") : (fields.find((field) => field.name === name)?.type ?? "text");
   const sign = sort.direction === "asc" ? 1 : -1;
-  return [...records].sort((x, y) => {
+  return (x, y) => {
     const [a, b] = [sectionValue(x, sort.column), sectionValue(y, sort.column)];
     const compared = compareValues(type, a, b);
     if (compared !== null) return sign * compared;
     // Empty — or no number — last, whichever way the column sorts.
     const blank = (value: string) => value === "" || (type === "number" && numberOf(value) === null);
     return Number(blank(a)) - Number(blank(b));
-  });
+  };
+}
+
+/** The records ordered by the sort, the empty values last both ways; unsorted when there is no sort. */
+export function sortedRecords<T extends SortableRecord>(records: readonly T[], sort: SectionSort | null, fields: readonly SectionField[]): T[] {
+  const compare = recordComparator(sort, fields);
+  return compare === null ? [...records] : [...records].sort(compare);
 }
 
 // ---------------------------------------------------------------------------

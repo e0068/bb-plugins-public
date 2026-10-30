@@ -11,7 +11,6 @@ import { Button } from "@/components/ui/button";
 import { Icon } from "@/components/ui/icon";
 import { Skeleton } from "@/components/ui/skeleton";
 import { DelayedLoading } from "../../components/delayed-loading.js";
-import { cn } from "@/lib/utils";
 import {
   narrowsOnServer,
   useLabels,
@@ -55,7 +54,8 @@ import { tableRows, type TableGroup } from "./rows.js";
 import { SectionTable } from "./section-table.js";
 import { NewTaskRow } from "./new-task-row.js";
 import { GroupIcon } from "../board/group-icon.js";
-import { TableCell, TitleCell } from "./cells.js";
+import { TableCell } from "./cells.js";
+import { TableRowLine } from "./table-row.js";
 import {
   HEADER_HEIGHT_PX,
   TableHeader,
@@ -201,92 +201,6 @@ function LoadingRows() {
         ))}
       </div>
     </DelayedLoading>
-  );
-}
-
-/** One family row: the title (or a plain cell) per visible column, pinned ones stuck to the leading edge. */
-function TableRowLine({
-  task,
-  depth,
-  childCount,
-  collapsed,
-  onToggleCollapse,
-  onOpen,
-  columns,
-  properties,
-  pinnedSet,
-  offsets,
-  edgeColumn,
-  gridTemplate,
-  cellContext,
-}: {
-  task: Task;
-  depth: number;
-  childCount: number;
-  collapsed: boolean;
-  onToggleCollapse: () => void;
-  onOpen: () => void;
-  columns: readonly TableColumn[];
-  /** The property names drawn after the regular columns. */
-  properties: readonly string[];
-  pinnedSet: ReadonlySet<TableColumn>;
-  offsets: Partial<Record<TableColumn, number>>;
-  edgeColumn: TableColumn | null;
-  gridTemplate: string;
-  cellContext: Parameters<typeof TableCell>[0]["context"];
-}) {
-  return (
-    <div
-      data-task-key={task.key}
-      role="row"
-      onClick={(event) => {
-        // Status/priority editors and the fold toggle are buttons inside the
-        // row; a click on one of them edits or folds, it never opens the task.
-        if ((event.target as HTMLElement).closest("button")) return;
-        onOpen();
-      }}
-      className="group grid h-[34px] cursor-pointer items-stretch border-b border-border-hairline text-sm hover:bg-state-hover"
-      // Off the screen the browser skips the row's styling and layout: a long
-      // table restyled whole on every change of the page took over half a
-      // second each time — the toolbar's menus opened seconds late.
-      style={{ gridTemplateColumns: gridTemplate, contentVisibility: "auto", containIntrinsicSize: "auto 34px" }}
-    >
-      {columns.map((column) => {
-        const pinned = pinnedSet.has(column);
-        return (
-          <div
-            key={column}
-            className={cn(
-              "flex min-w-0 items-center overflow-hidden px-2",
-              // A pinned cell is opaque so scrolled cells pass under it; the
-              // row's hover tint is laid over it rather than lost behind it.
-              pinned &&
-                "sticky z-[1] bg-background before:pointer-events-none before:absolute before:inset-0 before:-z-10 group-hover:before:bg-state-hover",
-              column === edgeColumn && "border-r border-border-hairline",
-            )}
-            style={pinned ? { left: `${offsets[column] ?? 0}px` } : undefined}
-          >
-            {column === "title" ? (
-              <TitleCell
-                task={task}
-                depth={depth}
-                childCount={childCount}
-                collapsed={collapsed}
-                onToggle={onToggleCollapse}
-                onOpen={onOpen}
-              />
-            ) : (
-              <TableCell column={column} task={task} context={cellContext} />
-            )}
-          </div>
-        );
-      })}
-      {properties.map((name) => (
-        <div key={`property:${name}`} data-property-cell={name} className="flex min-w-0 items-center overflow-hidden px-2 text-muted-foreground">
-          <span className="truncate">{task.properties?.[name] ?? ""}</span>
-        </div>
-      ))}
-    </div>
   );
 }
 
@@ -636,22 +550,32 @@ function TaskTable({ scope, thread }: TableViewProps) {
                 onToggleCollapse={() => toggleTaskCollapsed(row.task.id)}
                 onOpen={() => openTask(row.task.key)}
                 columns={visibleColumns}
-                properties={shownPropertyNames}
                 pinnedSet={pinnedSet}
                 offsets={offsets}
                 edgeColumn={edge}
                 gridTemplate={gridTemplate}
-                cellContext={{
-                  project: projectsById.get(row.task.projectId),
-                  labelsById,
-                  taskKeys,
-                  activeThreads: meta.data?.get(row.task.id)?.activeThreads.length ?? 0,
-                  subtasks: subtaskStatsOf(row.task.id, byParent),
-                  showEmpty: fieldConfig.showEmpty,
-                  onEdit: edits.edit,
-                  displays: settings.columns,
-                  now,
-                }}
+                renderCell={(column) => (
+                  <TableCell
+                    column={column}
+                    task={row.task}
+                    context={{
+                      project: projectsById.get(row.task.projectId),
+                      labelsById,
+                      taskKeys,
+                      activeThreads: meta.data?.get(row.task.id)?.activeThreads.length ?? 0,
+                      subtasks: subtaskStatsOf(row.task.id, byParent),
+                      showEmpty: fieldConfig.showEmpty,
+                      onEdit: edits.edit,
+                      displays: settings.columns,
+                      now,
+                    }}
+                  />
+                )}
+                trailing={shownPropertyNames.map((name) => (
+                  <div key={`property:${name}`} data-property-cell={name} className="flex min-w-0 items-center overflow-hidden px-2 text-muted-foreground">
+                    <span className="truncate">{row.task.properties?.[name] ?? ""}</span>
+                  </div>
+                ))}
               />
             ))}
             <NewTaskRow label={group.label === null ? "Add a task" : `Add a task to ${group.label}`} onOpen={() => openNewTask(group)} />

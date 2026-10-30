@@ -19,6 +19,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Icon } from "@/components/ui/icon";
+import { drawnColor } from "@/lib/icon-drawing";
 import { cn } from "@/lib/utils";
 import { ConfirmDialog } from "../../components/confirm-dialog.js";
 import {
@@ -165,7 +166,7 @@ function LabelsSection() {
                 <span
                   aria-hidden
                   className="size-2.5 rounded-sm"
-                  style={{ backgroundColor: project.color }}
+                  style={{ backgroundColor: drawnColor(project.icon, project.color) }}
                 />
                 {project.name}
               </span>
