@@ -27,7 +27,6 @@ const demo: DecisionBrief = { id: "D", threadId: THREAD, title: "Демонст�
 const approval: DecisionBrief = { id: "A", threadId: THREAD, title: "Утверждение", createdAt: T, kind: "brief", questions: [], stages, outcome: outcome("approve") };
 
 const proceed = { briefId: "A", answers: [], outcome: { accepted: true } };
-const rework = { briefId: "A", answers: [], outcome: { accepted: false, note: "переделай" } };
 const picked = (optionId: string, note?: string) => ({ briefId: "Q", answers: [{ questionId: "go", optionIds: [optionId] }], ...(note === undefined ? {} : { note }) });
 
 const host = async () => {
@@ -93,15 +92,6 @@ describe("Утверждение отвечает за виджеты своей
     await call("answerBrief", { id: "A", answer: proceed, messageId: "m", group: [{ id: "Q", answer: picked("a") }, { id: "D", note: "тема" }] });
     expect((await call("getBrief", { id: "D" })).sentWith).toBe("A");
     expect(((await call("approvalMembers", { id: "A" })).members as DecisionBrief[]).map((b) => b.id)).toEqual([]);
-  });
-
-  it("комментарий к Утверждению — на доработку: ответы группы не записываются, черновики остаются", async () => {
-    const { call, store } = await host();
-    await store.putDraft("Q", "{}");
-    await call("answerBrief", { id: "A", answer: rework, messageId: "m", group: [{ id: "Q", answer: picked("b", "x") }] });
-    expect(await store.getAnswer("Q")).toBeNull();
-    expect(await store.getDraft("Q")).not.toBeNull();
-    expect(await store.getChecklist(THREAD)).toBeNull();
   });
 
   it("агент отмечает пункты инструментом; незнакомый id — отказ без отметки", async () => {

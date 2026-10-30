@@ -296,7 +296,14 @@ function BriefLoader({ id, source, messageId, threadId }: { id: string; source: 
       case "found": {
         const legacy = isLegacyBrief(state.brief);
         // Группа вернулась агенту — комментарий к утверждению или сообщение в чат: на месте утверждения одна строка, остальные виджеты группы не рисуются.
-        if (state.fold !== undefined) return state.fold.holder === id ? <FoldedLine fold={state.fold} roots={roots} /> : null;
+        // Чек-лист по комментариям к виджетам «на доработку» тоже ведётся: он остаётся под строкой держателя.
+        if (state.fold !== undefined)
+          return state.fold.holder === id ? (
+            <>
+              <FoldedLine fold={state.fold} roots={roots} />
+              {state.checklist !== undefined && <ChecklistCard items={state.checklist} />}
+            </>
+          ) : null;
         if (state.answer !== null)
           return legacy ? (
             <AnsweredBrief brief={state.brief} record={state.answer} />
@@ -309,6 +316,8 @@ function BriefLoader({ id, source, messageId, threadId }: { id: string; source: 
           );
         // Уточнение, которое агент починил или решил сам, отвечать уже нечем: одна приглушённая строка.
         if (state.resolved === true && state.brief.kind === "clarify") return <ResolvedClarifyLine brief={state.brief} />;
+        // Картинки виджетов группы лежат в их пулах: каждое поле нумерует свои, сервер сводит номера с Утверждением.
+        const withPools = (group: readonly GroupAnswer[]) => Promise.all(group.map(async (entry) => ({ ...entry, ...(await attachmentsPayload(entry.id)) })));
         const send = async (draft: Draft, extra?: { group?: GroupAnswer[] }) =>
           rpcRef.current.call("answerBrief", {
             id,
@@ -316,7 +325,7 @@ function BriefLoader({ id, source, messageId, threadId }: { id: string; source: 
             messageId,
             locale,
             ...(await attachmentsPayload(id)),
-            ...(extra?.group === undefined || extra.group.length === 0 ? {} : { group: extra.group }),
+            ...(extra?.group === undefined || extra.group.length === 0 ? {} : { group: await withPools(extra.group) }),
           });
         const onAccepted = (result: Awaited<ReturnType<typeof send>>) => {
           if (result.kind === "accepted" || result.kind === "already_answered") answered(result.record);

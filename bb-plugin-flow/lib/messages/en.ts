@@ -652,7 +652,7 @@ export const en: Messages = {
     approvedHeading: (title) => `Approval ${quote(title)} — approved.`,
     approveCommentHeading: (title) => `Changes to the approval ${quote(title)}:`,
     approveComment:
-      "Not approved: the widgets since the previous approval were folded and returned to you. The owner's comment on the approval is the main one, the owner's other answers still stand. Rework the stage before the approval as the comment asks (roll back to it with flow_stage when it is done), send new widgets reworked by the comments (the owner's choices are preselected in them), and only then the approval: it is refused without reworked widgets.",
+      "Not approved: the widgets since the previous approval were folded and returned to you. The owner's comment on the approval is the main one; the owner's answers and comments on the widgets, if any, come with it, but none of them is recorded — the widgets return to the owner with them as drafts. Rework the stage before the approval as the comment asks (roll back to it with flow_stage when it is done), send new widgets reworked by the comments (the owner's choices are preselected in them), and only then the approval: it is refused without reworked widgets.",
     outcomeSwitchHeading: (title, flow) => `Demo ${quote(title)} — move to the ${quote(flow)} flow.`,
     outcomeSwitch: (flow) =>
       `The thread now runs the ${quote(flow)} flow: its stages are in the turn instructions, start with the first. The scope is the findings of this demo; the owner's comment above, if any, narrows it.`,

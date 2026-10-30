@@ -830,10 +830,6 @@ export const foldSchema = z.object({ holder: text, ids: z.array(text).min(1) });
 /** Итог прогона: минуты, цель и потолок в долларах; `null` у минут — времени в прогнозе нет. */
 export const plannedSchema = z.object({ minutes: z.number().nullable(), target: z.number(), max: z.number() });
 
-/** Ответ виджета группы Утверждения: ответ брифа из его черновика или комментарий к Демонстрации. */
-export const groupAnswerSchema = z.object({ id: text, answer: decisionAnswerSchema.optional(), note: z.string().optional() });
-export type GroupAnswer = z.infer<typeof groupAnswerSchema>;
-
 /** Пункт чек-листа по комментарию владельца к виджету: где оставлен, что сказано, отметил ли агент выполненным. */
 export const checklistItemSchema = z.object({ id: text, where: text, text, done: z.boolean() });
 export type ChecklistItem = z.infer<typeof checklistItemSchema>;
@@ -944,6 +940,13 @@ export const answerImagesSchema = z
   .max(ANSWER_IMAGES_MAX)
   .refine((images) => new Set(images.map((i) => i.n)).size === images.length, "image numbers must not repeat")
   .refine((images) => images.reduce((sum, i) => sum + i.dataBase64.length, 0) <= ANSWER_IMAGES_MAX_BASE64, "images exceed 16 MB of base64");
+
+/**
+ * Ответ виджета группы Утверждения: ответ брифа из его черновика или комментарий к Демонстрации. `images` — вложения из поля
+ * этого виджета: их метки «[картинка N]» считаются в его собственной нумерации, сервер сводит их с нумерацией Утверждения.
+ */
+export const groupAnswerSchema = z.object({ id: text, answer: decisionAnswerSchema.optional(), note: z.string().optional(), images: answerImagesSchema.optional() });
+export type GroupAnswer = z.infer<typeof groupAnswerSchema>;
 
 /** Виджеты группы Утверждения, которые копят ответ до него: неотвеченные с `settle: "approval"`, по порядку ленты. */
 export const approvalGroupRpcContract = defineRpcContract({

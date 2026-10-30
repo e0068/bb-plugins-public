@@ -445,7 +445,9 @@ export const registerProgress = (
       if (state === "started" && track?.skipped === true && track.proposed !== true && track.finishedAt === undefined)
         return toolError(`The owner took stage ${stage} out of the run: skip it and go on with the next stage of the run. Nothing was marked.`);
       // Чек-лист по комментариям владельца закрывается до следующего этапа: так «Продолжить с правками» не теряет правки.
-      const checklist = state === "started" ? ((await deps.checklist?.(ctx.threadId).catch(() => [])) ?? []) : [];
+      // Откат к закрытому этапу — начало доработки, а не следующий этап: пункты делаются в ней, отказ ждёт этап после.
+      const rollback = track?.finishedAt !== undefined;
+      const checklist = state === "started" && !rollback ? ((await deps.checklist?.(ctx.threadId).catch(() => [])) ?? []) : [];
       if (openItems(checklist).length > 0) return toolError(checklistBlock(checklist));
       // Пропущенный этап прогона молча уходил из работы: следующий начинается и закрывается только после него.
       const open = unfinishedBefore(stages, record, stage);

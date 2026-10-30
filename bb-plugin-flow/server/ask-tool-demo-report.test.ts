@@ -30,13 +30,6 @@ describe("Демонстрация — отчёт без вопросов", () =
     expect(await store.getBrief("dec_R1")).not.toBeNull();
   });
 
-  it("вопросы у Демонстрации отбиваются: уточнение идёт виджетом, переход — утверждением", async () => {
-    const { ask, store } = await host();
-    const result = await ask({ title: "Демо", outcome: outcome("demo"), questions: [question] });
-    expect(result).toContain("a demo is a report: questions go as a clarify, a flow switch as outcome.nextFlow on an approval");
-    expect(await store.getBrief("dec_R1")).toBeNull();
-  });
-
   it("у Утверждения вопросы по-прежнему допустимы", async () => {
     const { ask, store } = await host();
     expect(await ask({ title: "Утв", outcome: outcome("approve"), questions: [question] })).not.toContain("Brief not accepted");

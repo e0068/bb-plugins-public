@@ -9,7 +9,7 @@ const THREAD = "thr_boundary";
 
 type Failing = { wait?: boolean; compact?: boolean; update?: boolean; send?: boolean };
 
-const setup = (failing: Failing = {}, options: { state?: () => StageState; clock?: () => number } = {}) => {
+const setup = (failing: Failing = {}, options: { state?: (stageId: string) => StageState; clock?: () => number } = {}) => {
   /** Запасные таймеры: тесты запускают их руками, минуту никто не ждёт. */
   const timers: Array<{ fire: () => Promise<void>; ms: number; cancelled: boolean }> = [];
   const calls: string[] = [];
@@ -46,7 +46,7 @@ const setup = (failing: Failing = {}, options: { state?: () => StageState; clock
       if (failing.send === true) throw new Error("send failed");
       sends.push({ mode: "queue-if-active", text });
     },
-    ...(options.state === undefined ? {} : { stageState: async () => options.state!() }),
+    ...(options.state === undefined ? {} : { stageState: async (_threadId: string, stageId: string) => options.state!(stageId) }),
     ...(options.clock === undefined ? {} : { now: options.clock }),
     setTimer: (fire, ms) => {
       const timer = { fire, ms, cancelled: false };
@@ -281,6 +281,47 @@ describe("граница этапов: два обещания подряд", ()
     boundary.schedule(THREAD, next);
     await Promise.all([first, boundary.continueNow(THREAD)]);
     expect(calls).toEqual(["wait", "compact", "update:claude-opus-5-5/high", "send"]);
+  });
+});
+
+describe("граница этапов: отметка задним числом (тред 29.10)", () => {
+  // Журнал: «practice — done» обещает carry on с code-review; через десять секунд, пока агент ещё в ходу, «questions — done»
+  // даёт второе обещание, но с этапом, уже закрытым ранее в прогоне. Обе реплики ждали конца хода.
+  const codeReview = { ...plan, compact: true, stageId: "code-review", nextStage: 'code-review "code-review"', fresh: true };
+  const closedStage = { ...plan, compact: true, stageId: "practice", nextStage: 'practice "Execution"', fresh: true };
+  const states = (id: string): StageState => (id === "practice" ? "closed" : "todo");
+
+  it("второе обещание про закрытый этап не гасит первое: carry on идёт с code-review", async () => {
+    const { boundary, sends } = setup({}, { state: states });
+    boundary.schedule(THREAD, codeReview);
+    const first = boundary.continueNow(THREAD);
+    boundary.schedule(THREAD, closedStage);
+    const second = boundary.continueNow(THREAD);
+    await Promise.all([first, second]);
+    expect(sends.map((sent) => sent.text)).toEqual([expect.stringContaining('carry on with stage code-review "code-review"')]);
+  });
+
+  it("основная отправка упала — запасной таймер шлёт carry on о code-review, а не молчит", async () => {
+    const failing = { send: true };
+    const { boundary, sends, fireTimer } = setup(failing, { state: states });
+    boundary.schedule(THREAD, codeReview);
+    const first = boundary.continueNow(THREAD);
+    boundary.schedule(THREAD, closedStage);
+    const second = boundary.continueNow(THREAD);
+    await expect(Promise.all([first, second])).rejects.toThrow("send failed");
+    failing.send = false;
+    await fireTimer();
+    expect(sends.map((sent) => sent.text)).toEqual([expect.stringContaining('code-review "code-review"')]);
+  });
+
+  it("оба обещания про закрытые этапы — реплики нет", async () => {
+    const { boundary, sends, fireTimer } = setup({}, { state: () => "closed" });
+    boundary.schedule(THREAD, codeReview);
+    const first = boundary.continueNow(THREAD);
+    boundary.schedule(THREAD, closedStage);
+    await Promise.all([first, boundary.continueNow(THREAD)]);
+    await fireTimer();
+    expect(sends).toEqual([]);
   });
 });
 

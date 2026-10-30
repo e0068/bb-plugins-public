@@ -35,12 +35,12 @@ export const outcomeKind = (brief: DecisionBrief): OutcomeKind => {
 /** Название этапа Демонстрации брифа. */
 export const outcomeStageName = (brief: DecisionBrief): string => stageNameOf(brief, brief.outcome?.stage ?? "");
 
-/** Демонстрация — отчёт: итог не Утверждения ответа не принимает, `answerBrief` отказывает. */
+/** Демонстрация — отчёт: сама ответа не принимает, `answerBrief` отказывает; её вопросы отвечают с Утверждением группы. */
 export const isReport = (brief: DecisionBrief): boolean => brief.outcome !== undefined && outcomeKind(brief) !== "approve";
 
 /**
  * Исход ответа на итог: продолжить, комментарий или переход в другой flow; `null` — итог не отвечен. Отвечают на Утверждение
- * (Демонстрация — отчёт, ответов не берёт; исходы в записях ответов на неё остались от прежних виджетов). Комментарий —
+ * (Демонстрация — отчёт, исхода не имеет; исходы в записях ответов на неё остались от прежних виджетов). Комментарий —
  * написанный к нему или свой ответ в строке вопроса — Утверждение не принимает: оно остаётся открытым, агент дорабатывает. Переход его тоже не принимает:
  * тред уходит в выбранный flow, а комментарий едет туда вместе с ним.
  */
@@ -65,11 +65,26 @@ export const ownWords = (answer: Partial<Pick<DecisionAnswer, "answers">>): bool
 export const outcomeAnswered = (answer: Parameters<typeof demoVerdict>[0]): boolean => demoVerdict(answer) !== null;
 
 /**
- * Демонстрация — отчёт: вопросов у неё нет (уточнение идёт отдельным виджетом), перехода тоже — работу в другой flow
- * переводит кнопка утверждения, поэтому `nextFlow` допустим только там.
+ * Виджет группы Утверждения в том виде, в котором он отвечает: Демонстрация с вопросами — брифом без итога и без снимка этапов
+ * (без него у брифа не появляются этапы, которых владелец не выбирал), так её вопросы читаются, записываются и уходят агенту,
+ * как у любого виджета группы. Остальное — как есть.
  */
-export const reportOnlyIssues = (outcome: Pick<StageOutcome, "nextFlow">, questionCount: number): string[] => [
-  ...(questionCount === 0 ? [] : ["a demo is a report: questions go as a clarify, a flow switch as outcome.nextFlow on an approval"]),
+export const memberOf = (member: DecisionBrief): DecisionBrief => {
+  if (!isReport(member) || member.questions.length === 0) return member;
+  const { outcome: _outcome, stages: _stages, ...plain } = member;
+  return plain;
+};
+
+/** Ответ на Демонстрацию, ушедший брифом без итога — ответом её вопросов с Утверждением: вердикта у него нет. */
+export const answeredAsQuestions = (brief: Pick<DecisionBrief, "outcome">, answer: Pick<DecisionAnswer, "outcome">): boolean => brief.outcome !== undefined && answer.outcome === undefined;
+
+/**
+ * Демонстрация — отчёт, перехода у неё нет: работу в другой flow переводит кнопка утверждения, поэтому `nextFlow` допустим
+ * только там. Вопросы — только когда впереди Утверждение (`questionsAllowed`): ответ копится до него; без него отвечать некуда,
+ * и вопрос идёт отдельным уточнением.
+ */
+export const reportOnlyIssues = (outcome: Pick<StageOutcome, "nextFlow">, questionCount: number, questionsAllowed = false): string[] => [
+  ...(questionCount === 0 || questionsAllowed ? [] : ["a demo is a report: questions go as a clarify, a flow switch as outcome.nextFlow on an approval"]),
   ...(outcome.nextFlow === undefined ? [] : ["outcome.nextFlow goes on an approval: the owner moves the work with its button"]),
 ];
 

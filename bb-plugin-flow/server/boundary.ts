@@ -47,8 +47,9 @@ export interface Boundary {
   service(threadId: string): Promise<void>;
   /**
    * Для агента без автоматизации впереди: обслуживает тред и присылает «продолжай этап». Реплика уходит один раз на план и только
-   * пока этап открыт. План, назначенный, пока обслуживается прежний, не теряется: реплика идёт по самому свежему. Не дошла
-   * основная отправка — через {@link FALLBACK_MS} реплику шлёт запасной таймер, без сжатия и смены модели. Сбой отправки уходит наружу.
+   * пока этап открыт. План, назначенный, пока обслуживается прежний, не теряется: реплика идёт по самому свежему из тех, чей этап
+   * ещё ждёт, — план про уже закрытый этап прежнего не отменяет. Не дошла основная отправка — через {@link FALLBACK_MS} реплику
+   * шлёт запасной таймер, без сжатия и смены модели. Сбой отправки уходит наружу.
    */
   continueNow(threadId: string): Promise<void>;
   /** Реплика «продолжай» об этом этапе уже ушла последней: доработка с отметкой «начат» не заводит вторую границу. */
@@ -74,8 +75,8 @@ export const createBoundary = (deps: {
   const plans = new Map<string, { plan: ScheduledBoundary; at: number }>();
   const running = new Set<string>();
   const carried = new Map<string, string>();
-  /** Последнее обещание «продолжай» по треду: номер, время, этап и отмена его запасного таймера. */
-  const promises = new Map<string, { seq: number; at: number; plan: ScheduledBoundary; cancel: () => void }>();
+  /** Последнее обещание «продолжай» по треду: номер, время, планы (свежий первым) и отмена его запасного таймера. */
+  const promises = new Map<string, { seq: number; at: number; plans: readonly ScheduledBoundary[]; cancel: () => void }>();
   /** До какого номера обещаний реплика «продолжай» уже ушла. */
   const answered = new Map<string, number>();
   const now = deps.now ?? Date.now;
@@ -132,41 +133,54 @@ export const createBoundary = (deps: {
   const text = (plan: ScheduledBoundary): string => `Flow: the stage boundary is serviced — carry on with stage ${plan.nextStage}.`;
 
   /** Реплика «продолжай»: закрывает все обещания, данные до неё. */
-  const send = async (threadId: string, plan: ScheduledBoundary): Promise<void> => {
-    const covered = promises.get(threadId)?.seq ?? 0;
+  const send = async (threadId: string, plan: ScheduledBoundary, covered = promises.get(threadId)?.seq ?? 0): Promise<void> => {
     carried.set(threadId, plan.stageId);
     await deps.send(threadId, text(plan));
     settle(threadId, covered);
   };
 
-  /** Берёт планы по одному, самый свежий последним: между ними тред не отпускают, и обещание, данное под идущим обслуживанием, не теряется. */
-  const drain = async (threadId: string): Promise<void> => {
-    let owed = false;
-    for (let plan = take(threadId); plan !== undefined; plan = take(threadId)) {
-      if (!(await waiting(threadId, plan))) {
-        // Агент сам начал или закрыл этап: обещание исполнено без реплики, запасной таймер её не шлёт.
-        settle(threadId);
-        owed ||= plan.compact;
-        continue;
-      }
-      await serve(threadId, { ...plan, compact: plan.compact || owed });
-      owed = false;
-      // Пока тред простаивал, назначили новый план: он решает, что дальше, и свою модель ставит сам.
-      if (peek(threadId) !== undefined) continue;
-      // Этап могли закрыть или начать сами: реплика была бы лишней.
-      if (!(await waiting(threadId, plan))) {
-        settle(threadId);
-        continue;
-      }
-      await send(threadId, plan);
-    }
+  /** Первый из планов, чей этап ещё ждёт агента; этап начатый уже ждёт: агент мог закончить ход, не продолжив. */
+  const firstWaiting = async (threadId: string, plans: readonly ScheduledBoundary[]): Promise<ScheduledBoundary | undefined> => {
+    for (const plan of plans) if (await waiting(threadId, { ...plan, fresh: false })) return plan;
+    return undefined;
   };
 
-  /** Ставит запасной таймер на только что данное обещание; прежний снимается. */
+  /**
+   * Берёт планы по одному, самый свежий последним: между ними тред не отпускают, и обещание, данное под идущим обслуживанием,
+   * не теряется. Реплика идёт по последнему обслуженному плану, чей этап ещё ждёт: более свежий план про уже закрытый этап
+   * (отметка задним числом) его обещание не отменяет.
+   */
+  const drain = async (threadId: string): Promise<void> => {
+    let owed = false;
+    let served: ScheduledBoundary | undefined;
+    do {
+      for (let plan = take(threadId); plan !== undefined; plan = take(threadId)) {
+        if (!(await waiting(threadId, plan))) {
+          // Агент сам начал или закрыл этап: этот план реплики не требует, но сжатие за ним остаётся долгом.
+          owed ||= plan.compact;
+          continue;
+        }
+        await serve(threadId, { ...plan, compact: plan.compact || owed });
+        owed = false;
+        served = plan;
+      }
+      const last = served;
+      const covered = promises.get(threadId)?.seq ?? 0;
+      served = undefined;
+      // Этап могли закрыть или начать сами: реплика была бы лишней, обещание исполнено без неё.
+      if (last !== undefined && (await waiting(threadId, last))) await send(threadId, last, covered);
+      else settle(threadId, covered);
+    } while (peek(threadId) !== undefined);
+  };
+
+  /** Ставит запасной таймер на только что данное обещание; прежний снимается, но его план остаётся запасным, пока обещание не исполнено. */
   const arm = (threadId: string, plan: ScheduledBoundary): void => {
-    promises.get(threadId)?.cancel();
-    const seq = (promises.get(threadId)?.seq ?? 0) + 1;
+    const previous = promises.get(threadId);
+    previous?.cancel();
+    const seq = (previous?.seq ?? 0) + 1;
     const at = now();
+    const earlier = previous !== undefined && (answered.get(threadId) ?? 0) < previous.seq ? previous.plans : [];
+    const plans = [plan, ...earlier];
     const fire = async (): Promise<void> => {
       const promise = promises.get(threadId);
       if (promise?.seq !== seq || (answered.get(threadId) ?? 0) >= seq || now() - at > PLAN_TTL_MS) return;
@@ -176,13 +190,14 @@ export const createBoundary = (deps: {
         return;
       }
       try {
-        // Закрытый этап реплики не ждёт; начатый уже — ждёт: агент мог закончить ход, не продолжив.
-        if (await waiting(threadId, { ...plan, fresh: false })) await send(threadId, plan);
+        // Свежий план мог назвать уже закрытый этап (отметка задним числом): реплика идёт по первому, что ещё ждёт.
+        const target = await firstWaiting(threadId, plans);
+        if (target !== undefined) await send(threadId, target);
       } catch (error) {
         deps.warn(`stage boundary: fallback message failed (${error instanceof Error ? error.message : String(error)})`);
       }
     };
-    promises.set(threadId, { seq, at, plan, cancel: setTimer(fire, deps.fallbackMs ?? FALLBACK_MS) });
+    promises.set(threadId, { seq, at, plans, cancel: setTimer(fire, deps.fallbackMs ?? FALLBACK_MS) });
   };
 
   return {

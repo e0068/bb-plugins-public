@@ -52,6 +52,27 @@ describe("следующая работа агента за отмеченным
   });
 });
 
+describe("отметка задним числом: следующий этап — не уже закрытый", () => {
+  const questions = stage("questions", { name: "Questions" });
+  const practice = stage("practice", { skill: "code-standards-fp", name: "Execution" });
+  const codeReview = stage("code-review", { skill: "code-review", name: "code-review" });
+
+  // Тред 29.10: «practice — done», затем «questions — done» — questions стоит в прогоне раньше уже закрытого practice.
+  const journal = done(done(EMPTY_PROGRESS, "practice"), "questions");
+
+  it("закрытый этап агента пропускается: за questions ждёт code-review, а не закрытый practice", () => {
+    expect(upcomingAfter([questions, practice, codeReview], journal, "questions")).toEqual({ via: "agent", stage: codeReview });
+  });
+
+  it("закрытая автоматизация в цепочке пропускается тоже", () => {
+    expect(upcomingAfter([review, publish, testing], done(done(EMPTY_PROGRESS, "publish"), "review"), "review")).toEqual({ via: "agent", stage: testing });
+  });
+
+  it("всё за отмеченным этапом закрыто — работы нет", () => {
+    expect(upcomingAfter([questions, practice], journal, "questions")).toBeNull();
+  });
+});
+
 describe("что ответ flow_stage говорит о границе", () => {
   const next = { via: "agent", stage: implement } as const;
 
