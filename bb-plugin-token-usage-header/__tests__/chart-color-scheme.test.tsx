@@ -84,11 +84,11 @@ describe("The Usage Analytics feed under the model colour scheme", () => {
     expect(columnsPainted("#f97316")).toBeGreaterThan(0);
   });
 
-  it("lets a colour picked in the legend beat the model", async () => {
-    const viz = { ...DEFAULT_VIZ_SETTINGS, threads: { ...DEFAULT_VIZ_SETTINGS.threads, agentColors: { main: "#123456" } } };
+  it("keeps the model's colour over a colour picked in the legend, which still paints an agent of another provider", async () => {
+    const viz = { ...DEFAULT_VIZ_SETTINGS, threads: { ...DEFAULT_VIZ_SETTINGS.threads, agentColors: { main: "#123456", tester: "#654321" } } };
     await renderFeed("model", viz);
-    await waitFor(() => expect(legendColor("main")).toBe("#123456"));
-    expect(legendColor("code-reviewer")).toBe("#f97316");
+    await waitFor(() => expect(legendColor("main")).toBe("#facc15"));
+    expect(legendColor("tester")).toBe("#654321");
   });
 
   it("names a thread's agents by that thread's own models — 'main' runs on another model in another thread", async () => {

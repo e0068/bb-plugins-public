@@ -80,8 +80,12 @@ describe("agentColor — which colour an agent's columns get", () => {
     expect(agentColor({ ...base, scheme: "model", model: undefined, manual: undefined })).toBe("#3b82f6");
   });
 
-  it("lets a colour picked in the legend beat the model", () => {
-    expect(agentColor({ ...base, scheme: "model", model: "claude-opus-4-8", manual: "#112233" })).toBe("#112233");
+  it("keeps the model's colour over a colour picked in the legend", () => {
+    expect(agentColor({ ...base, scheme: "model", model: "claude-opus-4-8", manual: "#112233" })).toBe("#facc15");
+  });
+
+  it("paints an agent with no model colour by its legend pick under the model scheme", () => {
+    expect(agentColor({ ...base, scheme: "model", model: "gpt-5-codex", manual: "#112233" })).toBe("#112233");
   });
 
   it("leaves the palette colour alone under the palette and Reduced Colors schemes", () => {
@@ -90,17 +94,18 @@ describe("agentColor — which colour an agent's columns get", () => {
     }
   });
 
-  it("is total: any scheme, theme and model gives a colour, and a manual pick always wins under the model scheme", () => {
+  it("is total: any scheme, theme and model gives a colour, and under the model scheme a Claude model's colour always wins", () => {
     fc.assert(
       fc.property(
         fc.constantFrom<ChartColorScheme>(...CHART_COLOR_SCHEMES),
         fc.constantFrom("light", "dark"),
-        fc.oneof(fc.string(), fc.constant(null), fc.constant(undefined)),
+        fc.oneof(fc.string(), fc.constant("claude-opus-4-8"), fc.constant(null), fc.constant(undefined)),
         fc.oneof(fc.constant("#abcdef"), fc.constant(undefined)),
         (scheme, theme, model, manual) => {
           const color = agentColor({ scheme, theme, model, manual, fallback: manual ?? "#3b82f6" });
           expect(color).toMatch(/^#[0-9a-f]{6}$/i);
-          if (scheme === "model" && manual) expect(color).toBe(manual);
+          const own = modelColor(model, theme);
+          if (scheme === "model" && own) expect(color).toBe(own);
         },
       ),
     );
