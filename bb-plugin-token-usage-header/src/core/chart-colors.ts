@@ -54,7 +54,11 @@ export interface AgentColorInput {
   readonly fallback: string;
 }
 
-/** Under the model scheme: the owner's own pick, else the model's colour, else the fallback. Under the other two schemes the fallback already is the answer. */
+/**
+ * Under the model scheme: the model's colour, else the owner's own pick, else the fallback. The model goes first
+ * because a legend pick is keyed by agent name, and "main" names the main agent of every thread whatever it ran on.
+ * Under the other two schemes the fallback already is the answer.
+ */
 export function agentColor({ scheme, theme, model, manual, fallback }: AgentColorInput): string {
-  return scheme === "model" ? (manual ?? modelColor(model, theme) ?? fallback) : fallback;
+  return scheme === "model" ? (modelColor(model, theme) ?? manual ?? fallback) : fallback;
 }

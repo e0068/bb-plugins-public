@@ -163,6 +163,17 @@ describe("session tab in the thread's right panel", () => {
     expect(grid.className).not.toMatch(/(^|\s)lg:/);
     expect(grid.closest(".\\@container")).not.toBeNull();
   });
+
+  it("gives each phase its share of the cost, not of the tokens, and thinking its share of the output's cost", async () => {
+    await renderPanelTab();
+    const row = async (label: string) => (await screen.findByText(label)).nextElementSibling!.textContent;
+    // Costs 0.10 / 0.02 / 0.05 / 0.12 of 0.29; by tokens cache read would be 60%.
+    expect(await row("Cache read")).toBe("600 · $0.10 (34%)");
+    expect(await row("Cache write")).toBe("100 · $0.02 (7%)");
+    expect(await row("Input")).toBe("200 · $0.05 (17%)");
+    expect(await row("Output")).toBe("90 · $0.12 (41%)");
+    expect(await row("incl. thinking")).toBe("10 · $0.01 (8%)");
+  });
 });
 
 describe("header counter click", () => {

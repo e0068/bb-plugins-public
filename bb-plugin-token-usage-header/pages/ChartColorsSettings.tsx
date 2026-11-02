@@ -62,7 +62,7 @@ export function ChartColorsSettings({ loadScheme, saveScheme, loadReducedColors,
         <Option
           scheme="model"
           title="By model"
-          note="Claude agents are coloured by the model they ran on; agents of other providers keep the palette. A colour picked in the legend wins."
+          note="Claude agents are coloured by the model they ran on; agents of other providers keep the palette or the colour picked in the legend."
           current={loaded.scheme}
           onChoose={choose}
           extra={<ModelSwatches />}

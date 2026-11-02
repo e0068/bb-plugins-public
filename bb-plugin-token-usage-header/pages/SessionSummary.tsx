@@ -40,6 +40,10 @@ export function SessionSummary({
   /** Whole row is the click target; omitted renders the rows inert. */
   onSelectAgent?: (agentKey: string) => void;
 }) {
+  // A phase's share is of the money, not of the tokens: of the tokens cache read
+  // always reads ~96% while costing a fraction of that. The whole is the four
+  // phases' own sum, so the shares add up to 100% whatever the total covers.
+  const phasesCost = TOKEN_PHASES.reduce((sum, { key }) => sum + totals.costs[key], 0);
   return (
     <div className="space-y-3">
       <div className="flex items-baseline justify-between">
@@ -52,18 +56,17 @@ export function SessionSummary({
           <div key={key} className="flex items-center justify-between gap-2 text-xs text-muted-foreground">
             <dt>{label}</dt>
             <dd className="tabular-nums">
-              {formatTokenCount(totals[key])}{" "}
-              <span className="text-subtle-foreground">({formatPercent(totals[key], totals.total)})</span> ·{" "}
-              {formatCost(totals.costs[key])}
+              {formatTokenCount(totals[key])} · {formatCost(totals.costs[key])}{" "}
+              <span className="text-subtle-foreground">({formatPercent(totals.costs[key], phasesCost)})</span>
             </dd>
           </div>
         ))}
-        {/* Its share is of the output, not of the total — of the total it would always read "0%". */}
+        {/* Its share is of the output's cost, not of the total — of the total it would always read "0%". */}
         <div className="flex items-center justify-between gap-2 pl-3 text-xs text-subtle-foreground">
           <dt>incl. thinking</dt>
           <dd className="tabular-nums">
-            {formatTokenCount(totals.thinking)} <span>({formatPercent(totals.thinking, totals.output)})</span> ·{" "}
-            {formatCost(totals.costs.thinking)}
+            {formatTokenCount(totals.thinking)} · {formatCost(totals.costs.thinking)}{" "}
+            <span>({formatPercent(totals.costs.thinking, totals.costs.output)})</span>
           </dd>
         </div>
       </dl>
