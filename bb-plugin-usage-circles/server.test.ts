@@ -60,13 +60,14 @@ async function load(options: {
 }
 
 describe("getState", () => {
-  it("returns claude-code, codex and kimi from one usage-limits response and the Kimi source", async () => {
+  it("returns claude-code, codex, kimi and opencode from one usage-limits response and the Kimi source", async () => {
     const { getState } = await load({ kimiUsage: async () => ({ status: "unauthenticated" }) });
     const state = await getState();
     expect(state.providers.map((provider) => [provider.id, provider.title])).toEqual([
       ["claude-code", "Claude Code"],
       ["codex", "Codex"],
       ["acp-kimi", "Kimi"],
+      ["acp-opencode", "OpenCode"],
     ]);
     expect(state.providers[1]!.usage).toEqual({
       status: "ok",
@@ -197,7 +198,7 @@ describe("window layout and limits", () => {
 });
 
 describe("kimi", () => {
-  it("adds Kimi after Codex with the usage the plugin's own Kimi source reports", async () => {
+  it("puts Kimi right after Codex with the usage the plugin's own Kimi source reports", async () => {
     const { getState } = await load({
       kimiUsage: async () => ({
         status: "ok",
@@ -208,8 +209,7 @@ describe("kimi", () => {
       }),
     });
     const providers = (await getState()).providers;
-    expect(providers.map((provider) => [provider.id, provider.title])).toEqual([
-      ["claude-code", "Claude Code"],
+    expect(providers.slice(1, 3).map((provider) => [provider.id, provider.title])).toEqual([
       ["codex", "Codex"],
       ["acp-kimi", "Kimi"],
     ]);
@@ -246,5 +246,55 @@ describe("kimi", () => {
     await getState();
     await getState();
     expect(calls).toBe(1);
+  });
+});
+
+describe("opencode", () => {
+  /** The live host answer for an OpenCode Go subscription, 2026-11-07. */
+  const OPENCODE_GO = {
+    status: "ok",
+    accountEmail: "someone@example.com",
+    planLabel: "OpenCode Go",
+    windows: [
+      { label: "5 hour", usedPercent: 3, resetsAt: "2026-11-07T20:48:23.000Z", kind: "five-hour", model: null },
+      { label: "Weekly", usedPercent: 1, resetsAt: "2026-11-09T00:00:00.000Z", kind: "weekly", model: null },
+      { label: "Monthly", usedPercent: 0, resetsAt: "2026-12-02T13:45:48.000Z", kind: "custom", model: null },
+    ],
+  };
+  const opencode = async (options: Parameters<typeof load>[0]) =>
+    (await (await load(options)).getState()).providers.find((provider) => provider.id === "acp-opencode");
+
+  it("reads OpenCode Go's three windows from the host's usage-limits response", async () => {
+    const provider = await opencode({ usage: async () => ({ ...LIVE_USAGE, "acp-opencode": OPENCODE_GO }) });
+    expect(provider?.usage).toEqual({
+      status: "ok",
+      windows: [
+        { label: "5 hour", usedPercent: 3, resetsAt: "2026-11-07T20:48:23.000Z" },
+        { label: "Weekly", usedPercent: 1, resetsAt: "2026-11-09T00:00:00.000Z" },
+        { label: "Monthly", usedPercent: 0, resetsAt: "2026-12-02T13:45:48.000Z" },
+      ],
+    });
+  });
+
+  it("takes OpenCode's logo and tint from the host's provider list", async () => {
+    const provider = await opencode({
+      providers: async () => [
+        ...LIVE_PROVIDERS,
+        { id: "acp-opencode", displayName: "opencode", logoUrl: "/api/v1/system/providers/acp-opencode/logo?h=1", strings: { iconTint: { light: "#111111", dark: "#EEEEEE" } } },
+      ],
+    });
+    expect(provider?.logoUrl).toBe("/api/v1/system/providers/acp-opencode/logo?h=1");
+    expect(provider?.tint).toEqual({ light: "#111111", dark: "#EEEEEE" });
+  });
+
+  it("reports OpenCode the host does not answer for as not_installed, and a signed-out one as unauthenticated", async () => {
+    expect((await opencode({}))?.usage).toEqual({ status: "not_installed" });
+    expect((await opencode({ usage: async () => ({ ...LIVE_USAGE, "acp-opencode": { status: "unauthenticated" } }) }))?.usage).toEqual({ status: "unauthenticated" });
+  });
+
+  it("carries the host's reason through when the account has no Go subscription", async () => {
+    const message = "OpenCode Go usage access was denied. Check that the account has an active Go subscription.";
+    const provider = await opencode({ usage: async () => ({ ...LIVE_USAGE, "acp-opencode": { status: "error", message } }) });
+    expect(provider?.usage).toEqual({ status: "error", message });
   });
 });

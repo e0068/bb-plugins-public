@@ -1,5 +1,5 @@
-// bb-plugin-usage-circles — backend entry. Reads Claude Code's and Codex's
-// usage limits through the BB SDK (bb.sdk.system.usageLimits), Kimi's quota
+// bb-plugin-usage-circles — backend entry. Reads Claude Code's, Codex's and
+// OpenCode Go's usage limits through the BB SDK (bb.sdk.system.usageLimits), Kimi's quota
 // from the Kimi coding API itself (lib/kimi-source.ts — the host has no Kimi
 // collector, see docs/decisions/usage-rings-kimi-self-fetch.md), their logos
 // and brand tints from the host's provider list, and exposes them — plus the
@@ -41,6 +41,7 @@ export const PROVIDERS = [
   { id: "claude-code", title: "Claude Code" },
   { id: "codex", title: "Codex" },
   { id: "acp-kimi", title: "Kimi" },
+  { id: "acp-opencode", title: "OpenCode" },
 ] as const;
 
 /** Kimi is the provider whose limits the plugin reads itself, not through the host. */

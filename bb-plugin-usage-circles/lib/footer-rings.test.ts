@@ -10,7 +10,7 @@ const claude = (windows: Array<{ label: string; usedPercent: number }>): Provide
 });
 
 describe("footer rings", () => {
-  it("offers seven rings: three Claude Code windows, two Codex and two Kimi, each with its own id", () => {
+  it("offers ten rings: three Claude Code windows, two Codex, two Kimi and three OpenCode, each with its own id", () => {
     expect(FOOTER_RINGS.map(({ providerId, kind }) => `${providerId}:${kind}`)).toEqual([
       "claude-code:session",
       "claude-code:weekly",
@@ -19,8 +19,34 @@ describe("footer rings", () => {
       "codex:weekly",
       "acp-kimi:session",
       "acp-kimi:weekly",
+      "acp-opencode:session",
+      "acp-opencode:weekly",
+      "acp-opencode:monthly",
     ]);
-    expect(new Set(FOOTER_RINGS.map(({ id }) => id)).size).toBe(7);
+    expect(new Set(FOOTER_RINGS.map(({ id }) => id)).size).toBe(10);
+  });
+
+  it("gives each OpenCode Go window the host reports its own ring", () => {
+    const opencode: ProviderStateWire = {
+      id: "acp-opencode",
+      title: "OpenCode",
+      logoUrl: "/logo",
+      tint: null,
+      usage: {
+        status: "ok",
+        windows: [
+          { label: "5 hour", usedPercent: 3, resetsAt: null },
+          { label: "Weekly", usedPercent: 1, resetsAt: null },
+          { label: "Monthly", usedPercent: 0, resetsAt: null },
+        ],
+      },
+    };
+    const shown = FOOTER_RINGS.filter((ring) => ring.providerId === "acp-opencode").map((ring) => [ring.label, ringWindow(opencode, ring.kind)?.label]);
+    expect(shown).toEqual([
+      ["OpenCode — 5-hour limit", "5 hour"],
+      ["OpenCode — weekly limit", "Weekly"],
+      ["OpenCode — monthly limit", "Monthly"],
+    ]);
   });
 
   it("tells the session, Fable and plain weekly windows apart by their labels", () => {

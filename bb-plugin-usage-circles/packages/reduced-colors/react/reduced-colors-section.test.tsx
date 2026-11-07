@@ -73,6 +73,21 @@ describe("ReducedColorsSection", () => {
   });
 });
 
+describe("ReducedColorsSection — without its own switch", () => {
+  it("shows the colour rows but no switch, for a page that decides on or off elsewhere", async () => {
+    render(<ReducedColorsSection load={async () => STORED} save={async () => undefined} hideSwitch />);
+    await act(async () => {});
+    expect(screen.queryByRole("switch")).toBeNull();
+    expect(field("Light theme low colour").value).toBe("#1d4ed8");
+  });
+
+  it("shows the colour rows as live, not dimmed, since the page only shows them while the mode is on", async () => {
+    render(<ReducedColorsSection load={async () => STORED} save={async () => undefined} hideSwitch />);
+    await act(async () => {});
+    expect(field("Dark theme high colour").closest("div[style*='opacity']")?.getAttribute("style")).toContain("opacity: 1");
+  });
+});
+
 describe("ReducedColorsSection — nothing is lost or faked", () => {
   it("saves an edit made just before the section goes away", async () => {
     const save = vi.fn(async (_value: ReducedColors) => undefined);

@@ -188,6 +188,21 @@ export function formatResetClock(resetsAt: string | null): string {
   return Number.isNaN(date.getTime()) ? "—" : `${pad2(date.getHours())}:${pad2(date.getMinutes())}`;
 }
 
+const MONTHS_EN = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"] as const;
+
+/** The local date and time of the reset — "Dec 2 13:45" — for a window too long for its weekday to say when. */
+export function formatResetDate(resetsAt: string | null): string {
+  if (resetsAt === null) return "—";
+  const date = new Date(resetsAt);
+  return Number.isNaN(date.getTime()) ? "—" : `${MONTHS_EN[date.getMonth()]} ${date.getDate()} ${formatResetClock(resetsAt)}`;
+}
+
+/** When the reset comes, as precise as the window is long: the clock time within a day-scale window, the weekday within a week, the date beyond. */
+function formatResetFor(durationMs: number): (resetsAt: string | null) => string {
+  if (durationMs < WEEK_MS) return formatResetClock;
+  return durationMs < MONTH_MS ? formatAbsoluteReset : formatResetDate;
+}
+
 const MODEL_IN_LABEL_PATTERN = /\(([^)]+)\)/;
 const PLAIN_WEEK_LABEL_PATTERN = /^(weekly( limit)?|current week( \(all models\))?)$/i;
 
@@ -241,7 +256,7 @@ export function buildUsageWindowModel(window: UsageWindowInput, nowMs: number, c
     segmentsElapsed,
     resetsAt: window.resetsAt,
     resetRelativeLabel: formatRelativeReset(window.resetsAt, nowMs),
-    resetAbsoluteLabel: segmentCount === 1 ? formatResetClock(window.resetsAt) : formatAbsoluteReset(window.resetsAt),
+    resetAbsoluteLabel: formatResetFor(durationMs)(window.resetsAt),
   };
 }
 
@@ -373,6 +388,9 @@ export const FOOTER_RINGS: readonly FooterRing[] = [
   { id: "codex-weekly", providerId: "codex", kind: "weekly", label: "Codex — weekly limit" },
   { id: "kimi-session", providerId: "acp-kimi", kind: "session", label: "Kimi — 5-hour limit" },
   { id: "kimi-weekly", providerId: "acp-kimi", kind: "weekly", label: "Kimi — weekly limit" },
+  { id: "opencode-session", providerId: "acp-opencode", kind: "session", label: "OpenCode — 5-hour limit" },
+  { id: "opencode-weekly", providerId: "acp-opencode", kind: "weekly", label: "OpenCode — weekly limit" },
+  { id: "opencode-monthly", providerId: "acp-opencode", kind: "monthly", label: "OpenCode — monthly limit" },
 ];
 
 /** The window a ring shows; none while the provider reports no usage or lacks that window. */

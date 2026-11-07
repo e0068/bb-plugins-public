@@ -155,7 +155,7 @@
     {
       "id": "usage-circles",
       "displayName": "Usage Limits",
-      "description": "Claude Code and Codex usage-limit rings in the sidebar footer — a ring per limit or one for all, the limits as a list or cards.",
+      "description": "Claude Code, Codex, Kimi and OpenCode usage-limit rings in the sidebar footer — a ring per limit or one for all, the limits as a list or cards.",
       "icon": {
         "url": "bb-plugin-usage-circles/assets/icon.svg"
       },
@@ -164,6 +164,8 @@
         "limits",
         "claude-code",
         "codex",
+        "kimi",
+        "opencode",
         "interface"
       ],
       "author": {
