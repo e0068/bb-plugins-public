@@ -18,7 +18,7 @@ export interface ParsedTaskFile {
   frontmatter: Record<string, unknown>;
 }
 
-type Status = "backlog" | "todo" | "in_progress" | "in_review" | "done" | "canceled";
+type Status = "backlog" | "todo" | "in_progress" | "agent_review" | "in_review" | "done" | "canceled";
 
 export function parseTaskFile(
   content: string,

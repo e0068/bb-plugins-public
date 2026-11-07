@@ -43,6 +43,7 @@ export type TileAxis = "time" | QueryField;
 export const FIGURES = [
   "open",
   "in_progress",
+  "agent_review",
   "in_review",
   "done",
   "created",

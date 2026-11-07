@@ -1485,8 +1485,9 @@ export function createFileTasksStore(
     const task = (await findAssembled(input.taskId))!;
     // Attaching a thread takes the task; the check is against the read just made.
     // The claim rule clears the mark of a task that stays in backlog/todo, but
-    // the thread is attached before the status moves (delegate/index.ts) and
-    // its mark must survive that: there the take is asked for as In Progress.
+    // a board dispatch attaches the thread before it moves the status
+    // (delegate/index.ts), and `bb tasks attach` leaves the status alone: the
+    // mark must survive both, so the take is asked for as In Progress.
     // Only the mark is written — the task's status is not touched here.
     const restsBeforeProgress = task.task.status === "backlog" || task.task.status === "todo";
     const takenBy = claimedTakenBy(

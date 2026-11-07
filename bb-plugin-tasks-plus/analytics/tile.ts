@@ -428,6 +428,7 @@ function figuresOf(input: TileInput, tasks: readonly Task[], moves: Map<string, 
     figures: {
       open: new Set([...created, ...cameInto(OPEN_STATUSES)]).size,
       in_progress: new Set(cameInto(["in_progress"])).size,
+      agent_review: new Set(cameInto(["agent_review"])).size,
       in_review: new Set(cameInto(["in_review"])).size,
       done: new Set(cameInto(["done"])).size,
       created: created.length,

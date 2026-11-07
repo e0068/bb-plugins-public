@@ -9,7 +9,8 @@ export const STATUS_LABELS: Record<TaskStatus, string> = {
   backlog: "Backlog",
   todo: "Todo",
   in_progress: "In Progress",
-  in_review: "In Review",
+  agent_review: "Agent Review",
+  in_review: "Owner Review",
   done: "Done",
   canceled: "Canceled",
 };
@@ -18,6 +19,7 @@ const STATUS_CLASS: Record<TaskStatus, string> = {
   backlog: "text-muted-foreground",
   todo: "text-muted-foreground",
   in_progress: "text-attention",
+  agent_review: "text-timeline-accent",
   in_review: "text-timeline-accent",
   done: "text-success",
   canceled: "text-muted-foreground",
@@ -60,6 +62,20 @@ function statusArtwork(status: TaskStatus) {
             strokeWidth="1.6"
           />
           <path d="M7 7 L7 2.4 A4.6 4.6 0 0 1 11.2 9.5 Z" fill="currentColor" />
+        </>
+      );
+    case "agent_review":
+      return (
+        <>
+          <circle
+            cx="7"
+            cy="7"
+            r="5.4"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.6"
+          />
+          <path d="M7 7 L7 2.4 A4.6 4.6 0 1 1 3.02 9.3 Z" fill="currentColor" />
         </>
       );
     case "in_review":

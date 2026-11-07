@@ -5,6 +5,7 @@ export const BOARD_STATUSES = [
   "backlog",
   "todo",
   "in_progress",
+  "agent_review",
   "in_review",
   "done",
 ] as const satisfies readonly TaskStatus[];

@@ -22,7 +22,7 @@ export interface EpicFolderPlan {
 /** Done when nothing is left to do, in progress once anything is moving, else to do. */
 function epicStatus(tasks: readonly Task[]): TaskStatus {
   if (tasks.every((task) => task.status === "done" || task.status === "canceled")) return "done";
-  if (tasks.some((task) => task.status === "in_progress" || task.status === "in_review")) return "in_progress";
+  if (tasks.some((task) => task.status === "in_progress" || task.status === "agent_review" || task.status === "in_review")) return "in_progress";
   return "todo";
 }
 

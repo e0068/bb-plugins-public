@@ -201,13 +201,13 @@ describe("the tooltip of a Gantt row", () => {
   });
   const hover = () => fireEvent.pointerMove(document.querySelector("[data-gantt-row]")!, { pointerType: "mouse" });
 
-  it("names the task, its status and its plan", async () => {
+  it("names the task, its status as Owner review and its plan", async () => {
     render(<GanttChart rows={[planned]} fromMs={from} toMs={to} mode="both" compact />);
     hover();
     const tip = await screen.findByTestId("gantt-row-tip");
     expect(tip.textContent).toContain("TSK-7");
     expect(tip.textContent).toContain("Ship the tooltip");
-    expect(tip.textContent).toContain("In review");
+    expect(tip.textContent).toContain("Owner review");
     expect(tip.textContent).toMatch(/Sep 22.*→.*Sep 25/);
   });
 

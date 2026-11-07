@@ -35,7 +35,7 @@ export interface ChartColors {
  * Canceled is not among them: its red is an alarm and stays red
  * (docs/decisions/reduced-colors-alarm-red-stays.md).
  */
-const RAMP_STATUSES: readonly TaskStatus[] = ["backlog", "todo", "in_progress", "in_review", "done"];
+const RAMP_STATUSES: readonly TaskStatus[] = ["backlog", "todo", "in_progress", "agent_review", "in_review", "done"];
 
 /** A colour by the key's place in `keys` on the ramp, else the key's own colour. */
 const onRamp =

@@ -38,7 +38,7 @@ describe("ganttSegmentsOf — a task's life by status", () => {
     expect(ganttSegmentsOf(task("a", "todo"), [move("a", "backlog", "todo", T0 + HOUR)], T0 + 3 * HOUR)).toEqual([]);
   });
 
-  it("gives only In progress and In review stretches, whatever the moves", () => {
+  it("gives only working stretches — In progress, Agent review, Owner review — whatever the moves", () => {
     const statusArb = fc.constantFrom(...TASK_STATUSES);
     fc.assert(
       fc.property(statusArb, fc.array(fc.tuple(statusArb, fc.integer({ min: 0, max: 100 * HOUR })), { maxLength: 12 }), (initial, steps) => {
@@ -48,7 +48,7 @@ describe("ganttSegmentsOf — a task's life by status", () => {
           .map(({ status, atMs }, index, all) => move("a", index === 0 ? initial : all[index - 1]!.status, status, atMs));
         const current = moves.at(-1)?.toStatus ?? initial;
         const segments = ganttSegmentsOf(task("a", current as TaskStatus), moves, T0 + 101 * HOUR);
-        segments.forEach((segment) => expect(["in_progress", "in_review"]).toContain(segment.status));
+        segments.forEach((segment) => expect(["in_progress", "agent_review", "in_review"]).toContain(segment.status));
       }),
     );
   });

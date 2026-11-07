@@ -14,7 +14,8 @@ export const STATUS_LABELS: Record<TaskStatus, string> = {
   backlog: "Backlog",
   todo: "Todo",
   in_progress: "In Progress",
-  in_review: "In Review",
+  agent_review: "Agent Review",
+  in_review: "Owner Review",
   done: "Done",
   canceled: "Canceled",
 };
@@ -92,6 +93,7 @@ const STATUS_COLORS: Record<TaskStatus, string> = {
   backlog: "var(--muted-foreground)",
   todo: "var(--muted-foreground)",
   in_progress: "var(--attention)",
+  agent_review: "var(--timeline-accent)",
   in_review: "var(--timeline-accent)",
   done: "var(--success)",
   canceled: "var(--muted-foreground)",
@@ -133,7 +135,7 @@ export function StatusIcon({
           strokeWidth="1.6"
         />
       ) : null}
-      {status === "in_progress" || status === "in_review" ? (
+      {status === "in_progress" || status === "agent_review" || status === "in_review" ? (
         <>
           <circle
             cx="7"
@@ -145,6 +147,8 @@ export function StatusIcon({
           />
           {status === "in_progress" ? (
             <path d="M7 7 L7 2.4 A4.6 4.6 0 0 1 11.2 9.5 Z" fill={color} />
+          ) : status === "agent_review" ? (
+            <path d="M7 7 L7 2.4 A4.6 4.6 0 0 1 7 11.6 Z" fill={color} />
           ) : (
             <path d="M7 7 L7 2.4 A4.6 4.6 0 1 1 2.4 7 Z" fill={color} />
           )}

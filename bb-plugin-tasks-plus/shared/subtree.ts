@@ -77,7 +77,7 @@ export interface SubtreeProgress {
 }
 
 export function progressOf(descendants: readonly Descendant<{ status: TaskStatus }>[]): SubtreeProgress {
-  const byStatus: Record<TaskStatus, number> = { backlog: 0, todo: 0, in_progress: 0, in_review: 0, done: 0, canceled: 0 };
+  const byStatus: Record<TaskStatus, number> = { backlog: 0, todo: 0, in_progress: 0, agent_review: 0, in_review: 0, done: 0, canceled: 0 };
   const counted = descendants.reduce(
     (counts, { task }) => ({ ...counts, [task.status]: counts[task.status] + 1 }),
     byStatus,

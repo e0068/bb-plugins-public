@@ -140,7 +140,7 @@ const row = (id: string, height: number, minHeight: number, cells: readonly [str
  */
 export function defaultDashboard(): Dashboard {
   const tiles: Tile[] = [
-    newTile("work", { type: "big", title: "Work", figures: ["open", "in_progress", "in_review", "done"] }),
+    newTile("work", { type: "big", title: "Work", figures: ["open", "in_progress", "agent_review", "in_review", "done"] }),
     newTile("period", { type: "big", title: "This period", figures: ["created", "closed", "cycle"] }),
     newTile("time", { type: "big", title: "Time", figures: ["planned", "actual"] }),
     newTile("money", { type: "big", title: "Money", figures: ["budget", "cost", "limit"] }),
@@ -154,7 +154,7 @@ export function defaultDashboard(): Dashboard {
     newTile("closed-hourly", { title: "Closed — last 24 hours", window: { unit: "hour", count: 24 }, y: { metric: "closed", field: null }, breakdown: "project" }),
     newTile("closed-daily", { title: "Closed — last 30 days", window: { unit: "day", count: 30 }, y: { metric: "closed", field: null }, breakdown: "project" }),
     newTile("created-closed", { title: "Created vs closed", y: { metric: "createdClosed", field: null }, breakdown: null }),
-    newTile("wip", { title: "Work in progress", conditions: byStatus(["in_progress", "in_review"]) }),
+    newTile("wip", { title: "Work in progress", conditions: byStatus(["in_progress", "agent_review", "in_review"]) }),
     newTile("cycle", { type: "bars", title: "Cycle time", x: "estimate", y: { metric: "cycle", field: null }, breakdown: null, display: BAR_DISPLAY }),
     newTile("accuracy", { type: "bars", title: "Estimate accuracy", x: "estimate", y: { metric: "accuracy", field: null }, breakdown: null, display: BAR_DISPLAY }),
     newTile("cost", {
@@ -169,7 +169,7 @@ export function defaultDashboard(): Dashboard {
     newTile("aging", {
       type: "list",
       title: "Stuck tasks",
-      conditions: byStatus(["todo", "in_progress", "in_review"]),
+      conditions: byStatus(["todo", "in_progress", "agent_review", "in_review"]),
       sort: { by: "timeInStatus", direction: "desc" },
       limit: 15,
     }),

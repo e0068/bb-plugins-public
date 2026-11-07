@@ -109,11 +109,25 @@ not already exist. Dispatch requires an existing preset.
    Outside a thread they target the server's machine; pass
    `--machine <id-or-name>` to address files on another enrolled machine.
 
-5. When the work is ready for review, update the task:
+5. Move each task through its statuses at the moment the work moves, one
+   task at a time — never several sub-tasks at once ahead of the work:
 
    ```sh
-   bb tasks update ABC-12 --status in_review
+   bb tasks update ABC-12 --status in_progress   # you start on this task
+   bb tasks update ABC-12 --status agent_review  # you hand it to a reviewing agent
+   bb tasks update ABC-12 --status in_progress   # the review sent changes back
+   bb tasks update ABC-12 --status in_review     # you hand it to the owner (Owner Review)
+   bb tasks update ABC-12 --status in_progress   # the owner sent it back
    ```
+
+   A thread that holds several sub-tasks takes the next one into
+   `in_progress` only when it starts on it; the rest stay in `todo` or
+   `backlog` until then. Each sub-task goes to `agent_review` when its
+   reviewer starts, back to `in_progress` when the reviewer returns changes,
+   and to `in_review` only when the owner is the one who looks next. When the
+   owner returns the work — a comment, a returned approval, a request for
+   changes — move it from `in_review` back to `in_progress` before the first
+   edit, and the cycle runs again through `agent_review`.
 
    Change task hierarchy with `bb tasks update ABC-12 --parent ABC-10`, using
    either a task key or ID for the parent. Promote a subtask to the top level
@@ -155,12 +169,17 @@ not already exist. Dispatch requires an existing preset.
    specific blocker, what you tried, and what would unblock it. Do not mark a
    blocked task complete.
 
-6. Delegated threads are attached automatically. If this thread was not
-   delegated from Tasks, attach it yourself so the task shows the active work:
+6. Delegated threads are attached automatically, and a dispatch from the
+   board moves its task to `in_progress`. If this thread was not delegated
+   from Tasks, attach it yourself so the task shows the active work:
 
    ```sh
    bb tasks attach ABC-12
    ```
+
+   Attaching does not change the status: attach every sub-task the thread
+   will solve up front if you like, and move each one with step 5 when its
+   work actually starts.
 
 ## Epics
 
@@ -214,10 +233,11 @@ each renders its own card.
 
 ## Invariants
 
-- Valid task statuses are `backlog`, `todo`, `in_progress`, `in_review`,
-  `done`, and `canceled`.
-- Use `in_review` when implementation is complete but still needs human or
-  agent review. Use `done` only when the task's completion criteria are met.
+- Valid task statuses are `backlog`, `todo`, `in_progress`, `agent_review`
+  (Agent Review), `in_review` (Owner Review), `done`, and `canceled`.
+- Use `agent_review` while a reviewing agent checks the work, `in_review`
+  when the work waits for the owner. Use `done` only when the task's
+  completion criteria are met.
 - Write one comment per meaningful milestone. Combine related facts into a
   useful update; never spam progress pings, command-by-command narration, or
   repeated status messages.

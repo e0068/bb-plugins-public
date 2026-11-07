@@ -178,11 +178,12 @@ describe("boardColumns", () => {
     );
   });
 
-  it("lays the status columns out in board order and shows Canceled only when it holds cards", () => {
+  it("lays the status columns out in board order, Agent Review before Owner Review, and shows Canceled only when it holds cards", () => {
     expect(keys(boardColumns([task(1)], layout("status"), LABELS))).toEqual([
       "backlog",
       "todo",
       "in_progress",
+      "agent_review",
       "in_review",
       "done",
     ]);
