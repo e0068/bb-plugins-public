@@ -55,6 +55,7 @@ import { assembleBoardTasks, parseTaskKey, taskSlug, type AssembledTask } from "
 import { rekeyBoard, rewriteMentions } from "./prefix-rename.js";
 import { issueKeys } from "./key-issue.js";
 import {
+  parseAttachedThreads,
   serializeAttachedThread,
   UNKNOWN_THREAD_LIVE_STATE,
   withBackgroundWork,
@@ -1442,12 +1443,18 @@ export function createFileTasksStore(
   }
   /** Which threads are attached to the task — the fact, not their state.
    *  Written when somebody attaches or detaches a thread and at no other
-   *  time. */
-  async function writeThreads(task: BoardTask, threads: readonly AttachedThread[], takenBy?: TakenBy | null): Promise<void> {
+   *  time. The edit is applied to the facts the file holds, not to the
+   *  threads as shown: those carry the title bb gives a thread now, and a
+   *  rename seen here is not a repository edit. */
+  async function writeThreads(
+    task: BoardTask,
+    edit: (attached: readonly AttachedThread[]) => readonly AttachedThread[],
+    takenBy?: TakenBy | null,
+  ): Promise<void> {
     const board = requireBoard(task.task.projectId);
     const { data } = await readOwnFile(task.task);
     await persistTask(board, takenBy === undefined ? task.task : { ...task.task, takenBy }, task.comments, rootOfTask(board, task.task), data, {
-      threads: threads.map(serializeAttachedThread),
+      threads: edit(parseAttachedThreads(task.task.id, data)).map(serializeAttachedThread),
     });
   }
   function setThreadLiveState(threadId: string, state: ThreadLiveState): void {
@@ -1496,7 +1503,11 @@ export function createFileTasksStore(
       title: requireNonEmpty(input.title, "Task thread title"),
       attachedAt: existing?.attachedAt ?? new Date().toISOString(),
     };
-    await writeThreads(task, existing ? task.threads.map((t) => (t.id === thread.id ? thread : t)) : [...task.threads, thread], takenBy);
+    await writeThreads(
+      task,
+      (attached) => (attached.some((t) => t.id === thread.id) ? attached.map((t) => (t.id === thread.id ? thread : t)) : [...attached, thread]),
+      takenBy,
+    );
     const caller = readCallerEnvironment();
     if (task.task.source?.origin.kind === "worktree" && hasOwnTree(caller)) {
       rememberBranchThread(withBranchSlug(branchThreads.get(thread.threadId), thread.threadId, caller, taskSlug(task.task)));
@@ -1527,7 +1538,7 @@ export function createFileTasksStore(
   const deleteTaskThread = (id: string): Promise<boolean> => retrying(() => deleteTaskThreadFromRead(id));
   async function deleteTaskThreadFromRead(id: string): Promise<boolean> {
     const { task } = await requireThreadOwner(id);
-    await writeThreads(task, task.threads.filter((t) => t.id !== id));
+    await writeThreads(task, (attached) => attached.filter((t) => t.id !== id));
     return true;
   }
 

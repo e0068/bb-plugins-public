@@ -150,6 +150,7 @@ export const ROW_FIELDS = [
   "status",
   "slug",
   "active",
+  "threads",
   "assignee",
   "flow",
   "type",
@@ -235,6 +236,7 @@ export const FIELD_FILTER_KINDS = {
   status: "listed",
   slug: "text",
   active: "values",
+  threads: "text",
   assignee: "listed",
   flow: "values",
   type: "listed",
@@ -265,7 +267,7 @@ export const VALUE_FILTER_FIELDS = ["project", "flow", "worktree", "takenBy", "a
 export type ValueFilterField = (typeof VALUE_FILTER_FIELDS)[number];
 
 /** Fields filtered by "contains". */
-export const TEXT_FIELDS = ["title", "description", "key", "slug"] as const satisfies readonly QueryField[];
+export const TEXT_FIELDS = ["title", "description", "key", "slug", "threads"] as const satisfies readonly QueryField[];
 export type TextField = (typeof TEXT_FIELDS)[number];
 
 /** Fields filtered by a from–to range of days. */
@@ -283,6 +285,11 @@ export const NUMBER_FIELDS = [
   "attachments",
 ] as const satisfies readonly QueryField[];
 export type NumberField = (typeof NUMBER_FIELDS)[number];
+
+const NUMBERS: ReadonlySet<string> = new Set(NUMBER_FIELDS);
+
+/** Whether a field holds a number — what a range filter, a sum and a median read. */
+export const isNumberField = (field: QueryField): field is NumberField => NUMBERS.has(field);
 
 type FieldsOfKind<K extends FilterKind> = {
   [F in QueryField]: (typeof FIELD_FILTER_KINDS)[F] extends K ? F : never;

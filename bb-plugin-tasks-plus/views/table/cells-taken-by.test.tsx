@@ -18,6 +18,7 @@ const context = (showEmpty: boolean): CellContext => ({
   labelsById: new Map(),
   taskKeys: new Map(),
   activeThreads: 0,
+  threads: [],
   subtasks: { done: 0, total: 0 },
   showEmpty,
   onEdit: () => {},

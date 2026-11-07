@@ -13,7 +13,8 @@
 import { TASK_ESTIMATES, TASK_PRIORITIES, TASK_STATUSES, TASK_TYPES } from "../db/types.js";
 import type { TaskStatus } from "../db/types.js";
 import type { StatusTransition } from "../db/transition-log.js";
-import { CELL_KEYS_MAX, NONE_KEY, OTHER_KEY, SERIES_LIMIT, type Figure, type YMetric } from "../shared/analytics-tile.js";
+import { CELL_KEYS_MAX, NONE_KEY, OTHER_KEY, SERIES_LIMIT, tileTable, type Figure, type YMetric } from "../shared/analytics-tile.js";
+import { columnTotals, type ColumnTotalValue } from "../shared/column-totals.js";
 import type { SavedViewFilters, Task, Tile, TileAnswer } from "../shared/contract.js";
 import { ACTIVITY_VALUES, FIELD_FILTER_KINDS, MAIN_CHECKOUT, OPEN_STATUSES, type NumberField, type QueryField } from "../shared/enums.js";
 import { firstParagraph } from "../shared/first-paragraph.js";
@@ -164,6 +165,11 @@ function keysOf(field: QueryField, task: Task, status: TaskStatus, input: TileIn
       return [orNone(task.takenBy?.machine)];
     case "active":
       return [(facts.activeCounts.get(task.id) ?? 0) > 0 ? ACTIVITY_VALUES[0] : ACTIVITY_VALUES[1]];
+    case "threads": {
+      const titles = facts.threadTitles.get(task.id) ?? [];
+      // Threads may share a title: the task counts once under it.
+      return titles.length === 0 ? [NONE_KEY] : [...new Set(titles)];
+    }
     case "title":
       return [orNone(task.title)];
     case "key":
@@ -566,12 +572,13 @@ export function tileAnswer(input: TileInput): TileCore {
  * each once, in the sort asked or by key, the first `limit` of them, and how
  * many there are in all.
  */
-export function segmentTasks(input: TileInput, pick: GridPick | null, sort: ColumnSort | null, limit: number): { tasks: Task[]; total: number } {
+export function segmentTasks(input: TileInput, pick: GridPick | null, sort: ColumnSort | null, limit: number): { tasks: Task[]; total: number; totals: ColumnTotalValue[] } {
   const { seriesKeys, columnKeys, cellTasks } = tileGrid(input);
   const columns = pick === null ? columnKeys : columnKeys.slice(pick.column, pick.column + 1);
   const seriesIndexes = seriesKeys.map((_, index) => index).filter((index) => pick?.series == null || seriesKeys[index] === pick.series);
   const picked = [...new Map(columns.flatMap((column) => seriesIndexes.flatMap((index) => cellTasks(column, index))).map((task) => [task.id, task])).values()];
   const byKey = [...picked].sort(compareByField({ column: "key", direction: "asc" }, input.facts));
   const sorted = sort === null ? byKey : [...byKey].sort(compareByField(sort, input.facts));
-  return { tasks: sorted.slice(0, limit), total: sorted.length };
+  const { columns: shown, totals } = tileTable(input.tile);
+  return { tasks: sorted.slice(0, limit), total: sorted.length, totals: columnTotals(sorted, totals.filter(({ column }) => shown.includes(column)), input.facts) };
 }

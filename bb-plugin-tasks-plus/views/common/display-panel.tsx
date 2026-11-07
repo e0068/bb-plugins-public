@@ -133,7 +133,7 @@ const GROUP_LABELS: Record<BoardGroupBy, string> = {
   priority: "Priority",
   type: "Type",
   estimate: "Estimate",
-  assignee: "Assignee",
+  assignee: "Folder",
   label: "Label",
   none: "No grouping",
 };

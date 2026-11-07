@@ -117,6 +117,8 @@ export interface TaskRowMeta {
   /** Threads currently starting or working. Historical attachments (idle,
    * completed, failed) are excluded — list rows only surface live activity. */
   activeThreads: TaskThread[];
+  /** Every thread attached to the task — also the finished and archived ones — in the order they were attached; the Assignee field. */
+  threads: TaskThread[];
   /** Files attached to the task — a field the table filters and sorts by. */
   attachmentCount: number;
 }
@@ -135,7 +137,7 @@ export function useTaskListMeta(tasks: readonly Task[] | undefined) {
       return new Map(
         cards.map((card) => [
           card.taskId,
-          { activeThreads: card.taskThreads.filter(isWorkingThread), attachmentCount: card.attachmentCount },
+          { activeThreads: card.taskThreads.filter(isWorkingThread), threads: card.taskThreads, attachmentCount: card.attachmentCount },
         ]),
       );
     },

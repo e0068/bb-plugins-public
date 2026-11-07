@@ -242,8 +242,8 @@ describe("future version and storage failures", () => {
 // The field dictionary grows; these promises are stated against it rather
 // than against a spelled-out copy of it.
 const LIST_FIELDS = surfaceFieldOrder("list");
-/** The tree fields, the description and Taken by came after the rail had its defaults: they are opt-in. */
-const OPT_IN = ["status", "slug", "subtasks", "description", "takenBy"];
+/** The tree fields, the description, Taken by and the threads' Assignee came after the rail had its defaults: they are opt-in. */
+const OPT_IN = ["status", "slug", "subtasks", "description", "takenBy", "threads"];
 const DEFAULT_LIST_RAIL = LIST_FIELDS.filter(
   (field) => !["priority", "createdAt", "updatedAt", ...OPT_IN].includes(field),
 );

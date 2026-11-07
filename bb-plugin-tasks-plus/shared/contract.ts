@@ -38,6 +38,7 @@ import {
   TEXT_FIELDS,
   DATE_FIELDS,
   NUMBER_FIELDS,
+  isNumberField,
   QUERY_FIELDS,
   GANTT_MODES,
 } from "./enums.js";
@@ -62,6 +63,7 @@ import {
   TILE_TABLE_HEIGHTS,
   TILE_TABLE_ROWS,
   TILE_TABLE_SHOWN_MAX,
+  TOTAL_FNS,
   conditionsFromFilters,
 } from "./analytics-tile.js";
 
@@ -548,6 +550,12 @@ const queryFieldSchema = z.enum(QUERY_FIELDS as unknown as [QueryField, ...Query
 
 const tileTableFieldSchema = z.enum(TILE_TABLE_FIELDS as unknown as [QueryField, ...QueryField[]]);
 
+/** One column's total under the table: Sum and Median only of a number. */
+const columnTotalSchema = z
+  .object({ column: tileTableFieldSchema, fn: z.enum(TOTAL_FNS) })
+  .strict()
+  .refine(({ column, fn }) => fn === "unique" || isNumberField(column), "Sum and Median read numbers only");
+
 /** The table under a tile's chart (shared/analytics-tile.ts): the title always shown, no column twice. */
 const tileTableSchema = z
   .object({
@@ -558,6 +566,11 @@ const tileTableSchema = z
     sort: z.object({ column: tileTableFieldSchema, direction: z.enum(TABLE_SORT_DIRECTIONS) }).strict().nullable(),
     rows: z.number().int().min(TILE_TABLE_ROWS.min).max(TILE_TABLE_ROWS.max),
     rowHeight: z.enum(TILE_TABLE_HEIGHTS),
+    /** The totals under the columns, a column once; absent from a table saved before totals. */
+    totals: z
+      .array(columnTotalSchema)
+      .refine((totals) => new Set(totals.map((total) => total.column)).size === totals.length, "A column has one total")
+      .optional(),
   })
   .strict();
 
@@ -1681,7 +1694,14 @@ export const tasksRpcContract = defineRpcContract({
         limit: z.number().int().min(TILE_TABLE_ROWS.min).max(TILE_TABLE_SHOWN_MAX),
       })
       .strict(),
-    output: z.object({ tasks: z.array(taskSchema), total: z.number().int().nonnegative() }).strict(),
+    output: z
+      .object({
+        tasks: z.array(taskSchema),
+        total: z.number().int().nonnegative(),
+        /** The asked totals over every task of the segment — null where nothing is there to total. */
+        totals: z.array(z.object({ column: tileTableFieldSchema, value: z.number().nullable() }).strict()),
+      })
+      .strict(),
   },
   // The tiles of the analytics screen, kept in the plugin's KV; null — none saved yet.
   loadAnalyticsDashboard: {

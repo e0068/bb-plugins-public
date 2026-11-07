@@ -6,6 +6,7 @@ import { segmentTasks, tileAnswer } from "../analytics/tile.js";
 import { bbProjectIcons } from "../lib/bb-project-icons.js";
 import { isWorkingThread } from "../shared/thread-activity.js";
 import { checkColumnWidthBounds, COLUMN_WIDTH_BOUNDS_KV_KEY, parseColumnWidthBounds } from "../shared/board-column-width.js";
+import { tileTable } from "../shared/analytics-tile.js";
 import { parseReducedProjects, REDUCED_PROJECTS_KV_KEY } from "../shared/reduced-projects.js";
 import { activeFilterFields, factsOf, type TaskFacts } from "../shared/task-fields.js";
 import { descendantsOf } from "../shared/subtree.js";
@@ -741,13 +742,22 @@ async function listTaskPullRequests(
 /** Where the analytics screen keeps its tiles and their rows. */
 export const ANALYTICS_DASHBOARD_KV_KEY = "analytics:dashboard";
 
-/** Fields whose values live outside the task: agents on it and its attachments, read from the card meta. */
-const CARD_META_FIELDS: ReadonlySet<string> = new Set(["active", "attachments"]);
+/** Fields whose values live outside the task: agents on it, its attachments and its threads, read from the card meta. */
+const CARD_META_FIELDS: ReadonlySet<string> = new Set(["active", "attachments", "threads"]);
 
 /** Whether a tile, or the page's filters over it, read a field only the card meta knows — the meta is read only then. */
 function readsCardMeta(tile: Tile, filters: SavedViewFilters | undefined): boolean {
   const filtered = filters === undefined ? [] : activeFilterFields(filters);
-  const named = [tile.x, tile.breakdown, tile.switch, tile.sort?.by, tile.y.field, ...tile.conditions.map((condition) => condition.field), ...filtered];
+  const named = [
+    tile.x,
+    tile.breakdown,
+    tile.switch,
+    tile.sort?.by,
+    tile.y.field,
+    ...tile.conditions.map((condition) => condition.field),
+    ...tileTable(tile).columns,
+    ...filtered,
+  ];
   return named.some((field) => field != null && CARD_META_FIELDS.has(field));
 }
 
@@ -768,6 +778,7 @@ async function tileFacts(
     descendantCounts: new Map([...descendantsOf(tasks)].map(([id, below]) => [id, below.length])),
     activeCounts: new Map(cards.map((card) => [card.taskId, card.taskThreads.filter(isWorkingThread).length])),
     attachmentCounts: new Map(cards.map((card) => [card.taskId, card.attachmentCount])),
+    threadTitles: new Map(cards.map((card) => [card.taskId, card.taskThreads.map((thread) => thread.title)])),
   });
 }
 

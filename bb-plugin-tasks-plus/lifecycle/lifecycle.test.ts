@@ -138,6 +138,20 @@ describe("thread lifecycle", () => {
     expect((await store.tasks.listTaskThreads(task.id))[0]?.liveStatus).toBe("idle");
   });
 
+  it("переименованный тред виден под новым названием, файл задачи не переписывается", async () => {
+    const store = makeStore();
+    const task = await taskWithThread(store);
+    sdkThreads.set("thr_x", { id: "thr_x", status: "idle", archivedAt: null, deletedAt: null, title: "Work", titleFallback: null });
+    await registerLifecycle(fakeBb(), store);
+    const filePath = (await store.tasks.getTask(task.id))!.source!.filePath;
+    const before = readFileSync(filePath, "utf8");
+
+    events.get("thread.idle")!({ thread: { id: "thr_x", title: "Desktop window", titleFallback: null } });
+    await waitFor(async () => (await store.tasks.listTaskThreads(task.id))[0]?.title === "Desktop window");
+
+    expect(readFileSync(filePath, "utf8")).toBe(before);
+  });
+
   it("архивация треда видна на карточке и тоже не трогает файл", async () => {
     const store = makeStore();
     const task = await taskWithThread(store);

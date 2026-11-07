@@ -6,6 +6,7 @@ import { unlessOutOfReach } from "../filesync/task-repo.js";
 import { hasOwnTree } from "../filesync/branch-threads.js";
 import { resolveCallerEnvironment } from "../filesync/resolve-roots.js";
 import {
+  observedTitle,
   patchLiveState,
   sameLiveState,
   threadLiveState,
@@ -184,18 +185,18 @@ export async function registerLifecycle(
     void observeThread(bb, store, thread.id, threadLiveState(thread));
   });
   bb.events.on("thread.active", ({ thread }) => {
-    void observeThread(bb, store, thread.id, { liveStatus: "working" });
+    void observeThread(bb, store, thread.id, { liveStatus: "working", ...observedTitle(thread) });
     void noticeBranchThread(bb, store, checkedForBranch, thread);
   });
   bb.events.on("thread.idle", ({ thread }) => {
-    void observeThread(bb, store, thread.id, { liveStatus: "idle" });
+    void observeThread(bb, store, thread.id, { liveStatus: "idle", ...observedTitle(thread) });
     void noticeBranchThread(bb, store, checkedForBranch, thread);
   });
   bb.events.on("thread.failed", ({ thread }) => {
-    void observeThread(bb, store, thread.id, { liveStatus: "failed" });
+    void observeThread(bb, store, thread.id, { liveStatus: "failed", ...observedTitle(thread) });
   });
   bb.events.on("thread.archived", ({ thread }) => {
-    void observeThread(bb, store, thread.id, { archivedAt: archivedAtOf(thread) });
+    void observeThread(bb, store, thread.id, { archivedAt: archivedAtOf(thread), ...observedTitle(thread) });
   });
   bb.events.on("thread.deleted", ({ thread }) => {
     void observeThread(bb, store, thread.id, { liveStatus: "completed" });

@@ -22,14 +22,31 @@ export interface AttachedThread {
 export interface ThreadLiveState {
   liveStatus: TaskThreadLiveStatus;
   archivedAt: string | null;
+  /** The title bb shows now; absent until bb has been asked, and then the
+   *  title written at attach stands — a thread renamed later is not stale. */
+  title?: string;
 }
 
-/** What a bb thread looks like from here: the three fields the state is read
+/** What a bb thread looks like from here: the fields the state is read
  *  from, so this module needs neither the SDK nor a live host to be tested. */
-export interface ObservedThread {
+export interface ObservedThread extends ObservedTitle {
   status: "pending" | "starting" | "active" | "stopping" | "idle" | "error";
   archivedAt: number | null;
   deletedAt: number | null;
+}
+
+/** The two names bb gives a thread: its own title and, until it has one, a
+ *  fallback from the first message. Either may be missing. */
+export interface ObservedTitle {
+  title?: string | null;
+  titleFallback?: string | null;
+}
+
+/** The thread's current title as a state patch — nothing when bb names it
+ *  neither, so the title written at attach stays. */
+export function observedTitle(thread: ObservedTitle): Pick<ThreadLiveState, "title"> {
+  const title = thread.title || thread.titleFallback;
+  return title ? { title } : {};
 }
 
 /** A thread attached but not yet observed — the plugin restarted and
@@ -67,6 +84,7 @@ export function threadLiveState(thread: ObservedThread): ThreadLiveState {
     liveStatus: observedLiveStatus(thread),
     archivedAt:
       thread.archivedAt === null ? null : new Date(thread.archivedAt).toISOString(),
+    ...observedTitle(thread),
   };
 }
 
@@ -104,7 +122,8 @@ export function sameLiveState(
   return (
     previous !== undefined &&
     previous.liveStatus === next.liveStatus &&
-    previous.archivedAt === next.archivedAt
+    previous.archivedAt === next.archivedAt &&
+    previous.title === next.title
   );
 }
 

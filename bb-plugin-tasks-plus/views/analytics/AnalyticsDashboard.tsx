@@ -114,12 +114,12 @@ interface TileSlotProps {
   onDelete: () => void;
   onOpenTask: (taskKey: string) => void;
   onSplit: (share: number) => void;
-  /** A header of the table under the chart was clicked: the sort the tile keeps. */
-  onTableSort: (sort: TileTable["sort"]) => void;
+  /** A header of the table under the chart was clicked or a total chosen: the change to the table the tile keeps. */
+  onTableChange: (change: (table: TileTable) => TileTable) => void;
 }
 
 /** One tile and its own answer, asked again when its settings, the page's cut and filters or the hour change. */
-function TileSlot({ tile, window, scope, firstMs, hour, minute, picked, onTableSort, ...card }: TileSlotProps) {
+function TileSlot({ tile, window, scope, firstMs, hour, minute, picked, onTableChange, ...card }: TileSlotProps) {
   const query = useTasksQuery<{ answer: TileAnswer; edges: number[]; nowMs: number }>(
     async (rpc) => {
       const nowMs = Date.now();
@@ -151,7 +151,7 @@ function TileSlot({ tile, window, scope, firstMs, hour, minute, picked, onTableS
           picked={picked}
           pick={pick}
           heading={heading}
-          onSort={onTableSort}
+          onTableChange={onTableChange}
           onOpenTask={card.onOpenTask}
           style={style}
         />
@@ -257,14 +257,14 @@ export function AnalyticsDashboard() {
   };
 
   /** The divider of a tile let go: its chart's share, kept in the saved tile and in the draft the panel holds. */
-  // A change made on the tile itself — the divider, a header's sort: into the draft while it is edited, and kept by a tile that lists its contents.
+  // A change made on the tile itself — the divider, a header's sort, a total under the table: into the draft while it is edited, and kept by a tile that lists its contents.
   const retouch = (id: string, change: (tile: Tile) => Tile) => {
     if (editing?.id === id) setEditing((current) => (current === null ? null : { ...current, draft: change(current.draft) }));
     // A tile whose contents are only turned on in its draft keeps nothing until it is saved.
     if (dashboard?.tiles.some((tile) => tile.id === id && tile.display.contents !== undefined)) save({ ...dashboard, tiles: dashboard.tiles.map((tile) => (tile.id === id ? change(tile) : tile)) });
   };
   const split = (id: string, share: number) => retouch(id, (tile) => ({ ...tile, display: { ...tile.display, contents: share } }));
-  const sortTable = (id: string, sort: TileTable["sort"]) => retouch(id, (tile) => ({ ...tile, table: { ...tileTable(tile), sort } }));
+  const changeTable = (id: string, change: (table: TileTable) => TileTable) => retouch(id, (tile) => ({ ...tile, table: change(tileTable(tile)) }));
 
   const relayout = (layout: RowLayout) => {
     // A tile being added has a cell but is no tile yet: only that cell goes, never the tiles sharing its row.
@@ -307,7 +307,7 @@ export function AnalyticsDashboard() {
                           onDelete={() => remove(id)}
                           onOpenTask={openTask}
                           onSplit={(share) => split(id, share)}
-                          onTableSort={(sort) => sortTable(id, sort)}
+                          onTableChange={(change) => changeTable(id, change)}
                         />
                       );
                     }}

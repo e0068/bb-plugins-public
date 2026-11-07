@@ -96,6 +96,7 @@ import {
   type RowField,
 } from "../common/row-field-preference.js";
 import { AmountChip } from "../common/amount-chip.js";
+import { ThreadLinks } from "../table/cells.js";
 import { labelFill } from "../common/label-fill.js";
 import { planRowFields, type FieldPlanCell } from "../common/field-plan.js";
 import { cardSections, type CardBlockField } from "./card-sections.js";
@@ -117,6 +118,7 @@ export type { BoardData };
 
 const EMPTY_META: BoardCardMeta = {
   workingThreads: [],
+  threads: [],
   attachmentCount: 0,
   parent: null,
   family: { descendants: [] },
@@ -270,7 +272,7 @@ function CardFieldValue({
   meta: BoardCardMeta;
   labels: readonly Label[];
   project: Project | undefined;
-}) {
+}): ReactNode {
   switch (field) {
     case "key":
       return (
@@ -340,10 +342,12 @@ function CardFieldValue({
       return null;
     case "active":
       return <WorkingAgentsChip threads={meta.workingThreads} />;
+    case "threads":
+      return meta.threads.length > 0 ? <ThreadLinks threads={meta.threads} textClassName="text-2xs" /> : null;
     case "assignee":
       return task.assignee ? (
-        <span title={`Assignee: ${task.assignee}`} className={`${CARD_CHIP_CLASS} max-w-32`}>
-          <Icon name="UserRound" className="size-3 shrink-0" />
+        <span title={`Folder: ${task.assignee}`} className={`${CARD_CHIP_CLASS} max-w-32`}>
+          <Icon name="Folder" className="size-3 shrink-0" />
           <span className="truncate">{task.assignee}</span>
         </span>
       ) : null;
@@ -431,6 +435,11 @@ function CardFieldValue({
           style={{ backgroundColor: drawnColor(project.icon, project.color) }}
         />
       ) : null;
+    default: {
+      // A field added without a branch here fails to compile instead of vanishing from the card.
+      const unreachable: never = field;
+      return unreachable;
+    }
   }
 }
 
@@ -637,6 +646,7 @@ function TaskCard({
     hasProject: project !== undefined,
     descendantCount: meta.progress.total,
     attachmentCount: meta.attachmentCount,
+    threadCount: meta.threads.length,
   });
   const listedSubtasks = subtasksInScope(meta.family.descendants, subtaskScopeOf(config));
   // A block with nothing to draw yet — a burndown still loading, a list on a
@@ -866,6 +876,7 @@ export function BoardView({ scope, viewId, thread }: BoardViewProps) {
         attachmentCounts: new Map([...metaByTaskId].map(([id, meta]) => [id, meta.attachmentCount])),
         descendantCounts: new Map([...metaByTaskId].map(([id, meta]) => [id, meta.progress.total])),
         openCounts: new Map([...metaByTaskId].map(([id, meta]) => [id, meta.progress.open])),
+        threadTitles: new Map([...metaByTaskId].map(([id, meta]) => [id, meta.threads.map((thread) => thread.title)])),
       }),
     [projectsById, board.data, labels, metaByTaskId],
   );

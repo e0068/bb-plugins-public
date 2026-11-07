@@ -147,6 +147,21 @@ describe("task lifecycle", () => {
     expect(readFileSync(filePath, "utf8")).toBe(before);
   });
 
+  it("threads: тред, переименованный в bb, показывается новым названием, а в файле остаётся название привязки — и после привязки и отвязки соседей", async () => {
+    const task = await store.createTask({ projectId: "b1", title: "T" });
+    await store.upsertTaskThread({ taskId: task.id, threadId: "thr_x", presetName: "Opus", title: "Work" });
+    store.setThreadLiveState("thr_x", { liveStatus: "idle", archivedAt: null, title: "Desktop window" });
+    const filePath = (await store.getTask(task.id))!.source!.filePath;
+
+    const second = await store.upsertTaskThread({ taskId: task.id, threadId: "thr_y", presetName: "Opus", title: "Other" });
+    expect(readFileSync(filePath, "utf8")).not.toContain("Desktop window");
+    await store.deleteTaskThread(second.id);
+    expect(readFileSync(filePath, "utf8")).not.toContain("Desktop window");
+    expect(readFileSync(filePath, "utf8")).toContain("title: Work");
+
+    expect((await store.getTaskThreadByThreadId(task.id, "thr_x"))?.title).toBe("Desktop window");
+  });
+
   it("threads: liveStatus, оставшийся в файле от старой версии, игнорируется", async () => {
     const task = await store.createTask({ projectId: "b1", title: "T" });
     const filePath = (await store.getTask(task.id))!.source!.filePath;

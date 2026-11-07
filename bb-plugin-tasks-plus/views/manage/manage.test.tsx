@@ -851,9 +851,9 @@ describe("new task dialog: assignee", () => {
     const slot = renderSlot(app.navPanels[0]!, { subPath: PROJECT_ID }, { rpc });
     await openWithTitle(slot);
 
-    fireEvent.click(slot.getByRole("button", { name: "Edit assignee" }));
-    expect(await slot.findByText("Type a name to create a new assignee")).toBeDefined();
-    fireEvent.change(slot.getByPlaceholderText("Assignee…"), { target: { value: "Claude" } });
+    fireEvent.click(slot.getByRole("button", { name: "Edit folder" }));
+    expect(await slot.findByText("Type a name to create a new folder")).toBeDefined();
+    fireEvent.change(slot.getByPlaceholderText("Folder…"), { target: { value: "Claude" } });
     fireEvent.click(await slot.findByRole("option", { name: "Create “Claude”" }));
     fireEvent.click(slot.getByRole("button", { name: "Create task" }));
 

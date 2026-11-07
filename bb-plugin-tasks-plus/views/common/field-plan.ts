@@ -18,6 +18,8 @@ export interface FieldPlanContext {
   descendantCount?: number;
   /** Files attached to the task; absent — none. */
   attachmentCount?: number;
+  /** Threads attached to the task; absent — none. */
+  threadCount?: number;
 }
 
 export type FieldCellMode = "value" | "placeholder";
@@ -64,6 +66,8 @@ export function isRowFieldEmpty(
       return (ctx.descendantCount ?? 0) === 0;
     case "active":
       return ctx.activeCount === 0;
+    case "threads":
+      return (ctx.threadCount ?? 0) === 0;
     case "assignee":
       return !task.assignee;
     case "flow":

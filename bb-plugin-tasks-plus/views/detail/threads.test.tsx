@@ -158,7 +158,7 @@ describe("task detail pull request pills", () => {
       },
     );
 
-    await slot.findByText("Offline worker");
+    await slot.findAllByText("Offline worker");
     expect(slot.getAllByText("PR unavailable")).toHaveLength(1);
     // The healthy thread with no PR renders no pill and no link.
     expect(slot.queryByRole("link")).toBeNull();
@@ -183,7 +183,7 @@ describe("task detail pull request pills", () => {
       },
     );
 
-    await slot.findByText("Worker");
+    await slot.findAllByText("Worker");
     expect(slot.getAllByText("Archived")).toHaveLength(1);
   });
 

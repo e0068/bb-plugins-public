@@ -61,6 +61,26 @@ describe("threadLiveState", () => {
   });
 });
 
+describe("the thread's current title", () => {
+  it("reads the title bb shows, its fallback when the thread has none, and nothing when bb names it neither", () => {
+    expect(threadLiveState(observed({ title: "Desktop window", titleFallback: "First words" })).title).toBe("Desktop window");
+    expect(threadLiveState(observed({ title: null, titleFallback: "First words" })).title).toBe("First words");
+    expect(threadLiveState(observed({ title: null, titleFallback: null }))).not.toHaveProperty("title");
+    expect(threadLiveState(observed({ title: "", titleFallback: null }))).not.toHaveProperty("title");
+  });
+
+  it("shows a renamed thread under its current title, and under the attached one until bb has been asked", () => {
+    expect(withLiveState(attached({ title: "Old" }), { liveStatus: "idle", archivedAt: null, title: "New" }).title).toBe("New");
+    expect(withLiveState(attached({ title: "Old" }), { liveStatus: "idle", archivedAt: null }).title).toBe("Old");
+  });
+
+  it("takes a rename alone for news, and keeps the title through an event that does not speak of it", () => {
+    const named = { liveStatus: "idle", archivedAt: null, title: "Old" } as const;
+    expect(sameLiveState(named, { ...named, title: "New" })).toBe(false);
+    expect(patchLiveState(named, { liveStatus: "working" }).title).toBe("Old");
+  });
+});
+
 describe("withLiveState", () => {
   it("joins the attachment fact with the observed state", () => {
     const thread = withLiveState(attached(), { liveStatus: "working", archivedAt: null });

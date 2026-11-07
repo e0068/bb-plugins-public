@@ -207,3 +207,21 @@ describe("analyticsTileTasks RPC", () => {
     expect(backlog.tasks.map((task) => task.key)).toEqual([b.key, a.key]);
   });
 });
+
+describe("analyticsTileTasks RPC — the Assignee column", () => {
+  it("sorts the segment by the titles of the threads attached to its tasks, though the tile names the field only as a table column", async () => {
+    const { harness } = setup();
+    const a = await tasks.createTask({ projectId: BOARD.id, title: "A" });
+    const b = await tasks.createTask({ projectId: BOARD.id, title: "B" });
+    const c = await tasks.createTask({ projectId: BOARD.id, title: "C" });
+    await tasks.upsertTaskThread({ taskId: a.id, threadId: "thr_a", presetName: "Opus", title: "Zeta" });
+    await tasks.upsertTaskThread({ taskId: b.id, threadId: "thr_b", presetName: "Opus", title: "Alpha" });
+    const table = { columns: ["key", "title", "threads"], sort: null, rows: 50, rowHeight: "regular" };
+    const ask = { tile: tile({ switch: null, table }), edges: EDGES, projectIds: [], picked: null, pick: null, limit: 10 };
+
+    const asc = (await harness.callRpc("analyticsTileTasks", { ...ask, sort: { column: "threads", direction: "asc" } })) as { tasks: { key: string }[] };
+    expect(asc.tasks.map((task) => task.key)).toEqual([b.key, a.key, c.key]);
+    const desc = (await harness.callRpc("analyticsTileTasks", { ...ask, sort: { column: "threads", direction: "desc" } })) as { tasks: { key: string }[] };
+    expect(desc.tasks.map((task) => task.key)).toEqual([a.key, b.key, c.key]);
+  });
+});

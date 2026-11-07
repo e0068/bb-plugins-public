@@ -32,6 +32,7 @@ import {
 } from "../../components/task-meta.js";
 import { DispatchControl } from "./threads.js";
 import { AssigneePicker } from "./assignee-picker.js";
+import { ThreadLinks } from "../table/cells.js";
 import { ParentPicker } from "./parent-picker.js";
 import { DEFAULT_COLOR } from "../manage/shared.js";
 import {
@@ -642,6 +643,20 @@ export const RAIL_FRAME_CLASS = "w-56 shrink-0 py-10 pl-2 pr-6";
 const RAIL_ROW_CLASS =
   "-mx-1.5 flex w-[calc(100%+0.75rem)] items-center gap-2 rounded-md px-1.5 py-1 text-left text-sm hover:bg-state-hover";
 
+/**
+ * Assignee — the threads attached to the task, the finished and archived ones
+ * too, each opening on click. Read-only: a thread is attached from the thread.
+ * No thread — "No assignee" in the empty look the caller gives.
+ */
+function AssigneeThreads({ threads, className, empty }: { threads: readonly TaskThread[]; className: string; empty: string }) {
+  return (
+    <div role="group" aria-label="Assignee" className={cn(className, threads.length === 0 && empty)}>
+      <Icon name="UserRound" className="size-3.5 shrink-0" />
+      {threads.length === 0 ? "No assignee" : <ThreadLinks threads={threads} wrap />}
+    </div>
+  );
+}
+
 /** Right-hand properties rail (hidden below the container breakpoint). */
 function SourceRow({
   task,
@@ -769,6 +784,7 @@ export function PropertiesRail({
         onSelect={(estimate) => onUpdate({ estimate })}
         triggerClassName={RAIL_ROW_CLASS}
       />
+      <AssigneeThreads threads={threads} className="flex min-w-0 items-center gap-2 py-1 text-sm" empty="text-muted-foreground" />
       <AssigneePicker
         projectId={task.projectId}
         value={task.assignee ?? null}
@@ -919,11 +935,14 @@ export function PropertiesRail({
 const CHIP_CLASS =
   "inline-flex items-center gap-1.5 rounded-md border border-border bg-secondary px-2.5 py-0.5 text-xs text-foreground hover:border-input";
 
-// Same pill with the fill removed: marks an optional property that is currently
+// Same pill with the fill removed: an empty property that is not edited here.
+const CHIP_EMPTY_CLASS =
+  "inline-flex items-center gap-1.5 rounded-md border border-border px-2.5 py-0.5 text-xs text-muted-foreground";
+
+// The empty pill with a hover: marks an optional property that is currently
 // empty (the due date, which may legitimately have no value) so it reads as an
 // affordance to set rather than as a value already chosen.
-const CHIP_GHOST_CLASS =
-  "inline-flex items-center gap-1.5 rounded-md border border-border px-2.5 py-0.5 text-xs text-muted-foreground hover:border-input hover:text-foreground";
+const CHIP_GHOST_CLASS = cn(CHIP_EMPTY_CLASS, "hover:border-input hover:text-foreground");
 
 // Non-interactive variant for the project, shown in the row but edited elsewhere.
 const CHIP_STATIC_CLASS =
@@ -939,11 +958,12 @@ export function InlineProperties({
   parent,
   project,
   labels,
+  threads,
   presets,
   onUpdate,
   onError,
   className,
-}: Omit<TaskPropertiesProps, "threads"> & {
+}: TaskPropertiesProps & {
   presets: Preset[] | undefined;
   onError: (message: string) => void;
   className?: string;
@@ -999,6 +1019,7 @@ export function InlineProperties({
             triggerClassName={CHIP_CLASS}
           />
         ) : null}
+        <AssigneeThreads threads={threads} className="inline-flex min-w-0 max-w-full items-center gap-1.5 text-xs" empty={CHIP_EMPTY_CLASS} />
         <AssigneePicker
           projectId={task.projectId}
           value={task.assignee ?? null}

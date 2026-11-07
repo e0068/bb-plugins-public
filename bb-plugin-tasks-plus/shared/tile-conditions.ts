@@ -71,6 +71,8 @@ function reading(field: QueryField, task: Task, facts: TaskFacts): Reading {
       return named(task.takenBy?.machine);
     case "active":
       return named((facts.activeCounts.get(task.id) ?? 0) > 0 ? ACTIVITY_VALUES[0] : ACTIVITY_VALUES[1]);
+    case "threads":
+      return named(...(facts.threadTitles.get(task.id) ?? []));
     case "subtasks":
     case "attachments":
     case "plannedMinutes":
