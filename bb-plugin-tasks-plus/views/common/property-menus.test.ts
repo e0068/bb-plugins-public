@@ -22,9 +22,9 @@ describe("statusForShortcut", () => {
     expect(statusForShortcut("6")).toBe(TASK_STATUSES[5]);
   });
 
-  it("rejects out-of-range and non-digit keys", () => {
+  it("rejects zero, a digit past the last status and non-digit keys", () => {
     expect(statusForShortcut("0")).toBeNull();
-    expect(statusForShortcut("7")).toBeNull();
+    expect(statusForShortcut(String(TASK_STATUSES.length + 1))).toBeNull();
     expect(statusForShortcut("s")).toBeNull();
     expect(statusForShortcut("")).toBeNull();
   });

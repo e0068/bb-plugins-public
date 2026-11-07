@@ -123,9 +123,9 @@ const text = (column: RowField, task: Task, ctx?: CellContext) => {
 };
 
 describe("a cell reads as text with an icon", () => {
-  it("status, priority, type and estimate read as text with an icon", () => {
+  it("status (Owner Review), priority, type and estimate read as text with an icon", () => {
     for (const [column, expected] of [
-      ["status", "In Review"],
+      ["status", "Owner Review"],
       ["priority", "High"],
       ["type", "Bugfix"],
       ["estimate", "M"],

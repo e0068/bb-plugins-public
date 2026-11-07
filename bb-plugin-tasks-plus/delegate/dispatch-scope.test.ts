@@ -209,8 +209,8 @@ describe("статус пишется по той копии, которую п�
   });
 });
 
-describe("привязка существующего треда", () => {
-  it("пишет перевод в работу в дерево привязанного треда", async () => {
+describe("привязка существующего треда не меняет статус задачи", () => {
+  it("задача в дереве треда — привязка ложится туда, задача остаётся в backlog, main не тронут", async () => {
     const task = await taskInMain();
     const mainPath = task.source!.filePath;
     copyIntoWorktree(mainPath, "backlog");
@@ -218,36 +218,29 @@ describe("привязка существующего треда", () => {
 
     await handlers(fakeBb(), store).taskThreadsAttach({ taskId: task.id, threadId: "thr_old" });
 
-    expect(readFileSync(inWorktree(mainPath, "in_progress"), "utf8")).toContain(
-      "Status changed to In Progress · thread attached",
-    );
+    expect(readFileSync(inWorktree(mainPath, "backlog"), "utf8")).toContain("thr_old");
+    expect(existsSync(inWorktree(mainPath, "in_progress"))).toBe(false);
     expect(readFileSync(mainPath, "utf8")).toBe(mainBefore);
   });
 
-  it("дерево есть, а задачи в нём нет — запись остаётся при файле", async () => {
+  it("дерево есть, а задачи в нём нет — привязка остаётся при файле, задача в backlog", async () => {
     const task = await taskInMain();
     const mainPath = task.source!.filePath;
 
     await handlers(fakeBb(), store).taskThreadsAttach({ taskId: task.id, threadId: "thr_old" });
 
-    expect(readFileSync(inMain(mainPath, "in_progress"), "utf8")).toContain(
-      "Status changed to In Progress · thread attached",
-    );
+    expect(readFileSync(inMain(mainPath, "backlog"), "utf8")).toContain("thr_old");
+    expect(existsSync(inMain(mainPath, "in_progress"))).toBe(false);
     expect(existsSync(join(worktreeDir, "tasks"))).toBe(false);
   });
 
-  it("у треда нет своего дерева вовсе — запись тоже остаётся при файле", async () => {
+  it("у треда нет своего дерева — привязка остаётся при файле, задача в backlog", async () => {
     const task = await taskInMain();
     const mainPath = task.source!.filePath;
-    copyIntoWorktree(mainPath, "backlog");
 
-    await handlers(fakeBbWithoutWorktree(), store).taskThreadsAttach({
-      taskId: task.id,
-      threadId: "thr_old",
-    });
+    await handlers(fakeBbWithoutWorktree(), store).taskThreadsAttach({ taskId: task.id, threadId: "thr_old" });
 
-    expect(existsSync(inMain(mainPath, "in_progress"))).toBe(true);
-    expect(existsSync(inWorktree(mainPath, "backlog"))).toBe(true);
-    expect(existsSync(inWorktree(mainPath, "in_progress"))).toBe(false);
+    expect(readFileSync(inMain(mainPath, "backlog"), "utf8")).toContain("thr_old");
+    expect(existsSync(inMain(mainPath, "in_progress"))).toBe(false);
   });
 });

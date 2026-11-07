@@ -124,7 +124,7 @@ export function buildSeedPrompt(input: SeedPromptInput): string {
     markdownSection("Recent comments", formatComments(input.recentComments)),
     markdownSection(
       "Report-back contract",
-      `You are working on task ${input.task.key}. Use the bb tasks CLI: comment substantive updates (bb tasks comment ${input.task.key} --body ...), attach result artifacts, set status when done (bb tasks update ${input.task.key} --status in_review) or explain blockage in a comment. Your thread is already attached to the task; run bb tasks current to reread which task(s) it solves.`,
+      `You are working on task ${input.task.key}. Use the bb tasks CLI: comment substantive updates (bb tasks comment ${input.task.key} --body ...), attach result artifacts, move the status as the work moves — agent_review when a reviewing agent checks it, back to in_progress when the review returns changes, in_review (Owner Review) when you hand it to the owner, back to in_progress when the owner returns it (bb tasks update ${input.task.key} --status <status>); take each sub-task into in_progress only when you start on it — or explain blockage in a comment. Your thread is already attached to the task; run bb tasks current to reread which task(s) it solves.`,
     ),
   ];
 
@@ -268,12 +268,14 @@ function mapSpawnTargetError(error: unknown, preset: Preset): never {
 }
 
 /**
- * backlog/todo → in_progress the moment a thread gets linked to a task —
- * whether that link comes from a board dispatch or from `bb tasks attach`.
+ * backlog/todo → in_progress the moment a board dispatch starts a thread on
+ * the task: that thread works on exactly this task. `bb tasks attach` does
+ * not come here — a thread holding several sub-tasks takes each into
+ * progress itself, when it starts on it (BBPL-1043).
  * No-op once the task is already in_progress or further along, so a second
- * thread attaching to the same task never bounces its status backwards.
+ * dispatch never bounces its status backwards.
  */
-export async function promoteToInProgressOnThreadLink(
+export async function promoteToInProgressOnDispatch(
   store: TasksApiStore,
   task: Task,
   presetName: string,
@@ -291,8 +293,8 @@ export async function promoteToInProgressOnThreadLink(
 }
 
 /**
- * Дерево, в которое идут записи о привязке треда — перевод в работу и
- * системный комментарий. Своё дерево треда берётся, только когда файл задачи
+ * Дерево, в которое идут записи о привязке треда — сама привязка, а при
+ * отправке с доски ещё перевод в работу и системный комментарий. Своё дерево треда берётся, только когда файл задачи
  * в нём есть: иначе появилась бы вторая копия слага, а это конфликт при
  * слиянии ветки. Нет дерева или нет в нём задачи — пишем туда же, куда писал
  * вызывающий (доска — в main).
@@ -420,7 +422,7 @@ export function handlers(
           title,
         });
 
-        await promoteToInProgressOnThreadLink(
+        await promoteToInProgressOnDispatch(
           store,
           write.task,
           preset.name,
@@ -478,14 +480,6 @@ export function handlers(
           presetName: MANUAL_PRESET_NAME,
           title,
         });
-
-        await promoteToInProgressOnThreadLink(
-          store,
-          write.task,
-          MANUAL_PRESET_NAME,
-          thread.id,
-          "Status changed to In Progress · thread attached",
-        );
       }));
 
       publishThreadsChanged(bb, task.id);

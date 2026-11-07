@@ -8,12 +8,13 @@ import type { DateTick } from "./date-ticks.js";
 import { STATUS_LABELS } from "./icons.js";
 
 /** The bar's order, closest to done first; canceled work is not work and stays off it. */
-const BAR_STATUSES = ["done", "in_review", "in_progress", "todo", "backlog"] as const satisfies readonly TaskStatus[];
+const BAR_STATUSES = ["done", "in_review", "agent_review", "in_progress", "todo", "backlog"] as const satisfies readonly TaskStatus[];
 
 /** Status colours are bb's own variables, as the status icons use them. */
 const BAR_COLORS: Record<(typeof BAR_STATUSES)[number], string> = {
   done: "var(--success)",
   in_review: "var(--timeline-accent)",
+  agent_review: "color-mix(in oklch, var(--timeline-accent) 55%, transparent)",
   in_progress: "var(--attention)",
   todo: "color-mix(in oklch, var(--muted-foreground) 45%, transparent)",
   backlog: "color-mix(in oklch, var(--muted-foreground) 25%, transparent)",

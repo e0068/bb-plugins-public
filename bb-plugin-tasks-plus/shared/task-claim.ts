@@ -20,7 +20,7 @@ export interface ClaimState {
 /** The task is free to take, already held by this machine, or held by another. */
 export type ClaimDecision = "free" | "mine" | { taken: TakenBy };
 
-const HELD_STATUSES: readonly TaskStatus[] = ["in_progress", "in_review"];
+const HELD_STATUSES: readonly TaskStatus[] = ["in_progress", "agent_review", "in_review"];
 const RESET_STATUSES: readonly TaskStatus[] = ["backlog", "todo"];
 const HISTORY_STATUSES: readonly TaskStatus[] = ["done", "canceled"];
 

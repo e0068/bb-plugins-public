@@ -648,7 +648,7 @@ describe("tasks app shell", () => {
     );
   });
 
-  it("renders board and task subPaths without plugin-owned sidebar chrome", async () => {
+  it("renders board and task subPaths, with the Agent Review and Owner Review columns, without plugin-owned sidebar chrome", async () => {
     const boardSlot = renderSlot(
       app.navPanels[0]!,
       { subPath: `${PROJECT_ID}?view=board` },
@@ -656,7 +656,8 @@ describe("tasks app shell", () => {
     );
     // The real board renders its status columns (empty listTasks → 0 cards).
     await boardSlot.findByText("Backlog");
-    await boardSlot.findByText("In Review");
+    await boardSlot.findByText("Agent Review");
+    await boardSlot.findByText("Owner Review");
     // Имя доски теперь стоит и в шапке, и в строке пути — важно, что оно есть.
     expect(boardSlot.getAllByText("Tasks Plugin").length).toBeGreaterThan(0);
     expect(boardSlot.queryByRole("button", { name: /sidebar/i })).toBeNull();

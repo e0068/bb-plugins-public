@@ -17,11 +17,11 @@ const machineArb = fc.constantFrom("Mac mini", "MacBook", "studio");
 const markArb = fc.option(fc.record({ machine: machineArb, threadId: fc.option(fc.constantFrom("thr_a", "thr_b"), { nil: null }), at: fc.constant("2026-09-30T12:00:00.000Z") }), { nil: null });
 
 describe("claimDecision — can this machine take the task", () => {
-  it("refuses exactly when the task is in progress or in review and another machine holds it", () => {
+  it("refuses exactly when the task is in progress, in agent review or in owner review and another machine holds it", () => {
     fc.assert(
       fc.property(statusArb, markArb, machineArb, (status, takenBy, me) => {
         const decision = claimDecision({ status, takenBy }, me);
-        const refused = (status === "in_progress" || status === "in_review") && takenBy !== null && takenBy.machine !== me;
+        const refused = (status === "in_progress" || status === "agent_review" || status === "in_review") && takenBy !== null && takenBy.machine !== me;
         expect(typeof decision === "object").toBe(refused);
         if (refused) expect(decision).toEqual({ taken: takenBy });
       }),

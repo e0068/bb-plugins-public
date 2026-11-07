@@ -24,6 +24,7 @@ export const STATUS_COLOR: Readonly<Record<TaskStatus, string>> = {
   backlog: "var(--subtle-foreground)",
   todo: "var(--timeline-accent)",
   in_progress: "var(--attention)",
+  agent_review: "color-mix(in oklch, var(--pr-merged) 55%, transparent)",
   in_review: "var(--pr-merged)",
   done: "var(--success)",
   canceled: "var(--destructive)",
@@ -33,7 +34,8 @@ export const STATUS_LABEL: Readonly<Record<TaskStatus, string>> = {
   backlog: "Backlog",
   todo: "To do",
   in_progress: "In progress",
-  in_review: "In review",
+  agent_review: "Agent review",
+  in_review: "Owner review",
   done: "Done",
   canceled: "Canceled",
 };

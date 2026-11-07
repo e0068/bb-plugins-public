@@ -53,8 +53,8 @@ describe("chartColors — Reduced Colors on, repainting the projects", () => {
     expect(colors.project("gone")).toBe(MUTED);
   });
 
-  it("puts statuses on the ramp in work order, backlog low and done high", () => {
-    expect(["backlog", "todo", "in_progress", "in_review", "done"].map((status) => colors.status(status as never))).toEqual(rampColors(LOW, HIGH, 5));
+  it("puts statuses on the ramp in work order, agent review before owner review, backlog low and done high", () => {
+    expect(["backlog", "todo", "in_progress", "agent_review", "in_review", "done"].map((status) => colors.status(status as never))).toEqual(rampColors(LOW, HIGH, 6));
   });
 
   it("keeps canceled in its alarm red", () => {

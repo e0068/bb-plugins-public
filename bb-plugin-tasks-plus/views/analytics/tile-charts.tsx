@@ -573,7 +573,8 @@ function TableChart({ tile, answer, edges, unit }: TileChartProps) {
 const FIGURE_LABEL: Record<Figure, string> = {
   open: "Open",
   in_progress: "In progress",
-  in_review: "In review",
+  agent_review: "Agent review",
+  in_review: "Owner review",
   done: "Done",
   created: "Created",
   closed: "Closed",

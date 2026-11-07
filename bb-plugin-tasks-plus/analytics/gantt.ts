@@ -25,7 +25,7 @@ export interface GanttRow {
 }
 
 /** The statuses a Gantt fills — the work itself; waiting in Backlog or To do is not drawn, and Done is a mark, not a stretch. */
-const WORKING: ReadonlySet<TaskStatus> = new Set(["in_progress", "in_review"]);
+const WORKING: ReadonlySet<TaskStatus> = new Set(["in_progress", "agent_review", "in_review"]);
 
 const isStatus = (value: string | null): value is TaskStatus => TASK_STATUSES.includes(value as TaskStatus);
 

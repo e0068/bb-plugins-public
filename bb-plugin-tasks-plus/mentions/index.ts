@@ -142,7 +142,7 @@ ${formatThreads(threads)}
 
 ## Action contract
 
-You can act on this task with the bb tasks CLI. If you begin working on it, first run: bb tasks attach ${task.key} (attaches THIS thread so the task shows you as working). Comment substantive updates via bb tasks comment ${task.key} --body ... and set status via bb tasks update ${task.key} --status ...
+You can act on this task with the bb tasks CLI. If you begin working on it, first run: bb tasks attach ${task.key} (attaches THIS thread so the task shows you as working; attaching does not change the status). Then move the status as the work moves: bb tasks update ${task.key} --status in_progress when you start, agent_review when a reviewing agent checks it, in_progress again when the review returns changes, in_review (Owner Review) when you hand it to the owner, back to in_progress when the owner returns it. Comment substantive updates via bb tasks comment ${task.key} --body ...
 `;
 }
 

@@ -73,7 +73,8 @@ const fieldLabel = (field: QueryField) => ROW_FIELD_LABELS[field];
 const FIGURE_OPTIONS: Record<Figure, { label: string; hint: string }> = {
   open: { label: "Open tasks", hint: "Tasks made or reopened within the chart's period" },
   in_progress: { label: "Taken into progress", hint: "Tasks moved to in progress within the chart's period" },
-  in_review: { label: "Sent to review", hint: "Tasks moved to in review within the chart's period" },
+  agent_review: { label: "Sent to agent review", hint: "Tasks moved to agent review within the chart's period" },
+  in_review: { label: "Sent to owner review", hint: "Tasks moved to owner review within the chart's period" },
   done: { label: "Done", hint: "Tasks moved to done within the chart's period" },
   created: { label: "Created in the period", hint: "Tasks made within the chart's period" },
   closed: { label: "Closed in the period", hint: "Tasks moved to done within the chart's period" },

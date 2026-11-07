@@ -21,6 +21,7 @@ export interface TaskPage {
 const STATUS_RANK: Record<TaskStatus, number> = {
   todo: 0,
   in_progress: 0,
+  agent_review: 0,
   in_review: 0,
   backlog: 1,
   done: 2,

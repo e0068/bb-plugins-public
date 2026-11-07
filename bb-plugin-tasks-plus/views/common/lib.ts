@@ -12,7 +12,8 @@ export const STATUS_LABELS: Record<TaskStatus, string> = {
   backlog: "Backlog",
   todo: "Todo",
   in_progress: "In Progress",
-  in_review: "In Review",
+  agent_review: "Agent Review",
+  in_review: "Owner Review",
   done: "Done",
   canceled: "Canceled",
 };

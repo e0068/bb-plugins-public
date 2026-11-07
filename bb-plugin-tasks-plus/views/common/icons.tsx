@@ -9,6 +9,7 @@ const STATUS_COLOR_CLASS: Record<TaskStatus, string> = {
   backlog: "text-subtle-foreground",
   todo: "text-subtle-foreground",
   in_progress: "text-attention",
+  agent_review: "text-timeline-accent",
   in_review: "text-timeline-accent",
   done: "text-success",
   canceled: "text-subtle-foreground",
@@ -45,6 +46,12 @@ export function StatusIcon({
         <>
           {ring(false)}
           <path d="M7 7 L7 2.4 A4.6 4.6 0 0 1 11.2 9.5 Z" fill="currentColor" />
+        </>
+      ) : null}
+      {status === "agent_review" ? (
+        <>
+          {ring(false)}
+          <path d="M7 7 L7 2.4 A4.6 4.6 0 1 1 3.02 9.3 Z" fill="currentColor" />
         </>
       ) : null}
       {status === "in_review" ? (

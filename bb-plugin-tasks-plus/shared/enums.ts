@@ -10,13 +10,14 @@ export const TASK_STATUSES = [
   "backlog",
   "todo",
   "in_progress",
+  "agent_review",
   "in_review",
   "done",
   "canceled",
 ] as const;
 
 /** Statuses that still owe work — what a burndown burns down, an analytics tile counts open and a card's open sub-tasks are. */
-export const OPEN_STATUSES = ["backlog", "todo", "in_progress", "in_review"] as const satisfies readonly (typeof TASK_STATUSES)[number][];
+export const OPEN_STATUSES = ["backlog", "todo", "in_progress", "agent_review", "in_review"] as const satisfies readonly (typeof TASK_STATUSES)[number][];
 
 const OPEN: ReadonlySet<string> = new Set(OPEN_STATUSES);
 

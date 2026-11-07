@@ -67,10 +67,11 @@ const answerIn = (fromDay: number, toDay: number, patch: Partial<Parameters<type
 const figuresIn = (fromDay: number, toDay: number) => answerIn(fromDay, toDay).figures;
 
 describe("«Big numbers» over the period", () => {
-  it("the second week — only what came into each status, and the money of what closed", () => {
+  it("the second week — only what came into each status, agent review among them, and the money of what closed", () => {
     expect(figuresIn(8, 15)).toEqual({
       open: 2,
       in_progress: 3,
+      agent_review: 0,
       in_review: 1,
       done: 1,
       created: 1,
@@ -92,8 +93,8 @@ describe("«Big numbers» over the period", () => {
     expect(figuresIn(1, 15)).toMatchObject({ done: 3, closed: 2 });
   });
 
-  it("a period with nothing in it — zeroes, no cycle", () => {
-    expect(figuresIn(12, 15)).toEqual({ open: 0, in_progress: 0, in_review: 0, done: 0, created: 0, closed: 0, cycle: null, planned: 0, actual: 0, budget: 0, cost: 0, limit: 0 });
+  it("a period with nothing in it — zeroes in every status, agent review too, no cycle", () => {
+    expect(figuresIn(12, 15)).toEqual({ open: 0, in_progress: 0, agent_review: 0, in_review: 0, done: 0, created: 0, closed: 0, cycle: null, planned: 0, actual: 0, budget: 0, cost: 0, limit: 0 });
   });
 });
 
