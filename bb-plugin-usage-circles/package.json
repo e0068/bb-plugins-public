@@ -1,6 +1,6 @@
 {
   "name": "bb-plugin-usage-circles",
-  "version": "0.2.9",
+  "version": "0.2.10",
   "type": "module",
   "engines": {
     "bb": ">=0.45",
@@ -8,7 +8,7 @@
   },
   "bb": {
     "name": "Usage Limits",
-    "description": "Claude Code and Codex usage-limit rings in the sidebar footer — a ring per limit or one for all, the limits as a list or cards.",
+    "description": "Claude Code, Codex, Kimi and OpenCode usage-limit rings in the sidebar footer — a ring per limit or one for all, the limits as a list or cards.",
     "branding": {
       "icon": "./assets/icon.svg"
     },
@@ -21,6 +21,8 @@
       "limits",
       "claude-code",
       "codex",
+      "kimi",
+      "opencode",
       "interface"
     ]
   },

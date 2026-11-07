@@ -223,7 +223,7 @@ export function allLimitsPanel(): ComponentType<{ dismiss(): void }> {
   return AllLimitsPanel;
 }
 
-/** The rings the footer does not show: all five in the All limits layout, else the ones of the limits switched off. The item of every limit is never hidden. */
+/** The rings the footer does not show: every ring in the All limits layout, else the ones of the limits switched off. The item of every limit is never hidden. */
 const hiddenItems = (layout: Layout, limits: LimitsChoice): string[] =>
   layout === "all" ? FOOTER_RINGS.map(({ id }) => id) : limits.filter(({ shown }) => !shown).map(({ id }) => id);
 

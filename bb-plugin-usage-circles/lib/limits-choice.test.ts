@@ -30,7 +30,7 @@ describe("parseLimits", () => {
     expect(DEFAULT_LIMITS).toEqual(parseLimits(null));
   });
 
-  it("keeps the stored order and choice, drops unknown ids and repeats, and adds missing limits shown at the end", () => {
+  it("keeps the stored order and choice, drops unknown ids and repeats, and adds missing limits — OpenCode's among them — shown at the end", () => {
     const stored = [
       { id: "codex-weekly", shown: false },
       { id: "nope", shown: true },
@@ -45,6 +45,9 @@ describe("parseLimits", () => {
       { id: "codex-session", shown: true },
       { id: "kimi-session", shown: true },
       { id: "kimi-weekly", shown: true },
+      { id: "opencode-session", shown: true },
+      { id: "opencode-weekly", shown: true },
+      { id: "opencode-monthly", shown: true },
     ]);
   });
 
@@ -58,11 +61,11 @@ describe("parseLimits", () => {
 });
 
 describe("moveLimit and toggleLimit", () => {
-  it("moves a limit one place up or down and leaves it at the edge", () => {
+  it("moves a limit one place up or down and leaves it at the edge, where OpenCode's monthly limit now stands last", () => {
     expect(moveLimit(DEFAULT_LIMITS, "claude-weekly", -1).map(({ id }) => id).slice(0, 2)).toEqual(["claude-weekly", "claude-session"]);
     expect(moveLimit(DEFAULT_LIMITS, "claude-weekly", 1).map(({ id }) => id).slice(1, 3)).toEqual(["claude-fable", "claude-weekly"]);
     expect(moveLimit(DEFAULT_LIMITS, "claude-session", -1)).toEqual(DEFAULT_LIMITS);
-    expect(moveLimit(DEFAULT_LIMITS, "kimi-weekly", 1)).toEqual(DEFAULT_LIMITS);
+    expect(moveLimit(DEFAULT_LIMITS, "opencode-monthly", 1)).toEqual(DEFAULT_LIMITS);
   });
 
   it("moving keeps every limit and its choice; moving back undoes it", () => {

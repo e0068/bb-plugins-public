@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { getRingStyle, publishRingStyle } from "./footer-items";
 import { RingSettings } from "./ring-settings";
 import { DEFAULT_RING_DIMS, DEFAULT_RING_STYLE, type RingDims } from "./ring-style";
+import { FOOTER_RINGS } from "./usage-model";
 
 afterEach(() => {
   cleanup();
@@ -20,9 +21,9 @@ const unfold = (view: ReturnType<typeof render>) => fireEvent.click(view.getByRo
 const previewBox = (view: ReturnType<typeof render>) => view.container.querySelector("[data-ring-preview] svg")?.getAttribute("viewBox");
 
 describe("ring settings", () => {
-  it("shows the seven footer rings in the current style", () => {
+  it("shows every footer ring in the current style", () => {
     const { view } = show();
-    expect(view.container.querySelectorAll("[data-ring-preview] svg.usage-circles__ring")).toHaveLength(7);
+    expect(view.container.querySelectorAll("[data-ring-preview] svg.usage-circles__ring")).toHaveLength(FOOTER_RINGS.length);
   });
 
   it("keeps the sliders folded until asked, then shows the ring sliders and the center logo's", () => {

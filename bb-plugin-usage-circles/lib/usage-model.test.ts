@@ -7,6 +7,7 @@ import {
   FOOTER_RINGS,
   formatAbsoluteReset,
   formatResetClock,
+  formatResetDate,
   formatRelativeReset,
   inferWindowDurationMs,
   normalizeUsage,
@@ -430,5 +431,27 @@ describe("kimi footer rings", () => {
       ["kimi-weekly", "weekly"],
     ]);
     expect(DEFAULT_LIMITS.filter((limit) => limit.id.startsWith("kimi-")).map((limit) => limit.shown)).toEqual([true, true]);
+  });
+});
+
+describe("formatResetDate", () => {
+  it("names the month, the day and the zero-padded local time of the reset", () => {
+    const resetsAt = "2026-12-02T13:45:48.000Z";
+    const date = new Date(resetsAt);
+    const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+    expect(formatResetDate(resetsAt)).toBe(`${months[date.getMonth()]} ${date.getDate()} ${formatResetClock(resetsAt)}`);
+  });
+
+  it("answers a dash when the reset is unknown or unreadable", () => {
+    expect(formatResetDate(null)).toBe("—");
+    expect(formatResetDate("soon")).toBe("—");
+  });
+});
+
+describe("a monthly window's reset", () => {
+  it("shows its date, not only the clock time the 5-hour window shows", () => {
+    const now = Date.parse("2026-11-07T19:00:00Z");
+    const resetsAt = "2026-12-02T13:45:48.000Z";
+    expect(buildUsageWindowModel({ label: "Monthly", usedPercent: 0, resetsAt }, now).resetAbsoluteLabel).toBe(formatResetDate(resetsAt));
   });
 });

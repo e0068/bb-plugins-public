@@ -35,7 +35,7 @@ describe("the Limits section", () => {
     expect(view.getByRole("switch", { name: "Show Claude Code — Fable weekly limit" }).getAttribute("aria-checked")).toBe("false");
   });
 
-  it("moves a limit up and down, and has no way past the ends", () => {
+  it("moves a limit up and down, and has no way past the ends — OpenCode's monthly limit is the last", () => {
     const { view, save, names } = show();
     fireEvent.click(view.getByRole("button", { name: "Move Codex — 5-hour limit up" }));
     expect(names().slice(2, 4)).toEqual(["codex-session", "claude-fable"]);
@@ -43,7 +43,15 @@ describe("the Limits section", () => {
     fireEvent.click(view.getByRole("button", { name: "Move Codex — 5-hour limit down" }));
     expect(names()).toEqual(FOOTER_RINGS.map(({ id }) => id));
     expect((view.getByRole("button", { name: "Move Claude Code — 5-hour limit up" }) as HTMLButtonElement).disabled).toBe(true);
-    expect((view.getByRole("button", { name: "Move Kimi — weekly limit down" }) as HTMLButtonElement).disabled).toBe(true);
+    expect((view.getByRole("button", { name: "Move OpenCode — monthly limit down" }) as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it("switches an OpenCode limit off and on", () => {
+    const { view, save } = show();
+    fireEvent.click(view.getByRole("switch", { name: "Show OpenCode — weekly limit" }));
+    expect(save).toHaveBeenLastCalledWith(DEFAULT_LIMITS.map((limit) => (limit.id === "opencode-weekly" ? { ...limit, shown: false } : limit)));
+    fireEvent.click(view.getByRole("switch", { name: "Show OpenCode — weekly limit" }));
+    expect(save).toHaveBeenLastCalledWith(DEFAULT_LIMITS);
   });
 
   it("says so when the choice could not be kept", async () => {

@@ -16,6 +16,8 @@ export interface ReducedColorsSectionProps {
   load: () => Promise<unknown>;
   /** Stores the whole setting; called once the edits settle. */
   save: (value: ReducedColors) => Promise<unknown>;
+  /** For a page that decides on or off elsewhere and shows the colour rows only while it is on: no switch, and the rows are never dimmed. */
+  hideSwitch?: boolean;
 }
 
 /** How long edits must pause before they are stored — a dragged picker fires on every pixel. */
@@ -35,7 +37,7 @@ const control: CSSProperties = { height: 28, borderRadius: 6, border: "1px solid
 /** What the section holds: still asking, could not read the stored value, or the value being edited. */
 type Loaded = { readonly kind: "loading" } | { readonly kind: "failed" } | { readonly kind: "ready"; readonly value: ReducedColors };
 
-export function ReducedColorsSection({ load, save }: ReducedColorsSectionProps) {
+export function ReducedColorsSection({ load, save, hideSwitch = false }: ReducedColorsSectionProps) {
   const [loaded, setLoaded] = useState<Loaded>({ kind: "loading" });
   const [saveFailed, setSaveFailed] = useState(false);
   const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
@@ -95,20 +97,22 @@ export function ReducedColorsSection({ load, save }: ReducedColorsSectionProps) 
 
   return (
     <div style={{ display: "flex", flexDirection: "column" }}>
-      <div style={{ ...row, borderTop: 0 }}>
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={text}>Use Reduced Colors</div>
-          <div style={hint}>Red for errors and canceled tasks stays red.</div>
+      {!hideSwitch && (
+        <div style={{ ...row, borderTop: 0 }}>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={text}>Use Reduced Colors</div>
+            <div style={hint}>Red for errors and canceled tasks stays red.</div>
+          </div>
+          <Switch checked={value.enabled} label="Use Reduced Colors" onChange={(enabled) => commit({ ...value, enabled })} />
         </div>
-        <Switch checked={value.enabled} label="Use Reduced Colors" onChange={(enabled) => commit({ ...value, enabled })} />
-      </div>
+      )}
       {saveFailed && (
         <p role="alert" style={{ ...hint, color: "var(--destructive)", paddingBottom: 8 }}>
           Could not save Reduced Colors — the last change is not stored.
         </p>
       )}
       {THEMES.map(({ mode, label }) => (
-        <div key={mode} style={{ ...row, opacity: value.enabled ? 1 : 0.5 }}>
+        <div key={mode} style={{ ...row, borderTop: hideSwitch && mode === "light" ? 0 : row.borderTop, opacity: value.enabled || hideSwitch ? 1 : 0.5 }}>
           <div style={{ ...text, width: 96, flexShrink: 0 }}>{label}</div>
           <ColorField label={`${label} low colour`} color={value[mode].low} onChange={(color) => setEnd(mode, "low", color)} />
           <div style={{ display: "flex", gap: 2, flex: 1, minWidth: 48, height: 16 }} aria-hidden>
