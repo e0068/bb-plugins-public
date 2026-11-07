@@ -101,6 +101,7 @@ const context = (patch: Partial<CellContext> = {}): CellContext => ({
     ["01HZZZZZZZZZZZZZZZZZZZZZT8", "SH-8"],
   ]),
   activeThreads: 0,
+  threads: [],
   subtasks: { done: 0, total: 0 },
   showEmpty: false,
   onEdit: () => {},

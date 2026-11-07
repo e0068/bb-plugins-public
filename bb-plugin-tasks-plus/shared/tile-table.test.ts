@@ -26,12 +26,12 @@ const table = (patch: Record<string, unknown> = {}) => ({ columns: ["key", "titl
 describe("the table under a tile's chart", () => {
   it("reads a tile saved before it had a table with the starting settings", () => {
     const parsed = tileSchema.parse(tile());
-    expect(tileTable(parsed)).toEqual({ columns: [...TILE_TABLE_COLUMNS_START], sort: null, rows: TILE_TABLE_ROWS.start, rowHeight: "regular" });
+    expect(tileTable(parsed)).toEqual({ columns: [...TILE_TABLE_COLUMNS_START], sort: null, rows: TILE_TABLE_ROWS.start, rowHeight: "regular", totals: [] });
   });
 
   it("reads back the settings a tile keeps", () => {
     const parsed = tileSchema.parse(tile({ table: table() }));
-    expect(tileTable(parsed)).toEqual(table());
+    expect(tileTable(parsed)).toEqual({ ...table(), totals: [] });
   });
 
   it("starts with columns the table can draw, the title among them", () => {

@@ -5,19 +5,22 @@
 // a cell draws as the task table's does (views/table/cells.tsx).
 import { useMemo, useState, type CSSProperties, type ReactNode } from "react";
 
-import { TILE_TABLE_SHOWN_MAX, tileTable, type TileTable } from "../../shared/analytics-tile.js";
-import type { QueryField } from "../../shared/enums.js";
+import { TILE_TABLE_SHOWN_MAX, tileTable, totalFnsOf, withTotal, type TileTable, type TotalFn } from "../../shared/analytics-tile.js";
+import { isNumberField, type QueryField } from "../../shared/enums.js";
 import type { Task, Tile } from "../../shared/contract.js";
 import { useProjects, useTasksQuery } from "../../client/data.js";
 import { Button } from "@/components/ui/button";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuRadioGroup, DropdownMenuRadioItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
+import { Icon } from "@/components/ui/icon";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
-import { useLabels } from "../common/data.js";
+import { useLabels, useTaskListMeta } from "../common/data.js";
 import { editedTasks } from "../common/optimistic.js";
 import { ROW_FIELD_LABELS } from "../common/row-field-preference.js";
 import { useListTaskEdits } from "../common/use-task-edits.js";
 import { TableCell, type CellContext } from "../table/cells.js";
 import { defaultColumnWidth } from "../table/columns.js";
+import { totalText } from "./column-total-format.js";
 import type { TileScope } from "./default-dashboard";
 import type { SegmentPick } from "./tile-charts";
 
@@ -39,6 +42,8 @@ const columnPx = (column: QueryField): number | undefined => (column === "title"
 const tableMinPx = (columns: readonly QueryField[]): number => columns.reduce((total, column) => total + (columnPx(column) ?? TITLE_MIN_PX), 0);
 
 const ROW_HEIGHT_CLASS = { regular: "h-[34px]", compact: "h-7" } as const;
+/** One type size for the whole table — its head, its rows and its totals — set by the row height. */
+const ROW_TEXT_CLASS = { regular: "text-sm", compact: "text-xs" } as const;
 
 export interface SegmentTableProps {
   tile: Tile;
@@ -53,13 +58,13 @@ export interface SegmentTableProps {
   pick: SegmentPick | null;
   /** «All tasks» or the picked segment's name, before the count. */
   heading: ReactNode;
-  /** A header was clicked: the sort the tile keeps from now on. */
-  onSort: (sort: TableSort) => void;
+  /** A header was clicked or a total chosen: the change to the table the tile keeps — applied to the saved table, not to a draft being edited. */
+  onTableChange: (change: (table: TileTable) => TileTable) => void;
   onOpenTask: (taskKey: string) => void;
   style?: CSSProperties;
 }
 
-export function SegmentTable({ tile, edges, asked, scope, picked, pick, heading, onSort, onOpenTask, style }: SegmentTableProps) {
+export function SegmentTable({ tile, edges, asked, scope, picked, pick, heading, onTableChange, onOpenTask, style }: SegmentTableProps) {
   const table = tileTable(tile);
   // Rows shown: the setting's at first, more on each «Show more»; a new pick, sort or setting starts over.
   const reset = JSON.stringify([tile.id, pick, table.sort, table.rows, picked]);
@@ -80,7 +85,7 @@ export function SegmentTable({ tile, edges, asked, scope, picked, pick, heading,
       }),
     // The chart's new answer stands for every change of the tile, the page and the boards: the table asks after it, on its edges.
     [],
-    [asked, gridPick, table.sort, shown],
+    [asked, gridPick, table.sort, shown, JSON.stringify([table.columns, table.totals])],
   );
   const [editError, setEditError] = useState<string | null>(null);
   const context = useCellContext(query.data?.tasks, setEditError);
@@ -108,15 +113,15 @@ export function SegmentTable({ tile, edges, asked, scope, picked, pick, heading,
               ))}
             </colgroup>
             <thead className="sticky top-0 z-[1] bg-surface-recessed-solid">
-              <tr className="h-8">
+              <tr className={cn("h-8", ROW_TEXT_CLASS[table.rowHeight])}>
                 {table.columns.map((column) => (
                   <th
                     key={column}
                     scope="col"
                     aria-sort={table.sort?.column !== column ? "none" : table.sort.direction === "asc" ? "ascending" : "descending"}
-                    className="border-b border-border-hairline px-2 text-left text-xs font-medium text-muted-foreground"
+                    className={cn("border-b border-border-hairline px-2 font-medium text-muted-foreground", isNumberField(column) ? "text-right" : "text-left")}
                   >
-                    <button type="button" className="flex w-full items-center gap-1 truncate hover:text-foreground" onClick={() => onSort(nextSort(table.sort, column))}>
+                    <button type="button" className={cn("flex w-full items-center gap-1 truncate hover:text-foreground", isNumberField(column) && "justify-end")} onClick={() => onTableChange((kept) => ({ ...kept, sort: nextSort(kept.sort, column) }))}>
                       <span className="truncate">{ROW_FIELD_LABELS[column]}</span>
                       {table.sort?.column === column ? <span className="text-foreground">{table.sort.direction === "asc" ? "↑" : "↓"}</span> : null}
                     </button>
@@ -137,7 +142,7 @@ export function SegmentTable({ tile, edges, asked, scope, picked, pick, heading,
                     <tr
                       key={task.id}
                       data-task-key={task.key}
-                      className={cn("cursor-pointer text-sm hover:bg-state-hover", ROW_HEIGHT_CLASS[table.rowHeight], table.rowHeight === "compact" && "text-xs")}
+                      className={cn("cursor-pointer hover:bg-state-hover", ROW_HEIGHT_CLASS[table.rowHeight], ROW_TEXT_CLASS[table.rowHeight])}
                       onClick={(event) => {
                         // Status and priority edit in their own buttons and menus; only a click on the row itself opens the task.
                         const target = event.target as HTMLElement;
@@ -146,7 +151,7 @@ export function SegmentTable({ tile, edges, asked, scope, picked, pick, heading,
                     >
                       {table.columns.map((column) => (
                         <td key={column} className={cn("overflow-hidden border-b border-border-hairline px-2 whitespace-nowrap", column === "key" && "text-muted-foreground tabular-nums")}>
-                          <span className="flex min-w-0 items-center">
+                          <span className={cn("flex min-w-0 items-center", isNumberField(column) && "justify-end")}>
                             {column === "title" ? <span className="truncate">{task.title}</span> : <TableCell column={column} task={task} context={context.of(task)} />}
                           </span>
                         </td>
@@ -154,6 +159,19 @@ export function SegmentTable({ tile, edges, asked, scope, picked, pick, heading,
                     </tr>
                   ))}
             </tbody>
+            <tfoot className="sticky bottom-0 z-[1] bg-card">
+              <tr className={cn("group/totals h-8", ROW_TEXT_CLASS[table.rowHeight])}>
+                {table.columns.map((column) => (
+                  <TotalCell
+                    key={column}
+                    column={column}
+                    fn={table.totals.find((total) => total.column === column)?.fn ?? null}
+                    value={query.data?.totals.find((total) => total.column === column)?.value}
+                    onChoose={(fn) => onTableChange((kept) => ({ ...kept, totals: withTotal(kept.totals, column, fn) }))}
+                  />
+                ))}
+              </tr>
+            </tfoot>
           </table>
         </div>
       )}
@@ -169,11 +187,56 @@ export function SegmentTable({ tile, edges, asked, scope, picked, pick, heading,
   );
 }
 
-/** The tasks with their pending edits, and what a cell reads beyond its task: the project, the labels, the edit. */
+const TOTAL_LABELS: Record<TotalFn, string> = { unique: "Unique", sum: "Sum", median: "Median" };
+
+/** One column's cell of the totals row: the chosen total and its number, a menu to choose it; the title has none. */
+function TotalCell({ column, fn, value, onChoose }: { column: QueryField; fn: TotalFn | null; value: number | null | undefined; onChoose: (fn: TotalFn | null) => void }) {
+  if (column === "title") return <td className="border-t border-border" />;
+  const label = ROW_FIELD_LABELS[column];
+  const number = isNumberField(column);
+  return (
+    <td className="overflow-hidden border-t border-border p-0">
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <button
+            type="button"
+            aria-label={`${label} total`}
+            className={cn("flex h-8 w-full min-w-0 items-center gap-1.5 px-2 whitespace-nowrap hover:bg-state-hover", number && "justify-end")}
+          >
+            {fn === null ? (
+              <span className="flex items-center gap-0.5 text-subtle-foreground opacity-0 group-hover/totals:opacity-100 focus-visible:opacity-100">
+                Calculate
+                <Icon name="ChevronDown" className="size-3" />
+              </span>
+            ) : (
+              <>
+                <span className="text-muted-foreground">{TOTAL_LABELS[fn]}</span>
+                {value === undefined ? <Skeleton className="h-3 w-10" /> : <span className="tabular-nums text-foreground">{totalText(column, fn, value)}</span>}
+              </>
+            )}
+          </button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align={number ? "end" : "start"} side="top">
+          <DropdownMenuRadioGroup value={fn ?? "none"} onValueChange={(next) => onChoose(next === "none" ? null : (next as TotalFn))}>
+            <DropdownMenuRadioItem value="none">None</DropdownMenuRadioItem>
+            {totalFnsOf(column).map((choice) => (
+              <DropdownMenuRadioItem key={choice} value={choice}>
+                {TOTAL_LABELS[choice]}
+              </DropdownMenuRadioItem>
+            ))}
+          </DropdownMenuRadioGroup>
+        </DropdownMenuContent>
+      </DropdownMenu>
+    </td>
+  );
+}
+
+/** The tasks with their pending edits, and what a cell reads beyond its task: the project, the labels, the threads, the edit. */
 function useCellContext(served: readonly Task[] | undefined, onError: (message: string) => void): { tasks: Task[]; of: (task: Task) => CellContext } {
   const projects = useProjects();
   const projectIds = useMemo(() => (projects.data ?? []).map((project) => project.id), [projects.data]);
   const labels = useLabels(projectIds);
+  const meta = useTaskListMeta(served);
   const edits = useListTaskEdits(served, onError);
   const tasks = useMemo(() => editedTasks(served ?? [], edits.entries), [served, edits.entries]);
   const projectsById = useMemo(() => new Map((projects.data ?? []).map((project) => [project.id, project])), [projects.data]);
@@ -184,7 +247,8 @@ function useCellContext(served: readonly Task[] | undefined, onError: (message: 
       project: projectsById.get(task.projectId),
       labelsById,
       taskKeys: new Map(),
-      activeThreads: 0,
+      activeThreads: meta.data?.get(task.id)?.activeThreads.length ?? 0,
+      threads: meta.data?.get(task.id)?.threads ?? [],
       subtasks: { done: 0, total: 0 },
       showEmpty: false,
       onEdit: edits.edit,

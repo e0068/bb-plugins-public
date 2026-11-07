@@ -108,7 +108,47 @@ describe("segmentTasks — the tasks behind a pick", () => {
 
   it("lists nothing for a column past the chart's or a series it does not have", () => {
     const board = [aTask(1, { status: "todo" })];
-    expect(segmentTasks(input(board), { column: 9, series: null }, null, 10)).toEqual({ tasks: [], total: 0 });
-    expect(segmentTasks(input(board), { column: 0, series: "nobody" }, null, 10)).toEqual({ tasks: [], total: 0 });
+    expect(segmentTasks(input(board), { column: 9, series: null }, null, 10)).toEqual({ tasks: [], total: 0, totals: [] });
+    expect(segmentTasks(input(board), { column: 0, series: "nobody" }, null, 10)).toEqual({ tasks: [], total: 0, totals: [] });
+  });
+});
+
+describe("segmentTasks — the totals under the table", () => {
+  const board = (count: number) => Array.from({ length: count }, (_, index) => aTask(index + 1, { cost: index + 1, status: index % 2 === 0 ? "todo" : "done" }));
+  const withTotals = (totals: { column: "cost" | "status" | "project"; fn: "unique" | "sum" | "median" }[]) =>
+    tile({ breakdown: null, table: { columns: ["key", "title", "cost", "status", "project"], sort: null, rows: 50, rowHeight: "regular", totals } });
+  const totalsOf = (tasks: readonly Task[], limit: number, totals: Parameters<typeof withTotals>[0], pick: Parameters<typeof segmentTasks>[1] = null) =>
+    segmentTasks(input(tasks, { tile: withTotals(totals) }), pick, null, limit).totals;
+
+  it("sums the whole segment, not the rows the limit shows — 364 tasks, 50 shown", () => {
+    const tasks = board(364);
+    const answer = segmentTasks(input(tasks, { tile: withTotals([{ column: "cost", fn: "sum" }]) }), null, null, 50);
+    expect(answer.tasks).toHaveLength(50);
+    expect(answer.total).toBe(364);
+    expect(answer.totals).toEqual([{ column: "cost", value: (364 * 365) / 2 }]);
+  });
+
+  it("totals only the picked segment's tasks", () => {
+    const tasks = board(10);
+    const todo = totalsOf(tasks, 3, [{ column: "cost", fn: "sum" }], { column: 0, series: null });
+    expect(todo).toEqual([{ column: "cost", value: 1 + 3 + 5 + 7 + 9 }]);
+  });
+
+  it("answers the asked totals in order, and none when none is asked", () => {
+    const tasks = board(4);
+    expect(totalsOf(tasks, 10, [])).toEqual([]);
+    expect(totalsOf(tasks, 10, [{ column: "status", fn: "unique" }, { column: "cost", fn: "median" }])).toEqual([
+      { column: "status", value: 2 },
+      { column: "cost", value: 2.5 },
+    ]);
+  });
+
+  it("leaves out a total whose column the table does not show", () => {
+    const hidden = tile({ breakdown: null, table: { columns: ["key", "title"], sort: null, rows: 50, rowHeight: "regular", totals: [{ column: "cost", fn: "sum" }] } });
+    expect(segmentTasks(input(board(3), { tile: hidden }), null, null, 10).totals).toEqual([]);
+  });
+
+  it("reads a tile saved without a table as having no totals", () => {
+    expect(segmentTasks(input(board(3)), null, null, 10).totals).toEqual([]);
   });
 });

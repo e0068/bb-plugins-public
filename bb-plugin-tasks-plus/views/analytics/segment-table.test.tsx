@@ -91,7 +91,7 @@ function renderTable(asked: Asked) {
           projects: [PROJECT],
           logStartMs: null,
         }),
-        analyticsTileTasks: log("analyticsTileTasks", (input) => ({ tasks: TASKS.slice(0, input.limit), total: TASKS.length })),
+        analyticsTileTasks: log("analyticsTileTasks", (input) => ({ tasks: TASKS.slice(0, input.limit), total: TASKS.length, totals: [] })),
       } as never,
     },
   );

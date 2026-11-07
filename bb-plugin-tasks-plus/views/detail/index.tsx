@@ -527,6 +527,7 @@ function TaskDetail({
                 parent={parentTask}
                 project={project}
                 labels={labels.data}
+                threads={threads.data ?? []}
                 presets={presets.data}
                 onUpdate={(update) => void updateTask(update)}
                 onError={(message) => push("error", message)}

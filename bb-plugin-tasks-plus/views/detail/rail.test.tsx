@@ -239,7 +239,7 @@ describe("assignee and epic", () => {
     const updateCalls: Array<Record<string, unknown>> = [];
     const slot = renderSlot(app.navPanels[0]!, { subPath: "task/TSK-5" }, { rpc: placementRpc({}, updateCalls) });
 
-    fireEvent.click((await slot.findAllByRole("button", { name: "Edit assignee" }))[0]!);
+    fireEvent.click((await slot.findAllByRole("button", { name: "Edit folder" }))[0]!);
     fireEvent.click(await slot.findByRole("option", { name: "Sergey" }));
 
     await waitFor(() => expect(updateCalls).toHaveLength(1));
@@ -275,12 +275,52 @@ describe("assignee and epic", () => {
     const updateCalls: Array<Record<string, unknown>> = [];
     const slot = renderSlot(app.navPanels[0]!, { subPath: "task/TSK-5" }, { rpc: placementRpc({}, updateCalls) });
 
-    fireEvent.click((await slot.findAllByRole("button", { name: "Edit assignee" }))[0]!);
-    fireEvent.change(await slot.findByPlaceholderText("Assignee…"), { target: { value: "Codex" } });
+    fireEvent.click((await slot.findAllByRole("button", { name: "Edit folder" }))[0]!);
+    fireEvent.change(await slot.findByPlaceholderText("Folder…"), { target: { value: "Codex" } });
     fireEvent.click(await slot.findByRole("option", { name: "Create “Codex”" }));
 
     await waitFor(() => expect(updateCalls).toHaveLength(1));
     expect(updateCalls[0]).toMatchObject({ assignee: "Codex" });
   });
 
+});
+
+describe("Assignee — the threads that worked on the task", () => {
+  const thread = (n: number, title: string, liveStatus: string, archivedAt: string | null = null) => ({
+    id: `rec_${n}`,
+    taskId: task.id,
+    threadId: `thr_${n}`,
+    presetName: "Code",
+    title,
+    liveStatus,
+    archivedAt,
+    attachedAt: "2026-10-01T10:00:00.000Z",
+  });
+
+  it("lists every thread of the task among its properties, the finished and archived ones too, and opens the clicked one", async () => {
+    const threads = [thread(1, "Desktop window", "working"), thread(2, "First try", "completed", "2026-10-02T10:00:00.000Z")];
+    const slot = renderSlot(app.navPanels[0]!, { subPath: "task/TSK-5" }, { rpc: detailRpc(null, { listTaskThreads: () => ({ taskThreads: threads }) }) as never });
+
+    const properties = await waitFor(() => {
+      const found = slot.getAllByRole("group", { name: "Assignee" });
+      expect(found.length).toBeGreaterThan(0);
+      return found;
+    });
+    for (const property of properties) {
+      expect(Array.from(property.querySelectorAll("button")).map((button) => button.textContent)).toEqual(["Desktop window", "First try"]);
+    }
+    fireEvent.click(properties[0]!.querySelectorAll("button")[1]!);
+    expect(slot.inspection.navigateCalls).toEqual([{ method: "toThread", threadId: "thr_2" }]);
+  });
+
+  it("says No assignee while no thread is attached", async () => {
+    const slot = renderSlot(app.navPanels[0]!, { subPath: "task/TSK-5" }, { rpc: detailRpc(null) as never });
+
+    const properties = await waitFor(() => {
+      const found = slot.getAllByRole("group", { name: "Assignee" });
+      expect(found.length).toBeGreaterThan(0);
+      return found;
+    });
+    for (const property of properties) expect(property.textContent).toContain("No assignee");
+  });
 });

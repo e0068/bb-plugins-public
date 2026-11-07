@@ -1,5 +1,6 @@
 import { useState } from "react";
-import type { Label, Project, Task } from "../../shared/contract.js";
+import { useBbNavigate } from "@get-bb/plugin-sdk/app";
+import type { Label, Project, Task, TaskThread } from "../../shared/contract.js";
 import { Icon } from "@/components/ui/icon";
 import { EntityIcon } from "@/components/entity-icon";
 import { PriorityEditor, StatusEditor, type EditFn } from "../common/property-menus.js";
@@ -8,7 +9,7 @@ import type { RowField } from "../common/row-field-preference.js";
 import { PRIORITY_LABELS, STATUS_LABELS } from "../common/lib.js";
 import { formatDateValue, type DateValue } from "../common/date-display.js";
 import { dateFormatOf, iconShownOf, type ColumnDisplays, type DateColumn } from "./column-display.js";
-import { EstimateIcon, TYPE_ICONS, TYPE_LABELS } from "../../components/task-meta.js";
+import { EstimateIcon, THREAD_STATUS_META, TYPE_ICONS, TYPE_LABELS } from "../../components/task-meta.js";
 import { WorktreeSourceMark } from "../../components/worktree-mark.js";
 import { slugOf } from "../../shared/format.js";
 
@@ -20,6 +21,8 @@ export interface CellContext {
   labelsById: ReadonlyMap<string, Label>;
   taskKeys: ReadonlyMap<string, string>;
   activeThreads: number;
+  /** Every thread attached to the task, in the order they were attached. */
+  threads: readonly TaskThread[];
   subtasks: { done: number; total: number };
   showEmpty: boolean;
   onEdit: EditFn;
@@ -41,6 +44,39 @@ function CellEmpty({ showEmpty }: { showEmpty: boolean }) {
 function CellText({ value, showEmpty }: { value: string | null; showEmpty: boolean }) {
   if (value === null) return <CellEmpty showEmpty={showEmpty} />;
   return <span className="truncate">{value}</span>;
+}
+
+/** The dot a thread chip leads with: its live status, muted once the thread is archived. */
+const threadDotClass = (thread: TaskThread): string =>
+  thread.archivedAt === null ? THREAD_STATUS_META[thread.liveStatus].dotClassName : "bg-muted";
+
+/**
+ * The task's threads as chips in one row, cut at the edge — or wrapped onto the next lines: a status dot and
+ * the title, each a button that opens its thread. The press and the click stay
+ * on the chip — the row or the card under it neither opens the task nor drags.
+ */
+export function ThreadLinks({ threads, textClassName = "text-xs", wrap = false }: { threads: readonly TaskThread[]; textClassName?: string; wrap?: boolean }) {
+  const navigate = useBbNavigate();
+  return (
+    <span className={`flex min-w-0 items-center gap-1 ${wrap ? "flex-wrap" : "overflow-hidden"}`}>
+      {threads.map((thread) => (
+        <button
+          key={thread.id}
+          type="button"
+          title={thread.title}
+          onPointerDown={(event) => event.stopPropagation()}
+          onClick={(event) => {
+            event.stopPropagation();
+            navigate.toThread(thread.threadId);
+          }}
+          className={`flex min-w-0 shrink items-center gap-1 rounded-sm border border-border bg-secondary px-1.5 py-0.5 ${textClassName} hover:border-input focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring`}
+        >
+          <span aria-hidden className={`size-1.5 shrink-0 rounded-full ${threadDotClass(thread)}`} />
+          <span className="truncate">{thread.title}</span>
+        </button>
+      ))}
+    </span>
+  );
 }
 
 function keyOf(taskId: string | null, taskKeys: ReadonlyMap<string, string>): string | null {
@@ -173,6 +209,8 @@ export function TableCell({
       return <CellText value={task.flow?.name ?? null} showEmpty={context.showEmpty} />;
     case "takenBy":
       return <CellText value={task.takenBy?.machine ?? null} showEmpty={context.showEmpty} />;
+    case "threads":
+      return context.threads.length === 0 ? <CellEmpty showEmpty={context.showEmpty} /> : <ThreadLinks threads={context.threads} />;
     case "assignee":
       return <CellText value={task.assignee ?? null} showEmpty={context.showEmpty} />;
     case "labels":

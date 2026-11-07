@@ -75,7 +75,7 @@ const NONE_LABELS: Record<BoardGroupProperty, string> = {
   priority: PRIORITY_LABELS.none,
   type: "No type",
   estimate: "No estimate",
-  assignee: "No assignee",
+  assignee: "No folder",
   label: "No label",
 };
 

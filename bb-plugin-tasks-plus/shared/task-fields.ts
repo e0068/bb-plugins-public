@@ -60,6 +60,8 @@ export interface TaskFacts {
   /** Per task, the open tasks at every depth under it. */
   openCounts: ReadonlyMap<string, number>;
   attachmentCounts: ReadonlyMap<string, number>;
+  /** Per task, the titles of the threads attached to it, in the order they were attached. */
+  threadTitles: ReadonlyMap<string, readonly string[]>;
 }
 
 const NOTHING: ReadonlyMap<string, never> = new Map<string, never>();
@@ -72,6 +74,7 @@ export const EMPTY_FACTS: TaskFacts = {
   descendantCounts: NOTHING,
   openCounts: NOTHING,
   attachmentCounts: NOTHING,
+  threadTitles: NOTHING,
 };
 
 /** Facts from whichever of them a surface knows; the rest read as empty. */
@@ -145,8 +148,11 @@ const keyOf = (id: string | null | undefined, facts: TaskFacts): string | null =
 
 const orNull = (text: string): string | null => (text === "" ? null : text);
 
+/** A task's thread titles as one text, comma-separated; empty when none is attached. */
+const threadsText = (task: Task, facts: TaskFacts): string => (facts.threadTitles.get(task.id) ?? []).join(", ");
+
 /** A field's value as it orders: text, a number or rank, or null for empty. */
-function sortValue(field: SortField, task: Task, facts: TaskFacts): string | number | null {
+export function sortValue(field: SortField, task: Task, facts: TaskFacts): string | number | null {
   switch (field) {
     case "title":
       return task.title;
@@ -184,6 +190,8 @@ function sortValue(field: SortField, task: Task, facts: TaskFacts): string | num
       );
     case "active":
       return (facts.activeCounts.get(task.id) ?? 0) || null;
+    case "threads":
+      return orNull(threadsText(task, facts));
     case "subtasks":
       return facts.descendantCounts.get(task.id) ?? 0;
     case "openSubtasks":
@@ -248,7 +256,7 @@ function filterValue(field: ValueFilterField, task: Task, facts: TaskFacts): str
   }
 }
 
-function textValue(field: TextField, task: Task): string {
+function textValue(field: TextField, task: Task, facts: TaskFacts): string {
   switch (field) {
     case "title":
       return task.title;
@@ -258,6 +266,8 @@ function textValue(field: TextField, task: Task): string {
       return task.key;
     case "slug":
       return slugOf(task.id);
+    case "threads":
+      return threadsText(task, facts);
   }
 }
 
@@ -322,7 +332,7 @@ export function matchesFieldFilters(task: Task, filters: SavedViewFilters, facts
     }) &&
     entries(filters.texts ?? {}).every(([field, needle]) => {
       const wanted = (needle ?? "").trim().toLowerCase();
-      return wanted === "" || textValue(field, task).toLowerCase().includes(wanted);
+      return wanted === "" || textValue(field, task, facts).toLowerCase().includes(wanted);
     }) &&
     entries(filters.dates ?? {}).every(([field, range]) => range === undefined || inRange(dayValue(field, task), range)) &&
     entries(filters.numbers ?? {}).every(([field, range]) => range === undefined || inRange(numberValue(field, task, facts), range))

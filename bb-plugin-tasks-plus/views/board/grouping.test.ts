@@ -197,7 +197,7 @@ describe("boardColumns", () => {
         ?.label;
     expect(labelOf("type")).toBe("No type");
     expect(labelOf("estimate")).toBe("No estimate");
-    expect(labelOf("assignee")).toBe("No assignee");
+    expect(labelOf("assignee")).toBe("No folder");
     expect(labelOf("label")).toBe("No label");
     expect(labelOf("priority")).toBe("No priority");
   });

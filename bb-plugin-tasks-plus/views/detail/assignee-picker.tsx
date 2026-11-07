@@ -12,7 +12,7 @@ import { Icon } from "@/components/ui/icon";
 import { cn } from "@/lib/utils";
 
 /**
- * One assignee out of the folders in use on the board, or a new one typed
+ * One folder out of those in use on the board, or a new one typed
  * into the search. Knows nothing of the task itself, so the card and the
  * new-task dialog share it. Values are asked for on open — the folders change
  * with every move, and a closed menu needs none of them.
@@ -55,21 +55,21 @@ export function AssigneePicker({
       <PopoverTrigger asChild>
         <button
           type="button"
-          aria-label="Edit assignee"
+          aria-label="Edit folder"
           disabled={projectId === null}
           className={cn(triggerClassName, "disabled:opacity-50")}
         >
-          <Icon name="UserRound" className="size-3.5" />
-          {value ?? "No assignee"}
+          <Icon name="Folder" className="size-3.5" />
+          {value ?? "No folder"}
         </button>
       </PopoverTrigger>
       <PopoverContent className="w-56 p-0" align="start">
         <Command>
-          <CommandInput placeholder="Assignee…" value={query} onValueChange={setQuery} />
+          <CommandInput placeholder="Folder…" value={query} onValueChange={setQuery} />
           <CommandList>
             <CommandGroup>
-              <CommandItem value="No assignee" onSelect={() => select(null)}>
-                <span className="flex-1">No assignee</span>
+              <CommandItem value="No folder" onSelect={() => select(null)}>
+                <span className="flex-1">No folder</span>
                 {value === null ? <Icon name="Check" className="size-3.5" /> : null}
               </CommandItem>
               {assignees.map((name) => (
@@ -87,7 +87,7 @@ export function AssigneePicker({
             </CommandGroup>
             {typed === "" ? (
               // Creating is only reachable by typing, so an empty board has to say so.
-              <p className="px-3 py-2 text-xs text-muted-foreground">Type a name to create a new assignee</p>
+              <p className="px-3 py-2 text-xs text-muted-foreground">Type a name to create a new folder</p>
             ) : null}
           </CommandList>
         </Command>

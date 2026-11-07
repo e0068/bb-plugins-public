@@ -7,6 +7,8 @@ import { isWorkingThread } from "../../shared/thread-activity.js";
 
 export interface BoardCardMeta {
   workingThreads: TaskThread[];
+  /** Every thread attached to the task, in the order they were attached — the Assignee field. */
+  threads: TaskThread[];
   attachmentCount: number;
   /** The task the card sits under, marked on a child's card. */
   parent: Task | null;
@@ -32,6 +34,7 @@ export function boardCardMeta(
         task.id,
         {
           workingThreads: card?.taskThreads.filter(isWorkingThread) ?? [],
+          threads: card?.taskThreads ?? [],
           attachmentCount: card?.attachmentCount ?? 0,
           parent: task.parentTaskId === null ? null : (byId.get(task.parentTaskId) ?? null),
           family,

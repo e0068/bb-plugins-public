@@ -3,7 +3,7 @@
 // pure helpers only, no zod — the client imports this; the schemas over these
 // lists live in contract.ts, which only the server reads by value.
 import type { SavedViewFilters } from "./contract.js";
-import { QUERY_FIELDS, type QueryField, type TableSortDirection } from "./enums.js";
+import { QUERY_FIELDS, isNumberField, type QueryField, type TableSortDirection } from "./enums.js";
 
 /** How a tile draws. Gantt is `bars` whose length runs Start → Due. */
 export const TILE_TYPES = ["columns", "bars", "line", "ring", "list", "table", "big"] as const;
@@ -116,17 +116,42 @@ export const TILE_TABLE_FIELDS: readonly QueryField[] = QUERY_FIELDS.filter((fie
 /** The columns a new table shows. */
 export const TILE_TABLE_COLUMNS_START: readonly QueryField[] = ["key", "title", "status", "project"];
 
-/** How the table under a chart is set: its columns in order, its sort, rows per segment and row height. */
+/** What a column's total under the table counts: the distinct values, their sum, or their median. */
+export const TOTAL_FNS = ["unique", "sum", "median"] as const;
+export type TotalFn = (typeof TOTAL_FNS)[number];
+
+/** One column's chosen total; a column without one has none. */
+export interface ColumnTotal {
+  column: QueryField;
+  fn: TotalFn;
+}
+
+/** The totals a column offers: Unique on any, Sum and Median only on a number. */
+export const totalFnsOf = (column: QueryField): readonly TotalFn[] => (isNumberField(column) ? TOTAL_FNS : ["unique"]);
+
+/** The totals with one column's total set to `fn` — none (`null`) takes it away; every other column keeps its own. */
+export const withTotal = (totals: readonly ColumnTotal[], column: QueryField, fn: TotalFn | null): ColumnTotal[] => [
+  ...totals.filter((total) => total.column !== column),
+  ...(fn === null ? [] : [{ column, fn }]),
+];
+
+/** How the table under a chart is set: its columns in order, its sort, rows per segment, row height and the totals under the columns. */
 export interface TileTable {
   columns: QueryField[];
   sort: { column: QueryField; direction: TableSortDirection } | null;
   rows: number;
   rowHeight: TileTableHeight;
+  totals: ColumnTotal[];
 }
 
-/** A tile's table settings, the starting ones for a tile saved before it had a table. */
-export const tileTable = (tile: { table?: TileTable }): TileTable =>
-  tile.table ?? { columns: [...TILE_TABLE_COLUMNS_START], sort: null, rows: TILE_TABLE_ROWS.start, rowHeight: "regular" };
+/** A table as a tile stores it: one saved before totals has none. */
+export type StoredTileTable = Omit<TileTable, "totals"> & { totals?: ColumnTotal[] };
+
+/** A tile's table settings, the starting ones for a tile saved before it had a table, no totals for one saved before totals. */
+export const tileTable = (tile: { table?: StoredTileTable }): TileTable =>
+  tile.table === undefined
+    ? { columns: [...TILE_TABLE_COLUMNS_START], sort: null, rows: TILE_TABLE_ROWS.start, rowHeight: "regular", totals: [] }
+    : { ...tile.table, totals: tile.table.totals ?? [] };
 
 /** The chart's share of a tile's height while the tile lists its segments' tasks under it: the bounds the divider moves in, and where it starts. */
 export const CONTENTS_SHARE = { min: 0.2, max: 0.8, start: 0.6 } as const;
