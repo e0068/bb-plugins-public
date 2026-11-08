@@ -64,12 +64,19 @@ function setup(world: World) {
 const ask = { threadId: "root", unit: 60, groupWorkflows: true };
 
 describe("createThreadFamilyService", () => {
-  it("answers with no members for a thread that started nothing, without counting anything", async () => {
-    const { service, tokenUsage, threadsTimeline } = setup({ threads: [row("root", null), row("other", null)], sessions: { root: "s-root" }, usage: { "s-root": [10, 1] } });
+  it("counts a thread that started nothing as a family of one — its own spend, not zero", async () => {
+    const { service } = setup({ threads: [row("root", null), row("other", null)], sessions: { root: "s-root" }, usage: { "s-root": [10, 1] } });
+
+    const result = await service.query(ask);
+
+    expect(result.members.map((m) => [m.threadId, m.totals.total, m.totals.cost])).toEqual([["root", 10, 1]]);
+    expect(result.total).toMatchObject({ total: 10, cost: 1 });
+  });
+
+  it("answers with no members for a thread that has not started a session", async () => {
+    const { service } = setup({ threads: [row("root", null)] });
 
     expect(await service.query(ask)).toEqual({ members: [], total: sumTotals([]), truncated: false, unreadable: 0 });
-    expect(tokenUsage.query).not.toHaveBeenCalled();
-    expect(threadsTimeline.query).not.toHaveBeenCalled();
   });
 
   it("lists hidden threads too — a workflow's agent threads are children like any other", async () => {
