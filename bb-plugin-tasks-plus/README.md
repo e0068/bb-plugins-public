@@ -20,6 +20,8 @@ The frontend registers four host slots in [app.tsx](app.tsx):
 - `app.slots.threadPanelAction` (id `task`) — a **Task** tab in a thread's right panel (`TaskEmbedPanel`).
 - `app.slots.experimental_threadHeaderAction` (id `current-task`) — a task action in the thread header (`CurrentTaskHeaderAction`).
 - `app.slots.messageDirective` (id `task`) — renders the `::task{key="…"}` leaf directive inline in a message as a task card (`TaskDirectiveCard`).
+- `app.slots.experimental_appOverlay` (id `inline-task-chips`) — the same directive in the middle of a sentence, which bb leaves as text, becomes an inline task chip (`views/embed/inline-chips.tsx`); code spans and code blocks stay text.
+  The same overlay catches a click on any `bb://tasks/<key>` link — a widget card's text, where directives do not render — and opens the task in the thread side panel.
 
 The backend ([server.ts](server.ts)) wires the store and its feature modules: `registerTasksApi` (RPC — the only bridge the frontend uses), `registerAttachments`, `registerTasksCli` (the `bb tasks` CLI), `registerDelegation`, `registerMentions`, `registerFolders`, and `registerLifecycle`. Mentions register through `bb.ui.registerMentionProvider` (id `task`, label **Tasks**) so typing `@` in the composer searches tasks by key or title and hands the agent the task's context.
 
@@ -80,6 +82,8 @@ Tasks+ — трекер в стиле Linear внутри bb (id плагина 
 - `app.slots.threadPanelAction` (id `task`) — вкладка **Task** в правой панели треда (`TaskEmbedPanel`).
 - `app.slots.experimental_threadHeaderAction` (id `current-task`) — действие задачи в шапке треда (`CurrentTaskHeaderAction`).
 - `app.slots.messageDirective` (id `task`) — рендерит листовую директиву `::task{key="…"}` в сообщении карточкой задачи (`TaskDirectiveCard`).
+- `app.slots.experimental_appOverlay` (id `inline-task-chips`) — та же директива посреди фразы, которую bb оставляет текстом, становится чипом задачи в строке (`views/embed/inline-chips.tsx`); в коде и блоках кода остаётся текстом.
+  Тот же оверлей ловит клик по любой ссылке `bb://tasks/<ключ>` — в тексте карточки виджета, где директива не рисуется, — и открывает задачу в боковой панели треда.
 
 Бэкенд ([server.ts](server.ts)) собирает store и его модули: `registerTasksApi` (RPC — единственный мост, которым пользуется фронтенд), `registerAttachments`, `registerTasksCli` (CLI `bb tasks`), `registerDelegation`, `registerMentions`, `registerFolders` и `registerLifecycle`. Упоминания регистрируются через `bb.ui.registerMentionProvider` (id `task`, метка **Tasks**): `@` в композере ищет задачи по ключу или заголовку и отдаёт агенту контекст задачи.
 

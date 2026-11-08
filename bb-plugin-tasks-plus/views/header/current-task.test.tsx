@@ -59,7 +59,7 @@ describe("CurrentTaskHeaderAction", () => {
     const seen: unknown[] = [];
     const slot = renderSlot(
       app.threadHeaderActions[0]!,
-      { threadId: "thr_worktree", isCompactViewport: false },
+      { threadId: "thr_worktree", projectId: "prj_test", isCompactViewport: false },
       {
         rpc: {
           tasksForThread: (input: unknown) => {
@@ -80,7 +80,7 @@ describe("CurrentTaskHeaderAction", () => {
   it("молчит, когда тред не ведёт ни одной задачи", async () => {
     const slot = renderSlot(
       app.threadHeaderActions[0]!,
-      { threadId: "thr_main", isCompactViewport: false },
+      { threadId: "thr_main", projectId: "prj_test", isCompactViewport: false },
       { rpc: { tasksForThread: () => ({ tasks: [] }) } },
     );
 

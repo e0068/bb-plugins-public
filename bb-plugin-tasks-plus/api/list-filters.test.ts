@@ -66,7 +66,7 @@ function apiStore(): TasksApiStore {
 describe("listTasks RPC filter seam", () => {
   it("forwards every thread filter it accepts", async () => {
     const { bb, harness } = createFakePluginHost({ pluginId: "tasks" });
-    registerTasksApi(bb, apiStore());
+    registerTasksApi(bb, apiStore(), { get: async () => null });
 
     const waiting = await tasks.createTask({
       projectId: BOARD.id,

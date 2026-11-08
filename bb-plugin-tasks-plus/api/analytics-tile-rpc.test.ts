@@ -58,7 +58,7 @@ function setup() {
     openTaskCount: async () => (await tasks.listTasks({})).length,
     sidebarSummary: async () => [],
   };
-  registerTasksApi(bb, store);
+  registerTasksApi(bb, store, { get: async () => null });
   return { harness };
 }
 

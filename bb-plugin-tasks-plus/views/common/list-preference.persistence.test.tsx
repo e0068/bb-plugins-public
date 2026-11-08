@@ -149,16 +149,17 @@ function baseRpc(overrides: Record<string, unknown> = {}) {
     listFolders: () => ({ folders: [] }),
     listPresets: () => ({ presets: [] }),
     sidebarSummary: () => ({ projects: [] }),
-    listLabels: (input: { projectId: string }) => ({
-      labels: input.projectId === PROJECT_A ? labelsA : [],
+    listLabels: (input: unknown) => ({
+      labels: (input as { projectId: string }).projectId === PROJECT_A ? labelsA : [],
     }),
-    listTasks: (input: {
+    listTasks: (rawInput: unknown) => {
+      const input = rawInput as {
       projectId?: string | null;
       activeOnly?: boolean;
       statuses?: readonly string[];
       priorities?: readonly string[];
       labelIds?: readonly string[];
-    }) => {
+      };
       listTasksCalls.push(input);
       let tasks: Task[];
       if (input.activeOnly) {
@@ -196,14 +197,14 @@ function baseRpc(overrides: Record<string, unknown> = {}) {
     listAttachments: () => ({ attachments: [] }),
     ...overrides,
   };
-  return Object.assign(rpc, { listTasksCalls });
+  return { rpc, listTasksCalls };
 }
 
 function renderProject(projectId: string) {
   return renderSlot(
     app.navPanels[0]!,
     { subPath: projectId },
-    { rpc: baseRpc() },
+    { rpc: baseRpc().rpc },
   );
 }
 
@@ -263,7 +264,7 @@ describe("list filter/sort preference persistence", () => {
     const slot = renderSlot(
       registration,
       { subPath: PROJECT_A },
-      { rpc: baseRpc() },
+      { rpc: baseRpc().rpc },
     );
     await slot.findByText("ALP-3");
     fireEvent.click(slot.getByRole("button", { name: "Filter" }));
@@ -277,7 +278,7 @@ describe("list filter/sort preference persistence", () => {
     const remounted = renderSlot(
       registration,
       { subPath: PROJECT_A },
-      { rpc: baseRpc() },
+      { rpc: baseRpc().rpc },
     );
     await remounted.findByText("ALP-1");
     expect(filterBadge(remounted)).toBe("");
@@ -288,7 +289,7 @@ describe("list filter/sort preference persistence", () => {
 
   it("persists priority and label filters and sends resolved label ids", async () => {
     const registration = app.navPanels[0]!;
-    const rpc = baseRpc();
+    const { rpc, listTasksCalls } = baseRpc();
     const slot = renderSlot(registration, { subPath: PROJECT_A }, { rpc });
     await slot.findByText("ALP-1");
 
@@ -308,7 +309,7 @@ describe("list filter/sort preference persistence", () => {
     });
 
     await waitFor(() => {
-      const withLabels = rpc.listTasksCalls.filter(
+      const withLabels = listTasksCalls.filter(
         (call): call is { labelIds?: string[]; priorities?: string[] } =>
           typeof call === "object" && call !== null,
       );
@@ -327,7 +328,7 @@ describe("list filter/sort preference persistence", () => {
     const remounted = renderSlot(
       registration,
       { subPath: PROJECT_A },
-      { rpc: baseRpc() },
+      { rpc: baseRpc().rpc },
     );
     await waitFor(() => expect(filterBadge(remounted)).toBe("2"));
     expect(loadListPreference(`project:${PROJECT_A}`).filters).toMatchObject({ priorities: ["urgent"], labelNames: ["Bug"] });
@@ -350,12 +351,12 @@ describe("list filter/sort preference persistence", () => {
         },
       }),
     );
-    const rpc = baseRpc();
+    const { rpc, listTasksCalls } = baseRpc();
     const slot = renderSlot(app.navPanels[0]!, { subPath: PROJECT_A }, { rpc });
     await waitFor(() => expect(filterBadge(slot)).toBe("1"));
     await waitFor(() => {
       expect(
-        rpc.listTasksCalls.some(
+        listTasksCalls.some(
           (call) =>
             typeof call === "object" &&
             call !== null &&

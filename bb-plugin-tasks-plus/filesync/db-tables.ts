@@ -74,8 +74,12 @@ const OPTIONS_PATH = `'$[' || ${FIELD_INDEX} || '].options'`;
 /** Puts an option (?3) at the end of the options of a declared field (?2) of a section (?1), inside the database. */
 export const ADD_FIELD_OPTION = `UPDATE tables SET fields = json_set(fields, ${OPTIONS_PATH}, json_insert(COALESCE(json_extract(fields, ${OPTIONS_PATH}), json('[]')), '$[#]', ?3)) WHERE id = ?1 AND ${FIELD_INDEX} IS NOT NULL`;
 
-/** Takes an option (?3), in any case, out of the options of a declared field (?2) of a section (?1). */
-export const REMOVE_FIELD_OPTION = `UPDATE tables SET fields = json_set(fields, ${OPTIONS_PATH}, (SELECT json_group_array(value) FROM json_each(tables.fields, ${OPTIONS_PATH}) WHERE lower(value) <> lower(?3))) WHERE id = ?1 AND ${FIELD_INDEX} IS NOT NULL`;
+/**
+ * Takes an option (?3), in any case, out of the options of a declared field (?2) of a section (?1).
+ * The remaining list comes out of a subquery, which drops its JSON mark on newer SQLite (3.54): without
+ * `json(…)` the list would be written as one string, `"[\"Done\"]"`, and the field would lose every option.
+ */
+export const REMOVE_FIELD_OPTION = `UPDATE tables SET fields = json_set(fields, ${OPTIONS_PATH}, json((SELECT json_group_array(value) FROM json_each(tables.fields, ${OPTIONS_PATH}) WHERE lower(value) <> lower(?3)))) WHERE id = ?1 AND ${FIELD_INDEX} IS NOT NULL`;
 
 /** Where the field named by ?2 stands in a section's list, as a JSON path. */
 const FIELD_PATH = `'$[' || ${FIELD_INDEX} || ']'`;

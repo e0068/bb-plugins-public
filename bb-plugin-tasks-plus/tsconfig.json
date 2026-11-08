@@ -2,6 +2,9 @@
   "extends": "./packages/plugin-base/tsconfig.base.json",
   "compilerOptions": {
     "jsx": "react-jsx",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "allowJs": true,
+    "checkJs": false,
     "types": [
       "node"
     ],

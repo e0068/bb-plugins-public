@@ -31,6 +31,14 @@ function task(overrides: Partial<Task> & Pick<Task, "id" | "status">): Task {
     createdAt: "2026-07-01T00:00:00.000Z",
     updatedAt: "2026-07-01T00:00:00.000Z",
     labelIds: [],
+    type: null,
+    estimate: null,
+    plannedMinutes: null,
+    actualMinutes: null,
+    budget: null,
+    budgetLimit: null,
+    cost: null,
+    source: null,
     ...overrides,
   };
 }

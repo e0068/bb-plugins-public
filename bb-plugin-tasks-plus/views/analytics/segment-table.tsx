@@ -241,6 +241,8 @@ function useCellContext(served: readonly Task[] | undefined, onError: (message: 
   const tasks = useMemo(() => editedTasks(served ?? [], edits.entries), [served, edits.entries]);
   const projectsById = useMemo(() => new Map((projects.data ?? []).map((project) => [project.id, project])), [projects.data]);
   const labelsById = useMemo(() => new Map((labels.data ?? []).map((label) => [label.id, label])), [labels.data]);
+  // Relative dates count from one moment for the whole render, as in the board's table.
+  const now = new Date();
   return {
     tasks,
     of: (task) => ({
@@ -252,6 +254,9 @@ function useCellContext(served: readonly Task[] | undefined, onError: (message: 
       subtasks: { done: 0, total: 0 },
       showEmpty: false,
       onEdit: edits.edit,
+      // The segment table has no header menus: every column keeps its default format and icon.
+      displays: undefined,
+      now,
     }),
   };
 }

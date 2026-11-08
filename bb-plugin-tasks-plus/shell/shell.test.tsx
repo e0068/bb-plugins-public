@@ -2,6 +2,7 @@
 import { cleanup, fireEvent, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { loadPluginApp, renderSlot } from "@get-bb/plugin-sdk/testing/app";
+import type { Task } from "../shared/contract.js";
 
 // jsdom lacks matchMedia; the vendored Dialog's responsive root needs it.
 if (!window.matchMedia) {
@@ -80,13 +81,14 @@ const emptyRpc = seededRpc({
   sidebarSummary: () => ({ projects: [] }),
 });
 
-function pagerTask(key: string, status: string, position: number) {
+function pagerTask(key: string, status: Task["status"], position: number): Task {
   return {
     id: `01HZZZZZZZZZZZZZZZZZZZZ${key.replace("-", "")}`,
     projectId: PROJECT_ID,
     number: position,
     key,
     title: key,
+    description: "",
     status,
     priority: "none",
     dueDate: null,
@@ -105,7 +107,7 @@ function pagerTask(key: string, status: string, position: number) {
     cost: null,
     source: null,
     // Only key/status/position matter to the pager; the rest satisfies Task.
-  } as never;
+  };
 }
 
 describe("task pager", () => {
@@ -303,7 +305,7 @@ describe("tasks app shell", () => {
     let listTaskCalls = 0;
     let listProjectCalls = 0;
     let holdProjects = false;
-    let releaseProjects: (() => void) | null = null;
+    let releaseProjects = null as (() => void) | null;
     const page = renderSlot(
       app.navPanels[0]!,
       { subPath: "all" },

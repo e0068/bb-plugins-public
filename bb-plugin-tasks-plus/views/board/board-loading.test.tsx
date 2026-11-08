@@ -105,7 +105,8 @@ function renderBoard(tasks: Task[], cards: () => Promise<unknown>) {
         listPresets: () => ({ presets: [] }),
         sidebarSummary: () => ({ projects: [] }),
         listLabels: () => ({ labels: [] }),
-        listTasks: (input: { projectId?: string; activeOnly?: boolean; waitingOnly?: boolean }) => {
+        listTasks: (rawInput: unknown) => {
+          const input = rawInput as { projectId?: string; activeOnly?: boolean; waitingOnly?: boolean };
           // The sidebar's Active/Waiting sections ask listTasks too; only the
           // board's own request is counted.
           if (input.projectId === PROJECT_ID && !input.activeOnly && !input.waitingOnly) {
