@@ -122,7 +122,7 @@ describe("withCallerScope", () => {
   it("выполняет задачный метод в области вызова треда", async () => {
     let seen: CallerEnvironment | null = null;
     const handlers = withCallerScope(cache, {
-      listTasks: () => {
+      listTasks: (_input: unknown) => {
         seen = currentCallerEnvironment();
         return { tasks: [], nextCursor: null };
       },
@@ -151,7 +151,7 @@ describe("withCallerScope", () => {
   it("без поля треда обработчик работает вне области вызова", async () => {
     let seen: CallerEnvironment | null = { ...environment };
     const handlers = withCallerScope(cache, {
-      listTasks: () => {
+      listTasks: (_input: unknown) => {
         seen = currentCallerEnvironment();
         return { tasks: [], nextCursor: null };
       },
@@ -165,7 +165,7 @@ describe("withCallerScope", () => {
 
   it("метод вне списка окружение не резолвит", async () => {
     const handlers = withCallerScope(cache, {
-      listFolders: () => ({ folders: [] }),
+      listFolders: (_input: unknown) => ({ folders: [] }),
     });
 
     await handlers.listFolders(null as never);

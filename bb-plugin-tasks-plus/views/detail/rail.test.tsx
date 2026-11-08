@@ -74,8 +74,8 @@ function detailRpc(
     listFolders: () => ({ folders: [] }),
     listPresets: () => ({ presets: [] }),
     sidebarSummary: () => ({ projects: [] }),
-    listTasks: (input: { parentTaskId?: string } | null) =>
-      input?.parentTaskId ? { tasks: [] } : { tasks: [task] },
+    listTasks: (input: unknown) =>
+      (input as { parentTaskId?: string } | null)?.parentTaskId ? { tasks: [] } : { tasks: [task] },
     getTaskByKey: () => ({ task }),
     listLabels: () => ({ labels: [] }),
     listAttachments: () => ({ attachments: [] }),
@@ -101,7 +101,8 @@ describe("dispatch target rail control", () => {
           listBbProjects: () => ({
             bbProjects: [{ id: BB_PROJECT_ID, name: "bb monorepo" }],
           }),
-          updateProject: (input: Record<string, unknown>) => {
+          updateProject: (rawInput: unknown) => {
+            const input = rawInput as Record<string, unknown>;
             updateCalls.push(input);
             return {
               project: {
@@ -135,7 +136,8 @@ describe("dispatch target rail control", () => {
           listBbProjects: () => ({
             bbProjects: [{ id: BB_PROJECT_ID, name: "bb monorepo" }],
           }),
-          updateProject: (input: Record<string, unknown>) => {
+          updateProject: (rawInput: unknown) => {
+            const input = rawInput as Record<string, unknown>;
             updateCalls.push(input);
             return {
               project: {
@@ -183,9 +185,10 @@ describe("time and budget fields", () => {
       {
         rpc: detailRpc(null, {
           getTaskByKey: () => ({ task: { ...task, budgetLimit: 60 } }),
-          listTasks: (input: { parentTaskId?: string } | null) =>
-            input?.parentTaskId ? { tasks: [] } : { tasks: [{ ...task, budgetLimit: 60 }] },
-          updateTask: (input: Record<string, unknown>) => {
+          listTasks: (input: unknown) =>
+            (input as { parentTaskId?: string } | null)?.parentTaskId ? { tasks: [] } : { tasks: [{ ...task, budgetLimit: 60 }] },
+          updateTask: (rawInput: unknown) => {
+            const input = rawInput as Record<string, unknown>;
             updateCalls.push(input);
             return { ok: true, task: { ...task, budgetLimit: 60, ...input } };
           },
@@ -225,10 +228,11 @@ describe("assignee and epic", () => {
     const shown = { ...task, ...current };
     return detailRpc(null, {
       getTaskByKey: () => ({ task: shown }),
-      listTasks: (input: { parentTaskId?: string } | null) =>
-        input?.parentTaskId ? { tasks: [] } : { tasks: [shown] },
+      listTasks: (input: unknown) =>
+        (input as { parentTaskId?: string } | null)?.parentTaskId ? { tasks: [] } : { tasks: [shown] },
       listPlacements: () => ({ assignees: ["Claude", "Sergey"] }),
-      updateTask: (input: Record<string, unknown>) => {
+      updateTask: (rawInput: unknown) => {
+        const input = rawInput as Record<string, unknown>;
         updateCalls.push(input);
         return { ok: true, task: { ...shown, ...input } };
       },
@@ -252,9 +256,10 @@ describe("assignee and epic", () => {
     const other = { ...task, id: "01HZZZZZZZZZZZZZZZZZZZZZO1", number: 7, key: "TSK-7", title: "Other" };
     const rpc = detailRpc(null, {
       getTaskByKey: () => ({ task }),
-      listTasks: (input: { parentTaskId?: string } | null) =>
-        input?.parentTaskId ? { tasks: [] } : { tasks: [other, task, epic] },
-      updateTask: (input: Record<string, unknown>) => {
+      listTasks: (input: unknown) =>
+        (input as { parentTaskId?: string } | null)?.parentTaskId ? { tasks: [] } : { tasks: [other, task, epic] },
+      updateTask: (rawInput: unknown) => {
+        const input = rawInput as Record<string, unknown>;
         updateCalls.push(input);
         return { ok: true, task: { ...task, ...input } };
       },

@@ -9,6 +9,7 @@ import { SidebarRowIcons } from "./shell/sidebar-row-icon.js";
 import { BoardColumnWidthSetting } from "./shell/board-column-width-setting.js";
 import { ReducedProjectsSetting } from "./shell/reduced-projects-setting.js";
 import { TaskDirectiveCard, TaskEmbedPanel, TaskSidePanelTab } from "./views/embed/index.js";
+import { InlineTaskChips } from "./views/embed/inline-chips.js";
 import { TASK_PANEL_ACTION, TASK_TAB } from "./client/task-opening.js";
 import { CurrentTaskHeaderAction } from "./views/header/current-task.js";
 import { TASKS_PLUGIN_ID } from "./shared/plugin-id.js";
@@ -50,6 +51,8 @@ export default definePluginApp((app) => {
     component: CurrentTaskHeaderAction,
   });
   app.slots.messageDirective({ id: "task", component: TaskDirectiveCard });
+  // The same directive in the middle of a sentence, which bb leaves as text, becomes an inline task chip.
+  app.slots.experimental_appOverlay({ id: "inline-task-chips", component: InlineTaskChips });
   // A thread waiting for its own workflow counts as working in Active and on the cards.
   app.slots.experimental_appOverlay({ id: "busy-threads", component: BusyThreadsReporter });
   // A board's icon in the row of its bb project in bb's thread list, and the picker it opens.

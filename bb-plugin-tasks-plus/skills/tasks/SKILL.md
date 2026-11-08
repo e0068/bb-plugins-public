@@ -231,6 +231,11 @@ shows the live status, title, and priority, opens the task in the thread
 side panel, and links to the full Tasks app. Emit one directive per line;
 each renders its own card.
 
+A directive left in the middle of a sentence still renders, as an inline
+chip. Where directives do not render at all — the text fields of a widget
+card — link the task as `[ABC-12](bb://tasks/ABC-12)`: a click on it opens
+the task in the thread side panel.
+
 ## Invariants
 
 - Valid task statuses are `backlog`, `todo`, `in_progress`, `agent_review`

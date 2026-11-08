@@ -8,6 +8,7 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from "@/components/ui/popover";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 import type { Task } from "../../shared/contract.js";
 import { useInvalidation, useTasksRpc } from "../../client/data.js";
@@ -107,21 +108,28 @@ function CurrentTaskHeaderActionContent({
   if (tasks.length === 1) {
     const task = tasks[0];
     if (!task) return null;
+    // The key on hover: in a compact header the button shows only the status glyph.
     return (
-      <Button
-        type="button"
-        variant="outline"
-        size="sm"
-        aria-label={`Task ${task.key} — ${task.title} (${statusLabel(task)}) — open`}
-        title={task.key}
-        className={cn(HEADER_ACTION_CLASS, "gap-1.5")}
-        onClick={() => openTask(task)}
-      >
-        <StatusIcon status={task.status} />
-        {!isCompactViewport && (
-          <span className="min-w-0 truncate font-mono text-xs">{task.key}</span>
-        )}
-      </Button>
+      <TooltipProvider>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              aria-label={`Task ${task.key} — ${task.title} (${statusLabel(task)}) — open`}
+              className={cn(HEADER_ACTION_CLASS, "gap-1.5")}
+              onClick={() => openTask(task)}
+            >
+              <StatusIcon status={task.status} />
+              {!isCompactViewport && (
+                <span className="min-w-0 truncate font-mono text-xs">{task.key}</span>
+              )}
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent side="bottom">{task.key}</TooltipContent>
+        </Tooltip>
+      </TooltipProvider>
     );
   }
 

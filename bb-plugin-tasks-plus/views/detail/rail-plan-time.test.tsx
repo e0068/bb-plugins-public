@@ -74,8 +74,8 @@ function detailRpc(
     listFolders: () => ({ folders: [] }),
     listPresets: () => ({ presets: [] }),
     sidebarSummary: () => ({ projects: [] }),
-    listTasks: (input: { parentTaskId?: string } | null) =>
-      input?.parentTaskId ? { tasks: [] } : { tasks: [task] },
+    listTasks: (input: unknown) =>
+      (input as { parentTaskId?: string } | null)?.parentTaskId ? { tasks: [] } : { tasks: [task] },
     getTaskByKey: () => ({ task }),
     listLabels: () => ({ labels: [] }),
     listAttachments: () => ({ attachments: [] }),
@@ -95,9 +95,10 @@ describe("plan date with a time", () => {
     const shown = { ...task, dueDate };
     return detailRpc(null, {
       getTaskByKey: () => ({ task: shown }),
-      listTasks: (input: { parentTaskId?: string } | null) =>
-        input?.parentTaskId ? { tasks: [] } : { tasks: [shown] },
-      updateTask: (input: Record<string, unknown>) => {
+      listTasks: (input: unknown) =>
+        (input as { parentTaskId?: string } | null)?.parentTaskId ? { tasks: [] } : { tasks: [shown] },
+      updateTask: (rawInput: unknown) => {
+        const input = rawInput as Record<string, unknown>;
         updateCalls.push(input);
         return { ok: true, task: { ...shown, ...input } };
       },
@@ -143,9 +144,10 @@ describe("the plan date picker", () => {
     let shown = { ...task, startDate };
     return detailRpc(null, {
       getTaskByKey: () => ({ task: shown }),
-      listTasks: (input: { parentTaskId?: string } | null) =>
-        input?.parentTaskId ? { tasks: [] } : { tasks: [shown] },
-      updateTask: (input: Record<string, unknown>) => {
+      listTasks: (input: unknown) =>
+        (input as { parentTaskId?: string } | null)?.parentTaskId ? { tasks: [] } : { tasks: [shown] },
+      updateTask: (rawInput: unknown) => {
+        const input = rawInput as Record<string, unknown>;
         updateCalls.push(input);
         shown = { ...shown, ...input };
         return { ok: true, task: shown };

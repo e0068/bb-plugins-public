@@ -990,7 +990,8 @@ const updateTaskInputSchema = z
     propertyPatch: z
       .object({
         set: z.record(z.string(), z.string()).optional(),
-        remove: z.array(z.string()).optional(),
+        // Read-only, as PropertyPatch has it: the card passes its patch on untouched.
+        remove: z.array(z.string()).readonly().optional(),
         rename: z.record(z.string(), z.string()).optional(),
       })
       .strict()
@@ -1119,7 +1120,11 @@ const updatePresetInputSchema = z
  * нет; `.strict()` отверг бы поле, которого в схеме не объявлено. Пустое
  * значение означает «спрашивает доска» — и тогда запрос читает main.
  */
-export function withCallerThread<Schema extends z.ZodObject>(schema: Schema) {
+export function withCallerThread<Shape extends z.ZodRawShape, Config extends z.core.$ZodObjectConfig>(
+  schema: z.ZodObject<Shape, Config>,
+) {
+  // Над формой, а не над любым объектом: `extend` на голом параметре `ZodObject`
+  // видит форму без ключей, и вход каждого метода сервера становится `unknown`.
   return schema.extend({ [CALLER_THREAD_FIELD]: z.string().optional() });
 }
 

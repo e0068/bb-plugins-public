@@ -58,7 +58,7 @@ function apiStore(): TasksApiStore {
 describe("taskCardMeta RPC", () => {
   it("returns attachment counts and threads for the asked tasks", async () => {
     const { bb, harness } = createFakePluginHost({ pluginId: "tasks" });
-    registerTasksApi(bb, apiStore());
+    registerTasksApi(bb, apiStore(), { get: async () => null });
     const task = await tasks.createTask({ projectId: BOARD.id, title: "Card" });
     await tasks.createAttachment({ taskId: task.id, fileName: "a.png", mime: "image/png", sizeBytes: 1, blobPath: "blobs/a.png", isImage: true });
     await tasks.upsertTaskThread({ taskId: task.id, threadId: "thr_x", presetName: "Opus", title: "Work" });

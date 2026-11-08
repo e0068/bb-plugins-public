@@ -167,7 +167,7 @@ function CardShell({
   );
 }
 
-function embedAriaLabel(task: Task): string {
+export function embedAriaLabel(task: Task): string {
   const parts = [
     `${task.key} — ${task.title}`,
     STATUS_LABELS[task.status].toLowerCase(),
@@ -178,8 +178,27 @@ function embedAriaLabel(task: Task): string {
   return `${parts.join(", ")} — open in side panel`;
 }
 
-function TaskDirectiveCardContent({ attributes }: PluginMessageDirectiveProps) {
+/**
+ * Opens a task in the thread side panel; where the host has no thread panel,
+ * in the full Tasks app instead. Shared by the directive card and the inline
+ * chip (inline-chips.tsx), so both open a task the same way.
+ */
+export function useOpenTaskInSidePanel(): (taskKey: string) => void {
   const navigate = useBbNavigate();
+  return (taskKey) => {
+    const opened = navigate.openThreadPanel({
+      actionId: "task",
+      title: taskKey,
+      params: { taskKey },
+    });
+    if (!opened) {
+      navigate.toPluginPanel(PANEL_PATH, { subPath: taskDetailSubPath(taskKey) });
+    }
+  };
+}
+
+function TaskDirectiveCardContent({ attributes }: PluginMessageDirectiveProps) {
+  const openTask = useOpenTaskInSidePanel();
   const taskKey = attributes.key?.trim() ?? "";
   const fallbackTitle = attributes.title?.trim() || null;
   const validKey = isTaskAddress(taskKey);
@@ -259,18 +278,7 @@ function TaskDirectiveCardContent({ attributes }: PluginMessageDirectiveProps) {
   }
 
   const { task } = state;
-  const openInSidePanel = () => {
-    const opened = navigate.openThreadPanel({
-      actionId: "task",
-      title: task.key,
-      params: { taskKey: task.key },
-    });
-    if (!opened) {
-      navigate.toPluginPanel(PANEL_PATH, {
-        subPath: taskDetailSubPath(task.key),
-      });
-    }
-  };
+  const openInSidePanel = () => openTask(task.key);
 
   return (
     <CardShell>

@@ -64,12 +64,21 @@ function createdTask(input: Record<string, unknown>): Task {
     description: String(input.description ?? ""),
     status: (input.status as Task["status"]) ?? "backlog",
     priority: (input.priority as Task["priority"]) ?? "none",
+    type: null,
+    estimate: null,
+    plannedMinutes: null,
+    actualMinutes: null,
+    budget: null,
+    budgetLimit: null,
+    cost: null,
     dueDate: (input.dueDate as string | null) ?? null,
+    startDate: null,
     parentTaskId: (input.parentTaskId as string | null) ?? null,
     position: 1,
     createdAt: "2026-07-15T00:00:00.000Z",
     updatedAt: "2026-07-15T00:00:00.000Z",
     labelIds: (input.labelIds as string[]) ?? [],
+    source: null,
   };
 }
 
@@ -87,7 +96,8 @@ describe("NewTaskDialog", () => {
           sidebarSummary: () => ({ projects: [] }),
           listTasks: () => ({ tasks: [] }),
           listLabels: () => ({ labels: [] }),
-          createTask: (input: Record<string, unknown>) => {
+          createTask: (rawInput: unknown) => {
+            const input = rawInput as Record<string, unknown>;
             createCalls.push(input);
             return { ok: true, task: createdTask(input) };
           },
@@ -132,7 +142,8 @@ describe("NewTaskDialog", () => {
           sidebarSummary: () => ({ projects: [] }),
           listTasks: () => ({ tasks: [] }),
           listLabels: () => ({ labels: [] }),
-          createTask: (input: Record<string, unknown>) => {
+          createTask: (rawInput: unknown) => {
+            const input = rawInput as Record<string, unknown>;
             createCalls.push(input);
             return { ok: true, task: createdTask(input) };
           },
@@ -224,7 +235,8 @@ describe("NewTaskDialog", () => {
           sidebarSummary: () => ({ projects: [] }),
           listTasks: () => ({ tasks: [] }),
           listLabels: () => ({ labels: [] }),
-          createTask: (input: Record<string, unknown>) => {
+          createTask: (rawInput: unknown) => {
+            const input = rawInput as Record<string, unknown>;
             createCalls.push(input);
             return { ok: true, task: createdTask(input) };
           },
@@ -282,7 +294,8 @@ describe("NewTaskDialog", () => {
               },
             ],
           }),
-          createLabel: (input: Record<string, unknown>) => {
+          createLabel: (rawInput: unknown) => {
+            const input = rawInput as Record<string, unknown>;
             createLabelCalls.push(input);
             return {
               label: {
@@ -368,9 +381,9 @@ describe("NewTaskDialog attachments", () => {
     sidebarSummary: () => ({ projects: [] }),
     listTasks: () => ({ tasks: [] }),
     listLabels: () => ({ labels: [] }),
-    createTask: (input: Record<string, unknown>) => ({
+    createTask: (input: unknown) => ({
       ok: true,
-      task: createdTask(input),
+      task: createdTask(input as Record<string, unknown>),
     }),
   });
 
@@ -820,7 +833,8 @@ describe("new task dialog: assignee", () => {
       listTasks: () => ({ tasks: [] }),
       listLabels: () => ({ labels: [] }),
       listPlacements: () => ({ assignees: ["Claude"] }),
-      createTask: (input: Record<string, unknown>) => {
+      createTask: (rawInput: unknown) => {
+        const input = rawInput as Record<string, unknown>;
         createCalls.push(input);
         return { ok: true, task: createdTask(input) };
       },

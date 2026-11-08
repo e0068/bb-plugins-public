@@ -64,7 +64,7 @@ describe("status transition hook", () => {
   it("records a transition when boardMove changes a task's status", async () => {
     const { bb, harness } = createFakePluginHost({ pluginId: "tasks" });
     const transitions = createTransitionLog(bb.storage.database());
-    registerTasksApi(bb, apiStore(transitions));
+    registerTasksApi(bb, apiStore(transitions), { get: async () => null });
 
     const task = await tasks.createTask({ projectId: BOARD.id, title: "Move me" });
     const before = Date.now();
@@ -83,7 +83,7 @@ describe("status transition hook", () => {
   it("records a transition when updateTask changes a task's status", async () => {
     const { bb, harness } = createFakePluginHost({ pluginId: "tasks" });
     const transitions = createTransitionLog(bb.storage.database());
-    registerTasksApi(bb, apiStore(transitions));
+    registerTasksApi(bb, apiStore(transitions), { get: async () => null });
 
     const task = await tasks.createTask({ projectId: BOARD.id, title: "Update me" });
     const before = Date.now();
@@ -97,7 +97,7 @@ describe("status transition hook", () => {
   it("writes nothing when an update leaves the status unchanged", async () => {
     const { bb, harness } = createFakePluginHost({ pluginId: "tasks" });
     const transitions = createTransitionLog(bb.storage.database());
-    registerTasksApi(bb, apiStore(transitions));
+    registerTasksApi(bb, apiStore(transitions), { get: async () => null });
 
     const task = await tasks.createTask({ projectId: BOARD.id, title: "Rename only" });
     await harness.callRpc("updateTask", { taskId: task.id, title: "Renamed", authorName: "Tester" });
