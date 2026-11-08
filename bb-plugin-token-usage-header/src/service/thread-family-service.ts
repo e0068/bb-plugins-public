@@ -35,7 +35,7 @@ export interface FamilyMember {
 }
 
 export interface ThreadFamily {
-  /** The thread first, then its descendants; empty for a thread that started nothing. */
+  /** The thread first, then its descendants; a thread that started nothing is a family of one, so its spend is never lost. */
   members: FamilyMember[];
   /** Usage of all members added up; zeros when there are none. */
   total: UsageTotals;
@@ -64,8 +64,6 @@ export interface ThreadFamilyServiceDeps {
 
 /** What reading one member came to: its numbers, no session yet, or a failure. */
 type MemberRead = { kind: "member"; member: FamilyMember } | { kind: "no-session" } | { kind: "unreadable" };
-
-const NOTHING: ThreadFamily = { members: [], total: sumTotals([]), truncated: false, unreadable: 0 };
 
 export function createThreadFamilyService(bb: BbPluginApi, { tokenUsage, threadsTimeline }: ThreadFamilyServiceDeps): ThreadFamilyService {
   async function readMember(node: ThreadNode, { unit, groupWorkflows }: ThreadFamilyParams, options: QueryOptions): Promise<MemberRead> {
@@ -102,8 +100,6 @@ export function createThreadFamilyService(bb: BbPluginApi, { tokenUsage, threads
         params.threadId,
         listed.map((thread) => ({ id: thread.id, parentThreadId: thread.parentThreadId, title: thread.title ?? thread.titleFallback ?? null })),
       );
-      if (family.length === 1) return NOTHING;
-
       const queryOptions: QueryOptions = { fresh: options?.fresh };
       const reads = await mapWithLimit(family.slice(0, MAX_FAMILY_MEMBERS), FAMILY_LOOKUP_CONCURRENCY, (node) => readMember(node, params, queryOptions));
       const members = reads.flatMap((read) => (read.kind === "member" ? [read.member] : []));

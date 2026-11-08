@@ -138,6 +138,16 @@ describe("session page — thread family", () => {
     expect(screen.queryByRole("region", { name: "Thread family" })).toBeNull();
   });
 
+  it("shows nothing extra for a family of one — the thread alone", async () => {
+    const threadFamily = vi.fn(async () => family({ members: [member("t-root", "Parent thread", "s-root", 1)], total: totals(100, 1) }));
+    await renderSession(threadFamily);
+
+    await screen.findByLabelText("Session chart");
+    await waitFor(() => expect(threadFamily).toHaveBeenCalled());
+
+    expect(screen.queryByRole("region", { name: "Thread family" })).toBeNull();
+  });
+
   it("leaves the page as it was when the family cannot be read", async () => {
     const threadFamily = vi.fn(async () => ({ status: "error" as const, message: "daemon unreachable" }));
     await renderSession(threadFamily);

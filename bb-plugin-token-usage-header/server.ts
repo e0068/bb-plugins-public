@@ -325,7 +325,7 @@ export const rpcContract = defineRpcContract({
     output: z.discriminatedUnion("status", [
       z.object({
         status: z.literal("ready"),
-        /** Empty for a thread that started nothing — the page then shows no family block. */
+        /** The thread first, then its descendants; a thread that started nothing is a family of one. Empty only when no thread has a readable session. The page shows the family block from two members up. */
         members: z.array(familyMemberSchema),
         total: sessionTotalsSchema,
         /** True when the family was longer than the service reads at once and the rest is left out. */
