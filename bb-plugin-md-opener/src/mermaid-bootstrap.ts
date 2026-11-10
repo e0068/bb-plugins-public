@@ -6,7 +6,7 @@
 // Lives in the plugin, not packages/md-doc-view: mermaid is bb-plugin-md-opener's
 // own dependency, installed into ITS node_modules only — a bare import from the
 // shared package wouldn't resolve through the plugin bundler (the same wall
-// memory/decisions/md-opener-vendor-kasimov.md hit vendoring "kasimov" itself).
+// docs/decisions/md-opener-vendor-kasimov.md hit vendoring "kasimov" itself).
 import mermaid from "mermaid";
 
 declare global {

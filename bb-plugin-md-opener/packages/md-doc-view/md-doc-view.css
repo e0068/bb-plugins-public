@@ -66,11 +66,6 @@
   color: var(--destructive);
 }
 
-.mdo-actions {
-  display: flex;
-  flex: none;
-  gap: 4px;
-}
 .mdo-btn {
   border-radius: var(--radius);
   padding: 2px 10px;
@@ -95,23 +90,20 @@
   padding: 4px;
 }
 
-/* The second row exists only while the draft differs from the file. It carries
-   Save and Cancel so the first row never changes shape: the mode switcher has
-   to stay where the eye left it, including mid-edit. */
-.mdo-row2 {
+/* While the draft differs from the file, this group takes the left of the
+   header — back, path, forward and reload give way to it — and fills the same
+   width, so the switcher and the file's actions to the right never move.
+   Save and Cancel on the header's own scale: .mdo-btn is 14px, drawn for a
+   header that held nothing but the Edit button; next to a 10.5px switcher and
+   an 11px counter it read as the loudest thing on screen. */
+.mdo-draft {
   display: flex;
+  flex: 1;
+  min-width: 0;
   align-items: center;
-  justify-content: space-between;
   gap: 8px;
-  padding: 4px 12px;
-  border-bottom: 1px solid var(--border);
 }
-/* Save and Cancel on the header's own scale. .mdo-btn is 14px because it was
-   drawn for a header that held nothing but the Edit button; next to a 10.5px
-   switcher and an 11px counter it read as the loudest thing on the screen,
-   which a pair of actions under the header is not. Scoped to the second row:
-   the icon button and the older renderer keep .mdo-btn as it was. */
-.mdo-row2 .mdo-btn {
+.mdo-draft .mdo-btn {
   padding: 2px 8px;
   border-radius: 4px;
   font-size: 11px;
@@ -126,19 +118,33 @@
 .mdo-diff-del {
   color: var(--destructive);
 }
-/* The reload control sits with the switcher, not with the actions: re-reading
-   the file is about WHICH text is on screen, like the mode is, and not about
-   what to do with the draft. */
+/* Back, forward and reload: quiet icons on either side of the path. Back is
+   disabled rather than hidden at the start of the history, so the path does
+   not shift when the first jump gives it somewhere to go. */
+.mdo-nav,
 .mdo-reload {
   flex: none;
   color: var(--muted-foreground);
 }
-.mdo-reload:disabled {
+.mdo-nav:disabled {
   opacity: 0.4;
   cursor: default;
 }
-.mdo-reload:disabled:hover {
+.mdo-nav:disabled:hover {
   background: transparent;
+}
+
+/* The file's "⋯" (FileActions.tsx): a kit button, square like the icons
+   beside it. Disabled while a draft is unsaved. */
+.mdo-more {
+  display: contents;
+}
+.mdo-more > span > .uicell {
+  flex: none;
+}
+.mdo-more [aria-disabled="true"] {
+  opacity: 0.4;
+  cursor: default;
 }
 
 /* The draft guard (DraftGuard.tsx). The shade sits over the host's own chrome
@@ -173,6 +179,14 @@
   background: var(--background);
   color: var(--foreground);
   box-shadow: 0 8px 32px rgb(0 0 0 / 0.3);
+}
+.mdo-file-dialog {
+  width: min(420px, calc(100vw - 48px));
+}
+.mdo-dialog-problem {
+  margin: 0;
+  font-size: 13px;
+  color: var(--destructive);
 }
 .mdo-dialog:focus {
   outline: none;
@@ -329,4 +343,55 @@
    kasimov.css (outside the --kasi-* contract, so it stays hardcoded). */
 .mdo-mde .mde-root .mde-quote {
   border-left-color: var(--border);
+}
+
+/* The picture unfolded over bb. The sheet covers the window and closes on any
+   click inside it, so "beside the picture" needs no geometry; the backdrop
+   below it only dims. Above the draft's shade and its dialog (z-index 40/50/51)
+   — the shade never covers the document itself, and a picture unfolds from the
+   document. */
+.mdo-zoom-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  background: rgb(0 0 0 / 0.75);
+}
+.mdo-zoom {
+  position: fixed;
+  inset: 0;
+  z-index: 61;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 24px;
+  cursor: zoom-out;
+}
+.mdo-zoom:focus {
+  outline: none;
+}
+.mdo-zoom-pic {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+  border-radius: var(--radius);
+}
+.mdo-zoom-cap {
+  margin: 0;
+  max-width: min(880px, 100%);
+  font-size: 13px;
+  font-weight: 400;
+  text-align: center;
+  color: rgb(255 255 255 / 0.7);
+}
+/* The dialog's name when the picture has no caption: read aloud, not drawn —
+   the document shows no caption there either. */
+.mdo-zoom-name {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
 }

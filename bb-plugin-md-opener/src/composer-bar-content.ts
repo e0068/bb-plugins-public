@@ -1,6 +1,6 @@
 // Оболочка — стык с миром вместо чистого ядра. Content script не имеет
 // useSettings: SDK data hooks падают в его headless-корне (нет
-// QueryClientProvider — см. memory/decisions/row-status-rpc-not-frontend-hooks.md,
+// QueryClientProvider — см. docs/decisions/row-status-rpc-not-frontend-hooks.md,
 // тот же вывод для другого контент-скрипта этого репозитория). Поэтому флаг
 // «Kasimov: use in Composer» читается обычным same-origin fetch к RPC
 // плагина, тем же путём, каким его дёргает `useRpc` изнутри: `POST

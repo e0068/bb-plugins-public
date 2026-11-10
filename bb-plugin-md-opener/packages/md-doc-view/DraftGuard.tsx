@@ -18,9 +18,8 @@ import type { RefObject } from "react";
 import { createPortal } from "react-dom";
 
 import { useHostColorMode, type HostColorMode } from "../code-editor";
+import { portalScope } from "./portal-scope";
 import { shadeRects, type Box } from "./shade-rects";
-
-declare const __BB_PLUGIN_ID__: string | undefined;
 
 export interface DraftGuardProps {
   /** The document's own box — the hole the shade leaves open. */
@@ -33,14 +32,6 @@ export interface DraftGuardProps {
   onSave: () => void;
   onDiscard: () => void;
 }
-
-// Portaled nodes live outside the plugin's root, so they carry the same marks
-// the root does — the host scopes plugin chrome and its in-app links by them.
-const portalScope = {
-  "data-bb-portaled-overlay": "",
-  "data-bb-plugin-root": "",
-  ...(typeof __BB_PLUGIN_ID__ === "string" ? { "data-bb-plugin": __BB_PLUGIN_ID__ } : {}),
-};
 
 /**
  * The anchor's box against the viewport, re-measured when the anchor changes

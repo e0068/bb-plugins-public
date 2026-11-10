@@ -4,7 +4,7 @@ import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import {
   resetRevealExecFileProvider,
   revealExecFileProvider,
-} from "./packages/reveal-in-finder";
+} from "@bb-plugins/reveal-in-finder";
 import plugin, { type rpcContract } from "./server";
 
 type Handlers = {
@@ -22,6 +22,15 @@ type Handlers = {
     path: string;
     source: unknown;
   }) => Promise<{ revealed: boolean; error: string | null }>;
+  renameDoc: (input: {
+    path: string;
+    source: unknown;
+    name: string;
+  }) => Promise<{ outcome: string; path: string | null; message: string | null }>;
+  deleteDoc: (input: {
+    path: string;
+    source: unknown;
+  }) => Promise<{ outcome: string; message: string | null }>;
 };
 
 interface FsFile {
@@ -66,6 +75,26 @@ function setup(
           return { content: f.content, contentEncoding: "utf8", sha256: f.sha256 };
         }),
         write,
+        // As the host does: move never overwrites, and both refuse a source
+        // that is not there (host-daemon move_path / remove_path).
+        move: vi.fn(async (args: { sourcePath: string; destinationPath: string }) => {
+          if (!files[args.sourcePath]) {
+            throw Object.assign(new Error(`ENOENT: no such file or directory, lstat '${args.sourcePath}'`), { code: "ENOENT" });
+          }
+          if (files[args.destinationPath]) {
+            throw new Error(`Destination already exists: ${args.destinationPath}`);
+          }
+          files[args.destinationPath] = files[args.sourcePath];
+          delete files[args.sourcePath];
+          return { ok: true };
+        }),
+        remove: vi.fn(async (args: { path: string }) => {
+          if (!files[args.path]) {
+            throw Object.assign(new Error(`ENOENT: no such file or directory, lstat '${args.path}'`), { code: "ENOENT" });
+          }
+          delete files[args.path];
+          return { ok: true };
+        }),
         listPaths: vi.fn(async (args: { path: string }) => {
           const prefix = args.path.endsWith("/") ? args.path : `${args.path}/`;
           const names = new Set<string>();
@@ -259,5 +288,114 @@ describe("revealDoc", () => {
     expect(res.revealed).toBe(false);
     expect(res.error).toBe("Path is outside the source root.");
     expect(revealCalls).toEqual([]);
+  });
+});
+
+describe("renameDoc", () => {
+  it("renames a file under the root in its own folder and returns the new path", async () => {
+    const files = { "/env/notes/a.md": { content: "x", sha256: "s" } };
+    const { handlers, bb } = setup(files);
+    const res = await handlers.renameDoc({ path: "/env/notes/a.md", source: workspace, name: "b.md" });
+    expect(res).toEqual({ outcome: "renamed", path: "/env/notes/b.md", message: null });
+    expect(bb.sdk.files.move).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sourcePath: "/env/notes/a.md",
+        destinationPath: "/env/notes/b.md",
+        hostId: "h1",
+      }),
+    );
+    expect(Object.keys(files)).toEqual(["/env/notes/b.md"]);
+  });
+
+  it("a name with a slash is refused before the disk is touched", async () => {
+    const { handlers, bb } = setup({ "/env/a.md": { content: "a", sha256: "sa" } });
+    const res = await handlers.renameDoc({ path: "/env/a.md", source: workspace, name: "../b.md" });
+    expect(res.outcome).toBe("invalid");
+    expect(bb.sdk.files.move).not.toHaveBeenCalled();
+  });
+
+  it("a file outside the root is refused", async () => {
+    const { handlers, bb } = setup({ "/other/a.md": { content: "a", sha256: "sa" } });
+    const res = await handlers.renameDoc({ path: "/other/a.md", source: workspace, name: "b.md" });
+    expect(res.outcome).toBe("denied");
+    expect(bb.sdk.files.move).not.toHaveBeenCalled();
+  });
+
+});
+
+describe("deleteDoc", () => {
+  it("removes a file under the root once", async () => {
+    const files = { "/env/a.md": { content: "a", sha256: "sa" } };
+    const { handlers, bb } = setup(files);
+    const res = await handlers.deleteDoc({ path: "/env/a.md", source: workspace });
+    expect(res).toEqual({ outcome: "removed", message: null });
+    expect(bb.sdk.files.remove).toHaveBeenCalledTimes(1);
+    expect(bb.sdk.files.remove).toHaveBeenCalledWith(
+      expect.objectContaining({ path: "/env/a.md", hostId: "h1" }),
+    );
+    expect(files).toEqual({});
+  });
+
+  it("a file outside the root is refused", async () => {
+    const { handlers, bb } = setup({ "/other/a.md": { content: "a", sha256: "sa" } });
+    const res = await handlers.deleteDoc({ path: "/other/a.md", source: workspace });
+    expect(res.outcome).toBe("denied");
+    expect(bb.sdk.files.remove).not.toHaveBeenCalled();
+  });
+
+  it("a failure on the host becomes a refusal with its message", async () => {
+    const { handlers, bb } = setup({ "/env/a.md": { content: "a", sha256: "sa" } });
+    vi.mocked(bb.sdk.files.remove).mockRejectedValueOnce(new Error("EACCES"));
+    const res = await handlers.deleteDoc({ path: "/env/a.md", source: workspace });
+    expect(res.outcome).toBe("denied");
+    expect(res.message).toContain("EACCES");
+  });
+});
+
+describe("renameDoc and deleteDoc — what the host refuses", () => {
+  it("a name another file already has comes back as exists, and both files stay", async () => {
+    const files = {
+      "/env/a.md": { content: "a", sha256: "sa" },
+      "/env/b.md": { content: "b", sha256: "sb" },
+    };
+    const { handlers } = setup(files);
+    const res = await handlers.renameDoc({ path: "/env/a.md", source: workspace, name: "b.md" });
+    expect(res).toEqual({
+      outcome: "exists",
+      path: null,
+      message: "A file with that name already exists.",
+    });
+    expect(files["/env/a.md"].content).toBe("a");
+    expect(files["/env/b.md"].content).toBe("b");
+  });
+
+  it("a name taken only somewhere deeper in the tree is free to use", async () => {
+    const files = {
+      "/env/a.md": { content: "a", sha256: "sa" },
+      "/env/sub/README.md": { content: "r", sha256: "sr" },
+    };
+    const { handlers } = setup(files);
+    const res = await handlers.renameDoc({ path: "/env/a.md", source: workspace, name: "README.md" });
+    expect(res.outcome).toBe("renamed");
+    expect(res.path).toBe("/env/README.md");
+  });
+
+  it("renaming a file that is not there comes back as not-found", async () => {
+    const { handlers } = setup({});
+    const res = await handlers.renameDoc({ path: "/env/a.md", source: workspace, name: "b.md" });
+    expect(res.outcome).toBe("not-found");
+  });
+
+  it("deleting a file that is not there comes back as not-found", async () => {
+    const { handlers } = setup({});
+    const res = await handlers.deleteDoc({ path: "/env/a.md", source: workspace });
+    expect(res.outcome).toBe("not-found");
+  });
+
+  it("the file lookup never walks the folder tree", async () => {
+    const { handlers, bb } = setup({ "/env/a.md": { content: "a", sha256: "sa" } });
+    await handlers.renameDoc({ path: "/env/a.md", source: workspace, name: "b.md" });
+    await handlers.deleteDoc({ path: "/env/b.md", source: workspace });
+    expect(bb.sdk.files.listPaths).not.toHaveBeenCalled();
   });
 });

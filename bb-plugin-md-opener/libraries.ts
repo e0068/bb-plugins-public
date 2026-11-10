@@ -16,7 +16,7 @@ import { yaml } from "@codemirror/lang-yaml";
 import { shell } from "@codemirror/legacy-modes/mode/shell";
 import { oneDarkHighlightStyle } from "@codemirror/theme-one-dark";
 import { List, Root, Trigger } from "@radix-ui/react-tabs";
-import type { DocLibraries } from "./packages/md-doc-view";
+import type { DocLibraries } from "@bb-plugins/md-doc-view";
 
 export const docLibraries: DocLibraries = {
   codeMirror: {

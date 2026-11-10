@@ -1,6 +1,6 @@
 /* dist/kasimov.css — сгенерировано `node build.js`, руками не редактировать.
  * Структурный CSS редактора (editor/md-editor/md-editor.css), БЕЗ скина. Тёмные --kasi-*
- * дефолты инлайн; скин — контракт CSS-переменных --kasi-*, см. memory/wiki/kasi-css-contract.md. */
+ * дефолты инлайн; скин — контракт CSS-переменных --kasi-*, см. docs/wiki/kasi-css-contract.md. */
 
 /* md-editor.css — self-contained styles. Theme via the --kasi-* variables (defaults below = dark).
    Override on the host or a wrapper to reskin (e.g. map them onto Cellular tokens later). */
@@ -65,7 +65,7 @@
                                     см. settings-schema.js: noAlpha) — иначе линия ребра просвечивала
                                     бы сквозь текст подписи; --kasi-cell-bg этой гарантии не даёт */
   /* производные семантические токены — цвет ТОЛЬКО из базовой палитры выше через color-mix.
-     Сырые литералы в правилах запрещены (memory/decisions/2026-09-01-palette-only-derived-tokens.md). */
+     Сырые литералы в правилах запрещены (docs/decisions/2026-09-01-palette-only-derived-tokens.md). */
   --kasi-surface-hover: color-mix(in srgb, var(--kasi-fg) 12%, var(--kasi-cell-bg)); /* ховер строки/кнопки */
   --kasi-border: color-mix(in srgb, var(--kasi-fg) 16%, transparent);         /* хайрлайн-бордеры и разделители */
   --kasi-shadow: color-mix(in srgb, var(--kasi-surface) 55%, transparent);    /* тень всплывашек */

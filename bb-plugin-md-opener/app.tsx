@@ -8,24 +8,27 @@ import { useRef } from "react";
 import { definePluginApp, useRpc, useSettings } from "@get-bb/plugin-sdk/app";
 import type { PluginFileOpenerProps } from "@get-bb/plugin-sdk/app";
 
-import { MdDocView } from "./packages/md-doc-view";
+import { MdDocView } from "@bb-plugins/md-doc-view";
 import type {
   LoadedDoc,
+  RemoveResult,
+  RenameResult,
   RevealResult,
   SaveResult,
-} from "./packages/md-doc-view";
+} from "@bb-plugins/md-doc-view";
 import {
   NATIVE_VIEWER_TOKEN_DEFAULTS,
   parseKasimovSettings,
   kasimovCssVars,
   kasimovFlags,
-} from "./packages/md-doc-view";
+} from "@bb-plugins/md-doc-view";
 import {
   isInTabLink,
   parseHref,
   resolveRelative,
-} from "./packages/link-navigation/resolve";
+} from "@bb-plugins/link-navigation/resolve";
 import { mountComposerFormatBarIfEnabled } from "./src/composer-bar-content";
+import { registerDiagramPalette } from "./src/diagram-palette-content";
 import { installMermaid } from "./src/mermaid-bootstrap";
 import { docLibraries } from "./libraries";
 import type { rpcContract } from "./server";
@@ -67,9 +70,28 @@ function DocOpener({ path, source }: PluginFileOpenerProps) {
   const onReveal = (target: string): Promise<RevealResult> =>
     rpc.call("revealDoc", { path: target, source });
 
-  // All in-tab links are clickable (as in the native viewer); external (http)
-  // links resolve to null. Single shared resolver
-  // (memory/decisions/link-resolve-shared-layer.md).
+  // The server's flat answer turned into the view's union: a renamed file
+  // always carries its new path, a refusal always its message.
+  const rename = async (target: string, name: string): Promise<RenameResult> => {
+    const res = await rpc.call("renameDoc", { path: target, source, name });
+    return res.outcome === "renamed" && res.path !== null
+      ? { outcome: "renamed", path: res.path }
+      : {
+          outcome: res.outcome === "renamed" ? "denied" : res.outcome,
+          message: res.message ?? "Failed to rename.",
+        };
+  };
+
+  const remove = async (target: string): Promise<RemoveResult> => {
+    const res = await rpc.call("deleteDoc", { path: target, source });
+    return res.outcome === "removed"
+      ? { outcome: "removed" }
+      : { outcome: res.outcome, message: res.message ?? "Failed to delete." };
+  };
+
+  // All in-tab links are clickable (as in the native viewer); a web or mail
+  // link never gets here — MdDocView opens it in the browser itself. Single
+  // shared resolver (docs/decisions/link-resolve-shared-layer.md).
   const resolveLinkTarget = (href: string, fromPath: string): string | null =>
     isInTabLink(href)
       ? linksRef.current.get(href) ??
@@ -79,7 +101,7 @@ function DocOpener({ path, source }: PluginFileOpenerProps) {
   // Changing the file OR the source tab rebuilds the view (stack/draft). The
   // key is over source's PRIMITIVES, not the object: the host may recreate
   // source with the same values, and that shouldn't reset the tab
-  // (memory/wiki/bb-plugin-file-opener-slot.md).
+  // (docs/wiki/bb-plugin-file-opener-slot.md).
   const resetKey = `${path}|${source.kind}|${source.threadId}|${source.environmentId}|${source.projectId}`;
 
   return (
@@ -90,6 +112,8 @@ function DocOpener({ path, source }: PluginFileOpenerProps) {
       load={load}
       save={save}
       onReveal={onReveal}
+      rename={rename}
+      remove={remove}
       resolveLinkTarget={resolveLinkTarget}
       // The tab owns its surface, so an unsaved draft may hold the rest of the
       // app under a shade until it is saved or discarded.
@@ -98,7 +122,7 @@ function DocOpener({ path, source }: PluginFileOpenerProps) {
       // All engine flags at once (toFlags returns exactly the MdDocView flag
       // props): a hand-written list is one `atLinks` away from a setting that
       // silently does nothing — see
-      // memory/decisions/kasimov-atlink-click-guard.md.
+      // docs/decisions/kasimov-atlink-click-guard.md.
       {...flags}
     />
   );
@@ -121,9 +145,12 @@ export default definePluginApp((app) => {
   // флагом "Kasimov: use in Composer" (по умолчанию выключен). Content
   // script, а не баннер композера: панель обязана висеть над выделением и
   // заменять его, а ComposerCustomization выделения не отдаёт — см.
-  // memory/decisions/kasimov-composer-bar-needs-content-script.md.
+  // docs/decisions/kasimov-composer-bar-needs-content-script.md.
   app.contentScripts.register({
     id: "composer-format-bar",
     mount: (context) => mountComposerFormatBarIfEnabled(context),
   });
+
+  // Пироги mermaid в чате bb рисует серыми: перекрашиваем их палитрой — см. src/diagram-palette.ts.
+  registerDiagramPalette(app);
 });

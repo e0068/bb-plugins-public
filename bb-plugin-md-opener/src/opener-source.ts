@@ -4,13 +4,13 @@
 // layer is testable with a mock object, no live SDK needed.
 //
 // What `source.kind` determines (see
-// memory/wiki/bb-plugin-file-opener-slot.md):
+// docs/wiki/bb-plugin-file-opener-slot.md):
 //   workspace      — the path is relative to the environment's workdir; root
 //                    = env.path;
 //   thread-storage — the path is relative to the thread's storage root;
 //   host           — the path is absolute, there's NO root fence (the file
 //                    may live on a different machine —
-//                    memory/decisions/opener-host-path-no-home-fence.md).
+//                    docs/decisions/opener-host-path-no-home-fence.md).
 //
 // The host is needed for ALL file calls: skipping it on a remote machine
 // kills the feature entirely, not just "degrades it slightly".

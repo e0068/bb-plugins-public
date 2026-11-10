@@ -5,7 +5,7 @@
 // (editor/md-editor/md-editor.js), потому что панель обязана быть его: тот же
 // порядок кнопок, те же глифы, те же обёртки, те же хоткеи в подсказках.
 // Сборка packages/kasimov их не экспортирует — экспорт из самого Касимова
-// снял бы копию, см. задачу в memory/tasks.
+// снял бы копию, см. задачу в docs/tasks.
 
 const svgIcon = (inner: string) =>
   `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${inner}</svg>`;

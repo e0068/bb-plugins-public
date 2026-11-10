@@ -2,6 +2,11 @@
 // its types. The KasimovEditor wrapper is an internal detail, not re-exported
 // (the consumer works through MdDocView and effect injection).
 export { MdDocView } from "./MdDocView";
+// The same engine for a piece of text a consumer assembled — a card's field,
+// a note: read mode in the host's typography. A plugin that needs only this
+// imports "./MdText" directly, past MdDocView and its dependencies.
+export { MdText } from "./MdText";
+export type { MdTextProps } from "./MdText";
 // What the plugin imports and hands down — this package imports neither.
 export type { DocLibraries } from "./libraries";
 export type { CodeMirrorKit } from "../code-editor";
@@ -11,6 +16,8 @@ export type {
   LoadedDoc,
   SaveResult,
   RevealResult,
+  RenameResult,
+  RemoveResult,
 } from "./MdDocView";
 // The rule both renderers share for "does this document open in edit mode".
 // A server imports it from "./open-mode" directly, bypassing this barrel.

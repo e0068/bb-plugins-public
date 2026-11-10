@@ -6,11 +6,13 @@ import {
   radixDedupe,
   reactDedupe,
 } from "./packages/plugin-base/vitest-react-dedupe";
+import { sharedPackagesAlias } from "./packages/plugin-base/vitest-shared-packages";
 
 export default defineConfig({
   resolve: {
     alias: {
       "@": fileURLToPath(new URL(".", import.meta.url)),
+      ...sharedPackagesAlias,
     },
     // Plugin components are imported from ./packages/* and pull in React from
     // that package's node_modules — dedupe collapses all copies to the plugin's

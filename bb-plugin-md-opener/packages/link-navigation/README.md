@@ -30,6 +30,6 @@ Immutable helpers over `{ stack: string[] }` (current is the last element):
 
 ## Why it's built this way
 
-See [memory/decisions/link-resolve-shared-layer.md](../../memory/decisions/link-resolve-shared-layer.md) —
+See [docs/decisions/link-resolve-shared-layer.md](../../docs/decisions/link-resolve-shared-layer.md) —
 why path resolution is pulled into a separate layer without `node:path`, and
 what has to stay consistent between the server and the front end.

@@ -1,0 +1,27 @@
+{
+  "name": "@bb-plugins/cellular-react",
+  "version": "0.1.1",
+  "type": "module",
+  "private": true,
+  "description": "Монтажник компонентов kit Cellular в React-дерево и мост токенов bb в контракт --cell-*.",
+  "main": "./index.ts",
+  "peerDependencies": {
+    "react": ">=18"
+  },
+  "devDependencies": {
+    "@testing-library/jest-dom": "^7.0.1",
+    "@testing-library/react": "^16.3.2",
+    "@types/node": "^24.0.0",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "jsdom": "^30.0.1",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "typescript": "^5.7.0",
+    "vitest": "^3.2.7"
+  },
+  "scripts": {
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  }
+}

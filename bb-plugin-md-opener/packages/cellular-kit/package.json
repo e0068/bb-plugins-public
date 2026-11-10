@@ -1,0 +1,19 @@
+{
+  "name": "@bb-plugins/cellular-kit",
+  "version": "0.1.1",
+  "type": "module",
+  "private": true,
+  "description": "Вендоренная копия kit дизайн-системы Cellular (vendor/) и типизированный фасад над её фабриками.",
+  "main": "./index.ts",
+  "scripts": {
+    "update": "node ../../scripts/update-cellular-kit.mjs https://cell-ds.web.app vendor",
+    "test": "vitest run && node --test ../../scripts/__tests__/update-cellular-kit.test.cjs",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "jsdom": "^30.0.1",
+    "typescript": "^5.7.0",
+    "vitest": "^3.2.7"
+  }
+}

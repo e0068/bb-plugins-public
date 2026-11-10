@@ -1,0 +1,243 @@
+/* kit/components.css — self-contained styles for the Cellular ESM component package.
+   Extracted from public/cellular-components.css (the studio file): ONLY the primitives the
+   package components emit — button / input / segment / switch / swatch / menu / cell — with the
+   studio shell (.block, .bhead, .layer…, .uigroup) and presenter hooks (.st-…, .org-…, canvas) cut.
+   Loading this one file is enough for the components to render correctly, without the studio CSS.
+
+   Two variable families:
+   · --cell-*   — the flat design-system contract (28 tokens). KEPT FLAT AND UNRENAMED: the Ф4 host
+                  bridge maps onto exactly these names. Package defaults live in the :root below.
+   · --cl-kit-* — commonly-named globals the studio left unprefixed (accent, menu fill/hover/focus,
+                  segment pad, block gap, slider track colour, value typography). Namespaced here so
+                  they cannot collide with a host page's own --accent/--block-gap/… and so the package
+                  controls their defaults. Not part of the Ф4 contract. */
+
+/* ===== Design-system contract: the flat --cell-* tokens with package defaults =====
+   THEMED channels (the ones kit/seam.js bridges) are two-tier: `--cell-x-default` holds the package
+   default, and `--cell-x: var(--cell-x-default)`. Why the indirection: on a `.cl-<id>` scope the
+   bridge REDECLARES `--cell-x` (`--cell-x: var(--cl-<id>-x, …)`). When the theme omits that channel,
+   `var(--cl-<id>-x)` is undefined; without a fallback `--cell-x` would become guaranteed-invalid on
+   the scope — OVERRIDING this :root default — and the component would drop to the CSS initial value
+   (transparent bg, 0 radius), NOT the package default. The bridge cannot fall back to `var(--cell-x)`
+   (self-reference = cycle), so it falls back to `var(--cell-x-default)`, which the scope never
+   redeclares. Net: on any scope, a themed --cell-x always resolves to theme-value-or-package-default.
+   STRUCTURAL channels (blur, icon…, knob, text-dim, track-fill, track-zero, h) are single-tier: the bridge
+   never touches them, so no scope ever overrides them and they need no -default shadow. */
+:root {
+  /* themed: default tier */
+  --cell-bg-default: rgba(255,255,255,.05);
+  --cell-bg-hover-default: rgba(255,255,255,.1);
+  --cell-bg-focus-default: #292929;
+  --cell-gloss-default: inset 0 0 0 0 transparent;
+  --cell-gloss-hover-default: inset 0 0 0 0 transparent;
+  --cell-gloss-focus-default: inset 0 0 0 0 transparent;
+  --cell-shadow-default: 0 2px 12px rgba(0,0,0,.5);
+  --cell-radius-default: 4px;
+  --cell-gap-default: 4px;
+  --cell-pad-x-default: 8px;
+  --cell-pad-y-default: 8px;
+  --cell-font-size-default: 11px;
+  --cell-line-height-default: 13px;
+  --cell-track-default: 0px;
+  --cell-case-default: none;
+  --cell-weight-default: 400;
+  --cell-text-default: #ecf9f9;
+  /* themed: active tier (unscoped = default; a .cl-<id> scope overrides these, never the -default) */
+  --cell-bg: var(--cell-bg-default);
+  --cell-bg-hover: var(--cell-bg-hover-default);
+  --cell-bg-focus: var(--cell-bg-focus-default);
+  --cell-gloss: var(--cell-gloss-default);
+  --cell-gloss-hover: var(--cell-gloss-hover-default);
+  --cell-gloss-focus: var(--cell-gloss-focus-default);
+  --cell-shadow: var(--cell-shadow-default);
+  --cell-radius: var(--cell-radius-default);
+  --cell-gap: var(--cell-gap-default);
+  --cell-pad-x: var(--cell-pad-x-default);
+  --cell-pad-y: var(--cell-pad-y-default);
+  --cell-font-size: var(--cell-font-size-default);
+  --cell-line-height: var(--cell-line-height-default);
+  --cell-track: var(--cell-track-default);
+  --cell-case: var(--cell-case-default);
+  --cell-weight: var(--cell-weight-default);
+  --cell-text: var(--cell-text-default);
+  /* structural: single-tier (never bridged, never scope-overridden) */
+  --cell-blur: none;
+  --cell-icon: none;
+  --cell-icon-w: 7px;
+  --cell-icon-h: 5px;
+  --cell-knob: #d9d9d9;
+  --cell-text-dim: rgba(229,255,255,.24);
+  --cell-track-fill: 0%;
+  --cell-track-zero: 50%;
+  /* Height of ANY cell is derived from padY, not a scattered literal 29px — so padY moves every
+     component at once (buttons/switches/segments as well as content-grown cells). */
+  --cell-h: calc(var(--cell-pad-y, 8px) * 2 + var(--cell-line-height, 13px));
+}
+
+/* ===== Namespaced package defaults for the common globals our rules read ===== */
+:root {
+  --cl-kit-accent: #d97757;
+  --cl-kit-control-secondary: transparent;   /* unfilled slider groove — invisible by default (fill line + thumb only) */
+  --cl-kit-menu-fill: #1a1a1a;
+  --cl-kit-menu-bg-hover: var(--cl-kit-menu-fill, #1a1a1a);   /* plate hover: no visible shift by default (per-item hover gives the feedback) */
+  --cl-kit-menu-bg-focus: var(--cl-kit-menu-fill, #1a1a1a);
+  --cl-kit-segment-pad: 2px;
+  --cl-kit-block-gap: 2px;
+  /* --cl-kit-val-* (value typography) is intentionally NOT set here: its rule falls back to the Body
+     cell tokens, and a concrete default would defeat that "Values → Body" fallback. */
+}
+
+/* ===== Base cell + row (cell.js) ===== */
+.uirow { display: flex; gap: var(--cl-kit-block-gap, 2px); align-items: stretch; }
+.uirow > * { min-width: 0; }
+.uirow > .cell { flex: 1 1 0; min-width: 0; }
+
+.cell { background: var(--cell-bg); border-radius: var(--cell-radius, 4px); transition: background .12s; }
+.cell, .pkhexrow, .uisegment { backdrop-filter: var(--cell-blur, none); -webkit-backdrop-filter: var(--cell-blur, none); }
+.cell, .uicell { scroll-margin: 8px; }
+
+.uicell { background: var(--cell-bg); border-radius: var(--cell-radius); color: var(--cell-text); font-size: var(--cell-font-size); line-height: var(--cell-line-height, 13px);
+  font-weight: var(--cell-weight, 400); letter-spacing: var(--cell-track, 0px); text-transform: var(--cell-case, none);
+  padding: var(--cell-pad-y,8px) var(--cell-pad-x,8px); min-height: var(--cell-h, 29px); box-sizing: border-box; display: flex; align-items: center;
+  gap: var(--cell-gap,4px); flex: 1 1 0; min-width: 0; backdrop-filter: var(--cell-blur,none); -webkit-backdrop-filter: var(--cell-blur,none); }
+.uicell.act { cursor: pointer; }
+.uicell.on { background: var(--cell-bg-focus, #292929); }   /* toggle button pressed state */
+.uicell.on .clab { color: var(--cell-text); }
+.uicell .clab { flex: 1 1 0; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.uicell.chead .clab { font-weight: 700; }
+/* labels: horizontal ellipsis via overflow:hidden in each label rule; vertical clip removed by
+   geometry (line-height:normal keeps the line-box taller than the ink glyph at tight --cell-line-height). */
+.uicell .clab, .sihead .lb, .uiswitch .tglab { line-height: normal; }
+/* .cval — cell value: consumer of the Values style (--cl-kit-val-*), falling back to Body/cell. */
+.uicell .cval { color: var(--cl-kit-val-color, var(--cell-text)); font-family: var(--cl-kit-val-font, inherit);
+  font-size: var(--cl-kit-val-size, var(--cell-font-size)); line-height: var(--cl-kit-val-lh, normal);
+  font-weight: var(--cl-kit-val-weight, var(--cell-weight)); letter-spacing: var(--cl-kit-val-track, var(--cell-track));
+  text-transform: var(--cl-kit-val-case, var(--cell-case)); white-space: nowrap; }
+.uicell .cch { display: flex; align-items: center; color: color-mix(in srgb, var(--cell-text) 60%, transparent); flex: none; }
+
+/* clickable surfaces do not select text on click; real inputs restore it below */
+.cell, .uicell, .uisegment button, .lfomenu button { user-select: none; -webkit-user-select: none; }
+input, textarea, .pv, .cinp, .pkhex { user-select: text; -webkit-user-select: text; }
+
+/* hover / focus — brighter background + gloss (input / slider / dropdown / switch). A plain
+   .uicell without .act is not a button, so only .uicell.act reacts to the cursor. */
+.cell:not(.uisegment):hover, .pkhexrow:hover { background: var(--cell-bg-hover, rgba(255,255,255,.1)); box-shadow: var(--cell-gloss-hover, var(--cell-gloss)); }
+.uicell.act:hover { background: var(--cell-bg-hover, rgba(255,255,255,.1)); box-shadow: var(--cell-gloss-hover, var(--cell-gloss)); }
+.cell:not(.uisegment):focus-within, .pkhexrow:focus-within, .uicell:focus-within { background: var(--cell-bg-focus, #292929); box-shadow: var(--cell-gloss-focus, var(--cell-gloss)); }
+
+/* left/right hint icon inside a cell (button leftIcon, input icon, menu-item icon) */
+.blendico { flex: none; display: inline-flex; align-items: center; justify-content: center;
+  width: 12px; height: 12px; color: var(--cell-text, #ecf9f9); opacity: .85; cursor: pointer; }
+.blendico:hover { opacity: 1; }
+.blendico svg { display: block; }
+
+/* ===== Input: text mode (input.js inputPlain) ===== */
+.cinp { flex: 1; min-width: 0; background: none; border: none; color: var(--cell-text); font: inherit; font-size: var(--cell-font-size); line-height: var(--cell-line-height, 13px); padding: 0; }
+.cinp:focus { outline: none; }
+.cinp::placeholder { color: var(--cell-text-dim); }
+
+/* ===== Input: number / slider mode (input.js inputNum) ===== */
+/* slider input — a "pill column": label + value on top, a 6px slider strip pinned to the bottom edge */
+.uislider { display: flex; flex-direction: column; overflow: hidden; position: relative; }
+.sihead { display: flex; gap: var(--cell-gap,4px); align-items: flex-start; padding: var(--cell-pad-y,8px) var(--cell-pad-x,8px); font-size: var(--cell-font-size); line-height: var(--cell-line-height, 13px);
+  position: relative; z-index: 1; pointer-events: none; }   /* pass clicks to the slider; .pv takes its own back */
+.sihead .lb { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sihead .dim { opacity: .5; }
+/* the caret zone hugs the number (field-sizing, + size fallback); the rest of the cell is the slider hit-zone */
+.pv { pointer-events: auto; flex: 0 0 auto; width: auto; field-sizing: content; min-width: 1ch; max-width: 100%;
+  text-align: right; background: none; border: none;
+  color: var(--cell-text); font: inherit; font-size: var(--cell-font-size); line-height: var(--cell-line-height, 13px); padding: 0; cursor: text; caret-color: var(--cell-text); }
+.pv:focus { outline: none; }
+.pv::selection { background: color-mix(in srgb, var(--cell-text) 25%, transparent); }
+/* track is NOT in flow — it lies over the bottom edge (Figma: 28px cell with an absolute 6px strip
+   along the base), so the slider cell is exactly as tall as a button/dropdown. */
+.sitrack { position: absolute; left: 0; right: 0; bottom: 0; height: 6px; }
+.sitrack.notrack { visibility: hidden; }   /* num-only: track invisible and click-through, but its space stays — cell height unchanged */
+/* input nudged 2px down, thumb raised 2px: the 2px fill line and the peg base sit flush to the cell's bottom edge */
+.sitrack input[type=range] { position: absolute; left: 0; right: 0; bottom: -2px; width: 100%; height: 14px; margin: 0;
+  padding-top: 8px; box-sizing: border-box; -webkit-appearance: none; appearance: none; background: transparent; cursor: pointer; }
+.sitrack input[type=range]::-webkit-slider-runnable-track { height: 2px; border-radius: 1px;
+  background: linear-gradient(to right, var(--cell-knob, #d9d9d9) var(--cell-track-fill,0%), var(--cl-kit-control-secondary, transparent) var(--cell-track-fill,0%)); }
+.sitrack input[type=range].nofill::-webkit-slider-runnable-track { background: linear-gradient(to right, var(--cl-kit-control-secondary, transparent) min(var(--cell-track-zero,50%),var(--cell-track-fill,50%)), var(--cell-knob, #d9d9d9) min(var(--cell-track-zero,50%),var(--cell-track-fill,50%)), var(--cell-knob, #d9d9d9) max(var(--cell-track-zero,50%),var(--cell-track-fill,50%)), var(--cl-kit-control-secondary, transparent) max(var(--cell-track-zero,50%),var(--cell-track-fill,50%))); }
+.sitrack input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; width: 3px; height: 4px; margin-top: -2px;
+  border-radius: 1.5px 1.5px 0 0; background: var(--cell-knob, #fff); box-shadow: 0 1px 2px rgba(0,0,0,.35); }
+.sitrack input[type=range]::-moz-range-track { height: 2px; border-radius: 1px;
+  background: linear-gradient(to right, var(--cell-knob, #d9d9d9) var(--cell-track-fill,0%), var(--cl-kit-control-secondary, transparent) var(--cell-track-fill,0%)); }
+.sitrack input[type=range].nofill::-moz-range-track { background: linear-gradient(to right, var(--cl-kit-control-secondary, transparent) min(var(--cell-track-zero,50%),var(--cell-track-fill,50%)), var(--cell-knob, #d9d9d9) min(var(--cell-track-zero,50%),var(--cell-track-fill,50%)), var(--cell-knob, #d9d9d9) max(var(--cell-track-zero,50%),var(--cell-track-fill,50%)), var(--cl-kit-control-secondary, transparent) max(var(--cell-track-zero,50%),var(--cell-track-fill,50%))); }
+.sitrack input[type=range]::-moz-range-thumb { width: 3px; height: 4px; border: none; border-radius: 1.5px 1.5px 0 0; background: var(--cell-knob, #fff); box-shadow: 0 1px 2px rgba(0,0,0,.35); }
+
+/* ===== Segment control (segment.js) ===== */
+/* gap between segments equals the inner padding, so the rhythm is even */
+/* box-sizing объявлен ЗДЕСЬ, а не взят от сброса страницы: у плитки есть и height:--cell-h, и
+   padding, поэтому на странице потребителя без `* { box-sizing: border-box }` она уходила на
+   initial content-box и вырастала на 2*--cl-kit-segment-pad выше соседней ячейки. .uicell
+   объявляет border-box сама по той же причине — кит самодостаточен, чужой сброс не предполагается. */
+.uisegment { display: flex; box-sizing: border-box; gap: var(--cl-kit-segment-pad, 2px); height: var(--cell-h, 29px); padding: var(--cl-kit-segment-pad, 2px); background: var(--cell-bg); border-radius: var(--cell-radius); }
+.uisegment button { flex: 1 1 0; min-width: 0; height: 100%; border: none; background: none; color: color-mix(in srgb, var(--cell-text) 60%, transparent); border-radius: max(0px, calc(var(--cell-radius) - var(--cl-kit-segment-pad, 2px))); cursor: pointer; display: inline-flex; align-items: center; justify-content: center; transition: background .12s;
+  font: inherit; font-size: var(--cell-font-size, 11px); line-height: normal; padding: 0 8px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.uisegment button:hover { background: var(--cell-bg-hover); color: var(--cell-text); }
+.uisegment button.on { background: var(--cell-bg-focus); color: var(--cell-text); }
+/* vertical mode (segment {col:true}): buttons stacked, height by content */
+.uisegment.col { flex-direction: column; height: auto; }
+.uisegment.col button { flex: 0 0 auto; width: 100%; height: auto; padding: 6px 8px; }
+.uisegment button svg { flex: none; }   /* keep icon at native size across segment counts */
+
+/* ===== Switch / toggle (switch.js; also the knob a Button can show) ===== */
+.uiswitch { min-height: var(--cell-h, 29px); display: flex; align-items: center; gap: var(--cell-gap, 8px); padding: 0 var(--cell-pad-x, 8px); cursor: pointer; }
+.uiswitch .tglab { flex: 1 1 0; min-width: 0; font-size: var(--cell-font-size); line-height: var(--cell-line-height, 13px); color: var(--cell-text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.switch { position: relative; flex: none; width: 20px; height: 12px; }
+.switch input { position: absolute; opacity: 0; width: 100%; height: 100%; margin: 0; cursor: pointer; }
+.switch .track { position: absolute; inset: 0; border-radius: 999px; background: rgba(242,242,242,.16); transition: background .18s; }
+.switch .track::after { content: ""; position: absolute; top: 0.8px; left: 0.8px; width: 10.4px; height: 10.4px; border-radius: 50%; background: var(--cell-knob, rgba(255,255,255,.92)); transition: transform .18s; }
+.switch input:checked + .track { background: var(--cl-kit-accent); }
+.switch input:checked + .track::after { transform: translateX(8px); }
+
+/* ===== Swatch + colour picker (swatch.js) ===== */
+.dsswatch { width: 24px; height: var(--cell-line-height, 13px); border-radius: var(--cell-radius); border: 1px solid color-mix(in srgb, var(--cell-text) 20%, transparent); flex: none; cursor: pointer; }
+/* popover: just the picker on the menu plate with padding; shadow via filter (respects rounded corners) */
+.pkpop { position: fixed; z-index: 70; width: 176px; background: var(--cl-kit-menu-fill, #1a1a1a);
+  border-radius: var(--group-radius, 8px); padding: var(--cell-pad-y, 8px);
+  filter: drop-shadow(var(--cell-shadow)); }
+.pkpop .picker { width: 100%; }
+/* HSV square → hue strip → "label + hex" row; ring markers 16px */
+.picker { flex: 1 1 0; min-width: 0; display: flex; flex-direction: column; gap: var(--cl-kit-block-gap, 2px); border-radius: var(--cell-radius, 4px); overflow: hidden; }
+.pksq { position: relative; width: 100%; aspect-ratio: 1 / 1; height: auto; cursor: crosshair;
+  background-image: linear-gradient(to top, #000, transparent), linear-gradient(to right, #fff, transparent); }
+.pkdot, .pkhk { position: absolute; width: 16px; height: 16px; border-radius: 50%; border: 4px solid #fff; background: transparent;
+  box-shadow: 0 4px 7px rgba(0,0,0,.25); transform: translate(-50%,-50%); pointer-events: none; }
+.pkhue { position: relative; height: 16px; border-radius: var(--cell-radius, 4px); cursor: pointer;
+  background: linear-gradient(to right, #f00, #ff0, #0f0, #0ff, #00f, #f0f, #f00); }
+.pkhk { top: 50%; }
+.pkeye { flex: 0 0 16px; width: 16px; height: 16px; padding: 0; border: 0; background: none;
+  color: var(--cell-text); opacity: .6; cursor: pointer; display: flex; align-items: center; justify-content: center; }
+.pkeye:hover { opacity: 1; }
+.pkhexrow { display: flex; align-items: flex-start; gap: var(--cell-gap, 4px); background: var(--cell-bg); border-radius: var(--cell-radius, 4px); padding: var(--cell-pad-y, 8px) var(--cell-pad-x, 12px); }
+.pkhexrow .pkl { font-size: var(--cell-font-size); line-height: var(--cell-line-height, 13px); color: var(--cell-text); flex: none; }
+.pkhex { flex: 1; min-width: 0; background: none; border: none; color: var(--cell-text); font: inherit; font-size: var(--cell-font-size); line-height: var(--cell-line-height, 13px); padding: 0; text-align: right; text-transform: uppercase; }
+.pkhex:focus { outline: none; }
+
+/* ===== Menu popup (menu.js) ===== */
+/* container = group plate, title in a secondary colour, options as cells; --menu-* are theme tokens
+   the host may set, all with sensible fallbacks so the menu renders standalone. */
+.lfomenu { position: fixed; z-index: 60; background: var(--cl-kit-menu-fill, #1a1a1a); border: none;
+  border-radius: var(--menu-radius, 4px); padding: var(--menu-pad-y, var(--group-pad, 8px)) var(--menu-pad-x, var(--group-pad, 8px)); box-shadow: var(--menu-shadow), var(--menu-gloss, none); min-width: 128px;
+  max-height: 260px; overflow: auto; display: flex; flex-direction: column; gap: var(--menu-gap, var(--cl-kit-block-gap, 2px));
+  -webkit-backdrop-filter: var(--menu-bf, none); backdrop-filter: var(--menu-bf, none); }
+.lfomenu:hover { background: var(--cl-kit-menu-bg-hover); box-shadow: var(--menu-shadow-hover, none), var(--menu-gloss, none); }
+.lfomenu:focus-within { background: var(--cl-kit-menu-bg-focus); box-shadow: var(--menu-shadow-focus, none), var(--menu-gloss, none); }
+.lfomenu > * { flex: 0 0 auto; }   /* items do not shrink — the menu scrolls instead of squashing rows */
+/* two columns (uiMenu cols:2) — grid so order reads left-to-right; non-button items span the row */
+.lfomenu.cols2 { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); min-width: 208px; }
+.lfomenu.cols2 > .mmhd, .lfomenu.cols2 > .cell, .lfomenu.cols2 > .uisegment { grid-column: 1 / -1; }
+.lfomenu .mmhd { padding: var(--cell-pad-y) var(--cell-pad-x); margin: 0; font-size: var(--cell-font-size, 11px); line-height: var(--cell-line-height); letter-spacing: 0; text-transform: none;
+  color: color-mix(in srgb, var(--cell-text, #ecf9f9) 40%, transparent); }
+.lfomenu button { display: flex; align-items: center; gap: var(--cell-gap); width: 100%; text-align: left; background: var(--cell-bg); border: none;
+  color: var(--cell-text); font: inherit; font-size: var(--cell-font-size, 11px); line-height: var(--cell-line-height); padding: var(--cell-pad-y) var(--cell-pad-x); border-radius: var(--cell-radius, 4px); cursor: pointer; }
+.lfomenu button .lbl { flex: 1 1 0; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.lfomenu button .blendico { cursor: inherit; }
+/* item as a DS cell: --cell-bg resting, hover, and focus for the selected item */
+.lfomenu button:hover { background: var(--cell-bg-hover, rgba(255,255,255,.1)); }
+.lfomenu button.on { background: var(--cell-bg-focus, #292929); }
+
+/* ===== Gloss (resting) — the top-edge inset highlight; hover/focus gloss wins by specificity above ===== */
+.cell, .uicell, .uisegment { box-shadow: var(--cell-gloss); }

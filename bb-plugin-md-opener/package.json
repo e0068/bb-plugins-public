@@ -1,6 +1,6 @@
 {
   "name": "bb-plugin-md-opener",
-  "version": "0.1.11",
+  "version": "0.1.15",
   "type": "module",
   "engines": {
     "bb": ">=0.39",
@@ -8,7 +8,7 @@
   },
   "bb": {
     "name": "Kasimov",
-    "description": "Opens .md files in a Kasimov editor where markdown links are clickable and navigate within the same tab, with breadcrumbs, a back button, and CAS-safe saving.",
+    "description": "Opens .md files in a Kasimov editor where markdown links are clickable and navigate within the same tab, with breadcrumbs, a back button, and CAS-safe saving. Pie charts in the chat get a color per slice.",
     "branding": {
       "icon": "FileText"
     },

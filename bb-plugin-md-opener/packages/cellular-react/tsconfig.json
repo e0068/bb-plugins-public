@@ -1,0 +1,20 @@
+{
+  "extends": "../plugin-base/tsconfig.base.json",
+  "compilerOptions": {
+    "jsx": "react-jsx",
+    "allowJs": true,
+    "checkJs": false,
+    "types": [
+      "node"
+    ],
+    "resolveJsonModule": true
+  },
+  "include": [
+    "index.ts",
+    "*.tsx",
+    "*.ts",
+    "../cellular-kit/index.ts",
+    "../cellular-kit/vendor/index.js",
+    "../cellular-kit/vendor/manifest.json"
+  ]
+}
