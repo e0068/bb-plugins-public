@@ -1,0 +1,14 @@
+{
+  "extends": "../plugin-base/tsconfig.base.json",
+  "compilerOptions": {
+    "allowJs": true,
+    "checkJs": false,
+    "types": [
+      "node"
+    ],
+    "resolveJsonModule": true
+  },
+  "include": [
+    "*.test.ts"
+  ]
+}

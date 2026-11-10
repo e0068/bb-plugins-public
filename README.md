@@ -14,7 +14,7 @@ bb plugin install <id>@e0068
 
 - **Claude Config** (`claude-config`) — Manage your Claude Code setup — plugins, connectors, skills, agents, hooks, workflows and settings — per scope.
 - **Flow** (`flow`) — Agent questions as a widget in the thread: every option with cost and risks, the recommended one marked, an answer of your own always possible.
-- **Kasimov** (`md-opener`) — Opens .md files in a Kasimov editor where markdown links are clickable and navigate within the same tab, with breadcrumbs, a back button, and CAS-safe saving.
+- **Kasimov** (`md-opener`) — Opens .md files in a Kasimov editor where markdown links are clickable and navigate within the same tab, with breadcrumbs, a back button, and CAS-safe saving. Pie charts in the chat get a color per slice.
 - **Prompt Drafts** (`prompt-drafts`) — Save the composer's text as a draft and bring it back later. Drafts show as cards under the Home composer and above a thread's composer.
 - **Tasks+** (`tasks-plus`) — A fork of the Tasks plugin that keeps tasks as Markdown files on disk and adds native workflow fields — Type, Estimate, Check, time and budget.
 - **Threads Overview** (`threads-overview`) — A home-screen section listing threads that need you: any thread where no work is going on and that you have not postponed. Postpone a thread to snooze it; it returns on its own once work resumes.

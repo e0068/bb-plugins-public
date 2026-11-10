@@ -1,0 +1,39 @@
+/* MdText — Kasimov's read mode inside a consumer's own line of text. The
+   variables come from md-text.ts; what is left here is outside the --kasi-*
+   contract. The host's typography is taken by the properties themselves, so
+   the variables stay real values the engine can read back for mermaid. The
+   document's vertical padding is gone. A single plain line flows inline with
+   what stands next to it — the number before a question, the star before an
+   option; anything with structure — a list, a table, two lines — stays a
+   block. */
+
+.mdt {
+  display: block;
+  min-width: 0;
+  height: auto;
+}
+
+.mdt .mde-root {
+  font: inherit;
+  color: inherit;
+  padding: 0;
+  min-height: 0;
+}
+
+.mdt .mde-root :is(.mde-h, .mde-h2, .mde-h3) {
+  color: inherit;
+}
+
+/* The gaps between blocks stay; the outer edges of the text are the field's. */
+.mdt .mde-root > :first-child {
+  margin-top: 0;
+}
+
+.mdt .mde-root > :last-child {
+  margin-bottom: 0;
+}
+
+.mdt:has(.mde-root > .mde-body:only-child),
+.mdt:has(.mde-root > .mde-body:only-child) :is(.cg-mdhost, .mde-root, .mde-body) {
+  display: inline;
+}

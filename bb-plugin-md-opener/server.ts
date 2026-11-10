@@ -11,17 +11,19 @@ import { z } from "zod";
 import {
   parseHref,
   resolveRelative,
-} from "./packages/link-navigation/resolve";
+} from "@bb-plugins/link-navigation/resolve";
 // Direct import of the pure module (not the barrel index): otherwise the
 // server would pull in the MdDocView React component and its CSS into the
 // server bundle.
 import {
   NATIVE_VIEWER_TOKEN_DEFAULTS,
   buildDescriptors,
-} from "./packages/md-doc-view/kasimov-settings";
+} from "@bb-plugins/md-doc-view/kasimov-settings";
+import { renameProblem, siblingPath } from "@bb-plugins/md-doc-view/file-name";
 import {
   revealInFinderHere,
-} from "./packages/reveal-in-finder";
+} from "@bb-plugins/reveal-in-finder";
+import { fileErrorKind } from "./src/file-errors";
 import { extractLinkHrefs } from "./src/opener-links";
 import { resolveSource, type OpenerSource } from "./src/opener-source";
 
@@ -91,10 +93,29 @@ export const rpcContract = defineRpcContract({
       error: z.string().nullable(),
     }),
   },
+  renameDoc: {
+    // path: absolute (doc.path from a prior readDoc); name: the new name in
+    // the same folder. path on success is the file's new absolute path.
+    input: z.object({ path: z.string(), source: sourceSchema, name: z.string() }).strict(),
+    output: z.object({
+      outcome: z.enum(["renamed", "exists", "invalid", "denied", "not-found"]),
+      path: z.string().nullable(),
+      message: z.string().nullable(),
+    }),
+  },
+  deleteDoc: {
+    // path: absolute (doc.path from a prior readDoc). A file only — never a
+    // directory, never recursively.
+    input: z.object({ path: z.string(), source: sourceSchema }).strict(),
+    output: z.object({
+      outcome: z.enum(["removed", "denied", "not-found"]),
+      message: z.string().nullable(),
+    }),
+  },
   // Read by the composer format-bar content script via plain fetch, not
   // useSettings: SDK data hooks throw inside a content script's headless
   // root (no QueryClientProvider —
-  // memory/decisions/row-status-rpc-not-frontend-hooks.md, the same finding
+  // docs/decisions/row-status-rpc-not-frontend-hooks.md, the same finding
   // for a different content script in this repo).
   composerBarEnabled: {
     input: z.object({}).strict().default({}),
@@ -157,7 +178,7 @@ export default function plugin(bb: BbPluginApi) {
   //
   // Default presets are "to match the native bb viewer" (previously hardcoded
   // in packages/md-doc-view/md-doc-view.css, see
-  // memory/decisions/kasimov-opener-css-uses-token-defaults.md), not
+  // docs/decisions/kasimov-opener-css-uses-token-defaults.md), not
   // CUSTOM_TOKEN: without this change, Kasimov settings in MD Opener couldn't
   // override the hardcoded values.
   //
@@ -165,7 +186,7 @@ export default function plugin(bb: BbPluginApi) {
   // kasimov-settings schema: Cloud Config doesn't register the composer
   // content script, so the shared table (which only feeds MdDocView's
   // engine flags/CSS vars) has no use for it — see
-  // memory/decisions/kasimov-composer-bar-flag.md.
+  // docs/decisions/kasimov-composer-bar-flag.md.
   const settingsHandle = bb.settings.define({
     ...buildDescriptors(NATIVE_VIEWER_TOKEN_DEFAULTS),
     kasimovComposerBar: {
@@ -280,6 +301,24 @@ export default function plugin(bb: BbPluginApi) {
       }
     },
 
+    async renameDoc({ path, source, name }) {
+      try {
+        return await doRename(path, source, name);
+      } catch (err) {
+        bb.log.error(`renameDoc failed: ${String(err)}`);
+        return { outcome: "denied" as const, path: null, message: `Failed to rename: ${String(err)}` };
+      }
+    },
+
+    async deleteDoc({ path, source }) {
+      try {
+        return await doDelete(path, source);
+      } catch (err) {
+        bb.log.error(`deleteDoc failed: ${String(err)}`);
+        return { outcome: "denied" as const, message: `Failed to delete: ${String(err)}` };
+      }
+    },
+
     async composerBarEnabled() {
       const values = await settingsHandle.get();
       return { enabled: values.kasimovComposerBar === true };
@@ -363,6 +402,75 @@ export default function plugin(bb: BbPluginApi) {
       };
     }
     return { outcome: "written", sha256: written.sha256, message: null };
+  }
+
+  type Located =
+    | { ok: true; abs: string; hostId: string | undefined; root: string | undefined }
+    | { ok: false; outcome: "denied" | "not-found"; message: string };
+
+  // The file an action is aimed at: the tab's source resolved and the path
+  // made absolute and held inside the root. Whether the file is there is the
+  // host's to say — move and remove refuse on their own, and listPaths walks
+  // the whole tree below a folder, so asking it first would be slow and wrong.
+  async function locate(path: string, source: OpenerSource): Promise<Located> {
+    const resolved = await resolveSource(bb, source);
+    if (!resolved) return { ok: false, outcome: "not-found", message: "Tab source unavailable." };
+    const abs = toAbsolute(source, resolved.root, path);
+    if (resolved.root && !isWithin(resolved.root, abs)) {
+      return { ok: false, outcome: "denied", message: "Path is outside the source root." };
+    }
+    return { ok: true, abs, hostId: resolved.hostId, root: resolved.root };
+  }
+
+  const NOT_FOUND = "File not found.";
+
+  async function doRename(
+    path: string,
+    source: OpenerSource,
+    name: string,
+  ): Promise<{
+    outcome: "renamed" | "exists" | "invalid" | "denied" | "not-found";
+    path: string | null;
+    message: string | null;
+  }> {
+    // The name first: a name with a slash is refused before any path is built
+    // from it, so it can never lead the file out of its folder.
+    const problem = renameProblem(name, path);
+    if (problem !== null) return { outcome: "invalid", path: null, message: problem };
+    const file = await locate(path, source);
+    if (!file.ok) return { outcome: file.outcome, path: null, message: file.message };
+    const target = siblingPath(file.abs, name);
+    try {
+      await bb.sdk.files.move({
+        sourcePath: file.abs,
+        destinationPath: target,
+        hostId: file.hostId,
+        rootPath: file.root,
+      });
+    } catch (err) {
+      const kind = fileErrorKind(err);
+      if (kind === "exists") {
+        return { outcome: "exists", path: null, message: "A file with that name already exists." };
+      }
+      if (kind === "not-found") return { outcome: "not-found", path: null, message: NOT_FOUND };
+      throw err;
+    }
+    return { outcome: "renamed", path: target, message: null };
+  }
+
+  async function doDelete(
+    path: string,
+    source: OpenerSource,
+  ): Promise<{ outcome: "removed" | "denied" | "not-found"; message: string | null }> {
+    const file = await locate(path, source);
+    if (!file.ok) return { outcome: file.outcome, message: file.message };
+    try {
+      await bb.sdk.files.remove({ path: file.abs, hostId: file.hostId, rootPath: file.root });
+    } catch (err) {
+      if (fileErrorKind(err) === "not-found") return { outcome: "not-found", message: NOT_FOUND };
+      throw err;
+    }
+    return { outcome: "removed", message: null };
   }
 
   async function doReveal(

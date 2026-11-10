@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
-import { afterEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent } from "@testing-library/react";
+import { afterEach, describe, expect, it, onTestFinished, vi } from "vitest";
+import { act, cleanup, fireEvent, screen } from "@testing-library/react";
 import { loadPluginApp, renderSlot } from "@get-bb/plugin-sdk/testing/app";
 
 afterEach(cleanup);
@@ -18,7 +18,7 @@ vi.mock("./src/mermaid-bootstrap", () => ({ installMermaid }));
 // mock parses markdown links out of value and calls linkResolver on each one
 // (like the real editor), rendering a clickable link as a button with the
 // .mde-link class (its onDocClick skips those).
-vi.mock("./packages/md-doc-view/KasimovEditor", () => ({
+vi.mock("@bb-plugins/md-doc-view/KasimovEditor", () => ({
   KasimovEditor: ({
     value,
     linkResolver,
@@ -68,8 +68,8 @@ vi.mock("./packages/md-doc-view/KasimovEditor", () => ({
 // Raw mode renders CodeMirror, which jsdom cannot drive either. Mocked at the
 // same boundary as the engine above: what this suite checks is that the tab
 // hands the file's source to Raw, not how CodeMirror paints it.
-vi.mock("./packages/code-editor", async (importActual) => ({
-  ...(await importActual<typeof import("./packages/code-editor")>()),
+vi.mock("@bb-plugins/code-editor", async (importActual) => ({
+  ...(await importActual<typeof import("@bb-plugins/code-editor")>()),
   CodeEditor: ({
     text,
     language,
@@ -130,13 +130,17 @@ describe("bb-plugin-md-opener app", () => {
     expect(installMermaid).toHaveBeenCalledWith(window);
   });
 
-  it("in-tab link is clickable, external (http) link is not", async () => {
+  it("an external (http) link is clickable and opens the browser, not a file", async () => {
+    const open = vi.spyOn(window, "open").mockReturnValue(null);
+    onTestFinished(() => open.mockRestore());
     const app = await loadPluginApp(() => import("./app"));
-    const slot = renderSlot(app.fileOpeners[0]!, props, { rpc: makeRpc() });
+    const rpc = makeRpc();
+    const slot = renderSlot(app.fileOpeners[0]!, props, { rpc });
 
-    await slot.findByTestId("link-sub.md");
-    expect(slot.getByTestId("plain-https://x.dev")).toBeInTheDocument();
-    expect(slot.queryByTestId("link-https://x.dev")).toBeNull();
+    fireEvent.click(await slot.findByTestId("link-https://x.dev"));
+
+    expect(open).toHaveBeenCalledWith("https://x.dev", "_blank", "noopener,noreferrer");
+    expect(rpc.readDoc).toHaveBeenCalledTimes(1);
   });
 
   it("clicking a link drills into the file (abs from the server), back returns", async () => {
@@ -280,5 +284,52 @@ describe("bb-plugin-md-opener app", () => {
     expect(vars["--kasi-size"]).toBe("14px");
     expect(mde.getAttribute("data-follow")).toBe("true");
     expect(mde.getAttribute("data-frontmatter")).toBe("true");
+  });
+});
+
+describe("bb-plugin-md-opener app — the file's menu", () => {
+  const confirmIn = (dialog: HTMLElement, label: string) =>
+    fireEvent.click(
+      [...dialog.querySelectorAll('[role="button"]')].find((b) => b.textContent === label)!,
+    );
+
+  it("Rename asks the server for the file on screen with the tab's source", async () => {
+    const app = await loadPluginApp(() => import("./app"));
+    const renameDoc = vi.fn(async () => ({
+      outcome: "renamed" as const,
+      path: "/env/notes/renamed.md",
+      message: null,
+    }));
+    const slot = renderSlot(app.fileOpeners[0]!, props, { rpc: { ...makeRpc(), renameDoc } });
+
+    fireEvent.click(await slot.findByRole("button", { name: "More actions" }));
+    fireEvent.click(screen.getByRole("button", { name: "Rename" }));
+    const field = screen.getByRole("dialog").querySelector("input") as HTMLInputElement;
+    field.value = "renamed.md";
+    await act(async () => {
+      fireEvent.keyDown(field, { key: "Enter" });
+    });
+
+    expect(renameDoc).toHaveBeenCalledWith({
+      path: "/env/notes/doc.md",
+      source,
+      name: "renamed.md",
+    });
+    expect(await slot.findByText("/env/notes/renamed.md")).toBeInTheDocument();
+  });
+
+  it("Delete asks the server to remove the file on screen with the tab's source", async () => {
+    const app = await loadPluginApp(() => import("./app"));
+    const deleteDoc = vi.fn(async () => ({ outcome: "removed" as const, message: null }));
+    const slot = renderSlot(app.fileOpeners[0]!, props, { rpc: { ...makeRpc(), deleteDoc } });
+
+    fireEvent.click(await slot.findByRole("button", { name: "More actions" }));
+    fireEvent.click(screen.getByRole("button", { name: "Delete" }));
+    await act(async () => {
+      confirmIn(screen.getByRole("dialog"), "Delete");
+    });
+
+    expect(deleteDoc).toHaveBeenCalledWith({ path: "/env/notes/doc.md", source });
+    expect(await slot.findByText("File deleted.")).toBeInTheDocument();
   });
 });

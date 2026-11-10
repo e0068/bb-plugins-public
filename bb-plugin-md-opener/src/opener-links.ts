@@ -3,11 +3,11 @@
 // (packages/link-navigation), the same one that drives the front end's
 // linkResolver. Keep parsing here rather than duplicating it: the server and
 // front end must agree on what counts as a link (see
-// memory/decisions/link-resolve-shared-layer.md).
+// docs/decisions/link-resolve-shared-layer.md).
 import {
   isInTabLink,
   parseHref,
-} from "../packages/link-navigation/resolve";
+} from "@bb-plugins/link-navigation/resolve";
 
 // The only form the kasimov editor makes clickable is a markdown link
 // `[text](target)` (target inside the parens). A Claude `@import` does NOT

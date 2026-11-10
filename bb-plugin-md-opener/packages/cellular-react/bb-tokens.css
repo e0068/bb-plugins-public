@@ -1,0 +1,40 @@
+/* Мост bb → Cellular: плоский контракт --cell-* kit кормится токенами темы bb.
+   Ни одного литерального цвета: тема хоста (тёмная/светлая) меняет всё сама.
+   Подключается ПОСЛЕ components.css kit (см. styles.css): :root kit объявляет
+   те же имена со своими дефолтами, и побеждает тот, кто позже.
+   Themed-каналы (у kit есть --cell-<x>-default) перечислены все семнадцать;
+   размеры — выбор владельца по прототипу BP-214: ячейка 32px, кегль 12/16. */
+:root {
+  --cell-bg: var(--muted);
+  --cell-bg-hover: color-mix(in oklch, var(--foreground) 10%, var(--muted));
+  --cell-bg-focus: color-mix(in oklch, var(--primary) 18%, var(--background));
+  --cell-gloss: none;
+  --cell-gloss-hover: none;
+  --cell-gloss-focus: none;
+  --cell-shadow: none;
+  --cell-radius: calc(var(--radius) / 2);
+  --cell-gap: 2px;
+  --cell-pad-x: 8px;
+  --cell-pad-y: 8px;
+  --cell-font-size: 12px;
+  --cell-line-height: 16px;
+  --cell-track: 0px;
+  --cell-case: none;
+  --cell-weight: 400;
+  --cell-text: var(--foreground);
+
+  /* структурные каналы kit, у которых есть цвет */
+  --cell-text-dim: var(--muted-foreground);
+  --cell-knob: var(--primary);
+
+  /* общие переменные kit (--cl-kit-*) */
+  --cl-kit-accent: var(--primary);
+  --cl-kit-block-gap: 2px;
+  --cl-kit-menu-fill: var(--popover);
+  --cl-kit-menu-bg-hover: var(--popover);
+  --cl-kit-menu-bg-focus: var(--popover);
+
+  /* меню и попап kit читают --group-radius и --menu-shadow с фолбэками */
+  --group-radius: calc(var(--radius) + 2px);
+  --menu-shadow: 0 8px 24px color-mix(in oklch, var(--canvas) 50%, transparent);
+}

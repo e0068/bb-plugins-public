@@ -1,11 +1,28 @@
 {
-  "extends": "../packages/plugin-base/tsconfig.base.json",
+  "extends": "./packages/plugin-base/tsconfig.base.json",
   "compilerOptions": {
     "jsx": "react-jsx",
-    "types": ["node"],
+    "types": [
+      "node"
+    ],
     "paths": {
-      "@/*": ["./*"]
-    }
+      "@/*": [
+        "./*"
+      ],
+      "@bb-plugins/*": [
+        "./packages/*"
+      ]
+    },
+    "allowJs": true,
+    "checkJs": false,
+    "resolveJsonModule": true
   },
-  "include": ["server.ts", "app.tsx", "src"]
+  "include": [
+    "server.ts",
+    "app.tsx",
+    "src",
+    "./packages/cellular-kit/index.ts",
+    "./packages/cellular-kit/vendor/index.js",
+    "./packages/cellular-kit/vendor/manifest.json"
+  ]
 }

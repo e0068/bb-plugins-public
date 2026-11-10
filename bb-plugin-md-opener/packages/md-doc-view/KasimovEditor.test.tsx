@@ -6,7 +6,11 @@ import { cleanup, render } from "@testing-library/react";
 // factory: capture the passed options and return a stub instance, to check
 // the wrapper's wiring (CSS variables on the host, flags in createEditor).
 const created: Array<{ opts: Record<string, unknown> }> = [];
-vi.mock("../kasimov/kasimov.js", () => ({
+vi.mock("../kasimov/kasimov.js", async (importActual) => ({
+  // Only the factory is stubbed. The engine's own values — the three alignments
+  // the picture's menu hands straight back to it — stay real: a stubbed pair
+  // would let a wrong one through unnoticed.
+  ...(await importActual<typeof import("../kasimov/kasimov.js")>()),
   createEditor: (_host: HTMLElement, opts: Record<string, unknown>) => {
     created.push({ opts });
     return {
@@ -55,7 +59,7 @@ describe("KasimovEditor", () => {
   // Kasimov recreates .mde-root on every keystroke and redeclares its own
   // --kasi-* defaults on it; a declaration on the element itself always beats
   // one inherited from the host regardless of ancestor specificity (the
-  // upstream contract, memory/wiki/kasi-css-contract.md). So instead of
+  // upstream contract, docs/wiki/kasi-css-contract.md). So instead of
   // host.style the wrapper keeps a rule in document.head with an ID selector
   // keyed to the host, targeting `.mde-root` specifically — these tests check that rule.
   const styleRuleFor = (hostId: string) =>
