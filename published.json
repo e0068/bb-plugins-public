@@ -11,8 +11,8 @@
   },
   "bb-plugin-md-opener": {
     "version": "0.1.15",
-    "commit": "606170bfc40bb78ea33a48c9b068b2ca3666821c",
-    "publishedAt": "2026-11-10T10:06:38.893Z"
+    "commit": "0c5137dd3ef00444184e57147832dd90731a3e70",
+    "publishedAt": "2026-11-10T10:27:37.346Z"
   },
   "bb-plugin-prompt-drafts": {
     "version": "0.1.8",
